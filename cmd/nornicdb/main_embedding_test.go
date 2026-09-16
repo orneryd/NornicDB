@@ -74,7 +74,13 @@ func TestServeEmbeddingPrecedence(t *testing.T) {
 			// developer's real home-directory config would otherwise leak
 			// into "defaults" and other cases that don't pass --config.
 			proc.Env = append(proc.Env, "HOME="+dir)
-			proc.Env = append(proc.Env, "NORNICDB_TEST_EMBEDDING_CLI=1", "NORNICDB_LANGUAGE=en", "NORNICDB_BOLT_ENABLED=false", "NORNICDB_EMBEDDING_ENABLED=false")
+			proc.Env = append(proc.Env,
+				"NORNICDB_TEST_EMBEDDING_CLI=1",
+				"NORNICDB_LANGUAGE=en",
+				"NORNICDB_BOLT_ENABLED=false",
+				"NORNICDB_EMBEDDING_ENABLED=false",
+				"NORNICDB_TELEMETRY_LISTEN=127.0.0.1:0",
+			)
 			proc.Env = append(proc.Env, tc.env...)
 			logPath := filepath.Join(dir, "serve.log")
 			logFile, err := os.Create(logPath)
@@ -86,11 +92,31 @@ func TestServeEmbeddingPrecedence(t *testing.T) {
 				logFile.Close()
 				t.Fatal(err)
 			}
-			defer func() { _ = proc.Process.Kill(); _ = proc.Wait(); _ = logFile.Close() }()
+			procDone := make(chan error, 1)
+			go func() { procDone <- proc.Wait() }()
+			processExited := false
+			defer func() {
+				if !processExited {
+					_ = proc.Process.Kill()
+					select {
+					case <-procDone:
+					case <-time.After(5 * time.Second):
+					}
+				}
+				_ = logFile.Close()
+			}()
 			client := &http.Client{Timeout: time.Second}
 			deadline := time.Now().Add(30 * time.Second)
 			var effective map[string]string
 			for time.Now().Before(deadline) {
+				select {
+				case waitErr := <-procDone:
+					processExited = true
+					_ = logFile.Close()
+					logs, _ := os.ReadFile(logPath)
+					t.Fatalf("real CLI exited before exposing effective config: %v: %s", waitErr, logs)
+				default:
+				}
 				resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/admin/databases/nornic/config", port))
 				if err == nil {
 					var result struct {

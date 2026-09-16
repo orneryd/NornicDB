@@ -41,7 +41,7 @@
 - id: nornicdbcli.flag.upgrade_storage
   other: "[!! Áúthórízé óné-wáý stórágé úpgrádés thróúgh áll súppórtéd mígrátíóns; báck úp fírst. !!]"
 - id: nornicdbcli.flag.embedding_provider
-  other: "[!! Émbéddíng próvídér: local, ollama, openai !!]"
+  other: "[!! Émbéddíng próvídér: local, ollama, openai, orca !!]"
 - id: nornicdbcli.flag.embedding_url
   other: "[!! Émbéddíng ÁPÍ URL (ollama/openai) !!]"
 - id: nornicdbcli.flag.embedding_key

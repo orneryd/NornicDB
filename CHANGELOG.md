@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `b10411` nightly to the latest stable release, `v0.4.1`; align the Windows
   yzma bindings with its v0.4.1 ABI; and update local GGUF examples to the
   current non-deprecated C API.
+- Add `orca` as an optional OpenAI-compatible managed-embedding and Heimdall
+  provider, using the existing generic API URL, API key, model, and dimension
+  settings.
 
 ## [v1.3.3] - 9/15/2026
 

@@ -58,7 +58,7 @@
   other: Authorize one-way upgrade of the data directory's storage version through every migration arm this binary understands. Back up before enabling.
 - id: nornicdbcli.flag.embedding_provider
   description: Embedding provider flag help. Provider names are machine values.
-  other: "Embedding provider: local, ollama, openai"
+  other: "Embedding provider: local, ollama, openai, orca"
 - id: nornicdbcli.flag.embedding_url
   description: Embedding API URL flag help.
   other: Embedding API URL (ollama/openai)

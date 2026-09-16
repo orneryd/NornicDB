@@ -1,6 +1,6 @@
 ---
 name: nornicdb-managed-embeddings
-description: Use NornicDB managed embeddings via Cypher — server-side embedding generation with WITH EMBEDDING, db.index.vector.embed, embedding providers (Ollama / OpenAI / local GGUF), property include/exclude, and the managed ChunkEmbeddings storage model. Use when the API surface is Cypher and you want NornicDB to embed text for you instead of computing vectors client-side.
+description: Use NornicDB managed embeddings via Cypher — server-side embedding generation with WITH EMBEDDING, db.index.vector.embed, embedding providers (Ollama / OpenAI / OrcaRouter / local GGUF), property include/exclude, and the managed ChunkEmbeddings storage model. Use when the API surface is Cypher and you want NornicDB to embed text for you instead of computing vectors client-side.
 ---
 
 # Managed Embeddings (Cypher API)
@@ -20,7 +20,7 @@ Vector index lookup order is `NamedEmbeddings[indexProperty] → node.Properties
 
 ```bash
 export NORNICDB_EMBEDDING_ENABLED=true
-export NORNICDB_EMBEDDING_PROVIDER=ollama          # ollama | openai | local
+export NORNICDB_EMBEDDING_PROVIDER=ollama          # ollama | openai | orca | local
 export NORNICDB_EMBEDDING_MODEL=mxbai-embed-large
 export NORNICDB_EMBEDDING_API_URL=http://localhost:11434
 export NORNICDB_EMBEDDING_DIMENSIONS=1024
@@ -31,13 +31,13 @@ YAML form:
 ```yaml
 embedding:
   enabled: true
-  provider: ollama          # ollama | openai | local
+  provider: ollama          # ollama | openai | orca | local
   model: mxbai-embed-large
   url: http://localhost:11434
   dimensions: 1024
 ```
 
-The OpenAI provider also reads `embedding.api_key` (or `NORNICDB_EMBEDDING_API_KEY`). The local provider resolves the model file inside `NORNICDB_MODELS_DIR`.
+The OpenAI and Orca providers read `embedding.api_key` (or `NORNICDB_EMBEDDING_API_KEY`). The local provider resolves the model file inside `NORNICDB_MODELS_DIR`.
 
 Defaults shipped with NornicDB: `provider=local`, `model=bge-m3`, `dimensions=1024`.
 
@@ -63,6 +63,7 @@ is dynamic.
 |---|---|---|
 | `ollama` | `NORNICDB_EMBEDDING_API_URL=http://host:11434` | `ollama pull <model>` first; works offline |
 | `openai` | `NORNICDB_EMBEDDING_API_KEY=sk-...` | Models: `text-embedding-3-small` (1536), `text-embedding-3-large` (3072) |
+| `orca` | `NORNICDB_EMBEDDING_API_KEY=...` | Defaults to OrcaRouter's API and `openai/text-embedding-3-small` (1536); generic URL/model/dimension settings remain overridable |
 | `local`  | `NORNICDB_MODELS_DIR=./models` | Resolves `${NORNICDB_MODELS_DIR}/${NORNICDB_EMBEDDING_MODEL}.gguf`; set `NORNICDB_EMBEDDING_GPU_LAYERS=-1` for auto-GPU |
 
 ### Embedding text — which properties contribute

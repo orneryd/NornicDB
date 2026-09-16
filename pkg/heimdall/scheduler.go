@@ -48,6 +48,8 @@ func RegisterHeimdallProvider(name string, factory func(Config) (Generator, erro
 //
 // Heimdall provider selection:
 //   - openai: Use OpenAI (or compatible) chat API; requires NORNICDB_HEIMDALL_API_KEY.
+//   - orca: Use OrcaRouter's OpenAI-compatible API; defaults to orcarouter/auto
+//     and requires NORNICDB_HEIMDALL_API_KEY.
 //   - ollama: Use Ollama /api/chat; NORNICDB_HEIMDALL_API_URL defaults to http://localhost:11434.
 //   - vllm: Use vLLM's OpenAI-compatible API; NORNICDB_HEIMDALL_API_URL defaults to http://localhost:8000.
 //   - litellm: Use a LiteLLM proxy (OpenAI-compatible gateway to 100+ providers);
@@ -180,7 +182,7 @@ func loadLocalGenerator(cfg Config) (Generator, string, error) {
 		return nil, "", fmt.Errorf("Heimdall model not found: %s (expected at %s)\n"+
 			"  → Download a GGUF model and place it in the models directory\n"+
 			"  → Or set NORNICDB_HEIMDALL_MODEL to point to an existing model\n"+
-			"  → Or use provider ollama/openai (NORNICDB_HEIMDALL_PROVIDER=ollama or openai)",
+			"  → Or use provider ollama/openai/orca (NORNICDB_HEIMDALL_PROVIDER=ollama, openai, or orca)",
 			modelName, modelPath)
 	}
 

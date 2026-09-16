@@ -186,7 +186,7 @@ Instance-level configuration (env, config file) is the **default** for every dat
 - **Allowed keys:** `GET /admin/databases/config/keys` is the authoritative complete inventory. Use its canonical dotted names for persisted settings. Existing `NORNICDB_*` names remain supported alternatives for environment configuration and alternate YAML/API input; they are not deprecated. Writes are normalized to canonical names, and the canonical form wins a collision.
 - **Effect:** Settings returned with `restartLevel: none` are applied immediately by an explicit runtime applicator. Search/index/embedder/reranker settings rebuild the database's search service; search-result cache capacity and TTL resize the existing cache in place. Settings returned with `restartLevel: process` are persisted immediately and return `pendingRestart: true`, but the current runtime value remains active until restart.
 - **Search pipeline and query embedding:** The search pipeline must embed the **query** using the same effective config (and thus dimensions) as the **index** for that database to avoid vector dimension mismatches. The HTTP search handler uses per-database resolved config when embedding the query: it validates that the global embedder's output dimensions match the database's resolved embedding dimensions. If they differ (e.g. you set a per-DB override for embedding dimensions that does not match the global embedder), the API returns `400 Bad Request` with a clear message instead of returning empty vector results. Align global embedding dimensions with per-DB overrides, or leave per-DB embedding dimensions unset so they match global.
-- **Remote embedding providers (OpenAI, Ollama) per database:** You can set `db.nornic.embedding.provider`, `db.nornic.embedding.model`, `db.nornic.embedding.api.url`, `db.nornic.embedding.api.key`, and `db.nornic.embedding.dimensions` so different databases use different models, endpoints, or API keys. When a database uses provider `openai` (or another provider that requires a key), the **resolved** API key for that database (global default or per-DB setting) is used. Ollama typically does not require an API key.
+- **Remote embedding providers (OpenAI, OrcaRouter, Ollama) per database:** You can set `db.nornic.embedding.provider`, `db.nornic.embedding.model`, `db.nornic.embedding.api.url`, `db.nornic.embedding.api.key`, and `db.nornic.embedding.dimensions` so different databases use different models, endpoints, or API keys. When a database uses provider `openai` or `orca`, the **resolved** API key for that database (global default or per-DB setting) is used. Ollama typically does not require an API key.
 
 #### Canonical settings with environment alternatives
 
@@ -976,14 +976,14 @@ Watch logs for:
 
 ## Heimdall AI Assistant
 
-Heimdall is the cognitive guardian and AI chat assistant. It supports **local** (GGUF BYOM), **ollama**, **openai**, **vllm**, and **litellm** chat providers.
+Heimdall is the cognitive guardian and AI chat assistant. It supports **local** (GGUF BYOM), **ollama**, **openai**, **orca**, **vllm**, and **litellm** chat providers.
 
 | Variable                     | Default     | Description                                                                                                                                                  |
 | ---------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `NORNICDB_HEIMDALL_ENABLED`  | `false`     | Enable the AI assistant                                                                                                                                      |
-| `NORNICDB_HEIMDALL_PROVIDER` | `local`     | Backend: `local`, `ollama`, `openai`, `vllm`, or `litellm`                                                                                                   |
-| `NORNICDB_HEIMDALL_API_URL`  | (see below) | Provider base URL. Defaults: Ollama `http://localhost:11434`, OpenAI `https://api.openai.com`, vLLM `http://localhost:8000`, LiteLLM `http://localhost:4000` |
-| `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | Required for OpenAI; optional LiteLLM master/virtual key or vLLM key                                                                                         |
+| `NORNICDB_HEIMDALL_PROVIDER` | `local`     | Backend: `local`, `ollama`, `openai`, `orca`, `vllm`, or `litellm`                                                                                           |
+| `NORNICDB_HEIMDALL_API_URL`  | (see below) | Provider base URL. OrcaRouter defaults to `https://api.orcarouter.ai`; see provider docs for all defaults.                                                   |
+| `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | Required for OpenAI and Orca; optional LiteLLM master/virtual key or vLLM key                                                                                |
 | `NORNICDB_HEIMDALL_MODEL`    | (varies)    | Local GGUF name, Ollama/OpenAI/vLLM model name, or required LiteLLM `model_name` alias                                                                       |
 
 **Advanced llama.cpp context features** (local provider only, most models work with defaults):

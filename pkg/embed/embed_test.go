@@ -56,6 +56,29 @@ func TestDefaultOpenAIConfig(t *testing.T) {
 	}
 }
 
+func TestDefaultOrcaConfig(t *testing.T) {
+	config := DefaultOrcaConfig("test-key")
+
+	if config.Provider != "orca" {
+		t.Errorf("expected orca, got %s", config.Provider)
+	}
+	if config.APIURL != "https://api.orcarouter.ai" {
+		t.Errorf("expected OrcaRouter API root, got %s", config.APIURL)
+	}
+	if config.APIPath != "/v1/embeddings" {
+		t.Errorf("expected /v1/embeddings, got %s", config.APIPath)
+	}
+	if config.APIKey != "test-key" {
+		t.Errorf("expected test-key, got %s", config.APIKey)
+	}
+	if config.Model != "openai/text-embedding-3-small" {
+		t.Errorf("expected OrcaRouter embedding model, got %s", config.Model)
+	}
+	if config.Dimensions != 1536 {
+		t.Errorf("expected 1536 dimensions, got %d", config.Dimensions)
+	}
+}
+
 func TestNewOllama(t *testing.T) {
 	t.Run("with config", func(t *testing.T) {
 		config := &Config{
@@ -270,6 +293,46 @@ func TestOpenAIEmbedder(t *testing.T) {
 	})
 }
 
+func TestOrcaEmbedderUsesOpenAIWireFormat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/embeddings" {
+			t.Errorf("expected /v1/embeddings, got %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("expected bearer authorization")
+		}
+		var req openaiRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Model != "openai/text-embedding-3-small" {
+			t.Errorf("unexpected model %q", req.Model)
+		}
+		_ = json.NewEncoder(w).Encode(openaiResponse{Data: []struct {
+			Embedding []float32 `json:"embedding"`
+			Index     int       `json:"index"`
+		}{{Embedding: []float32{0.1, 0.2}, Index: 0}}})
+	}))
+	defer server.Close()
+
+	embedder, err := NewEmbedder(&Config{
+		Provider: "orca",
+		APIURL:   server.URL + "/v1",
+		APIKey:   "test-key",
+		Timeout:  time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewEmbedder() error = %v", err)
+	}
+	vector, err := embedder.Embed(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("Embed() error = %v", err)
+	}
+	if len(vector) != 2 {
+		t.Fatalf("expected two dimensions, got %d", len(vector))
+	}
+}
+
 func TestOpenAIEmbedderError(t *testing.T) {
 	// Create mock server that returns error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +387,13 @@ func TestOpenAIEmbedderNoEmbedding(t *testing.T) {
 }
 
 func TestNewEmbedder(t *testing.T) {
+	t.Run("nil config", func(t *testing.T) {
+		_, err := NewEmbedder(nil)
+		if err == nil {
+			t.Error("expected error for nil config")
+		}
+	})
+
 	t.Run("ollama provider", func(t *testing.T) {
 		config := &Config{
 			Provider: "ollama",
@@ -358,6 +428,13 @@ func TestNewEmbedder(t *testing.T) {
 			Provider: "openai",
 		}
 		_, err := NewEmbedder(config)
+		if err == nil {
+			t.Error("expected error for missing API key")
+		}
+	})
+
+	t.Run("orca without key", func(t *testing.T) {
+		_, err := NewEmbedder(&Config{Provider: "orca"})
 		if err == nil {
 			t.Error("expected error for missing API key")
 		}

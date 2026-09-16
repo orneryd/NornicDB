@@ -238,7 +238,7 @@ type Config struct {
 
 	ModelsDir   string  `json:"models_dir"`
 	Model       string  `json:"model"`
-	Provider    string  `json:"provider"`     // local, ollama, openai, vllm, litellm
+	Provider    string  `json:"provider"`     // local, ollama, openai, orca, vllm, litellm
 	APIURL      string  `json:"api_url"`      // for ollama/openai/vllm/litellm
 	APIKey      string  `json:"api_key"`      // for openai/litellm
 	ContextSize int     `json:"context_size"` // Context window size (single-shot, max out)

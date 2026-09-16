@@ -3911,6 +3911,25 @@ func TestBuildEmbedConfigFromResolved_Branches(t *testing.T) {
 		"db.nornic.embedding.provider": "custom-provider",
 	}, fallback)
 	require.Equal(t, "/api/embeddings", cfg.APIPath)
+
+	cfg = buildEmbedConfigFromResolved(map[string]string{
+		"db.nornic.embedding.provider": "orca",
+		"db.nornic.embedding.api.key":  "orca-key",
+	}, fallback)
+	require.Equal(t, "https://api.orcarouter.ai", cfg.APIURL)
+	require.Equal(t, "/v1/embeddings", cfg.APIPath)
+	require.Equal(t, "openai/text-embedding-3-small", cfg.Model)
+	require.Equal(t, 1536, cfg.Dimensions)
+
+	cfg = buildEmbedConfigFromResolved(map[string]string{
+		"db.nornic.embedding.provider":   "orca",
+		"db.nornic.embedding.api.url":    "https://gateway.example",
+		"db.nornic.embedding.model":      "google/gemini-embedding-001",
+		"db.nornic.embedding.dimensions": "3072",
+	}, fallback)
+	require.Equal(t, "https://gateway.example", cfg.APIURL)
+	require.Equal(t, "google/gemini-embedding-001", cfg.Model)
+	require.Equal(t, 3072, cfg.Dimensions)
 }
 
 func TestSetSearchFallbackReasonHeader(t *testing.T) {

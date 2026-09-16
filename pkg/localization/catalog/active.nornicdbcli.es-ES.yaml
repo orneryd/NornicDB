@@ -41,7 +41,7 @@
 - id: nornicdbcli.flag.upgrade_storage
   other: Autoriza la actualización unidireccional de la versión de almacenamiento mediante todas las migraciones admitidas. Haz una copia de seguridad antes de activarla.
 - id: nornicdbcli.flag.embedding_provider
-  other: "Proveedor de embeddings: local, ollama, openai"
+  other: "Proveedor de embeddings: local, ollama, openai, orca"
 - id: nornicdbcli.flag.embedding_url
   other: URL de la API de embeddings (ollama/openai)
 - id: nornicdbcli.flag.embedding_key

@@ -20,6 +20,7 @@ See `docs/architecture/embedding-search.md` for details.
 | -------------- | --------- | ---- | ------- |
 | Ollama (local) | 50-100ms  | Free | High    |
 | OpenAI         | 100-200ms | $$$  | Highest |
+| OrcaRouter     | Network-dependent | Usage-based | Model-dependent |
 | Local GGUF     | 30-80ms   | Free | High    |
 
 ## Configuration
@@ -47,6 +48,22 @@ export NORNICDB_EMBEDDING_DIMENSIONS=1024
 export NORNICDB_EMBEDDING_PROVIDER=openai
 export NORNICDB_EMBEDDING_API_KEY=sk-...
 export NORNICDB_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+### OrcaRouter
+
+OrcaRouter uses the existing generic embedding settings; there are no
+Orca-specific environment variables. Selecting `orca` supplies the API URL,
+model, and dimension defaults, while explicit generic values override them.
+
+```bash
+export NORNICDB_EMBEDDING_ENABLED=true
+export NORNICDB_EMBEDDING_PROVIDER=orca
+export NORNICDB_EMBEDDING_API_KEY=your-orca-key
+# Defaults:
+# NORNICDB_EMBEDDING_API_URL=https://api.orcarouter.ai
+# NORNICDB_EMBEDDING_MODEL=openai/text-embedding-3-small
+# NORNICDB_EMBEDDING_DIMENSIONS=1536
 ```
 
 ### Local GGUF

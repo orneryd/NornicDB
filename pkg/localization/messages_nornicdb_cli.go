@@ -125,7 +125,7 @@ func NornicDBCLIFlagUpgradeStorage() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagUpgradeStorage, "Authorize one-way upgrade of the data directory's storage version through every migration arm this binary understands. Back up before enabling.")
 }
 func NornicDBCLIFlagEmbeddingProvider() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingProvider, "Embedding provider: local, ollama, openai")
+	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingProvider, "Embedding provider: local, ollama, openai, orca")
 }
 func NornicDBCLIFlagEmbeddingURL() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingURL, "Embedding API URL (ollama/openai)")

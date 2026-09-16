@@ -301,10 +301,11 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 		LazyMode:      fallback.EmbeddingLazyMode,
 		LazyModeSet:   true,
 	}
+	cfg = embed.ResolveProviderConfig(cfg)
 	switch provider {
 	case "ollama":
 		cfg.APIPath = "/api/embeddings"
-	case "openai":
+	case "openai", "orca":
 		cfg.APIPath = "/v1/embeddings"
 	case "local":
 		// no APIPath
@@ -416,7 +417,7 @@ type Config struct {
 	// Embedding Configuration (for vector search)
 	// EmbeddingEnabled turns on automatic embedding generation
 	EmbeddingEnabled bool
-	// EmbeddingProvider: "ollama" or "openai" or "local"
+	// EmbeddingProvider: "local", "ollama", "openai", or "orca"
 	EmbeddingProvider string
 	// EmbeddingAPIURL is the base URL (e.g., http://localhost:11434)
 	EmbeddingAPIURL string
@@ -429,7 +430,7 @@ type Config struct {
 	EmbeddingCacheSize int
 	// EmbeddingGPULayers controls local model offload: -1=auto, 0=CPU only.
 	EmbeddingGPULayers int
-	// EmbeddingAPIKey is the API key for authenticated embedding providers (OpenAI, Cloudflare Workers AI, etc.)
+	// EmbeddingAPIKey is the API key for authenticated embedding providers.
 	// Env: NORNICDB_EMBEDDING_API_KEY
 	EmbeddingAPIKey string
 	// ModelsDir is the directory containing local GGUF models
@@ -1470,32 +1471,31 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			localization.ServerSearchRerankDisabledEvent("search_rerank", "NORNICDB_SEARCH_RERANK_ENABLED"))
 	}
 
-	// Configure embeddings if enabled
-	// Local provider doesn't need API URL, others do
-	embeddingsReady := config.EmbeddingEnabled && (config.EmbeddingProvider == "local" || config.EmbeddingAPIURL != "")
+	// Configure embeddings if enabled.
+	embedConfig := &embed.Config{
+		Provider:      config.EmbeddingProvider,
+		APIURL:        config.EmbeddingAPIURL,
+		APIKey:        config.EmbeddingAPIKey,
+		Model:         config.EmbeddingModel,
+		Dimensions:    config.EmbeddingDimensions,
+		ModelsDir:     config.ModelsDir,
+		GPULayers:     config.EmbeddingGPULayers,
+		Timeout:       30 * time.Second,
+		CtxType:       config.EmbeddingCtxType,
+		PoolingType:   config.EmbeddingPoolingType,
+		AttentionType: config.EmbeddingAttentionType,
+		FlashAttn:     config.EmbeddingFlashAttn,
+	}
+	embedConfig = embed.ResolveProviderConfig(embedConfig)
+	// Local providers do not need an API URL. Remote provider defaults are
+	// resolved before this check.
+	embeddingsReady := config.EmbeddingEnabled && (embedConfig.Provider == "local" || embedConfig.APIURL != "")
 	if embeddingsReady {
-		embedConfig := &embed.Config{
-			Provider:      config.EmbeddingProvider,
-			APIURL:        config.EmbeddingAPIURL,
-			APIKey:        config.EmbeddingAPIKey,
-			Model:         config.EmbeddingModel,
-			Dimensions:    config.EmbeddingDimensions,
-			ModelsDir:     config.ModelsDir,
-			GPULayers:     config.EmbeddingGPULayers,
-			Timeout:       30 * time.Second,
-			CtxType:       config.EmbeddingCtxType,
-			PoolingType:   config.EmbeddingPoolingType,
-			AttentionType: config.EmbeddingAttentionType,
-			FlashAttn:     config.EmbeddingFlashAttn,
-			LazyMode:      config.EmbeddingLazyMode,
-			LazyModeSet:   true,
-		}
-
 		// Set API path based on provider (only for remote providers)
-		switch config.EmbeddingProvider {
+		switch embedConfig.Provider {
 		case "ollama":
 			embedConfig.APIPath = "/api/embeddings"
-		case "openai":
+		case "openai", "orca":
 			embedConfig.APIPath = "/v1/embeddings"
 		case "local":
 			// Local provider doesn't need API path
@@ -1546,16 +1546,16 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 						embedder = embed.NewCachedEmbedder(embedder, config.EmbeddingCacheSize)
 						s.logEvent(context.Background(), slog.LevelInfo,
 							localization.ServerEmbeddingCacheEnabledEvent(config.EmbeddingCacheSize,
-								embeddingCacheMemoryMB(config.EmbeddingCacheSize, config.EmbeddingDimensions)))
+								embeddingCacheMemoryMB(config.EmbeddingCacheSize, embedConfig.Dimensions)))
 					}
 
-					if config.EmbeddingProvider == "local" {
+					if embedConfig.Provider == "local" {
 						s.logEvent(context.Background(), slog.LevelInfo,
-							localization.ServerEmbeddingsReadyLocalEvent(config.EmbeddingModel, config.EmbeddingDimensions))
+							localization.ServerEmbeddingsReadyLocalEvent(embedConfig.Model, embedConfig.Dimensions))
 					} else {
 						s.logEvent(context.Background(), slog.LevelInfo,
-							localization.ServerEmbeddingsReadyRemoteEvent(config.EmbeddingProvider,
-								config.EmbeddingAPIURL, config.EmbeddingModel, config.EmbeddingDimensions))
+							localization.ServerEmbeddingsReadyRemoteEvent(embedConfig.Provider,
+								embedConfig.APIURL, embedConfig.Model, embedConfig.Dimensions))
 					}
 
 					if mcpServer != nil {
@@ -1569,13 +1569,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					return
 				}
 
-				if config.EmbeddingProvider == "local" {
+				if embedConfig.Provider == "local" {
 					s.logEvent(context.Background(), slog.LevelWarn,
-						localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, config.EmbeddingModel, err))
+						localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, embedConfig.Model, err))
 				} else {
 					s.logEvent(context.Background(), slog.LevelWarn,
 						localization.ServerEmbeddingInitializationAttemptFailedRemoteEvent(attempt,
-							config.EmbeddingProvider, config.EmbeddingModel, config.EmbeddingAPIURL, err))
+							embedConfig.Provider, embedConfig.Model, embedConfig.APIURL, err))
 				}
 
 				if backoff < maxBackoff {

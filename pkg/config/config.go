@@ -573,13 +573,13 @@ type MemoryConfig struct {
 	// EmbeddingEnabled controls whether embedding generation is active
 	// Env: NORNICDB_EMBEDDING_ENABLED
 	EmbeddingEnabled bool
-	// EmbeddingProvider (local, ollama, openai)
+	// EmbeddingProvider (local, ollama, openai, orca)
 	EmbeddingProvider string
 	// EmbeddingModel name
 	EmbeddingModel string
 	// EmbeddingAPIURL endpoint
 	EmbeddingAPIURL string
-	// EmbeddingAPIKey for authenticated providers (OpenAI, etc.). Env: NORNICDB_EMBEDDING_API_KEY
+	// EmbeddingAPIKey for authenticated providers. Env: NORNICDB_EMBEDDING_API_KEY
 	EmbeddingAPIKey string
 	// EmbeddingDimensions size
 	EmbeddingDimensions int
@@ -829,15 +829,15 @@ type FeatureFlagsConfig struct {
 	// Environment: NORNICDB_HEIMDALL_MODEL (default: qwen2.5-1.5b-instruct-q4_k_m)
 	HeimdallModel string
 
-	// Heimdall provider: "local" (GGUF), "ollama", or "openai"
+	// Heimdall provider: "local" (GGUF), "ollama", "openai", "orca", "vllm", or "litellm"
 	// Environment: NORNICDB_HEIMDALL_PROVIDER (default: local)
 	HeimdallProvider string
 
-	// Heimdall API URL for remote providers (ollama/openai)
+	// Heimdall API URL for remote providers
 	// Environment: NORNICDB_HEIMDALL_API_URL (e.g. http://localhost:11434 for ollama)
 	HeimdallAPIURL string
 
-	// Heimdall API key for openai (and other authenticated providers)
+	// Heimdall API key for authenticated providers
 	// Environment: NORNICDB_HEIMDALL_API_KEY
 	HeimdallAPIKey string
 
@@ -1606,7 +1606,7 @@ type YAMLConfig struct {
 	Heimdall struct {
 		Enabled          bool     `yaml:"enabled"`
 		Model            string   `yaml:"model"`
-		Provider         string   `yaml:"provider"` // local, ollama, openai
+		Provider         string   `yaml:"provider"` // local, ollama, openai, orca
 		APIURL           string   `yaml:"api_url"`  // for ollama/openai
 		APIKey           string   `yaml:"api_key"`  // for openai
 		GPULayers        *int     `yaml:"gpu_layers"`

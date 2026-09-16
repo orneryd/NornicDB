@@ -60,3 +60,42 @@ func TestApplyServeEmbeddingOverrides(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyEmbeddingProviderDefaultsOrca(t *testing.T) {
+	t.Run("replaces built-in defaults", func(t *testing.T) {
+		cfg := config.LoadDefaults()
+		cfg.Memory.EmbeddingProvider = "orca"
+
+		applyEmbeddingProviderDefaults(cfg)
+
+		if cfg.Memory.EmbeddingAPIURL != "https://api.orcarouter.ai" {
+			t.Fatalf("API URL = %q", cfg.Memory.EmbeddingAPIURL)
+		}
+		if cfg.Memory.EmbeddingModel != "openai/text-embedding-3-small" {
+			t.Fatalf("model = %q", cfg.Memory.EmbeddingModel)
+		}
+		if cfg.Memory.EmbeddingDimensions != 1536 {
+			t.Fatalf("dimensions = %d", cfg.Memory.EmbeddingDimensions)
+		}
+	})
+
+	t.Run("preserves generic overrides", func(t *testing.T) {
+		cfg := config.LoadDefaults()
+		cfg.Memory.EmbeddingProvider = "orca"
+		cfg.Memory.EmbeddingAPIURL = "https://gateway.example/v1"
+		cfg.Memory.EmbeddingModel = "google/gemini-embedding-001"
+		cfg.Memory.EmbeddingDimensions = 3072
+
+		applyEmbeddingProviderDefaults(cfg)
+
+		if cfg.Memory.EmbeddingAPIURL != "https://gateway.example" {
+			t.Fatalf("API URL = %q", cfg.Memory.EmbeddingAPIURL)
+		}
+		if cfg.Memory.EmbeddingModel != "google/gemini-embedding-001" {
+			t.Fatalf("model = %q", cfg.Memory.EmbeddingModel)
+		}
+		if cfg.Memory.EmbeddingDimensions != 3072 {
+			t.Fatalf("dimensions = %d", cfg.Memory.EmbeddingDimensions)
+		}
+	})
+}

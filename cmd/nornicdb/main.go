@@ -24,6 +24,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
@@ -458,6 +459,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Explicit CLI flags override the loaded env/YAML/default configuration.
 	applyServeEmbeddingOverrides(cmd, cfg)
+	applyEmbeddingProviderDefaults(cfg)
 	embeddingProvider := cfg.Memory.EmbeddingProvider
 	embeddingModel := cfg.Memory.EmbeddingModel
 	embeddingURL := cfg.Memory.EmbeddingAPIURL
@@ -1303,6 +1305,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	commandPrintln(cmd, localization.NornicDBCLIServerStopped())
 	return nil
+}
+
+func applyEmbeddingProviderDefaults(cfg *config.Config) {
+	if cfg == nil || cfg.Memory.EmbeddingProvider != "orca" {
+		return
+	}
+	resolved := embed.ResolveProviderConfig(&embed.Config{
+		Provider:   cfg.Memory.EmbeddingProvider,
+		APIURL:     cfg.Memory.EmbeddingAPIURL,
+		APIKey:     cfg.Memory.EmbeddingAPIKey,
+		Model:      cfg.Memory.EmbeddingModel,
+		Dimensions: cfg.Memory.EmbeddingDimensions,
+	})
+	cfg.Memory.EmbeddingAPIURL = resolved.APIURL
+	cfg.Memory.EmbeddingModel = resolved.Model
+	cfg.Memory.EmbeddingDimensions = resolved.Dimensions
 }
 
 func appendProtocolComponents(

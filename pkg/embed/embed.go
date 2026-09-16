@@ -3,6 +3,7 @@
 // This package supports multiple embedding providers:
 //   - Ollama: Local open-source models (mxbai-embed-large, nomic-embed-text)
 //   - OpenAI: Cloud API (text-embedding-3-small, text-embedding-3-large)
+//   - OrcaRouter: OpenAI-compatible hosted embedding models
 //
 // Embeddings convert text into high-dimensional vectors that capture semantic meaning.
 // Similar texts have similar vectors, enabling semantic search.
@@ -51,6 +52,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/textchunk"
@@ -105,10 +107,10 @@ type Embedder interface {
 // Config holds embedding provider configuration.
 //
 // Fields:
-//   - Provider: "ollama" or "openai" or "local"
+//   - Provider: "local", "ollama", "openai", or "orca"
 //   - APIURL: Base URL for API (e.g., http://localhost:11434)
 //   - APIPath: Endpoint path (e.g., /api/embeddings)
-//   - APIKey: Authentication key (OpenAI only)
+//   - APIKey: Authentication key (OpenAI-compatible providers)
 //   - Model: Model name (e.g., mxbai-embed-large)
 //   - Dimensions: Expected vector size for validation
 //   - Timeout: HTTP request timeout
@@ -124,10 +126,10 @@ type Embedder interface {
 //		Timeout:    60 * time.Second,
 //	}
 type Config struct {
-	Provider   string        // ollama, openai, local
+	Provider   string        // local, ollama, openai, orca
 	APIURL     string        // e.g., http://localhost:11434
 	APIPath    string        // e.g., /api/embeddings or /v1/embeddings
-	APIKey     string        // For OpenAI
+	APIKey     string        // For authenticated remote providers
 	Model      string        // e.g., mxbai-embed-large
 	Dimensions int           // Expected dimensions (for validation)
 	Timeout    time.Duration // Request timeout
@@ -832,19 +834,40 @@ func (e *OpenAIEmbedder) Backend() string {
 	return "cpu"
 }
 
+// ResolveProviderConfig applies defaults selected by Config.Provider without
+// replacing explicit non-default settings. The returned configuration is a
+// copy when provider-specific resolution is needed.
+//
+// Example:
+//
+//	config := embed.ResolveProviderConfig(&embed.Config{Provider: "orca", APIKey: apiKey})
+//	embedder, err := embed.NewEmbedder(config)
+func ResolveProviderConfig(config *Config) *Config {
+	if config == nil {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(config.Provider)) {
+	case "orca":
+		return resolveOrcaConfig(config)
+	default:
+		return config
+	}
+}
+
 // NewEmbedder creates an embedder based on the provider specified in config.
 //
 // Supported providers:
 //   - "local": Local GGUF models via llama.cpp (GPU-accelerated)
 //   - "ollama": External Ollama server
 //   - "openai": OpenAI cloud API
+//   - "orca": OrcaRouter OpenAI-compatible API
 //
 // This is a convenience function for dynamic provider selection.
 //
 // Example:
 //
 //	// Dynamic provider selection
-//	provider := os.Getenv("EMBEDDING_PROVIDER") // "local", "ollama", or "openai"
+//	provider := os.Getenv("EMBEDDING_PROVIDER") // "local", "ollama", "openai", or "orca"
 //
 //	var config *embed.Config
 //	switch provider {
@@ -872,6 +895,10 @@ func (e *OpenAIEmbedder) Backend() string {
 // Returns an Embedder interface, or an error if the provider is unknown or
 // configuration is invalid (e.g., OpenAI without API key, local without model).
 func NewEmbedder(config *Config) (Embedder, error) {
+	config = ResolveProviderConfig(config)
+	if config == nil {
+		return nil, fmt.Errorf("embedding config is required")
+	}
 	switch config.Provider {
 	case "local":
 		return NewLocalGGUF(config)
@@ -882,7 +909,12 @@ func NewEmbedder(config *Config) (Embedder, error) {
 			return nil, fmt.Errorf("OpenAI requires an API key")
 		}
 		return NewOpenAI(config), nil
+	case "orca":
+		if config.APIKey == "" {
+			return nil, fmt.Errorf("OrcaRouter requires an API key")
+		}
+		return NewOpenAI(config), nil
 	default:
-		return nil, fmt.Errorf("unknown provider: %s (supported: local, ollama, openai)", config.Provider)
+		return nil, fmt.Errorf("unknown provider: %s (supported: local, ollama, openai, orca)", config.Provider)
 	}
 }

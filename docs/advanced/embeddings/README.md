@@ -7,6 +7,7 @@
 - **[Local GGUF Models](local-gguf.md)** - Run models locally
 - **[Ollama Integration](../../features/vector-embeddings.md#ollama-recommended)** - Use Ollama for embeddings
 - **[OpenAI Integration](../../features/vector-embeddings.md#openai)** - Use OpenAI API
+- **[OrcaRouter Integration](../../features/vector-embeddings.md#orcarouter)** - Use OrcaRouter's OpenAI-compatible API
 
 ## 🎯 What are Embeddings?
 
@@ -34,8 +35,15 @@ export NORNICDB_EMBEDDING_MODEL=mxbai-embed-large
 ```bash
 # Configure NornicDB
 export NORNICDB_EMBEDDING_PROVIDER=openai
-export NORNICDB_OPENAI_API_KEY=your-api-key
+export NORNICDB_EMBEDDING_API_KEY=your-api-key
 export NORNICDB_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+### With OrcaRouter
+
+```bash
+export NORNICDB_EMBEDDING_PROVIDER=orca
+export NORNICDB_EMBEDDING_API_KEY=your-orca-key
 ```
 
 ## 📖 Learn More
@@ -43,6 +51,7 @@ export NORNICDB_EMBEDDING_MODEL=text-embedding-3-small
 - **[Local GGUF](local-gguf.md)** - Run models offline
 - **[Ollama Setup](../../features/vector-embeddings.md#ollama-recommended)** - Easy local embeddings
 - **[OpenAI API](../../features/vector-embeddings.md#openai)** - Cloud embeddings
+- **[OrcaRouter](../../features/vector-embeddings.md#orcarouter)** - Routed hosted embeddings
 
 ---
 
