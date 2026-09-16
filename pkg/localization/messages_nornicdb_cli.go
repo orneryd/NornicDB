@@ -128,10 +128,10 @@ func NornicDBCLIFlagEmbeddingProvider() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingProvider, "Embedding provider: local, ollama, openai, orca")
 }
 func NornicDBCLIFlagEmbeddingURL() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingURL, "Embedding API URL (ollama/openai)")
+	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingURL, "Embedding API URL (ollama/openai/orca)")
 }
 func NornicDBCLIFlagEmbeddingKey() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingKey, "Embeddings API Key (openai)")
+	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingKey, "Embeddings API Key (openai/orca)")
 }
 func NornicDBCLIFlagEmbeddingModel() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingModel, "Embedding model name")

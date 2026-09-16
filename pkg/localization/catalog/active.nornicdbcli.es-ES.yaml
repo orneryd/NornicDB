@@ -43,9 +43,9 @@
 - id: nornicdbcli.flag.embedding_provider
   other: "Proveedor de embeddings: local, ollama, openai, orca"
 - id: nornicdbcli.flag.embedding_url
-  other: URL de la API de embeddings (ollama/openai)
+  other: URL de la API de embeddings (ollama/openai/orca)
 - id: nornicdbcli.flag.embedding_key
-  other: Clave de la API de embeddings (openai)
+  other: Clave de la API de embeddings (openai/orca)
 - id: nornicdbcli.flag.embedding_model
   other: Nombre del modelo de embeddings
 - id: nornicdbcli.flag.embedding_dimensions

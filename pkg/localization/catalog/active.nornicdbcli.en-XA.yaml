@@ -43,9 +43,9 @@
 - id: nornicdbcli.flag.embedding_provider
   other: "[!! Émbéddíng próvídér: local, ollama, openai, orca !!]"
 - id: nornicdbcli.flag.embedding_url
-  other: "[!! Émbéddíng ÁPÍ URL (ollama/openai) !!]"
+  other: "[!! Émbéddíng ÁPÍ URL (ollama/openai/orca) !!]"
 - id: nornicdbcli.flag.embedding_key
-  other: "[!! Émbéddíngs ÁPÍ Kéý (openai) !!]"
+  other: "[!! Émbéddíngs ÁPÍ Kéý (openai/orca) !!]"
 - id: nornicdbcli.flag.embedding_model
   other: "[!! Émbéddíng módél námé !!]"
 - id: nornicdbcli.flag.embedding_dimensions
