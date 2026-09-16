@@ -62,6 +62,20 @@ func TestApplyServeEmbeddingOverrides(t *testing.T) {
 }
 
 func TestApplyEmbeddingProviderDefaultsOrca(t *testing.T) {
+	t.Run("normalizes provider name", func(t *testing.T) {
+		cfg := config.LoadDefaults()
+		cfg.Memory.EmbeddingProvider = " ORCA "
+
+		applyEmbeddingProviderDefaults(cfg)
+
+		if cfg.Memory.EmbeddingProvider != "orca" {
+			t.Fatalf("provider = %q", cfg.Memory.EmbeddingProvider)
+		}
+		if cfg.Memory.EmbeddingDimensions != 1536 {
+			t.Fatalf("dimensions = %d", cfg.Memory.EmbeddingDimensions)
+		}
+	})
+
 	t.Run("replaces built-in defaults", func(t *testing.T) {
 		cfg := config.LoadDefaults()
 		cfg.Memory.EmbeddingProvider = "orca"
@@ -96,6 +110,67 @@ func TestApplyEmbeddingProviderDefaultsOrca(t *testing.T) {
 		}
 		if cfg.Memory.EmbeddingDimensions != 3072 {
 			t.Fatalf("dimensions = %d", cfg.Memory.EmbeddingDimensions)
+		}
+	})
+
+	t.Run("preserves explicit values equal to generic defaults", func(t *testing.T) {
+		cfg := config.LoadDefaults()
+		cfg.Memory.EmbeddingProvider = "orca"
+		cfg.EmbeddingExplicit.APIURL = true
+		cfg.EmbeddingExplicit.Model = true
+		cfg.EmbeddingExplicit.Dimensions = true
+
+		applyEmbeddingProviderDefaults(cfg)
+
+		if cfg.Memory.EmbeddingAPIURL != "http://localhost:11434" {
+			t.Fatalf("API URL = %q", cfg.Memory.EmbeddingAPIURL)
+		}
+		if cfg.Memory.EmbeddingModel != "bge-m3" {
+			t.Fatalf("model = %q", cfg.Memory.EmbeddingModel)
+		}
+		if cfg.Memory.EmbeddingDimensions != 1024 {
+			t.Fatalf("dimensions = %d", cfg.Memory.EmbeddingDimensions)
+		}
+	})
+
+	t.Run("preserves explicit environment values equal to generic defaults", func(t *testing.T) {
+		t.Setenv("NORNICDB_EMBEDDING_PROVIDER", "ORCA")
+		t.Setenv("NORNICDB_EMBEDDING_API_URL", "http://localhost:11434")
+		t.Setenv("NORNICDB_EMBEDDING_MODEL", "bge-m3")
+		t.Setenv("NORNICDB_EMBEDDING_DIMENSIONS", "1024")
+		cfg := config.LoadFromEnv()
+
+		applyEmbeddingProviderDefaults(cfg)
+
+		if cfg.Memory.EmbeddingProvider != "orca" ||
+			cfg.Memory.EmbeddingAPIURL != "http://localhost:11434" ||
+			cfg.Memory.EmbeddingModel != "bge-m3" ||
+			cfg.Memory.EmbeddingDimensions != 1024 {
+			t.Fatalf("resolved environment settings = %+v", cfg.Memory)
+		}
+	})
+
+	t.Run("preserves explicit YAML values equal to generic defaults", func(t *testing.T) {
+		for _, key := range []string{"PROVIDER", "API_URL", "MODEL", "DIMENSIONS"} {
+			t.Setenv("NORNICDB_EMBEDDING_"+key, "")
+		}
+		path := filepath.Join(t.TempDir(), "orca.yaml")
+		err := os.WriteFile(path, []byte("embedding:\n  provider: ORCA\n  url: http://localhost:11434\n  model: bge-m3\n  dimensions: 1024\n"), 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := config.LoadFromFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		applyEmbeddingProviderDefaults(cfg)
+
+		if cfg.Memory.EmbeddingProvider != "orca" ||
+			cfg.Memory.EmbeddingAPIURL != "http://localhost:11434" ||
+			cfg.Memory.EmbeddingModel != "bge-m3" ||
+			cfg.Memory.EmbeddingDimensions != 1024 {
+			t.Fatalf("resolved YAML settings = %+v", cfg.Memory)
 		}
 	})
 }

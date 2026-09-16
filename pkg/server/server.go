@@ -301,8 +301,15 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 		LazyMode:      fallback.EmbeddingLazyMode,
 		LazyModeSet:   true,
 	}
-	cfg = embed.ResolveProviderConfig(cfg)
-	switch provider {
+	_, apiURLExplicit := effective[dbconfig.CanonicalSettingName("NORNICDB_EMBEDDING_API_URL")]
+	_, modelExplicit := effective[dbconfig.CanonicalSettingName("NORNICDB_EMBEDDING_MODEL")]
+	_, dimensionsExplicit := effective[dbconfig.CanonicalSettingName("NORNICDB_EMBEDDING_DIMENSIONS")]
+	cfg = embed.ResolveProviderConfigWithProvenance(cfg, embed.ProviderConfigExplicit{
+		APIURL:     apiURLExplicit,
+		Model:      modelExplicit,
+		Dimensions: dimensionsExplicit,
+	})
+	switch cfg.Provider {
 	case "ollama":
 		cfg.APIPath = "/api/embeddings"
 	case "openai", "orca":

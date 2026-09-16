@@ -79,6 +79,32 @@ func TestDefaultOrcaConfig(t *testing.T) {
 	}
 }
 
+func TestResolveOrcaConfigPreservesExplicitGenericValues(t *testing.T) {
+	resolved := ResolveProviderConfig(&Config{
+		Provider:   " ORCA ",
+		APIURL:     "http://localhost:11434",
+		APIPath:    "/api/embeddings",
+		Model:      "bge-m3",
+		Dimensions: 1024,
+	})
+
+	if resolved.Provider != "orca" {
+		t.Fatalf("provider = %q", resolved.Provider)
+	}
+	if resolved.APIURL != "http://localhost:11434" {
+		t.Fatalf("API URL = %q", resolved.APIURL)
+	}
+	if resolved.APIPath != "/api/embeddings" {
+		t.Fatalf("API path = %q", resolved.APIPath)
+	}
+	if resolved.Model != "bge-m3" {
+		t.Fatalf("model = %q", resolved.Model)
+	}
+	if resolved.Dimensions != 1024 {
+		t.Fatalf("dimensions = %d", resolved.Dimensions)
+	}
+}
+
 func TestNewOllama(t *testing.T) {
 	t.Run("with config", func(t *testing.T) {
 		config := &Config{

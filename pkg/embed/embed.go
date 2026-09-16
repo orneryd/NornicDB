@@ -854,6 +854,37 @@ func ResolveProviderConfig(config *Config) *Config {
 	}
 }
 
+// ProviderConfigExplicit records which generic embedding values were supplied
+// explicitly rather than inherited from NornicDB's built-in Ollama defaults.
+type ProviderConfigExplicit struct {
+	APIURL     bool
+	Model      bool
+	Dimensions bool
+}
+
+// ResolveProviderConfigWithProvenance applies provider defaults without
+// replacing explicit values that happen to equal a different provider's
+// defaults. This is intended for configuration-loading boundaries; direct
+// callers should normally use ResolveProviderConfig.
+func ResolveProviderConfigWithProvenance(config *Config, explicit ProviderConfigExplicit) *Config {
+	if config == nil {
+		return nil
+	}
+	cfg := *config
+	if strings.EqualFold(strings.TrimSpace(cfg.Provider), "orca") {
+		if !explicit.APIURL && strings.TrimRight(strings.TrimSpace(cfg.APIURL), "/") == "http://localhost:11434" {
+			cfg.APIURL = ""
+		}
+		if !explicit.Model && strings.TrimSpace(cfg.Model) == "bge-m3" {
+			cfg.Model = ""
+		}
+		if !explicit.Dimensions && cfg.Dimensions == 1024 {
+			cfg.Dimensions = 0
+		}
+	}
+	return ResolveProviderConfig(&cfg)
+}
+
 // NewEmbedder creates an embedder based on the provider specified in config.
 //
 // Supported providers:

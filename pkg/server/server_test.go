@@ -3922,6 +3922,18 @@ func TestBuildEmbedConfigFromResolved_Branches(t *testing.T) {
 	require.Equal(t, 1536, cfg.Dimensions)
 
 	cfg = buildEmbedConfigFromResolved(map[string]string{
+		"db.nornic.embedding.provider":   " ORCA ",
+		"db.nornic.embedding.api.url":    "http://localhost:11434",
+		"db.nornic.embedding.model":      "bge-m3",
+		"db.nornic.embedding.dimensions": "1024",
+	}, fallback)
+	require.Equal(t, "orca", cfg.Provider)
+	require.Equal(t, "http://localhost:11434", cfg.APIURL)
+	require.Equal(t, "/v1/embeddings", cfg.APIPath)
+	require.Equal(t, "bge-m3", cfg.Model)
+	require.Equal(t, 1024, cfg.Dimensions)
+
+	cfg = buildEmbedConfigFromResolved(map[string]string{
 		"db.nornic.embedding.provider":   "orca",
 		"db.nornic.embedding.api.url":    "https://gateway.example",
 		"db.nornic.embedding.model":      "google/gemini-embedding-001",

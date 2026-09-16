@@ -321,15 +321,18 @@ func applyServeEmbeddingOverrides(cmd *cobra.Command, cfg *config.Config) {
 	}
 	if cmd.Flags().Changed("embedding-model") {
 		cfg.Memory.EmbeddingModel, _ = cmd.Flags().GetString("embedding-model")
+		cfg.EmbeddingExplicit.Model = true
 	}
 	if cmd.Flags().Changed("embedding-url") {
 		cfg.Memory.EmbeddingAPIURL, _ = cmd.Flags().GetString("embedding-url")
+		cfg.EmbeddingExplicit.APIURL = true
 	}
 	if cmd.Flags().Changed("embedding-key") {
 		cfg.Memory.EmbeddingAPIKey, _ = cmd.Flags().GetString("embedding-key")
 	}
 	if cmd.Flags().Changed("embedding-dim") {
 		cfg.Memory.EmbeddingDimensions, _ = cmd.Flags().GetInt("embedding-dim")
+		cfg.EmbeddingExplicit.Dimensions = true
 	}
 	if cmd.Flags().Changed("embedding-cache") {
 		cfg.Memory.EmbeddingCacheSize, _ = cmd.Flags().GetInt("embedding-cache")
@@ -1308,16 +1311,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 }
 
 func applyEmbeddingProviderDefaults(cfg *config.Config) {
-	if cfg == nil || cfg.Memory.EmbeddingProvider != "orca" {
+	if cfg == nil || !strings.EqualFold(strings.TrimSpace(cfg.Memory.EmbeddingProvider), "orca") {
 		return
 	}
-	resolved := embed.ResolveProviderConfig(&embed.Config{
+	resolved := embed.ResolveProviderConfigWithProvenance(&embed.Config{
 		Provider:   cfg.Memory.EmbeddingProvider,
 		APIURL:     cfg.Memory.EmbeddingAPIURL,
 		APIKey:     cfg.Memory.EmbeddingAPIKey,
 		Model:      cfg.Memory.EmbeddingModel,
 		Dimensions: cfg.Memory.EmbeddingDimensions,
+	}, embed.ProviderConfigExplicit{
+		APIURL:     cfg.EmbeddingExplicit.APIURL,
+		Model:      cfg.EmbeddingExplicit.Model,
+		Dimensions: cfg.EmbeddingExplicit.Dimensions,
 	})
+	cfg.Memory.EmbeddingProvider = resolved.Provider
 	cfg.Memory.EmbeddingAPIURL = resolved.APIURL
 	cfg.Memory.EmbeddingModel = resolved.Model
 	cfg.Memory.EmbeddingDimensions = resolved.Dimensions

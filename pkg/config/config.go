@@ -182,6 +182,18 @@ type Config struct {
 	//
 	// Runtime-only; never serialized to YAML/JSON.
 	CLIOverrides map[string]string `yaml:"-" json:"-"`
+
+	// EmbeddingExplicit records generic embedding settings supplied by YAML,
+	// environment, or CLI. Provider default resolution uses this provenance to
+	// distinguish inherited defaults from intentionally identical values.
+	EmbeddingExplicit EmbeddingExplicitSettings `yaml:"-" json:"-"`
+}
+
+// EmbeddingExplicitSettings identifies caller-supplied embedding fields.
+type EmbeddingExplicitSettings struct {
+	Model      bool
+	APIURL     bool
+	Dimensions bool
 }
 
 // AuthConfig holds authentication settings.
@@ -2469,15 +2481,18 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnv("NORNICDB_EMBEDDING_MODEL", ""); v != "" {
 		config.Memory.EmbeddingModel = v
+		config.EmbeddingExplicit.Model = true
 	}
 	if v := getEnv("NORNICDB_EMBEDDING_API_URL", ""); v != "" {
 		config.Memory.EmbeddingAPIURL = v
+		config.EmbeddingExplicit.APIURL = true
 	}
 	if v := getEnv("NORNICDB_EMBEDDING_API_KEY", ""); v != "" {
 		config.Memory.EmbeddingAPIKey = v
 	}
 	if v := getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 0); v > 0 {
 		config.Memory.EmbeddingDimensions = v
+		config.EmbeddingExplicit.Dimensions = true
 	}
 	if v := getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 0); v > 0 {
 		config.Memory.EmbeddingCacheSize = v
@@ -3381,15 +3396,18 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.Embedding.Model != "" {
 		config.Memory.EmbeddingModel = yamlCfg.Embedding.Model
+		config.EmbeddingExplicit.Model = true
 	}
 	if yamlCfg.Embedding.URL != "" {
 		config.Memory.EmbeddingAPIURL = yamlCfg.Embedding.URL
+		config.EmbeddingExplicit.APIURL = true
 	}
 	if yamlCfg.Embedding.APIKey != "" {
 		config.Memory.EmbeddingAPIKey = yamlCfg.Embedding.APIKey
 	}
 	if yamlCfg.Embedding.Dimensions > 0 {
 		config.Memory.EmbeddingDimensions = yamlCfg.Embedding.Dimensions
+		config.EmbeddingExplicit.Dimensions = true
 	}
 	if yamlCfg.Embedding.CacheSize > 0 {
 		config.Memory.EmbeddingCacheSize = yamlCfg.Embedding.CacheSize

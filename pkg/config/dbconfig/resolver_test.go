@@ -42,6 +42,47 @@ func TestResolve_Overrides(t *testing.T) {
 	assert.Equal(t, "v2", r.Effective["db.nornic.search.bm25.engine"])
 }
 
+func TestResolve_OrcaProviderOverrideUsesMatchingDefaults(t *testing.T) {
+	global := config.LoadDefaults()
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider": " ORCA ",
+	})
+
+	require.Equal(t, 1536, r.EmbeddingDimensions)
+	require.Equal(t, "orca", r.Effective["db.nornic.embedding.provider"])
+	require.Equal(t, "1536", r.Effective["db.nornic.embedding.dimensions"])
+	require.Equal(t, "https://api.orcarouter.ai", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "openai/text-embedding-3-small", r.Effective["db.nornic.embedding.model"])
+}
+
+func TestResolve_OrcaProviderOverridePreservesExplicitGenericSettings(t *testing.T) {
+	global := config.LoadDefaults()
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider":   "orca",
+		"db.nornic.embedding.api.url":    "http://localhost:11434",
+		"db.nornic.embedding.model":      "bge-m3",
+		"db.nornic.embedding.dimensions": "1024",
+	})
+
+	require.Equal(t, 1024, r.EmbeddingDimensions)
+	require.Equal(t, "http://localhost:11434", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "bge-m3", r.Effective["db.nornic.embedding.model"])
+}
+
+func TestResolve_OrcaProviderOverridePreservesExplicitGlobalGenericSettings(t *testing.T) {
+	global := config.LoadDefaults()
+	global.EmbeddingExplicit.APIURL = true
+	global.EmbeddingExplicit.Model = true
+	global.EmbeddingExplicit.Dimensions = true
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider": "orca",
+	})
+
+	require.Equal(t, 1024, r.EmbeddingDimensions)
+	require.Equal(t, "http://localhost:11434", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "bge-m3", r.Effective["db.nornic.embedding.model"])
+}
+
 func TestResolve_QueryCacheTTLIsDatabaseScoped(t *testing.T) {
 	global := config.LoadDefaults()
 	global.Memory.QueryCacheTTL = 5 * time.Minute

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/embed"
 )
 
 // ResolvedDbConfig holds effective per-DB config for search and embedding.
@@ -93,7 +94,8 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 	}
 	// Explicit process/CLI overrides sit above global config but below stored
 	// database settings.
-	for k, v := range CanonicalizeOverrides(global.CLIOverrides) {
+	cliOverrides := CanonicalizeOverrides(global.CLIOverrides)
+	for k, v := range cliOverrides {
 		if !IsAllowedKey(k) {
 			continue
 		}
@@ -101,14 +103,51 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 		r.Effective[CanonicalSettingName(k)] = v
 	}
 	// Persisted per-database settings are authoritative.
-	for k, v := range CanonicalizeOverrides(overrides) {
+	databaseOverrides := CanonicalizeOverrides(overrides)
+	for k, v := range databaseOverrides {
 		if !IsAllowedKey(k) {
 			continue
 		}
 		applyOverride(r, k, v)
 		r.Effective[CanonicalSettingName(k)] = v
 	}
+	resolveEmbeddingProviderDefaults(global, r, cliOverrides, databaseOverrides)
 	return r
+}
+
+func resolveEmbeddingProviderDefaults(global *config.Config, resolved *ResolvedDbConfig, overrideSets ...map[string]string) {
+	providerKey := CanonicalSettingName("NORNICDB_EMBEDDING_PROVIDER")
+	apiURLKey := CanonicalSettingName("NORNICDB_EMBEDDING_API_URL")
+	modelKey := CanonicalSettingName("NORNICDB_EMBEDDING_MODEL")
+	dimensionsKey := CanonicalSettingName("NORNICDB_EMBEDDING_DIMENSIONS")
+
+	hasOverride := func(key string) bool {
+		for _, overrides := range overrideSets {
+			if _, ok := overrides[key]; ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	providerConfig := embed.ResolveProviderConfigWithProvenance(&embed.Config{
+		Provider:   resolved.Effective[providerKey],
+		APIURL:     resolved.Effective[apiURLKey],
+		Model:      resolved.Effective[modelKey],
+		Dimensions: resolved.EmbeddingDimensions,
+	}, embed.ProviderConfigExplicit{
+		APIURL:     global.EmbeddingExplicit.APIURL || hasOverride(apiURLKey),
+		Model:      global.EmbeddingExplicit.Model || hasOverride(modelKey),
+		Dimensions: global.EmbeddingExplicit.Dimensions || hasOverride(dimensionsKey),
+	})
+	if providerConfig == nil {
+		return
+	}
+	resolved.EmbeddingDimensions = providerConfig.Dimensions
+	resolved.Effective[providerKey] = providerConfig.Provider
+	resolved.Effective[apiURLKey] = providerConfig.APIURL
+	resolved.Effective[modelKey] = providerConfig.Model
+	resolved.Effective[dimensionsKey] = strconv.Itoa(providerConfig.Dimensions)
 }
 
 // normalizeWarming returns "startup" or "lazy"; anything else (including empty)

@@ -37,17 +37,17 @@ func resolveOrcaConfig(config *Config) *Config {
 	}
 	cfg := *config
 	cfg.Provider = "orca"
-	if apiURL := strings.TrimSpace(cfg.APIURL); apiURL == "" || strings.TrimRight(apiURL, "/") == "http://localhost:11434" {
+	if strings.TrimSpace(cfg.APIURL) == "" {
 		cfg.APIURL = defaults.APIURL
 	}
 	cfg.APIURL = openAICompatibleAPIRoot(cfg.APIURL)
-	if strings.TrimSpace(cfg.APIPath) == "" || cfg.APIPath == "/api/embeddings" {
+	if strings.TrimSpace(cfg.APIPath) == "" {
 		cfg.APIPath = defaults.APIPath
 	}
-	if model := strings.TrimSpace(cfg.Model); model == "" || model == "bge-m3" {
+	if strings.TrimSpace(cfg.Model) == "" {
 		cfg.Model = defaults.Model
 	}
-	if cfg.Dimensions <= 0 || cfg.Dimensions == 1024 {
+	if cfg.Dimensions <= 0 {
 		cfg.Dimensions = defaults.Dimensions
 	}
 	if cfg.Timeout <= 0 {
