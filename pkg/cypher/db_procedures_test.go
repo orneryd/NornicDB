@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -669,6 +670,13 @@ func TestCallDbmsListConnections(t *testing.T) {
 // ========================================
 
 func TestCallDbIndexFulltextListAvailableAnalyzersExtended(t *testing.T) {
+	stemmer.ResetForTest()
+	t.Cleanup(stemmer.ResetForTest)
+	require.NoError(t, stemmer.Register(stemmer.Registration{
+		APIVersion: stemmer.APIVersion,
+		ID:         "snowball.ukrainian", Version: "1.2.3", Language: "ukrainian",
+		Digest: strings.Repeat("a", 64), Stem: func(token string) string { return token },
+	}))
 	baseStore := newTestMemoryEngine(t)
 
 	store := storage.NewNamespacedEngine(baseStore, "test")
@@ -680,24 +688,13 @@ func TestCallDbIndexFulltextListAvailableAnalyzersExtended(t *testing.T) {
 		t.Fatalf("db.index.fulltext.listAvailableAnalyzers() failed: %v", err)
 	}
 
-	if len(result.Columns) != 2 {
-		t.Errorf("Expected 2 columns, got %d", len(result.Columns))
-	}
-
-	// Should have multiple analyzers
-	if len(result.Rows) < 3 {
-		t.Errorf("Expected at least 3 analyzers, got %d", len(result.Rows))
-	}
-
-	// Check first analyzer has expected structure
-	if len(result.Rows) > 0 && len(result.Rows[0]) >= 2 {
-		if _, ok := result.Rows[0][0].(string); !ok {
-			t.Errorf("Expected analyzer name to be string, got %T", result.Rows[0][0])
-		}
-		if _, ok := result.Rows[0][1].(string); !ok {
-			t.Errorf("Expected analyzer description to be string, got %T", result.Rows[0][1])
-		}
-	}
+	require.Equal(t, []string{"analyzer", "description", "kind", "version", "digest", "dynamicLoad", "selectedDatabases"}, result.Columns)
+	require.Len(t, result.Rows, 2)
+	require.Equal(t, []interface{}{"none", "Language-neutral Unicode analyzer", "exact", "", "", false, []string{}}, result.Rows[0])
+	require.Equal(t, "snowball.ukrainian", result.Rows[1][0])
+	require.Equal(t, "stemmer", result.Rows[1][2])
+	require.Equal(t, "1.2.3", result.Rows[1][3])
+	require.Equal(t, strings.Repeat("a", 12), result.Rows[1][4])
 }
 
 // ========================================

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"os"
@@ -33,77 +34,49 @@ func TestParsePackageArgsAcceptsDocumentedShape(t *testing.T) {
 }
 
 func TestDocumentedLanguagePackageExamplesParse(t *testing.T) {
-	tests := []struct {
-		language string
-		id       string
-		version  string
-		module   string
-		source   string
-		output   string
-	}{
-		{
-			language: "french",
-			id:       "snowball.french",
-			version:  "3.0.1",
-			module:   "./build/stemmers/french",
-			source:   "./build/stemmers/french/stemmer.go",
-			output:   "./plugins/stemmers/snowball-french.so",
-		},
-		{
-			language: "spanish",
-			id:       "snowball.spanish",
-			version:  "3.0.1",
-			module:   "./build/stemmers/spanish",
-			source:   "./build/stemmers/spanish/stemmer.go",
-			output:   "./plugins/stemmers/snowball-spanish.so",
-		},
-		{
-			language: "dutch",
-			id:       "snowball.dutch",
-			version:  "3.0.1",
-			module:   "./build/stemmers/dutch",
-			source:   "./build/stemmers/dutch/stemmer.go",
-			output:   "./plugins/stemmers/snowball-dutch.so",
-		},
-		{
-			language: "ukrainian",
-			id:       "snowball.ukrainian",
-			version:  "local-2026.09",
-			module:   "./build/stemmers/ukrainian",
-			source:   "./build/stemmers/ukrainian/stemmer.go",
-			output:   "./plugins/stemmers/snowball-ukrainian.so",
-		},
-		{
-			language: "chinese",
-			id:       "snowball.chinese",
-			version:  "local-2026.09",
-			module:   "./build/stemmers/chinese",
-			source:   "./build/stemmers/chinese/stemmer.go",
-			output:   "./plugins/stemmers/snowball-chinese.so",
-		},
+	commands := documentedPackageCommands(t, filepath.Join("..", "..", "docs", "user-guides", "bm25-stemmers.md"))
+	require.NotEmpty(t, commands)
+	for i, args := range commands {
+		opts, err := parsePackageArgs(args)
+		require.NoErrorf(t, err, "documented package command %d", i+1)
+		require.True(t, strings.HasSuffix(opts.Output, ".so"))
+		require.NotContains(t, opts.ID, "/")
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.language, func(t *testing.T) {
-			opts, err := parsePackageArgs([]string{
-				"--language", tt.language,
-				"--id", tt.id,
-				"--version", tt.version,
-				"--module", tt.module,
-				"--source", tt.source,
-				"--output", tt.output,
-			})
-			require.NoError(t, err)
-			require.Equal(t, tt.language, opts.Language)
-			require.Equal(t, tt.id, opts.ID)
-			require.Equal(t, tt.version, opts.Version)
-			require.Equal(t, tt.module, opts.Module)
-			require.Equal(t, tt.source, opts.Source)
-			require.Equal(t, tt.output, opts.Output)
-			require.True(t, strings.HasSuffix(opts.Output, ".so"))
-			require.NotContains(t, opts.ID, "/")
-		})
+func documentedPackageCommands(t *testing.T, path string) [][]string {
+	t.Helper()
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer file.Close()
+
+	var commands [][]string
+	var command strings.Builder
+	collecting := false
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "./bin/nornicdb-snowball package") {
+			collecting = true
+			command.WriteString(strings.TrimSuffix(line, `\`))
+			command.WriteByte(' ')
+			continue
+		}
+		if !collecting {
+			continue
+		}
+		command.WriteString(strings.TrimSuffix(line, `\`))
+		command.WriteByte(' ')
+		if !strings.HasSuffix(line, `\`) {
+			fields := strings.Fields(command.String())
+			require.GreaterOrEqual(t, len(fields), 2)
+			commands = append(commands, fields[2:])
+			command.Reset()
+			collecting = false
+		}
 	}
+	require.NoError(t, scanner.Err())
+	return commands
 }
 
 func TestPackageArgsRejectPathAsPluginID(t *testing.T) {
@@ -147,6 +120,33 @@ func Stem(env *snowballRuntime.Env) bool { return true }
 	require.Contains(t, bridge, "func (generatedStemmer) StemTokens(tokens []string) []string")
 	require.Contains(t, bridge, "env := envPool.Get().(*snowballRuntime.Env)")
 	require.Contains(t, bridge, "for i, token := range tokens")
+}
+
+func TestDetectRuntimeImportRequiresBoolResult(t *testing.T) {
+	for _, signature := range []string{
+		"func Stem(env *snowballRuntime.Env) {}",
+		"func Stem(env *snowballRuntime.Env) int { return 1 }",
+		"func Stem(env *snowballRuntime.Env) (bool, bool) { return true, true }",
+	} {
+		t.Run(signature, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "stemmer.go")
+			require.NoError(t, os.WriteFile(source, []byte("package main\nimport snowballRuntime \"example.com/snowball/runtime\"\n"+signature), 0o644))
+			_, err := detectSnowballRuntimeImport(source)
+			require.ErrorContains(t, err, "func Stem(env *snowballRuntime.Env) bool")
+		})
+	}
+}
+
+func TestCopyFileClosesInput(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source.go")
+	target := filepath.Join(t.TempDir(), "nested", "target.go")
+	require.NoError(t, os.WriteFile(source, []byte("package fixture"), 0o640))
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+	require.NoError(t, copyFile(source, target, 0o640))
+	got, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "package fixture", string(got))
 }
 
 func TestPackageSnowballBuildsPluginAndManifest(t *testing.T) {

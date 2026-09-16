@@ -163,9 +163,12 @@ func VerifyLibrary(manifestPath string, manifest Manifest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Stat(libraryPath)
+	info, err := os.Lstat(libraryPath)
 	if err != nil {
 		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("stemmer library must not be a symlink: %s", libraryPath)
 	}
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("stemmer library is not a regular file: %s", libraryPath)
@@ -203,11 +206,24 @@ func Register(reg Registration) error {
 
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	if _, exists := registry[id]; exists {
+	if existing, exists := registry[id]; exists {
+		if sameArtifact(existing, reg) {
+			return nil
+		}
 		return fmt.Errorf("duplicate stemmer plugin id %q", id)
 	}
 	registry[id] = reg
 	return nil
+}
+
+func sameArtifact(a, b Registration) bool {
+	return a.Path != "" && b.Path != "" &&
+		a.APIVersion == b.APIVersion &&
+		a.ID == b.ID &&
+		a.Version == b.Version &&
+		a.Language == b.Language &&
+		a.Digest == b.Digest &&
+		a.Path == b.Path
 }
 
 // Lookup returns a registered stemmer by ID.

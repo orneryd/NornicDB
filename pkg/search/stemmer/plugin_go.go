@@ -7,6 +7,9 @@ import (
 	"plugin"
 )
 
+// DynamicLoadSupported reports whether this platform supports Go plugin loading.
+func DynamicLoadSupported() bool { return true }
+
 func openPlugin(path, entrypoint string) (Plugin, error) {
 	p, err := plugin.Open(path)
 	if err != nil {

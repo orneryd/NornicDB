@@ -11,6 +11,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -80,15 +81,25 @@ func (e *StorageExecutor) callDbmsListConnections() (*ExecuteResult, error) {
 
 // callDbIndexFulltextListAvailableAnalyzers lists fulltext analyzers - Neo4j db.index.fulltext.listAvailableAnalyzers()
 func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteResult, error) {
+	rows := [][]interface{}{{"none", "Language-neutral Unicode analyzer", "exact", "", "", false, []string{}}}
+	for _, registration := range stemmer.Available() {
+		digest := registration.Digest
+		if len(digest) > 12 {
+			digest = digest[:12]
+		}
+		rows = append(rows, []interface{}{
+			registration.ID,
+			"Registered BM25 stemmer plugin",
+			"stemmer",
+			registration.Version,
+			digest,
+			stemmer.DynamicLoadSupported(),
+			[]string{},
+		})
+	}
 	return &ExecuteResult{
-		Columns: []string{"analyzer", "description"},
-		Rows: [][]interface{}{
-			{"standard-no-stop-words", "Standard analyzer without stop words"},
-			{"simple", "Simple analyzer with lowercase tokenizer"},
-			{"whitespace", "Whitespace analyzer"},
-			{"keyword", "Keyword analyzer - entire string as single token"},
-			{"url-or-email", "URL or email analyzer"},
-		},
+		Columns: []string{"analyzer", "description", "kind", "version", "digest", "dynamicLoad", "selectedDatabases"},
+		Rows:    rows,
 	}, nil
 }
 

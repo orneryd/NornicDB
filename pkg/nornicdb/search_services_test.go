@@ -11,9 +11,30 @@ import (
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMissingStemmerDisablesOnlyBM25(t *testing.T) {
+	db, err := Open(t.TempDir(), DefaultConfig())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	db.SetDbSearchOptionsResolver(func(string) search.ServiceOptions {
+		return search.ServiceOptions{BM25StemmerID: "snowball.missing"}
+	})
+	db.SetDbSearchFlagsResolver(func(string) (bool, bool, string, string) {
+		return true, true, "startup", "startup"
+	})
+	db.ResetSearchService(db.defaultDatabaseName())
+
+	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), nil)
+	require.NoError(t, err)
+	require.False(t, svc.BM25Enabled())
+	require.True(t, svc.VectorEnabled())
+	_, found := stemmer.Lookup("snowball.missing")
+	require.False(t, found)
+}
 
 type blockingIterEngine struct {
 	storage.Engine

@@ -214,7 +214,7 @@ func detectSnowballRuntimeImport(sourcePath string) (string, error) {
 	var runtimeAlias string
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "Stem" || fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+		if !ok || fn.Name.Name != "Stem" || fn.Type.Params == nil || len(fn.Type.Params.List) != 1 || !hasSingleBoolResult(fn.Type.Results) {
 			continue
 		}
 		star, ok := fn.Type.Params.List[0].Type.(*ast.StarExpr)
@@ -240,6 +240,14 @@ func detectSnowballRuntimeImport(sourcePath string) (string, error) {
 		return "", fmt.Errorf("Snowball runtime import alias %q not found", runtimeAlias)
 	}
 	return runtimeImport, nil
+}
+
+func hasSingleBoolResult(results *ast.FieldList) bool {
+	if results == nil || len(results.List) != 1 || len(results.List[0].Names) > 1 {
+		return false
+	}
+	ident, ok := results.List[0].Type.(*ast.Ident)
+	return ok && ident.Name == "bool"
 }
 
 func renderBridgeSource(runtimeImport string) string {
@@ -311,19 +319,23 @@ func copyTree(src, dst string) error {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(out, in); err != nil {
-			_ = out.Close()
-			return err
-		}
-		return out.Close()
+		return copyFile(path, target, info.Mode().Perm())
 	})
+}
+
+func copyFile(source, target string, mode os.FileMode) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }

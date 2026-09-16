@@ -72,6 +72,29 @@ func TestVerifyLibraryChecksAdjacentDigest(t *testing.T) {
 	require.ErrorContains(t, err, "digest mismatch")
 }
 
+func TestVerifyLibraryRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.so")
+	require.NoError(t, os.WriteFile(target, []byte("fixture plugin bytes"), 0o644))
+	library := filepath.Join(dir, "linked.so")
+	require.NoError(t, os.Symlink(target, library))
+	digest, err := SHA256File(target)
+	require.NoError(t, err)
+
+	manifest := Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		APIVersion:    APIVersion,
+		Type:          ManifestType,
+		ID:            "snowball.linked",
+		Version:       "1.0.0",
+		Library:       filepath.Base(library),
+		SHA256:        digest,
+		Entrypoint:    EntrypointSymbol,
+	}
+	_, err = VerifyLibrary(filepath.Join(dir, "linked.stemmer.json"), manifest)
+	require.ErrorContains(t, err, "symlink")
+}
+
 func TestRegistryRejectsDuplicateIDs(t *testing.T) {
 	ResetForTest()
 	t.Cleanup(ResetForTest)
@@ -83,10 +106,28 @@ func TestRegistryRejectsDuplicateIDs(t *testing.T) {
 		Stem:       suffixPlugin{}.Stem,
 	}
 	require.NoError(t, Register(reg))
-	require.ErrorContains(t, Register(reg), "duplicate")
+	conflict := reg
+	conflict.Digest = strings.Repeat("d", 64)
+	require.ErrorContains(t, Register(conflict), "duplicate")
 
 	got, ok := Lookup("snowball.ukrainian")
 	require.True(t, ok)
 	require.Equal(t, "word-stem", got.Stem("word"))
 	require.Len(t, Available(), 1)
+}
+
+func TestRegistryAllowsIdenticalRegistration(t *testing.T) {
+	ResetForTest()
+	t.Cleanup(ResetForTest)
+	reg := Registration{
+		APIVersion: APIVersion,
+		ID:         "snowball.ukrainian",
+		Version:    "1.0.0",
+		Language:   "ukrainian",
+		Digest:     strings.Repeat("c", 64),
+		Path:       "/plugins/snowball-ukrainian.so",
+		Stem:       suffixPlugin{}.Stem,
+	}
+	require.NoError(t, Register(reg))
+	require.NoError(t, Register(reg), "loading the same artifact twice must be idempotent")
 }

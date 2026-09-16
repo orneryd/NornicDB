@@ -3,7 +3,6 @@ package nornicdb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"path/filepath"
 	"sort"
@@ -269,6 +268,9 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	if dims <= 0 {
 		dims = 1024
 	}
+	// Resolve index flags before the analyzer so a missing optional BM25 plugin
+	// cannot prevent vector search service creation.
+	bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)
 	var serviceOptions *search.ServiceOptions
 	if optionsResolver != nil {
 		resolved := optionsResolver(dbName)
@@ -281,9 +283,12 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		if selectedStemmer != stemmer.NoneID {
 			reg, ok := stemmer.Lookup(selectedStemmer)
 			if !ok {
-				return nil, fmt.Errorf("configured BM25 stemmer %q is not registered", selectedStemmer)
+				log.Printf("⚠️  Disabling BM25 for database %s: configured stemmer %q is not registered", dbName, selectedStemmer)
+				bm25On = false
+				serviceOptions.BM25StemmerID = stemmer.NoneID
+			} else {
+				serviceOptions.BM25Stemmer = &reg
 			}
-			serviceOptions.BM25Stemmer = &reg
 		}
 	}
 	svc := search.NewServiceWithDimensionsAndBM25EngineAndOptions(storageEngine, dims, bm25Engine, serviceOptions)
@@ -299,7 +304,6 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	}
 	// Per-DB master switches: pull from the resolver and seed the service.
 	// Defaults (true, true) when no resolver is wired reproduce today's behaviour.
-	bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)
 	svc.SetIndexFlags(bm25On, vectorOn)
 	// When both indexes are disabled, mark ready immediately so any
 	// concurrent indexNodeFromEvent / pendingFlush goroutine that races

@@ -217,3 +217,24 @@ func TestAdminPutSearchFlags_TeardownAndRebuild(t *testing.T) {
 	assert.True(t, svc.VectorEnabled(), "rejected PUT must not have torn down the service")
 	assert.True(t, svc.BM25Enabled())
 }
+
+func TestAdminPutMissingStemmerPreservesExistingService(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := getAuthToken(t, authenticator, "admin")
+	const dbName = "stemmer_rollback"
+	require.NoError(t, server.dbManager.CreateDatabase(dbName))
+
+	before, err := server.db.GetOrCreateSearchService(dbName, nil)
+	require.NoError(t, err)
+	response := makeRequest(t, server, http.MethodPut, "/admin/databases/"+dbName+"/config", map[string]any{
+		"overrides": map[string]string{
+			"NORNICDB_SEARCH_BM25_STEMMER": "snowball.missing",
+		},
+	}, "Bearer "+token)
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+
+	after, err := server.db.GetOrCreateSearchService(dbName, nil)
+	require.NoError(t, err)
+	require.Same(t, before, after, "rejected stemmer must not tear down the active service")
+	require.Empty(t, server.dbConfigStore.GetOverrides(dbName))
+}

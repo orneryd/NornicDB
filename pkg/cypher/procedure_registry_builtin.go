@@ -76,7 +76,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexFulltextDrop(cypher)
 			})
-		registerBuiltInProcedure("db.index.fulltext.listAvailableAnalyzers", "db.index.fulltext.listAvailableAnalyzers() :: (analyzer :: STRING, description :: STRING)", localization.CypherProcedureMetadata("db.index.fulltext.listAvailableAnalyzers"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("db.index.fulltext.listAvailableAnalyzers", "db.index.fulltext.listAvailableAnalyzers() :: (analyzer :: STRING, description :: STRING, kind :: STRING, version :: STRING, digest :: STRING, dynamicLoad :: BOOLEAN, selectedDatabases :: LIST<STRING>)", localization.CypherProcedureMetadata("db.index.fulltext.listAvailableAnalyzers"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexFulltextListAvailableAnalyzers()
 			})

@@ -12,6 +12,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -227,6 +228,13 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		body.Overrides[key] = normalized
 	}
 	nextResolved := dbconfig.Resolve(s.processConfig, body.Overrides)
+	selectedStemmer := stemmer.NormalizeSelection(nextResolved.Effective["db.nornic.search.bm25.stemmer"])
+	if nextResolved.BM25Enabled && selectedStemmer != stemmer.NoneID {
+		if _, ok := stemmer.Lookup(selectedStemmer); !ok {
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "configured BM25 stemmer \""+selectedStemmer+"\" is not registered")
+			return
+		}
+	}
 	changedDefinitions := make([]dbconfig.SettingDefinition, 0)
 	for _, definition := range dbconfig.Settings() {
 		if previousResolved.Effective[definition.Name] == nextResolved.Effective[definition.Name] {
