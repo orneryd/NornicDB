@@ -131,6 +131,41 @@ func TestClientRerankParsesDataAndResultsShapes(t *testing.T) {
 	require.Equal(t, []RerankResult{{Index: 0, RelevanceScore: 0.8}}, second.Data)
 }
 
+func TestClientHonorsFalseTruncationOptions(t *testing.T) {
+	var gotEmbedding, gotMultimodal, gotRerank map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+		switch r.URL.Path {
+		case "/v1/embeddings":
+			gotEmbedding = got
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{}}))
+		case "/v1/multimodalembeddings":
+			gotMultimodal = got
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{}}))
+		case "/v1/rerank":
+			gotRerank = got
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{}}))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{APIKey: "key", BaseURL: server.URL, MaxRetries: -1})
+	require.NoError(t, err)
+	_, err = client.EmbedText(context.Background(), []string{"a"}, EmbeddingOptions{Model: "voyage-4-large", Truncation: false})
+	require.NoError(t, err)
+	_, err = client.EmbedMultimodal(context.Background(), []any{map[string]any{"content": []any{map[string]any{"type": "text", "text": "a"}}}}, MultimodalOptions{Model: "voyage-4-large", Truncation: false})
+	require.NoError(t, err)
+	_, err = client.Rerank(context.Background(), "query", []string{"a"}, RerankOptions{Model: "rerank-2.5", Truncation: false})
+	require.NoError(t, err)
+
+	require.Equal(t, false, gotEmbedding["truncation"])
+	require.Equal(t, false, gotMultimodal["truncation"])
+	require.Equal(t, false, gotRerank["truncation"])
+}
+
 func TestClientRetriesRetryableStatus(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -148,4 +183,19 @@ func TestClientRetriesRetryableStatus(t *testing.T) {
 	_, err = client.EmbedText(context.Background(), []string{"a"}, EmbeddingOptions{Model: "voyage-4-large", Truncation: true})
 	require.NoError(t, err)
 	require.Equal(t, 2, calls)
+}
+
+func TestClientNegativeRetriesDisableRetry(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, "try again", http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{APIKey: "key", BaseURL: server.URL, MaxRetries: -1})
+	require.NoError(t, err)
+	_, err = client.EmbedText(context.Background(), []string{"a"}, EmbeddingOptions{Model: "voyage-4-large", Truncation: true})
+	require.Error(t, err)
+	require.Equal(t, 1, calls)
 }

@@ -30,8 +30,6 @@ const (
 	inputTypeDocument        = "document"
 	defaultOutputDType       = "float"
 	defaultRerankReturnDocs  = false
-	defaultRerankTruncation  = true
-	defaultEmbeddingTruncate = true
 )
 
 // Config configures a Voyage API client.
@@ -74,15 +72,13 @@ func NewClient(cfg Config) (*Client, error) {
 	maxRetries := cfg.MaxRetries
 	if maxRetries < 0 {
 		maxRetries = 0
-	}
-	if maxRetries == 0 {
+	} else if maxRetries == 0 {
 		maxRetries = defaultMaxRetries
 	}
 	retryBackoff := cfg.RetryBackoff
 	if retryBackoff < 0 {
 		retryBackoff = 0
-	}
-	if retryBackoff == 0 {
+	} else if retryBackoff == 0 {
 		retryBackoff = defaultRetryBackoff
 	}
 	return &Client{
@@ -155,7 +151,7 @@ func (c *Client) EmbedText(ctx context.Context, inputs []string, opts EmbeddingO
 		Input:           inputs,
 		Model:           model,
 		InputType:       normalizeInputType(opts.InputType),
-		Truncation:      defaultEmbeddingTruncate,
+		Truncation:      opts.Truncation,
 		OutputDimension: opts.OutputDimension,
 		OutputDType:     outputDType,
 	}
@@ -265,7 +261,7 @@ func (c *Client) EmbedMultimodal(ctx context.Context, inputs []any, opts Multimo
 		"inputs":       inputs,
 		"model":        model,
 		"input_type":   normalizeInputType(opts.InputType),
-		"truncation":   defaultEmbeddingTruncate,
+		"truncation":   opts.Truncation,
 		"output_dtype": outputDType,
 	}
 	if opts.OutputDimension > 0 {
@@ -337,7 +333,7 @@ func (c *Client) Rerank(ctx context.Context, query string, documents []string, o
 		Model:           model,
 		TopK:            opts.TopK,
 		ReturnDocuments: opts.ReturnDocuments,
-		Truncation:      defaultRerankTruncation,
+		Truncation:      opts.Truncation,
 	}
 	if !opts.ReturnDocuments {
 		req.ReturnDocuments = defaultRerankReturnDocs

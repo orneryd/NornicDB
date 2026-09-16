@@ -15,6 +15,10 @@ const (
 	VoyageModeText           = "text"
 	VoyageModeContextualized = "contextualized"
 	VoyageModeMultimodal     = "multimodal"
+
+	// VoyageContextualizedMaxChunkTokens is Voyage's maximum auto-chunk size
+	// for voyage-context-4 contextualized chunk embeddings.
+	VoyageContextualizedMaxChunkTokens = 32000
 )
 
 // DefaultVoyageConfig returns a default Voyage embedding configuration.
@@ -33,9 +37,11 @@ func DefaultVoyageConfig(apiKey string) *Config {
 
 // VoyageEmbedder implements Embedder for Voyage AI embeddings.
 type VoyageEmbedder struct {
-	config *Config
-	client *voyageapi.Client
-	mode   string
+	config       *Config
+	client       *voyageapi.Client
+	mode         string
+	textModel    string
+	contextModel string
 }
 
 // NewVoyage creates a Voyage embedder.
@@ -57,12 +63,28 @@ func NewVoyage(config *Config) (*VoyageEmbedder, error) {
 	if strings.TrimSpace(cfg.APIURL) == "" {
 		cfg.APIURL = voyageapi.DefaultBaseURL
 	}
-	if strings.TrimSpace(cfg.Model) == "" {
-		if normalizeVoyageMode(cfg.VoyageMode) == VoyageModeContextualized {
-			cfg.Model = voyageapi.DefaultContextModel
+	mode := normalizeVoyageMode(cfg.VoyageMode)
+	if mode == VoyageModeMultimodal {
+		return nil, fmt.Errorf("Voyage multimodal mode is not supported for managed text embeddings")
+	}
+	model := strings.TrimSpace(cfg.Model)
+	if model == "" {
+		if mode == VoyageModeContextualized {
+			model = voyageapi.DefaultContextModel
 		} else {
-			cfg.Model = voyageapi.DefaultEmbeddingModel
+			model = voyageapi.DefaultEmbeddingModel
 		}
+		cfg.Model = model
+	}
+	textModel := model
+	contextModel := voyageapi.DefaultContextModel
+	if mode == VoyageModeContextualized {
+		if strings.HasPrefix(model, "voyage-context") {
+			contextModel = model
+			textModel = voyageapi.DefaultEmbeddingModel
+		}
+	} else {
+		contextModel = voyageapi.DefaultContextModel
 	}
 	if cfg.Dimensions <= 0 {
 		cfg.Dimensions = voyageapi.DefaultOutputDimension
@@ -76,9 +98,11 @@ func NewVoyage(config *Config) (*VoyageEmbedder, error) {
 		return nil, err
 	}
 	return &VoyageEmbedder{
-		config: &cfg,
-		client: client,
-		mode:   normalizeVoyageMode(cfg.VoyageMode),
+		config:       &cfg,
+		client:       client,
+		mode:         mode,
+		textModel:    textModel,
+		contextModel: contextModel,
 	}, nil
 }
 
@@ -105,7 +129,7 @@ func (e *VoyageEmbedder) EmbedBatchWithInputType(ctx context.Context, texts []st
 		return nil, nil
 	}
 	resp, err := e.client.EmbedText(ctx, texts, voyageapi.EmbeddingOptions{
-		Model:           e.config.Model,
+		Model:           e.textModel,
 		InputType:       inputType,
 		Truncation:      true,
 		OutputDimension: e.config.Dimensions,
@@ -135,17 +159,15 @@ func (e *VoyageEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 		}
 		return &DocumentChunkResult{Chunks: chunks, Embeddings: embeddings, Model: e.Model()}, nil
 	}
-	model := strings.TrimSpace(e.config.Model)
-	if model == "" || strings.HasPrefix(model, "voyage-4") {
-		model = voyageapi.DefaultContextModel
-	}
+	model := e.contextModel
+	chunkSize := voyageContextualizedChunkSize(maxTokens)
 	resp, err := e.client.EmbedContextualized(ctx, []string{text}, voyageapi.ContextualizedOptions{
 		Model:              model,
 		InputType:          InputTypeDocument,
 		OutputDimension:    e.config.Dimensions,
 		OutputDType:        "float",
 		EnableAutoChunking: true,
-		ChunkSize:          maxTokens,
+		ChunkSize:          chunkSize,
 		ChunkOverlap:       overlap,
 	})
 	if err != nil {
@@ -186,6 +208,13 @@ func (e *VoyageEmbedder) Model() string {
 
 func (e *VoyageEmbedder) Backend() string {
 	return "cpu"
+}
+
+func voyageContextualizedChunkSize(maxTokens int) int {
+	if maxTokens <= 0 || maxTokens > VoyageContextualizedMaxChunkTokens {
+		return VoyageContextualizedMaxChunkTokens
+	}
+	return maxTokens
 }
 
 func normalizeVoyageMode(mode string) string {

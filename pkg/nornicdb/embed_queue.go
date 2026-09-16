@@ -16,6 +16,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+const defaultEmbedChunkSize = 8192
+
 type deterministicTextChunker interface {
 	ChunkText(text string, maxTokens, overlap int) ([]string, error)
 }
@@ -100,7 +102,7 @@ type EmbedWorkerConfig struct {
 	TriggerDebounceDelay time.Duration // default: 2s
 
 	// Text chunking settings.
-	ChunkSize    int // Max tokens per chunk (default: 512)
+	ChunkSize    int // Max tokens per chunk (default: 8192)
 	ChunkOverlap int // Tokens to overlap between chunks (default: 50)
 	// EmbedBatchSize caps chunks per EmbedBatch call to avoid oversized requests.
 	EmbedBatchSize int // Max chunks per batch request (default: 32)
@@ -130,7 +132,7 @@ func DefaultEmbedWorkerConfig() *EmbedWorkerConfig {
 		BatchDelay:           500 * time.Millisecond, // Delay between processing nodes
 		MaxRetries:           3,
 		TriggerDebounceDelay: 2 * time.Second,
-		ChunkSize:            512,
+		ChunkSize:            defaultEmbedChunkSize,
 		ChunkOverlap:         50,
 		EmbedBatchSize:       32,
 		ClusterDebounceDelay: 30 * time.Second, // Wait 30s after last embedding before k-means

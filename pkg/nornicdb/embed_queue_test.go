@@ -73,6 +73,13 @@ func (m *mockEmbedder) GetEmbedCount() int {
 	return m.embedCount
 }
 
+func TestResolveEmbedWorkerChunkSize(t *testing.T) {
+	require.Equal(t, 32000, resolveEmbedWorkerChunkSize("voyage", "contextualized", defaultEmbedChunkSize))
+	require.Equal(t, 512, resolveEmbedWorkerChunkSize("voyage", "contextualized", 512))
+	require.Equal(t, defaultEmbedChunkSize, resolveEmbedWorkerChunkSize("voyage", "text", defaultEmbedChunkSize))
+	require.Equal(t, defaultEmbedChunkSize, resolveEmbedWorkerChunkSize("ollama", "contextualized", defaultEmbedChunkSize))
+}
+
 // recordingBatchEmbedder records EmbedBatch call sizes for batching assertions.
 type recordingBatchEmbedder struct {
 	mu         sync.Mutex

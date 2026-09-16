@@ -93,7 +93,7 @@ func TestVoyageEmbedderContextualizedDocumentChunks(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := embedder.EmbedDocumentChunks(context.Background(), "whole document", 512, 64)
+	result, err := embedder.EmbedDocumentChunks(context.Background(), "whole document", 0, 64)
 	require.NoError(t, err)
 
 	require.Equal(t, []string{"whole document"}, got.Inputs)
@@ -101,11 +101,64 @@ func TestVoyageEmbedderContextualizedDocumentChunks(t *testing.T) {
 	require.Equal(t, "document", got.InputType)
 	require.Equal(t, 2, got.OutputDimension)
 	require.True(t, got.EnableAutoChunking)
-	require.Equal(t, 512, got.ChunkSize)
+	require.Equal(t, VoyageContextualizedMaxChunkTokens, got.ChunkSize)
 	require.Equal(t, 64, got.ChunkOverlap)
 	require.Equal(t, []string{"first chunk", "second chunk"}, result.Chunks)
 	require.Equal(t, [][]float32{{1, 0}, {0, 1}}, result.Embeddings)
 	require.Equal(t, "voyage-context-4", result.Model)
 	require.Equal(t, "voyage-chunker-test", result.ChunkerVersion)
 	require.Equal(t, 9, result.TotalTokens)
+}
+
+func TestVoyageEmbedderContextualizedUsesTextModelForQueries(t *testing.T) {
+	var paths []string
+	var models []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		var req map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		models = append(models, req["model"].(string))
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"index": 0, "embedding": []float32{1, 0}},
+			},
+			"model": req["model"],
+			"usage": map[string]any{"total_tokens": 1},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	embedder, err := NewVoyage(&Config{
+		Provider:   "voyage",
+		APIURL:     server.URL,
+		APIKey:     "voyage-key",
+		Dimensions: 2,
+		VoyageMode: VoyageModeContextualized,
+		Timeout:    time.Second,
+	})
+	require.NoError(t, err)
+
+	_, err = embedder.Embed(context.Background(), "query")
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"/v1/embeddings"}, paths)
+	require.Equal(t, []string{"voyage-4-large"}, models)
+}
+
+func TestVoyageEmbedderRejectsMultimodalManagedMode(t *testing.T) {
+	_, err := NewVoyage(&Config{
+		Provider:   "voyage",
+		APIURL:     "http://127.0.0.1",
+		APIKey:     "voyage-key",
+		Dimensions: 2,
+		VoyageMode: VoyageModeMultimodal,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "multimodal mode is not supported")
+}
+
+func TestVoyageContextualizedChunkSizeDefaultAndExplicit(t *testing.T) {
+	require.Equal(t, VoyageContextualizedMaxChunkTokens, voyageContextualizedChunkSize(0))
+	require.Equal(t, VoyageContextualizedMaxChunkTokens, voyageContextualizedChunkSize(VoyageContextualizedMaxChunkTokens+1))
+	require.Equal(t, 512, voyageContextualizedChunkSize(512))
 }

@@ -168,7 +168,7 @@ type Config struct {
 	Dimensions int           // Expected dimensions (for validation)
 	Timeout    time.Duration // Request timeout
 
-	// Voyage-specific mode: text (default), contextualized, or multimodal.
+	// Voyage-specific mode: text (default) or contextualized.
 	VoyageMode string
 
 	// Local GGUF model settings (used when Provider="local")

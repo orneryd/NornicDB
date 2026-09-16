@@ -3960,6 +3960,19 @@ func TestBuildEmbedConfigFromResolved_Branches(t *testing.T) {
 	require.Equal(t, "/v1/embeddings", cfg.APIPath)
 	require.Equal(t, "voyage-context-4", cfg.Model)
 	require.Equal(t, "contextualized", cfg.VoyageMode)
+
+	voyageFallback := DefaultConfig()
+	voyageFallback.EmbeddingAPIURL = "http://localhost:11434"
+	cfg = buildEmbedConfigFromResolved(map[string]string{
+		"db.nornic.embedding.provider": "voyage",
+	}, voyageFallback)
+	require.Equal(t, "https://api.voyageai.com", cfg.APIURL)
+
+	voyageFallback.EmbeddingAPIURL = "http://127.0.0.1:9000"
+	cfg = buildEmbedConfigFromResolved(map[string]string{
+		"db.nornic.embedding.provider": "voyage",
+	}, voyageFallback)
+	require.Equal(t, "http://127.0.0.1:9000", cfg.APIURL)
 }
 
 func TestSetSearchFallbackReasonHeader(t *testing.T) {

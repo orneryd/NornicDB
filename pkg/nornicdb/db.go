@@ -1089,13 +1089,18 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 
 	// Initialize embedding worker config from main config
+	embedChunkSize := resolveEmbedWorkerChunkSize(
+		config.Memory.EmbeddingProvider,
+		config.Memory.EmbeddingVoyageMode,
+		config.EmbeddingWorker.ChunkSize,
+	)
 	db.embedWorkerConfig = &EmbedWorkerConfig{
 		NumWorkers:           config.EmbeddingWorker.NumWorkers,
 		ScanInterval:         config.EmbeddingWorker.ScanInterval,
 		BatchDelay:           config.EmbeddingWorker.BatchDelay,
 		TriggerDebounceDelay: config.EmbeddingWorker.TriggerDebounceDelay,
 		MaxRetries:           config.EmbeddingWorker.MaxRetries,
-		ChunkSize:            config.EmbeddingWorker.ChunkSize,
+		ChunkSize:            embedChunkSize,
 		ChunkOverlap:         config.EmbeddingWorker.ChunkOverlap,
 		ClusterDebounceDelay: 30 * time.Second, // Wait 30s after last embedding before k-means
 		ClusterMinBatchSize:  10,               // Need at least 10 embeddings to trigger k-means
@@ -1417,6 +1422,15 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 
 	return db, nil
+}
+
+func resolveEmbedWorkerChunkSize(provider, voyageMode string, chunkSize int) int {
+	if strings.EqualFold(strings.TrimSpace(provider), "voyage") &&
+		strings.EqualFold(strings.TrimSpace(voyageMode), embed.VoyageModeContextualized) &&
+		chunkSize == defaultEmbedChunkSize {
+		return embed.VoyageContextualizedMaxChunkTokens
+	}
+	return chunkSize
 }
 
 func resolveBadgerOptions(dataDir string, config *Config) storage.BadgerOptions {

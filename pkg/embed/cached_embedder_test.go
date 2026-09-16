@@ -38,6 +38,32 @@ func (m *mockEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string,
 	return []string{text}, nil
 }
 
+type typedMockEmbedder struct {
+	mockEmbedder
+	typedCalls int64
+}
+
+func (m *typedMockEmbedder) EmbedWithInputType(ctx context.Context, text, inputType string) ([]float32, error) {
+	vecs, err := m.EmbedBatchWithInputType(ctx, []string{text}, inputType)
+	if err != nil || len(vecs) == 0 {
+		return nil, err
+	}
+	return vecs[0], nil
+}
+
+func (m *typedMockEmbedder) EmbedBatchWithInputType(ctx context.Context, texts []string, inputType string) ([][]float32, error) {
+	atomic.AddInt64(&m.typedCalls, int64(len(texts)))
+	base := float32(1)
+	if inputType == InputTypeDocument {
+		base = 2
+	}
+	results := make([][]float32, len(texts))
+	for i, text := range texts {
+		results[i] = []float32{base, float32(len(text))}
+	}
+	return results, nil
+}
+
 func TestCachedEmbedder_CacheHit(t *testing.T) {
 	mock := &mockEmbedder{}
 	cached := NewCachedEmbedder(mock, 100)
@@ -80,6 +106,39 @@ func TestCachedEmbedder_CacheHit(t *testing.T) {
 	}
 	if stats.Size != 2 {
 		t.Errorf("Expected cache size 2, got %d", stats.Size)
+	}
+}
+
+func TestCachedEmbedder_TypedCacheSeparatesQueryAndDocument(t *testing.T) {
+	base := &typedMockEmbedder{}
+	cached := NewCachedEmbedder(base, 100)
+	ctx := context.Background()
+
+	queryVec, err := cached.EmbedWithInputType(ctx, "same text", InputTypeQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docVec, err := cached.EmbedWithInputType(ctx, "same text", InputTypeDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryVecAgain, err := cached.EmbedWithInputType(ctx, "same text", InputTypeQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if queryVec[0] != 1 || queryVecAgain[0] != 1 {
+		t.Fatalf("query cache returned wrong vector: first=%v second=%v", queryVec, queryVecAgain)
+	}
+	if docVec[0] != 2 {
+		t.Fatalf("document cache returned wrong vector: %v", docVec)
+	}
+	if got := atomic.LoadInt64(&base.typedCalls); got != 2 {
+		t.Fatalf("expected two typed cache misses, got %d", got)
+	}
+	stats := cached.Stats()
+	if stats.Hits != 1 || stats.Misses != 2 {
+		t.Fatalf("unexpected typed cache stats: %+v", stats)
 	}
 }
 

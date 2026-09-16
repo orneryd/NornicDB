@@ -39,7 +39,7 @@ export NORNICDB_EMBEDDING_DIMENSIONS=1024
 nornicdb serve
 ```
 
-The embedding worker passes its configured chunk size and overlap to Voyage as `chunk_size` and `chunk_overlap`. Provider chunk text is kept in embedding metadata only for provider-managed chunking responses; local deterministic chunking keeps compact metadata.
+The embedding worker defaults contextualized Voyage requests to the provider's maximum 32,000-token chunk size. Set `NORNICDB_EMBED_CHUNK_SIZE` (or `embedding_worker.chunk_size` in YAML) to use a smaller explicit size. The worker passes the selected size and overlap to Voyage as `chunk_size` and `chunk_overlap`. Provider chunk text is kept in embedding metadata only for provider-managed chunking responses; local deterministic chunking keeps compact metadata.
 
 YAML:
 

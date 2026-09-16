@@ -47,7 +47,7 @@
 - id: nornicdbcli.flag.embedding_key
   other: Clave de la API de embeddings (openai/orca/voyage)
 - id: nornicdbcli.flag.embedding_voyage_mode
-  other: "Modo de embeddings de Voyage: text, contextualized o multimodal"
+  other: "Modo de embeddings de Voyage: text o contextualized"
 - id: nornicdbcli.flag.embedding_model
   other: Nombre del modelo de embeddings
 - id: nornicdbcli.flag.embedding_dimensions

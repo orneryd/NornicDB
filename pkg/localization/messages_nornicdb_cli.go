@@ -135,7 +135,7 @@ func NornicDBCLIFlagEmbeddingKey() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingKey, "Embeddings API key (openai/orca/voyage)")
 }
 func NornicDBCLIFlagEmbeddingVoyageMode() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingVoyageMode, "Voyage embedding mode: text, contextualized, or multimodal")
+	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingVoyageMode, "Voyage embedding mode: text or contextualized")
 }
 func NornicDBCLIFlagEmbeddingModel() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingModel, "Embedding model name")

@@ -605,6 +605,10 @@ type QueryEmbedder interface {
 	ChunkText(text string, maxTokens, overlap int) ([]string, error)
 }
 
+type typedQueryEmbedder interface {
+	EmbedWithInputType(ctx context.Context, text, inputType string) ([]float32, error)
+}
+
 // InferenceManager is the minimal LLM contract used by Cypher db.infer.
 // It mirrors Heimdall manager methods to keep adapters thin.
 type InferenceManager interface {
@@ -2363,6 +2367,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		return localizedError(localization.CypherCoreEmbeddingConfiguredRequired(), nil)
 	}
 	store := e.getStorage(ctx)
+	typedEmbedder, hasTypedEmbedder := e.embedder.(typedQueryEmbedder)
 	for id := range ids {
 		node, err := store.GetNode(storage.NodeID(id))
 		if err != nil {
@@ -2384,7 +2389,13 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		}
 		embeddings := make([][]float32, 0, len(chunks))
 		for _, chunk := range chunks {
-			emb, err := e.embedder.Embed(ctx, chunk)
+			var emb []float32
+			var err error
+			if hasTypedEmbedder {
+				emb, err = typedEmbedder.EmbedWithInputType(ctx, chunk, "document")
+			} else {
+				emb, err = e.embedder.Embed(ctx, chunk)
+			}
 			if err != nil {
 				return localizedError(localization.CypherCoreEmbeddingNodeFailed(id, err), err)
 			}

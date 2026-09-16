@@ -6150,12 +6150,10 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 
 	// Limit to top-K (optional; keeps prompt/service bounded).
 	topK := effectiveRerankTopK(opts)
-	rerankInput := results
-	var tail []rrfResult
-	if len(rerankInput) > topK {
-		rerankInput = results[:topK]
-		tail = results[topK:]
+	if len(results) > topK {
+		results = results[:topK]
 	}
+	rerankInput := results
 
 	// Build candidates with content from storage.
 	candidates := make([]RerankCandidate, 0, len(rerankInput))
@@ -6269,7 +6267,6 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			}
 			rerankedResults = append(rerankedResults, original)
 		}
-		rerankedResults = append(rerankedResults, tail...)
 	}
 
 	return rerankedResults

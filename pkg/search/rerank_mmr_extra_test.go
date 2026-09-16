@@ -107,7 +107,7 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	failing := &coverageReranker{enabled: true, err: errors.New("rerank failed")}
-	require.Equal(t, base, svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{RerankTopK: 1}, nil, failing))
+	require.Equal(t, base[:1], svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{RerankTopK: 1}, nil, failing))
 	require.Len(t, failing.seen, 1)
 
 	extended := append(append([]rrfResult(nil), base...), rrfResult{ID: "nornic:c", RRFScore: 0.7, VectorRank: 3, BM25Rank: 3, OriginalScore: 0.7})
@@ -115,7 +115,6 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	require.Equal(t, []rrfResult{
 		{ID: "nornic:b", RRFScore: 0.97, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.8},
 		{ID: "nornic:a", RRFScore: 0.2, VectorRank: 1, BM25Rank: 2, OriginalScore: 0.9},
-		extended[2],
 	}, svc.applyStage2Rerank(ctx, "query", extended, &SearchOptions{RerankTopK: 2}, nil, bounded))
 	require.Len(t, bounded.seen, 2)
 

@@ -10,8 +10,9 @@ import (
 )
 
 type queryEmbedderStub struct {
-	embedFn func(ctx context.Context, text string) ([]float32, error)
-	chunkFn func(text string, maxTokens, overlap int) ([]string, error)
+	embedFn      func(ctx context.Context, text string) ([]float32, error)
+	typedEmbedFn func(ctx context.Context, text, inputType string) ([]float32, error)
+	chunkFn      func(text string, maxTokens, overlap int) ([]string, error)
 }
 
 func (q *queryEmbedderStub) Embed(ctx context.Context, text string) ([]float32, error) {
@@ -19,6 +20,13 @@ func (q *queryEmbedderStub) Embed(ctx context.Context, text string) ([]float32, 
 		return q.embedFn(ctx, text)
 	}
 	return []float32{1, 2}, nil
+}
+
+func (q *queryEmbedderStub) EmbedWithInputType(ctx context.Context, text, inputType string) ([]float32, error) {
+	if q.typedEmbedFn != nil {
+		return q.typedEmbedFn(ctx, text, inputType)
+	}
+	return q.Embed(ctx, text)
 }
 
 func (q *queryEmbedderStub) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
@@ -130,6 +138,26 @@ func TestApplyInlineEmbeddingMutations_Branches(t *testing.T) {
 		exec.SetEmbedder(&queryEmbedderStub{})
 		err = exec.applyInlineEmbeddingMutations(ctx, map[string]struct{}{string(n): {}})
 		require.ErrorIs(t, err, boom)
+	})
+
+	t.Run("typed_embedder_uses_document_input_type", func(t *testing.T) {
+		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "inline_embed_document_type")
+		n, err := store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
+		require.NoError(t, err)
+		var gotInputTypes []string
+		exec := NewStorageExecutor(store)
+		exec.SetEmbedder(&queryEmbedderStub{
+			chunkFn: func(string, int, int) ([]string, error) {
+				return []string{"chunk one", "chunk two"}, nil
+			},
+			typedEmbedFn: func(ctx context.Context, text, inputType string) ([]float32, error) {
+				gotInputTypes = append(gotInputTypes, inputType)
+				return []float32{1, 2}, nil
+			},
+		})
+		err = exec.applyInlineEmbeddingMutations(ctx, map[string]struct{}{string(n): {}})
+		require.NoError(t, err)
+		require.Equal(t, []string{"document", "document"}, gotInputTypes)
 	})
 }
 

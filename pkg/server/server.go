@@ -284,9 +284,7 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 	apiKey := get("NORNICDB_EMBEDDING_API_KEY", fallback.EmbeddingAPIKey)
 	voyageMode := get("NORNICDB_EMBEDDING_VOYAGE_MODE", fallback.EmbeddingVoyageMode)
 	if provider == "voyage" {
-		if apiURL == "" {
-			apiURL = voyage.DefaultBaseURL
-		}
+		apiURL = resolveVoyageEmbeddingAPIURL(apiURL)
 		if model == "" {
 			if strings.EqualFold(voyageMode, embed.VoyageModeContextualized) {
 				model = voyage.DefaultContextModel
@@ -461,7 +459,7 @@ type Config struct {
 	// EmbeddingAPIKey is the API key for authenticated embedding providers.
 	// Env: NORNICDB_EMBEDDING_API_KEY
 	EmbeddingAPIKey string
-	// EmbeddingVoyageMode selects Voyage embedding behavior: text, contextualized, or multimodal.
+	// EmbeddingVoyageMode selects Voyage embedding behavior: text or contextualized.
 	// Env: NORNICDB_EMBEDDING_VOYAGE_MODE
 	EmbeddingVoyageMode string
 	// ModelsDir is the directory containing local GGUF models
@@ -1576,9 +1574,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	embeddingAPIKey := config.EmbeddingAPIKey
 	embeddingModel := config.EmbeddingModel
 	if embeddingProvider == "voyage" {
-		if embeddingAPIURL == "" {
-			embeddingAPIURL = voyage.DefaultBaseURL
-		}
+		embeddingAPIURL = resolveVoyageEmbeddingAPIURL(embeddingAPIURL)
 		if embeddingAPIKey == "" {
 			embeddingAPIKey = os.Getenv("VOYAGE_API_KEY")
 		}
@@ -1973,6 +1969,14 @@ func (s *Server) SetAuditLogger(logger *audit.Logger) {
 			_ = s.audit.LogDataAccess("system", "retention-manager", "node", recordID, action, true, category)
 		})
 	}
+}
+
+func resolveVoyageEmbeddingAPIURL(apiURL string) string {
+	apiURL = strings.TrimSpace(apiURL)
+	if apiURL == "" || strings.TrimRight(apiURL, "/") == "http://localhost:11434" {
+		return voyage.DefaultBaseURL
+	}
+	return apiURL
 }
 
 func (s *Server) setHeimdallHandler(handler *heimdall.Handler) {

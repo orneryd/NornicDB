@@ -612,7 +612,7 @@ embedding:
   provider: local # or ollama, openai, voyage
   model: bge-m3
   dimensions: 1024
-  # Voyage only: text, contextualized, or multimodal
+  # Voyage only: text or contextualized
   voyage_mode: text
 ```
 

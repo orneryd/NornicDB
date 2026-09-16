@@ -596,7 +596,7 @@ type MemoryConfig struct {
 	EmbeddingAPIURL string
 	// EmbeddingAPIKey for authenticated providers. Env: NORNICDB_EMBEDDING_API_KEY
 	EmbeddingAPIKey string
-	// EmbeddingVoyageMode selects Voyage's embedding endpoint behavior: text, contextualized, or multimodal.
+	// EmbeddingVoyageMode selects Voyage's embedding endpoint behavior: text or contextualized.
 	// Env: NORNICDB_EMBEDDING_VOYAGE_MODE
 	EmbeddingVoyageMode string
 	// EmbeddingDimensions size
