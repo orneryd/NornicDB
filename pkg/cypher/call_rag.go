@@ -338,6 +338,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			return e.embedder.ChunkText(text, 512, 50)
 		}
 		errorPolicy := search.ChunkedSearchErrorPolicy{
+			Transport:           "cypher",
 			FatalEmbeddingError: func(error) bool { return failClosed },
 		}
 		if continuationRequested {
@@ -364,7 +365,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered"},
+		Columns: []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason"},
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
 
@@ -382,6 +383,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			r.BM25Rank,
 			response.SearchMethod,
 			response.FallbackTriggered,
+			string(response.FallbackReason),
 		})
 	}
 
@@ -436,6 +438,7 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 			"expires_at": page.ExpiresAt.UTC().Format(time.RFC3339Nano),
 			"released":   page.Released, "search_method": page.SearchMethod,
 			"fallback_triggered": page.FallbackTriggered,
+			"fallback_reason":    string(page.FallbackReason),
 			"mode":               string(page.Mode), "ranked_count": int64(page.RankedCount),
 			"eligible_count": eligibleCount, "ranked_pool_exhausted": page.RankedPoolExhausted,
 			"collection_exhausted": page.CollectionExhausted, "completion": page.Completion,

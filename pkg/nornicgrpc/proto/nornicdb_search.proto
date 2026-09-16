@@ -116,4 +116,6 @@ message SearchTextResponse {
   // max_results_reached means the caller's explicit result ceiling stopped the
   // stream before full collection exhaustion.
   string completion = 18;
+  // Stable sanitized reason the selected path differed from hybrid search.
+  string fallback_reason = 19;
 }

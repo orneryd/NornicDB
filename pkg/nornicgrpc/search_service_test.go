@@ -2,6 +2,7 @@ package nornicgrpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -154,6 +155,7 @@ func TestService_SearchText_ValidationAndFallback(t *testing.T) {
 			resp: &search.SearchResponse{
 				SearchMethod:      "bm25",
 				FallbackTriggered: true,
+				FallbackReason:    search.SearchFallbackQueryEmbeddingFailed,
 				Message:           "fallback",
 				Results: []search.SearchResult{
 					{NodeID: storage.NodeID("nornic:fallback"), Labels: []string{"Doc"}, Properties: map[string]any{"title": "fallback"}, Score: 0.4},
@@ -161,7 +163,7 @@ func TestService_SearchText_ValidationAndFallback(t *testing.T) {
 			},
 		}
 		svc, err := NewService(Config{MaxLimit: 5, RerankEnabled: true}, func(ctx context.Context, query string) ([]float32, error) {
-			return nil, nil
+			return nil, errors.New("embedding provider unavailable")
 		}, nil, searcher)
 		require.NoError(t, err)
 
@@ -175,6 +177,7 @@ func TestService_SearchText_ValidationAndFallback(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "bm25", resp.SearchMethod)
 		require.True(t, resp.FallbackTriggered)
+		require.Equal(t, "query_embedding_failed", resp.FallbackReason)
 		require.Len(t, resp.Hits, 1)
 		require.NotNil(t, searcher.lastOpts)
 		require.Nil(t, searcher.lastEmbedding)

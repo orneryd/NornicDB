@@ -144,6 +144,7 @@ message SearchTextResponse {
   bool ranked_pool_exhausted = 16;
   bool collection_exhausted = 17;
   string completion = 18;
+  string fallback_reason = 19;
 }
 ```
 
@@ -156,7 +157,7 @@ expansion without proving full ranked exhaustion. `completion="max_results_reach
 means the caller's explicit result ceiling stopped the stream before full
 collection exhaustion.
 
-`SearchText` runs the same hybrid pipeline as the `db.retrieve` Cypher procedure: vector + BM25, fused with RRF, with adaptive weights based on query length. If embeddings are disabled, falls back to BM25-only and sets `fallback_triggered=true`.
+`SearchText` runs the same hybrid pipeline as the `db.retrieve` Cypher procedure: vector + BM25, fused with RRF, with adaptive weights based on query length. If the requested search path changes, it sets `fallback_triggered=true` and returns a stable `fallback_reason` code. Provider diagnostics remain in warning logs rather than caller-visible fields.
 
 Supplying `n` or another continuation field starts a durable stream. Reuse the
 returned `qid` with `n` to pull another page, or with `discard=true` to release

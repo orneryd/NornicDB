@@ -89,8 +89,10 @@ func TestDiscoverResultSerialization(t *testing.T) {
 		Results: []SearchResult{
 			{ID: "r-1", Title: "Result 1", Similarity: 0.95},
 		},
-		Method: "vector",
-		Total:  1,
+		Method:            "keyword",
+		Total:             1,
+		FallbackTriggered: true,
+		FallbackReason:    "query_embedding_failed",
 	}
 
 	data, err := json.Marshal(result)
@@ -103,8 +105,11 @@ func TestDiscoverResultSerialization(t *testing.T) {
 		t.Fatalf("Failed to unmarshal: %v", err)
 	}
 
-	if decoded.Method != "vector" {
-		t.Errorf("Method mismatch: got %s, want vector", decoded.Method)
+	if decoded.Method != "keyword" {
+		t.Errorf("Method mismatch: got %s, want keyword", decoded.Method)
+	}
+	if !decoded.FallbackTriggered || decoded.FallbackReason != "query_embedding_failed" {
+		t.Errorf("fallback metadata lost: %+v", decoded)
 	}
 }
 

@@ -63,6 +63,7 @@ type SearchContinuationPage struct {
 	Released            bool
 	SearchMethod        string
 	FallbackTriggered   bool
+	FallbackReason      SearchFallbackReason
 	Mode                SearchContinuationMode
 	RankedCount         int
 	EligibleCount       *int
@@ -100,6 +101,7 @@ type searchContinuationState struct {
 	plateau           continuationPlateauTracker
 	searchMethod      string
 	fallbackTriggered bool
+	fallbackReason    SearchFallbackReason
 	maxResultsReached bool
 }
 
@@ -315,6 +317,7 @@ func (s *Service) SearchTextContinuation(
 		plateau:           newContinuationPlateauTracker(len(initial.Results)),
 		searchMethod:      initial.SearchMethod,
 		fallbackTriggered: initial.FallbackTriggered,
+		fallbackReason:    initial.FallbackReason,
 		maxResultsReached: maxResultsReached,
 	}
 	for index := range state.results {
@@ -354,6 +357,7 @@ func (s *Service) SearchTextContinuation(
 		state.response = searchResponseMetadata(response)
 		state.searchMethod = response.SearchMethod
 		state.fallbackTriggered = response.FallbackTriggered
+		state.fallbackReason = response.FallbackReason
 		for index := range response.Results {
 			result := response.Results[index]
 			id := searchResultID(result)
@@ -510,6 +514,7 @@ func (s *searchMetadataStream) Pull(ctx context.Context, position uint64, n int)
 		"search_method":         s.state.searchMethod,
 		"response":              response,
 		"fallback_triggered":    s.state.fallbackTriggered,
+		"fallback_reason":       s.state.fallbackReason,
 		"discovered":            len(s.state.results),
 		"mode":                  SearchContinuationRanked,
 		"ranked_count":          len(s.state.results),
@@ -570,6 +575,11 @@ func searchPageFromResultStream(page *resultstream.Page) (*SearchContinuationPag
 		out.response, _ = page.Metadata["response"].(*SearchResponse)
 		out.SearchMethod, _ = page.Metadata["search_method"].(string)
 		out.FallbackTriggered, _ = page.Metadata["fallback_triggered"].(bool)
+		if reason, ok := page.Metadata["fallback_reason"].(SearchFallbackReason); ok {
+			out.FallbackReason = reason
+		} else if reason, ok := page.Metadata["fallback_reason"].(string); ok {
+			out.FallbackReason = SearchFallbackReason(reason)
+		}
 		out.Discovered, _ = page.Metadata["discovered"].(int)
 		if mode, ok := page.Metadata["mode"].(SearchContinuationMode); ok {
 			out.Mode = mode
@@ -612,6 +622,7 @@ func (p *SearchContinuationPage) SearchResponse() *SearchResponse {
 	response.Returned = p.Returned
 	response.SearchMethod = p.SearchMethod
 	response.FallbackTriggered = p.FallbackTriggered
+	response.FallbackReason = p.FallbackReason
 	return response
 }
 

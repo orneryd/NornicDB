@@ -3,7 +3,14 @@ package search
 import (
 	"cmp"
 	"context"
+	"errors"
+	"log/slog"
+	"net"
+	"regexp"
 	"slices"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 const (
@@ -12,6 +19,8 @@ const (
 	minChunkCandidateLimit = 10
 	maxChunkCandidateLimit = 100
 )
+
+var embeddingHTTPStatusPattern = regexp.MustCompile(`(?i)\b(?:http(?: status)?|status(?: code)?|returned)\D{0,12}([1-5][0-9]{2})\b`)
 
 // ChunkQueryFunc splits a text query into embedding-safe chunks.
 type ChunkQueryFunc func(ctx context.Context, query string) ([]string, error)
@@ -26,6 +35,8 @@ type SearchQueryFunc func(ctx context.Context, query string, embedding []float32
 type ChunkedSearchErrorPolicy struct {
 	FatalEmbeddingError func(error) bool
 	FatalSearchError    func(error) bool
+	// Transport identifies the caller in fallback warning logs.
+	Transport string
 }
 
 // SearchTextChunks applies the canonical text-search semantics used by all transports.
@@ -57,7 +68,8 @@ func SearchTextChunksWithErrorPolicy(
 		opts = &defaults
 	}
 	if embedQuery == nil {
-		return searchQuery(ctx, query, nil, opts)
+		response, err := searchQuery(ctx, query, nil, opts)
+		return withSearchFallback(response, SearchFallbackNoEmbedder), err
 	}
 
 	chunks := []string{query}
@@ -76,6 +88,13 @@ func SearchTextChunksWithErrorPolicy(
 		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
 			return nil, err
 		}
+		fallbackReason := SearchFallbackNone
+		if err != nil {
+			fallbackReason = SearchFallbackQueryEmbeddingFailed
+			logQueryEmbeddingFallback(ctx, errorPolicy.Transport, err)
+		} else if len(embedding) == 0 {
+			fallbackReason = SearchFallbackQueryEmbeddingUnavailable
+		}
 		if err == nil && len(embedding) > 0 {
 			response, searchErr := searchQuery(ctx, query, embedding, opts)
 			if searchErr != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, searchErr) {
@@ -84,8 +103,13 @@ func SearchTextChunksWithErrorPolicy(
 			if searchErr == nil && response != nil {
 				return response, nil
 			}
+			fallbackReason = SearchFallbackNoHybridResults
+			if searchErr != nil {
+				fallbackReason = SearchFallbackHybridSearchFailed
+			}
 		}
-		return searchQuery(ctx, query, nil, opts)
+		response, searchErr := searchQuery(ctx, query, nil, opts)
+		return withSearchFallback(response, fallbackReason), searchErr
 	}
 
 	type fusedResult struct {
@@ -102,9 +126,11 @@ func SearchTextChunksWithErrorPolicy(
 	}
 	exhausted := true
 	var (
-		fusedIndexes  map[string]int
-		fused         []fusedResult
-		budgetReached bool
+		fusedIndexes   map[string]int
+		fused          []fusedResult
+		budgetReached  bool
+		fallbackReason SearchFallbackReason
+		embeddingErr   error
 	)
 	for _, chunk := range chunks {
 		embedding, err := embedQuery(ctx, chunk)
@@ -114,6 +140,14 @@ func SearchTextChunksWithErrorPolicy(
 		if err != nil || len(embedding) == 0 {
 			// Unavailable preparation does not participate in the selected search;
 			// the canonical fallback (or other successful chunks) owns its result.
+			if err != nil {
+				fallbackReason = SearchFallbackQueryEmbeddingFailed
+				if embeddingErr == nil {
+					embeddingErr = err
+				}
+			} else if fallbackReason == SearchFallbackNone {
+				fallbackReason = SearchFallbackQueryEmbeddingUnavailable
+			}
 			continue
 		}
 		response, err := searchQuery(ctx, chunk, embedding, &chunkOpts)
@@ -121,7 +155,16 @@ func SearchTextChunksWithErrorPolicy(
 			return nil, err
 		}
 		if err != nil || response == nil {
+			if fallbackReason == SearchFallbackNone {
+				fallbackReason = SearchFallbackNoHybridResults
+				if err != nil {
+					fallbackReason = SearchFallbackHybridSearchFailed
+				}
+			}
 			continue
+		}
+		if response.FallbackReason != SearchFallbackNone && fallbackReason == SearchFallbackNone {
+			fallbackReason = response.FallbackReason
 		}
 		budgetReached = budgetReached || response.CandidateBudgetReached
 		exhausted = exhausted && response.RetrievalExhausted
@@ -153,6 +196,9 @@ func SearchTextChunksWithErrorPolicy(
 			fusedResult.score += 1.0 / (outerRRFK + float64(rank+1))
 		}
 	}
+	if embeddingErr != nil {
+		logQueryEmbeddingFallback(ctx, errorPolicy.Transport, embeddingErr)
+	}
 
 	if len(fused) == 0 {
 		if opts.FallbackEnabled != nil && !*opts.FallbackEnabled {
@@ -174,7 +220,7 @@ func SearchTextChunksWithErrorPolicy(
 			copy.RetrievalExhausted = exhausted && response.RetrievalExhausted && !copy.CandidateBudgetReached
 			response = &copy
 		}
-		return response, err
+		return withSearchFallback(response, fallbackReason), err
 	}
 
 	slices.SortFunc(fused, func(left, right fusedResult) int {
@@ -198,6 +244,10 @@ func SearchTextChunksWithErrorPolicy(
 		Returned:               len(fused),
 		SearchMethod:           "chunked_rrf_hybrid",
 		FallbackTriggered:      false,
+		FallbackReason:         fallbackReason,
+	}
+	if fallbackReason != SearchFallbackNone {
+		response.FallbackTriggered = true
 	}
 	for _, fusedResult := range fused {
 		result := *fusedResult.best
@@ -208,6 +258,49 @@ func SearchTextChunksWithErrorPolicy(
 		response.Results = append(response.Results, result)
 	}
 	return response, nil
+}
+
+func withSearchFallback(response *SearchResponse, reason SearchFallbackReason) *SearchResponse {
+	if response == nil || reason == SearchFallbackNone {
+		return response
+	}
+	copy := *response
+	copy.FallbackTriggered = true
+	copy.FallbackReason = reason
+	return &copy
+}
+
+func logQueryEmbeddingFallback(ctx context.Context, transport string, err error) {
+	if err == nil {
+		return
+	}
+	transport = strings.TrimSpace(transport)
+	if transport == "" {
+		transport = "unknown"
+	}
+	logSearchEvent(ctx, nil, nil, slog.LevelWarn,
+		localization.SearchQueryEmbeddingFallbackEvent(
+			transport,
+			string(SearchFallbackQueryEmbeddingFailed),
+			sanitizedEmbeddingDiagnostic(err),
+		))
+}
+
+func sanitizedEmbeddingDiagnostic(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "embedding provider request timed out"
+	case errors.Is(err, context.Canceled):
+		return "embedding provider request canceled"
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return "embedding provider request timed out"
+	}
+	if match := embeddingHTTPStatusPattern.FindStringSubmatch(err.Error()); len(match) == 2 {
+		return "embedding provider returned HTTP status " + match[1]
+	}
+	return "embedding provider request failed"
 }
 
 func chunkCandidateLimit(limit int) int {

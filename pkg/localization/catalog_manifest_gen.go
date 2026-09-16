@@ -1409,6 +1409,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "runtime.log.replication_raft_became_leader", Constructor: "ReplicationLogRaftBecameLeader", Fields: []string{"NodeID", "Term"}, PluralForms: []string{"other"}},
 	{ID: "search-log.log.bm25_engine_selected", Constructor: "SearchLogBM25EngineSelected", Fields: []string{"Engine"}, PluralForms: []string{"other"}},
 	{ID: "search-log.log.operator", Constructor: "SearchLogOperator", Fields: []string{"Message"}, PluralForms: []string{"other"}},
+	{ID: "search-log.log.query_embedding_fallback", Constructor: "SearchLogQueryEmbeddingFallback", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.auto_embed_not_enabled", Constructor: "AutoEmbedNotEnabled", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.candidate_generation_failed", Constructor: "SearchCandidateGenerationFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "search.cluster_hnsw_lookup_not_configured", Constructor: "SearchClusterHNSWLookupNotConfigured", Fields: []string{}, PluralForms: []string{"other"}},

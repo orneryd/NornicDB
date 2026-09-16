@@ -2,3 +2,5 @@
   other: "Motor BM25 de búsqueda seleccionado: {{.Engine}}"
 - id: search-log.log.operator
   other: "{{.Message}}"
+- id: search-log.log.query_embedding_fallback
+  other: "falló el embedding de la consulta; se activó la búsqueda alternativa"

@@ -937,7 +937,10 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 				embedQuery = s.embed.Embed
 			}
 
-			resp, err := search.SearchTextChunks(ctx, query, opts, chunkQuery, embedQuery, svc.Search)
+			resp, err := search.SearchTextChunksWithErrorPolicy(
+				ctx, query, opts, chunkQuery, embedQuery, svc.Search,
+				search.ChunkedSearchErrorPolicy{Transport: "mcp"},
+			)
 			if err == nil && resp != nil {
 				if resp.SearchMethod == "chunked_rrf_hybrid" {
 					method = "vector"
@@ -966,7 +969,11 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 					}
 					results = append(results, res)
 				}
-				return DiscoverResult{Results: results, Method: method, Total: len(results)}, nil
+				return DiscoverResult{
+					Results: results, Method: method, Total: len(results),
+					FallbackTriggered: resp.FallbackTriggered,
+					FallbackReason:    string(resp.FallbackReason),
+				}, nil
 			}
 		}
 	}

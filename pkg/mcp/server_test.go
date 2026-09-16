@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -166,6 +167,7 @@ type mockEmbedder struct {
 	embedTexts       []string
 	batchTexts       []string
 	embedding        []float32
+	embedErr         error
 }
 
 func countTestTokens(text string) (int, error) {
@@ -179,6 +181,9 @@ func chunkTestText(text string, maxTokens, overlap int) ([]string, error) {
 func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
 	m.embedCalled = true
 	m.embedTexts = append(m.embedTexts, text)
+	if m.embedErr != nil {
+		return nil, m.embedErr
+	}
 	if m.embedding != nil {
 		return m.embedding, nil
 	}
@@ -1089,6 +1094,34 @@ func TestHandleDiscover_WithDBKeywordResults(t *testing.T) {
 	require.Equal(t, "Alpha Root", discover.Results[0].Title)
 	require.Equal(t, "Memory", discover.Results[0].Type)
 	require.NotEmpty(t, discover.Results[0].Related)
+}
+
+func TestHandleDiscover_ReturnsEmbeddingFallbackReason(t *testing.T) {
+	db, err := nornicdb.Open("", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	engine := db.GetStorage()
+	_, err = engine.CreateNode(&storage.Node{
+		ID: "fallback-node", Labels: []string{"Memory"},
+		Properties: map[string]interface{}{"title": "Fallback", "content": "provider fallback document"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.BuildSearchIndexes(context.Background()))
+
+	cfg := DefaultServerConfig()
+	cfg.Embedder = &mockEmbedder{embedErr: errors.New("provider unavailable")}
+	cfg.EmbeddingEnabled = true
+	server := NewServer(db, cfg)
+	result, err := server.handleDiscover(context.Background(), map[string]interface{}{
+		"query": "provider fallback",
+		"limit": 5,
+	})
+	require.NoError(t, err)
+	discover := result.(DiscoverResult)
+	require.True(t, discover.FallbackTriggered)
+	require.Equal(t, "query_embedding_failed", discover.FallbackReason)
+	require.NotEmpty(t, discover.Results)
 }
 
 func TestHandleDiscover_VectorBranchWithManualEmbeddings(t *testing.T) {

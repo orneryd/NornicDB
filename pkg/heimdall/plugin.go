@@ -635,9 +635,11 @@ type DatabaseRouter interface {
 
 // DiscoverResult contains semantic search results with related nodes.
 type DiscoverResult struct {
-	Results []SearchResult `json:"results"`
-	Method  string         `json:"method"` // "vector" or "keyword"
-	Total   int            `json:"total"`
+	Results           []SearchResult `json:"results"`
+	Method            string         `json:"method"` // "vector" or "keyword"
+	Total             int            `json:"total"`
+	FallbackTriggered bool           `json:"fallback_triggered"`
+	FallbackReason    string         `json:"fallback_reason,omitempty"`
 }
 
 // SearchResult represents a single search result with similarity and related nodes.

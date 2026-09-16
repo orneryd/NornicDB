@@ -315,6 +315,15 @@ func TestContinuationUnavailableEmbeddingPreservesBM25Fallback(t *testing.T) {
 			require.Len(t, page.Results, 1)
 			require.Equal(t, "doc", searchResultID(page.Results[0]))
 			require.False(t, page.HasMore)
+			switch unavailable {
+			case "error":
+				require.Equal(t, SearchFallbackQueryEmbeddingFailed, page.FallbackReason)
+			case "empty":
+				require.Equal(t, SearchFallbackQueryEmbeddingUnavailable, page.FallbackReason)
+			case "retrieval":
+				require.NotEqual(t, SearchFallbackNone, page.FallbackReason)
+			}
+			require.Equal(t, page.FallbackReason, page.SearchResponse().FallbackReason)
 		})
 	}
 }

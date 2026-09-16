@@ -10,9 +10,12 @@ import (
 const (
 	// EventSearchBM25EngineSelected identifies selection of the active BM25 implementation.
 	EventSearchBM25EngineSelected EventID = "search.bm25_engine.selected"
+	// EventSearchQueryEmbeddingFallback identifies fail-open BM25 fallback after an embedding error.
+	EventSearchQueryEmbeddingFallback EventID = "search.query_embedding_fallback"
 
-	MessageSearchLogBM25EngineSelected MessageID = "search-log.log.bm25_engine_selected"
-	MessageSearchLogOperator           MessageID = "search-log.log.operator"
+	MessageSearchLogBM25EngineSelected     MessageID = "search-log.log.bm25_engine_selected"
+	MessageSearchLogQueryEmbeddingFallback MessageID = "search-log.log.query_embedding_fallback"
+	MessageSearchLogOperator               MessageID = "search-log.log.operator"
 )
 
 var searchReasonToken = regexp.MustCompile(`\breason=([a-z][a-z0-9_]*)`)
@@ -26,12 +29,31 @@ func SearchLogBM25EngineSelected(engine string) Message {
 	}
 }
 
+// SearchLogQueryEmbeddingFallback describes fail-open search after query embedding fails.
+func SearchLogQueryEmbeddingFallback() Message {
+	return Message{ID: MessageSearchLogQueryEmbeddingFallback, Fallback: "query embedding failed; search fallback activated"}
+}
+
 // SearchLogOperator preserves dynamically formatted operator prose.
 func SearchLogOperator(message string) Message {
 	return Message{
 		ID:       MessageSearchLogOperator,
 		Fallback: message,
 		Data:     map[string]any{"Message": message},
+	}
+}
+
+// SearchQueryEmbeddingFallbackEvent describes fail-open search after query embedding fails.
+func SearchQueryEmbeddingFallbackEvent(transport, reason, diagnostic string) LogEvent {
+	return LogEvent{
+		ID:      EventSearchQueryEmbeddingFallback,
+		Message: SearchLogQueryEmbeddingFallback(),
+		Attrs: []slog.Attr{
+			slog.String("component", "search"),
+			slog.String("transport", transport),
+			slog.String("fallback_reason", reason),
+			slog.String("diagnostic", diagnostic),
+		},
 	}
 }
 

@@ -105,9 +105,11 @@ Pull and discard use the same endpoint:
 ```
 
 When no continuation fields are supplied, HTTP preserves its legacy array
-response. A continuation request returns an object containing `results`, `qid`,
+response and exposes a fallback reason, when present, in the
+`X-NornicDB-Search-Fallback-Reason` header. A continuation request returns an
+object containing `results`, `qid`,
 `has_more`, `position`, `returned`, `discovered`, `total`, `expires_at`,
-`search_method`, `fallback_triggered`, `mode`, `ranked_count`,
+`search_method`, `fallback_triggered`, `fallback_reason`, `mode`, `ranked_count`,
 `eligible_count`, `ranked_pool_exhausted`, `collection_exhausted`, and
 `completion`.
 
@@ -137,10 +139,17 @@ CALL db.retrieve({qid: $qid, n: 10}) YIELD page RETURN page
 
 Ordinary `db.retrieve` calls without continuation options retain their existing
 `node`, `score`, `rrf_score`, `vector_rank`, `bm25_rank`, `search_method`, and
-`fallback_triggered` columns. Bolt's standard numeric qid remains local to a
+`fallback_triggered` columns, plus `fallback_reason` when the requested search
+path changed. Bolt's standard numeric qid remains local to a
 connection and transaction; it is not the opaque durable qid. A continuation
 START also publishes the opaque token as additive `durable_qid` metadata on
 Bolt's `RUN` `SUCCESS` message when more results exist.
+
+`fallback_reason` is a stable diagnostic code, not a provider error string.
+Current values are `query_embedding_failed`, `query_embedding_unavailable`,
+`no_embedder`, `no_hybrid_results`, and `hybrid_search_failed`. This keeps
+provider credentials and response bodies out of caller-visible metadata while
+the corresponding warning log retains the operational error.
 
 ## Security, consistency, and lifetime
 

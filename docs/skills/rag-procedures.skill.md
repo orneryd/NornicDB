@@ -39,7 +39,7 @@ CALL db.retrieve({
   rerankMinScore: 0.0,
   embedding:      $queryVector                 -- optional pre-computed; alias: queryEmbedding / query_embedding
 })
-YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered
+YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered, fallback_reason
 RETURN node.id, node.title, score, search_method
 ORDER BY score DESC
 ```
@@ -55,6 +55,7 @@ Behavior:
 - `fallbackEnabled: false` returns the empty hybrid result instead of switching to vector-only and then BM25-only retrieval.
 - `search_method` reports the winning path: `rrf_hybrid`, `rrf_hybrid+rerank`, `vector_only`, or `bm25_only`.
 - `fallback_triggered: true` means one strategy returned nothing and the engine fell back.
+- `fallback_reason` explains why the requested search path changed using a stable code such as `query_embedding_failed`, `query_embedding_unavailable`, `no_embedder`, `no_hybrid_results`, or `hybrid_search_failed`. Provider error text is logged, not returned to callers.
 
 ### Durable continuation
 

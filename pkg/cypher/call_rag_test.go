@@ -482,6 +482,26 @@ func TestCallDbRetrieveFailClosedPreservesEmbedderCause(t *testing.T) {
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
+func TestCallDbRetrieveFailOpenReturnsEmbeddingFallbackReason(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha fallback document"}})
+	require.NoError(t, err)
+	exec := NewStorageExecutor(store)
+	exec.SetEmbedder(&failingVectorEmbedder{err: context.DeadlineExceeded})
+	svc := search.NewService(store)
+	require.NoError(t, svc.BuildIndexes(ctx))
+	exec.SetSearchService(svc)
+
+	result, err := exec.Execute(ctx, `CALL db.retrieve({query: 'alpha'})
+YIELD node, fallback_triggered, fallback_reason
+RETURN node, fallback_triggered, fallback_reason`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, true, result.Rows[0][1])
+	require.Equal(t, "query_embedding_failed", result.Rows[0][2])
+}
+
 func TestCallDbRetrieveFailClosedRejectsStringEmbedding(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")

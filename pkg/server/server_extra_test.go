@@ -3253,6 +3253,7 @@ func TestHandleSearchDimensionMismatchAndFallbackBranches(t *testing.T) {
 		"limit": 5,
 	}, "Bearer "+token)
 	assert.Equal(t, http.StatusOK, resp.Code)
+	assert.Equal(t, "query_embedding_failed", resp.Header().Get("X-NornicDB-Search-Fallback-Reason"))
 
 	// Chunked query path with alternate dimensions.
 	server.db.SetEmbedder(&countingEmbedder{dims: 16})

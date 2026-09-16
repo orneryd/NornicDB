@@ -549,6 +549,12 @@ paths:
       responses:
         "200":
           description: Search results
+          headers:
+            X-NornicDB-Search-Fallback-Reason:
+              description: Stable sanitized reason the selected search path differed from the requested hybrid path; omitted when no fallback occurred.
+              schema:
+                type: string
+                enum: [query_embedding_failed, query_embedding_unavailable, no_embedder, no_hybrid_results, hybrid_search_failed]
           content:
             application/json:
               schema:
@@ -1415,6 +1421,10 @@ components:
           type: string
         fallback_triggered:
           type: boolean
+        fallback_reason:
+          type: string
+          description: Stable sanitized reason the selected search path differed from the requested hybrid path.
+          enum: [query_embedding_failed, query_embedding_unavailable, no_embedder, no_hybrid_results, hybrid_search_failed]
         mode:
           type: string
           enum: [ranked, ranked_then_id, id]

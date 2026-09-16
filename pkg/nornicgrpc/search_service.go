@@ -175,7 +175,8 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		}
 		page, err := continuable.SearchTextContinuation(
 			ctx, req.Query, searchOptions(req, s.maxLimit, s.rerankEnabled), continuation,
-			search.ChunkQueryFunc(dependencies.ChunkQuery), search.EmbedQueryFunc(dependencies.EmbedQuery), dependencies.Searcher.Search, search.ChunkedSearchErrorPolicy{},
+			search.ChunkQueryFunc(dependencies.ChunkQuery), search.EmbedQueryFunc(dependencies.EmbedQuery), dependencies.Searcher.Search,
+			search.ChunkedSearchErrorPolicy{Transport: "grpc"},
 		)
 		if err != nil {
 			return nil, s.continuationStatus(ctx, err)
@@ -217,7 +218,10 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 			return chunks, nil
 		}
 	}
-	resp, err := search.SearchTextChunks(ctx, req.Query, opts, chunkQuery, search.EmbedQueryFunc(dependencies.EmbedQuery), dependencies.Searcher.Search)
+	resp, err := search.SearchTextChunksWithErrorPolicy(
+		ctx, req.Query, opts, chunkQuery, search.EmbedQueryFunc(dependencies.EmbedQuery), dependencies.Searcher.Search,
+		search.ChunkedSearchErrorPolicy{Transport: "grpc"},
+	)
 	if err != nil {
 		if status.Code(err) != codes.Unknown {
 			return nil, err
@@ -234,6 +238,7 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		SearchMethod:      resp.SearchMethod,
 		Hits:              out,
 		FallbackTriggered: resp.FallbackTriggered,
+		FallbackReason:    string(resp.FallbackReason),
 		Message:           resp.Message,
 		TimeSeconds:       time.Since(start).Seconds(),
 	}, nil
@@ -276,7 +281,8 @@ func searchOptions(req *gen.SearchTextRequest, maxLimit int, rerank bool) *searc
 func grpcContinuationResponse(page *search.SearchContinuationPage, elapsed time.Duration) *gen.SearchTextResponse {
 	response := &gen.SearchTextResponse{
 		SearchMethod: page.SearchMethod, FallbackTriggered: page.FallbackTriggered,
-		Qid: page.QID, HasMore: page.HasMore, Position: page.Position,
+		FallbackReason: string(page.FallbackReason),
+		Qid:            page.QID, HasMore: page.HasMore, Position: page.Position,
 		Returned: uint32(page.Returned), Released: page.Released, TimeSeconds: elapsed.Seconds(),
 		Mode: string(page.Mode), RankedCount: int64(page.RankedCount),
 		RankedPoolExhausted: page.RankedPoolExhausted, CollectionExhausted: page.CollectionExhausted,

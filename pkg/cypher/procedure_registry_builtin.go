@@ -224,11 +224,11 @@ func ensureBuiltInProceduresRegistered() {
 				return e.callNornicDbKnowledgePolicyDeindexStatus()
 			})
 
-		registerBuiltInProcedure("db.retrieve", "db.retrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN)", localization.CypherProcedureMetadata("db.retrieve"), ProcedureModeRead, 1, 1, false,
+		registerBuiltInProcedure("db.retrieve", "db.retrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING)", localization.CypherProcedureMetadata("db.retrieve"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRetrieve(ctx, cypher)
 			})
-		registerBuiltInProcedure("db.rretrieve", "db.rretrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN)", localization.CypherProcedureMetadata("db.rretrieve"), ProcedureModeRead, 1, 1, false,
+		registerBuiltInProcedure("db.rretrieve", "db.rretrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING)", localization.CypherProcedureMetadata("db.rretrieve"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRRetrieve(ctx, cypher)
 			})

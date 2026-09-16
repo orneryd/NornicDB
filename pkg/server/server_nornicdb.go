@@ -505,8 +505,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			embedTotalDur += time.Since(embedStart)
 			if embedErr == nil && len(embedding) > 0 {
 				embedSuccessCalls++
-			} else if embedErr != nil && !errors.Is(embedErr, nornicdb.ErrQueryEmbeddingDimensionMismatch) {
-				s.logEvent(ctx, slog.LevelWarn, localization.ServerSearchChunkedQueryEmbeddingFailedEvent(embedErr))
 			}
 			return embedding, embedErr
 		}
@@ -527,6 +525,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	chunkLoopStart := time.Now()
 	errorPolicy := search.ChunkedSearchErrorPolicy{
+		Transport: "http",
 		FatalEmbeddingError: func(err error) bool {
 			return errors.Is(err, nornicdb.ErrQueryEmbeddingDimensionMismatch)
 		},
@@ -601,6 +600,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// Canonical mapping keeps DB and server adapters consistent.
 	results := nornicdb.MapSearchResponse(searchResponse)
 	if continuationPage != nil {
+		setSearchFallbackReasonHeader(w, continuationPage.FallbackReason)
 		s.writeJSON(w, http.StatusOK, map[string]any{
 			"results":               results,
 			"qid":                   continuationPage.QID,
@@ -612,6 +612,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			"expires_at":            continuationPage.ExpiresAt,
 			"search_method":         continuationPage.SearchMethod,
 			"fallback_triggered":    continuationPage.FallbackTriggered,
+			"fallback_reason":       continuationPage.FallbackReason,
 			"mode":                  continuationPage.Mode,
 			"ranked_count":          continuationPage.RankedCount,
 			"eligible_count":        continuationPage.EligibleCount,
@@ -621,6 +622,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	setSearchFallbackReasonHeader(w, searchResponse.FallbackReason)
 	if searchDiagEnabled {
 		s.logEvent(ctx, slog.LevelInfo, localization.ServerSearchTimingEvent(localization.ServerSearchTimingFields{
 			Status:        "ok",
@@ -670,6 +672,7 @@ func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Req
 
 func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, page *search.SearchContinuationPage) {
 	response := page.SearchResponse()
+	setSearchFallbackReasonHeader(w, page.FallbackReason)
 	if provider, ok := any(response).(interface{ ResponseHeaders() map[string]string }); ok {
 		for key, value := range provider.ResponseHeaders() {
 			w.Header().Set(key, value)
@@ -687,6 +690,7 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, page *search
 		"released":              page.Released,
 		"search_method":         page.SearchMethod,
 		"fallback_triggered":    page.FallbackTriggered,
+		"fallback_reason":       page.FallbackReason,
 		"mode":                  page.Mode,
 		"ranked_count":          page.RankedCount,
 		"eligible_count":        page.EligibleCount,
@@ -700,6 +704,12 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, page *search
 		}
 	}
 	s.writeJSON(w, http.StatusOK, body)
+}
+
+func setSearchFallbackReasonHeader(w http.ResponseWriter, reason search.SearchFallbackReason) {
+	if reason != search.SearchFallbackNone {
+		w.Header().Set("X-NornicDB-Search-Fallback-Reason", string(reason))
+	}
 }
 
 func runEmbedWithTimeout(parent context.Context, timeout time.Duration, fn func(context.Context) ([]float32, error)) ([]float32, error) {

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Log query-embedding fallback at warning level and expose a stable,
+  sanitized `fallback_reason` through HTTP, native gRPC, Cypher/Bolt, MCP,
+  Heimdall, and durable continuation responses.
+
 ### Added
 
 ## [v1.3.3] - 9/15/2026

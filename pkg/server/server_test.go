@@ -29,6 +29,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/textchunk"
 	"github.com/orneryd/nornicdb/pkg/txsession"
@@ -3908,6 +3909,12 @@ func TestBuildEmbedConfigFromResolved_Branches(t *testing.T) {
 		"db.nornic.embedding.provider": "custom-provider",
 	}, fallback)
 	require.Equal(t, "/api/embeddings", cfg.APIPath)
+}
+
+func TestSetSearchFallbackReasonHeader(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	setSearchFallbackReasonHeader(recorder, search.SearchFallbackQueryEmbeddingFailed)
+	require.Equal(t, "query_embedding_failed", recorder.Header().Get("X-NornicDB-Search-Fallback-Reason"))
 }
 
 func TestEnsureSearchBuildStartedForKnownDatabases_NilAndNoopBranches(t *testing.T) {

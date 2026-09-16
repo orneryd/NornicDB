@@ -128,10 +128,12 @@ type DiscoverParams struct {
 
 // DiscoverResult - Output from discover tool
 type DiscoverResult struct {
-	Results     []SearchResult `json:"results"`
-	Method      string         `json:"method"` // "vector" or "keyword"
-	Total       int            `json:"total"`
-	Suggestions []string       `json:"suggestions,omitempty"`
+	Results           []SearchResult `json:"results"`
+	Method            string         `json:"method"` // "vector" or "keyword"
+	Total             int            `json:"total"`
+	FallbackTriggered bool           `json:"fallback_triggered"`
+	FallbackReason    string         `json:"fallback_reason,omitempty"`
+	Suggestions       []string       `json:"suggestions,omitempty"`
 }
 
 // SearchResult represents a search result node

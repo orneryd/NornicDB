@@ -250,6 +250,19 @@ type SearchResult struct {
 // SearchPassage is one matching child retained within a grouped search result.
 type SearchPassage = SearchResult
 
+// SearchFallbackReason is a stable, sanitized explanation of why the selected
+// search path differed from the requested hybrid path.
+type SearchFallbackReason string
+
+const (
+	SearchFallbackNone                      SearchFallbackReason = ""
+	SearchFallbackQueryEmbeddingFailed      SearchFallbackReason = "query_embedding_failed"
+	SearchFallbackQueryEmbeddingUnavailable SearchFallbackReason = "query_embedding_unavailable"
+	SearchFallbackNoEmbedder                SearchFallbackReason = "no_embedder"
+	SearchFallbackNoHybridResults           SearchFallbackReason = "no_hybrid_results"
+	SearchFallbackHybridSearchFailed        SearchFallbackReason = "hybrid_search_failed"
+)
+
 // SearchResponse is the response from a search operation.
 type SearchResponse struct {
 	// RetrievalExhausted is internal continuation evidence: every participating
@@ -259,16 +272,46 @@ type SearchResponse struct {
 	// CandidateBudgetReached is internal continuation evidence: the selected
 	// producer hit a configured candidate budget and cannot expose a deeper
 	// ranked prefix without changing that budget.
-	CandidateBudgetReached bool           `json:"-"`
-	Status                 string         `json:"status"`
-	Query                  string         `json:"query"`
-	Results                []SearchResult `json:"results"`
-	TotalCandidates        int            `json:"total_candidates"`
-	Returned               int            `json:"returned"`
-	SearchMethod           string         `json:"search_method"`
-	FallbackTriggered      bool           `json:"fallback_triggered"`
-	Message                string         `json:"message,omitempty"`
-	Metrics                *SearchMetrics `json:"metrics,omitempty"`
+	CandidateBudgetReached bool                 `json:"-"`
+	Status                 string               `json:"status"`
+	Query                  string               `json:"query"`
+	Results                []SearchResult       `json:"results"`
+	TotalCandidates        int                  `json:"total_candidates"`
+	Returned               int                  `json:"returned"`
+	SearchMethod           string               `json:"search_method"`
+	FallbackTriggered      bool                 `json:"fallback_triggered"`
+	FallbackReason         SearchFallbackReason `json:"fallback_reason,omitempty"`
+	Message                string               `json:"message,omitempty"`
+	Metrics                *SearchMetrics       `json:"metrics,omitempty"`
+}
+
+// ResultMetadata returns protocol-neutral search selection metadata.
+func (r *SearchResponse) ResultMetadata() map[string]any {
+	if r == nil {
+		return nil
+	}
+	return map[string]any{
+		"search_method":      r.SearchMethod,
+		"fallback_triggered": r.FallbackTriggered,
+		"fallback_reason":    string(r.FallbackReason),
+	}
+}
+
+// ResponseHeaders exposes the sanitized fallback reason to HTTP callers whose
+// legacy response body is a bare result array.
+func (r *SearchResponse) ResponseHeaders() map[string]string {
+	if r == nil || r.FallbackReason == SearchFallbackNone {
+		return nil
+	}
+	return map[string]string{"X-NornicDB-Search-Fallback-Reason": string(r.FallbackReason)}
+}
+
+// ResponseTrailers exposes the sanitized fallback reason to gRPC callers.
+func (r *SearchResponse) ResponseTrailers() map[string]string {
+	if r == nil || r.FallbackReason == SearchFallbackNone {
+		return nil
+	}
+	return map[string]string{"nornicdb-search-fallback-reason": string(r.FallbackReason)}
 }
 
 // SearchMetrics contains timing and statistics.
@@ -4101,6 +4144,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		}
 		mode = "bm25" // Plan 04-05-05: closed AllowedSearchModes
 		resp, err := s.fullTextSearchOnly(ctx, query, opts)
+		resp = withSearchFallback(resp, SearchFallbackNoEmbedder)
 		if err == nil && s.resultCache != nil {
 			s.resultCache.Put(cacheKey, resp)
 		}
@@ -4144,11 +4188,13 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// Fallback to vector-only
 	// Failed branches are replaced by the selected fallback. A successful but
 	// incomplete branch must still prevent false exhaustion of the whole search.
+	hybridFailed := err != nil
 	hybridIncomplete := err == nil && response != nil && !response.RetrievalExhausted
 	response, err = s.vectorSearchOnly(ctx, embedding, opts)
 	if err == nil && len(response.Results) > 0 {
 		response.RetrievalExhausted = response.RetrievalExhausted && !hybridIncomplete
 		response.FallbackTriggered = true
+		response.FallbackReason = SearchFallbackNoHybridResults
 		response.Message = "RRF search returned no results, fell back to vector search"
 		if s.resultCache != nil {
 			s.resultCache.Put(cacheKey, response)
@@ -4158,10 +4204,16 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	}
 
 	// Final fallback to full-text
+	vectorFailed := err != nil
 	vectorIncomplete := err == nil && response != nil && !response.RetrievalExhausted
 	mode = "bm25" // Plan 04-05-05: final fallback to BM25-only
 	resp, err = s.fullTextSearchOnly(ctx, query, opts)
 	if resp != nil {
+		reason := SearchFallbackNoHybridResults
+		if hybridFailed || vectorFailed {
+			reason = SearchFallbackHybridSearchFailed
+		}
+		resp = withSearchFallback(resp, reason)
 		resp.RetrievalExhausted = resp.RetrievalExhausted && !hybridIncomplete && !vectorIncomplete
 	}
 	if err == nil && s.resultCache != nil {

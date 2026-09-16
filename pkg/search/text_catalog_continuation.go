@@ -172,10 +172,12 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	rankedByID := make(map[string]SearchResult)
 	searchMethod := "id"
 	fallbackTriggered := false
+	fallbackReason := SearchFallbackNone
 	rankedPoolExhausted := true
 	if ranked != nil {
 		searchMethod = ranked.SearchMethod
 		fallbackTriggered = ranked.FallbackTriggered
+		fallbackReason = ranked.FallbackReason
 		rankedPoolExhausted = ranked.RetrievalExhausted
 		for _, result := range ranked.Results {
 			result.Phase = SearchContinuationRankedPhase
@@ -345,6 +347,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			"search_method":         searchMethod,
 			"response":              searchResponseMetadata(ranked),
 			"fallback_triggered":    fallbackTriggered,
+			"fallback_reason":       fallbackReason,
 			"discovered":            eligibleCount,
 			"mode":                  request.Mode,
 			"ranked_count":          rankedCount,

@@ -664,6 +664,7 @@ func TestSearch_FallbackPolicyCanKeepEmptyHybridResult(t *testing.T) {
 	require.Len(t, legacyResponse.Results, 1)
 	require.Equal(t, "vector-candidate", legacyResponse.Results[0].ID)
 	require.True(t, legacyResponse.FallbackTriggered)
+	require.Equal(t, SearchFallbackNoHybridResults, legacyResponse.FallbackReason)
 }
 
 func TestSearch_FallbackDisabledDoesNotUseBM25WhenEmbeddingMissing(t *testing.T) {
@@ -692,6 +693,7 @@ func TestSearch_FallbackDisabledDoesNotUseBM25WhenEmbeddingMissing(t *testing.T)
 	legacy, err := service.Search(context.Background(), "zero-trust architecture", nil, DefaultSearchOptions())
 	require.NoError(t, err)
 	require.NotEmpty(t, legacy.Results)
+	require.Equal(t, SearchFallbackNoEmbedder, legacy.FallbackReason)
 }
 
 func TestSearchResultCacheCanBeDisabled(t *testing.T) {

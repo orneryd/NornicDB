@@ -77,7 +77,7 @@ CALL db.retrieve({
     artifact: ['source', 'summary']
   }
 })
-YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered
+YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered, fallback_reason
 RETURN node, score, rrf_score
 ```
 
@@ -85,6 +85,11 @@ Filter values use OR semantics within one property and AND semantics across
 properties. Scalar and array-valued node properties are supported. Every policy
 key also accepts snake_case, for example `candidate_target`, `rrf_k`,
 `min_rrf_score`, `property_filters`, and `fallback_enabled`.
+
+When fallback changes the requested search path, `fallback_reason` contains a
+stable code such as `query_embedding_failed`, `query_embedding_unavailable`,
+`no_embedder`, `no_hybrid_results`, or `hybrid_search_failed`. Provider error
+details are written to the warning log and are not exposed in query results.
 
 ```cypher
 CALL db.retrieve({query: 'zero-trust architecture', limit: 20}) YIELD node, score

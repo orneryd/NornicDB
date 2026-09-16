@@ -417,7 +417,7 @@ func (e *QueryExecutor) Discover(ctx context.Context, query string, nodeTypes []
 		embedQuery = e.embedder.Embed
 	}
 
-	response, err := search.SearchTextChunks(
+	response, err := search.SearchTextChunksWithErrorPolicy(
 		ctx,
 		query,
 		opts,
@@ -460,6 +460,7 @@ func (e *QueryExecutor) Discover(ctx context.Context, query string, nodeTypes []
 			}
 			return &search.SearchResponse{SearchMethod: method, Results: converted}, nil
 		},
+		search.ChunkedSearchErrorPolicy{Transport: "heimdall"},
 	)
 	if err != nil {
 		return nil, err
@@ -502,9 +503,11 @@ func (e *QueryExecutor) Discover(ctx context.Context, query string, nodeTypes []
 	}
 
 	return &DiscoverResult{
-		Results: results,
-		Method:  method,
-		Total:   len(results),
+		Results:           results,
+		Method:            method,
+		Total:             len(results),
+		FallbackTriggered: response.FallbackTriggered,
+		FallbackReason:    string(response.FallbackReason),
 	}, nil
 }
 
