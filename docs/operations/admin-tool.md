@@ -65,6 +65,32 @@ The directory importer:
 
 This makes it possible to import a full offline package produced by `database export neo4j-csv` with a single command.
 
+## Import an OKF Bundle
+
+Open Knowledge Format (OKF) bundles are imported from a directory of Markdown
+concepts with YAML frontmatter. This is an offline operation; it does not start
+the server or create embeddings.
+
+```bash
+nornicdb-admin database import okf knowledge \
+  --from-path=./knowledge-bundle \
+  --profile=okf \
+  --mode=fail-if-exists \
+  --property-map=./properties.env \
+  --data-dir=./data
+```
+
+Use `--profile=pgm-0.4-draft` when Markdown link titles contain Property Graph
+Markdown relationship mappings such as `"{type: DOCUMENTS, scope: import}"`.
+The current importer accepts directory input and `fail-if-exists`; merge,
+replace, archive input, and OKF export are intentionally rejected until their
+source-fidelity semantics are implemented.
+
+The optional `--property-map` points to an environment-style file of
+`source_property=storage_property` assignments. For example,
+`_okf_frontmatter=source_metadata` changes the storage property used for the
+preserved frontmatter without duplicating it.
+
 ## Multi-File Sources
 
 The first file in a source must contain the header. Additional files in the same source are read as data files.

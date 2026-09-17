@@ -10,6 +10,8 @@
   other: Run a full offline import
 - id: admincli.incremental_import_short
   other: Reserved incremental import command
+- id: admincli.okf_import_short
+  other: Import an Open Knowledge Format bundle
 - id: admincli.export_short
   other: Export database data for offline migration
 - id: admincli.neo4j_csv_export_short
@@ -27,7 +29,13 @@
 - id: admincli.flag.relationships
   other: Relationship CSV source (repeatable)
 - id: admincli.flag.from_path
-  other: Directory containing Neo4j-compatible CSV files
+  other: Source directory
+- id: admincli.flag.okf_profile
+  other: "Semantic profile: okf or pgm-0.4-draft"
+- id: admincli.flag.okf_mode
+  other: "Import mode: fail-if-exists"
+- id: admincli.flag.property_map
+  other: Environment-style source-to-property map file
 - id: admincli.flag.schema
   other: Cypher schema file to apply after load
 - id: admincli.flag.build_indexes
@@ -49,7 +57,7 @@
 - id: admincli.flag.bad_tolerance
   other: Number of bad rows tolerated before abort
 - id: admincli.flag.chunk_size
-  other: Rows per bulk write chunk
+  other: Records per bulk write chunk
 - id: admincli.flag.delimiter
   other: Field delimiter
 - id: admincli.flag.array_delimiter
@@ -72,6 +80,8 @@
   other: server status is not implemented yet
 - id: admincli.to_path_required
   other: --to-path is required
+- id: admincli.from_path_required
+  other: --from-path is required
 - id: admincli.exact_args
   other: accepts {{.Expected}} arg(s), received {{.Received}}
 - id: admincli.unknown_command
