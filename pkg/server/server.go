@@ -283,16 +283,6 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 	apiURL := get("NORNICDB_EMBEDDING_API_URL", fallback.EmbeddingAPIURL)
 	apiKey := get("NORNICDB_EMBEDDING_API_KEY", fallback.EmbeddingAPIKey)
 	mode := get("NORNICDB_EMBEDDING_MODE", fallback.EmbeddingMode)
-	if provider == "voyage" {
-		apiURL = resolveVoyageEmbeddingAPIURL(apiURL)
-		if model == "" {
-			if strings.EqualFold(mode, embed.VoyageModeContextualized) {
-				model = voyage.DefaultContextModel
-			} else {
-				model = voyage.DefaultEmbeddingModel
-			}
-		}
-	}
 	dimensions := getInt("NORNICDB_EMBEDDING_DIMENSIONS", fallback.EmbeddingDimensions)
 	if dimensions <= 0 {
 		dimensions = 1024
@@ -1561,16 +1551,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	embeddingAPIURL := strings.TrimSpace(config.EmbeddingAPIURL)
 	embeddingAPIKey := config.EmbeddingAPIKey
 	embeddingModel := config.EmbeddingModel
-	if embeddingProvider == "voyage" {
-		embeddingAPIURL = resolveVoyageEmbeddingAPIURL(embeddingAPIURL)
-		if strings.TrimSpace(embeddingModel) == "" {
-			if strings.EqualFold(config.EmbeddingMode, embed.VoyageModeContextualized) {
-				embeddingModel = voyage.DefaultContextModel
-			} else {
-				embeddingModel = voyage.DefaultEmbeddingModel
-			}
-		}
-	}
 	embedConfig := embed.ResolveProviderConfig(&embed.Config{
 		Provider:      embeddingProvider,
 		APIURL:        embeddingAPIURL,
@@ -1954,14 +1934,6 @@ func (s *Server) SetAuditLogger(logger *audit.Logger) {
 			_ = s.audit.LogDataAccess("system", "retention-manager", "node", recordID, action, true, category)
 		})
 	}
-}
-
-func resolveVoyageEmbeddingAPIURL(apiURL string) string {
-	apiURL = strings.TrimSpace(apiURL)
-	if apiURL == "" || strings.TrimRight(apiURL, "/") == "http://localhost:11434" {
-		return voyage.DefaultBaseURL
-	}
-	return apiURL
 }
 
 func (s *Server) setHeimdallHandler(handler *heimdall.Handler) {

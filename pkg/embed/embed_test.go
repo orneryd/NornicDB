@@ -105,6 +105,39 @@ func TestResolveOrcaConfigPreservesExplicitGenericValues(t *testing.T) {
 	}
 }
 
+func TestResolveVoyageConfigUsesProvenanceForGenericDefaults(t *testing.T) {
+	resolved := ResolveProviderConfigWithProvenance(&Config{
+		Provider:   " VOYAGE ",
+		APIURL:     "http://localhost:11434",
+		Model:      "bge-m3",
+		Dimensions: 1024,
+		Mode:       VoyageModeContextualized,
+	}, ProviderConfigExplicit{})
+
+	if resolved.Provider != "voyage" {
+		t.Fatalf("provider = %q", resolved.Provider)
+	}
+	if resolved.APIURL != "https://api.voyageai.com" {
+		t.Fatalf("API URL = %q", resolved.APIURL)
+	}
+	if resolved.Model != "voyage-context-4" {
+		t.Fatalf("model = %q", resolved.Model)
+	}
+	if resolved.Dimensions != 1024 {
+		t.Fatalf("dimensions = %d", resolved.Dimensions)
+	}
+
+	resolved = ResolveProviderConfigWithProvenance(&Config{
+		Provider:   "voyage",
+		APIURL:     "http://localhost:11434",
+		Model:      "bge-m3",
+		Dimensions: 1024,
+	}, ProviderConfigExplicit{APIURL: true, Model: true, Dimensions: true})
+	if resolved.APIURL != "http://localhost:11434" || resolved.Model != "bge-m3" || resolved.Dimensions != 1024 {
+		t.Fatalf("explicit generic settings were replaced: %+v", resolved)
+	}
+}
+
 func TestNewOllama(t *testing.T) {
 	t.Run("with config", func(t *testing.T) {
 		config := &Config{

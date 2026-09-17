@@ -1318,7 +1318,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 }
 
 func applyEmbeddingProviderDefaults(cfg *config.Config) {
-	if cfg == nil || !strings.EqualFold(strings.TrimSpace(cfg.Memory.EmbeddingProvider), "orca") {
+	if cfg == nil {
 		return
 	}
 	resolved := embed.ResolveProviderConfigWithProvenance(&embed.Config{
@@ -1326,6 +1326,7 @@ func applyEmbeddingProviderDefaults(cfg *config.Config) {
 		APIURL:     cfg.Memory.EmbeddingAPIURL,
 		APIKey:     cfg.Memory.EmbeddingAPIKey,
 		Model:      cfg.Memory.EmbeddingModel,
+		Mode:       cfg.Memory.EmbeddingMode,
 		Dimensions: cfg.Memory.EmbeddingDimensions,
 	}, embed.ProviderConfigExplicit{
 		APIURL:     cfg.EmbeddingExplicit.APIURL,

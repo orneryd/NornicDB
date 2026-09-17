@@ -887,6 +887,8 @@ func ResolveProviderConfig(config *Config) *Config {
 	switch strings.ToLower(strings.TrimSpace(config.Provider)) {
 	case "orca":
 		return resolveOrcaConfig(config)
+	case "voyage":
+		return resolveVoyageConfig(config)
 	default:
 		return config
 	}
@@ -909,7 +911,8 @@ func ResolveProviderConfigWithProvenance(config *Config, explicit ProviderConfig
 		return nil
 	}
 	cfg := *config
-	if strings.EqualFold(strings.TrimSpace(cfg.Provider), "orca") {
+	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
+	case "orca", "voyage":
 		if !explicit.APIURL && strings.TrimRight(strings.TrimSpace(cfg.APIURL), "/") == "http://localhost:11434" {
 			cfg.APIURL = ""
 		}

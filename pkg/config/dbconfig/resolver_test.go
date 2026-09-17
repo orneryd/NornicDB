@@ -83,6 +83,33 @@ func TestResolve_OrcaProviderOverrideUsesMatchingDefaults(t *testing.T) {
 	require.Equal(t, "openai/text-embedding-3-small", r.Effective["db.nornic.embedding.model"])
 }
 
+func TestResolve_VoyageProviderOverrideUsesMatchingDefaults(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.EmbeddingMode = "contextualized"
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider": "voyage",
+	})
+
+	require.Equal(t, 1024, r.EmbeddingDimensions)
+	require.Equal(t, "voyage", r.Effective["db.nornic.embedding.provider"])
+	require.Equal(t, "https://api.voyageai.com", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "voyage-context-4", r.Effective["db.nornic.embedding.model"])
+}
+
+func TestResolve_VoyageProviderOverridePreservesExplicitGenericSettings(t *testing.T) {
+	global := config.LoadDefaults()
+	r := Resolve(global, map[string]string{
+		"db.nornic.embedding.provider":   "voyage",
+		"db.nornic.embedding.api.url":    "http://localhost:11434",
+		"db.nornic.embedding.model":      "bge-m3",
+		"db.nornic.embedding.dimensions": "1024",
+	})
+
+	require.Equal(t, 1024, r.EmbeddingDimensions)
+	require.Equal(t, "http://localhost:11434", r.Effective["db.nornic.embedding.api.url"])
+	require.Equal(t, "bge-m3", r.Effective["db.nornic.embedding.model"])
+}
+
 func TestResolve_OrcaProviderOverridePreservesExplicitGenericSettings(t *testing.T) {
 	global := config.LoadDefaults()
 	r := Resolve(global, map[string]string{

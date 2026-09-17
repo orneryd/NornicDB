@@ -122,6 +122,7 @@ func resolveEmbeddingProviderDefaults(global *config.Config, resolved *ResolvedD
 	providerKey := CanonicalSettingName("NORNICDB_EMBEDDING_PROVIDER")
 	apiURLKey := CanonicalSettingName("NORNICDB_EMBEDDING_API_URL")
 	modelKey := CanonicalSettingName("NORNICDB_EMBEDDING_MODEL")
+	modeKey := CanonicalSettingName("NORNICDB_EMBEDDING_MODE")
 	dimensionsKey := CanonicalSettingName("NORNICDB_EMBEDDING_DIMENSIONS")
 
 	hasOverride := func(key string) bool {
@@ -137,6 +138,7 @@ func resolveEmbeddingProviderDefaults(global *config.Config, resolved *ResolvedD
 		Provider:   resolved.Effective[providerKey],
 		APIURL:     resolved.Effective[apiURLKey],
 		Model:      resolved.Effective[modelKey],
+		Mode:       resolved.Effective[modeKey],
 		Dimensions: resolved.EmbeddingDimensions,
 	}, embed.ProviderConfigExplicit{
 		APIURL:     global.EmbeddingExplicit.APIURL || hasOverride(apiURLKey),

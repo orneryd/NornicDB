@@ -173,4 +173,28 @@ func TestApplyEmbeddingProviderDefaultsOrca(t *testing.T) {
 			t.Fatalf("resolved YAML settings = %+v", cfg.Memory)
 		}
 	})
+
+	t.Run("voyage replaces inherited defaults but preserves explicit settings", func(t *testing.T) {
+		cfg := config.LoadDefaults()
+		cfg.Memory.EmbeddingProvider = "voyage"
+		cfg.Memory.EmbeddingMode = "contextualized"
+
+		applyEmbeddingProviderDefaults(cfg)
+
+		if cfg.Memory.EmbeddingProvider != "voyage" ||
+			cfg.Memory.EmbeddingAPIURL != "https://api.voyageai.com" ||
+			cfg.Memory.EmbeddingModel != "voyage-context-4" ||
+			cfg.Memory.EmbeddingDimensions != 1024 {
+			t.Fatalf("resolved Voyage defaults = %+v", cfg.Memory)
+		}
+
+		cfg = config.LoadDefaults()
+		cfg.Memory.EmbeddingProvider = "voyage"
+		cfg.EmbeddingExplicit.APIURL = true
+		cfg.Memory.EmbeddingAPIURL = "http://localhost:11434"
+		applyEmbeddingProviderDefaults(cfg)
+		if cfg.Memory.EmbeddingAPIURL != "http://localhost:11434" {
+			t.Fatalf("explicit API URL = %q", cfg.Memory.EmbeddingAPIURL)
+		}
+	})
 }

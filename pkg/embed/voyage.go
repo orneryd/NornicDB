@@ -34,6 +34,35 @@ func DefaultVoyageConfig(apiKey string) *Config {
 	}
 }
 
+func resolveVoyageConfig(config *Config) *Config {
+	defaults := DefaultVoyageConfig("")
+	if config == nil {
+		return defaults
+	}
+	cfg := *config
+	cfg.Provider = "voyage"
+	if strings.TrimSpace(cfg.APIURL) == "" {
+		cfg.APIURL = defaults.APIURL
+	}
+	if strings.TrimSpace(cfg.APIPath) == "" {
+		cfg.APIPath = defaults.APIPath
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		if normalizeVoyageMode(cfg.Mode) == VoyageModeContextualized {
+			cfg.Model = voyageapi.DefaultContextModel
+		} else {
+			cfg.Model = defaults.Model
+		}
+	}
+	if cfg.Dimensions <= 0 {
+		cfg.Dimensions = defaults.Dimensions
+	}
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = defaults.Timeout
+	}
+	return &cfg
+}
+
 // VoyageEmbedder implements Embedder for Voyage AI embeddings.
 type VoyageEmbedder struct {
 	config       *Config
