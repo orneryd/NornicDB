@@ -47,6 +47,7 @@ func TestImportOKFDocumentationCorpusPGM(t *testing.T) {
 	engine := storage.NewNamespacedEngine(base, "knowledge")
 	nodes, err := engine.AllNodes()
 	require.NoError(t, err)
+	nodes = okfConceptNodes(nodes, "_okf_concept_id")
 	require.Len(t, nodes, 3)
 	byConceptID := make(map[string]*storage.Node, len(nodes))
 	for _, node := range nodes {
@@ -125,6 +126,8 @@ func TestImportOKFPropertyMapWritesRequestedStorageProperties(t *testing.T) {
 	engine := storage.NewNamespacedEngine(base, "knowledge")
 	nodes, err := engine.AllNodes()
 	require.NoError(t, err)
+	nodes = okfConceptNodes(nodes, "concept_key")
+	require.Len(t, nodes, 3)
 	for _, node := range nodes {
 		require.NotContains(t, node.Properties, "_okf_concept_id")
 		require.NotContains(t, node.Properties, "_okf_frontmatter")
@@ -138,6 +141,16 @@ func TestImportOKFPropertyMapWritesRequestedStorageProperties(t *testing.T) {
 		require.Contains(t, edge.Properties, "relationship_metadata")
 		require.NotContains(t, edge.Properties, "_pgm_properties")
 	}
+	exportPath := filepath.Join(t.TempDir(), "mapped-export")
+	exportReport, err := ExportOKF(context.Background(), base, OKFExportOptions{
+		DatabaseName: "knowledge",
+		ToPath:       exportPath,
+		PropertyMap:  propertyMap,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 3, exportReport.ConceptsExported)
+	_, err = ValidateOKF(OKFImportOptions{DatabaseName: "knowledge", FromPath: exportPath, Profile: PGMProfile})
+	require.NoError(t, err)
 
 	_, err = ImportOKF(context.Background(), base, OKFImportOptions{
 		DatabaseName: "knowledge",
@@ -147,6 +160,48 @@ func TestImportOKFPropertyMapWritesRequestedStorageProperties(t *testing.T) {
 		Now:          fixedImportTime,
 	})
 	require.ErrorContains(t, err, "already contains concepts")
+}
+
+func TestExportOKFDocumentationCorpusRoundTripsSourceBundle(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	sourcePath := okfDocumentationCorpusPath(t)
+	_, err := ImportOKF(context.Background(), base, OKFImportOptions{
+		DatabaseName: "knowledge",
+		FromPath:     sourcePath,
+		Profile:      PGMProfile,
+		Now:          fixedImportTime,
+	})
+	require.NoError(t, err)
+
+	outputPath := filepath.Join(t.TempDir(), "exported-bundle")
+	report, err := ExportOKF(context.Background(), base, OKFExportOptions{
+		DatabaseName: "knowledge",
+		ToPath:       outputPath,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 3, report.ConceptsExported)
+	require.Equal(t, 3, report.ReservedFilesExported)
+
+	validation, err := ValidateOKF(OKFImportOptions{
+		DatabaseName: "knowledge",
+		FromPath:     outputPath,
+		Profile:      PGMProfile,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, validation.UnresolvedRelationships)
+
+	for _, reservedPath := range []string{"index.md", "log.md", "architecture/index.md"} {
+		source, err := os.ReadFile(filepath.Join(sourcePath, reservedPath))
+		require.NoError(t, err)
+		exported, err := os.ReadFile(filepath.Join(outputPath, reservedPath))
+		require.NoError(t, err)
+		require.Equal(t, string(source), string(exported))
+	}
+
+	exportedConcept, err := os.ReadFile(filepath.Join(outputPath, "architecture", "system.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(exportedConcept), "[hybrid-search reference][hybrid-reference]")
+	require.Contains(t, string(exportedConcept), "[A link in a code example](../operations/admin-import.md)")
 }
 
 func TestLoadPropertyMap(t *testing.T) {
@@ -188,4 +243,14 @@ func writeOKFFixture(root, relativePath, content string) error {
 		return err
 	}
 	return os.WriteFile(filePath, []byte(content), 0o600)
+}
+
+func okfConceptNodes(nodes []*storage.Node, conceptIDProperty string) []*storage.Node {
+	concepts := make([]*storage.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if _, ok := node.Properties[conceptIDProperty].(string); ok {
+			concepts = append(concepts, node)
+		}
+	}
+	return concepts
 }

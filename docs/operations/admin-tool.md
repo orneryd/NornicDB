@@ -91,6 +91,16 @@ The optional `--property-map` points to an environment-style file of
 `_okf_frontmatter=source_metadata` changes the storage property used for the
 preserved frontmatter without duplicating it.
 
+Export an imported bundle to an empty directory with the same map when one was
+used during import:
+
+```bash
+nornicdb-admin database export okf knowledge \
+  --to-path=./exported-bundle \
+  --property-map=./properties.env \
+  --data-dir=./data
+```
+
 ## Multi-File Sources
 
 The first file in a source must contain the header. Additional files in the same source are read as data files.

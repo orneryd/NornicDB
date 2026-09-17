@@ -1,6 +1,6 @@
 # OKF and Property Graph Markdown Admin Interchange Plan
 
-**Status:** Proposed — revised after OKF 0.2 and Property Graph Markdown (PGM) review
+**Status:** Initial directory import/export implemented — revised after OKF 0.2 and Property Graph Markdown (PGM) review
 
 ## Decision
 
@@ -115,6 +115,10 @@ nornicdb-admin database import okf knowledge \
   --profile okf \
   --mode fail-if-exists \
   --property-map ./properties.env
+
+nornicdb-admin database export okf knowledge \
+  --to-path ./exported-bundle \
+  --property-map ./properties.env
 ```
 
 `properties.env` uses `source_property=storage_property` assignments, for example `_okf_frontmatter=source_metadata`. The same mapping applies to node and relationship properties.
@@ -159,13 +163,13 @@ The report includes effective profile, versions, input root, node count, resolve
 
 ## Export contract
 
-### `--scope=imported` — initial source-fidelity export
+### Imported-bundle export — implemented
 
 Exports only nodes with `_okf_bundle` and `_okf_path` for the selected database namespace. It writes concept files from `_okf_frontmatter` and `_okf_body` in lexical `_okf_path` order. The original body contains original Markdown links, so this retains unresolved links, repeated links, fragments, ordinary titles, and PGM annotations without reconstructing them from database edges.
 
 This is the supported round trip: `OKF/PGM bundle → NornicDB adapter → bundle` preserves the upstream data model. PGM itself does not preserve presentation-only YAML details such as comments, styles, anchors, aliases, or mapping order when canonicalization is selected.
 
-If a node or adapter-owned edge changed through Cypher after import, export reports source divergence. `--on-divergence=fail|preserve-source|project` defaults to `fail`; `preserve-source` emits the original bundle and reports graph edits as not exported; `project` is deferred until generic projection exists.
+The initial exporter writes the preserved frontmatter/body and retained reserved files. It requires an empty output directory and accepts the same property map that was used at import. Source-divergence detection is deferred with generic projection.
 
 ### `--scope=project` — later and explicitly lossy
 

@@ -12,6 +12,8 @@
   other: Reserved incremental import command
 - id: admincli.okf_import_short
   other: Import an Open Knowledge Format bundle
+- id: admincli.okf_export_short
+  other: Export an imported Open Knowledge Format bundle
 - id: admincli.export_short
   other: Export database data for offline migration
 - id: admincli.neo4j_csv_export_short
@@ -71,7 +73,7 @@
 - id: admincli.flag.verbose
   other: Verbose logging
 - id: admincli.flag.to_path
-  other: Output directory for Neo4j-compatible CSV files
+  other: Output directory
 - id: admincli.incremental_not_implemented
   other: database import incremental is not implemented yet
 - id: admincli.database_info_not_implemented

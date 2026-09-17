@@ -44,6 +44,13 @@ type OKFImportOptions struct {
 	Now         time.Time
 }
 
+// OKFExportOptions configures an offline export of an imported OKF bundle.
+type OKFExportOptions struct {
+	DatabaseName string
+	ToPath       string
+	PropertyMap  map[string]string
+}
+
 // OKFDiagnostic is a stable, machine-readable import finding.
 type OKFDiagnostic struct {
 	Code    string `json:"code"`
@@ -62,6 +69,14 @@ type OKFReport struct {
 	Warnings                []OKFDiagnostic `json:"warnings,omitempty"`
 }
 
+// OKFExportReport summarizes files written by ExportOKF.
+type OKFExportReport struct {
+	DatabaseName          string          `json:"databaseName"`
+	ConceptsExported      int             `json:"conceptsExported"`
+	ReservedFilesExported int             `json:"reservedFilesExported"`
+	Warnings              []OKFDiagnostic `json:"warnings,omitempty"`
+}
+
 type okfConcept struct {
 	ID          string
 	Path        string
@@ -70,6 +85,11 @@ type okfConcept struct {
 	Links       []okfLink
 	Unresolved  []okfUnresolvedLink
 	NodeID      storage.NodeID
+}
+
+type okfBundle struct {
+	Concepts      []okfConcept
+	ReservedFiles map[string]string
 }
 
 type okfLink struct {
@@ -89,11 +109,11 @@ type okfUnresolvedLink struct {
 // ValidateOKF parses an OKF directory without writing database state.
 func ValidateOKF(opts OKFImportOptions) (OKFReport, error) {
 	opts = okfDefaults(opts)
-	concepts, report, err := loadOKFBundle(opts)
+	bundle, report, err := loadOKFBundle(opts)
 	if err != nil {
 		return report, err
 	}
-	_ = concepts
+	_ = bundle
 	return report, nil
 }
 
@@ -101,7 +121,7 @@ func ValidateOKF(opts OKFImportOptions) (OKFReport, error) {
 // It never starts a server or generates embeddings.
 func ImportOKF(ctx context.Context, engine storage.Engine, opts OKFImportOptions) (OKFReport, error) {
 	opts = okfDefaults(opts)
-	concepts, report, err := loadOKFBundle(opts)
+	bundle, report, err := loadOKFBundle(opts)
 	if err != nil {
 		return report, err
 	}
@@ -116,6 +136,7 @@ func ImportOKF(ctx context.Context, engine storage.Engine, opts OKFImportOptions
 		return report, err
 	}
 
+	concepts := bundle.Concepts
 	byID := make(map[string]*okfConcept, len(concepts))
 	for i := range concepts {
 		concept := &concepts[i]
@@ -138,7 +159,7 @@ func ImportOKF(ctx context.Context, engine storage.Engine, opts OKFImportOptions
 			edges = append(edges, edge)
 		}
 	}
-	nodes := make([]*storage.Node, 0, len(concepts))
+	nodes := make([]*storage.Node, 0, len(concepts)+1)
 	for i := range concepts {
 		node, nodeErr := okfNode(&concepts[i], opts)
 		if nodeErr != nil {
@@ -146,10 +167,15 @@ func ImportOKF(ctx context.Context, engine storage.Engine, opts OKFImportOptions
 		}
 		nodes = append(nodes, node)
 	}
+	metadataNode, metadataErr := okfBundleMetadataNode(bundle.ReservedFiles, opts)
+	if metadataErr != nil {
+		return report, metadataErr
+	}
+	nodes = append(nodes, metadataNode)
 	if err := createNodesInChunks(ctx, target, nodes, opts.ChunkSize); err != nil {
 		return report, err
 	}
-	report.ConceptsImported = len(nodes)
+	report.ConceptsImported = len(concepts)
 	if err := createEdgesInChunks(ctx, target, edges, opts.ChunkSize); err != nil {
 		return report, err
 	}
@@ -208,24 +234,24 @@ func LoadPropertyMap(filePath string) (map[string]string, error) {
 	return propertyMap, nil
 }
 
-func loadOKFBundle(opts OKFImportOptions) ([]okfConcept, OKFReport, error) {
+func loadOKFBundle(opts OKFImportOptions) (okfBundle, OKFReport, error) {
 	report := OKFReport{DatabaseName: opts.DatabaseName, Profile: opts.Profile}
 	if strings.TrimSpace(opts.DatabaseName) == "" {
-		return nil, report, okfError("database name is required")
+		return okfBundle{}, report, okfError("database name is required")
 	}
 	if opts.Profile != OKFProfile && opts.Profile != PGMProfile {
-		return nil, report, &Error{ExitCode: ExitUnsupported, Message: "unsupported OKF profile: " + opts.Profile}
+		return okfBundle{}, report, &Error{ExitCode: ExitUnsupported, Message: "unsupported OKF profile: " + opts.Profile}
 	}
 	root, err := filepath.Abs(opts.FromPath)
 	if err != nil || strings.TrimSpace(opts.FromPath) == "" {
-		return nil, report, okfError("OKF source directory is required")
+		return okfBundle{}, report, okfError("OKF source directory is required")
 	}
 	info, err := os.Stat(root)
 	if err != nil {
-		return nil, report, okfError("open OKF source: " + err.Error())
+		return okfBundle{}, report, okfError("open OKF source: " + err.Error())
 	}
 	if !info.IsDir() {
-		return nil, report, okfError("OKF source must be a directory")
+		return okfBundle{}, report, okfError("OKF source must be a directory")
 	}
 
 	var files []string
@@ -243,39 +269,41 @@ func loadOKFBundle(opts OKFImportOptions) ([]okfConcept, OKFReport, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, report, err
+		return okfBundle{}, report, err
 	}
 	sort.Strings(files)
 	concepts := make([]okfConcept, 0, len(files))
+	reservedFiles := make(map[string]string)
 	seen := make(map[string]struct{})
 	for _, filePath := range files {
 		rel, relErr := filepath.Rel(root, filePath)
 		if relErr != nil {
-			return nil, report, relErr
+			return okfBundle{}, report, relErr
 		}
 		rel = filepath.ToSlash(rel)
 		base := path.Base(rel)
 		data, readErr := os.ReadFile(filePath)
 		if readErr != nil {
-			return nil, report, readErr
+			return okfBundle{}, report, readErr
 		}
 		if base == "index.md" || base == "log.md" {
 			if reservedErr := validateReservedOKFFile(rel, string(data)); reservedErr != nil {
-				return nil, report, reservedErr
+				return okfBundle{}, report, reservedErr
 			}
+			reservedFiles[rel] = string(data)
 			continue
 		}
 		frontmatter, body, parseErr := splitOKFFrontmatter(rel, string(data))
 		if parseErr != nil {
-			return nil, report, parseErr
+			return okfBundle{}, report, parseErr
 		}
 		typeValue, ok := frontmatter["type"].(string)
 		if !ok || strings.TrimSpace(typeValue) == "" {
-			return nil, report, okfErrorAt(rel, 1, "missing_type", "concept frontmatter requires a non-empty type")
+			return okfBundle{}, report, okfErrorAt(rel, 1, "missing_type", "concept frontmatter requires a non-empty type")
 		}
 		id := strings.TrimSuffix(rel, ".md")
 		if _, exists := seen[id]; exists {
-			return nil, report, okfErrorAt(rel, 1, "duplicate_concept_id", "duplicate concept ID: "+id)
+			return okfBundle{}, report, okfErrorAt(rel, 1, "duplicate_concept_id", "duplicate concept ID: "+id)
 		}
 		seen[id] = struct{}{}
 		links, warnings := parseOKFLinks(rel, id, body, opts.Profile)
@@ -284,7 +312,7 @@ func loadOKFBundle(opts OKFImportOptions) ([]okfConcept, OKFReport, error) {
 	}
 	annotateOKFUnresolvedRelationships(concepts, &report)
 	sortDiagnostics(report.Warnings)
-	return concepts, report, nil
+	return okfBundle{Concepts: concepts, ReservedFiles: reservedFiles}, report, nil
 }
 
 func annotateOKFUnresolvedRelationships(concepts []okfConcept, report *OKFReport) {
@@ -455,6 +483,143 @@ func okfNode(concept *okfConcept, opts OKFImportOptions) (*storage.Node, error) 
 		}
 	}
 	return &storage.Node{ID: concept.NodeID, Properties: props, CreatedAt: opts.Now, UpdatedAt: opts.Now}, nil
+}
+
+func okfBundleMetadataNode(reservedFiles map[string]string, opts OKFImportOptions) (*storage.Node, error) {
+	encoded, err := json.Marshal(reservedFiles)
+	if err != nil {
+		return nil, okfError("encode reserved OKF files: " + err.Error())
+	}
+	properties := make(map[string]any, 2)
+	if err := setMappedOKFProperty(properties, opts, "_okf_bundle_metadata", string(encoded)); err != nil {
+		return nil, err
+	}
+	if err := setMappedOKFProperty(properties, opts, "_okf_bundle", opts.DatabaseName); err != nil {
+		return nil, err
+	}
+	return &storage.Node{
+		ID:         storage.NodeID("okf-bundle-metadata"),
+		Properties: properties,
+		CreatedAt:  opts.Now,
+		UpdatedAt:  opts.Now,
+	}, nil
+}
+
+// ExportOKF writes the original OKF source representation of an imported bundle.
+// The target directory must be empty so export cannot overwrite unrelated files.
+func ExportOKF(ctx context.Context, engine storage.Engine, opts OKFExportOptions) (OKFExportReport, error) {
+	report := OKFExportReport{DatabaseName: opts.DatabaseName}
+	if strings.TrimSpace(opts.DatabaseName) == "" {
+		return report, okfError("database name is required")
+	}
+	if strings.TrimSpace(opts.ToPath) == "" {
+		return report, okfError("OKF output directory is required")
+	}
+	if engine == nil {
+		return report, okfError("storage engine is required")
+	}
+	if err := ensureEmptyOKFOutputDirectory(opts.ToPath); err != nil {
+		return report, err
+	}
+
+	target := storage.NewNamespacedEngine(engine, opts.DatabaseName)
+	nodes, err := target.AllNodes()
+	if err != nil {
+		return report, err
+	}
+	metadataName := okfPropertyName(OKFImportOptions{PropertyMap: opts.PropertyMap}, "_okf_bundle_metadata")
+	conceptIDName := okfPropertyName(OKFImportOptions{PropertyMap: opts.PropertyMap}, "_okf_concept_id")
+	pathName := okfPropertyName(OKFImportOptions{PropertyMap: opts.PropertyMap}, "_okf_path")
+	frontmatterName := okfPropertyName(OKFImportOptions{PropertyMap: opts.PropertyMap}, "_okf_frontmatter")
+	bodyName := okfPropertyName(OKFImportOptions{PropertyMap: opts.PropertyMap}, "_okf_body")
+
+	var reservedFiles map[string]string
+	concepts := make([]*storage.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if raw, metadata := node.Properties[metadataName].(string); metadata {
+			if err := json.Unmarshal([]byte(raw), &reservedFiles); err != nil {
+				return report, okfError("decode reserved OKF files: " + err.Error())
+			}
+			continue
+		}
+		if _, concept := node.Properties[conceptIDName].(string); concept {
+			concepts = append(concepts, node)
+		}
+	}
+	if len(concepts) == 0 {
+		return report, okfError("database does not contain an imported OKF bundle")
+	}
+	sort.Slice(concepts, func(i, j int) bool {
+		return concepts[i].Properties[pathName].(string) < concepts[j].Properties[pathName].(string)
+	})
+	for _, node := range concepts {
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
+		pathValue, pathOK := node.Properties[pathName].(string)
+		frontmatter, frontmatterOK := node.Properties[frontmatterName].(string)
+		body, bodyOK := node.Properties[bodyName].(string)
+		if !pathOK || !frontmatterOK || !bodyOK {
+			return report, okfError("imported OKF concept is missing preserved source properties")
+		}
+		if err := writeOKFConcept(opts.ToPath, pathValue, frontmatter, body); err != nil {
+			return report, err
+		}
+		report.ConceptsExported++
+	}
+	if len(reservedFiles) == 0 {
+		reservedFiles = map[string]string{"index.md": "---\nokf_version: \"0.2\"\n---\n"}
+	}
+	for relativePath, content := range reservedFiles {
+		if err := writeOKFFile(opts.ToPath, relativePath, content, true); err != nil {
+			return report, err
+		}
+		report.ReservedFilesExported++
+	}
+	return report, nil
+}
+
+func ensureEmptyOKFOutputDirectory(outputDir string) error {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return okfError("OKF output directory must be empty")
+	}
+	return nil
+}
+
+func writeOKFConcept(outputDir, relativePath, encodedFrontmatter, body string) error {
+	var frontmatter map[string]any
+	if err := json.Unmarshal([]byte(encodedFrontmatter), &frontmatter); err != nil {
+		return okfError("decode imported frontmatter: " + err.Error())
+	}
+	encoded, err := yaml.Marshal(frontmatter)
+	if err != nil {
+		return okfError("encode exported frontmatter: " + err.Error())
+	}
+	content := "---\n" + string(encoded) + "---\n" + body
+	return writeOKFFile(outputDir, relativePath, content, false)
+}
+
+func writeOKFFile(outputDir, relativePath, content string, reserved bool) error {
+	relativePath = filepath.ToSlash(relativePath)
+	clean := path.Clean(relativePath)
+	if clean == "." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) || !strings.HasSuffix(clean, ".md") {
+		return okfError("invalid OKF output path: " + relativePath)
+	}
+	if reserved != (path.Base(clean) == "index.md" || path.Base(clean) == "log.md") {
+		return okfError("invalid OKF reserved output path: " + relativePath)
+	}
+	outputPath := filepath.Join(outputDir, filepath.FromSlash(clean))
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(outputPath, []byte(content), 0o600)
 }
 
 func okfEdge(source, target *okfConcept, link okfLink, ordinal int, opts OKFImportOptions) (*storage.Edge, error) {

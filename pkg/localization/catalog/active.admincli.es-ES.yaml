@@ -12,6 +12,8 @@
   other: Comando reservado para la importación incremental
 - id: admincli.okf_import_short
   other: Importar un paquete Open Knowledge Format
+- id: admincli.okf_export_short
+  other: Exportar un paquete Open Knowledge Format importado
 - id: admincli.export_short
   other: Exportar datos de la base de datos para una migración sin conexión
 - id: admincli.neo4j_csv_export_short
@@ -71,7 +73,7 @@
 - id: admincli.flag.verbose
   other: Registro detallado
 - id: admincli.flag.to_path
-  other: Directorio de salida para archivos CSV compatibles con Neo4j
+  other: Directorio de salida
 - id: admincli.incremental_not_implemented
   other: la importación incremental de bases de datos aún no está implementada
 - id: admincli.database_info_not_implemented

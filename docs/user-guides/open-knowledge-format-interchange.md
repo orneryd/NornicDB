@@ -17,7 +17,7 @@ nornicdb-admin database import okf knowledge \
 
 The importer accepts a directory. Every non-reserved `.md` file must start with YAML frontmatter containing a non-empty `type`. `index.md` and `log.md` are reserved navigation/history files and are validated but not imported as nodes. Root `index.md` may declare `okf_version: "0.2"`; nested indexes cannot have frontmatter, and `log.md` cannot have frontmatter.
 
-The default `fail-if-exists` mode protects an existing imported bundle in the target database namespace. `merge`, `replace`, archive input, and export are planned separately and are not accepted by this importer yet.
+The default `fail-if-exists` mode protects an existing imported bundle in the target database namespace. `merge`, `replace`, and archive input are planned separately and are not accepted by this importer yet.
 
 `--property-map` is optional. It names an environment-style text file of
 `source_property=storage_property` assignments. It applies to every property
@@ -34,6 +34,21 @@ type=concept_type
 With this map, the node contains `source_metadata`, `markdown`, and
 `concept_type`; it does not receive second copies at `_okf_frontmatter`,
 `_okf_body`, or `type`. The map also applies to relationship properties.
+
+## Export an imported bundle
+
+```bash
+nornicdb-admin database export okf knowledge \
+  --to-path ./exported-bundle \
+  --property-map ./properties.env \
+  --data-dir ./data
+```
+
+Export accepts only an empty output directory and exports concept nodes that
+carry the preserved-source properties from a prior OKF import. Pass the same
+property-map used for import when you renamed those properties. The exporter
+recreates concept Markdown from preserved frontmatter and body and restores
+the reserved `index.md` and `log.md` files retained with the imported bundle.
 
 ## Graph projection
 

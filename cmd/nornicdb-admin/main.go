@@ -146,6 +146,16 @@ func newRootCmdWithManager(manager *localization.Manager) *cobra.Command {
 
 	importCmd.AddCommand(fullCmd, incrementalCmd, okfCmd)
 	exportCmd := &cobra.Command{Use: "export", Short: text(localization.AdminCLIExportShort())}
+	exportOKFCmd := &cobra.Command{
+		Use:   "okf <db-name>",
+		Short: text(localization.AdminCLIOKFExportShort()),
+		Args:  localizedExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runExportOKF(args[0], *dataDir, cmd)
+		},
+	}
+	exportOKFCmd.Flags().String("to-path", "", text(localization.AdminCLIToPathFlag()))
+	exportOKFCmd.Flags().String("property-map", "", text(localization.AdminCLIPropertyMapFlag()))
 	exportNeo4jCSVCmd := &cobra.Command{
 		Use:   "neo4j-csv <db-name>",
 		Short: text(localization.AdminCLINeo4jCSVExportShort()),
@@ -159,7 +169,7 @@ func newRootCmdWithManager(manager *localization.Manager) *cobra.Command {
 	exportNeo4jCSVCmd.Flags().String("array-delimiter", ";", text(localization.AdminCLIArrayDelimiterFlag()))
 	exportNeo4jCSVCmd.Flags().String("vector-delimiter", ";", text(localization.AdminCLIVectorDelimiterFlag()))
 	exportNeo4jCSVCmd.Flags().String("quote", "\"", text(localization.AdminCLIQuoteFlag()))
-	exportCmd.AddCommand(exportNeo4jCSVCmd)
+	exportCmd.AddCommand(exportNeo4jCSVCmd, exportOKFCmd)
 	databaseCmd.AddCommand(importCmd)
 	databaseCmd.AddCommand(exportCmd)
 	databaseCmd.AddCommand(&cobra.Command{Use: "info <db-name>", Args: localizedExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -405,6 +415,34 @@ func runExportNeo4jCSV(dbName string, dataDir string, cmd *cobra.Command) error 
 		VectorDelimiter: firstRune(vectorDelimiter, ';'),
 		Quote:           firstRune(quote, '"'),
 	})
+}
+
+func runExportOKF(dbName string, dataDir string, cmd *cobra.Command) error {
+	toPath, _ := cmd.Flags().GetString("to-path")
+	propertyMapFile, _ := cmd.Flags().GetString("property-map")
+	if strings.TrimSpace(toPath) == "" {
+		return newLocalizedCommandError(localization.AdminCLIToPathRequired())
+	}
+	var propertyMap map[string]string
+	if strings.TrimSpace(propertyMapFile) != "" {
+		var err error
+		propertyMap, err = adminimport.LoadPropertyMap(propertyMapFile)
+		if err != nil {
+			return err
+		}
+	}
+
+	engine, err := storage.NewBadgerEngine(dataDir)
+	if err != nil {
+		return err
+	}
+	defer engine.Close()
+	_, err = adminimport.ExportOKF(context.Background(), engine, adminimport.OKFExportOptions{
+		DatabaseName: dbName,
+		ToPath:       toPath,
+		PropertyMap:  propertyMap,
+	})
+	return err
 }
 
 func firstRune(value string, fallback rune) rune {

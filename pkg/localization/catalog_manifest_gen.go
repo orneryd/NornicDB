@@ -62,6 +62,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "admincli.incremental_import_short", Constructor: "AdminCLIIncrementalImportShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.incremental_not_implemented", Constructor: "AdminCLIIncrementalNotImplemented", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.neo4j_csv_export_short", Constructor: "AdminCLINeo4jCSVExportShort", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "admincli.okf_export_short", Constructor: "AdminCLIOKFExportShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.okf_import_short", Constructor: "AdminCLIOKFImportShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.root_short", Constructor: "AdminCLIRootShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.server_short", Constructor: "AdminCLIServerShort", Fields: []string{}, PluralForms: []string{"other"}},

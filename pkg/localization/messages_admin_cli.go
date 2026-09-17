@@ -13,6 +13,7 @@ const (
 	MessageAdminCLIFullImportShort             MessageID = "admincli.full_import_short"
 	MessageAdminCLIIncrementalImportShort      MessageID = "admincli.incremental_import_short"
 	MessageAdminCLIOKFImportShort              MessageID = "admincli.okf_import_short"
+	MessageAdminCLIOKFExportShort              MessageID = "admincli.okf_export_short"
 	MessageAdminCLIExportShort                 MessageID = "admincli.export_short"
 	MessageAdminCLINeo4jCSVExportShort         MessageID = "admincli.neo4j_csv_export_short"
 	MessageAdminCLIServerShort                 MessageID = "admincli.server_short"
@@ -86,6 +87,9 @@ func AdminCLIIncrementalImportShort() Message {
 }
 func AdminCLIOKFImportShort() Message {
 	return Message{ID: MessageAdminCLIOKFImportShort, Fallback: "Import an Open Knowledge Format bundle"}
+}
+func AdminCLIOKFExportShort() Message {
+	return Message{ID: MessageAdminCLIOKFExportShort, Fallback: "Export an imported Open Knowledge Format bundle"}
 }
 func AdminCLIExportShort() Message {
 	return Message{ID: MessageAdminCLIExportShort, Fallback: "Export database data for offline migration"}
@@ -175,7 +179,7 @@ func AdminCLIVerboseFlag() Message {
 	return Message{ID: MessageAdminCLIVerboseFlag, Fallback: "Verbose logging"}
 }
 func AdminCLIToPathFlag() Message {
-	return Message{ID: MessageAdminCLIToPathFlag, Fallback: "Output directory for Neo4j-compatible CSV files"}
+	return Message{ID: MessageAdminCLIToPathFlag, Fallback: "Output directory"}
 }
 func AdminCLIIncrementalNotImplemented() Message {
 	return Message{ID: MessageAdminCLIIncrementalNotImplemented, Fallback: "database import incremental is not implemented yet"}
