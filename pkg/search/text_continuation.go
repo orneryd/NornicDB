@@ -232,10 +232,11 @@ func (s *Service) SearchTextContinuation(
 		preparation := &cachedTextPreparation{embeds: make(map[string]cachedEmbedding)}
 		cachedChunks := preparation.chunker(chunkQuery)
 		cachedEmbeds := preparation.embedder(embedQuery)
+		rerankContext := withRerankMemo(ctx, newRerankMemo())
 		if rankedLimit > 0 {
 			ownedOptions.Limit = rankedLimit
 		}
-		ranked, err := SearchTextChunksWithErrorPolicy(ctx, query, &ownedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
+		ranked, err := SearchTextChunksWithErrorPolicy(rerankContext, query, &ownedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
 		plateau := newContinuationPlateauTracker(0)
 		if err == nil && ranked != nil {
 			plateau = newContinuationPlateauTracker(len(ranked.Results))
@@ -256,7 +257,7 @@ func (s *Service) SearchTextContinuation(
 				nextLimit = depthLimit
 			}
 			ownedOptions.Limit = nextLimit
-			ranked, err = SearchTextChunksWithErrorPolicy(ctx, query, &ownedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
+			ranked, err = SearchTextChunksWithErrorPolicy(rerankContext, query, &ownedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
 			if err == nil && plateau.budgetReached(ranked) {
 				ranked = markContinuationCandidateBudget(ranked)
 			}
@@ -295,7 +296,8 @@ func (s *Service) SearchTextContinuation(
 	preparation := &cachedTextPreparation{embeds: make(map[string]cachedEmbedding)}
 	cachedChunks := preparation.chunker(chunkQuery)
 	cachedEmbeds := preparation.embedder(embedQuery)
-	initial, err := SearchTextChunksWithErrorPolicy(ctx, query, &ownedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
+	rerankMemo := newRerankMemo()
+	initial, err := SearchTextChunksWithErrorPolicy(withRerankMemo(ctx, rerankMemo), query, &ownedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +344,7 @@ func (s *Service) SearchTextContinuation(
 		depth = min(depth, depthLimit)
 		expandedOptions := cloneContinuationSearchOptions(&ownedOptions)
 		expandedOptions.Limit = depth
-		response, expandErr := SearchTextChunksWithErrorPolicy(expandCtx, query, &expandedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
+		response, expandErr := SearchTextChunksWithErrorPolicy(withRerankMemo(expandCtx, rerankMemo), query, &expandedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
 		if expandErr != nil {
 			return nil, false, expandErr
 		}

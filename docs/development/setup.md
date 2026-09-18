@@ -164,6 +164,7 @@ go test ./pkg/nornicdb/...
 | `NORNICDB_HEIMDALL_MODEL`         | Heimdall LLM model                                    | `models/qwen3-0.6b-instruct-q4_k_m.gguf` |
 | `NORNICDB_SEARCH_RERANK_ENABLED`  | Enable Stage-2 search reranking                       | `false`                                  |
 | `NORNICDB_SEARCH_RERANK_PROVIDER` | Reranker backend: `local`, `ollama`, `openai`, `http` | `local`                                  |
+| `NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES` | Maximum focused passage bytes per rerank candidate | `4096` |
 | `NORNICDB_PLUGINS_DIR`            | APOC plugins directory                                | `apoc/built-plugins`                     |
 
 ## IDE Setup

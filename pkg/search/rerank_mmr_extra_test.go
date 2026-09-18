@@ -3,7 +3,9 @@ package search
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -14,6 +16,26 @@ type coverageReranker struct {
 	results []RerankResult
 	err     error
 	seen    []RerankCandidate
+}
+
+type recordingReranker struct {
+	calls [][]RerankCandidate
+}
+
+func (r *recordingReranker) Name() string                     { return "recording_reranker" }
+func (r *recordingReranker) Enabled() bool                    { return true }
+func (r *recordingReranker) IsAvailable(context.Context) bool { return true }
+func (r *recordingReranker) Rerank(_ context.Context, _ string, candidates []RerankCandidate) ([]RerankResult, error) {
+	r.calls = append(r.calls, append([]RerankCandidate(nil), candidates...))
+	results := make([]RerankResult, len(candidates))
+	for i, candidate := range candidates {
+		results[i] = RerankResult{
+			ID:         candidate.ID,
+			BiScore:    candidate.Score,
+			FinalScore: 1 - float64(i)/10,
+		}
+	}
+	return results, nil
 }
 
 func (r *coverageReranker) Name() string  { return "coverage_reranker" }
@@ -124,4 +146,122 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	reranker := &coverageReranker{enabled: true, results: []RerankResult{{ID: "nornic:b", BiScore: 0.8, FinalScore: 0.95}, {ID: "missing", BiScore: 0.1, FinalScore: 0.2}, {ID: "nornic:a", BiScore: 0.9, FinalScore: 0.1}}}
 	reranked := svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{RerankMinScore: 0.15}, nil, reranker)
 	require.Equal(t, []rrfResult{{ID: "nornic:b", RRFScore: 0.95, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.8}, {ID: "missing", RRFScore: 0.2, OriginalScore: 0.1}}, reranked)
+}
+
+func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { engine.Close() })
+	svc := NewServiceWithDimensions(engine, 2)
+
+	longPrefix := strings.Repeat("предисловие ", 80)
+	longSuffix := strings.Repeat(" заключение", 80)
+	nodes := []*storage.Node{
+		{
+			ID:         "nornic:vector",
+			Labels:     []string{"Doc"},
+			Properties: map[string]interface{}{"text": longPrefix + "whole node" + longSuffix},
+			EmbedMeta:  map[string]interface{}{"chunk_texts": []string{"first passage", "matching vector passage"}},
+		},
+		{
+			ID:         "nornic:bm25",
+			Labels:     []string{"Doc"},
+			Properties: map[string]interface{}{"text": longPrefix + "alpha tango sierra" + longSuffix},
+		},
+		{
+			ID:         "nornic:prefix",
+			Labels:     []string{"Doc"},
+			Properties: map[string]interface{}{"text": strings.Repeat("я", 100)},
+		},
+	}
+	for _, node := range nodes {
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+	}
+
+	reranker := &recordingReranker{}
+	results := []rrfResult{
+		{ID: "nornic:vector", MatchID: "nornic:vector-chunk-1", RRFScore: 0.9, VectorRank: 1},
+		{ID: "nornic:bm25", RRFScore: 0.8, BM25Rank: 1},
+		{ID: "nornic:prefix", RRFScore: 0.7},
+	}
+	svc.applyStage2Rerank(context.Background(), "alpha tango", results, &SearchOptions{RerankMaxBytes: 96}, nil, reranker)
+
+	require.Len(t, reranker.calls, 1)
+	require.Len(t, reranker.calls[0], 3)
+	require.Equal(t, "matching vector passage", reranker.calls[0][0].Content)
+	require.Contains(t, reranker.calls[0][1].Content, "alpha")
+	for _, candidate := range reranker.calls[0] {
+		require.LessOrEqual(t, len(candidate.Content), 96)
+		require.True(t, utf8.ValidString(candidate.Content))
+	}
+}
+
+func TestRerankCandidateByteCeilingUsesOptionThenEnvironmentThenDefault(t *testing.T) {
+	t.Setenv(EnvSearchRerankMaxDocumentBytes, "2048")
+	require.Equal(t, 1024, effectiveRerankMaxBytes(&SearchOptions{RerankMaxBytes: 1024}))
+	require.Equal(t, 2048, effectiveRerankMaxBytes(&SearchOptions{}))
+	t.Setenv(EnvSearchRerankMaxDocumentBytes, "invalid")
+	require.Equal(t, defaultRerankMaxDocumentBytes, effectiveRerankMaxBytes(&SearchOptions{}))
+	t.Setenv(EnvSearchRerankMaxDocumentBytes, "0")
+	require.Equal(t, defaultRerankMaxDocumentBytes, effectiveRerankMaxBytes(&SearchOptions{}))
+}
+
+func TestStage2RerankMemoSubmitsOnlyNewCandidates(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { engine.Close() })
+	svc := NewServiceWithDimensions(engine, 2)
+	for _, id := range []string{"nornic:a", "nornic:b", "nornic:c"} {
+		_, err := engine.CreateNode(&storage.Node{
+			ID:         storage.NodeID(id),
+			Labels:     []string{"Doc"},
+			Properties: map[string]interface{}{"text": id + " searchable content"},
+		})
+		require.NoError(t, err)
+	}
+
+	reranker := &recordingReranker{}
+	ctx := withRerankMemo(context.Background(), newRerankMemo())
+	first := []rrfResult{{ID: "nornic:a", RRFScore: 0.9}, {ID: "nornic:b", RRFScore: 0.8}}
+	require.Len(t, svc.applyStage2Rerank(ctx, "query", first, &SearchOptions{}, nil, reranker), 2)
+	second := append(append([]rrfResult(nil), first...), rrfResult{ID: "nornic:c", RRFScore: 0.7})
+	require.Len(t, svc.applyStage2Rerank(ctx, "query", second, &SearchOptions{}, nil, reranker), 3)
+
+	require.Len(t, reranker.calls, 2)
+	require.Len(t, reranker.calls[0], 2)
+	require.Equal(t, []RerankCandidate{{ID: "nornic:c", Content: "Doc nornic:c searchable content", Score: 0.7}}, reranker.calls[1])
+
+	svc.applyStage2Rerank(ctx, "different query", first, &SearchOptions{}, nil, reranker)
+	require.Len(t, reranker.calls, 3)
+	require.Len(t, reranker.calls[2], 2, "a distinct query must not reuse prior scores")
+}
+
+var benchmarkRerankCandidateContent string
+
+func BenchmarkRerankCandidateContentForLongDocument(b *testing.B) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	text := strings.Repeat("предисловие ", 7000) + "alpha tango" + strings.Repeat(" заключение", 7000)
+	node := &storage.Node{
+		ID:         "nornic:long",
+		Labels:     []string{"LongDoc"},
+		Properties: map[string]interface{}{"text": text},
+	}
+	result := rrfResult{ID: "nornic:long", BM25Rank: 1}
+	b.Run("bounded_matching_window", func(b *testing.B) {
+		b.SetBytes(int64(len(text)))
+		b.ReportAllocs()
+		for range b.N {
+			content := svc.rerankCandidateContent(node, result, "alpha tango", 4096)
+			if len(content) > 4096 {
+				b.Fatalf("candidate content exceeded byte ceiling: %d", len(content))
+			}
+			benchmarkRerankCandidateContent = content
+		}
+	})
+	b.Run("whole_searchable_node", func(b *testing.B) {
+		b.SetBytes(int64(len(text)))
+		b.ReportAllocs()
+		for range b.N {
+			benchmarkRerankCandidateContent = svc.extractSearchableText(node)
+		}
+	})
 }

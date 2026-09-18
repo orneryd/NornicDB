@@ -1015,6 +1015,7 @@ Stage-2 reranking improves vector/hybrid search by re-scoring top candidates wit
 | `NORNICDB_SEARCH_RERANK_MODEL`    | (see below) | For **local**: GGUF filename (e.g. `bge-reranker-v2-m3-Q4_K_M.gguf`). For **API**: model name (e.g. `rerank-english-v3.0`) |
 | `NORNICDB_SEARCH_RERANK_API_URL`  | (see below) | Rerank API URL for non-local (default for `ollama`: `http://localhost:11434/rerank`)                                       |
 | `NORNICDB_SEARCH_RERANK_API_KEY`  | (empty)     | API key for Cohere, OpenAI, etc.                                                                                           |
+| `NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES` | `4096` | Maximum UTF-8 bytes of focused passage content sent per candidate                                                         |
 
 **Advanced llama.cpp context features** (local provider only, most models work with defaults):
 

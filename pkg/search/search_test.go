@@ -338,6 +338,7 @@ func TestRRFFusion(t *testing.T) {
 }
 
 func TestCollapseIndexResultsByNodeIDFastPathAndFallback(t *testing.T) {
+	svc := &Service{}
 	canonical := []indexResult{{ID: "doc-a", Score: 0.9}, {ID: "doc-b", Score: 0.8}}
 	got := collapseIndexResultsByNodeID(canonical)
 	require.Equal(t, canonical, got)
@@ -347,7 +348,10 @@ func TestCollapseIndexResultsByNodeIDFastPathAndFallback(t *testing.T) {
 	require.Equal(t, []indexResult{{ID: "doc-a", Score: 0.9}}, duplicate)
 
 	chunked := collapseIndexResultsByNodeID([]indexResult{{ID: "doc-a-chunk-0", Score: 0.7}, {ID: "doc-a-chunk-1", Score: 0.9}})
-	require.Equal(t, []indexResult{{ID: "doc-a", Score: 0.9}}, chunked)
+	require.Equal(t, []indexResult{{ID: "doc-a", MatchID: "doc-a-chunk-1", Score: 0.9}}, chunked)
+	fused := svc.fuseRRF(chunked, nil, &SearchOptions{RRFK: 60})
+	require.Len(t, fused, 1)
+	require.Equal(t, "doc-a-chunk-1", fused[0].MatchID)
 }
 
 func TestServicePersistenceAndTimingHelpers(t *testing.T) {
@@ -657,6 +661,7 @@ func TestSearchCacheKeyAndMinSimilarityHelpers(t *testing.T) {
 	assertDifferentKey("vector weight", func(opts *SearchOptions) { opts.VectorWeight = 0.5 })
 	assertDifferentKey("bm25 weight", func(opts *SearchOptions) { opts.BM25Weight = 1.5 })
 	assertDifferentKey("minimum rrf score", func(opts *SearchOptions) { opts.MinRRFScore = 0 })
+	assertDifferentKey("rerank document byte ceiling", func(opts *SearchOptions) { opts.RerankMaxBytes = 2048 })
 	assertDifferentKey("minimum similarity", func(opts *SearchOptions) {
 		value := 0.25
 		opts.MinSimilarity = &value

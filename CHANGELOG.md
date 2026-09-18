@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound Stage-2 rerank content per candidate, prefer the winning managed
+  embedding passage, and use a query-centered window for lexical-only matches.
+  Ranked continuations now reuse prior rerank scores instead of resubmitting
+  the growing candidate prefix on every depth expansion.
 - Batch pending documents across embedding-provider requests, pace requests
   instead of individual nodes, isolate rejected inputs, and park permanent or
   retry-exhausted failures without blocking the queue. Voyage contextualized

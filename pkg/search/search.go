@@ -377,6 +377,9 @@ type SearchOptions struct {
 	RerankEnabled  bool    // Enable cross-encoder reranking (default: false)
 	RerankTopK     int     // How many candidates to rerank (default: 100)
 	RerankMinScore float64 // Minimum cross-encoder score to include (default: 0)
+	// RerankMaxBytes bounds the UTF-8 content sent for each candidate. Zero uses
+	// NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES or the 4096-byte default.
+	RerankMaxBytes int
 
 	// Filters pre-filters nodes by property values before top-K selection.
 	// Keys are property names; values are acceptable values (OR within a key, AND across keys).
@@ -488,6 +491,7 @@ func searchCacheKey(query string, embedding []float32, opts *SearchOptions) stri
 		strings.Join(typesCopy, "|"),
 		strconv.FormatBool(opts.RerankEnabled),
 		strconv.Itoa(opts.RerankTopK),
+		strconv.Itoa(effectiveRerankMaxBytes(opts)),
 		strconv.FormatBool(opts.MMREnabled),
 		strconv.FormatFloat(opts.MMRLambda, 'g', -1, 64),
 		strconv.FormatFloat(opts.RerankMinScore, 'g', -1, 64),
@@ -4572,7 +4576,7 @@ func (s *Service) adaptiveVectorSearch(
 		stats.exhausted = exhausted
 		results := make([]indexResult, 0, len(scored))
 		for _, result := range scored {
-			results = append(results, indexResult{ID: result.ID, Score: result.Score})
+			results = append(results, indexResult{ID: result.ID, MatchID: result.ID, Score: result.Score})
 		}
 		results = collapseIndexResultsByNodeID(results)
 		if postProcess != nil {
@@ -4710,16 +4714,21 @@ func collapseIndexResultsByNodeID(results []indexResult) []indexResult {
 }
 
 func collapseIndexResultsByNodeIDSlow(results []indexResult) []indexResult {
-	best := make(map[string]float64, len(results))
+	best := make(map[string]indexResult, len(results))
 	for _, r := range results {
-		nodeID := normalizeVectorResultIDToNodeID(r.ID)
-		if prev, ok := best[nodeID]; !ok || r.Score > prev {
-			best[nodeID] = r.Score
+		rawID := r.ID
+		nodeID := normalizeVectorResultIDToNodeID(rawID)
+		if prev, ok := best[nodeID]; !ok || r.Score > prev.Score {
+			if r.MatchID == "" && nodeID != rawID {
+				r.MatchID = rawID
+			}
+			r.ID = nodeID
+			best[nodeID] = r
 		}
 	}
 	out := make([]indexResult, 0, len(best))
-	for id, score := range best {
-		out = append(out, indexResult{ID: id, Score: score})
+	for _, result := range best {
+		out = append(out, result)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	return out
@@ -5978,6 +5987,7 @@ func (s *Service) fuseRRF(vectorResults, bm25Results []indexResult, opts *Search
 			entry.vectorComponent = component
 			entry.result.RRFScore += component
 			entry.result.VectorRank = rank
+			entry.result.MatchID = candidate.MatchID
 			if !entry.hasVectorScore {
 				entry.result.OriginalScore = candidate.Score
 				entry.hasVectorScore = true
@@ -6160,10 +6170,23 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 		results = results[:topK]
 	}
 	rerankInput := results
+	memo := rerankMemoFromContext(ctx)
 
-	// Build candidates with content from storage.
+	// Reuse scores within one continuation query and build content only for new
+	// candidates. This keeps depth expansion proportional to newly discovered
+	// candidates instead of repeatedly uploading the complete ranked prefix.
 	candidates := make([]RerankCandidate, 0, len(rerankInput))
+	reranked := make([]RerankResult, 0, len(rerankInput))
+	memoHits := 0
+	maxDocumentBytes := effectiveRerankMaxBytes(opts)
 	for _, r := range rerankInput {
+		if cached, ok, include := memo.get(query, r.ID); ok {
+			memoHits++
+			if include {
+				reranked = append(reranked, cached)
+			}
+			continue
+		}
 		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
@@ -6175,8 +6198,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			continue
 		}
 
-		// Extract searchable content
-		content := s.extractSearchableText(node)
+		content := s.rerankCandidateContent(node, r, query, maxDocumentBytes)
 		if content == "" {
 			continue
 		}
@@ -6188,24 +6210,32 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 		})
 	}
 
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && len(reranked) == 0 && memoHits == 0 {
 		return results
 	}
 
-	// Log before reranking
-	s.logPrintf("🔄 Reranking %d candidates (query_len=%d reranker=%s)...", len(candidates), len(query), reranker.Name())
-	start := time.Now()
+	if len(candidates) > 0 {
+		// Log before reranking
+		s.logPrintf("🔄 Reranking %d new candidates (query_len=%d reranker=%s)...", len(candidates), len(query), reranker.Name())
+		start := time.Now()
 
-	// Apply Stage-2 reranking.
-	reranked, err := reranker.Rerank(ctx, query, candidates)
-	if err != nil {
-		// Fallback to original results on error
-		s.logPrintf("⚠️ Reranking failed (%s): %v; using original order", reranker.Name(), err)
-		return results
+		newResults, err := reranker.Rerank(ctx, query, candidates)
+		if err != nil {
+			// Fallback to original results on error
+			s.logPrintf("⚠️ Reranking failed (%s): %v; using original order", reranker.Name(), err)
+			return results
+		}
+		memo.put(query, candidates, newResults)
+		reranked = append(reranked, newResults...)
+
+		// Log after reranking
+		s.logPrintf("✅ Reranking complete: %d new results in %v (%s)", len(newResults), time.Since(start), reranker.Name())
 	}
 
-	// Log after reranking
-	s.logPrintf("✅ Reranking complete: %d results in %v (%s)", len(reranked), time.Since(start), reranker.Name())
+	// Cached and newly returned scores must be merged into one ranking.
+	sort.SliceStable(reranked, func(i, j int) bool {
+		return reranked[i].FinalScore > reranked[j].FinalScore
+	})
 
 	// If reranker produced nearly identical scores (e.g. model not discriminating),
 	// keep original RRF order and scores so the user gets the better ranking.
@@ -6248,7 +6278,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 		}
 		// Apply per-request MinScore filter if configured. Note that individual rerankers
 		// may also apply their own MinScore internally.
-		if opts.RerankMinScore > 0 && r.FinalScore < opts.RerankMinScore {
+		if opts != nil && opts.RerankMinScore > 0 && r.FinalScore < opts.RerankMinScore {
 			continue
 		}
 		usedIDs[r.ID] = struct{}{}
@@ -6260,13 +6290,14 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 		}
 		rerankedResults = append(rerankedResults, rrfResult{
 			ID:            r.ID,
+			MatchID:       originalMatchID(original),
 			RRFScore:      r.FinalScore, // Use cross-encoder score
 			VectorRank:    vectorRank,
 			BM25Rank:      bm25Rank,
 			OriginalScore: originalScore,
 		})
 	}
-	if opts.RerankMinScore <= 0 {
+	if opts == nil || opts.RerankMinScore <= 0 {
 		for _, original := range rerankInput {
 			if _, ok := usedIDs[original.ID]; ok {
 				continue
@@ -6276,6 +6307,13 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 	}
 
 	return rerankedResults
+}
+
+func originalMatchID(result *rrfResult) string {
+	if result == nil {
+		return ""
+	}
+	return result.MatchID
 }
 
 func effectiveRerankTopK(opts *SearchOptions) int {
@@ -7213,12 +7251,14 @@ func GetAdaptiveRRFConfig(query string) *SearchOptions {
 
 // Helper types
 type indexResult struct {
-	ID    string
-	Score float64
+	ID      string
+	MatchID string
+	Score   float64
 }
 
 type rrfResult struct {
 	ID            string
+	MatchID       string
 	RRFScore      float64
 	VectorRank    int
 	BM25Rank      int

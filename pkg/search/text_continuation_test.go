@@ -149,6 +149,41 @@ func TestSearchTextContinuationExpandsWithoutReembedding(t *testing.T) {
 	require.Equal(t, int32(2), embedCalls.Load())
 }
 
+func TestSearchTextContinuationReusesRerankMemoAcrossExpansion(t *testing.T) {
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	service := NewService(engine)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	for index := 0; index < 8; index++ {
+		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("node-%03d", index)), Labels: []string{"Document"}})
+		require.NoError(t, err)
+	}
+
+	var memos []*rerankMemo
+	searchQuery := func(ctx context.Context, _ string, _ []float32, opts *SearchOptions) (*SearchResponse, error) {
+		memos = append(memos, rerankMemoFromContext(ctx))
+		results := make([]SearchResult, opts.Limit)
+		for index := range results {
+			id := fmt.Sprintf("node-%03d", index)
+			results[index] = SearchResult{ID: id, NodeID: storage.NodeID(id)}
+		}
+		return &SearchResponse{Status: "success", Results: results, SearchMethod: "test"}, nil
+	}
+
+	request := SearchContinuationRequest{Owner: "alice", Database: "nornic", N: 2}
+	first, err := service.SearchTextContinuation(context.Background(), "query", &SearchOptions{Limit: 2}, request, nil, nil, searchQuery, ChunkedSearchErrorPolicy{})
+	require.NoError(t, err)
+	require.True(t, first.HasMore)
+
+	request.QID = first.QID
+	_, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(memos), 2)
+	require.NotNil(t, memos[0])
+	for _, memo := range memos[1:] {
+		require.Same(t, memos[0], memo)
+	}
+}
+
 func TestSearchTextContinuationMaxResultsCapsInitialPage(t *testing.T) {
 	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 	service := NewService(engine)

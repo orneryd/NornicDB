@@ -58,6 +58,12 @@ When reranking is **enabled**, the server loads the configured reranker at start
 | `NORNICDB_SEARCH_RERANK_MODEL`    | (see below) | For **local**: GGUF filename (e.g. `bge-reranker-v2-m3-Q4_K_M.gguf`). For **API**: model name/id (e.g. `rerank-english-v3.0`)       |
 | `NORNICDB_SEARCH_RERANK_API_URL`  | (see below) | Rerank API endpoint for non-local providers (required when provider ≠ local; default for `ollama`: `http://localhost:11434/rerank`) |
 | `NORNICDB_SEARCH_RERANK_API_KEY`  | (empty)     | API key for authenticated providers (e.g. Cohere, OpenAI)                                                                           |
+| `NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES` | `4096` | Maximum UTF-8 bytes sent for one candidate passage; managed vector hits use their winning chunk and lexical-only hits use a query-centered window |
+
+The byte ceiling is enforced before calling any local or hosted reranker, so
+request size scales with candidate count rather than source-document length.
+Ranked continuation streams retain scores for the lifetime of the query and
+only submit newly discovered candidates during expansion.
 
 Local GGUF rerankers default to llama.cpp rank pooling (`4`), non-causal
 attention (`1`), and disabled flash attention (`0`). Override these with
