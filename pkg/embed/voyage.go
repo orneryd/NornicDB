@@ -64,9 +64,12 @@ func resolveVoyageConfig(config *Config) *Config {
 		cfg.APIPath = defaults.APIPath
 	}
 	if strings.TrimSpace(cfg.Model) == "" {
-		if normalizeVoyageMode(cfg.Mode) == VoyageModeContextualized {
+		switch normalizeVoyageMode(cfg.Mode) {
+		case VoyageModeContextualized:
 			cfg.Model = voyageapi.DefaultContextModel
-		} else {
+		case VoyageModeMultimodal:
+			cfg.Model = voyageapi.DefaultMultimodalModel
+		default:
 			cfg.Model = defaults.Model
 		}
 	}
@@ -105,14 +108,14 @@ func NewVoyage(config *Config) (*VoyageEmbedder, error) {
 		cfg.APIURL = voyageapi.DefaultBaseURL
 	}
 	mode := normalizeVoyageMode(cfg.Mode)
-	if mode == VoyageModeMultimodal {
-		return nil, fmt.Errorf("Voyage multimodal mode is not supported for managed text embeddings")
-	}
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
-		if mode == VoyageModeContextualized {
+		switch mode {
+		case VoyageModeContextualized:
 			model = voyageapi.DefaultContextModel
-		} else {
+		case VoyageModeMultimodal:
+			model = voyageapi.DefaultMultimodalModel
+		default:
 			model = voyageapi.DefaultEmbeddingModel
 		}
 		cfg.Model = model
@@ -169,6 +172,19 @@ func (e *VoyageEmbedder) EmbedBatchWithInputType(ctx context.Context, texts []st
 	if len(texts) == 0 {
 		return nil, nil
 	}
+	if e.mode == VoyageModeMultimodal {
+		inputs := make([]any, len(texts))
+		for index, text := range texts {
+			inputs[index] = voyageapi.MultimodalInput{Content: []voyageapi.MultimodalPart{{Type: "text", Text: text}}}
+		}
+		resp, err := e.client.EmbedMultimodal(ctx, inputs, voyageapi.MultimodalOptions{
+			Model: e.config.Model, InputType: inputType, Truncation: false, OutputDimension: e.config.Dimensions,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return orderedVoyageEmbeddings(resp, len(texts)), nil
+	}
 	resp, err := e.client.EmbedText(ctx, texts, voyageapi.EmbeddingOptions{
 		Model:           e.textModel,
 		InputType:       inputType,
@@ -179,13 +195,58 @@ func (e *VoyageEmbedder) EmbedBatchWithInputType(ctx context.Context, texts []st
 	if err != nil {
 		return nil, err
 	}
-	results := make([][]float32, len(texts))
+	return orderedVoyageEmbeddings(resp, len(texts)), nil
+}
+
+func orderedVoyageEmbeddings(resp *voyageapi.EmbeddingResponse, count int) [][]float32 {
+	results := make([][]float32, count)
+	if resp == nil {
+		return results
+	}
 	for _, item := range resp.Data {
 		if item.Index >= 0 && item.Index < len(results) {
 			results[item.Index] = item.Embedding
 		}
 	}
-	return results, nil
+	return results
+}
+
+// UsesDocumentProperties reports whether this configured provider consumes a
+// structured node property instead of flattened text.
+func (e *VoyageEmbedder) UsesDocumentProperties() bool {
+	return e.mode == VoyageModeMultimodal
+}
+
+// EmbedDocumentPropertyChunks embeds a managed document. The Voyage package
+// owns the property name, structured schema, and input validation.
+func (e *VoyageEmbedder) EmbedDocumentPropertyChunks(ctx context.Context, fallbackText string, properties map[string]any, _, _ int) (*DocumentChunkResult, error) {
+	if e.mode != VoyageModeMultimodal {
+		return e.EmbedDocumentChunks(ctx, fallbackText, 0, 0)
+	}
+	parts := []voyageapi.MultimodalPart{{Type: "text", Text: fallbackText}}
+	if raw, ok := properties[voyageapi.MultimodalContentProperty]; ok {
+		parsed, err := voyageapi.ParseMultimodalContent(raw)
+		if err != nil {
+			return nil, err
+		}
+		parts = parsed
+	}
+	if err := voyageapi.ValidateMultimodalContent(parts); err != nil {
+		return nil, err
+	}
+	resp, err := e.client.EmbedMultimodal(ctx, []any{voyageapi.MultimodalInput{Content: parts}}, voyageapi.MultimodalOptions{
+		Model: e.config.Model, InputType: InputTypeDocument, Truncation: false, OutputDimension: e.config.Dimensions,
+	})
+	if err != nil {
+		return nil, err
+	}
+	chunks := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part.Type == "text" {
+			chunks = append(chunks, part.Text)
+		}
+	}
+	return &DocumentChunkResult{Chunks: chunks, Embeddings: orderedVoyageEmbeddings(resp, 1), Model: e.Model()}, nil
 }
 
 func (e *VoyageEmbedder) EmbedDocumentChunks(ctx context.Context, text string, maxTokens, overlap int) (*DocumentChunkResult, error) {
@@ -394,6 +455,12 @@ func (e *VoyageEmbedder) Model() string {
 
 func (e *VoyageEmbedder) Backend() string {
 	return "cpu"
+}
+
+// EmbeddingSpace returns a stable identity for compatible vectors. It includes
+// the endpoint because custom Voyage-compatible services are distinct spaces.
+func (e *VoyageEmbedder) EmbeddingSpace() string {
+	return fmt.Sprintf("voyage:%s:%s:%d:%s", e.mode, e.Model(), e.Dimensions(), strings.TrimRight(e.config.APIURL, "/"))
 }
 
 func voyageContextualizedChunkSize(maxTokens int) int {

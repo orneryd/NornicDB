@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Restore managed Voyage multimodal embeddings for mixed text and URL/base64
+  image documents and text queries. Keep Voyage schemas and limits isolated in
+  the provider package, persist model-space identity, and prevent per-database
+  search indexes from mixing incompatible managed spaces with equal dimensions.
 - Expose llama.cpp lazy tensor loading for local embedding, reranking, and
   Heimdall models through domain-specific `*_LAZY_MODE` settings.
 

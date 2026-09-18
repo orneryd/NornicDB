@@ -138,6 +138,21 @@ type DocumentChunkEmbedder interface {
 	EmbedDocumentChunks(ctx context.Context, text string, maxTokens, overlap int) (*DocumentChunkResult, error)
 }
 
+// DocumentPropertyChunkEmbedder is an optional provider-neutral capability for
+// embedders whose document input can include structured node properties. Core
+// workers pass properties through unchanged; each provider owns its schema and
+// validation rules.
+type DocumentPropertyChunkEmbedder interface {
+	UsesDocumentProperties() bool
+	EmbedDocumentPropertyChunks(ctx context.Context, fallbackText string, properties map[string]any, maxTokens, overlap int) (*DocumentChunkResult, error)
+}
+
+// EmbeddingSpaceProvider identifies a provider/model vector space. Dimension
+// equality alone does not make embeddings comparable.
+type EmbeddingSpaceProvider interface {
+	EmbeddingSpace() string
+}
+
 // DocumentBatchChunkEmbedder embeds several documents in a bounded provider
 // request while preserving one chunk result per input document.
 type DocumentBatchChunkEmbedder interface {

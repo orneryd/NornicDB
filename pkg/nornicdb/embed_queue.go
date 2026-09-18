@@ -29,9 +29,10 @@ type deterministicTextChunker interface {
 // EmbedWorker manages async embedding generation using a pull-based model.
 // On each cycle, it scans for nodes without embeddings and processes them.
 type EmbedWorker struct {
-	embedder embed.Embedder
-	storage  storage.Engine
-	config   *EmbedWorkerConfig
+	embedder         embed.Embedder
+	embedderResolver func(storage.NodeID) (embed.Embedder, error)
+	storage          storage.Engine
+	config           *EmbedWorkerConfig
 
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -230,6 +231,32 @@ func (ew *EmbedWorker) SetEmbedder(embedder embed.Embedder) {
 	ew.mu.Unlock()
 	// Trigger immediate processing now that embedder is available
 	ew.TriggerImmediate()
+}
+
+// SetEmbedderResolver selects a provider for a fully-qualified node ID. This
+// supports per-database model spaces without coupling the worker to a provider.
+func (ew *EmbedWorker) SetEmbedderResolver(resolver func(storage.NodeID) (embed.Embedder, error)) {
+	ew.mu.Lock()
+	ew.embedderResolver = resolver
+	ew.mu.Unlock()
+}
+
+func (ew *EmbedWorker) resolveEmbedder(nodeID storage.NodeID) (embed.Embedder, error) {
+	ew.mu.Lock()
+	resolver := ew.embedderResolver
+	fallback := ew.embedder
+	ew.mu.Unlock()
+	if resolver == nil {
+		return fallback, nil
+	}
+	provider, err := resolver(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if provider == nil {
+		return fallback, nil
+	}
+	return provider, nil
 }
 
 // SetOnEmbedded sets a callback to be called after a node is embedded.
@@ -610,12 +637,111 @@ func (ew *EmbedWorker) processUntilEmpty() {
 // Returns true if it did useful work (processed or permanently skipped a node).
 // Returns false if there was nothing to process or if a node was temporarily skipped.
 func (ew *EmbedWorker) processNextBatch() bool {
+	ew.mu.Lock()
+	hasResolver := ew.embedderResolver != nil
+	ew.mu.Unlock()
+	if hasResolver {
+		return ew.processNextResolvedBatch()
+	}
+	if provider, ok := ew.embedder.(embed.DocumentPropertyChunkEmbedder); ok && provider.UsesDocumentProperties() {
+		return ew.processNextNode()
+	}
 	if batcher, ok := ew.embedder.(embed.DocumentBatchChunkEmbedder); ok && ew.config.EmbedBatchSize > 1 {
 		if _, indexed := ew.storage.(EmbeddingIndexManager); indexed {
 			return ew.processNextDocumentBatch(batcher)
 		}
 	}
 	return ew.processNextNode()
+}
+
+func (ew *EmbedWorker) processNextResolvedBatch() bool {
+	limit := ew.config.EmbedBatchSize
+	if limit < 1 {
+		limit = 1
+	}
+	nodes := make([]*storage.Node, 0, limit)
+	for len(nodes) < limit {
+		ew.claimMu.Lock()
+		pending := ew.findNodeWithoutEmbedding()
+		if pending == nil {
+			ew.claimMu.Unlock()
+			break
+		}
+		current, err := ew.storage.GetNode(pending.ID)
+		if err != nil || current == nil {
+			ew.markNodeEmbedded(pending.ID)
+			ew.claimMu.Unlock()
+			continue
+		}
+		ew.markNodeEmbedded(current.ID)
+		ew.claimMu.Unlock()
+		nodes = append(nodes, copyNodeForEmbedding(current))
+	}
+	if len(nodes) == 0 {
+		return false
+	}
+
+	type resolvedGroup struct {
+		provider embed.Embedder
+		batcher  embed.DocumentBatchChunkEmbedder
+		nodes    []*storage.Node
+	}
+	groups := make(map[string]*resolvedGroup)
+	for _, node := range nodes {
+		provider, err := ew.resolveEmbedder(node.ID)
+		if err != nil || provider == nil {
+			if err == nil {
+				err = errors.New("embedding provider is not configured")
+			}
+			ew.failed.Add(1)
+			ew.markNodeEmbeddingFailed(node.ID, err)
+			continue
+		}
+		if structured, ok := provider.(embed.DocumentPropertyChunkEmbedder); ok && structured.UsesDocumentProperties() {
+			ew.processClaimedNode(node, provider)
+			continue
+		}
+		batcher, ok := provider.(embed.DocumentBatchChunkEmbedder)
+		if !ok || limit == 1 {
+			ew.processClaimedNode(node, provider)
+			continue
+		}
+		key := fmt.Sprintf("%T:%p", provider, provider)
+		group := groups[key]
+		if group == nil {
+			group = &resolvedGroup{provider: provider, batcher: batcher}
+			groups[key] = group
+		}
+		group.nodes = append(group.nodes, node)
+	}
+
+	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
+	for _, group := range groups {
+		texts := make([]string, len(group.nodes))
+		for index, node := range group.nodes {
+			texts[index] = embeddingutil.BuildText(node.Properties, node.Labels, opts)
+		}
+		results, resultErrors := ew.embedDocumentBatchIsolated(group.batcher, texts)
+		for index, node := range group.nodes {
+			if resultErrors[index] != nil {
+				ew.failed.Add(1)
+				if !isRetryableEmbeddingError(resultErrors[index]) || !ew.retryDocumentEmbedding(node.ID) {
+					ew.markNodeEmbeddingFailed(node.ID, resultErrors[index])
+				} else {
+					ew.addNodeToPendingEmbeddings(node.ID)
+				}
+				continue
+			}
+			if results[index] == nil {
+				ew.failed.Add(1)
+				ew.markNodeEmbeddingFailed(node.ID, errors.New("embedding provider returned no document result"))
+				continue
+			}
+			ew.persistEmbeddedNode(node, results[index].Embeddings, documentResultMeta(results[index]), group.provider)
+		}
+	}
+	ew.signalTrigger()
+	return true
 }
 
 func (ew *EmbedWorker) processNextNode() bool {
@@ -720,7 +846,19 @@ func (ew *EmbedWorker) processNextNode() bool {
 	// The node from storage may be accessed by other goroutines (e.g., HTTP handlers)
 	// Modifying the Properties map directly causes "concurrent map iteration and map write"
 	node = copyNodeForEmbedding(node)
+	provider, resolveErr := ew.resolveEmbedder(node.ID)
+	if resolveErr != nil || provider == nil {
+		if resolveErr == nil {
+			resolveErr = errors.New("embedding provider is not configured")
+		}
+		ew.failed.Add(1)
+		ew.markNodeEmbeddingFailed(node.ID, resolveErr)
+		return true
+	}
+	return ew.processClaimedNode(node, provider)
+}
 
+func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Embedder) bool {
 	// Build text for embedding (labels and properties per config include/exclude)
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
 	text := embeddingutil.BuildText(node.Properties, node.Labels, opts)
@@ -728,8 +866,23 @@ func (ew *EmbedWorker) processNextNode() bool {
 	// Embed documents through the provider-managed document path when available.
 	// Voyage contextualized mode uses this to return provider-generated chunks;
 	// other providers fall back to deterministic local chunking + micro-batches.
-	_, isDocumentEmbedder := ew.embedder.(embed.DocumentChunkEmbedder)
-	_, embeddings, providerMeta, err := ew.embedDocument(text, node.ID)
+	_, isDocumentEmbedder := provider.(embed.DocumentChunkEmbedder)
+	propertyEmbedder, usesProperties := provider.(embed.DocumentPropertyChunkEmbedder)
+	isDocumentEmbedder = isDocumentEmbedder || (usesProperties && propertyEmbedder.UsesDocumentProperties())
+	var embeddings [][]float32
+	var providerMeta map[string]any
+	var err error
+	if usesProperties && propertyEmbedder.UsesDocumentProperties() {
+		var result *embed.DocumentChunkResult
+		result, err = propertyEmbedder.EmbedDocumentPropertyChunks(ew.ctx, text, node.Properties, ew.config.ChunkSize, ew.config.ChunkOverlap)
+		ew.waitAfterProviderRequest()
+		if result != nil {
+			embeddings = result.Embeddings
+			providerMeta = documentResultMeta(result)
+		}
+	} else {
+		_, embeddings, providerMeta, err = ew.embedDocumentWith(provider, text, node.ID)
+	}
 	if err != nil {
 		ew.failed.Add(1)
 		if !isRetryableEmbeddingError(err) {
@@ -751,7 +904,7 @@ func (ew *EmbedWorker) processNextNode() bool {
 		return true
 	}
 
-	return ew.persistEmbeddedNode(node, embeddings, providerMeta)
+	return ew.persistEmbeddedNode(node, embeddings, providerMeta, provider)
 }
 
 func (ew *EmbedWorker) processNextDocumentBatch(batcher embed.DocumentBatchChunkEmbedder) bool {
@@ -807,7 +960,7 @@ func (ew *EmbedWorker) processNextDocumentBatch(batcher embed.DocumentBatchChunk
 			ew.failed.Add(1)
 			continue
 		}
-		ew.persistEmbeddedNode(node, result.Embeddings, documentResultMeta(result))
+		ew.persistEmbeddedNode(node, result.Embeddings, documentResultMeta(result), ew.embedder)
 	}
 	ew.signalTrigger()
 	return true
@@ -866,7 +1019,7 @@ func documentResultMeta(result *embed.DocumentChunkResult) map[string]any {
 	return meta
 }
 
-func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]float32, providerMeta map[string]any) bool {
+func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]float32, providerMeta map[string]any, provider embed.Embedder) bool {
 	if len(embeddings) == 0 || embeddings[0] == nil || len(embeddings[0]) == 0 {
 		fmt.Printf("⚠️  Failed to generate embedding for node %s: empty embedding\n", node.ID)
 		ew.failed.Add(1)
@@ -874,7 +1027,12 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]fl
 		return true
 	}
 
-	embeddingutil.ApplyManagedEmbedding(node, embeddings, ew.embedder.Model(), ew.embedder.Dimensions(), time.Now())
+	embeddingutil.ApplyManagedEmbedding(node, embeddings, provider.Model(), provider.Dimensions(), time.Now())
+	if spaceProvider, ok := provider.(embed.EmbeddingSpaceProvider); ok {
+		if space := spaceProvider.EmbeddingSpace(); space != "" {
+			node.EmbedMeta["embedding_space"] = space
+		}
+	}
 	for key, value := range providerMeta {
 		node.EmbedMeta[key] = value
 	}
@@ -1133,6 +1291,10 @@ func (ew *EmbedWorker) addNodeToPendingEmbeddings(nodeID storage.NodeID) {
 // embedChunksInBatches embeds chunks using bounded request sizes.
 // This avoids sending massive single EmbedBatch requests for large files.
 func (ew *EmbedWorker) embedChunksInBatches(chunks []string, nodeID storage.NodeID) ([][]float32, error) {
+	return ew.embedChunksInBatchesWith(ew.embedder, chunks, nodeID)
+}
+
+func (ew *EmbedWorker) embedChunksInBatchesWith(provider embed.Embedder, chunks []string, nodeID storage.NodeID) ([][]float32, error) {
 	if len(chunks) == 0 {
 		return nil, nil
 	}
@@ -1147,7 +1309,7 @@ func (ew *EmbedWorker) embedChunksInBatches(chunks []string, nodeID storage.Node
 			end = len(chunks)
 		}
 		batch := chunks[start:end]
-		batchEmbeddings, err := ew.embedBatchWithRetry(batch)
+		batchEmbeddings, err := ew.embedBatchWithRetryFor(provider, batch)
 		if err != nil {
 			return nil, localizedError(localization.NornicDBCoreEmbedBatchFailed(start+1, end, len(chunks), string(nodeID), err), err)
 		}
@@ -1160,7 +1322,11 @@ func (ew *EmbedWorker) embedChunksInBatches(chunks []string, nodeID storage.Node
 }
 
 func (ew *EmbedWorker) embedDocument(text string, nodeID storage.NodeID) ([]string, [][]float32, map[string]any, error) {
-	if documentEmbedder, ok := ew.embedder.(embed.DocumentChunkEmbedder); ok {
+	return ew.embedDocumentWith(ew.embedder, text, nodeID)
+}
+
+func (ew *EmbedWorker) embedDocumentWith(provider embed.Embedder, text string, nodeID storage.NodeID) ([]string, [][]float32, map[string]any, error) {
+	if documentEmbedder, ok := provider.(embed.DocumentChunkEmbedder); ok {
 		result, err := documentEmbedder.EmbedDocumentChunks(ew.ctx, text, ew.config.ChunkSize, ew.config.ChunkOverlap)
 		ew.waitAfterProviderRequest()
 		if err != nil {
@@ -1182,15 +1348,15 @@ func (ew *EmbedWorker) embedDocument(text string, nodeID storage.NodeID) ([]stri
 		return nil, nil, meta, nil
 	}
 
-	chunker, ok := ew.embedder.(deterministicTextChunker)
+	chunker, ok := provider.(deterministicTextChunker)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("embedder %T does not support deterministic token chunking", ew.embedder)
+		return nil, nil, nil, fmt.Errorf("embedder %T does not support deterministic token chunking", provider)
 	}
 	chunks, err := chunker.ChunkText(text, ew.config.ChunkSize, ew.config.ChunkOverlap)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	embeddings, err := ew.embedChunksInBatches(chunks, nodeID)
+	embeddings, err := ew.embedChunksInBatchesWith(provider, chunks, nodeID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1199,6 +1365,10 @@ func (ew *EmbedWorker) embedDocument(text string, nodeID storage.NodeID) ([]stri
 
 // embedBatchWithRetry retries a single micro-batch with backoff.
 func (ew *EmbedWorker) embedBatchWithRetry(chunks []string) ([][]float32, error) {
+	return ew.embedBatchWithRetryFor(ew.embedder, chunks)
+}
+
+func (ew *EmbedWorker) embedBatchWithRetryFor(provider embed.Embedder, chunks []string) ([][]float32, error) {
 	var embeddings [][]float32
 	var err error
 	for attempt := 1; attempt <= ew.config.MaxRetries; attempt++ {
@@ -1210,10 +1380,10 @@ func (ew *EmbedWorker) embedBatchWithRetry(chunks []string) ([][]float32, error)
 		go func() {
 			var embs [][]float32
 			var embedErr error
-			if typed, ok := ew.embedder.(embed.TypedEmbedder); ok {
+			if typed, ok := provider.(embed.TypedEmbedder); ok {
 				embs, embedErr = typed.EmbedBatchWithInputType(ew.ctx, chunks, embed.InputTypeDocument)
 			} else {
-				embs, embedErr = ew.embedder.EmbedBatch(ew.ctx, chunks)
+				embs, embedErr = provider.EmbedBatch(ew.ctx, chunks)
 			}
 			resultCh <- embedResult{embeddings: embs, err: embedErr}
 		}()

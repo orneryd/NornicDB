@@ -11,6 +11,7 @@ import (
 	"time"
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -292,6 +293,13 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		}
 	}
 	svc := search.NewServiceWithDimensionsAndBM25EngineAndOptions(storageEngine, dims, bm25Engine, serviceOptions)
+	if configuredEmbedder, embedErr := db.getOrCreateEmbedderForDB(dbName); embedErr != nil {
+		log.Printf("⚠️  Could not resolve embedding space for database %s: %v", dbName, embedErr)
+	} else if provider, ok := configuredEmbedder.(embed.EmbeddingSpaceProvider); ok {
+		if space := provider.EmbeddingSpace(); space != "" {
+			svc.SetEmbeddingSpace(space)
+		}
+	}
 	continuations, err := db.getOrCreateSearchContinuationRegistry()
 	if err != nil {
 		_ = svc.Close()

@@ -269,16 +269,59 @@ func TestVoyageEmbedderContextualizedUsesTextModelForQueries(t *testing.T) {
 	require.Equal(t, []string{"voyage-4-large"}, models)
 }
 
-func TestVoyageEmbedderRejectsMultimodalManagedMode(t *testing.T) {
-	_, err := NewVoyage(&Config{
+func TestVoyageMultimodalEmbedsStructuredDocumentsAndTextQueries(t *testing.T) {
+	type capturedRequest struct {
+		Path string
+		Body map[string]any
+	}
+	requests := make([]capturedRequest, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		requests = append(requests, capturedRequest{Path: r.URL.Path, Body: body})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{{"index": 0, "embedding": []float32{1, 0}}},
+			"model": "voyage-multimodal-3.5",
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	embedder, err := NewVoyage(&Config{
 		Provider:   "voyage",
-		APIURL:     "http://127.0.0.1",
+		APIURL:     server.URL,
 		APIKey:     "voyage-key",
+		Model:      "voyage-multimodal-3.5",
 		Dimensions: 2,
 		Mode:       VoyageModeMultimodal,
 	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "multimodal mode is not supported")
+	require.NoError(t, err)
+	require.True(t, embedder.UsesDocumentProperties())
+
+	result, err := embedder.EmbedDocumentPropertyChunks(context.Background(), "flattened fallback", map[string]any{
+		"_embedding_content": []any{
+			map[string]any{"type": "text", "text": "diagram caption"},
+			map[string]any{"type": "image_url", "image_url": "https://example.invalid/diagram.png"},
+		},
+	}, 512, 0)
+	require.NoError(t, err)
+	require.Len(t, result.Embeddings, 1)
+
+	query, err := embedder.Embed(context.Background(), "find the diagram")
+	require.NoError(t, err)
+	require.Equal(t, []float32{1, 0}, query)
+	require.Len(t, requests, 2)
+	for _, request := range requests {
+		require.Equal(t, "/v1/multimodalembeddings", request.Path)
+		require.Equal(t, "voyage-multimodal-3.5", request.Body["model"])
+	}
+	require.Equal(t, "document", requests[0].Body["input_type"])
+	documentContent := requests[0].Body["inputs"].([]any)[0].(map[string]any)["content"].([]any)
+	require.Equal(t, "image_url", documentContent[1].(map[string]any)["type"])
+	require.Equal(t, "query", requests[1].Body["input_type"])
+	queryContent := requests[1].Body["inputs"].([]any)[0].(map[string]any)["content"].([]any)
+	require.Equal(t, "text", queryContent[0].(map[string]any)["type"])
+	require.Equal(t, "find the diagram", queryContent[0].(map[string]any)["text"])
+	require.NotEmpty(t, embedder.EmbeddingSpace())
 }
 
 func TestVoyageContextualizedChunkSizeDefaultAndExplicit(t *testing.T) {

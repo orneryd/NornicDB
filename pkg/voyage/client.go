@@ -251,26 +251,26 @@ type MultimodalOptions struct {
 	InputType       string
 	Truncation      bool
 	OutputDimension int
-	OutputDType     string
+	// OutputDType is retained for source compatibility. Voyage multimodal
+	// responses are floating-point vectors unless output_encoding is requested.
+	OutputDType string
 }
 
 // EmbedMultimodal embeds text/image multimodal inputs. Inputs are intentionally
 // represented as JSON-compatible values so callers can supply the Voyage wire shape.
 func (c *Client) EmbedMultimodal(ctx context.Context, inputs []any, opts MultimodalOptions) (*EmbeddingResponse, error) {
+	if err := validateMultimodalInputs(inputs); err != nil {
+		return nil, err
+	}
 	model := strings.TrimSpace(opts.Model)
 	if model == "" {
-		model = DefaultEmbeddingModel
-	}
-	outputDType := strings.TrimSpace(opts.OutputDType)
-	if outputDType == "" {
-		outputDType = defaultOutputDType
+		model = DefaultMultimodalModel
 	}
 	req := map[string]any{
-		"inputs":       inputs,
-		"model":        model,
-		"input_type":   normalizeInputType(opts.InputType),
-		"truncation":   opts.Truncation,
-		"output_dtype": outputDType,
+		"inputs":     inputs,
+		"model":      model,
+		"input_type": normalizeInputType(opts.InputType),
+		"truncation": opts.Truncation,
 	}
 	if opts.OutputDimension > 0 {
 		req["output_dimension"] = opts.OutputDimension

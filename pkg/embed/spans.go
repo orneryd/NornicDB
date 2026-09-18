@@ -86,6 +86,20 @@ func (t *TracedEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 	return &DocumentChunkResult{Chunks: chunks, Embeddings: embeddings, Model: t.Model()}, nil
 }
 
+// UsesDocumentProperties preserves the wrapped provider's structured-document capability.
+func (t *TracedEmbedder) UsesDocumentProperties() bool {
+	provider, ok := t.inner.(DocumentPropertyChunkEmbedder)
+	return ok && provider.UsesDocumentProperties()
+}
+
+// EmbedDocumentPropertyChunks delegates provider-structured documents.
+func (t *TracedEmbedder) EmbedDocumentPropertyChunks(ctx context.Context, fallbackText string, properties map[string]any, maxTokens, overlap int) (*DocumentChunkResult, error) {
+	if provider, ok := t.inner.(DocumentPropertyChunkEmbedder); ok && provider.UsesDocumentProperties() {
+		return provider.EmbedDocumentPropertyChunks(ctx, fallbackText, properties, maxTokens, overlap)
+	}
+	return t.EmbedDocumentChunks(ctx, fallbackText, maxTokens, overlap)
+}
+
 // EmbedDocumentBatchChunks traces a cross-document provider batch while
 // retaining provider-managed contextual chunking when the inner embedder has it.
 func (t *TracedEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []string, maxTokens, overlap int) ([]*DocumentChunkResult, error) {
@@ -111,4 +125,12 @@ func (t *TracedEmbedder) Model() string {
 
 func (t *TracedEmbedder) Backend() string {
 	return t.inner.Backend()
+}
+
+// EmbeddingSpace preserves the wrapped provider's model-space identity.
+func (t *TracedEmbedder) EmbeddingSpace() string {
+	if provider, ok := t.inner.(EmbeddingSpaceProvider); ok {
+		return provider.EmbeddingSpace()
+	}
+	return ""
 }

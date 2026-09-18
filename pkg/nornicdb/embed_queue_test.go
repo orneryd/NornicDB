@@ -24,6 +24,142 @@ type mockEmbedder struct {
 	model      string
 }
 
+type structuredDocumentEmbedder struct {
+	properties map[string]any
+	batchCalls int
+}
+
+type resolvedDocumentBatchEmbedder struct {
+	batchSizes []int
+}
+
+func (e *resolvedDocumentBatchEmbedder) Embed(context.Context, string) ([]float32, error) {
+	return []float32{1, 0}, nil
+}
+func (e *resolvedDocumentBatchEmbedder) EmbedBatch(context.Context, []string) ([][]float32, error) {
+	return nil, errors.New("document batch capability should be used")
+}
+func (e *resolvedDocumentBatchEmbedder) ChunkText(text string, _, _ int) ([]string, error) {
+	return []string{text}, nil
+}
+func (e *resolvedDocumentBatchEmbedder) Dimensions() int { return 2 }
+func (e *resolvedDocumentBatchEmbedder) Model() string   { return "shared-model" }
+func (e *resolvedDocumentBatchEmbedder) Backend() string { return "cpu" }
+func (e *resolvedDocumentBatchEmbedder) EmbedDocumentBatchChunks(_ context.Context, texts []string, _, _ int) ([]*embed.DocumentChunkResult, error) {
+	e.batchSizes = append(e.batchSizes, len(texts))
+	results := make([]*embed.DocumentChunkResult, len(texts))
+	for index, text := range texts {
+		results[index] = &embed.DocumentChunkResult{Chunks: []string{text}, Embeddings: [][]float32{{1, 0}}, Model: e.Model()}
+	}
+	return results, nil
+}
+
+type sequenceEmbeddingEngine struct {
+	storage.Engine
+	nodes []*storage.Node
+	next  int
+}
+
+func (e *sequenceEmbeddingEngine) FindNodeNeedingEmbedding() *storage.Node {
+	if e.next >= len(e.nodes) {
+		return nil
+	}
+	node := e.nodes[e.next]
+	e.next++
+	return storage.CopyNode(node)
+}
+func (e *sequenceEmbeddingEngine) MarkNodeEmbedded(storage.NodeID) {}
+func (e *sequenceEmbeddingEngine) UpdateNodeEmbedding(node *storage.Node) error {
+	return e.Engine.UpdateNode(node)
+}
+
+func TestEmbedWorkerBatchesNodesThatResolveToTheSameProvider(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	nodes := []*storage.Node{
+		{ID: "docs:first", Properties: map[string]any{"content": "first"}},
+		{ID: "docs:second", Properties: map[string]any{"content": "second"}},
+	}
+	for _, node := range nodes {
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+	}
+	queue := &sequenceEmbeddingEngine{Engine: engine, nodes: nodes}
+	provider := &resolvedDocumentBatchEmbedder{}
+	worker := &EmbedWorker{
+		embedder: newMockEmbedder(), storage: queue,
+		config: &EmbedWorkerConfig{EmbedBatchSize: 32, MaxRetries: 3, ChunkSize: 512},
+		ctx:    context.Background(), trigger: make(chan struct{}, 1),
+	}
+	worker.SetEmbedderResolver(func(storage.NodeID) (embed.Embedder, error) { return provider, nil })
+
+	require.True(t, worker.processNextBatch())
+	require.Equal(t, []int{2}, provider.batchSizes)
+	for _, node := range nodes {
+		stored, err := engine.GetNode(node.ID)
+		require.NoError(t, err)
+		require.Equal(t, [][]float32{{1, 0}}, stored.ChunkEmbeddings)
+	}
+}
+
+func (e *structuredDocumentEmbedder) Embed(context.Context, string) ([]float32, error) {
+	return []float32{1, 0}, nil
+}
+func (e *structuredDocumentEmbedder) EmbedBatch(context.Context, []string) ([][]float32, error) {
+	e.batchCalls++
+	return nil, errors.New("structured documents must not use the text batch path")
+}
+func (e *structuredDocumentEmbedder) ChunkText(text string, _, _ int) ([]string, error) {
+	return []string{text}, nil
+}
+func (e *structuredDocumentEmbedder) Dimensions() int { return 2 }
+func (e *structuredDocumentEmbedder) Model() string   { return "visual-model" }
+func (e *structuredDocumentEmbedder) Backend() string { return "cpu" }
+func (e *structuredDocumentEmbedder) EmbeddingSpace() string {
+	return "provider:multimodal:visual-model:2"
+}
+func (e *structuredDocumentEmbedder) UsesDocumentProperties() bool { return true }
+func (e *structuredDocumentEmbedder) EmbedDocumentPropertyChunks(_ context.Context, _ string, properties map[string]any, _, _ int) (*embed.DocumentChunkResult, error) {
+	e.properties = properties
+	return &embed.DocumentChunkResult{Embeddings: [][]float32{{1, 0}}, Model: e.Model()}, nil
+}
+func (e *structuredDocumentEmbedder) EmbedDocumentBatchChunks(context.Context, []string, int, int) ([]*embed.DocumentChunkResult, error) {
+	e.batchCalls++
+	return nil, errors.New("structured documents must not use the text batch path")
+}
+
+func TestEmbedWorkerPassesStructuredNodeContentAndPersistsModelSpace(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	engine := storage.Engine(base)
+	node := &storage.Node{ID: "visual:image", Labels: []string{"Image"}, Properties: map[string]any{
+		"_embedding_content": []any{map[string]any{"type": "image_url", "image_url": "https://example.invalid/image.png"}},
+	}}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+
+	provider := &structuredDocumentEmbedder{}
+	defaultProvider := &structuredDocumentEmbedder{}
+	queue := &queueBranchEngine{Engine: engine, findNode: node}
+	worker := &EmbedWorker{
+		embedder: defaultProvider,
+		storage:  queue,
+		config:   &EmbedWorkerConfig{EmbedBatchSize: 16, MaxRetries: 3, ChunkSize: 512},
+		ctx:      context.Background(),
+		trigger:  make(chan struct{}, 1),
+	}
+	worker.SetEmbedderResolver(func(nodeID storage.NodeID) (embed.Embedder, error) {
+		require.Equal(t, node.ID, nodeID)
+		return provider, nil
+	})
+
+	require.True(t, worker.processNextBatch())
+	require.Equal(t, node.Properties["_embedding_content"], provider.properties["_embedding_content"])
+	require.Zero(t, provider.batchCalls)
+	require.Nil(t, defaultProvider.properties)
+	require.NotNil(t, queue.updatedEmbedding)
+	require.Equal(t, provider.EmbeddingSpace(), queue.updatedEmbedding.EmbedMeta["embedding_space"])
+	require.Equal(t, [][]float32{{1, 0}}, queue.updatedEmbedding.ChunkEmbeddings)
+}
+
 func newMockEmbedder() *mockEmbedder {
 	return &mockEmbedder{
 		dims:  1024,

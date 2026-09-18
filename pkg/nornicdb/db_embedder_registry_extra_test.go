@@ -12,6 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEmbedderRegistrySeparatesEmbeddingModes(t *testing.T) {
+	contextual := &embed.Config{Provider: "voyage", Mode: embed.VoyageModeContextualized, Model: "shared-name", Dimensions: 1024}
+	multimodal := &embed.Config{Provider: "voyage", Mode: embed.VoyageModeMultimodal, Model: "shared-name", Dimensions: 1024}
+	require.NotEqual(t, embedConfigKey(contextual), embedConfigKey(multimodal))
+}
+
 func TestDB_GetOrCreateEmbedderForDB_ExtraBranches(t *testing.T) {
 	t.Run("inflight create channel without registry entry falls back to global embedder", func(t *testing.T) {
 		global := &factoryTestEmbedder{dims: 4}

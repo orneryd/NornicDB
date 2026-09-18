@@ -286,7 +286,7 @@ func embedConfigKey(cfg *embed.Config) string {
 	if cfg == nil {
 		return ""
 	}
-	return cfg.Provider + "|" + cfg.Model + "|" + strconv.Itoa(cfg.Dimensions) + "|" +
+	return cfg.Provider + "|" + cfg.Mode + "|" + cfg.Model + "|" + strconv.Itoa(cfg.Dimensions) + "|" +
 		cfg.APIURL + "|" + cfg.APIKey + "|" + cfg.ModelsDir + "|" + strconv.Itoa(cfg.GPULayers)
 }
 
@@ -1692,7 +1692,22 @@ func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
 func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error)) {
 	db.mu.Lock()
 	db.embedConfigForDB = fn
+	queue := db.embedQueue
 	db.mu.Unlock()
+	if queue == nil {
+		return
+	}
+	if fn == nil {
+		queue.SetEmbedderResolver(nil)
+		return
+	}
+	queue.SetEmbedderResolver(func(nodeID storage.NodeID) (embed.Embedder, error) {
+		dbName, _, ok := splitQualifiedID(string(nodeID))
+		if !ok {
+			return nil, nil
+		}
+		return db.getOrCreateEmbedderForDB(dbName)
+	})
 }
 
 // getOrCreateEmbedderForDB returns the embedder for the given database, using the registry when embedConfigForDB is set.

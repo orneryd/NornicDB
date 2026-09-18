@@ -663,6 +663,7 @@ type Service struct {
 	buildMu        sync.Mutex
 	ready          atomic.Bool
 	buildAttempted atomic.Bool
+	embeddingSpace atomic.Value
 	// resumeVectorBuild skips re-adding vectors already present in vectorFileStore during BuildIndexes.
 	resumeVectorBuild bool
 
@@ -2762,7 +2763,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// chunk IDs back to a unique node ID. The "main" embedding is an additional
 	// node-level entry used by some call paths and for compatibility.
 	// Chunk embeddings are stored in struct field (opaque to users), not in properties
-	if indexVectorState && len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
+	if indexVectorState && s.managedEmbeddingEligible(node) && len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 		chunkIDs := make([]string, 0, len(node.ChunkEmbeddings)+1)
 		// Always index a main embedding at the node ID (using first chunk)
 		mainEmbedding := node.ChunkEmbeddings[0]
@@ -2898,7 +2899,7 @@ func (s *Service) nodeVectorStateUnchangedLocked(node *storage.Node) bool {
 		expected[id] = embedding
 		expectedNamed[vectorName] = id
 	}
-	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
+	if s.managedEmbeddingEligible(node) && len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 		if len(node.ChunkEmbeddings[0]) != dim {
 			return false
 		}

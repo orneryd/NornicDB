@@ -6,6 +6,7 @@ Official references:
 
 - Text embeddings: <https://docs.voyageai.com/docs/embeddings>
 - Contextualized chunk embeddings: <https://docs.voyageai.com/docs/contextualized-chunk-embeddings>
+- Multimodal embeddings: <https://docs.voyageai.com/reference/multimodal-embeddings-api>
 - Reranking: <https://docs.voyageai.com/reference/reranker-api>
 
 ## Text Embeddings
@@ -59,6 +60,52 @@ embedding_worker:
   chunk_overlap: 50
 ```
 
+## Multimodal Documents and Text Queries
+
+Use a dedicated database with `NORNICDB_EMBEDDING_MODE=multimodal` and the
+`voyage-multimodal-3.5` model. The background worker sends structured image and
+text documents to `/v1/multimodalembeddings` with `input_type: document`.
+Search text is sent to the same model and endpoint with `input_type: query`.
+
+```bash
+export NORNICDB_EMBEDDING_API_KEY=pa-...
+export NORNICDB_EMBEDDING_ENABLED=true
+export NORNICDB_EMBEDDING_PROVIDER=voyage
+export NORNICDB_EMBEDDING_MODE=multimodal
+export NORNICDB_EMBEDDING_MODEL=voyage-multimodal-3.5
+export NORNICDB_EMBEDDING_DIMENSIONS=1024
+```
+
+Store the ordered content parts in `_embedding_content`. The property can be a
+native list of maps or a JSON string when a client cannot represent nested
+property values. Text and images may be interleaved:
+
+```json
+[
+  {"type":"text","text":"A diagram of the indexing pipeline"},
+  {"type":"image_url","image_url":"https://example.com/diagram.png"}
+]
+```
+
+For inline images, use `image_base64` with a PNG, JPEG, WEBP, or GIF data URI:
+
+```json
+[{"type":"image_base64","image_base64":"data:image/png;base64,..."}]
+```
+
+NornicDB validates the structured shape, supported data-URI media types, the
+20 MB decoded inline-image limit, and Voyage's 1,000-input request limit. It
+does not fetch remote images: Voyage fetches an `http` or `https` URL and
+enforces pixel and token limits. Provider 4xx responses are terminal for the
+node; rate limits and server failures use the configured bounded retry policy.
+
+Managed vectors persist a provider/model-space identity. Search services only
+index managed vectors for their configured database space, so contextualized
+and multimodal vectors are not compared merely because their dimensions match.
+Use separate logical databases when both spaces are needed. After changing a
+database's mode or model, clear its prior managed embeddings and regenerate
+them before searching the new space.
+
 ## Reranking
 
 Voyage reranking is configured through the existing search rerank feature flag. It uses Voyage's native `/v1/rerank` API, not the generic cross-encoder adapter.
@@ -88,6 +135,10 @@ CALL db.nornic.config.set('docs', {
   `db.nornic.search.rerank.api.key`: 'pa-...'
 })
 ```
+
+For a visual database, set the same keys with mode `multimodal` and model
+`voyage-multimodal-3.5`. Per-database embedder reuse includes the mode, so a
+text/contextualized configuration cannot alias a multimodal provider instance.
 
 ## Inference
 

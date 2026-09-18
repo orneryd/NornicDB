@@ -282,3 +282,23 @@ func TestCollapseCandidatesByNodeIDKeepsHighestScore(t *testing.T) {
 		{ID: "node-c", Score: 0.6},
 	}, collapsed)
 }
+
+func TestSearchServiceDoesNotIndexManagedVectorsFromAnotherModelSpace(t *testing.T) {
+	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	service.SetEmbeddingSpace("provider:text:model:2")
+
+	require.NoError(t, service.IndexNode(&storage.Node{
+		ID:              "text",
+		ChunkEmbeddings: [][]float32{{1, 0}},
+		EmbedMeta:       map[string]any{"embedding_space": "provider:text:model:2"},
+	}))
+	require.NoError(t, service.IndexNode(&storage.Node{
+		ID:              "visual",
+		ChunkEmbeddings: [][]float32{{0, 1}},
+		EmbedMeta:       map[string]any{"embedding_space": "provider:multimodal:model:2"},
+	}))
+
+	require.Equal(t, 1, service.EmbeddingCount())
+	_, found := service.vectorIndex.GetVector("visual")
+	require.False(t, found)
+}

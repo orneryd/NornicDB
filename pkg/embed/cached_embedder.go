@@ -264,6 +264,21 @@ func (c *CachedEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 	return chunker.EmbedDocumentChunks(ctx, text, maxTokens, overlap)
 }
 
+// UsesDocumentProperties preserves the wrapped provider's structured-document capability.
+func (c *CachedEmbedder) UsesDocumentProperties() bool {
+	provider, ok := c.base.(DocumentPropertyChunkEmbedder)
+	return ok && provider.UsesDocumentProperties()
+}
+
+// EmbedDocumentPropertyChunks delegates structured documents without placing
+// image payloads in the text-query cache.
+func (c *CachedEmbedder) EmbedDocumentPropertyChunks(ctx context.Context, fallbackText string, properties map[string]any, maxTokens, overlap int) (*DocumentChunkResult, error) {
+	if provider, ok := c.base.(DocumentPropertyChunkEmbedder); ok && provider.UsesDocumentProperties() {
+		return provider.EmbedDocumentPropertyChunks(ctx, fallbackText, properties, maxTokens, overlap)
+	}
+	return c.EmbedDocumentChunks(ctx, fallbackText, maxTokens, overlap)
+}
+
 // EmbedDocumentBatchChunks preserves provider-managed batching when available
 // and otherwise batches deterministic chunks from several documents together.
 func (c *CachedEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []string, maxTokens, overlap int) ([]*DocumentChunkResult, error) {
@@ -296,6 +311,14 @@ func (c *CachedEmbedder) Model() string {
 // backend (e.g., "metal" for a cached LocalGGUF embedder running on Metal).
 func (c *CachedEmbedder) Backend() string {
 	return c.base.Backend()
+}
+
+// EmbeddingSpace preserves the wrapped provider's model-space identity.
+func (c *CachedEmbedder) EmbeddingSpace() string {
+	if provider, ok := c.base.(EmbeddingSpaceProvider); ok {
+		return provider.EmbeddingSpace()
+	}
+	return ""
 }
 
 // Stats returns cache statistics.
