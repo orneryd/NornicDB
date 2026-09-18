@@ -2,6 +2,7 @@ package search
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -45,5 +46,26 @@ func BenchmarkFulltextIndexGrowingVocabularyMutation(b *testing.B) {
 		for i := 0; i < 1_000; i++ {
 			idx.Index(fmt.Sprintf("doc-%04d", i), fmt.Sprintf("shared unique-%04d", i))
 		}
+	}
+}
+
+func BenchmarkFulltextIndexMutationWithLargeVocabulary(b *testing.B) {
+	idx := NewFulltextIndexV2()
+	idx.Index("mutable", "middlea")
+
+	idx.mu.Lock()
+	for i := 0; i < 100_000; i++ {
+		term := fmt.Sprintf("term%08x", i)
+		idx.termIndex[term] = &bm25TermState{Postings: []bm25Posting{{DocNum: 0, TF: 1}}}
+		idx.lexicon = append(idx.lexicon, term)
+	}
+	idx.lexicon = append(idx.lexicon, "middlea")
+	sort.Strings(idx.lexicon)
+	idx.lexiconDirty = false
+	idx.mu.Unlock()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		idx.Index("mutable", fmt.Sprintf("middle%c", 'a'+rune(i&1)))
 	}
 }

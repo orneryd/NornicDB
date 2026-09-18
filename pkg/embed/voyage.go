@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/pkg/textchunk"
 	voyageapi "github.com/orneryd/nornicdb/pkg/voyage"
@@ -14,6 +16,10 @@ const (
 	VoyageModeText           = "text"
 	VoyageModeContextualized = "contextualized"
 	VoyageModeMultimodal     = "multimodal"
+
+	// VoyageContextualizedDefaultChunkTokens is NornicDB's default provider
+	// chunk size when Voyage contextualized auto-chunking is enabled.
+	VoyageContextualizedDefaultChunkTokens = 512
 
 	// VoyageContextualizedMaxChunkTokens is Voyage's maximum auto-chunk size
 	// for voyage-context-4 contextualized chunk embeddings.
@@ -199,6 +205,7 @@ func (e *VoyageEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 	if len(text) > VoyageContextualizedSafeRequestBytes {
 		return e.embedLongContextualizedDocument(ctx, text, model, chunkSize, overlap)
 	}
+	chunkOverlap, chunkOverlapSet := voyageChunkOverlap(overlap)
 	resp, err := e.client.EmbedContextualized(ctx, []string{text}, voyageapi.ContextualizedOptions{
 		Model:              model,
 		InputType:          InputTypeDocument,
@@ -206,7 +213,8 @@ func (e *VoyageEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 		OutputDType:        "float",
 		EnableAutoChunking: true,
 		ChunkSize:          chunkSize,
-		ChunkOverlap:       overlap,
+		ChunkOverlap:       chunkOverlap,
+		ChunkOverlapSet:    chunkOverlapSet,
 	})
 	if err != nil {
 		return nil, err
@@ -255,6 +263,7 @@ func (e *VoyageEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []s
 		return results, nil
 	}
 
+	chunkOverlap, chunkOverlapSet := voyageChunkOverlap(overlap)
 	resp, err := e.client.EmbedContextualized(ctx, shortTexts, voyageapi.ContextualizedOptions{
 		Model:              e.contextModel,
 		InputType:          InputTypeDocument,
@@ -262,7 +271,8 @@ func (e *VoyageEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []s
 		OutputDType:        "float",
 		EnableAutoChunking: true,
 		ChunkSize:          voyageContextualizedChunkSize(maxTokens),
-		ChunkOverlap:       overlap,
+		ChunkOverlap:       chunkOverlap,
+		ChunkOverlapSet:    chunkOverlapSet,
 	})
 	if err != nil {
 		return nil, err
@@ -281,39 +291,22 @@ func (e *VoyageEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []s
 	return results, nil
 }
 
-// embedLongContextualizedDocument preserves contextualized embeddings for
-// documents that cannot fit Voyage's 120K-token request budget. It makes
-// conservative byte-bounded, locally chunked requests: chunks in each request
-// retain context with their neighbouring chunks, while each group is safely
-// below the provider's total-token and input-count limits.
+// embedLongContextualizedDocument splits only at the request boundary. Voyage
+// still performs token-based, boundary-aware auto-chunking inside every
+// segment, so chunk size has identical semantics for short and long documents.
 func (e *VoyageEmbedder) embedLongContextualizedDocument(ctx context.Context, text, model string, chunkSize, overlap int) (*DocumentChunkResult, error) {
-	chunks, err := e.ChunkText(text, chunkSize, overlap)
-	if err != nil {
-		return nil, err
-	}
-
 	result := &DocumentChunkResult{Model: model}
-	for start := 0; start < len(chunks); {
-		end, requestBytes := start, 0
-		for end < len(chunks) && end-start < VoyageContextualizedMaxInputs {
-			chunkBytes := len(chunks[end])
-			if end > start && requestBytes+chunkBytes > VoyageContextualizedSafeRequestBytes {
-				break
-			}
-			requestBytes += chunkBytes
-			end++
-		}
-		// ChunkText uses byte length as its conservative token counter, so a
-		// single chunk cannot exceed the request byte budget.
-		if end == start {
-			return nil, fmt.Errorf("contextualized chunk exceeds safe request size")
-		}
-
-		resp, err := e.client.EmbedContextualized(ctx, [][]string{chunks[start:end]}, voyageapi.ContextualizedOptions{
-			Model:           model,
-			InputType:       InputTypeDocument,
-			OutputDimension: e.config.Dimensions,
-			OutputDType:     "float",
+	chunkOverlap, chunkOverlapSet := voyageChunkOverlap(overlap)
+	for _, segment := range splitVoyageContextualizedSegments(text, VoyageContextualizedSafeRequestBytes) {
+		resp, err := e.client.EmbedContextualized(ctx, []string{segment}, voyageapi.ContextualizedOptions{
+			Model:              model,
+			InputType:          InputTypeDocument,
+			OutputDimension:    e.config.Dimensions,
+			OutputDType:        "float",
+			EnableAutoChunking: true,
+			ChunkSize:          chunkSize,
+			ChunkOverlap:       chunkOverlap,
+			ChunkOverlapSet:    chunkOverlapSet,
 		})
 		if err != nil {
 			return nil, err
@@ -325,9 +318,48 @@ func (e *VoyageEmbedder) embedLongContextualizedDocument(ctx context.Context, te
 		if batch.ChunkerVersion != "" {
 			result.ChunkerVersion = batch.ChunkerVersion
 		}
-		start = end
 	}
 	return result, nil
+}
+
+func voyageChunkOverlap(overlap int) (int, bool) {
+	if overlap < 0 {
+		return 0, false
+	}
+	return overlap, true
+}
+
+func splitVoyageContextualizedSegments(text string, maxBytes int) []string {
+	if text == "" {
+		return []string{""}
+	}
+	if maxBytes <= 0 || len(text) <= maxBytes {
+		return []string{text}
+	}
+	segments := make([]string, 0, len(text)/maxBytes+1)
+	for start := 0; start < len(text); {
+		hardEnd := start + maxBytes
+		if hardEnd >= len(text) {
+			segments = append(segments, text[start:])
+			break
+		}
+		for hardEnd > start && !utf8.RuneStart(text[hardEnd]) {
+			hardEnd--
+		}
+		end := hardEnd
+		lastBoundary := 0
+		for offset, r := range text[start:hardEnd] {
+			if unicode.IsSpace(r) || strings.ContainsRune(".!?;:。！？", r) {
+				lastBoundary = offset + utf8.RuneLen(r)
+			}
+		}
+		if lastBoundary >= maxBytes/2 {
+			end = start + lastBoundary
+		}
+		segments = append(segments, text[start:end])
+		start = end
+	}
+	return segments
 }
 
 func contextualizedDocumentResult(resp *voyageapi.ContextualizedResponse, model string) *DocumentChunkResult {
@@ -365,7 +397,10 @@ func (e *VoyageEmbedder) Backend() string {
 }
 
 func voyageContextualizedChunkSize(maxTokens int) int {
-	if maxTokens <= 0 || maxTokens > VoyageContextualizedMaxChunkTokens {
+	if maxTokens <= 0 {
+		return VoyageContextualizedDefaultChunkTokens
+	}
+	if maxTokens > VoyageContextualizedMaxChunkTokens {
 		return VoyageContextualizedMaxChunkTokens
 	}
 	return maxTokens

@@ -45,6 +45,10 @@ type FulltextIndexV2 struct {
 
 	termIndex map[string]*bm25TermState
 	lexicon   []string
+	// lexicon is rebuilt lazily because maintaining a sorted slice on every new
+	// term makes vocabulary growth quadratic. Exact-term search uses termIndex;
+	// only prefix expansion and persistence require the sorted snapshot.
+	lexiconDirty bool
 
 	avgDocLength   float64
 	docCount       int
@@ -129,6 +133,7 @@ func (f *FulltextIndexV2) Clear() {
 	f.docIDsLexicalByNum = true
 	f.termIndex = make(map[string]*bm25TermState)
 	f.lexicon = nil
+	f.lexiconDirty = false
 	f.docCount = 0
 	f.totalDocLength = 0
 	f.avgDocLength = 0
@@ -269,7 +274,7 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		return nil
 	}
 
-	f.mu.RLock()
+	f.lockForSearch()
 	defer f.mu.RUnlock()
 	if f.docCount == 0 || f.avgDocLength <= 0 {
 		return nil
@@ -493,22 +498,50 @@ func (f *FulltextIndexV2) calculateIDFLocked(df int) float64 {
 }
 
 func (f *FulltextIndexV2) insertLexiconTermLocked(term string) {
-	i := sort.SearchStrings(f.lexicon, term)
-	if i < len(f.lexicon) && f.lexicon[i] == term {
-		return
-	}
-	f.lexicon = append(f.lexicon, "")
-	copy(f.lexicon[i+1:], f.lexicon[i:])
-	f.lexicon[i] = term
+	f.lexiconDirty = true
 }
 
 func (f *FulltextIndexV2) removeLexiconTermLocked(term string) {
-	i := sort.SearchStrings(f.lexicon, term)
-	if i >= len(f.lexicon) || f.lexicon[i] != term {
+	f.lexiconDirty = true
+}
+
+func (f *FulltextIndexV2) rebuildLexiconLocked() {
+	if !f.lexiconDirty {
 		return
 	}
-	copy(f.lexicon[i:], f.lexicon[i+1:])
-	f.lexicon = f.lexicon[:len(f.lexicon)-1]
+	lexicon := make([]string, 0, len(f.termIndex))
+	for term, state := range f.termIndex {
+		if state != nil && len(state.Postings) > 0 {
+			lexicon = append(lexicon, term)
+		}
+	}
+	sort.Strings(lexicon)
+	f.lexicon = lexicon
+	f.lexiconDirty = false
+}
+
+// lockWithCurrentLexicon returns with the read lock held and guarantees that
+// no mutation can make the sorted lexicon stale between rebuilding and use.
+func (f *FulltextIndexV2) lockWithCurrentLexicon() {
+	for {
+		f.mu.RLock()
+		if !f.lexiconDirty {
+			return
+		}
+		f.mu.RUnlock()
+
+		f.mu.Lock()
+		f.rebuildLexiconLocked()
+		f.mu.Unlock()
+	}
+}
+
+func (f *FulltextIndexV2) lockForSearch() {
+	if f.maxPrefixExpansions == 0 {
+		f.mu.RLock()
+		return
+	}
+	f.lockWithCurrentLexicon()
 }
 
 type weightedTermPostings struct {

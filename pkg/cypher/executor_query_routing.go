@@ -290,12 +290,7 @@ skipMatchCallRoute:
 		return e.executeMultipleCreates(ctx, cypher)
 	}
 	if findKeywordIndex(cypher, "UNWIND") == 0 {
-		if needsUnwindMutationPipeline(cypher) {
-			if result, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
-				return result, err
-			}
-		}
-		return e.executeUnwind(ctx, cypher)
+		return e.executeTopLevelUnwind(ctx, cypher)
 	}
 
 	hasDelete := findKeywordIndex(cypher, "DELETE") > 0
@@ -495,6 +490,18 @@ func needsUnwindMutationPipeline(cypher string) bool {
 		return false
 	}
 	return findKeywordIndex(afterWith[matchIdx+len("MATCH"):], "CREATE") >= 0
+}
+
+// executeTopLevelUnwind keeps autocommit and explicit-transaction routing in
+// sync. Compound mutation pipelines must retain bindings across every clause;
+// simpler UNWIND statements continue through the specialized handler.
+func (e *StorageExecutor) executeTopLevelUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if needsUnwindMutationPipeline(cypher) {
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
+	}
+	return e.executeUnwind(ctx, cypher)
 }
 
 // executeReturn handles simple RETURN statements (e.g., "RETURN 1").

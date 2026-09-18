@@ -4,7 +4,7 @@ How to keep memory usage bounded when building search indexes (especially the ve
 
 ## Current NornicDB Behavior
 
-- **Without a vector index path**: BuildIndexes streams nodes in batches but every node’s embedding is added to in-memory structures (VectorIndex `vectors`/`rawVectors` maps). After iteration, warmup builds HNSW from that, so peak RAM ≈ 2–3× vector data plus graph.
+- **Without a vector index path**: BuildIndexes streams nodes in batches and keeps one normalized private copy of each unit-length embedding. Raw values are retained only for non-unit vectors that need distinct dot/euclidean semantics. HNSW resolves vectors from this immutable store instead of retaining another full copy, so the normal embedding path is ≈1× vector data plus the graph.
 - **With a vector index path** (see Implemented below): BuildIndexes always starts from 0 (removes any existing .vec/.meta). Vectors are written to an append-only file during the run; only id→offset is kept in RAM. HNSW uses a vector lookup (no duplicate copy). We do **not** resume partial builds: BM25 is written only at end, so resume would leave BM25 and vectors out of sync. Each run is a full build; the file is only used to bound memory during that run.
 
 ## How Neo4j Handles It
@@ -39,7 +39,7 @@ How to keep memory usage bounded when building search indexes (especially the ve
 ### File-backed vector store + single vector per id
 
 - **VectorFileStore** (`pkg/search/vector_file_store.go`): Append-only storage. Vectors are written to a **.vec** file (binary: length-prefixed id + float32 vector); only **id→offset** is kept in RAM. A **.meta** file (msgpack) stores dimensions and id→offset for Load/Save.
-- **Single vector per id**: Only **normalized** vectors are stored (one per id). No `rawVectors` when using the file store; cosine is the primary path. This halves vector storage (RAM and disk) vs the previous in-memory design.
+- **Single vector per id**: Only **normalized** vectors are stored (one per id). No `rawVectors` are needed in the file store; cosine is the primary path. This keeps disk-backed storage aligned with the single-copy normal in-memory path.
 - **BuildIndexes**: At start we **resume** if a .vec exists and loads cleanly; we rebuild the id→offset map from .vec and compare the **database last-write time** to the .vec file timestamp. If the DB is newer (or the file is **missing/corrupted**), we remove .vec/.meta and start from 0. When a vector index path is set, `ensureBuildVectorFileStore()` creates a VectorFileStore; new embeddings are appended via `addVectorLocked()`. **No checkpoint persist**: the append-only .vec is authoritative. **After indexing**: we persist **BM25 + vector store** first (base indexes), then build HNSW or k-means+IVF-HNSW. The **.vec/.meta files are the canonical persisted vector store** and are kept on disk for reload/resume (no conversion to a single vectors file).
 - **Warmup**: HNSW is built from the file in chunks via **VectorFileStore.IterateChunked** (e.g. 10k vectors per chunk). Cluster backfill and IVF-HNSW also use the file store when present.
 - **Load/Save**: On startup, if `vectorPath.vec` exists we open VectorFileStore and Load() .meta (used when we skip iteration because both BM25 and vector index were loaded). **runPersist** Syncs and Saves the vector file store (and BM25/HNSW).

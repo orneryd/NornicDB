@@ -1700,6 +1700,7 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 		}
 		if idx == nil {
 			idx = NewHNSWIndex(dims, config)
+			idx.SetVectorLookup(vectorLookup)
 			for _, id := range memberIDs {
 				vec, ok := vectorLookup(id)
 				if !ok || len(vec) == 0 {
@@ -2263,7 +2264,7 @@ func (s *Service) getVectorLookup() VectorLookup {
 			}
 		}
 		if vi != nil {
-			return vi.GetVector(id)
+			return vi.getVectorRef(id)
 		}
 		return nil, false
 	}
@@ -2278,8 +2279,8 @@ func (v *vectorLookupGetter) GetVector(id string) ([]float32, bool) {
 	return v.lookup(id)
 }
 
-// getVectorForCypher returns the vector for vecID for use in Cypher vector similarity.
-// When using file store only normalized vectors are available (cosine/dot correct; euclidean uses normalized).
+// getVectorForCypher returns the normalized vector for vecID for use in Cypher
+// vector similarity, matching the file-backed vector-store behavior.
 func (s *Service) getVectorForCypher(vecID string) ([]float32, bool) {
 	s.mu.RLock()
 	vfs := s.vectorFileStore
@@ -2290,13 +2291,15 @@ func (s *Service) getVectorForCypher(vecID string) ([]float32, bool) {
 	}
 	if vi != nil {
 		vi.mu.RLock()
-		v, ok := vi.rawVectors[vecID]
-		vi.mu.RUnlock()
-		if ok {
-			out := make([]float32, len(v))
-			copy(out, v)
-			return out, true
+		raw, hasRaw := vi.rawVectors[vecID]
+		if hasRaw {
+			raw = append([]float32(nil), raw...)
 		}
+		vi.mu.RUnlock()
+		if hasRaw {
+			return raw, true
+		}
+		return vi.GetVector(vecID)
 	}
 	return nil, false
 }
@@ -2616,7 +2619,8 @@ func (s *Service) ensureBuildVectorFileStore() {
 	}
 	_ = vfs.Load()
 	s.vectorFileStore = vfs
-	// Clear in-memory vectors so we don't hold 2x during indexing; metadata (nodeLabels etc.) stays in RAM.
+	// Clear in-memory vectors so we don't hold duplicates during indexing;
+	// metadata (nodeLabels etc.) stays in RAM.
 	s.vectorIndex.vectors = make(map[string][]float32)
 	s.vectorIndex.rawVectors = make(map[string][]float32)
 }
@@ -5021,7 +5025,7 @@ func (s *Service) buildHNSWForTransition(ctx context.Context, dimensions int, vi
 				return fn(batch)
 			})
 		}
-		built, _, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, nil, total, iter, nil)
+		built, _, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, s.getVectorLookup(), total, iter, nil)
 		return built, err
 	}
 	if vi == nil {
@@ -5034,7 +5038,7 @@ func (s *Service) buildHNSWForTransition(ctx context.Context, dimensions int, vi
 	}
 	vi.mu.RUnlock()
 	iter := hnswPairSliceIterator(pairs)
-	built, _, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, nil, len(pairs), iter, nil)
+	built, _, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, VectorLookup(vi.getVectorRef), len(pairs), iter, nil)
 	return built, err
 }
 
@@ -5466,7 +5470,7 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 		total := len(pairs)
 		s.logPrintf("[HNSW] 🔨 Building from in-memory index: %d vectors", total)
 		var err error
-		built, buildStats, err = buildHNSWWithOptionalGPU(ctx, dimensions, config, nil, total, hnswPairSliceIterator(pairs), nil)
+		built, buildStats, err = buildHNSWWithOptionalGPU(ctx, dimensions, config, s.getVectorLookup(), total, hnswPairSliceIterator(pairs), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -5649,6 +5653,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	s.mu.RUnlock()
 
 	rebuilt := NewHNSWIndex(old.dimensions, old.config)
+	rebuilt.SetVectorLookup(s.getVectorLookup())
 	const rebuildProgressInterval = 50000
 	if vfs != nil && vfs.Count() > 0 {
 		total := vfs.Count()

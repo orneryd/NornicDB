@@ -1100,10 +1100,13 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 
 	// Initialize embedding worker config from main config
-	embedChunkSize := resolveEmbedWorkerChunkSize(
+	embedChunkSize, embedChunkOverlap := resolveEmbedWorkerChunking(
 		config.Memory.EmbeddingProvider,
 		config.Memory.EmbeddingMode,
 		config.EmbeddingWorker.ChunkSize,
+		config.EmbeddingWorker.ChunkSizeSet,
+		config.EmbeddingWorker.ChunkOverlap,
+		config.EmbeddingWorker.ChunkOverlapSet,
 	)
 	db.embedWorkerConfig = &EmbedWorkerConfig{
 		NumWorkers:           config.EmbeddingWorker.NumWorkers,
@@ -1112,7 +1115,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		TriggerDebounceDelay: config.EmbeddingWorker.TriggerDebounceDelay,
 		MaxRetries:           config.EmbeddingWorker.MaxRetries,
 		ChunkSize:            embedChunkSize,
-		ChunkOverlap:         config.EmbeddingWorker.ChunkOverlap,
+		ChunkOverlap:         embedChunkOverlap,
 		ClusterDebounceDelay: 30 * time.Second, // Wait 30s after last embedding before k-means
 		ClusterMinBatchSize:  10,               // Need at least 10 embeddings to trigger k-means
 		PropertiesInclude:    config.EmbeddingWorker.PropertiesInclude,
@@ -1435,13 +1438,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	return db, nil
 }
 
-func resolveEmbedWorkerChunkSize(provider, mode string, chunkSize int) int {
+func resolveEmbedWorkerChunking(provider, mode string, chunkSize int, chunkSizeSet bool, overlap int, overlapSet bool) (int, int) {
 	if strings.EqualFold(strings.TrimSpace(provider), "voyage") &&
-		strings.EqualFold(strings.TrimSpace(mode), embed.VoyageModeContextualized) &&
-		chunkSize == defaultEmbedChunkSize {
-		return embed.VoyageContextualizedMaxChunkTokens
+		strings.EqualFold(strings.TrimSpace(mode), embed.VoyageModeContextualized) {
+		if !chunkSizeSet {
+			chunkSize = embed.VoyageContextualizedDefaultChunkTokens
+		}
+		if !overlapSet {
+			overlap = -1
+		}
 	}
-	return chunkSize
+	return chunkSize, overlap
 }
 
 func resolveBadgerOptions(dataDir string, config *Config) storage.BadgerOptions {

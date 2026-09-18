@@ -197,3 +197,61 @@ ORDER BY s.uid, rel.evidence_source, t.uid`, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), record.Values[0])
 }
+
+func TestDatabaseManagerBoltExplicitTransactionPreservesBindingsAcrossUnwindMutationPipeline(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	mgr := &mockDBManager{
+		stores:    map[string]storage.Engine{"nornic": storage.NewNamespacedEngine(base, "nornic")},
+		defaultDB: "nornic",
+	}
+	server := NewWithDatabaseManager(&Config{
+		Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192,
+	}, &mockExecutor{}, mgr)
+	port := startBoltTestServer(t, server)
+
+	ctx := context.Background()
+	driver, err := neo4jdriver.NewDriverWithContext(
+		fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth(),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, driver.Close(context.Background())) })
+	require.NoError(t, driver.VerifyConnectivity(ctx))
+
+	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
+		AccessMode: neo4jdriver.AccessModeWrite, DatabaseName: "nornic",
+	})
+	defer func() { require.NoError(t, session.Close(ctx)) }()
+
+	seed, err := session.Run(ctx, "CREATE (:BugT {k: 0})", nil)
+	require.NoError(t, err)
+	_, err = seed.Consume(ctx)
+	require.NoError(t, err)
+
+	value, err := session.ExecuteWrite(ctx, func(tx neo4jdriver.ManagedTransaction) (any, error) {
+		result, runErr := tx.Run(ctx, `UNWIND $rows AS r
+CREATE (t:BugT)
+SET t = r
+WITH t
+MATCH (x:BugT {k: 0})
+CREATE (x)-[:L]->(t)
+RETURN t.k AS k`, map[string]any{
+			"rows": []map[string]any{{"k": 1}, {"k": 2}},
+		})
+		if runErr != nil {
+			return nil, runErr
+		}
+		return result.Collect(ctx)
+	})
+	require.NoError(t, err)
+	records := value.([]*neo4jdriver.Record)
+	require.Len(t, records, 2)
+	require.Equal(t, int64(1), records[0].Values[0])
+	require.Equal(t, int64(2), records[1].Values[0])
+
+	result, err := session.Run(ctx, "MATCH (:BugT {k: 0})-[r:L]->() RETURN count(r)", nil)
+	require.NoError(t, err)
+	record, err := result.Single(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), record.Values[0])
+}

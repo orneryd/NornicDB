@@ -569,6 +569,12 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	if cfg.EmbeddingWorker.ChunkSize != 2048 || cfg.EmbeddingWorker.ChunkOverlap != 33 || cfg.EmbeddingWorker.IncludeLabels {
 		t.Fatalf("unexpected embedding worker chunk config: %+v", cfg.EmbeddingWorker)
 	}
+	if !cfg.EmbeddingWorker.ChunkOverlapSet {
+		t.Fatal("expected environment overlap to be marked explicitly configured")
+	}
+	if !cfg.EmbeddingWorker.ChunkSizeSet {
+		t.Fatal("expected environment chunk size to be marked explicitly configured")
+	}
 	if len(cfg.EmbeddingWorker.PropertiesInclude) != 2 || cfg.EmbeddingWorker.PropertiesExclude[1] != "internal" {
 		t.Fatalf("unexpected embedding worker property filters: %+v", cfg.EmbeddingWorker)
 	}
@@ -664,6 +670,26 @@ func TestLoadFromEnv_EmbeddingWorkerNumWorkers(t *testing.T) {
 	}
 }
 
+func TestEmbeddingChunkOverlapAcceptsExplicitZero(t *testing.T) {
+	t.Run("environment", func(t *testing.T) {
+		clearEnvVars(t)
+		t.Setenv("NORNICDB_EMBED_CHUNK_OVERLAP", "0")
+		cfg := LoadFromEnv()
+		require.Zero(t, cfg.EmbeddingWorker.ChunkOverlap)
+		require.True(t, cfg.EmbeddingWorker.ChunkOverlapSet)
+	})
+
+	t.Run("yaml", func(t *testing.T) {
+		clearEnvVars(t)
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("embedding_worker:\n  chunk_overlap: 0\n"), 0o600))
+		cfg, err := LoadFromFile(path)
+		require.NoError(t, err)
+		require.Zero(t, cfg.EmbeddingWorker.ChunkOverlap)
+		require.True(t, cfg.EmbeddingWorker.ChunkOverlapSet)
+	})
+}
+
 func TestLoadFromEnv_MemoryNamespacedEnvVars(t *testing.T) {
 	clearEnvVars(t)
 	t.Setenv("NORNICDB_MEMORY_ACCESS_FLUSH_BUFFER_SIZE", "222")
@@ -680,6 +706,9 @@ func TestLoadDefaults_EmbeddingWorkerChunkSize(t *testing.T) {
 	if cfg.EmbeddingWorker.ChunkSize != 8192 {
 		t.Fatalf("expected default chunk size 8192, got %d", cfg.EmbeddingWorker.ChunkSize)
 	}
+	require.Equal(t, 50, cfg.EmbeddingWorker.ChunkOverlap)
+	require.False(t, cfg.EmbeddingWorker.ChunkSizeSet)
+	require.False(t, cfg.EmbeddingWorker.ChunkOverlapSet)
 }
 
 func TestLoadDefaults_MVCCLifecycle(t *testing.T) {
@@ -1307,7 +1336,9 @@ plugins:
 	require.Equal(t, 2*time.Second, cfg.EmbeddingWorker.BatchDelay)
 	require.Equal(t, 9, cfg.EmbeddingWorker.MaxRetries)
 	require.Equal(t, 1234, cfg.EmbeddingWorker.ChunkSize)
+	require.True(t, cfg.EmbeddingWorker.ChunkSizeSet)
 	require.Equal(t, 12, cfg.EmbeddingWorker.ChunkOverlap)
+	require.True(t, cfg.EmbeddingWorker.ChunkOverlapSet)
 	require.Equal(t, []string{"title", "body"}, cfg.EmbeddingWorker.PropertiesInclude)
 	require.Equal(t, []string{"secret"}, cfg.EmbeddingWorker.PropertiesExclude)
 	require.False(t, cfg.EmbeddingWorker.IncludeLabels)

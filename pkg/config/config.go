@@ -539,8 +539,9 @@ type ServerConfig struct {
 //   - NORNICDB_EMBED_BATCH_DELAY: Delay between processing nodes (default: 500ms)
 //   - NORNICDB_EMBED_TRIGGER_DEBOUNCE: Delay before write-triggered scans fire (default: 2s)
 //   - NORNICDB_EMBED_MAX_RETRIES: Max retry attempts per node (default: 3)
-//   - NORNICDB_EMBED_CHUNK_SIZE: Max tokens per chunk (default: 8192)
-//   - NORNICDB_EMBED_CHUNK_OVERLAP: Tokens to overlap between chunks (default: 50)
+//   - NORNICDB_EMBED_CHUNK_SIZE: Max tokens per chunk (default: 8192; contextualized Voyage: 512)
+//   - NORNICDB_EMBED_CHUNK_OVERLAP: Tokens to overlap between chunks (default: 50;
+//     unset uses the provider default for contextualized Voyage)
 //   - NORNICDB_EMBED_WORKER_NUM_WORKERS: Number of concurrent embedding workers (default: 1, 0 disables workers)
 //   - NORNICDB_EMBEDDING_PROPERTIES_INCLUDE: Comma-separated property keys to use for embedding text (empty = all)
 //   - NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE: Comma-separated property keys to exclude from embedding text
@@ -559,8 +560,15 @@ type EmbeddingWorkerConfig struct {
 	MaxRetries int
 	// ChunkSize is max tokens per chunk.
 	ChunkSize int
+	// ChunkSizeSet records whether the operator explicitly configured the
+	// chunk size, allowing provider-specific defaults without replacing an
+	// explicitly selected value that happens to equal the global default.
+	ChunkSizeSet bool
 	// ChunkOverlap is tokens to overlap between chunks.
 	ChunkOverlap int
+	// ChunkOverlapSet records whether the operator explicitly configured the
+	// overlap, allowing provider defaults to differ from an explicit zero.
+	ChunkOverlapSet bool
 	// PropertiesInclude: if non-empty, only these property keys are used when building embedding text.
 	// Enables "embed only content" or "embed only title,description". Empty = use all (subject to PropertiesExclude).
 	PropertiesInclude []string
@@ -2644,11 +2652,17 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvInt("NORNICDB_EMBED_MAX_RETRIES", 0); v > 0 {
 		config.EmbeddingWorker.MaxRetries = v
 	}
-	if v := getEnvInt("NORNICDB_EMBED_CHUNK_SIZE", 0); v > 0 {
-		config.EmbeddingWorker.ChunkSize = v
+	if raw := strings.TrimSpace(getEnv("NORNICDB_EMBED_CHUNK_SIZE", "")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			config.EmbeddingWorker.ChunkSize = v
+			config.EmbeddingWorker.ChunkSizeSet = true
+		}
 	}
-	if v := getEnvInt("NORNICDB_EMBED_CHUNK_OVERLAP", 0); v > 0 {
-		config.EmbeddingWorker.ChunkOverlap = v
+	if raw := strings.TrimSpace(getEnv("NORNICDB_EMBED_CHUNK_OVERLAP", "")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+			config.EmbeddingWorker.ChunkOverlap = v
+			config.EmbeddingWorker.ChunkOverlapSet = true
+		}
 	}
 	if v := getEnvStringSlice("NORNICDB_EMBEDDING_PROPERTIES_INCLUDE", nil); len(v) > 0 {
 		config.EmbeddingWorker.PropertiesInclude = v
@@ -3034,6 +3048,17 @@ func LoadFromFile(configPath string) (*Config, error) {
 	var yamlCfg YAMLConfig
 	if err := yaml.Unmarshal(data, &yamlCfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+	// Decode presence separately so YAMLConfig keeps its public integer fields
+	// while explicit zero remains distinguishable from an omitted value.
+	var explicit struct {
+		EmbeddingWorker struct {
+			ChunkSize    *int `yaml:"chunk_size"`
+			ChunkOverlap *int `yaml:"chunk_overlap"`
+		} `yaml:"embedding_worker"`
+	}
+	if err := yaml.Unmarshal(data, &explicit); err != nil {
+		return nil, fmt.Errorf("failed to parse embedding worker config: %w", err)
 	}
 
 	// === Server Settings ===
@@ -3523,11 +3548,13 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.EmbeddingWorker.MaxRetries > 0 {
 		config.EmbeddingWorker.MaxRetries = yamlCfg.EmbeddingWorker.MaxRetries
 	}
-	if yamlCfg.EmbeddingWorker.ChunkSize > 0 {
+	if explicit.EmbeddingWorker.ChunkSize != nil && yamlCfg.EmbeddingWorker.ChunkSize > 0 {
 		config.EmbeddingWorker.ChunkSize = yamlCfg.EmbeddingWorker.ChunkSize
+		config.EmbeddingWorker.ChunkSizeSet = true
 	}
-	if yamlCfg.EmbeddingWorker.ChunkOverlap > 0 {
+	if explicit.EmbeddingWorker.ChunkOverlap != nil && yamlCfg.EmbeddingWorker.ChunkOverlap >= 0 {
 		config.EmbeddingWorker.ChunkOverlap = yamlCfg.EmbeddingWorker.ChunkOverlap
+		config.EmbeddingWorker.ChunkOverlapSet = true
 	}
 	if len(yamlCfg.EmbeddingWorker.PropertiesInclude) > 0 {
 		config.EmbeddingWorker.PropertiesInclude = yamlCfg.EmbeddingWorker.PropertiesInclude

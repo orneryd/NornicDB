@@ -105,6 +105,7 @@ package search
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"sort"
 	"sync"
@@ -159,7 +160,8 @@ type VectorIndex struct {
 	mu         sync.RWMutex
 	// vectors holds normalized vectors (unit length) for cosine similarity and HNSW.
 	vectors map[string][]float32
-	// rawVectors holds the original, unnormalized vectors for dot/euclidean scoring.
+	// rawVectors is sparse: it only retains non-unit inputs whose original
+	// magnitude is required by Cypher dot/euclidean similarity semantics.
 	rawVectors map[string][]float32
 }
 
@@ -236,14 +238,28 @@ func (v *VectorIndex) Add(id string, vec []float32) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	// Copy to protect against caller mutation.
-	raw := make([]float32, len(vec))
-	copy(raw, vec)
-
-	// Normalize for faster cosine similarity calculation.
-	v.rawVectors[id] = raw
-	v.vectors[id] = vector.Normalize(raw)
+	// Unit-length embeddings need only one private copy. Preserve a sparse raw
+	// copy for non-unit vectors so Cypher dot/euclidean behavior does not change.
+	private := append([]float32(nil), vec...)
+	if !rawVectorNeeded(private) {
+		vector.NormalizeInPlace(private)
+		delete(v.rawVectors, id)
+		v.vectors[id] = private
+		return nil
+	}
+	v.rawVectors[id] = private
+	normalized := append([]float32(nil), private...)
+	vector.NormalizeInPlace(normalized)
+	v.vectors[id] = normalized
 	return nil
+}
+
+func rawVectorNeeded(vec []float32) bool {
+	normSquared := float64(0)
+	for _, value := range vec {
+		normSquared += float64(value) * float64(value)
+	}
+	return normSquared != 0 && math.Abs(math.Sqrt(normSquared)-1) > 1e-5
 }
 
 // Remove removes a vector from the index by its ID.
@@ -410,6 +426,16 @@ func (v *VectorIndex) GetVector(id string) ([]float32, bool) {
 	return out, true
 }
 
+// getVectorRef returns an immutable internal vector reference for in-package
+// search indexes. Add replaces whole slices and never mutates a published
+// vector, so a reference remains safe after the read lock is released.
+func (v *VectorIndex) getVectorRef(id string) ([]float32, bool) {
+	v.mu.RLock()
+	vec, exists := v.vectors[id]
+	v.mu.RUnlock()
+	return vec, exists && len(vec) > 0
+}
+
 // GetDimensions returns the vector dimensions.
 func (v *VectorIndex) GetDimensions() int {
 	return v.dimensions
@@ -424,7 +450,8 @@ type vectorIndexSnapshot struct {
 	Version    string
 	Dimensions int
 	Vectors    map[string][]float32
-	RawVectors map[string][]float32
+	// RawVectors is retained only to decode snapshots written by older builds.
+	RawVectors map[string][]float32 `msgpack:"RawVectors,omitempty"`
 }
 
 // Save writes the vector index to path (msgpack format). Dir is created if needed.
@@ -440,9 +467,7 @@ func (v *VectorIndex) Save(path string) error {
 	}
 	rawVectors := make(map[string][]float32, len(v.rawVectors))
 	for id, vec := range v.rawVectors {
-		if len(vec) > 0 {
-			rawVectors[id] = append([]float32(nil), vec...)
-		}
+		rawVectors[id] = append([]float32(nil), vec...)
 	}
 	v.mu.RUnlock()
 
@@ -481,9 +506,6 @@ func (v *VectorIndex) Load(path string) error {
 	if snap.Vectors == nil {
 		snap.Vectors = make(map[string][]float32)
 	}
-	if snap.RawVectors == nil {
-		snap.RawVectors = make(map[string][]float32)
-	}
 	if !searchIndexVersionCompatible(snap.Version, vectorIndexFormatVersion, "vector") {
 		v.mu.Lock()
 		v.vectors = make(map[string][]float32)
@@ -503,6 +525,15 @@ func (v *VectorIndex) Load(path string) error {
 	v.mu.Lock()
 	v.vectors = snap.Vectors
 	v.rawVectors = snap.RawVectors
+	if v.rawVectors == nil {
+		v.rawVectors = make(map[string][]float32)
+	} else {
+		for id, raw := range v.rawVectors {
+			if !rawVectorNeeded(raw) {
+				delete(v.rawVectors, id)
+			}
+		}
+	}
 	v.mu.Unlock()
 	return nil
 }

@@ -215,44 +215,27 @@ func TestFulltextIndexV2_CalculateIDFLocked(t *testing.T) {
 	require.Greater(t, rare, common, "rare terms must have higher IDF per BM25")
 }
 
-// ---------------------------------------------------------------------------
-// Lexicon insert/remove – sorted slice maintenance
-// ---------------------------------------------------------------------------
-
-func TestFulltextIndexV2_LexiconInsertRemove(t *testing.T) {
+func TestFulltextIndexDefersLexiconMaintenanceUntilPrefixSearch(t *testing.T) {
 	idx := NewFulltextIndexV2()
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
+	idx.maxPrefixExpansions = 10
+	idx.minPrefixLength = 2
 
-	// Insert in non-sorted order — lexicon must stay sorted
-	idx.insertLexiconTermLocked("banana")
-	idx.insertLexiconTermLocked("apple")
-	idx.insertLexiconTermLocked("cherry")
+	idx.Index("banana", "banana")
+	idx.Index("apple", "apple")
+	idx.Index("application", "application")
+	require.Empty(t, idx.lexicon, "write-heavy ingestion must not shift a sorted vocabulary slice")
 
-	require.Equal(t, []string{"apple", "banana", "cherry"}, idx.lexicon)
+	results := idx.Search("app", 10)
+	require.Equal(t, []string{"apple", "application"}, []string{results[0].ID, results[1].ID})
+	require.Equal(t, []string{"apple", "application", "banana"}, idx.lexicon)
 
-	// Duplicate insert should be a no-op
-	idx.insertLexiconTermLocked("banana")
-	require.Equal(t, []string{"apple", "banana", "cherry"}, idx.lexicon)
-
-	// Remove middle element
-	idx.removeLexiconTermLocked("banana")
-	require.Equal(t, []string{"apple", "cherry"}, idx.lexicon)
-
-	// Remove non-existent term should be a no-op
-	idx.removeLexiconTermLocked("banana")
-	require.Equal(t, []string{"apple", "cherry"}, idx.lexicon)
-
-	// Remove from edges
-	idx.removeLexiconTermLocked("apple")
-	require.Equal(t, []string{"cherry"}, idx.lexicon)
-
-	idx.removeLexiconTermLocked("cherry")
-	require.Empty(t, idx.lexicon)
-
-	// Remove from empty lexicon should not panic
-	idx.removeLexiconTermLocked("nothing")
-	require.Empty(t, idx.lexicon)
+	idx.Remove("apple")
+	require.Equal(t, []string{"apple", "application", "banana"}, idx.lexicon,
+		"removal must also defer linear lexicon maintenance")
+	results = idx.Search("app", 10)
+	require.Len(t, results, 1)
+	require.Equal(t, "application", results[0].ID)
+	require.Equal(t, []string{"application", "banana"}, idx.lexicon)
 }
 
 // ---------------------------------------------------------------------------

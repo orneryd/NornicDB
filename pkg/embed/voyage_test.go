@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -102,7 +103,7 @@ func TestVoyageEmbedderContextualizedDocumentChunks(t *testing.T) {
 	require.Equal(t, "document", got.InputType)
 	require.Equal(t, 2, got.OutputDimension)
 	require.True(t, got.EnableAutoChunking)
-	require.Equal(t, VoyageContextualizedMaxChunkTokens, got.ChunkSize)
+	require.Equal(t, VoyageContextualizedDefaultChunkTokens, got.ChunkSize)
 	require.Equal(t, 64, got.ChunkOverlap)
 	require.Equal(t, []string{"first chunk", "second chunk"}, result.Chunks)
 	require.Equal(t, [][]float32{{1, 0}, {0, 1}}, result.Embeddings)
@@ -111,36 +112,31 @@ func TestVoyageEmbedderContextualizedDocumentChunks(t *testing.T) {
 	require.Equal(t, 9, result.TotalTokens)
 }
 
-func TestVoyageEmbedderContextualizedLongDocumentUsesBoundedPrechunkedRequests(t *testing.T) {
+func TestVoyageEmbedderContextualizedLongDocumentUsesBoundedAutoChunkedSegments(t *testing.T) {
 	const safeRequestBytes = 96_000
-	const maxInputs = 1_000
-	var requests [][]string
+	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/contextualizedembeddings", r.URL.Path)
 		var got struct {
-			Inputs             [][]string `json:"inputs"`
-			EnableAutoChunking bool       `json:"enable_auto_chunking"`
+			Inputs             []string `json:"inputs"`
+			EnableAutoChunking bool     `json:"enable_auto_chunking"`
+			ChunkSize          int      `json:"chunk_size"`
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
-		require.False(t, got.EnableAutoChunking, "oversized documents must use client-side chunks")
-		require.Len(t, got.Inputs, 1, "each request contains one context group")
-		require.LessOrEqual(t, len(got.Inputs[0]), maxInputs)
-
-		requestBytes := 0
-		for _, chunk := range got.Inputs[0] {
-			requestBytes += len(chunk)
-		}
-		require.LessOrEqual(t, requestBytes, safeRequestBytes)
+		require.True(t, got.EnableAutoChunking)
+		require.Equal(t, 128, got.ChunkSize)
+		require.Len(t, got.Inputs, 1)
+		require.LessOrEqual(t, len(got.Inputs[0]), safeRequestBytes)
+		require.True(t, len(got.Inputs[0]) == 0 || !strings.HasPrefix(got.Inputs[0], " "), "segments must begin at a word boundary")
 		requests = append(requests, got.Inputs[0])
 
-		data := make([]map[string]any, len(got.Inputs[0]))
-		for i, chunk := range got.Inputs[0] {
-			data[i] = map[string]any{"index": i, "text": chunk, "embedding": []float32{float32(i), 1}}
-		}
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-			"data":  []map[string]any{{"index": 0, "data": data}},
-			"model": "voyage-context-4",
-			"usage": map[string]any{"total_tokens": requestBytes},
+			"data": []map[string]any{{"index": 0, "data": []map[string]any{
+				{"index": 0, "text": got.Inputs[0], "embedding": []float32{1, 1}},
+			}}},
+			"model":           "voyage-context-4",
+			"chunker_version": "voyage-auto-v1",
+			"usage":           map[string]any{"total_tokens": len(got.Inputs[0]) / 2},
 		}))
 	}))
 	t.Cleanup(server.Close)
@@ -155,13 +151,49 @@ func TestVoyageEmbedderContextualizedLongDocumentUsesBoundedPrechunkedRequests(t
 	})
 	require.NoError(t, err)
 
-	text := strings.Repeat("a", safeRequestBytes*2+1)
-	result, err := embedder.EmbedDocumentChunks(context.Background(), text, VoyageContextualizedMaxChunkTokens, 0)
+	text := strings.Repeat("привет мир. ", 20_000)
+	result, err := embedder.EmbedDocumentChunks(context.Background(), text, 128, -1)
 	require.NoError(t, err)
 
 	require.Greater(t, len(requests), 1, "an oversized document must be split across requests")
-	require.Equal(t, text, strings.Join(result.Chunks, ""))
+	require.Equal(t, text, strings.Join(requests, ""))
+	require.Equal(t, requests, result.Chunks)
 	require.Len(t, result.Embeddings, len(result.Chunks))
+	require.Equal(t, "voyage-auto-v1", result.ChunkerVersion)
+}
+
+func TestVoyageContextualizedOverlapDistinguishesUnsetAndZero(t *testing.T) {
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+		requests = append(requests, got)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"index": 0, "data": []map[string]any{{"index": 0, "text": "document", "embedding": []float32{1}}}}},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	embedder, err := NewVoyage(&Config{Provider: "voyage", APIURL: server.URL, APIKey: "key", Dimensions: 1, Mode: VoyageModeContextualized})
+	require.NoError(t, err)
+	_, err = embedder.EmbedDocumentChunks(context.Background(), "document", 128, -1)
+	require.NoError(t, err)
+	_, err = embedder.EmbedDocumentChunks(context.Background(), "document", 128, 0)
+	require.NoError(t, err)
+
+	require.NotContains(t, requests[0], "chunk_overlap")
+	require.Equal(t, float64(0), requests[1]["chunk_overlap"])
+}
+
+func TestVoyageContextualizedSegmentsPreserveUnicodeAndText(t *testing.T) {
+	text := strings.Repeat("я", 101)
+	segments := splitVoyageContextualizedSegments(text, 17)
+	require.Greater(t, len(segments), 1)
+	require.Equal(t, text, strings.Join(segments, ""))
+	for _, segment := range segments {
+		require.True(t, utf8.ValidString(segment))
+		require.LessOrEqual(t, len(segment), 17)
+	}
 }
 
 func TestVoyageContextualizedDocumentsShareRequest(t *testing.T) {
@@ -250,7 +282,7 @@ func TestVoyageEmbedderRejectsMultimodalManagedMode(t *testing.T) {
 }
 
 func TestVoyageContextualizedChunkSizeDefaultAndExplicit(t *testing.T) {
-	require.Equal(t, VoyageContextualizedMaxChunkTokens, voyageContextualizedChunkSize(0))
+	require.Equal(t, VoyageContextualizedDefaultChunkTokens, voyageContextualizedChunkSize(0))
 	require.Equal(t, VoyageContextualizedMaxChunkTokens, voyageContextualizedChunkSize(VoyageContextualizedMaxChunkTokens+1))
 	require.Equal(t, 512, voyageContextualizedChunkSize(512))
 }

@@ -434,7 +434,7 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 	// the UNWIND binding and silently turn a matched relationship delete into a
 	// successful no-op inside an explicit transaction.
 	if strings.HasPrefix(upper, "UNWIND") {
-		return e.executeUnwind(ctx, cypher)
+		return e.executeTopLevelUnwind(ctx, cypher)
 	}
 
 	// Check for DELETE queries (MATCH...DELETE, DETACH DELETE)

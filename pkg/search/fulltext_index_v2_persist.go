@@ -33,7 +33,7 @@ type bm25V1Snapshot struct {
 }
 
 func (f *FulltextIndexV2) Save(path string) error {
-	f.mu.RLock()
+	f.lockWithCurrentLexicon()
 	docs := make(map[string]string, len(f.documents))
 	for k, v := range f.documents {
 		docs[k] = v
@@ -76,7 +76,7 @@ func (f *FulltextIndexV2) Save(path string) error {
 }
 
 func (f *FulltextIndexV2) SaveNoCopy(path string) error {
-	f.mu.RLock()
+	f.lockWithCurrentLexicon()
 	version := f.version
 	snap := bm25V2Snapshot{
 		Version:        bm25V2FormatVersion,
@@ -184,6 +184,7 @@ func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	f.docIDsLexicalByNum = docIDsAreLexicalByNumber(s.DocNumToID)
 	f.termIndex = s.TermIndex
 	f.lexicon = s.Lexicon
+	f.lexiconDirty = len(f.lexicon) != len(f.termIndex) || !sort.StringsAreSorted(f.lexicon)
 	f.avgDocLength = s.AvgDocLength
 	f.docCount = s.DocCount
 	f.totalDocLength = s.TotalDocLength
@@ -269,6 +270,7 @@ func (f *FulltextIndexV2) migrateFromV1Snapshot(v1 bm25V1Snapshot) {
 		f.lexicon = append(f.lexicon, term)
 	}
 	sort.Strings(f.lexicon)
+	f.lexiconDirty = false
 	f.markDirtyLocked()
 	f.persistedVersion = f.version
 }

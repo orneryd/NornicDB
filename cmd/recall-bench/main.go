@@ -514,7 +514,9 @@ func runIngest(args []string) {
 	}
 	config := benchmarkConfig()
 	config.EmbeddingWorker.ChunkSize = *embeddingChunkSize
+	config.EmbeddingWorker.ChunkSizeSet = true
 	config.EmbeddingWorker.ChunkOverlap = *embeddingChunkOverlap
+	config.EmbeddingWorker.ChunkOverlapSet = true
 	db, err := nornicdb.Open(*dataDir, config)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open database:", err)

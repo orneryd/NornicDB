@@ -171,6 +171,9 @@ type ContextualizedOptions struct {
 	EnableAutoChunking bool
 	ChunkSize          int
 	ChunkOverlap       int
+	// ChunkOverlapSet sends ChunkOverlap even when it is explicitly zero.
+	// Positive values remain implicitly set for source compatibility.
+	ChunkOverlapSet bool
 }
 
 // ContextualizedResult is one query/document result from the contextualized endpoint.
@@ -195,7 +198,7 @@ type contextualizedRequest struct {
 	OutputDType        string `json:"output_dtype,omitempty"`
 	EnableAutoChunking bool   `json:"enable_auto_chunking,omitempty"`
 	ChunkSize          int    `json:"chunk_size,omitempty"`
-	ChunkOverlap       int    `json:"chunk_overlap,omitempty"`
+	ChunkOverlap       *int   `json:"chunk_overlap,omitempty"`
 }
 
 type contextualizedResponseWire struct {
@@ -215,6 +218,11 @@ func (c *Client) EmbedContextualized(ctx context.Context, inputs any, opts Conte
 	if outputDType == "" {
 		outputDType = defaultOutputDType
 	}
+	var chunkOverlap *int
+	if opts.ChunkOverlapSet || opts.ChunkOverlap != 0 {
+		value := opts.ChunkOverlap
+		chunkOverlap = &value
+	}
 	req := contextualizedRequest{
 		Inputs:             inputs,
 		Model:              model,
@@ -223,7 +231,7 @@ func (c *Client) EmbedContextualized(ctx context.Context, inputs any, opts Conte
 		OutputDType:        outputDType,
 		EnableAutoChunking: opts.EnableAutoChunking,
 		ChunkSize:          opts.ChunkSize,
-		ChunkOverlap:       opts.ChunkOverlap,
+		ChunkOverlap:       chunkOverlap,
 	}
 	var wire contextualizedResponseWire
 	if err := c.postJSON(ctx, pathContextualEmbeddings, req, &wire); err != nil {

@@ -81,11 +81,13 @@ func TestClientContextualizedAutoChunking(t *testing.T) {
 		EnableAutoChunking: true,
 		ChunkSize:          512,
 		ChunkOverlap:       0,
+		ChunkOverlapSet:    true,
 	})
 	require.NoError(t, err)
 	require.Equal(t, true, got["enable_auto_chunking"])
 	require.Equal(t, "document", got["input_type"])
 	require.Equal(t, float64(512), got["chunk_size"])
+	require.Equal(t, float64(0), got["chunk_overlap"])
 	require.Equal(t, "1.0.0", resp.ChunkerVersion)
 	require.Len(t, resp.Data, 1)
 	require.Equal(t, "chunk two", resp.Data[0].Data[1].Text)

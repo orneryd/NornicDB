@@ -155,6 +155,80 @@ func TestVectorIndex_Basic(t *testing.T) {
 	assert.Equal(t, "doc2", results[1].ID)
 }
 
+func TestVectorIndexPersistsOneNormalizedPrivateCopy(t *testing.T) {
+	idx := NewVectorIndex(3)
+	input := []float32{0.6, 0.8, 0}
+	require.NoError(t, idx.Add("doc", input))
+	input[0] = 100
+
+	stored, ok := idx.GetVector("doc")
+	require.True(t, ok)
+	require.InDelta(t, 0.6, stored[0], 1e-6)
+	require.InDelta(t, 0.8, stored[1], 1e-6)
+
+	path := filepath.Join(t.TempDir(), "vectors.msgpack")
+	require.NoError(t, idx.Save(path))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer file.Close()
+	var snapshot vectorIndexSnapshot
+	require.NoError(t, msgpack.NewDecoder(file).Decode(&snapshot))
+	require.Len(t, snapshot.Vectors, 1)
+	require.Empty(t, snapshot.RawVectors, "the persisted index must not duplicate normalized vectors")
+}
+
+func TestVectorIndexPreservesNonUnitValuesForCypherSimilarity(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	require.NoError(t, svc.vectorIndex.Add("doc", []float32{3, 4, 0}))
+
+	stored, ok := svc.getVectorForCypher("doc")
+	require.True(t, ok)
+	require.Equal(t, []float32{3, 4, 0}, stored)
+	normalized, ok := svc.vectorIndex.GetVector("doc")
+	require.True(t, ok)
+	require.InDelta(t, 0.6, normalized[0], 1e-6)
+	require.InDelta(t, 0.8, normalized[1], 1e-6)
+}
+
+func TestVectorIndexLoadCompactsLegacyUnitRawVectors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vectors.msgpack")
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	require.NoError(t, msgpack.NewEncoder(file).Encode(&vectorIndexSnapshot{
+		Version:    vectorIndexFormatVersion,
+		Dimensions: 3,
+		Vectors:    map[string][]float32{"unit": {0.6, 0.8, 0}},
+		RawVectors: map[string][]float32{"unit": {0.6, 0.8, 0}},
+	}))
+	require.NoError(t, file.Close())
+
+	idx := NewVectorIndex(3)
+	require.NoError(t, idx.Load(path))
+	require.Empty(t, idx.rawVectors, "legacy unit vectors should not retain a redundant raw copy")
+}
+
+func TestInMemoryHNSWReusesVectorIndexStorage(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	for id, vec := range map[string][]float32{
+		"a": {1, 0, 0},
+		"b": {0, 1, 0},
+		"c": {0, 0, 1},
+	} {
+		require.NoError(t, svc.vectorIndex.Add(id, vec))
+	}
+
+	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
+	require.NoError(t, err)
+	require.NotNil(t, idx.vectorLookup)
+	require.Empty(t, idx.vectors, "HNSW graph must resolve vectors from the in-memory vector index")
+
+	results, err := idx.Search(context.Background(), []float32{1, 0, 0}, 1, -1)
+	require.NoError(t, err)
+	require.Equal(t, "a", results[0].ID)
+}
+
 // TestVectorIndex_DimensionMismatch tests dimension validation.
 func TestVectorIndex_DimensionMismatch(t *testing.T) {
 	idx := NewVectorIndex(4)
@@ -1688,11 +1762,9 @@ func TestSearchService_EnsureBuildVectorFileStore_Branches(t *testing.T) {
 	okPath := filepath.Join(t.TempDir(), "ok-vectors")
 	svc.vectorIndexPath = okPath
 	svc.vectorIndex.vectors["a"] = []float32{1, 0}
-	svc.vectorIndex.rawVectors["a"] = []float32{1, 0}
 	svc.ensureBuildVectorFileStore()
 	require.NotNil(t, svc.vectorFileStore)
 	require.Empty(t, svc.vectorIndex.vectors)
-	require.Empty(t, svc.vectorIndex.rawVectors)
 }
 
 // TestSearchService_WithRealData tests search with exported Neo4j data.

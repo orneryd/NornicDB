@@ -12,12 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Batch pending documents across embedding-provider requests, pace requests
   instead of individual nodes, isolate rejected inputs, and park permanent or
   retry-exhausted failures without blocking the queue. Voyage contextualized
-  embeddings now split oversized documents into bounded requests.
+  embeddings now split oversized documents into bounded, boundary-aligned
+  segments that retain provider auto-chunking; default contextualized chunks
+  to 512 tokens while preserving explicit sizes; and distinguish omitted
+  overlap from explicit zero.
 - Match Neo4j Unicode code-point semantics for string length, slicing, and
   indexing; order computed RETURN expressions before pagination; and preserve
   bindings through `UNWIND … CREATE … SET … WITH … MATCH … CREATE` pipelines.
 - Compute BM25 IDF lazily from current corpus statistics instead of refreshing
-  the entire term dictionary on every node mutation.
+  the entire term dictionary on every node mutation, and rebuild the sorted
+  prefix lexicon lazily instead of shifting it for every new term.
+- Share compound top-level `UNWIND` routing between autocommit and explicit
+  Bolt transactions so bindings survive multi-clause mutation pipelines.
+- Reduce default in-memory vector retention by normalizing unit embeddings in
+  one private copy and making HNSW reuse that immutable storage. Preserve sparse
+  raw copies only where non-unit dot/euclidean semantics require them, and
+  compact redundant raw data while loading legacy snapshots.
 - Isolate packaged Snowball runtimes so multiple language plugins can coexist,
   quarantine unrelated broken plugins, and document Snowball v3.1.1 with the
   current `-P` compiler syntax.

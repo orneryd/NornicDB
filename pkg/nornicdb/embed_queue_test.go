@@ -74,11 +74,22 @@ func (m *mockEmbedder) GetEmbedCount() int {
 	return m.embedCount
 }
 
-func TestResolveEmbedWorkerChunkSize(t *testing.T) {
-	require.Equal(t, 32000, resolveEmbedWorkerChunkSize("voyage", "contextualized", defaultEmbedChunkSize))
-	require.Equal(t, 512, resolveEmbedWorkerChunkSize("voyage", "contextualized", 512))
-	require.Equal(t, defaultEmbedChunkSize, resolveEmbedWorkerChunkSize("voyage", "text", defaultEmbedChunkSize))
-	require.Equal(t, defaultEmbedChunkSize, resolveEmbedWorkerChunkSize("ollama", "contextualized", defaultEmbedChunkSize))
+func TestContextualizedWorkerPreservesChunkSizeAndOverlapIntent(t *testing.T) {
+	size, overlap := resolveEmbedWorkerChunking("voyage", "contextualized", defaultEmbedChunkSize, false, 50, false)
+	require.Equal(t, embed.VoyageContextualizedDefaultChunkTokens, size)
+	require.Equal(t, -1, overlap)
+
+	size, overlap = resolveEmbedWorkerChunking("voyage", "contextualized", defaultEmbedChunkSize, true, 0, true)
+	require.Equal(t, defaultEmbedChunkSize, size)
+	require.Equal(t, 0, overlap)
+
+	size, overlap = resolveEmbedWorkerChunking("voyage", "contextualized", 2048, true, 25, true)
+	require.Equal(t, 2048, size)
+	require.Equal(t, 25, overlap)
+
+	size, overlap = resolveEmbedWorkerChunking("ollama", "text", defaultEmbedChunkSize, false, 50, false)
+	require.Equal(t, defaultEmbedChunkSize, size)
+	require.Equal(t, 50, overlap)
 }
 
 // recordingBatchEmbedder records EmbedBatch call sizes for batching assertions.
