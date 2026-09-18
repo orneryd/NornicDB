@@ -398,6 +398,13 @@ func (e apiError) Error() string {
 	return fmt.Sprintf("voyage API returned status %d: %s", e.StatusCode, e.Body)
 }
 
+// Retryable reports whether the API response could succeed on a later attempt.
+// Request-validation 4xx responses are permanent; rate limits and server
+// failures may recover and are safe to retry.
+func (e apiError) Retryable() bool {
+	return e.StatusCode == http.StatusTooManyRequests || e.StatusCode >= 500
+}
+
 func (c *Client) postOnce(ctx context.Context, path string, body []byte, response any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
@@ -423,7 +430,7 @@ func (c *Client) postOnce(ctx context.Context, path string, body []byte, respons
 func isRetryable(err error) bool {
 	var apiErr apiError
 	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= 500
+		return apiErr.Retryable()
 	}
 	return strings.Contains(err.Error(), "send voyage request")
 }

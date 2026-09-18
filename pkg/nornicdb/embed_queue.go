@@ -4,6 +4,7 @@ package nornicdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -61,6 +62,9 @@ type EmbedWorker struct {
 
 	// Track nodes we've already logged as skipped (to avoid log spam)
 	loggedSkip map[string]bool
+	// documentRetryCounts tracks provider-managed document attempts. Unlike
+	// local micro-batches, this path does not pass through embedBatchWithRetry.
+	documentRetryCounts map[string]int
 
 	// Debounce state for k-means clustering trigger
 	clusterDebounceTimer   *time.Timer
@@ -163,14 +167,15 @@ func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *Emb
 	ctx, cancel := context.WithCancel(context.Background())
 
 	ew := &EmbedWorker{
-		embedder:          embedder,
-		storage:           storage,
-		config:            config,
-		ctx:               ctx,
-		cancel:            cancel,
-		trigger:           make(chan struct{}, 1),
-		recentlyProcessed: make(map[string]time.Time),
-		loggedSkip:        make(map[string]bool),
+		embedder:            embedder,
+		storage:             storage,
+		config:              config,
+		ctx:                 ctx,
+		cancel:              cancel,
+		trigger:             make(chan struct{}, 1),
+		recentlyProcessed:   make(map[string]time.Time),
+		loggedSkip:          make(map[string]bool),
+		documentRetryCounts: make(map[string]int),
 	}
 
 	// Start N workers unless deferred until after DB warmup
@@ -707,11 +712,20 @@ func (ew *EmbedWorker) processNextBatch() bool {
 	// Embed documents through the provider-managed document path when available.
 	// Voyage contextualized mode uses this to return provider-generated chunks;
 	// other providers fall back to deterministic local chunking + micro-batches.
+	_, isDocumentEmbedder := ew.embedder.(embed.DocumentChunkEmbedder)
 	_, embeddings, providerMeta, err := ew.embedDocument(text, node.ID)
 	if err != nil {
+		ew.failed.Add(1)
+		if !isRetryableEmbeddingError(err) {
+			ew.markNodeEmbeddingFailed(node.ID, err)
+			return true
+		}
+		if isDocumentEmbedder && !ew.retryDocumentEmbedding(node.ID) {
+			ew.markNodeEmbeddingFailed(node.ID, fmt.Errorf("embedding retry limit (%d) reached: %w", ew.documentEmbeddingRetryLimit(), err))
+			return true
+		}
 		fmt.Printf("⚠️  Failed to embed node %s: %v\n", node.ID, err)
 		ew.addNodeToPendingEmbeddings(node.ID) // Re-queue so another worker can retry
-		ew.failed.Add(1)
 		return true
 	}
 
@@ -798,6 +812,7 @@ func (ew *EmbedWorker) processNextBatch() bool {
 
 	// Remove from pending embeddings index (O(1) operation)
 	ew.markNodeEmbedded(node.ID)
+	ew.clearDocumentEmbeddingRetries(node.ID)
 
 	ew.processed.Add(1)
 	// Track this node as recently processed to prevent re-processing before DB commit is visible
@@ -840,6 +855,91 @@ func compactWorkerError(err error, maxLen int) string {
 		return text
 	}
 	return text[:maxLen] + "...(truncated)"
+}
+
+// retryableEmbeddingError is implemented by providers that can distinguish a
+// permanent request error (such as an HTTP 4xx) from a transient failure.
+type retryableEmbeddingError interface {
+	Retryable() bool
+}
+
+func isRetryableEmbeddingError(err error) bool {
+	var classified retryableEmbeddingError
+	if errors.As(err, &classified) {
+		return classified.Retryable()
+	}
+	// Existing providers do not all expose error classification. Preserve their
+	// retry behavior until they can state that an error is permanent.
+	return true
+}
+
+func (ew *EmbedWorker) documentEmbeddingRetryLimit() int {
+	if ew.config == nil || ew.config.MaxRetries < 1 {
+		return 1
+	}
+	return ew.config.MaxRetries
+}
+
+// retryDocumentEmbedding records a failed provider-managed document attempt.
+// It returns true when another queue attempt remains in the configured budget.
+func (ew *EmbedWorker) retryDocumentEmbedding(nodeID storage.NodeID) bool {
+	ew.mu.Lock()
+	defer ew.mu.Unlock()
+	if ew.documentRetryCounts == nil {
+		ew.documentRetryCounts = make(map[string]int)
+	}
+	id := string(nodeID)
+	ew.documentRetryCounts[id]++
+	if ew.documentRetryCounts[id] < ew.documentEmbeddingRetryLimit() {
+		return true
+	}
+	delete(ew.documentRetryCounts, id)
+	return false
+}
+
+func (ew *EmbedWorker) clearDocumentEmbeddingRetries(nodeID storage.NodeID) {
+	ew.mu.Lock()
+	delete(ew.documentRetryCounts, string(nodeID))
+	ew.mu.Unlock()
+}
+
+// markNodeEmbeddingFailed records a permanent provider failure outside user
+// properties, removes it from the pending index, and lets later content edits
+// retry it by clearing managed embedding metadata during invalidation.
+func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr error) {
+	ew.clearDocumentEmbeddingRetries(nodeID)
+	node, err := ew.storage.GetNode(nodeID)
+	if err != nil || node == nil {
+		// A deleted node does not need retrying; an unexpected storage read error
+		// does, so leave it pending in that case.
+		if errors.Is(err, storage.ErrNotFound) || node == nil {
+			ew.markNodeEmbedded(nodeID)
+		}
+		return
+	}
+	node = copyNodeForEmbedding(node)
+	if node.EmbedMeta == nil {
+		node.EmbedMeta = make(map[string]any)
+	}
+	node.EmbedMeta["has_embedding"] = false
+	node.EmbedMeta["embedding_failed"] = true
+	node.EmbedMeta["embedding_error"] = compactWorkerError(embedErr, 300)
+	node.EmbedMeta["embedding_failed_at"] = time.Now().UTC().Format(time.RFC3339)
+
+	var updateErr error
+	if updater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
+		updateErr = updater.UpdateNodeEmbedding(node)
+	} else {
+		updateErr = ew.storage.UpdateNode(node)
+	}
+	if updateErr != nil {
+		fmt.Printf("⚠️  Failed to persist permanent embedding failure for node %s: %s; re-queuing\n", nodeID, compactWorkerError(updateErr, 300))
+		ew.addNodeToPendingEmbeddings(nodeID)
+		return
+	}
+
+	ew.markNodeEmbedded(nodeID)
+	fmt.Printf("⛔ Permanent embedding failure for node %s: %s\n", nodeID, compactWorkerError(embedErr, 300))
 }
 
 // EmbeddingFinder interface for efficient node lookup
@@ -998,6 +1098,9 @@ func (ew *EmbedWorker) embedBatchWithRetry(chunks []string) ([][]float32, error)
 		}
 		if err == nil {
 			return embeddings, nil
+		}
+		if !isRetryableEmbeddingError(err) {
+			break
 		}
 		if attempt < ew.config.MaxRetries {
 			backoff := time.Duration(attempt) * 2 * time.Second

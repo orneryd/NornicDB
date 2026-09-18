@@ -1316,7 +1316,7 @@ func StreamEdgesWithFallback(ctx context.Context, engine Engine, chunkSize int, 
 //   - It has an internal label (starts with '_')
 //   - It already has an embedding
 //   - It has the "embedding_skipped" property set
-//   - It has "has_embedding" property explicitly set to false
+//   - It has a persisted permanent embedding failure
 //
 // Example:
 //
@@ -1349,6 +1349,12 @@ func NodeNeedsEmbedding(node *Node) bool {
 
 	// Skip if already has managed embeddings (ChunkEmbeddings).
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
+		return false
+	}
+
+	// A provider can mark malformed or over-limit inputs as a permanent failure.
+	// Content mutations clear EmbedMeta, making the node eligible again.
+	if failed, _ := node.EmbedMeta["embedding_failed"].(bool); failed {
 		return false
 	}
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,6 +109,59 @@ func TestVoyageEmbedderContextualizedDocumentChunks(t *testing.T) {
 	require.Equal(t, "voyage-context-4", result.Model)
 	require.Equal(t, "voyage-chunker-test", result.ChunkerVersion)
 	require.Equal(t, 9, result.TotalTokens)
+}
+
+func TestVoyageEmbedderContextualizedLongDocumentUsesBoundedPrechunkedRequests(t *testing.T) {
+	const safeRequestBytes = 96_000
+	const maxInputs = 1_000
+	var requests [][]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/contextualizedembeddings", r.URL.Path)
+		var got struct {
+			Inputs             [][]string `json:"inputs"`
+			EnableAutoChunking bool       `json:"enable_auto_chunking"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+		require.False(t, got.EnableAutoChunking, "oversized documents must use client-side chunks")
+		require.Len(t, got.Inputs, 1, "each request contains one context group")
+		require.LessOrEqual(t, len(got.Inputs[0]), maxInputs)
+
+		requestBytes := 0
+		for _, chunk := range got.Inputs[0] {
+			requestBytes += len(chunk)
+		}
+		require.LessOrEqual(t, requestBytes, safeRequestBytes)
+		requests = append(requests, got.Inputs[0])
+
+		data := make([]map[string]any, len(got.Inputs[0]))
+		for i, chunk := range got.Inputs[0] {
+			data[i] = map[string]any{"index": i, "text": chunk, "embedding": []float32{float32(i), 1}}
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{{"index": 0, "data": data}},
+			"model": "voyage-context-4",
+			"usage": map[string]any{"total_tokens": requestBytes},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	embedder, err := NewVoyage(&Config{
+		Provider:   "voyage",
+		APIURL:     server.URL,
+		APIKey:     "voyage-key",
+		Dimensions: 2,
+		Mode:       VoyageModeContextualized,
+		Timeout:    time.Second,
+	})
+	require.NoError(t, err)
+
+	text := strings.Repeat("a", safeRequestBytes*2+1)
+	result, err := embedder.EmbedDocumentChunks(context.Background(), text, VoyageContextualizedMaxChunkTokens, 0)
+	require.NoError(t, err)
+
+	require.Greater(t, len(requests), 1, "an oversized document must be split across requests")
+	require.Equal(t, text, strings.Join(result.Chunks, ""))
+	require.Len(t, result.Embeddings, len(result.Chunks))
 }
 
 func TestVoyageEmbedderContextualizedUsesTextModelForQueries(t *testing.T) {

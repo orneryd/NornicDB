@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -1622,6 +1623,7 @@ type queueBranchEngine struct {
 	getNodeCalls       int
 	updateEmbeddingErr error
 	updateNodeErr      error
+	updatedEmbedding   *storage.Node
 	refreshCount       int
 	marked             []storage.NodeID
 	added              []storage.NodeID
@@ -1661,8 +1663,12 @@ func (e *queueBranchEngine) AddToPendingEmbeddings(id storage.NodeID) {
 	e.added = append(e.added, id)
 }
 
-func (e *queueBranchEngine) UpdateNodeEmbedding(*storage.Node) error {
-	return e.updateEmbeddingErr
+func (e *queueBranchEngine) UpdateNodeEmbedding(node *storage.Node) error {
+	if e.updateEmbeddingErr != nil {
+		return e.updateEmbeddingErr
+	}
+	e.updatedEmbedding = storage.CopyNode(node)
+	return nil
 }
 
 func (e *queueBranchEngine) UpdateNode(node *storage.Node) error {
@@ -1739,6 +1745,63 @@ func (f *flakyBatchEmbedder) Dimensions() int { return f.dims }
 func (f *flakyBatchEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 
 func (f *flakyBatchEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	return chunkTestText(text, maxTokens, overlap)
+}
+
+type permanentEmbeddingError struct{}
+
+func (permanentEmbeddingError) Error() string   { return "invalid embedding request" }
+func (permanentEmbeddingError) Retryable() bool { return false }
+
+type permanentFailureEmbedder struct {
+	dims      int
+	callCount int
+}
+
+func (e *permanentFailureEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	return nil, permanentEmbeddingError{}
+}
+
+func (e *permanentFailureEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	e.callCount++
+	return nil, permanentEmbeddingError{}
+}
+
+func (e *permanentFailureEmbedder) Model() string { return "permanent-failure" }
+
+func (e *permanentFailureEmbedder) Dimensions() int { return e.dims }
+
+func (e *permanentFailureEmbedder) Backend() string { return "cpu" }
+
+func (e *permanentFailureEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	return chunkTestText(text, maxTokens, overlap)
+}
+
+type retryableDocumentFailureEmbedder struct {
+	dims      int
+	callCount int
+}
+
+func (e *retryableDocumentFailureEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	return nil, errors.New("temporary document provider failure")
+}
+
+func (e *retryableDocumentFailureEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	return nil, errors.New("temporary document provider failure")
+}
+
+func (e *retryableDocumentFailureEmbedder) EmbedDocumentChunks(ctx context.Context, text string, maxTokens, overlap int) (*embed.DocumentChunkResult, error) {
+	e.callCount++
+	return nil, errors.New("temporary document provider failure")
+}
+
+func (e *retryableDocumentFailureEmbedder) Model() string { return "retryable-document-failure" }
+
+func (e *retryableDocumentFailureEmbedder) Dimensions() int { return e.dims }
+
+func (e *retryableDocumentFailureEmbedder) Backend() string { return "cpu" }
+
+func (e *retryableDocumentFailureEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }
 
@@ -1962,6 +2025,79 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.True(t, didWork)
 		require.Equal(t, int64(1), ew.failed.Load())
 		require.Equal(t, []storage.NodeID{"n1"}, qe.added)
+	})
+
+	t.Run("processNextBatch marks non-retryable embed failures permanent", func(t *testing.T) {
+		base := storage.NewMemoryEngine()
+		engine := storage.NewNamespacedEngine(base, "test")
+		node := &storage.Node{
+			ID:         storage.NodeID("n-permanent"),
+			Labels:     []string{"Doc"},
+			Properties: map[string]any{"content": "hello"},
+		}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+
+		emb := &permanentFailureEmbedder{dims: 3}
+		qe := &queueBranchEngine{
+			Engine:   engine,
+			findNode: &storage.Node{ID: node.ID},
+		}
+		ew := &EmbedWorker{
+			embedder: emb,
+			storage:  qe,
+			config:   &EmbedWorkerConfig{BatchDelay: time.Millisecond, MaxRetries: 3, ChunkSize: 64, ChunkOverlap: 8},
+			ctx:      context.Background(),
+			trigger:  make(chan struct{}, 1),
+		}
+
+		didWork := ew.processNextBatch()
+		require.True(t, didWork)
+		require.Equal(t, 1, emb.callCount, "non-retryable errors must not consume the retry budget")
+		require.Equal(t, int64(1), ew.failed.Load())
+		require.Empty(t, qe.added, "permanent errors must not be requeued")
+		require.Equal(t, []storage.NodeID{node.ID, node.ID}, qe.marked, "claim and terminal failure both remove pending work")
+		require.NotNil(t, qe.updatedEmbedding)
+		require.Equal(t, true, qe.updatedEmbedding.EmbedMeta["embedding_failed"])
+		require.Equal(t, false, qe.updatedEmbedding.EmbedMeta["has_embedding"])
+		require.Contains(t, qe.updatedEmbedding.EmbedMeta["embedding_error"], "invalid embedding request")
+	})
+
+	t.Run("processNextBatch caps provider-managed document retries", func(t *testing.T) {
+		base := storage.NewMemoryEngine()
+		engine := storage.NewNamespacedEngine(base, "test")
+		node := &storage.Node{
+			ID:         storage.NodeID("n-document-retry-limit"),
+			Labels:     []string{"Doc"},
+			Properties: map[string]any{"content": "hello"},
+		}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+
+		emb := &retryableDocumentFailureEmbedder{dims: 3}
+		qe := &queueBranchEngine{Engine: engine, findNode: &storage.Node{ID: node.ID}}
+		ew := &EmbedWorker{
+			embedder: emb,
+			storage:  qe,
+			config:   &EmbedWorkerConfig{BatchDelay: time.Millisecond, MaxRetries: 3, ChunkSize: 64, ChunkOverlap: 8},
+			ctx:      context.Background(),
+			trigger:  make(chan struct{}, 1),
+		}
+
+		for attempt := 1; attempt <= 3; attempt++ {
+			qe.findReturned = false
+			require.True(t, ew.processNextBatch())
+			if attempt < 3 {
+				require.Len(t, qe.added, attempt, "retryable failure should be requeued while budget remains")
+			} else {
+				require.Len(t, qe.added, 2, "the exhausted failure must not be requeued")
+			}
+		}
+		require.Equal(t, 3, emb.callCount)
+		require.Equal(t, int64(3), ew.failed.Load())
+		require.NotNil(t, qe.updatedEmbedding)
+		require.Equal(t, true, qe.updatedEmbedding.EmbedMeta["embedding_failed"])
+		require.Contains(t, qe.updatedEmbedding.EmbedMeta["embedding_error"], "retry limit (3) reached")
 	})
 
 	t.Run("processNextBatch uses deterministic chunker from embedder", func(t *testing.T) {

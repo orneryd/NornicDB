@@ -74,6 +74,16 @@ func TestNodeNeedsEmbedding(t *testing.T) {
 		assert.False(t, NodeNeedsEmbedding(node))
 	})
 
+	t.Run("node with permanent embedding failure returns false", func(t *testing.T) {
+		node := &Node{
+			ID:         "test-permanent-failure",
+			Labels:     []string{"Document"},
+			Properties: map[string]interface{}{"content": "invalid provider input"},
+			EmbedMeta:  map[string]any{"embedding_failed": true, "has_embedding": false},
+		}
+		assert.False(t, NodeNeedsEmbedding(node))
+	})
+
 	// REGRESSION TEST: has_embedding property should NOT affect the result
 	// Only the actual Embedding array matters
 	t.Run("REGRESSION: has_embedding=true but no embedding array returns true", func(t *testing.T) {

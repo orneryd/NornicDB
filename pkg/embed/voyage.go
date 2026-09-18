@@ -18,6 +18,16 @@ const (
 	// VoyageContextualizedMaxChunkTokens is Voyage's maximum auto-chunk size
 	// for voyage-context-4 contextualized chunk embeddings.
 	VoyageContextualizedMaxChunkTokens = 32000
+
+	// VoyageContextualizedSafeRequestBytes is a conservative upper bound for
+	// client-side contextualized requests. UTF-8 byte length is an upper bound
+	// for the number of text tokens, leaving 20% of Voyage's 120K-token request
+	// budget for provider-added input text.
+	VoyageContextualizedSafeRequestBytes = 96000
+
+	// VoyageContextualizedMaxInputs is a conservative cap on client-side chunks
+	// in one contextualized request. A client-side request contains one group.
+	VoyageContextualizedMaxInputs = 1000
 )
 
 // DefaultVoyageConfig returns a default Voyage embedding configuration.
@@ -186,6 +196,9 @@ func (e *VoyageEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 	}
 	model := e.contextModel
 	chunkSize := voyageContextualizedChunkSize(maxTokens)
+	if len(text) > VoyageContextualizedSafeRequestBytes {
+		return e.embedLongContextualizedDocument(ctx, text, model, chunkSize, overlap)
+	}
 	resp, err := e.client.EmbedContextualized(ctx, []string{text}, voyageapi.ContextualizedOptions{
 		Model:              model,
 		InputType:          InputTypeDocument,
@@ -198,23 +211,72 @@ func (e *VoyageEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 	if err != nil {
 		return nil, err
 	}
-	if len(resp.Data) == 0 {
-		return &DocumentChunkResult{Model: model, ChunkerVersion: resp.ChunkerVersion, TotalTokens: resp.Usage.TotalTokens}, nil
+	return contextualizedDocumentResult(resp, model), nil
+}
+
+// embedLongContextualizedDocument preserves contextualized embeddings for
+// documents that cannot fit Voyage's 120K-token request budget. It makes
+// conservative byte-bounded, locally chunked requests: chunks in each request
+// retain context with their neighbouring chunks, while each group is safely
+// below the provider's total-token and input-count limits.
+func (e *VoyageEmbedder) embedLongContextualizedDocument(ctx context.Context, text, model string, chunkSize, overlap int) (*DocumentChunkResult, error) {
+	chunks, err := e.ChunkText(text, chunkSize, overlap)
+	if err != nil {
+		return nil, err
 	}
-	first := resp.Data[0]
-	chunks := make([]string, 0, len(first.Data))
-	embeddings := make([][]float32, 0, len(first.Data))
-	for _, item := range first.Data {
-		chunks = append(chunks, item.Text)
-		embeddings = append(embeddings, item.Embedding)
+
+	result := &DocumentChunkResult{Model: model}
+	for start := 0; start < len(chunks); {
+		end, requestBytes := start, 0
+		for end < len(chunks) && end-start < VoyageContextualizedMaxInputs {
+			chunkBytes := len(chunks[end])
+			if end > start && requestBytes+chunkBytes > VoyageContextualizedSafeRequestBytes {
+				break
+			}
+			requestBytes += chunkBytes
+			end++
+		}
+		// ChunkText uses byte length as its conservative token counter, so a
+		// single chunk cannot exceed the request byte budget.
+		if end == start {
+			return nil, fmt.Errorf("contextualized chunk exceeds safe request size")
+		}
+
+		resp, err := e.client.EmbedContextualized(ctx, [][]string{chunks[start:end]}, voyageapi.ContextualizedOptions{
+			Model:           model,
+			InputType:       InputTypeDocument,
+			OutputDimension: e.config.Dimensions,
+			OutputDType:     "float",
+		})
+		if err != nil {
+			return nil, err
+		}
+		batch := contextualizedDocumentResult(resp, model)
+		result.Chunks = append(result.Chunks, batch.Chunks...)
+		result.Embeddings = append(result.Embeddings, batch.Embeddings...)
+		result.TotalTokens += batch.TotalTokens
+		if batch.ChunkerVersion != "" {
+			result.ChunkerVersion = batch.ChunkerVersion
+		}
+		start = end
 	}
-	return &DocumentChunkResult{
-		Chunks:         chunks,
-		Embeddings:     embeddings,
-		Model:          model,
-		ChunkerVersion: resp.ChunkerVersion,
-		TotalTokens:    resp.Usage.TotalTokens,
-	}, nil
+	return result, nil
+}
+
+func contextualizedDocumentResult(resp *voyageapi.ContextualizedResponse, model string) *DocumentChunkResult {
+	result := &DocumentChunkResult{Model: model}
+	if resp == nil {
+		return result
+	}
+	result.ChunkerVersion = resp.ChunkerVersion
+	result.TotalTokens = resp.Usage.TotalTokens
+	for _, document := range resp.Data {
+		for _, item := range document.Data {
+			result.Chunks = append(result.Chunks, item.Text)
+			result.Embeddings = append(result.Embeddings, item.Embedding)
+		}
+	}
+	return result
 }
 
 func (e *VoyageEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
