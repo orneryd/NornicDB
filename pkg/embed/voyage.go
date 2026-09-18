@@ -214,6 +214,73 @@ func (e *VoyageEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 	return contextualizedDocumentResult(resp, model), nil
 }
 
+// EmbedDocumentBatchChunks batches documents that fit Voyage's request budget
+// and falls back to the bounded long-document path for oversized inputs.
+func (e *VoyageEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []string, maxTokens, overlap int) ([]*DocumentChunkResult, error) {
+	results := make([]*DocumentChunkResult, len(texts))
+	if len(texts) == 0 {
+		return results, nil
+	}
+	if e.mode != VoyageModeContextualized {
+		for i, text := range texts {
+			result, err := e.EmbedDocumentChunks(ctx, text, maxTokens, overlap)
+			if err != nil {
+				return nil, err
+			}
+			results[i] = result
+		}
+		return results, nil
+	}
+
+	shortTexts := make([]string, 0, len(texts))
+	shortIndexes := make([]int, 0, len(texts))
+	requestBytes := 0
+	for i, text := range texts {
+		if len(text) > VoyageContextualizedSafeRequestBytes {
+			result, err := e.embedLongContextualizedDocument(ctx, text, e.contextModel, voyageContextualizedChunkSize(maxTokens), overlap)
+			if err != nil {
+				return nil, err
+			}
+			results[i] = result
+			continue
+		}
+		if len(shortTexts) >= VoyageContextualizedMaxInputs || requestBytes+len(text) > VoyageContextualizedSafeRequestBytes {
+			return nil, fmt.Errorf("contextualized document batch exceeds provider request limits")
+		}
+		requestBytes += len(text)
+		shortTexts = append(shortTexts, text)
+		shortIndexes = append(shortIndexes, i)
+	}
+	if len(shortTexts) == 0 {
+		return results, nil
+	}
+
+	resp, err := e.client.EmbedContextualized(ctx, shortTexts, voyageapi.ContextualizedOptions{
+		Model:              e.contextModel,
+		InputType:          InputTypeDocument,
+		OutputDimension:    e.config.Dimensions,
+		OutputDType:        "float",
+		EnableAutoChunking: true,
+		ChunkSize:          voyageContextualizedChunkSize(maxTokens),
+		ChunkOverlap:       overlap,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, document := range resp.Data {
+		if document.Index < 0 || document.Index >= len(shortIndexes) {
+			continue
+		}
+		result := &DocumentChunkResult{Model: e.contextModel, ChunkerVersion: resp.ChunkerVersion}
+		for _, item := range document.Data {
+			result.Chunks = append(result.Chunks, item.Text)
+			result.Embeddings = append(result.Embeddings, item.Embedding)
+		}
+		results[shortIndexes[document.Index]] = result
+	}
+	return results, nil
+}
+
 // embedLongContextualizedDocument preserves contextualized embeddings for
 // documents that cannot fit Voyage's 120K-token request budget. It makes
 // conservative byte-bounded, locally chunked requests: chunks in each request

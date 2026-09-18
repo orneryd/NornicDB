@@ -86,6 +86,17 @@ func (t *TracedEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 	return &DocumentChunkResult{Chunks: chunks, Embeddings: embeddings, Model: t.Model()}, nil
 }
 
+// EmbedDocumentBatchChunks traces a cross-document provider batch while
+// retaining provider-managed contextual chunking when the inner embedder has it.
+func (t *TracedEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []string, maxTokens, overlap int) ([]*DocumentChunkResult, error) {
+	if batcher, ok := t.inner.(DocumentBatchChunkEmbedder); ok {
+		return batcher.EmbedDocumentBatchChunks(ctx, texts, maxTokens, overlap)
+	}
+	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, t.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, error) {
+		return t.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+	}, t.Model())
+}
+
 func (t *TracedEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return t.inner.ChunkText(text, maxTokens, overlap)
 }

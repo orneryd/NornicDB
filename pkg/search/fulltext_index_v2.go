@@ -198,18 +198,13 @@ func (f *FulltextIndexV2) IndexBatch(entries []FulltextBatchEntry) {
 				f.insertLexiconTermLocked(term)
 			}
 			st.Postings = append(st.Postings, bm25Posting{DocNum: docNum, TF: uint16(minInt(tf, math.MaxUint16))})
-			st.IDF = f.calculateIDFLocked(len(st.Postings))
 		}
 
 		dirty = true
 	}
 
 	f.updateAvgDocLengthLocked()
-	// IDF depends on total N; update all terms after any batch mutation.
 	if dirty {
-		for _, st := range f.termIndex {
-			st.IDF = f.calculateIDFLocked(len(st.Postings))
-		}
 		f.markDirtyLocked()
 	}
 }
@@ -218,9 +213,6 @@ func (f *FulltextIndexV2) Remove(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.removeInternalLocked(id) {
-		for _, st := range f.termIndex {
-			st.IDF = f.calculateIDFLocked(len(st.Postings))
-		}
 		f.markDirtyLocked()
 	}
 }
@@ -258,8 +250,6 @@ func (f *FulltextIndexV2) removeInternalLocked(id string) bool {
 		if len(st.Postings) == 0 {
 			delete(f.termIndex, t)
 			f.removeLexiconTermLocked(t)
-		} else {
-			st.IDF = f.calculateIDFLocked(len(st.Postings))
 		}
 	}
 
@@ -420,7 +410,7 @@ func (f *FulltextIndexV2) LexicalSeedDocIDs(maxTerms, docsPerTerm int) []string 
 		if df < lexicalSeedMinDocumentFrequency() {
 			continue
 		}
-		idf := st.IDF
+		idf := f.calculateIDFLocked(df)
 		if idf > 0 {
 			terms = append(terms, termEntry{term: term, idf: idf, df: df})
 		}
@@ -625,13 +615,14 @@ func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weig
 		if st == nil || len(st.Postings) == 0 {
 			continue
 		}
-		upper := weight * st.IDF * (bm25K1 + 1)
+		idf := f.calculateIDFLocked(len(st.Postings))
+		upper := weight * idf * (bm25K1 + 1)
 		if upper <= 0 {
 			continue
 		}
 		terms = append(terms, weightedTermPostings{
 			postings: st.Postings,
-			idf:      st.IDF,
+			idf:      idf,
 			weight:   weight,
 		})
 	}

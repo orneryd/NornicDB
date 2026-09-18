@@ -138,6 +138,54 @@ type DocumentChunkEmbedder interface {
 	EmbedDocumentChunks(ctx context.Context, text string, maxTokens, overlap int) (*DocumentChunkResult, error)
 }
 
+// DocumentBatchChunkEmbedder embeds several documents in a bounded provider
+// request while preserving one chunk result per input document.
+type DocumentBatchChunkEmbedder interface {
+	EmbedDocumentBatchChunks(ctx context.Context, texts []string, maxTokens, overlap int) ([]*DocumentChunkResult, error)
+}
+
+// embedLocallyChunkedDocuments chunks documents deterministically, embeds all
+// resulting chunks in one batch, and restores the per-document result mapping.
+// Wrappers use this helper so batching behavior stays identical across cached
+// and traced embedders.
+func embedLocallyChunkedDocuments(
+	ctx context.Context,
+	texts []string,
+	maxTokens, overlap int,
+	chunk func(string, int, int) ([]string, error),
+	embedBatch func(context.Context, []string) ([][]float32, error),
+	model string,
+) ([]*DocumentChunkResult, error) {
+	results := make([]*DocumentChunkResult, len(texts))
+	counts := make([]int, len(texts))
+	allChunks := make([]string, 0, len(texts))
+	for i, text := range texts {
+		chunks, err := chunk(text, maxTokens, overlap)
+		if err != nil {
+			return nil, fmt.Errorf("chunk document %d: %w", i, err)
+		}
+		counts[i] = len(chunks)
+		allChunks = append(allChunks, chunks...)
+		results[i] = &DocumentChunkResult{Chunks: chunks, Model: model}
+	}
+	if len(allChunks) == 0 {
+		return results, nil
+	}
+	embeddings, err := embedBatch(ctx, allChunks)
+	if err != nil {
+		return nil, err
+	}
+	if len(embeddings) != len(allChunks) {
+		return nil, fmt.Errorf("embedding count mismatch: got %d, expected %d", len(embeddings), len(allChunks))
+	}
+	offset := 0
+	for i, count := range counts {
+		results[i].Embeddings = append([][]float32(nil), embeddings[offset:offset+count]...)
+		offset += count
+	}
+	return results, nil
+}
+
 // Config holds embedding provider configuration.
 //
 // Fields:
@@ -475,7 +523,7 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, &ProviderError{Provider: "ollama", StatusCode: resp.StatusCode, Body: string(bodyBytes)}
 	}
 
 	var ollamaResp ollamaResponse
@@ -834,7 +882,7 @@ func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, &ProviderError{Provider: "openai", StatusCode: resp.StatusCode, Body: string(bodyBytes)}
 	}
 
 	var openaiResp openaiResponse

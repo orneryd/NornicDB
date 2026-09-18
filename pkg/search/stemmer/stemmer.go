@@ -256,52 +256,73 @@ func ResetForTest() {
 // LoadDir scans *.stemmer.json manifests, verifies adjacent libraries, opens Go plugins,
 // and registers their Stem implementations.
 func LoadDir(dir string) error {
+	_, err := loadDir(dir, false)
+	return err
+}
+
+// LoadDirBestEffort loads every valid plugin independently and returns
+// per-plugin diagnostics for artifacts that were quarantined. Directory-level
+// errors are returned because no plugin discovery was possible.
+func LoadDirBestEffort(dir string) ([]error, error) {
+	return loadDir(dir, true)
+}
+
+func loadDir(dir string, continueOnPluginError bool) ([]error, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
-		return nil
+		return nil, nil
 	}
 	info, err := os.Stat(dir)
 	if os.IsNotExist(err) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("checking stemmer plugins directory: %w", err)
+		return nil, fmt.Errorf("checking stemmer plugins directory: %w", err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("stemmer plugins path is not a directory: %s", dir)
+		return nil, fmt.Errorf("stemmer plugins path is not a directory: %s", dir)
 	}
 	matches, err := filepath.Glob(filepath.Join(dir, "*.stemmer.json"))
 	if err != nil {
-		return fmt.Errorf("scanning stemmer plugins directory: %w", err)
+		return nil, fmt.Errorf("scanning stemmer plugins directory: %w", err)
 	}
 	slices.Sort(matches)
+	var diagnostics []error
 	for _, manifestPath := range matches {
-		manifest, err := ReadManifest(manifestPath)
-		if err != nil {
-			return fmt.Errorf("%s: %w", filepath.Base(manifestPath), err)
-		}
-		libraryPath, err := VerifyLibrary(manifestPath, manifest)
-		if err != nil {
-			return fmt.Errorf("%s: %w", filepath.Base(manifestPath), err)
-		}
-		pluginImpl, err := openPlugin(libraryPath, manifest.Entrypoint)
-		if err != nil {
-			return fmt.Errorf("%s: %w", filepath.Base(manifestPath), err)
-		}
-		if err := Register(Registration{
-			APIVersion: manifest.APIVersion,
-			ID:         manifest.ID,
-			Version:    manifest.Version,
-			Language:   manifest.Language,
-			Digest:     manifest.SHA256,
-			Path:       libraryPath,
-			Stem:       pluginImpl.Stem,
-			StemTokens: batchStemFunc(pluginImpl),
-		}); err != nil {
-			return fmt.Errorf("%s: %w", filepath.Base(manifestPath), err)
+		if err := loadManifest(manifestPath); err != nil {
+			diagnostic := fmt.Errorf("%s: %w", filepath.Base(manifestPath), err)
+			if !continueOnPluginError {
+				return diagnostics, diagnostic
+			}
+			diagnostics = append(diagnostics, diagnostic)
 		}
 	}
-	return nil
+	return diagnostics, nil
+}
+
+func loadManifest(manifestPath string) error {
+	manifest, err := ReadManifest(manifestPath)
+	if err != nil {
+		return err
+	}
+	libraryPath, err := VerifyLibrary(manifestPath, manifest)
+	if err != nil {
+		return err
+	}
+	pluginImpl, err := openPlugin(libraryPath, manifest.Entrypoint)
+	if err != nil {
+		return err
+	}
+	return Register(Registration{
+		APIVersion: manifest.APIVersion,
+		ID:         manifest.ID,
+		Version:    manifest.Version,
+		Language:   manifest.Language,
+		Digest:     manifest.SHA256,
+		Path:       libraryPath,
+		Stem:       pluginImpl.Stem,
+		StemTokens: batchStemFunc(pluginImpl),
+	})
 }
 
 type batchPlugin interface {

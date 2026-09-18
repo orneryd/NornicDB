@@ -1,6 +1,7 @@
 package stemmer
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,30 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestPluginDirectoryQuarantinesInvalidArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "broken.stemmer.json"), []byte(`{"schema_version":0}`), 0o644))
+
+	missingLibrary := Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		APIVersion:    APIVersion,
+		Type:          ManifestType,
+		ID:            "snowball.missing",
+		Version:       "1.0.0",
+		Library:       "missing.so",
+		SHA256:        strings.Repeat("a", 64),
+		Entrypoint:    EntrypointSymbol,
+	}
+	raw, err := json.Marshal(missingLibrary)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "missing.stemmer.json"), raw, 0o644))
+
+	diagnostics, err := LoadDirBestEffort(dir)
+	require.NoError(t, err)
+	require.Len(t, diagnostics, 2)
+	require.Error(t, LoadDir(dir), "strict loading should retain its fail-fast contract")
+}
 
 type suffixPlugin struct{}
 

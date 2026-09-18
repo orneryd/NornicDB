@@ -610,6 +610,24 @@ func findOrderByColumnIndex(columns []string, colName string) int {
 	return -1
 }
 
+// sliceRows applies Cypher SKIP and LIMIT after operators such as DISTINCT and
+// ORDER BY have produced their complete row stream. A negative limit means no
+// limit.
+func sliceRows(rows [][]interface{}, skip, limit int) [][]interface{} {
+	start := skip
+	if start < 0 {
+		start = 0
+	}
+	if start > len(rows) {
+		start = len(rows)
+	}
+	end := len(rows)
+	if limit >= 0 && limit < end-start {
+		end = start + limit
+	}
+	return rows[start:end]
+}
+
 func extractOrderByPropertyValue(value interface{}, propPath []string) interface{} {
 	current := value
 	for _, part := range propPath {

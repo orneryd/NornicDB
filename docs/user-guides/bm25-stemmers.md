@@ -37,12 +37,13 @@ at `github.com/snowballstem/snowball/go`.
 
 ```bash
 git clone https://github.com/snowballstem/snowball.git ./third_party/snowball
+git -C ./third_party/snowball checkout v3.1.1
 make -C ./third_party/snowball
 ```
 
-Pin the Snowball source revision you use in your own release process. The
-plugin version you pass to `nornicdb-snowball` should identify that pinned
-algorithm/runtime build.
+The examples use the current stable Snowball v3.1.1 compiler and Go runtime.
+Keep both on the same release so generated code and runtime APIs stay aligned.
+The plugin version passed to `nornicdb-snowball` should identify that build.
 
 ## Package A Snowball Algorithm
 
@@ -54,12 +55,12 @@ mkdir -p ./build/stemmers/french ./plugins/stemmers
 cd ./build/stemmers/french
 
 go mod init example.com/acme/nornicdb-stemmers/french
-go get github.com/snowballstem/snowball/go@v3.0.1+incompatible
+go get github.com/snowballstem/snowball/go@v3.1.1+incompatible
 
 ../../../third_party/snowball/snowball \
   ../../../third_party/snowball/algorithms/french.sbl \
   -go \
-  -gopackage main \
+  -P main \
   -goruntime github.com/snowballstem/snowball/go \
   -o stemmer
 
@@ -70,7 +71,7 @@ cd ../../..
 ./bin/nornicdb-snowball package \
   --language french \
   --id snowball.french \
-  --version 3.0.1 \
+  --version 3.1.1 \
   --module ./build/stemmers/french \
   --source ./build/stemmers/french/stemmer.go \
   --output ./plugins/stemmers/snowball-french.so
@@ -104,7 +105,7 @@ label, and output name:
 ./bin/nornicdb-snowball package \
   --language spanish \
   --id snowball.spanish \
-  --version 3.0.1 \
+  --version 3.1.1 \
   --module ./build/stemmers/spanish \
   --source ./build/stemmers/spanish/stemmer.go \
   --output ./plugins/stemmers/snowball-spanish.so
@@ -119,7 +120,7 @@ third-party source you have reviewed. Package it the same way:
 ./third_party/snowball/snowball \
   ./local-algorithms/ukrainian.sbl \
   -go \
-  -gopackage main \
+  -P main \
   -goruntime github.com/snowballstem/snowball/go \
   -o ./build/stemmers/ukrainian/stemmer
 
@@ -136,7 +137,7 @@ third-party source you have reviewed. Package it the same way:
 ./third_party/snowball/snowball \
   ./local-algorithms/chinese.sbl \
   -go \
-  -gopackage main \
+  -P main \
   -goruntime github.com/snowballstem/snowball/go \
   -o ./build/stemmers/chinese/stemmer
 

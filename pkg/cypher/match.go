@@ -860,6 +860,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 
 	// Parse ORDER BY (whitespace-tolerant)
 	orderByIdx := findKeywordIndex(cypher, "ORDER")
+	orderRowsAfterProjection := false
 	if orderByIdx > 0 && !usedIndexTopK {
 		orderStart := orderByIdx + 5
 		for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
@@ -876,9 +877,13 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			}
 		}
 		orderExpr := strings.TrimSpace(orderPart[:endIdx])
+		orderRowsAfterProjection = len(e.parseNodeOrderSpecs(orderExpr, nodePattern.variable)) == 0
 		// Fast path for ORDER BY + LIMIT with single node property sort:
 		// maintain only top-K rows, then sort that subset.
-		if skip == 0 && limit > 0 {
+		if orderRowsAfterProjection {
+			// Computed expressions and projected aliases do not exist on the
+			// storage node. Sort their materialized return values below.
+		} else if skip == 0 && limit > 0 {
 			if topK, ok := e.selectTopKNodesByOrder(nodes, nodePattern.variable, orderExpr, limit); ok {
 				nodes = topK
 			} else {
@@ -896,12 +901,12 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	rowCount := 0
 	for i, node := range nodes {
 		// Apply SKIP
-		if i < skip {
+		if !orderRowsAfterProjection && i < skip {
 			continue
 		}
 
 		// Apply LIMIT
-		if limit >= 0 && rowCount >= limit {
+		if !orderRowsAfterProjection && limit >= 0 && rowCount >= limit {
 			break
 		}
 
@@ -931,6 +936,11 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 
 		result.Rows = append(result.Rows, row)
 		rowCount++
+	}
+
+	if orderRowsAfterProjection {
+		result.Rows = e.orderResultRowsForReturnItems(result.Rows, result.Columns, returnItems, orderExprEarly)
+		result.Rows = sliceRows(result.Rows, skip, limit)
 	}
 
 	return result, nil

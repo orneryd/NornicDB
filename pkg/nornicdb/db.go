@@ -958,9 +958,20 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 	}
 	if db.config.Server.StemmerPluginsDir != "" {
-		if err := stemmer.LoadDir(db.config.Server.StemmerPluginsDir); err != nil {
+		diagnostics, err := stemmer.LoadDirBestEffort(db.config.Server.StemmerPluginsDir)
+		if err != nil {
 			_ = db.baseStorage.Close()
 			return nil, fmt.Errorf("loading stemmer plugins: %w", err)
+		}
+		for _, diagnostic := range diagnostics {
+			fmt.Printf("⚠️  Stemmer plugin quarantined: %v\n", diagnostic)
+		}
+		selectedStemmer := stemmer.NormalizeSelection(db.config.Memory.SearchBM25Stemmer)
+		if selectedStemmer != stemmer.NoneID {
+			if _, ok := stemmer.Lookup(selectedStemmer); !ok {
+				_ = db.baseStorage.Close()
+				return nil, fmt.Errorf("configured stemmer %q is unavailable after loading plugins", selectedStemmer)
+			}
 		}
 	}
 

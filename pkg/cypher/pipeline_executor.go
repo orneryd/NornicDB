@@ -43,6 +43,7 @@ const (
 	pipelineClauseMatch pipelineClauseKind = iota
 	pipelineClauseOptionalMatch
 	pipelineClauseCreate
+	pipelineClauseSet
 	pipelineClauseWith
 	pipelineClauseUnwind
 	pipelineClauseReturn
@@ -115,6 +116,7 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 		{"OPTIONAL MATCH", pipelineClauseOptionalMatch},
 		{"MATCH", pipelineClauseMatch},
 		{"CREATE", pipelineClauseCreate},
+		{"SET", pipelineClauseSet},
 		{"WITH", pipelineClauseWith},
 		{"UNWIND", pipelineClauseUnwind},
 		{"RETURN", pipelineClauseReturn},
@@ -124,7 +126,7 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 	// is handled by the per-clause appliers below, which substitute params
 	// from context and respect node bindings supplied by the caller.
 	upper := strings.ToUpper(cypher)
-	for _, bad := range []string{"MERGE ", "FOREACH", "CALL ", "DELETE", "REMOVE ", "SET "} {
+	for _, bad := range []string{"MERGE ", "FOREACH", "CALL ", "DELETE", "REMOVE "} {
 		if findKeywordIndex(upper, strings.TrimRight(bad, " ")) >= 0 {
 			return nil, false
 		}
@@ -258,6 +260,15 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				result.Stats.NodesCreated += stats.NodesCreated
 				result.Stats.RelationshipsCreated += stats.RelationshipsCreated
 			}
+		case pipelineClauseSet:
+			propertiesSet, ok, err := e.pipelineApplySet(ctx, rows, clause.text)
+			if err != nil {
+				return nil, true, err
+			}
+			if !ok {
+				return nil, false, nil
+			}
+			result.Stats.PropertiesSet += propertiesSet
 		case pipelineClauseWith:
 			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text)
 			if !ok {
@@ -284,6 +295,96 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 	}
 
 	return result, true, nil
+}
+
+// pipelineApplySet mutates entities already bound in each pipeline row. Scalar
+// and map bindings are attached as typed context values so assignments such as
+// SET target = row retain their original Go/Cypher types.
+func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineRow, clause string) (int, bool, error) {
+	body := strings.TrimSpace(clause[len("SET"):])
+	assignments := e.splitSetAssignmentsRespectingBrackets(body)
+	if body == "" || len(assignments) == 0 {
+		return 0, false, nil
+	}
+
+	store := e.getStorage(ctx)
+	propertiesSet := 0
+	for _, row := range rows {
+		nodes := make(map[string]*storage.Node)
+		rels := make(map[string]*storage.Edge)
+		params := make(map[string]interface{})
+		for name, value := range getParamsFromContext(ctx) {
+			params[name] = value
+		}
+		for name, value := range row {
+			switch entity := value.(type) {
+			case *storage.Node:
+				nodes[name] = entity
+			case *storage.Edge:
+				rels[name] = entity
+			default:
+				params[name] = value
+			}
+		}
+		rowCtx := withParams(ctx, params)
+		targets := pipelineSetTargetVariables(assignments)
+		if len(targets) == 0 {
+			return 0, false, nil
+		}
+		for _, variable := range targets {
+			node, ok := nodes[variable]
+			if !ok || node == nil {
+				return 0, false, nil
+			}
+			before := cloneStringAnyMap(node.Properties)
+			e.applySetToNodeWithContext(rowCtx, node, variable, body, nodes, rels)
+			if err := store.UpdateNode(node); err != nil {
+				return 0, true, err
+			}
+			propertiesSet += changedPropertyCount(before, node.Properties)
+		}
+	}
+	return propertiesSet, true, nil
+}
+
+func pipelineSetTargetVariables(assignments []string) []string {
+	seen := make(map[string]struct{})
+	var targets []string
+	for _, assignment := range assignments {
+		left := strings.TrimSpace(assignment)
+		if idx := strings.Index(left, "+="); idx >= 0 {
+			left = strings.TrimSpace(left[:idx])
+		} else if idx := strings.Index(left, "="); idx >= 0 {
+			left = strings.TrimSpace(left[:idx])
+		}
+		if idx := strings.IndexAny(left, ".:"); idx >= 0 {
+			left = strings.TrimSpace(left[:idx])
+		}
+		if !isValidIdentifier(left) {
+			continue
+		}
+		if _, exists := seen[left]; exists {
+			continue
+		}
+		seen[left] = struct{}{}
+		targets = append(targets, left)
+	}
+	return targets
+}
+
+func changedPropertyCount(before, after map[string]interface{}) int {
+	changed := 0
+	for key, value := range after {
+		if old, exists := before[key]; !exists || !reflect.DeepEqual(old, value) {
+			changed++
+		}
+	}
+	for key := range before {
+		if _, exists := after[key]; !exists {
+			changed++
+		}
+	}
+	return changed
 }
 
 // ---- clause appliers ----

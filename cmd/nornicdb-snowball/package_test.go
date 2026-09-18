@@ -196,6 +196,43 @@ func TestPackageSnowballBuildsPluginAndManifest(t *testing.T) {
 	require.Equal(t, []string{"україна-stem", "пошук-stem"}, batch.StemTokens([]string{"україна", "пошук"}))
 }
 
+func TestPackagedStemmersWithSharedRuntimeLoadTogether(t *testing.T) {
+	if runtime.GOOS == "windows" || !stemmer.DynamicLoadSupported() {
+		t.Skip("Go plugins are unavailable on this platform")
+	}
+	moduleDir := writeSnowballFixtureModule(t)
+	pluginDir := t.TempDir()
+	for _, id := range []string{"snowball.first", "snowball.second"} {
+		output := filepath.Join(pluginDir, strings.ReplaceAll(id, ".", "-")+".so")
+		require.NoError(t, packageSnowball(packageOptions{
+			Language: id,
+			ID:       id,
+			Version:  "1.0.0",
+			Module:   moduleDir,
+			Source:   filepath.Join(moduleDir, "stemmer.go"),
+			Output:   output,
+		}))
+	}
+
+	stemmer.ResetForTest()
+	t.Cleanup(stemmer.ResetForTest)
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "broken.stemmer.json"), []byte(`{"schema_version":0}`), 0o644))
+	diagnostics, err := stemmer.LoadDirBestEffort(pluginDir)
+	require.NoError(t, err)
+	require.Len(t, diagnostics, 1)
+	require.ErrorContains(t, diagnostics[0], "broken.stemmer.json")
+	for _, id := range []string{"snowball.first", "snowball.second"} {
+		registration, ok := stemmer.Lookup(id)
+		require.True(t, ok)
+		require.Equal(t, "token-stem", registration.Stem("token"))
+	}
+}
+
+func TestPluginIDProducesSafeIsolatedModuleSegment(t *testing.T) {
+	require.Equal(t, "snowball-russian-v3", sanitizeModuleSegment(" Snowball.Russian/V3 "))
+	require.Equal(t, "plugin", sanitizeModuleSegment(""))
+}
+
 func writeSnowballFixtureModule(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

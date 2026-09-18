@@ -1606,6 +1606,7 @@ func TestEmbedQueueSmallWrappers(t *testing.T) {
 	require.Contains(t, string(payload), "\"running\":true")
 	require.Contains(t, string(payload), "\"processed\":3")
 	require.Contains(t, string(payload), "\"failed\":1")
+	require.Contains(t, string(payload), "\"parked\":0")
 }
 
 type pendingAdderEngine struct {
@@ -1998,7 +1999,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Equal(t, []storage.NodeID{"ghost"}, qe.marked)
 	})
 
-	t.Run("processNextBatch requeues on embed failure", func(t *testing.T) {
+	t.Run("processNextBatch parks a node after its retry budget", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
@@ -2024,7 +2025,10 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		didWork := ew.processNextBatch()
 		require.True(t, didWork)
 		require.Equal(t, int64(1), ew.failed.Load())
-		require.Equal(t, []storage.NodeID{"n1"}, qe.added)
+		require.Empty(t, qe.added)
+		require.Equal(t, int64(1), ew.parked.Load())
+		require.NotNil(t, qe.updatedEmbedding)
+		require.Equal(t, true, qe.updatedEmbedding.EmbedMeta["embedding_failed"])
 	})
 
 	t.Run("processNextBatch marks non-retryable embed failures permanent", func(t *testing.T) {
@@ -2131,7 +2135,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Equal(t, []string{"chunk-one", "chunk-two"}, emb.batchCalls[0])
 	})
 
-	t.Run("processNextBatch empty embedding is treated as failure", func(t *testing.T) {
+	t.Run("processNextBatch parks an empty embedding response", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
@@ -2157,7 +2161,9 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		didWork := ew.processNextBatch()
 		require.True(t, didWork)
 		require.Equal(t, int64(1), ew.failed.Load())
-		require.Equal(t, []storage.NodeID{"n2"}, qe.added)
+		require.Empty(t, qe.added)
+		require.Equal(t, int64(1), ew.parked.Load())
+		require.Equal(t, true, qe.updatedEmbedding.EmbedMeta["embedding_failed"])
 	})
 
 	t.Run("processNextBatch skips when update embedding reports not found", func(t *testing.T) {

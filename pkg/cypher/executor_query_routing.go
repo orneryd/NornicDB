@@ -290,6 +290,11 @@ skipMatchCallRoute:
 		return e.executeMultipleCreates(ctx, cypher)
 	}
 	if findKeywordIndex(cypher, "UNWIND") == 0 {
+		if needsUnwindMutationPipeline(cypher) {
+			if result, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
+				return result, err
+			}
+		}
 		return e.executeUnwind(ctx, cypher)
 	}
 
@@ -472,6 +477,24 @@ skipMatchCallRoute:
 		firstWord := strings.Split(upperQuery, " ")[0]
 		return nil, localizedError(localization.CypherTransactionsQueryTypeUnsupported(firstWord), nil)
 	}
+}
+
+func needsUnwindMutationPipeline(cypher string) bool {
+	setIdx := findKeywordIndex(cypher, "SET")
+	if setIdx < 0 {
+		return false
+	}
+	afterSet := cypher[setIdx+len("SET"):]
+	withIdx := findKeywordIndex(afterSet, "WITH")
+	if withIdx < 0 {
+		return false
+	}
+	afterWith := afterSet[withIdx+len("WITH"):]
+	matchIdx := findKeywordIndex(afterWith, "MATCH")
+	if matchIdx < 0 {
+		return false
+	}
+	return findKeywordIndex(afterWith[matchIdx+len("MATCH"):], "CREATE") >= 0
 }
 
 // executeReturn handles simple RETURN statements (e.g., "RETURN 1").

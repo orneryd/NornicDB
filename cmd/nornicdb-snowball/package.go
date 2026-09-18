@@ -122,6 +122,10 @@ func packageSnowball(opts packageOptions) error {
 	if err := copyTree(moduleDir, tmpModule); err != nil {
 		return err
 	}
+	runtimeImport, err = isolateSnowballRuntime(tmpModule, sourceRel, runtimeImport, opts.ID)
+	if err != nil {
+		return err
+	}
 	buildDir := filepath.Join(tmpModule, filepath.Dir(sourceRel))
 	if err := os.WriteFile(filepath.Join(buildDir, "nornicdb_stemmer_bridge.go"), []byte(renderBridgeSource(runtimeImport)), 0o644); err != nil {
 		return err
@@ -158,6 +162,73 @@ func packageSnowball(opts packageOptions) error {
 	}
 	raw = append(raw, '\n')
 	return os.WriteFile(manifestPath(outputPath), raw, 0o644)
+}
+
+// isolateSnowballRuntime gives each generated plugin its own import identity.
+// Go's plugin loader requires matching package paths to have identical build
+// hashes; two independently vendored Snowball runtimes otherwise collide even
+// when both plugins are valid.
+func isolateSnowballRuntime(moduleDir, sourceRel, runtimeImport, pluginID string) (string, error) {
+	isolatedModule := "nornicdb.local/stemmer/" + sanitizeModuleSegment(pluginID)
+	goModPath := filepath.Join(moduleDir, "go.mod")
+	goMod, err := os.ReadFile(goModPath)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(string(goMod), "\n")
+	replaced := false
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "module ") {
+			lines[i] = "module " + isolatedModule
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		return "", fmt.Errorf("module must declare a module path")
+	}
+	if err := os.WriteFile(goModPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return "", err
+	}
+
+	runtimeSource := filepath.Join(moduleDir, "vendor", filepath.FromSlash(runtimeImport))
+	runtimeTarget := filepath.Join(moduleDir, "internal", "snowballruntime")
+	if err := copyTree(runtimeSource, runtimeTarget); err != nil {
+		return "", fmt.Errorf("copy vendored Snowball runtime: %w", err)
+	}
+
+	sourcePath := filepath.Join(moduleDir, sourceRel)
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return "", err
+	}
+	isolatedImport := isolatedModule + "/internal/snowballruntime"
+	oldQuoted := strconv.Quote(runtimeImport)
+	newQuoted := strconv.Quote(isolatedImport)
+	rewritten := bytes.ReplaceAll(source, []byte(oldQuoted), []byte(newQuoted))
+	if bytes.Equal(source, rewritten) {
+		return "", fmt.Errorf("generated source does not import detected Snowball runtime %q", runtimeImport)
+	}
+	if err := os.WriteFile(sourcePath, rewritten, 0o644); err != nil {
+		return "", err
+	}
+	return isolatedImport, nil
+}
+
+func sanitizeModuleSegment(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var out strings.Builder
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			out.WriteRune(r)
+		} else {
+			out.WriteByte('-')
+		}
+	}
+	if out.Len() == 0 {
+		return "plugin"
+	}
+	return out.String()
 }
 
 func validateModule(moduleDir, sourcePath string) error {

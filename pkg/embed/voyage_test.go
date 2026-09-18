@@ -164,6 +164,44 @@ func TestVoyageEmbedderContextualizedLongDocumentUsesBoundedPrechunkedRequests(t
 	require.Len(t, result.Embeddings, len(result.Chunks))
 }
 
+func TestVoyageContextualizedDocumentsShareRequest(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		var got struct {
+			Inputs []string `json:"inputs"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+		require.Equal(t, []string{"first", "second", "third"}, got.Inputs)
+		data := make([]map[string]any, len(got.Inputs))
+		for i, input := range got.Inputs {
+			data[i] = map[string]any{
+				"index": i,
+				"data":  []map[string]any{{"index": 0, "text": input, "embedding": []float32{float32(i), 1}}},
+			}
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data": data, "model": "voyage-context-4", "usage": map[string]any{"total_tokens": 3},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	embedder, err := NewVoyage(&Config{
+		Provider: "voyage", APIURL: server.URL, APIKey: "voyage-key",
+		Dimensions: 2, Mode: VoyageModeContextualized, Timeout: time.Second,
+	})
+	require.NoError(t, err)
+
+	results, err := embedder.EmbedDocumentBatchChunks(context.Background(), []string{"first", "second", "third"}, 512, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, requestCount)
+	require.Len(t, results, 3)
+	for i, result := range results {
+		require.Equal(t, []string{[]string{"first", "second", "third"}[i]}, result.Chunks)
+		require.Len(t, result.Embeddings, 1)
+	}
+}
+
 func TestVoyageEmbedderContextualizedUsesTextModelForQueries(t *testing.T) {
 	var paths []string
 	var models []string

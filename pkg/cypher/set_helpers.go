@@ -49,6 +49,7 @@ import (
 	"strings"
 	"time"
 
+	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -638,7 +639,7 @@ func (e *StorageExecutor) evaluateSubstringForSet(expr string) string {
 	}
 
 	// Parse optional length
-	length := len(str) - start
+	length := cyphertext.Length(str) - start
 	if len(args) >= 3 {
 		if l, err := strconv.Atoi(strings.TrimSpace(args[2])); err == nil {
 			length = l
@@ -646,14 +647,7 @@ func (e *StorageExecutor) evaluateSubstringForSet(expr string) string {
 	}
 
 	// Apply substring
-	if start >= len(str) {
-		return ""
-	}
-	end := start + length
-	if end > len(str) {
-		end = len(str)
-	}
-	return str[start:end]
+	return cyphertext.Substring(str, start, length)
 }
 
 // splitFunctionArgs splits function arguments by comma, respecting parentheses and quotes.

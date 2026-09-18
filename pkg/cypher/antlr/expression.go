@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/antlr4-go/antlr/v4"
+	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -1099,23 +1100,14 @@ func (e *ExpressionEvaluator) evaluateBuiltInFunction(name string, args []interf
 			if !ok {
 				return ""
 			}
-			if start < 0 {
-				start = 0
-			}
-			if start >= len(s) {
-				return ""
-			}
 			if len(args) >= 3 {
 				length, ok := util.SafeFloat64ToInt(e.toFloat64(args[2]))
 				if !ok || length < 0 {
 					return ""
 				}
-				if start+length > len(s) {
-					length = len(s) - start
-				}
-				return s[start : start+length]
+				return cyphertext.Substring(s, start, length)
 			}
-			return s[start:]
+			return cyphertext.From(s, start)
 		}
 	case "left":
 		if len(args) >= 2 {
@@ -1124,10 +1116,7 @@ func (e *ExpressionEvaluator) evaluateBuiltInFunction(name string, args []interf
 			if !ok || n < 0 {
 				return ""
 			}
-			if n >= len(s) {
-				return s
-			}
-			return s[:n]
+			return cyphertext.Left(s, n)
 		}
 	case "right":
 		if len(args) >= 2 {
@@ -1136,10 +1125,7 @@ func (e *ExpressionEvaluator) evaluateBuiltInFunction(name string, args []interf
 			if !ok || n < 0 {
 				return ""
 			}
-			if n >= len(s) {
-				return s
-			}
-			return s[len(s)-n:]
+			return cyphertext.Right(s, n)
 		}
 	case "split":
 		if len(args) >= 2 {
@@ -1346,7 +1332,7 @@ func (e *ExpressionEvaluator) size(val interface{}) int64 {
 	case []interface{}:
 		return int64(len(v))
 	case string:
-		return int64(len(v))
+		return int64(cyphertext.Length(v))
 	case map[string]interface{}:
 		return int64(len(v))
 	}

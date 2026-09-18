@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Batch pending documents across embedding-provider requests, pace requests
+  instead of individual nodes, isolate rejected inputs, and park permanent or
+  retry-exhausted failures without blocking the queue. Voyage contextualized
+  embeddings now split oversized documents into bounded requests.
+- Match Neo4j Unicode code-point semantics for string length, slicing, and
+  indexing; order computed RETURN expressions before pagination; and preserve
+  bindings through `UNWIND … CREATE … SET … WITH … MATCH … CREATE` pipelines.
+- Compute BM25 IDF lazily from current corpus statistics instead of refreshing
+  the entire term dictionary on every node mutation.
+- Isolate packaged Snowball runtimes so multiple language plugins can coexist,
+  quarantine unrelated broken plugins, and document Snowball v3.1.1 with the
+  current `-P` compiler syntax.
 - Log query-embedding fallback at warning level and expose a stable,
   sanitized `fallback_reason` through HTTP, native gRPC, Cypher/Bolt, MCP,
   Heimdall, and durable continuation responses.

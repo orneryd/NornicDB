@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -144,7 +145,7 @@ func evalSize(ctx Context, args []string) (interface{}, error) {
 	v, _ := ctx.Eval(args[0])
 	switch vv := v.(type) {
 	case string:
-		return int64(len(vv)), nil
+		return int64(cyphertext.Length(vv)), nil
 	case []interface{}:
 		return int64(len(vv)), nil
 	case []string:

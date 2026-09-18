@@ -10,6 +10,7 @@ import (
 	"time"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -169,11 +170,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 				}
 				return nil
 			case string:
-				if idx < 0 {
-					idx = int64(len(list)) + idx
-				}
-				if idx >= 0 && idx < int64(len(list)) {
-					return string(list[idx])
+				if character, ok := cyphertext.At(list, int(idx)); ok {
+					return character
 				}
 				return nil
 			}
@@ -256,7 +254,7 @@ skipArrayIndexing:
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		switch v := innerVal.(type) {
 		case string:
-			return int64(len(v))
+			return int64(cyphertext.Length(v))
 		case []interface{}:
 			return int64(len(v))
 		}
@@ -1029,18 +1027,11 @@ skipArrayIndexing:
 		if len(args) >= 2 {
 			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
 			start, _ := strconv.Atoi(strings.TrimSpace(args[1]))
-			length := len(str) - start
 			if len(args) >= 3 {
-				length, _ = strconv.Atoi(strings.TrimSpace(args[2]))
+				length, _ := strconv.Atoi(strings.TrimSpace(args[2]))
+				return cyphertext.Substring(str, start, length)
 			}
-			if start >= len(str) {
-				return ""
-			}
-			end := start + length
-			if end > len(str) {
-				end = len(str)
-			}
-			return str[start:end]
+			return cyphertext.From(str, start)
 		}
 		return nil
 	}
@@ -1052,10 +1043,7 @@ skipArrayIndexing:
 		if len(args) >= 2 {
 			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
 			n, _ := strconv.Atoi(strings.TrimSpace(args[1]))
-			if n > len(str) {
-				n = len(str)
-			}
-			return str[:n]
+			return cyphertext.Left(str, n)
 		}
 		return nil
 	}
@@ -1067,10 +1055,7 @@ skipArrayIndexing:
 		if len(args) >= 2 {
 			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
 			n, _ := strconv.Atoi(strings.TrimSpace(args[1]))
-			if n > len(str) {
-				n = len(str)
-			}
-			return str[len(str)-n:]
+			return cyphertext.Right(str, n)
 		}
 		return nil
 	}

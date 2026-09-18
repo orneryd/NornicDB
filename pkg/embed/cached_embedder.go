@@ -264,6 +264,17 @@ func (c *CachedEmbedder) EmbedDocumentChunks(ctx context.Context, text string, m
 	return chunker.EmbedDocumentChunks(ctx, text, maxTokens, overlap)
 }
 
+// EmbedDocumentBatchChunks preserves provider-managed batching when available
+// and otherwise batches deterministic chunks from several documents together.
+func (c *CachedEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []string, maxTokens, overlap int) ([]*DocumentChunkResult, error) {
+	if batcher, ok := c.base.(DocumentBatchChunkEmbedder); ok {
+		return batcher.EmbedDocumentBatchChunks(ctx, texts, maxTokens, overlap)
+	}
+	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, c.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, error) {
+		return c.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+	}, c.Model())
+}
+
 // ChunkText delegates chunking to the wrapped embedder.
 func (c *CachedEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return c.base.ChunkText(text, maxTokens, overlap)

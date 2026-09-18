@@ -9,6 +9,7 @@ import (
 	"time"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -67,12 +68,16 @@ func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) []node
 		expr := tokens[0]
 		descending := len(tokens) > 1 && strings.ToUpper(tokens[1]) == "DESC"
 
-		// Extract property name
-		var propName string
-		if strings.HasPrefix(expr, variable+".") {
-			propName = expr[len(variable)+1:]
-		} else {
-			propName = expr
+		// Node sorting is safe only for direct properties of the matched
+		// variable. Aliases and computed expressions must be sorted after
+		// projection, when their values actually exist.
+		prefix := variable + "."
+		if !strings.HasPrefix(expr, prefix) {
+			return nil
+		}
+		propName := expr[len(prefix):]
+		if propName == "" || strings.ContainsAny(propName, ".()[]") {
+			return nil
 		}
 
 		specs = append(specs, nodeOrderSpec{propName: propName, descending: descending})
@@ -1097,7 +1102,7 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 				case []string:
 					return int64(len(v))
 				case string:
-					return int64(len(v))
+					return int64(cyphertext.Length(v))
 				}
 			}
 			// Recursively evaluate the inner expression first
@@ -1112,7 +1117,7 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 			case []string:
 				return int64(len(v))
 			case string:
-				return int64(len(v))
+				return int64(cyphertext.Length(v))
 			}
 			return int64(0)
 		}

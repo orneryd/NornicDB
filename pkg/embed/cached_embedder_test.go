@@ -5,12 +5,28 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // mockEmbedder tracks calls for testing
 type mockEmbedder struct {
 	calls     int64
 	batchSize int
+}
+
+func TestCachedEmbedderBatchesChunksAcrossDocuments(t *testing.T) {
+	mock := &mockEmbedder{}
+	cached := NewCachedEmbedder(mock, 100)
+
+	results, err := cached.EmbedDocumentBatchChunks(context.Background(), []string{"first", "second", "third"}, 512, 0)
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+	require.Equal(t, 3, mock.batchSize)
+	for i, result := range results {
+		require.Equal(t, []string{[]string{"first", "second", "third"}[i]}, result.Chunks)
+		require.Len(t, result.Embeddings, 1)
+	}
 }
 
 func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
