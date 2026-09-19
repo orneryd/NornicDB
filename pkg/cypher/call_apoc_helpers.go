@@ -13,7 +13,14 @@ import (
 
 // findMatchingParen finds the index of the closing parenthesis matching the one at startIdx.
 func (e *StorageExecutor) findMatchingParen(s string, startIdx int) int {
-	if startIdx >= len(s) || s[startIdx] != '(' {
+	return findMatchingDelimiter(s, startIdx, '(', ')')
+}
+
+// findMatchingDelimiter finds the index of the closer matching the opener at startIdx,
+// skipping quoted strings. It returns -1 when s[startIdx] is not the opener or no
+// matching closer exists.
+func findMatchingDelimiter(s string, startIdx int, opener, closer rune) int {
+	if startIdx >= len(s) || rune(s[startIdx]) != opener {
 		return -1
 	}
 
@@ -35,9 +42,9 @@ func (e *StorageExecutor) findMatchingParen(s string, startIdx int) int {
 		case '\'', '"':
 			inQuote = true
 			quoteChar = c
-		case '(':
+		case opener:
 			depth++
-		case ')':
+		case closer:
 			depth--
 			if depth == 0 {
 				return i
@@ -173,39 +180,7 @@ func (e *StorageExecutor) extractQuotedString(s string) (string, string, error) 
 
 // findMatchingBrace finds the index of the closing brace matching the one at startIdx.
 func (e *StorageExecutor) findMatchingBrace(s string, startIdx int) int {
-	if startIdx >= len(s) || s[startIdx] != '{' {
-		return -1
-	}
-
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i := startIdx; i < len(s); i++ {
-		c := rune(s[i])
-
-		if inQuote {
-			if c == quoteChar && (i == 0 || s[i-1] != '\\') {
-				inQuote = false
-			}
-			continue
-		}
-
-		switch c {
-		case '\'', '"':
-			inQuote = true
-			quoteChar = c
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-
-	return -1
+	return findMatchingDelimiter(s, startIdx, '{', '}')
 }
 
 // parseMapLiteral parses a Cypher map literal like {key: value, key2: value2}.
