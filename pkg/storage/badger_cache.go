@@ -3,6 +3,8 @@ package storage
 import (
 	"container/list"
 	"sync/atomic"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // =============================================================================
@@ -152,43 +154,12 @@ func estimateNodeBodyCacheBytes(node *Node) int64 {
 		bytes += int64(16 + len(label))
 	}
 	for key, value := range node.Properties {
-		bytes += int64(32+len(key)) + estimateCacheValueBytes(value)
+		bytes += int64(32+len(key)) + util.EstimateValueBytes(value)
 	}
 	for key, value := range node.EmbedMeta {
-		bytes += int64(32+len(key)) + estimateCacheValueBytes(value)
+		bytes += int64(32+len(key)) + util.EstimateValueBytes(value)
 	}
 	return bytes
-}
-
-func estimateCacheValueBytes(value any) int64 {
-	switch typed := value.(type) {
-	case nil:
-		return 0
-	case string:
-		return int64(16 + len(typed))
-	case []byte:
-		return int64(24 + len(typed))
-	case []string:
-		bytes := int64(24 + 16*len(typed))
-		for _, value := range typed {
-			bytes += int64(len(value))
-		}
-		return bytes
-	case []any:
-		bytes := int64(24 + 16*len(typed))
-		for _, value := range typed {
-			bytes += estimateCacheValueBytes(value)
-		}
-		return bytes
-	case map[string]any:
-		bytes := int64(48 + 32*len(typed))
-		for key, value := range typed {
-			bytes += int64(len(key)) + estimateCacheValueBytes(value)
-		}
-		return bytes
-	default:
-		return 16
-	}
 }
 
 // cacheLoadEdge returns the cached edge pointer if present.
