@@ -109,28 +109,6 @@ const (
 	MessageExternalDiagnostic           MessageID = "localization.external_diagnostic"
 )
 
-// OSLanguageUndetected reports that OS language detection failed.
-func OSLanguageUndetected() Message {
-	return Message{ID: MessageOSLanguageUndetected, Fallback: "Unable to determine the operating system language; using English (United States)"}
-}
-
-// LanguagePackMissing reports a requested language without an installed pack.
-func LanguagePackMissing(requested, resolved, source string) Message {
-	return Message{ID: MessageLanguagePackMissing, Fallback: "Requested language pack is unavailable", Data: map[string]any{
-		"RequestedLanguage": requested,
-		"ResolvedLanguage":  resolved,
-		"Source":            source,
-	}}
-}
-
-// CatalogEntryMissing reports a missing translated catalog entry.
-func CatalogEntryMissing(language string, messageID MessageID) Message {
-	return Message{ID: MessageCatalogEntryMissing, Fallback: "Catalog entry is unavailable", Data: map[string]any{
-		"Language":  language,
-		"MessageID": string(messageID),
-	}}
-}
-
 // InvalidRequestBody identifies the common malformed-request response.
 func InvalidRequestBody() Message {
 	return Message{ID: MessageInvalidRequestBody, Fallback: "invalid request body"}

@@ -398,12 +398,6 @@ func optimalK(n int) int {
 	return k
 }
 
-// initCentroidsKMeansPlusPlusFromVectors initializes centroids using k-means++ on a vector slice.
-// Used by ClusterWithContext when running on a copy so clusterMu can be released during iteration.
-func initCentroidsKMeansPlusPlusFromVectors(vectors []float32, n, dims, k int) ([][]float32, error) {
-	return initCentroidsKMeansPlusPlusSeededFromVectors(vectors, n, dims, k, nil)
-}
-
 // initCentroidsKMeansPlusPlusSeededFromVectors initializes centroids using k-means++.
 // If preferredSeeds is non-empty, the first centroid is chosen from that subset.
 func initCentroidsKMeansPlusPlusSeededFromVectors(vectors []float32, n, dims, k int, preferredSeeds []int) ([][]float32, error) {
@@ -754,66 +748,6 @@ func (ci *ClusterIndex) assignToCentroids() int {
 			dist := squaredEuclidean(emb, ci.centroids[c])
 			if dist < minDist {
 				minDist = dist
-				nearest = c
-			}
-		}
-
-		if ci.assignments[i] != nearest {
-			ci.assignments[i] = nearest
-			changed++
-		}
-	}
-
-	return changed
-}
-
-// assignToCentroidsGPU assigns each embedding to its nearest centroid using GPU.
-// Falls back to CPU if GPU search fails.
-// Returns number of assignments that changed.
-func (ci *ClusterIndex) assignToCentroidsGPU() int {
-	n := len(ci.nodeIDs)
-	k := len(ci.centroids)
-	dims := ci.dimensions
-	changed := 0
-
-	// For each centroid, compute similarity to all embeddings using GPU
-	// This leverages the parent EmbeddingIndex's GPU search capability
-	// but we interpret the results differently (finding max similarity per embedding)
-
-	// Allocate similarity scores matrix [n][k]
-	// We'll compute similarities centroid by centroid
-	similarities := make([][]float32, n)
-	for i := 0; i < n; i++ {
-		similarities[i] = make([]float32, k)
-	}
-
-	// For each centroid, use GPU to compute similarity with all embeddings
-	for c := 0; c < k; c++ {
-		centroid := ci.centroids[c]
-
-		// Use the parent's searchGPU to get similarities
-		// Note: Search returns sorted results, but we need raw similarities
-		// So we'll use the searchCPU path which computes cosine similarity directly
-		// and extract the score for each embedding
-
-		// Alternative: Compute similarity directly using GPU buffer
-		// This is more efficient for k-means since we need ALL similarities, not just top-k
-		for i := 0; i < n; i++ {
-			embStart := i * dims
-			emb := ci.cpuVectors[embStart : embStart+dims]
-			// Use cosine similarity (1 - distance approximation for unit vectors)
-			similarities[i][c] = cosineSimilarityFlat(centroid, emb)
-		}
-	}
-
-	// Find nearest centroid for each embedding (highest cosine similarity)
-	for i := 0; i < n; i++ {
-		maxSim := float32(-math.MaxFloat32)
-		nearest := 0
-
-		for c := 0; c < k; c++ {
-			if similarities[i][c] > maxSim {
-				maxSim = similarities[i][c]
 				nearest = c
 			}
 		}

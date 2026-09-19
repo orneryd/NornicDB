@@ -1763,17 +1763,6 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 	return nil
 }
 
-// readLegacyWALEntries reads entries in the legacy JSON-per-line format.
-// This is for backward compatibility with existing WAL files.
-func readLegacyWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error) {
-	entries := make([]WALEntry, 0)
-	err := visitLegacyWALEntries(file, logger, func(entry WALEntry) error {
-		entries = append(entries, entry)
-		return nil
-	})
-	return entries, err
-}
-
 func visitLegacyWALEntries(file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
 	if logger == nil {
 		logger = discardWALSlog()

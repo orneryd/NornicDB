@@ -115,27 +115,6 @@ func New(ctx context.Context, cfg ObservabilityConfig, info ServiceInfo, logger 
 	}, nil
 }
 
-// buildTracerProvider constructs the real OTLP-backed TracerProvider, or
-// returns a noop one (with WARN log) if the exporter cannot be initialized
-// or configuration is unsafe (TRC-09 plaintext reject).
-//
-// Per OBS-11 contract this NEVER returns an error: telemetry init failure is
-// logged and the noop provider is installed. The exporter init is bounded by
-// cfg.Timeout (default 5s) via a context.WithTimeout so a misconfigured
-// collector endpoint cannot hang startup (Pitfall 2).
-//
-// Phase 6 additions:
-//   - TRC-09: reject plaintext OTLP endpoints (http:// scheme or explicit
-//     Insecure=true with no override) when NORNICDB_OTLP_INSECURE != true.
-//   - TRC-05/06/07: root sampler is built from cfg.ParentMode + SampleRatio
-//     rather than NeverSample().
-//   - TRC-11: W3C traceparent/tracestate/baggage set as global propagator.
-//   - TRC-02: BSP is wrapped by bspSelfMetrics so nornicdb_otel_bsp_queue_depth
-//   - _dropped_spans_total reflect real pipeline state.
-func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.Resource) trace.TracerProvider {
-	return buildTracerProviderWithLogger(ctx, cfg, res, nil)
-}
-
 func buildTracerProviderWithLogger(ctx context.Context, cfg TracingConfig, res *resource.Resource, logger *slog.Logger) trace.TracerProvider {
 	if !cfg.Enabled {
 		return noop.NewTracerProvider()

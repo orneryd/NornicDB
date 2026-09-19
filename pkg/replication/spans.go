@@ -5,7 +5,6 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -34,11 +33,4 @@ func startApplySpan(ctx context.Context, leaderID string, term, prevLogIndex uin
 		),
 	)
 	return ctx, span
-}
-
-func recordReplicationError(span trace.Span, err error) {
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-	}
 }

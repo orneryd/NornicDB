@@ -1573,10 +1573,6 @@ func (ew *EmbedWorker) embedChunksInBatchesWith(provider embed.Embedder, chunks 
 	return allEmbeddings, nil
 }
 
-func (ew *EmbedWorker) embedDocument(text string, nodeID storage.NodeID) ([]string, [][]float32, map[string]any, error) {
-	return ew.embedDocumentWith(ew.embedder, text, nodeID)
-}
-
 func (ew *EmbedWorker) embedDocumentWith(provider embed.Embedder, text string, nodeID storage.NodeID) ([]string, [][]float32, map[string]any, error) {
 	if documentEmbedder, ok := provider.(embed.DocumentChunkEmbedder); ok {
 		result, err := documentEmbedder.EmbedDocumentChunks(ew.ctx, text, ew.config.ChunkSize, ew.config.ChunkOverlap)

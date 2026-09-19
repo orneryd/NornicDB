@@ -64,11 +64,6 @@ func ObservabilityLogInstanceIDResolved(instanceID, source string) Message {
 	return Message{ID: MessageObservabilityLogInstanceIDResolved, Fallback: fmt.Sprintf("INFO observability: service.instance.id=%q (resolved from %s)", instanceID, source), Data: map[string]any{"InstanceID": instanceID, "Source": source}}
 }
 
-// ObservabilityLogOperator preserves dynamically formatted observability operator prose.
-func ObservabilityLogOperator(message string) Message {
-	return Message{ID: MessageObservabilityLogOperator, Fallback: message, Data: map[string]any{"Message": message}}
-}
-
 // ReplicationLogRaftBecameLeader describes a Raft leader transition.
 func ReplicationLogRaftBecameLeader(nodeID string, term uint64) Message {
 	return Message{ID: MessageReplicationLogRaftBecameLeader, Fallback: fmt.Sprintf("[Raft %s] Became leader for term %d", nodeID, term), Data: map[string]any{"NodeID": nodeID, "Term": term}}
@@ -122,16 +117,6 @@ func ObservabilityTenantLabelsResolvedEvent(enabled bool, reason string, service
 // ObservabilityInstanceIDResolvedEvent describes service instance identity resolution.
 func ObservabilityInstanceIDResolvedEvent(instanceID, source string) LogEvent {
 	return LogEvent{ID: EventObservabilityInstanceIDResolved, Message: ObservabilityLogInstanceIDResolved(instanceID, source), Attrs: []slog.Attr{slog.String("component", "observability"), slog.String("service_instance_id", instanceID), slog.String("source", source)}}
-}
-
-// ObservabilityOperatorEvent converts legacy observability prose into a structured event.
-func ObservabilityOperatorEvent(format string, args ...any) LogEvent {
-	message := fmt.Sprintf(format, args...)
-	attrs := []slog.Attr{slog.String("component", "observability"), slog.String("message_template", format)}
-	for index, arg := range args {
-		attrs = append(attrs, slog.Any(fmt.Sprintf("arg_%d", index), arg))
-	}
-	return LogEvent{ID: EventObservabilityOperator, Message: ObservabilityLogOperator(message), Attrs: attrs}
 }
 
 // ReplicationRaftBecameLeaderEvent describes a Raft leader transition.

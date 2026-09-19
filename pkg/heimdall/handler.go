@@ -990,10 +990,6 @@ func sliceContains(ss []string, s string) bool {
 	return false
 }
 
-func logToolCall(requestID, action string, params map[string]interface{}) {
-	logHeimdallEvent(localization.HeimdallToolCallEvent(requestID, action, params))
-}
-
 func logToolResult(requestID, action string, duration time.Duration, err error) {
 	if err != nil {
 		logHeimdallEvent(localization.HeimdallOperatorEvent("[Heimdall] Tool result: request=%s action=%s duration=%v error=%v", requestID, action, duration, err))

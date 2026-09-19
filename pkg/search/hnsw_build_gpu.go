@@ -371,10 +371,6 @@ func sortHNSWBuildCandidates(cands []hnswCandidateDistance) {
 	})
 }
 
-func flattenHNSWBuildFrontier(frontier [][]float32, dim int) []float32 {
-	return flattenHNSWBuildFrontierInto(make([]float32, 0, len(frontier)*dim), frontier, dim)
-}
-
 func flattenHNSWBuildFrontierInto(flat []float32, frontier [][]float32, dim int) []float32 {
 	for _, vec := range frontier {
 		if len(vec) != dim {
@@ -383,10 +379,6 @@ func flattenHNSWBuildFrontierInto(flat []float32, frontier [][]float32, dim int)
 		flat = append(flat, vec...)
 	}
 	return flat
-}
-
-func flattenHNSWBuildQueries(queries [][]float32, dim int) []float32 {
-	return flattenHNSWBuildQueriesInto(make([]float32, 0, len(queries)*dim), queries, dim)
 }
 
 func flattenHNSWBuildQueriesInto(flat []float32, queries [][]float32, dim int) []float32 {

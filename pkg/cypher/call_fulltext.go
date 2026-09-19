@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -659,48 +658,6 @@ func extractTextContent(node *storage.Node, properties []string) string {
 	}
 
 	return strings.TrimSpace(content.String())
-}
-
-// calculateBM25Score calculates a BM25-like score for a document
-func calculateBM25Score(content string, terms []string, docFreq map[string]int, totalDocs int) float64 {
-	if totalDocs == 0 {
-		return 0
-	}
-
-	// BM25 parameters
-	k1 := 1.2
-	b := 0.75
-	avgDocLen := 100.0 // Assume average document length
-
-	docLen := float64(len(strings.Fields(content)))
-	var score float64
-
-	for _, term := range terms {
-		tf := float64(strings.Count(content, term))
-		if tf == 0 {
-			continue
-		}
-
-		// IDF calculation using BM25 formula with smoothing
-		df := float64(docFreq[term])
-		if df == 0 {
-			df = 0.5 // Smoothing for unseen terms
-		}
-
-		// Use IDF+ variant: log((N + 1) / df) to ensure positive IDF
-		// This prevents common terms from having zero or negative IDF
-		idf := math.Log((float64(totalDocs) + 1) / df)
-		if idf < 0.1 {
-			idf = 0.1 // Minimum IDF floor
-		}
-
-		// TF normalization
-		tfNorm := (tf * (k1 + 1)) / (tf + k1*(1-b+b*(docLen/avgDocLen)))
-
-		score += idf * tfNorm
-	}
-
-	return score
 }
 
 // extractFulltextQuery extracts the search query from a fulltext CALL statement (legacy)

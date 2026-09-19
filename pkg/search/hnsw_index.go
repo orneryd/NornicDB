@@ -1330,15 +1330,6 @@ func (h *HNSWIndex) releaseCandidateIDs(ids []uint32) {
 	}
 }
 
-func (h *HNSWIndex) searchLayerHeapPooled(query []float32, entryID uint32, ef int, level int) []hnswDistItem {
-	out, _ := h.searchLayerHeapPooledWithContext(context.Background(), query, entryID, ef, level)
-	return out
-}
-
-func (h *HNSWIndex) searchLayerHeapPooledWithContext(ctx context.Context, query []float32, entryID uint32, ef int, level int) ([]hnswDistItem, error) {
-	return h.searchLayerHeapPooledFromEntriesWithContext(ctx, query, []uint32{entryID}, ef, level)
-}
-
 func (h *HNSWIndex) searchLayerHeapPooledFromEntriesWithContext(ctx context.Context, query []float32, entryIDs []uint32, ef int, level int) ([]hnswDistItem, error) {
 	if ctx == nil {
 		ctx = context.Background()
