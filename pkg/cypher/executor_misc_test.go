@@ -710,9 +710,9 @@ func TestExecuteQueryAgainstStorage_DispatchBranches(t *testing.T) {
 		{query: "SHOW DATABASES", errContains: "SHOW DATABASES requires multi-database support"},
 		{query: "SHOW ALIASES", errContains: "SHOW ALIASES requires multi-database support"},
 		{query: "SHOW LIMITS FOR DATABASE nornic", errContains: "SHOW LIMITS requires multi-database support"},
-		{query: "SHOW WHATEVER", errContains: "unsupported SHOW command in transaction"},
-		{query: "LOAD CSV FROM 'file:///tmp/missing.csv' AS row RETURN row", errContains: "unsupported query type"},
-		{query: "ALTER COMPOSITE DATABASE cdb ADD CONSTITUENT db1", errContains: "unsupported query type"},
+		{query: "SHOW WHATEVER", errContains: "unsupported query type: SHOW"},
+		{query: "LOAD CSV FROM 'file:///tmp/missing.csv' AS row RETURN row", errContains: "LOAD CSV is not supported"},
+		{query: "ALTER COMPOSITE DATABASE cdb ADD CONSTITUENT db1", errContains: "requires multi-database support"},
 		{query: "WHATEVER 1", errContains: "unsupported query type"},
 	}
 
