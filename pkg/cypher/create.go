@@ -1773,7 +1773,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			if params := getParamsFromContext(ctx); params != nil && !strings.Contains(setPart, "+=") {
 				setPartForAssignments = e.substituteParams(setPart, params)
 			}
-			assignments := e.splitSetAssignmentsRespectingBrackets(setPartForAssignments)
+			assignments := e.splitSetAssignments(setPartForAssignments)
 			for _, assignment := range assignments {
 				assignment = strings.TrimSpace(assignment)
 				if assignment == "" {
@@ -2391,7 +2391,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 	// Pre-validate SET assignments BEFORE executing CREATE
 	// This ensures we fail fast and don't create nodes that would be orphaned
 	if !strings.Contains(setPartForAssignments, "+=") {
-		assignments := e.splitSetAssignmentsRespectingBrackets(setPartForAssignments)
+		assignments := e.splitSetAssignments(setPartForAssignments)
 		if err := e.validateSetAssignments(assignments); err != nil {
 			return nil, err
 		}
@@ -2406,7 +2406,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 	result.Stats.RelationshipsCreated = createResult.Stats.RelationshipsCreated
 
 	// Handle regular and SET += assignments in order.
-	assignments := e.splitSetAssignmentsRespectingBrackets(setPartForAssignments)
+	assignments := e.splitSetAssignments(setPartForAssignments)
 	for _, assignment := range assignments {
 		assignment = strings.TrimSpace(assignment)
 		if assignment == "" {

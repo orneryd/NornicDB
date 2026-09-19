@@ -962,7 +962,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 
 	// Split SET clause into individual assignments, respecting brackets
 	// e.g., "n.embedding = [0.1, 0.2], n.dim = 4" -> ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
-	assignments := e.splitSetAssignmentsRespectingBrackets(setPartForAssignments)
+	assignments := e.splitSetAssignments(setPartForAssignments)
 
 	if len(assignments) == 0 || (len(assignments) == 1 && strings.TrimSpace(assignments[0]) == "") {
 		return nil, localizedError(localization.CypherMutationsSetAssignmentRequired(), nil)

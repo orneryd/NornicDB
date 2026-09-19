@@ -266,7 +266,8 @@ func setNodeProperty(node *storage.Node, propName string, value interface{}) {
 }
 
 // splitSetAssignments splits a SET clause into individual assignments,
-// respecting parentheses and quotes.
+// respecting quotes and nesting in (), [] and {} (function calls, list literals
+// such as embeddings, and map literals).
 //
 // # Parameters
 //
@@ -283,6 +284,9 @@ func setNodeProperty(node *storage.Node, propName string, value interface{}) {
 //
 //	splitSetAssignments("n.name = concat('a', 'b'), n.x = 1")
 //	// Returns: ["n.name = concat('a', 'b')", "n.x = 1"]
+//
+//	splitSetAssignments("n.embedding = [0.1, 0.2], n.dim = 4")
+//	// Returns: ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
 func (e *StorageExecutor) splitSetAssignments(setClause string) []string {
 	var assignments []string
 	var current strings.Builder
@@ -310,65 +314,6 @@ func (e *StorageExecutor) splitSetAssignments(setClause string) []string {
 			parenDepth--
 			current.WriteRune(c)
 		case c == ',' && !inQuote && parenDepth == 0:
-			if s := strings.TrimSpace(current.String()); s != "" {
-				assignments = append(assignments, s)
-			}
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-
-	// Add final assignment
-	if s := strings.TrimSpace(current.String()); s != "" {
-		assignments = append(assignments, s)
-	}
-
-	return assignments
-}
-
-// splitSetAssignmentsRespectingBrackets splits a SET clause into individual assignments,
-// respecting brackets (for arrays), parentheses, and quotes.
-//
-// # Parameters
-//
-//   - setClause: The SET clause string
-//
-// # Returns
-//
-//   - Slice of individual assignments
-//
-// # Example
-//
-//	splitSetAssignmentsRespectingBrackets("n.embedding = [0.1, 0.2], n.dim = 4")
-//	// Returns: ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
-func (e *StorageExecutor) splitSetAssignmentsRespectingBrackets(setClause string) []string {
-	var assignments []string
-	var current strings.Builder
-	depth := 0 // Tracks (), [], and {}
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, c := range setClause {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				// Check for escaped quote
-				if i > 0 && setClause[i-1] != '\\' {
-					inQuote = false
-				}
-			}
-			current.WriteRune(c)
-		case (c == '(' || c == '[' || c == '{') && !inQuote:
-			depth++
-			current.WriteRune(c)
-		case (c == ')' || c == ']' || c == '}') && !inQuote:
-			depth--
-			current.WriteRune(c)
-		case c == ',' && !inQuote && depth == 0:
 			if s := strings.TrimSpace(current.String()); s != "" {
 				assignments = append(assignments, s)
 			}

@@ -415,7 +415,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 // SET target = row retain their original Go/Cypher types.
 func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineRow, clause string) (int, bool, error) {
 	body := strings.TrimSpace(clause[len("SET"):])
-	assignments := e.splitSetAssignmentsRespectingBrackets(body)
+	assignments := e.splitSetAssignments(body)
 	if body == "" || len(assignments) == 0 {
 		return 0, false, nil
 	}
@@ -466,7 +466,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 // context values; only expression forms that require the row evaluator are
 // converted to Cypher literals.
 func (e *StorageExecutor) materializePipelineSetExpressions(body string, row pipelineRow) string {
-	assignments := e.splitSetAssignmentsRespectingBrackets(body)
+	assignments := e.splitSetAssignments(body)
 	resolved := make([]string, 0, len(assignments))
 	for _, assignment := range assignments {
 		assignment = strings.TrimSpace(assignment)
