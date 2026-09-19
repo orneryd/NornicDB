@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/adminimport"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
 )
@@ -187,10 +189,75 @@ func TestRootCommand_PreservesUseSyntaxAndFlagNames(t *testing.T) {
 		require.NotNil(t, full.Flags().Lookup(name), "flag %s must remain available", name)
 	}
 
+	okf, _, err := command.Find([]string{"database", "import", "okf"})
+	require.NoError(t, err)
+	require.Equal(t, "okf <db-name>", okf.Use)
+	for _, name := range []string{"from-path", "profile", "mode", "property-map", "chunk-size"} {
+		require.NotNil(t, okf.Flags().Lookup(name), "flag %s must remain available", name)
+	}
+
 	export, _, err := command.Find([]string{"database", "export", "neo4j-csv"})
 	require.NoError(t, err)
 	require.Equal(t, "neo4j-csv <db-name>", export.Use)
 	require.NotNil(t, export.Flags().Lookup("to-path"))
+
+	okfExport, _, err := command.Find([]string{"database", "export", "okf"})
+	require.NoError(t, err)
+	require.Equal(t, "okf <db-name>", okfExport.Use)
+	require.NotNil(t, okfExport.Flags().Lookup("to-path"))
+	require.NotNil(t, okfExport.Flags().Lookup("property-map"))
+}
+
+func TestOKFImportCommandAppliesPropertyMapFile(t *testing.T) {
+	dataDir := t.TempDir()
+	sourcePath, err := filepath.Abs(filepath.Join("..", "..", "pkg", "adminimport", "testdata", "okf", "nornicdb-docs"))
+	require.NoError(t, err)
+	propertyMapPath := filepath.Join(sourcePath, "property-map.env")
+
+	command := newRootCmd()
+	command.SetArgs([]string{
+		"--data-dir", dataDir,
+		"database", "import", "okf", "knowledge",
+		"--from-path", sourcePath,
+		"--property-map", propertyMapPath,
+	})
+	require.NoError(t, command.Execute())
+
+	engine, err := storage.NewBadgerEngine(dataDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	nodes, err := storage.NewNamespacedEngine(engine, "knowledge").AllNodes()
+	require.NoError(t, err)
+	concepts := make([]*storage.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if _, ok := node.Properties["concept_key"].(string); ok {
+			concepts = append(concepts, node)
+		}
+	}
+	require.Len(t, concepts, 3)
+	for _, node := range concepts {
+		require.Contains(t, node.Properties, "concept_key")
+		require.Contains(t, node.Properties, "source_metadata")
+		require.NotContains(t, node.Properties, "_okf_concept_id")
+		require.NotContains(t, node.Properties, "_okf_frontmatter")
+	}
+	require.NoError(t, engine.Close())
+
+	exportPath := filepath.Join(dataDir, "exported-bundle")
+	exportCommand := newRootCmd()
+	exportCommand.SetArgs([]string{
+		"--data-dir", dataDir,
+		"database", "export", "okf", "knowledge",
+		"--to-path", exportPath,
+		"--property-map", propertyMapPath,
+	})
+	require.NoError(t, exportCommand.Execute())
+	_, err = adminimport.ValidateOKF(adminimport.OKFImportOptions{
+		DatabaseName: "knowledge",
+		FromPath:     exportPath,
+		Profile:      adminimport.PGMProfile,
+	})
+	require.NoError(t, err)
 }
 
 func lineContaining(t *testing.T, text, fragment string) string {
