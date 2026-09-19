@@ -178,6 +178,16 @@ func ServerLogSearchStorageLookupFailed() Message {
 	return Message{ID: MessageServerLogSearchStorageLookupFailed, Fallback: "search: storage lookup failed"}
 }
 
+// ServerLogSearchQueryEmbeddingFailed describes a query embedding fallback.
+func ServerLogSearchQueryEmbeddingFailed() Message {
+	return Message{ID: MessageServerLogSearchQueryEmbeddingFailed, Fallback: "query embedding failed"}
+}
+
+// ServerLogSearchChunkedQueryEmbeddingFailed describes a chunk embedding fallback.
+func ServerLogSearchChunkedQueryEmbeddingFailed() Message {
+	return Message{ID: MessageServerLogSearchChunkedQueryEmbeddingFailed, Fallback: "query embedding failed (chunked)"}
+}
+
 // ServerLogSearchTiming describes detailed search diagnostics.
 func ServerLogSearchTiming() Message {
 	return Message{ID: MessageServerLogSearchTiming, Fallback: "search timing"}
@@ -339,6 +349,18 @@ func ServerSearchRequestEvent(database, query string) LogEvent {
 func ServerSearchStorageLookupFailedEvent(database string, err error) LogEvent {
 	return serverRuntimeEvent(EventServerSearchStorageLookupFailed, ServerLogSearchStorageLookupFailed(),
 		slog.String("subsystem", "search"), slog.String("db", database), slog.Any("error", err))
+}
+
+// ServerSearchQueryEmbeddingFailedEvent describes a query embedding fallback.
+func ServerSearchQueryEmbeddingFailedEvent(err error) LogEvent {
+	return serverRuntimeEvent(EventServerSearchQueryEmbeddingFailed, ServerLogSearchQueryEmbeddingFailed(),
+		slog.String("subsystem", "search"), slog.Any("error", err))
+}
+
+// ServerSearchChunkedQueryEmbeddingFailedEvent describes a chunk embedding fallback.
+func ServerSearchChunkedQueryEmbeddingFailedEvent(err error) LogEvent {
+	return serverRuntimeEvent(EventServerSearchChunkedQueryEmbeddingFailed, ServerLogSearchChunkedQueryEmbeddingFailed(),
+		slog.String("subsystem", "search"), slog.Any("error", err))
 }
 
 // ServerSearchTimingFields contains the stable fields emitted by search diagnostics.
