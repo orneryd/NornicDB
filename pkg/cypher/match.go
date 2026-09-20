@@ -732,6 +732,12 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			}
 		}
 		if !usedPropertyIndex {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, wherePart); idxErr == nil && used {
+				nodes = candidates
+				usedPropertyIndex = true
+			}
+		}
+		if !usedPropertyIndex {
 			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, nodePattern, wherePart); idxErr == nil && used {
 				nodes = candidates
 				usedPropertyIndex = true

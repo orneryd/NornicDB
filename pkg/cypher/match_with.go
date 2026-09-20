@@ -73,10 +73,50 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	var nodes []*storage.Node
 	var err error
 
-	if len(nodePattern.labels) > 0 {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-	} else {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
+	loadAll := func() ([]*storage.Node, error) {
+		if len(nodePattern.labels) > 0 {
+			return e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
+		}
+		return e.loadNodesWithTemporalViewport(ctx, nil)
+	}
+
+	// Prefer a property-index seed when the WHERE clause carries an equality
+	// conjunct on an indexed property (#490): the full label load below
+	// hydrates every node even when the index could narrow it to a handful.
+	// Seeding is over-fetch-only — the pattern-property and WHERE filters
+	// below still apply — and an empty seed falls back to the full load so
+	// stale index metadata can never produce a false empty result (mirrors
+	// the single-clause markOuterScanFallbackUsed path).
+	seeded := false
+	if whereClause != "" {
+		var seedErr error
+		nodes, seeded, seedErr = e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereClause)
+		if seedErr != nil {
+			return nil, localizedError(localization.CypherMatchingStorageFailed(seedErr), seedErr)
+		}
+		if seeded && len(nodes) == 0 {
+			e.markOuterScanFallbackUsed()
+			seeded = false
+		}
+		if seeded {
+			// Mirror loadNodesWithTemporalViewport exactly: the index seed
+			// checks labels with ANY semantics, so re-apply the required
+			// (ALL) label filter, then the temporal viewport filter. The
+			// pattern-property and WHERE filters below still apply.
+			nodes = filterNodesByRequiredLabels(nodes, nodePattern.labels)
+			if viewport, ok := TemporalViewportFromContext(ctx); ok && viewport.Enabled() {
+				if checker, canCheck := e.getStorage(ctx).(temporalCurrentNodeChecker); canCheck {
+					var viewportErr error
+					nodes, viewportErr = filterNodesByTemporalViewport(nodes, viewport, checker)
+					if viewportErr != nil {
+						return nil, localizedError(localization.CypherMatchingStorageFailed(viewportErr), viewportErr)
+					}
+				}
+			}
+		}
+	}
+	if !seeded {
+		nodes, err = loadAll()
 	}
 	if err != nil {
 		return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)

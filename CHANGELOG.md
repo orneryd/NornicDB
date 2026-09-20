@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Seed node MATCH candidates from a property index when the WHERE clause is a
+  conjunction containing an equality on an indexed property (e.g.
+  `WHERE n.repo_id = $r AND n.evidence_source = 'x' AND n.generation_id <> $g`),
+  on both the single-clause and WITH dispatch paths. Previously every such query
+  hydrated the whole label even with a usable index present; the residual
+  predicates still filter in the executor, so results are unchanged. A conjunctive
+  existence probe over a 50k-node label drops from ~27.7ms/op to ~8.7us/op
+  (~3177x), ~2001x fewer bytes and ~1109x fewer allocs per op. Fixes #490.
 - Track embedding claims as in-flight work across provider calls, batch
   bisection, retry backoff, and persistence. Embed stats now keep `running`
   true, expose `in_flight`, and include claims in `pending_nodes`, preventing

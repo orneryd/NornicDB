@@ -542,6 +542,53 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	return nil, false, nil
 }
 
+// tryCollectNodesFromPropertyIndexEqualityCompound attempts to satisfy a
+// start-node predicate from a schema property index when an equality on an
+// indexed property is combined with other predicates via AND — e.g.
+// `WHERE n.repo_id = $repo_id AND n.evidence_source = 'x' AND
+// n.generation_id <> $gen`. Only a single AND conjunct needs to match an
+// indexed property equality for pruning to be safe: every caller
+// re-applies the full WHERE clause afterward, so seeding from one
+// recognized conjunct can only over-fetch, never under-fetch, and
+// correctness does not depend on this helper understanding the rest of the
+// clause.
+//
+// Mirrors tryCollectNodesFromPropertyIndexInCompound's AND-conjunct handling
+// (match_index_seek.go) for the plain-equality case. Tries the whole clause
+// first (the simple form), then each top-level AND conjunct in order.
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
+	ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+) ([]*storage.Node, bool, error) {
+	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	if clause == "" {
+		return nil, false, nil
+	}
+
+	// 1) Simple clause (a lone equality, no conjunction).
+	if nodes, used, err := e.tryCollectNodesFromPropertyIndex(ctx, nodePattern, clause); used || err != nil {
+		return nodes, used, err
+	}
+
+	// 2) Conjunction: any equality conjunct on an indexed property is safe
+	// to use as a pruning seek (see over-fetch-only argument in the doc
+	// comment above).
+	if findTopLevelKeyword(clause, " AND ") > 0 {
+		for _, raw := range splitTopLevelAndConjuncts(clause) {
+			term := unwrapOuterParens(strings.TrimSpace(raw))
+			if term == "" {
+				continue
+			}
+			if nodes, used, err := e.tryCollectNodesFromPropertyIndex(ctx, nodePattern, term); used || err != nil {
+				return nodes, used, err
+			}
+		}
+	}
+
+	return nil, false, nil
+}
+
 // tryCollectNodesFromPropertyIndexInOrParam attempts to satisfy OR-combined IN
 // predicates backed by indexes, e.g.:
 //
