@@ -44,25 +44,44 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 
 	// AND operator
 	if left, right, ok := splitByOperatorWithOptions(expr, " AND ", true, false); ok {
-		if e.evaluateExpressionWithContext(ctx, left, nodes, rels) != true {
+		leftValue := e.evaluateExpressionWithContext(ctx, left, nodes, rels)
+		if leftValue == false {
 			return false
 		}
-		return e.evaluateExpressionWithContext(ctx, right, nodes, rels) == true
+		rightValue := e.evaluateExpressionWithContext(ctx, right, nodes, rels)
+		if rightValue == false {
+			return false
+		}
+		if leftValue == nil || rightValue == nil {
+			return nil
+		}
+		return leftValue == true && rightValue == true
 	}
 
 	// OR operator
 	if left, right, ok := splitByOperatorWithOptions(expr, " OR ", true, false); ok {
-		if e.evaluateExpressionWithContext(ctx, left, nodes, rels) == true {
+		leftValue := e.evaluateExpressionWithContext(ctx, left, nodes, rels)
+		if leftValue == true {
 			return true
 		}
-		return e.evaluateExpressionWithContext(ctx, right, nodes, rels) == true
+		rightValue := e.evaluateExpressionWithContext(ctx, right, nodes, rels)
+		if rightValue == true {
+			return true
+		}
+		if leftValue == nil || rightValue == nil {
+			return nil
+		}
+		return false
 	}
 
 	// XOR operator
 	if left, right, ok := splitByOperatorWithOptions(expr, " XOR ", true, false); ok {
-		leftResult := e.evaluateExpressionWithContext(ctx, left, nodes, rels) == true
-		rightResult := e.evaluateExpressionWithContext(ctx, right, nodes, rels) == true
-		return leftResult != rightResult
+		leftValue := e.evaluateExpressionWithContext(ctx, left, nodes, rels)
+		rightValue := e.evaluateExpressionWithContext(ctx, right, nodes, rels)
+		if leftValue == nil || rightValue == nil {
+			return nil
+		}
+		return (leftValue == true) != (rightValue == true)
 	}
 
 	// ========================================
@@ -112,72 +131,25 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// ========================================
 	// NOT IN must be checked before IN (because "NOT IN" contains " IN ")
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " NOT IN ", true, true); ok {
-		value := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-		listVal := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
-
-		// Convert to []interface{} if needed
-		var list []interface{}
-		switch v := listVal.(type) {
-		case []interface{}:
-			list = v
-		case []string:
-			list = make([]interface{}, len(v))
-			for i, s := range v {
-				list[i] = s
-			}
-		case []int64:
-			list = make([]interface{}, len(v))
-			for i, n := range v {
-				list[i] = n
-			}
-		default:
-			// Not a list, return true (value is not in non-list)
+		result, validList := e.evaluateInOperator(ctx, leftExpr, rightExpr, nodes, rels)
+		if !validList {
 			return true
 		}
-
-		// Check if value is NOT in the list
-		for _, item := range list {
-			if e.compareEqual(value, item) {
-				return false
-			}
+		if result == nil {
+			return nil
 		}
-		return true
+		return !result.(bool)
 	}
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " IN ", true, true); ok {
-		value := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-		listVal := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
-
-		// Convert to []interface{} if needed
-		var list []interface{}
-		switch v := listVal.(type) {
-		case []interface{}:
-			list = v
-		case []string:
-			list = make([]interface{}, len(v))
-			for i, s := range v {
-				list[i] = s
-			}
-		case []int64:
-			list = make([]interface{}, len(v))
-			for i, n := range v {
-				list[i] = n
-			}
-		default:
-			// Not a list, return false
+		result, validList := e.evaluateInOperator(ctx, leftExpr, rightExpr, nodes, rels)
+		if !validList {
 			return false
 		}
-
-		// Check if value is in the list
-		for _, item := range list {
-			if e.compareEqual(value, item) {
-				return true
-			}
-		}
-		return false
+		return result
 	}
 
 	// Comparison operators (=, <>, <, >, <=, >=)
-	if result := e.evaluateComparisonExpr(ctx, expr, nodes, rels); result != nil {
+	if result, matched := e.evaluateComparisonExpr(ctx, expr, nodes, rels); matched {
 		return result
 	}
 
@@ -217,6 +189,38 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 		lowerExpr = strings.ToLower(expr)
 	}
 	return e.evaluateExpressionWithContextFullPropsLiterals(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+}
+
+func (e *StorageExecutor) evaluateInOperator(ctx context.Context, leftExpr, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+	value := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
+	listValue := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+	if listValue == nil {
+		return nil, true
+	}
+	list, ok := toInterfaceSlice(listValue)
+	if !ok {
+		return nil, false
+	}
+	if len(list) == 0 {
+		return false, true
+	}
+	if value == nil {
+		return nil, true
+	}
+	containsNull := false
+	for _, item := range list {
+		if item == nil {
+			containsNull = true
+			continue
+		}
+		if e.compareEqual(value, item) {
+			return true, true
+		}
+	}
+	if containsNull {
+		return nil, true
+	}
+	return false, true
 }
 
 func (e *StorageExecutor) evaluateStringPredicateOperand(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (string, bool) {

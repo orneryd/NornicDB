@@ -407,6 +407,20 @@ func TestAggregatedNeighborsWithRelationshipChain(t *testing.T) {
 		       (poc2)-[:HAS_CONTACT]->(person2)
 	`, nil)
 	require.NoError(t, err)
+	createdRelationships, err := exec.Execute(ctx, "MATCH ()-[r]->() RETURN count(r)", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(4), createdRelationships.Rows[0][0])
+	identityProjection, err := exec.Execute(ctx, `
+		MATCH (seed:Area {id: 'area_16'})
+		OPTIONAL MATCH path = (seed)-[rels*1..2]-(connected)
+		RETURN id(seed), id(connected)
+	`, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, identityProjection.Rows)
+	for _, row := range identityProjection.Rows {
+		require.NotNil(t, row[0])
+		require.NotNil(t, row[1])
+	}
 
 	// Test the exact aggregation query from production
 	query := `

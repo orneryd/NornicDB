@@ -1954,7 +1954,7 @@ skipArrayIndexing:
 
 	// apoc.convert.fromJsonMap(json) - Parse JSON string to map
 	if isFunctionCall(expr, "apoc.convert.fromjsonmap") {
-		inner := strings.TrimSpace(expr[24 : len(expr)-1])
+		inner := strings.TrimSpace(extractFuncArgs(expr, "apoc.convert.fromjsonmap"))
 		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		jsonStr, ok := val.(string)
 		if !ok {
@@ -1970,7 +1970,7 @@ skipArrayIndexing:
 
 	// apoc.convert.fromJsonList(json) - Parse JSON string to list
 	if isFunctionCall(expr, "apoc.convert.fromjsonlist") {
-		inner := strings.TrimSpace(expr[25 : len(expr)-1])
+		inner := strings.TrimSpace(extractFuncArgs(expr, "apoc.convert.fromjsonlist"))
 		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		jsonStr, ok := val.(string)
 		if !ok {

@@ -3740,7 +3740,7 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 			// Add a row for each match
 			addedAny := false
 			for _, related := range relatedNodes {
-				if !e.optionalRelatedMatchesWhere(ctx, related, relPattern, optMatchWhereClause) {
+				if !e.optionalRelatedMatchesWhere(ctx, node, related, relPattern, optMatchWhereClause) {
 					continue
 				}
 				joinedRows = append(joinedRows, joinedRow{
@@ -4129,12 +4129,15 @@ func (e *StorageExecutor) findOptionalRelatedNodes(ctx context.Context, sourceNo
 	return e.findRelatedNodes(sourceNode, pattern)
 }
 
-func (e *StorageExecutor) optionalRelatedMatchesWhere(ctx context.Context, related optionalRelResult, pattern optionalRelPattern, whereClause string) bool {
+func (e *StorageExecutor) optionalRelatedMatchesWhere(ctx context.Context, source *storage.Node, related optionalRelResult, pattern optionalRelPattern, whereClause string) bool {
 	whereClause = strings.TrimSpace(whereClause)
 	if whereClause == "" {
 		return true
 	}
 	nodeCtx := make(map[string]*storage.Node)
+	if pattern.sourceVar != "" {
+		nodeCtx[pattern.sourceVar] = source
+	}
 	if pattern.targetVar != "" {
 		nodeCtx[pattern.targetVar] = related.node
 	}
@@ -4298,7 +4301,7 @@ func (e *StorageExecutor) executeJoinedRowsWithOptionalMatch(ctx context.Context
 		}
 		addedAny := false
 		for _, related := range relatedNodes {
-			if !e.optionalRelatedMatchesWhere(ctx, related, relPattern, optMatchWhereClause) {
+			if !e.optionalRelatedMatchesWhere(ctx, sourceNode, related, relPattern, optMatchWhereClause) {
 				continue
 			}
 			joinedOptionalRows = append(joinedOptionalRows, optionalRow{computedValues: row.values, relatedNode: related.node, relationship: related.edge})

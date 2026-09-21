@@ -35,6 +35,43 @@ func (e *StorageExecutor) evaluateExpressionWithContext(ctx context.Context, exp
 	return e.evaluateExpressionWithContextFull(ctx, expr, nodes, rels, nil, nil, nil, 0)
 }
 
+// evaluateExpressionWithContextDefined distinguishes a valid Cypher null from
+// an expression that this evaluator did not recognize. Callers that project
+// values must preserve that distinction instead of replacing null with the
+// original expression text or another fallback value.
+func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+	value := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+	if value != nil {
+		return value, true
+	}
+	expr = strings.TrimSpace(expr)
+	if strings.EqualFold(expr, "null") || isCaseExpression(expr) || looksLikeFunctionCall(expr) {
+		return nil, true
+	}
+	if dot := strings.IndexByte(expr, '.'); dot > 0 {
+		variable := expr[:dot]
+		if _, ok := nodes[variable]; ok {
+			return nil, true
+		}
+		if _, ok := rels[variable]; ok {
+			return nil, true
+		}
+	}
+	for _, operator := range []string{
+		" AND ", " OR ", " XOR ", " NOT IN ", " IN ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ",
+		"<=", ">=", "<>", "!=", "=~", "=", "<", ">", "+", "-", "*", "/", "%", "^",
+	} {
+		if _, _, ok := splitByOperatorWithOptions(expr, operator, true, true); ok {
+			return nil, true
+		}
+	}
+	upper := strings.ToUpper(expr)
+	if strings.HasPrefix(upper, "NOT ") || strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") {
+		return nil, true
+	}
+	return nil, false
+}
+
 func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {

@@ -553,8 +553,8 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 			}
 		}
 
-		result := e.evaluateExpressionWithContext(ctx, part, nil, nil)
-		if result != nil {
+		result, defined := e.evaluateExpressionWithContextDefined(ctx, part, nil, nil)
+		if defined {
 			values = append(values, result)
 			continue
 		}

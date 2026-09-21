@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 )
 
 // TransactionMode selects how the statement under test is sent through Bolt.
@@ -57,6 +58,7 @@ func NewBoltBackend(config BoltBackendConfig) (*BoltBackend, error) {
 
 // Reset removes all graph entities through Bolt.
 func (b *BoltBackend) Reset(ctx context.Context) error {
+	cypher.ClearUserProcedures()
 	_, err := b.executeAutocommit(ctx, "MATCH (n) DETACH DELETE n", nil)
 	return err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cucumber/godog"
@@ -19,11 +20,24 @@ func TestOfficialOpenCypherCorpusInBothTransactionModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inventory official corpus: %v", err)
 	}
-	if inventory.Scenarios != 3897 {
+	requestedPaths := []string{featuresRoot}
+	if rawPaths := strings.TrimSpace(os.Getenv("NORNICDB_TCK_PATHS")); rawPaths != "" {
+		requestedPaths = nil
+		for _, path := range strings.Split(rawPaths, ",") {
+			requestedPaths = append(requestedPaths, strings.TrimSpace(path))
+		}
+	} else if inventory.Scenarios != 3897 {
 		t.Fatalf("expanded scenario count changed: got %d, want 3897", inventory.Scenarios)
 	}
 
-	for _, mode := range []TransactionMode{AutocommitMode, ExplicitTransactionMode} {
+	modes := []TransactionMode{AutocommitMode, ExplicitTransactionMode}
+	if requestedMode := TransactionMode(os.Getenv("NORNICDB_TCK_MODE")); requestedMode != "" {
+		modes = []TransactionMode{requestedMode}
+	}
+	for _, mode := range modes {
+		if mode != AutocommitMode && mode != ExplicitTransactionMode {
+			t.Fatalf("invalid NORNICDB_TCK_MODE %q", mode)
+		}
 		t.Run(string(mode), func(t *testing.T) {
 			driver, shutdown := startConformanceServer(t)
 			defer shutdown()
@@ -42,7 +56,7 @@ func TestOfficialOpenCypherCorpusInBothTransactionModes(t *testing.T) {
 				Options: &godog.Options{
 					Format:      "progress",
 					NoColors:    true,
-					Paths:       []string{featuresRoot},
+					Paths:       requestedPaths,
 					Concurrency: 1,
 					TestingT:    t,
 				},

@@ -419,7 +419,7 @@ func (e *StorageExecutor) hasOperatorOutsideQuotes(expr, op string) bool {
 //	evaluateComparisonExpr("5 > 3", nodes, rels)        // true
 //	evaluateComparisonExpr("'abc' = 'abc'", nodes, rels) // true
 //	evaluateComparisonExpr("n.age >= 18", nodes, rels)   // depends on n.age
-func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
 	// Try operators in order of specificity
 	ops := []struct {
 		op   string
@@ -440,11 +440,14 @@ func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr strin
 		if ok {
 			left := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
 			right := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
-			return op.eval(left, right)
+			if left == nil || right == nil {
+				return nil, true
+			}
+			return op.eval(left, right), true
 		}
 	}
 
-	return nil
+	return nil, false
 }
 
 // ========================================

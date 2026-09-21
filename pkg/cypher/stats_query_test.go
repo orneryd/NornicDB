@@ -212,10 +212,10 @@ func TestOptionalRelatedMatchesWhereBindsTargetVariable(t *testing.T) {
 	require.Equal(t, "c", pattern.targetVar)
 
 	related := optionalRelResult{node: &storage.Node{ID: "c1", Labels: []string{"C"}, Properties: map[string]interface{}{"met": false}}}
-	assert.True(t, exec.optionalRelatedMatchesWhere(ctx, related, pattern, "c.met = false"))
+	assert.True(t, exec.optionalRelatedMatchesWhere(ctx, nil, related, pattern, "c.met = false"))
 
 	related.node.Properties["met"] = true
-	assert.False(t, exec.optionalRelatedMatchesWhere(ctx, related, pattern, "c.met = false"))
+	assert.False(t, exec.optionalRelatedMatchesWhere(ctx, nil, related, pattern, "c.met = false"))
 }
 
 func TestGroupedWithAggregationCountSkipsNullOptionalTarget(t *testing.T) {

@@ -87,9 +87,6 @@ func (e *StorageExecutor) executeCreateNodeSegment(ctx context.Context, createSt
 
 	// Parse node pattern to get variable name and properties
 	nodePattern := e.parseNodePattern(ctx, pattern)
-	if nodePattern.variable == "" {
-		return nil, "", localizedError(localization.CypherMergeCreateNodeVariableRequired(), nil)
-	}
 
 	// Validate labels
 	for _, label := range nodePattern.labels {

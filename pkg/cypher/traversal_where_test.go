@@ -372,6 +372,11 @@ func TestEvaluateWhereOnPath(t *testing.T) {
 			expected:    true,
 		},
 		{
+			name:        "node identity inequality",
+			whereClause: "id(i) <> id(e)",
+			expected:    true,
+		},
+		{
 			name:        "CONTAINS",
 			whereClause: "i.name CONTAINS 'Register'",
 			expected:    true,

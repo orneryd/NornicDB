@@ -2286,9 +2286,11 @@ func TestLowLevelHelpers_AdditionalCoverage(t *testing.T) {
 	assert.Nil(t, apocCollMin("not-list"))
 
 	// executeCreateNodeSegment
-	_, _, err := exec.executeCreateNodeSegment(ctx, "CREATE (:Person {name:'x'})")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must have a variable name")
+	anonymous, anonymousVar, err := exec.executeCreateNodeSegment(ctx, "CREATE (:Person {name:'x'})")
+	require.NoError(t, err)
+	require.NotNil(t, anonymous)
+	assert.Empty(t, anonymousVar)
+	assert.Equal(t, "x", anonymous.Properties["name"])
 
 	_, _, err = exec.executeCreateNodeSegment(ctx, "CREATE (n:123Bad)")
 	require.Error(t, err)
