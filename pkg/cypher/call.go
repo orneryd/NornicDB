@@ -442,6 +442,12 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
 	}
+	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
+		return projected, err
+	}
+	if pipelined, ok, err := e.tryExecuteCallTailProcedurePipeline(ctx, seed, tail); ok || err != nil {
+		return pipelined, err
+	}
 	if len(seed.Rows) == 0 {
 		cols := expectedReturnColumnsFromTail(tail)
 		if len(cols) == 0 {
@@ -544,6 +550,130 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 	return combined, nil
+}
+
+func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
+	ctx context.Context,
+	seed *ExecuteResult,
+	tail string,
+) (*ExecuteResult, bool, error) {
+	callIndex := findKeywordIndexInContext(tail, "CALL")
+	if callIndex <= 0 {
+		return nil, false, nil
+	}
+	prefix := strings.TrimSpace(tail[:callIndex])
+	if !hasPrefixFoldASCII(prefix, "WITH ") {
+		return nil, false, nil
+	}
+
+	rows := make([]pipelineRow, 0, len(seed.Rows))
+	for _, row := range seed.Rows {
+		rows = append(rows, pipelineRow(seedValuesForRow(seed, row)))
+	}
+	projected, ok := e.pipelineApplyWith(ctx, rows, prefix)
+	if !ok {
+		return nil, false, nil
+	}
+	prefixColumns, ok := callTailWithProjectionColumns(prefix)
+	if !ok {
+		return nil, false, nil
+	}
+
+	callParts := splitChainedProcedureCall(strings.TrimSpace(tail[callIndex:]))
+	if strings.TrimSpace(callParts.tail) == "" {
+		return nil, false, nil
+	}
+	combined := &ExecuteResult{Columns: append([]string(nil), prefixColumns...)}
+	for _, bindings := range projected {
+		procedureResult, err := e.executeCall(ctx, callParts.callOnly)
+		if err != nil {
+			return nil, true, err
+		}
+		if len(combined.Columns) == len(prefixColumns) {
+			combined.Columns = append(combined.Columns, procedureResult.Columns...)
+		}
+		for _, procedureRow := range procedureResult.Rows {
+			row := make([]interface{}, 0, len(prefixColumns)+len(procedureRow))
+			for _, column := range prefixColumns {
+				row = append(row, bindings[column])
+			}
+			row = append(row, procedureRow...)
+			combined.Rows = append(combined.Rows, row)
+		}
+	}
+
+	result, err := e.executeCallTail(ctx, combined, callParts.tail)
+	return result, true, err
+}
+
+func splitChainedProcedureCall(cypher string) callSplit {
+	parts := splitCallAndTail(cypher)
+	if strings.TrimSpace(parts.tail) != "" {
+		return parts
+	}
+	yieldIndex := findKeywordIndexInContext(cypher, "YIELD")
+	if yieldIndex < 0 {
+		return parts
+	}
+	searchStart := yieldIndex + len("YIELD")
+	returnIndex := findKeywordIndexInContext(cypher[searchStart:], "RETURN")
+	if returnIndex < 0 {
+		return parts
+	}
+	returnIndex += searchStart
+	return callSplit{
+		callOnly: strings.TrimSpace(cypher[:returnIndex]),
+		tail:     strings.TrimSpace(cypher[returnIndex:]),
+	}
+}
+
+func callTailWithProjectionColumns(withClause string) ([]string, bool) {
+	body := strings.TrimSpace(withClause[len("WITH "):])
+	if whereIndex := findKeywordIndexInContext(body, "WHERE"); whereIndex >= 0 {
+		body = strings.TrimSpace(body[:whereIndex])
+	}
+	items := splitTopLevelComma(body)
+	columns := make([]string, 0, len(items))
+	for _, item := range items {
+		expr, alias := parseProjectionExprAlias(strings.TrimSpace(item))
+		if expr == "" || alias == "" {
+			return nil, false
+		}
+		columns = append(columns, normalizeProjectionColumnName(alias))
+	}
+	return columns, len(columns) > 0
+}
+
+func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+	trimmed := strings.TrimSpace(tail)
+	if !hasPrefixFoldASCII(trimmed, "RETURN ") {
+		return nil, false, nil
+	}
+	body := strings.TrimSpace(trimmed[len("RETURN "):])
+	modifierStart := len(body)
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if index := findKeywordIndexInContext(body, keyword); index >= 0 && index < modifierStart {
+			modifierStart = index
+		}
+	}
+	if strings.TrimSpace(body[:modifierStart]) != "*" {
+		return nil, false, nil
+	}
+
+	result := &ExecuteResult{
+		Columns: append([]string(nil), seed.Columns...),
+		Rows:    make([][]interface{}, len(seed.Rows)),
+		Stats:   seed.Stats,
+	}
+	for index, row := range seed.Rows {
+		result.Rows[index] = append([]interface{}(nil), row...)
+	}
+	modifiers := strings.TrimSpace(body[modifierStart:])
+	if modifiers == "" {
+		return result, true, nil
+	}
+	result, err := e.applyResultModifiers(result, modifiers)
+	return result, true, err
 }
 
 type callTailRowResult struct {
@@ -3538,6 +3668,9 @@ func (e *StorageExecutor) applyReturnToYieldResult(ctx context.Context, result *
 	if len(returnItems) == 0 {
 		return result, nil
 	}
+	if len(returnItems) == 1 && strings.TrimSpace(returnItems[0]) == "*" {
+		return result, nil
+	}
 
 	// Build column index map for current result
 	colIndex := make(map[string]int)
@@ -3775,6 +3908,14 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 	ensureBuiltInProceduresRegistered()
 	procName := extractProcedureName(callCypher)
 	if proc, found := globalProcedureRegistry.Get(procName); found {
+		hasTail := strings.TrimSpace(tailCypher) != ""
+		if err := validateProcedureArgumentPassingMode(proc.Spec, callCypher, hasTail); err != nil {
+			return nil, err
+		}
+		isInQuery := hasTail || (yield != nil && yield.hasReturn)
+		if err := validateProcedureYieldBindings(yield, isInQuery); err != nil {
+			return nil, err
+		}
 		args, err := extractProcedureInvocationArguments(ctx, proc.Spec, callCypher)
 		if err != nil {
 			return nil, err

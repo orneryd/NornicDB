@@ -51,6 +51,13 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 	callParts := splitCallAndTail(callPart)
 	ensureBuiltInProceduresRegistered()
 	if procedure, found := globalProcedureRegistry.Get(extractProcedureName(callParts.callOnly)); found {
+		hasTail := strings.TrimSpace(callParts.tail) != ""
+		if err := validateProcedureArgumentPassingMode(procedure.Spec, callParts.callOnly, hasTail); err != nil {
+			return nil, err
+		}
+		if err := validateProcedureYieldBindings(parseYieldClause(callParts.callOnly), true); err != nil {
+			return nil, err
+		}
 		if _, err := extractProcedureInvocationArguments(ctx, procedure.Spec, callParts.callOnly); err != nil {
 			return nil, err
 		}
