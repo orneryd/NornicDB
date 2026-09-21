@@ -15,6 +15,9 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	if expr == "" {
 		return nil, false
 	}
+	if inner, ok := stripEnclosingExpressionParentheses(expr); ok {
+		return e.evaluateRowExpression(inner, values)
+	}
 	if value, ok := values[expr]; ok {
 		return value, true
 	}
@@ -37,6 +40,53 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			result = append(result, value)
 		}
 		return result, true
+	}
+
+	for _, operator := range []string{" OR ", " XOR ", " AND "} {
+		if left, right, ok := splitByOperatorWithOptions(expr, operator, true, false); ok {
+			leftValue, leftOK := e.evaluateRowExpression(left, values)
+			rightValue, rightOK := e.evaluateRowExpression(right, values)
+			if !leftOK || !rightOK {
+				return nil, false
+			}
+			return evaluateRowBooleanOperator(strings.TrimSpace(operator), leftValue, rightValue)
+		}
+	}
+
+	for _, operator := range []string{"<=", ">=", "<>", "!=", "=", "<", ">"} {
+		if left, right, ok := splitByOperatorWithOptions(expr, operator, true, true); ok {
+			leftValue, leftOK := e.evaluateRowExpression(left, values)
+			rightValue, rightOK := e.evaluateRowExpression(right, values)
+			if !leftOK || !rightOK {
+				return nil, false
+			}
+			if leftValue == nil || rightValue == nil {
+				return nil, true
+			}
+			if operator == "!=" {
+				operator = "<>"
+			}
+			return compareWithOperator(leftValue, rightValue, operator), true
+		}
+	}
+
+	for _, predicate := range []struct {
+		suffix  string
+		notNull bool
+	}{
+		{suffix: " IS NOT NULL", notNull: true},
+		{suffix: " IS NULL"},
+	} {
+		if hasSuffixFoldASCII(expr, strings.ToLower(predicate.suffix)) {
+			value, ok := e.evaluateRowExpression(strings.TrimSpace(expr[:len(expr)-len(predicate.suffix)]), values)
+			if !ok {
+				return nil, false
+			}
+			if predicate.notNull {
+				return value != nil, true
+			}
+			return value == nil, true
+		}
 	}
 
 	if open := strings.LastIndex(expr, "["); open > 0 && strings.HasSuffix(expr, "]") {
@@ -103,6 +153,76 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		return nil, false
 	}
 	return value, true
+}
+
+func stripEnclosingExpressionParentheses(expr string) (string, bool) {
+	if len(expr) < 2 || expr[0] != '(' || expr[len(expr)-1] != ')' {
+		return "", false
+	}
+	depth := 0
+	quote := byte(0)
+	for i := 0; i < len(expr); i++ {
+		character := expr[i]
+		if quote != 0 {
+			if character == quote && (i == 0 || expr[i-1] != '\\') {
+				quote = 0
+			}
+			continue
+		}
+		if character == '\'' || character == '"' {
+			quote = character
+			continue
+		}
+		switch character {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(expr)-1 {
+				return "", false
+			}
+			if depth < 0 {
+				return "", false
+			}
+		}
+	}
+	if depth != 0 || quote != 0 {
+		return "", false
+	}
+	return strings.TrimSpace(expr[1 : len(expr)-1]), true
+}
+
+func evaluateRowBooleanOperator(operator string, left, right interface{}) (interface{}, bool) {
+	leftBool, leftIsBool := left.(bool)
+	rightBool, rightIsBool := right.(bool)
+	if (left != nil && !leftIsBool) || (right != nil && !rightIsBool) {
+		return nil, false
+	}
+	switch operator {
+	case "AND":
+		if (leftIsBool && !leftBool) || (rightIsBool && !rightBool) {
+			return false, true
+		}
+		if left == nil || right == nil {
+			return nil, true
+		}
+		return leftBool && rightBool, true
+	case "OR":
+		if (leftIsBool && leftBool) || (rightIsBool && rightBool) {
+			return true, true
+		}
+		if left == nil || right == nil {
+			return nil, true
+		}
+		return false, true
+	case "XOR":
+		if left == nil || right == nil {
+			return nil, true
+		}
+		return leftBool != rightBool, true
+	default:
+		return nil, false
+	}
 }
 
 func rowSubscriptIndex(value interface{}) (int, bool) {

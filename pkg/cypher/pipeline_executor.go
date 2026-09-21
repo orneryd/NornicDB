@@ -398,7 +398,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			}
 			rows = newRows
 		case pipelineClauseUnwind:
-			newRows, ok := e.pipelineApplyUnwind(rows, clause.text)
+			newRows, ok := e.pipelineApplyUnwind(ctx, rows, clause.text)
 			if !ok {
 				return nil, false, nil
 			}
@@ -1304,7 +1304,7 @@ func deduplicatePipelineRows(rows []pipelineRow, columns []string) []pipelineRow
 // pipelineApplyUnwind evaluates the list expression (which may be a literal,
 // a reference to a bound variable, or a bare property access) and produces
 // one row per element.
-func (e *StorageExecutor) pipelineApplyUnwind(rows []pipelineRow, clause string) ([]pipelineRow, bool) {
+func (e *StorageExecutor) pipelineApplyUnwind(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "UNWIND"))
 	body = strings.TrimPrefix(body, "unwind")
 	upper := strings.ToUpper(body)
@@ -1317,8 +1317,8 @@ func (e *StorageExecutor) pipelineApplyUnwind(rows []pipelineRow, clause string)
 
 	out := make([]pipelineRow, 0)
 	for _, row := range rows {
-		items := evaluateListForPipeline(listExpr, row)
-		if items == nil {
+		items, ok := e.evaluateListForPipelineWithContext(ctx, listExpr, row)
+		if !ok {
 			// Couldn't evaluate — fall back.
 			return nil, false
 		}
@@ -1594,10 +1594,15 @@ func referencesVariable(query, name string) bool {
 //
 // Returns nil if the expression can't be evaluated.
 func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
+	items, _ := evaluateStaticListForPipeline(expr, row)
+	return items
+}
+
+func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{}, bool) {
 	expr = strings.TrimSpace(expr)
 	// Bare variable.
 	if val, ok := row[expr]; ok {
-		return toAnySlice(val)
+		return toAnySlice(val), true
 	}
 	// Property access (a.b).
 	if dot := strings.Index(expr, "."); dot > 0 {
@@ -1606,11 +1611,11 @@ func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
 		if baseVal, ok := row[base]; ok {
 			if asMap, ok := toStringAnyMap(baseVal); ok {
 				if v, ok := asMap[field]; ok {
-					return toAnySlice(v)
+					return toAnySlice(v), true
 				}
 			}
 			if node, ok := baseVal.(*storage.Node); ok && node != nil {
-				return toAnySlice(node.Properties[field])
+				return toAnySlice(node.Properties[field]), true
 			}
 		}
 	}
@@ -1621,11 +1626,30 @@ func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
 		parsed, ok := parseLiteralValueForPipeline(expr)
 		if !ok {
-			return nil
+			return nil, false
 		}
-		return toAnySlice(parsed)
+		return toAnySlice(parsed), true
 	}
-	return nil
+	return nil, false
+}
+
+func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
+	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
+		return items, true
+	}
+
+	materialized := expr
+	for name, value := range row {
+		materialized = replaceIdentifierOutsideQuotes(materialized, name, e.valueToLiteral(value))
+	}
+	value := e.evaluateExpressionWithContext(ctx, materialized, nil, nil)
+	if text, unresolved := value.(string); unresolved && text == materialized && !isWholeCypherQuotedString(materialized) {
+		return nil, false
+	}
+	if value == nil && !strings.EqualFold(strings.TrimSpace(materialized), "null") && !looksLikeFunctionCall(materialized) {
+		return nil, false
+	}
+	return toAnySlice(value), true
 }
 
 func toAnySlice(v interface{}) []interface{} {

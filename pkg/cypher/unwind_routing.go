@@ -46,3 +46,19 @@ func unwindNeedsRowPipeline(query string) bool {
 	}
 	return false
 }
+
+// hasMultipleUnwindClauses keeps every chained UNWIND query on the general
+// row pipeline, which applies expansion horizons iteratively at any arity.
+func hasMultipleUnwindClauses(query string) bool {
+	clauses, ok := canExecuteAsPipeline(query)
+	if !ok {
+		return false
+	}
+	count := 0
+	for _, clause := range clauses {
+		if clause.kind == pipelineClauseUnwind {
+			count++
+		}
+	}
+	return count > 1
+}

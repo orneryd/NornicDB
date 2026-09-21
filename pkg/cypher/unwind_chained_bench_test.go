@@ -7,15 +7,15 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func newDoubleUnwindBenchExecutor(b *testing.B) *StorageExecutor {
+func newChainedUnwindBenchExecutor(b *testing.B) *StorageExecutor {
 	b.Helper()
 	base := storage.NewMemoryEngine()
 	store := storage.NewNamespacedEngine(base, "bench")
 	return NewStorageExecutor(store)
 }
 
-func BenchmarkDoubleUnwind_IndependentHotPath(b *testing.B) {
-	exec := newDoubleUnwindBenchExecutor(b)
+func BenchmarkChainedUnwindIndependentLists(b *testing.B) {
+	exec := newChainedUnwindBenchExecutor(b)
 	ctx := context.Background()
 	query := "UNWIND range(1, 256) AS i UNWIND [1,2,3,4] AS j RETURN i, j"
 
@@ -32,8 +32,8 @@ func BenchmarkDoubleUnwind_IndependentHotPath(b *testing.B) {
 	}
 }
 
-func BenchmarkDoubleUnwind_DependentRangeHotPath(b *testing.B) {
-	exec := newDoubleUnwindBenchExecutor(b)
+func BenchmarkChainedUnwindDependentRange(b *testing.B) {
+	exec := newChainedUnwindBenchExecutor(b)
 	ctx := context.Background()
 	query := "UNWIND range(1, 256) AS i UNWIND range(1, i) AS j RETURN i, j"
 
