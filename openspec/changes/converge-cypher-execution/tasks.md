@@ -3,7 +3,7 @@
 - [x] 1.1 Pin official TCK revision/checksum/license and record the complete feature/scenario/step inventory.
 - [x] 1.2 Implement Go step bindings, typed result/error comparison and observable side-effect checks with negative-control tests.
 - [x] 1.3 Run fresh-fixture autocommit and explicit-transaction scenarios over the production Bolt server; consume results and verify transaction completion.
-- [ ] 1.4 Pin a Neo4j patch image/digest and validate the runner and fixed differential corpus.
+- [x] 1.4 Pin a Neo4j patch image/digest and validate the runner and fixed differential corpus.
 - [ ] 1.5 Import every reproduction/variant for the 35 scoped issues, including #452's comment; record exact TCK matches or local-only coverage.
 - [ ] 1.6 Check in exact known failures; fail on new/changed failures, missing scenarios, unexpected passes and harness errors.
 - [ ] 1.7 Add required CI workflow, artifacts and runnable make targets; configure required-check enforcement during rollout.

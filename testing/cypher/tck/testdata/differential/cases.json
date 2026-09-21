@@ -1,0 +1,35 @@
+[
+  {
+    "name": "integer division truncates",
+    "query": "RETURN 7 / 2 AS value",
+    "ordered": true
+  },
+  {
+    "name": "floating division retains fraction",
+    "query": "RETURN 7.0 / 2 AS value",
+    "ordered": true
+  },
+  {
+    "name": "exponentiation returns floating point",
+    "query": "RETURN 2 ^ 3 AS value",
+    "ordered": true
+  },
+  {
+    "name": "list comprehension filters and projects",
+    "query": "RETURN [x IN range(1, 5) WHERE x % 2 = 1 | x * x] AS values",
+    "ordered": true
+  },
+  {
+    "name": "conditional aggregation reads node properties",
+    "setup": [
+      "CREATE (:File {embedded: true}), (:File {embedded: false})"
+    ],
+    "query": "MATCH (f:File) RETURN count(f) AS files, sum(CASE WHEN f.embedded = true THEN 1 ELSE 0 END) AS embedded",
+    "ordered": true
+  },
+  {
+    "name": "comma separated create patterns share scope",
+    "query": "CREATE (a:Fixture {name: 'a'}), (b:Fixture {name: 'b'}), (a)-[:NEXT]->(b)",
+    "ordered": true
+  }
+]

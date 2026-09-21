@@ -47,3 +47,6 @@ jobs:
 
       - name: Verify pinned corpus and run conformance regressions
         run: make cypher-conformance
+
+      - name: Compare fixed corpus with pinned Neo4j
+        run: make cypher-differential

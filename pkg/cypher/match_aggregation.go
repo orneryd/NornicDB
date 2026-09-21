@@ -364,18 +364,41 @@ func (e *StorageExecutor) executeAggregationSingleGroup(ctx context.Context, nod
 				}
 			} else if isCaseExpression(inner) {
 				// SUM(CASE WHEN ... END)
-				sum := float64(0)
+				var sumInt int64
+				var sumFloat float64
+				hasFloat := false
 				for _, node := range nodes {
 					nodeMap := map[string]*storage.Node{variable: node}
 					val := e.evaluateCaseExpression(ctx, inner, nodeMap, nil)
-					if num, ok := toFloat64(val); ok {
-						sum += num
+					switch number := val.(type) {
+					case int:
+						sumInt += int64(number)
+						sumFloat += float64(number)
+					case int64:
+						sumInt += number
+						sumFloat += float64(number)
+					case float64:
+						hasFloat = true
+						sumFloat += number
 					}
 				}
-				row[i] = sum
-			} else if num, ok := toFloat64(e.parseValue(ctx, inner)); ok {
+				if hasFloat {
+					row[i] = sumFloat
+				} else {
+					row[i] = sumInt
+				}
+			} else if value := e.parseValue(ctx, inner); value != nil {
 				// SUM(literal) like SUM(1)
-				row[i] = num * float64(len(nodes))
+				switch number := value.(type) {
+				case int:
+					row[i] = int64(number) * int64(len(nodes))
+				case int64:
+					row[i] = number * int64(len(nodes))
+				case float64:
+					row[i] = number * float64(len(nodes))
+				default:
+					row[i] = int64(0)
+				}
 			} else {
 				row[i] = int64(0)
 			}

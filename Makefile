@@ -1538,13 +1538,19 @@ test-parsers:
 	@echo ""
 	@echo "✅ Both parsers passed all Cypher tests"
 
-.PHONY: cypher-tck-inventory cypher-conformance
+.PHONY: cypher-tck-inventory cypher-tck cypher-conformance cypher-differential
 
 cypher-tck-inventory:
 	go run ./testing/cypher/tck/cmd/inventory -check testing/cypher/tck/testdata/inventory.json
 
-cypher-conformance: cypher-tck-inventory
+cypher-tck: cypher-tck-inventory
+	NORNICDB_RUN_FULL_TCK=1 go test ./testing/cypher/tck -run '^TestOfficialOpenCypherCorpusInBothTransactionModes$$' -count=1 -v
+
+cypher-conformance: cypher-tck
 	go test ./testing/cypher/tck/... ./pkg/cypher -count=1
+
+cypher-differential:
+	./scripts/cypher-tck/run-differential.sh
 
 # Clean ANTLR generated files and JAR
 antlr-clean:
