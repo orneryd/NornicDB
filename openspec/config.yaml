@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  NornicDB is a Go graph database with Neo4j-compatible Cypher and Bolt APIs.
+  The Cypher convergence plan is docs/plans/cypher-convergence-plan.md.
+  The issue inventory is docs/plans/cypher-convergence-issues.md.
+  Preserve fast-path-first stream-parse-execute with shared lexical context,
+  expression semantics and storage contracts. Use ANTLR for uncovered shapes;
+  the existing ANTLR mode currently validates syntax and needs an execution adapter.
+  First establish the official openCypher TCK baseline over Bolt in autocommit
+  and explicit transactions. Preserve snapshot isolation, atomic writes,
+  authorization, cancellation, and existing extensions.
+  Successful fallback is informational, never a correctness failure by itself.
+  Exclude decay/knowledge-policy behavior changes and unrelated search/GPU work.
+  Plans describe dependencies and acceptance evidence without staffing assumptions.
+
+rules:
+  proposal:
+    - Reference affected issue IDs and the convergence plan step.
+    - Separate already-merged changes from remaining work.
+  specs:
+    - Use observable requirements with concrete WHEN/THEN scenarios.
+    - Distinguish openCypher core, versioned Neo4j additions and Nornic extensions.
+    - Cover errors, persistent side effects and transaction modes where applicable.
+  design:
+    - Identify shared semantics, affected paths, deletion targets and compatibility risks.
+    - Preserve streaming fast paths and define the no-effects fallback boundary.
+    - Specify workload-scoped before/after measurements for hot-path changes.
+  tasks:
+    - Start bug fixes with a failing reproduction and record the failing baseline.
+    - Map fixes to exact TCK or local regression IDs before marking them complete.
+    - Include fresh-session write verification and rollback tests for mutations.
+    - Keep implementation tasks unchecked until verified; artifact creation is not implementation.
