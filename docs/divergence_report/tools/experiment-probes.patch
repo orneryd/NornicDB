@@ -1,0 +1,107 @@
+diff --git a/pkg/cypher/executor_mutations_where_eval.go b/pkg/cypher/executor_mutations_where_eval.go
+index 69429e34..09937e9c 100644
+--- a/pkg/cypher/executor_mutations_where_eval.go
++++ b/pkg/cypher/executor_mutations_where_eval.go
+@@ -812,6 +812,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{}
+ 		}
+ 	}
+ 
++	probeFallthrough("where-literal", s)
+ 	return s
+ }
+ 
+diff --git a/pkg/cypher/executor_query_routing.go b/pkg/cypher/executor_query_routing.go
+index 12b77005..c5eb8304 100644
+--- a/pkg/cypher/executor_query_routing.go
++++ b/pkg/cypher/executor_query_routing.go
+@@ -190,6 +190,11 @@ func isShowConstraintContractsCommand(cypher string) bool {
+ 
+ // executeWithoutTransaction executes query without transaction wrapping (original path).
+ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
++	if probePipelineFirst {
++		if r, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
++			return r, err
++		}
++	}
+ 	if result, handled := e.tryFastPathSimpleMatchReturnLimit(ctx, cypher, upperQuery); handled {
+ 		return result, nil
+ 	}
+diff --git a/pkg/cypher/functions_eval_props_literals.go b/pkg/cypher/functions_eval_props_literals.go
+index b911bc8e..4cd7c3df 100644
+--- a/pkg/cypher/functions_eval_props_literals.go
++++ b/pkg/cypher/functions_eval_props_literals.go
+@@ -186,5 +186,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
+ 	}
+ 
+ 	// Unknown - return as string (for string literals without quotes, etc.)
++	probeFallthrough("main-evaluator", expr)
++	if probeStrict {
++		return nil
++	}
+ 	return expr
+ }
+diff --git a/pkg/cypher/match_with_rel.go b/pkg/cypher/match_with_rel.go
+index d3e04dc9..e20c72d8 100644
+--- a/pkg/cypher/match_with_rel.go
++++ b/pkg/cypher/match_with_rel.go
+@@ -1186,6 +1186,7 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
+ 		}
+ 	}
+ 
++	probeFallthrough("values-evaluator", expr)
+ 	return expr // Return as literal if not found
+ }
+ 
+diff --git a/pkg/cypher/set_helpers.go b/pkg/cypher/set_helpers.go
+index 93968521..d92de1ff 100644
+--- a/pkg/cypher/set_helpers.go
++++ b/pkg/cypher/set_helpers.go
+@@ -432,6 +432,7 @@ func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
+ 	}
+ 
+ 	// If nothing else matched, return as-is (already substituted parameter value)
++	probeFallthrough("set-evaluator", expr)
+ 	return expr
+ }
+ 
+diff --git a/pkg/cypher/zz_fallthrough_probe.go b/pkg/cypher/zz_fallthrough_probe.go
+new file mode 100644
+index 00000000..e51c5755
+--- /dev/null
++++ b/pkg/cypher/zz_fallthrough_probe.go
+@@ -0,0 +1,35 @@
++package cypher
++
++import (
++	"fmt"
++	"os"
++	"sync"
++)
++
++var probeMu sync.Mutex
++
++// NORNIC_STRICT_EVAL=1: the main evaluator returns nil instead of the expression text.
++var probeStrict = os.Getenv("NORNIC_STRICT_EVAL") != ""
++
++// NORNIC_PIPELINE_FIRST=1: the router tries executePipeline before every other rule.
++var probePipelineFirst = os.Getenv("NORNIC_PIPELINE_FIRST") != ""
++
++// probeFallthrough appends "site<TAB>expression" to the file named by
++// NORNIC_FALLTHROUGH_PROBE every time an evaluator returns the expression text as the value.
++func probeFallthrough(site, expr string) {
++	p := os.Getenv("NORNIC_FALLTHROUGH_PROBE")
++	if p == "" {
++		return
++	}
++	if len(expr) > 100 {
++		expr = expr[:100]
++	}
++	probeMu.Lock()
++	defer probeMu.Unlock()
++	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
++	if err != nil {
++		return
++	}
++	fmt.Fprintf(f, "%s\t%q\n", site, expr)
++	f.Close()
++}

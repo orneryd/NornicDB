@@ -1,0 +1,40 @@
+FAIL: MATCH (p:P) RETURN p.name AS n ORDER BY p.age DESC, n LIMIT 2 
+   expected: [{'n': 'Dee'}, {'n': 'Cid'}] 
+   got:      [{'n': 'Ann'}, {'n': 'Bob'}]
+FAIL: MATCH (p:P)-[:WORKS_AT]->(c:C) WITH c, p ORDER BY p.name RETURN c.name AS c, collect(p.name) AS ps ORDER BY c 
+   expected: [{'c': 'Acme', 'ps': ['Ann', 'Bob']}, {'c': 'Bolt', 'ps': ['Cid']}] 
+   got:      [{'c': {'name': 'Acme', 'city': 'Riga'}, 'ps': ['p.name', 'p.name', 'p.name']}]
+FAIL: MATCH (p:P)-[:WORKS_AT]->(c:C) WITH c, count(p) AS n WHERE n > 1 RETURN c.name AS c 
+   expected: [{'c': 'Acme'}] 
+   got:      [{'c': {'city': 'Riga', 'name': 'Acme'}}]
+FAIL: UNWIND [3,1,2] AS x RETURN x ORDER BY x DESC 
+   expected: [{'x': 3}, {'x': 2}, {'x': 1}] 
+   got:      [{'x': 3}, {'x': 1}, {'x': 2}]
+FAIL: RETURN [x IN range(1,5) WHERE x % 2 = 1 | x * 10] AS l 
+   expected: [{'l': [10, 30, 50]}] 
+   got:      [{'l': [1, 2, 3, 4, 5]}]
+FAIL: RETURN toInteger('42') AS i, toFloat('1.5') AS f, toString(7) AS s, 7 / 2 AS d, 7 % 3 AS m, 2 ^ 3 AS p 
+   expected: [{'i': 42, 'f': 1.5, 's': '7', 'd': 3, 'm': 1, 'p': 8.0}] 
+   got:      [{'i': 42, 'f': 1.5, 's': '7', 'd': 3.5, 'm': 1, 'p': '2 ^ 3'}]
+FAIL: MATCH (a:P {name:'Ann'}), (d:P {name:'Dee'}) MERGE (a)-[r:KNOWS]->(d) ON CREATE SET r.w = 1 RETURN r.w AS w 
+   expected: [{'w': 1}] 
+   got:      [{'w': None}]
+FAIL: MATCH (p:P {name:'Dee'}) REMOVE p.city SET p:VIP RETURN p.city AS c, labels(p) AS l 
+   expected: [{'c': None, 'l': ['P', 'VIP']}] 
+   got:      [{'c': 'p.city', 'l': None}, {'c': 'p.city', 'l': None}, {'c': 'p.city', 'l': None}, {'c': 'p.city', 'l': None}]
+FAIL: MATCH (p:VIP) RETURN count(p) AS c 
+   expected: [{'c': 1}] 
+   got:      [{'c': 0}]
+FAIL: MATCH (p:P) RETURN p.name AS n ORDER BY toLower(p.name) DESC LIMIT 1 
+   expected: [{'n': 'Dee'}] 
+   got:      [{'n': 'Bob'}]
+FAIL: MATCH (p:P) WITH collect(p.name) AS names RETURN size(names) AS n, reduce(s = 0, x IN [1,2,3] | s + x) AS r 
+   expected: [{'n': 4, 'r': 6}] 
+   got:      [{'n': 4, 'r': None}]
+FAIL: MATCH (c:C) CALL { WITH c MATCH (p:P)-[:WORKS_AT]->(c) RETURN count(p) AS n } RETURN c.name AS c, n ORDER BY c 
+   expected: [{'c': 'Acme', 'n': 2}, {'c': 'Bolt', 'n': 1}] 
+   got:      [{'c': None, 'n': 2}, {'c': None, 'n': 1}]
+FAIL: RETURN date('2026-09-19').year AS y, duration({days: 2}).days AS dd, datetime('2026-09-19T10:00:00Z') < datetime('2026-09-20T10:00:00Z') AS lt 
+   expected: [{'y': 2026, 'dd': 2, 'lt': True}] 
+   got:      [{'y': "date('2026-09-19').year", 'dd': 'duration({days: 2}).days', 'lt': True}]
+[auto] 46 cases, 13 failed

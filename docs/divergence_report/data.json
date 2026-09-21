@@ -1,0 +1,5267 @@
+{
+ "graph_stats": {
+  "cypher": {
+   "nodes": 2993,
+   "call_edges": 3970
+  },
+  "storage": {
+   "nodes": 2266,
+   "call_edges": 2562
+  },
+  "search": {
+   "nodes": 1092,
+   "call_edges": 986
+  },
+  "nornicdb": {
+   "nodes": 454,
+   "call_edges": 357
+  },
+  "server": {
+   "nodes": 473,
+   "call_edges": 323
+  },
+  "bolt": {
+   "nodes": 386,
+   "call_edges": 278
+  },
+  "multidb": {
+   "nodes": 206,
+   "call_edges": 103
+  },
+  "embed": {
+   "nodes": 166,
+   "call_edges": 91
+  }
+ },
+ "engine_and_embedder_types": [
+  "AsyncEngine",
+  "BadgerEngine",
+  "CachedEmbedder",
+  "CompositeEngine",
+  "LocalGGUFEmbedder",
+  "MemoryEngine",
+  "NamespacedEngine",
+  "OllamaEmbedder",
+  "OpenAIEmbedder",
+  "RemoteEngine",
+  "TracedEmbedder",
+  "TracedEngine",
+  "VoyageEmbedder",
+  "WALEngine",
+  "sizeTrackingEngine"
+ ],
+ "forwarding_gaps": [
+  {
+   "family": "storage engine stack",
+   "inner": "BadgerEngine",
+   "wrappers": [
+    "WALEngine",
+    "AsyncEngine",
+    "NamespacedEngine",
+    "MemoryEngine"
+   ],
+   "inner_exported_methods": 162,
+   "gaps": [
+    {
+     "method": "AddToPendingEmbeddings",
+     "inner_loc": "badger_stats.go:357",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "AllEdges",
+     "inner_loc": "badger_queries.go:380",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "AllNodes",
+     "inner_loc": "badger_queries.go:317",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "Backup",
+     "inner_loc": "badger_backup.go:17",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "BatchGetNodes",
+     "inner_loc": "badger_queries.go:529",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "BatchGetNodesLatestVisible",
+     "inner_loc": "badger_mvcc.go:1164",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "BatchGetNodesWithoutEmbeddings",
+     "inner_loc": "badger_queries.go:605",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "BeginTransaction",
+     "inner_loc": "badger_transaction.go:140",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ],
+     "present_in": [
+      "MemoryEngine"
+     ]
+    },
+    {
+     "method": "BulkCreateEdges",
+     "inner_loc": "badger_bulk.go:235",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "BulkCreateNodes",
+     "inner_loc": "badger_bulk.go:16",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "BulkDeleteEdges",
+     "inner_loc": "badger_edges.go:703",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "BulkDeleteNodes",
+     "inner_loc": "badger_edges.go:586",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "Close",
+     "inner_loc": "badger_stats.go:177",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "ConsumeCleanShutdownMarker",
+     "inner_loc": "badger_maintenance_state.go:15",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "CreateEdge",
+     "inner_loc": "badger_edges.go:15",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "CreateNode",
+     "inner_loc": "badger_nodes.go:19",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "DeleteEdge",
+     "inner_loc": "badger_edges.go:352",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "DeleteNode",
+     "inner_loc": "badger_nodes.go:767",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "EdgeCount",
+     "inner_loc": "badger_stats.go:128",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "EdgeCountByPrefix",
+     "inner_loc": "badger_stats.go:138",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "FindNodeNeedingEmbedding",
+     "inner_loc": "badger_stats.go:271",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "ForEachNodeIDByLabel",
+     "inner_loc": "badger_queries.go:71",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetAccessMeta",
+     "inner_loc": "badger_access_meta.go:14",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetAdjacentEdges",
+     "inner_loc": "badger_queries.go:737",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetAllNodes",
+     "inner_loc": "badger_queries.go:311",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetDeindexWorkItem",
+     "inner_loc": "badger_deindex_work.go:35",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetEdge",
+     "inner_loc": "badger_edges.go:150",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetEdgeBetween",
+     "inner_loc": "badger_queries.go:949",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetEdgeCurrentHead",
+     "inner_loc": "badger_mvcc.go:988",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetEdgeLatestVisible",
+     "inner_loc": "badger_mvcc.go:1034",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetEdgeVisibleAt",
+     "inner_loc": "badger_mvcc.go:1067",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetEdgesBetween",
+     "inner_loc": "badger_queries.go:924",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetEdgesBetweenVisibleAt",
+     "inner_loc": "badger_mvcc_indexed_reads.go:279",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetEdgesByType",
+     "inner_loc": "badger_queries.go:422",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetEdgesByTypeVisibleAt",
+     "inner_loc": "badger_mvcc_indexed_reads.go:202",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetEntityMeta",
+     "inner_loc": "badger_entity_meta.go:7",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetFirstNodeByLabel",
+     "inner_loc": "badger_queries.go:21",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetInDegree",
+     "inner_loc": "badger_bulk.go:358",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetIncomingEdges",
+     "inner_loc": "badger_queries.go:896",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetIncomingEdgesVisibleAt",
+     "inner_loc": "badger_mvcc.go:1125",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetIndexEntryCatalog",
+     "inner_loc": "badger_index_catalog.go:36",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetNode",
+     "inner_loc": "badger_nodes.go:135",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetNodeCurrentHead",
+     "inner_loc": "badger_mvcc.go:978",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetNodeLatestVisible",
+     "inner_loc": "badger_mvcc.go:998",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetNodeProjected",
+     "inner_loc": "badger_nodes.go:194",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetNodeVisibleAt",
+     "inner_loc": "badger_mvcc_indexed_reads.go:9",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetNodeWithoutEmbeddings",
+     "inner_loc": "badger_nodes.go:241",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetNodesByLabel",
+     "inner_loc": "badger_queries.go:143",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetNodesByLabelVisibleAt",
+     "inner_loc": "badger_mvcc_indexed_reads.go:110",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetOutDegree",
+     "inner_loc": "badger_bulk.go:385",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetOutgoingEdges",
+     "inner_loc": "badger_queries.go:706",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetOutgoingEdgesVisibleAt",
+     "inner_loc": "badger_mvcc.go:1086",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetSchema",
+     "inner_loc": "badger_stats.go:170",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GetSchemaForNamespace",
+     "inner_loc": "badger_schema.go:265",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "GetTemporalNodeAsOfInNamespace",
+     "inner_loc": "badger_temporal_index.go:367",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GraphMutationVersion",
+     "inner_loc": "graph_mutation_version.go:75",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "GraphMutationVersionInNamespace",
+     "inner_loc": "graph_mutation_version.go:80",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "IsCurrentTemporalNode",
+     "inner_loc": "badger_temporal_index.go:523",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "IterateLatestVisibleEdges",
+     "inner_loc": "badger_mvcc_indexed_reads.go:319",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "IterateLatestVisibleNodes",
+     "inner_loc": "badger_mvcc_indexed_reads.go:306",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "IterateMVCCHeads",
+     "inner_loc": "badger_lifecycle.go:128",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "IterateMVCCVersions",
+     "inner_loc": "badger_lifecycle.go:165",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "IterateNodes",
+     "inner_loc": "badger_stats.go:537",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "LifecycleStatus",
+     "inner_loc": "badger_lifecycle.go:41",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "ListNamespaces",
+     "inner_loc": "badger_namespaces.go:9",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "MarkCleanShutdown",
+     "inner_loc": "badger_maintenance_state.go:54",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "MarkNodeEmbedded",
+     "inner_loc": "badger_stats.go:349",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "NodeCount",
+     "inner_loc": "badger_stats.go:82",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "NodeCountByLabel",
+     "inner_loc": "badger_label_count.go:277",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "NodeCountByLabelInNamespace",
+     "inner_loc": "badger_label_count.go:262",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "NodeCountByPrefix",
+     "inner_loc": "badger_stats.go:95",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "OnEdgeCreated",
+     "inner_loc": "badger.go:372",
+     "missing_in": [
+      "WALEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "OnEdgeDeleted",
+     "inner_loc": "badger.go:388",
+     "missing_in": [
+      "WALEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "OnEdgeUpdated",
+     "inner_loc": "badger.go:380",
+     "missing_in": [
+      "WALEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "OnNodeCreated",
+     "inner_loc": "badger.go:348",
+     "missing_in": [
+      "WALEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "OnNodeDeleted",
+     "inner_loc": "badger.go:364",
+     "missing_in": [
+      "WALEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "OnNodeUpdated",
+     "inner_loc": "badger.go:356",
+     "missing_in": [
+      "WALEngine",
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "PauseLifecycle",
+     "inner_loc": "badger_lifecycle.go:63",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "PendingEmbeddingsCount",
+     "inner_loc": "badger_stats.go:365",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "PruneMVCCVersions",
+     "inner_loc": "badger_mvcc.go:2042",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "PruneTemporalHistory",
+     "inner_loc": "badger_temporal_index.go:653",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "RebuildMVCCHeads",
+     "inner_loc": "badger_mvcc.go:1516",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "RebuildTemporalIndexes",
+     "inner_loc": "badger_temporal_index.go:622",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    },
+    {
+     "method": "RecordMaterializedAccess",
+     "inner_loc": "badger_access_meta.go:93",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "RefreshPendingEmbeddingsIndex",
+     "inner_loc": "badger_stats.go:390",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "RegisterSnapshotReader",
+     "inner_loc": "badger_lifecycle.go:30",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "ResumeLifecycle",
+     "inner_loc": "badger_lifecycle.go:73",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "SetLifecycleSchedule",
+     "inner_loc": "badger_lifecycle.go:83",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "StreamEdges",
+     "inner_loc": "badger_stats.go:770",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "StreamNodeChunks",
+     "inner_loc": "badger_stats.go:816",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "StreamNodes",
+     "inner_loc": "badger_stats.go:575",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "StreamNodesByLabelProjected",
+     "inner_loc": "badger_queries.go:223",
+     "missing_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "StreamNodesByPrefix",
+     "inner_loc": "badger_stats.go:663",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "StreamNodesByPrefixProjected",
+     "inner_loc": "badger_stats.go:710",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "StreamNodesByPrefixWithoutEmbeddings",
+     "inner_loc": "badger_stats.go:762",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "StreamNodesWithoutEmbeddings",
+     "inner_loc": "badger_stats.go:621",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "TopLifecycleDebtKeys",
+     "inner_loc": "badger_lifecycle.go:94",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "TriggerPruneNow",
+     "inner_loc": "badger_lifecycle.go:52",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "UpdateEdge",
+     "inner_loc": "badger_edges.go:187",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "UpdateNode",
+     "inner_loc": "badger_nodes.go:296",
+     "missing_in": [
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine",
+      "NamespacedEngine"
+     ]
+    },
+    {
+     "method": "UpdateNodeEmbedding",
+     "inner_loc": "badger_nodes.go:546",
+     "missing_in": [
+      "NamespacedEngine",
+      "MemoryEngine"
+     ],
+     "present_in": [
+      "WALEngine",
+      "AsyncEngine"
+     ]
+    }
+   ]
+  },
+  {
+   "family": "storage transaction",
+   "inner": "BadgerEngine",
+   "wrappers": [
+    "BadgerTransaction"
+   ],
+   "inner_exported_methods": 162,
+   "gaps": [
+    {
+     "method": "Backup",
+     "inner_loc": "badger_backup.go:17",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "BatchGetNodes",
+     "inner_loc": "badger_queries.go:529",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "BatchGetNodesLatestVisible",
+     "inner_loc": "badger_mvcc.go:1164",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "BatchGetNodesWithoutEmbeddings",
+     "inner_loc": "badger_queries.go:605",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "FindNodeNeedingEmbedding",
+     "inner_loc": "badger_stats.go:271",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetAccessMeta",
+     "inner_loc": "badger_access_meta.go:14",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetAdjacentEdges",
+     "inner_loc": "badger_queries.go:737",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetDeindexWorkItem",
+     "inner_loc": "badger_deindex_work.go:35",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetEdgeCurrentHead",
+     "inner_loc": "badger_mvcc.go:988",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetEdgeLatestVisible",
+     "inner_loc": "badger_mvcc.go:1034",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetEdgeVisibleAt",
+     "inner_loc": "badger_mvcc.go:1067",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetEdgesBetweenVisibleAt",
+     "inner_loc": "badger_mvcc_indexed_reads.go:279",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetEdgesByTypeVisibleAt",
+     "inner_loc": "badger_mvcc_indexed_reads.go:202",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetEntityMeta",
+     "inner_loc": "badger_entity_meta.go:7",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetInDegree",
+     "inner_loc": "badger_bulk.go:358",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetIncomingEdgesVisibleAt",
+     "inner_loc": "badger_mvcc.go:1125",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetIndexEntryCatalog",
+     "inner_loc": "badger_index_catalog.go:36",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetNodeCurrentHead",
+     "inner_loc": "badger_mvcc.go:978",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetNodeLatestVisible",
+     "inner_loc": "badger_mvcc.go:998",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetNodeProjected",
+     "inner_loc": "badger_nodes.go:194",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetNodeVisibleAt",
+     "inner_loc": "badger_mvcc_indexed_reads.go:9",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetNodeWithoutEmbeddings",
+     "inner_loc": "badger_nodes.go:241",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetNodesByLabelVisibleAt",
+     "inner_loc": "badger_mvcc_indexed_reads.go:110",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetOutDegree",
+     "inner_loc": "badger_bulk.go:385",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetOutgoingEdgesVisibleAt",
+     "inner_loc": "badger_mvcc.go:1086",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetSchema",
+     "inner_loc": "badger_stats.go:170",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetSchemaForNamespace",
+     "inner_loc": "badger_schema.go:265",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetTemporalNodeAsOfInNamespace",
+     "inner_loc": "badger_temporal_index.go:367",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "IterateLatestVisibleEdges",
+     "inner_loc": "badger_mvcc_indexed_reads.go:319",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "IterateLatestVisibleNodes",
+     "inner_loc": "badger_mvcc_indexed_reads.go:306",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "IterateMVCCHeads",
+     "inner_loc": "badger_lifecycle.go:128",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "IterateMVCCVersions",
+     "inner_loc": "badger_lifecycle.go:165",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "IterateNodes",
+     "inner_loc": "badger_stats.go:537",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamEdges",
+     "inner_loc": "badger_stats.go:770",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodeChunks",
+     "inner_loc": "badger_stats.go:816",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodes",
+     "inner_loc": "badger_stats.go:575",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodesByLabelProjected",
+     "inner_loc": "badger_queries.go:223",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodesByPrefix",
+     "inner_loc": "badger_stats.go:663",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodesByPrefixProjected",
+     "inner_loc": "badger_stats.go:710",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodesByPrefixWithoutEmbeddings",
+     "inner_loc": "badger_stats.go:762",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodesWithoutEmbeddings",
+     "inner_loc": "badger_stats.go:621",
+     "missing_in": [
+      "BadgerTransaction"
+     ],
+     "present_in": []
+    }
+   ]
+  },
+  {
+   "family": "multidb engine wrappers",
+   "inner": "NamespacedEngine",
+   "wrappers": [
+    "sizeTrackingEngine",
+    "CompositeEngine"
+   ],
+   "inner_exported_methods": 75,
+   "gaps": [
+    {
+     "method": "AllEdges",
+     "inner_loc": "namespaced.go:715",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "AllNodes",
+     "inner_loc": "namespaced.go:700",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "BatchGetNodes",
+     "inner_loc": "namespaced.go:977",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "BatchGetNodesWithoutEmbeddings",
+     "inner_loc": "namespaced.go:278",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "BatchGetNodesWithoutEmbeddingsSupported",
+     "inner_loc": "namespaced.go:308",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "Close",
+     "inner_loc": "namespaced.go:1003",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "DeleteByPrefix",
+     "inner_loc": "namespaced.go:1281",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "EdgeCount",
+     "inner_loc": "namespaced.go:1083",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "FindNodeNeedingEmbedding",
+     "inner_loc": "namespaced.go:1290",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "ForEachNodeIDByLabel",
+     "inner_loc": "namespaced.go:453",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetAdjacentEdges",
+     "inner_loc": "namespaced.go:522",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetAllNodes",
+     "inner_loc": "namespaced.go:730",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetEdge",
+     "inner_loc": "namespaced.go:375",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetEdgeBetween",
+     "inner_loc": "namespaced.go:576",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetEdgeCurrentHead",
+     "inner_loc": "namespaced.go:850",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetEdgeLatestVisible",
+     "inner_loc": "namespaced.go:815",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetEdgeVisibleAt",
+     "inner_loc": "namespaced.go:828",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetEdgesBetween",
+     "inner_loc": "namespaced.go:557",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetEdgesBetweenVisibleAt",
+     "inner_loc": "namespaced.go:682",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetEdgesByType",
+     "inner_loc": "namespaced.go:590",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetEdgesByTypeVisibleAt",
+     "inner_loc": "namespaced.go:663",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetFirstNodeByLabel",
+     "inner_loc": "namespaced.go:432",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetInDegree",
+     "inner_loc": "namespaced.go:745",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetIncomingEdges",
+     "inner_loc": "namespaced.go:501",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetIncomingEdgesVisibleAt",
+     "inner_loc": "namespaced.go:644",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetInnerEngine",
+     "inner_loc": "namespaced.go:116",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetNode",
+     "inner_loc": "namespaced.go:235",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetNodeCurrentHead",
+     "inner_loc": "namespaced.go:841",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetNodeLatestVisible",
+     "inner_loc": "namespaced.go:789",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetNodeProjected",
+     "inner_loc": "namespaced.go:249",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetNodeVisibleAt",
+     "inner_loc": "namespaced.go:802",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetNodeWithoutEmbeddings",
+     "inner_loc": "namespaced.go:266",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GetNodesByLabel",
+     "inner_loc": "namespaced.go:413",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetNodesByLabelVisibleAt",
+     "inner_loc": "namespaced.go:606",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetOutDegree",
+     "inner_loc": "namespaced.go:749",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetOutgoingEdges",
+     "inner_loc": "namespaced.go:483",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetOutgoingEdgesVisibleAt",
+     "inner_loc": "namespaced.go:625",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "GetSchema",
+     "inner_loc": "namespaced.go:757",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "GetTemporalNodeAsOf",
+     "inner_loc": "namespaced.go:767",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "GraphMutationVersion",
+     "inner_loc": "graph_mutation_version.go:85",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "LifecycleStatus",
+     "inner_loc": "namespaced.go:872",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "NodeCount",
+     "inner_loc": "namespaced.go:1013",
+     "missing_in": [
+      "sizeTrackingEngine"
+     ],
+     "present_in": [
+      "CompositeEngine"
+     ]
+    },
+    {
+     "method": "PauseLifecycle",
+     "inner_loc": "namespaced.go:892",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "RegisterSnapshotReader",
+     "inner_loc": "namespaced.go:859",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "ResumeLifecycle",
+     "inner_loc": "namespaced.go:900",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "SetLifecycleSchedule",
+     "inner_loc": "namespaced.go:908",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "StreamNodesByLabelProjected",
+     "inner_loc": "namespaced.go:313",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodesByPrefix",
+     "inner_loc": "namespaced.go:1163",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "StreamNodesByPrefixProjected",
+     "inner_loc": "namespaced.go:1182",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodesByPrefixWithoutEmbeddings",
+     "inner_loc": "namespaced.go:1208",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "StreamNodesWithoutEmbeddings",
+     "inner_loc": "namespaced.go:1147",
+     "missing_in": [
+      "sizeTrackingEngine",
+      "CompositeEngine"
+     ],
+     "present_in": []
+    },
+    {
+     "method": "TopLifecycleDebtKeys",
+     "inner_loc": "namespaced.go:917",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    },
+    {
+     "method": "TriggerPruneNow",
+     "inner_loc": "namespaced.go:883",
+     "missing_in": [
+      "CompositeEngine"
+     ],
+     "present_in": [
+      "sizeTrackingEngine"
+     ]
+    }
+   ]
+  },
+  {
+   "family": "embedder decorators",
+   "inner": "VoyageEmbedder",
+   "wrappers": [
+    "CachedEmbedder",
+    "TracedEmbedder",
+    "OpenAIEmbedder",
+    "OllamaEmbedder",
+    "LocalGGUFEmbedder"
+   ],
+   "inner_exported_methods": 14,
+   "gaps": [
+    {
+     "method": "EmbedBatchWithInputType",
+     "inner_loc": "voyage.go:171",
+     "missing_in": [
+      "OpenAIEmbedder",
+      "OllamaEmbedder",
+      "LocalGGUFEmbedder"
+     ],
+     "present_in": [
+      "CachedEmbedder",
+      "TracedEmbedder"
+     ]
+    },
+    {
+     "method": "EmbedDocumentBatchChunks",
+     "inner_loc": "voyage.go:316",
+     "missing_in": [
+      "OpenAIEmbedder",
+      "OllamaEmbedder",
+      "LocalGGUFEmbedder"
+     ],
+     "present_in": [
+      "CachedEmbedder",
+      "TracedEmbedder"
+     ]
+    },
+    {
+     "method": "EmbedDocumentChunks",
+     "inner_loc": "voyage.go:280",
+     "missing_in": [
+      "OpenAIEmbedder",
+      "OllamaEmbedder",
+      "LocalGGUFEmbedder"
+     ],
+     "present_in": [
+      "CachedEmbedder",
+      "TracedEmbedder"
+     ]
+    },
+    {
+     "method": "EmbedDocumentPropertyBatchChunks",
+     "inner_loc": "voyage.go:235",
+     "missing_in": [
+      "OpenAIEmbedder",
+      "OllamaEmbedder",
+      "LocalGGUFEmbedder"
+     ],
+     "present_in": [
+      "CachedEmbedder",
+      "TracedEmbedder"
+     ]
+    },
+    {
+     "method": "EmbedDocumentPropertyChunks",
+     "inner_loc": "voyage.go:222",
+     "missing_in": [
+      "OpenAIEmbedder",
+      "OllamaEmbedder",
+      "LocalGGUFEmbedder"
+     ],
+     "present_in": [
+      "CachedEmbedder",
+      "TracedEmbedder"
+     ]
+    },
+    {
+     "method": "EmbedWithInputType",
+     "inner_loc": "voyage.go:163",
+     "missing_in": [
+      "OpenAIEmbedder",
+      "OllamaEmbedder",
+      "LocalGGUFEmbedder"
+     ],
+     "present_in": [
+      "CachedEmbedder",
+      "TracedEmbedder"
+     ]
+    },
+    {
+     "method": "EmbeddingSpace",
+     "inner_loc": "voyage.go:515",
+     "missing_in": [
+      "OpenAIEmbedder",
+      "OllamaEmbedder",
+      "LocalGGUFEmbedder"
+     ],
+     "present_in": [
+      "CachedEmbedder",
+      "TracedEmbedder"
+     ]
+    },
+    {
+     "method": "UsesDocumentProperties",
+     "inner_loc": "voyage.go:216",
+     "missing_in": [
+      "OpenAIEmbedder",
+      "OllamaEmbedder",
+      "LocalGGUFEmbedder"
+     ],
+     "present_in": [
+      "CachedEmbedder",
+      "TracedEmbedder"
+     ]
+    }
+   ]
+  }
+ ],
+ "variant_families": [
+  {
+   "comp": "search",
+   "recv": "HNSWIndex",
+   "stem": "searchLayer",
+   "variants": 7,
+   "total_lines": 264,
+   "members": [
+    {
+     "name": "searchLayer",
+     "loc": "hnsw_index.go:1229",
+     "lines": 6
+    },
+    {
+     "name": "searchLayerHeap",
+     "loc": "hnsw_index.go:1236",
+     "lines": 90
+    },
+    {
+     "name": "searchLayerHeapPooled",
+     "loc": "hnsw_index.go:1333",
+     "lines": 4
+    },
+    {
+     "name": "searchLayerHeapPooledFromEntriesWithContext",
+     "loc": "hnsw_index.go:1342",
+     "lines": 114
+    },
+    {
+     "name": "searchLayerHeapPooledWithContext",
+     "loc": "hnsw_index.go:1338",
+     "lines": 3
+    },
+    {
+     "name": "searchLayerSingle",
+     "loc": "hnsw_index.go:1180",
+     "lines": 4
+    },
+    {
+     "name": "searchLayerSingleWithContext",
+     "loc": "hnsw_index.go:1185",
+     "lines": 43
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "BadgerEngine",
+   "stem": "getNode",
+   "variants": 6,
+   "total_lines": 245,
+   "members": [
+    {
+     "name": "GetNode",
+     "loc": "badger_nodes.go:135",
+     "lines": 53
+    },
+    {
+     "name": "GetNodeProjected",
+     "loc": "badger_nodes.go:194",
+     "lines": 44
+    },
+    {
+     "name": "GetNodeVisibleAt",
+     "loc": "badger_mvcc_indexed_reads.go:9",
+     "lines": 3
+    },
+    {
+     "name": "GetNodeWithoutEmbeddings",
+     "loc": "badger_nodes.go:241",
+     "lines": 53
+    },
+    {
+     "name": "getNodeVisibleAtInTxn",
+     "loc": "badger_mvcc_indexed_reads.go:31",
+     "lines": 78
+    },
+    {
+     "name": "getNodeVisibleAtWithView",
+     "loc": "badger_mvcc_indexed_reads.go:13",
+     "lines": 14
+    }
+   ]
+  },
+  {
+   "comp": "cypher",
+   "recv": "StorageExecutor",
+   "stem": "execute",
+   "variants": 5,
+   "total_lines": 644,
+   "members": [
+    {
+     "name": "Execute",
+     "loc": "executor.go:1247",
+     "lines": 356
+    },
+    {
+     "name": "ExecuteOptimized",
+     "loc": "optimized_executors.go:25",
+     "lines": 35
+    },
+    {
+     "name": "executeInTransaction",
+     "loc": "transaction.go:286",
+     "lines": 86
+    },
+    {
+     "name": "executeInternal",
+     "loc": "executor_internal.go:21",
+     "lines": 62
+    },
+    {
+     "name": "executePipeline",
+     "loc": "pipeline_executor.go:307",
+     "lines": 105
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "AsyncEngine",
+   "stem": "streamNodes",
+   "variants": 5,
+   "total_lines": 293,
+   "members": [
+    {
+     "name": "StreamNodes",
+     "loc": "async_engine.go:2927",
+     "lines": 69
+    },
+    {
+     "name": "StreamNodesByPrefix",
+     "loc": "async_engine.go:3049",
+     "lines": 81
+    },
+    {
+     "name": "StreamNodesByPrefixProjected",
+     "loc": "async_engine.go:3133",
+     "lines": 48
+    },
+    {
+     "name": "StreamNodesByPrefixWithoutEmbeddings",
+     "loc": "async_engine.go:3184",
+     "lines": 48
+    },
+    {
+     "name": "StreamNodesWithoutEmbeddings",
+     "loc": "async_engine.go:2999",
+     "lines": 47
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "BadgerEngine",
+   "stem": "streamNodes",
+   "variants": 5,
+   "total_lines": 177,
+   "members": [
+    {
+     "name": "StreamNodes",
+     "loc": "badger_stats.go:575",
+     "lines": 43
+    },
+    {
+     "name": "StreamNodesByPrefix",
+     "loc": "badger_stats.go:663",
+     "lines": 42
+    },
+    {
+     "name": "StreamNodesByPrefixProjected",
+     "loc": "badger_stats.go:710",
+     "lines": 49
+    },
+    {
+     "name": "StreamNodesByPrefixWithoutEmbeddings",
+     "loc": "badger_stats.go:762",
+     "lines": 5
+    },
+    {
+     "name": "StreamNodesWithoutEmbeddings",
+     "loc": "badger_stats.go:621",
+     "lines": 38
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "NamespacedEngine",
+   "stem": "streamNodes",
+   "variants": 5,
+   "total_lines": 92,
+   "members": [
+    {
+     "name": "StreamNodes",
+     "loc": "namespaced.go:1117",
+     "lines": 27
+    },
+    {
+     "name": "StreamNodesByPrefix",
+     "loc": "namespaced.go:1163",
+     "lines": 15
+    },
+    {
+     "name": "StreamNodesByPrefixProjected",
+     "loc": "namespaced.go:1182",
+     "lines": 23
+    },
+    {
+     "name": "StreamNodesByPrefixWithoutEmbeddings",
+     "loc": "namespaced.go:1208",
+     "lines": 14
+    },
+    {
+     "name": "StreamNodesWithoutEmbeddings",
+     "loc": "namespaced.go:1147",
+     "lines": 13
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "WALEngine",
+   "stem": "streamNodes",
+   "variants": 5,
+   "total_lines": 59,
+   "members": [
+    {
+     "name": "StreamNodes",
+     "loc": "wal_engine.go:1119",
+     "lines": 19
+    },
+    {
+     "name": "StreamNodesByPrefix",
+     "loc": "wal_engine.go:1153",
+     "lines": 16
+    },
+    {
+     "name": "StreamNodesByPrefixProjected",
+     "loc": "wal_engine.go:1172",
+     "lines": 8
+    },
+    {
+     "name": "StreamNodesByPrefixWithoutEmbeddings",
+     "loc": "wal_engine.go:1183",
+     "lines": 8
+    },
+    {
+     "name": "StreamNodesWithoutEmbeddings",
+     "loc": "wal_engine.go:1141",
+     "lines": 8
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "BadgerEngine",
+   "stem": "getEdge",
+   "variants": 4,
+   "total_lines": 115,
+   "members": [
+    {
+     "name": "GetEdge",
+     "loc": "badger_edges.go:150",
+     "lines": 35
+    },
+    {
+     "name": "GetEdgeVisibleAt",
+     "loc": "badger_mvcc.go:1067",
+     "lines": 3
+    },
+    {
+     "name": "getEdgeVisibleAtInTxn",
+     "loc": "badger_mvcc.go:321",
+     "lines": 63
+    },
+    {
+     "name": "getEdgeVisibleAtWithView",
+     "loc": "badger_mvcc.go:1071",
+     "lines": 14
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "",
+   "stem": "copyNode",
+   "variants": 4,
+   "total_lines": 72,
+   "members": [
+    {
+     "name": "CopyNode",
+     "loc": "transaction.go:210",
+     "lines": 3
+    },
+    {
+     "name": "copyNode",
+     "loc": "transaction.go:108",
+     "lines": 25
+    },
+    {
+     "name": "copyNodeProjectedWithoutEmbeddings",
+     "loc": "transaction.go:165",
+     "lines": 14
+    },
+    {
+     "name": "copyNodeWithoutEmbeddings",
+     "loc": "transaction.go:134",
+     "lines": 30
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "NamespacedEngine",
+   "stem": "getNode",
+   "variants": 4,
+   "total_lines": 51,
+   "members": [
+    {
+     "name": "GetNode",
+     "loc": "namespaced.go:235",
+     "lines": 13
+    },
+    {
+     "name": "GetNodeProjected",
+     "loc": "namespaced.go:249",
+     "lines": 16
+    },
+    {
+     "name": "GetNodeVisibleAt",
+     "loc": "namespaced.go:802",
+     "lines": 11
+    },
+    {
+     "name": "GetNodeWithoutEmbeddings",
+     "loc": "namespaced.go:266",
+     "lines": 11
+    }
+   ]
+  },
+  {
+   "comp": "cypher",
+   "recv": "StorageExecutor",
+   "stem": "evaluateExpression",
+   "variants": 4,
+   "total_lines": 43,
+   "members": [
+    {
+     "name": "evaluateExpression",
+     "loc": "functions.go:25",
+     "lines": 3
+    },
+    {
+     "name": "evaluateExpressionWithContext",
+     "loc": "functions.go:34",
+     "lines": 3
+    },
+    {
+     "name": "evaluateExpressionWithContextFull",
+     "loc": "functions.go:38",
+     "lines": 34
+    },
+    {
+     "name": "evaluateExpressionWithPathContext",
+     "loc": "functions.go:30",
+     "lines": 3
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "BadgerTransaction",
+   "stem": "validateConstraintContracts",
+   "variants": 3,
+   "total_lines": 128,
+   "members": [
+    {
+     "name": "validateConstraintContracts",
+     "loc": "constraint_contracts.go:1129",
+     "lines": 72
+    },
+    {
+     "name": "validateConstraintContractsForEdgeLocked",
+     "loc": "constraint_contracts.go:1278",
+     "lines": 25
+    },
+    {
+     "name": "validateConstraintContractsForNodeLocked",
+     "loc": "constraint_contracts.go:1246",
+     "lines": 31
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "BadgerEngine",
+   "stem": "getNodesByLabel",
+   "variants": 3,
+   "total_lines": 114,
+   "members": [
+    {
+     "name": "GetNodesByLabel",
+     "loc": "badger_queries.go:143",
+     "lines": 77
+    },
+    {
+     "name": "GetNodesByLabelVisibleAt",
+     "loc": "badger_mvcc_indexed_reads.go:110",
+     "lines": 3
+    },
+    {
+     "name": "getNodesByLabelVisibleAtWithView",
+     "loc": "badger_mvcc_indexed_reads.go:114",
+     "lines": 34
+    }
+   ]
+  },
+  {
+   "comp": "search",
+   "recv": "Service",
+   "stem": "vectorQueryNodes",
+   "variants": 3,
+   "total_lines": 104,
+   "members": [
+    {
+     "name": "VectorQueryNodes",
+     "loc": "vector_query_spec.go:86",
+     "lines": 39
+    },
+    {
+     "name": "vectorQueryNodesIndexed",
+     "loc": "vector_query_spec.go:211",
+     "lines": 6
+    },
+    {
+     "name": "vectorQueryNodesIndexedWithOptions",
+     "loc": "vector_query_spec.go:218",
+     "lines": 59
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "BadgerEngine",
+   "stem": "getOutgoingEdges",
+   "variants": 3,
+   "total_lines": 63,
+   "members": [
+    {
+     "name": "GetOutgoingEdges",
+     "loc": "badger_queries.go:706",
+     "lines": 26
+    },
+    {
+     "name": "GetOutgoingEdgesVisibleAt",
+     "loc": "badger_mvcc.go:1086",
+     "lines": 3
+    },
+    {
+     "name": "getOutgoingEdgesVisibleAtWithView",
+     "loc": "badger_mvcc.go:1090",
+     "lines": 34
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "BadgerEngine",
+   "stem": "getIncomingEdges",
+   "variants": 3,
+   "total_lines": 63,
+   "members": [
+    {
+     "name": "GetIncomingEdges",
+     "loc": "badger_queries.go:896",
+     "lines": 26
+    },
+    {
+     "name": "GetIncomingEdgesVisibleAt",
+     "loc": "badger_mvcc.go:1125",
+     "lines": 3
+    },
+    {
+     "name": "getIncomingEdgesVisibleAtWithView",
+     "loc": "badger_mvcc.go:1129",
+     "lines": 34
+    }
+   ]
+  },
+  {
+   "comp": "search",
+   "recv": "VectorSearchPipeline",
+   "stem": "search",
+   "variants": 3,
+   "total_lines": 55,
+   "members": [
+    {
+     "name": "Search",
+     "loc": "vector_pipeline.go:469",
+     "lines": 4
+    },
+    {
+     "name": "searchWithExhaustion",
+     "loc": "vector_pipeline.go:474",
+     "lines": 3
+    },
+    {
+     "name": "searchWithExhaustionFromEntries",
+     "loc": "vector_pipeline.go:478",
+     "lines": 48
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "AsyncEngine",
+   "stem": "getNode",
+   "variants": 3,
+   "total_lines": 41,
+   "members": [
+    {
+     "name": "GetNode",
+     "loc": "async_engine.go:1246",
+     "lines": 17
+    },
+    {
+     "name": "GetNodeVisibleAt",
+     "loc": "async_engine_events.go:83",
+     "lines": 6
+    },
+    {
+     "name": "GetNodeWithoutEmbeddings",
+     "loc": "async_engine_node_reads.go:6",
+     "lines": 18
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "BadgerEngine",
+   "stem": "decodeNode",
+   "variants": 3,
+   "total_lines": 41,
+   "members": [
+    {
+     "name": "decodeNode",
+     "loc": "badger_helpers.go:1003",
+     "lines": 3
+    },
+    {
+     "name": "decodeNodeProjected",
+     "loc": "badger_helpers.go:1007",
+     "lines": 30
+    },
+    {
+     "name": "decodeNodeWithEmbeddings",
+     "loc": "badger_helpers.go:1040",
+     "lines": 8
+    }
+   ]
+  },
+  {
+   "comp": "search",
+   "recv": "HNSWCandidateGen",
+   "stem": "searchCandidates",
+   "variants": 3,
+   "total_lines": 40,
+   "members": [
+    {
+     "name": "SearchCandidates",
+     "loc": "vector_pipeline.go:226",
+     "lines": 4
+    },
+    {
+     "name": "searchCandidatesWithExhaustion",
+     "loc": "vector_pipeline.go:231",
+     "lines": 3
+    },
+    {
+     "name": "searchCandidatesWithLexicalEntries",
+     "loc": "vector_pipeline.go:235",
+     "lines": 33
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "SchemaManager",
+   "stem": "addPropertyTypeConstraint",
+   "variants": 3,
+   "total_lines": 35,
+   "members": [
+    {
+     "name": "AddPropertyTypeConstraint",
+     "loc": "schema.go:575",
+     "lines": 7
+    },
+    {
+     "name": "AddPropertyTypeConstraintWithOptions",
+     "loc": "schema.go:584",
+     "lines": 3
+    },
+    {
+     "name": "addPropertyTypeConstraint",
+     "loc": "schema.go:588",
+     "lines": 25
+    }
+   ]
+  },
+  {
+   "comp": "search",
+   "recv": "HNSWIndex",
+   "stem": "searchWithEf",
+   "variants": 3,
+   "total_lines": 17,
+   "members": [
+    {
+     "name": "SearchWithEf",
+     "loc": "hnsw_index.go:608",
+     "lines": 6
+    },
+    {
+     "name": "SearchWithEfFromEntries",
+     "loc": "hnsw_index.go:620",
+     "lines": 7
+    },
+    {
+     "name": "searchWithEf",
+     "loc": "hnsw_index.go:628",
+     "lines": 4
+    }
+   ]
+  },
+  {
+   "comp": "storage",
+   "recv": "WALEngine",
+   "stem": "getNode",
+   "variants": 3,
+   "total_lines": 15,
+   "members": [
+    {
+     "name": "GetNode",
+     "loc": "wal_engine.go:796",
+     "lines": 3
+    },
+    {
+     "name": "GetNodeVisibleAt",
+     "loc": "wal_engine.go:157",
+     "lines": 6
+    },
+    {
+     "name": "GetNodeWithoutEmbeddings",
+     "loc": "wal_engine.go:803",
+     "lines": 6
+    }
+   ]
+  }
+ ],
+ "parallel_dispatchers": [
+  {
+   "comp": "cypher",
+   "a": ".applySetToNode() (set_helpers.go:L73)",
+   "b": ".applySetToNodeWithContext() (merge.go:L2322)",
+   "shared_callees": 11,
+   "jaccard": 0.73,
+   "only_a": [
+    ".applySetMapMergeToNode()",
+    ".evaluateSetExpression()",
+    ".splitSetAssignments()"
+   ],
+   "only_b": [
+    ".evaluateSetExpressionWithContext()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".tryFastPathMatchVectorCosine() (executor_match_vector_cosine_fastpath.go:L35)",
+   "b": ".tryFastPathMatchWithVectorCosineProjection() (executor_match_vector_cosine_fastpath.go:L209)",
+   "shared_callees": 11,
+   "jaccard": 0.61,
+   "only_a": [],
+   "only_b": [
+    ".fetchCosineNodeScoresNoIndexExactFiltered()",
+    ".parseScoreComparisonPredicate()",
+    "appendProjectedProperty()",
+    "compareScore()",
+    "scorePredicateRejectsLeadingResults()",
+    "trimOptionalDistinctPrefix()",
+    "withProjectionContainsVariable()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".tryFastPathMatchRelationshipVectorCosine() (executor_match_vector_cosine_fastpath.go:L496)",
+   "b": ".tryFastPathMatchWithRelationshipVectorCosineProjection() (executor_match_vector_cosine_fastpath.go:L624)",
+   "shared_callees": 10,
+   "jaccard": 0.67,
+   "only_a": [],
+   "only_b": [
+    ".parseScoreComparisonPredicate()",
+    "compareScore()",
+    "scorePredicateRejectsLeadingResults()",
+    "trimOptionalDistinctPrefix()",
+    "withProjectionContainsVariable()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".executeCreate() (create.go:L18)",
+   "b": ".executeCreateWithRefs() (create.go:L396)",
+   "shared_callees": 9,
+   "jaccard": 0.64,
+   "only_a": [
+    ".validateCreatePatternPropertyMap()",
+    "containsReservedKeyword()",
+    "isValidIdentifier()",
+    "parseCreatePathAssignment()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "cypher",
+   "a": ".tryFastPathMatchWithRelationshipVectorCosineProjection() (executor_match_vector_cosine_fastpath.go:L624)",
+   "b": ".tryFastPathMatchWithVectorCosineProjection() (executor_match_vector_cosine_fastpath.go:L209)",
+   "shared_callees": 11,
+   "jaccard": 0.5,
+   "only_a": [
+    ".buildRelationshipContextInto()",
+    ".fetchCosineRelationshipScores()",
+    ".parseSimpleMatchRelationshipPattern()",
+    "evaluateExpressionBoolWithContext()"
+   ],
+   "only_b": [
+    ".fetchCosineNodeScores()",
+    ".fetchCosineNodeScoresNoIndexExact()",
+    ".fetchCosineNodeScoresNoIndexExactFiltered()",
+    "appendProjectedProperty()",
+    "nodeProjectionPropertiesForVectorFastPath()",
+    "parseFastPathPropertyNotNullPredicate()",
+    "parseSimpleMatchSingleNodePattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintForRequireDDL() (schema.go:L1503)",
+   "b": ".parseCreateConstraintNodeKeyDDL() (schema.go:L1378)",
+   "shared_callees": 7,
+   "jaccard": 0.78,
+   "only_a": [],
+   "only_b": [
+    ".parseNodeKeyPropertyList()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintForRequireDDL() (schema.go:L1503)",
+   "b": ".parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL() (schema.go:L1894)",
+   "shared_callees": 7,
+   "jaccard": 0.78,
+   "only_a": [],
+   "only_b": [
+    ".parseRelationshipKeyOrCompositeUniquePredicate()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintForRequireDDL() (schema.go:L1503)",
+   "b": ".parseCreateConstraintSimplePropertyDDL() (schema.go:L2052)",
+   "shared_callees": 7,
+   "jaccard": 0.78,
+   "only_a": [],
+   "only_b": [
+    "parseConstraintPredicate()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".callDbTemporalAsOf() (call_temporal.go:L99)",
+   "b": ".callDbTemporalAssertNoOverlap() (call_temporal.go:L26)",
+   "shared_callees": 7,
+   "jaccard": 0.78,
+   "only_a": [],
+   "only_b": [
+    "intervalsOverlap()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintForRequireDDL() (schema.go:L1503)",
+   "b": ".parseCreateConstraintTypeDDL() (schema.go:L1947)",
+   "shared_callees": 7,
+   "jaccard": 0.7,
+   "only_a": [],
+   "only_b": [
+    "parseConstraintTypePredicate()",
+    "parsePropertyType()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintNodeKeyDDL() (schema.go:L1378)",
+   "b": ".parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL() (schema.go:L1894)",
+   "shared_callees": 7,
+   "jaccard": 0.7,
+   "only_a": [
+    ".parseNodeKeyPropertyList()"
+   ],
+   "only_b": [
+    ".parseRelationshipKeyOrCompositeUniquePredicate()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintNodeKeyDDL() (schema.go:L1378)",
+   "b": ".parseCreateConstraintSimplePropertyDDL() (schema.go:L2052)",
+   "shared_callees": 7,
+   "jaccard": 0.7,
+   "only_a": [
+    ".parseNodeKeyPropertyList()"
+   ],
+   "only_b": [
+    "parseConstraintPredicate()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL() (schema.go:L1894)",
+   "b": ".parseCreateConstraintSimplePropertyDDL() (schema.go:L2052)",
+   "shared_callees": 7,
+   "jaccard": 0.7,
+   "only_a": [
+    ".parseRelationshipKeyOrCompositeUniquePredicate()"
+   ],
+   "only_b": [
+    "parseConstraintPredicate()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": "parseAlterDecayProfile() (knowledgepolicy_ddl.go:L767)",
+   "b": "parseAlterPromotionProfile() (knowledgepolicy_ddl.go:L894)",
+   "shared_callees": 6,
+   "jaccard": 0.75,
+   "only_a": [
+    "parseDecayProfileBinding()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "cypher",
+   "a": "parseAlterPromotionPolicy() (knowledgepolicy_ddl.go:L1205)",
+   "b": "parseAlterPromotionProfile() (knowledgepolicy_ddl.go:L894)",
+   "shared_callees": 6,
+   "jaccard": 0.75,
+   "only_a": [
+    "parsePromotionPolicyDefinition()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintNodeKeyDDL() (schema.go:L1378)",
+   "b": ".parseCreateConstraintTypeDDL() (schema.go:L1947)",
+   "shared_callees": 7,
+   "jaccard": 0.64,
+   "only_a": [
+    ".parseNodeKeyPropertyList()"
+   ],
+   "only_b": [
+    "parseConstraintTypePredicate()",
+    "parsePropertyType()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL() (schema.go:L1894)",
+   "b": ".parseCreateConstraintTypeDDL() (schema.go:L1947)",
+   "shared_callees": 7,
+   "jaccard": 0.64,
+   "only_a": [
+    ".parseRelationshipKeyOrCompositeUniquePredicate()"
+   ],
+   "only_b": [
+    "parseConstraintTypePredicate()",
+    "parsePropertyType()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintSimplePropertyDDL() (schema.go:L2052)",
+   "b": ".parseCreateConstraintTypeDDL() (schema.go:L1947)",
+   "shared_callees": 7,
+   "jaccard": 0.64,
+   "only_a": [
+    "parseConstraintPredicate()"
+   ],
+   "only_b": [
+    "parseConstraintTypePredicate()",
+    "parsePropertyType()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".executeMatchRelationshipsWithClause() (match_with_rel.go:L91)",
+   "b": ".executeMatchWithClause() (match_with.go:L14)",
+   "shared_callees": 9,
+   "jaccard": 0.47,
+   "only_a": [
+    ".evaluateExpressionFromValues()",
+    ".evaluateWhereOnComputedRow()",
+    "containsAggregateFunc()",
+    "toFloat64()"
+   ],
+   "only_b": [
+    ".executeMatchWithOptionalMatch()",
+    "compareForSort()",
+    "isCaseExpression()",
+    "isWhitespace()",
+    "valueToCypherLiteral()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".applySetToNodeWithContext() (merge.go:L2322)",
+   "b": ".applySetToRelationshipWithContext() (merge.go:L2218)",
+   "shared_callees": 7,
+   "jaccard": 0.58,
+   "only_a": [
+    "containsReservedKeyword()",
+    "containsString()",
+    "isValidIdentifier()",
+    "setNodeProperty()",
+    "toStringSlice()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "cypher",
+   "a": "parseAlterDecayProfile() (knowledgepolicy_ddl.go:L767)",
+   "b": "parseAlterPromotionPolicy() (knowledgepolicy_ddl.go:L1205)",
+   "shared_callees": 6,
+   "jaccard": 0.67,
+   "only_a": [
+    "parseDecayProfileBinding()"
+   ],
+   "only_b": [
+    "parsePromotionPolicyDefinition()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintCardinalityDDL() (schema.go:L1687)",
+   "b": ".parseCreateConstraintForRequireDDL() (schema.go:L1503)",
+   "shared_callees": 6,
+   "jaccard": 0.6,
+   "only_a": [
+    "parseCardinalityRequireExpr()",
+    "parseRelationshipForDirection()"
+   ],
+   "only_b": [
+    "parseCreateIndexForPattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintForRequireDDL() (schema.go:L1503)",
+   "b": ".parseCreateConstraintPolicyDDL() (schema.go:L1844)",
+   "shared_callees": 6,
+   "jaccard": 0.6,
+   "only_a": [
+    "parseCreateIndexForPattern()"
+   ],
+   "only_b": [
+    "parsePolicyForClause()",
+    "parsePolicyModeRequireExpr()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintForRequireDDL() (schema.go:L1503)",
+   "b": ".parseCreateIndexDDL() (schema.go:L821)",
+   "shared_callees": 6,
+   "jaccard": 0.6,
+   "only_a": [
+    "splitDDLOptionsTail()"
+   ],
+   "only_b": [
+    ".parseQualifiedIndexProperties()",
+    "extractIndexPropertiesSegment()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": "parseAlterPromotionProfile() (knowledgepolicy_ddl.go:L894)",
+   "b": "parseCreatePromotionProfile() (knowledgepolicy_ddl.go:L825)",
+   "shared_callees": 5,
+   "jaccard": 0.71,
+   "only_a": [
+    "parseRawValue()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintCardinalityDDL() (schema.go:L1687)",
+   "b": ".parseCreateConstraintNodeKeyDDL() (schema.go:L1378)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    "parseCardinalityRequireExpr()",
+    "parseRelationshipForDirection()"
+   ],
+   "only_b": [
+    ".parseNodeKeyPropertyList()",
+    "parseCreateIndexForPattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintCardinalityDDL() (schema.go:L1687)",
+   "b": ".parseCreateConstraintPolicyDDL() (schema.go:L1844)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    "parseCardinalityRequireExpr()",
+    "parseRelationshipForDirection()"
+   ],
+   "only_b": [
+    "parsePolicyForClause()",
+    "parsePolicyModeRequireExpr()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintCardinalityDDL() (schema.go:L1687)",
+   "b": ".parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL() (schema.go:L1894)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    "parseCardinalityRequireExpr()",
+    "parseRelationshipForDirection()"
+   ],
+   "only_b": [
+    ".parseRelationshipKeyOrCompositeUniquePredicate()",
+    "parseCreateIndexForPattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintCardinalityDDL() (schema.go:L1687)",
+   "b": ".parseCreateConstraintSimplePropertyDDL() (schema.go:L2052)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    "parseCardinalityRequireExpr()",
+    "parseRelationshipForDirection()"
+   ],
+   "only_b": [
+    "parseConstraintPredicate()",
+    "parseCreateIndexForPattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintNodeKeyDDL() (schema.go:L1378)",
+   "b": ".parseCreateConstraintPolicyDDL() (schema.go:L1844)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    ".parseNodeKeyPropertyList()",
+    "parseCreateIndexForPattern()"
+   ],
+   "only_b": [
+    "parsePolicyForClause()",
+    "parsePolicyModeRequireExpr()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintNodeKeyDDL() (schema.go:L1378)",
+   "b": ".parseCreateIndexDDL() (schema.go:L821)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    ".parseNodeKeyPropertyList()",
+    "splitDDLOptionsTail()"
+   ],
+   "only_b": [
+    ".parseQualifiedIndexProperties()",
+    "extractIndexPropertiesSegment()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintPolicyDDL() (schema.go:L1844)",
+   "b": ".parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL() (schema.go:L1894)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    "parsePolicyForClause()",
+    "parsePolicyModeRequireExpr()"
+   ],
+   "only_b": [
+    ".parseRelationshipKeyOrCompositeUniquePredicate()",
+    "parseCreateIndexForPattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintPolicyDDL() (schema.go:L1844)",
+   "b": ".parseCreateConstraintSimplePropertyDDL() (schema.go:L2052)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    "parsePolicyForClause()",
+    "parsePolicyModeRequireExpr()"
+   ],
+   "only_b": [
+    "parseConstraintPredicate()",
+    "parseCreateIndexForPattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL() (schema.go:L1894)",
+   "b": ".parseCreateIndexDDL() (schema.go:L821)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    ".parseRelationshipKeyOrCompositeUniquePredicate()",
+    "splitDDLOptionsTail()"
+   ],
+   "only_b": [
+    ".parseQualifiedIndexProperties()",
+    "extractIndexPropertiesSegment()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintSimplePropertyDDL() (schema.go:L2052)",
+   "b": ".parseCreateIndexDDL() (schema.go:L821)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    "parseConstraintPredicate()",
+    "splitDDLOptionsTail()"
+   ],
+   "only_b": [
+    ".parseQualifiedIndexProperties()",
+    "extractIndexPropertiesSegment()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateFulltextIndexDDL() (schema.go:L1122)",
+   "b": ".parseCreateIndexDDL() (schema.go:L821)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    "extractFulltextPropertiesSegment()",
+    "parseCreateFulltextForPattern()"
+   ],
+   "only_b": [
+    "extractIndexPropertiesSegment()",
+    "parseCreateIndexForPattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": "parseAlterDecayProfile() (knowledgepolicy_ddl.go:L767)",
+   "b": "parseCreatePromotionProfile() (knowledgepolicy_ddl.go:L825)",
+   "shared_callees": 5,
+   "jaccard": 0.62,
+   "only_a": [
+    "parseDecayProfileBinding()",
+    "parseRawValue()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "cypher",
+   "a": "parseAlterPromotionPolicy() (knowledgepolicy_ddl.go:L1205)",
+   "b": "parseCreatePromotionProfile() (knowledgepolicy_ddl.go:L825)",
+   "shared_callees": 5,
+   "jaccard": 0.62,
+   "only_a": [
+    "parsePromotionPolicyDefinition()",
+    "parseRawValue()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintCardinalityDDL() (schema.go:L1687)",
+   "b": ".parseCreateConstraintTypeDDL() (schema.go:L1947)",
+   "shared_callees": 6,
+   "jaccard": 0.5,
+   "only_a": [
+    "parseCardinalityRequireExpr()",
+    "parseRelationshipForDirection()"
+   ],
+   "only_b": [
+    "parseConstraintTypePredicate()",
+    "parseCreateIndexForPattern()",
+    "parsePropertyType()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintPolicyDDL() (schema.go:L1844)",
+   "b": ".parseCreateConstraintTypeDDL() (schema.go:L1947)",
+   "shared_callees": 6,
+   "jaccard": 0.5,
+   "only_a": [
+    "parsePolicyForClause()",
+    "parsePolicyModeRequireExpr()"
+   ],
+   "only_b": [
+    "parseConstraintTypePredicate()",
+    "parseCreateIndexForPattern()",
+    "parsePropertyType()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintTypeDDL() (schema.go:L1947)",
+   "b": ".parseCreateIndexDDL() (schema.go:L821)",
+   "shared_callees": 6,
+   "jaccard": 0.5,
+   "only_a": [
+    "parseConstraintTypePredicate()",
+    "parsePropertyType()",
+    "splitDDLOptionsTail()"
+   ],
+   "only_b": [
+    ".parseQualifiedIndexProperties()",
+    "extractIndexPropertiesSegment()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseFieldValue() (fulltext_query.go:L843)",
+   "b": ".parsePrimary() (fulltext_query.go:L813)",
+   "shared_callees": 5,
+   "jaccard": 0.56,
+   "only_a": [
+    ".parseRange()",
+    "rebindField()"
+   ],
+   "only_b": [
+    ".parseFieldValue()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".compileBindingInPredicate() (binding_where_compile.go:L271)",
+   "b": ".compileCallTailValueInPredicate() (call.go:L1849)",
+   "shared_callees": 5,
+   "jaccard": 0.56,
+   "only_a": [
+    ".compileBindingValueResolver()",
+    ".makeCompiledBindingMembershipPredicate()",
+    ".makeCompiledParamMembershipPredicate()"
+   ],
+   "only_b": [
+    ".compileCallTailValueResolver()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateIndexLegacyDDL() (schema.go:L887)",
+   "b": "extractFulltextPropertiesSegment() (schema.go:L1081)",
+   "shared_callees": 5,
+   "jaccard": 0.5,
+   "only_a": [
+    ".parseIndexProperties()",
+    "normalizeIdentifierToken()",
+    "parseOptionalDDLName()"
+   ],
+   "only_b": [
+    "extractBracketSection()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCallTailBranchingPathCountPlan() (call.go:L2432)",
+   "b": ".parseCallTailConstrainedMaxDepthPlan() (call.go:L2569)",
+   "shared_callees": 5,
+   "jaccard": 0.5,
+   "only_a": [
+    "extractOrderByClause()",
+    "stripOrderByFromClause()"
+   ],
+   "only_b": [
+    "parseAggregateExprAlias()",
+    "parseConstrainedTraversalPredicates()",
+    "splitConjunction()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCallTailConstrainedMaxDepthPlan() (call.go:L2569)",
+   "b": ".parseCallTailFrontierReachablePlan() (call.go:L2518)",
+   "shared_callees": 5,
+   "jaccard": 0.5,
+   "only_a": [
+    "parseConstrainedTraversalPredicates()",
+    "splitConjunction()",
+    "splitPathAssignment()"
+   ],
+   "only_b": [
+    "parseCountStarAlias()",
+    "parseProjectionExprAlias()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCallTailProjectionPlan() (call.go:L1377)",
+   "b": ".parseCallTailRelationshipMatchPlan() (call.go:L1066)",
+   "shared_callees": 5,
+   "jaccard": 0.5,
+   "only_a": [
+    "callTailProjectionItemsAreIdentity()",
+    "hasStarReturnItem()",
+    "splitCallTailProjectionModifiers()"
+   ],
+   "only_b": [
+    ".parseCallTailProjectionPlan()",
+    "parseCallTailRelationshipPattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": "parseDecayProfileBinding() (knowledgepolicy_ddl.go:L457)",
+   "b": "parsePromotionPolicyDefinition() (knowledgepolicy_ddl.go:L959)",
+   "shared_callees": 4,
+   "jaccard": 0.57,
+   "only_a": [
+    "parseBindingApplyBlock()"
+   ],
+   "only_b": [
+    "parsePolicyApplyBlock()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintForRequireDDL() (schema.go:L1503)",
+   "b": ".parseCreateFulltextIndexDDL() (schema.go:L1122)",
+   "shared_callees": 5,
+   "jaccard": 0.45,
+   "only_a": [
+    "parseCreateIndexForPattern()",
+    "splitDDLOptionsTail()"
+   ],
+   "only_b": [
+    ".parseQualifiedIndexProperties()",
+    "extractFulltextPropertiesSegment()",
+    "parseCreateFulltextForPattern()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseCreateConstraintForRequireDDL() (schema.go:L1503)",
+   "b": ".parseCreateIndexLegacyDDL() (schema.go:L887)",
+   "shared_callees": 5,
+   "jaccard": 0.45,
+   "only_a": [
+    "parseCreateIndexForPattern()",
+    "splitDDLOptionsTail()"
+   ],
+   "only_b": [
+    ".parseIndexProperties()",
+    "extractParenSection()",
+    "normalizeIdentifierToken()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseConstraintContractPrimitive() (schema_contracts.go:L320)",
+   "b": ".parseRelationshipKeyOrCompositeUniquePredicate() (schema.go:L1468)",
+   "shared_callees": 4,
+   "jaccard": 0.5,
+   "only_a": [
+    "localizedError()",
+    "parseConstraintPredicate()"
+   ],
+   "only_b": [
+    ".parseConstraintProperties()",
+    "parseConstraintQualifiedProperty()"
+   ]
+  },
+  {
+   "comp": "cypher",
+   "a": ".parseConstraintContractPrimitive() (schema_contracts.go:L320)",
+   "b": "extractFulltextPropertiesSegment() (schema.go:L1081)",
+   "shared_callees": 4,
+   "jaccard": 0.5,
+   "only_a": [
+    "parseConstraintPredicate()"
+   ],
+   "only_b": [
+    "extractBracketSection()",
+    "startsWithKeywordFold()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".BulkCreateEdges() (badger_transaction.go:L1054)",
+   "b": ".CreateEdge() (badger_transaction.go:L971)",
+   "shared_callees": 9,
+   "jaccard": 0.82,
+   "only_a": [
+    ".getCommittedNodeLocked()"
+   ],
+   "only_b": [
+    ".nodeExists()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": "evaluateRelationshipConstraintContractExpressionEngine() (constraint_contracts.go:L402)",
+   "b": ".evaluateRelationshipConstraintContractExpressionLocked() (constraint_contracts.go:L1336)",
+   "shared_callees": 8,
+   "jaccard": 0.89,
+   "only_a": [],
+   "only_b": [
+    ".currentNodeLocked()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": "evaluateNodeConstraintContractExpressionEngine() (constraint_contracts.go:L366)",
+   "b": ".evaluateNodeConstraintContractExpressionLocked() (constraint_contracts.go:L1304)",
+   "shared_callees": 8,
+   "jaccard": 0.8,
+   "only_a": [
+    "countMatchingPatternEdgesEngine()"
+   ],
+   "only_b": [
+    ".countMatchingPatternEdgesLocked()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".CreateEdge() (badger_transaction.go:L971)",
+   "b": ".UpdateEdge() (badger_transaction.go:L1173)",
+   "shared_callees": 9,
+   "jaccard": 0.69,
+   "only_a": [
+    "hasUUIDShape()"
+   ],
+   "only_b": [
+    ".bufferDelete()",
+    ".bufferDeleteEdgeBetweenIndexes()",
+    ".getCommittedEdgeForUpdateLocked()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".FindNodeNeedingEmbedding() (badger_stats.go:L271)",
+   "b": ".RefreshPendingEmbeddingsIndex() (badger_stats.go:L390)",
+   "shared_callees": 7,
+   "jaccard": 0.88,
+   "only_a": [],
+   "only_b": [
+    "badgerIterOptsKeyOnly()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".GetFirstNodeByLabel() (badger_queries.go:L21)",
+   "b": ".GetNodesByLabel() (badger_queries.go:L143)",
+   "shared_callees": 7,
+   "jaccard": 0.88,
+   "only_a": [],
+   "only_b": [
+    "copyNode()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".CreateNode() (badger_nodes.go:L19)",
+   "b": ".UpdateNode() (badger_nodes.go:L296)",
+   "shared_callees": 7,
+   "jaccard": 0.78,
+   "only_a": [],
+   "only_b": [
+    "embeddingPrefix()",
+    "labelsEqual()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".CreateNode() (badger_transaction.go:L502)",
+   "b": ".UpdateNode() (badger_transaction.go:L608)",
+   "shared_callees": 9,
+   "jaccard": 0.6,
+   "only_a": [
+    "buildEmbeddingChunkWriteKVs()",
+    "shouldSkipCreateExistenceCheck()"
+   ],
+   "only_b": [
+    ".bufferDelete()",
+    ".pendingCreateNodeOperationIndexLocked()",
+    ".validatePolicyOnNodeLabelChange()",
+    "labelsEqual()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".GetFirstNodeByLabel() (badger_queries.go:L21)",
+   "b": ".StreamNodesByLabelProjected() (badger_queries.go:L223)",
+   "shared_callees": 7,
+   "jaccard": 0.7,
+   "only_a": [],
+   "only_b": [
+    "namespaceForNodeID()",
+    "projectCachedNodeForRead()",
+    "propertyProjectionSet()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".BulkCreateEdges() (badger_transaction.go:L1054)",
+   "b": ".UpdateEdge() (badger_transaction.go:L1173)",
+   "shared_callees": 8,
+   "jaccard": 0.57,
+   "only_a": [
+    ".getCommittedNodeLocked()",
+    "hasUUIDShape()"
+   ],
+   "only_b": [
+    ".bufferDelete()",
+    ".bufferDeleteEdgeBetweenIndexes()",
+    ".getCommittedEdgeForUpdateLocked()",
+    ".nodeExists()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".GetNodesByLabel() (badger_queries.go:L143)",
+   "b": ".StreamNodesByLabelProjected() (badger_queries.go:L223)",
+   "shared_callees": 7,
+   "jaccard": 0.64,
+   "only_a": [
+    "copyNode()"
+   ],
+   "only_b": [
+    "namespaceForNodeID()",
+    "projectCachedNodeForRead()",
+    "propertyProjectionSet()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".UpdateNode() (badger_nodes.go:L296)",
+   "b": ".UpdateNodeEmbedding() (badger_nodes.go:L546)",
+   "shared_callees": 6,
+   "jaccard": 0.67,
+   "only_a": [
+    "ParseDatabasePrefix()",
+    "labelsEqual()",
+    "putIndexEntryCatalogInTxn()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "storage",
+   "a": ".FindNodeNeedingEmbedding() (namespaced.go:L1290)",
+   "b": ".RefreshPendingEmbeddingsIndex() (namespaced.go:L1394)",
+   "shared_callees": 6,
+   "jaccard": 0.67,
+   "only_a": [
+    ".GetNode()",
+    ".hasNodePrefix()",
+    ".toUserNode()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "storage",
+   "a": ".GetTemporalNodeAsOfInNamespace() (badger_temporal_index.go:L367)",
+   "b": ".IsCurrentTemporalNodeInNamespace() (badger_temporal_index.go:L453)",
+   "shared_callees": 6,
+   "jaccard": 0.55,
+   "only_a": [
+    "temporalConstraintForLookup()"
+   ],
+   "only_b": [
+    ".currentTemporalNodeByScanInNamespace()",
+    "qualifyTemporalNodeID()",
+    "temporalConstraintsForLabels()",
+    "temporalNodeState()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".CreateNode() (badger_nodes.go:L19)",
+   "b": ".UpdateNodeEmbedding() (badger_nodes.go:L546)",
+   "shared_callees": 5,
+   "jaccard": 0.62,
+   "only_a": [
+    "ParseDatabasePrefix()",
+    "putIndexEntryCatalogInTxn()"
+   ],
+   "only_b": [
+    "embeddingPrefix()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".edgeBetweenFromHeadIndex() (badger_queries.go:L981)",
+   "b": ".edgesBetweenFromSetIndex() (badger_queries.go:L1031)",
+   "shared_callees": 5,
+   "jaccard": 0.56,
+   "only_a": [
+    "edgeBetweenHeadKey()",
+    "edgeBetweenIndexKey()"
+   ],
+   "only_b": [
+    "edgeBetweenIndexPrefix()",
+    "typedEdgeBetweenIndexPrefix()"
+   ]
+  },
+  {
+   "comp": "storage",
+   "a": ".IsCurrentTemporalNodeInNamespace() (badger_temporal_index.go:L453)",
+   "b": ".rebuildTemporalNodeInTxn() (badger_temporal_index.go:L567)",
+   "shared_callees": 6,
+   "jaccard": 0.46,
+   "only_a": [
+    ".currentTemporalNodeByScanInNamespace()",
+    ".temporalHistoryNodeAsOfInTxn()",
+    "makeTemporalDescriptor()",
+    "qualifyTemporalNodeID()"
+   ],
+   "only_b": [
+    "ParseDatabasePrefix()",
+    "temporalHistoryKey()",
+    "temporalTargetForNode()"
+   ]
+  },
+  {
+   "comp": "search",
+   "a": ".Add() (hnsw_index.go:L270)",
+   "b": ".addWithLevel0Candidates() (hnsw_index.go:L399)",
+   "shared_callees": 10,
+   "jaccard": 0.91,
+   "only_a": [],
+   "only_b": [
+    ".Add()"
+   ]
+  },
+  {
+   "comp": "search",
+   "a": ".searchLayerHeap() (hnsw_index.go:L1236)",
+   "b": ".searchLayerHeapPooledFromEntriesWithContext() (hnsw_index.go:L1342)",
+   "shared_callees": 8,
+   "jaccard": 1.0,
+   "only_a": [],
+   "only_b": []
+  },
+  {
+   "comp": "search",
+   "a": ".buildHNSWForTransition() (search.go:L5253)",
+   "b": ".getOrCreateHNSWIndex() (search.go:L5608)",
+   "shared_callees": 8,
+   "jaccard": 0.67,
+   "only_a": [
+    "VectorLookup"
+   ],
+   "only_b": [
+    ".Close()",
+    ".ensureHNSWMaintenance()",
+    "hnswVectorReadLeaseIterator()"
+   ]
+  },
+  {
+   "comp": "search",
+   "a": ".applyTransitionSwapLocked() (search.go:L5153)",
+   "b": ".buildPipelineForMode() (search.go:L5202)",
+   "shared_callees": 6,
+   "jaccard": 0.75,
+   "only_a": [
+    ".Clear()",
+    ".ensureGPUIndexSynced()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "search",
+   "a": ".enrichIndexResults() (search.go:L7260)",
+   "b": ".enrichResults() (search.go:L7156)",
+   "shared_callees": 6,
+   "jaccard": 0.67,
+   "only_a": [
+    ".enrichIndexResultsIndividually()",
+    "normalizeVectorResultIDToNodeID()"
+   ],
+   "only_b": [
+    ".enrichResultsIndividually()"
+   ]
+  },
+  {
+   "comp": "search",
+   "a": ".IndexEdge() (search.go:L3284)",
+   "b": ".IndexNode() (search.go:L2610)",
+   "shared_callees": 5,
+   "jaccard": 0.56,
+   "only_a": [
+    ".indexEdgeLocked()",
+    "firstEdgeVectorDimensions()"
+   ],
+   "only_b": [
+    ".indexNodeLocked()",
+    "firstVectorDimensions()"
+   ]
+  },
+  {
+   "comp": "nornicdb",
+   "a": ".processNextDocumentBatch() (embed_queue.go:L1000)",
+   "b": ".processNextResolvedBatch() (embed_queue.go:L788)",
+   "shared_callees": 11,
+   "jaccard": 0.73,
+   "only_a": [],
+   "only_b": [
+    ".embedDocumentPropertyBatchIsolated()",
+    ".processClaimedNode()",
+    ".resolveEmbedder()",
+    "compactWorkerError()"
+   ]
+  },
+  {
+   "comp": "nornicdb",
+   "a": ".processClaimedNode() (embed_queue.go:L956)",
+   "b": ".processNextDocumentBatch() (embed_queue.go:L1000)",
+   "shared_callees": 7,
+   "jaccard": 0.47,
+   "only_a": [
+    ".clearProviderFailure()",
+    ".embedDocumentWith()",
+    ".recordProviderFailure()",
+    ".waitAfterProviderRequest()"
+   ],
+   "only_b": [
+    ".claimNextNode()",
+    ".embedDocumentBatchIsolated()",
+    ".recordProviderBatchOutcome()",
+    ".signalTrigger()"
+   ]
+  },
+  {
+   "comp": "nornicdb",
+   "a": ".indexNodeFromEvent() (search_services.go:L861)",
+   "b": ".removeNodeFromEvent() (search_services.go:L909)",
+   "shared_callees": 4,
+   "jaccard": 0.5,
+   "only_a": [
+    ".getOrCreateSearchService()",
+    ".queueIndex()"
+   ],
+   "only_b": [
+    ".defaultDatabaseName()",
+    ".queueRemove()"
+   ]
+  },
+  {
+   "comp": "server",
+   "a": ".collectLatestInducedSubgraph() (server_graph.go:L697)",
+   "b": ".collectSnapshotInducedSubgraph() (server_graph.go:L737)",
+   "shared_callees": 7,
+   "jaccard": 1.0,
+   "only_a": [],
+   "only_b": []
+  },
+  {
+   "comp": "server",
+   "a": ".handleImplicitTransaction() (server_db.go:L1112)",
+   "b": ".handleSingleStatementFastPath() (server_db.go:L1354)",
+   "shared_callees": 10,
+   "jaccard": 0.62,
+   "only_a": [
+    ".grantAccessToNewDatabase()",
+    ".handleSingleStatementFastPath()",
+    "isCreateDatabaseStatement()",
+    "isShowDatabasesQuery()",
+    "normalizeStatementForExecution()",
+    "parseCreatedDatabaseName()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "server",
+   "a": ".collectLatestNeighborhood() (server_graph.go:L501)",
+   "b": ".collectLatestPath() (server_graph.go:L593)",
+   "shared_callees": 6,
+   "jaccard": 1.0,
+   "only_a": [],
+   "only_b": []
+  },
+  {
+   "comp": "server",
+   "a": ".handleGraphDiff() (server_graph.go:L247)",
+   "b": ".handleGraphTemporal() (server_graph.go:L197)",
+   "shared_callees": 7,
+   "jaccard": 0.7,
+   "only_a": [
+    ".collectLatestInducedSubgraph()",
+    "diffGraphCollections()",
+    "parseGraphVersionForField()"
+   ],
+   "only_b": []
+  },
+  {
+   "comp": "server",
+   "a": ".collectLatestInducedSubgraph() (server_graph.go:L697)",
+   "b": ".collectLatestNeighborhood() (server_graph.go:L501)",
+   "shared_callees": 5,
+   "jaccard": 0.62,
+   "only_a": [
+    "normalizeNodeIDs()",
+    "sortedNodeIDs()"
+   ],
+   "only_b": [
+    "graphEdgesForNode()"
+   ]
+  },
+  {
+   "comp": "server",
+   "a": ".collectLatestInducedSubgraph() (server_graph.go:L697)",
+   "b": ".collectLatestPath() (server_graph.go:L593)",
+   "shared_callees": 5,
+   "jaccard": 0.62,
+   "only_a": [
+    "normalizeNodeIDs()",
+    "sortedNodeIDs()"
+   ],
+   "only_b": [
+    "graphEdgesForNode()"
+   ]
+  },
+  {
+   "comp": "server",
+   "a": ".collectLatestNeighborhood() (server_graph.go:L501)",
+   "b": ".collectSnapshotInducedSubgraph() (server_graph.go:L737)",
+   "shared_callees": 5,
+   "jaccard": 0.62,
+   "only_a": [
+    "graphEdgesForNode()"
+   ],
+   "only_b": [
+    "normalizeNodeIDs()",
+    "sortedNodeIDs()"
+   ]
+  },
+  {
+   "comp": "server",
+   "a": ".collectLatestPath() (server_graph.go:L593)",
+   "b": ".collectSnapshotInducedSubgraph() (server_graph.go:L737)",
+   "shared_callees": 5,
+   "jaccard": 0.62,
+   "only_a": [
+    "graphEdgesForNode()"
+   ],
+   "only_b": [
+    "normalizeNodeIDs()",
+    "sortedNodeIDs()"
+   ]
+  },
+  {
+   "comp": "server",
+   "a": ".handleGraphNeighborhood() (server_graph.go:L104)",
+   "b": ".handleGraphTemporal() (server_graph.go:L197)",
+   "shared_callees": 5,
+   "jaccard": 0.62,
+   "only_a": [
+    ".collectLatestNeighborhood()"
+   ],
+   "only_b": [
+    ".collectSnapshotInducedSubgraph()",
+    "parseGraphVersion()"
+   ]
+  },
+  {
+   "comp": "server",
+   "a": ".handleGraphDiff() (server_graph.go:L247)",
+   "b": ".handleGraphNeighborhood() (server_graph.go:L104)",
+   "shared_callees": 5,
+   "jaccard": 0.45,
+   "only_a": [
+    ".collectLatestInducedSubgraph()",
+    ".collectSnapshotInducedSubgraph()",
+    "diffGraphCollections()",
+    "parseGraphVersion()",
+    "parseGraphVersionForField()"
+   ],
+   "only_b": [
+    ".collectLatestNeighborhood()"
+   ]
+  },
+  {
+   "comp": "bolt",
+   "a": ".handleDiscard() (session_messages.go:L880)",
+   "b": ".handlePull() (session_messages.go:L730)",
+   "shared_callees": 9,
+   "jaccard": 0.82,
+   "only_a": [],
+   "only_b": [
+    ".sendRecordsBatched()",
+    ".writeRecordNoFlush()"
+   ]
+  }
+ ],
+ "clones": [
+  {
+   "a": "search/hnsw_build_cuda.go:52 (CudaHNSWBuildAccelerator).candidateSearch [100 lines]",
+   "b": "search/hnsw_build_gpu.go:156 (MetalHNSWBuildAccelerator).candidateSearch [100 lines]",
+   "similarity": 0.96,
+   "containment": 0.96,
+   "dup_lines": 100,
+   "same_name": true,
+   "cross_component": false
+  },
+  {
+   "a": "search/hnsw_index.go:270 (HNSWIndex).Add [128 lines]",
+   "b": "search/hnsw_index.go:399 (HNSWIndex).addWithLevel0Candidates [128 lines]",
+   "similarity": 0.75,
+   "containment": 0.87,
+   "dup_lines": 128,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/schema.go:1947 (StorageExecutor).parseCreateConstraintTypeDDL [104 lines]",
+   "b": "cypher/schema.go:2052 (StorageExecutor).parseCreateConstraintSimplePropertyDDL [97 lines]",
+   "similarity": 0.79,
+   "containment": 0.88,
+   "dup_lines": 97,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/call_apoc_path.go:767 (StorageExecutor).bfsSpanningTree [101 lines]",
+   "b": "cypher/call_apoc_path.go:870 (StorageExecutor).dfsSpanningTree [104 lines]",
+   "similarity": 0.75,
+   "containment": 0.86,
+   "dup_lines": 101,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/match_index_seek.go:20 (StorageExecutor).tryCollectNodesFromIDEquality [94 lines]",
+   "b": "cypher/match_index_seek.go:124 (StorageExecutor).tryCollectNodesFromIDEqualityParam [109 lines]",
+   "similarity": 0.77,
+   "containment": 0.89,
+   "dup_lines": 94,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:1175 (BadgerEngine).iterateNodesVisibleAtInTxn [86 lines]",
+   "b": "storage/badger_mvcc.go:1262 (BadgerEngine).iterateEdgesVisibleAtInTxn [86 lines]",
+   "similarity": 0.79,
+   "containment": 0.85,
+   "dup_lines": 86,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/async_engine.go:2927 (AsyncEngine).StreamNodes [69 lines]",
+   "b": "storage/async_engine.go:3234 (AsyncEngine).StreamEdges [68 lines]",
+   "similarity": 0.95,
+   "containment": 0.95,
+   "dup_lines": 68,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "search/hnsw_build_cuda.go:184 (CudaHNSWBuildAccelerator).candidateSearchGraphGroup [63 lines]",
+   "b": "search/hnsw_build_gpu.go:288 (MetalHNSWBuildAccelerator).candidateSearchGraphGroup [63 lines]",
+   "similarity": 0.92,
+   "containment": 0.92,
+   "dup_lines": 63,
+   "same_name": true,
+   "cross_component": false
+  },
+  {
+   "a": "search/hnsw_build_cuda.go:184 (CudaHNSWBuildAccelerator).candidateSearchGraphGroup [63 lines]",
+   "b": "search/hnsw_build_vulkan.go:229 (VulkanHNSWBuildAccelerator).candidateSearchGraphGroup [63 lines]",
+   "similarity": 0.92,
+   "containment": 0.92,
+   "dup_lines": 63,
+   "same_name": true,
+   "cross_component": false
+  },
+  {
+   "a": "search/hnsw_build_gpu.go:288 (MetalHNSWBuildAccelerator).candidateSearchGraphGroup [63 lines]",
+   "b": "search/hnsw_build_vulkan.go:229 (VulkanHNSWBuildAccelerator).candidateSearchGraphGroup [63 lines]",
+   "similarity": 0.92,
+   "containment": 0.92,
+   "dup_lines": 63,
+   "same_name": true,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:1539 (BadgerEngine).rebuildNodeMVCCHeadsFromVersions [59 lines]",
+   "b": "storage/badger_mvcc.go:1599 (BadgerEngine).rebuildEdgeMVCCHeadsFromVersions [59 lines]",
+   "similarity": 0.89,
+   "containment": 0.89,
+   "dup_lines": 59,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/async_engine.go:2087 (AsyncEngine).NodeCountByPrefix [66 lines]",
+   "b": "storage/async_engine.go:2177 (AsyncEngine).EdgeCountByPrefix [58 lines]",
+   "similarity": 0.83,
+   "containment": 0.9,
+   "dup_lines": 58,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/optimized_executors.go:138 (StorageExecutor).executeIncomingCountOptimized [61 lines]",
+   "b": "cypher/optimized_executors.go:206 (StorageExecutor).executeOutgoingCountOptimized [61 lines]",
+   "similarity": 0.78,
+   "containment": 0.78,
+   "dup_lines": 61,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:1681 (BadgerEngine).withViewNodeMVCCVersionsFromKey [51 lines]",
+   "b": "storage/badger_mvcc.go:1733 (BadgerEngine).withViewEdgeMVCCVersionsFromKey [51 lines]",
+   "similarity": 0.91,
+   "containment": 0.91,
+   "dup_lines": 51,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/call_compat.go:949 (StorageExecutor).callDbCreateSetNodeVectorProperty [65 lines]",
+   "b": "cypher/call_compat.go:1017 (StorageExecutor).callDbCreateSetRelationshipVectorProperty [65 lines]",
+   "similarity": 0.71,
+   "containment": 0.76,
+   "dup_lines": 65,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/schema.go:821 (StorageExecutor).parseCreateIndexDDL [65 lines]",
+   "b": "cypher/schema.go:1122 (StorageExecutor).parseCreateFulltextIndexDDL [67 lines]",
+   "similarity": 0.71,
+   "containment": 0.82,
+   "dup_lines": 65,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/set_helpers.go:286 (StorageExecutor).splitSetAssignments [43 lines]",
+   "b": "cypher/set_helpers.go:345 (StorageExecutor).splitSetAssignmentsRespectingBrackets [43 lines]",
+   "similarity": 0.99,
+   "containment": 0.99,
+   "dup_lines": 43,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/id_dictionary.go:508 (idDictionary).resolveOrAllocateNodeNumIDInTxn [57 lines]",
+   "b": "storage/id_dictionary.go:577 (idDictionary).resolveOrAllocateEdgeNumIDInTxn [45 lines]",
+   "similarity": 0.91,
+   "containment": 0.91,
+   "dup_lines": 45,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/match_index_seek.go:386 (StorageExecutor).tryCollectNodesFromPropertyIndexIn [49 lines]",
+   "b": "cypher/match_index_seek.go:440 (StorageExecutor).tryCollectNodesFromPropertyIndexInLiteral [49 lines]",
+   "similarity": 0.8,
+   "containment": 0.84,
+   "dup_lines": 49,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/async_engine.go:1680 (AsyncEngine).GetOutgoingEdges [54 lines]",
+   "b": "storage/async_engine.go:1735 (AsyncEngine).GetIncomingEdges [46 lines]",
+   "similarity": 0.85,
+   "containment": 0.85,
+   "dup_lines": 46,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/schema.go:1844 (StorageExecutor).parseCreateConstraintPolicyDDL [49 lines]",
+   "b": "cypher/schema.go:1894 (StorageExecutor).parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL [52 lines]",
+   "similarity": 0.75,
+   "containment": 0.83,
+   "dup_lines": 49,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_decay_filter.go:56 (BadgerEngine).filterNodeByDecay [49 lines]",
+   "b": "storage/badger_decay_filter.go:107 (BadgerEngine).filterEdgeByDecay [49 lines]",
+   "similarity": 0.7,
+   "containment": 0.81,
+   "dup_lines": 49,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/call_apoc_helpers.go:15 (StorageExecutor).findMatchingParen [35 lines]",
+   "b": "cypher/call_apoc_helpers.go:175 (StorageExecutor).findMatchingBrace [35 lines]",
+   "similarity": 0.97,
+   "containment": 0.97,
+   "dup_lines": 35,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/match_index_seek.go:333 (StorageExecutor).tryCollectNodesFromPropertyIndex [46 lines]",
+   "b": "cypher/match_index_seek.go:440 (StorageExecutor).tryCollectNodesFromPropertyIndexInLiteral [49 lines]",
+   "similarity": 0.72,
+   "containment": 0.79,
+   "dup_lines": 46,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/call_shared_utils.go:12 splitTopLevelComma [44 lines]",
+   "b": "cypher/set_merge_strict.go:54 splitTopLevelCommaKeepEmpty [42 lines]",
+   "similarity": 0.77,
+   "containment": 0.92,
+   "dup_lines": 42,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_transaction.go:1581 (BadgerTransaction).mergePendingNodesLocked [35 lines]",
+   "b": "storage/badger_transaction.go:1617 (BadgerTransaction).mergePendingEdgesLocked [35 lines]",
+   "similarity": 0.89,
+   "containment": 0.89,
+   "dup_lines": 35,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/constraint_contracts.go:1095 countMatchingPatternEdgesEngine [33 lines]",
+   "b": "storage/constraint_contracts.go:1367 (BadgerTransaction).countMatchingPatternEdgesLocked [33 lines]",
+   "similarity": 0.94,
+   "containment": 0.94,
+   "dup_lines": 33,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/loader.go:367 loadNodesFromReader [37 lines]",
+   "b": "storage/loader.go:420 loadRelationshipsFromReader [36 lines]",
+   "similarity": 0.83,
+   "containment": 0.83,
+   "dup_lines": 36,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:1811 (BadgerEngine).collectNodeBootstrapBatch [40 lines]",
+   "b": "storage/badger_mvcc.go:1896 (BadgerEngine).collectEdgeBootstrapBatch [44 lines]",
+   "similarity": 0.73,
+   "containment": 0.83,
+   "dup_lines": 40,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_edge_between_index.go:85 (BadgerEngine).startEdgeBetweenIndexBackfill [40 lines]",
+   "b": "storage/badger_label_index_backfill.go:120 (BadgerEngine).startLabelIndexBackfill [38 lines]",
+   "similarity": 0.76,
+   "containment": 0.85,
+   "dup_lines": 38,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:852 (BadgerEngine).loadNodeMVCCRecordAtOrBeforeInTxn [31 lines]",
+   "b": "storage/badger_mvcc.go:884 (BadgerEngine).loadEdgeMVCCRecordAtOrBeforeInTxn [31 lines]",
+   "similarity": 0.93,
+   "containment": 0.93,
+   "dup_lines": 31,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "search/hnsw_build_cuda.go:153 (CudaHNSWBuildAccelerator).CandidateSearchGraph [30 lines]",
+   "b": "search/hnsw_build_gpu.go:257 (MetalHNSWBuildAccelerator).CandidateSearchGraph [30 lines]",
+   "similarity": 0.96,
+   "containment": 0.96,
+   "dup_lines": 30,
+   "same_name": true,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_cache.go:163 estimateCacheValueBytes [30 lines]",
+   "b": "search/search.go:687 estimateSearchCacheValueBytes [30 lines]",
+   "similarity": 0.96,
+   "containment": 0.96,
+   "dup_lines": 30,
+   "same_name": false,
+   "cross_component": true
+  },
+  {
+   "a": "storage/badger_mvcc.go:1966 (BadgerEngine).bootstrapNodeMVCCFromCurrentStateInTxn [37 lines]",
+   "b": "storage/badger_mvcc.go:2004 (BadgerEngine).bootstrapEdgeMVCCFromCurrentStateInTxn [37 lines]",
+   "similarity": 0.77,
+   "containment": 0.81,
+   "dup_lines": 37,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/schema.go:1687 (StorageExecutor).parseCreateConstraintCardinalityDDL [70 lines]",
+   "b": "cypher/schema.go:1844 (StorageExecutor).parseCreateConstraintPolicyDDL [49 lines]",
+   "similarity": 0.58,
+   "containment": 0.85,
+   "dup_lines": 49,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/schema.go:1503 (StorageExecutor).parseCreateConstraintForRequireDDL [51 lines]",
+   "b": "cypher/schema.go:2052 (StorageExecutor).parseCreateConstraintSimplePropertyDDL [97 lines]",
+   "similarity": 0.55,
+   "containment": 0.93,
+   "dup_lines": 51,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/pattern_parser.go:281 (StorageExecutor).splitPropertyPairs [52 lines]",
+   "b": "cypher/set_helpers.go:286 (StorageExecutor).splitSetAssignments [43 lines]",
+   "similarity": 0.65,
+   "containment": 0.86,
+   "dup_lines": 43,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/pattern_parser.go:281 (StorageExecutor).splitPropertyPairs [52 lines]",
+   "b": "cypher/set_helpers.go:345 (StorageExecutor).splitSetAssignmentsRespectingBrackets [43 lines]",
+   "similarity": 0.65,
+   "containment": 0.86,
+   "dup_lines": 43,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/constraint_contracts.go:402 evaluateRelationshipConstraintContractExpressionEngine [34 lines]",
+   "b": "storage/constraint_contracts.go:1336 (BadgerTransaction).evaluateRelationshipConstraintContractExpressionLocked [30 lines]",
+   "similarity": 0.93,
+   "containment": 0.93,
+   "dup_lines": 30,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/wal_engine.go:952 (WALEngine).NodeCountByPrefix [29 lines]",
+   "b": "storage/wal_engine.go:1016 (WALEngine).EdgeCountByPrefix [29 lines]",
+   "similarity": 0.95,
+   "containment": 0.95,
+   "dup_lines": 29,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/call_compat.go:733 (StorageExecutor).callDbIndexFulltextCreateNodeIndex [39 lines]",
+   "b": "cypher/call_compat.go:775 (StorageExecutor).callDbIndexFulltextCreateRelationshipIndex [39 lines]",
+   "similarity": 0.7,
+   "containment": 0.73,
+   "dup_lines": 39,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/schema.go:1503 (StorageExecutor).parseCreateConstraintForRequireDDL [51 lines]",
+   "b": "cypher/schema.go:1947 (StorageExecutor).parseCreateConstraintTypeDDL [104 lines]",
+   "similarity": 0.53,
+   "containment": 0.91,
+   "dup_lines": 51,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/pattern_parser.go:510 (StorageExecutor).evaluateScalarPropertyExpressionFast [41 lines]",
+   "b": "cypher/unwind_multi_match_create.go:451 (StorageExecutor).evaluateBatchArithmeticLookupExpr [38 lines]",
+   "similarity": 0.7,
+   "containment": 0.86,
+   "dup_lines": 38,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/typed_results.go:148 decodeMap [44 lines]",
+   "b": "nornicdb/db_admin.go:363 decodeMapToStruct [37 lines]",
+   "similarity": 0.71,
+   "containment": 0.83,
+   "dup_lines": 37,
+   "same_name": false,
+   "cross_component": true
+  },
+  {
+   "a": "storage/badger_mvcc.go:998 (BadgerEngine).GetNodeLatestVisible [35 lines]",
+   "b": "storage/badger_mvcc.go:1034 (BadgerEngine).GetEdgeLatestVisible [32 lines]",
+   "similarity": 0.81,
+   "containment": 0.81,
+   "dup_lines": 32,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:1090 (BadgerEngine).getOutgoingEdgesVisibleAtWithView [34 lines]",
+   "b": "storage/badger_mvcc.go:1129 (BadgerEngine).getIncomingEdgesVisibleAtWithView [34 lines]",
+   "similarity": 0.75,
+   "containment": 0.75,
+   "dup_lines": 34,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/ast_builder.go:697 (ASTBuilder).parseReturn [34 lines]",
+   "b": "cypher/ast_builder.go:733 (ASTBuilder).parseWith [34 lines]",
+   "similarity": 0.74,
+   "containment": 0.79,
+   "dup_lines": 34,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "bolt/packstream.go:915 coercePathNodes [27 lines]",
+   "b": "bolt/packstream.go:943 coercePathRels [27 lines]",
+   "similarity": 0.93,
+   "containment": 0.93,
+   "dup_lines": 27,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/call_compat.go:265 buildEdgeFulltextDoc [29 lines]",
+   "b": "cypher/call_fulltext.go:241 buildNodeFulltextDoc [29 lines]",
+   "similarity": 0.86,
+   "containment": 0.86,
+   "dup_lines": 29,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/compound_query_shape_matcher.go:477 extractParenSection [30 lines]",
+   "b": "cypher/compound_query_shape_matcher.go:508 extractBracketSection [30 lines]",
+   "similarity": 0.82,
+   "containment": 0.89,
+   "dup_lines": 30,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/constraint_contracts.go:366 evaluateNodeConstraintContractExpressionEngine [35 lines]",
+   "b": "storage/constraint_contracts.go:1304 (BadgerTransaction).evaluateNodeConstraintContractExpressionLocked [31 lines]",
+   "similarity": 0.78,
+   "containment": 0.87,
+   "dup_lines": 31,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/schema_knowledgepolicy.go:104 (SchemaManager).AlterDecayProfile [25 lines]",
+   "b": "storage/schema_knowledgepolicy.go:237 (SchemaManager).AlterPromotionProfile [25 lines]",
+   "similarity": 0.96,
+   "containment": 0.96,
+   "dup_lines": 25,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/call.go:415 (StorageExecutor).executeCallTail [110 lines]",
+   "b": "cypher/call.go:605 (StorageExecutor).executeCallTailSingleRow [57 lines]",
+   "similarity": 0.42,
+   "containment": 0.87,
+   "dup_lines": 57,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/schema_knowledgepolicy.go:12 (SchemaManager).CreateDecayProfileBundle [25 lines]",
+   "b": "storage/schema_knowledgepolicy.go:179 (SchemaManager).CreatePromotionProfile [25 lines]",
+   "similarity": 0.94,
+   "containment": 0.94,
+   "dup_lines": 25,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc_per_namespace.go:20 namespaceForNodeIDs [24 lines]",
+   "b": "storage/badger_mvcc_per_namespace.go:46 namespaceForEdgeIDs [24 lines]",
+   "similarity": 0.97,
+   "containment": 0.97,
+   "dup_lines": 24,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "server/server_db.go:440 (databaseManagerAdapter).CreateCompositeDatabase [27 lines]",
+   "b": "bolt/server.go:2324 (boltDatabaseManagerAdapter).CreateCompositeDatabase [25 lines]",
+   "similarity": 0.93,
+   "containment": 0.93,
+   "dup_lines": 25,
+   "same_name": true,
+   "cross_component": true
+  },
+  {
+   "a": "search/hnsw_build_cuda.go:153 (CudaHNSWBuildAccelerator).CandidateSearchGraph [30 lines]",
+   "b": "search/hnsw_build_vulkan.go:198 (VulkanHNSWBuildAccelerator).CandidateSearchGraph [30 lines]",
+   "similarity": 0.76,
+   "containment": 0.87,
+   "dup_lines": 30,
+   "same_name": true,
+   "cross_component": false
+  },
+  {
+   "a": "search/hnsw_build_gpu.go:257 (MetalHNSWBuildAccelerator).CandidateSearchGraph [30 lines]",
+   "b": "search/hnsw_build_vulkan.go:198 (VulkanHNSWBuildAccelerator).CandidateSearchGraph [30 lines]",
+   "similarity": 0.76,
+   "containment": 0.87,
+   "dup_lines": 30,
+   "same_name": true,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_stats.go:95 (BadgerEngine).NodeCountByPrefix [30 lines]",
+   "b": "storage/badger_stats.go:138 (BadgerEngine).EdgeCountByPrefix [30 lines]",
+   "similarity": 0.76,
+   "containment": 0.76,
+   "dup_lines": 30,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/clauses.go:2031 applyUnwindMergeChainSetAssignment [31 lines]",
+   "b": "cypher/clauses.go:2063 applyUnwindMergeChainEdgeSetAssignment [31 lines]",
+   "similarity": 0.73,
+   "containment": 0.81,
+   "dup_lines": 31,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_queries.go:706 (BadgerEngine).GetOutgoingEdges [26 lines]",
+   "b": "storage/badger_queries.go:896 (BadgerEngine).GetIncomingEdges [26 lines]",
+   "similarity": 0.87,
+   "containment": 0.87,
+   "dup_lines": 26,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/constraint_contracts.go:1429 (BadgerTransaction).currentOutgoingEdgesLocked [31 lines]",
+   "b": "storage/constraint_contracts.go:1485 (BadgerTransaction).currentIncomingEdgesLocked [31 lines]",
+   "similarity": 0.71,
+   "containment": 0.71,
+   "dup_lines": 31,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/knowledgepolicy_ddl.go:767 parseAlterDecayProfile [37 lines]",
+   "b": "cypher/knowledgepolicy_ddl.go:894 parseAlterPromotionProfile [29 lines]",
+   "similarity": 0.75,
+   "containment": 0.96,
+   "dup_lines": 29,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/wal_engine.go:738 (WALEngine).BulkDeleteNodes [26 lines]",
+   "b": "storage/wal_engine.go:766 (WALEngine).BulkDeleteEdges [26 lines]",
+   "similarity": 0.83,
+   "containment": 0.83,
+   "dup_lines": 26,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_decay_filter.go:197 (BadgerEngine).FilterPropertyByDecay [22 lines]",
+   "b": "storage/badger_decay_filter.go:221 (BadgerEngine).FilterEdgePropertyByDecay [22 lines]",
+   "similarity": 0.97,
+   "containment": 0.97,
+   "dup_lines": 22,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/async_engine.go:2236 countNodesInEngineByPrefix [24 lines]",
+   "b": "storage/async_engine.go:2261 countEdgesInEngineByPrefix [24 lines]",
+   "similarity": 0.88,
+   "containment": 0.88,
+   "dup_lines": 24,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:804 (BadgerEngine).loadNodeMVCCRecordExactInTxn [23 lines]",
+   "b": "storage/badger_mvcc.go:828 (BadgerEngine).loadEdgeMVCCRecordExactInTxn [23 lines]",
+   "similarity": 0.9,
+   "containment": 0.9,
+   "dup_lines": 23,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/composite_engine.go:831 (CompositeEngine).AllNodes [27 lines]",
+   "b": "storage/composite_engine.go:861 (CompositeEngine).AllEdges [27 lines]",
+   "similarity": 0.75,
+   "containment": 0.75,
+   "dup_lines": 27,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "server/server_retention.go:36 (Server).handleRetentionPolicies [24 lines]",
+   "b": "server/server_retention.go:137 (Server).handleRetentionHolds [23 lines]",
+   "similarity": 0.88,
+   "containment": 0.88,
+   "dup_lines": 23,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:1852 (BadgerEngine).applyNodeBootstrapBatch [24 lines]",
+   "b": "storage/badger_mvcc.go:1941 (BadgerEngine).applyEdgeBootstrapBatch [24 lines]",
+   "similarity": 0.84,
+   "containment": 0.84,
+   "dup_lines": 24,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/knowledgepolicy_ddl.go:41 kpMatchKeywordAt [22 lines]",
+   "b": "storage/constraint_contracts.go:50 ccMatchKeywordAt [23 lines]",
+   "similarity": 0.91,
+   "containment": 0.91,
+   "dup_lines": 22,
+   "same_name": false,
+   "cross_component": true
+  },
+  {
+   "a": "storage/composite_engine.go:692 (CompositeEngine).GetOutgoingEdges [27 lines]",
+   "b": "storage/composite_engine.go:722 (CompositeEngine).GetIncomingEdges [27 lines]",
+   "similarity": 0.74,
+   "containment": 0.74,
+   "dup_lines": 27,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/composite_engine.go:692 (CompositeEngine).GetOutgoingEdges [27 lines]",
+   "b": "storage/composite_engine.go:801 (CompositeEngine).GetEdgesByType [27 lines]",
+   "similarity": 0.74,
+   "containment": 0.74,
+   "dup_lines": 27,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/composite_engine.go:722 (CompositeEngine).GetIncomingEdges [27 lines]",
+   "b": "storage/composite_engine.go:801 (CompositeEngine).GetEdgesByType [27 lines]",
+   "similarity": 0.74,
+   "containment": 0.74,
+   "dup_lines": 27,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:653 (BadgerEngine).loadEdgeMVCCHead [25 lines]",
+   "b": "storage/badger_mvcc.go:717 (BadgerEngine).loadNodeMVCCHead [25 lines]",
+   "similarity": 0.79,
+   "containment": 0.79,
+   "dup_lines": 25,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_deindex_work.go:35 (BadgerEngine).GetDeindexWorkItem [24 lines]",
+   "b": "storage/badger_index_catalog.go:36 (BadgerEngine).GetIndexEntryCatalog [24 lines]",
+   "similarity": 0.82,
+   "containment": 0.82,
+   "dup_lines": 24,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/executor_mutations.go:823 (StorageExecutor).normalizeSetMatchRowsToNodes [27 lines]",
+   "b": "cypher/executor_mutations.go:851 (StorageExecutor).normalizeSetMatchRowsToEdges [27 lines]",
+   "similarity": 0.72,
+   "containment": 0.8,
+   "dup_lines": 27,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/schema_knowledgepolicy.go:206 (SchemaManager).DropPromotionProfile [29 lines]",
+   "b": "storage/schema_knowledgepolicy.go:311 (SchemaManager).DropPromotionPolicy [24 lines]",
+   "similarity": 0.8,
+   "containment": 0.95,
+   "dup_lines": 24,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/remote_engine.go:1138 (RemoteEngine).BulkDeleteNodes [21 lines]",
+   "b": "storage/remote_engine.go:1160 (RemoteEngine).BulkDeleteEdges [21 lines]",
+   "similarity": 0.91,
+   "containment": 0.91,
+   "dup_lines": 21,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_bulk.go:358 (BadgerEngine).GetInDegree [25 lines]",
+   "b": "storage/badger_bulk.go:385 (BadgerEngine).GetOutDegree [25 lines]",
+   "similarity": 0.76,
+   "containment": 0.76,
+   "dup_lines": 25,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/id_dictionary.go:725 (idDictionary).deleteNodeEntryByNumInTxn [20 lines]",
+   "b": "storage/id_dictionary.go:747 (idDictionary).deleteEdgeEntryByNumInTxn [20 lines]",
+   "similarity": 0.93,
+   "containment": 0.93,
+   "dup_lines": 20,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/knowledgepolicy_ddl.go:805 parseDropDecayProfile [19 lines]",
+   "b": "cypher/knowledgepolicy_ddl.go:924 parseDropPromotionProfile [19 lines]",
+   "similarity": 0.95,
+   "containment": 0.95,
+   "dup_lines": 19,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/knowledgepolicy_ddl.go:805 parseDropDecayProfile [19 lines]",
+   "b": "cypher/knowledgepolicy_ddl.go:1252 parseDropPromotionPolicy [19 lines]",
+   "similarity": 0.95,
+   "containment": 0.95,
+   "dup_lines": 19,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/knowledgepolicy_ddl.go:924 parseDropPromotionProfile [19 lines]",
+   "b": "cypher/knowledgepolicy_ddl.go:1252 parseDropPromotionPolicy [19 lines]",
+   "similarity": 0.95,
+   "containment": 0.95,
+   "dup_lines": 19,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:743 (BadgerEngine).loadNodeMVCCHeadInTxn [23 lines]",
+   "b": "storage/badger_mvcc.go:804 (BadgerEngine).loadNodeMVCCRecordExactInTxn [23 lines]",
+   "similarity": 0.77,
+   "containment": 0.84,
+   "dup_lines": 23,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_mvcc.go:743 (BadgerEngine).loadNodeMVCCHeadInTxn [23 lines]",
+   "b": "storage/badger_mvcc.go:828 (BadgerEngine).loadEdgeMVCCRecordExactInTxn [23 lines]",
+   "similarity": 0.77,
+   "containment": 0.84,
+   "dup_lines": 23,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/property_codec.go:344 decodeInt64Array [22 lines]",
+   "b": "storage/property_codec.go:367 decodeUint64Array [22 lines]",
+   "similarity": 0.8,
+   "containment": 0.8,
+   "dup_lines": 22,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger.go:1013 (BadgerEngine).loadPersistedMVCCSequence [23 lines]",
+   "b": "storage/badger_mvcc_per_namespace.go:251 (BadgerEngine).loadPersistedNamespaceSequence [23 lines]",
+   "similarity": 0.75,
+   "containment": 0.82,
+   "dup_lines": 23,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "embed/spans.go:22 (TracedEmbedder).Embed [18 lines]",
+   "b": "embed/spans.go:41 (TracedEmbedder).EmbedBatch [18 lines]",
+   "similarity": 0.95,
+   "containment": 0.95,
+   "dup_lines": 18,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/schema.go:1192 (SchemaManager).AddFulltextIndex [24 lines]",
+   "b": "storage/schema.go:1222 (SchemaManager).AddFulltextRelationshipIndex [24 lines]",
+   "similarity": 0.7,
+   "containment": 0.7,
+   "dup_lines": 24,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/remote_engine.go:911 (RemoteEngine).GetOutgoingEdges [20 lines]",
+   "b": "storage/remote_engine.go:932 (RemoteEngine).GetIncomingEdges [20 lines]",
+   "similarity": 0.83,
+   "containment": 0.83,
+   "dup_lines": 20,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/id_dictionary.go:678 (idDictionary).deleteNodeEntryInTxn [18 lines]",
+   "b": "storage/id_dictionary.go:769 (idDictionary).deleteEdgeEntryInTxn [18 lines]",
+   "similarity": 0.92,
+   "containment": 0.92,
+   "dup_lines": 18,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "server/server_router.go:156 (Server).registerNornicDBRoutes [25 lines]",
+   "b": "server/server_router.go:182 (Server).registerAdminRoutes [18 lines]",
+   "similarity": 0.91,
+   "containment": 0.91,
+   "dup_lines": 18,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/async_engine.go:3305 (AsyncEngine).StreamNodeChunks [22 lines]",
+   "b": "storage/wal_engine.go:1214 (WALEngine).StreamNodeChunks [24 lines]",
+   "similarity": 0.74,
+   "containment": 0.96,
+   "dup_lines": 22,
+   "same_name": true,
+   "cross_component": false
+  },
+  {
+   "a": "storage/property_validation.go:112 interfaceSliceToInt64 [20 lines]",
+   "b": "storage/property_validation.go:133 interfaceSliceToUint64 [20 lines]",
+   "similarity": 0.8,
+   "containment": 0.8,
+   "dup_lines": 20,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/binding_where_compile.go:432 parseBindingLiteralList [20 lines]",
+   "b": "cypher/pipeline_executor.go:1672 parseLiteralListForPipeline [20 lines]",
+   "similarity": 0.79,
+   "containment": 0.79,
+   "dup_lines": 20,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "cypher/call_compat.go:817 (StorageExecutor).callDbIndexFulltextDrop [20 lines]",
+   "b": "cypher/call_compat.go:840 (StorageExecutor).callDbIndexVectorDrop [22 lines]",
+   "similarity": 0.78,
+   "containment": 0.87,
+   "dup_lines": 20,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_transaction.go:1364 (BadgerTransaction).GetNode [22 lines]",
+   "b": "storage/badger_transaction.go:1392 (BadgerTransaction).GetEdge [20 lines]",
+   "similarity": 0.78,
+   "containment": 0.78,
+   "dup_lines": 20,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_property_index_maintenance.go:35 (BadgerEngine).maintainPropertyIndexesOnNodeCreated [22 lines]",
+   "b": "storage/badger_property_index_maintenance.go:63 (BadgerEngine).maintainPropertyIndexesOnNodeUpdated [39 lines]",
+   "similarity": 0.7,
+   "containment": 0.85,
+   "dup_lines": 22,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "bolt/packstream.go:809 uniquePathNodes [18 lines]",
+   "b": "bolt/packstream.go:828 uniquePathRels [18 lines]",
+   "similarity": 0.85,
+   "containment": 0.85,
+   "dup_lines": 18,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/remote_engine.go:773 (RemoteEngine).UpdateNode [15 lines]",
+   "b": "storage/remote_engine.go:846 (RemoteEngine).UpdateEdge [15 lines]",
+   "similarity": 0.98,
+   "containment": 0.98,
+   "dup_lines": 15,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_temporal_index.go:77 temporalHistoryPrefix [17 lines]",
+   "b": "storage/badger_temporal_index.go:103 temporalCurrentKey [16 lines]",
+   "similarity": 0.87,
+   "containment": 0.9,
+   "dup_lines": 16,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/edge_meta.go:218 (EdgeMetaStore).GetBySignalType [14 lines]",
+   "b": "storage/edge_meta.go:267 (EdgeMetaStore).GetByOrigin [14 lines]",
+   "similarity": 0.92,
+   "containment": 0.92,
+   "dup_lines": 14,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/edge_meta.go:218 (EdgeMetaStore).GetBySignalType [14 lines]",
+   "b": "storage/edge_meta.go:283 (EdgeMetaStore).GetBySession [14 lines]",
+   "similarity": 0.92,
+   "containment": 0.92,
+   "dup_lines": 14,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/edge_meta.go:267 (EdgeMetaStore).GetByOrigin [14 lines]",
+   "b": "storage/edge_meta.go:283 (EdgeMetaStore).GetBySession [14 lines]",
+   "similarity": 0.92,
+   "containment": 0.92,
+   "dup_lines": 14,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "search/hnsw_metal.go:84 (HNSWIndex).batchScoreCandidatesCPU [16 lines]",
+   "b": "search/hnsw_metal_stub.go:10 (HNSWIndex).batchScoreCandidatesMetal [16 lines]",
+   "similarity": 0.79,
+   "containment": 0.79,
+   "dup_lines": 16,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/badger_decay_reconcile.go:94 (BadgerEngine).collectNamespaceNodeIDs [16 lines]",
+   "b": "storage/badger_decay_reconcile.go:111 (BadgerEngine).collectNamespaceEdgeIDs [16 lines]",
+   "similarity": 0.78,
+   "containment": 0.78,
+   "dup_lines": 16,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/wal_engine.go:610 (WALEngine).DeleteNode [15 lines]",
+   "b": "storage/wal_engine.go:661 (WALEngine).DeleteEdge [15 lines]",
+   "similarity": 0.83,
+   "containment": 0.83,
+   "dup_lines": 15,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/namespaced.go:625 (NamespacedEngine).GetOutgoingEdgesVisibleAt [17 lines]",
+   "b": "storage/namespaced.go:644 (NamespacedEngine).GetIncomingEdgesVisibleAt [17 lines]",
+   "similarity": 0.7,
+   "containment": 0.7,
+   "dup_lines": 17,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "server/server_retention.go:15 (Server).registerRetentionRoutes [11 lines]",
+   "b": "server/server_router.go:156 (Server).registerNornicDBRoutes [25 lines]",
+   "similarity": 0.91,
+   "containment": 0.91,
+   "dup_lines": 11,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "server/server_retention.go:15 (Server).registerRetentionRoutes [11 lines]",
+   "b": "server/server_router.go:182 (Server).registerAdminRoutes [18 lines]",
+   "similarity": 0.91,
+   "containment": 0.91,
+   "dup_lines": 11,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "bolt/packstream.go:97 encodePackStreamStringInto [15 lines]",
+   "b": "bolt/packstream.go:117 encodePackStreamBytesInto [11 lines]",
+   "similarity": 0.81,
+   "containment": 1.0,
+   "dup_lines": 11,
+   "same_name": false,
+   "cross_component": false
+  },
+  {
+   "a": "storage/traced_engine.go:187 (TracedEngine).BulkCreateNodes [12 lines]",
+   "b": "storage/traced_engine.go:200 (TracedEngine).BulkCreateEdges [12 lines]",
+   "similarity": 0.74,
+   "containment": 0.85,
+   "dup_lines": 12,
+   "same_name": false,
+   "cross_component": false
+  }
+ ],
+ "clone_groups": [
+  [
+   [
+    "cypher/schema.go:1503 (StorageExecutor).parseCreateConstraintForRequireDDL [51 lines]",
+    "cypher/schema.go:1947 (StorageExecutor).parseCreateConstraintTypeDDL [104 lines]",
+    "cypher/schema.go:2052 (StorageExecutor).parseCreateConstraintSimplePropertyDDL [97 lines]"
+   ]
+  ],
+  [
+   [
+    "search/hnsw_build_cuda.go:184 (CudaHNSWBuildAccelerator).candidateSearchGraphGroup [63 lines]",
+    "search/hnsw_build_gpu.go:288 (MetalHNSWBuildAccelerator).candidateSearchGraphGroup [63 lines]",
+    "search/hnsw_build_vulkan.go:229 (VulkanHNSWBuildAccelerator).candidateSearchGraphGroup [63 lines]"
+   ]
+  ],
+  [
+   [
+    "cypher/pattern_parser.go:281 (StorageExecutor).splitPropertyPairs [52 lines]",
+    "cypher/set_helpers.go:286 (StorageExecutor).splitSetAssignments [43 lines]",
+    "cypher/set_helpers.go:345 (StorageExecutor).splitSetAssignmentsRespectingBrackets [43 lines]"
+   ]
+  ],
+  [
+   [
+    "cypher/match_index_seek.go:333 (StorageExecutor).tryCollectNodesFromPropertyIndex [46 lines]",
+    "cypher/match_index_seek.go:386 (StorageExecutor).tryCollectNodesFromPropertyIndexIn [49 lines]",
+    "cypher/match_index_seek.go:440 (StorageExecutor).tryCollectNodesFromPropertyIndexInLiteral [49 lines]"
+   ]
+  ],
+  [
+   [
+    "cypher/schema.go:1687 (StorageExecutor).parseCreateConstraintCardinalityDDL [70 lines]",
+    "cypher/schema.go:1844 (StorageExecutor).parseCreateConstraintPolicyDDL [49 lines]",
+    "cypher/schema.go:1894 (StorageExecutor).parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL [52 lines]"
+   ]
+  ],
+  [
+   [
+    "search/hnsw_build_cuda.go:153 (CudaHNSWBuildAccelerator).CandidateSearchGraph [30 lines]",
+    "search/hnsw_build_gpu.go:257 (MetalHNSWBuildAccelerator).CandidateSearchGraph [30 lines]",
+    "search/hnsw_build_vulkan.go:198 (VulkanHNSWBuildAccelerator).CandidateSearchGraph [30 lines]"
+   ]
+  ],
+  [
+   [
+    "storage/badger_mvcc.go:743 (BadgerEngine).loadNodeMVCCHeadInTxn [23 lines]",
+    "storage/badger_mvcc.go:804 (BadgerEngine).loadNodeMVCCRecordExactInTxn [23 lines]",
+    "storage/badger_mvcc.go:828 (BadgerEngine).loadEdgeMVCCRecordExactInTxn [23 lines]"
+   ]
+  ],
+  [
+   [
+    "storage/composite_engine.go:692 (CompositeEngine).GetOutgoingEdges [27 lines]",
+    "storage/composite_engine.go:722 (CompositeEngine).GetIncomingEdges [27 lines]",
+    "storage/composite_engine.go:801 (CompositeEngine).GetEdgesByType [27 lines]"
+   ]
+  ],
+  [
+   [
+    "cypher/knowledgepolicy_ddl.go:1252 parseDropPromotionPolicy [19 lines]",
+    "cypher/knowledgepolicy_ddl.go:805 parseDropDecayProfile [19 lines]",
+    "cypher/knowledgepolicy_ddl.go:924 parseDropPromotionProfile [19 lines]"
+   ]
+  ],
+  [
+   [
+    "server/server_retention.go:15 (Server).registerRetentionRoutes [11 lines]",
+    "server/server_router.go:156 (Server).registerNornicDBRoutes [25 lines]",
+    "server/server_router.go:182 (Server).registerAdminRoutes [18 lines]"
+   ]
+  ],
+  [
+   [
+    "storage/edge_meta.go:218 (EdgeMetaStore).GetBySignalType [14 lines]",
+    "storage/edge_meta.go:267 (EdgeMetaStore).GetByOrigin [14 lines]",
+    "storage/edge_meta.go:283 (EdgeMetaStore).GetBySession [14 lines]"
+   ]
+  ]
+ ]
+}

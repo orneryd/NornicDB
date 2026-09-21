@@ -1,0 +1,63 @@
+FAIL: MATCH (a:A) WHERE a.id IN [1, 2, 3] RETURN a.id AS id, a.name AS n ORDER BY id  
+   expected: [{'id': 1, 'n': 'n1x'}, {'id': 2, 'n': 'n2x'}, {'id': 3, 'n': 'n3'}] 
+   got:      [{'id': 1, 'n': "r.name + 'x'"}, {'id': 2, 'n': "r.name + 'x'"}, {'id': 3, 'n': 'n3'}]
+FAIL: MATCH (a:A) WHERE size(a.tags) = 2 AND a.tags[0] = 't0' RETURN count(a) AS c  
+   expected: [{'c': 3}] 
+   got:      [{'c': 0}]
+FAIL: MATCH (a:A) WHERE a.ts >= datetime('2026-09-14T00:00:00Z') RETURN count(a) AS c  
+   expected: [{'c': 3}] 
+   got:      [{'c': 0}]
+FAIL: MATCH (a:A) RETURN a.grp AS g, max(a.id) AS hi, min(a.name) AS lo ORDER BY g  
+   expected: [{'g': 0, 'hi': 6, 'lo': 'n3'}, {'g': 1, 'hi': 4, 'lo': 'n1x'}, {'g': 2, 'hi': 5, 'lo': 'n2x'}] 
+   got:      [{'g': 0, 'hi': 6, 'lo': None}, {'g': 1, 'hi': 4, 'lo': None}, {'g': 2, 'hi': 5, 'lo': None}]
+FAIL: UNWIND $pairs AS p MATCH (x:A {id: p[0]}), (y:A {id: p[1]}) MERGE (x)-[r:NEXT]->(y) SET r.w = p[0] * 10 RETURN count(r) AS c {'pairs': [[1, 2], [2, 3], [3, 4], [1, 2]]} 
+   expected: [{'c': 4}] 
+   got:      [{'c': 0}]
+FAIL: MATCH ()-[r:NEXT]->() RETURN count(r) AS c, sum(r.w) AS s  
+   expected: [{'c': 3, 's': 60}] 
+   got:      [{'c': 0, 's': 0}]
+FAIL: MATCH (x:A {id: 1})-[r:NEXT]->(y) RETURN y.id AS y, r.w AS w  
+   expected: [{'y': 2, 'w': 10}] 
+   got:      []
+FAIL: MATCH (x:A)-[:NEXT]->(y:A) RETURN x.id AS x, y.id AS y ORDER BY x  
+   expected: [{'x': 1, 'y': 2}, {'x': 2, 'y': 3}, {'x': 3, 'y': 4}] 
+   got:      []
+FAIL: MATCH (x:A {id: 1})-[:NEXT*]->(y:A) RETURN max(y.id) AS far, count(y) AS n  
+   expected: [{'far': 4, 'n': 3}] 
+   got:      [{'far': None, 'n': 0}]
+FAIL: MATCH (x:A)<-[:NEXT]-(y:A) WHERE x.id = 3 RETURN y.id AS y  
+   expected: [{'y': 2}] 
+   got:      []
+FAIL: MATCH (x:A)-[:NEXT]-(y:A) WHERE x.id = 2 RETURN y.id AS y ORDER BY y  
+   expected: [{'y': 1}, {'y': 3}] 
+   got:      []
+FAIL: MATCH (x:A) RETURN x.id AS id, size([(x)-[:NEXT]->(y) | y.id]) AS outdeg ORDER BY id LIMIT 3  
+   expected: [{'id': 1, 'outdeg': 1}, {'id': 2, 'outdeg': 1}, {'id': 3, 'outdeg': 1}] 
+   got:      [{'id': 1, 'outdeg': 0}, {'id': 2, 'outdeg': 0}, {'id': 3, 'outdeg': 0}]
+FAIL: MATCH (x:A) WHERE x.id <= 4 OPTIONAL MATCH (x)-[r:NEXT]->() RETURN x.id AS id, count(r) AS outdeg ORDER BY id  
+   expected: [{'id': 1, 'outdeg': 1}, {'id': 2, 'outdeg': 1}, {'id': 3, 'outdeg': 1}, {'id': 4, 'outdeg': 0}] 
+   got:      [{'id': 1, 'outdeg': 0}]
+FAIL: MATCH (x:A {id: 2})-[r:NEXT]->(y) DELETE r RETURN count(*) AS c  
+   expected: [{'c': 1}] 
+   got:      [{'c': 0}]
+FAIL: MATCH (x:A {id: 1})-[:NEXT*]->(y:A) RETURN collect(y.id) AS ys  
+   expected: [{'ys': [2]}] 
+   got:      [{'ys': []}]
+FAIL: MATCH (a:A) WHERE a.grp = 0 SET a.hits = coalesce(a.hits, 0) + 1 RETURN sum(a.hits) AS s  
+   expected: [{'s': 4}] 
+   got:      [{'s': 2}]
+FAIL: MATCH (a:A {id: 6}) SET a:Extra:Hot REMOVE a:Hot RETURN labels(a) AS l  
+   expected: LABELS 
+   got:      ERROR {code: Neo.ClientError.Statement.SyntaxError} {message: invalid label name: "Extra:Hot" (must be alphanumeric starting with letter or underscore)}
+FAIL: MATCH (a:A:Extra) RETURN count(a) AS c  
+   expected: [{'c': 1}] 
+   got:      [{'c': 0}]
+FAIL: MATCH (a:A {id: 1}) DELETE a  
+   expected: ERROR 
+   got:      []
+FAIL: MATCH (a:A {id: 1}) RETURN count(a) AS c  
+   expected: [{'c': 1}] 
+   got:      [{'c': 0}]
+[auto] 35 cases, 20 failed
+rollback: visible inside tx = 1 | after rollback = 0 (expected 1 and 0)
+isolation: other session sees uncommitted = 0 | after commit = 1 (expected 0 and 1)
