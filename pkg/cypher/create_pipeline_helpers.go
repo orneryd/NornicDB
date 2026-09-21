@@ -96,7 +96,7 @@ func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStm
 				return node, nil
 			}
 		}
-		if len(nodePattern.labels) == 0 && len(nodePattern.properties) == 0 {
+		if nodePattern.variable != "" && len(nodePattern.labels) == 0 && len(nodePattern.properties) == 0 {
 			return nil, localizedError(localization.CypherMergeVariableNotFound(content), nil)
 		}
 		node := &storage.Node{

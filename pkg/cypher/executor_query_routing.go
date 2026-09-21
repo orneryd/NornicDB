@@ -402,6 +402,9 @@ skipMatchCallRoute:
 	case findMultiWordKeywordIndex(cypher, "CREATE", "ALIAS") == 0:
 		return e.executeCreateAlias(ctx, cypher)
 	case startsWithCreate:
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
 		return e.executeCreate(ctx, cypher)
 	case hasDelete || hasDetachDelete:
 		return e.executeDelete(ctx, cypher)
@@ -490,34 +493,12 @@ skipMatchCallRoute:
 	}
 }
 
-func needsUnwindMutationPipeline(cypher string) bool {
-	setIdx := findKeywordIndex(cypher, "SET")
-	if setIdx < 0 {
-		return false
-	}
-	afterSet := cypher[setIdx+len("SET"):]
-	withIdx := findKeywordIndex(afterSet, "WITH")
-	if withIdx < 0 {
-		return false
-	}
-	afterWith := afterSet[withIdx+len("WITH"):]
-	matchIdx := findKeywordIndex(afterWith, "MATCH")
-	if matchIdx < 0 {
-		return false
-	}
-	return findKeywordIndex(afterWith[matchIdx+len("MATCH"):], "CREATE") >= 0
-}
-
 // executeTopLevelUnwind keeps autocommit and explicit-transaction routing in
-// sync. Compound and chained pipelines retain bindings across every clause;
-// a single UNWIND statement continues through its focused handler.
+// sync through the converged clause pipeline. Shapes outside the pipeline's
+// grammar continue through the residual handler.
 func (e *StorageExecutor) executeTopLevelUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if needsUnwindMutationPipeline(cypher) || unwindProjectionPrecedesMutation(cypher) ||
-		unwindNeedsRowPipeline(cypher) || hasMultipleUnwindClauses(cypher) ||
-		hasSubqueryPattern(cypher, existsSubqueryRe) {
-		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
-			return result, err
-		}
+	if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+		return result, err
 	}
 	return e.executeUnwind(ctx, cypher)
 }

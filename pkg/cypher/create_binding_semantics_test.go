@@ -108,6 +108,60 @@ func TestCreatePipelinePreservesAnonymousRowCardinalityAcrossWildcardProjection(
 	require.Equal(t, int64(6), count.Rows[0][0])
 }
 
+func TestCreateReturnModifiersDoNotDiscardSideEffects(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+
+	limited, err := exec.Execute(context.Background(), "CREATE (node:Item {num: 1}) RETURN node LIMIT 0", nil)
+	require.NoError(t, err)
+	require.Empty(t, limited.Rows)
+
+	skipped, err := exec.Execute(context.Background(), "CREATE (node:Item {num: 2}) RETURN node SKIP 1", nil)
+	require.NoError(t, err)
+	require.Empty(t, skipped.Rows)
+
+	count, err := exec.Execute(context.Background(), "MATCH (node:Item) RETURN count(node)", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count.Rows[0][0])
+}
+
+func TestUnwindCreateAppliesProjectionHorizonsAfterEveryMutation(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+
+	window, err := exec.Execute(context.Background(), "UNWIND [1, 2, 3, 4, 5] AS value CREATE (node:Item {num: value}) RETURN node.num AS num SKIP 2 LIMIT 2", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(3)}, {int64(4)}}, window.Rows)
+
+	filtered, err := exec.Execute(context.Background(), "UNWIND [1, 2, 3, 4, 5] AS value CREATE (node:Filtered {num: value}) WITH node WHERE node.num % 2 = 0 RETURN node.num AS num", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"num"}, filtered.Columns)
+	require.Equal(t, [][]interface{}{{int64(2)}, {int64(4)}}, filtered.Rows)
+}
+
+func TestUnwindCreateAggregatesMutatedRows(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+
+	direct, err := exec.Execute(context.Background(), "UNWIND [1, 2, 3, 4, 5] AS value CREATE (node:Direct {num: value}) RETURN sum(node.num) AS total", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"total"}, direct.Columns)
+	require.Equal(t, int64(15), direct.Rows[0][0])
+
+	throughWith, err := exec.Execute(context.Background(), "UNWIND [1, 2, 3, 4, 5] AS value CREATE (node:Projected {num: value}) WITH sum(node.num) AS total RETURN total", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"total"}, throughWith.Columns)
+	require.Equal(t, int64(15), throughWith.Rows[0][0])
+}
+
+func TestUnwindCreateAnonymousRelationshipsPreservesBindings(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+
+	result, err := exec.Execute(context.Background(), "UNWIND [1, 2, 3] AS value CREATE ()-[relationship:LINK {num: value}]->() RETURN sum(relationship.num) AS total", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"total"}, result.Columns)
+	require.Equal(t, int64(6), result.Rows[0][0])
+	require.Equal(t, 6, result.Stats.NodesCreated)
+	require.Equal(t, 3, result.Stats.RelationshipsCreated)
+}
+
 func requireSemanticDetail(t *testing.T, err error, detail string) {
 	t.Helper()
 	require.Error(t, err)

@@ -149,7 +149,9 @@ func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*Exec
 
 		trimmedExpr := strings.TrimSpace(expr)
 		var val interface{}
-		if strings.HasPrefix(trimmedExpr, "{") && strings.HasSuffix(trimmedExpr, "}") {
+		if decoded, ok := decodeCypherQuotedString(trimmedExpr); ok {
+			val = decoded
+		} else if strings.HasPrefix(trimmedExpr, "{") && strings.HasSuffix(trimmedExpr, "}") {
 			val = e.evaluateMapLiteral(ctx, trimmedExpr, make(map[string]*storage.Node), make(map[string]*storage.Edge))
 		} else {
 			val = e.evaluateExpressionWithContext(ctx, trimmedExpr, make(map[string]*storage.Node), make(map[string]*storage.Edge))
@@ -554,107 +556,15 @@ func (e *StorageExecutor) splitWithItems(expr string) []string {
 
 // executeUnwind handles UNWIND clause - list expansion
 func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
-
-	// Check for unsupported map keys() function
-	if strings.Contains(upper, "KEYS(") && strings.Contains(upper, "UNWIND") {
-		return nil, localizedError(localization.CypherMutationsUnwindKeysUnsupported(), nil)
+	prepared, err := e.prepareTopLevelUnwind(ctx, cypher)
+	if err != nil {
+		return nil, err
 	}
-
-	unwindIdx := findKeywordIndex(cypher, "UNWIND")
-	if unwindIdx == -1 {
-		return nil, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
-	}
-
-	afterUnwind := cypher[unwindIdx+6:]
-	asRelIdx := findKeywordNotInBrackets(afterUnwind, " AS ")
-	if asRelIdx == -1 {
-		return nil, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
-	}
-
-	asIdx := unwindIdx + 6 + asRelIdx
-	listExpr := strings.TrimSpace(cypher[unwindIdx+6 : asIdx])
-
-	remainderStart := asIdx + len("AS")
-	for remainderStart < len(cypher) && isASCIISpace(cypher[remainderStart]) {
-		remainderStart++
-	}
-	remainder := strings.TrimSpace(cypher[remainderStart:])
-	spaceIdx := strings.IndexAny(remainder, " \t\r\n")
-	var variable string
-	var restQuery string
-	if spaceIdx > 0 {
-		variable = strings.TrimSpace(remainder[:spaceIdx])
-		restQuery = strings.TrimSpace(remainder[spaceIdx:])
-	} else {
-		variable = strings.TrimSpace(remainder)
-		restQuery = ""
-	}
-
+	variable := prepared.variable
+	restQuery := prepared.remainder
+	unwindParamName := prepared.parameterName
+	items := prepared.items
 	params := getParamsFromContext(ctx)
-	unwindParamName := ""
-	var list interface{}
-	if strings.HasPrefix(strings.TrimSpace(listExpr), "$") {
-		paramName := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(listExpr), "$"))
-		if paramName == "" {
-			return nil, localizedError(localization.CypherMutationsUnwindParameterNameRequired(), nil)
-		}
-		unwindParamName = paramName
-		if params == nil {
-			return nil, localizedError(localization.CypherMutationsUnwindParametersRequired(paramName), nil)
-		}
-		paramValue, exists := params[paramName]
-		if !exists {
-			return nil, localizedError(localization.CypherMutationsUnwindParameterNotFound(paramName), nil)
-		}
-		list = paramValue
-	} else {
-		listExprEval := listExpr
-		if params != nil {
-			listExprEval = e.substituteParams(listExprEval, params)
-		}
-		list = e.evaluateExpressionWithContext(ctx, listExprEval, make(map[string]*storage.Node), make(map[string]*storage.Edge))
-	}
-
-	var items []interface{}
-	switch v := list.(type) {
-	case nil:
-		// UNWIND null produces no rows (Neo4j compatible)
-		items = []interface{}{}
-	case []interface{}:
-		items = v
-	case []string:
-		items = make([]interface{}, len(v))
-		for i, s := range v {
-			items[i] = s
-		}
-	case []int64:
-		items = make([]interface{}, len(v))
-		for i, n := range v {
-			items[i] = n
-		}
-	case []float64:
-		items = make([]interface{}, len(v))
-		for i, n := range v {
-			items[i] = n
-		}
-	case []map[string]interface{}:
-		items = make([]interface{}, len(v))
-		for i := range v {
-			items[i] = v[i]
-		}
-	default:
-		rv := reflect.ValueOf(list)
-		if rv.IsValid() && (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
-			items = make([]interface{}, rv.Len())
-			for i := 0; i < rv.Len(); i++ {
-				items[i] = rv.Index(i).Interface()
-			}
-		} else {
-			// Single value gets wrapped in a list
-			items = []interface{}{list}
-		}
-	}
 
 	// Handle UNWIND ... CREATE/MERGE/MATCH ... mutation patterns.
 	if restQuery != "" {
@@ -3066,7 +2976,15 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 		return query
 	}
 	patterns := strings.TrimSpace(body[:whereIdx])
-	whereClause := strings.TrimSpace(body[whereIdx+len("WHERE"):])
+	whereAndMutations := strings.TrimSpace(body[whereIdx+len("WHERE"):])
+	whereClause := whereAndMutations
+	for _, keyword := range []string{"CREATE", "MERGE", "SET", "DELETE", "REMOVE"} {
+		if index := findKeywordIndexInContext(whereAndMutations, keyword); index >= 0 {
+			whereClause = strings.TrimSpace(whereAndMutations[:index])
+			tail = strings.TrimSpace(whereAndMutations[index:]) + " " + tail
+			break
+		}
+	}
 	if patterns == "" || whereClause == "" {
 		return query
 	}
@@ -3108,6 +3026,10 @@ func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
 	}
 	// Rewrites should preserve semantics. We only apply when unwind items are
 	// distinct comparable values so IN-list matching does not collapse duplicates.
+	return unwindItemsAreDistinctComparable(items)
+}
+
+func unwindItemsAreDistinctComparable(items []interface{}) bool {
 	seen := map[interface{}]struct{}{}
 	for _, it := range items {
 		if it == nil {

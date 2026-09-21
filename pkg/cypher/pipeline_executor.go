@@ -103,7 +103,10 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	upper := strings.ToUpper(cypher)
 	stringPredicateMutation := strings.Contains(upper, " CREATE ") &&
 		(strings.Contains(upper, " STARTS WITH ") || strings.Contains(upper, " ENDS WITH "))
-	if !hasWithOrUnwind && !hasRemove && !stringPredicateMutation {
+	startsWithCreateProjection := clauses[0].kind == pipelineClauseCreate &&
+		clauses[len(clauses)-1].kind == pipelineClauseReturn &&
+		firstTopLevelModifierIndex(strings.TrimSpace(clauses[len(clauses)-1].text[len("RETURN"):])) >= 0
+	if !hasWithOrUnwind && !hasRemove && !stringPredicateMutation && !startsWithCreateProjection {
 		return nil, false
 	}
 	return clauses, true
@@ -327,6 +330,15 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 	if !ok {
 		return nil, false, nil
 	}
+	if clauses[0].kind == pipelineClauseUnwind {
+		plan, err := e.prepareTopLevelUnwind(ctx, cypher)
+		if err != nil {
+			return nil, true, err
+		}
+		if result, handled, err := e.executeUnwindBatchOperator(ctx, plan); handled || err != nil {
+			return result, true, err
+		}
+	}
 
 	// Substitute $param placeholders up-front — this is the same pass the
 	// other top-level handlers perform. After this step the clause texts are
@@ -542,6 +554,10 @@ func (e *StorageExecutor) materializePipelineSetExpressions(body string, row pip
 			if value, ok := e.evaluateRowExpression(right, row); ok {
 				right = e.valueToLiteral(value)
 			}
+		} else if _, directBinding := row[right]; !directBinding {
+			if value, ok := e.evaluateRowExpression(right, row); ok {
+				right = e.valueToLiteral(value)
+			}
 		}
 		resolved = append(resolved, left+" "+operator+" "+right)
 	}
@@ -717,6 +733,7 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 		if len(matchPieces) > 0 {
 			queryToRun = strings.Join(matchPieces, " ") + " " + substituted
 		}
+		queryToRun = normalizeMultiMatchWhereClauses(queryToRun)
 
 		result, err := e.executeMatch(ctx, queryToRun+" RETURN "+strings.Join(returnVars, ", "))
 		if err != nil {
@@ -904,7 +921,7 @@ func (e *StorageExecutor) pipelineApplyCreate(ctx context.Context, rows []pipeli
 			queryToRun = "MATCH " + queryToRun + " " + substituted
 		}
 
-		subResult, refsNodes, _, err := e.executeCreateWithRefsOrCompound(ctx, queryToRun)
+		subResult, refsNodes, refsEdges, err := e.executeCreateWithRefsOrCompound(ctx, queryToRun)
 		if err != nil {
 			return nil, nil, true, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
 		}
@@ -916,12 +933,15 @@ func (e *StorageExecutor) pipelineApplyCreate(ctx context.Context, rows []pipeli
 		// Merge newly-created node bindings into the row so subsequent
 		// pipeline steps can reference them (e.g. CREATE (c)-[:REL]->(o)
 		// where `o` was created by an earlier CREATE in the same pipeline).
-		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(refsNodes)))
+		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(refsNodes), len(refsEdges)))
 		for k, v := range row {
 			newRow[k] = v
 		}
 		for k, n := range refsNodes {
 			newRow[k] = n
+		}
+		for k, relationship := range refsEdges {
+			newRow[k] = relationship
 		}
 		out = append(out, newRow)
 	}
@@ -1087,10 +1107,9 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		expr          string
 		alias         string
 		aggregate     bool
-		collect       bool
-		distinct      bool
+		aggregateName string
 		aggregateExpr string
-		collectExpr   string
+		distinct      bool
 	}
 	projections := make([]withProjection, 0, len(items))
 	projectionAliases := make([]string, 0, len(items))
@@ -1105,33 +1124,14 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			return nil, false
 		}
 		projection := withProjection{expr: expr, alias: alias}
-		upperExpr := strings.ToUpper(expr)
-		if strings.HasPrefix(upperExpr, "COUNT(") && strings.HasSuffix(expr, ")") {
+		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregate(expr); aggregate {
 			if !strings.Contains(strings.ToUpper(item), " AS ") {
 				return nil, false
 			}
 			projection.aggregate = true
-			projection.aggregateExpr = strings.TrimSpace(extractFuncInner(expr))
-			if strings.HasPrefix(strings.ToUpper(projection.aggregateExpr), "DISTINCT ") {
-				projection.distinct = true
-				projection.aggregateExpr = strings.TrimSpace(projection.aggregateExpr[len("DISTINCT "):])
-			}
-			hasAggregate = true
-		}
-		if strings.HasPrefix(upperExpr, "COLLECT(") && strings.HasSuffix(expr, ")") {
-			if !strings.Contains(strings.ToUpper(item), " AS ") {
-				return nil, false
-			}
-			projection.aggregate = true
-			projection.collect = true
-			projection.collectExpr = strings.TrimSpace(expr[len("collect(") : len(expr)-1])
-			if strings.HasPrefix(strings.ToUpper(projection.collectExpr), "DISTINCT ") {
-				projection.distinct = true
-				projection.collectExpr = strings.TrimSpace(projection.collectExpr[len("distinct "):])
-			}
-			if projection.collectExpr == "" {
-				return nil, false
-			}
+			projection.aggregateName = aggregateName
+			projection.aggregateExpr = aggregateExpr
+			projection.distinct = distinct
 			hasAggregate = true
 		}
 		projections = append(projections, projection)
@@ -1165,6 +1165,16 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			}
 			group.rows = append(group.rows, row)
 		}
+		if len(rows) == 0 {
+			allAggregates := len(projections) > 0
+			for _, projection := range projections {
+				allAggregates = allAggregates && projection.aggregate
+			}
+			if allAggregates {
+				groups[""] = &aggregateGroup{}
+				groupOrder = append(groupOrder, "")
+			}
+		}
 
 		out := make([]pipelineRow, 0, len(groupOrder))
 		for _, key := range groupOrder {
@@ -1179,47 +1189,11 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 					newRow[projection.alias] = value
 					continue
 				}
-				if !projection.collect {
-					if projection.aggregateExpr == "*" {
-						newRow[projection.alias] = int64(len(group.rows))
-						continue
-					}
-					var count int64
-					seen := make(map[string]struct{})
-					for _, row := range group.rows {
-						value, ok := e.evaluateRowExpression(projection.aggregateExpr, row)
-						if !ok || value == nil {
-							continue
-						}
-						if projection.distinct {
-							valueKey := pipelineValueKey(value)
-							if _, exists := seen[valueKey]; exists {
-								continue
-							}
-							seen[valueKey] = struct{}{}
-						}
-						count++
-					}
-					newRow[projection.alias] = count
-					continue
+				value, ok := e.evaluatePipelineAggregate(group.rows, projection.aggregateName, projection.aggregateExpr, projection.distinct)
+				if !ok {
+					return nil, false
 				}
-				values := make([]interface{}, 0, len(group.rows))
-				seen := make(map[string]struct{})
-				for _, row := range group.rows {
-					value, ok := e.evaluateRowExpression(projection.collectExpr, row)
-					if !ok {
-						return nil, false
-					}
-					if projection.distinct {
-						valueKey := pipelineValueKey(value)
-						if _, exists := seen[valueKey]; exists {
-							continue
-						}
-						seen[valueKey] = struct{}{}
-					}
-					values = append(values, value)
-				}
-				newRow[projection.alias] = values
+				newRow[projection.alias] = value
 			}
 			out = append(out, newRow)
 		}
@@ -1383,6 +1357,98 @@ func (e *StorageExecutor) pipelineApplyUnwind(ctx context.Context, rows []pipeli
 	return out, true
 }
 
+// parsePipelineAggregate recognizes the standard Cypher aggregate functions
+// and separates their input expression from an optional DISTINCT modifier.
+func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool) {
+	if !isAggregateFunc(expr) {
+		return "", "", false, false
+	}
+	open := strings.Index(expr, "(")
+	if open < 0 {
+		return "", "", false, false
+	}
+	name = strings.ToLower(strings.TrimSpace(expr[:open]))
+	inner = strings.TrimSpace(extractFuncInner(expr))
+	if strings.HasPrefix(strings.ToUpper(inner), "DISTINCT ") {
+		distinct = true
+		inner = strings.TrimSpace(inner[len("DISTINCT "):])
+	}
+	if inner == "" {
+		return "", "", false, false
+	}
+	return name, inner, distinct, true
+}
+
+// evaluatePipelineAggregate applies an aggregate to one logical group. Null
+// inputs are ignored by every standard aggregate, including collect().
+func (e *StorageExecutor) evaluatePipelineAggregate(rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
+	if name == "count" && expr == "*" {
+		return int64(len(rows)), true
+	}
+	values := make([]interface{}, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		value, ok := e.evaluateRowExpression(expr, row)
+		if !ok {
+			return nil, false
+		}
+		if value == nil {
+			continue
+		}
+		if distinct {
+			key := pipelineValueKey(value)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		values = append(values, value)
+	}
+
+	switch name {
+	case "count":
+		return int64(len(values)), true
+	case "collect":
+		return values, true
+	case "sum":
+		total := interface{}(int64(0))
+		for _, value := range values {
+			total = e.add(total, value)
+			if total == nil {
+				return nil, false
+			}
+		}
+		return total, true
+	case "avg":
+		if len(values) == 0 {
+			return nil, true
+		}
+		var total float64
+		for _, value := range values {
+			numeric, ok := toFloat64(value)
+			if !ok {
+				return nil, false
+			}
+			total += numeric
+		}
+		return total / float64(len(values)), true
+	case "min", "max":
+		if len(values) == 0 {
+			return nil, true
+		}
+		selected := values[0]
+		for _, value := range values[1:] {
+			less := compareForSort(value, selected)
+			if (name == "min" && less) || (name == "max" && compareForSort(selected, value)) {
+				selected = value
+			}
+		}
+		return selected, true
+	default:
+		return nil, false
+	}
+}
+
 // pipelineApplyReturn projects each binding row through the RETURN list.
 // Supports:
 //   - `count(*)` / `count(var)` (aggregate — collapses all rows to one)
@@ -1415,6 +1481,7 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 		expr          string
 		alias         string
 		isAggr        bool
+		aggregateName string
 		aggregateExpr string
 		distinct      bool
 	}
@@ -1433,18 +1500,13 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 			expr = strings.TrimSpace(item[:asIdx])
 			alias = normalizeProjectionColumnName(item[asIdx+4:])
 		}
-		exprUpper := strings.ToUpper(expr)
-		isAggr := strings.HasPrefix(exprUpper, "COUNT(") && strings.HasSuffix(expr, ")")
+		aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
 		if isAggr {
 			hasAggregate = true
 		}
-		projection := proj{expr: expr, alias: alias, isAggr: isAggr}
+		projection := proj{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct}
 		if isAggr {
-			projection.aggregateExpr = strings.TrimSpace(extractFuncInner(expr))
-			if strings.HasPrefix(strings.ToUpper(projection.aggregateExpr), "DISTINCT ") {
-				projection.distinct = true
-				projection.aggregateExpr = strings.TrimSpace(projection.aggregateExpr[len("DISTINCT "):])
-			}
+			projection.aggregateExpr = aggregateExpr
 		}
 		projs = append(projs, projection)
 	}
@@ -1505,27 +1567,11 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 					outRow = append(outRow, value)
 					continue
 				}
-				if projection.aggregateExpr == "*" {
-					outRow = append(outRow, int64(len(group.rows)))
-					continue
+				value, ok := e.evaluatePipelineAggregate(group.rows, projection.aggregateName, projection.aggregateExpr, projection.distinct)
+				if !ok {
+					return nil, false
 				}
-				var count int64
-				seen := make(map[string]struct{})
-				for _, inputRow := range group.rows {
-					value, ok := e.evaluateRowExpression(projection.aggregateExpr, inputRow)
-					if !ok || value == nil {
-						continue
-					}
-					if projection.distinct {
-						valueKey := pipelineValueKey(value)
-						if _, exists := seen[valueKey]; exists {
-							continue
-						}
-						seen[valueKey] = struct{}{}
-					}
-					count++
-				}
-				outRow = append(outRow, count)
+				outRow = append(outRow, value)
 			}
 			result.Rows = append(result.Rows, outRow)
 		}
@@ -1833,7 +1879,7 @@ func parseLiteralScalarForPipeline(s string) (interface{}, bool) {
 	// Quoted string.
 	if (strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) ||
 		(strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) {
-		return s[1 : len(s)-1], true
+		return decodeCypherQuotedString(s)
 	}
 	// Bool.
 	switch strings.ToLower(s) {

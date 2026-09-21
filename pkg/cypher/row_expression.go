@@ -141,6 +141,24 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		return e.add(leftValue, rightValue), true
 	}
 
+	for _, arithmetic := range []struct {
+		operator string
+		apply    func(interface{}, interface{}) interface{}
+	}{
+		{operator: "%", apply: e.modulo},
+		{operator: "*", apply: e.multiply},
+		{operator: "/", apply: e.divide},
+	} {
+		if left, right, ok := splitByOperatorWithOptions(expr, arithmetic.operator, false, true); ok {
+			leftValue, leftOK := e.evaluateRowExpression(left, values)
+			rightValue, rightOK := e.evaluateRowExpression(right, values)
+			if !leftOK || !rightOK {
+				return nil, false
+			}
+			return arithmetic.apply(leftValue, rightValue), true
+		}
+	}
+
 	if dot := strings.Index(expr, "."); dot > 0 {
 		baseName := strings.TrimSpace(expr[:dot])
 		property := strings.TrimSpace(expr[dot+1:])
