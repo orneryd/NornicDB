@@ -94,6 +94,20 @@ func TestChainedMatchReturnAllExpandsBoundVariables(t *testing.T) {
 	require.Len(t, result.Rows[0], len(result.Columns))
 }
 
+func TestCreatePipelinePreservesAnonymousRowCardinalityAcrossWildcardProjection(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	_, err := exec.Execute(context.Background(), "CREATE (), ()", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(context.Background(), "MATCH () CREATE () WITH * CREATE ()", nil)
+	require.NoError(t, err)
+	require.Equal(t, 4, result.Stats.NodesCreated)
+
+	count, err := exec.Execute(context.Background(), "MATCH (node) RETURN count(node)", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(6), count.Rows[0][0])
+}
+
 func requireSemanticDetail(t *testing.T, err error, detail string) {
 	t.Helper()
 	require.Error(t, err)

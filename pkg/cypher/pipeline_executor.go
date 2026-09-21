@@ -127,6 +127,13 @@ func pipelineMergeShapeSupported(clauses []pipelineClause) bool {
 	if len(mergeIndexes) == 0 {
 		return true
 	}
+	if clauses[0].kind == pipelineClauseCreate {
+		for _, clause := range clauses {
+			if clause.kind == pipelineClauseWith {
+				return true
+			}
+		}
+	}
 	if len(mergeIndexes) != 1 || hasSet || len(clauses) < 3 || len(clauses) > 4 {
 		return false
 	}
@@ -693,7 +700,17 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 			}
 		}
 		if len(returnVars) == 0 {
-			continue
+			trimmedPattern := strings.TrimSpace(patternPart)
+			if strings.Contains(trimmedPattern, "-[") || strings.Contains(trimmedPattern, "]-") || !strings.HasPrefix(trimmedPattern, "(") {
+				return nil, false, nil
+			}
+			const anonymousBinding = "__nornic_pipeline_anonymous"
+			open := strings.Index(substituted, "(")
+			if open < 0 {
+				return nil, false, nil
+			}
+			substituted = substituted[:open+1] + anonymousBinding + substituted[open+1:]
+			returnVars = []string{anonymousBinding}
 		}
 
 		queryToRun := substituted
@@ -713,6 +730,9 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 				newRow[k] = v
 			}
 			for i, col := range result.Columns {
+				if col == "__nornic_pipeline_anonymous" {
+					continue
+				}
 				if i >= len(resultRow) {
 					continue
 				}
@@ -914,6 +934,7 @@ func (e *StorageExecutor) pipelineApplyCreate(ctx context.Context, rows []pipeli
 // mutation semantics after UNWIND/WITH without duplicating MERGE behavior.
 func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, error) {
 	stats := &QueryStats{}
+	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
 		substituted := e.materializePipelinePropertyExpressions(clause, row)
 		nodeContext := make(map[string]*storage.Node)
@@ -937,8 +958,19 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			stats.RelationshipsCreated += merged.Stats.RelationshipsCreated
 			stats.PropertiesSet += merged.Stats.PropertiesSet
 		}
+		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeContext), len(relContext)))
+		for name, value := range row {
+			newRow[name] = value
+		}
+		for name, node := range nodeContext {
+			newRow[name] = node
+		}
+		for name, relationship := range relContext {
+			newRow[name] = relationship
+		}
+		out = append(out, newRow)
 	}
-	return rows, stats, nil
+	return out, stats, nil
 }
 
 // materializePipelinePropertyExpressions evaluates property-map values using
@@ -1034,6 +1066,17 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
 		withDistinct = true
 		body = strings.TrimSpace(body[len("DISTINCT "):])
+	}
+	if strings.TrimSpace(body) == "*" {
+		out := make([]pipelineRow, 0, len(rows))
+		for _, row := range rows {
+			projected := make(pipelineRow, len(row))
+			for name, value := range row {
+				projected[name] = value
+			}
+			out = append(out, projected)
+		}
+		return e.filterPipelineRows(ctx, out, postWithWhere), true
 	}
 	items := splitTopLevelComma(body)
 	if len(items) == 0 {

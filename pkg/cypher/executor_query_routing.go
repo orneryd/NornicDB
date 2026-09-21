@@ -260,6 +260,7 @@ skipMatchCallRoute:
 		if clauses, ok := splitPipelineClauses(cypher); ok {
 			createCount := 0
 			hasMutationBetweenCreates := false
+			hasRowPipelineClause := false
 			for _, clause := range clauses {
 				if clause.kind == pipelineClauseCreate {
 					createCount++
@@ -267,8 +268,11 @@ skipMatchCallRoute:
 				if clause.kind == pipelineClauseSet || clause.kind == pipelineClauseRemove || clause.kind == pipelineClauseMerge {
 					hasMutationBetweenCreates = true
 				}
+				if clause.kind == pipelineClauseWith || clause.kind == pipelineClauseUnwind || clause.kind == pipelineClauseMatch || clause.kind == pipelineClauseOptionalMatch {
+					hasRowPipelineClause = true
+				}
 			}
-			if createCount > 1 && !hasMutationBetweenCreates {
+			if createCount > 1 && !hasMutationBetweenCreates && !hasRowPipelineClause {
 				return e.executeMultipleCreates(ctx, cypher)
 			}
 		}

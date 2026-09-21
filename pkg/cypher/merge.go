@@ -259,7 +259,34 @@ func compositeLookupValues(idx *storage.CompositeIndex, props map[string]interfa
 }
 
 func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
-	if len(labels) == 0 || len(props) == 0 {
+	if len(props) == 0 {
+		var candidates []*storage.Node
+		var err error
+		if len(labels) > 0 {
+			candidates, err = store.GetNodesByLabel(labels[0])
+		} else {
+			candidates, err = store.AllNodes()
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range candidates {
+			if mergeNodeMatches(node, labels, props) {
+				return node, nil
+			}
+		}
+		return nil, nil
+	}
+	if len(labels) == 0 {
+		candidates, err := store.AllNodes()
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range candidates {
+			if mergeNodeMatches(node, labels, props) {
+				return node, nil
+			}
+		}
 		return nil, nil
 	}
 
@@ -573,12 +600,9 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 	}
 
 	// Try to find existing node
-	var existingNode *storage.Node
-	if len(labels) > 0 && len(matchProps) > 0 {
-		existingNode, err = e.findMergeNode(store, labels, matchProps)
-		if err != nil {
-			return nil, err
-		}
+	existingNode, err := e.findMergeNode(store, labels, matchProps)
+	if err != nil {
+		return nil, err
 	}
 
 	var node *storage.Node
@@ -1910,7 +1934,19 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 
 	// Try to find existing node
 	var existingNode *storage.Node
-	if len(labels) > 0 && len(matchProps) > 0 {
+	contextNames := make([]string, 0, len(nodeContext))
+	for name := range nodeContext {
+		contextNames = append(contextNames, name)
+	}
+	sort.Strings(contextNames)
+	for _, name := range contextNames {
+		candidate := nodeContext[name]
+		if candidate != nil && mergeNodeMatches(candidate, labels, matchProps) {
+			existingNode = candidate
+			break
+		}
+	}
+	if existingNode == nil {
 		existingNode, err = e.findMergeNode(store, labels, matchProps)
 		if err != nil {
 			return nil, err
