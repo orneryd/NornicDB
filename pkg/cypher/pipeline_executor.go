@@ -190,6 +190,12 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 					continue
 				}
 			}
+			if k.kind == pipelineClauseCreate {
+				preceding := strings.TrimSpace(strings.ToUpper(cypher[:p]))
+				if strings.HasSuffix(preceding, "ON") {
+					continue
+				}
+			}
 			// Skip "STARTS WITH" / "ENDS WITH".
 			if k.name == "WITH" {
 				preceding := strings.TrimRight(strings.ToUpper(cypher[:p]), " \t\n\r")

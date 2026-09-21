@@ -69,7 +69,7 @@ func TestMatchWhereSetUnwind_PermutationsAndStyles(t *testing.T) {
 			// Seed data: one node should match, one should not.
 			_, err := exec.Execute(ctx, `
 CREATE (n:Person {id: 'p1', name: 'Alice', group: 'A', score: 10, tags: ['x','y']})
-CREATE (n:Person {id: 'p2', name: 'Bob', group: 'B', score: 4, tags: ['z']})
+CREATE (other:Person {id: 'p2', name: 'Bob', group: 'B', score: 4, tags: ['z']})
 `, nil)
 			require.NoError(t, err)
 
@@ -269,7 +269,7 @@ func TestMatchWhereSetUnwind_SpecificFailedQueryRegression(t *testing.T) {
 
 	_, err := exec.Execute(ctx, `
 CREATE (n:Person {id: 'p1', name: 'Alice', group: 'A', score: 10, tags: ['x','y']})
-CREATE (n:Person {id: 'p2', name: 'Bob', group: 'B', score: 4, tags: ['z']})
+CREATE (other:Person {id: 'p2', name: 'Bob', group: 'B', score: 4, tags: ['z']})
 `, nil)
 	require.NoError(t, err)
 
@@ -325,7 +325,7 @@ func TestMatchWhereSetUnwind_MultilineWhereAllPermutations(t *testing.T) {
 
 			_, err := exec.Execute(ctx, `
 CREATE (n:Person {id: 'p1', name: 'Alice', group: 'A', score: 10, tags: ['x','y']})
-CREATE (n:Person {id: 'p2', name: 'Bob', group: 'B', score: 4, tags: ['z']})
+CREATE (other:Person {id: 'p2', name: 'Bob', group: 'B', score: 4, tags: ['z']})
 `, nil)
 			require.NoError(t, err)
 

@@ -139,6 +139,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 		pathVar, currentPattern := parseCreatePathAssignment(relPatternStr)
 		var pathNodes []*storage.Node
 		var pathEdges []*storage.Edge
+		var chainedSourceNode *storage.Node
 		for currentPattern != "" {
 			// Parse the relationship pattern: (varA)-[:TYPE {props}]->(varB)
 			sourceContent, relStr, targetContent, isReverse, remainder, err := e.parseCreateRelPatternWithVars(currentPattern)
@@ -152,7 +153,9 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 
 			// Determine source node - either lookup by variable or create inline
 			var sourceNode *storage.Node
-			if sourcePattern.variable != "" {
+			if chainedSourceNode != nil {
+				sourceNode = chainedSourceNode
+			} else if sourcePattern.variable != "" {
 				if node, exists := createdNodes[sourcePattern.variable]; exists {
 					sourceNode = node
 				}
@@ -266,6 +269,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 			// If there's more chain to process, continue with target as new source
 			if remainder != "" && (strings.HasPrefix(remainder, "-[") || strings.HasPrefix(remainder, "<-[")) {
 				// Build the next pattern: (targetContent) + remainder
+				chainedSourceNode = targetNode
 				currentPattern = "(" + targetContent + ")" + remainder
 			} else {
 				currentPattern = ""
@@ -479,6 +483,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 
 		// Process relationship chains - keep going until no remainder
 		currentPattern := relPatternStr
+		var chainedSourceNode *storage.Node
 		for currentPattern != "" {
 			// Parse the relationship pattern: (varA)-[:TYPE {props}]->(varB)
 			sourceContent, relStr, targetContent, isReverse, remainder, err := e.parseCreateRelPatternWithVars(currentPattern)
@@ -492,7 +497,9 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 
 			// Determine source node - either lookup by variable or create inline
 			var sourceNode *storage.Node
-			if sourcePattern.variable != "" {
+			if chainedSourceNode != nil {
+				sourceNode = chainedSourceNode
+			} else if sourcePattern.variable != "" {
 				if node, exists := createdNodes[sourcePattern.variable]; exists {
 					sourceNode = node
 				}
@@ -588,6 +595,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 
 			// If there's more chain to process, continue with target as new source
 			if remainder != "" && (strings.HasPrefix(remainder, "-[") || strings.HasPrefix(remainder, "<-[")) {
+				chainedSourceNode = targetNode
 				currentPattern = "(" + targetContent + ")" + remainder
 			} else {
 				currentPattern = ""

@@ -12,70 +12,17 @@ import (
 
 // splitMultipleCreates splits a query into CREATE, WITH, and RETURN segments.
 func (e *StorageExecutor) splitMultipleCreates(cypher string) []string {
-	var segments []string
-
-	// Find all keyword positions (CREATE, WITH, RETURN)
-	type keywordPos struct {
-		pos  int
-		kind string // "CREATE", "WITH", "RETURN"
+	clauses, ok := splitPipelineClauses(cypher)
+	if !ok {
+		return nil
 	}
-	var positions []keywordPos
-
-	searchPos := 0
-	for searchPos < len(cypher) {
-		// Find next CREATE, WITH, or RETURN
-		createIdx := findKeywordIndex(cypher[searchPos:], "CREATE")
-		withIdx := findKeywordIndex(cypher[searchPos:], "WITH")
-		returnIdx := findKeywordIndex(cypher[searchPos:], "RETURN")
-
-		// Find the earliest keyword
-		earliest := -1
-		var earliestKind string
-		if createIdx >= 0 && (earliest == -1 || createIdx < earliest) {
-			earliest = createIdx
-			earliestKind = "CREATE"
-		}
-		if withIdx >= 0 && (earliest == -1 || withIdx < earliest) {
-			earliest = withIdx
-			earliestKind = "WITH"
-		}
-		if returnIdx >= 0 && (earliest == -1 || returnIdx < earliest) {
-			earliest = returnIdx
-			earliestKind = "RETURN"
-		}
-
-		if earliest == -1 {
-			break
-		}
-
-		positions = append(positions, keywordPos{
-			pos:  searchPos + earliest,
-			kind: earliestKind,
-		})
-
-		// Move past this keyword
-		searchPos = searchPos + earliest
-		switch earliestKind {
-		case "CREATE":
-			searchPos += 6
-		case "WITH":
-			searchPos += 4
-		case "RETURN":
-			searchPos += 6
+	segments := make([]string, 0, len(clauses))
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseCreate, pipelineClauseWith, pipelineClauseReturn:
+			segments = append(segments, clause.text)
 		}
 	}
-
-	// Build segments - each segment goes from one keyword to the next
-	for i, pos := range positions {
-		var endPos int
-		if i+1 < len(positions) {
-			endPos = positions[i+1].pos
-		} else {
-			endPos = len(cypher)
-		}
-		segments = append(segments, strings.TrimSpace(cypher[pos.pos:endPos]))
-	}
-
 	return segments
 }
 
@@ -139,15 +86,8 @@ func (e *StorageExecutor) executeCreateNodeSegment(ctx context.Context, createSt
 
 // executeCreateRelSegment executes a CREATE relationship statement using variable references from context.
 func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStmt string, nodeContext map[string]*storage.Node, edgeContext map[string]*storage.Edge, result *ExecuteResult) error {
-	// Extract relationship pattern
-	pattern := strings.TrimSpace(createStmt[6:]) // Skip "CREATE"
+	currentPattern := strings.TrimSpace(createStmt[6:]) // Skip "CREATE"
 	store := e.getStorage(ctx)
-
-	// Parse relationship pattern: (varA)-[varR:Type {props}]->(varB)
-	sourceVar, relContent, targetVar, isReverse, _, err := e.parseCreateRelPatternWithVars(pattern)
-	if err != nil {
-		return localizedError(localization.CypherMergeRelationshipPatternParseFailed(err), err)
-	}
 
 	resolveNode := func(content string) (*storage.Node, error) {
 		nodePattern := e.parseNodePattern(ctx, "("+content+")")
@@ -180,83 +120,75 @@ func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStm
 		return node, nil
 	}
 
-	sourceNode, err := resolveNode(sourceVar)
-	if err != nil {
-		return localizedError(localization.CypherMergeSourceResolutionFailed(sourceVar, err), err)
-	}
-	targetNode, err := resolveNode(targetVar)
-	if err != nil {
-		return localizedError(localization.CypherMergeTargetResolutionFailed(targetVar, err), err)
-	}
-
-	// Validate node IDs are not empty
-	if sourceNode.ID == "" {
-		return localizedError(localization.CypherMergeSourceNodeIDEmpty(sourceVar), nil)
-	}
-	if targetNode.ID == "" {
-		return localizedError(localization.CypherMergeTargetNodeIDEmpty(targetVar), nil)
-	}
-
-	// Parse relationship type and properties from relContent
-	// relContent format: varR:Type {props} or just :Type {props}
-	relType := ""
-	relVar := ""
-	props := make(map[string]interface{})
-
-	// Extract type (after colon, before { or end)
-	colonIdx := strings.Index(relContent, ":")
-	if colonIdx >= 0 {
-		afterColon := strings.TrimSpace(relContent[colonIdx+1:])
-		// Check if there's a variable before colon
-		beforeColon := strings.TrimSpace(relContent[:colonIdx])
-		if beforeColon != "" {
-			relVar = beforeColon
+	var chainedSourceNode *storage.Node
+	for currentPattern != "" {
+		sourceVar, relContent, targetVar, isReverse, remainder, err := e.parseCreateRelPatternWithVars(currentPattern)
+		if err != nil {
+			return localizedError(localization.CypherMergeRelationshipPatternParseFailed(err), err)
 		}
-		// Extract type (everything before { or end)
-		braceIdx := strings.Index(afterColon, "{")
-		if braceIdx > 0 {
-			relType = strings.TrimSpace(afterColon[:braceIdx])
-			// Extract properties
-			propsStr := afterColon[braceIdx:]
-			props = e.parseProperties(ctx, propsStr)
-		} else {
-			relType = strings.TrimSpace(afterColon)
+
+		sourceNode := chainedSourceNode
+		if sourceNode == nil {
+			sourceNode, err = resolveNode(sourceVar)
+			if err != nil {
+				return localizedError(localization.CypherMergeSourceResolutionFailed(sourceVar, err), err)
+			}
 		}
-	}
+		targetNode, err := resolveNode(targetVar)
+		if err != nil {
+			return localizedError(localization.CypherMergeTargetResolutionFailed(targetVar, err), err)
+		}
+		if sourceNode.ID == "" {
+			return localizedError(localization.CypherMergeSourceNodeIDEmpty(sourceVar), nil)
+		}
+		if targetNode.ID == "" {
+			return localizedError(localization.CypherMergeTargetNodeIDEmpty(targetVar), nil)
+		}
 
-	if relType == "" {
-		return localizedError(localization.CypherMergeRelationshipTypeRequired(), nil)
-	}
+		relType := ""
+		relVar := ""
+		props := make(map[string]interface{})
+		if colonIdx := strings.Index(relContent, ":"); colonIdx >= 0 {
+			afterColon := strings.TrimSpace(relContent[colonIdx+1:])
+			relVar = strings.TrimSpace(relContent[:colonIdx])
+			if braceIdx := strings.Index(afterColon, "{"); braceIdx > 0 {
+				relType = strings.TrimSpace(afterColon[:braceIdx])
+				props = e.parseProperties(ctx, afterColon[braceIdx:])
+			} else {
+				relType = strings.TrimSpace(afterColon)
+			}
+		}
+		if relType == "" {
+			return localizedError(localization.CypherMergeRelationshipTypeRequired(), nil)
+		}
 
-	// Determine start and end nodes based on direction
-	var startNode, endNode *storage.Node
-	if isReverse {
-		startNode = targetNode
-		endNode = sourceNode
-	} else {
-		startNode = sourceNode
-		endNode = targetNode
-	}
+		startNode, endNode := sourceNode, targetNode
+		if isReverse {
+			startNode, endNode = targetNode, sourceNode
+		}
+		edge := &storage.Edge{
+			ID:         storage.EdgeID(e.generateID()),
+			Type:       relType,
+			StartNode:  startNode.ID,
+			EndNode:    endNode.ID,
+			Properties: props,
+		}
+		if err := store.CreateEdge(edge); err != nil {
+			return localizedError(localization.CypherMergeCreateEdgeFailed(err), err)
+		}
+		e.notifyEdgeMutated(string(edge.ID))
+		if relVar != "" {
+			edgeContext[relVar] = edge
+		}
+		result.Stats.RelationshipsCreated++
+		addOptimisticRelationshipID(result, edge.ID)
 
-	// Create the relationship
-	edge := &storage.Edge{
-		ID:         storage.EdgeID(e.generateID()),
-		Type:       relType,
-		StartNode:  startNode.ID,
-		EndNode:    endNode.ID,
-		Properties: props,
+		if remainder == "" {
+			break
+		}
+		chainedSourceNode = targetNode
+		currentPattern = "(" + targetVar + ")" + remainder
 	}
-
-	if err := store.CreateEdge(edge); err != nil {
-		return localizedError(localization.CypherMergeCreateEdgeFailed(err), err)
-	}
-
-	if relVar != "" {
-		edgeContext[relVar] = edge
-	}
-
-	result.Stats.RelationshipsCreated++
-	addOptimisticRelationshipID(result, edge.ID)
 	return nil
 }
 

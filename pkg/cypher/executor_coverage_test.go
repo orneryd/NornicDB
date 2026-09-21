@@ -1591,14 +1591,12 @@ func TestExecuteCreateRelationshipNoType(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// Relationship without explicit type (uses default RELATED_TO)
-	result, err := exec.Execute(ctx, "CREATE (a:A)-[r]->(b:B)", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 2, result.Stats.NodesCreated)
-	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
+	_, err := exec.Execute(ctx, "CREATE (a:A)-[r]->(b:B)", nil)
+	requireSemanticDetail(t, err, "NoSingleRelationshipType")
 
-	edges, _ := store.AllEdges()
-	assert.Equal(t, "RELATED_TO", edges[0].Type)
+	edges, edgeErr := store.AllEdges()
+	require.NoError(t, edgeErr)
+	assert.Empty(t, edges)
 }
 
 // ============================================================================

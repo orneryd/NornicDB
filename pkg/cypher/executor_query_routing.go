@@ -257,11 +257,18 @@ skipMatchCallRoute:
 		createIdx = findKeywordIndex(cypher, "CREATE")
 		optionalMatchIdx = findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH")
 	} else if startsWithCreate {
-		firstCreateEnd := findKeywordIndex(cypher[6:], ")")
-		if firstCreateEnd > 0 {
-			afterFirstCreate := cypher[6+firstCreateEnd+1:]
-			secondCreateIdx := findKeywordIndex(afterFirstCreate, "CREATE")
-			if secondCreateIdx >= 0 {
+		if clauses, ok := splitPipelineClauses(cypher); ok {
+			createCount := 0
+			hasMutationBetweenCreates := false
+			for _, clause := range clauses {
+				if clause.kind == pipelineClauseCreate {
+					createCount++
+				}
+				if clause.kind == pipelineClauseSet || clause.kind == pipelineClauseRemove || clause.kind == pipelineClauseMerge {
+					hasMutationBetweenCreates = true
+				}
+			}
+			if createCount > 1 && !hasMutationBetweenCreates {
 				return e.executeMultipleCreates(ctx, cypher)
 			}
 		}

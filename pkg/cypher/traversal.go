@@ -185,19 +185,18 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 		Stats:   &QueryStats{},
 	}
 
-	// Set up columns from return items
+	// Parse the pattern: (a:Label)-[r:TYPE]->(b:Label)
+	matches := e.parseTraversalPattern(ctx, pattern)
+	if matches == nil {
+		return result, localizedError(localization.CypherMatchingTraversalPatternInvalid(pattern), nil)
+	}
+	returnItems = expandTraversalWildcardReturnItems(returnItems, matches, pathVariable)
 	for _, item := range returnItems {
 		if item.alias != "" {
 			result.Columns = append(result.Columns, item.alias)
 		} else {
 			result.Columns = append(result.Columns, item.expr)
 		}
-	}
-
-	// Parse the pattern: (a:Label)-[r:TYPE]->(b:Label)
-	matches := e.parseTraversalPattern(ctx, pattern)
-	if matches == nil {
-		return result, localizedError(localization.CypherMatchingTraversalPatternInvalid(pattern), nil)
 	}
 
 	// Store the path variable for path functions (relationships(path), nodes(path), length(path))
@@ -508,6 +507,40 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 	e.appendTraversalRows(ctx, result, paths, matches, returnItems, earlyLimit)
 
 	return result, nil
+}
+
+func expandTraversalWildcardReturnItems(items []returnItem, match *TraversalMatch, pathVariable string) []returnItem {
+	if len(items) != 1 || strings.TrimSpace(items[0].expr) != "*" || match == nil {
+		return items
+	}
+	names := make(map[string]struct{})
+	bind := func(name string) {
+		if name = strings.TrimSpace(name); name != "" {
+			names[name] = struct{}{}
+		}
+	}
+	bind(pathVariable)
+	bind(match.StartNode.variable)
+	bind(match.EndNode.variable)
+	bind(match.Relationship.Variable)
+	for _, node := range match.IntermediateNodes {
+		bind(node.variable)
+	}
+	for _, segment := range match.Segments {
+		bind(segment.FromNode.variable)
+		bind(segment.ToNode.variable)
+		bind(segment.Relationship.Variable)
+	}
+	columns := make([]string, 0, len(names))
+	for name := range names {
+		columns = append(columns, name)
+	}
+	sort.Strings(columns)
+	expanded := make([]returnItem, len(columns))
+	for index, name := range columns {
+		expanded[index] = returnItem{expr: name}
+	}
+	return expanded
 }
 
 func (e *StorageExecutor) appendTraversalRows(ctx context.Context, result *ExecuteResult, paths []PathResult, matches *TraversalMatch, returnItems []returnItem, rowLimit int) {
