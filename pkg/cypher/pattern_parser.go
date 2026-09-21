@@ -165,8 +165,13 @@ func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) 
 		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		valueStr := strings.TrimSpace(pair[colonIdx+1:])
 
-		// Parse the value
-		props[key] = e.parsePropertyValue(ctx, valueStr)
+		// Cypher property containers cannot persist null. Supplying null in a
+		// CREATE/MERGE property map is equivalent to omitting that property.
+		value := e.parsePropertyValue(ctx, valueStr)
+		if value == nil {
+			continue
+		}
+		props[key] = value
 	}
 
 	return props
