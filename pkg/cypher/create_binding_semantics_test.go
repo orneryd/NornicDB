@@ -65,6 +65,15 @@ func TestSeparateCreateClausesShareBindings(t *testing.T) {
 	require.Equal(t, 1, result.Stats.RelationshipsCreated)
 }
 
+func TestCreateRelationshipBindsPreviouslyUnboundEndpoint(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+
+	result, err := exec.Execute(context.Background(), "CREATE (root) CREATE (root)-[:LINK]->(newcomer)", nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Stats.NodesCreated)
+	require.Equal(t, 1, result.Stats.RelationshipsCreated)
+}
+
 func TestCreateChainedPatternReusesIntermediateNodesAtAnyArity(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	const hops = 5

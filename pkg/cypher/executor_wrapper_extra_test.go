@@ -387,10 +387,14 @@ func TestExecuteCreateRelSegment_Branches(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to parse relationship pattern")
 	})
 
-	t.Run("missing variable in context", func(t *testing.T) {
-		err := exec.executeCreateRelSegment(ctx, "CREATE (a)-[:KNOWS]->(missing)", map[string]*storage.Node{"a": a}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "variable not found in context")
+	t.Run("unbound endpoint creates and binds node", func(t *testing.T) {
+		nodeCtx := map[string]*storage.Node{"a": a}
+		result := &ExecuteResult{Stats: &QueryStats{}}
+		err := exec.executeCreateRelSegment(ctx, "CREATE (a)-[:KNOWS]->(missing)", nodeCtx, map[string]*storage.Edge{}, result)
+		require.NoError(t, err)
+		require.Contains(t, nodeCtx, "missing")
+		require.Equal(t, 1, result.Stats.NodesCreated)
+		require.Equal(t, 1, result.Stats.RelationshipsCreated)
 	})
 
 	t.Run("empty source id", func(t *testing.T) {
