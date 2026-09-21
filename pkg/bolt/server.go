@@ -956,10 +956,34 @@ func (s *Server) ListenAndServe() error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
+	return s.Serve(listener)
+}
+
+// Serve accepts Bolt connections from an already-bound listener.
+//
+// Serve is useful when a caller must reserve an ephemeral port without a
+// close-and-rebind race, such as an integration test or an embedded deployment.
+// The listener is owned by the server after this call and is closed by Close.
+//
+// Example:
+//
+//	listener, err := net.Listen("tcp", "127.0.0.1:0")
+//	if err != nil {
+//		return err
+//	}
+//	server := bolt.New(bolt.DefaultConfig(), executor)
+//	go func() { _ = server.Serve(listener) }()
+func (s *Server) Serve(listener net.Listener) error {
+	if listener == nil {
+		return fmt.Errorf("bolt listener is nil")
+	}
+	if s.closed.Load() {
+		return fmt.Errorf("bolt server is closed")
+	}
 	s.listener = listener
 
-	announceHost := host
-	if host == "0.0.0.0" || host == "::" || host == "" {
+	announceHost := strings.TrimSpace(s.config.Host)
+	if announceHost == "0.0.0.0" || announceHost == "::" || announceHost == "" {
 		announceHost = "localhost"
 	}
 	actualPort := s.config.Port

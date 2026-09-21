@@ -191,3 +191,23 @@ func TestSetEvaluationFailureRollsBackEarlierAssignments(t *testing.T) {
 	require.Nil(t, readback.Rows[0][0])
 	require.ElementsMatch(t, []interface{}{"id"}, readback.Rows[0][1])
 }
+
+func TestCommaSeparatedCreateClausesPreserveVariableScope(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, `
+		CREATE (a:Fixture {name: 'a'}),
+		       (b:Fixture {name: 'b'}),
+		       (c:Fixture {name: 'c'})
+		CREATE (a)-[:NEXT]->(b),
+		       (b)-[:NEXT]->(c)
+	`, nil)
+	require.NoError(t, err)
+
+	nodes, err := exec.Execute(ctx, "MATCH (n:Fixture) RETURN count(n) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, nodes, int64(3))
+
+	relationships, err := exec.Execute(ctx, "MATCH ()-[r:NEXT]->() RETURN count(r) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, relationships, int64(2))
+}

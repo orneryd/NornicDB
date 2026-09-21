@@ -2987,17 +2987,25 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 
 		if strings.HasPrefix(upperSeg, "CREATE") {
 			createContent := strings.TrimSpace(segment[6:])
-
-			// Check if this is a relationship CREATE
-			if strings.Contains(createContent, "-[") || strings.Contains(createContent, "]-") {
-				// Relationship CREATE - need to resolve variable references
-				err := e.executeCreateRelSegment(ctx, segment, nodeContext, edgeContext, result)
-				if err != nil {
-					return nil, localizedError(localization.CypherMutationsRelationshipCreateFailed(err), err)
+			patterns := e.splitCreatePatterns(createContent)
+			var nodePatterns, relationshipPatterns []string
+			for _, pattern := range patterns {
+				pattern = strings.TrimSpace(pattern)
+				if pattern == "" {
+					continue
 				}
-			} else {
-				// Node CREATE
-				node, varName, err := e.executeCreateNodeSegment(ctx, segment)
+				if containsOutsideStrings(pattern, "->") || containsOutsideStrings(pattern, "<-") || containsOutsideStrings(pattern, "]-") {
+					relationshipPatterns = append(relationshipPatterns, pattern)
+				} else {
+					nodePatterns = append(nodePatterns, pattern)
+				}
+			}
+
+			// A CREATE clause has one scope. Bind every comma-separated node
+			// before resolving relationships so later patterns and later CREATE
+			// clauses can reference any variable introduced by the clause.
+			for _, pattern := range nodePatterns {
+				node, varName, err := e.executeCreateNodeSegment(ctx, "CREATE "+pattern)
 				if err != nil {
 					return nil, localizedError(localization.CypherMutationsNodeCreateFailed(err), err)
 				}
@@ -3005,6 +3013,11 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 					nodeContext[varName] = node
 					result.Stats.NodesCreated++
 					addOptimisticNodeID(result, node.ID)
+				}
+			}
+			for _, pattern := range relationshipPatterns {
+				if err := e.executeCreateRelSegment(ctx, "CREATE "+pattern, nodeContext, edgeContext, result); err != nil {
+					return nil, localizedError(localization.CypherMutationsRelationshipCreateFailed(err), err)
 				}
 			}
 		} else if strings.HasPrefix(upperSeg, "WITH") {

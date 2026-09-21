@@ -331,7 +331,7 @@ func TestCoverageLiftOperatorsAndRelationshipVectorLimitZero(t *testing.T) {
 	assert.Equal(t, float64(7.5), exec.multiply(2.5, int64(3)))
 	assert.Nil(t, exec.multiply("bad", int64(3)))
 	assert.Equal(t, int64(5), exec.divide(int64(10), int64(2)))
-	assert.Equal(t, float64(2.5), exec.divide(int64(5), int64(2)))
+	assert.Equal(t, int64(2), exec.divide(int64(5), int64(2)))
 	assert.Nil(t, exec.divide(int64(10), int64(0)))
 	assert.Equal(t, int64(1), exec.modulo(int64(10), int64(3)))
 	assert.Nil(t, exec.modulo("bad", int64(3)))

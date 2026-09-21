@@ -68,7 +68,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			return value[property]
 		case *storage.Node:
 			if value != nil {
-				return value.Properties[property]
+				propertyValue, _ := getNodePropertyValue(value, property)
+				return propertyValue
 			}
 			return nil
 		case *storage.Edge:
@@ -210,15 +211,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(expr string, nodes map[stri
 			if node == nil {
 				return nil, true
 			}
-			if propName == "has_embedding" {
-				if node.EmbedMeta != nil {
-					if val, ok := node.EmbedMeta["has_embedding"]; ok {
-						return val, true
-					}
-				}
-				return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0, true
-			}
-			if val, ok := node.Properties[propName]; ok {
+			if val, ok := getNodePropertyValue(node, propName); ok {
 				return val, true
 			}
 			return nil, true
