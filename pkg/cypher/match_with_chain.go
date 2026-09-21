@@ -201,7 +201,7 @@ func parseProjectionExprAlias(item string) (string, string) {
 		return trimmed, trimmed
 	}
 	expr := strings.TrimSpace(trimmed[:asIdx])
-	alias := strings.TrimSpace(trimmed[asIdx+4:])
+	alias := normalizeProjectionColumnName(trimmed[asIdx+4:])
 	return expr, alias
 }
 

@@ -311,7 +311,30 @@ func splitCallAndTail(cypher string) callSplit {
 		if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(normalized)), "CALL ") {
 			return callSplit{callOnly: strings.TrimSpace(cypher)}
 		}
-		// No YIELD clause; treat full query as call-only.
+		open := strings.Index(normalized, "(")
+		if open < 0 {
+			return callSplit{callOnly: strings.TrimSpace(cypher)}
+		}
+		close := findMatchingCallParen(normalized, open)
+		if close < 0 {
+			return callSplit{callOnly: strings.TrimSpace(cypher)}
+		}
+		searchStart := close + 1
+		boundary := len(normalized)
+		for _, keyword := range []string{"WITH", "MATCH", "OPTIONAL MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "DETACH DELETE", "REMOVE", "FOREACH", "LOAD CSV", "RETURN"} {
+			if index := findKeywordIndexInContext(normalized[searchStart:], keyword); index >= 0 {
+				index += searchStart
+				if index < boundary {
+					boundary = index
+				}
+			}
+		}
+		if boundary < len(normalized) {
+			return callSplit{
+				callOnly: strings.TrimSpace(normalized[:boundary]),
+				tail:     strings.TrimSpace(normalized[boundary:]),
+			}
+		}
 		return callSplit{callOnly: strings.TrimSpace(cypher)}
 	}
 
@@ -401,7 +424,7 @@ func expectedReturnColumnsFromTail(tail string) []string {
 		}
 		upperExpr := strings.ToUpper(expr)
 		if asIdx := strings.Index(upperExpr, " AS "); asIdx >= 0 {
-			alias := strings.TrimSpace(expr[asIdx+4:])
+			alias := normalizeProjectionColumnName(expr[asIdx+4:])
 			if alias != "" {
 				cols = append(cols, alias)
 				continue
@@ -3752,12 +3775,20 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 	ensureBuiltInProceduresRegistered()
 	procName := extractProcedureName(callCypher)
 	if proc, found := globalProcedureRegistry.Get(procName); found {
-		args, err := extractCallArguments(callCypher)
+		args, err := extractProcedureInvocationArguments(ctx, proc.Spec, callCypher)
 		if err != nil {
 			return nil, err
 		}
-		if err := validateProcedureArgCount(proc.Spec, args); err != nil {
-			return nil, err
+		if yield == nil && strings.TrimSpace(tailCypher) != "" && len(proc.Spec.Returns) > 0 {
+			for _, column := range proc.Spec.Returns {
+				if referencesVariable(tailCypher, column.Name) {
+					return nil, newSemanticError(
+						"Neo.ClientError.Statement.SyntaxError",
+						"UndefinedVariable",
+						fmt.Sprintf("procedure output %s must be introduced with YIELD", column.Name),
+					)
+				}
+			}
 		}
 		result, err := proc.Handler(ctx, e, callCypher, args)
 		if err != nil {
@@ -3993,7 +4024,11 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 	default:
 		// Extract procedure name for clearer error
 		procName := extractProcedureName(callCypher)
-		return nil, localizedError(localization.CypherCommandRoutingUnknownProcedure(procName), nil)
+		return nil, newSemanticError(
+			"Neo.ClientError.Procedure.ProcedureError",
+			"ProcedureNotFound",
+			fmt.Sprintf("unknown procedure %s", procName),
+		)
 	}
 
 	// Return error if procedure failed

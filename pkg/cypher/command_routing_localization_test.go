@@ -32,8 +32,11 @@ func TestCypherCommandRoutingErrorsHaveTypedIdentity(t *testing.T) {
 
 	t.Run("CALL", func(t *testing.T) {
 		_, err := exec.executeCall(context.Background(), "CALL missing.procedure()")
-		localizedErr := requireCypherCommandRoutingLocalizedError(t, err, localization.MessageCypherCommandRoutingUnknownProcedure, "unknown procedure: missing.procedure (try SHOW PROCEDURES for available procedures)")
-		require.Equal(t, "missing.procedure", localizedErr.Message.Data["Procedure"])
+		require.EqualError(t, err, "Neo.ClientError.Procedure.ProcedureError: unknown procedure missing.procedure")
+		var semanticErr *SemanticError
+		require.ErrorAs(t, err, &semanticErr)
+		require.Equal(t, "Neo.ClientError.Procedure.ProcedureError", semanticErr.Code)
+		require.Equal(t, "ProcedureNotFound", semanticErr.Detail)
 	})
 
 	t.Run("USE", func(t *testing.T) {
@@ -54,8 +57,11 @@ func TestCypherCommandRoutingErrorsHaveTypedIdentity(t *testing.T) {
 
 	t.Run("procedure minimum arguments", func(t *testing.T) {
 		err := validateProcedureArgCount(ProcedureSpec{Name: "db.test", MinArgs: 2, MaxArgs: 3}, []interface{}{1})
-		localizedErr := requireCypherCommandRoutingLocalizedError(t, err, localization.MessageCypherCommandRoutingProcedureMinArguments, "procedure db.test requires at least 2 arguments, got 1")
-		require.Equal(t, "db.test", localizedErr.Message.Data["Procedure"])
+		require.EqualError(t, err, "Neo.ClientError.Statement.SyntaxError: procedure db.test requires at least 2 arguments, got 1")
+		var semanticErr *SemanticError
+		require.ErrorAs(t, err, &semanticErr)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticErr.Code)
+		require.Equal(t, "InvalidNumberOfArguments", semanticErr.Detail)
 	})
 }
 

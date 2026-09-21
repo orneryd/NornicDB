@@ -2776,7 +2776,7 @@ func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
 		asIdx := strings.Index(upperPart, " AS ")
 		if asIdx > 0 {
 			item.expr = strings.TrimSpace(part[:asIdx])
-			item.alias = strings.TrimSpace(part[asIdx+4:])
+			item.alias = normalizeProjectionColumnName(part[asIdx+4:])
 		} else {
 			// Handle map projection without AS alias: n { .*, key: value } -> column name is "n"
 			// Neo4j infers the column name from the variable before the map projection
@@ -2797,6 +2797,14 @@ func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
 	}
 
 	return items
+}
+
+func normalizeProjectionColumnName(raw string) string {
+	name := strings.TrimSpace(raw)
+	if len(name) >= 2 && name[0] == '`' && name[len(name)-1] == '`' {
+		return strings.ReplaceAll(name[1:len(name)-1], "``", "`")
+	}
+	return name
 }
 
 func (e *StorageExecutor) generateID() string {

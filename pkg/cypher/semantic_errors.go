@@ -31,3 +31,7 @@ func invalidBooleanOperandError(value interface{}) error {
 		Message: fmt.Sprintf("boolean operator requires BOOLEAN or NULL operands, got %T", value),
 	}
 }
+
+func newSemanticError(code, detail, message string) error {
+	return &SemanticError{Code: code, Detail: detail, Message: message}
+}

@@ -179,10 +179,18 @@ func ClearUserProcedures() {
 
 func validateProcedureArgCount(spec ProcedureSpec, args []interface{}) error {
 	if spec.MinArgs > 0 && len(args) < spec.MinArgs {
-		return localizedError(localization.CypherCommandRoutingProcedureMinArguments(spec.Name, spec.MinArgs, len(args)), nil)
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidNumberOfArguments",
+			fmt.Sprintf("procedure %s requires at least %d arguments, got %d", spec.Name, spec.MinArgs, len(args)),
+		)
 	}
 	if spec.MaxArgs >= 0 && len(args) > spec.MaxArgs {
-		return localizedError(localization.CypherCommandRoutingProcedureMaxArguments(spec.Name, spec.MaxArgs, len(args)), nil)
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidNumberOfArguments",
+			fmt.Sprintf("procedure %s accepts at most %d arguments, got %d", spec.Name, spec.MaxArgs, len(args)),
+		)
 	}
 	return nil
 }

@@ -48,6 +48,24 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 
 	// Extract the CALL part and everything after
 	callPart := strings.TrimSpace(cypher[callIdx:])
+	callParts := splitCallAndTail(callPart)
+	ensureBuiltInProceduresRegistered()
+	if procedure, found := globalProcedureRegistry.Get(extractProcedureName(callParts.callOnly)); found {
+		if _, err := extractProcedureInvocationArguments(ctx, procedure.Spec, callParts.callOnly); err != nil {
+			return nil, err
+		}
+		if parseYieldClause(callParts.callOnly) == nil && len(procedure.Spec.Returns) > 0 {
+			for _, column := range procedure.Spec.Returns {
+				if referencesVariable(callParts.tail, column.Name) {
+					return nil, newSemanticError(
+						"Neo.ClientError.Statement.SyntaxError",
+						"UndefinedVariable",
+						fmt.Sprintf("procedure output %s must be introduced with YIELD", column.Name),
+					)
+				}
+			}
+		}
+	}
 
 	// Execute MATCH to get bound variables
 	// We'll execute a modified MATCH query that returns all bound variables
@@ -122,6 +140,8 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 					columns[i] = item.name
 				}
 			}
+		} else if strings.TrimSpace(callParts.tail) != "" {
+			columns = e.inferTopLevelReturnColumns(callParts.tail)
 		} else {
 			// Default columns for vector queries
 			if strings.Contains(strings.ToUpper(callPart), "QUERYNODES") {
@@ -148,12 +168,21 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 
 		// Evaluate variable references in the CALL statement
 		// Replace patterns like "n.embedding" with actual values
-		evaluatedCall := e.substituteBoundVariablesInCall(callPart, nodeContext, nil)
+		evaluatedCall := e.substituteBoundVariablesInCall(callParts.callOnly, nodeContext, nil)
 
 		// Execute the CALL with evaluated values
 		result, err := e.executeCall(ctx, evaluatedCall)
 		if err != nil {
 			return nil, localizedError(localization.CypherSubqueriesCallForNodeFailed(string(node.ID), err), err)
+		}
+		if result != nil && len(result.Columns) == 0 && strings.TrimSpace(callParts.tail) != "" {
+			result, err = e.executeCallTail(ctx, &ExecuteResult{
+				Columns: []string{nodePattern.variable},
+				Rows:    [][]interface{}{{node}},
+			}, callParts.tail)
+			if err != nil {
+				return nil, localizedError(localization.CypherSubqueriesCallForNodeFailed(string(node.ID), err), err)
+			}
 		}
 		if result != nil {
 			allResults = append(allResults, result)

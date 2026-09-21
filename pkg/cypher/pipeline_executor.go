@@ -1382,7 +1382,7 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 		alias := item
 		if asIdx > 0 {
 			expr = strings.TrimSpace(item[:asIdx])
-			alias = strings.TrimSpace(item[asIdx+4:])
+			alias = normalizeProjectionColumnName(item[asIdx+4:])
 		}
 		exprUpper := strings.ToUpper(expr)
 		isAggr := strings.HasPrefix(exprUpper, "COUNT(") && strings.HasSuffix(expr, ")")

@@ -294,6 +294,23 @@ func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*Exec
 
 		// Substitute bound variables into remainder before delegating
 		// e.g., WITH [[1,2],[3,4]] AS matrix UNWIND matrix ... -> UNWIND [[1,2],[3,4]] ...
+		if strings.HasPrefix(strings.ToUpper(remainder), "CALL ") {
+			if yield := parseYieldClause(remainder); yield != nil {
+				for _, item := range yield.items {
+					name := item.name
+					if item.alias != "" {
+						name = item.alias
+					}
+					if _, exists := boundVars[name]; exists {
+						return nil, newSemanticError(
+							"Neo.ClientError.Statement.SyntaxError",
+							"VariableAlreadyBound",
+							fmt.Sprintf("procedure output %s shadows an existing variable", name),
+						)
+					}
+				}
+			}
+		}
 		substitutedRemainder := remainder
 		for varName, varVal := range boundVars {
 			// Map-valued bindings: expand `m.<key>` into the property's

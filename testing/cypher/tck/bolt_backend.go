@@ -317,7 +317,7 @@ func classifyBoltError(err error) error {
 		errorType = parts[len(parts)-1]
 	}
 	phase := "runtime"
-	if strings.Contains(databaseErr.Code, ".Statement.") || errorType == "SyntaxError" {
+	if strings.Contains(databaseErr.Code, ".Statement.") || strings.Contains(databaseErr.Code, ".Procedure.") || errorType == "SyntaxError" {
 		phase = "compile time"
 	}
 	detail := "*"
