@@ -2232,6 +2232,28 @@ func TestMapBoltQueryError(t *testing.T) {
 	}
 }
 
+type classifiedBoltTestError struct {
+	code string
+	msg  string
+}
+
+func (e *classifiedBoltTestError) Error() string         { return e.msg }
+func (e *classifiedBoltTestError) BoltErrorCode() string { return e.code }
+
+func TestMapBoltQueryErrorUsesTypedClassification(t *testing.T) {
+	err := fmt.Errorf("delete failed: %w", &classifiedBoltTestError{
+		code: "Neo.ClientError.Schema.ConstraintValidationFailed",
+		msg:  "node still has relationships",
+	})
+	code, message := mapBoltQueryError(err)
+	if code != "Neo.ClientError.Schema.ConstraintValidationFailed" {
+		t.Fatalf("code = %q, want constraint validation classification", code)
+	}
+	if message != "delete failed: node still has relationships" {
+		t.Fatalf("message = %q, want wrapped diagnostic", message)
+	}
+}
+
 func TestMapBoltQueryErrorForQueryCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
 	err := nornicerrors.MarkMergeCommitTimeUniqueConflict(fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
 		Type:       storage.ConstraintUnique,

@@ -9,21 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ====================================================================================
-// BUG: non-DETACH DELETE of a connected node silently cascade-deletes its edges
-// ====================================================================================
-// Discovered: eshu #5147
-// Impact: `MATCH (n) DELETE n` on a node that still has relationships
-//         silently succeeded and cascade-deleted its edges instead of
-//         erroring, diverging from openCypher/Neo4j semantics.
-// Root Cause: executeDelete's generic path called store.DeleteNode with no
-//         adjacency check; the storage engines (e.g. BadgerEngine.DeleteNode)
-//         cascade-delete a node's edges unconditionally.
-// Behavior change: non-DETACH DELETE of a connected node now fails
-//         unconditionally (matching Neo4j). Callers relying on the old
-//         silent cascade must switch to DETACH DELETE.
-// ====================================================================================
-
 func setupDeleteGuardFixture(t *testing.T) (*StorageExecutor, storage.Engine) {
 	t.Helper()
 	base := storage.NewMemoryEngine()
@@ -59,6 +44,13 @@ func TestDeleteConnectedNodeWithoutDetach_Errors(t *testing.T) {
 	_, err := exec.Execute(ctx, `MATCH (n:Item {name: 'connected'}) DELETE n`, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "still has relationships")
+	var classified interface {
+		BoltErrorCode() string
+		BoltErrorDetail() string
+	}
+	require.ErrorAs(t, err, &classified)
+	require.Equal(t, "Neo.ClientError.Schema.ConstraintValidationFailed", classified.BoltErrorCode())
+	require.Equal(t, "DeleteConnectedNode", classified.BoltErrorDetail())
 
 	assert.Equal(t, int64(1), countItemsByName(t, exec, "connected"), "node must survive a rejected delete")
 	assert.Equal(t, int64(1), countItemsByName(t, exec, "peer"), "peer node must survive")

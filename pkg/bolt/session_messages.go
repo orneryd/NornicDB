@@ -85,7 +85,7 @@ func (s *Session) handleRun(data []byte) error {
 	//                            timeout, or successful return
 	//
 	// Rooting at connCtx — not spanCtx (which is rooted at
-	// context.Background) — closes the v1.1.2 #184 bug where a
+	// context.Background) — prevents cancellation from being discarded where a
 	// long-running Cypher pinned a CPU core for ~34 minutes after the
 	// client disconnected. Now: handleConnection's defer connCancel()
 	// propagates here, the Cypher executor sees ctx.Err() at the next
@@ -413,6 +413,12 @@ func mapBoltQueryError(err error) (code, message string) {
 	}
 	if errors.Is(err, resultstream.ErrExpiredQID) || errors.Is(err, resultstream.ErrGoneQID) || errors.Is(err, resultstream.ErrInvalidated) {
 		return "Neo.ClientError.Statement.EntityNotFound", err.Error()
+	}
+	var classified interface {
+		BoltErrorCode() string
+	}
+	if errors.As(err, &classified) && classified.BoltErrorCode() != "" {
+		return classified.BoltErrorCode(), err.Error()
 	}
 	msg := err.Error()
 	if strings.HasPrefix(msg, "Neo.") {

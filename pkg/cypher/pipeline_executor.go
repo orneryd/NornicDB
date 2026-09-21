@@ -44,6 +44,7 @@ const (
 	pipelineClauseOptionalMatch
 	pipelineClauseCreate
 	pipelineClauseMerge
+	pipelineClauseDelete
 	pipelineClauseSet
 	pipelineClauseRemove
 	pipelineClauseWith
@@ -92,12 +93,16 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	}
 	hasWithOrUnwind := false
 	hasRemove := false
+	hasDelete := false
 	for _, clause := range clauses {
 		if clause.kind == pipelineClauseWith || clause.kind == pipelineClauseUnwind {
 			hasWithOrUnwind = true
 		}
 		if clause.kind == pipelineClauseRemove {
 			hasRemove = true
+		}
+		if clause.kind == pipelineClauseDelete {
+			hasDelete = true
 		}
 	}
 	upper := strings.ToUpper(cypher)
@@ -106,7 +111,7 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	startsWithCreateProjection := clauses[0].kind == pipelineClauseCreate &&
 		clauses[len(clauses)-1].kind == pipelineClauseReturn &&
 		firstTopLevelModifierIndex(strings.TrimSpace(clauses[len(clauses)-1].text[len("RETURN"):])) >= 0
-	if !hasWithOrUnwind && !hasRemove && !stringPredicateMutation && !startsWithCreateProjection {
+	if !hasWithOrUnwind && !hasRemove && !hasDelete && !stringPredicateMutation && !startsWithCreateProjection {
 		return nil, false
 	}
 	return clauses, true
@@ -167,6 +172,8 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 		{"MATCH", pipelineClauseMatch},
 		{"CREATE", pipelineClauseCreate},
 		{"MERGE", pipelineClauseMerge},
+		{"DETACH DELETE", pipelineClauseDelete},
+		{"DELETE", pipelineClauseDelete},
 		{"SET", pipelineClauseSet},
 		{"REMOVE", pipelineClauseRemove},
 		{"WITH", pipelineClauseWith},
@@ -178,7 +185,7 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 	// is handled by the per-clause appliers below, which substitute params
 	// from context and respect node bindings supplied by the caller.
 	upper := strings.ToUpper(cypher)
-	for _, bad := range []string{"FOREACH", "CALL ", "DELETE"} {
+	for _, bad := range []string{"FOREACH", "CALL "} {
 		if findKeywordIndex(upper, strings.TrimRight(bad, " ")) >= 0 {
 			return nil, false
 		}
@@ -197,6 +204,12 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 			if k.kind == pipelineClauseSet {
 				preceding := strings.TrimSpace(strings.ToUpper(cypher[:p]))
 				if strings.HasSuffix(preceding, "ON CREATE") || strings.HasSuffix(preceding, "ON MATCH") {
+					continue
+				}
+			}
+			if k.name == "DELETE" {
+				preceding := strings.TrimSpace(strings.ToUpper(cypher[:p]))
+				if strings.HasSuffix(preceding, "DETACH") {
 					continue
 				}
 			}
@@ -361,6 +374,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 
 	// Start with a single empty binding row — the first MATCH populates it.
 	rows := []pipelineRow{{}}
+	scope := make(map[string]struct{})
 
 	for idx, clause := range clauses {
 		switch clause.kind {
@@ -373,12 +387,14 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, false, nil
 			}
 			rows = newRows
+			addPipelinePatternBindings(e, scope, clause.text, "MATCH")
 		case pipelineClauseOptionalMatch:
 			newRows, err := e.pipelineApplyOptionalMatch(ctx, rows, clause.text)
 			if err != nil {
 				return nil, true, err
 			}
 			rows = newRows
+			addPipelinePatternBindings(e, scope, clause.text, "OPTIONAL MATCH")
 		case pipelineClauseCreate:
 			newRows, stats, ok, err := e.pipelineApplyCreate(ctx, rows, clause.text)
 			if err != nil {
@@ -388,6 +404,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, false, nil
 			}
 			rows = newRows
+			addPipelinePatternBindings(e, scope, clause.text, "CREATE")
 			if stats != nil {
 				result.Stats.NodesCreated += stats.NodesCreated
 				result.Stats.RelationshipsCreated += stats.RelationshipsCreated
@@ -398,11 +415,22 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, true, err
 			}
 			rows = newRows
+			addPipelinePatternBindings(e, scope, clause.text, "MERGE")
 			if stats != nil {
 				result.Stats.NodesCreated += stats.NodesCreated
 				result.Stats.RelationshipsCreated += stats.RelationshipsCreated
 				result.Stats.PropertiesSet += stats.PropertiesSet
 			}
+		case pipelineClauseDelete:
+			stats, ok, err := e.pipelineApplyDelete(ctx, rows, scope, clause.text)
+			if err != nil {
+				return nil, true, err
+			}
+			if !ok {
+				return nil, false, nil
+			}
+			result.Stats.NodesDeleted += stats.NodesDeleted
+			result.Stats.RelationshipsDeleted += stats.RelationshipsDeleted
 		case pipelineClauseSet:
 			propertiesSet, ok, err := e.pipelineApplySet(ctx, rows, clause.text)
 			if err != nil {
@@ -422,12 +450,16 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, false, nil
 			}
 			rows = newRows
+			scope = pipelineProjectionScope(scope, clause.text)
 		case pipelineClauseUnwind:
 			newRows, ok := e.pipelineApplyUnwind(ctx, rows, clause.text)
 			if !ok {
 				return nil, false, nil
 			}
 			rows = newRows
+			if alias := pipelineUnwindAlias(clause.text); alias != "" {
+				scope[alias] = struct{}{}
+			}
 		case pipelineClauseReturn:
 			final, ok := e.pipelineApplyReturn(rows, clause.text)
 			if !ok {
@@ -442,6 +474,113 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 	}
 
 	return result, true, nil
+}
+
+// pipelineApplyDelete collects every entity target before validation and
+// mutation, preserving statement atomicity while retaining input rows for
+// subsequent WITH and RETURN clauses.
+func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clause string) (*QueryStats, bool, error) {
+	body := strings.TrimSpace(clause)
+	detach := startsWithKeywordFold(body, "DETACH DELETE")
+	if detach {
+		body = strings.TrimSpace(body[len("DETACH DELETE"):])
+	} else if startsWithKeywordFold(body, "DELETE") {
+		body = strings.TrimSpace(body[len("DELETE"):])
+	} else {
+		return nil, false, nil
+	}
+	targets := splitTopLevelComma(body)
+	if len(targets) == 0 {
+		return nil, false, nil
+	}
+	for _, expression := range targets {
+		if hasTopLevelDeleteLabelQualifier(expression) {
+			return nil, true, newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"InvalidDelete",
+				"DELETE accepts nodes, relationships, and paths, not labels or relationship types",
+			)
+		}
+		if root := deleteExpressionRootIdentifier(expression); root != "" {
+			if _, bound := scope[root]; !bound {
+				return nil, true, newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"UndefinedVariable",
+					fmt.Sprintf("DELETE expression %q refers to an undefined variable", strings.TrimSpace(expression)),
+				)
+			}
+		} else if value, evaluated := e.evaluateRowExpression(strings.TrimSpace(expression), pipelineRow{}); evaluated && !isDeleteTargetValue(value) {
+			return nil, true, newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"InvalidArgumentType",
+				fmt.Sprintf("DELETE expression %q does not evaluate to a node, relationship, or path", strings.TrimSpace(expression)),
+			)
+		}
+	}
+	projected := &ExecuteResult{Columns: targets, Rows: make([][]interface{}, 0, len(rows))}
+	for _, row := range rows {
+		values := make([]interface{}, 0, len(targets))
+		for _, expression := range targets {
+			value, ok := e.evaluateRowExpression(strings.TrimSpace(expression), row)
+			if !ok {
+				return nil, true, newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"UndefinedVariable",
+					fmt.Sprintf("DELETE expression %q refers to an undefined variable", strings.TrimSpace(expression)),
+				)
+			}
+			if !isDeleteTargetValue(value) {
+				return nil, true, newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"InvalidArgumentType",
+					fmt.Sprintf("DELETE expression %q does not evaluate to a node, relationship, or path", strings.TrimSpace(expression)),
+				)
+			}
+			values = append(values, value)
+		}
+		projected.Rows = append(projected.Rows, values)
+	}
+	nodeIDs, edgeIDs := collectDeleteMutationTargets(projected)
+	store := e.getStorage(ctx)
+	if !detach {
+		if err := validateNoResidualRelationships(store, nodeIDs, edgeIDs); err != nil {
+			return nil, true, err
+		}
+	}
+
+	deletedEdges := make(map[storage.EdgeID]struct{}, len(edgeIDs))
+	for _, edgeID := range edgeIDs {
+		deletedEdges[edgeID] = struct{}{}
+	}
+	if detach {
+		for _, nodeID := range nodeIDs {
+			outgoing, err := store.GetOutgoingEdges(nodeID)
+			if err != nil {
+				return nil, true, err
+			}
+			incoming, err := store.GetIncomingEdges(nodeID)
+			if err != nil {
+				return nil, true, err
+			}
+			for _, edge := range append(outgoing, incoming...) {
+				deletedEdges[edge.ID] = struct{}{}
+			}
+		}
+	}
+	if len(edgeIDs) > 0 {
+		if err := store.BulkDeleteEdges(edgeIDs); err != nil {
+			return nil, true, err
+		}
+	}
+	stats := &QueryStats{RelationshipsDeleted: len(deletedEdges)}
+	for _, nodeID := range nodeIDs {
+		if err := store.DeleteNode(nodeID); err != nil {
+			return nil, true, err
+		}
+		stats.NodesDeleted++
+		e.removeNodeFromSearch(string(nodeID))
+	}
+	return stats, true, nil
 }
 
 func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipelineRow, clause string, result *ExecuteResult) error {
@@ -703,17 +842,11 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 			patternPart = strings.TrimSpace(substituted[len("MATCH"):whereIdx])
 		}
 		returnVars := e.extractVariableNamesFromPattern(patternPart)
+		if pathVariable := extractPathAssignmentVariable(patternPart); pathVariable != "" {
+			returnVars = appendUniquePipelineBinding(returnVars, pathVariable)
+		}
 		if relVar := extractRelationshipVariable(patternPart); relVar != "" {
-			seen := false
-			for _, v := range returnVars {
-				if v == relVar {
-					seen = true
-					break
-				}
-			}
-			if !seen {
-				returnVars = append(returnVars, relVar)
-			}
+			returnVars = appendUniquePipelineBinding(returnVars, relVar)
 		}
 		if len(returnVars) == 0 {
 			trimmedPattern := strings.TrimSpace(patternPart)
@@ -1133,6 +1266,13 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			projection.aggregateExpr = aggregateExpr
 			projection.distinct = distinct
 			hasAggregate = true
+		} else if pipelineExpressionContainsAggregate(expr) {
+			if !strings.Contains(strings.ToUpper(item), " AS ") {
+				return nil, false
+			}
+			projection.aggregate = true
+			projection.aggregateExpr = expr
+			hasAggregate = true
 		}
 		projections = append(projections, projection)
 		projectionAliases = append(projectionAliases, alias)
@@ -1189,7 +1329,13 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 					newRow[projection.alias] = value
 					continue
 				}
-				value, ok := e.evaluatePipelineAggregate(group.rows, projection.aggregateName, projection.aggregateExpr, projection.distinct)
+				var value interface{}
+				var ok bool
+				if projection.aggregateName == "" {
+					value, ok = e.evaluatePipelineAggregateExpression(group.rows, projection.aggregateExpr)
+				} else {
+					value, ok = e.evaluatePipelineAggregate(group.rows, projection.aggregateName, projection.aggregateExpr, projection.distinct)
+				}
 				if !ok {
 					return nil, false
 				}
@@ -1377,6 +1523,75 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 		return "", "", false, false
 	}
 	return name, inner, distinct, true
+}
+
+func pipelineExpressionContainsAggregate(expr string) bool {
+	expr = strings.TrimSpace(expr)
+	if _, _, _, ok := parsePipelineAggregate(expr); ok {
+		return true
+	}
+	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
+		for _, pair := range splitTopLevelComma(strings.TrimSpace(expr[1 : len(expr)-1])) {
+			separator := findTopLevelMapKeyValueSeparator(pair)
+			if separator > 0 && pipelineExpressionContainsAggregate(pair[separator+1:]) {
+				return true
+			}
+		}
+	}
+	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
+		for _, item := range splitTopLevelComma(strings.TrimSpace(expr[1 : len(expr)-1])) {
+			if pipelineExpressionContainsAggregate(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow, expr string) (interface{}, bool) {
+	expr = strings.TrimSpace(expr)
+	if name, inner, distinct, ok := parsePipelineAggregate(expr); ok {
+		return e.evaluatePipelineAggregate(rows, name, inner, distinct)
+	}
+	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
+		inner := strings.TrimSpace(expr[1 : len(expr)-1])
+		result := make(map[string]interface{})
+		if inner == "" {
+			return result, true
+		}
+		for _, pair := range splitTopLevelComma(inner) {
+			separator := findTopLevelMapKeyValueSeparator(pair)
+			if separator <= 0 {
+				return nil, false
+			}
+			key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+			value, ok := e.evaluatePipelineAggregateExpression(rows, pair[separator+1:])
+			if !ok {
+				return nil, false
+			}
+			result[key] = value
+		}
+		return result, true
+	}
+	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
+		inner := strings.TrimSpace(expr[1 : len(expr)-1])
+		if inner == "" {
+			return []interface{}{}, true
+		}
+		result := make([]interface{}, 0)
+		for _, item := range splitTopLevelComma(inner) {
+			value, ok := e.evaluatePipelineAggregateExpression(rows, item)
+			if !ok {
+				return nil, false
+			}
+			result = append(result, value)
+		}
+		return result, true
+	}
+	if len(rows) == 0 {
+		return e.evaluateRowExpression(expr, pipelineRow{})
+	}
+	return e.evaluateRowExpression(expr, rows[0])
 }
 
 // evaluatePipelineAggregate applies an aggregate to one logical group. Null

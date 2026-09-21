@@ -405,7 +405,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	// dropped -- e.g. a probe built by executeDelete/executeSet/executeRemove's
 	// internal "MATCH ... OPTIONAL MATCH ... RETURN <vars>" probe resolves an
 	// OPTIONAL MATCH-bound relationship variable to nil even though the
-	// OPTIONAL MATCH genuinely matched (eshu #5147).
+	// OPTIONAL MATCH genuinely matched.
 	//
 	// This is only reachable here when a caller invokes executeMatch directly
 	// with an embedded OPTIONAL MATCH: the top-level dispatcher
@@ -426,7 +426,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	// Check for relationship pattern: (a)-[r:TYPE]->(b) or (a)<-[r]-(b)
-	if strings.Contains(matchPart, "-[") || strings.Contains(matchPart, "]-") {
+	if containsRelExistencePattern(matchPart) {
 		// Extract WHERE clause if present
 		var whereClause string
 		if whereIdx > 0 {

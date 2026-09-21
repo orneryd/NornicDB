@@ -44,7 +44,7 @@ type TraversalContext struct {
 	direction        string // "outgoing", "incoming", "both"
 	minHops          int
 	maxHops          int
-	visited          map[storage.NodeID]bool
+	usedEdges        map[storage.EdgeID]bool
 	paths            []PathResult
 	nodeCache        map[storage.NodeID]*storage.Node // Cache for batch-fetched nodes
 	limit            int                              // OPTIMIZATION: Early termination limit (0 = no limit)
@@ -1104,11 +1104,50 @@ type TraversalSegment struct {
 // Also handles chained patterns like (a)<-[:R1]-(b)-[:R2]->(c)
 // Uses a state machine instead of regex to properly handle parentheses in property values
 func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
+	pattern = normalizeAnonymousTraversalRelationships(pattern)
 	// First check if this is a chained pattern (has multiple relationship segments)
 	if e.isChainedPattern(pattern) {
 		return e.parseChainedTraversalPattern(ctx, pattern)
 	}
 	return e.parseTraversalPatternStateMachine(ctx, pattern)
+}
+
+func normalizeAnonymousTraversalRelationships(pattern string) string {
+	var normalized strings.Builder
+	normalized.Grow(len(pattern) + 8)
+	quote := byte(0)
+	for index := 0; index < len(pattern); {
+		character := pattern[index]
+		if quote != 0 {
+			normalized.WriteByte(character)
+			if character == quote && (index == 0 || pattern[index-1] != '\\') {
+				quote = 0
+			}
+			index++
+			continue
+		}
+		if character == '\'' || character == '"' || character == '`' {
+			quote = character
+			normalized.WriteByte(character)
+			index++
+			continue
+		}
+		switch {
+		case strings.HasPrefix(pattern[index:], "-->"):
+			normalized.WriteString("-[]->")
+			index += len("-->")
+		case strings.HasPrefix(pattern[index:], "<--"):
+			normalized.WriteString("<-[]-")
+			index += len("<--")
+		case strings.HasPrefix(pattern[index:], "--"):
+			normalized.WriteString("-[]-")
+			index += len("--")
+		default:
+			normalized.WriteByte(character)
+			index++
+		}
+	}
+	return normalized.String()
 }
 
 // isChainedPattern checks if a pattern has multiple relationship segments
@@ -1555,7 +1594,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			direction:        match.Relationship.Direction,
 			minHops:          match.Relationship.MinHops,
 			maxHops:          match.Relationship.MaxHops,
-			visited:          make(map[storage.NodeID]bool),
+			usedEdges:        make(map[storage.EdgeID]bool),
 			nodeCache:        make(map[storage.NodeID]*storage.Node),
 			limit:            ctxLimit,
 			temporalViewport: viewport,
@@ -1622,7 +1661,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					direction:        match.Relationship.Direction,
 					minHops:          match.Relationship.MinHops,
 					maxHops:          match.Relationship.MaxHops,
-					visited:          make(map[storage.NodeID]bool),
+					usedEdges:        make(map[storage.EdgeID]bool),
 					nodeCache:        make(map[storage.NodeID]*storage.Node),
 					temporalViewport: viewport,
 					temporalChecker:  checker,
@@ -1765,7 +1804,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 		direction:        match.Relationship.Direction,
 		minHops:          match.Relationship.MinHops,
 		maxHops:          match.Relationship.MaxHops,
-		visited:          make(map[storage.NodeID]bool),
+		usedEdges:        make(map[storage.EdgeID]bool),
 		nodeCache:        make(map[storage.NodeID]*storage.Node),
 		temporalViewport: TemporalViewport{},
 		temporalChecker:  nil,
@@ -1868,6 +1907,12 @@ func (e *StorageExecutor) findPaths(
 
 	// Traverse each edge
 	for _, edge := range edges {
+		// A Cypher path may revisit a node, but it cannot reuse a relationship.
+		// This also prevents an undirected expansion from walking the same edge
+		// immediately back in the opposite direction.
+		if ctx.usedEdges[edge.ID] {
+			continue
+		}
 		// Check relationship type filter
 		if len(ctx.relTypes) > 0 {
 			if len(ctx.relTypes) == 1 {
@@ -1892,23 +1937,17 @@ func (e *StorageExecutor) findPaths(
 			nextNodeID = edge.StartNode
 		}
 
-		// Avoid cycles
-		if ctx.visited[nextNodeID] {
-			continue
-		}
-
 		nextNode, ok := e.loadTraversalEndpointNode(ctx, nextNodeID)
 		if !ok {
 			continue
 		}
 
-		// Mark as visited
-		ctx.visited[nextNodeID] = true
+		ctx.usedEdges[edge.ID] = true
 
 		// Recurse with optimized path copying (pre-allocate exact size)
 		nextNodesLen, ok := util.SafeIntAdd(len(pathNodes), 1)
 		if !ok {
-			ctx.visited[nextNodeID] = false
+			ctx.usedEdges[edge.ID] = false
 			continue
 		}
 		newPathNodes := make([]*storage.Node, nextNodesLen)
@@ -1917,7 +1956,7 @@ func (e *StorageExecutor) findPaths(
 
 		nextEdgesLen, ok := util.SafeIntAdd(len(pathEdges), 1)
 		if !ok {
-			ctx.visited[nextNodeID] = false
+			ctx.usedEdges[edge.ID] = false
 			continue
 		}
 		newPathEdges := make([]*storage.Edge, nextEdgesLen)
@@ -1927,8 +1966,8 @@ func (e *StorageExecutor) findPaths(
 		subPaths := e.findPaths(ctx, nextNode, newPathNodes, newPathEdges, depth+1, endPattern)
 		results = append(results, subPaths...)
 
-		// Unmark for other paths
-		ctx.visited[nextNodeID] = false
+		// Unmark for sibling paths.
+		ctx.usedEdges[edge.ID] = false
 	}
 
 	return results

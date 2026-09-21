@@ -160,30 +160,42 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	}
 
 	if dot := strings.Index(expr, "."); dot > 0 {
-		baseName := strings.TrimSpace(expr[:dot])
-		property := strings.TrimSpace(expr[dot+1:])
-		if base, exists := values[baseName]; exists {
-			switch value := base.(type) {
-			case *storage.Node:
-				if value == nil {
-					return nil, true
-				}
-				return value.Properties[property], true
-			case *storage.Edge:
-				if value == nil {
-					return nil, true
-				}
-				return value.Properties[property], true
-			default:
-				if object, ok := toStringAnyMap(base); ok {
-					return object[property], true
-				}
-			}
+		base, ok := e.evaluateRowExpression(strings.TrimSpace(expr[:dot]), values)
+		if ok {
+			return evaluateRowPropertyChain(base, strings.TrimSpace(expr[dot+1:]))
 		}
 	}
 	value := e.evaluateExpressionFromValues(expr, values)
 	if text, ok := value.(string); ok && text == expr && !isWholeCypherQuotedString(expr) {
 		return nil, false
+	}
+	return value, true
+}
+
+func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, bool) {
+	for _, property := range strings.Split(chain, ".") {
+		property = strings.TrimSpace(property)
+		if property == "" {
+			return nil, false
+		}
+		switch typed := value.(type) {
+		case *storage.Node:
+			if typed == nil {
+				return nil, true
+			}
+			value = typed.Properties[property]
+		case *storage.Edge:
+			if typed == nil {
+				return nil, true
+			}
+			value = typed.Properties[property]
+		default:
+			object, ok := toStringAnyMap(value)
+			if !ok {
+				return nil, false
+			}
+			value = object[property]
+		}
 	}
 	return value, true
 }

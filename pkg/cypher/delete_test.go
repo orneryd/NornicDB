@@ -107,6 +107,131 @@ func TestDeleteWithFilter(t *testing.T) {
 	assert.Equal(t, int64(1), count, "Should have 1 Animal node")
 }
 
+func TestDeleteReturnModifiersShapeRowsAfterAllSideEffects(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, "CREATE (:Item {num: 1}), (:Item {num: 2}), (:Item {num: 3}), (:Item {num: 4}), (:Item {num: 5})", nil)
+	require.NoError(t, err)
+
+	result, err := executor.Execute(ctx, "MATCH (node:Item) DELETE node RETURN 42 AS value SKIP 2 LIMIT 2", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(42)}, {int64(42)}}, result.Rows)
+	require.Equal(t, 5, result.Stats.NodesDeleted)
+}
+
+func TestDeletePreservesScalarBindingsForFilteringAndAggregation(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, "CREATE (:Item {num: 1}), (:Item {num: 2}), (:Item {num: 3}), (:Item {num: 4}), (:Item {num: 5})", nil)
+	require.NoError(t, err)
+
+	result, err := executor.Execute(ctx, "MATCH (node:Item) WITH node, node.num AS num DELETE node WITH num WHERE num % 2 = 0 RETURN num", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}, {int64(4)}}, result.Rows)
+	require.Equal(t, 5, result.Stats.NodesDeleted)
+
+	_, err = executor.Execute(ctx, "CREATE (:Other {num: 1}), (:Other {num: 2}), (:Other {num: 3}), (:Other {num: 4}), (:Other {num: 5})", nil)
+	require.NoError(t, err)
+	aggregated, err := executor.Execute(ctx, "MATCH (node:Other) WITH node, node.num AS num DELETE node RETURN sum(num) AS total", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(15)}}, aggregated.Rows)
+	require.Equal(t, 5, aggregated.Stats.NodesDeleted)
+}
+
+func TestDeleteRejectsInvalidTargetsBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		detail string
+	}{
+		{name: "label expression", query: "MATCH (node:Item) DELETE node:Other", detail: "InvalidDelete"},
+		{name: "undefined variable", query: "MATCH (node:Item) DELETE missing", detail: "UndefinedVariable"},
+		{name: "scalar expression", query: "MATCH (node:Item) DELETE 1 + 1", detail: "InvalidArgumentType"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+			_, err := executor.Execute(context.Background(), "CREATE (:Item)", nil)
+			require.NoError(t, err)
+
+			_, err = executor.Execute(context.Background(), test.query, nil)
+			require.Error(t, err)
+			var semantic *SemanticError
+			require.ErrorAs(t, err, &semantic)
+			assert.Equal(t, "Neo.ClientError.Statement.SyntaxError", semantic.Code)
+			assert.Equal(t, test.detail, semantic.Detail)
+
+			result, countErr := executor.Execute(context.Background(), "MATCH (node:Item) RETURN count(node)", nil)
+			require.NoError(t, countErr)
+			assert.Equal(t, int64(1), result.Rows[0][0])
+		})
+	}
+}
+
+func TestDeletePathTargetsFromNestedCollections(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, `
+		CREATE (left:User), (right:User)
+		CREATE (left)-[:LINK]->(right)
+		CREATE (right)-[:LINK]->(left)
+	`, nil)
+	require.NoError(t, err)
+
+	result, err := executor.Execute(ctx, `
+		MATCH path = (:User)-[relationship]->(:User)
+		WITH {key: collect(path)} AS paths
+		DELETE paths.key[0], paths.key[1]
+	`, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Stats.NodesDeleted)
+	assert.Equal(t, 2, result.Stats.RelationshipsDeleted)
+}
+
+func TestDetachDeleteAnonymousChainedPath(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, `
+		CREATE (start:Start), (middleOne), (middleTwo), (finish)
+		CREATE (start)-[:LINK]->(middleOne)
+		CREATE (middleOne)-[:LINK]->(middleTwo)
+		CREATE (middleTwo)-[:LINK]->(finish)
+	`, nil)
+	require.NoError(t, err)
+	edges, edgeErr := executor.Execute(ctx, `MATCH ()-[relationship]->() RETURN count(relationship)`, nil)
+	require.NoError(t, edgeErr)
+	require.Equal(t, int64(3), edges.Rows[0][0])
+	parsed := executor.parseTraversalPattern(ctx, `(:Start)-->()-->()-->()`)
+	require.NotNil(t, parsed)
+	require.Len(t, parsed.Segments, 3)
+	require.Len(t, executor.traverseGraph(ctx, parsed), 1)
+	matched, matchErr := executor.Execute(ctx, `MATCH path = (:Start)-->()-->()-->() RETURN path`, nil)
+	require.NoError(t, matchErr)
+	require.Len(t, matched.Rows, 1)
+
+	result, err := executor.Execute(ctx, `MATCH path = (:Start)-->()-->()-->() DETACH DELETE path`, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 4, result.Stats.NodesDeleted)
+	assert.Equal(t, 3, result.Stats.RelationshipsDeleted)
+}
+
+func TestUndirectedVariableLengthDeleteCountsRelationshipUniquePaths(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, `
+		CREATE (first), (second), (third)
+		CREATE (first)-[:LINK]->(second)
+		CREATE (second)-[:LINK]->(third)
+	`, nil)
+	require.NoError(t, err)
+
+	result, err := executor.Execute(ctx, `MATCH (left)-[*]-(right) DETACH DELETE left, right RETURN count(*) AS count`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(6)}}, result.Rows)
+	assert.Equal(t, 3, result.Stats.NodesDeleted)
+	assert.Equal(t, 2, result.Stats.RelationshipsDeleted)
+}
+
 // TestDetachDeleteParsing tests that DETACH DELETE is parsed correctly
 // This fixes the issue where "MATCH (n) DETACH DELETE n" wasn't working
 func TestDetachDeleteParsing(t *testing.T) {

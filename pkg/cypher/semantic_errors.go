@@ -10,6 +10,19 @@ type SemanticError struct {
 	Message string
 }
 
+// classifiedCypherError adds Neo4j/TCK classification to an existing typed
+// error without changing its localized message or unwrap identity.
+type classifiedCypherError struct {
+	cause  error
+	code   string
+	detail string
+}
+
+func (e *classifiedCypherError) Error() string           { return e.cause.Error() }
+func (e *classifiedCypherError) Unwrap() error           { return e.cause }
+func (e *classifiedCypherError) BoltErrorCode() string   { return e.code }
+func (e *classifiedCypherError) BoltErrorDetail() string { return e.detail }
+
 // Error formats the error so non-Bolt callers retain the Neo4j status code.
 func (e *SemanticError) Error() string {
 	if e == nil {

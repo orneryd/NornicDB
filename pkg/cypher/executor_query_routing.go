@@ -307,6 +307,9 @@ skipMatchCallRoute:
 	hasDelete := findKeywordIndex(cypher, "DELETE") > 0
 	hasDetachDelete := containsKeywordOutsideStrings(cypher, "DETACH DELETE")
 	if hasDelete || hasDetachDelete {
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
 		return e.executeDelete(ctx, cypher)
 	}
 
