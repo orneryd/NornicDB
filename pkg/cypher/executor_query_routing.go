@@ -498,8 +498,8 @@ func needsUnwindMutationPipeline(cypher string) bool {
 }
 
 // executeTopLevelUnwind keeps autocommit and explicit-transaction routing in
-// sync. Compound mutation pipelines must retain bindings across every clause;
-// simpler UNWIND statements continue through the specialized handler.
+// sync. Compound and chained pipelines retain bindings across every clause;
+// a single UNWIND statement continues through its focused handler.
 func (e *StorageExecutor) executeTopLevelUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if needsUnwindMutationPipeline(cypher) || unwindProjectionPrecedesMutation(cypher) ||
 		unwindNeedsRowPipeline(cypher) || hasMultipleUnwindClauses(cypher) ||
@@ -538,6 +538,9 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		if asIdx := strings.Index(upperPart, " AS "); asIdx != -1 {
 			alias = strings.TrimSpace(part[asIdx+4:])
 			part = strings.TrimSpace(part[:asIdx])
+		}
+		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
+			return nil, err
 		}
 
 		columns = append(columns, alias)
@@ -595,12 +598,14 @@ func firstTopLevelModifierIndex(clause string) int {
 	return cut
 }
 
-// splitReturnExpressions splits RETURN expressions by comma, respecting parentheses and brackets depth
+// splitReturnExpressions splits RETURN expressions by comma while preserving
+// nested parentheses, lists, and map literals.
 func splitReturnExpressions(clause string) []string {
 	var parts []string
 	var current strings.Builder
 	parenDepth := 0
 	bracketDepth := 0
+	braceDepth := 0
 	inQuote := false
 	quoteChar := rune(0)
 
@@ -626,7 +631,13 @@ func splitReturnExpressions(clause string) []string {
 		case ch == ']' && !inQuote:
 			bracketDepth--
 			current.WriteRune(ch)
-		case ch == ',' && parenDepth == 0 && bracketDepth == 0 && !inQuote:
+		case ch == '{' && !inQuote:
+			braceDepth++
+			current.WriteRune(ch)
+		case ch == '}' && !inQuote:
+			braceDepth--
+			current.WriteRune(ch)
+		case ch == ',' && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && !inQuote:
 			parts = append(parts, current.String())
 			current.Reset()
 		default:

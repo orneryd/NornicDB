@@ -293,7 +293,7 @@ func (s *Session) handleRun(data []byte) error {
 			s.server.logEvent(context.Background(), slog.LevelWarn, localization.BoltQueryErrorEvent())
 		}
 		code, msg := mapBoltQueryErrorForQuery(err, query)
-		return s.sendRunFailure(code, msg)
+		return s.sendRunFailureWithDetail(code, msg, boltErrorDetail(err))
 	}
 	rows := 0
 	if result != nil && result.Rows != nil {
@@ -439,6 +439,18 @@ func mapBoltQueryErrorForQuery(err error, query string) (code, message string) {
 		return nornicerrors.TransientOutdated, message
 	}
 	return code, message
+}
+
+type boltDetailedError interface {
+	BoltErrorDetail() string
+}
+
+func boltErrorDetail(err error) string {
+	var detailed boltDetailedError
+	if errors.As(err, &detailed) {
+		return detailed.BoltErrorDetail()
+	}
+	return ""
 }
 
 // mapBoltCommitError preserves Bolt's commit-failed fallback for ordinary
@@ -1518,6 +1530,10 @@ func (s *Session) sendSuccessNoFlush(metadata map[string]any) error {
 // sendFailure sends a FAILURE response.
 // Uses buffer pooling to reduce allocations.
 func (s *Session) sendFailure(code, message string) error {
+	return s.sendFailureWithDetail(code, message, "")
+}
+
+func (s *Session) sendFailureWithDetail(code, message, detail string) error {
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1529,6 +1545,9 @@ func (s *Session) sendFailure(code, message string) error {
 		"code":    code,
 		"message": message,
 	}
+	if detail != "" {
+		metadata["gql_status"] = detail
+	}
 	buf = encodePackStreamMapIntoWithUTC(buf, metadata, s.useUTCDateTimeStructs())
 
 	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
@@ -1538,10 +1557,14 @@ func (s *Session) sendFailure(code, message string) error {
 }
 
 func (s *Session) sendRunFailure(code, message string) error {
+	return s.sendRunFailureWithDetail(code, message, "")
+}
+
+func (s *Session) sendRunFailureWithDetail(code, message, detail string) error {
 	if s.inTransaction {
 		s.failedUntilReset = true
 	}
-	return s.sendFailure(code, message)
+	return s.sendFailureWithDetail(code, message, detail)
 }
 
 func (s *Session) sendTransactionControlFailure(code, message string) error {

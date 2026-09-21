@@ -89,6 +89,21 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		}
 	}
 
+	if hasPrefixFoldASCII(expr, "NOT ") {
+		value, ok := e.evaluateRowExpression(strings.TrimSpace(expr[len("NOT "):]), values)
+		if !ok {
+			return nil, false
+		}
+		if value == nil {
+			return nil, true
+		}
+		boolean, ok := value.(bool)
+		if !ok {
+			return nil, false
+		}
+		return !boolean, true
+	}
+
 	if open := strings.LastIndex(expr, "["); open > 0 && strings.HasSuffix(expr, "]") {
 		base, ok := e.evaluateRowExpression(expr[:open], values)
 		if !ok {
