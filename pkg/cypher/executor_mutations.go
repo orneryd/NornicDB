@@ -972,6 +972,49 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	for i, col := range matchResult.Columns {
 		colIndex[col] = i
 	}
+	buildEvalNodes := func(row []interface{}) map[string]*storage.Node {
+		evalNodes := make(map[string]*storage.Node, len(matchResult.Columns))
+		for i, col := range matchResult.Columns {
+			if i >= len(row) {
+				continue
+			}
+			switch v := row[i].(type) {
+			case *storage.Node:
+				if v != nil {
+					evalNodes[col] = v
+				}
+			case *storage.Edge:
+				// Relationships belong exclusively in the relationship scope.
+				// Adding a synthetic node with the same variable would shadow it.
+				continue
+			case map[string]interface{}:
+				evalNodes[col] = &storage.Node{
+					ID:         storage.NodeID(col),
+					Properties: v,
+				}
+			default:
+				evalNodes[col] = &storage.Node{
+					ID: storage.NodeID(col),
+					Properties: map[string]interface{}{
+						"value": v,
+					},
+				}
+			}
+		}
+		return evalNodes
+	}
+	buildEvalEdges := func(row []interface{}) map[string]*storage.Edge {
+		evalEdges := make(map[string]*storage.Edge, len(matchResult.Columns))
+		for i, col := range matchResult.Columns {
+			if i >= len(row) {
+				continue
+			}
+			if edge, ok := row[i].(*storage.Edge); ok && edge != nil {
+				evalEdges[col] = edge
+			}
+		}
+		return evalEdges
+	}
 
 	var variable string
 	validAssignments := 0
@@ -994,14 +1037,15 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			variable = leftVar
 
 			var propsToMerge map[string]interface{}
+			var mapExpressions map[string]string
 			mapVarName := ""
 			paramMapUsed := false
 			if strings.HasPrefix(right, "{") {
-				parsedProps, err := e.parseSetMergeMapLiteralStrict(ctx, right)
+				parsedExpressions, err := parseSetMergeMapExpressionsStrict(right)
 				if err != nil {
 					return nil, localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
 				}
-				propsToMerge = parsedProps
+				mapExpressions = parsedExpressions
 			} else if strings.HasPrefix(right, "$") {
 				paramName := strings.TrimSpace(right[1:])
 				if paramName == "" {
@@ -1031,7 +1075,14 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			mapIdx, hasMapIdx := colIndex[mapVarName]
 			for _, row := range matchResult.Rows {
 				propsForRow := propsToMerge
-				if mapVarName != "" && !paramMapUsed {
+				if mapExpressions != nil {
+					propsForRow = make(map[string]interface{}, len(mapExpressions))
+					nodes := buildEvalNodes(row)
+					edges := buildEvalEdges(row)
+					for key, expression := range mapExpressions {
+						propsForRow[key] = e.evaluateExpressionWithContext(ctx, expression, nodes, edges)
+					}
+				} else if mapVarName != "" && !paramMapUsed {
 					if !hasMapIdx || mapIdx >= len(row) {
 						return nil, localizedError(localization.CypherMutationsSetMergeMapScopeRequired(mapVarName), nil)
 					}
@@ -1044,15 +1095,39 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 
 				updated := false
 				if hasTargetIdx && targetIdx < len(row) {
-					if node, ok := row[targetIdx].(*storage.Node); ok && node != nil {
+					switch entity := row[targetIdx].(type) {
+					case *storage.Node:
+						if entity == nil {
+							continue
+						}
 						for k, v := range propsForRow {
-							setNodeProperty(node, k, v)
+							setNodeProperty(entity, k, v)
 							result.Stats.PropertiesSet++
 						}
-						if err := store.UpdateNode(node); err != nil {
+						if err := store.UpdateNode(entity); err != nil {
 							return nil, localizedError(localization.CypherMutationsSetMergeUpdateFailed(leftVar, err), err)
 						}
-						e.notifyNodeMutated(string(node.ID))
+						e.notifyNodeMutated(string(entity.ID))
+						updated = true
+					case *storage.Edge:
+						if entity == nil {
+							continue
+						}
+						if entity.Properties == nil {
+							entity.Properties = make(map[string]interface{})
+						}
+						for k, v := range propsForRow {
+							if v == nil {
+								delete(entity.Properties, k)
+							} else {
+								entity.Properties[k] = v
+							}
+							result.Stats.PropertiesSet++
+						}
+						if err := store.UpdateEdge(entity); err != nil {
+							return nil, localizedError(localization.CypherMutationsSetMergeUpdateFailed(leftVar, err), err)
+						}
+						e.notifyEdgeMutated(string(entity.ID))
 						updated = true
 					}
 				}
@@ -1086,17 +1161,16 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			if colonIdx > 0 {
 				// This is a label assignment
 				labelVar := strings.TrimSpace(assignment[:colonIdx])
-				labelName := strings.TrimSpace(assignment[colonIdx+1:])
-				// Normalize escaped label identifiers (e.g. `MyLabel`) before validation/storage.
-				if len(labelName) >= 2 && strings.HasPrefix(labelName, "`") && strings.HasSuffix(labelName, "`") {
-					labelName = strings.ReplaceAll(labelName[1:len(labelName)-1], "``", "`")
-				}
-				if labelVar != "" && labelName != "" {
-					if !isValidIdentifier(labelName) {
-						return nil, localizedError(localization.CypherMutationsInvalidLabelName(labelName), nil)
-					}
-					if containsReservedKeyword(labelName) {
-						return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(labelName), nil)
+				labelExpr := strings.TrimSpace(assignment[colonIdx+1:])
+				labelNames := splitSetLabelChain(labelExpr)
+				if labelVar != "" && len(labelNames) > 0 {
+					for _, labelName := range labelNames {
+						if !isValidIdentifier(labelName) {
+							return nil, localizedError(localization.CypherMutationsInvalidLabelName(labelName), nil)
+						}
+						if containsReservedKeyword(labelName) {
+							return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(labelName), nil)
+						}
 					}
 					validAssignments++
 					variable = labelVar
@@ -1107,15 +1181,10 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 							if !ok || node == nil {
 								continue
 							}
-							// Add label if not already present
-							hasLabel := false
-							for _, l := range node.Labels {
-								if l == labelName {
-									hasLabel = true
-									break
+							for _, labelName := range labelNames {
+								if containsString(node.Labels, labelName) {
+									continue
 								}
-							}
-							if !hasLabel {
 								oldLabels := make([]string, len(node.Labels))
 								copy(oldLabels, node.Labels)
 								node.Labels = append(node.Labels, labelName)
@@ -1143,47 +1212,6 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 
 		left := strings.TrimSpace(assignment[:eqIdx])
 		right := strings.TrimSpace(assignment[eqIdx+1:])
-
-		buildEvalNodes := func(row []interface{}) map[string]*storage.Node {
-			evalNodes := make(map[string]*storage.Node, len(matchResult.Columns))
-			for i, col := range matchResult.Columns {
-				if i >= len(row) {
-					continue
-				}
-				switch v := row[i].(type) {
-				case *storage.Node:
-					if v != nil {
-						evalNodes[col] = v
-					}
-				case map[string]interface{}:
-					evalNodes[col] = &storage.Node{
-						ID:         storage.NodeID(col),
-						Properties: v,
-					}
-				default:
-					evalNodes[col] = &storage.Node{
-						ID: storage.NodeID(col),
-						Properties: map[string]interface{}{
-							"value": v,
-						},
-					}
-				}
-			}
-			return evalNodes
-		}
-
-		buildEvalEdges := func(row []interface{}) map[string]*storage.Edge {
-			evalEdges := make(map[string]*storage.Edge, len(matchResult.Columns))
-			for i, col := range matchResult.Columns {
-				if i >= len(row) {
-					continue
-				}
-				if edge, ok := row[i].(*storage.Edge); ok && edge != nil {
-					evalEdges[col] = edge
-				}
-			}
-			return evalEdges
-		}
 
 		resolvePropValue := func(row []interface{}) (interface{}, error) {
 			if strings.HasPrefix(right, "$") {
@@ -1524,6 +1552,36 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	}
 
 	return result, nil
+}
+
+func splitSetLabelChain(expression string) []string {
+	parts := make([]string, 0, 2)
+	var current strings.Builder
+	inBacktick := false
+	for index := 0; index < len(expression); index++ {
+		ch := expression[index]
+		if ch == '`' {
+			if inBacktick && index+1 < len(expression) && expression[index+1] == '`' {
+				current.WriteByte('`')
+				index++
+				continue
+			}
+			inBacktick = !inBacktick
+			continue
+		}
+		if ch == ':' && !inBacktick {
+			if label := strings.TrimSpace(current.String()); label != "" {
+				parts = append(parts, label)
+			}
+			current.Reset()
+			continue
+		}
+		current.WriteByte(ch)
+	}
+	if label := strings.TrimSpace(current.String()); label != "" {
+		parts = append(parts, label)
+	}
+	return parts
 }
 
 var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.|\+=|=)`)
@@ -1997,16 +2055,17 @@ func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *Exec
 
 	// Parse the properties to merge
 	var propsToMerge map[string]interface{}
+	var mapExpressions map[string]string
 	mapVarName := ""
 	paramMapUsed := false
 
 	if strings.HasPrefix(right, "{") {
-		// Inline properties: {key: value, ...}
-		parsedProps, err := e.parseSetMergeMapLiteralStrict(ctx, right)
+		// Preserve inline value expressions until each input row is in scope.
+		parsedExpressions, err := parseSetMergeMapExpressionsStrict(right)
 		if err != nil {
 			return nil, localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
 		}
-		propsToMerge = parsedProps
+		mapExpressions = parsedExpressions
 	} else if strings.HasPrefix(right, "$") {
 		// Parameter reference: $properties
 		// Extract parameter name (remove $ prefix)
@@ -2052,7 +2111,33 @@ func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *Exec
 	// Update matched nodes
 	for _, row := range matchResult.Rows {
 		propsForRow := propsToMerge
-		if mapVarName != "" && !paramMapUsed {
+		if mapExpressions != nil {
+			nodes := make(map[string]*storage.Node, len(matchResult.Columns))
+			rels := make(map[string]*storage.Edge, len(matchResult.Columns))
+			for i, column := range matchResult.Columns {
+				if i >= len(row) {
+					continue
+				}
+				switch value := row[i].(type) {
+				case *storage.Node:
+					if value != nil {
+						nodes[column] = value
+					}
+				case *storage.Edge:
+					if value != nil {
+						rels[column] = value
+					}
+				case map[string]interface{}:
+					nodes[column] = &storage.Node{ID: storage.NodeID(column), Properties: value}
+				default:
+					nodes[column] = &storage.Node{ID: storage.NodeID(column), Properties: map[string]interface{}{"value": value}}
+				}
+			}
+			propsForRow = make(map[string]interface{}, len(mapExpressions))
+			for key, expression := range mapExpressions {
+				propsForRow[key] = e.evaluateExpressionWithContext(ctx, expression, nodes, rels)
+			}
+		} else if mapVarName != "" && !paramMapUsed {
 			if !hasMapIdx || mapIdx >= len(row) {
 				return nil, localizedError(localization.CypherMutationsSetMergeMapScopeRequired(mapVarName), nil)
 			}

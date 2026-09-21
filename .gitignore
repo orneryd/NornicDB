@@ -13,6 +13,10 @@
 *.out
 coverage.out
 
+# Generated Cypher conformance artifacts and vendored TCK build output
+/testing/cypher/tck/artifacts/
+/testing/cypher/tck/testdata/opencypher/target/
+
 # Go workspace file
 go.work
 

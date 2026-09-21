@@ -2129,7 +2129,8 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 	relationshipKnown := make(map[string]bool)
 	notified := make(map[string]struct{})
 	params := getParamsFromContext(ctx)
-	resolveBatchValue := func(expr string, values map[string]interface{}) interface{} {
+	var resolveBatchValue func(string, map[string]interface{}) interface{}
+	resolveBatchValue = func(expr string, values map[string]interface{}) interface{} {
 		trimmed := strings.TrimSpace(expr)
 		if params != nil {
 			if strings.HasPrefix(trimmed, "$") && len(trimmed) > 1 && isSimpleIdentifier(trimmed[1:]) {
@@ -2139,6 +2140,15 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 			}
 			if strings.Contains(trimmed, "$") {
 				trimmed = strings.TrimSpace(e.substituteParams(trimmed, params))
+			}
+		}
+		if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
+			if expressions, err := parseSetMergeMapExpressionsStrict(trimmed); err == nil {
+				resolved := make(map[string]interface{}, len(expressions))
+				for key, expression := range expressions {
+					resolved[key] = resolveBatchValue(expression, values)
+				}
+				return resolved
 			}
 		}
 		if strings.HasPrefix(strings.ToUpper(trimmed), "COALESCE(") && strings.HasSuffix(trimmed, ")") {

@@ -62,6 +62,7 @@ package cypher
 
 import (
 	"context"
+	"math"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -506,6 +507,15 @@ func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
 //	evaluateArithmeticExpr("10 / 3", nodes, rels)            // float64(3.333...)
 //	evaluateArithmeticExpr("date('2025-01-01') + duration('P5D')", ...) // "2025-01-06..."
 func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+	// Cypher exponentiation always yields a floating-point value.
+	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "^", true, false); ok {
+		left, leftOK := toFloat64(e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels))
+		right, rightOK := toFloat64(e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels))
+		if leftOK && rightOK {
+			return math.Pow(left, right)
+		}
+		return nil
+	}
 	// Handle + operator (date + duration, or numeric addition)
 	// Try with spaces first, then without
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " + ", true, false); ok {
@@ -732,18 +742,18 @@ func (e *StorageExecutor) divide(left, right interface{}) interface{} {
 	if !okL || !okR || r == 0 {
 		return nil
 	}
-	result := l / r
-	// Check if both operands were integers and result is exact
+	// Cypher integer division truncates toward zero whenever both operands are
+	// integers; a floating operand selects floating-point division.
 	_, leftIsInt64 := left.(int64)
 	_, rightIsInt64 := right.(int64)
 	_, leftIsInt := left.(int)
 	_, rightIsInt := right.(int)
 	leftIsInteger := leftIsInt64 || leftIsInt
 	rightIsInteger := rightIsInt64 || rightIsInt
-	if leftIsInteger && rightIsInteger && result == float64(int64(result)) {
-		return int64(result)
+	if leftIsInteger && rightIsInteger {
+		return int64(l) / int64(r)
 	}
-	return result
+	return l / r
 }
 
 // modulo performs modulo operation (remainder after division).

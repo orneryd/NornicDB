@@ -45,6 +45,7 @@ const (
 	pipelineClauseCreate
 	pipelineClauseMerge
 	pipelineClauseSet
+	pipelineClauseRemove
 	pipelineClauseWith
 	pipelineClauseUnwind
 	pipelineClauseReturn
@@ -90,16 +91,19 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 		return nil, false
 	}
 	hasWithOrUnwind := false
+	hasRemove := false
 	for _, clause := range clauses {
 		if clause.kind == pipelineClauseWith || clause.kind == pipelineClauseUnwind {
 			hasWithOrUnwind = true
-			break
+		}
+		if clause.kind == pipelineClauseRemove {
+			hasRemove = true
 		}
 	}
 	upper := strings.ToUpper(cypher)
 	stringPredicateMutation := strings.Contains(upper, " CREATE ") &&
 		(strings.Contains(upper, " STARTS WITH ") || strings.Contains(upper, " ENDS WITH "))
-	if !hasWithOrUnwind && !stringPredicateMutation {
+	if !hasWithOrUnwind && !hasRemove && !stringPredicateMutation {
 		return nil, false
 	}
 	return clauses, true
@@ -154,6 +158,7 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 		{"CREATE", pipelineClauseCreate},
 		{"MERGE", pipelineClauseMerge},
 		{"SET", pipelineClauseSet},
+		{"REMOVE", pipelineClauseRemove},
 		{"WITH", pipelineClauseWith},
 		{"UNWIND", pipelineClauseUnwind},
 		{"RETURN", pipelineClauseReturn},
@@ -163,7 +168,7 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 	// is handled by the per-clause appliers below, which substitute params
 	// from context and respect node bindings supplied by the caller.
 	upper := strings.ToUpper(cypher)
-	for _, bad := range []string{"FOREACH", "CALL ", "DELETE", "REMOVE "} {
+	for _, bad := range []string{"FOREACH", "CALL ", "DELETE"} {
 		if findKeywordIndex(upper, strings.TrimRight(bad, " ")) >= 0 {
 			return nil, false
 		}
@@ -382,6 +387,10 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, false, nil
 			}
 			result.Stats.PropertiesSet += propertiesSet
+		case pipelineClauseRemove:
+			if err := e.pipelineApplyRemove(ctx, rows, clause.text, result); err != nil {
+				return nil, true, err
+			}
 		case pipelineClauseWith:
 			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text)
 			if !ok {
@@ -408,6 +417,24 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 	}
 
 	return result, true, nil
+}
+
+func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipelineRow, clause string, result *ExecuteResult) error {
+	body := strings.TrimSpace(clause[len("REMOVE"):])
+	store := e.getStorage(ctx)
+	for _, bindings := range rows {
+		columns := make([]string, 0, len(bindings))
+		row := make([]interface{}, 0, len(bindings))
+		for name, value := range bindings {
+			columns = append(columns, name)
+			row = append(row, value)
+		}
+		matched := &ExecuteResult{Columns: columns, Rows: [][]interface{}{row}}
+		if err := e.applyRemoveToMatchedRows(store, matched, body, result); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // pipelineApplySet mutates entities already bound in each pipeline row. Scalar
@@ -480,6 +507,23 @@ func (e *StorageExecutor) materializePipelineSetExpressions(body string, row pip
 		}
 		left := strings.TrimSpace(assignment[:operatorIndex])
 		right := strings.TrimSpace(assignment[operatorIndex+len(operator):])
+		if operator == "+=" && strings.HasPrefix(right, "{") {
+			if expressions, err := parseSetMergeMapExpressionsStrict(right); err == nil {
+				values := make(map[string]interface{}, len(expressions))
+				resolvedAll := true
+				for key, expression := range expressions {
+					value, ok := e.evaluateRowExpression(expression, row)
+					if !ok {
+						resolvedAll = false
+						break
+					}
+					values[key] = value
+				}
+				if resolvedAll {
+					right = e.valueToLiteral(values)
+				}
+			}
+		}
 		if hasTopLevelPlus(right) || strings.HasPrefix(right, "[") ||
 			(strings.Contains(right, "[") && strings.HasSuffix(right, "]")) {
 			if value, ok := e.evaluateRowExpression(right, row); ok {

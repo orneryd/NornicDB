@@ -61,6 +61,23 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	if v, ok := resolveParamPathRef(ctx, expr); ok {
 		return normalizePropValue(v)
 	}
+	if baseExpr, property, ok := splitPostfixPropertyAccess(expr); ok {
+		base := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		switch value := base.(type) {
+		case map[string]interface{}:
+			return value[property]
+		case *storage.Node:
+			if value != nil {
+				return value.Properties[property]
+			}
+			return nil
+		case *storage.Edge:
+			if value != nil {
+				return value.Properties[property]
+			}
+			return nil
+		}
+	}
 	if v, ok := e.evaluateExpressionFastLeaf(expr, nodes, rels, paths); ok {
 		return v
 	}
@@ -68,6 +85,65 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		return e.evaluateExpressionWithContextFullOperators(ctx, expr, "", nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 	return e.evaluateExpressionWithContextFullFunctions(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+}
+
+func splitPostfixPropertyAccess(expr string) (string, string, bool) {
+	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	inSingle, inDouble := false, false
+	lastDot := -1
+	for index := 0; index < len(expr); index++ {
+		ch := expr[index]
+		if ch == '\\' && (inSingle || inDouble) {
+			index++
+			continue
+		}
+		switch ch {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '(':
+			if !inSingle && !inDouble {
+				parenDepth++
+			}
+		case ')':
+			if !inSingle && !inDouble && parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			if !inSingle && !inDouble {
+				bracketDepth++
+			}
+		case ']':
+			if !inSingle && !inDouble && bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '{':
+			if !inSingle && !inDouble {
+				braceDepth++
+			}
+		case '}':
+			if !inSingle && !inDouble && braceDepth > 0 {
+				braceDepth--
+			}
+		case '.':
+			if !inSingle && !inDouble && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+				lastDot = index
+			}
+		}
+	}
+	if lastDot <= 0 || lastDot == len(expr)-1 {
+		return "", "", false
+	}
+	property := strings.TrimSpace(expr[lastDot+1:])
+	if !isValidIdentifier(property) {
+		return "", "", false
+	}
+	return strings.TrimSpace(expr[:lastDot]), property, true
 }
 
 func isSimpleIdentifierOrProperty(expr string) bool {

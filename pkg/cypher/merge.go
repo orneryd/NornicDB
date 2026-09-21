@@ -2074,6 +2074,8 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 	withIdx := findKeywordIndexInContext(cypher, "WITH")
+	onCreateIdx := findKeywordIndex(cypher, "ON CREATE SET")
+	onMatchIdx := findKeywordIndex(cypher, "ON MATCH SET")
 
 	// Parse relationship pattern: (a)-[r:TYPE {props}]->(b)
 	// Extract start node, relationship, end node
@@ -2148,6 +2150,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	}
 
 	var edge *storage.Edge
+	relationshipCreated := false
 	if existingEdge != nil {
 		edge = existingEdge
 	} else {
@@ -2165,6 +2168,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		}
 		edge = createdEdge
 		if created {
+			relationshipCreated = true
 			result.Stats.RelationshipsCreated = 1
 			e.notifyEdgeMutated(string(edge.ID))
 		}
@@ -2174,31 +2178,46 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	if relVar != "" {
 		relContext[relVar] = edge
 	}
-
-	if setIdx > 0 && relVar != "" {
+	applySetClause := func(clauseIdx, keywordLength int) error {
+		if clauseIdx < 0 || relVar == "" {
+			return nil
+		}
 		setEnd := len(cypher)
-		if withIdx > setIdx && withIdx < setEnd {
-			setEnd = withIdx
+		for _, boundary := range []int{onCreateIdx, onMatchIdx, setIdx, withIdx, returnIdx} {
+			if boundary > clauseIdx && boundary < setEnd {
+				setEnd = boundary
+			}
 		}
-		if returnIdx > setIdx && returnIdx < setEnd {
-			setEnd = returnIdx
-		}
-		// SET in relationship MERGE chains must terminate before a following
-		// top-level MERGE clause; otherwise the assignment parser consumes
-		// trailing MERGE text into the RHS expression.
-		if nextMergeRel := findKeywordIndexInContext(cypher[setIdx+3:], "MERGE"); nextMergeRel >= 0 {
-			mergeAbs := setIdx + 3 + nextMergeRel
-			if mergeAbs > setIdx && mergeAbs < setEnd {
+		if nextMergeRel := findKeywordIndexInContext(cypher[clauseIdx+keywordLength:], "MERGE"); nextMergeRel >= 0 {
+			mergeAbs := clauseIdx + keywordLength + nextMergeRel
+			if mergeAbs > clauseIdx && mergeAbs < setEnd {
 				setEnd = mergeAbs
 			}
 		}
-		setClause := strings.TrimSpace(cypher[setIdx+3 : setEnd])
+		setClause := strings.TrimSpace(cypher[clauseIdx+keywordLength : setEnd])
 		if propertiesSet := e.applySetToRelationshipWithContext(ctx, edge, relVar, setClause, nodeContext, relContext); propertiesSet > 0 {
 			if err := store.UpdateEdge(edge); err != nil {
-				return nil, localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
+				return localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
 			}
 			result.Stats.PropertiesSet += propertiesSet
 			e.notifyEdgeMutated(string(edge.ID))
+		}
+		return nil
+	}
+
+	if relationshipCreated {
+		if err := applySetClause(onCreateIdx, len("ON CREATE SET")); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := applySetClause(onMatchIdx, len("ON MATCH SET")); err != nil {
+			return nil, err
+		}
+	}
+
+	if setIdx > 0 && relVar != "" {
+		if err := applySetClause(setIdx, len("SET")); err != nil {
+			return nil, err
 		}
 	}
 

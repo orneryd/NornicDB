@@ -1538,6 +1538,14 @@ test-parsers:
 	@echo ""
 	@echo "✅ Both parsers passed all Cypher tests"
 
+.PHONY: cypher-tck-inventory cypher-conformance
+
+cypher-tck-inventory:
+	go run ./testing/cypher/tck/cmd/inventory -check testing/cypher/tck/testdata/inventory.json
+
+cypher-conformance: cypher-tck-inventory
+	go test ./testing/cypher/tck/... ./pkg/cypher -count=1
+
 # Clean ANTLR generated files and JAR
 antlr-clean:
 	@echo "Cleaning ANTLR artifacts..."

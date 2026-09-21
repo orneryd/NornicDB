@@ -217,7 +217,25 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 			return
 		}
 	}
-	evaluated := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+	// UNWIND/WITH row bindings travel through the parameter context on fallback
+	// mutation paths. Expose map and scalar bindings to the same expression
+	// evaluator used for graph variables so inline maps can reference them.
+	evalNodes := make(map[string]*storage.Node, len(nodes)+len(getParamsFromContext(ctx)))
+	for name, value := range nodes {
+		evalNodes[name] = value
+	}
+	for name, value := range getParamsFromContext(ctx) {
+		if _, exists := evalNodes[name]; exists {
+			continue
+		}
+		switch bound := value.(type) {
+		case map[string]interface{}:
+			evalNodes[name] = &storage.Node{ID: storage.NodeID(name), Properties: bound}
+		default:
+			evalNodes[name] = &storage.Node{ID: storage.NodeID(name), Properties: map[string]interface{}{"value": bound}}
+		}
+	}
+	evaluated := e.evaluateExpressionWithContext(ctx, rightExpr, evalNodes, rels)
 
 	// Fallback for unresolved inline literals.
 	if s, ok := evaluated.(string); ok && strings.TrimSpace(s) == strings.TrimSpace(rightExpr) {
@@ -261,6 +279,10 @@ func setNodeProperty(node *storage.Node, propName string, value interface{}) {
 
 	if node.Properties == nil {
 		node.Properties = make(map[string]interface{})
+	}
+	if value == nil {
+		delete(node.Properties, propName)
+		return
 	}
 	node.Properties[propName] = value
 }

@@ -121,6 +121,14 @@ func evalKeys(ctx Context, args []string) (interface{}, error) {
 		}
 		return keys, nil
 	}
+	value, _ := ctx.Eval(inner)
+	if object, ok := value.(map[string]interface{}); ok {
+		keys := make([]interface{}, 0, len(object))
+		for key := range object {
+			keys = append(keys, key)
+		}
+		return keys, nil
+	}
 	return nil, nil
 }
 
@@ -134,6 +142,10 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 	}
 	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
 		return rel.Properties, nil
+	}
+	value, _ := ctx.Eval(inner)
+	if object, ok := value.(map[string]interface{}); ok {
+		return object, nil
 	}
 	return nil, nil
 }

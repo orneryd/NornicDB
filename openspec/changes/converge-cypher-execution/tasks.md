@@ -1,6 +1,6 @@
 ## 1. Establish TCK and issue baseline
 
-- [ ] 1.1 Pin official TCK revision/checksum/license and record the complete feature/scenario/step inventory.
+- [x] 1.1 Pin official TCK revision/checksum/license and record the complete feature/scenario/step inventory.
 - [ ] 1.2 Implement Go step bindings, typed result/error comparison and observable side-effect checks with negative-control tests.
 - [ ] 1.3 Run fresh-fixture autocommit and explicit-transaction scenarios over the production Bolt server; consume results and verify transaction completion.
 - [ ] 1.4 Pin a Neo4j patch image/digest and validate the runner and fixed differential corpus.
@@ -18,8 +18,8 @@
 
 ## 3. Repair mutations and storage visibility
 
-- [ ] 3.1 Reproduce then fix #462/#474 through scoped assignment and recursively evaluated map values; enforce rollback on evaluation failure.
-- [ ] 3.2 Reproduce then fix #455/#456/#470/#480; verify persisted graph, MERGE branches, null removal and label updates.
+- [x] 3.1 Reproduce then fix #462/#474 through scoped assignment and recursively evaluated map values; enforce rollback on evaluation failure.
+- [x] 3.2 Reproduce then fix #455/#456/#470/#480; verify persisted graph, MERGE branches, null removal and label updates.
 - [ ] 3.3 Build storage contract tests across Memory, Badger, production wrappers and transaction/multidb views.
 - [ ] 3.4 Reproduce then fix #461 and #448; verify atomic publication, embedding flush visibility, reopen and any existing-data repair needs.
 - [ ] 3.5 Normalize typed property access and capability forwarding; cover #475's storage leg and individual/batch mutation equivalence.

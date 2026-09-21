@@ -1,0 +1,49 @@
+name: Cypher Conformance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pkg/cypher/**"
+      - "testing/cypher/**"
+      - "scripts/cypher-tck/**"
+      - "docs/plans/cypher-convergence-*.md"
+      - "openspec/**"
+      - ".github/workflows/cypher-conformance.yml"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    branches: [main]
+    paths:
+      - "pkg/cypher/**"
+      - "testing/cypher/**"
+      - "scripts/cypher-tck/**"
+      - "docs/plans/cypher-convergence-*.md"
+      - "openspec/**"
+      - ".github/workflows/cypher-conformance.yml"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: Cypher conformance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.4"
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify pinned corpus and run conformance regressions
+        run: make cypher-conformance

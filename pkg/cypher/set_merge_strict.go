@@ -11,6 +11,21 @@ import (
 // Unlike permissive property parsing helpers, this enforces Cypher semantics:
 // malformed maps must return an error instead of becoming an empty map/no-op.
 func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s string) (map[string]interface{}, error) {
+	expressions, err := parseSetMergeMapExpressionsStrict(s)
+	if err != nil {
+		return nil, err
+	}
+
+	props := make(map[string]interface{}, len(expressions))
+	for key, value := range expressions {
+		props[key] = e.parseValue(ctx, value)
+	}
+	return props, nil
+}
+
+// parseSetMergeMapExpressionsStrict validates an inline SET += map while
+// preserving each value expression for evaluation against an individual row.
+func parseSetMergeMapExpressionsStrict(s string) (map[string]string, error) {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
 		return nil, localizedError(localization.CypherMergeMapLiteralEnclosureRequired(), nil)
@@ -18,10 +33,10 @@ func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s s
 
 	inner := strings.TrimSpace(s[1 : len(s)-1])
 	if inner == "" {
-		return map[string]interface{}{}, nil
+		return map[string]string{}, nil
 	}
 
-	props := make(map[string]interface{})
+	expressions := make(map[string]string)
 	pairs := splitTopLevelCommaKeepEmpty(inner)
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
@@ -43,10 +58,10 @@ func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s s
 			return nil, localizedError(localization.CypherMergeMapValueEmpty(key), nil)
 		}
 
-		props[key] = e.parseValue(ctx, value)
+		expressions[key] = value
 	}
 
-	return props, nil
+	return expressions, nil
 }
 
 // splitTopLevelCommaKeepEmpty is like splitTopLevelComma but preserves empty

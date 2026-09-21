@@ -1,0 +1,13 @@
+{
+  "upstream_revision": "370fe27f417730dca2ef712dd1c0c5dadcb99ef8",
+  "archive_sha256": "9f8e8bb027664e1a951b529a37fe44330cbb7f670cf41fdbd4af65d3ac5369aa",
+  "feature_files": 220,
+  "expanded_scenarios": 3897,
+  "expanded_steps": 16006,
+  "scenarios_by_family": {
+    "clauses": 1251,
+    "expressions": 2616,
+    "useCases": 30
+  },
+  "corpus_sha256": "d56bf265aff4e52275b1d027588d1fe7571097df838e3bd220270ab9502ca57e"
+}

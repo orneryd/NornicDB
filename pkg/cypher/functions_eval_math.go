@@ -1415,6 +1415,51 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		return result
 	}
 
+	// [x IN list WHERE condition | expression] - filter before projection.
+	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(strings.ToUpper(expr), " WHERE ") && strings.Contains(expr, " | ") {
+		inner := strings.TrimSpace(expr[1 : len(expr)-1])
+		upperInner := strings.ToUpper(inner)
+		inIdx := strings.Index(upperInner, " IN ")
+		whereIdx := strings.Index(upperInner, " WHERE ")
+		pipeIdx := strings.LastIndex(inner, " | ")
+		if inIdx > 0 && whereIdx > inIdx && pipeIdx > whereIdx {
+			varName := strings.TrimSpace(inner[:inIdx])
+			listExpr := strings.TrimSpace(inner[inIdx+4 : whereIdx])
+			condition := strings.TrimSpace(inner[whereIdx+7 : pipeIdx])
+			projection := strings.TrimSpace(inner[pipeIdx+3:])
+			list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			items, ok := toInterfaceSlice(list)
+			if !ok {
+				return []interface{}{}
+			}
+			result := make([]interface{}, 0, len(items))
+			for _, item := range items {
+				boundNodes := make(map[string]*storage.Node, len(nodes)+1)
+				for name, node := range nodes {
+					boundNodes[name] = node
+				}
+				boundRels := make(map[string]*storage.Edge, len(rels)+1)
+				for name, rel := range rels {
+					boundRels[name] = rel
+				}
+				switch value := item.(type) {
+				case *storage.Node:
+					boundNodes[varName] = value
+				case *storage.Edge:
+					boundRels[varName] = value
+				case map[string]interface{}:
+					boundNodes[varName] = &storage.Node{ID: storage.NodeID(varName), Properties: value}
+				default:
+					boundNodes[varName] = &storage.Node{ID: storage.NodeID(varName), Properties: map[string]interface{}{"value": value}}
+				}
+				if e.evaluateExpressionWithContext(ctx, condition, boundNodes, boundRels) == true {
+					result = append(result, e.evaluateExpressionWithContextFull(ctx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength))
+				}
+			}
+			return result
+		}
+	}
+
 	// [x IN list WHERE condition] - list comprehension with filter
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(strings.ToUpper(expr), " WHERE ") {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])

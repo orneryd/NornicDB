@@ -302,6 +302,11 @@ skipMatchCallRoute:
 	hasSet := containsKeywordOutsideStrings(cypher, "SET")
 	hasOnCreateSet := containsKeywordOutsideStrings(cypher, "ON CREATE SET")
 	hasOnMatchSet := containsKeywordOutsideStrings(cypher, "ON MATCH SET")
+	if startsWithMatch && hasSet && containsKeywordOutsideStrings(cypher, "REMOVE") {
+		if result, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
+			return result, err
+		}
+	}
 
 	if startsWithCreate && !isCreateProcedureCommand(cypher) && hasSet && !hasOnCreateSet && !hasOnMatchSet &&
 		findMultiWordKeywordIndex(cypher, "CREATE", "DECAY PROFILE") != 0 &&
