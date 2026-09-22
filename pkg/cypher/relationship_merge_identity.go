@@ -285,3 +285,26 @@ func findRelationshipForMerge(
 	}
 	return nil, nil
 }
+
+func findRelationshipsForMerge(
+	store storage.Engine,
+	startID storage.NodeID,
+	endID storage.NodeID,
+	relType string,
+	matchProps map[string]interface{},
+) ([]*storage.Edge, error) {
+	if relationshipMergeIdentityContainsNaN(matchProps) {
+		return nil, nil
+	}
+	edges, err := store.GetEdgesBetween(startID, endID)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]*storage.Edge, 0, len(edges))
+	for _, edge := range edges {
+		if relationshipMatchesMergePattern(edge, relType, matchProps) {
+			matches = append(matches, edge)
+		}
+	}
+	return matches, nil
+}

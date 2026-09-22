@@ -1934,17 +1934,8 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 
 	// Try to find existing node
 	var existingNode *storage.Node
-	contextNames := make([]string, 0, len(nodeContext))
-	for name := range nodeContext {
-		contextNames = append(contextNames, name)
-	}
-	sort.Strings(contextNames)
-	for _, name := range contextNames {
-		candidate := nodeContext[name]
-		if candidate != nil && mergeNodeMatches(candidate, labels, matchProps) {
-			existingNode = candidate
-			break
-		}
+	if candidate := nodeContext[varName]; candidate != nil && mergeNodeMatches(candidate, labels, matchProps) {
+		existingNode = candidate
 	}
 	if existingNode == nil {
 		existingNode, err = e.findMergeNode(store, labels, matchProps)
@@ -2113,15 +2104,9 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	onCreateIdx := findKeywordIndex(cypher, "ON CREATE SET")
 	onMatchIdx := findKeywordIndex(cypher, "ON MATCH SET")
 
-	// Parse relationship pattern: (a)-[r:TYPE {props}]->(b)
-	// Extract start node, relationship, end node
-
-	// Find the relationship part
-	relStart := strings.Index(pattern, "[")
-	relEnd := strings.Index(pattern, "]")
-
-	if relStart == -1 || relEnd == -1 {
-		return result, nil // Not a valid relationship pattern
+	parsedPattern, err := e.parseMergeRelationshipPattern(ctx, pattern, nodeContext, relContext)
+	if err != nil {
+		return nil, err
 	}
 
 	setSearchStart := 0
@@ -2130,59 +2115,33 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	}
 	setIdx := findStandaloneSetInMergeSegmentFrom(cypher, setSearchStart)
 
-	// Get start and end node variables
-	startPart := strings.TrimSpace(pattern[:relStart])
-	endPart := strings.TrimSpace(pattern[relEnd+1:])
-	relPart := pattern[relStart+1 : relEnd]
-
-	// Remove direction markers and parens
-	startPart = strings.Trim(startPart, "()-")
-	endPart = strings.Trim(endPart, "()<>-")
-
-	// Extract start/end variable names
-	startVar := strings.Split(startPart, ":")[0]
-	endVar := strings.Split(endPart, ":")[0]
-
-	// Parse relationship type and variable
-	relVar := ""
-	relType := ""
-	relProps := make(map[string]interface{})
-
-	relPart = strings.TrimSpace(relPart)
-	propsStart := strings.Index(relPart, "{")
-	if propsStart > 0 {
-		propsEnd := strings.LastIndex(relPart, "}")
-		if propsEnd > propsStart {
-			relProps = e.parseProperties(ctx, relPart[propsStart:propsEnd+1])
-		}
-		relPart = relPart[:propsStart]
-	}
-
-	relParts := strings.Split(relPart, ":")
-	if len(relParts) > 0 {
-		relVar = strings.TrimSpace(relParts[0])
-	}
-	if len(relParts) > 1 {
-		relType = strings.TrimSpace(relParts[1])
-	}
-
 	// Get start and end nodes from context
-	startNode := nodeContext[startVar]
-	endNode := nodeContext[endVar]
+	startNode := nodeContext[parsedPattern.startVariable]
+	endNode := nodeContext[parsedPattern.endVariable]
 
 	if startNode == nil {
-		return nil, localizedError(localization.CypherMergeStartVariableNotBound(startVar, getKeys(nodeContext)), nil)
+		return nil, localizedError(localization.CypherMergeStartVariableNotBound(parsedPattern.startVariable, getKeys(nodeContext)), nil)
 	}
 	if endNode == nil {
-		return nil, localizedError(localization.CypherMergeEndVariableNotBound(endVar, getKeys(nodeContext)), nil)
+		return nil, localizedError(localization.CypherMergeEndVariableNotBound(parsedPattern.endVariable, getKeys(nodeContext)), nil)
+	}
+	mergeStartNode, mergeEndNode := startNode, endNode
+	if parsedPattern.direction == mergeRelationshipIncoming {
+		mergeStartNode, mergeEndNode = endNode, startNode
 	}
 
 	// Cypher relationship properties inside the MERGE pattern are identity
 	// fields. Scan the bounded endpoint pair so same-type relationships with
 	// different property identities remain distinct.
-	existingEdge, err := findRelationshipForMerge(store, startNode.ID, endNode.ID, relType, relProps)
+	existingEdge, err := findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
 	if err != nil {
 		return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
+	}
+	if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
+		existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+		if err != nil {
+			return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
+		}
 	}
 
 	var edge *storage.Edge
@@ -2192,13 +2151,13 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	} else {
 		// Create new relationship
 		edge = &storage.Edge{
-			ID:         e.newRelationshipMergeEdgeID(startNode.ID, endNode.ID, relType, relProps),
-			Type:       relType,
-			StartNode:  startNode.ID,
-			EndNode:    endNode.ID,
-			Properties: relProps,
+			ID:         e.newRelationshipMergeEdgeID(mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties),
+			Type:       parsedPattern.relType,
+			StartNode:  mergeStartNode.ID,
+			EndNode:    mergeEndNode.ID,
+			Properties: parsedPattern.properties,
 		}
-		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, relProps)
+		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties)
 		if createErr != nil {
 			return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
 		}
@@ -2211,11 +2170,11 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	}
 
 	// Store in context
-	if relVar != "" {
-		relContext[relVar] = edge
+	if parsedPattern.relVariable != "" {
+		relContext[parsedPattern.relVariable] = edge
 	}
 	applySetClause := func(clauseIdx, keywordLength int) error {
-		if clauseIdx < 0 || relVar == "" {
+		if clauseIdx < 0 || parsedPattern.relVariable == "" {
 			return nil
 		}
 		setEnd := len(cypher)
@@ -2231,7 +2190,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			}
 		}
 		setClause := strings.TrimSpace(cypher[clauseIdx+keywordLength : setEnd])
-		if propertiesSet := e.applySetToRelationshipWithContext(ctx, edge, relVar, setClause, nodeContext, relContext); propertiesSet > 0 {
+		if propertiesSet := e.applySetToRelationshipWithContext(ctx, edge, parsedPattern.relVariable, setClause, nodeContext, relContext); propertiesSet > 0 {
 			if err := store.UpdateEdge(edge); err != nil {
 				return localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
 			}
@@ -2251,7 +2210,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		}
 	}
 
-	if setIdx > 0 && relVar != "" {
+	if setIdx > 0 && parsedPattern.relVariable != "" {
 		if err := applySetClause(setIdx, len("SET")); err != nil {
 			return nil, err
 		}

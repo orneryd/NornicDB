@@ -95,6 +95,128 @@ func TestRelationshipMergeAppliesCreateAndMatchAssignments(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(2), int64(1)}}, readback.Rows)
 }
 
+func TestRelationshipMergeHonorsPatternDirection(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (a:DirectionFixture {id:'a'}), (b:DirectionFixture {id:'b'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (a:DirectionFixture {id:'a'}), (b:DirectionFixture {id:'b'}) CREATE (b)-[:INCOMING]->(a), (b)-[:UNDIRECTED]->(a)", nil)
+	require.NoError(t, err)
+
+	incoming, err := exec.Execute(ctx, "MATCH (a:DirectionFixture {id:'a'}), (b:DirectionFixture {id:'b'}) MERGE (a)<-[r:INCOMING]-(b) RETURN startNode(r).id AS start, endNode(r).id AS end", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"b", "a"}}, incoming.Rows)
+	require.Zero(t, incoming.Stats.RelationshipsCreated)
+
+	undirectedMatch, err := exec.Execute(ctx, "MATCH (a:DirectionFixture {id:'a'}), (b:DirectionFixture {id:'b'}) MERGE (a)-[r:UNDIRECTED]-(b) RETURN startNode(r).id AS start, endNode(r).id AS end", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"b", "a"}}, undirectedMatch.Rows)
+	require.Zero(t, undirectedMatch.Stats.RelationshipsCreated)
+
+	undirectedCreate, err := exec.Execute(ctx, "MATCH (a:DirectionFixture {id:'a'}), (b:DirectionFixture {id:'b'}) MERGE (a)-[r:CREATED]-(b) RETURN startNode(r).id AS start, endNode(r).id AS end", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"a", "b"}}, undirectedCreate.Rows)
+	require.Equal(t, 1, undirectedCreate.Stats.RelationshipsCreated)
+}
+
+func TestRelationshipMergeMatchesListIdentity(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (a:ListFixture {id:'a'}), (b:ListFixture {id:'b'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (a:ListFixture {id:'a'}), (b:ListFixture {id:'b'}) CREATE (a)-[:LISTED {values:[1, 2, 3]}]->(b)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (a:ListFixture {id:'a'}), (b:ListFixture {id:'b'}) MERGE (a)-[r:LISTED {values:[1, 2, 3]}]->(b) RETURN r.values AS values", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]int64{1, 2, 3}}}, result.Rows)
+	require.Zero(t, result.Stats.RelationshipsCreated)
+}
+
+func TestMutationPipelineCarriesBindingsAcrossMergeChains(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	created, err := exec.Execute(ctx, "CREATE (a:ChainFixture {id:'a'}), (b:ChainFixture {id:'b'}) MERGE (a)-[:FIRST]->(b) RETURN count(a) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, created, int64(1))
+	require.Equal(t, 2, created.Stats.NodesCreated)
+	require.Equal(t, 1, created.Stats.RelationshipsCreated)
+
+	chained, err := exec.Execute(ctx, "MERGE (a:ChainFixture {id:'a'}) MERGE (b:ChainFixture {id:'b'}) MERGE (a)-[:SECOND]->(b) MERGE (a)-[:THIRD]->(b)", nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, chained.Stats.RelationshipsCreated)
+
+	readback, err := exec.Execute(ctx, "MATCH (:ChainFixture)-[r]->(:ChainFixture) RETURN count(r) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, readback, int64(3))
+}
+
+func TestMergePathBindingFlowsThroughMutationPipeline(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	result, err := exec.Execute(ctx, "MERGE (a {num:1}) MERGE (b {num:2}) MERGE path = (a)-[:LINK]->(b) RETURN path", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"path"}, result.Columns)
+	require.Len(t, result.Rows, 1)
+	require.Len(t, result.Rows[0], 1)
+	pathMap, ok := result.Rows[0][0].(map[string]interface{})
+	require.True(t, ok, "path result type: %T", result.Rows[0][0])
+	path, ok := pathMap["_pathResult"].(PathResult)
+	require.True(t, ok, "embedded path result type: %T", pathMap["_pathResult"])
+	require.Len(t, path.Nodes, 2)
+	require.Len(t, path.Relationships, 1)
+	require.Equal(t, storage.NodeID(path.Nodes[0].ID), path.Relationships[0].StartNode)
+	require.Equal(t, storage.NodeID(path.Nodes[1].ID), path.Relationships[0].EndNode)
+}
+
+func TestMergeUsesBindingsProjectedAcrossWithHorizons(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:AliasFixture {id:0})", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (original:AliasFixture) WITH original AS source, original AS target MERGE (source)-[:SELF]->(target) RETURN source.id AS id", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, result, int64(0))
+	require.Equal(t, 1, result.Stats.RelationshipsCreated)
+
+	chained, err := exec.Execute(ctx, "MATCH (original:AliasFixture) WITH original AS source MERGE (created:AliasCreated {id:1}) MERGE (source)-[:LINK]->(created) WITH source AS projected MERGE (createdAgain:AliasCreated {id:1}) MERGE (projected)-[:SECOND]->(createdAgain) RETURN projected.id AS id", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, chained, int64(0))
+	require.Equal(t, 1, chained.Stats.NodesCreated)
+	require.Equal(t, 2, chained.Stats.RelationshipsCreated)
+}
+
+func TestMutationPipelineCarriesEveryRelationshipInChainedMatch(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (a:DeleteChain), (b:DeleteChain), (c:DeleteChain) CREATE (a)-[:LINK]->(b), (b)-[:LINK]->(c)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (a:DeleteChain)-[first:LINK]->(b:DeleteChain)-[second:LINK]->(c:DeleteChain) DELETE first, second, b, c MERGE (replacement:Replacement)", nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Stats.RelationshipsDeleted)
+	require.Equal(t, 2, result.Stats.NodesDeleted)
+	require.Equal(t, 1, result.Stats.NodesCreated)
+}
+
+func TestBareUndirectedMatchPreservesGraphConnectivity(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (a:BareDirection {side:2}), (b:BareDirection {side:1}), (c:BareDirection {side:1}), (d:BareDirection {side:2}) CREATE (a)-[:LINK]->(b), (c)-[:LINK]->(d)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (left:BareDirection {side:2})--(right:BareDirection {side:1}) RETURN left, right", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2)
+}
+
+func TestRelationshipMergeEmitsEveryExistingMatch(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (a:MergeCardinality {side:'a'}), (b:MergeCardinality {side:'b'}) CREATE (a)-[:LINK]->(b), (a)-[:LINK]->(b)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (a:MergeCardinality {side:'a'}), (b:MergeCardinality {side:'b'}) MERGE (a)-[relationship:LINK]->(b) RETURN count(relationship) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, result, int64(2))
+	require.Zero(t, result.Stats.RelationshipsCreated)
+}
+
 func TestRemovePropertyThenSetLabelPreservesMatchedScope(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	_, err := exec.Execute(ctx, "CREATE (:P {name:'Ann'}), (:P {name:'Bob'}), (:P {name:'Cid'}), (:P {name:'Dee', city:'Riga'})", nil)

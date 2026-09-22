@@ -199,6 +199,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	if params := getParamsFromContext(ctx); params != nil {
 		cypher = e.substituteParams(cypher, params)
 	}
+	cypher = normalizeBareRelationshipPatterns(cypher)
 
 	// Validate MATCH syntax
 	trimmed := strings.TrimSpace(cypher)

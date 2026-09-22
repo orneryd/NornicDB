@@ -234,6 +234,11 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 
 skipMatchCallRoute:
 	if startsWithMerge {
+		if !containsKeywordOutsideStrings(cypher, "SET") {
+			if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+				return result, err
+			}
+		}
 		if findKeywordIndexInContext(cypher, "OPTIONAL MATCH") > 0 ||
 			findKeywordIndexInContext(cypher, "WITH") > 0 ||
 			findKeywordIndexInContext(cypher, "WHERE") > 0 ||
@@ -284,6 +289,11 @@ skipMatchCallRoute:
 	}
 
 	if startsWithMatch && mergeIdx > 0 {
+		if !containsKeywordOutsideStrings(cypher, "SET") {
+			if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+				return result, err
+			}
+		}
 		return e.executeCompoundMatchMerge(ctx, cypher)
 	}
 	if startsWithMatch && createIdx > 0 {

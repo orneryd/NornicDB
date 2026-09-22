@@ -82,7 +82,40 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	if !ok {
 		return nil, false
 	}
-	if !pipelineMergeShapeSupported(clauses) {
+	upper := strings.ToUpper(cypher)
+	// Inline MERGE actions and dynamic-label assignments are atomic operators
+	// owned by their parse-once mutation plans. The row pipeline must not split
+	// them into independent MERGE/SET clauses until it can retain that atomicity.
+	if strings.Contains(upper, "ON CREATE SET") || strings.Contains(upper, "ON MATCH SET") || strings.Contains(cypher, "$(") {
+		return nil, false
+	}
+	// Top-level UNWIND mutation plans use the batch executor. WITH-bearing
+	// pipelines still require row projection here; direct UNWIND plans do not.
+	if clauses[0].kind == pipelineClauseUnwind {
+		hasWith := false
+		requiresBatchPlan := false
+		mergeCount := 0
+		for _, clause := range clauses {
+			hasWith = hasWith || clause.kind == pipelineClauseWith
+			if clause.kind == pipelineClauseMerge {
+				mergeCount++
+			}
+			switch clause.kind {
+			case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate,
+				pipelineClauseDelete, pipelineClauseSet, pipelineClauseRemove:
+				requiresBatchPlan = true
+			}
+		}
+		if mergeCount > 0 && (!hasWith || requiresBatchPlan || mergeCount > 1) {
+			return nil, false
+		}
+	}
+	hasMergeAction, hasSetAction := false, false
+	for _, clause := range clauses {
+		hasMergeAction = hasMergeAction || clause.kind == pipelineClauseMerge
+		hasSetAction = hasSetAction || clause.kind == pipelineClauseSet
+	}
+	if hasMergeAction && hasSetAction {
 		return nil, false
 	}
 	for _, clause := range clauses {
@@ -98,6 +131,8 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	hasRemove := false
 	hasDelete := false
 	hasSet := false
+	hasMerge := false
+	mutationClauseCount := 0
 	for _, clause := range clauses {
 		if clause.kind == pipelineClauseWith || clause.kind == pipelineClauseUnwind {
 			hasWithOrUnwind = true
@@ -111,56 +146,23 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 		if clause.kind == pipelineClauseSet {
 			hasSet = true
 		}
+		if clause.kind == pipelineClauseMerge {
+			hasMerge = true
+		}
+		switch clause.kind {
+		case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseDelete, pipelineClauseSet, pipelineClauseRemove:
+			mutationClauseCount++
+		}
 	}
-	upper := strings.ToUpper(cypher)
 	stringPredicateMutation := strings.Contains(upper, " CREATE ") &&
 		(strings.Contains(upper, " STARTS WITH ") || strings.Contains(upper, " ENDS WITH "))
 	startsWithCreateProjection := clauses[0].kind == pipelineClauseCreate &&
 		clauses[len(clauses)-1].kind == pipelineClauseReturn &&
 		firstTopLevelModifierIndex(strings.TrimSpace(clauses[len(clauses)-1].text[len("RETURN"):])) >= 0
-	if !hasWithOrUnwind && !hasRemove && !hasDelete && !hasSet && !stringPredicateMutation && !startsWithCreateProjection {
+	if !hasWithOrUnwind && !hasRemove && !hasDelete && !hasSet && !hasMerge && mutationClauseCount < 2 && !stringPredicateMutation && !startsWithCreateProjection {
 		return nil, false
 	}
 	return clauses, true
-}
-
-// pipelineMergeShapeSupported keeps the semantic pipeline and the optimized
-// bulk mutation plans disjoint. The pipeline owns the previously broken
-// UNWIND-WITH-node-MERGE sequence; relationship and multi-MERGE/SET chains
-// remain with the parse-once batch plans built for those workloads.
-func pipelineMergeShapeSupported(clauses []pipelineClause) bool {
-	mergeIndexes := make([]int, 0, 1)
-	hasSet := false
-	for index, clause := range clauses {
-		if clause.kind == pipelineClauseMerge {
-			mergeIndexes = append(mergeIndexes, index)
-		}
-		if clause.kind == pipelineClauseSet {
-			hasSet = true
-		}
-	}
-	if len(mergeIndexes) == 0 {
-		return true
-	}
-	if clauses[0].kind == pipelineClauseCreate {
-		for _, clause := range clauses {
-			if clause.kind == pipelineClauseWith {
-				return true
-			}
-		}
-	}
-	if len(mergeIndexes) != 1 || hasSet || len(clauses) < 3 || len(clauses) > 4 {
-		return false
-	}
-	mergeIndex := mergeIndexes[0]
-	if mergeIndex != 2 || clauses[0].kind != pipelineClauseUnwind || clauses[1].kind != pipelineClauseWith {
-		return false
-	}
-	if len(clauses) == 4 && clauses[3].kind != pipelineClauseReturn {
-		return false
-	}
-	mergeText := clauses[mergeIndex].text
-	return !strings.Contains(mergeText, "-[") && !strings.Contains(mergeText, "]-")
 }
 
 // splitPipelineClauses walks the query from left to right and slices it on
@@ -1056,7 +1058,7 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 		if pathVariable := extractPathAssignmentVariable(patternPart); pathVariable != "" {
 			returnVars = appendUniquePipelineBinding(returnVars, pathVariable)
 		}
-		if relVar := extractRelationshipVariable(patternPart); relVar != "" {
+		for _, relVar := range extractRelationshipVariables(patternPart) {
 			returnVars = appendUniquePipelineBinding(returnVars, relVar)
 		}
 		if len(returnVars) == 0 {
@@ -1313,6 +1315,18 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				substituted = replaceIdentifierOutsideQuotes(substituted, name, e.valueToLiteral(value))
 			}
 		}
+		var relationshipPattern *mergeRelationshipPattern
+		mergeBody := strings.TrimSpace(substituted)
+		if startsWithKeywordFold(mergeBody, "MERGE") {
+			mergeBody = strings.TrimSpace(mergeBody[len("MERGE"):])
+			if strings.Contains(mergeBody, "[") {
+				var parseErr error
+				relationshipPattern, parseErr = e.parseMergeRelationshipPattern(ctx, mergeBody, nodeContext, relContext)
+				if parseErr != nil {
+					return nil, nil, parseErr
+				}
+			}
+		}
 		merged, err := e.executeMergeWithContext(ctx, substituted, nodeContext, relContext)
 		if err != nil {
 			return nil, nil, err
@@ -1331,6 +1345,33 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		}
 		for name, relationship := range relContext {
 			newRow[name] = relationship
+		}
+		if relationshipPattern != nil {
+			startNode := nodeContext[relationshipPattern.startVariable]
+			endNode := nodeContext[relationshipPattern.endVariable]
+			if startNode != nil && endNode != nil {
+				matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), relationshipPattern, startNode, endNode)
+				if findErr != nil {
+					return nil, nil, findErr
+				}
+				if len(matches) > 0 {
+					for _, relationship := range matches {
+						expanded := make(pipelineRow, util.SafePreallocSum(len(newRow), 2))
+						for name, value := range newRow {
+							expanded[name] = value
+						}
+						if relationshipPattern.relVariable != "" {
+							expanded[relationshipPattern.relVariable] = relationship
+						}
+						if relationshipPattern.pathVariable != "" {
+							path := PathResult{Nodes: []*storage.Node{startNode, endNode}, Relationships: []*storage.Edge{relationship}, Length: 1}
+							expanded[relationshipPattern.pathVariable] = e.pathToMap(path)
+						}
+						out = append(out, expanded)
+					}
+					continue
+				}
+			}
 		}
 		out = append(out, newRow)
 	}
