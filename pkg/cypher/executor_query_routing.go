@@ -190,6 +190,16 @@ func isShowConstraintContractsCommand(cypher string) bool {
 
 // executeWithoutTransaction executes query without transaction wrapping (original path).
 func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	// A top-level UNION composes complete single queries. Route it before any
+	// handler can consume the leading MATCH, RETURN, or UNWIND branch. The
+	// inexpensive substring guard keeps non-UNION queries off the structural
+	// scanner used to distinguish top-level separators from nested subqueries.
+	if strings.Contains(upperQuery, "UNION") {
+		if branches, unionAll, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
+			return e.executeUnion(ctx, cypher, unionAll)
+		}
+	}
+
 	if result, handled := e.tryFastPathSimpleMatchReturnLimit(ctx, cypher, upperQuery); handled {
 		return result, nil
 	}
@@ -461,10 +471,6 @@ skipMatchCallRoute:
 		return e.executeWith(ctx, cypher)
 	case findKeywordIndex(cypher, "UNWIND") == 0:
 		return e.executeUnwind(ctx, cypher)
-	case findKeywordIndex(cypher, "UNION ALL") >= 0:
-		return e.executeUnion(ctx, cypher, true)
-	case findKeywordIndex(cypher, "UNION") >= 0:
-		return e.executeUnion(ctx, cypher, false)
 	case findKeywordIndex(cypher, "FOREACH") == 0:
 		return e.executeForeach(ctx, cypher)
 	case findKeywordIndex(cypher, "LOAD CSV") == 0:

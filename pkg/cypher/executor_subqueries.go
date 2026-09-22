@@ -2235,9 +2235,17 @@ func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass boo
 // splitTopLevelUnionBranches splits a query by top-level UNION/UNION ALL separators.
 // Returns branches, unionAllMode, ok.
 func splitTopLevelUnionBranches(query string) ([]string, bool, bool) {
+	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(query)
+	return branches, unionAll, ok && !mixed
+}
+
+// parseTopLevelUnionBranches preserves whether a composition mixes UNION and
+// UNION ALL so callers can report the Cypher semantic error rather than
+// treating the statement as an unsplittable query.
+func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, mixed, ok bool) {
 	trimmed := strings.TrimSpace(query)
 	if trimmed == "" {
-		return nil, false, false
+		return nil, false, false, false
 	}
 
 	type sep struct {
@@ -2309,33 +2317,38 @@ func splitTopLevelUnionBranches(query string) ([]string, bool, bool) {
 	}
 
 	if len(seps) == 0 {
-		return nil, false, false
+		return nil, false, false, false
 	}
 
-	unionAllMode := true
+	unionAllMode = true
+	hasDistinct := false
+	hasAll := false
 	for _, s := range seps {
-		if !s.all {
+		if s.all {
+			hasAll = true
+		} else {
+			hasDistinct = true
 			unionAllMode = false
-			break
 		}
 	}
+	mixed = hasDistinct && hasAll
 
-	branches := make([]string, 0, util.SafePreallocSum(len(seps), 1))
+	branches = make([]string, 0, util.SafePreallocSum(len(seps), 1))
 	start := 0
 	for _, s := range seps {
 		part := strings.TrimSpace(trimmed[start:s.pos])
 		if part == "" {
-			return nil, false, false
+			return nil, false, false, false
 		}
 		branches = append(branches, part)
 		start = s.end
 	}
 	last := strings.TrimSpace(trimmed[start:])
 	if last == "" {
-		return nil, false, false
+		return nil, false, false, false
 	}
 	branches = append(branches, last)
-	return branches, unionAllMode, true
+	return branches, unionAllMode, mixed, true
 }
 
 func (e *StorageExecutor) executeCorrelatedCallWithSeedRows(ctx context.Context, seedResult *ExecuteResult, innerBody string, importVars []string) (*ExecuteResult, error) {

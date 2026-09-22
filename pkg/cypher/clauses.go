@@ -3236,9 +3236,16 @@ func (e *StorageExecutor) executeUnwindWithCollectProjection(unwindVar string, i
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
 func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
-	queries, splitAll, ok := splitTopLevelUnionBranches(cypher)
+	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
 	if !ok || len(queries) < 2 {
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
+	}
+	if mixed {
+		return nil, newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidClauseComposition",
+			"UNION and UNION ALL cannot be combined in the same query",
+		)
 	}
 	if unionAll != splitAll {
 		if unionAll {
@@ -3274,11 +3281,20 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 				Columns: result.Columns,
 				Rows:    make([][]interface{}, 0),
 			}
-		} else {
-			// Validate column count matches
+		} else if !reflect.DeepEqual(combinedResult.Columns, result.Columns) {
+			message := fmt.Sprintf(
+				"UNION queries must return the same columns (got %v and %v)",
+				combinedResult.Columns,
+				result.Columns,
+			)
 			if len(combinedResult.Columns) != len(result.Columns) {
-				return nil, localizedError(localization.CypherResidualUnionColumnCountMismatch(len(combinedResult.Columns), len(result.Columns)), nil)
+				message = localization.CypherResidualUnionColumnCountMismatch(len(combinedResult.Columns), len(result.Columns)).Fallback
 			}
+			return nil, newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"DifferentColumnsInUnion",
+				message,
+			)
 		}
 
 		// Add rows from this query
