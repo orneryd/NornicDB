@@ -1836,8 +1836,6 @@ func cypherSyntaxConfusableReplacement(r rune) (string, bool) {
 		return "->", true
 	case '←':
 		return "<-", true
-	case '—', '–', '−', '‐', '‑', '‒':
-		return "-", true
 	case '（':
 		return "(", true
 	case '）':

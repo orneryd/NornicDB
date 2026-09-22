@@ -94,6 +94,7 @@
     "expressions/mathematical/Mathematical11.feature",
     "expressions/mathematical/Mathematical13.feature",
     "expressions/mathematical/Mathematical2.feature",
+    "expressions/mathematical/Mathematical3.feature",
     "expressions/null/Null3.feature",
     "expressions/path/Path1.feature",
     "expressions/path/Path2.feature",
@@ -35406,11 +35407,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:a2d53e2db15e539a2a2a0b8ee36bb587f3cf6ff494afee5df0ebb3cfed0e126d",
-      "gap_id": "tck-gap-6deadf026fe7",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/mathematical"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/mathematical/Mathematical3.feature",
@@ -35418,11 +35415,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:a2d53e2db15e539a2a2a0b8ee36bb587f3cf6ff494afee5df0ebb3cfed0e126d",
-      "gap_id": "tck-gap-8287189d8649",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/mathematical"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/mathematical/Mathematical8.feature",

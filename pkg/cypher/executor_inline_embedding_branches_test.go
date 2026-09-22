@@ -162,13 +162,15 @@ func TestApplyInlineEmbeddingMutations_Branches(t *testing.T) {
 }
 
 func TestExecutorConfusableAndEmbeddingSuffixHelpers(t *testing.T) {
-	cases := []rune{'→', '←', '—', '（', '）', '［', '］', '｛', '｝', '，', '：', '；', '．', '＝', '＜', '＞', '＄'}
+	cases := []rune{'→', '←', '（', '）', '［', '］', '｛', '｝', '，', '：', '；', '．', '＝', '＜', '＞', '＄'}
 	for _, r := range cases {
 		repl, ok := cypherSyntaxConfusableReplacement(r)
 		require.True(t, ok)
 		require.NotEmpty(t, repl)
 	}
 	_, ok := cypherSyntaxConfusableReplacement('A')
+	require.False(t, ok)
+	_, ok = cypherSyntaxConfusableReplacement('—')
 	require.False(t, ok)
 
 	stripped, found := stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING RETURN n")
