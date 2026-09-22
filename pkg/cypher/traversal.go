@@ -29,9 +29,10 @@ const VarLengthUnboundedMaxHops = 1 << 24 // ~16.7M
 
 // PathResult represents a path through the graph
 type PathResult struct {
-	Nodes         []*storage.Node
-	Relationships []*storage.Edge
-	Length        int
+	Nodes          []*storage.Node
+	Relationships  []*storage.Edge
+	Length         int
+	SegmentLengths []int
 }
 
 // TraversalContext holds state during graph traversal
@@ -73,12 +74,13 @@ func buildRelTypeSet(relTypes []string) map[string]struct{} {
 
 // RelationshipPattern represents a parsed relationship pattern
 type RelationshipPattern struct {
-	Variable   string   // r in [r:TYPE]
-	Types      []string // TYPE in [r:TYPE|OTHER]
-	Direction  string   // "outgoing" (-[r]->), "incoming" (<-[r]-), "both" (-[r]-)
-	MinHops    int      // min in [*min..max]
-	MaxHops    int      // max in [*min..max]
-	Properties map[string]interface{}
+	Variable       string   // r in [r:TYPE]
+	Types          []string // TYPE in [r:TYPE|OTHER]
+	Direction      string   // "outgoing" (-[r]->), "incoming" (<-[r]-), "both" (-[r]-)
+	MinHops        int      // min in [*min..max]
+	MaxHops        int      // max in [*min..max]
+	VariableLength bool     // whether the pattern explicitly uses `*`
+	Properties     map[string]interface{}
 }
 
 // parseRelationshipPattern parses patterns like -[r:TYPE {props}]->
@@ -111,6 +113,7 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 
 		// Check for variable length: [*], [*2], [*1..3], [*2..], [*..5]
 		if strings.Contains(inner, "*") {
+			result.VariableLength = true
 			varLengthStart := strings.Index(inner, "*")
 			varLengthEnd := varLengthStart + 1
 			for varLengthEnd < len(inner) {
@@ -1719,6 +1722,9 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 	} else {
 		currentPaths = e.traverseGraph(ctx, simpleMatch)
 	}
+	for index := range currentPaths {
+		currentPaths[index].SegmentLengths = []int{len(currentPaths[index].Relationships)}
+	}
 
 	// For each subsequent segment, extend paths
 	for segIdx := 1; segIdx < len(match.Segments); segIdx++ {
@@ -1750,9 +1756,10 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 				}
 				// Create extended path
 				extended := PathResult{
-					Nodes:         make([]*storage.Node, 0, len(path.Nodes)+len(segPath.Nodes)-1),
-					Relationships: make([]*storage.Edge, 0, len(path.Relationships)+len(segPath.Relationships)),
-					Length:        path.Length + segPath.Length,
+					Nodes:          make([]*storage.Node, 0, len(path.Nodes)+len(segPath.Nodes)-1),
+					Relationships:  make([]*storage.Edge, 0, len(path.Relationships)+len(segPath.Relationships)),
+					Length:         path.Length + segPath.Length,
+					SegmentLengths: append(append([]int{}, path.SegmentLengths...), len(segPath.Relationships)),
 				}
 
 				// Add all nodes from current path
@@ -2049,7 +2056,7 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 	}
 
 	// Map end node
-	if match.EndNode.variable != "" && len(path.Nodes) > 1 {
+	if match.EndNode.variable != "" && len(path.Nodes) > 0 {
 		ctx.nodes[match.EndNode.variable] = path.Nodes[len(path.Nodes)-1]
 	}
 
@@ -2057,10 +2064,15 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 	// Path nodes layout: [startNode, intermediate1, intermediate2, ..., endNode]
 	// IntermediateNodes layout: [intermediate1, intermediate2, ...]
 	if match.IsChained && len(match.IntermediateNodes) > 0 {
+		nodeOffset := 0
 		for i, intermediateInfo := range match.IntermediateNodes {
+			if i < len(path.SegmentLengths) {
+				nodeOffset += path.SegmentLengths[i]
+			} else {
+				nodeOffset++
+			}
 			if intermediateInfo.variable != "" {
-				// Path node index is i+1 (skip start node)
-				pathIdx := i + 1
+				pathIdx := nodeOffset
 				if pathIdx < len(path.Nodes) {
 					ctx.nodes[intermediateInfo.variable] = path.Nodes[pathIdx]
 				}
@@ -2068,15 +2080,35 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 		}
 
 		// Also map relationships from each segment
+		relationshipOffset := 0
 		for i, seg := range match.Segments {
-			if seg.Relationship.Variable != "" && i < len(path.Relationships) {
-				ctx.rels[seg.Relationship.Variable] = path.Relationships[i]
+			segmentLength := 1
+			if i < len(path.SegmentLengths) {
+				segmentLength = path.SegmentLengths[i]
 			}
+			segmentEnd := relationshipOffset + segmentLength
+			if segmentEnd > len(path.Relationships) {
+				segmentEnd = len(path.Relationships)
+			}
+			if seg.Relationship.Variable != "" {
+				if seg.Relationship.VariableLength {
+					relationships := append([]*storage.Edge{}, path.Relationships[relationshipOffset:segmentEnd]...)
+					ctx.paths[seg.Relationship.Variable] = &PathResult{Relationships: relationships}
+				} else if relationshipOffset < segmentEnd {
+					ctx.rels[seg.Relationship.Variable] = path.Relationships[relationshipOffset]
+				}
+			}
+			relationshipOffset = segmentEnd
 		}
 	} else {
 		// Map relationship (single segment)
-		if match.Relationship.Variable != "" && len(path.Relationships) > 0 {
-			ctx.rels[match.Relationship.Variable] = path.Relationships[0]
+		if match.Relationship.Variable != "" {
+			if match.Relationship.VariableLength {
+				relationships := append([]*storage.Edge{}, path.Relationships...)
+				ctx.paths[match.Relationship.Variable] = &PathResult{Relationships: relationships}
+			} else if len(path.Relationships) > 0 {
+				ctx.rels[match.Relationship.Variable] = path.Relationships[0]
+			}
 		}
 	}
 

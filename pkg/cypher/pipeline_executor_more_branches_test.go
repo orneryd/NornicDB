@@ -51,9 +51,8 @@ func TestPipelineApplyReturn_AdditionalBranches(t *testing.T) {
 
 	rows := []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}
 	res, ok := exec.pipelineApplyReturn(rows, "RETURN ")
-	require.True(t, ok)
-	require.Equal(t, []string{"n"}, res.Columns)
-	require.EqualValues(t, int64(2), res.Rows[0][0])
+	require.False(t, ok)
+	require.Nil(t, res)
 
 	res, ok = exec.pipelineApplyReturn(rows, "RETURN count(*) AS c, count(x) AS cx")
 	require.True(t, ok)

@@ -349,11 +349,23 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "range")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			start, _ := strconv.ParseInt(strings.TrimSpace(args[0]), 10, 64)
-			end, _ := strconv.ParseInt(strings.TrimSpace(args[1]), 10, 64)
+			startValue := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			endValue := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			startNumber, startOK := toFloat64(startValue)
+			endNumber, endOK := toFloat64(endValue)
+			if !startOK || !endOK {
+				return []interface{}{}
+			}
+			start := int64(startNumber)
+			end := int64(endNumber)
 			step := int64(1)
 			if len(args) >= 3 {
-				step, _ = strconv.ParseInt(strings.TrimSpace(args[2]), 10, 64)
+				stepValue := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+				stepNumber, stepOK := toFloat64(stepValue)
+				if !stepOK {
+					return []interface{}{}
+				}
+				step = int64(stepNumber)
 			}
 			if step == 0 {
 				step = 1

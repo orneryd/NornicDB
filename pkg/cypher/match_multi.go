@@ -364,6 +364,12 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 	if len(matchClauses) < 2 {
 		return nil, localizedError(localization.CypherTransactionsMultipleMatchExpected(), nil)
 	}
+	pathVariables := make([]string, 0)
+	for _, clause := range matchClauses {
+		if variable := extractPathAssignmentVariable(clause); variable != "" {
+			pathVariables = append(pathVariables, variable)
+		}
+	}
 
 	// Execute first MATCH and get initial bindings. relBindings is
 	// index-aligned with bindings and carries any relationship variable
@@ -410,7 +416,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 	// relAt returns the relationship-binding map for row idx, or nil when
 	// relBindings is shorter than bindings (e.g. rows added before any
 	// relationship variable existed).
-	relAt := func(idx int) map[string]*storage.Edge {
+	relAt := func(idx int) relationshipBinding {
 		if idx < len(relBindings) {
 			return relBindings[idx]
 		}
@@ -419,9 +425,14 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 	if hasAggregation {
 		aggregateRows := make([]traversalOptRow, 0, len(bindings))
 		for idx, nodeBindings := range bindings {
+			values := make(map[string]interface{}, len(pathVariables))
+			for _, variable := range pathVariables {
+				values[variable] = true
+			}
 			aggregateRows = append(aggregateRows, traversalOptRow{
-				nodes: map[string]*storage.Node(nodeBindings),
-				rels:  relAt(idx),
+				nodes:  map[string]*storage.Node(nodeBindings),
+				rels:   edgeRelationshipBindings(relAt(idx)),
+				values: values,
 			})
 		}
 		aggregated, err := e.aggregateTraversalOptionalRows(ctx, aggregateRows, returnItems)
@@ -458,7 +469,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 			keyParts := make([]interface{}, 0)
 			for i, item := range returnItems {
 				if !isAggFlags[i] {
-					val := e.resolveBindingItem(ctx, item, b, relAt(idx))
+					val := e.resolveBindingItemWithRelationships(ctx, item, b, relAt(idx))
 					keyParts = append(keyParts, val)
 				}
 			}
@@ -491,7 +502,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 					} else {
 						count := int64(0)
 						for _, idx := range groupIdxs {
-							val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
+							val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 							if val != nil {
 								count++
 							}
@@ -502,7 +513,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				case isAggregateFuncName(item.expr, "sum"):
 					sum := float64(0)
 					for _, idx := range groupIdxs {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
+						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						if num, ok := toFloat64(val); ok {
 							sum += num
 						}
@@ -513,7 +524,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 					sum := float64(0)
 					count := 0
 					for _, idx := range groupIdxs {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
+						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						if num, ok := toFloat64(val); ok {
 							sum += num
 							count++
@@ -528,7 +539,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				case isAggregateFuncName(item.expr, "min"):
 					var minVal interface{}
 					for _, idx := range groupIdxs {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
+						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						if val != nil && (minVal == nil || e.compareOrderValues(val, minVal) < 0) {
 							minVal = val
 						}
@@ -538,7 +549,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				case isAggregateFuncName(item.expr, "max"):
 					var maxVal interface{}
 					for _, idx := range groupIdxs {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
+						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						if val != nil && (maxVal == nil || e.compareOrderValues(val, maxVal) > 0) {
 							maxVal = val
 						}
@@ -548,7 +559,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				case isAggregateFuncName(item.expr, "collect"):
 					var collected []interface{}
 					for _, idx := range groupIdxs {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
+						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						collected = append(collected, val)
 					}
 					row[i] = collected
@@ -561,7 +572,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		for idx, b := range bindings {
 			row := make([]interface{}, len(returnItems))
 			for i, item := range returnItems {
-				row[i] = e.resolveBindingItem(ctx, item, b, relAt(idx))
+				row[i] = e.resolveBindingItemWithRelationships(ctx, item, b, relAt(idx))
 			}
 			result.Rows = append(result.Rows, row)
 		}
@@ -707,13 +718,14 @@ func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
 // executeChainedMatch below — that travels index-aligned alongside a
 // []binding slice rather than living inside binding itself.
 type binding map[string]*storage.Node
+type relationshipBinding map[string]interface{}
 
 // executeFirstMatch executes the first MATCH and returns initial bindings,
 // plus the relationship variable (if any) bound by this same clause for each
 // row, index-aligned with the returned bindings slice.
-func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string) ([]binding, []map[string]*storage.Edge) {
+func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string) ([]binding, []relationshipBinding) {
 	var bindings []binding
-	var relBindings []map[string]*storage.Edge
+	var relBindings []relationshipBinding
 
 	// Check for relationship pattern
 	if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
@@ -739,7 +751,7 @@ func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string)
 			// knows how to map a PathResult's relationships onto the
 			// pattern's relationship variable(s) (including chained
 			// segments); reuse it instead of duplicating that logic.
-			relBindings = append(relBindings, pathContext.rels)
+			relBindings = append(relBindings, relationshipBindingsFromPathContext(pathContext))
 		}
 	} else {
 		// Simple node pattern
@@ -764,9 +776,9 @@ func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string)
 // relationship-binding slice is index-aligned with the returned bindings and
 // carries forward any relationship bound earlier in the chain plus any
 // relationship variable bound by this clause's own pattern.
-func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern string, existingBindings []binding, existingRelBindings []map[string]*storage.Edge) ([]binding, []map[string]*storage.Edge) {
+func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern string, existingBindings []binding, existingRelBindings []relationshipBinding) ([]binding, []relationshipBinding) {
 	var newBindings []binding
-	var newRelBindings []map[string]*storage.Edge
+	var newRelBindings []relationshipBinding
 	isRelationshipPattern := strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-")
 	var matches *TraversalMatch
 	if isRelationshipPattern {
@@ -777,7 +789,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 	}
 
 	for idx, existing := range existingBindings {
-		var existingRels map[string]*storage.Edge
+		var existingRels relationshipBinding
 		if idx < len(existingRelBindings) {
 			existingRels = existingRelBindings[idx]
 		}
@@ -815,7 +827,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 					if !ok {
 						continue
 					}
-					mergedRels, ok := mergeRelBindingsChecked(existingRels, pathContext.rels)
+					mergedRels, ok := mergeRelationshipBindingsChecked(existingRels, relationshipBindingsFromPathContext(pathContext))
 					if !ok {
 						continue
 					}
@@ -908,6 +920,69 @@ func mergeRelBindingsChecked(existing, current map[string]*storage.Edge) (map[st
 	return merged, true
 }
 
+func relationshipBindingsFromPathContext(pathContext PathContext) relationshipBinding {
+	bindings := make(relationshipBinding, len(pathContext.rels)+len(pathContext.paths))
+	for name, relationship := range pathContext.rels {
+		bindings[name] = relationship
+	}
+	for name, path := range pathContext.paths {
+		if path == nil || path.Nodes != nil {
+			continue
+		}
+		bindings[name] = append([]*storage.Edge{}, path.Relationships...)
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+	return bindings
+}
+
+func mergeRelationshipBindingsChecked(existing, current relationshipBinding) (relationshipBinding, bool) {
+	if len(existing) == 0 && len(current) == 0 {
+		return nil, true
+	}
+	merged := make(relationshipBinding, len(existing)+len(current))
+	for name, value := range existing {
+		merged[name] = value
+	}
+	for name, value := range current {
+		if previous, exists := merged[name]; exists && !sameRelationshipBinding(previous, value) {
+			return nil, false
+		}
+		merged[name] = value
+	}
+	return merged, true
+}
+
+func sameRelationshipBinding(left, right interface{}) bool {
+	leftEdge, leftIsEdge := left.(*storage.Edge)
+	rightEdge, rightIsEdge := right.(*storage.Edge)
+	if leftIsEdge || rightIsEdge {
+		return leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && leftEdge.ID == rightEdge.ID
+	}
+	leftList, leftIsList := left.([]*storage.Edge)
+	rightList, rightIsList := right.([]*storage.Edge)
+	if !leftIsList || !rightIsList || len(leftList) != len(rightList) {
+		return false
+	}
+	for index := range leftList {
+		if leftList[index] == nil || rightList[index] == nil || leftList[index].ID != rightList[index].ID {
+			return false
+		}
+	}
+	return true
+}
+
+func edgeRelationshipBindings(bindings relationshipBinding) map[string]*storage.Edge {
+	result := make(map[string]*storage.Edge)
+	for name, value := range bindings {
+		if relationship, ok := value.(*storage.Edge); ok {
+			result[name] = relationship
+		}
+	}
+	return result
+}
+
 // filterBindingsByWhere filters bindings based on WHERE clause. Kept
 // unchanged (node-only) because several existing tests
 // (binding_where_benchmark_test.go, migration_query_shapes_test.go) call it
@@ -938,17 +1013,17 @@ func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []
 // the duration of the WHERE check only — see bindingWithRelView. The real
 // *storage.Edge values (needed for RETURN/DELETE) are returned separately
 // and never replaced by the view.
-func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []map[string]*storage.Edge, whereClause string, params map[string]interface{}) ([]binding, []map[string]*storage.Edge) {
+func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []relationshipBinding, whereClause string, params map[string]interface{}) ([]binding, []relationshipBinding) {
 	compiled := e.getCompiledBindingWhere(ctx, whereClause)
 	resultBindings := make([]binding, 0, len(bindings))
-	resultRels := make([]map[string]*storage.Edge, 0, len(bindings))
+	resultRels := make([]relationshipBinding, 0, len(bindings))
 
 	for i, b := range bindings {
-		var rels map[string]*storage.Edge
+		var rels relationshipBinding
 		if i < len(relBindings) {
 			rels = relBindings[i]
 		}
-		if compiled(bindingWithRelView(b, rels), params) {
+		if compiled(bindingWithRelView(b, edgeRelationshipBindings(rels)), params) {
 			resultBindings = append(resultBindings, b)
 			resultRels = append(resultRels, rels)
 		}
@@ -1013,15 +1088,23 @@ func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, par
 // any relationship variable(s) bound for this specific row (index-aligned
 // counterpart produced by executeFirstMatch/executeChainedMatch); pass nil
 // when the row binds no relationship variable.
-func (e *StorageExecutor) resolveBindingItem(ctx context.Context, item returnItem, b binding, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) resolveBindingItemWithRelationships(ctx context.Context, item returnItem, b binding, rels relationshipBinding) interface{} {
 	expr := strings.TrimSpace(item.expr)
 	if expr == "" {
 		return nil
 	}
-	return e.resolveBindingExpr(ctx, expr, b, rels)
+	return e.resolveBindingExprWithRelationships(ctx, expr, b, rels)
+}
+
+func (e *StorageExecutor) resolveBindingItem(ctx context.Context, item returnItem, b binding, rels map[string]*storage.Edge) interface{} {
+	return e.resolveBindingItemWithRelationships(ctx, item, b, relationshipBindingFromEdges(rels))
 }
 
 func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b binding, rels map[string]*storage.Edge) interface{} {
+	return e.resolveBindingExprWithRelationships(ctx, expr, b, relationshipBindingFromEdges(rels))
+}
+
+func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Context, expr string, b binding, rels relationshipBinding) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -1033,7 +1116,7 @@ func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b
 		if node := b[inner]; node != nil {
 			return storage.NodeElementID(e.databaseName(), node.ID)
 		}
-		if edge := rels[inner]; edge != nil {
+		if edge, ok := rels[inner].(*storage.Edge); ok && edge != nil {
 			return storage.RelationshipElementID(e.databaseName(), edge.ID)
 		}
 		return nil
@@ -1041,7 +1124,7 @@ func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b
 
 	// Reuse shared COALESCE evaluator used in MATCH row projection paths.
 	if strings.HasPrefix(strings.ToUpper(expr), "COALESCE(") && strings.HasSuffix(expr, ")") {
-		return e.evaluateCoalesceInContext(expr, b, rels, nil)
+		return e.evaluateCoalesceInContext(expr, b, edgeRelationshipBindings(rels), nil)
 	}
 
 	// Literal value
@@ -1062,7 +1145,7 @@ func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b
 			}
 			return nil
 		}
-		if edge := rels[varName]; edge != nil {
+		if edge, ok := rels[varName].(*storage.Edge); ok && edge != nil {
 			return edge.Properties[propName]
 		}
 		return nil
@@ -1080,19 +1163,27 @@ func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b
 	// *storage.Edge here (rather than a synthetic node) matters because
 	// DELETE's classifyDeleteTargetValue and Neo4j-compat RETURN both
 	// distinguish edges from nodes by Go type.
-	if edge := rels[expr]; edge != nil {
-		return edge
+	if relationship, exists := rels[expr]; exists {
+		return relationship
 	}
 
 	// Fallback to the common expression evaluator used in other MATCH/RETURN
 	// paths. It already accepts a relationship map (previously always passed
 	// nil here), so expressions like count(rel) / collect(rel.prop) resolve
 	// correctly once rels is populated.
-	if val := e.evaluateExpressionWithContext(ctx, expr, b, rels); val != nil {
+	if val := e.evaluateExpressionWithContext(ctx, expr, b, edgeRelationshipBindings(rels)); val != nil {
 		return val
 	}
 
 	return nil
+}
+
+func relationshipBindingFromEdges(edges map[string]*storage.Edge) relationshipBinding {
+	bindings := make(relationshipBinding, len(edges))
+	for name, edge := range edges {
+		bindings[name] = edge
+	}
+	return bindings
 }
 
 func isNumericLiteral(s string) bool {

@@ -3050,6 +3050,9 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 					withClause = withClause[:idx]
 				}
 			}
+			if withClause == "*" {
+				continue
+			}
 
 			// Parse WITH items (similar to RETURN items)
 			withItems := e.parseReturnItems(withClause)

@@ -840,6 +840,8 @@ func validatePipelineSetAssignments(assignments []string) error {
 				if _, err := parseSetMergeMapExpressionsStrict(right); err != nil {
 					return localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
 				}
+			} else if _, scalar := parseLiteralScalarForPipeline(right); scalar {
+				return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
 			}
 			continue
 		}
@@ -1004,6 +1006,9 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 // MATCH in the middle of a pipeline binds zero rows, it does NOT fail — it
 // just zeros out the pipeline (matches Neo4j semantics for chained MATCH).
 func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
+	if expanded, ok, err := e.pipelineApplyBoundRelationshipListMatch(ctx, rows, clause); ok || err != nil {
+		return expanded, ok, err
+	}
 	if expanded, ok, err := e.pipelineApplyBoundTraversalMatch(ctx, rows, clause); ok || err != nil {
 		return expanded, ok, err
 	}
@@ -1105,6 +1110,129 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 	}
 	// No matches → empty pipeline (legal).
 	return out, true, nil
+}
+
+func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
+	pattern := strings.TrimSpace(clause[len("MATCH"):])
+	match := e.parseTraversalPattern(ctx, pattern)
+	if match == nil || match.IsChained || !match.Relationship.VariableLength || match.Relationship.Variable == "" {
+		return nil, false, nil
+	}
+	for _, row := range rows {
+		if _, exists := row[match.Relationship.Variable]; !exists {
+			return nil, false, nil
+		}
+	}
+
+	store := e.getStorage(ctx)
+	out := make([]pipelineRow, 0, len(rows))
+	for _, row := range rows {
+		relationships, ok := pipelineRelationshipList(row[match.Relationship.Variable])
+		if !ok || len(relationships) == 0 || relationshipListReusesEdge(relationships) {
+			continue
+		}
+		for _, endpoints := range traceRelationshipList(relationships, match.Relationship.Direction) {
+			start, startErr := store.GetNode(endpoints[0])
+			end, endErr := store.GetNode(endpoints[1])
+			if startErr != nil || endErr != nil || start == nil || end == nil ||
+				!pipelineNodeMatchesPattern(start, match.StartNode) || !pipelineNodeMatchesPattern(end, match.EndNode) {
+				continue
+			}
+			if bound, exists := row[match.StartNode.variable]; exists {
+				boundNode, isNode := bound.(*storage.Node)
+				if !isNode || boundNode == nil || boundNode.ID != start.ID {
+					continue
+				}
+			}
+			if bound, exists := row[match.EndNode.variable]; exists {
+				boundNode, isNode := bound.(*storage.Node)
+				if !isNode || boundNode == nil || boundNode.ID != end.ID {
+					continue
+				}
+			}
+			expanded := make(pipelineRow, util.SafePreallocSum(len(row), 2))
+			for name, value := range row {
+				expanded[name] = value
+			}
+			if match.StartNode.variable != "" {
+				expanded[match.StartNode.variable] = start
+			}
+			if match.EndNode.variable != "" {
+				expanded[match.EndNode.variable] = end
+			}
+			out = append(out, expanded)
+		}
+	}
+	return out, true, nil
+}
+
+func pipelineRelationshipList(value interface{}) ([]*storage.Edge, bool) {
+	switch relationships := value.(type) {
+	case []*storage.Edge:
+		return relationships, true
+	case []interface{}:
+		result := make([]*storage.Edge, len(relationships))
+		for index, value := range relationships {
+			relationship, ok := value.(*storage.Edge)
+			if !ok || relationship == nil {
+				return nil, false
+			}
+			result[index] = relationship
+		}
+		return result, true
+	default:
+		return nil, false
+	}
+}
+
+func relationshipListReusesEdge(relationships []*storage.Edge) bool {
+	seen := make(map[storage.EdgeID]struct{}, len(relationships))
+	for _, relationship := range relationships {
+		if relationship == nil {
+			return true
+		}
+		if _, exists := seen[relationship.ID]; exists {
+			return true
+		}
+		seen[relationship.ID] = struct{}{}
+	}
+	return false
+}
+
+func traceRelationshipList(relationships []*storage.Edge, direction string) [][2]storage.NodeID {
+	if len(relationships) == 0 {
+		return nil
+	}
+	starts := [][2]storage.NodeID{{relationships[0].StartNode, relationships[0].EndNode}}
+	if direction == "incoming" {
+		starts[0] = [2]storage.NodeID{relationships[0].EndNode, relationships[0].StartNode}
+	} else if direction == "both" && relationships[0].StartNode != relationships[0].EndNode {
+		starts = append(starts, [2]storage.NodeID{relationships[0].EndNode, relationships[0].StartNode})
+	}
+	for _, relationship := range relationships[1:] {
+		next := starts[:0]
+		for _, endpoints := range starts {
+			switch direction {
+			case "outgoing":
+				if endpoints[1] == relationship.StartNode {
+					next = append(next, [2]storage.NodeID{endpoints[0], relationship.EndNode})
+				}
+			case "incoming":
+				if endpoints[1] == relationship.EndNode {
+					next = append(next, [2]storage.NodeID{endpoints[0], relationship.StartNode})
+				}
+			default:
+				if endpoints[1] == relationship.StartNode {
+					next = append(next, [2]storage.NodeID{endpoints[0], relationship.EndNode})
+				}
+				if endpoints[1] == relationship.EndNode && relationship.StartNode != relationship.EndNode {
+					next = append(next, [2]storage.NodeID{endpoints[0], relationship.StartNode})
+				}
+			}
+		}
+		starts = next
+	}
+	return starts
 }
 
 func (e *StorageExecutor) pipelineApplyBoundTraversalMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
@@ -1463,10 +1591,24 @@ func (e *StorageExecutor) executeCreateWithRefsOrCompound(ctx context.Context, q
 func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "WITH"))
 	body = strings.TrimPrefix(body, "with")
+	withSkip, withLimit := 0, -1
+	if skipIndex := findKeywordIndexInContext(body, "SKIP"); skipIndex >= 0 {
+		tail := strings.TrimSpace(body[skipIndex+len("SKIP"):])
+		fmt.Sscanf(tail, "%d", &withSkip)
+	}
+	if limitIndex := findKeywordIndexInContext(body, "LIMIT"); limitIndex >= 0 {
+		tail := strings.TrimSpace(body[limitIndex+len("LIMIT"):])
+		fmt.Sscanf(tail, "%d", &withLimit)
+	}
 	postWithWhere := ""
 	if whereIdx := findKeywordIndexInContext(body, "WHERE"); whereIdx >= 0 {
 		postWithWhere = strings.TrimSpace(body[whereIdx+len("WHERE"):])
 		body = strings.TrimSpace(body[:whereIdx])
+	}
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if index := findKeywordIndexInContext(body, keyword); index >= 0 {
+			body = strings.TrimSpace(body[:index])
+		}
 	}
 	withDistinct := false
 	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
@@ -1482,7 +1624,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			}
 			out = append(out, projected)
 		}
-		return e.filterPipelineRows(ctx, out, postWithWhere), true
+		return applyPipelineWindow(e.filterPipelineRows(ctx, out, postWithWhere), withSkip, withLimit), true
 	}
 	items := splitTopLevelComma(body)
 	if len(items) == 0 {
@@ -1599,7 +1741,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		if withDistinct {
 			out = deduplicatePipelineRows(out, projectionAliases)
 		}
-		return e.filterPipelineRows(ctx, out, postWithWhere), true
+		return applyPipelineWindow(e.filterPipelineRows(ctx, out, postWithWhere), withSkip, withLimit), true
 	}
 
 	out := make([]pipelineRow, 0, len(rows))
@@ -1689,7 +1831,20 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	if withDistinct {
 		out = deduplicatePipelineRows(out, projectionAliases)
 	}
-	return out, true
+	return applyPipelineWindow(out, withSkip, withLimit), true
+}
+
+func applyPipelineWindow(rows []pipelineRow, skip, limit int) []pipelineRow {
+	if skip >= len(rows) {
+		return []pipelineRow{}
+	}
+	if skip > 0 {
+		rows = rows[skip:]
+	}
+	if limit >= 0 && limit < len(rows) {
+		rows = rows[:limit]
+	}
+	return rows
 }
 
 func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelineRow, whereClause string) []pipelineRow {
@@ -1783,6 +1938,9 @@ func pipelineExpressionContainsAggregate(expr string) bool {
 	if _, _, _, ok := parsePipelineAggregate(expr); ok {
 		return true
 	}
+	if left, right, ok := splitByOperatorWithOptions(expr, "+", true, true); ok {
+		return pipelineExpressionContainsAggregate(left) || pipelineExpressionContainsAggregate(right)
+	}
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
 		for _, pair := range splitTopLevelComma(strings.TrimSpace(expr[1 : len(expr)-1])) {
 			separator := findTopLevelMapKeyValueSeparator(pair)
@@ -1805,6 +1963,15 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow
 	expr = strings.TrimSpace(expr)
 	if name, inner, distinct, ok := parsePipelineAggregate(expr); ok {
 		return e.evaluatePipelineAggregate(rows, name, inner, distinct)
+	}
+	if left, right, ok := splitByOperatorWithOptions(expr, "+", true, true); ok {
+		leftValue, leftOK := e.evaluatePipelineAggregateExpression(rows, left)
+		rightValue, rightOK := e.evaluatePipelineAggregateExpression(rows, right)
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		value := e.add(leftValue, rightValue)
+		return value, value != nil
 	}
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
@@ -1940,9 +2107,7 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 	body = strings.TrimSpace(body[:modifierStart])
 	items := splitTopLevelComma(body)
 	if len(items) == 0 {
-		result := &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{int64(len(rows))}}}
-		result, err := e.applyResultModifiers(result, modifiers)
-		return result, err == nil
+		return nil, false
 	}
 
 	type proj struct {
@@ -1977,6 +2142,9 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 			projection.aggregateExpr = aggregateExpr
 		}
 		projs = append(projs, projection)
+	}
+	if len(projs) == 0 {
+		return nil, false
 	}
 
 	result := &ExecuteResult{}
@@ -2119,8 +2287,8 @@ func pipelineListSubscript(row pipelineRow, expr string) (interface{}, bool, boo
 	}
 	base := strings.TrimSpace(expr[:open])
 	indexText := strings.TrimSpace(expr[open+1 : len(expr)-1])
-	index, err := strconv.Atoi(indexText)
-	if err != nil || index < 0 {
+	index, ok := pipelineIntegerExpression(row, indexText)
+	if !ok || index < 0 {
 		return nil, true, false
 	}
 	value, exists := row[base]
@@ -2132,6 +2300,40 @@ func pipelineListSubscript(row pipelineRow, expr string) (interface{}, bool, boo
 		return nil, true, true
 	}
 	return items[index], true, true
+}
+
+func pipelineIntegerExpression(row pipelineRow, expression string) (int, bool) {
+	expression = strings.TrimSpace(expression)
+	if matchFuncStartAndSuffix(expression, "size") {
+		name := strings.TrimSpace(extractFuncArgs(expression, "size"))
+		value, exists := row[name]
+		if !exists {
+			return 0, false
+		}
+		return len(toAnySlice(value)), true
+	}
+	if value, exists := row[expression]; exists {
+		number, ok := toFloat64(value)
+		if !ok || number != float64(int(number)) {
+			return 0, false
+		}
+		return int(number), true
+	}
+	for _, operator := range []string{"+", "-"} {
+		if left, right, found := splitByOperatorWithOptions(expression, operator, false, true); found {
+			leftValue, leftOK := pipelineIntegerExpression(row, left)
+			rightValue, rightOK := pipelineIntegerExpression(row, right)
+			if !leftOK || !rightOK {
+				return 0, false
+			}
+			if operator == "+" {
+				return leftValue + rightValue, true
+			}
+			return leftValue - rightValue, true
+		}
+	}
+	value, err := strconv.Atoi(expression)
+	return value, err == nil
 }
 
 // ---- helpers ----
@@ -2201,6 +2403,36 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		expr = inner
 	}
 	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
+		return items, true
+	}
+	if matchFuncStartAndSuffix(expr, "range") {
+		args := e.splitFunctionArgs(extractFuncArgs(expr, "range"))
+		if len(args) < 2 || len(args) > 3 {
+			return nil, false
+		}
+		start, startOK := pipelineIntegerExpression(row, args[0])
+		end, endOK := pipelineIntegerExpression(row, args[1])
+		step := 1
+		stepOK := true
+		if len(args) == 3 {
+			step, stepOK = pipelineIntegerExpression(row, args[2])
+		}
+		if !startOK || !endOK || !stepOK {
+			return nil, false
+		}
+		if step == 0 {
+			step = 1
+		}
+		items := make([]interface{}, 0)
+		if step > 0 {
+			for value := start; value <= end; value += step {
+				items = append(items, int64(value))
+			}
+		} else {
+			for value := start; value >= end; value += step {
+				items = append(items, int64(value))
+			}
+		}
 		return items, true
 	}
 

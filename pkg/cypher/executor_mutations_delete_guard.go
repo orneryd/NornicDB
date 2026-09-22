@@ -219,6 +219,11 @@ func pipelineProjectionScope(previous map[string]struct{}, clause string) map[st
 	if where := findKeywordIndexInContext(body, "WHERE"); where >= 0 {
 		body = strings.TrimSpace(body[:where])
 	}
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if index := findKeywordIndexInContext(body, keyword); index >= 0 {
+			body = strings.TrimSpace(body[:index])
+		}
+	}
 	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
 		body = strings.TrimSpace(body[len("DISTINCT "):])
 	}

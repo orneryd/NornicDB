@@ -11,6 +11,7 @@ const (
 	matchBindingUnknown matchBindingKind = iota
 	matchBindingNode
 	matchBindingRelationship
+	matchBindingRelationshipList
 	matchBindingPath
 	matchBindingValue
 )
@@ -80,6 +81,13 @@ func validateMatchClauseBindings(scope matchSemanticScope, clause string) error 
 			"MATCH pattern predicates must use a property map, not a parameter map",
 		)
 	}
+	if invalidRelationshipPattern(pattern) {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidRelationshipPattern",
+			"invalid variable-length relationship pattern",
+		)
+	}
 
 	for _, variable := range extractNodeVariables(pattern) {
 		if err := bindMatchSemanticKind(scope, variable, matchBindingNode); err != nil {
@@ -87,9 +95,14 @@ func validateMatchClauseBindings(scope matchSemanticScope, clause string) error 
 		}
 	}
 	relationshipVariables := extractRelationshipVariables(pattern)
+	variableLengthRelationships := variableLengthRelationshipVariableSet(pattern)
 	seenRelationships := make(map[string]struct{}, len(relationshipVariables))
 	for _, variable := range relationshipVariables {
-		if err := bindMatchSemanticKind(scope, variable, matchBindingRelationship); err != nil {
+		kind := matchBindingRelationship
+		if _, variableLength := variableLengthRelationships[variable]; variableLength {
+			kind = matchBindingRelationshipList
+		}
+		if err := bindMatchSemanticKind(scope, variable, kind); err != nil {
 			return err
 		}
 		if _, exists := seenRelationships[variable]; exists {
@@ -159,10 +172,85 @@ func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSem
 			if sourceKind, found := input[source]; found {
 				kind = sourceKind
 			}
+		} else if relationshipListLiteral(expression, input) {
+			kind = matchBindingRelationshipList
 		}
 		output[normalizeProjectionColumnName(name)] = kind
 	}
 	return output
+}
+
+func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
+	result := make(map[string]struct{})
+	for index := 0; index < len(pattern); index++ {
+		if pattern[index] != '[' {
+			continue
+		}
+		end := strings.IndexByte(pattern[index+1:], ']')
+		if end < 0 {
+			break
+		}
+		end += index + 1
+		inner := strings.TrimSpace(pattern[index+1 : end])
+		name, next, ok := scanIdentifierToken(inner, 0)
+		if ok && strings.Contains(inner[next:], "*") {
+			result[name] = struct{}{}
+		}
+		index = end
+	}
+	return result
+}
+
+func relationshipListLiteral(expression string, scope matchSemanticScope) bool {
+	expression = strings.TrimSpace(expression)
+	if len(expression) < 2 || expression[0] != '[' || expression[len(expression)-1] != ']' {
+		return false
+	}
+	items := splitTopLevelComma(expression[1 : len(expression)-1])
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		name := simpleSemanticIdentifier(item)
+		if name == "" || scope[name] != matchBindingRelationship {
+			return false
+		}
+	}
+	return true
+}
+
+func invalidRelationshipPattern(pattern string) bool {
+	for index := 0; index < len(pattern); index++ {
+		if pattern[index] != '[' {
+			continue
+		}
+		end := strings.IndexByte(pattern[index+1:], ']')
+		if end < 0 {
+			return true
+		}
+		end += index + 1
+		inner := strings.TrimSpace(pattern[index+1 : end])
+		star := strings.IndexByte(inner, '*')
+		if strings.Contains(inner, "..") && star < 0 {
+			return true
+		}
+		if star >= 0 {
+			spec := strings.TrimSpace(inner[star+1:])
+			if property := strings.IndexByte(spec, '{'); property >= 0 {
+				spec = strings.TrimSpace(spec[:property])
+			}
+			for _, character := range spec {
+				if (character < '0' || character > '9') && character != '.' {
+					return true
+				}
+			}
+			if strings.Count(spec, "..") > 1 || (strings.Contains(spec, ".") && !strings.Contains(spec, "..")) {
+				return true
+			}
+		}
+		index = end
+	}
+	return false
 }
 
 func simpleSemanticIdentifier(expression string) string {
