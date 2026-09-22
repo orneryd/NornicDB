@@ -58,6 +58,26 @@ type optionalClauseEndpoints struct {
 	direction string // "out", "in", or "both", relative to source
 }
 
+func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, predicate string, row traversalOptRow) bool {
+	if strings.TrimSpace(predicate) == "" {
+		return true
+	}
+	graphValues := util.SafePreallocSum(len(row.nodes), len(row.rels))
+	values := make(map[string]interface{}, util.SafePreallocSum(graphValues, len(row.values)))
+	for variable, node := range row.nodes {
+		values[variable] = node
+	}
+	for variable, relationship := range row.rels {
+		values[variable] = relationship
+	}
+	for variable, value := range row.values {
+		values[variable] = value
+	}
+	predicate = substituteWithWhereLabelTests(predicate, values)
+	passes, ok := e.evaluateExpressionWithContext(ctx, predicate, row.nodes, row.rels).(bool)
+	return ok && passes
+}
+
 // splitOptionalMatchClauses splits the text that follows the first
 // "OPTIONAL MATCH" keyword (already sliced to end before WITH/RETURN) into
 // individual clauses. Each clause's own WHERE predicate is separated from its
@@ -367,11 +387,8 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 				}
 			}
 			cand := extendTraversalRow(row, newNodeVar, rel.node, eps.relVar, rel.edge)
-			if clause.where != "" {
-				passes, ok := e.evaluateExpressionWithContext(ctx, clause.where, cand.nodes, cand.rels).(bool)
-				if !ok || !passes {
-					continue
-				}
+			if !e.traversalOptionalWhereMatches(ctx, clause.where, cand) {
+				continue
 			}
 			cand.optionalMatched = true
 			out = append(out, cand)

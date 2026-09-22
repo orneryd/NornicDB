@@ -92,16 +92,25 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 		Properties: make(map[string]interface{}),
 	}
 
-	// Determine direction
-	if strings.HasPrefix(pattern, "<-") {
+	// Determine direction from both ends before trimming either marker. A
+	// relationship carrying arrowheads at both ends is traversable in either
+	// direction; neither marker may overwrite the other.
+	hasIncomingArrow := strings.HasPrefix(pattern, "<-")
+	hasOutgoingArrow := strings.HasSuffix(pattern, "->")
+	switch {
+	case hasIncomingArrow && hasOutgoingArrow:
+		result.Direction = "both"
+	case hasIncomingArrow:
 		result.Direction = "incoming"
+	case hasOutgoingArrow:
+		result.Direction = "outgoing"
+	}
+	if hasIncomingArrow {
 		pattern = pattern[2:]
 	} else if strings.HasPrefix(pattern, "-") {
 		pattern = pattern[1:]
 	}
-
-	if strings.HasSuffix(pattern, "->") {
-		result.Direction = "outgoing"
+	if hasOutgoingArrow {
 		pattern = pattern[:len(pattern)-2]
 	} else if strings.HasSuffix(pattern, "-") {
 		pattern = pattern[:len(pattern)-1]
@@ -2491,6 +2500,10 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 	if strings.HasPrefix(upperClause, "NOT ") {
 		inner := strings.TrimSpace(whereClause[4:])
 		return !e.evaluateWhereOnPath(ctx, inner, pathCtx)
+	}
+
+	if variable, labels, ok := parseWithWhereLabelTest(whereClause); ok {
+		return withWhereNodeHasAllLabels(pathCtx.nodes[variable], labels)
 	}
 
 	// Handle membership predicates before comparison operators so list literals

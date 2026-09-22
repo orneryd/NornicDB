@@ -159,11 +159,8 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 		matched := false
 		for _, node := range filtered {
 			cand := extendTraversalRow(row, varName, node, "", nil)
-			if clause.where != "" {
-				passes, ok := e.evaluateExpressionWithContext(ctx, clause.where, cand.nodes, cand.rels).(bool)
-				if !ok || !passes {
-					continue
-				}
+			if !e.traversalOptionalWhereMatches(ctx, clause.where, cand) {
+				continue
 			}
 			cand.optionalMatched = true
 			out = append(out, cand)
@@ -296,11 +293,8 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 				valueBinds[variable] = cand.values[variable]
 			}
 			merged := extendTraversalRowMulti(row, nodeBinds, relBinds, valueBinds)
-			if clause.where != "" {
-				passes, ok := e.evaluateExpressionWithContext(ctx, clause.where, merged.nodes, merged.rels).(bool)
-				if !ok || !passes {
-					continue
-				}
+			if !e.traversalOptionalWhereMatches(ctx, clause.where, merged) {
+				continue
 			}
 			merged.optionalMatched = true
 			out = append(out, merged)

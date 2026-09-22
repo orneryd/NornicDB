@@ -132,6 +132,21 @@ func TestParseRelationshipPattern(t *testing.T) {
 	}
 }
 
+func TestParseRelationshipPatternWithArrowheadsAtBothEnds(t *testing.T) {
+	exec := &StorageExecutor{}
+	pattern := exec.parseRelationshipPattern(context.Background(), "<-[:LIKES*3]->")
+
+	if pattern.Direction != "both" {
+		t.Fatalf("expected bidirectional traversal, got %q", pattern.Direction)
+	}
+	if !pattern.VariableLength || pattern.MinHops != 3 || pattern.MaxHops != 3 {
+		t.Fatalf("expected an exact three-hop relationship, got %#v", pattern)
+	}
+	if len(pattern.Types) != 1 || pattern.Types[0] != "LIKES" {
+		t.Fatalf("expected LIKES relationship type, got %#v", pattern.Types)
+	}
+}
+
 func TestParseTraversalPattern(t *testing.T) {
 	exec := setupTestExecutor(t)
 
