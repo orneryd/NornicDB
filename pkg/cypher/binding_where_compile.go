@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 type bindingWherePredicate func(binding, map[string]interface{}) bool
@@ -20,9 +22,15 @@ func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClau
 			return predicate
 		}
 	}
-	predicate := e.compileBindingWhere(ctx, key)
-	compiledBindingWhereCache.Store(key, predicate)
-	return predicate
+	if predicate, ok := e.tryCompileBindingWhere(ctx, key); ok {
+		compiledBindingWhereCache.Store(key, predicate)
+		return predicate
+	}
+	// Generic predicates may consult this executor's graph (for example, a
+	// bound relationship-pattern predicate). They must not enter the global
+	// cache, where the closure would retain one database and leak it into a
+	// later executor using the same predicate text.
+	return e.compileBindingWhere(ctx, key)
 }
 
 func normalizeBindingWhereClause(whereClause string) string {
@@ -37,10 +45,65 @@ func (e *StorageExecutor) compileBindingWhere(ctx context.Context, whereClause s
 	if predicate, ok := e.tryCompileBindingWhere(ctx, whereClause); ok {
 		return predicate
 	}
+	if predicate, ok := e.tryCompileExecutorBindingWhere(ctx, whereClause); ok {
+		return predicate
+	}
 	clause := strings.TrimSpace(whereClause)
 	return func(b binding, params map[string]interface{}) bool {
 		return e.evaluateBindingWhereGeneric(ctx, b, clause, params)
 	}
+}
+
+// tryCompileExecutorBindingWhere compiles predicates that depend on this
+// executor's graph. These closures intentionally remain executor-local and
+// therefore never enter compiledBindingWhereCache.
+func (e *StorageExecutor) tryCompileExecutorBindingWhere(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
+	clause := strings.TrimSpace(whereClause)
+	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
+		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:orIdx])
+		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, clause[orIdx+4:])
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		return func(b binding, params map[string]interface{}) bool {
+			return left(b, params) || right(b, params)
+		}, true
+	}
+	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
+		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:andIdx])
+		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, clause[andIdx+5:])
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		return func(b binding, params map[string]interface{}) bool {
+			return left(b, params) && right(b, params)
+		}, true
+	}
+	if hasPrefixFold(clause, "NOT ") {
+		inner, ok := e.compileExecutorBindingWhereBranch(ctx, clause[4:])
+		if !ok {
+			return nil, false
+		}
+		return func(b binding, params map[string]interface{}) bool {
+			return !inner(b, params)
+		}, true
+	}
+	match, ok := e.parseBoundRelationshipPattern(ctx, clause)
+	if !ok {
+		return nil, false
+	}
+	return func(b binding, params map[string]interface{}) bool {
+		_ = params
+		return e.evaluateParsedBoundRelationshipPattern(ctx, match, map[string]*storage.Node(b))
+	}, true
+}
+
+func (e *StorageExecutor) compileExecutorBindingWhereBranch(ctx context.Context, clause string) (bindingWherePredicate, bool) {
+	clause = strings.TrimSpace(clause)
+	if predicate, ok := e.tryCompileBindingWhere(ctx, clause); ok {
+		return predicate, true
+	}
+	return e.tryCompileExecutorBindingWhere(ctx, clause)
 }
 
 func (e *StorageExecutor) getCompiledBindingWhereIfSupported(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
@@ -63,16 +126,6 @@ func (e *StorageExecutor) tryCompileBindingWhere(ctx context.Context, whereClaus
 		return func(binding, map[string]interface{}) bool { return true }, true
 	}
 
-	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left, okLeft := e.getCompiledBindingWhereIfSupported(ctx, clause[:andIdx])
-		right, okRight := e.getCompiledBindingWhereIfSupported(ctx, clause[andIdx+5:])
-		if !okLeft || !okRight {
-			return nil, false
-		}
-		return func(b binding, params map[string]interface{}) bool {
-			return left(b, params) && right(b, params)
-		}, true
-	}
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
 		left, okLeft := e.getCompiledBindingWhereIfSupported(ctx, clause[:orIdx])
 		right, okRight := e.getCompiledBindingWhereIfSupported(ctx, clause[orIdx+4:])
@@ -81,6 +134,16 @@ func (e *StorageExecutor) tryCompileBindingWhere(ctx context.Context, whereClaus
 		}
 		return func(b binding, params map[string]interface{}) bool {
 			return left(b, params) || right(b, params)
+		}, true
+	}
+	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
+		left, okLeft := e.getCompiledBindingWhereIfSupported(ctx, clause[:andIdx])
+		right, okRight := e.getCompiledBindingWhereIfSupported(ctx, clause[andIdx+5:])
+		if !okLeft || !okRight {
+			return nil, false
+		}
+		return func(b binding, params map[string]interface{}) bool {
+			return left(b, params) && right(b, params)
 		}, true
 	}
 	if hasPrefixFold(clause, "NOT ") {
@@ -511,18 +574,21 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b bin
 	clause = strings.ReplaceAll(clause, "\t", " ")
 	upper := strings.ToUpper(clause)
 
-	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left := strings.TrimSpace(clause[:andIdx])
-		right := strings.TrimSpace(clause[andIdx+5:])
-		return e.evaluateBindingWhere(ctx, b, left, params) && e.evaluateBindingWhere(ctx, b, right, params)
-	}
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
 		left := strings.TrimSpace(clause[:orIdx])
 		right := strings.TrimSpace(clause[orIdx+4:])
 		return e.evaluateBindingWhere(ctx, b, left, params) || e.evaluateBindingWhere(ctx, b, right, params)
 	}
+	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
+		left := strings.TrimSpace(clause[:andIdx])
+		right := strings.TrimSpace(clause[andIdx+5:])
+		return e.evaluateBindingWhere(ctx, b, left, params) && e.evaluateBindingWhere(ctx, b, right, params)
+	}
 	if strings.HasPrefix(upper, "NOT ") {
 		return !e.evaluateBindingWhere(ctx, b, clause[4:], params)
+	}
+	if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, clause, map[string]*storage.Node(b)); recognized {
+		return matches
 	}
 
 	for _, pred := range []string{" STARTS WITH ", " ENDS WITH ", " CONTAINS "} {

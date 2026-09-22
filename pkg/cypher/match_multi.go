@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -2031,54 +2030,19 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 
 	// Handle top-level conjunction/disjunction explicitly so each side can use
 	// the single-variable WHERE evaluator (supports relationship predicates).
-	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left := strings.TrimSpace(clause[:andIdx])
-		right := strings.TrimSpace(clause[andIdx+5:])
-		return e.evaluateWhereForContext(ctx, left, nodes) && e.evaluateWhereForContext(ctx, right, nodes)
-	}
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
 		left := strings.TrimSpace(clause[:orIdx])
 		right := strings.TrimSpace(clause[orIdx+4:])
 		return e.evaluateWhereForContext(ctx, left, nodes) || e.evaluateWhereForContext(ctx, right, nodes)
 	}
-
-	// Relationship existence predicate across two bound variables:
-	// (a)-[:TYPE]->(b) or (a)<-[:TYPE]-(b)
-	relForwardRe := regexp.MustCompile(`^\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*-\s*\[:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]\s*->\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$`)
-	if m := relForwardRe.FindStringSubmatch(clause); len(m) == 4 {
-		start := nodes[m[1]]
-		end := nodes[m[3]]
-		if start == nil || end == nil {
-			return false
-		}
-		outEdges, err := e.storage.GetOutgoingEdges(start.ID)
-		if err != nil {
-			return false
-		}
-		for _, edge := range outEdges {
-			if edge != nil && edge.Type == m[2] && edge.EndNode == end.ID {
-				return true
-			}
-		}
-		return false
+	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
+		left := strings.TrimSpace(clause[:andIdx])
+		right := strings.TrimSpace(clause[andIdx+5:])
+		return e.evaluateWhereForContext(ctx, left, nodes) && e.evaluateWhereForContext(ctx, right, nodes)
 	}
-	relReverseRe := regexp.MustCompile(`^\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*<-\s*\[:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]\s*-\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$`)
-	if m := relReverseRe.FindStringSubmatch(clause); len(m) == 4 {
-		start := nodes[m[3]]
-		end := nodes[m[1]]
-		if start == nil || end == nil {
-			return false
-		}
-		outEdges, err := e.storage.GetOutgoingEdges(start.ID)
-		if err != nil {
-			return false
-		}
-		for _, edge := range outEdges {
-			if edge != nil && edge.Type == m[2] && edge.EndNode == end.ID {
-				return true
-			}
-		}
-		return false
+
+	if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, clause, nodes); recognized {
+		return matches
 	}
 
 	if predicate, ok := e.getCompiledBindingWhereIfSupported(ctx, clause); ok {
@@ -2111,6 +2075,131 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 	result := e.evaluateExpressionWithContext(ctx, clause, nodes, nil)
 	if b, ok := result.(bool); ok {
 		return b
+	}
+	return false
+}
+
+// evaluateBoundRelationshipPattern evaluates a WHERE pattern against the
+// current bindings using the same parser and traversal implementation as a
+// MATCH clause. The second return value distinguishes a valid pattern that did
+// not match from an expression that is not a relationship pattern.
+func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, clause string, nodes map[string]*storage.Node) (bool, bool) {
+	match, recognized := e.parseBoundRelationshipPattern(ctx, clause)
+	if !recognized {
+		return false, false
+	}
+	return e.evaluateParsedBoundRelationshipPattern(ctx, match, nodes), true
+}
+
+func (e *StorageExecutor) parseBoundRelationshipPattern(ctx context.Context, clause string) (*TraversalMatch, bool) {
+	pattern := strings.TrimSpace(clause)
+	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") ||
+		(!strings.Contains(pattern, "-[") && !strings.Contains(pattern, "]-") && !strings.Contains(pattern, "--")) {
+		return nil, false
+	}
+
+	match := e.parseTraversalPattern(ctx, pattern)
+	if match == nil || len(match.Segments) == 0 && match.Relationship.MinHops == 0 && !match.Relationship.VariableLength {
+		return nil, false
+	}
+	return match, true
+}
+
+func (e *StorageExecutor) evaluateParsedBoundRelationshipPattern(ctx context.Context, match *TraversalMatch, nodes map[string]*storage.Node) bool {
+	if match.StartNode.variable != "" && nodes[match.StartNode.variable] == nil ||
+		match.EndNode.variable != "" && nodes[match.EndNode.variable] == nil {
+		return false
+	}
+	for _, intermediate := range match.IntermediateNodes {
+		if intermediate.variable != "" && nodes[intermediate.variable] == nil {
+			return false
+		}
+	}
+	if !match.IsChained && match.Relationship.MinHops == 1 && match.Relationship.MaxHops == 1 {
+		return e.evaluateBoundOneHopPattern(match, nodes)
+	}
+
+	var paths []PathResult
+	if start := nodes[match.StartNode.variable]; start != nil {
+		if match.IsChained && len(match.Segments) > 1 {
+			paths = e.traverseChainedGraph(ctx, match, []*storage.Node{start})
+		} else {
+			paths = e.traverseFromNode(ctx, start, match)
+		}
+	} else if end := nodes[match.EndNode.variable]; end != nil && !match.IsChained {
+		reversed := reverseTraversalMatch(match)
+		if reversed == nil {
+			return false
+		}
+		for _, reversedPath := range e.traverseFromNode(ctx, end, reversed) {
+			paths = append(paths, reversePathResult(reversedPath))
+		}
+	} else {
+		paths = e.traverseGraph(ctx, match)
+	}
+
+	existing := binding(nodes)
+	for _, path := range paths {
+		pathContext := e.buildPathContext(path, match)
+		if _, compatible := mergeNodeBindingsChecked(existing, pathContext.nodes); compatible {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *StorageExecutor) evaluateBoundOneHopPattern(match *TraversalMatch, nodes map[string]*storage.Node) bool {
+	start := nodes[match.StartNode.variable]
+	if start == nil {
+		end := nodes[match.EndNode.variable]
+		if end == nil {
+			return false
+		}
+		reversed := reverseTraversalMatch(match)
+		return reversed != nil && e.evaluateBoundOneHopPattern(reversed, nodes)
+	}
+	if !e.matchesEndPattern(start, &match.StartNode) {
+		return false
+	}
+
+	var edges []*storage.Edge
+	switch match.Relationship.Direction {
+	case "outgoing":
+		edges, _ = e.storage.GetOutgoingEdges(start.ID)
+	case "incoming":
+		edges, _ = e.storage.GetIncomingEdges(start.ID)
+	default:
+		edges, _ = undirectedIncidentEdges(e.storage, start.ID)
+	}
+	boundEnd := nodes[match.EndNode.variable]
+	for _, edge := range edges {
+		if edge == nil || len(match.Relationship.Types) > 0 && !e.edgeTypeMatches(edge.Type, match.Relationship.Types) ||
+			len(match.Relationship.Properties) > 0 && !e.edgeMatchesProps(edge, match.Relationship.Properties) {
+			continue
+		}
+		var endID storage.NodeID
+		switch match.Relationship.Direction {
+		case "outgoing":
+			endID = edge.EndNode
+		case "incoming":
+			endID = edge.StartNode
+		case "both":
+			if edge.StartNode == start.ID {
+				endID = edge.EndNode
+			} else {
+				endID = edge.StartNode
+			}
+		}
+		if boundEnd != nil {
+			if endID == boundEnd.ID && e.matchesEndPattern(boundEnd, &match.EndNode) {
+				return true
+			}
+			continue
+		}
+		end, err := e.storage.GetNode(endID)
+		if err == nil && end != nil && e.matchesEndPattern(end, &match.EndNode) {
+			return true
+		}
 	}
 	return false
 }
