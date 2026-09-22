@@ -54,6 +54,36 @@ func TestMatchAllowsNodeBindingProjectedThroughCoalesce(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestOptionalMatchAcceptsNullAsNullableNodeBinding(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_null_node_binding"))
+	ctx := context.Background()
+
+	result, err := exec.Execute(ctx, `
+		WITH null AS a
+		OPTIONAL MATCH p = (a)-[r]->()
+		RETURN relationships(p), relationships(null)
+	`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil, nil}}, result.Rows)
+}
+
+func TestReturnScopeRejectsUndefinedAndEmptyWildcardProjections(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "return_scope_validation"))
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "MATCH () RETURN missing", nil)
+	requireMatchSemanticDetail(t, err, "UndefinedVariable")
+
+	_, err = exec.Execute(ctx, "MATCH () RETURN *", nil)
+	requireMatchSemanticDetail(t, err, "NoVariablesInScope")
+
+	_, err = exec.Execute(ctx, "MATCH (node) RETURN *", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "MATCH () RETURN true, null, 1", nil)
+	require.NoError(t, err)
+}
+
 func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_self_relationship")
 	exec := NewStorageExecutor(store)

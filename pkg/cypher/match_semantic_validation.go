@@ -56,11 +56,49 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			if alias := unwindBindingName(clause.text); alias != "" {
 				scope[alias] = unwindMatchSemanticKind(clause.text, scope)
 			}
+		case pipelineClauseReturn:
+			if err := validateReturnSemanticScope(scope, clause.text); err != nil {
+				return err
+			}
 		case pipelineClauseCreate, pipelineClauseMerge:
 			addMatchPatternBindingKinds(scope, clause.text)
 		}
 	}
 	e.matchSemanticValidationCache.add(cypher)
+	return nil
+}
+
+func validateReturnSemanticScope(scope matchSemanticScope, clause string) error {
+	body := strings.TrimSpace(clause[len("RETURN"):])
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
+			body = strings.TrimSpace(body[:index])
+		}
+	}
+	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
+		body = strings.TrimSpace(body[len("DISTINCT "):])
+	}
+	for _, raw := range splitTopLevelComma(body) {
+		expression, _ := parseProjectionExprAlias(strings.TrimSpace(raw))
+		if expression == "*" {
+			if len(scope) == 0 {
+				return newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"NoVariablesInScope",
+					"RETURN * requires at least one variable in scope",
+				)
+			}
+			continue
+		}
+		if _, literal := parseLiteralValueFromComputedRow(expression); literal {
+			continue
+		}
+		if variable := simpleSemanticIdentifier(expression); variable != "" {
+			if _, found := scope[variable]; !found {
+				return createUndefinedVariableError(variable)
+			}
+		}
+	}
 	return nil
 }
 
@@ -170,7 +208,7 @@ func bindMatchSemanticKind(scope matchSemanticScope, variable string, kind match
 func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSemanticScope {
 	body := strings.TrimSpace(clause[len("WITH"):])
 	for _, keyword := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := findKeywordIndexInContext(body, keyword); index >= 0 {
+		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
 			body = strings.TrimSpace(body[:index])
 		}
 	}
@@ -195,7 +233,11 @@ func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSem
 			continue
 		}
 		kind := matchBindingValue
-		if source := simpleSemanticIdentifier(expression); source != "" {
+		if strings.EqualFold(strings.TrimSpace(expression), "null") {
+			// NULL is compatible with every nullable Cypher binding kind. Keep
+			// it unknown until a later pattern or expression supplies context.
+			kind = matchBindingUnknown
+		} else if source := simpleSemanticIdentifier(expression); source != "" {
 			if sourceKind, found := input[source]; found {
 				kind = sourceKind
 			}
