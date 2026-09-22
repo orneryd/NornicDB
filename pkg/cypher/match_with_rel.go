@@ -1329,22 +1329,18 @@ func (e *StorageExecutor) evaluateConditionFromValues(condition string, values m
 		return e.evaluateExpressionFromValues(expr, values) != nil
 	}
 
-	for _, op := range []string{"<=", ">=", "<>", "!=", "<", ">", "="} {
-		if idx := findTopLevelKeyword(condition, op); idx > 0 {
-			left := strings.TrimSpace(condition[:idx])
-			right := strings.TrimSpace(condition[idx+len(op):])
-			leftVal := e.evaluateExpressionFromValues(left, values)
-			rightVal := e.evaluateExpressionFromValues(right, values)
-			if literal, ok := rightVal.(string); ok && literal == right {
-				if parsed, parsedOK := parseLiteralValueFromComputedRow(right); parsedOK {
-					rightVal = parsed
-				}
+	resolveComparisonOperand := func(operand string) interface{} {
+		value := e.evaluateExpressionFromValues(operand, values)
+		if literal, ok := value.(string); ok && literal == strings.TrimSpace(operand) {
+			if parsed, parsedOK := parseLiteralValueFromComputedRow(operand); parsedOK {
+				return parsed
 			}
-			if op == "!=" {
-				op = "<>"
-			}
-			return compareWithOperator(leftVal, rightVal, op)
 		}
+		return value
+	}
+	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareWithOperator); ok {
+		matched, _ := result.(bool)
+		return matched
 	}
 
 	return isTruthy(e.evaluateExpressionFromValues(condition, values))

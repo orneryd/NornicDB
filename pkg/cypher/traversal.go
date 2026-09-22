@@ -2533,21 +2533,16 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 		}
 	}
 
-	// Handle comparison operators: =, <>, <, >, <=, >=
-	operators := []string{"<>", "<=", ">=", "=", "<", ">"}
-	for _, op := range operators {
-		if idx := strings.Index(whereClause, op); idx > 0 {
-			leftExpr := strings.TrimSpace(whereClause[:idx])
-			rightExpr := strings.TrimSpace(whereClause[idx+len(op):])
-
-			leftVal := e.evaluateExpressionWithPathContext(ctx, leftExpr, pathCtx)
-			rightVal := e.evaluateExpressionWithPathContext(ctx, rightExpr, pathCtx)
-			if rightVal == nil {
-				rightVal = e.evaluatePathValue(rightExpr)
-			}
-
-			return e.compareValues(leftVal, rightVal, op)
+	resolveComparisonOperand := func(operand string) interface{} {
+		value := e.evaluateExpressionWithPathContext(ctx, operand, pathCtx)
+		if value == nil {
+			value = e.evaluatePathValue(operand)
 		}
+		return value
+	}
+	if result, ok := evaluateComparisonChain(whereClause, resolveComparisonOperand, e.compareValues); ok {
+		matched, _ := result.(bool)
+		return matched
 	}
 
 	// Handle CONTAINS

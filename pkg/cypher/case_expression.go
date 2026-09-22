@@ -212,16 +212,12 @@ func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition strin
 		return !e.evaluateCondition(ctx, inner, nodes, rels)
 	}
 
-	// Handle comparison operators: <, >, <=, >=, =, <>
-	for _, op := range []string{"<=", ">=", "<>", "<", ">", "="} {
-		if strings.Contains(condition, op) {
-			parts := strings.SplitN(condition, op, 2)
-			if len(parts) == 2 {
-				left := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(parts[0]), nodes, rels)
-				right := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(parts[1]), nodes, rels)
-				return compareWithOperator(left, right, op)
-			}
-		}
+	resolveComparisonOperand := func(operand string) interface{} {
+		return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
+	}
+	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareWithOperator); ok {
+		matched, _ := result.(bool)
+		return matched
 	}
 
 	// Handle IS NULL / IS NOT NULL
