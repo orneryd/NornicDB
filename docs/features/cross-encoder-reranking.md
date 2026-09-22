@@ -58,7 +58,8 @@ When reranking is **enabled**, the server loads the configured reranker at start
 | `NORNICDB_SEARCH_RERANK_MODEL`    | (see below) | For **local**: GGUF filename (e.g. `bge-reranker-v2-m3-Q4_K_M.gguf`). For **API**: model name/id (e.g. `rerank-english-v3.0`)       |
 | `NORNICDB_SEARCH_RERANK_API_URL`  | (see below) | Rerank API endpoint for non-local providers (required when provider ≠ local; default for `ollama`: `http://localhost:11434/rerank`) |
 | `NORNICDB_SEARCH_RERANK_API_KEY`  | (empty)     | API key for authenticated providers (e.g. Cohere, OpenAI)                                                                           |
-| `NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES` | `4096` | Maximum UTF-8 bytes sent for one candidate passage; managed vector hits use their winning chunk and lexical-only hits use a query-centered window |
+| `NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES` | `2048` | Maximum UTF-8 bytes sent for one candidate (identifying properties + passage). Managed vector hits send the matched chunk extended with its neighbouring chunks up to this budget; lexical-only hits send a query-centered window. Sized for Latin-script text; scripts that take 2+ bytes per character in UTF-8 (Cyrillic, Greek, CJK, …) should raise it, e.g. to `4096`, to keep the same amount of text |
+| `NORNICDB_SEARCH_RERANK_CONTEXT_PROPERTIES` | `title,name` | Comma-separated node properties placed (each capped at 256 bytes) in front of every rerank candidate so the reranker knows which document the passage belongs to |
 
 The byte ceiling is enforced before calling any local or hosted reranker, so
 request size scales with candidate count rather than source-document length.

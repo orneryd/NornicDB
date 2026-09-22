@@ -12,7 +12,14 @@ import (
 const (
 	// EnvSearchRerankMaxDocumentBytes bounds each candidate sent to a reranker.
 	EnvSearchRerankMaxDocumentBytes = "NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES"
-	defaultRerankMaxDocumentBytes   = 4096
+	defaultRerankMaxDocumentBytes   = 2048
+	// EnvSearchRerankContextProperties lists the short identifying properties
+	// (comma-separated) placed in front of every rerank candidate so the
+	// reranker knows which document a passage belongs to.
+	EnvSearchRerankContextProperties = "NORNICDB_SEARCH_RERANK_CONTEXT_PROPERTIES"
+	defaultRerankContextProperties   = "title,name"
+	// rerankContextPropertyMaxBytes bounds each identifying property value.
+	rerankContextPropertyMaxBytes = 256
 )
 
 func effectiveRerankMaxBytes(opts *SearchOptions) int {
@@ -26,13 +33,139 @@ func effectiveRerankMaxBytes(opts *SearchOptions) int {
 	return value
 }
 
+// rerankCandidateContent builds the text a reranker sees for one candidate:
+// the node's identifying properties (title/name by default) followed by the
+// passage. For a managed-embedding hit the passage is the matched chunk
+// extended with its neighbouring chunks until maxBytes is reached, so the
+// reranker judges the document around the match instead of one small chunk;
+// for a lexical-only hit it is the query-centred window as before. The header
+// is taken out of the same byte budget.
 func (s *Service) rerankCandidateContent(node *storage.Node, result rrfResult, query string, maxBytes int) string {
+	header := rerankContextHeader(node, rerankContextProperties())
+	remaining := maxBytes
+	if header != "" {
+		remaining -= len(header) + 1
+	}
+	var body string
 	if chunkIndex, ok := matchingChunkIndex(string(node.ID), result.MatchID); ok {
-		if chunk := managedChunkText(node, chunkIndex); chunk != "" {
-			return boundedQueryWindow(chunk, query, maxBytes)
+		if chunks := managedChunkTexts(node); chunkIndex < len(chunks) && chunks[chunkIndex] != "" {
+			body = expandedChunkWindow(chunks, chunkIndex, query, remaining)
 		}
 	}
-	return s.boundedNodeSearchableText(node, query, maxBytes)
+	if body == "" {
+		body = s.boundedNodeSearchableText(node, query, remaining)
+	}
+	if header == "" {
+		return body
+	}
+	if body == "" {
+		return header
+	}
+	return header + "\n" + body
+}
+
+func rerankContextProperties() []string {
+	raw := envutil.Get(EnvSearchRerankContextProperties, defaultRerankContextProperties)
+	parts := strings.Split(raw, ",")
+	properties := parts[:0]
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			properties = append(properties, part)
+		}
+	}
+	return properties
+}
+
+// rerankContextHeader joins the node's identifying property values, each
+// bounded to rerankContextPropertyMaxBytes, in the configured order.
+func rerankContextHeader(node *storage.Node, properties []string) string {
+	if node == nil || len(properties) == 0 {
+		return ""
+	}
+	var header strings.Builder
+	for _, property := range properties {
+		text := strings.TrimSpace(propertyToString(node.Properties[property]))
+		if text == "" {
+			continue
+		}
+		if header.Len() > 0 {
+			header.WriteString(" | ")
+		}
+		header.WriteString(strings.TrimSpace(boundedUTF8Prefix(text, rerankContextPropertyMaxBytes)))
+	}
+	return header.String()
+}
+
+// expandedChunkWindow returns chunks[index] extended alternately with the
+// following and preceding chunks while the result stays within maxBytes. A
+// neighbour that does not fit whole is added as a bounded prefix (after) or
+// suffix (before) to use the remaining budget, then expansion stops. Text the
+// neighbouring chunks share through chunk overlap is added only once.
+func expandedChunkWindow(chunks []string, index int, query string, maxBytes int) string {
+	chunk := chunks[index]
+	if len(chunk) >= maxBytes {
+		return boundedQueryWindow(chunk, query, maxBytes)
+	}
+	window := chunk
+	after, before := index+1, index-1
+	for len(window) < maxBytes && (after < len(chunks) || before >= 0) {
+		if after < len(chunks) {
+			next := trimChunkOverlapPrefix(window, chunks[after])
+			if room := maxBytes - len(window) - 1; room > 0 && next != "" {
+				if len(next) > room {
+					if next = strings.TrimSpace(boundedUTF8Prefix(next, room)); next != "" {
+						window += " " + next
+					}
+					break
+				}
+				window += " " + next
+			}
+			after++
+		}
+		if before >= 0 && len(window) < maxBytes {
+			prev := trimChunkOverlapSuffix(chunks[before], window)
+			if room := maxBytes - len(window) - 1; room > 0 && prev != "" {
+				if len(prev) > room {
+					if prev = strings.TrimSpace(boundedUTF8Suffix(prev, room)); prev != "" {
+						window = prev + " " + window
+					}
+					break
+				}
+				window = prev + " " + window
+			}
+			before--
+		}
+	}
+	return strings.TrimSpace(window)
+}
+
+// trimChunkOverlapPrefix removes from next the longest prefix that is also a
+// suffix of window (the chunker's overlap), so shared text is not repeated.
+func trimChunkOverlapPrefix(window, next string) string {
+	for size := min(len(window), len(next)); size > 0; size-- {
+		if size < len(next) && !utf8.RuneStart(next[size]) {
+			continue
+		}
+		if strings.HasSuffix(window, next[:size]) {
+			return strings.TrimSpace(next[size:])
+		}
+	}
+	return strings.TrimSpace(next)
+}
+
+// trimChunkOverlapSuffix removes from prev the longest suffix that is also a
+// prefix of window.
+func trimChunkOverlapSuffix(prev, window string) string {
+	for size := min(len(prev), len(window)); size > 0; size-- {
+		start := len(prev) - size
+		if !utf8.RuneStart(prev[start]) {
+			continue
+		}
+		if strings.HasPrefix(window, prev[start:]) {
+			return strings.TrimSpace(prev[:start])
+		}
+	}
+	return strings.TrimSpace(prev)
 }
 
 func matchingChunkIndex(nodeID, matchID string) (int, bool) {
@@ -50,22 +183,23 @@ func matchingChunkIndex(nodeID, matchID string) (int, bool) {
 	return 0, false
 }
 
-func managedChunkText(node *storage.Node, index int) string {
-	if node == nil || index < 0 || node.EmbedMeta == nil {
-		return ""
+// managedChunkTexts returns the chunk texts stored on the node by the embedding
+// worker, in chunk order, or nil when the node has none.
+func managedChunkTexts(node *storage.Node) []string {
+	if node == nil || node.EmbedMeta == nil {
+		return nil
 	}
 	switch chunks := node.EmbedMeta["chunk_texts"].(type) {
 	case []string:
-		if index < len(chunks) {
-			return chunks[index]
-		}
+		return chunks
 	case []any:
-		if index < len(chunks) {
-			text, _ := chunks[index].(string)
-			return text
+		texts := make([]string, len(chunks))
+		for i, chunk := range chunks {
+			texts[i], _ = chunk.(string)
 		}
+		return texts
 	}
-	return ""
+	return nil
 }
 
 func (s *Service) boundedNodeSearchableText(node *storage.Node, query string, maxBytes int) string {
@@ -224,4 +358,18 @@ func boundedUTF8Prefix(text string, maxBytes int) string {
 		end--
 	}
 	return text[:end]
+}
+
+func boundedUTF8Suffix(text string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(text) <= maxBytes {
+		return text
+	}
+	start := len(text) - maxBytes
+	for start < len(text) && !utf8.RuneStart(text[start]) {
+		start++
+	}
+	return text[start:]
 }

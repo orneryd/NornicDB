@@ -188,7 +188,8 @@ func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
 
 	require.Len(t, reranker.calls, 1)
 	require.Len(t, reranker.calls[0], 3)
-	require.Equal(t, "matching vector passage", reranker.calls[0][0].Content)
+	// The matched chunk comes first and is extended with its neighbours within the budget.
+	require.Equal(t, "first passage matching vector passage", reranker.calls[0][0].Content)
 	require.Contains(t, reranker.calls[0][1].Content, "alpha")
 	for _, candidate := range reranker.calls[0] {
 		require.LessOrEqual(t, len(candidate.Content), 96)
