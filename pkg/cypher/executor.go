@@ -114,6 +114,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -428,6 +429,12 @@ type StorageExecutor struct {
 	// apocRemoteURLAllowlist restricts APOC HTTP(S) fetches to explicitly
 	// approved hosts or wildcard suffixes.
 	apocRemoteURLAllowlist []string
+	// apocRemoteHTTPClient is executor-scoped so tests and database-scoped
+	// executors cannot race by replacing process-global HTTP transport state.
+	apocRemoteHTTPClient *http.Client
+	// apocRemoteHostResolver is executor-scoped for the same reason and keeps
+	// URL-security tests independent from ambient DNS.
+	apocRemoteHostResolver apocHostResolver
 	// apocLocalFileAccessRoot mirrors Neo4j's import-directory behavior: when
 	// set, local APOC file URLs are normalized and rebased under this root.
 	apocLocalFileAccessRoot string
@@ -526,6 +533,8 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		allowLocalAPOCExportFileAccess: e.allowLocalAPOCExportFileAccess,
 		allowRemoteAPOCURLAccess:       e.allowRemoteAPOCURLAccess,
 		apocRemoteURLAllowlist:         append([]string(nil), e.apocRemoteURLAllowlist...),
+		apocRemoteHTTPClient:           e.apocRemoteHTTPClient,
+		apocRemoteHostResolver:         e.apocRemoteHostResolver,
 		apocLocalFileAccessRoot:        e.apocLocalFileAccessRoot,
 		// Plan 04-03: propagate the metrics bag + database label through
 		// per-query / per-storage clones so observation chokepoints in
@@ -1428,6 +1437,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 	if err := e.validateCreateSemanticScopes(cypher); err != nil {
+		return nil, err
+	}
+	if err := e.validateSetSemanticScopes(cypher); err != nil {
 		return nil, err
 	}
 

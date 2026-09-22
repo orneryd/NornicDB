@@ -3,6 +3,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -679,10 +680,12 @@ func TestExecuteSetInvalidPropertyAccess(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	// SET without proper n.property format is invalid.
+	// A bare SET target is an undefined variable at the current clause horizon.
 	_, err = exec.Execute(ctx, "MATCH (n:SetInv) SET prop = 'value'", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid SET assignment")
+	var semanticError *SemanticError
+	require.True(t, errors.As(err, &semanticError))
+	assert.Equal(t, "UndefinedVariable", semanticError.Detail)
 }
 
 func TestExecuteSetMergeRejectsMalformedInlineMap(t *testing.T) {

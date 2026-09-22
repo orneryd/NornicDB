@@ -3214,10 +3214,12 @@ func TestExecuteSet_AdditionalMapAndLabelValidationBranches(t *testing.T) {
 	require.Len(t, merged.Rows, 1)
 	assert.Equal(t, int64(3), merged.Rows[0][0])
 
-	// Missing map variable should return explicit scope error.
+	// Missing map variable is rejected by compile-time scope validation.
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += props RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, strings.ToLower(err.Error()), "map variable")
+	var semanticError *SemanticError
+	require.True(t, errors.As(err, &semanticError))
+	assert.Equal(t, "UndefinedVariable", semanticError.Detail)
 
 	// Escaped-label normalization branch (`Quoted``Label` -> Quoted`Label) still fails identifier validation.
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n:`Quoted``Label` RETURN n", nil)

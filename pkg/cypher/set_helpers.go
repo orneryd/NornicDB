@@ -299,6 +299,28 @@ func setPropertyMap(properties map[string]interface{}) map[string]interface{} {
 	return result
 }
 
+func parseSetAssignmentTarget(target string) (variable string, property string, hasProperty bool) {
+	target = strings.TrimSpace(target)
+	if base, prop, ok := splitPostfixPropertyAccess(target); ok {
+		for {
+			inner, wrapped := stripEnclosingExpressionParentheses(base)
+			if !wrapped {
+				break
+			}
+			base = strings.TrimSpace(inner)
+		}
+		return strings.TrimSpace(base), prop, true
+	}
+	for {
+		inner, wrapped := stripEnclosingExpressionParentheses(target)
+		if !wrapped {
+			break
+		}
+		target = strings.TrimSpace(inner)
+	}
+	return target, "", false
+}
+
 // splitSetAssignments splits a SET clause into individual assignments,
 // respecting quotes and nesting in (), [] and {} (function calls, list literals
 // such as embeddings, and map literals).

@@ -3,8 +3,8 @@ package cypher
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +19,12 @@ type roundTripFunc func(req *http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
+}
+
+func allowPublicAPOCTestHost(exec *StorageExecutor) {
+	exec.apocRemoteHostResolver = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+	}
 }
 
 func TestApocLoadExportHelpers_ExtractLoadArg(t *testing.T) {
@@ -90,6 +96,7 @@ func TestApocLoadExportHelpers_CallApocLoadJsonArray_Branches(t *testing.T) {
 	e.SetAllowLocalAPOCFileAccess(true)
 	e.SetAllowRemoteAPOCURLAccess(true)
 	e.SetAPOCRemoteURLAllowlist([]string{"example.com"})
+	allowPublicAPOCTestHost(e)
 	ctx := context.Background()
 
 	_, err := e.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray()")
@@ -108,8 +115,7 @@ func TestApocLoadExportHelpers_CallApocLoadJsonArray_Branches(t *testing.T) {
 	assert.Equal(t, "v", obj["k"])
 
 	// URL source branch.
-	origClient := apocRemoteHTTPClient
-	apocRemoteHTTPClient = &http.Client{
+	e.apocRemoteHTTPClient = &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -120,10 +126,6 @@ func TestApocLoadExportHelpers_CallApocLoadJsonArray_Branches(t *testing.T) {
 			}, nil
 		}),
 	}
-	t.Cleanup(func() {
-		apocRemoteHTTPClient = origClient
-	})
-
 	res, err = e.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray('https://example.com/array.json') YIELD value")
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 2)
@@ -170,8 +172,8 @@ func TestApocLoadExportHelpers_LoadJsonFromURL_AndQueryExports(t *testing.T) {
 	e.SetAllowLocalAPOCFileAccess(true)
 	e.SetAllowRemoteAPOCURLAccess(true)
 	e.SetAPOCRemoteURLAllowlist([]string{"example.com"})
-	origClient := apocRemoteHTTPClient
-	apocRemoteHTTPClient = &http.Client{
+	allowPublicAPOCTestHost(e)
+	e.apocRemoteHTTPClient = &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			switch req.URL.Path {
 			case "/ok":
@@ -201,10 +203,6 @@ func TestApocLoadExportHelpers_LoadJsonFromURL_AndQueryExports(t *testing.T) {
 			}
 		}),
 	}
-	t.Cleanup(func() {
-		apocRemoteHTTPClient = origClient
-	})
-
 	data, err := e.loadJsonFromURL("https://example.com/ok")
 	require.NoError(t, err)
 	require.NotNil(t, data)
@@ -263,6 +261,7 @@ func TestApocLoadExportHelpers_CallApocLoadCsv_OptionsAndSources(t *testing.T) {
 	exec.SetAllowLocalAPOCFileAccess(true)
 	exec.SetAllowRemoteAPOCURLAccess(true)
 	exec.SetAPOCRemoteURLAllowlist([]string{"example.com"})
+	allowPublicAPOCTestHost(exec)
 	ctx := context.Background()
 
 	dir := t.TempDir()
@@ -290,8 +289,7 @@ func TestApocLoadExportHelpers_CallApocLoadCsv_OptionsAndSources(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, res.Rows)
 
-	origClient := apocRemoteHTTPClient
-	apocRemoteHTTPClient = &http.Client{
+	exec.apocRemoteHTTPClient = &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -302,10 +300,6 @@ func TestApocLoadExportHelpers_CallApocLoadCsv_OptionsAndSources(t *testing.T) {
 			}, nil
 		}),
 	}
-	t.Cleanup(func() {
-		apocRemoteHTTPClient = origClient
-	})
-
 	res, err = exec.callApocLoadCsv(ctx, "CALL apoc.load.csv('https://example.com/data.csv') YIELD lineNo, list, map")
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
@@ -353,22 +347,17 @@ func TestApocLoadExportHelpers_RemoteURLLoadsDeniedByDefault(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"x":1}`))
-	}))
-	defer srv.Close()
-
-	_, err := exec.callApocLoadJson(ctx, "CALL apoc.load.json('"+srv.URL+"') YIELD value")
+	const remoteURL = "https://example.com/data"
+	_, err := exec.callApocLoadJson(ctx, "CALL apoc.load.json('"+remoteURL+"') YIELD value")
 	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
 
-	_, err = exec.callApocLoadCsv(ctx, "CALL apoc.load.csv('"+srv.URL+"') YIELD lineNo, list, map")
+	_, err = exec.callApocLoadCsv(ctx, "CALL apoc.load.csv('"+remoteURL+"') YIELD lineNo, list, map")
 	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
 
-	_, err = exec.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray('"+srv.URL+"') YIELD value")
+	_, err = exec.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray('"+remoteURL+"') YIELD value")
 	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
 
-	_, err = exec.callApocImportJson(ctx, "CALL apoc.import.json('"+srv.URL+"') YIELD source, nodes, relationships")
+	_, err = exec.callApocImportJson(ctx, "CALL apoc.import.json('"+remoteURL+"') YIELD source, nodes, relationships")
 	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
 }
 

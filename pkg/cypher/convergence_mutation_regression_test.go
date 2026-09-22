@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -145,6 +146,46 @@ func TestWholeMapAssignmentOmitsNullProperties(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (item:Item) SET item = {kept: 2, omitted: null} RETURN keys(item) AS keys", nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []interface{}{"kept"}, result.Rows[0][0])
+}
+
+func TestSetAcceptsParenthesizedEntityTargets(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (source:A)-[:LINK]->(target:B)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (node:A)-[relationship:LINK]->(:B) SET (node).name = 'neo4j', (relationship).name = 'neo4j' RETURN node.name, relationship.name", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"neo4j", "neo4j"}}, result.Rows)
+}
+
+func TestSetConcatenatesPropertyListsInEitherOrder(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	result, err := exec.Execute(ctx, "CREATE (node {numbers: [3, 4, 5]}) SET node.numbers = [1, 2] + node.numbers SET node.numbers = node.numbers + [6, 7] RETURN node.numbers", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6), int64(7)}}}, result.Rows)
+}
+
+func TestSetRejectsUndefinedExpressionVariablesBeforeExecution(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	_, err := exec.Execute(ctx, "MATCH (node) SET node.name = missing RETURN node", nil)
+	require.Error(t, err)
+	var semanticError *SemanticError
+	require.True(t, errors.As(err, &semanticError))
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code)
+	require.Equal(t, "UndefinedVariable", semanticError.Detail)
+}
+
+func TestSetRejectsMapsNestedInPropertyLists(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	_, err := exec.Execute(ctx, "CREATE (node) SET node.maplist = [{num: 1}]", nil)
+	require.Error(t, err)
+	var semanticError *SemanticError
+	require.True(t, errors.As(err, &semanticError))
+	require.Equal(t, "Neo.ClientError.Statement.TypeError", semanticError.Code)
+	require.Equal(t, "InvalidPropertyType", semanticError.Detail)
 }
 
 func TestSetAddsChainedLabels(t *testing.T) {

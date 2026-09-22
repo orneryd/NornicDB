@@ -317,7 +317,11 @@ func classifyBoltError(err error) error {
 		errorType = parts[len(parts)-1]
 	}
 	phase := "runtime"
-	if strings.Contains(databaseErr.Code, ".Statement.") || strings.Contains(databaseErr.Code, ".Procedure.") || errorType == "SyntaxError" {
+	// The Neo4j status namespace identifies the subsystem, not the TCK phase.
+	// Statement.TypeError and Statement.ArgumentError are runtime failures;
+	// compile-time failures carry an explicitly compile-time error type.
+	switch errorType {
+	case "SyntaxError", "ParameterMissing", "ProcedureError":
 		phase = "compile time"
 	}
 	detail := "*"

@@ -208,6 +208,8 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 	cloned.allowLocalAPOCExportFileAccess = e.allowLocalAPOCExportFileAccess
 	cloned.allowRemoteAPOCURLAccess = e.allowRemoteAPOCURLAccess
 	cloned.apocRemoteURLAllowlist = append([]string(nil), e.apocRemoteURLAllowlist...)
+	cloned.apocRemoteHTTPClient = e.apocRemoteHTTPClient
+	cloned.apocRemoteHostResolver = e.apocRemoteHostResolver
 	cloned.apocLocalFileAccessRoot = e.apocLocalFileAccessRoot
 	cloned.defaultEmbeddingDimensions = e.defaultEmbeddingDimensions
 	cloned.dbManager = e.dbManager

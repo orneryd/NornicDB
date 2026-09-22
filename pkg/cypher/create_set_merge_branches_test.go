@@ -126,7 +126,7 @@ func TestExecuteCreateSetMergeFromParamVariable(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.Execute(ctx, "CREATE (n:ParamSetVar) SET n += row RETURN n", map[string]interface{}{
+	_, err := exec.Execute(ctx, "CREATE (n:ParamSetVar) SET n += $row RETURN n", map[string]interface{}{
 		"row": map[string]interface{}{
 			"id":   "p-1",
 			"name": "param-var",

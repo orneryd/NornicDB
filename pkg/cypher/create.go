@@ -2469,9 +2469,11 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 		leftSide := strings.TrimSpace(assignment[:eqIdx])
 		rightSide := strings.TrimSpace(assignment[eqIdx+1:])
 
-		// Parse variable.property
-		dotIdx := strings.Index(leftSide, ".")
-		value := e.parseValue(ctx, rightSide)
+		// Evaluate against the complete CREATE row scope so property references,
+		// list concatenation, and functions have the same semantics as every
+		// other SET entry point.
+		varName, propName, hasProperty := parseSetAssignmentTarget(leftSide)
+		value := e.evaluateExpressionWithContext(ctx, rightSide, createdNodes, createdEdges)
 		if strings.HasPrefix(rightSide, "$") {
 			paramName := strings.TrimSpace(rightSide[1:])
 			if paramName == "" {
@@ -2487,11 +2489,20 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			}
 			value = normalizePropValue(paramValue)
 		}
-		if dotIdx == -1 {
-			varName := strings.TrimSpace(leftSide)
+		if hasProperty {
+			if err := validateSetPropertyValue(value); err != nil {
+				return nil, err
+			}
+		}
+		if !hasProperty {
 			props, err := normalizePropsMap(value, "SET assignment")
 			if err != nil {
 				return nil, err
+			}
+			for _, propertyValue := range props {
+				if err := validateSetPropertyValue(propertyValue); err != nil {
+					return nil, err
+				}
 			}
 			if node, exists := createdNodes[varName]; exists {
 				node.Properties = cloneStringAnyMap(props)
@@ -2513,25 +2524,16 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			continue
 		}
 
-		varName := strings.TrimSpace(leftSide[:dotIdx])
-		propName := strings.TrimSpace(leftSide[dotIdx+1:])
-
 		// Apply to created node or edge
 		if node, exists := createdNodes[varName]; exists {
-			if node.Properties == nil {
-				node.Properties = make(map[string]interface{})
-			}
-			node.Properties[propName] = value
+			setNodeProperty(node, propName, value)
 			if err := store.UpdateNode(node); err != nil {
 				return nil, localizedError(localization.CypherMutationsUpdateNodePropertyFailed(err), err)
 			}
 			result.Stats.PropertiesSet++
 			e.notifyNodeMutated(string(node.ID))
 		} else if edge, exists := createdEdges[varName]; exists {
-			if edge.Properties == nil {
-				edge.Properties = make(map[string]interface{})
-			}
-			edge.Properties[propName] = value
+			setRelationshipProperty(edge, propName, value)
 			if err := store.UpdateEdge(edge); err != nil {
 				return nil, localizedError(localization.CypherMutationsUpdateEdgePropertyFailed(err), err)
 			}

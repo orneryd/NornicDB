@@ -1232,11 +1232,13 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			return e.evaluateExpressionWithContext(ctx, right, buildEvalNodes(row), buildEvalEdges(row)), nil
 		}
 
-		// Extract variable and property (or whole-variable map replacement)
-		parts := strings.SplitN(left, ".", 2)
+		// Extract the entity expression and property (or whole-variable map
+		// replacement). Cypher permits simple parenthesized entity expressions,
+		// such as SET (n).name = 'neo4j'.
+		targetVariable, targetProperty, hasProperty := parseSetAssignmentTarget(left)
 		validAssignments++
-		if len(parts) != 2 {
-			variable = strings.TrimSpace(left)
+		if !hasProperty {
+			variable = targetVariable
 			targetIdx, hasTargetIdx := colIndex[variable]
 			if !hasTargetIdx {
 				return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
@@ -1250,6 +1252,11 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 				props, err := normalizePropsMap(propValue, "SET assignment")
 				if err != nil {
 					return nil, localizedError(localization.CypherResidualSetEntityAssignmentInvalid(assignment, err), err)
+				}
+				for _, propertyValue := range props {
+					if err := validateSetPropertyValue(propertyValue); err != nil {
+						return nil, err
+					}
 				}
 				if targetIdx >= len(row) {
 					continue
@@ -1281,8 +1288,8 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			}
 			continue
 		}
-		variable = parts[0]
-		propName := parts[1]
+		variable = targetVariable
+		propName := targetProperty
 		targetIdx, hasTargetIdx := colIndex[variable]
 		if !hasTargetIdx {
 			return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
@@ -1292,6 +1299,9 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 		for _, row := range matchResult.Rows {
 			propValue, err := resolvePropValue(row)
 			if err != nil {
+				return nil, err
+			}
+			if err := validateSetPropertyValue(propValue); err != nil {
 				return nil, err
 			}
 			if targetIdx >= len(row) {
