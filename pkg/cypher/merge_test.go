@@ -454,7 +454,7 @@ func TestMergeNode_OnCreateOnMatchNarySetMapMergePreservesCreated(t *testing.T) 
 	require.Equal(t, "matched-input", verifyMatched.Rows[0][2])
 }
 
-func TestMergeNode_OnCreateOnMatchMapMergeAuditKeysDoNotClobberBranchTimestamps(t *testing.T) {
+func TestMergeNode_LaterMapMergeNullRemovesEarlierBranchProperties(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -477,7 +477,7 @@ func TestMergeNode_OnCreateOnMatchMapMergeAuditKeysDoNotClobberBranchTimestamps(
 	})
 	require.NoError(t, err)
 	require.Len(t, created.Rows, 1)
-	require.NotNil(t, created.Rows[0][0], "explicit ON CREATE timestamp must survive later p += $node")
+	require.Nil(t, created.Rows[0][0], "later map merge null must remove the earlier ON CREATE property")
 	require.Nil(t, created.Rows[0][1], "ON MATCH timestamp must not be present on create")
 	require.Equal(t, "first", created.Rows[0][2])
 
@@ -495,8 +495,8 @@ func TestMergeNode_OnCreateOnMatchMapMergeAuditKeysDoNotClobberBranchTimestamps(
 	})
 	require.NoError(t, err)
 	require.Len(t, matched.Rows, 1)
-	require.NotNil(t, matched.Rows[0][0], "ON MATCH map merge must not remove created")
-	require.NotNil(t, matched.Rows[0][1], "explicit ON MATCH timestamp must survive later p += $node")
+	require.Nil(t, matched.Rows[0][0], "map merge null must keep the previously removed property absent")
+	require.Nil(t, matched.Rows[0][1], "later map merge null must remove the earlier ON MATCH property")
 	require.Equal(t, "second", matched.Rows[0][2])
 }
 
@@ -1130,7 +1130,7 @@ CREATE (s)-[:DEPENDS_ON]->(t)
 	}, segments)
 }
 
-func TestIssue359_MergeNodesThenCreateRelationship(t *testing.T) {
+func TestMergeNodesThenCreateRelationship(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -1149,7 +1149,7 @@ CREATE (s)-[:DEPENDS_ON]->(t)`, map[string]interface{}{"s": "s1", "t": "t1"})
 	require.Equal(t, int64(1), rels)
 }
 
-func TestIssue359_SingleMergeThenCreate(t *testing.T) {
+func TestSingleMergeThenCreateNodeAndRelationship(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -1164,7 +1164,7 @@ CREATE (s)-[:DEPENDS_ON]->(t)`, nil)
 	require.Equal(t, int64(1), mustCountRows(t, exec, ctx, "MATCH (:Workload)-[r:DEPENDS_ON]->(:Workload) RETURN count(r)", nil))
 }
 
-func TestIssue359_MergeNodesThenCreateRelationshipVariants(t *testing.T) {
+func TestMergeNodesThenCreateRelationshipVariants(t *testing.T) {
 	tests := []struct {
 		name       string
 		query      string

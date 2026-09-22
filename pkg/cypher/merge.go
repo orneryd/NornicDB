@@ -2297,21 +2297,21 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 			right := strings.TrimSpace(assignment[eqIdx+1:])
 			if v, ok := resolveDirectParamRef(ctx, right); ok {
 				if props, ok := toStringAnyMap(v); ok {
-					edge.Properties = cloneStringAnyMap(props)
+					edge.Properties = setPropertyMap(props)
 					propertiesSet += len(props)
 					continue
 				}
 			}
 			if v, ok := resolveContextPathRef(ctx, right); ok {
 				if props, ok := toStringAnyMap(v); ok {
-					edge.Properties = cloneStringAnyMap(props)
+					edge.Properties = setPropertyMap(props)
 					propertiesSet += len(props)
 					continue
 				}
 			}
 			evaluated := e.evaluateSetExpressionWithContext(ctx, right, nodeContext, fullRelContext)
 			if props, ok := toStringAnyMap(evaluated); ok {
-				edge.Properties = cloneStringAnyMap(props)
+				edge.Properties = setPropertyMap(props)
 				propertiesSet += len(props)
 			}
 			continue
@@ -2335,7 +2335,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 					edge.Properties = make(map[string]interface{})
 				}
 				for k, v := range props {
-					edge.Properties[k] = v
+					setRelationshipProperty(edge, k, v)
 					propertiesSet++
 				}
 			}
@@ -2363,11 +2363,11 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 		// here, and the generic expression evaluator would only return
 		// the unresolved string.
 		if v, ok := resolveDirectParamRef(ctx, propValue); ok {
-			edge.Properties[propName] = normalizePropValue(v)
+			setRelationshipProperty(edge, propName, normalizePropValue(v))
 			propertiesSet++
 			continue
 		}
-		edge.Properties[propName] = e.evaluateSetExpressionWithContext(ctx, propValue, nodeContext, fullRelContext)
+		setRelationshipProperty(edge, propName, e.evaluateSetExpressionWithContext(ctx, propValue, nodeContext, fullRelContext))
 		propertiesSet++
 	}
 	return propertiesSet
@@ -2409,19 +2409,19 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 			right := strings.TrimSpace(assignment[eqIdx+1:])
 			if v, ok := resolveDirectParamRef(ctx, right); ok {
 				if props, ok := toStringAnyMap(v); ok {
-					node.Properties = cloneStringAnyMap(props)
+					node.Properties = setPropertyMap(props)
 					continue
 				}
 			}
 			if v, ok := resolveContextPathRef(ctx, right); ok {
 				if props, ok := toStringAnyMap(v); ok {
-					node.Properties = cloneStringAnyMap(props)
+					node.Properties = setPropertyMap(props)
 					continue
 				}
 			}
 			evaluated := e.evaluateSetExpressionWithContext(ctx, right, fullContext, relContext)
 			if props, ok := toStringAnyMap(evaluated); ok {
-				node.Properties = cloneStringAnyMap(props)
+				node.Properties = setPropertyMap(props)
 			}
 			continue
 		}

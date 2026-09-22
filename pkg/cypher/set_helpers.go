@@ -133,19 +133,19 @@ func (e *StorageExecutor) applySetToNode(ctx context.Context, node *storage.Node
 				right := strings.TrimSpace(assignment[eqIdx+1:])
 				if v, ok := resolveDirectParamRef(ctx, right); ok {
 					if props, ok := toStringAnyMap(v); ok {
-						node.Properties = cloneStringAnyMap(props)
+						node.Properties = setPropertyMap(props)
 						continue
 					}
 				}
 				if v, ok := resolveContextPathRef(ctx, right); ok {
 					if props, ok := toStringAnyMap(v); ok {
-						node.Properties = cloneStringAnyMap(props)
+						node.Properties = setPropertyMap(props)
 						continue
 					}
 				}
 				evaluated := e.evaluateExpressionWithContext(ctx, right, map[string]*storage.Node{varName: node}, nil)
 				if props, ok := toStringAnyMap(evaluated); ok {
-					node.Properties = cloneStringAnyMap(props)
+					node.Properties = setPropertyMap(props)
 				}
 				continue
 			}
@@ -198,9 +198,6 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 	if m, ok := resolveDirectParamRef(ctx, rightExpr); ok {
 		if props, ok := toStringAnyMap(m); ok {
 			for k, v := range props {
-				if v == nil {
-					continue
-				}
 				setNodeProperty(node, k, normalizePropValue(v))
 			}
 			return
@@ -209,9 +206,6 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 	if m, ok := resolveContextPathRef(ctx, rightExpr); ok {
 		if props, ok := toStringAnyMap(m); ok {
 			for k, v := range props {
-				if v == nil {
-					continue
-				}
 				setNodeProperty(node, k, normalizePropValue(v))
 			}
 			return
@@ -247,9 +241,6 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 
 	if m, ok := toStringAnyMap(evaluated); ok {
 		for k, v := range m {
-			if v == nil {
-				continue
-			}
 			setNodeProperty(node, k, v)
 		}
 	}
@@ -285,6 +276,27 @@ func setNodeProperty(node *storage.Node, propName string, value interface{}) {
 		return
 	}
 	node.Properties[propName] = value
+}
+
+func setRelationshipProperty(relationship *storage.Edge, propName string, value interface{}) {
+	if relationship.Properties == nil {
+		relationship.Properties = make(map[string]interface{})
+	}
+	if value == nil {
+		delete(relationship.Properties, propName)
+		return
+	}
+	relationship.Properties[propName] = value
+}
+
+func setPropertyMap(properties map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{}, len(properties))
+	for key, value := range properties {
+		if value != nil {
+			result[key] = normalizePropValue(value)
+		}
+	}
+	return result
 }
 
 // splitSetAssignments splits a SET clause into individual assignments,

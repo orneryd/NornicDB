@@ -196,7 +196,7 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	// as a whole statement before anything is mutated: a multi-row DELETE
 	// must not partially apply before a later row is found to still have
 	// relationships, and a plain "DELETE n" on a connected node must error
-	// instead of silently cascading its edges away (eshu #5147).
+	// instead of silently cascading its edges away.
 	nodeIDs, edgeIDsToDelete := collectDeleteMutationTargets(matchResult)
 
 	if !detach {
@@ -1259,7 +1259,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 					if entity == nil {
 						continue
 					}
-					entity.Properties = cloneStringAnyMap(props)
+					entity.Properties = setPropertyMap(props)
 					if err := store.UpdateNode(entity); err != nil {
 						return nil, localizedError(localization.CypherMutationsSetEntityReplaceFailed(variable, err), err)
 					}
@@ -1269,7 +1269,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 					if entity == nil {
 						continue
 					}
-					entity.Properties = cloneStringAnyMap(props)
+					entity.Properties = setPropertyMap(props)
 					if err := store.UpdateEdge(entity); err != nil {
 						return nil, localizedError(localization.CypherMutationsSetEntityReplaceFailed(variable, err), err)
 					}
@@ -1312,10 +1312,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 				if entity == nil {
 					continue
 				}
-				if entity.Properties == nil {
-					entity.Properties = make(map[string]interface{})
-				}
-				entity.Properties[propName] = propValue
+				setRelationshipProperty(entity, propName, propValue)
 				if err := store.UpdateEdge(entity); err != nil {
 					return nil, localizedError(localization.CypherMutationsSetPropertyFailed(variable, propName, err), err)
 				}
@@ -3067,7 +3064,7 @@ func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.
 	// EXISTS { ... } and COUNT { ... } also allow an *implicit* MATCH: a
 	// bare pattern body with no "MATCH " keyword (e.g. "EXISTS { (n)--() }").
 	// The previous version required the "MATCH " prefix unconditionally, so
-	// a bare body always returned false here (eshu #5147).
+	// a bare body always returned false here.
 	subquery = strings.TrimSpace(subquery)
 	upperSub := strings.ToUpper(subquery)
 
@@ -3851,7 +3848,7 @@ func (e *StorageExecutor) countSubqueryMatches(node *storage.Node, variable, sub
 	// COUNT { ... } allows an *implicit* MATCH: a bare pattern body with no
 	// "MATCH " keyword (e.g. "COUNT { (n)--() }"). The previous version
 	// required the "MATCH " prefix unconditionally, so a bare body always
-	// returned 0 here (eshu #5147).
+	// returned 0 here.
 	subquery = strings.TrimSpace(subquery)
 	upperSub := strings.ToUpper(subquery)
 
@@ -3878,7 +3875,7 @@ func (e *StorageExecutor) countSubqueryMatches(node *storage.Node, variable, sub
 
 	if !checkIncoming && !checkOutgoing {
 		// Bracket-less pattern (e.g. "(n)-->()", "(n)--()") -- the checks
-		// above only recognize bracketed arrows (eshu #5147).
+		// above only recognize bracketed arrows.
 		if in, out, ok := bareRelDirection(pattern, variable); ok {
 			checkIncoming, checkOutgoing = in, out
 		}

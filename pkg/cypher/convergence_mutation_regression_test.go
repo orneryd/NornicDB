@@ -123,6 +123,30 @@ func TestAssigningNullRemovesNodeProperty(t *testing.T) {
 	require.ElementsMatch(t, []interface{}{"sku", "qty"}, readback.Rows[0][0])
 }
 
+func TestAssigningNullRemovesRelationshipProperty(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE ()-[:LINK {obsolete: 1, retained: 2}]->()", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH ()-[relationship:LINK]->() SET relationship.obsolete = null RETURN keys(relationship) AS keys", nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []interface{}{"retained"}, result.Rows[0][0])
+
+	readback, err := exec.Execute(ctx, "MATCH ()-[relationship:LINK]->() RETURN keys(relationship) AS keys", nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []interface{}{"retained"}, readback.Rows[0][0])
+}
+
+func TestWholeMapAssignmentOmitsNullProperties(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:Item {old: 1})", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (item:Item) SET item = {kept: 2, omitted: null} RETURN keys(item) AS keys", nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []interface{}{"kept"}, result.Rows[0][0])
+}
+
 func TestSetAddsChainedLabels(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	_, err := exec.Execute(ctx, "CREATE (:A {id:4})", nil)
