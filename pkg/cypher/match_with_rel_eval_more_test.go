@@ -27,6 +27,10 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 		},
 		"path": map[string]interface{}{
 			"length": int64(2),
+			"nodes": []*storage.Node{
+				{ID: "n1", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "alice"}},
+				{ID: "n2", Labels: []string{"B"}, Properties: map[string]interface{}{"name": "bob"}},
+			},
 			"rels": []*storage.Edge{
 				{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n2", Properties: map[string]interface{}{"w": 1}},
 			},
@@ -56,6 +60,11 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 	rel := relList[0].(*storage.Edge)
 	require.Equal(t, "KNOWS", rel.Type)
 	require.Equal(t, "e1", string(rel.ID))
+
+	nodeList := exec.evaluateExpressionFromValues("nodes(path)", values).([]interface{})
+	require.Len(t, nodeList, 2)
+	require.Equal(t, "n1", string(nodeList[0].(*storage.Node).ID))
+	require.Equal(t, "bob", nodeList[1].(*storage.Node).Properties["name"])
 
 	require.Equal(t, "4:match_with_rel_eval_cov:n1", exec.evaluateExpressionFromValues("elementId(n)", values))
 	require.Equal(t, "map-id", exec.evaluateExpressionFromValues("id(nodeMap)", values))

@@ -1445,6 +1445,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := e.validateSemanticScopes(cypher); err != nil {
 		return nil, err
 	}
+	if err := validateStaticQuantifierTypes(cypher); err != nil {
+		return nil, err
+	}
 
 	// IMPORTANT: Do NOT substitute parameters before routing!
 	// We need to route the query based on the ORIGINAL query structure,

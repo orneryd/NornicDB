@@ -1079,6 +1079,27 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 			}
 		}
 
+		// For nodes(path), preserve the native nodes stored in a path map.
+		if matchFuncStartAndSuffix(expr, "nodes") {
+			inner := extractFuncArgs(expr, "nodes")
+			if val, ok := values[inner]; ok {
+				if pathMap, ok := val.(map[string]interface{}); ok {
+					if pathNodes, ok := pathMap["nodes"]; ok {
+						switch nodes := pathNodes.(type) {
+						case []*storage.Node:
+							result := make([]interface{}, len(nodes))
+							for i, node := range nodes {
+								result[i] = node
+							}
+							return result
+						case []interface{}:
+							return nodes
+						}
+					}
+				}
+			}
+		}
+
 		// For relationships(path), extract the relationships from a path map
 		if matchFuncStartAndSuffix(expr, "relationships") {
 			inner := extractFuncArgs(expr, "relationships")
@@ -1088,12 +1109,15 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 						// Preserve native relationship values so Bolt encodes the list
 						// with relationship structure and expression evaluation retains
 						// relationship property/type semantics.
-						if edges, ok := rels.([]*storage.Edge); ok {
+						switch edges := rels.(type) {
+						case []*storage.Edge:
 							result := make([]interface{}, len(edges))
 							for i, edge := range edges {
 								result[i] = edge
 							}
 							return result
+						case []interface{}:
+							return edges
 						}
 					}
 				}
