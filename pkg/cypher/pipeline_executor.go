@@ -71,9 +71,11 @@ type pipelineRow map[string]interface{}
 // caller can select a specialized physical plan.
 func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	if optionalIdx := findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH"); optionalIdx >= 0 {
-		withIdx := findKeywordIndex(cypher, "WITH")
-		if withIdx < 0 || findMultiWordKeywordIndex(cypher[withIdx+len("WITH"):], "OPTIONAL", "MATCH") < 0 {
-			return nil, false
+		if !startsWithKeywordFold(strings.TrimSpace(cypher), "OPTIONAL MATCH") {
+			withIdx := findKeywordIndex(cypher, "WITH")
+			if withIdx < 0 || findMultiWordKeywordIndex(cypher[withIdx+len("WITH"):], "OPTIONAL", "MATCH") < 0 {
+				return nil, false
+			}
 		}
 	}
 	clauses, ok := splitPipelineClauses(cypher)
@@ -969,10 +971,18 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 				joined[name] = value
 			}
 			for name, node := range expandedRow.nodes {
-				joined[name] = node
+				if node == nil {
+					joined[name] = nil
+				} else {
+					joined[name] = node
+				}
 			}
 			for name, relationship := range expandedRow.rels {
-				joined[name] = relationship
+				if relationship == nil {
+					joined[name] = nil
+				} else {
+					joined[name] = relationship
+				}
 			}
 			out = append(out, joined)
 		}

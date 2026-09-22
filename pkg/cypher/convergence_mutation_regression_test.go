@@ -256,6 +256,60 @@ func TestSetFeedsMutatedRelationshipsThroughAggregation(t *testing.T) {
 	requireSingleValue(t, result, int64(20))
 }
 
+func TestRemoveAppliesResultWindowAfterAllNodeMutations(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:N {name:'a'}), (:N {name:'a'}), (:N {name:'a'})", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (n:N) REMOVE n.name RETURN n LIMIT 0", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+
+	readback, err := exec.Execute(ctx, "MATCH (n:N) RETURN count(n.name) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, readback, int64(0))
+}
+
+func TestRemoveFeedsLabelsThroughAggregation(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:N {num:1}), (:N {num:2}), (:N {num:3})", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (n:N) REMOVE n:N WITH sum(n.num) AS sum RETURN sum", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, result, int64(6))
+
+	readback, err := exec.Execute(ctx, "MATCH (n:N) RETURN count(n) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, readback, int64(0))
+}
+
+func TestRemoveFeedsRelationshipsThroughFiltering(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE ()-[:R {name:'a', num:1}]->(), ()-[:R {name:'a', num:2}]->(), ()-[:R {name:'a', num:3}]->()", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH ()-[r:R]->() REMOVE r.name WITH r WHERE r.num % 2 = 0 RETURN r.num AS num", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+
+	readback, err := exec.Execute(ctx, "MATCH ()-[r:R]->() RETURN count(r.name) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, readback, int64(0))
+}
+
+func TestRemoveIgnoresNullOptionalBindings(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	propertyResult, err := exec.Execute(ctx, "OPTIONAL MATCH (node:Missing) REMOVE node.value RETURN node", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil}}, propertyResult.Rows)
+
+	labelResult, err := exec.Execute(ctx, "OPTIONAL MATCH (node:Missing) REMOVE node:Missing RETURN node", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil}}, labelResult.Rows)
+}
+
 func TestMutationExpressionsAndClauseCompositionInExplicitTransactions(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	run := func(query string, params map[string]interface{}) *ExecuteResult {

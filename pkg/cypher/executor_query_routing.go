@@ -201,6 +201,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 
 	startsWithMatch := strings.HasPrefix(upperQuery, "MATCH")
+	startsWithOptionalMatch := strings.HasPrefix(upperQuery, "OPTIONAL MATCH")
 	startsWithCreate := strings.HasPrefix(upperQuery, "CREATE")
 	startsWithMerge := strings.HasPrefix(upperQuery, "MERGE")
 
@@ -351,6 +352,11 @@ skipMatchCallRoute:
 	}
 
 	if containsKeywordOutsideStrings(cypher, "REMOVE") {
+		if startsWithMatch || startsWithOptionalMatch {
+			if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+				return result, err
+			}
+		}
 		return e.executeRemove(ctx, cypher)
 	}
 
