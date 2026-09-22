@@ -69,6 +69,18 @@ func TestVariableLengthRelationshipPatternRejectsMalformedBounds(t *testing.T) {
 	}
 }
 
+func TestZeroHopTraversalBindsBothEndpointsToTheSeedNode(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "zero_hop_endpoint_binding")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CREATE (:Root {name: 'seed'})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (start:Root) MATCH (start)-[:LINK*0]->(end) RETURN end.name", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"seed"}}, result.Rows)
+}
+
 func BenchmarkTraceRelationshipList64(b *testing.B) {
 	relationships := make([]*storage.Edge, 64)
 	for index := range relationships {

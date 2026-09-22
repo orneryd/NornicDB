@@ -736,7 +736,7 @@ func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string)
 
 		paths := e.traverseGraph(ctx, matches)
 		for _, path := range paths {
-			if len(path.Nodes) < 2 {
+			if len(path.Nodes) == 0 {
 				continue
 			}
 			pathContext := e.buildPathContext(path, matches)
@@ -811,7 +811,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				paths = e.traverseGraph(ctx, matches)
 			}
 			for _, path := range paths {
-				if len(path.Nodes) < 2 {
+				if len(path.Nodes) == 0 {
 					continue
 				}
 				startNode := path.Nodes[0]
