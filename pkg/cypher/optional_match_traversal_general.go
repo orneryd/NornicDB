@@ -18,6 +18,7 @@ package cypher
 
 import (
 	"context"
+	"reflect"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -229,7 +230,8 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 
 	// Split the pattern variables into shared (already bound on the left) and
 	// new, using the uniform binding keys of the first row.
-	var sharedNodeVars, newNodeVars, sharedRelVars, newRelVars []string
+	variableLengthRelVars := variableLengthRelationshipVariableSet(pattern)
+	var sharedNodeVars, newNodeVars, sharedRelVars, newRelVars, sharedValueVars, newValueVars []string
 	for _, v := range nodeVars {
 		if _, bound := rows[0].nodes[v]; bound {
 			sharedNodeVars = append(sharedNodeVars, v)
@@ -238,6 +240,14 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 		}
 	}
 	for _, v := range relVars {
+		if _, variableLength := variableLengthRelVars[v]; variableLength {
+			if _, bound := rows[0].values[v]; bound {
+				sharedValueVars = append(sharedValueVars, v)
+			} else {
+				newValueVars = append(newValueVars, v)
+			}
+			continue
+		}
 		if _, bound := rows[0].rels[v]; bound {
 			sharedRelVars = append(sharedRelVars, v)
 		} else {
@@ -253,10 +263,11 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 	for _, v := range newRelVars {
 		nullBindsRels[v] = nil
 	}
-	newValueVars := make([]string, 0, 1)
 	if pathVar != "" {
 		if _, bound := rows[0].values[pathVar]; !bound {
-			newValueVars = append(newValueVars, pathVar)
+			newValueVars = appendUniquePipelineBinding(newValueVars, pathVar)
+		} else {
+			sharedValueVars = appendUniquePipelineBinding(sharedValueVars, pathVar)
 		}
 	}
 	nullBindsValues := make(map[string]interface{}, len(newValueVars))
@@ -268,7 +279,8 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 	for _, row := range rows {
 		matched := false
 		for _, cand := range candidates {
-			if !candidateAgreesWithRow(row, cand, sharedNodeVars, sharedRelVars) {
+			if !candidateAgreesWithRow(row, cand, sharedNodeVars, sharedRelVars) ||
+				!candidateValuesAgreeWithRow(row, cand, sharedValueVars) {
 				continue
 			}
 			nodeBinds := make(map[string]*storage.Node, len(newNodeVars))
@@ -299,6 +311,17 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 		}
 	}
 	return out, nil
+}
+
+func candidateValuesAgreeWithRow(row, candidate traversalOptRow, variables []string) bool {
+	for _, variable := range variables {
+		left, leftBound := row.values[variable]
+		right, rightBound := candidate.values[variable]
+		if !leftBound || !rightBound || left == nil || right == nil || !reflect.DeepEqual(left, right) {
+			return false
+		}
+	}
+	return true
 }
 
 // candidateAgreesWithRow reports whether a candidate's bindings for the shared

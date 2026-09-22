@@ -254,6 +254,11 @@ func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Contex
 				row.rels[col] = v
 			case nil:
 				row.nodes[col] = nil
+			default:
+				if row.values == nil {
+					row.values = make(map[string]interface{})
+				}
+				row.values[col] = v
 			}
 		}
 		rows = append(rows, row)
@@ -292,6 +297,12 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 		return e.applySingleNodeOptionalClause(ctx, rows, clause)
 	}
 	if nodeGroups != 2 || brackets != 1 {
+		return e.applyGeneralOptionalClause(ctx, rows, clause)
+	}
+	// Variable-length patterns bind an ordered relationship list and may bind
+	// a named path. The general row-join operator retains both values; the
+	// single-hop expansion stores only one relationship edge.
+	if strings.Contains(clause.pattern, "*") {
 		return e.applyGeneralOptionalClause(ctx, rows, clause)
 	}
 	eps, err := e.parseOptionalClauseEndpoints(ctx, clause.pattern)

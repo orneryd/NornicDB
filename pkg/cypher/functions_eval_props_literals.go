@@ -99,6 +99,16 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	// This allows path functions like length(path), relationships(path) to work after WITH
 	if paths != nil {
 		if pathResult, ok := paths[expr]; ok && pathResult != nil {
+			// A variable-length relationship variable is represented in the path
+			// context by a relationship-only PathResult. Its Cypher value is the
+			// ordered list of relationships, not a named path value.
+			if len(pathResult.Nodes) == 0 {
+				values := make([]interface{}, len(pathResult.Relationships))
+				for index, relationship := range pathResult.Relationships {
+					values[index] = relationship
+				}
+				return values
+			}
 			// Return path as a serializable structure that can be used later
 			return map[string]interface{}{
 				"_pathResult": pathResult, // Keep the PathResult for later use
