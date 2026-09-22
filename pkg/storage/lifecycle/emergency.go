@@ -64,6 +64,23 @@ func (e *EmergencyController) Evaluate() bool {
 	last := e.debtHistory[len(e.debtHistory)-1]
 	deltaSeconds := last.at.Sub(first.at).Seconds()
 	if deltaSeconds <= 0 {
+		// Equal clock samples with increasing debt represent an effectively
+		// unbounded positive slope. Treat them deterministically instead of
+		// retaining a stale state that depends on timer resolution or suite load.
+		switch {
+		case last.bytes > first.bytes:
+			e.active = true
+		case last.bytes < first.bytes:
+			e.active = false
+		default:
+			e.active = 0 > e.config.DebtGrowthSlopeThreshold
+		}
+		if e.active && e.activeSince.IsZero() {
+			e.activeSince = time.Now()
+		}
+		if !e.active {
+			e.activeSince = time.Time{}
+		}
 		return e.active
 	}
 	slope := float64(last.bytes-first.bytes) / deltaSeconds
