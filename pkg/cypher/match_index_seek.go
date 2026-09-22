@@ -97,7 +97,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nod
 		return []*storage.Node{}, true, nil
 	}
 
-	if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(node, nodePattern.labels) {
+	if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 		return []*storage.Node{}, true, nil
 	}
 
@@ -216,7 +216,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 		return []*storage.Node{}, true, nil
 	}
 
-	if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(node, nodePattern.labels) {
+	if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 		return []*storage.Node{}, true, nil
 	}
 
@@ -368,7 +368,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, 
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(node, nodePattern.labels) {
+		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -425,7 +425,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(node, nodePattern.labels) {
+		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -479,7 +479,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(node, nodePattern.labels) {
+		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -677,7 +677,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(node, nodePattern.labels) {
+		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -758,7 +758,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(node, nodePattern.labels) {
+		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -863,7 +863,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDInParam(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(node, nodePattern.labels) {
+		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 			continue
 		}
 		if len(nodePattern.properties) > 0 && !e.nodeMatchesProps(node, nodePattern.properties) {
@@ -1028,7 +1028,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(node, nodePattern.labels) {
+		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 			continue
 		}
 		nodes = append(nodes, node)

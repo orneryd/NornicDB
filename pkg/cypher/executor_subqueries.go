@@ -4,6 +4,8 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"math"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -3478,10 +3480,11 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 // applyResultModifiers applies ORDER BY, LIMIT, SKIP to a result
 func (e *StorageExecutor) applyResultModifiers(result *ExecuteResult, modifiers string) (*ExecuteResult, error) {
 	orderByCol, orderByDesc, hasOrderBy := parseOrderByModifier(modifiers)
+	orderTerms := parseOrderByTerms(modifiers)
 	skip, hasSkip := parseIntModifier(modifiers, "SKIP")
 	limit, hasLimit := parseIntModifier(modifiers, "LIMIT")
 
-	if hasOrderBy && hasLimit && limit >= 0 {
+	if hasOrderBy && len(orderTerms) == 1 && hasLimit && limit >= 0 {
 		if colIdx := findColumnIndexByName(result.Columns, orderByCol); colIdx >= 0 {
 			k := limit
 			if hasSkip && skip > 0 {
@@ -3525,84 +3528,123 @@ func (e *StorageExecutor) applyResultModifiers(result *ExecuteResult, modifiers 
 
 // applyOrderByToResult applies ORDER BY to a result set
 func (e *StorageExecutor) applyOrderByToResult(result *ExecuteResult, orderByClause string) *ExecuteResult {
-	// Parse ORDER BY column [DESC|ASC]
-	clause := strings.TrimSpace(orderByClause)
-	if idx := findKeywordIndex(clause, "ORDER BY"); idx != -1 {
-		clause = strings.TrimSpace(clause[idx+8:])
+	terms := parseOrderByTerms(orderByClause)
+	if len(terms) == 0 {
+		terms = parseOrderByClause(orderByClause)
 	}
-
-	// Find end of ORDER BY (before LIMIT, SKIP)
-	endIdx := len(clause)
-	for _, kw := range []string{" LIMIT", " SKIP"} {
-		if idx := strings.Index(strings.ToUpper(clause), kw); idx != -1 && idx < endIdx {
-			endIdx = idx
-		}
-	}
-	clause = strings.TrimSpace(clause[:endIdx])
-
-	// Parse column and direction
-	parts := strings.Fields(clause)
-	if len(parts) == 0 {
+	if len(terms) == 0 {
 		return result
 	}
-
-	colName := parts[0]
-	descending := false
-	if len(parts) > 1 && strings.ToUpper(parts[1]) == "DESC" {
-		descending = true
+	type resolvedOrderTerm struct {
+		columnIndex int
+		property    string
+		descending  bool
 	}
-
-	// Find column index
-	colIdx := -1
-	for i, col := range result.Columns {
-		if col == colName {
-			colIdx = i
-			break
-		}
-	}
-
-	// If the ORDER BY column is a dotted property (e.g. t.createdAt) and not directly
-	// projected, look for the variable name (e.g. "t") in the result columns and
-	// extract the property from the returned node map.
-	propName := ""
-	if colIdx == -1 && strings.Contains(colName, ".") {
-		parts := strings.SplitN(colName, ".", 2)
-		varName, prop := parts[0], parts[1]
-		for i, col := range result.Columns {
-			if col == varName {
-				colIdx = i
-				propName = prop
-				break
+	resolved := make([]resolvedOrderTerm, 0, len(terms))
+	for _, term := range terms {
+		columnIndex := findColumnIndexByName(result.Columns, term.column)
+		property := ""
+		if columnIndex < 0 && strings.Contains(term.column, ".") {
+			parts := strings.SplitN(term.column, ".", 2)
+			columnIndex = findColumnIndexByName(result.Columns, parts[0])
+			if columnIndex >= 0 {
+				property = parts[1]
 			}
 		}
+		if columnIndex < 0 {
+			// A leading hidden ORDER BY expression must be evaluated before
+			// projection by the owning query plan. Sorting on only the remaining
+			// terms would violate the requested lexicographic order.
+			return result
+		}
+		resolved = append(resolved, resolvedOrderTerm{columnIndex: columnIndex, property: property, descending: term.descending})
 	}
-
-	if colIdx == -1 {
+	if len(resolved) == 0 {
 		return result
 	}
 
-	// Sort rows
 	sort.SliceStable(result.Rows, func(i, j int) bool {
-		vi := result.Rows[i][colIdx]
-		vj := result.Rows[j][colIdx]
-		// Extract property from node map if ORDER BY uses var.property on a returned node
-		if propName != "" {
-			vi = extractPropertyFromValue(vi, propName)
-			vj = extractPropertyFromValue(vj, propName)
+		for _, term := range resolved {
+			vi := result.Rows[i][term.columnIndex]
+			vj := result.Rows[j][term.columnIndex]
+			if term.property != "" {
+				vi = extractPropertyFromValue(vi, term.property)
+				vj = extractPropertyFromValue(vj, term.property)
+			}
+			comparison := compareValuesForSort(vi, vj)
+			if comparison == 0 {
+				continue
+			}
+			if term.descending {
+				return comparison > 0
+			}
+			return comparison < 0
 		}
-		cmp := compareValuesForSort(vi, vj)
-		if descending {
-			return cmp > 0
-		}
-		return cmp < 0
+		return false
 	})
 
 	return result
 }
 
+type orderByTerm struct {
+	column     string
+	descending bool
+}
+
+func parseOrderByTerms(modifiers string) []orderByTerm {
+	orderByIndex := findKeywordIndex(modifiers, "ORDER BY")
+	if orderByIndex < 0 {
+		return nil
+	}
+	return parseOrderByClause(modifiers[orderByIndex+len("ORDER BY"):])
+}
+
+func parseOrderByClause(clause string) []orderByTerm {
+	clause = strings.TrimSpace(clause)
+	end := len(clause)
+	for _, keyword := range []string{"LIMIT", "SKIP"} {
+		if index := findKeywordIndex(clause, keyword); index >= 0 && index < end {
+			end = index
+		}
+	}
+	clause = strings.TrimSpace(clause[:end])
+	parts := splitTopLevelComma(clause)
+	terms := make([]orderByTerm, 0, len(parts))
+	for _, part := range parts {
+		expression := strings.TrimSpace(part)
+		fields := strings.Fields(expression)
+		if len(fields) == 0 {
+			continue
+		}
+		term := orderByTerm{column: expression}
+		if len(fields) > 1 {
+			direction := strings.ToUpper(fields[len(fields)-1])
+			switch direction {
+			case "DESC", "DESCENDING":
+				term.descending = true
+				term.column = strings.TrimSpace(expression[:strings.LastIndex(expression, fields[len(fields)-1])])
+			case "ASC", "ASCENDING":
+				term.column = strings.TrimSpace(expression[:strings.LastIndex(expression, fields[len(fields)-1])])
+			}
+		}
+		terms = append(terms, term)
+	}
+	return terms
+}
+
 // compareValuesForSort compares two values for sorting, returns -1, 0, or 1
 // extractPropertyFromValue extracts a named property from a value that may be a node map.
 func extractPropertyFromValue(val interface{}, propName string) interface{} {
+	switch entity := val.(type) {
+	case *storage.Node:
+		if entity != nil {
+			return entity.Properties[propName]
+		}
+	case *storage.Edge:
+		if entity != nil {
+			return entity.Properties[propName]
+		}
+	}
 	if m, ok := val.(map[string]interface{}); ok {
 		if pv, exists := m[propName]; exists {
 			return pv
@@ -3622,53 +3664,64 @@ func compareValuesForSort(a, b interface{}) int {
 		return 0
 	}
 	if a == nil {
-		return -1
+		return 1
 	}
 	if b == nil {
+		return -1
+	}
+
+	aRank := cypherSortRank(a)
+	bRank := cypherSortRank(b)
+	if aRank != bRank {
+		if aRank < bRank {
+			return -1
+		}
 		return 1
 	}
 
-	// Try numeric comparison
-	switch va := a.(type) {
-	case int:
-		if vb, ok := b.(int); ok {
-			if va < vb {
-				return -1
-			} else if va > vb {
-				return 1
+	if aList, ok := cypherSortList(a); ok {
+		bList, _ := cypherSortList(b)
+		for index := 0; index < len(aList) && index < len(bList); index++ {
+			if comparison := compareValuesForSort(aList[index], bList[index]); comparison != 0 {
+				return comparison
 			}
+		}
+		return compareOrderedInts(len(aList), len(bList))
+	}
+	if aNumber, ok := cypherSortNumber(a); ok {
+		bNumber, _ := cypherSortNumber(b)
+		if math.IsNaN(aNumber) && math.IsNaN(bNumber) {
 			return 0
 		}
-	case int64:
-		if vb, ok := b.(int64); ok {
-			if va < vb {
-				return -1
-			} else if va > vb {
-				return 1
-			}
-			return 0
+		if aNumber < bNumber {
+			return -1
 		}
-	case float64:
-		if vb, ok := b.(float64); ok {
-			if va < vb {
-				return -1
-			} else if va > vb {
-				return 1
-			}
-			return 0
+		if aNumber > bNumber {
+			return 1
 		}
+		return 0
+	}
+	switch left := a.(type) {
 	case string:
-		if vb, ok := b.(string); ok {
-			if va < vb {
-				return -1
-			} else if va > vb {
-				return 1
-			}
+		right := b.(string)
+		if left < right {
+			return -1
+		}
+		if left > right {
+			return 1
+		}
+		return 0
+	case bool:
+		right := b.(bool)
+		if left == right {
 			return 0
 		}
+		if !left {
+			return -1
+		}
+		return 1
 	}
 
-	// Fallback to string comparison
 	sa := fmt.Sprintf("%v", a)
 	sb := fmt.Sprintf("%v", b)
 	if sa < sb {
@@ -3679,31 +3732,95 @@ func compareValuesForSort(a, b interface{}) int {
 	return 0
 }
 
-func parseOrderByModifier(modifiers string) (column string, descending bool, ok bool) {
-	orderByIdx := findKeywordIndex(modifiers, "ORDER BY")
-	if orderByIdx == -1 {
-		return "", false, false
+// cypherSortRank implements the openCypher comparability order used by ORDER
+// BY: maps, nodes, relationships, lists, paths, strings, booleans, numbers,
+// NaN, and null. Null is handled before this function.
+func cypherSortRank(value interface{}) int {
+	switch value.(type) {
+	case *storage.Node:
+		return 1
+	case *storage.Edge:
+		return 2
+	case PathResult, *PathResult:
+		return 4
+	case string:
+		return 5
+	case bool:
+		return 6
 	}
-	clause := strings.TrimSpace(modifiers[orderByIdx+8:])
-	// Find end of ORDER BY (before LIMIT, SKIP)
-	endIdx := len(clause)
-	for _, kw := range []string{" LIMIT", " SKIP"} {
-		if idx := strings.Index(strings.ToUpper(clause), kw); idx != -1 && idx < endIdx {
-			endIdx = idx
+	if number, ok := cypherSortNumber(value); ok {
+		if math.IsNaN(number) {
+			return 8
+		}
+		return 7
+	}
+	typeOf := reflect.TypeOf(value)
+	if typeOf != nil {
+		switch typeOf.Kind() {
+		case reflect.Map:
+			return 0
+		case reflect.Slice, reflect.Array:
+			return 3
 		}
 	}
-	clause = strings.TrimSpace(clause[:endIdx])
-	parts := strings.Fields(clause)
-	if len(parts) == 0 {
+	return 10
+}
+
+func cypherSortList(value interface{}) ([]interface{}, bool) {
+	typeOf := reflect.TypeOf(value)
+	if typeOf == nil || (typeOf.Kind() != reflect.Slice && typeOf.Kind() != reflect.Array) {
+		return nil, false
+	}
+	return toAnySlice(value), true
+}
+
+func cypherSortNumber(value interface{}) (float64, bool) {
+	switch number := value.(type) {
+	case int:
+		return float64(number), true
+	case int8:
+		return float64(number), true
+	case int16:
+		return float64(number), true
+	case int32:
+		return float64(number), true
+	case int64:
+		return float64(number), true
+	case uint:
+		return float64(number), true
+	case uint8:
+		return float64(number), true
+	case uint16:
+		return float64(number), true
+	case uint32:
+		return float64(number), true
+	case uint64:
+		return float64(number), true
+	case float32:
+		return float64(number), true
+	case float64:
+		return number, true
+	default:
+		return 0, false
+	}
+}
+
+func compareOrderedInts(left, right int) int {
+	if left < right {
+		return -1
+	}
+	if left > right {
+		return 1
+	}
+	return 0
+}
+
+func parseOrderByModifier(modifiers string) (column string, descending bool, ok bool) {
+	terms := parseOrderByTerms(modifiers)
+	if len(terms) == 0 {
 		return "", false, false
 	}
-	col := strings.TrimSuffix(strings.TrimSpace(parts[0]), ",")
-	descTok := ""
-	if len(parts) > 1 {
-		descTok = strings.TrimSuffix(strings.TrimSpace(parts[1]), ",")
-	}
-	desc := strings.EqualFold(descTok, "DESC")
-	return col, desc, col != ""
+	return terms[0].column, terms[0].descending, terms[0].column != ""
 }
 
 func parseIntModifier(modifiers, keyword string) (value int, ok bool) {
@@ -3713,11 +3830,11 @@ func parseIntModifier(modifiers, keyword string) (value int, ok bool) {
 	}
 	kwPart := strings.TrimSpace(modifiers[idx+len(keyword):])
 	nextKw := len(kwPart)
-	for _, kw := range []string{" LIMIT", " SKIP", " ORDER"} {
-		if kw == " "+keyword {
+	for _, otherKeyword := range []string{"LIMIT", "SKIP", "ORDER BY"} {
+		if otherKeyword == keyword {
 			continue
 		}
-		if kidx := strings.Index(strings.ToUpper(kwPart), kw); kidx != -1 && kidx < nextKw {
+		if kidx := findKeywordIndex(kwPart, otherKeyword); kidx != -1 && kidx < nextKw {
 			nextKw = kidx
 		}
 	}

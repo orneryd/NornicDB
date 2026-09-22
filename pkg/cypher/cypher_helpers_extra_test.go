@@ -2060,8 +2060,8 @@ func TestCypherHelpers_KalmanPredict_Branches(t *testing.T) {
 
 func TestCypherHelpers_CompareValuesForSort(t *testing.T) {
 	assert.Equal(t, 0, compareValuesForSort(nil, nil))
-	assert.Equal(t, -1, compareValuesForSort(nil, 1))
-	assert.Equal(t, 1, compareValuesForSort(1, nil))
+	assert.Equal(t, 1, compareValuesForSort(nil, 1))
+	assert.Equal(t, -1, compareValuesForSort(1, nil))
 	assert.Equal(t, -1, compareValuesForSort(1, 2))
 	assert.Equal(t, 1, compareValuesForSort(2, 1))
 	assert.Equal(t, 0, compareValuesForSort(2, 2))
@@ -2069,6 +2069,8 @@ func TestCypherHelpers_CompareValuesForSort(t *testing.T) {
 	assert.Equal(t, 0, compareValuesForSort(float64(1.5), float64(1.5)))
 	assert.Equal(t, -1, compareValuesForSort("a", "b"))
 	assert.Equal(t, 1, compareValuesForSort("b", "a"))
+	assert.Equal(t, -1, compareValuesForSort([]interface{}{"a", int64(1)}, []interface{}{int64(1)}))
+	assert.Equal(t, 1, compareValuesForSort([]interface{}{int64(1), nil}, []interface{}{int64(1), "a"}))
 	assert.Equal(t, -1, compareValuesForSort(struct{ X int }{1}, struct{ X int }{2}))
 }
 

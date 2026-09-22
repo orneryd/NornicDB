@@ -2,6 +2,8 @@ package cypher
 
 import (
 	"context"
+	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -24,6 +26,26 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	if value, ok := parseLiteralValueFromComputedRow(expr); ok {
 		return value, true
 	}
+	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
+		inner := strings.TrimSpace(expr[1 : len(expr)-1])
+		result := make(map[string]interface{})
+		if inner == "" {
+			return result, true
+		}
+		for _, pair := range splitTopLevelComma(inner) {
+			separator := findTopLevelMapKeyValueSeparator(pair)
+			if separator <= 0 {
+				return nil, false
+			}
+			key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+			value, ok := e.evaluateRowExpression(strings.TrimSpace(pair[separator+1:]), values)
+			if !ok {
+				return nil, false
+			}
+			result[key] = value
+		}
+		return result, true
+	}
 
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
@@ -40,6 +62,139 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			result = append(result, value)
 		}
 		return result, true
+	}
+
+	if value, matched, ok := e.evaluateRowQuantifier(expr, values); matched {
+		return value, ok
+	}
+
+	if function, argument, ok := parseFunctionCallWS(expr); ok {
+		switch strings.ToLower(function) {
+		case "abs":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			switch number := value.(type) {
+			case int64:
+				if number < 0 {
+					return -number, true
+				}
+				return number, true
+			case float64:
+				if number < 0 {
+					return -number, true
+				}
+				return number, true
+			default:
+				return nil, false
+			}
+		case "head", "last", "tail", "reverse", "size":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			if text, isString := value.(string); isString {
+				switch strings.ToLower(function) {
+				case "size":
+					return int64(len([]rune(text))), true
+				case "reverse":
+					runes := []rune(text)
+					for left, right := 0, len(runes)-1; left < right; left, right = left+1, right-1 {
+						runes[left], runes[right] = runes[right], runes[left]
+					}
+					return string(runes), true
+				default:
+					return nil, false
+				}
+			}
+			valueType := reflect.TypeOf(value)
+			if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
+				return nil, false
+			}
+			items := toAnySlice(value)
+			switch strings.ToLower(function) {
+			case "head":
+				if len(items) == 0 {
+					return nil, true
+				}
+				return items[0], true
+			case "last":
+				if len(items) == 0 {
+					return nil, true
+				}
+				return items[len(items)-1], true
+			case "tail":
+				if len(items) <= 1 {
+					return []interface{}{}, true
+				}
+				return append([]interface{}(nil), items[1:]...), true
+			case "reverse":
+				reversed := make([]interface{}, len(items))
+				for index := range items {
+					reversed[len(items)-1-index] = items[index]
+				}
+				return reversed, true
+			default:
+				return int64(len(items)), true
+			}
+		case "keys":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			object, isMap := toStringAnyMap(value)
+			if !isMap {
+				switch entity := value.(type) {
+				case *storage.Node:
+					if entity != nil {
+						object = entity.Properties
+						isMap = true
+					}
+				case *storage.Edge:
+					if entity != nil {
+						object = entity.Properties
+						isMap = true
+					}
+				}
+			}
+			if !isMap {
+				return nil, false
+			}
+			keys := make([]string, 0, len(object))
+			for key := range object {
+				if key != "_nodeId" && key != "_edgeId" && key != "labels" && key != "type" {
+					keys = append(keys, key)
+				}
+			}
+			sort.Strings(keys)
+			result := make([]interface{}, len(keys))
+			for index, key := range keys {
+				result[index] = key
+			}
+			return result, true
+		case "labels":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			var labels []string
+			switch entity := value.(type) {
+			case *storage.Node:
+				if entity != nil {
+					labels = entity.Labels
+				}
+			default:
+				if object, isMap := toStringAnyMap(value); isMap {
+					labels = toStringSlice(object["labels"])
+				}
+			}
+			result := make([]interface{}, len(labels))
+			for index, label := range labels {
+				result[index] = label
+			}
+			return result, true
+		}
 	}
 
 	for _, operator := range []string{" OR ", " XOR ", " AND "} {
@@ -140,6 +295,14 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		}
 		return e.add(leftValue, rightValue), true
 	}
+	if left, right, ok := splitByOperatorWithOptions(expr, "-", true, false); ok && isBinaryRowSubtraction(left) {
+		leftValue, leftOK := e.evaluateRowExpression(left, values)
+		rightValue, rightOK := e.evaluateRowExpression(right, values)
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		return e.subtract(leftValue, rightValue), true
+	}
 
 	for _, arithmetic := range []struct {
 		operator string
@@ -170,6 +333,98 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		return nil, false
 	}
 	return value, true
+}
+
+func isBinaryRowSubtraction(left string) bool {
+	left = strings.TrimSpace(left)
+	if left == "" {
+		return false
+	}
+	last := left[len(left)-1]
+	return !strings.ContainsRune("+-*/%(<>=,", rune(last))
+}
+
+func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]interface{}) (interface{}, bool, bool) {
+	function, inner, isFunction := parseFunctionCallWS(expr)
+	function = strings.ToLower(function)
+	if !isFunction || (function != "all" && function != "any" && function != "none" && function != "single") {
+		return nil, false, false
+	}
+	lowerInner := strings.ToLower(inner)
+	inIndex := strings.Index(lowerInner, " in ")
+	if inIndex <= 0 {
+		return nil, true, false
+	}
+	rest := inner[inIndex+len(" in "):]
+	whereIndex := strings.Index(strings.ToLower(rest), " where ")
+	if whereIndex < 0 {
+		return nil, true, false
+	}
+	variable := strings.TrimSpace(inner[:inIndex])
+	listExpression := strings.TrimSpace(rest[:whereIndex])
+	predicate := strings.TrimSpace(rest[whereIndex+len(" where "):])
+	if !isValidIdentifier(variable) || listExpression == "" || predicate == "" {
+		return nil, true, false
+	}
+	listValue, ok := e.evaluateRowExpression(listExpression, values)
+	if !ok {
+		return nil, true, false
+	}
+	valueType := reflect.TypeOf(listValue)
+	if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
+		return nil, true, false
+	}
+	items := toAnySlice(listValue)
+	trueCount := 0
+	sawNull := false
+	for _, item := range items {
+		scope := make(map[string]interface{}, len(values)+1)
+		for name, value := range values {
+			scope[name] = value
+		}
+		scope[variable] = item
+		result, evaluated := e.evaluateRowExpression(predicate, scope)
+		if !evaluated || result == nil {
+			sawNull = true
+			continue
+		}
+		boolean, booleanOK := result.(bool)
+		if !booleanOK {
+			return nil, true, false
+		}
+		if boolean {
+			trueCount++
+		}
+		switch function {
+		case "all":
+			if !boolean {
+				return false, true, true
+			}
+		case "any":
+			if boolean {
+				return true, true, true
+			}
+		case "none":
+			if boolean {
+				return false, true, true
+			}
+		case "single":
+			if trueCount > 1 {
+				return false, true, true
+			}
+		}
+	}
+	if sawNull {
+		return nil, true, true
+	}
+	switch function {
+	case "all", "none":
+		return true, true, true
+	case "any":
+		return false, true, true
+	default:
+		return trueCount == 1, true, true
+	}
 }
 
 func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, bool) {

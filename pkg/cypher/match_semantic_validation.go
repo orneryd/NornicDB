@@ -12,6 +12,7 @@ const (
 	matchBindingNode
 	matchBindingRelationship
 	matchBindingRelationshipList
+	matchBindingNodeList
 	matchBindingPath
 	matchBindingValue
 )
@@ -53,7 +54,7 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			scope = projectMatchSemanticScope(scope, clause.text)
 		case pipelineClauseUnwind:
 			if alias := unwindBindingName(clause.text); alias != "" {
-				scope[alias] = matchBindingValue
+				scope[alias] = unwindMatchSemanticKind(clause.text, scope)
 			}
 		case pipelineClauseCreate, pipelineClauseMerge:
 			addMatchPatternBindingKinds(scope, clause.text)
@@ -202,10 +203,40 @@ func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSem
 			kind = inferred
 		} else if relationshipListLiteral(expression, input) {
 			kind = matchBindingRelationshipList
+		} else if aggregateName, aggregateExpression, _, aggregate := parsePipelineAggregate(expression); aggregate && aggregateName == "collect" {
+			if source := simpleSemanticIdentifier(aggregateExpression); source != "" {
+				switch input[source] {
+				case matchBindingNode:
+					kind = matchBindingNodeList
+				case matchBindingRelationship:
+					kind = matchBindingRelationshipList
+				}
+			}
 		}
 		output[normalizeProjectionColumnName(name)] = kind
 	}
 	return output
+}
+
+func unwindMatchSemanticKind(clause string, scope matchSemanticScope) matchBindingKind {
+	body := strings.TrimSpace(clause[len("UNWIND"):])
+	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
+		body = strings.TrimSpace(body[:asIndex])
+	}
+	if source := simpleSemanticIdentifier(body); source != "" {
+		switch scope[source] {
+		case matchBindingNodeList:
+			return matchBindingNode
+		case matchBindingRelationshipList:
+			return matchBindingRelationship
+		case matchBindingValue:
+			return matchBindingUnknown
+		}
+	}
+	if strings.HasPrefix(strings.TrimSpace(body), "[") || matchFuncStartAndSuffix(body, "range") {
+		return matchBindingValue
+	}
+	return matchBindingUnknown
 }
 
 func coalesceSemanticKind(expression string, scope matchSemanticScope) (matchBindingKind, bool) {

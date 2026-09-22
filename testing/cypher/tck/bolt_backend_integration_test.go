@@ -113,6 +113,38 @@ func TestBoltBackendRunsBehaviorChecksInBothTransactionModes(t *testing.T) {
 	}
 }
 
+func TestBoltBackendResetClearsSchemaArtifacts(t *testing.T) {
+	driver, shutdown := startConformanceServer(t)
+	defer shutdown()
+	backend, err := NewBoltBackend(BoltBackendConfig{
+		Driver: driver, DatabaseName: "nornic", Mode: AutocommitMode,
+	})
+	if err != nil {
+		t.Fatalf("NewBoltBackend() error = %v", err)
+	}
+	ctx := context.Background()
+	if _, err := backend.Execute(ctx, "CREATE INDEX reset_probe IF NOT EXISTS FOR (n:ResetProbe) ON (n.value)", nil); err != nil {
+		t.Fatalf("create reset index: %v", err)
+	}
+	if _, err := backend.Execute(ctx, "CREATE CONSTRAINT reset_unique IF NOT EXISTS FOR (n:ResetProbe) REQUIRE n.id IS UNIQUE", nil); err != nil {
+		t.Fatalf("create reset constraint: %v", err)
+	}
+	if err := backend.Reset(ctx); err != nil {
+		t.Fatalf("Reset() error = %v", err)
+	}
+	indexes, err := backend.Execute(ctx, "SHOW INDEXES", nil)
+	if err != nil {
+		t.Fatalf("show indexes: %v", err)
+	}
+	constraints, err := backend.Execute(ctx, "SHOW CONSTRAINTS", nil)
+	if err != nil {
+		t.Fatalf("show constraints: %v", err)
+	}
+	if len(indexes.Rows) != 0 || len(constraints.Rows) != 0 {
+		t.Fatalf("Reset() retained schema artifacts: indexes=%v constraints=%v", indexes.Rows, constraints.Rows)
+	}
+}
+
 func startConformanceServer(t *testing.T) (neo4j.DriverWithContext, func()) {
 	t.Helper()
 	engine, err := storage.NewBadgerEngine(t.TempDir())

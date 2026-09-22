@@ -321,36 +321,24 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		// First check if we have a full path by that variable name
 		if paths != nil {
 			if pathResult, ok := paths[inner]; ok && pathResult != nil {
-				var result []interface{}
-				for _, edge := range pathResult.Relationships {
-					result = append(result, map[string]interface{}{
-						"_edgeId":    string(edge.ID),
-						"type":       edge.Type,
-						"properties": edge.Properties,
-					})
+				result := make([]interface{}, len(pathResult.Relationships))
+				for index, edge := range pathResult.Relationships {
+					result[index] = edge
 				}
 				return result
 			}
 		}
 		// Then check allPathEdges (for variable-length patterns without explicit path variable)
 		if len(allPathEdges) > 0 {
-			var result []interface{}
-			for _, edge := range allPathEdges {
-				result = append(result, map[string]interface{}{
-					"_edgeId":    string(edge.ID),
-					"type":       edge.Type,
-					"properties": edge.Properties,
-				})
+			result := make([]interface{}, len(allPathEdges))
+			for index, edge := range allPathEdges {
+				result[index] = edge
 			}
 			return result
 		}
 		// Fallback: return single relationship from rel context
 		if rel, ok := rels[inner]; ok {
-			return []interface{}{map[string]interface{}{
-				"_edgeId":    string(rel.ID),
-				"type":       rel.Type,
-				"properties": rel.Properties,
-			}}
+			return []interface{}{rel}
 		}
 		return []interface{}{}
 	}
@@ -1231,18 +1219,19 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			return false
 		}
 
+		sawNull := false
 		for _, item := range listVal {
-			// Create temporary context with variable
-			tempNodes := make(map[string]*storage.Node)
-			for k, v := range nodes {
-				tempNodes[k] = v
+			result, ok := e.evaluateQuantifierPredicate(predicate, varName, item, nodes, rels)
+			if !ok || result == nil {
+				sawNull = true
+				continue
 			}
-			// For simple values, we need to substitute in the predicate
-			predWithVal := strings.ReplaceAll(predicate, varName, fmt.Sprintf("%v", item))
-			result := e.evaluateExpressionWithContext(ctx, predWithVal, tempNodes, rels)
 			if result != true {
 				return false
 			}
+		}
+		if sawNull {
+			return nil
 		}
 		return true
 	}
@@ -1269,12 +1258,19 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			return false
 		}
 
+		sawNull := false
 		for _, item := range listVal {
-			predWithVal := strings.ReplaceAll(predicate, varName, fmt.Sprintf("%v", item))
-			result := e.evaluateExpressionWithContext(ctx, predWithVal, nodes, rels)
+			result, ok := e.evaluateQuantifierPredicate(predicate, varName, item, nodes, rels)
+			if !ok || result == nil {
+				sawNull = true
+				continue
+			}
 			if result == true {
 				return true
 			}
+		}
+		if sawNull {
+			return nil
 		}
 		return false
 	}
@@ -1301,12 +1297,19 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			return true
 		}
 
+		sawNull := false
 		for _, item := range listVal {
-			predWithVal := strings.ReplaceAll(predicate, varName, fmt.Sprintf("%v", item))
-			result := e.evaluateExpressionWithContext(ctx, predWithVal, nodes, rels)
+			result, ok := e.evaluateQuantifierPredicate(predicate, varName, item, nodes, rels)
+			if !ok || result == nil {
+				sawNull = true
+				continue
+			}
 			if result == true {
 				return false
 			}
+		}
+		if sawNull {
+			return nil
 		}
 		return true
 	}
@@ -1334,15 +1337,22 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		}
 
 		matchCount := 0
+		sawNull := false
 		for _, item := range listVal {
-			predWithVal := strings.ReplaceAll(predicate, varName, fmt.Sprintf("%v", item))
-			result := e.evaluateExpressionWithContext(ctx, predWithVal, nodes, rels)
+			result, ok := e.evaluateQuantifierPredicate(predicate, varName, item, nodes, rels)
+			if !ok || result == nil {
+				sawNull = true
+				continue
+			}
 			if result == true {
 				matchCount++
 				if matchCount > 1 {
 					return false
 				}
 			}
+		}
+		if sawNull {
+			return nil
 		}
 		return matchCount == 1
 	}
@@ -1664,4 +1674,33 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// ========================================
 
 	return e.evaluateExpressionWithContextFullOperators(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+}
+
+func (e *StorageExecutor) evaluateQuantifierPredicate(
+	predicate string,
+	variable string,
+	item interface{},
+	nodes map[string]*storage.Node,
+	rels map[string]*storage.Edge,
+) (interface{}, bool) {
+	values := make(map[string]interface{}, len(nodes)+len(rels)+1)
+	for name, node := range nodes {
+		values[name] = node
+	}
+	for name, relationship := range rels {
+		values[name] = relationship
+	}
+	values[variable] = item
+	value, ok := e.evaluateRowExpression(predicate, values)
+	if !ok {
+		return nil, false
+	}
+	if value == nil {
+		return nil, true
+	}
+	boolean, ok := value.(bool)
+	if !ok {
+		return nil, false
+	}
+	return boolean, true
 }

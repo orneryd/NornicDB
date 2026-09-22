@@ -2028,7 +2028,7 @@ func TestFunctionAdditionalGeometryAndPathCoverage(t *testing.T) {
 		t.Fatalf("nodes(p) fallback expected 2 entries, got %T %#v", gotNodesFallback, gotNodesFallback)
 	}
 	gotRelsFallback := e.evaluateExpressionWithContextFull(ctx, "relationships(p)", nil, nil, nil, pathEdges, nil, 0)
-	if arr, ok := gotRelsFallback.([]interface{}); !ok || len(arr) != 1 {
+	if arr, ok := gotRelsFallback.([]interface{}); !ok || len(arr) != 1 || arr[0] != pathEdges[0] {
 		t.Fatalf("relationships(p) fallback expected 1 entry, got %T %#v", gotRelsFallback, gotRelsFallback)
 	}
 }

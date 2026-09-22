@@ -202,8 +202,8 @@ func TestCallSubqueryHelpers_PropertyExtractionAndOrdering(t *testing.T) {
 	require.Nil(t, extractPropertyFromValue(map[string]interface{}{"properties": "wrong"}, "age"))
 	require.Nil(t, extractPropertyFromValue("not-a-map", "age"))
 
-	require.Equal(t, -1, compareValuesForSort(nil, 1))
-	require.Equal(t, 1, compareValuesForSort(2, nil))
+	require.Equal(t, 1, compareValuesForSort(nil, 1))
+	require.Equal(t, -1, compareValuesForSort(2, nil))
 	require.Equal(t, -1, compareValuesForSort(1, 2))
 	require.Equal(t, 1, compareValuesForSort("b", "a"))
 	require.Equal(t, 1, compareValuesForSort(true, false))

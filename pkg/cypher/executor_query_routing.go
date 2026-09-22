@@ -414,6 +414,9 @@ skipMatchCallRoute:
 		}
 		return e.executeShortestPathQuery(ctx, query)
 	case startsWithMatch:
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
 		matchCount := countKeywordOccurrences(upperQuery, "MATCH")
 		optionalMatchCount := countKeywordOccurrences(upperQuery, "OPTIONAL MATCH")
 		if matchCount-optionalMatchCount > 1 && findKeywordIndexInContext(cypher, "WITH") > 0 {
@@ -476,6 +479,9 @@ skipMatchCallRoute:
 	case findKeywordIndex(cypher, "DROP") == 0:
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	case findKeywordIndex(cypher, "WITH") == 0:
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
 		return e.executeWith(ctx, cypher)
 	case findKeywordIndex(cypher, "UNWIND") == 0:
 		return e.executeUnwind(ctx, cypher)

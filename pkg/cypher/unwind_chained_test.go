@@ -105,3 +105,61 @@ func TestChainedUnwindsPreserveEveryBindingAtArbitraryArity(t *testing.T) {
 		})
 	}
 }
+
+func TestUnwindPreservesCollectedEntityBindings(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "unwind_collected_entities")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CREATE ({id: 1}), ({id: 2})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, `
+		MATCH (row)
+		WITH collect(row) AS rows
+		UNWIND rows AS node
+		RETURN node.id
+	`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"node.id"}, result.Columns)
+	require.ElementsMatch(t, [][]interface{}{{int64(1)}, {int64(2)}}, result.Rows)
+}
+
+func TestUnwindWildcardProjectionPreservesCompleteScope(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "unwind_wildcard_scope")
+	exec := NewStorageExecutor(store)
+
+	result, err := exec.Execute(context.Background(), `
+		WITH [1, 2] AS xs, [3, 4] AS ys, [5, 6] AS zs
+		UNWIND xs AS x
+		UNWIND ys AS y
+		UNWIND zs AS z
+		RETURN *
+	`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"x", "xs", "y", "ys", "z", "zs"}, result.Columns)
+	require.Len(t, result.Rows, 8)
+}
+
+func TestUnwindEntityMayBeReusedByFollowingMatch(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "unwind_entity_match")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, `
+		CREATE (s:S), (n), (e:E),
+		       (s)-[:X]->(e), (s)-[:Y]->(e), (n)-[:Y]->(e)
+	`, nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, `
+		MATCH (a:S)-[:X]->(b1)
+		WITH a, collect(b1) AS bees
+		UNWIND bees AS b2
+		MATCH (a)-[:Y]->(b2)
+		RETURN a, b2
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+}

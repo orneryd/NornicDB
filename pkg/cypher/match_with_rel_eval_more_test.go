@@ -53,8 +53,9 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 
 	relList := exec.evaluateExpressionFromValues("relationships(path)", values).([]interface{})
 	require.Len(t, relList, 1)
-	relMap := relList[0].(map[string]interface{})
-	require.Equal(t, "KNOWS", relMap["type"])
+	rel := relList[0].(*storage.Edge)
+	require.Equal(t, "KNOWS", rel.Type)
+	require.Equal(t, "e1", string(rel.ID))
 
 	require.Equal(t, "4:match_with_rel_eval_cov:n1", exec.evaluateExpressionFromValues("elementId(n)", values))
 	require.Equal(t, "map-id", exec.evaluateExpressionFromValues("id(nodeMap)", values))

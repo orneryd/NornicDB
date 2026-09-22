@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -389,8 +390,14 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 		Stats:   &QueryStats{},
 	}
 
-	// Start with a single empty binding row — the first MATCH populates it.
-	rows := []pipelineRow{{}}
+	// Start with one binding row. Parameters retain their typed values under
+	// their `$name` expression keys so list/map inputs are not stringified while
+	// crossing WITH and UNWIND horizons.
+	initialRow := pipelineRow{}
+	for name, value := range params {
+		initialRow["$"+name] = value
+	}
+	rows := []pipelineRow{initialRow}
 	scope := make(map[string]struct{})
 
 	for idx, clause := range clauses {
@@ -1272,6 +1279,18 @@ func (e *StorageExecutor) pipelineApplyBoundTraversalMatch(ctx context.Context, 
 		if targetBound && (!expectedTargetIsNode || expectedTarget == nil) {
 			continue
 		}
+		var expectedRelationship *storage.Edge
+		relationshipBound := false
+		if endpoints.relVar != "" {
+			if boundRelationship, bound := row[endpoints.relVar]; bound {
+				relationshipBound = true
+				var relationshipIsEdge bool
+				expectedRelationship, relationshipIsEdge = boundRelationship.(*storage.Edge)
+				if !relationshipIsEdge || expectedRelationship == nil {
+					continue
+				}
+			}
+		}
 
 		var edges []*storage.Edge
 		switch endpoints.direction {
@@ -1287,6 +1306,9 @@ func (e *StorageExecutor) pipelineApplyBoundTraversalMatch(ctx context.Context, 
 		}
 
 		for _, edge := range edges {
+			if relationshipBound && edge.ID != expectedRelationship.ID {
+				continue
+			}
 			if endpoints.relType != "" && edge.Type != endpoints.relType {
 				continue
 			}
@@ -1625,6 +1647,7 @@ func (e *StorageExecutor) executeCreateWithRefsOrCompound(ctx context.Context, q
 func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "WITH"))
 	body = strings.TrimPrefix(body, "with")
+	orderTerms := parseOrderByTerms(body)
 	withSkip, withLimit := 0, -1
 	if skipIndex := findKeywordIndexInContext(body, "SKIP"); skipIndex >= 0 {
 		tail := strings.TrimSpace(body[skipIndex+len("SKIP"):])
@@ -1658,7 +1681,11 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			}
 			out = append(out, projected)
 		}
-		return applyPipelineWindow(e.filterPipelineRows(ctx, out, postWithWhere), withSkip, withLimit), true
+		out = e.filterPipelineRows(ctx, out, postWithWhere)
+		if !e.orderPipelineRows(out, orderTerms) {
+			return nil, false
+		}
+		return applyPipelineWindow(out, withSkip, withLimit), true
 	}
 	items := splitTopLevelComma(body)
 	if len(items) == 0 {
@@ -1746,6 +1773,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		}
 
 		out := make([]pipelineRow, 0, len(groupOrder))
+		orderScopes := make([]pipelineRow, 0, len(groupOrder))
 		for _, key := range groupOrder {
 			group := groups[key]
 			newRow := pipelineRow{}
@@ -1770,15 +1798,30 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 				}
 				newRow[projection.alias] = value
 			}
+			orderScope := make(pipelineRow, len(group.first)+len(newRow))
+			for name, value := range group.first {
+				orderScope[name] = value
+			}
+			for name, value := range newRow {
+				orderScope[name] = value
+			}
+			if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
+				continue
+			}
 			out = append(out, newRow)
+			orderScopes = append(orderScopes, orderScope)
 		}
 		if withDistinct {
-			out = deduplicatePipelineRows(out, projectionAliases)
+			out, orderScopes = deduplicatePipelineRowsWithScopes(out, orderScopes, projectionAliases)
 		}
-		return applyPipelineWindow(e.filterPipelineRows(ctx, out, postWithWhere), withSkip, withLimit), true
+		if !e.orderPipelineRowsWithScopes(out, orderScopes, orderTerms) {
+			return nil, false
+		}
+		return applyPipelineWindow(out, withSkip, withLimit), true
 	}
 
 	out := make([]pipelineRow, 0, len(rows))
+	orderScopes := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
 		newRow := pipelineRow{}
 		ok := true
@@ -1861,11 +1904,71 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			}
 		}
 		out = append(out, newRow)
+		orderScope := make(pipelineRow, len(row)+len(newRow))
+		for name, value := range row {
+			orderScope[name] = value
+		}
+		for name, value := range newRow {
+			orderScope[name] = value
+		}
+		orderScopes = append(orderScopes, orderScope)
 	}
 	if withDistinct {
-		out = deduplicatePipelineRows(out, projectionAliases)
+		out, orderScopes = deduplicatePipelineRowsWithScopes(out, orderScopes, projectionAliases)
+	}
+	if !e.orderPipelineRowsWithScopes(out, orderScopes, orderTerms) {
+		return nil, false
 	}
 	return applyPipelineWindow(out, withSkip, withLimit), true
+}
+
+// orderPipelineRows applies every ORDER BY term lexicographically. WITH has
+// already materialized its projection at this point, so aliases and retained
+// entity properties resolve from the same scope exposed to the next clause.
+func (e *StorageExecutor) orderPipelineRows(rows []pipelineRow, terms []orderByTerm) bool {
+	return e.orderPipelineRowsWithScopes(rows, rows, terms)
+}
+
+func (e *StorageExecutor) orderPipelineRowsWithScopes(rows, scopes []pipelineRow, terms []orderByTerm) bool {
+	if len(terms) == 0 || len(rows) < 2 {
+		return true
+	}
+	if len(rows) != len(scopes) {
+		return false
+	}
+	type orderValue struct {
+		values []interface{}
+		row    pipelineRow
+	}
+	ordered := make([]orderValue, 0, len(rows))
+	for index, row := range rows {
+		values := make([]interface{}, len(terms))
+		for termIndex, term := range terms {
+			value, ok := e.evaluateRowExpression(term.column, scopes[index])
+			if !ok {
+				return false
+			}
+			values[termIndex] = value
+		}
+		ordered = append(ordered, orderValue{values: values, row: row})
+	}
+	sort.SliceStable(ordered, func(left, right int) bool {
+		for index, term := range terms {
+			comparison := compareValuesForSort(ordered[left].values[index], ordered[right].values[index])
+			if comparison == 0 {
+				continue
+			}
+			if term.descending {
+				return comparison > 0
+			}
+			return comparison < 0
+		}
+		return false
+	})
+	for index := range rows {
+		rows[index] = ordered[index].row
+	}
+	return true
 }
 
 func applyPipelineWindow(rows []pipelineRow, skip, limit int) []pipelineRow {
@@ -1895,10 +1998,16 @@ func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelin
 }
 
 func deduplicatePipelineRows(rows []pipelineRow, columns []string) []pipelineRow {
+	unique, _ := deduplicatePipelineRowsWithScopes(rows, rows, columns)
+	return unique
+}
+
+func deduplicatePipelineRowsWithScopes(rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
 	seen := make(map[string]struct{}, len(rows))
 	unique := make([]pipelineRow, 0, len(rows))
+	uniqueScopes := make([]pipelineRow, 0, len(rows))
 	keys := make([]string, len(columns))
-	for _, row := range rows {
+	for rowIndex, row := range rows {
 		for i, column := range columns {
 			keys[i] = pipelineValueKey(row[column])
 		}
@@ -1908,8 +2017,9 @@ func deduplicatePipelineRows(rows []pipelineRow, columns []string) []pipelineRow
 		}
 		seen[key] = struct{}{}
 		unique = append(unique, row)
+		uniqueScopes = append(uniqueScopes, scopes[rowIndex])
 	}
-	return unique
+	return unique, uniqueScopes
 }
 
 // pipelineApplyUnwind evaluates the list expression (which may be a literal,
@@ -2139,6 +2249,19 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 	}
 	modifiers := strings.TrimSpace(body[modifierStart:])
 	body = strings.TrimSpace(body[:modifierStart])
+	if body == "*" {
+		columns := pipelineWildcardColumns(rows)
+		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}
+		for _, row := range rows {
+			projected := make([]interface{}, len(columns))
+			for index, column := range columns {
+				projected[index] = row[column]
+			}
+			result.Rows = append(result.Rows, projected)
+		}
+		result, err := e.applyResultModifiers(result, modifiers)
+		return result, err == nil
+	}
 	items := splitTopLevelComma(body)
 	if len(items) == 0 {
 		return nil, false
@@ -2262,6 +2385,24 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 	}
 	result, err := e.applyResultModifiers(result, modifiers)
 	return result, err == nil
+}
+
+func pipelineWildcardColumns(rows []pipelineRow) []string {
+	seen := make(map[string]struct{})
+	for _, row := range rows {
+		for column := range row {
+			if strings.HasPrefix(column, "$") {
+				continue
+			}
+			seen[column] = struct{}{}
+		}
+	}
+	columns := make([]string, 0, len(seen))
+	for column := range seen {
+		columns = append(columns, column)
+	}
+	sort.Strings(columns)
+	return columns
 }
 
 // projectFromRow resolves a RETURN / WITH expression against a single
@@ -2468,6 +2609,9 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 			}
 		}
 		return items, true
+	}
+	if value, ok := e.evaluateRowExpression(expr, row); ok {
+		return toAnySlice(value), true
 	}
 
 	materialized := expr

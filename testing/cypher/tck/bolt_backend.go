@@ -59,8 +59,48 @@ func NewBoltBackend(config BoltBackendConfig) (*BoltBackend, error) {
 // Reset removes all graph entities through Bolt.
 func (b *BoltBackend) Reset(ctx context.Context) error {
 	cypher.ClearUserProcedures()
-	_, err := b.executeAutocommit(ctx, "MATCH (n) DETACH DELETE n", nil)
+	if _, err := b.executeAutocommit(ctx, "MATCH (n) DETACH DELETE n", nil); err != nil {
+		return err
+	}
+	if err := b.dropSchemaObjects(ctx, "SHOW CONSTRAINTS", "name", "DROP CONSTRAINT"); err != nil {
+		return err
+	}
+	if err := b.dropSchemaObjects(ctx, "SHOW INDEXES", "name", "DROP INDEX"); err != nil {
+		return err
+	}
+	_, err := b.executeAutocommit(ctx, "CALL db.clearQueryCaches()", nil)
 	return err
+}
+
+func (b *BoltBackend) dropSchemaObjects(ctx context.Context, showQuery, nameColumn, dropPrefix string) error {
+	result, err := b.executeAutocommit(ctx, showQuery, nil)
+	if err != nil {
+		return err
+	}
+	nameIndex := -1
+	for index, column := range result.Columns {
+		if column == nameColumn {
+			nameIndex = index
+			break
+		}
+	}
+	if nameIndex < 0 {
+		return fmt.Errorf("%s did not return column %q", showQuery, nameColumn)
+	}
+	for _, row := range result.Rows {
+		if nameIndex >= len(row) {
+			return fmt.Errorf("%s returned a row without column %q", showQuery, nameColumn)
+		}
+		name, ok := row[nameIndex].(string)
+		if !ok || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s returned invalid schema object name %v", showQuery, row[nameIndex])
+		}
+		escapedName := strings.ReplaceAll(name, "`", "``")
+		if _, err := b.executeAutocommit(ctx, dropPrefix+" `"+escapedName+"` IF EXISTS", nil); err != nil {
+			return fmt.Errorf("drop schema object %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // LoadNamedGraph executes the pinned graph fixture with committed setup writes.

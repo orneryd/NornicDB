@@ -1538,7 +1538,7 @@ test-parsers:
 	@echo ""
 	@echo "✅ Both parsers passed all Cypher tests"
 
-.PHONY: cypher-tck-inventory cypher-tck cypher-conformance cypher-differential
+.PHONY: cypher-tck-inventory cypher-tck cypher-tck-ratchet cypher-tck-vetted cypher-tck-update-ratchet cypher-conformance cypher-differential
 
 cypher-tck-inventory:
 	go run ./testing/cypher/tck/cmd/inventory -check testing/cypher/tck/testdata/inventory.json
@@ -1546,7 +1546,16 @@ cypher-tck-inventory:
 cypher-tck: cypher-tck-inventory
 	NORNICDB_RUN_FULL_TCK=1 go test ./testing/cypher/tck -run '^TestOfficialOpenCypherCorpusInBothTransactionModes$$' -count=1 -v
 
-cypher-conformance: cypher-tck
+cypher-tck-ratchet: cypher-tck-inventory
+	NORNICDB_RUN_FULL_TCK=1 NORNICDB_TCK_RATCHET=1 go test ./testing/cypher/tck -run '^TestOfficialOpenCypherCorpusInBothTransactionModes$$' -count=1 -v
+
+cypher-tck-vetted: cypher-tck-inventory
+	NORNICDB_RUN_FULL_TCK=1 NORNICDB_TCK_VETTED=1 go test ./testing/cypher/tck -run '^TestOfficialOpenCypherCorpusInBothTransactionModes$$' -count=1 -v
+
+cypher-tck-update-ratchet: cypher-tck-inventory
+	NORNICDB_RUN_FULL_TCK=1 NORNICDB_TCK_UPDATE_RATCHET=1 go test ./testing/cypher/tck -run '^TestOfficialOpenCypherCorpusInBothTransactionModes$$' -count=1 -v
+
+cypher-conformance: cypher-tck-ratchet cypher-tck-vetted
 	go test ./testing/cypher/tck/... ./pkg/cypher -count=1
 
 cypher-differential:

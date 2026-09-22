@@ -1085,15 +1085,13 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 			if val, ok := values[inner]; ok {
 				if pathMap, ok := val.(map[string]interface{}); ok {
 					if rels, ok := pathMap["rels"]; ok {
-						// Convert []*storage.Edge to []interface{} of maps
+						// Preserve native relationship values so Bolt encodes the list
+						// with relationship structure and expression evaluation retains
+						// relationship property/type semantics.
 						if edges, ok := rels.([]*storage.Edge); ok {
 							result := make([]interface{}, len(edges))
 							for i, edge := range edges {
-								result[i] = map[string]interface{}{
-									"_edgeId":    string(edge.ID),
-									"type":       edge.Type,
-									"properties": edge.Properties,
-								}
+								result[i] = edge
 							}
 							return result
 						}
@@ -1147,7 +1145,7 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 		inIdx := strings.Index(strings.ToUpper(inner), " IN ")
 		if inIdx > 0 {
 			// varName is the iterator variable (e.g., "r" in "[r IN ... | ...]")
-			_ = strings.TrimSpace(inner[:inIdx]) // varName - used for context if needed
+			varName := strings.TrimSpace(inner[:inIdx])
 			rest := inner[inIdx+4:]
 			pipeIdx := strings.Index(rest, " | ")
 			if pipeIdx > 0 {
@@ -1163,17 +1161,12 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 
 				result := make([]interface{}, len(listVal))
 				for i, item := range listVal {
-					// For type(r), extract the type from the relationship map
-					if matchFuncStartAndSuffix(transform, "type") {
-						if mapItem, ok := item.(map[string]interface{}); ok {
-							if relType, ok := mapItem["type"]; ok {
-								result[i] = relType
-								continue
-							}
-						}
+					itemValues := make(map[string]interface{}, len(values)+1)
+					for name, value := range values {
+						itemValues[name] = value
 					}
-					// Fallback
-					result[i] = nil
+					itemValues[varName] = item
+					result[i] = e.evaluateExpressionFromValues(transform, itemValues)
 				}
 				return result
 			}

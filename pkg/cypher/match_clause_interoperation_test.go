@@ -80,3 +80,35 @@ func TestIndependentMatchAfterWithProducesCartesianRows(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(776)}}, result.Rows)
 }
+
+func TestWithPreservesBoundRelationshipAcrossSubsequentMatch(t *testing.T) {
+	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "with-bound-relationship")
+	executor := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := executor.Execute(ctx, `
+		CREATE ()-[:T1 {id: 0}]->(:X),
+		       ()-[:T2 {id: 1}]->(:X),
+		       ()-[:T2 {id: 2}]->()
+	`, nil)
+	require.NoError(t, err)
+
+	for iteration := 0; iteration < 25; iteration++ {
+		result, err := executor.Execute(ctx, `
+			MATCH (a)-[r]->(b:X)
+			WITH a, r, b, count(*) AS c
+			  ORDER BY c
+			MATCH (a)-[r]->(b)
+			RETURN r AS rel
+			  ORDER BY rel.id
+		`, nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 2)
+		first, firstOK := result.Rows[0][0].(*storage.Edge)
+		second, secondOK := result.Rows[1][0].(*storage.Edge)
+		require.True(t, firstOK)
+		require.True(t, secondOK)
+		require.EqualValues(t, 0, first.Properties["id"])
+		require.EqualValues(t, 1, second.Properties["id"])
+	}
+}
