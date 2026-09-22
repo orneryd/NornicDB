@@ -380,9 +380,9 @@ type SearchOptions struct {
 	RerankEnabled  bool    // Enable cross-encoder reranking (default: false)
 	RerankTopK     int     // How many candidates to rerank (default: 100)
 	RerankMinScore float64 // Minimum cross-encoder score to include (default: 0)
-	// RerankMaxBytes bounds the UTF-8 content sent for each candidate. Zero uses
-	// NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES or the 4096-byte default.
-	RerankMaxBytes int
+	// RerankMaxChars bounds the content sent for each candidate, in characters. Zero uses
+	// NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_CHARS or the 2048-character default.
+	RerankMaxChars int
 
 	// Filters pre-filters nodes by property values before top-K selection.
 	// Keys are property names; values are acceptable values (OR within a key, AND across keys).
@@ -511,7 +511,7 @@ func searchCacheKey(query string, embedding []float32, opts *SearchOptions) stri
 		strings.Join(typesCopy, "|"),
 		strconv.FormatBool(opts.RerankEnabled),
 		strconv.Itoa(opts.RerankTopK),
-		strconv.Itoa(effectiveRerankMaxBytes(opts)),
+		strconv.Itoa(effectiveRerankMaxChars(opts)),
 		strconv.FormatBool(opts.MMREnabled),
 		strconv.FormatFloat(opts.MMRLambda, 'g', -1, 64),
 		strconv.FormatFloat(opts.RerankMinScore, 'g', -1, 64),
@@ -6309,7 +6309,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 	candidates := make([]RerankCandidate, 0, len(rerankInput))
 	reranked := make([]RerankResult, 0, len(rerankInput))
 	memoHits := 0
-	maxDocumentBytes := effectiveRerankMaxBytes(opts)
+	maxDocumentChars := effectiveRerankMaxChars(opts)
 	for _, r := range rerankInput {
 		if cached, ok, include := memo.get(query, r.ID); ok {
 			memoHits++
@@ -6329,7 +6329,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			continue
 		}
 
-		content := s.rerankCandidateContent(node, r, query, maxDocumentBytes)
+		content := s.rerankCandidateContent(node, r, query, maxDocumentChars)
 		if content == "" {
 			continue
 		}

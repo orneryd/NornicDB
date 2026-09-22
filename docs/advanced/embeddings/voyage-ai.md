@@ -133,10 +133,10 @@ For every candidate NornicDB sends the node's identifying properties
 (`NORNICDB_SEARCH_RERANK_CONTEXT_PROPERTIES`, default `title,name`) followed by
 the passage: for vector matches the matched chunk extended with its neighbouring
 chunks, for lexical-only matches a query-centered window. Candidate content is
-capped at 2048 UTF-8 bytes by default; set
-`NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES` to adjust the provider-independent
-limit (raise it for scripts that need 2+ bytes per character, e.g. `4096` for
-Cyrillic, to keep the same amount of text). Ranked continuation expansions reuse scores already obtained for the
+capped at 2048 characters by default (characters, not bytes, so Latin, Cyrillic
+and CJK content get the same amount of text); set
+`NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_CHARS` to adjust the provider-independent
+limit. Ranked continuation expansions reuse scores already obtained for the
 same query and only send newly discovered candidates to Voyage.
 
 Per-database override example:

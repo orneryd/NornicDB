@@ -184,7 +184,7 @@ func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
 		{ID: "nornic:bm25", RRFScore: 0.8, BM25Rank: 1},
 		{ID: "nornic:prefix", RRFScore: 0.7},
 	}
-	svc.applyStage2Rerank(context.Background(), "alpha tango", results, &SearchOptions{RerankMaxBytes: 96}, nil, reranker)
+	svc.applyStage2Rerank(context.Background(), "alpha tango", results, &SearchOptions{RerankMaxChars: 96}, nil, reranker)
 
 	require.Len(t, reranker.calls, 1)
 	require.Len(t, reranker.calls[0], 3)
@@ -192,19 +192,25 @@ func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
 	require.Equal(t, "first passage matching vector passage", reranker.calls[0][0].Content)
 	require.Contains(t, reranker.calls[0][1].Content, "alpha")
 	for _, candidate := range reranker.calls[0] {
-		require.LessOrEqual(t, len(candidate.Content), 96)
+		require.LessOrEqual(t, utf8.RuneCountInString(candidate.Content), 96)
 		require.True(t, utf8.ValidString(candidate.Content))
 	}
 }
 
-func TestRerankCandidateByteCeilingUsesOptionThenEnvironmentThenDefault(t *testing.T) {
-	t.Setenv(EnvSearchRerankMaxDocumentBytes, "2048")
-	require.Equal(t, 1024, effectiveRerankMaxBytes(&SearchOptions{RerankMaxBytes: 1024}))
-	require.Equal(t, 2048, effectiveRerankMaxBytes(&SearchOptions{}))
-	t.Setenv(EnvSearchRerankMaxDocumentBytes, "invalid")
-	require.Equal(t, defaultRerankMaxDocumentBytes, effectiveRerankMaxBytes(&SearchOptions{}))
-	t.Setenv(EnvSearchRerankMaxDocumentBytes, "0")
-	require.Equal(t, defaultRerankMaxDocumentBytes, effectiveRerankMaxBytes(&SearchOptions{}))
+func TestRerankCandidateCharCeilingUsesOptionThenEnvironmentThenDefault(t *testing.T) {
+	t.Setenv(EnvSearchRerankMaxDocumentChars, "4096")
+	require.Equal(t, 1024, effectiveRerankMaxChars(&SearchOptions{RerankMaxChars: 1024}))
+	require.Equal(t, 4096, effectiveRerankMaxChars(&SearchOptions{}))
+	t.Setenv(EnvSearchRerankMaxDocumentChars, "invalid")
+	require.Equal(t, defaultRerankMaxDocumentChars, effectiveRerankMaxChars(&SearchOptions{}))
+	t.Setenv(EnvSearchRerankMaxDocumentChars, "0")
+	require.Equal(t, defaultRerankMaxDocumentChars, effectiveRerankMaxChars(&SearchOptions{}))
+	// The deprecated BYTES variable is honoured when CHARS is unset, as a character count.
+	t.Setenv(EnvSearchRerankMaxDocumentChars, "")
+	t.Setenv(EnvSearchRerankMaxDocumentBytes, "3000")
+	require.Equal(t, 3000, effectiveRerankMaxChars(&SearchOptions{}))
+	t.Setenv(EnvSearchRerankMaxDocumentChars, "512")
+	require.Equal(t, 512, effectiveRerankMaxChars(&SearchOptions{}), "CHARS wins over BYTES")
 }
 
 func TestStage2RerankMemoSubmitsOnlyNewCandidates(t *testing.T) {
@@ -252,8 +258,8 @@ func BenchmarkRerankCandidateContentForLongDocument(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
 			content := svc.rerankCandidateContent(node, result, "alpha tango", 4096)
-			if len(content) > 4096 {
-				b.Fatalf("candidate content exceeded byte ceiling: %d", len(content))
+			if utf8.RuneCountInString(content) > 4096 {
+				b.Fatalf("candidate content exceeded character ceiling: %d", utf8.RuneCountInString(content))
 			}
 			benchmarkRerankCandidateContent = content
 		}

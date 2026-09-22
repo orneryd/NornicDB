@@ -699,7 +699,7 @@ func TestSearchCacheKeyAndMinSimilarityHelpers(t *testing.T) {
 	assertDifferentKey("vector weight", func(opts *SearchOptions) { opts.VectorWeight = 0.5 })
 	assertDifferentKey("bm25 weight", func(opts *SearchOptions) { opts.BM25Weight = 1.5 })
 	assertDifferentKey("minimum rrf score", func(opts *SearchOptions) { opts.MinRRFScore = 0 })
-	assertDifferentKey("rerank document byte ceiling", func(opts *SearchOptions) { opts.RerankMaxBytes = 1024 })
+	assertDifferentKey("rerank document character ceiling", func(opts *SearchOptions) { opts.RerankMaxChars = 1024 })
 	assertDifferentKey("minimum similarity", func(opts *SearchOptions) {
 		value := 0.25
 		opts.MinSimilarity = &value

@@ -55,7 +55,8 @@ func TestRerankCandidateContentHeaderPropertiesAreConfigurableAndBounded(t *test
 	require.True(t, found)
 	require.Equal(t, "only chunk", body)
 	require.True(t, strings.HasSuffix(header, " | T"))
-	require.LessOrEqual(t, len(strings.TrimSuffix(header, " | T")), rerankContextPropertyMaxBytes)
+	require.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(header, " | T")), rerankContextPropertyMaxChars)
+	require.Equal(t, rerankContextPropertyMaxChars, utf8.RuneCountInString(strings.TrimSuffix(header, " | T")), "a 300-character name is cut to 256 characters, not bytes")
 	require.True(t, utf8.ValidString(header))
 }
 
@@ -70,7 +71,7 @@ func TestExpandedChunkWindowDoesNotRepeatOverlap(t *testing.T) {
 func TestExpandedChunkWindowKeepsQueryWindowForOversizedChunk(t *testing.T) {
 	chunk := strings.Repeat("предисловие ", 40) + "alpha tango" + strings.Repeat(" заключение", 40)
 	window := expandedChunkWindow([]string{"before", chunk, "after"}, 1, "alpha tango", 96)
-	require.LessOrEqual(t, len(window), 96)
+	require.LessOrEqual(t, utf8.RuneCountInString(window), 96)
 	require.Contains(t, window, "alpha")
 	require.True(t, utf8.ValidString(window))
 }
@@ -79,12 +80,39 @@ func TestExpandedChunkWindowNeverExceedsBudgetWithMultibyteText(t *testing.T) {
 	chunks := []string{strings.Repeat("я", 50), strings.Repeat("ю", 50), strings.Repeat("э", 50)}
 	for budget := 1; budget < 400; budget += 7 {
 		window := expandedChunkWindow(chunks, 1, "", budget)
-		require.LessOrEqual(t, len(window), budget, "budget %d", budget)
+		require.LessOrEqual(t, utf8.RuneCountInString(window), budget, "budget %d", budget)
 		require.True(t, utf8.ValidString(window), "budget %d", budget)
 	}
 }
 
-func TestRerankDefaultBudgetIs2048(t *testing.T) {
-	require.Equal(t, 2048, defaultRerankMaxDocumentBytes)
-	require.Equal(t, 2048, effectiveRerankMaxBytes(&SearchOptions{}))
+func TestRerankBudgetCountsCharactersNotBytes(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	for _, script := range []struct {
+		name   string
+		chunks []string
+	}{
+		{"latin", []string{strings.Repeat("a", 100), strings.Repeat("b", 100), strings.Repeat("c", 100)}},
+		{"cyrillic", []string{strings.Repeat("я", 100), strings.Repeat("ю", 100), strings.Repeat("э", 100)}},
+		{"cjk", []string{strings.Repeat("字", 100), strings.Repeat("文", 100), strings.Repeat("本", 100)}},
+	} {
+		node := &storage.Node{ID: "nornic:doc", EmbedMeta: map[string]interface{}{"chunk_texts": script.chunks}}
+		content := svc.rerankCandidateContent(node, rrfResult{ID: "nornic:doc", MatchID: "nornic:doc-chunk-1"}, "", 250)
+		// 100 (matched) + 1 + 100 (next) + 1 + 48 (bounded previous suffix) = 250 characters in every script.
+		require.Equal(t, 250, utf8.RuneCountInString(content), script.name)
+		bytesPerChar := len(script.chunks[0]) / 100
+		require.Equal(t, 248*bytesPerChar+2, len(content), script.name+": 248 letters plus two ASCII spaces; byte length scales with the script")
+	}
+	// A lexical-only window is a character window too.
+	text := strings.Repeat("字 ", 300) + "alpha" + strings.Repeat(" 字", 300)
+	window := boundedWindow(text, strings.Index(text, "alpha"), 61)
+	require.LessOrEqual(t, utf8.RuneCountInString(window), 61)
+	require.Greater(t, utf8.RuneCountInString(window), 40)
+	require.Contains(t, window, "alpha")
+	require.Equal(t, "字字字", boundedSuffix("字字字字字", 3))
+	require.Equal(t, "字字", boundedPrefix("字字字字字", 2))
+}
+
+func TestRerankDefaultBudgetIs2048Chars(t *testing.T) {
+	require.Equal(t, 2048, defaultRerankMaxDocumentChars)
+	require.Equal(t, 2048, effectiveRerankMaxChars(&SearchOptions{}))
 }

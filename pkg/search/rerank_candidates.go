@@ -10,41 +10,54 @@ import (
 )
 
 const (
-	// EnvSearchRerankMaxDocumentBytes bounds each candidate sent to a reranker.
+	// EnvSearchRerankMaxDocumentChars bounds each candidate sent to a reranker,
+	// in characters (Unicode code points), so the same setting yields the same
+	// amount of text for Latin, Cyrillic or CJK content.
+	EnvSearchRerankMaxDocumentChars = "NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_CHARS"
+	// EnvSearchRerankMaxDocumentBytes is the deprecated predecessor of
+	// EnvSearchRerankMaxDocumentChars. It is honoured when the new variable is
+	// unset and its value is interpreted as a character count.
 	EnvSearchRerankMaxDocumentBytes = "NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES"
-	defaultRerankMaxDocumentBytes   = 2048
+	defaultRerankMaxDocumentChars   = 2048
 	// EnvSearchRerankContextProperties lists the short identifying properties
 	// (comma-separated) placed in front of every rerank candidate so the
 	// reranker knows which document a passage belongs to.
 	EnvSearchRerankContextProperties = "NORNICDB_SEARCH_RERANK_CONTEXT_PROPERTIES"
 	defaultRerankContextProperties   = "title,name"
-	// rerankContextPropertyMaxBytes bounds each identifying property value.
-	rerankContextPropertyMaxBytes = 256
+	// rerankContextPropertyMaxChars bounds each identifying property value.
+	rerankContextPropertyMaxChars = 256
 )
 
-func effectiveRerankMaxBytes(opts *SearchOptions) int {
-	if opts != nil && opts.RerankMaxBytes > 0 {
-		return opts.RerankMaxBytes
+func effectiveRerankMaxChars(opts *SearchOptions) int {
+	if opts != nil && opts.RerankMaxChars > 0 {
+		return opts.RerankMaxChars
 	}
-	value := envutil.GetInt(EnvSearchRerankMaxDocumentBytes, defaultRerankMaxDocumentBytes)
+	value := envutil.GetInt(EnvSearchRerankMaxDocumentChars, 0)
 	if value <= 0 {
-		return defaultRerankMaxDocumentBytes
+		value = envutil.GetInt(EnvSearchRerankMaxDocumentBytes, defaultRerankMaxDocumentChars)
+	}
+	if value <= 0 {
+		return defaultRerankMaxDocumentChars
 	}
 	return value
+}
+
+func charLen(text string) int {
+	return utf8.RuneCountInString(text)
 }
 
 // rerankCandidateContent builds the text a reranker sees for one candidate:
 // the node's identifying properties (title/name by default) followed by the
 // passage. For a managed-embedding hit the passage is the matched chunk
-// extended with its neighbouring chunks until maxBytes is reached, so the
+// extended with its neighbouring chunks until maxChars is reached, so the
 // reranker judges the document around the match instead of one small chunk;
 // for a lexical-only hit it is the query-centred window as before. The header
-// is taken out of the same byte budget.
-func (s *Service) rerankCandidateContent(node *storage.Node, result rrfResult, query string, maxBytes int) string {
+// is taken out of the same character budget.
+func (s *Service) rerankCandidateContent(node *storage.Node, result rrfResult, query string, maxChars int) string {
 	header := rerankContextHeader(node, rerankContextProperties())
-	remaining := maxBytes
+	remaining := maxChars
 	if header != "" {
-		remaining -= len(header) + 1
+		remaining -= charLen(header) + 1
 	}
 	var body string
 	if chunkIndex, ok := matchingChunkIndex(string(node.ID), result.MatchID); ok {
@@ -77,7 +90,7 @@ func rerankContextProperties() []string {
 }
 
 // rerankContextHeader joins the node's identifying property values, each
-// bounded to rerankContextPropertyMaxBytes, in the configured order.
+// bounded to rerankContextPropertyMaxChars, in the configured order.
 func rerankContextHeader(node *storage.Node, properties []string) string {
 	if node == nil || len(properties) == 0 {
 		return ""
@@ -91,47 +104,50 @@ func rerankContextHeader(node *storage.Node, properties []string) string {
 		if header.Len() > 0 {
 			header.WriteString(" | ")
 		}
-		header.WriteString(strings.TrimSpace(boundedUTF8Prefix(text, rerankContextPropertyMaxBytes)))
+		header.WriteString(strings.TrimSpace(boundedPrefix(text, rerankContextPropertyMaxChars)))
 	}
 	return header.String()
 }
 
 // expandedChunkWindow returns chunks[index] extended alternately with the
-// following and preceding chunks while the result stays within maxBytes. A
+// following and preceding chunks while the result stays within maxChars. A
 // neighbour that does not fit whole is added as a bounded prefix (after) or
 // suffix (before) to use the remaining budget, then expansion stops. Text the
 // neighbouring chunks share through chunk overlap is added only once.
-func expandedChunkWindow(chunks []string, index int, query string, maxBytes int) string {
+func expandedChunkWindow(chunks []string, index int, query string, maxChars int) string {
 	chunk := chunks[index]
-	if len(chunk) >= maxBytes {
-		return boundedQueryWindow(chunk, query, maxBytes)
+	if charLen(chunk) >= maxChars {
+		return boundedQueryWindow(chunk, query, maxChars)
 	}
 	window := chunk
+	used := charLen(window)
 	after, before := index+1, index-1
-	for len(window) < maxBytes && (after < len(chunks) || before >= 0) {
+	for used < maxChars && (after < len(chunks) || before >= 0) {
 		if after < len(chunks) {
 			next := trimChunkOverlapPrefix(window, chunks[after])
-			if room := maxBytes - len(window) - 1; room > 0 && next != "" {
-				if len(next) > room {
-					if next = strings.TrimSpace(boundedUTF8Prefix(next, room)); next != "" {
+			if room := maxChars - used - 1; room > 0 && next != "" {
+				if charLen(next) > room {
+					if next = strings.TrimSpace(boundedPrefix(next, room)); next != "" {
 						window += " " + next
 					}
 					break
 				}
 				window += " " + next
+				used += 1 + charLen(next)
 			}
 			after++
 		}
-		if before >= 0 && len(window) < maxBytes {
+		if before >= 0 && used < maxChars {
 			prev := trimChunkOverlapSuffix(chunks[before], window)
-			if room := maxBytes - len(window) - 1; room > 0 && prev != "" {
-				if len(prev) > room {
-					if prev = strings.TrimSpace(boundedUTF8Suffix(prev, room)); prev != "" {
+			if room := maxChars - used - 1; room > 0 && prev != "" {
+				if charLen(prev) > room {
+					if prev = strings.TrimSpace(boundedSuffix(prev, room)); prev != "" {
 						window = prev + " " + window
 					}
 					break
 				}
 				window = prev + " " + window
+				used += 1 + charLen(prev)
 			}
 			before--
 		}
@@ -202,30 +218,34 @@ func managedChunkTexts(node *storage.Node) []string {
 	return nil
 }
 
-func (s *Service) boundedNodeSearchableText(node *storage.Node, query string, maxBytes int) string {
+func (s *Service) boundedNodeSearchableText(node *storage.Node, query string, maxChars int) string {
 	values := s.searchableTextValues(node)
 	for _, value := range values {
 		if position := firstQueryTermPosition(value, query); position >= 0 {
-			return boundedUTF8Window(value, position, maxBytes)
+			return boundedWindow(value, position, maxChars)
 		}
 	}
 
 	var result strings.Builder
-	result.Grow(maxBytes)
+	result.Grow(maxChars)
+	used := 0
 	for _, value := range values {
 		if value == "" {
 			continue
 		}
-		remaining := maxBytes - result.Len()
-		if result.Len() > 0 {
+		remaining := maxChars - used
+		if used > 0 {
 			if remaining <= 1 {
 				break
 			}
 			result.WriteByte(' ')
+			used++
 			remaining--
 		}
-		result.WriteString(boundedUTF8Prefix(value, remaining))
-		if result.Len() >= maxBytes {
+		part := boundedPrefix(value, remaining)
+		result.WriteString(part)
+		used += charLen(part)
+		if used >= maxChars {
 			break
 		}
 	}
@@ -265,11 +285,11 @@ func (s *Service) searchableTextValues(node *storage.Node) []string {
 	return values
 }
 
-func boundedQueryWindow(text, query string, maxBytes int) string {
+func boundedQueryWindow(text, query string, maxChars int) string {
 	if position := firstQueryTermPosition(text, query); position >= 0 {
-		return boundedUTF8Window(text, position, maxBytes)
+		return boundedWindow(text, position, maxChars)
 	}
-	return boundedUTF8Prefix(text, maxBytes)
+	return boundedPrefix(text, maxChars)
 }
 
 func firstQueryTermPosition(text, query string) int {
@@ -305,22 +325,54 @@ func indexEqualFold(text, term string) int {
 	return -1
 }
 
-func boundedUTF8Window(text string, position, maxBytes int) string {
-	if len(text) <= maxBytes {
-		return strings.TrimSpace(text)
+// byteOffsetAfterChars returns the byte offset in text that lies count
+// characters after the byte offset from.
+func byteOffsetAfterChars(text string, from, count int) int {
+	offset := from
+	for count > 0 && offset < len(text) {
+		offset++
+		for offset < len(text) && !utf8.RuneStart(text[offset]) {
+			offset++
+		}
+		count--
 	}
-	if maxBytes <= 0 {
+	return offset
+}
+
+// byteOffsetBeforeChars returns the byte offset in text that lies count
+// characters before the byte offset from.
+func byteOffsetBeforeChars(text string, from, count int) int {
+	offset := from
+	for count > 0 && offset > 0 {
+		offset--
+		for offset > 0 && !utf8.RuneStart(text[offset]) {
+			offset--
+		}
+		count--
+	}
+	return offset
+}
+
+// boundedWindow returns at most maxChars characters of text around the byte
+// offset position (about a third of the window before it), trimmed to word
+// boundaries where possible. It walks only the window, not the whole text.
+func boundedWindow(text string, position, maxChars int) string {
+	if maxChars <= 0 {
 		return ""
 	}
-	start := position - maxBytes/3
-	if start < 0 {
-		start = 0
+	if len(text) <= maxChars {
+		return strings.TrimSpace(text)
 	}
-	if start+maxBytes > len(text) {
-		start = len(text) - maxBytes
+	// A character is at most utf8.UTFMax bytes, so a longer text cannot fit;
+	// only texts in between need the character walk.
+	if len(text) <= maxChars*utf8.UTFMax && byteOffsetAfterChars(text, 0, maxChars) >= len(text) {
+		return strings.TrimSpace(text)
 	}
-	for start < len(text) && !utf8.RuneStart(text[start]) {
-		start++
+	start := byteOffsetBeforeChars(text, position, maxChars/3)
+	end := byteOffsetAfterChars(text, start, maxChars)
+	if end >= len(text) {
+		end = len(text)
+		start = byteOffsetBeforeChars(text, end, maxChars)
 	}
 	if start > 0 {
 		for start < position && start < len(text) && !isRerankBoundary(text[start]) {
@@ -329,10 +381,6 @@ func boundedUTF8Window(text string, position, maxBytes int) string {
 		for start < position && start < len(text) && isRerankBoundary(text[start]) {
 			start++
 		}
-	}
-	end := min(start+maxBytes, len(text))
-	for end > start && end < len(text) && !utf8.RuneStart(text[end]) {
-		end--
 	}
 	if end < len(text) {
 		for end > position && !isRerankBoundary(text[end-1]) {
@@ -346,30 +394,21 @@ func isRerankBoundary(value byte) bool {
 	return value == ' ' || value == '\n' || value == '\r' || value == '\t'
 }
 
-func boundedUTF8Prefix(text string, maxBytes int) string {
-	if maxBytes <= 0 {
+// boundedPrefix returns the first maxChars characters of text.
+func boundedPrefix(text string, maxChars int) string {
+	if maxChars <= 0 {
 		return ""
 	}
-	if len(text) <= maxBytes {
-		return text
-	}
-	end := maxBytes
-	for end > 0 && !utf8.RuneStart(text[end]) {
-		end--
-	}
-	return text[:end]
+	return text[:byteOffsetAfterChars(text, 0, maxChars)]
 }
 
-func boundedUTF8Suffix(text string, maxBytes int) string {
-	if maxBytes <= 0 {
+// boundedSuffix returns the last maxChars characters of text.
+func boundedSuffix(text string, maxChars int) string {
+	if maxChars <= 0 {
 		return ""
 	}
-	if len(text) <= maxBytes {
+	if len(text) <= maxChars {
 		return text
 	}
-	start := len(text) - maxBytes
-	for start < len(text) && !utf8.RuneStart(text[start]) {
-		start++
-	}
-	return text[start:]
+	return text[byteOffsetBeforeChars(text, len(text), maxChars):]
 }
