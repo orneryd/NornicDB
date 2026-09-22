@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -203,6 +204,58 @@ func TestSetAddsChainedLabels(t *testing.T) {
 	require.ElementsMatch(t, []interface{}{"A", "Extra", "Hot"}, result.Rows[0][0])
 }
 
+func TestSetAppliesReturnWindowAfterAllNodeMutations(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:N {num:1}), (:N {num:2}), (:N {num:3}), (:N {num:4}), (:N {num:5})", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (n:N) SET n.num = 42 RETURN n.num AS num SKIP 2 LIMIT 2", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(42)}, {int64(42)}}, result.Rows)
+
+	readback, err := exec.Execute(ctx, "MATCH (n:N {num:42}) RETURN count(n) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, readback, int64(5))
+}
+
+func TestSetFeedsMutatedRowsThroughWithFilteringAndAggregation(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:N {num:1}), (:N {num:2}), (:N {num:3}), (:N {num:4}), (:N {num:5})", nil)
+	require.NoError(t, err)
+
+	filtered, err := exec.Execute(ctx, "MATCH (n:N) SET n.num = n.num + 1 WITH n WHERE n.num % 2 = 0 RETURN n.num AS num", nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, [][]interface{}{{int64(2)}, {int64(4)}, {int64(6)}}, filtered.Rows)
+
+	aggregated, err := exec.Execute(ctx, "MATCH (n:N) SET n.num = n.num + 1 WITH sum(n.num) AS sum RETURN sum", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, aggregated, int64(25))
+}
+
+func TestSetAppliesLabelsBeforeResultLimiting(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:N), (:N), (:N), (:N), (:N)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (n:N) SET n:Marked RETURN n LIMIT 0", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+
+	readback, err := exec.Execute(ctx, "MATCH (n:Marked) RETURN count(n) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, readback, int64(5))
+}
+
+func TestSetFeedsMutatedRelationshipsThroughAggregation(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE ()-[:R {num:1}]->(), ()-[:R {num:2}]->(), ()-[:R {num:3}]->(), ()-[:R {num:4}]->(), ()-[:R {num:5}]->()", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH ()-[r:R]->() SET r.num = r.num + 1 RETURN sum(r.num) AS sum", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, result, int64(20))
+}
+
 func TestMutationExpressionsAndClauseCompositionInExplicitTransactions(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	run := func(query string, params map[string]interface{}) *ExecuteResult {
@@ -275,4 +328,85 @@ func TestCommaSeparatedCreateClausesPreserveVariableScope(t *testing.T) {
 	relationships, err := exec.Execute(ctx, "MATCH ()-[r:NEXT]->() RETURN count(r) AS count", nil)
 	require.NoError(t, err)
 	requireSingleValue(t, relationships, int64(2))
+}
+
+func BenchmarkSetExecutionPaths(b *testing.B) {
+	const query = "MATCH (node:SetBenchmark) SET node.value = node.value + 1 RETURN node.value AS value"
+	benchmark := func(b *testing.B, execute func(*StorageExecutor, context.Context) error) {
+		store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "set-benchmark")
+		for index := 0; index < 100; index++ {
+			_, err := store.CreateNode(&storage.Node{
+				ID:     storage.NodeID(fmt.Sprintf("set-benchmark-%d", index)),
+				Labels: []string{"SetBenchmark"},
+				Properties: map[string]interface{}{
+					"value": int64(index),
+				},
+			})
+			require.NoError(b, err)
+		}
+		exec := NewStorageExecutor(store)
+		ctx := context.Background()
+		b.ReportAllocs()
+		b.ResetTimer()
+		for iteration := 0; iteration < b.N; iteration++ {
+			if err := execute(exec, ctx); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+
+	b.Run("converged_pipeline", func(b *testing.B) {
+		benchmark(b, func(exec *StorageExecutor, ctx context.Context) error {
+			_, handled, err := exec.executePipeline(ctx, query)
+			if !handled && err == nil {
+				return fmt.Errorf("converged SET pipeline did not handle benchmark query")
+			}
+			return err
+		})
+	})
+	b.Run("residual_handler", func(b *testing.B) {
+		benchmark(b, func(exec *StorageExecutor, ctx context.Context) error {
+			_, err := exec.executeSet(ctx, query)
+			return err
+		})
+	})
+}
+
+func TestConvergedSetPipelineHelpers(t *testing.T) {
+	t.Run("clause kind detection scopes normalization", func(t *testing.T) {
+		clauses := []pipelineClause{{kind: pipelineClauseMatch}, {kind: pipelineClauseSet}}
+		require.True(t, pipelineHasClauseKind(clauses, pipelineClauseSet))
+		require.False(t, pipelineHasClauseKind(clauses, pipelineClauseReturn))
+	})
+
+	t.Run("whitespace normalization preserves quoted content", func(t *testing.T) {
+		require.Equal(t, "MATCH (n) SET n.text = 'a  b' RETURN n", normalizePipelineWhitespace("\nMATCH\t(n)  SET n.text = 'a  b'\rRETURN n\n"))
+		require.Equal(t, "RETURN `a``b`, \"c\\\"d\"", normalizePipelineWhitespace("RETURN\t`a``b`,\n\"c\\\"d\""))
+		require.Equal(t, "RETURN 1", normalizePipelineWhitespace("  RETURN 1  "))
+	})
+
+	t.Run("assignment validation rejects malformed forms", func(t *testing.T) {
+		invalid := [][]string{
+			{""},
+			{"bad-target += {value: 1}"},
+			{"node +="},
+			{"node += {value:}"},
+			{"bad-target = 1"},
+			{"node ="},
+			{"invalid"},
+			{"node:"},
+			{"node:1bad"},
+		}
+		for _, assignments := range invalid {
+			require.Error(t, validatePipelineSetAssignments(assignments), assignments)
+		}
+		require.NoError(t, validatePipelineSetAssignments([]string{"node += properties", "node.value = 1", "node:Valid"}))
+	})
+
+	t.Run("mutation operation describes failing assignment", func(t *testing.T) {
+		require.Equal(t, "node +=", pipelineSetOperation("node", []string{"node += {value: 1}"}))
+		require.Equal(t, "node =", pipelineSetOperation("node", []string{"node = {value: 1}"}))
+		require.Equal(t, "node.property =", pipelineSetOperation("node", []string{"node.value = 1"}))
+		require.Equal(t, "node", pipelineSetOperation("node", []string{"other.value = 1"}))
+	})
 }

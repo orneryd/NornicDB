@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -94,6 +95,7 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	hasWithOrUnwind := false
 	hasRemove := false
 	hasDelete := false
+	hasSet := false
 	for _, clause := range clauses {
 		if clause.kind == pipelineClauseWith || clause.kind == pipelineClauseUnwind {
 			hasWithOrUnwind = true
@@ -104,6 +106,9 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 		if clause.kind == pipelineClauseDelete {
 			hasDelete = true
 		}
+		if clause.kind == pipelineClauseSet {
+			hasSet = true
+		}
 	}
 	upper := strings.ToUpper(cypher)
 	stringPredicateMutation := strings.Contains(upper, " CREATE ") &&
@@ -111,7 +116,7 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	startsWithCreateProjection := clauses[0].kind == pipelineClauseCreate &&
 		clauses[len(clauses)-1].kind == pipelineClauseReturn &&
 		firstTopLevelModifierIndex(strings.TrimSpace(clauses[len(clauses)-1].text[len("RETURN"):])) >= 0
-	if !hasWithOrUnwind && !hasRemove && !hasDelete && !stringPredicateMutation && !startsWithCreateProjection {
+	if !hasWithOrUnwind && !hasRemove && !hasDelete && !hasSet && !stringPredicateMutation && !startsWithCreateProjection {
 		return nil, false
 	}
 	return clauses, true
@@ -204,6 +209,12 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 			if k.kind == pipelineClauseSet {
 				preceding := strings.TrimSpace(strings.ToUpper(cypher[:p]))
 				if strings.HasSuffix(preceding, "ON CREATE") || strings.HasSuffix(preceding, "ON MATCH") {
+					continue
+				}
+			}
+			if k.kind == pipelineClauseReturn {
+				preceding := strings.TrimRight(cypher[:p], " \t\n\r")
+				if strings.HasSuffix(preceding, ":") {
 					continue
 				}
 			}
@@ -343,6 +354,13 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 	if !ok {
 		return nil, false, nil
 	}
+	if pipelineHasClauseKind(clauses, pipelineClauseSet) {
+		cypher = normalizePipelineWhitespace(cypher)
+		clauses, ok = canExecuteAsPipeline(cypher)
+		if !ok {
+			return nil, false, nil
+		}
+	}
 	if clauses[0].kind == pipelineClauseUnwind {
 		plan, err := e.prepareTopLevelUnwind(ctx, cypher)
 		if err != nil {
@@ -432,14 +450,15 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			result.Stats.NodesDeleted += stats.NodesDeleted
 			result.Stats.RelationshipsDeleted += stats.RelationshipsDeleted
 		case pipelineClauseSet:
-			propertiesSet, ok, err := e.pipelineApplySet(ctx, rows, clause.text)
+			stats, ok, err := e.pipelineApplySet(ctx, rows, clause.text)
 			if err != nil {
 				return nil, true, err
 			}
 			if !ok {
 				return nil, false, nil
 			}
-			result.Stats.PropertiesSet += propertiesSet
+			result.Stats.PropertiesSet += stats.PropertiesSet
+			result.Stats.LabelsAdded += stats.LabelsAdded
 		case pipelineClauseRemove:
 			if err := e.pipelineApplyRemove(ctx, rows, clause.text, result); err != nil {
 				return nil, true, err
@@ -472,8 +491,70 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 		}
 		_ = idx
 	}
+	if len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseSet {
+		result.Columns = []string{"matched"}
+		result.Rows = [][]interface{}{{len(rows)}}
+	}
 
 	return result, true, nil
+}
+
+func pipelineHasClauseKind(clauses []pipelineClause, kind pipelineClauseKind) bool {
+	for _, clause := range clauses {
+		if clause.kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizePipelineWhitespace(query string) string {
+	if !strings.ContainsAny(query, "\t\n\r") {
+		return strings.TrimSpace(query)
+	}
+	var normalized strings.Builder
+	normalized.Grow(len(query))
+	quote := byte(0)
+	spacePending := false
+	for index := 0; index < len(query); index++ {
+		character := query[index]
+		if quote != 0 {
+			normalized.WriteByte(character)
+			if character == '\\' && quote != '`' && index+1 < len(query) {
+				index++
+				normalized.WriteByte(query[index])
+				continue
+			}
+			if character == quote {
+				if quote == '`' && index+1 < len(query) && query[index+1] == '`' {
+					index++
+					normalized.WriteByte(query[index])
+					continue
+				}
+				quote = 0
+			}
+			continue
+		}
+		if character == '\'' || character == '"' || character == '`' {
+			if spacePending && normalized.Len() > 0 {
+				normalized.WriteByte(' ')
+			}
+			spacePending = false
+			quote = character
+			normalized.WriteByte(character)
+			continue
+		}
+		if isWhitespace(character) {
+			spacePending = normalized.Len() > 0
+			continue
+		}
+		if spacePending {
+			normalized.WriteByte(' ')
+			spacePending = false
+		}
+		normalized.WriteByte(character)
+	}
+	return strings.TrimSpace(normalized.String())
 }
 
 // pipelineApplyDelete collects every entity target before validation and
@@ -604,17 +685,23 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 // pipelineApplySet mutates entities already bound in each pipeline row. Scalar
 // and map bindings are attached as typed context values so assignments such as
 // SET target = row retain their original Go/Cypher types.
-func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineRow, clause string) (int, bool, error) {
+func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineRow, clause string) (*QueryStats, bool, error) {
 	body := strings.TrimSpace(clause[len("SET"):])
 	assignments := e.splitSetAssignments(body)
 	if body == "" || len(assignments) == 0 {
-		return 0, false, nil
+		return nil, false, nil
 	}
 
 	store := e.getStorage(ctx)
-	propertiesSet := 0
+	stats := &QueryStats{}
+	if err := validatePipelineSetAssignments(assignments); err != nil {
+		return nil, true, err
+	}
+	simpleTarget, simpleProperty, simpleExpression, simplePropertyAssignment := pipelineSimplePropertyAssignment(assignments)
 	for _, row := range rows {
 		nodes := make(map[string]*storage.Node)
+		evalNodes := nodes
+		evalNodesShared := true
 		rels := make(map[string]*storage.Edge)
 		params := make(map[string]interface{})
 		for name, value := range getParamsFromContext(ctx) {
@@ -624,83 +711,189 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 			switch entity := value.(type) {
 			case *storage.Node:
 				nodes[name] = entity
+				if !evalNodesShared {
+					evalNodes[name] = entity
+				}
 			case *storage.Edge:
 				rels[name] = entity
 			default:
 				params[name] = value
+				if evalNodesShared {
+					evalNodes = make(map[string]*storage.Node, util.SafePreallocSum(len(nodes), 1))
+					for nodeName, node := range nodes {
+						evalNodes[nodeName] = node
+					}
+					evalNodesShared = false
+				}
+				evalNodes[name] = &storage.Node{
+					ID: storage.NodeID(name),
+					Properties: map[string]interface{}{
+						"value": value,
+					},
+				}
 			}
 		}
 		rowCtx := withParams(ctx, params)
-		resolvedBody := e.materializePipelineSetExpressions(body, row)
 		targets := pipelineSetTargetVariables(assignments)
 		if len(targets) == 0 {
-			return 0, false, nil
+			return nil, false, nil
 		}
 		for _, variable := range targets {
-			node, ok := nodes[variable]
-			if !ok || node == nil {
-				return 0, false, nil
+			if node := nodes[variable]; node != nil {
+				beforeProperties := cloneStringAnyMap(node.Properties)
+				beforeLabels := append([]string(nil), node.Labels...)
+				if simplePropertyAssignment && simpleTarget == variable {
+					value := e.evaluatePipelineSetValue(rowCtx, simpleExpression, evalNodes, rels)
+					if err := validateSetPropertyValue(value); err != nil {
+						return nil, true, err
+					}
+					setNodeProperty(node, simpleProperty, value)
+				} else {
+					e.applySetToNodeWithContext(rowCtx, node, variable, body, evalNodes, rels)
+				}
+				if !reflect.DeepEqual(beforeLabels, node.Labels) {
+					if err := validatePolicyOnLabelChange(store, node, beforeLabels); err != nil {
+						node.Properties = beforeProperties
+						node.Labels = beforeLabels
+						return nil, true, err
+					}
+					embeddingutil.InvalidateManagedEmbeddings(node)
+				}
+				if err := store.UpdateNode(node); err != nil {
+					node.Properties = beforeProperties
+					node.Labels = beforeLabels
+					return nil, true, fmt.Errorf("SET %s: %w", pipelineSetOperation(variable, assignments), err)
+				}
+				stats.PropertiesSet += changedPropertyCount(beforeProperties, node.Properties)
+				stats.LabelsAdded += addedLabelCount(beforeLabels, node.Labels)
+				e.notifyNodeMutated(string(node.ID))
+				continue
 			}
-			before := cloneStringAnyMap(node.Properties)
-			e.applySetToNodeWithContext(rowCtx, node, variable, resolvedBody, nodes, rels)
-			if err := store.UpdateNode(node); err != nil {
-				return 0, true, err
+			if relationship := rels[variable]; relationship != nil {
+				beforeProperties := cloneStringAnyMap(relationship.Properties)
+				if simplePropertyAssignment && simpleTarget == variable {
+					value := e.evaluatePipelineSetValue(rowCtx, simpleExpression, evalNodes, rels)
+					if err := validateSetPropertyValue(value); err != nil {
+						return nil, true, err
+					}
+					setRelationshipProperty(relationship, simpleProperty, value)
+				} else {
+					e.applySetToRelationshipWithContext(rowCtx, relationship, variable, body, evalNodes, rels)
+				}
+				if err := store.UpdateEdge(relationship); err != nil {
+					relationship.Properties = beforeProperties
+					return nil, true, fmt.Errorf("SET %s: %w", pipelineSetOperation(variable, assignments), err)
+				}
+				stats.PropertiesSet += changedPropertyCount(beforeProperties, relationship.Properties)
+				e.notifyEdgeMutated(string(relationship.ID))
+				continue
 			}
-			propertiesSet += changedPropertyCount(before, node.Properties)
+			return nil, false, nil
 		}
 	}
-	return propertiesSet, true, nil
+	return stats, true, nil
 }
 
-// materializePipelineSetExpressions resolves compound row expressions before
-// the graph-only SET evaluator runs. Direct scalar/map references remain typed
-// context values; only expression forms that require the row evaluator are
-// converted to Cypher literals.
-func (e *StorageExecutor) materializePipelineSetExpressions(body string, row pipelineRow) string {
-	assignments := e.splitSetAssignments(body)
-	resolved := make([]string, 0, len(assignments))
-	for _, assignment := range assignments {
-		assignment = strings.TrimSpace(assignment)
-		operator, operatorIndex := "=", strings.Index(assignment, "=")
-		if plusIndex := strings.Index(assignment, "+="); plusIndex >= 0 {
-			operator, operatorIndex = "+=", plusIndex
+func pipelineSimplePropertyAssignment(assignments []string) (target, property, expression string, ok bool) {
+	if len(assignments) != 1 {
+		return "", "", "", false
+	}
+	assignment := strings.TrimSpace(assignments[0])
+	if strings.Contains(assignment, "+=") {
+		return "", "", "", false
+	}
+	equalIndex := strings.Index(assignment, "=")
+	if equalIndex <= 0 {
+		return "", "", "", false
+	}
+	target, property, hasProperty := parseSetAssignmentTarget(strings.TrimSpace(assignment[:equalIndex]))
+	if !hasProperty {
+		return "", "", "", false
+	}
+	expression = strings.TrimSpace(assignment[equalIndex+1:])
+	return target, property, expression, expression != ""
+}
+
+func (e *StorageExecutor) evaluatePipelineSetValue(ctx context.Context, expression string, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) interface{} {
+	if value, ok := resolveDirectParamRef(ctx, expression); ok {
+		return normalizePropValue(value)
+	}
+	return e.evaluateSetExpressionWithContext(ctx, expression, nodes, relationships)
+}
+
+func validatePipelineSetAssignments(assignments []string) error {
+	for _, raw := range assignments {
+		assignment := strings.TrimSpace(raw)
+		if assignment == "" {
+			return localizedError(localization.CypherMutationsSetAssignmentRequired(), nil)
 		}
-		if operatorIndex <= 0 {
-			resolved = append(resolved, assignment)
+		if plusIndex := strings.Index(assignment, "+="); plusIndex >= 0 {
+			target := strings.TrimSpace(assignment[:plusIndex])
+			right := strings.TrimSpace(assignment[plusIndex+2:])
+			if !isValidIdentifier(target) || right == "" {
+				return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
+			}
+			if strings.HasPrefix(right, "{") {
+				if _, err := parseSetMergeMapExpressionsStrict(right); err != nil {
+					return localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
+				}
+			}
 			continue
 		}
-		left := strings.TrimSpace(assignment[:operatorIndex])
-		right := strings.TrimSpace(assignment[operatorIndex+len(operator):])
-		if operator == "+=" && strings.HasPrefix(right, "{") {
-			if expressions, err := parseSetMergeMapExpressionsStrict(right); err == nil {
-				values := make(map[string]interface{}, len(expressions))
-				resolvedAll := true
-				for key, expression := range expressions {
-					value, ok := e.evaluateRowExpression(expression, row)
-					if !ok {
-						resolvedAll = false
-						break
-					}
-					values[key] = value
-				}
-				if resolvedAll {
-					right = e.valueToLiteral(values)
-				}
+		if equalIndex := strings.Index(assignment, "="); equalIndex >= 0 {
+			target := strings.TrimSpace(assignment[:equalIndex])
+			right := strings.TrimSpace(assignment[equalIndex+1:])
+			variable, _, _ := parseSetAssignmentTarget(target)
+			if !isValidIdentifier(variable) || right == "" {
+				return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
+			}
+			continue
+		}
+		colonIndex := strings.Index(assignment, ":")
+		if colonIndex <= 0 || !isValidIdentifier(strings.TrimSpace(assignment[:colonIndex])) {
+			return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
+		}
+		labels := splitSetLabelChain(strings.TrimSpace(assignment[colonIndex+1:]))
+		if len(labels) == 0 {
+			return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
+		}
+		for _, label := range labels {
+			if !isValidIdentifier(label) {
+				return localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
 			}
 		}
-		if hasTopLevelPlus(right) || strings.HasPrefix(right, "[") ||
-			(strings.Contains(right, "[") && strings.HasSuffix(right, "]")) {
-			if value, ok := e.evaluateRowExpression(right, row); ok {
-				right = e.valueToLiteral(value)
-			}
-		} else if _, directBinding := row[right]; !directBinding {
-			if value, ok := e.evaluateRowExpression(right, row); ok {
-				right = e.valueToLiteral(value)
-			}
-		}
-		resolved = append(resolved, left+" "+operator+" "+right)
 	}
-	return strings.Join(resolved, ", ")
+	return nil
+}
+
+func pipelineSetOperation(variable string, assignments []string) string {
+	for _, assignment := range assignments {
+		assignment = strings.TrimSpace(assignment)
+		if strings.HasPrefix(assignment, variable+" +=") || strings.HasPrefix(assignment, variable+"+=") {
+			return variable + " +="
+		}
+		if strings.HasPrefix(assignment, variable+" =") || strings.HasPrefix(assignment, variable+"=") {
+			return variable + " ="
+		}
+		if strings.HasPrefix(assignment, variable+".") {
+			return variable + ".property ="
+		}
+	}
+	return variable
+}
+
+func addedLabelCount(before, after []string) int {
+	known := make(map[string]struct{}, len(before))
+	for _, label := range before {
+		known[label] = struct{}{}
+	}
+	added := 0
+	for _, label := range after {
+		if _, exists := known[label]; !exists {
+			added++
+		}
+	}
+	return added
 }
 
 func pipelineSetTargetVariables(assignments []string) []string {
@@ -1944,6 +2137,9 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 }
 
 func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
+	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
+		expr = inner
+	}
 	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
 		return items, true
 	}

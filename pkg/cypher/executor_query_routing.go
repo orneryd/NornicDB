@@ -341,6 +341,11 @@ skipMatchCallRoute:
 		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION PROFILE") != 0 &&
 		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION POLICY") != 0 {
 		if startsWithMatch || findKeywordIndex(cypher, "SET") == 0 {
+			if startsWithMatch {
+				if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+					return result, err
+				}
+			}
 			return e.executeSet(ctx, cypher)
 		}
 	}

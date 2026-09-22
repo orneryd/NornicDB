@@ -2426,8 +2426,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 			continue
 		}
 
-		if strings.HasPrefix(assignment, varName+":") {
-			labelExpr := strings.TrimSpace(assignment[len(varName)+1:])
+		if labelExpr, isLabelAssignment := parseSetLabelExpression(assignment, varName); isLabelAssignment {
 			if labelExpr == "" {
 				continue
 			}
@@ -2449,11 +2448,11 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 				}
 				continue
 			}
-			if !isValidIdentifier(labelExpr) || containsReservedKeyword(labelExpr) {
-				continue
-			}
-			if !containsString(node.Labels, labelExpr) {
-				node.Labels = append(node.Labels, labelExpr)
+			for _, label := range splitSetLabelChain(labelExpr) {
+				if !isValidIdentifier(label) || containsReservedKeyword(label) || containsString(node.Labels, label) {
+					continue
+				}
+				node.Labels = append(node.Labels, label)
 			}
 			continue
 		}

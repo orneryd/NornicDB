@@ -92,8 +92,7 @@ func (e *StorageExecutor) applySetToNode(ctx context.Context, node *storage.Node
 			continue
 		}
 
-		if strings.HasPrefix(assignment, varName+":") {
-			labelExpr := strings.TrimSpace(assignment[len(varName)+1:])
+		if labelExpr, isLabelAssignment := parseSetLabelExpression(assignment, varName); isLabelAssignment {
 			if labelExpr == "" {
 				continue
 			}
@@ -185,6 +184,17 @@ func (e *StorageExecutor) applySetToNode(ctx context.Context, node *storage.Node
 
 		setNodeProperty(node, propName, evaluated)
 	}
+}
+
+func parseSetLabelExpression(assignment, variable string) (string, bool) {
+	if !strings.HasPrefix(assignment, variable) {
+		return "", false
+	}
+	remainder := strings.TrimSpace(assignment[len(variable):])
+	if !strings.HasPrefix(remainder, ":") {
+		return "", false
+	}
+	return strings.TrimSpace(remainder[1:]), true
 }
 
 func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) {
