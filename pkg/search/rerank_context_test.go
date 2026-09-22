@@ -116,3 +116,26 @@ func TestRerankDefaultBudgetIs2048Chars(t *testing.T) {
 	require.Equal(t, 2048, defaultRerankMaxDocumentChars)
 	require.Equal(t, 2048, effectiveRerankMaxChars(&SearchOptions{}))
 }
+
+func TestRerankBudgetHandlesMixedScripts(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	mixed := "Москва alpha 北京 β 東京 gamma Київ 😀 delta"
+	chunks := []string{mixed, mixed + " second", mixed + " third"}
+	node := &storage.Node{ID: "nornic:doc", EmbedMeta: map[string]interface{}{"chunk_texts": chunks}}
+	for budget := 1; budget <= 3*utf8.RuneCountInString(mixed)+20; budget += 3 {
+		content := svc.rerankCandidateContent(node, rrfResult{ID: "nornic:doc", MatchID: "nornic:doc-chunk-1"}, "gamma", budget)
+		require.LessOrEqual(t, utf8.RuneCountInString(content), budget, "budget %d", budget)
+		require.True(t, utf8.ValidString(content), "budget %d: cut inside a multi-byte character", budget)
+	}
+	// Prefix and suffix cuts never split a character, whatever the script.
+	for i := 0; i <= utf8.RuneCountInString(mixed); i++ {
+		require.True(t, utf8.ValidString(boundedPrefix(mixed, i)))
+		require.True(t, utf8.ValidString(boundedSuffix(mixed, i)))
+		require.Equal(t, i, utf8.RuneCountInString(boundedPrefix(mixed, i)))
+		require.Equal(t, i, utf8.RuneCountInString(boundedSuffix(mixed, i)))
+	}
+	// Invalid bytes count as one character each and do not panic.
+	broken := "ab\xffcd\xfe"
+	require.Equal(t, "ab\xffc", boundedPrefix(broken, 4))
+	require.Equal(t, "cd\xfe", boundedSuffix(broken, 3))
+}
