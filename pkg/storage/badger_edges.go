@@ -15,6 +15,11 @@ import (
 func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
+	release, barrierErr := b.beginWrite()
+	if barrierErr != nil {
+		return barrierErr
+	}
+	defer release()
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -187,6 +192,11 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
+	release, barrierErr := b.beginWrite()
+	if barrierErr != nil {
+		return barrierErr
+	}
+	defer release()
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -352,6 +362,11 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
+	release, barrierErr := b.beginWrite()
+	if barrierErr != nil {
+		return barrierErr
+	}
+	defer release()
 	if id == "" {
 		return ErrInvalidID
 	}

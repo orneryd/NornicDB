@@ -14,6 +14,11 @@ import (
 
 // BulkCreateNodes creates multiple nodes in a single transaction.
 func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
+	release, barrierErr := b.beginWrite()
+	if barrierErr != nil {
+		return barrierErr
+	}
+	defer release()
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
@@ -233,6 +238,11 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 
 // BulkCreateEdges creates multiple edges in a single transaction.
 func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
+	release, barrierErr := b.beginWrite()
+	if barrierErr != nil {
+		return barrierErr
+	}
+	defer release()
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}

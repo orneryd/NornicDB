@@ -175,8 +175,29 @@ func (b *BadgerEngine) GetSchema() *SchemaManager {
 
 // Close closes the BadgerDB database.
 func (b *BadgerEngine) Close() error {
+	// Stop the background backfills before taking the write barrier: they
+	// write through withUpdate and must not be left waiting on a barrier
+	// this goroutine holds while it waits for them to stop.
 	b.stopEdgeBetweenIndexBackfill()
 	b.stopLabelIndexBackfill()
+	// The MVCC lifecycle worker is stopped here for the same reason:
+	// StopLifecycle waits for the worker to exit, and the worker must not
+	// be parked behind a barrier this goroutine is about to hold. The call
+	// is idempotent, so the lifecycle stop under b.mu below stays as the
+	// guard for a controller installed after this point.
+	b.mu.RLock()
+	lifecycle := b.lifecycleController
+	b.mu.RUnlock()
+	if lifecycle != nil {
+		lifecycle.StopLifecycle()
+	}
+
+	// Wait for every in-flight durable write (see writeBarrier) so no
+	// commit that already reached Badger has its publication tail torn by
+	// the release below, and hold the barrier through db.Close so no new
+	// write reaches a closing Badger handle.
+	b.writeBarrier.Lock()
+	defer b.writeBarrier.Unlock()
 
 	b.mu.Lock()
 	if b.closed {

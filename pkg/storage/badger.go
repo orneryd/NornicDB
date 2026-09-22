@@ -139,11 +139,22 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
-	db       *badger.DB
-	mu       sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
-	closed   bool
-	inMemory bool   // True if running in memory-only mode (testing)
-	dataDir  string // Captured from BadgerOptions.DataDir; used by migration logging.
+	db     *badger.DB
+	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
+	closed bool
+	// writeBarrier orders Close against durable writes. Every public
+	// non-transactional mutator holds it for read for its whole duration,
+	// and an explicit transaction holds it for read from just before its
+	// Badger commit through the post-commit tail (derived counts, MVCC
+	// sequence, ID counters, caches, callbacks). Close takes it for write
+	// before releasing engine state, so a write whose Badger commit has
+	// already returned always finishes publishing and reports success, and a
+	// write that arrives after Close fails cleanly with ErrStorageClosed.
+	// Lock order: writeBarrier before mu; Close stops its background
+	// backfills before taking the barrier so they cannot wait on it.
+	writeBarrier sync.RWMutex
+	inMemory     bool   // True if running in memory-only mode (testing)
+	dataDir      string // Captured from BadgerOptions.DataDir; used by migration logging.
 
 	// migrationDidRun is set by RunOnStartMigrations when at least one
 	// migration arm rewrote bodies. The engine open path uses it to

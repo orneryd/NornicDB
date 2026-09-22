@@ -1763,6 +1763,19 @@ func (tx *BadgerTransaction) Commit() error {
 	// not create optimistic conflicts; holding the lock through the follow-up
 	// delta write preserves mutation order and prevents count readers from
 	// observing the committed node without its derived metadata.
+	// From here to the end of the tail the engine must stay open: once
+	// badgerTx.Commit() returns the data is durable, and the publication
+	// steps below (label counts, MVCC sequence, ID counters, caches,
+	// callbacks) must run against live engine state and the client must be
+	// told the truth. Close waits on this barrier; a commit that arrives
+	// after Close finished fails here without touching Badger.
+	releaseWrite, err := tx.engine.beginWrite()
+	if err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
+	defer releaseWrite()
+
 	labelCountsLocked := len(tx.pendingLabelCountDeltas) > 0
 	if labelCountsLocked {
 		tx.engine.labelCountWriteMu.Lock()
@@ -1776,6 +1789,7 @@ func (tx *BadgerTransaction) Commit() error {
 		tx.closeLocked(TxStatusRolledBack, false, nil)
 		return normalizeTransactionCommitError(err)
 	}
+	runCommitTailHook()
 
 	// Label counts are derived metadata, not part of the user transaction's
 	// conflict set. Apply the accumulated deltas only after the entity and
@@ -2601,6 +2615,37 @@ func getUniqueConstraintScanHook() func() {
 	uniqueConstraintScanHookMu.RLock()
 	defer uniqueConstraintScanHookMu.RUnlock()
 	return uniqueConstraintScanHook
+}
+
+// commitTailHook lets storage tests interpose between a successful Badger
+// commit and the post-commit tail (derived counts, MVCC sequence, ID
+// counters, caches, callbacks) that publishes it. It exists to pin the
+// Close-versus-commit ordering; production leaves it nil.
+var (
+	commitTailHook   func()
+	commitTailHookMu sync.RWMutex
+)
+
+func setCommitTailHook(hook func()) func() {
+	commitTailHookMu.Lock()
+	previousHook := commitTailHook
+	commitTailHook = hook
+	commitTailHookMu.Unlock()
+
+	return func() {
+		commitTailHookMu.Lock()
+		commitTailHook = previousHook
+		commitTailHookMu.Unlock()
+	}
+}
+
+func runCommitTailHook() {
+	commitTailHookMu.RLock()
+	hook := commitTailHook
+	commitTailHookMu.RUnlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 // scanForUniqueViolation performs a full database scan to check for UNIQUE violations

@@ -19,6 +19,11 @@ import (
 func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
+	release, barrierErr := b.beginWrite()
+	if barrierErr != nil {
+		return "", barrierErr
+	}
+	defer release()
 	if node == nil {
 		return "", ErrInvalidData
 	}
@@ -296,6 +301,11 @@ func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 func (b *BadgerEngine) UpdateNode(node *Node) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
+	release, barrierErr := b.beginWrite()
+	if barrierErr != nil {
+		return barrierErr
+	}
+	defer release()
 	if node == nil {
 		return ErrInvalidData
 	}
@@ -767,6 +777,11 @@ func (b *BadgerEngine) writeEmbeddingChunksBatched(nodeID NodeID, embeddings [][
 func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
+	release, barrierErr := b.beginWrite()
+	if barrierErr != nil {
+		return barrierErr
+	}
+	defer release()
 	if id == "" {
 		return ErrInvalidID
 	}

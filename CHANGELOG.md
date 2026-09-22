@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Make `BadgerEngine.Close` wait for in-flight durable writes before releasing
+  engine state. An explicit transaction whose Badger commit had already
+  returned could have its post-commit tail (label counts, MVCC sequence, ID
+  counters, caches, callbacks) torn by a concurrent `Close`, panicking on the
+  released `db` handle and reporting a durable commit to the Bolt client as
+  `transaction commit panicked: ... nil pointer dereference`; a non-transactional
+  `CreateNode` in the same window panicked on a released cache map. Writes now
+  hold a read barrier that `Close` takes for write, and a commit that arrives
+  after `Close` has finished fails with `ErrStorageClosed` without touching
+  Badger. Fixes #499.
 - Floor the numeric ID dictionary counters at the highest numID the durable
   forward maps hold when the engine opens. The counter high-water mark is
   persisted in its own transaction after the user transaction commits, so a

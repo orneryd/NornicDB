@@ -17,6 +17,21 @@ func (b *BadgerEngine) ensureOpen() error {
 	return nil
 }
 
+// beginWrite marks a durable write in flight so Close waits for it before
+// releasing engine state. It returns the release func the caller must defer,
+// or ErrStorageClosed when the engine has already closed (the caller must
+// not touch Badger in that case). The closed check runs under the barrier so
+// a Close that has completed is always observed and a Close that has not
+// started yet cannot slip in between the check and the write.
+func (b *BadgerEngine) beginWrite() (func(), error) {
+	b.writeBarrier.RLock()
+	if err := b.ensureOpen(); err != nil {
+		b.writeBarrier.RUnlock()
+		return nil, err
+	}
+	return b.writeBarrier.RUnlock, nil
+}
+
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
@@ -60,6 +75,7 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 		})
 	})
 	if err == nil {
+		runCommitTailHook()
 		if b.idDict != nil {
 			b.idDict.persistCounters(b.db, nodeMax, edgeMax)
 		}
