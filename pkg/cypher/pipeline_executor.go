@@ -1116,7 +1116,7 @@ func (e *StorageExecutor) pipelineApplyBoundTraversalMatch(ctx context.Context, 
 		return nil, false, nil
 	}
 	nodeGroups, brackets := scanOptionalPatternShape(pattern)
-	if nodeGroups != 2 || brackets != 1 {
+	if nodeGroups != 2 || brackets > 1 {
 		return nil, false, nil
 	}
 	endpoints, err := e.parseOptionalClauseEndpoints(ctx, pattern)
@@ -1126,15 +1126,19 @@ func (e *StorageExecutor) pipelineApplyBoundTraversalMatch(ctx context.Context, 
 	if _, sourceBound := rows[0][endpoints.source.variable]; !sourceBound {
 		return nil, false, nil
 	}
-	if _, targetBound := rows[0][endpoints.target.variable]; targetBound {
-		return nil, false, nil
-	}
-
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
 		source, ok := row[endpoints.source.variable].(*storage.Node)
 		if !ok || source == nil || !pipelineNodeMatchesPattern(source, endpoints.source) {
+			continue
+		}
+		boundTarget, targetBound := row[endpoints.target.variable]
+		if targetBound && boundTarget == nil {
+			continue
+		}
+		expectedTarget, expectedTargetIsNode := boundTarget.(*storage.Node)
+		if targetBound && (!expectedTargetIsNode || expectedTarget == nil) {
 			continue
 		}
 
@@ -1145,12 +1149,7 @@ func (e *StorageExecutor) pipelineApplyBoundTraversalMatch(ctx context.Context, 
 		case "in":
 			edges, err = store.GetIncomingEdges(source.ID)
 		default:
-			var incoming []*storage.Edge
-			edges, err = store.GetOutgoingEdges(source.ID)
-			if err == nil {
-				incoming, err = store.GetIncomingEdges(source.ID)
-				edges = append(edges, incoming...)
-			}
+			edges, err = undirectedIncidentEdges(store, source.ID)
 		}
 		if err != nil {
 			return nil, true, err
@@ -1169,6 +1168,9 @@ func (e *StorageExecutor) pipelineApplyBoundTraversalMatch(ctx context.Context, 
 				return nil, true, getErr
 			}
 			if target == nil || !pipelineNodeMatchesPattern(target, endpoints.target) {
+				continue
+			}
+			if targetBound && target.ID != expectedTarget.ID {
 				continue
 			}
 

@@ -399,6 +399,9 @@ skipMatchCallRoute:
 		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION POLICY") == 0:
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH") == 0:
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
 		return e.executeOptionalMatch(ctx, cypher)
 	case startsWithMatch && isShortestPathQuery(cypher):
 		spCypher := cypher

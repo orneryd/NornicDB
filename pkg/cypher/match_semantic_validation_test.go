@@ -67,6 +67,64 @@ func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"LOOP"}}, result.Rows)
 }
 
+func TestMatchRejectsRelationshipReuseWithinOnePattern(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_relationship_uniqueness"))
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "MATCH (a)-[r]->()-[r]->(a) RETURN r", nil)
+	requireMatchSemanticDetail(t, err, "RelationshipUniquenessViolation")
+}
+
+func TestUndirectedMatchFiltersUntypedRelationshipProperties(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_relationship_properties")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	leftID, err := store.CreateNode(&storage.Node{ID: "left", Labels: []string{"Left"}})
+	require.NoError(t, err)
+	rightID, err := store.CreateNode(&storage.Node{ID: "right", Labels: []string{"Right"}})
+	require.NoError(t, err)
+	require.NoError(t, store.CreateEdge(&storage.Edge{
+		ID:         "relationship",
+		Type:       "LINK",
+		StartNode:  leftID,
+		EndNode:    rightID,
+		Properties: map[string]interface{}{"name": "selected"},
+	}))
+
+	result, err := exec.Execute(ctx, "MATCH (a)-[r {name: 'selected'}]-(b) RETURN a, b", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2)
+}
+
+func TestBidirectionalArrowMatchesRelationshipInEitherDirection(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_bidirectional_arrow")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	leftID, err := store.CreateNode(&storage.Node{ID: "left", Properties: map[string]interface{}{"name": "A"}})
+	require.NoError(t, err)
+	middleID, err := store.CreateNode(&storage.Node{ID: "middle", Properties: map[string]interface{}{"name": "X"}})
+	require.NoError(t, err)
+	rightID, err := store.CreateNode(&storage.Node{ID: "right", Properties: map[string]interface{}{"name": "B"}})
+	require.NoError(t, err)
+	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "left-middle", Type: "LINK", StartNode: leftID, EndNode: middleID}))
+	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "right-middle", Type: "LINK", StartNode: rightID, EndNode: middleID}))
+
+	result, err := exec.Execute(ctx, "MATCH (a {name: 'A'}), (b {name: 'B'}) MATCH (a)-->(x)<-->(b) RETURN x", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+}
+
+func TestMandatoryMatchDropsNullOptionalBinding(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_null_optional_binding"))
+	ctx := context.Background()
+
+	result, err := exec.Execute(ctx, "OPTIONAL MATCH (a) WITH a MATCH (a)-->(b) RETURN b", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+}
+
 func requireMatchSemanticDetail(t *testing.T, err error, detail string) {
 	t.Helper()
 	require.Error(t, err)

@@ -86,10 +86,20 @@ func validateMatchClauseBindings(scope matchSemanticScope, clause string) error 
 			return err
 		}
 	}
-	for _, variable := range extractRelationshipVariables(pattern) {
+	relationshipVariables := extractRelationshipVariables(pattern)
+	seenRelationships := make(map[string]struct{}, len(relationshipVariables))
+	for _, variable := range relationshipVariables {
 		if err := bindMatchSemanticKind(scope, variable, matchBindingRelationship); err != nil {
 			return err
 		}
+		if _, exists := seenRelationships[variable]; exists {
+			return newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"RelationshipUniquenessViolation",
+				fmt.Sprintf("relationship variable %s is used more than once in the same pattern", variable),
+			)
+		}
+		seenRelationships[variable] = struct{}{}
 	}
 	for _, patternPart := range splitTopLevelComma(pattern) {
 		if variable := extractPathAssignmentVariable(strings.TrimSpace(patternPart)); variable != "" {

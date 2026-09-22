@@ -427,6 +427,20 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	// Check for relationship pattern: (a)-[r:TYPE]->(b) or (a)<-[r]-(b)
+	matchComponents := splitTopLevelComma(matchPart)
+	if len(matchComponents) > 1 {
+		hasRelationshipComponent := false
+		for _, component := range matchComponents {
+			if containsRelExistencePattern(component) {
+				hasRelationshipComponent = true
+				break
+			}
+		}
+		if hasRelationshipComponent {
+			return e.executeMultiMatch(ctx, cypher)
+		}
+	}
+
 	if containsRelExistencePattern(matchPart) {
 		// Extract WHERE clause if present
 		var whereClause string

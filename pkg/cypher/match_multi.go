@@ -351,6 +351,16 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 
 	// Split MATCH clauses
 	matchClauses := splitMatchClauses(cypher, whereIdx, returnIdx)
+	components := make([]string, 0, len(matchClauses))
+	for _, clause := range matchClauses {
+		for _, component := range splitTopLevelComma(clause) {
+			component = strings.TrimSpace(component)
+			if component != "" {
+				components = append(components, component)
+			}
+		}
+	}
+	matchClauses = components
 	if len(matchClauses) < 2 {
 		return nil, localizedError(localization.CypherTransactionsMultipleMatchExpected(), nil)
 	}

@@ -146,16 +146,18 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 			inner = strings.TrimSpace(inner[:varLengthStart] + inner[varLengthEnd:])
 		}
 
+		// Property maps are valid with or without a relationship type, e.g.
+		// [r {name: 'value'}] and [r:TYPE {name: 'value'}]. Remove the map
+		// before interpreting the remaining declaration as variable/type text.
+		if propsIdx := strings.Index(inner, "{"); propsIdx >= 0 {
+			result.Properties = e.parseProperties(ctx, inner[propsIdx:])
+			inner = strings.TrimSpace(inner[:propsIdx])
+		}
+
 		// Parse variable and types: r:TYPE|OTHER
 		if colonIdx := strings.Index(inner, ":"); colonIdx >= 0 {
 			result.Variable = strings.TrimSpace(inner[:colonIdx])
 			typesPart := inner[colonIdx+1:]
-
-			// Check for properties
-			if propsIdx := strings.Index(typesPart, "{"); propsIdx >= 0 {
-				result.Properties = e.parseProperties(ctx, typesPart[propsIdx:])
-				typesPart = typesPart[:propsIdx]
-			}
 
 			// Split by | for multiple types
 			for _, t := range strings.Split(typesPart, "|") {
@@ -1133,6 +1135,9 @@ func normalizeAnonymousTraversalRelationships(pattern string) string {
 			continue
 		}
 		switch {
+		case strings.HasPrefix(pattern[index:], "<-->"):
+			normalized.WriteString("-[]-")
+			index += len("<-->")
 		case strings.HasPrefix(pattern[index:], "-->"):
 			normalized.WriteString("-[]->")
 			index += len("-->")
@@ -1740,6 +1745,9 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 
 			// Join paths: combine current path with each segment path
 			for _, segPath := range segPaths {
+				if pathResultsReuseRelationship(path, segPath) {
+					continue
+				}
 				// Create extended path
 				extended := PathResult{
 					Nodes:         make([]*storage.Node, 0, len(path.Nodes)+len(segPath.Nodes)-1),
@@ -1767,6 +1775,17 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 	}
 
 	return currentPaths
+}
+
+func pathResultsReuseRelationship(left, right PathResult) bool {
+	for _, leftRelationship := range left.Relationships {
+		for _, rightRelationship := range right.Relationships {
+			if leftRelationship != nil && rightRelationship != nil && leftRelationship.ID == rightRelationship.ID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // traverseFromNode traverses from a specific node rather than finding start nodes by label
