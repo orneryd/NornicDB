@@ -179,12 +179,34 @@ func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSem
 			if sourceKind, found := input[source]; found {
 				kind = sourceKind
 			}
+		} else if inferred, ok := coalesceSemanticKind(expression, input); ok {
+			kind = inferred
 		} else if relationshipListLiteral(expression, input) {
 			kind = matchBindingRelationshipList
 		}
 		output[normalizeProjectionColumnName(name)] = kind
 	}
 	return output
+}
+
+func coalesceSemanticKind(expression string, scope matchSemanticScope) (matchBindingKind, bool) {
+	name, inner, ok := parseFunctionCallWS(expression)
+	if !ok || !strings.EqualFold(name, "coalesce") {
+		return matchBindingUnknown, false
+	}
+	kind := matchBindingUnknown
+	for _, argument := range splitTopLevelComma(inner) {
+		variable := simpleSemanticIdentifier(argument)
+		argumentKind, found := scope[variable]
+		if variable == "" || !found || argumentKind == matchBindingUnknown {
+			return matchBindingUnknown, false
+		}
+		if kind != matchBindingUnknown && kind != argumentKind {
+			return matchBindingUnknown, false
+		}
+		kind = argumentKind
+	}
+	return kind, kind != matchBindingUnknown
 }
 
 func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {

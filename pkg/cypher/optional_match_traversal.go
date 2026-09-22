@@ -110,7 +110,7 @@ func extractRelationshipVariables(matchClause string) []string {
 			next++
 		}
 		if next < len(matchClause) &&
-			(matchClause[next] == ':' || matchClause[next] == ']' || matchClause[next] == '*') {
+			(matchClause[next] == ':' || matchClause[next] == ']' || matchClause[next] == '*' || matchClause[next] == '{') {
 			vars = append(vars, name)
 		}
 	}
@@ -122,6 +122,7 @@ func extractRelationshipVariables(matchClause string) []string {
 // direction. It returns an error for patterns without two node endpoints.
 func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, pattern string) (optionalClauseEndpoints, error) {
 	eps := optionalClauseEndpoints{direction: "both"}
+	pattern = normalizeAnonymousTraversalRelationships(pattern)
 	if strings.Contains(pattern, "<-") {
 		eps.direction = "in"
 	} else if strings.Contains(pattern, "->") {

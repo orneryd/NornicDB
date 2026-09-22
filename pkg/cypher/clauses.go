@@ -3462,18 +3462,18 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 	hasTraversal := strings.Contains(nodePatternStr, "->") ||
 		strings.Contains(nodePatternStr, "<-") ||
 		strings.Contains(nodePatternStr, "-[")
-	optionalNodeGroups, optionalBrackets := scanOptionalPatternShape(optMatchPattern)
+	normalizedOptionalPattern := normalizeAnonymousTraversalRelationships(optMatchPattern)
+	optionalNodeGroups, optionalBrackets := scanOptionalPatternShape(normalizedOptionalPattern)
 	hasChainedOptional := findKeywordIndex(optMatchPattern, "OPTIONAL MATCH") > 0
 	requiresBoundEndExpansion := false
 	if optionalNodeGroups == 2 && optionalBrackets == 1 && withIdx < 0 {
-		if endpoints, err := e.parseOptionalClauseEndpoints(ctx, optMatchPattern); err == nil {
+		if endpoints, err := e.parseOptionalClauseEndpoints(ctx, normalizedOptionalPattern); err == nil {
 			initialVars := make(map[string]struct{})
 			for _, variable := range extractNodeVariables(nodePatternStr) {
 				initialVars[variable] = struct{}{}
 			}
-			_, sourceBound := initialVars[endpoints.source.variable]
 			_, targetBound := initialVars[endpoints.target.variable]
-			requiresBoundEndExpansion = targetBound && !sourceBound
+			requiresBoundEndExpansion = targetBound
 		}
 	}
 	if hasTraversal || hasChainedOptional || optionalNodeGroups > 2 || requiresBoundEndExpansion {
@@ -3765,7 +3765,7 @@ func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern s
 		direction:   "out",
 		targetProps: make(map[string]interface{}),
 	}
-	pattern = strings.TrimSpace(pattern)
+	pattern = normalizeAnonymousTraversalRelationships(strings.TrimSpace(pattern))
 
 	// Check direction
 	if strings.Contains(pattern, "<-") {
@@ -3848,9 +3848,7 @@ func (e *StorageExecutor) findRelatedNodes(sourceNode *storage.Node, pattern opt
 		}
 		edges = inEdges
 	case "both":
-		outEdges, _ := e.storage.GetOutgoingEdges(sourceNode.ID)
-		inEdges, _ := e.storage.GetIncomingEdges(sourceNode.ID)
-		edges = append(outEdges, inEdges...)
+		edges, _ = undirectedIncidentEdges(e.storage, sourceNode.ID)
 	}
 
 	for _, edge := range edges {
@@ -3907,7 +3905,6 @@ func (e *StorageExecutor) findOptionalRelatedNodes(ctx context.Context, sourceNo
 		}
 		paths := e.traverseFromNode(ctx, sourceNode, traversal)
 		results := make([]optionalRelResult, 0, len(paths))
-		seen := make(map[string]bool)
 		for _, path := range paths {
 			if len(path.Nodes) == 0 {
 				continue
@@ -3917,14 +3914,7 @@ func (e *StorageExecutor) findOptionalRelatedNodes(ctx context.Context, sourceNo
 			if len(path.Relationships) > 0 {
 				edge = path.Relationships[0]
 			}
-			key := string(node.ID)
-			if edge != nil {
-				key += ":" + string(edge.ID)
-			}
-			if !seen[key] {
-				seen[key] = true
-				results = append(results, optionalRelResult{node: node, edge: edge})
-			}
+			results = append(results, optionalRelResult{node: node, edge: edge})
 		}
 		return results
 	}

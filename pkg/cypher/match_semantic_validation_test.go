@@ -46,6 +46,14 @@ func TestMatchAllowsRepeatedNodeBindings(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestMatchAllowsNodeBindingProjectedThroughCoalesce(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_coalesced_node"))
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "OPTIONAL MATCH (left) OPTIONAL MATCH (right) WITH coalesce(left, right) AS node MATCH (node)-->(target) RETURN target", nil)
+	require.NoError(t, err)
+}
+
 func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_self_relationship")
 	exec := NewStorageExecutor(store)

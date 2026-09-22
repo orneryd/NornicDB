@@ -276,7 +276,7 @@ func TestMatchOptionalMatchWithCase(t *testing.T) {
 
 		// 3 chunk connections (file1->chunk1, file1->chunk2, file2->chunk3)
 		chunkConnections := result.Rows[0][1]
-		assert.Equal(t, float64(3), chunkConnections)
+		assert.Equal(t, int64(3), chunkConnections)
 	})
 }
 

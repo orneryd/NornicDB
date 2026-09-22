@@ -70,14 +70,6 @@ type pipelineRow map[string]interface{}
 // CALL subquery, etc.) causes a false return so the
 // caller can select a specialized physical plan.
 func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
-	if optionalIdx := findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH"); optionalIdx >= 0 {
-		if !startsWithKeywordFold(strings.TrimSpace(cypher), "OPTIONAL MATCH") {
-			withIdx := findKeywordIndex(cypher, "WITH")
-			if withIdx < 0 || findMultiWordKeywordIndex(cypher[withIdx+len("WITH"):], "OPTIONAL", "MATCH") < 0 {
-				return nil, false
-			}
-		}
-	}
 	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
 		return nil, false
@@ -1019,7 +1011,18 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 	// normal MATCH executor with a synthetic RETURN of the clause bindings.
 	var out []pipelineRow
 	store := e.getStorage(ctx)
+	patternVariables := append(extractNodeVariables(clause), extractRelationshipVariables(clause)...)
 	for _, row := range rows {
+		hasNullPatternBinding := false
+		for _, variable := range patternVariables {
+			if value, bound := row[variable]; bound && value == nil {
+				hasNullPatternBinding = true
+				break
+			}
+		}
+		if hasNullPatternBinding {
+			continue
+		}
 		substituted := clause
 		var matchPieces []string
 		for name, val := range row {
