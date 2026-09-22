@@ -330,6 +330,92 @@ func TestDeleteIgnoresNullOptionalPath(t *testing.T) {
 	requireSingleValue(t, readback, int64(0))
 }
 
+func TestMergeReturnPreservesImplicitExpressionColumnNames(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	counted, err := exec.Execute(ctx, "MERGE (node) RETURN count(*) AS count", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"count"}, counted.Columns)
+	requireSingleValue(t, counted, int64(1))
+
+	property, err := exec.Execute(ctx, "MERGE (item:Item {value: 42}) RETURN item.value", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"item.value"}, property.Columns)
+	requireSingleValue(t, property, int64(42))
+}
+
+func TestMergeRejectsInvalidPatternBindingsAndValues(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:Existing)", nil)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		query  string
+		code   string
+		detail string
+	}{
+		{
+			name:   "already bound node",
+			query:  "MATCH (node:Existing) MERGE (node)",
+			code:   "Neo.ClientError.Statement.SyntaxError",
+			detail: "VariableAlreadyBound",
+		},
+		{
+			name:   "parameter map predicate",
+			query:  "MERGE (node $properties) RETURN node",
+			code:   "Neo.ClientError.Statement.SyntaxError",
+			detail: "InvalidParameterUse",
+		},
+		{
+			name:   "null match property",
+			query:  "MERGE (:Item {value: null})",
+			code:   "Neo.ClientError.Statement.SemanticError",
+			detail: "MergeReadOwnWrites",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := exec.Execute(ctx, test.query, map[string]interface{}{"properties": map[string]interface{}{"value": 1}})
+			require.Error(t, err)
+			var semanticError *SemanticError
+			require.ErrorAs(t, err, &semanticError)
+			require.Equal(t, test.code, semanticError.Code)
+			require.Equal(t, test.detail, semanticError.Detail)
+		})
+	}
+}
+
+func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
+	exec, _ := newConvergenceExecutor(t)
+
+	require.NoError(t, exec.validateMergeSemanticScopes("MATCH (source), (target) MERGE (source)-[relationship:LINK]->(target)"))
+	require.NoError(t, exec.validateMergeSemanticScopes("MERGE (node:Item {value: $value})"))
+	require.NoError(t, exec.validateMergeSemanticScopes("RETURN 1"))
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{name: "decorated bound endpoint", query: "MATCH (source) MERGE (source:Extra)-[:LINK]->()"},
+		{name: "bound relationship", query: "MATCH ()-[relationship:LINK]->() MERGE ()-[relationship:LINK]->()"},
+		{name: "projected binding", query: "MATCH (source) WITH source AS projected MERGE (projected)"},
+		{name: "unwind binding", query: "UNWIND [1] AS value MERGE (value)"},
+		{name: "created binding", query: "CREATE (node) MERGE (node)"},
+		{name: "path binding", query: "MATCH path = ()-[:LINK]->() MERGE path = (:Other)"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := exec.validateMergeSemanticScopes(test.query)
+			require.Error(t, err)
+			var semanticError *SemanticError
+			require.ErrorAs(t, err, &semanticError)
+			require.Equal(t, "VariableAlreadyBound", semanticError.Detail)
+		})
+	}
+}
+
 func TestMutationExpressionsAndClauseCompositionInExplicitTransactions(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	run := func(query string, params map[string]interface{}) *ExecuteResult {

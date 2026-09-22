@@ -1010,7 +1010,7 @@ func TestParseReturnClauseBasic(t *testing.T) {
 			name:         "return property without alias",
 			returnClause: "n.age",
 			varName:      "n",
-			expectedCols: []string{"age"},
+			expectedCols: []string{"n.age"},
 			expectedValFunc: func(vals []interface{}) bool {
 				return len(vals) == 1 && vals[0] == float64(30)
 			},
@@ -1112,8 +1112,8 @@ func TestExpressionToAlias(t *testing.T) {
 		expr     string
 		expected string
 	}{
-		{"property access", "n.name", "name"},
-		{"nested property", "n.address.city", "city"},
+		{"property access", "n.name", "n.name"},
+		{"nested property", "n.address.city", "n.address.city"},
 		{"function call", "id(n)", "id(n)"},
 		{"simple variable", "n", "n"},
 		{"literal", "'hello'", "'hello'"},

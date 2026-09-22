@@ -1309,12 +1309,12 @@ func TestExecuteMerge_UnsubstitutedParamAndFallbackPatternBranches(t *testing.T)
 	require.Len(t, res.Rows, 1)
 	require.Len(t, res.Rows[0], 1)
 
-	// Fallback parse branch for degenerate MERGE pattern.
-	fallback, err := exec.executeMerge(ctx, "MERGE () RETURN n")
+	// An anonymous MERGE pattern is valid and can feed an aggregate projection.
+	fallback, err := exec.executeMerge(ctx, "MERGE () RETURN count(*) AS n")
 	require.NoError(t, err)
 	require.Equal(t, []string{"n"}, fallback.Columns)
 	require.Len(t, fallback.Rows, 1)
-	require.NotNil(t, fallback.Rows[0][0])
+	require.Equal(t, int64(1), fallback.Rows[0][0])
 }
 
 func TestExecuteMerge_RecoversFromDuplicateCreateForParameterizedRepositoryMerge(t *testing.T) {

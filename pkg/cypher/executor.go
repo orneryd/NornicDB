@@ -305,9 +305,10 @@ type StorageExecutor struct {
 	txContext *TransactionContext // Active transaction context
 	cache     *SmartQueryCache    // Query result cache with label-aware invalidation
 	// Query cache policy is immutable and scoped to this executor's database.
-	queryCacheMaxEntries int
-	queryCacheTTL        time.Duration
-	planCache            *QueryPlanCache // Parsed query plan cache
+	queryCacheMaxEntries         int
+	queryCacheTTL                time.Duration
+	planCache                    *QueryPlanCache // Parsed query plan cache
+	mergeSemanticValidationCache *mergeSemanticValidationCache
 	// fabricPlanCache caches planned Fabric fragment trees (query + sessionDB).
 	fabricPlanCache *fabric.PlanCache
 	analyzer        *QueryAnalyzer // Query analysis with AST caching
@@ -503,6 +504,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		queryCacheMaxEntries:           e.queryCacheMaxEntries,
 		queryCacheTTL:                  e.queryCacheTTL,
 		planCache:                      e.planCache,
+		mergeSemanticValidationCache:   e.mergeSemanticValidationCache,
 		fabricPlanCache:                e.fabricPlanCache,
 		analyzer:                       e.analyzer,
 		nodeLookupCache:                lookupCache,
@@ -684,7 +686,8 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 		cache:                          queryCache,
 		queryCacheMaxEntries:           maxEntries,
 		queryCacheTTL:                  queryCacheTTL,
-		planCache:                      NewQueryPlanCache(500),   // Cache 500 parsed query plans
+		planCache:                      NewQueryPlanCache(500), // Cache 500 parsed query plans
+		mergeSemanticValidationCache:   newMergeSemanticValidationCache(500),
 		fabricPlanCache:                fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
 		analyzer:                       NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
 		nodeLookupCache:                make(map[string]*storage.Node, 1000),
@@ -1437,6 +1440,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 	if err := e.validateCreateSemanticScopes(cypher); err != nil {
+		return nil, err
+	}
+	if err := e.validateMergeSemanticScopes(cypher); err != nil {
 		return nil, err
 	}
 	if err := e.validateSetSemanticScopes(cypher); err != nil {

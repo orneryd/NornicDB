@@ -576,7 +576,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 		err = nil // Continue with partial info
 	}
 
-	if err != nil || (len(labels) == 0 && len(matchProps) == 0) {
+	if err != nil {
 		// If we truly can't parse, create a basic node
 		node := &storage.Node{
 			ID:         storage.NodeID(e.generateID()),
@@ -2641,21 +2641,10 @@ func (e *StorageExecutor) splitReturnExpressions(clause string) []string {
 	return result
 }
 
-// expressionToAlias converts an expression to a column alias.
+// expressionToAlias returns Cypher's implicit result-column name. Without an
+// explicit AS clause, the source expression itself is the column name.
 func (e *StorageExecutor) expressionToAlias(expr string) string {
-	expr = strings.TrimSpace(expr)
-
-	// Function call: id(n) -> id(n)
-	if strings.Contains(expr, "(") {
-		return expr
-	}
-
-	// Property access: n.prop -> prop
-	if dotIdx := strings.LastIndex(expr, "."); dotIdx > 0 {
-		return expr[dotIdx+1:]
-	}
-
-	return expr
+	return strings.TrimSpace(expr)
 }
 
 // executeMergeWithChain handles MERGE ... WITH ... MATCH ... MERGE chain patterns.
