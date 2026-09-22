@@ -2249,6 +2249,11 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 	}
 	modifiers := strings.TrimSpace(body[modifierStart:])
 	body = strings.TrimSpace(body[:modifierStart])
+	returnDistinct := false
+	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
+		returnDistinct = true
+		body = strings.TrimSpace(body[len("DISTINCT "):])
+	}
 	if body == "*" {
 		columns := pipelineWildcardColumns(rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}
@@ -2258,6 +2263,9 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 				projected[index] = row[column]
 			}
 			result.Rows = append(result.Rows, projected)
+		}
+		if returnDistinct {
+			result.Rows = deduplicatePipelineResultRows(result.Rows)
 		}
 		result, err := e.applyResultModifiers(result, modifiers)
 		return result, err == nil
@@ -2368,6 +2376,9 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 			}
 			result.Rows = append(result.Rows, outRow)
 		}
+		if returnDistinct {
+			result.Rows = deduplicatePipelineResultRows(result.Rows)
+		}
 		result, err := e.applyResultModifiers(result, modifiers)
 		return result, err == nil
 	}
@@ -2383,8 +2394,34 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 		}
 		result.Rows = append(result.Rows, outRow)
 	}
+	if returnDistinct {
+		result.Rows = deduplicatePipelineResultRows(result.Rows)
+	}
 	result, err := e.applyResultModifiers(result, modifiers)
 	return result, err == nil
+}
+
+func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {
+	seen := make(map[string]struct{}, len(rows))
+	unique := make([][]interface{}, 0, len(rows))
+	keys := make([]string, 0)
+	for _, row := range rows {
+		if cap(keys) < len(row) {
+			keys = make([]string, len(row))
+		} else {
+			keys = keys[:len(row)]
+		}
+		for index, value := range row {
+			keys[index] = pipelineValueKey(value)
+		}
+		key := strings.Join(keys, "\x1f")
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, row)
+	}
+	return unique
 }
 
 func pipelineWildcardColumns(rows []pipelineRow) []string {

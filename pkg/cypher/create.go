@@ -72,6 +72,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 		}
 
 		nodePattern := e.parseNodePattern(ctx, nodePatternStr)
+		e.resolveCreatePropertyReferences(ctx, nodePatternStr, nodePattern.properties, createdNodes, createdEdges)
 
 		// Check for empty label (e.g., "n:" or ":") - only check before properties
 		patternBeforeProps := nodePatternStr
@@ -362,6 +363,48 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 	}
 
 	return result, nil
+}
+
+func (e *StorageExecutor) resolveCreatePropertyReferences(
+	ctx context.Context,
+	pattern string,
+	properties map[string]interface{},
+	nodes map[string]*storage.Node,
+	relationships map[string]*storage.Edge,
+) {
+	open := strings.IndexByte(pattern, '{')
+	if open < 0 {
+		return
+	}
+	close := e.findMatchingBrace(pattern, open)
+	if close < 0 {
+		return
+	}
+	for _, pair := range e.splitPropertyPairs(pattern[open+1 : close]) {
+		separator := findTopLevelMapKeyValueSeparator(pair)
+		if separator <= 0 {
+			continue
+		}
+		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+		expression := strings.TrimSpace(pair[separator+1:])
+		if expression == "" || isWholeCypherQuotedString(expression) {
+			continue
+		}
+		dot := strings.IndexByte(expression, '.')
+		if dot <= 0 {
+			continue
+		}
+		root := strings.TrimSpace(expression[:dot])
+		if nodes[root] == nil && relationships[root] == nil {
+			continue
+		}
+		value := e.evaluateExpressionWithContext(ctx, expression, nodes, relationships)
+		if value == nil {
+			delete(properties, key)
+			continue
+		}
+		properties[key] = normalizePropValue(value)
+	}
 }
 
 func (e *StorageExecutor) validateCreatePatternPropertyMap(ctx context.Context, pattern string) error {
