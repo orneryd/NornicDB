@@ -910,6 +910,9 @@ func (e *StorageExecutor) tryFastRelationshipCount(matches *TraversalMatch, item
 	if argUpper != "*" && !strings.EqualFold(strings.TrimSpace(arg), matches.Relationship.Variable) {
 		return 0, false, nil
 	}
+	if matches.Relationship.Direction == "both" {
+		return e.countUndirectedRelationshipMatches(matches.Relationship.Types)
+	}
 
 	// No type filter: use storage.EdgeCount() (O(1) for most engines).
 	if len(matches.Relationship.Types) == 0 {
@@ -928,6 +931,50 @@ func (e *StorageExecutor) tryFastRelationshipCount(matches *TraversalMatch, item
 		total += int64(len(edges))
 	}
 	return total, true, nil
+}
+
+// countUndirectedRelationshipMatches returns Cypher pattern cardinality rather
+// than physical edge cardinality. A non-loop relationship matches once from
+// each endpoint, while a self-loop has only one distinct orientation.
+func (e *StorageExecutor) countUndirectedRelationshipMatches(types []string) (int64, bool, error) {
+	var candidates []*storage.Edge
+	if len(types) == 0 {
+		edges, err := e.storage.AllEdges()
+		if err != nil {
+			return 0, true, err
+		}
+		candidates = edges
+	} else {
+		seen := make(map[storage.EdgeID]struct{})
+		for _, relationshipType := range types {
+			edges, err := e.storage.GetEdgesByType(relationshipType)
+			if err != nil {
+				return 0, true, err
+			}
+			for _, edge := range edges {
+				if edge == nil {
+					continue
+				}
+				if _, exists := seen[edge.ID]; exists {
+					continue
+				}
+				seen[edge.ID] = struct{}{}
+				candidates = append(candidates, edge)
+			}
+		}
+	}
+
+	var count int64
+	for _, edge := range candidates {
+		if edge == nil {
+			continue
+		}
+		count++
+		if edge.StartNode != edge.EndNode {
+			count++
+		}
+	}
+	return count, true, nil
 }
 
 // isLengthPathExpr checks if an expression is length(path) for some path variable

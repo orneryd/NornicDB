@@ -75,6 +75,23 @@ func TestTryFastRelationshipAggregations_EarlyGuards(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestFastUndirectedRelationshipCountUsesPatternCardinality(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "undirected_count")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CREATE (:A)-[:R]->(:B), (loop:A)-[:R]->(loop)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH ()--() RETURN count(*) AS matches", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
+
+	result, err = exec.Execute(ctx, "MATCH ()-[r:R]-() RETURN count(r) AS matches", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
+}
+
 func TestTryFastSingleHopAgg_AggregateVariants(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
