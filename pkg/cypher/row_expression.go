@@ -547,14 +547,19 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
 		return withWhereNodeHasAllLabels(values[variable], labels)
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, false); ok {
-		return e.evaluateRowPredicate(ctx, left, values) && e.evaluateRowPredicate(ctx, right, values)
-	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, false); ok {
 		return e.evaluateRowPredicate(ctx, left, values) || e.evaluateRowPredicate(ctx, right, values)
 	}
+	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, false); ok {
+		return e.evaluateRowPredicate(ctx, left, values) && e.evaluateRowPredicate(ctx, right, values)
+	}
 	if hasPrefixFoldASCII(expression, "NOT ") {
 		return !e.evaluateRowPredicate(ctx, strings.TrimSpace(expression[4:]), values)
+	}
+	if nodeCtx, _ := withWhereValueContext(values); len(nodeCtx) > 0 {
+		if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, expression, nodeCtx); recognized {
+			return matches
+		}
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " STARTS WITH ", true, true); ok {
 		return e.evaluateRowStringPredicate(left, right, values, strings.HasPrefix)

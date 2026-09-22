@@ -68,6 +68,35 @@ func TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors(t *testing.
 	}
 }
 
+func TestWithWhereFiltersWithDisjunctiveRelationshipPatterns(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, `
+		CREATE (first:TheLabel {id: 0}), (second:TheLabel {id: 1}), (third:TheLabel {id: 2})
+		CREATE (first)-[:T]->(second), (second)-[:T]->(third)
+	`, nil)
+	if err != nil {
+		t.Fatalf("create graph: %v", err)
+	}
+
+	result, err := exec.Execute(ctx, `
+		MATCH (source), (target)
+		WITH source, target
+		WHERE source.id = 0
+		  AND (source)-[:T]->(target:TheLabel)
+		  OR (source)-[:T*]->(target:MissingLabel)
+		RETURN DISTINCT target.id
+	`, nil)
+	if err != nil {
+		t.Fatalf("execute WITH pattern predicate query: %v", err)
+	}
+	if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != int64(1) {
+		t.Fatalf("expected only the directly related labeled target, got %#v", result.Rows)
+	}
+}
+
 func BenchmarkBoundOneHopRelationshipPatternPredicate(b *testing.B) {
 	baseStore := storage.NewMemoryEngine()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "benchmark"))

@@ -71,6 +71,7 @@
     "clauses/with-where/WithWhere1.feature",
     "clauses/with-where/WithWhere2.feature",
     "clauses/with-where/WithWhere3.feature",
+    "clauses/with-where/WithWhere4.feature",
     "clauses/with-where/WithWhere5.feature",
     "clauses/with-where/WithWhere6.feature",
     "clauses/with-where/WithWhere7.feature",
@@ -21146,11 +21147,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:a84f0d806ae42a0320442ef73780efa4ebfeb496466f7f33d3232a3f103d5f9b",
-      "gap_id": "tck-gap-d682add4a880",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "clauses/with-where"
+      "status": "pass"
     },
     {
       "feature_path": "clauses/with-where/WithWhere4.feature",
@@ -21158,11 +21155,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:a84f0d806ae42a0320442ef73780efa4ebfeb496466f7f33d3232a3f103d5f9b",
-      "gap_id": "tck-gap-f3a45ea73a1f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "clauses/with-where"
+      "status": "pass"
     },
     {
       "feature_path": "clauses/with-where/WithWhere5.feature",
