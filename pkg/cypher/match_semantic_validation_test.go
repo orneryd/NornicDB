@@ -28,7 +28,6 @@ func TestMatchRejectsVariablesBoundToDifferentEntityKinds(t *testing.T) {
 		"MATCH ()-[r]-() MATCH (r) RETURN r",
 		"MATCH r = ()-[]->() MATCH (r) RETURN r",
 		"MATCH ()-[r]-(), (r) RETURN r",
-		"MATCH r = ()-[]-(), (r) RETURN r",
 		"WITH true AS n MATCH (n) RETURN n",
 		"WITH [10] AS n MATCH (n) RETURN n",
 	}
@@ -73,6 +72,21 @@ func TestMatchRejectsRelationshipReuseWithinOnePattern(t *testing.T) {
 
 	_, err := exec.Execute(ctx, "MATCH (a)-[r]->()-[r]->(a) RETURN r", nil)
 	requireMatchSemanticDetail(t, err, "RelationshipUniquenessViolation")
+}
+
+func TestMatchRejectsPathVariableAlreadyBoundByAnotherEntity(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_path_binding_conflict"))
+	ctx := context.Background()
+
+	for _, query := range []string{
+		"MATCH (path) MATCH path = ()-[]-() RETURN path",
+		"MATCH ()-[path]-() MATCH path = ()-[]-() RETURN path",
+		"MATCH path = ()-[]-(), (path) RETURN path",
+		"WITH true AS path MATCH path = ()-[]-() RETURN path",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		requireMatchSemanticDetail(t, err, "VariableAlreadyBound")
+	}
 }
 
 func TestUndirectedMatchFiltersUntypedRelationshipProperties(t *testing.T) {

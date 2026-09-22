@@ -285,16 +285,41 @@ func relationshipFromBolt(relationship neo4j.Relationship) RelationshipValue {
 }
 
 func pathFromBolt(path neo4j.Path) PathValue {
-	result := PathValue{Nodes: make([]NodeValue, len(path.Nodes)), Segments: make([]PathSegment, len(path.Relationships))}
-	for i, node := range path.Nodes {
-		result.Nodes[i] = nodeFromBolt(node)
+	result := PathValue{Segments: make([]PathSegment, 0, len(path.Relationships))}
+	if len(path.Nodes) == 0 {
+		return result
 	}
-	for i, relationship := range path.Relationships {
+
+	nodesByIdentity := make(map[string]NodeValue, len(path.Nodes))
+	for _, node := range path.Nodes {
+		converted := nodeFromBolt(node)
+		nodesByIdentity[converted.Identity] = converted
+	}
+	current := nodeFromBolt(path.Nodes[0])
+	result.Nodes = append(result.Nodes, current)
+	for _, relationship := range path.Relationships {
 		converted := relationshipFromBolt(relationship)
-		result.Segments[i] = PathSegment{
-			Relationship: converted,
-			Forward:      converted.StartIdentity == result.Nodes[i].Identity,
+		forward := false
+		var nextIdentity string
+		switch {
+		case converted.StartIdentity == current.Identity:
+			forward = true
+			nextIdentity = converted.EndIdentity
+		case converted.EndIdentity == current.Identity:
+			nextIdentity = converted.StartIdentity
+		default:
+			return result
 		}
+		next, ok := nodesByIdentity[nextIdentity]
+		if !ok {
+			break
+		}
+		result.Segments = append(result.Segments, PathSegment{
+			Relationship: converted,
+			Forward:      forward,
+		})
+		result.Nodes = append(result.Nodes, next)
+		current = next
 	}
 	return result
 }

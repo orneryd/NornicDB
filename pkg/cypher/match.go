@@ -387,6 +387,10 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		matchPart = cypher[5:returnIdx]
 	}
 	matchPart = strings.TrimSpace(matchPart)
+	pathVariable := extractPathAssignmentVariable(matchPart)
+	if pathVariable != "" {
+		matchPart = strings.TrimSpace(matchPart[strings.Index(matchPart, "=")+1:])
+	}
 
 	// A relationship pattern embedded after a literal "OPTIONAL MATCH" keyword
 	// (e.g. matchPart == "(n) OPTIONAL MATCH (n)-[r:TYPE]->(m)") must be routed
@@ -471,19 +475,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			}
 		}
 
-		// Extract path variable if pattern has assignment: path = (a)-[r]-(b)
-		pathVariable := ""
 		patternForParsing := matchPart
-		if eqIdx := strings.Index(matchPart, "="); eqIdx > 0 {
-			// Check if this is a path assignment (not a property comparison)
-			beforeEq := strings.TrimSpace(matchPart[:eqIdx])
-			afterEq := strings.TrimSpace(matchPart[eqIdx+1:])
-			// Path variable should be a simple identifier, and after = should start with (
-			if !strings.Contains(beforeEq, " ") && !strings.Contains(beforeEq, "(") && strings.HasPrefix(afterEq, "(") {
-				pathVariable = beforeEq
-				patternForParsing = afterEq
-			}
-		}
 
 		earlyLimit := -1
 		if !hasAggregation && !distinct && !hasOrderBy && skip == 0 && limit >= 0 {
@@ -932,6 +924,16 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		}
 
 		row := make([]interface{}, len(returnItems))
+		var namedPathContext PathContext
+		if pathVariable != "" {
+			path := PathResult{Nodes: []*storage.Node{node}}
+			pathMatch := &TraversalMatch{
+				StartNode:    nodePattern,
+				EndNode:      nodePattern,
+				PathVariable: pathVariable,
+			}
+			namedPathContext = e.buildPathContext(path, pathMatch)
+		}
 		for j, item := range returnItems {
 			// Check for COLLECT { } subquery
 			if hasSubqueryPattern(item.expr, collectSubqueryRe) {
@@ -941,6 +943,8 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 					return nil, localizedError(localization.CypherMatchingCollectSubqueryFailed(err), err)
 				}
 				row[j] = collected
+			} else if pathVariable != "" {
+				row[j] = e.evaluateExpressionWithPathContext(ctx, item.expr, namedPathContext)
 			} else {
 				row[j] = e.resolveReturnItem(ctx, item, nodePattern.variable, node)
 			}

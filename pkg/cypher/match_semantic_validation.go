@@ -116,6 +116,13 @@ func validateMatchClauseBindings(scope matchSemanticScope, clause string) error 
 	}
 	for _, patternPart := range splitTopLevelComma(pattern) {
 		if variable := extractPathAssignmentVariable(strings.TrimSpace(patternPart)); variable != "" {
+			if _, alreadyBound := scope[variable]; alreadyBound {
+				return newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"VariableAlreadyBound",
+					fmt.Sprintf("path variable %s is already bound", variable),
+				)
+			}
 			if err := bindMatchSemanticKind(scope, variable, matchBindingPath); err != nil {
 				return err
 			}

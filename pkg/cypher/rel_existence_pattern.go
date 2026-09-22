@@ -7,7 +7,8 @@ func containsRelExistencePattern(s string) bool {
 		// Covers "]->", "]-(", and the undirected bracketed "-[r]-" form.
 		return true
 	}
-	return strings.Contains(s, ")--(") || strings.Contains(s, ")-->(") || strings.Contains(s, ")<--(")
+	return strings.Contains(s, ")--(") || strings.Contains(s, ")-->(") ||
+		strings.Contains(s, ")<--(") || strings.Contains(s, ")<-->(")
 }
 
 func bareRelDirection(pattern, variable string) (incoming, outgoing, ok bool) {
