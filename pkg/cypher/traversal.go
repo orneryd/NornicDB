@@ -1900,9 +1900,7 @@ func (e *StorageExecutor) findPaths(
 	case "incoming":
 		edges, _ = e.storage.GetIncomingEdges(currentNode.ID)
 	case "both":
-		outgoing, _ := e.storage.GetOutgoingEdges(currentNode.ID)
-		incoming, _ := e.storage.GetIncomingEdges(currentNode.ID)
-		edges = append(outgoing, incoming...)
+		edges, _ = undirectedIncidentEdges(e.storage, currentNode.ID)
 	}
 
 	// Traverse each edge
@@ -2293,9 +2291,7 @@ func (e *StorageExecutor) allShortestPaths(ctx context.Context, startNode, endNo
 		case "incoming":
 			edges, _ = e.storage.GetIncomingEdges(current.node.ID)
 		default:
-			outgoing, _ := e.storage.GetOutgoingEdges(current.node.ID)
-			incoming, _ := e.storage.GetIncomingEdges(current.node.ID)
-			edges = append(outgoing, incoming...)
+			edges, _ = undirectedIncidentEdges(e.storage, current.node.ID)
 		}
 
 		for _, edge := range edges {

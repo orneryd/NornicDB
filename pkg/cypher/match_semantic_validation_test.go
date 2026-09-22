@@ -47,6 +47,26 @@ func TestMatchAllowsRepeatedNodeBindings(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_self_relationship")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	nodeID, err := store.CreateNode(&storage.Node{ID: "node"})
+	require.NoError(t, err)
+	require.NoError(t, store.CreateEdge(&storage.Edge{
+		ID:        "relationship",
+		Type:      "LOOP",
+		StartNode: nodeID,
+		EndNode:   nodeID,
+	}))
+
+	result, err := exec.Execute(ctx, "MATCH ()-[r]-() RETURN type(r) AS relationshipType", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"relationshipType"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"LOOP"}}, result.Rows)
+}
+
 func requireMatchSemanticDetail(t *testing.T, err error, detail string) {
 	t.Helper()
 	require.Error(t, err)

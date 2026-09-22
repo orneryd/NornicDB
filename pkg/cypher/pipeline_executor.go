@@ -642,15 +642,11 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	}
 	if detach {
 		for _, nodeID := range nodeIDs {
-			outgoing, err := store.GetOutgoingEdges(nodeID)
+			incident, err := undirectedIncidentEdges(store, nodeID)
 			if err != nil {
 				return nil, true, err
 			}
-			incoming, err := store.GetIncomingEdges(nodeID)
-			if err != nil {
-				return nil, true, err
-			}
-			for _, edge := range append(outgoing, incoming...) {
+			for _, edge := range incident {
 				deletedEdges[edge.ID] = struct{}{}
 			}
 		}

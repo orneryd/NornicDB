@@ -3273,15 +3273,7 @@ func (e *StorageExecutor) callTailTraversalEdges(current *storage.Node, match *T
 	case "incoming":
 		return e.storage.GetIncomingEdges(current.ID)
 	default:
-		outgoing, err := e.storage.GetOutgoingEdges(current.ID)
-		if err != nil {
-			return nil, err
-		}
-		incoming, err := e.storage.GetIncomingEdges(current.ID)
-		if err != nil {
-			return nil, err
-		}
-		return append(outgoing, incoming...), nil
+		return undirectedIncidentEdges(e.storage, current.ID)
 	}
 }
 
@@ -3353,15 +3345,11 @@ func (e *StorageExecutor) maxDepthForTraversalMatchFromNode(
 		}
 		edges = incoming
 	default:
-		outgoing, err := e.storage.GetOutgoingEdges(current.ID)
+		incident, err := undirectedIncidentEdges(e.storage, current.ID)
 		if err != nil {
 			return err
 		}
-		incoming, err := e.storage.GetIncomingEdges(current.ID)
-		if err != nil {
-			return err
-		}
-		edges = append(outgoing, incoming...)
+		edges = incident
 	}
 
 	for _, edge := range edges {
