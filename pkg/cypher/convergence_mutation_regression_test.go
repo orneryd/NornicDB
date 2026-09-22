@@ -373,6 +373,24 @@ func TestMergeRejectsInvalidPatternBindingsAndValues(t *testing.T) {
 			code:   "Neo.ClientError.Statement.SemanticError",
 			detail: "MergeReadOwnWrites",
 		},
+		{
+			name:   "relationship without type",
+			query:  "MATCH (source), (target) MERGE (source)-->(target)",
+			code:   "Neo.ClientError.Statement.SyntaxError",
+			detail: "NoSingleRelationshipType",
+		},
+		{
+			name:   "relationship with multiple types",
+			query:  "MATCH (source), (target) MERGE (source)-[:FIRST|SECOND]->(target)",
+			code:   "Neo.ClientError.Statement.SyntaxError",
+			detail: "NoSingleRelationshipType",
+		},
+		{
+			name:   "variable length relationship",
+			query:  "MATCH (source), (target) MERGE (source)-[:LINK*1..2]->(target)",
+			code:   "Neo.ClientError.Statement.SyntaxError",
+			detail: "CreatingVarLength",
+		},
 	}
 
 	for _, test := range tests {
@@ -399,7 +417,7 @@ func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
 		query string
 	}{
 		{name: "decorated bound endpoint", query: "MATCH (source) MERGE (source:Extra)-[:LINK]->()"},
-		{name: "bound relationship", query: "MATCH ()-[relationship:LINK]->() MERGE ()-[relationship:LINK]->()"},
+		{name: "bound relationship", query: "MATCH ()-[relationship:LINK]->() MERGE ()-[relationship]->()"},
 		{name: "projected binding", query: "MATCH (source) WITH source AS projected MERGE (projected)"},
 		{name: "unwind binding", query: "UNWIND [1] AS value MERGE (value)"},
 		{name: "created binding", query: "CREATE (node) MERGE (node)"},

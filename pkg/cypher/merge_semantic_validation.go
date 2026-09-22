@@ -116,7 +116,19 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		)
 	}
 
-	relationshipPattern := containsOutsideStrings(pattern, "-[")
+	relationshipPattern := containsOutsideStrings(pattern, "->") ||
+		containsOutsideStrings(pattern, "<-") || containsOutsideStrings(pattern, "-[")
+	relationshipVariables := extractRelationshipVariables(pattern)
+	for _, variable := range relationshipVariables {
+		if scope.contains(variable) {
+			return mergeVariableAlreadyBoundError(variable)
+		}
+	}
+	if relationshipPattern {
+		if err := validateMergeRelationshipShape(pattern); err != nil {
+			return err
+		}
+	}
 	for _, nodePattern := range e.splitNodePatterns(pattern) {
 		variable := createNodePatternVariable(nodePattern)
 		if variable == "" {
@@ -130,10 +142,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		}
 		scope.bind(variable)
 	}
-	for _, variable := range extractRelationshipVariables(pattern) {
-		if scope.contains(variable) {
-			return mergeVariableAlreadyBoundError(variable)
-		}
+	for _, variable := range relationshipVariables {
 		scope.bind(variable)
 	}
 	if pathVariable := extractPathAssignmentVariable(pattern); pathVariable != "" {
@@ -141,6 +150,50 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 			return mergeVariableAlreadyBoundError(pathVariable)
 		}
 		scope.bind(pathVariable)
+	}
+	return nil
+}
+
+func validateMergeRelationshipShape(pattern string) error {
+	open := strings.Index(pattern, "[")
+	close := -1
+	if open >= 0 {
+		close = findMatchingBracket(pattern, open)
+	}
+	if open < 0 || close < 0 {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"NoSingleRelationshipType",
+			"MERGE relationships require exactly one relationship type",
+		)
+	}
+
+	declaration := strings.TrimSpace(pattern[open+1 : close])
+	if properties := strings.Index(declaration, "{"); properties >= 0 {
+		declaration = strings.TrimSpace(declaration[:properties])
+	}
+	if strings.Contains(declaration, "*") {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"CreatingVarLength",
+			"variable-length relationships cannot be merged",
+		)
+	}
+	colon := strings.Index(declaration, ":")
+	if colon < 0 {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"NoSingleRelationshipType",
+			"MERGE relationships require exactly one relationship type",
+		)
+	}
+	typeDeclaration := strings.TrimSpace(declaration[colon+1:])
+	if typeDeclaration == "" || strings.Contains(typeDeclaration, "|") || strings.Contains(typeDeclaration, ":") {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"NoSingleRelationshipType",
+			"MERGE relationships require exactly one relationship type",
+		)
 	}
 	return nil
 }
