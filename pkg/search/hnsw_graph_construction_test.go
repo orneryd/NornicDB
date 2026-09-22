@@ -102,6 +102,7 @@ func TestHNSWSearchUsesLexicalEntryPointsToReachDisconnectedRegions(t *testing.T
 
 	withoutSeeds, _, err := index.searchWithEfExhaustion(context.Background(), []float32{-1, 0}, 1, -1, 1)
 	require.NoError(t, err)
+	require.Len(t, withoutSeeds, 1, "the only reachable vector is exactly opposite to the query; minSimilarity -1 must not drop it")
 	require.Equal(t, "lexically-unrelated", withoutSeeds[0].ID)
 
 	withSeeds, _, err := index.searchWithEfExhaustionFromEntries(
@@ -109,7 +110,22 @@ func TestHNSWSearchUsesLexicalEntryPointsToReachDisconnectedRegions(t *testing.T
 		[]string{"missing", "lexical-match", "lexical-match"},
 	)
 	require.NoError(t, err)
+	require.Len(t, withSeeds, 1)
 	require.Equal(t, "lexical-match", withSeeds[0].ID)
+}
+
+func TestHNSWSearchMinSimilarityMinusOneKeepsExactlyOppositeVector(t *testing.T) {
+	index := NewHNSWIndex(2, HNSWConfig{M: 2, EfConstruction: 4, EfSearch: 1, LevelMultiplier: 1})
+	require.NoError(t, index.Add("opposite", []float32{1, 0}))
+	for _, threshold := range []float64{-1, -1.5} {
+		results, _, err := index.searchWithEfExhaustion(context.Background(), []float32{-1, 0}, 1, threshold, 1)
+		require.NoError(t, err)
+		require.Len(t, results, 1, "threshold %v", threshold)
+		require.Equal(t, "opposite", results[0].ID)
+	}
+	results, _, err := index.searchWithEfExhaustion(context.Background(), []float32{-1, 0}, 1, -0.5, 1)
+	require.NoError(t, err)
+	require.Empty(t, results, "a real threshold still filters")
 }
 
 func TestHNSWNeighborSelectionUsesLexicalDiversityForEqualVectorDistances(t *testing.T) {

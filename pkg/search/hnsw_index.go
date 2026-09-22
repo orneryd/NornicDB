@@ -677,7 +677,13 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 		defer h.queryBufPool.Put(pooledBuf)
 	}
 
+	// Cosine similarity cannot be below -1, so a threshold of -1 or lower means
+	// "no threshold". Comparing against exactly -1 would let float rounding of
+	// the distance drop a vector that is exactly opposite to the query.
 	minSim32 := float32(minSimilarity)
+	if minSimilarity <= -1 {
+		minSim32 = float32(math.Inf(-1))
+	}
 	ep := h.entryPoint
 
 	for l := h.maxLevel; l > 0; l-- {
