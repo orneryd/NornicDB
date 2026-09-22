@@ -79,6 +79,7 @@
     "clauses/with/With3.feature",
     "clauses/with/With5.feature",
     "clauses/with/With7.feature",
+    "expressions/aggregation/Aggregation1.feature",
     "expressions/aggregation/Aggregation3.feature",
     "expressions/aggregation/Aggregation8.feature",
     "expressions/boolean/Boolean1.feature",
@@ -21859,11 +21860,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:cf87b122a871befdad3db14423d11ec3589e96a1bec4b0b723274f9b74f80b4e",
-      "gap_id": "tck-gap-d7285cbe725f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/aggregation"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/aggregation/Aggregation1.feature",
@@ -21871,11 +21868,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:cf87b122a871befdad3db14423d11ec3589e96a1bec4b0b723274f9b74f80b4e",
-      "gap_id": "tck-gap-baa4fd1815ca",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/aggregation"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/aggregation/Aggregation2.feature",
@@ -75507,11 +75500,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ae60eaddde6c12b0a87de101981ecac478b7f187fe6da7205cdd4d4d013d76ef",
-      "gap_id": "tck-gap-71a5019b6d02",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "useCases/countingSubgraphMatches"
+      "status": "pass"
     },
     {
       "feature_path": "useCases/countingSubgraphMatches/CountingSubgraphMatches1.feature",
@@ -75519,11 +75508,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ae60eaddde6c12b0a87de101981ecac478b7f187fe6da7205cdd4d4d013d76ef",
-      "gap_id": "tck-gap-ef72f9a4d3d6",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "useCases/countingSubgraphMatches"
+      "status": "pass"
     },
     {
       "feature_path": "useCases/countingSubgraphMatches/CountingSubgraphMatches1.feature",
@@ -75548,7 +75533,7 @@
       "transaction_mode": "autocommit",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:969b9aa72651960d1ead9495dd60d969a2a0d486c7941ad0d19ab9cfd9a000f4",
+      "failure_signature": "sha256:80b9d93e5bf57939c2147f5f690a63e1c0d462cf3821ae0ea245d89890dc461f",
       "gap_id": "tck-gap-764f0805d103",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "useCases/countingSubgraphMatches"
@@ -75560,7 +75545,7 @@
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:969b9aa72651960d1ead9495dd60d969a2a0d486c7941ad0d19ab9cfd9a000f4",
+      "failure_signature": "sha256:80b9d93e5bf57939c2147f5f690a63e1c0d462cf3821ae0ea245d89890dc461f",
       "gap_id": "tck-gap-f14cce5338bb",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "useCases/countingSubgraphMatches"
@@ -75571,11 +75556,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ce0bf289b43f27c60115bb8e1ce7df286c46b9a32825270893cf655147e0d19d",
-      "gap_id": "tck-gap-819944535a5f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "useCases/countingSubgraphMatches"
+      "status": "pass"
     },
     {
       "feature_path": "useCases/countingSubgraphMatches/CountingSubgraphMatches1.feature",
@@ -75583,11 +75564,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ce0bf289b43f27c60115bb8e1ce7df286c46b9a32825270893cf655147e0d19d",
-      "gap_id": "tck-gap-b21811e4c3af",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "useCases/countingSubgraphMatches"
+      "status": "pass"
     },
     {
       "feature_path": "useCases/countingSubgraphMatches/CountingSubgraphMatches1.feature",
@@ -75643,11 +75620,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:a4baf9b57b2be51af5d705b856b0379aff9e545892b1c6436fbe72e9d7efb90f",
-      "gap_id": "tck-gap-9cd6a84373b2",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "useCases/countingSubgraphMatches"
+      "status": "pass"
     },
     {
       "feature_path": "useCases/countingSubgraphMatches/CountingSubgraphMatches1.feature",
@@ -75655,11 +75628,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:a4baf9b57b2be51af5d705b856b0379aff9e545892b1c6436fbe72e9d7efb90f",
-      "gap_id": "tck-gap-c65486949c4c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "useCases/countingSubgraphMatches"
+      "status": "pass"
     },
     {
       "feature_path": "useCases/countingSubgraphMatches/CountingSubgraphMatches1.feature",

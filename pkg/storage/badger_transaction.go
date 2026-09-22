@@ -857,6 +857,14 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte) (int64
 	var deletedCount int64
 	var deletedIDs []EdgeID
 	for _, edgeID := range edgeIDs {
+		// Buffered deletes are not visible through badgerTx until commit. A
+		// multi-node DETACH DELETE can therefore encounter the same relationship
+		// from each endpoint's adjacency index. Count and buffer each relationship
+		// once for the whole transaction.
+		if _, deleted := tx.deletedEdges[edgeID]; deleted {
+			continue
+		}
+
 		// Get edge to delete its indexes
 		edgeKey := edgeKey(edgeID)
 		item, err := tx.badgerTx.Get(edgeKey)
@@ -908,6 +916,8 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte) (int64
 
 		deletedCount++
 		deletedIDs = append(deletedIDs, edgeID)
+		tx.deletedEdges[edgeID] = struct{}{}
+		delete(tx.pendingEdges, edgeID)
 	}
 
 	return deletedCount, deletedIDs, nil
