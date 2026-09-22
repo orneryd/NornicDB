@@ -363,7 +363,18 @@ func (d *idDictionary) freelistStagedCount(db *badger.DB, kind byte) (int, error
 
 // loadFromBadger scans the persisted forward maps and populates the
 // in-memory cache. Called once on engine open.
+//
+// The counter keys are advisory, not authoritative: persistCounters runs in
+// its own Badger transaction AFTER the user transaction commits, so a crash,
+// a kill, or an engine Close racing the commit tail leaves committed forward
+// entries whose numIDs sit above the persisted counter. The forward map is
+// the durable record of every numID actually in use, so the counters are
+// floored at the highest numID it holds. Without that floor the next
+// allocation reissues a live numID and two string IDs share one compact key
+// in every numID-keyed index (adjacency, label, edge-between, MVCC heads),
+// silently merging the two entities.
 func (d *idDictionary) loadFromBadger(db *badger.DB) error {
+	var maxNodeNum, maxEdgeNum uint64
 	return db.View(func(txn *badger.Txn) error {
 		// Node forward map.
 		{
@@ -391,6 +402,9 @@ func (d *idDictionary) loadFromBadger(db *badger.DB) error {
 				}
 				d.nodeForward[id] = num
 				d.nodeReverse[num] = id
+				if num > maxNodeNum {
+					maxNodeNum = num
+				}
 			}
 			it.Close()
 		}
@@ -420,6 +434,9 @@ func (d *idDictionary) loadFromBadger(db *badger.DB) error {
 				}
 				d.edgeForward[id] = num
 				d.edgeReverse[num] = id
+				if num > maxEdgeNum {
+					maxEdgeNum = num
+				}
 			}
 			it.Close()
 		}
@@ -449,6 +466,15 @@ func (d *idDictionary) loadFromBadger(db *badger.DB) error {
 			}
 		} else if err != badger.ErrKeyNotFound {
 			return err
+		}
+		// Floor both counters at the highest numID the durable forward maps
+		// hold, so a counter write lost after a commit can never lead to a
+		// live numID being reissued (see the function doc).
+		if maxNodeNum > d.nextNode.Load() {
+			d.nextNode.Store(maxNodeNum)
+		}
+		if maxEdgeNum > d.nextEdge.Load() {
+			d.nextEdge.Store(maxEdgeNum)
 		}
 		// Seed freelist-pending counters from persisted state so the
 		// fast-path "is the freelist empty?" check is accurate after

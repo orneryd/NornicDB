@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Floor the numeric ID dictionary counters at the highest numID the durable
+  forward maps hold when the engine opens. The counter high-water mark is
+  persisted in its own transaction after the user transaction commits, so a
+  crash, kill, or engine Close racing that commit tail left committed nodes and
+  edges above the persisted counter; the next allocation then reissued a live
+  numID and two entities shared one compact key in every numID-keyed index
+  (adjacency, label, edge-between, MVCC heads). Observed as `MATCH (a)-[r]->(b)`
+  returning each relationship a second time under an unrelated start node after
+  a restart mid-commit.
 - Seed node MATCH candidates from a property index when the WHERE clause is a
   conjunction containing an equality on an indexed property (e.g.
   `WHERE n.repo_id = $r AND n.evidence_source = 'x' AND n.generation_id <> $g`),
