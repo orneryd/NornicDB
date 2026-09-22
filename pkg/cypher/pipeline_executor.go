@@ -958,6 +958,11 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 				traversalRow.nodes[name] = entity
 			case *storage.Edge:
 				traversalRow.rels[name] = entity
+			default:
+				if traversalRow.values == nil {
+					traversalRow.values = make(map[string]interface{})
+				}
+				traversalRow.values[name] = value
 			}
 		}
 
@@ -983,6 +988,9 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 				} else {
 					joined[name] = relationship
 				}
+			}
+			for name, value := range expandedRow.values {
+				joined[name] = value
 			}
 			out = append(out, joined)
 		}

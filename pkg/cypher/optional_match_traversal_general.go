@@ -84,9 +84,9 @@ func ensureLeadingNodeNamed(pattern string) string {
 	return pattern[:open+1] + traversalAnonVar + pattern[open+1:]
 }
 
-// extendTraversalRowMulti returns a copy of row with additional node and
-// relationship bindings.
-func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.Node, relBinds map[string]*storage.Edge) traversalOptRow {
+// extendTraversalRowMulti returns a copy of row with additional node,
+// relationship, and scalar or path bindings.
+func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.Node, relBinds map[string]*storage.Edge, valueBinds map[string]interface{}) traversalOptRow {
 	out := traversalOptRow{
 		nodes: make(map[string]*storage.Node, util.SafePreallocSum(len(row.nodes), len(nodeBinds))),
 		rels:  make(map[string]*storage.Edge, util.SafePreallocSum(len(row.rels), len(relBinds))),
@@ -102,6 +102,15 @@ func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.
 	}
 	for k, v := range relBinds {
 		out.rels[k] = v
+	}
+	if len(row.values)+len(valueBinds) > 0 {
+		out.values = make(map[string]interface{}, util.SafePreallocSum(len(row.values), len(valueBinds)))
+		for k, v := range row.values {
+			out.values[k] = v
+		}
+		for k, v := range valueBinds {
+			out.values[k] = v
+		}
 	}
 	return out
 }
@@ -181,6 +190,10 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 	nodeVars := extractNodeVariables(pattern)
 	relVars := extractRelationshipVariables(pattern)
 	allVars := append(append([]string{}, nodeVars...), relVars...)
+	pathVar := extractPathAssignmentVariable(pattern)
+	if pathVar != "" {
+		allVars = appendUniquePipelineBinding(allVars, pathVar)
+	}
 	if len(allVars) == 0 {
 		return rows, nil
 	}
@@ -204,6 +217,11 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 				cand.nodes[col] = v
 			case *storage.Edge:
 				cand.rels[col] = v
+			default:
+				if cand.values == nil {
+					cand.values = make(map[string]interface{})
+				}
+				cand.values[col] = v
 			}
 		}
 		candidates = append(candidates, cand)
@@ -235,6 +253,16 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 	for _, v := range newRelVars {
 		nullBindsRels[v] = nil
 	}
+	newValueVars := make([]string, 0, 1)
+	if pathVar != "" {
+		if _, bound := rows[0].values[pathVar]; !bound {
+			newValueVars = append(newValueVars, pathVar)
+		}
+	}
+	nullBindsValues := make(map[string]interface{}, len(newValueVars))
+	for _, variable := range newValueVars {
+		nullBindsValues[variable] = nil
+	}
 
 	out := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
@@ -251,7 +279,11 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 			for _, v := range newRelVars {
 				relBinds[v] = cand.rels[v]
 			}
-			merged := extendTraversalRowMulti(row, nodeBinds, relBinds)
+			valueBinds := make(map[string]interface{}, len(newValueVars))
+			for _, variable := range newValueVars {
+				valueBinds[variable] = cand.values[variable]
+			}
+			merged := extendTraversalRowMulti(row, nodeBinds, relBinds, valueBinds)
 			if clause.where != "" {
 				passes, ok := e.evaluateExpressionWithContext(ctx, clause.where, merged.nodes, merged.rels).(bool)
 				if !ok || !passes {
@@ -263,7 +295,7 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 			matched = true
 		}
 		if !matched {
-			out = append(out, extendTraversalRowMulti(row, nullBindsNodes, nullBindsRels))
+			out = append(out, extendTraversalRowMulti(row, nullBindsNodes, nullBindsRels, nullBindsValues))
 		}
 	}
 	return out, nil

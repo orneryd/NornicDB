@@ -310,6 +310,26 @@ func TestRemoveIgnoresNullOptionalBindings(t *testing.T) {
 	require.Equal(t, [][]interface{}{{nil}}, labelResult.Rows)
 }
 
+func TestDeleteIgnoresNullOptionalPath(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	result, err := exec.Execute(ctx, "OPTIONAL MATCH path = ()-->() DETACH DELETE path", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	require.Equal(t, &QueryStats{}, result.Stats)
+
+	_, err = exec.Execute(ctx, "CREATE (:Source)-[:LINK]->(:Target)", nil)
+	require.NoError(t, err)
+	result, err = exec.Execute(ctx, "OPTIONAL MATCH path = (:Source)-[:LINK]->(:Target) DETACH DELETE path", nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Stats.NodesDeleted)
+	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
+
+	readback, err := exec.Execute(ctx, "MATCH (node) RETURN count(node) AS count", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, readback, int64(0))
+}
+
 func TestMutationExpressionsAndClauseCompositionInExplicitTransactions(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	run := func(query string, params map[string]interface{}) *ExecuteResult {

@@ -35,6 +35,7 @@ import (
 type traversalOptRow struct {
 	nodes           map[string]*storage.Node
 	rels            map[string]*storage.Edge
+	values          map[string]interface{}
 	optionalMatched bool
 }
 
@@ -202,6 +203,12 @@ func extendTraversalRow(row traversalOptRow, nodeVar string, node *storage.Node,
 	}
 	for k, v := range row.rels {
 		out.rels[k] = v
+	}
+	if len(row.values) > 0 {
+		out.values = make(map[string]interface{}, len(row.values))
+		for k, v := range row.values {
+			out.values[k] = v
+		}
 	}
 	if nodeVar != "" {
 		out.nodes[nodeVar] = node
@@ -494,6 +501,9 @@ func fastTraversalExprValue(expr string, row traversalOptRow) (interface{}, bool
 			return nil, true
 		}
 		return rel, true
+	}
+	if value, ok := row.values[expr]; ok {
+		return value, true
 	}
 	return nil, false
 }
