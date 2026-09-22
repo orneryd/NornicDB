@@ -89,44 +89,63 @@ func validateMatchClauseBindings(scope matchSemanticScope, clause string) error 
 		)
 	}
 
-	for _, variable := range extractNodeVariables(pattern) {
-		if err := bindMatchSemanticKind(scope, variable, matchBindingNode); err != nil {
-			return err
-		}
-	}
-	relationshipVariables := extractRelationshipVariables(pattern)
 	variableLengthRelationships := variableLengthRelationshipVariableSet(pattern)
-	seenRelationships := make(map[string]struct{}, len(relationshipVariables))
-	for _, variable := range relationshipVariables {
-		kind := matchBindingRelationship
-		if _, variableLength := variableLengthRelationships[variable]; variableLength {
-			kind = matchBindingRelationshipList
-		}
-		if err := bindMatchSemanticKind(scope, variable, kind); err != nil {
-			return err
-		}
-		if _, exists := seenRelationships[variable]; exists {
-			return newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"RelationshipUniquenessViolation",
-				fmt.Sprintf("relationship variable %s is used more than once in the same pattern", variable),
-			)
-		}
-		seenRelationships[variable] = struct{}{}
-	}
+	seenRelationships := make(map[string]struct{})
 	for _, patternPart := range splitTopLevelComma(pattern) {
-		if variable := extractPathAssignmentVariable(strings.TrimSpace(patternPart)); variable != "" {
-			if _, alreadyBound := scope[variable]; alreadyBound {
+		patternPart = strings.TrimSpace(patternPart)
+		pathVariable := extractPathAssignmentVariable(patternPart)
+		entityPattern := patternPart
+		if pathVariable != "" {
+			if equals := strings.Index(patternPart, "="); equals >= 0 {
+				entityPattern = strings.TrimSpace(patternPart[equals+1:])
+			}
+			if _, alreadyBound := scope[pathVariable]; alreadyBound {
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
 					"VariableAlreadyBound",
-					fmt.Sprintf("path variable %s is already bound", variable),
+					fmt.Sprintf("path variable %s is already bound", pathVariable),
 				)
 			}
-			if err := bindMatchSemanticKind(scope, variable, matchBindingPath); err != nil {
+			scope[pathVariable] = matchBindingPath
+		}
+
+		for _, variable := range extractNodeVariables(entityPattern) {
+			if variable == pathVariable {
+				return newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"VariableAlreadyBound",
+					fmt.Sprintf("path variable %s is already bound", pathVariable),
+				)
+			}
+			if err := bindMatchSemanticKind(scope, variable, matchBindingNode); err != nil {
 				return err
 			}
 		}
+		for _, variable := range extractRelationshipVariables(entityPattern) {
+			if variable == pathVariable {
+				return newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"VariableAlreadyBound",
+					fmt.Sprintf("path variable %s is already bound", pathVariable),
+				)
+			}
+			kind := matchBindingRelationship
+			if _, variableLength := variableLengthRelationships[variable]; variableLength {
+				kind = matchBindingRelationshipList
+			}
+			if err := bindMatchSemanticKind(scope, variable, kind); err != nil {
+				return err
+			}
+			if _, exists := seenRelationships[variable]; exists {
+				return newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"RelationshipUniquenessViolation",
+					fmt.Sprintf("relationship variable %s is used more than once in the same pattern", variable),
+				)
+			}
+			seenRelationships[variable] = struct{}{}
+		}
+
 	}
 	return nil
 }

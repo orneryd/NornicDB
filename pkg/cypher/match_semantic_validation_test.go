@@ -89,11 +89,23 @@ func TestMatchRejectsPathVariableAlreadyBoundByAnotherEntity(t *testing.T) {
 	for _, query := range []string{
 		"MATCH (path) MATCH path = ()-[]-() RETURN path",
 		"MATCH ()-[path]-() MATCH path = ()-[]-() RETURN path",
-		"MATCH path = ()-[]-(), (path) RETURN path",
 		"WITH true AS path MATCH path = ()-[]-() RETURN path",
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		requireMatchSemanticDetail(t, err, "VariableAlreadyBound")
+	}
+}
+
+func TestMatchRejectsEntityBindingAfterPathAsTypeConflict(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_path_then_entity_conflict"))
+	ctx := context.Background()
+
+	for _, query := range []string{
+		"MATCH path = ()-[]-(), (path) RETURN path",
+		"MATCH path = ()-[]-(), ()-[path]-() RETURN path",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		requireMatchSemanticDetail(t, err, "VariableTypeConflict")
 	}
 }
 
