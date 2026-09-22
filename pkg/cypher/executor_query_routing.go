@@ -416,6 +416,11 @@ skipMatchCallRoute:
 	case startsWithMatch:
 		matchCount := countKeywordOccurrences(upperQuery, "MATCH")
 		optionalMatchCount := countKeywordOccurrences(upperQuery, "OPTIONAL MATCH")
+		if matchCount-optionalMatchCount > 1 && findKeywordIndexInContext(cypher, "WITH") > 0 {
+			if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+				return result, err
+			}
+		}
 		isMultiMatch := matchCount-optionalMatchCount > 1
 		if !isMultiMatch {
 			patternInfo := DetectQueryPattern(ctx, cypher)

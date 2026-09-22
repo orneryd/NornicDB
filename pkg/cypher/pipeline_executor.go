@@ -1465,6 +1465,37 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				substituted = "MERGE " + mergeBody
 			}
 		}
+		if relationshipPattern == nil {
+			nodePattern := mergeBody
+			variable, labels, properties, parseErr := e.parseMergePattern(ctx, nodePattern)
+			if parseErr == nil {
+				properties = e.resolveMergePropsWithContext(ctx, properties, nodeContext, relContext)
+				_, alreadyBound := nodeContext[variable]
+				if variable == "" || !alreadyBound {
+					matches, findErr := e.findMergeNodes(e.getStorage(ctx), labels, properties)
+					if findErr != nil {
+						return nil, nil, findErr
+					}
+					if len(matches) > 0 {
+						for _, node := range matches {
+							expanded := make(pipelineRow, util.SafePreallocSum(len(row), 2))
+							for name, value := range row {
+								expanded[name] = value
+							}
+							if variable != "" {
+								expanded[variable] = node
+							}
+							if nodePathVariable != "" {
+								path := PathResult{Nodes: []*storage.Node{node}}
+								expanded[nodePathVariable] = e.pathToMap(path)
+							}
+							out = append(out, expanded)
+						}
+						continue
+					}
+				}
+			}
+		}
 		merged, err := e.executeMergeWithContext(ctx, substituted, nodeContext, relContext)
 		if err != nil {
 			return nil, nil, err

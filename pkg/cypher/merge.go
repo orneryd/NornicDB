@@ -397,6 +397,31 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 	return nil, nil
 }
 
+// findMergeNodes returns every node that satisfies a MERGE node pattern.
+// MERGE is a row-producing clause: when an unbound pattern has multiple
+// existing matches, every match must continue through the remaining clauses.
+// Callers that only need existence may continue to use findMergeNode.
+func (e *StorageExecutor) findMergeNodes(store storage.Engine, labels []string, props map[string]interface{}) ([]*storage.Node, error) {
+	var candidates []*storage.Node
+	var err error
+	if len(labels) > 0 {
+		candidates, err = store.GetNodesByLabel(labels[0])
+	} else {
+		candidates, err = store.AllNodes()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	matches := make([]*storage.Node, 0, len(candidates))
+	for _, candidate := range candidates {
+		if mergeNodeMatches(candidate, labels, props) {
+			matches = append(matches, candidate)
+		}
+	}
+	return matches, nil
+}
+
 func (e *StorageExecutor) findMergeNodeAnyLabel(store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
 	if len(labels) == 0 || len(props) == 0 {
 		return nil, nil
