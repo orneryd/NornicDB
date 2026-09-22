@@ -125,6 +125,7 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	hasDelete := false
 	hasSet := false
 	hasMerge := false
+	optionalMatchCount := 0
 	mutationClauseCount := 0
 	for _, clause := range clauses {
 		if clause.kind == pipelineClauseWith || clause.kind == pipelineClauseUnwind {
@@ -142,6 +143,9 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 		if clause.kind == pipelineClauseMerge {
 			hasMerge = true
 		}
+		if clause.kind == pipelineClauseOptionalMatch {
+			optionalMatchCount++
+		}
 		switch clause.kind {
 		case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseDelete, pipelineClauseSet, pipelineClauseRemove:
 			mutationClauseCount++
@@ -152,7 +156,7 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	startsWithCreateProjection := clauses[0].kind == pipelineClauseCreate &&
 		clauses[len(clauses)-1].kind == pipelineClauseReturn &&
 		firstTopLevelModifierIndex(strings.TrimSpace(clauses[len(clauses)-1].text[len("RETURN"):])) >= 0
-	if !hasWithOrUnwind && !hasRemove && !hasDelete && !hasSet && !hasMerge && mutationClauseCount < 2 && !stringPredicateMutation && !startsWithCreateProjection {
+	if !hasWithOrUnwind && !hasRemove && !hasDelete && !hasSet && !hasMerge && optionalMatchCount < 2 && mutationClauseCount < 2 && !stringPredicateMutation && !startsWithCreateProjection {
 		return nil, false
 	}
 	return clauses, true
@@ -947,6 +951,14 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 	if len(optionalClause) != 1 {
 		return nil, localizedError(localization.CypherCoreOptionalMatchRequired(), nil)
 	}
+	nodeVariables := make(map[string]struct{})
+	for _, variable := range extractNodeVariables(clause) {
+		nodeVariables[variable] = struct{}{}
+	}
+	relationshipVariables := make(map[string]struct{})
+	for _, variable := range extractRelationshipVariables(clause) {
+		relationshipVariables[variable] = struct{}{}
+	}
 
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
@@ -961,6 +973,16 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 			case *storage.Edge:
 				traversalRow.rels[name] = entity
 			default:
+				if value == nil {
+					if _, isNodeBinding := nodeVariables[name]; isNodeBinding {
+						traversalRow.nodes[name] = nil
+						continue
+					}
+					if _, isRelationshipBinding := relationshipVariables[name]; isRelationshipBinding {
+						traversalRow.rels[name] = nil
+						continue
+					}
+				}
 				if traversalRow.values == nil {
 					traversalRow.values = make(map[string]interface{})
 				}

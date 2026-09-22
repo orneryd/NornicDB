@@ -433,6 +433,12 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 		if property == "" {
 			return nil, false
 		}
+		// Cypher property access is null-propagating. OPTIONAL MATCH stores an
+		// unmatched variable as an untyped nil interface, so handle it before
+		// the entity/map type switch just as we handle typed nil entities below.
+		if value == nil {
+			return nil, true
+		}
 		switch typed := value.(type) {
 		case *storage.Node:
 			if typed == nil {
