@@ -223,7 +223,7 @@ func TestCompareValues(t *testing.T) {
 		a, b     interface{}
 		expected bool
 	}{
-		{"nil == nil", nil, nil, true},
+		{"null is not equal to null", nil, nil, false},
 		{"nil != value", nil, "test", false},
 		{"same string", "test", "test", true},
 		// Note: compareValues in case_expression.go uses sprintf which is case-sensitive
@@ -232,8 +232,7 @@ func TestCompareValues(t *testing.T) {
 		{"int == float64", 42, 42.0, true},
 		{"int64 == float64", int64(42), 42.0, true},
 		{"different numbers", 42, 43, false},
-		// Note: compareValues in case_expression.go converts numeric strings to float64
-		{"string_42 == number_42", "42", 42, true},
+		{"numeric string differs from number", "42", 42, false},
 	}
 
 	for _, tt := range tests {

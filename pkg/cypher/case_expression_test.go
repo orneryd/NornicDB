@@ -46,6 +46,27 @@ func TestCompareWithOperatorCoverage(t *testing.T) {
 	}
 }
 
+func TestSimpleCaseUsesTypedEquality(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))
+
+	result, err := exec.Execute(context.Background(), `
+		RETURN CASE '0'
+			WHEN 0 THEN 'numeric match'
+			ELSE 'different type'
+		END AS result
+	`, nil)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(result.Rows) != 1 || len(result.Rows[0]) != 1 {
+		t.Fatalf("expected one scalar row, got %#v", result.Rows)
+	}
+	if got := result.Rows[0][0]; got != "different type" {
+		t.Fatalf("expected typed CASE comparison, got %#v", got)
+	}
+}
+
 func TestCaseExpressionSearched(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 

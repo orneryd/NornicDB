@@ -84,6 +84,7 @@
     "expressions/boolean/Boolean4.feature",
     "expressions/boolean/Boolean5.feature",
     "expressions/conditional/Conditional1.feature",
+    "expressions/conditional/Conditional2.feature",
     "expressions/existentialSubqueries/ExistentialSubquery1.feature",
     "expressions/graph/Graph7.feature",
     "expressions/graph/Graph8.feature",
@@ -26669,11 +26670,7 @@
       "example_row": "bc010ec543fe901d",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7a06d05bf70810fb0d04bb4a173c0f0a17d705fc3d9247ef9b74560c1df0e211",
-      "gap_id": "tck-gap-22a96fcb2298",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/conditional"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/conditional/Conditional2.feature",
@@ -26681,11 +26678,7 @@
       "example_row": "bc010ec543fe901d",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7a06d05bf70810fb0d04bb4a173c0f0a17d705fc3d9247ef9b74560c1df0e211",
-      "gap_id": "tck-gap-001e02ccf385",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/conditional"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/conditional/Conditional2.feature",

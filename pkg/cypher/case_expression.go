@@ -12,6 +12,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -337,21 +338,55 @@ func findTopLevelKeyword(s, keyword string) int {
 	return -1
 }
 
-// compareValues compares two values for equality (used in simple CASE).
+// compareValues applies Cypher equality without coercing values across type
+// families. Integer and floating-point values share Cypher's numeric family,
+// while strings, booleans, and composite values retain their types.
 func compareValues(a, b interface{}) bool {
 	if a == nil || b == nil {
-		return a == b
+		return false
 	}
 
-	// Try numeric comparison
-	numA, okA := toFloat64(a)
-	numB, okB := toFloat64(b)
+	numA, okA := strictNumericValue(a)
+	numB, okB := strictNumericValue(b)
 	if okA && okB {
 		return numA == numB
 	}
+	if okA != okB {
+		return false
+	}
 
-	// String comparison
-	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+	return reflect.DeepEqual(a, b)
+}
+
+func strictNumericValue(value interface{}) (float64, bool) {
+	switch number := value.(type) {
+	case int:
+		return float64(number), true
+	case int8:
+		return float64(number), true
+	case int16:
+		return float64(number), true
+	case int32:
+		return float64(number), true
+	case int64:
+		return float64(number), true
+	case uint:
+		return float64(number), true
+	case uint8:
+		return float64(number), true
+	case uint16:
+		return float64(number), true
+	case uint32:
+		return float64(number), true
+	case uint64:
+		return float64(number), true
+	case float32:
+		return float64(number), true
+	case float64:
+		return number, true
+	default:
+		return 0, false
+	}
 }
 
 // compareWithOperator compares two values using the given operator.
