@@ -6,17 +6,17 @@ import (
 	"sync"
 )
 
-type mergeSemanticValidationCache struct {
+type semanticValidationCache struct {
 	mu      sync.RWMutex
 	entries map[string]struct{}
 	max     int
 }
 
-func newMergeSemanticValidationCache(max int) *mergeSemanticValidationCache {
-	return &mergeSemanticValidationCache{entries: make(map[string]struct{}, max), max: max}
+func newSemanticValidationCache(max int) *semanticValidationCache {
+	return &semanticValidationCache{entries: make(map[string]struct{}, max), max: max}
 }
 
-func (cache *mergeSemanticValidationCache) contains(query string) bool {
+func (cache *semanticValidationCache) contains(query string) bool {
 	if cache == nil {
 		return false
 	}
@@ -26,7 +26,7 @@ func (cache *mergeSemanticValidationCache) contains(query string) bool {
 	return exists
 }
 
-func (cache *mergeSemanticValidationCache) add(query string) {
+func (cache *semanticValidationCache) add(query string) {
 	if cache == nil || cache.max <= 0 {
 		return
 	}

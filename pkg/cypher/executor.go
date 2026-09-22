@@ -308,7 +308,8 @@ type StorageExecutor struct {
 	queryCacheMaxEntries         int
 	queryCacheTTL                time.Duration
 	planCache                    *QueryPlanCache // Parsed query plan cache
-	mergeSemanticValidationCache *mergeSemanticValidationCache
+	matchSemanticValidationCache *semanticValidationCache
+	mergeSemanticValidationCache *semanticValidationCache
 	// fabricPlanCache caches planned Fabric fragment trees (query + sessionDB).
 	fabricPlanCache *fabric.PlanCache
 	analyzer        *QueryAnalyzer // Query analysis with AST caching
@@ -504,6 +505,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		queryCacheMaxEntries:           e.queryCacheMaxEntries,
 		queryCacheTTL:                  e.queryCacheTTL,
 		planCache:                      e.planCache,
+		matchSemanticValidationCache:   e.matchSemanticValidationCache,
 		mergeSemanticValidationCache:   e.mergeSemanticValidationCache,
 		fabricPlanCache:                e.fabricPlanCache,
 		analyzer:                       e.analyzer,
@@ -687,7 +689,8 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 		queryCacheMaxEntries:           maxEntries,
 		queryCacheTTL:                  queryCacheTTL,
 		planCache:                      NewQueryPlanCache(500), // Cache 500 parsed query plans
-		mergeSemanticValidationCache:   newMergeSemanticValidationCache(500),
+		matchSemanticValidationCache:   newSemanticValidationCache(500),
+		mergeSemanticValidationCache:   newSemanticValidationCache(500),
 		fabricPlanCache:                fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
 		analyzer:                       NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
 		nodeLookupCache:                make(map[string]*storage.Node, 1000),
@@ -1439,13 +1442,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		execSpan.SetAttributes(attribute.String("cypher.op_type", "parse_error"))
 		return nil, err
 	}
-	if err := e.validateCreateSemanticScopes(cypher); err != nil {
-		return nil, err
-	}
-	if err := e.validateMergeSemanticScopes(cypher); err != nil {
-		return nil, err
-	}
-	if err := e.validateSetSemanticScopes(cypher); err != nil {
+	if err := e.validateSemanticScopes(cypher); err != nil {
 		return nil, err
 	}
 

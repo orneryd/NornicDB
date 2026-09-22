@@ -44,6 +44,21 @@ func createBenchmarkEdge(b *testing.B, store storage.Engine, id, edgeType string
 	}
 }
 
+func BenchmarkMatchSemanticValidationCached(b *testing.B) {
+	exec, _ := newClauseSemanticsBenchmarkExecutor(b)
+	const query = `MATCH (source:Source)-[relationship:LINK]->(target:Target) RETURN source, relationship, target`
+	if err := exec.validateMatchSemanticScopes(query); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := exec.validateMatchSemanticScopes(query); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkMixedPatternRelationshipNodeProduct(b *testing.B) {
 	exec, store := newClauseSemanticsBenchmarkExecutor(b)
 	ctx := context.Background()
