@@ -217,6 +217,86 @@ func TestRelationshipMergeEmitsEveryExistingMatch(t *testing.T) {
 	require.Zero(t, result.Stats.RelationshipsCreated)
 }
 
+func TestNodeMergeBindsZeroLengthPath(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	result, err := exec.Execute(ctx, "MERGE path = (node {num:1}) RETURN path", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"path"}, result.Columns)
+	require.Len(t, result.Rows, 1)
+	pathMap, ok := result.Rows[0][0].(map[string]interface{})
+	require.True(t, ok)
+	path, ok := pathMap["_pathResult"].(PathResult)
+	require.True(t, ok)
+	require.Len(t, path.Nodes, 1)
+	require.Empty(t, path.Relationships)
+	require.Equal(t, int64(1), path.Nodes[0].Properties["num"])
+}
+
+func TestNodeMergeUsesFreshlyCreatedPropertyBinding(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	result, err := exec.Execute(ctx, "CREATE (source {num:1}) MERGE ({copied:source.num})", nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Stats.NodesCreated)
+
+	readback, err := exec.Execute(ctx, "MATCH (target {copied:1}) RETURN target.copied AS copied", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, readback, int64(1))
+}
+
+func TestRelationshipMergeAppliesCreateMutationsToBoundEntities(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:A {name:'A'}), (:B {name:'B'})", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (a:A), (b:B) MERGE (a)-[relationship:TYPE]->(b) ON CREATE SET relationship.name = 'linked', b.created = 1", nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Stats.RelationshipsCreated)
+	require.Equal(t, 2, result.Stats.PropertiesSet)
+
+	relReadback, err := exec.Execute(ctx, "MATCH ()-[relationship:TYPE]->() RETURN relationship.name AS name", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, relReadback, "linked")
+	dynamicReadback, err := exec.Execute(ctx, "MATCH ()-[relationship:TYPE]->() RETURN [key IN keys(relationship) | key + '->' + relationship[key]] AS entries", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{"name->linked"}}}, dynamicReadback.Rows)
+	nodeReadback, err := exec.Execute(ctx, "MATCH (node:B) RETURN node.created AS created", nil)
+	require.NoError(t, err)
+	requireSingleValue(t, nodeReadback, int64(1))
+}
+
+func TestCartesianMatchFiltersByElementIdentifiersBeforeMutation(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	created, err := exec.Execute(ctx, "CREATE (source:Memory {name:'source'}), (target:Memory {name:'target'}) RETURN elementId(source), elementId(target)", nil)
+	require.NoError(t, err)
+	require.Len(t, created.Rows, 1)
+	sourceID := created.Rows[0][0]
+	targetID := created.Rows[0][1]
+	require.Contains(t, sourceID, "4:convergence:")
+	require.Contains(t, targetID, "4:convergence:")
+
+	matched, err := exec.Execute(ctx,
+		"MATCH (source), (target) WHERE elementId(source) = $source AND elementId(target) = $target RETURN source.name, target.name",
+		map[string]interface{}{"source": sourceID, "target": targetID},
+	)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"source", "target"}}, matched.Rows)
+
+	result, err := exec.Execute(ctx,
+		"MATCH (source), (target) WHERE elementId(source) = $source AND elementId(target) = $target CREATE (source)-[relationship:LINK]->(target) SET relationship.strength = 0.75 RETURN elementId(relationship)",
+		map[string]interface{}{"source": sourceID, "target": targetID},
+	)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, 1, result.Stats.RelationshipsCreated)
+	require.Contains(t, result.Rows[0][0], "5:convergence:")
+
+	readback, err := exec.Execute(ctx, "MATCH ()-[relationship:LINK]->() RETURN relationship.strength", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{0.75}}, readback.Rows)
+}
+
 func TestRemovePropertyThenSetLabelPreservesMatchedScope(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	_, err := exec.Execute(ctx, "CREATE (:P {name:'Ann'}), (:P {name:'Bob'}), (:P {name:'Cid'}), (:P {name:'Dee', city:'Riga'})", nil)
@@ -553,6 +633,27 @@ func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
 			require.ErrorAs(t, err, &semanticError)
 			require.Equal(t, "VariableAlreadyBound", semanticError.Detail)
 		})
+	}
+}
+
+func TestMergeActionsRejectUndefinedVariablesBeforeExecution(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+
+	for _, query := range []string{
+		"MERGE (node) ON CREATE SET missing.value = 1",
+		"MERGE (node) ON MATCH SET missing.value = 1",
+	} {
+		clauses, ok := splitPipelineClauses(query)
+		require.True(t, ok)
+		require.Len(t, clauses, 1)
+		require.Equal(t, query, clauses[0].text)
+		require.Error(t, exec.validateMergeSemanticScopes(query))
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err)
+		var semanticError *SemanticError
+		require.ErrorAs(t, err, &semanticError)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code)
+		require.Equal(t, "UndefinedVariable", semanticError.Detail)
 	}
 }
 

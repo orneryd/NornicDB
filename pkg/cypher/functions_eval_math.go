@@ -1602,9 +1602,27 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 						}
 					}
 
-					// Fallback to string replacement (may not work for complex types)
-					transformWithVal := strings.ReplaceAll(transform, varName, fmt.Sprintf("%v", item))
-					result[i] = e.evaluateExpressionWithContextFull(ctx, transformWithVal, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+					// Bind the comprehension variable as a typed value. Text replacement
+					// corrupts dynamic property access (for example r[key]) and quoted
+					// strings, while a row-local binding preserves Cypher expression
+					// semantics for scalars, maps, nodes, and relationships.
+					itemNodes := make(map[string]*storage.Node, len(nodes)+1)
+					for name, node := range nodes {
+						itemNodes[name] = node
+					}
+					itemRels := make(map[string]*storage.Edge, len(rels)+1)
+					for name, relationship := range rels {
+						itemRels[name] = relationship
+					}
+					switch value := item.(type) {
+					case *storage.Node:
+						itemNodes[varName] = value
+					case *storage.Edge:
+						itemRels[varName] = value
+					default:
+						itemNodes[varName] = &storage.Node{Properties: map[string]interface{}{"value": value}}
+					}
+					result[i] = e.evaluateExpressionWithContextFull(ctx, transform, itemNodes, itemRels, paths, allPathEdges, allPathNodes, pathLength)
 				}
 				return result
 			}

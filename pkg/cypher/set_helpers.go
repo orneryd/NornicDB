@@ -309,6 +309,25 @@ func setPropertyMap(properties map[string]interface{}) map[string]interface{} {
 	return result
 }
 
+// propertyMapForSetValue implements Cypher's entity-as-property-map semantics
+// for SET target = source while keeping general map coercion strict elsewhere.
+func propertyMapForSetValue(value interface{}) (map[string]interface{}, bool) {
+	switch entity := value.(type) {
+	case *storage.Node:
+		if entity == nil {
+			return nil, false
+		}
+		return entity.Properties, true
+	case *storage.Edge:
+		if entity == nil {
+			return nil, false
+		}
+		return entity.Properties, true
+	default:
+		return toStringAnyMap(value)
+	}
+}
+
 func parseSetAssignmentTarget(target string) (variable string, property string, hasProperty bool) {
 	target = strings.TrimSpace(target)
 	if base, prop, ok := splitPostfixPropertyAccess(target); ok {

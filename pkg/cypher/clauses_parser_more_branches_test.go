@@ -60,8 +60,9 @@ func TestUnwindClauseParsers_MoreBranches(t *testing.T) {
 	require.Equal(t, "total", alias)
 	_, ok = parseUnwindBatchCountReturn("RETURN sum(x) AS total")
 	require.False(t, ok)
-	_, ok = parseUnwindBatchCountReturn("RETURN count(*)")
-	require.False(t, ok)
+	alias, ok = parseUnwindBatchCountReturn("RETURN count(*)")
+	require.True(t, ok)
+	require.Equal(t, "count(*)", alias)
 
 	clauses, ok := splitUnwindMergeChainClauses("MERGE (n:A {k: row.k}) ON CREATE SET n.created = true SET n.updated = true")
 	require.True(t, ok)

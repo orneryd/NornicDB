@@ -219,8 +219,8 @@ func TestMatchMatchWhereCreate_TwoMatchWithWhere(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, persons, 2)
 
-	elemA := "4:nornicdb:" + string(persons[0].ID)
-	elemB := "4:nornicdb:" + string(persons[1].ID)
+	elemA := storage.NodeElementID("test", persons[0].ID)
+	elemB := storage.NodeElementID("test", persons[1].ID)
 	params := map[string]interface{}{"from": elemA, "to": elemB}
 
 	// Query that previously failed: parser truncated after first WHERE so 'a' was bound but 'b' was not
@@ -267,8 +267,8 @@ func TestMatchCreateRelationship_CommaSeparatedElementIDWhere(t *testing.T) {
 	require.NotNil(t, bob)
 
 	params := map[string]interface{}{
-		"from": "4:nornicdb:" + string(alice.ID),
-		"to":   "4:nornicdb:" + string(bob.ID),
+		"from": storage.NodeElementID("test", alice.ID),
+		"to":   storage.NodeElementID("test", bob.ID),
 	}
 
 	result, err := exec.Execute(ctx,

@@ -711,6 +711,9 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 					return fast, err
 				}
 			}
+			countAlias, countReturnOnly := parseUnwindBatchCountReturn(returnPart)
+			countReturnOnly = returnPart != "" && countReturnOnly
+			var aggregateCount int64
 
 			// Execute mutation for each unwound item
 			for _, item := range items {
@@ -794,7 +797,9 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 				}
 
 				// If there's a RETURN clause, collect the result rows
-				if mutationResult != nil && returnPart != "" && len(mutationResult.Rows) > 0 {
+				if countReturnOnly {
+					aggregateCount += countResultRows(mutationResult)
+				} else if mutationResult != nil && returnPart != "" && len(mutationResult.Rows) > 0 {
 					// First iteration: set columns
 					if len(result.Columns) == 0 {
 						result.Columns = mutationResult.Columns
@@ -802,6 +807,10 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 					// Append all rows from this per-item execution
 					result.Rows = append(result.Rows, mutationResult.Rows...)
 				}
+			}
+			if countReturnOnly {
+				result.Columns = []string{countAlias}
+				result.Rows = [][]interface{}{{aggregateCount}}
 			}
 
 			return result, nil
@@ -1462,13 +1471,14 @@ func parseUnwindBatchCountReturn(returnPart string) (alias string, ok bool) {
 	if !startsWithKeywordFold(r, "RETURN") {
 		return "", false
 	}
-	body := strings.TrimSpace(r[len("RETURN "):])
+	body := strings.TrimSpace(r[len("RETURN"):])
 	asIdx := findKeywordIndexInContext(body, "AS")
-	if asIdx <= 0 {
-		return "", false
+	expr := body
+	alias = body
+	if asIdx > 0 {
+		expr = strings.TrimSpace(body[:asIdx])
+		alias = strings.TrimSpace(body[asIdx+2:])
 	}
-	expr := strings.TrimSpace(body[:asIdx])
-	alias = strings.TrimSpace(body[asIdx+2:])
 	if alias == "" {
 		return "", false
 	}
@@ -1481,6 +1491,24 @@ func parseUnwindBatchCountReturn(returnPart string) (alias string, ok bool) {
 		return "", false
 	}
 	return alias, true
+}
+
+func countResultRows(result *ExecuteResult) int64 {
+	if result == nil || len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
+		return 0
+	}
+	switch value := result.Rows[0][0].(type) {
+	case int:
+		return int64(value)
+	case int32:
+		return int64(value)
+	case int64:
+		return value
+	case float64:
+		return int64(value)
+	default:
+		return 0
+	}
 }
 
 func splitUnwindMergeChainClauses(input string) ([]string, bool) {

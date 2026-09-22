@@ -95,8 +95,9 @@ func TestParseSimpleCountAndBatchReturn_Branches(t *testing.T) {
 
 	_, ok = parseUnwindBatchCountReturn("RETURN count(a.b) AS total")
 	require.False(t, ok)
-	_, ok = parseUnwindBatchCountReturn("RETURN count(*)")
-	require.False(t, ok)
+	alias, ok = parseUnwindBatchCountReturn("RETURN count(*)")
+	require.True(t, ok)
+	require.Equal(t, "count(*)", alias)
 	_, ok = parseUnwindBatchCountReturn("MATCH (n) RETURN n")
 	require.False(t, ok)
 }

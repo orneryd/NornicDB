@@ -427,9 +427,9 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 		return strconv.FormatUint(val, 10)
 
 	case float32:
-		return strconv.FormatFloat(float64(val), 'f', -1, 32)
+		return formatCypherFloatLiteral(float64(val), 32)
 	case float64:
-		return strconv.FormatFloat(val, 'f', -1, 64)
+		return formatCypherFloatLiteral(val, 64)
 
 	case bool:
 		if val {
@@ -479,7 +479,7 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 	case []float64:
 		parts := make([]string, len(val))
 		for i, item := range val {
-			parts[i] = strconv.FormatFloat(item, 'f', -1, 64)
+			parts[i] = formatCypherFloatLiteral(item, 64)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 
@@ -487,7 +487,7 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 		// Float32 array (common for vector embeddings)
 		parts := make([]string, len(val))
 		for i, item := range val {
-			parts[i] = strconv.FormatFloat(float64(item), 'f', -1, 32)
+			parts[i] = formatCypherFloatLiteral(float64(item), 32)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 
@@ -528,4 +528,12 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 		// Fallback: convert to string
 		return quoteCypherStringLiteral(fmt.Sprintf("%v", v))
 	}
+}
+
+func formatCypherFloatLiteral(value float64, bitSize int) string {
+	literal := strconv.FormatFloat(value, 'g', -1, bitSize)
+	if !strings.ContainsAny(literal, ".eE") {
+		literal += ".0"
+	}
+	return literal
 }

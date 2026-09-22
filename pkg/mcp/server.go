@@ -628,7 +628,7 @@ func (s *Server) getExecutorAndGetNode(ctx context.Context) (exec *cypher.Storag
 			return nil, nil, localizedError(localization.MCPDatabaseExecutorUnavailable(dbName), nil)
 		}
 		return e, func(ctx context.Context, id string) (*nornicdb.Node, error) {
-			return gn(ctx, normalizeNodeElementID(id))
+			return gn(ctx, normalizeNodeElementIDForDatabase(dbName, id))
 		}, nil
 	}
 	if s.db != nil {
@@ -793,9 +793,18 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 			if err != nil {
 				return nil, localizedError(localization.MCPNodeNotFound(id), nil)
 			}
+			resolvedElementID := s.nodeElementID(ctx, node.ID)
+			if exec != nil {
+				idResult, queryErr := exec.Execute(ctx, "MATCH (n) WHERE id(n) = $id RETURN elementId(n)", map[string]interface{}{"id": node.ID})
+				if queryErr == nil && len(idResult.Rows) > 0 && len(idResult.Rows[0]) > 0 {
+					if actualElementID, ok := idResult.Rows[0][0].(string); ok && actualElementID != "" {
+						resolvedElementID = actualElementID
+					}
+				}
+			}
 			return RecallResult{
 				Nodes: []Node{{
-					ID:         normalizeNodeElementID(node.ID),
+					ID:         resolvedElementID,
 					Type:       getLabelType(node.Labels),
 					Title:      getStringProp(node.Properties, "title"),
 					Content:    getStringProp(node.Properties, "content"),
@@ -827,7 +836,7 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 			b.WriteString(" WHERE ")
 			b.WriteString(strings.Join(conds, " AND "))
 		}
-		b.WriteString(" RETURN n LIMIT $limit")
+		b.WriteString(" RETURN n, elementId(n) LIMIT $limit")
 
 		result, err := exec.Execute(ctx, b.String(), params)
 		if err != nil {
@@ -836,11 +845,15 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 
 		nodes := make([]Node, 0, len(result.Rows))
 		for _, row := range result.Rows {
-			if len(row) == 0 {
+			if len(row) < 2 {
 				continue
 			}
 			snode, ok := row[0].(*storage.Node)
 			if !ok || snode == nil {
+				continue
+			}
+			elementID, ok := row[1].(string)
+			if !ok || elementID == "" {
 				continue
 			}
 			props := toInterfaceMap(snode.Properties)
@@ -854,7 +867,7 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 				}
 			}
 			nodes = append(nodes, Node{
-				ID:         normalizeNodeElementID(string(snode.ID)),
+				ID:         elementID,
 				Type:       getLabelType(snode.Labels),
 				Title:      getStringProp(props, "title"),
 				Content:    getStringProp(props, "content"),
@@ -954,7 +967,7 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 					// Vector cosine is already bounded; lexical relevance is
 					// monotonically normalized before crossing the MCP boundary.
 					res := SearchResult{
-						ID:             normalizeNodeElementID(r.ID),
+						ID:             s.nodeElementID(ctx, r.ID),
 						Type:           getLabelType(r.Labels),
 						Title:          r.Title,
 						ContentPreview: r.ContentPreview,
@@ -1043,8 +1056,8 @@ func (s *Server) handleLink(ctx context.Context, args map[string]interface{}) (i
 	var fromNode, toNode Node
 	var receipt interface{}
 
-	fromEID := normalizeNodeElementID(from)
-	toEID := normalizeNodeElementID(to)
+	fromEID := s.nodeElementID(ctx, from)
+	toEID := s.nodeElementID(ctx, to)
 
 	exec, getNode, execErr := s.getExecutorAndGetNode(ctx)
 	if execErr != nil {
@@ -1118,7 +1131,7 @@ func (s *Server) resolveNodeForLink(ctx context.Context, exec *cypher.StorageExe
 		return nil, "", nornicdb.ErrNotFound
 	}
 
-	elementID := normalizeNodeElementID(id)
+	elementID := s.nodeElementID(ctx, id)
 	if getNode != nil {
 		if node, err := getNode(ctx, elementID); err == nil && node != nil {
 			return node, elementID, nil
@@ -1129,44 +1142,45 @@ func (s *Server) resolveNodeForLink(ctx context.Context, exec *cypher.StorageExe
 	if exec != nil {
 		localID := localNodeIDFromAny(id)
 		// First try internal id(n) match (handles raw storage IDs)
-		result, err := exec.Execute(ctx, "MATCH (n) WHERE id(n) = $id RETURN n", map[string]interface{}{"id": localID})
-		if err == nil && len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
-			if snode, ok := result.Rows[0][0].(*storage.Node); ok && snode != nil {
-				props := make(map[string]interface{}, len(snode.Properties))
-				for k, val := range snode.Properties {
-					props[k] = val
-				}
-				node := &nornicdb.Node{
-					ID:         string(snode.ID),
-					Labels:     snode.Labels,
-					Properties: props,
-					CreatedAt:  snode.CreatedAt,
-				}
-				return node, normalizeNodeElementID(node.ID), nil
+		result, err := exec.Execute(ctx, "MATCH (n) WHERE id(n) = $id RETURN n, elementId(n)", map[string]interface{}{"id": localID})
+		if err == nil && len(result.Rows) > 0 {
+			if node, resolvedElementID, ok := linkNodeFromCypherRow(result.Rows[0]); ok {
+				return node, resolvedElementID, nil
 			}
 		}
 
 		// Fallback: allow linking by node property "id" or "_nodeId"
-		query := "MATCH (n) WHERE n.id = $id OR n._nodeId = $id RETURN n"
+		query := "MATCH (n) WHERE n.id = $id OR n._nodeId = $id RETURN n, elementId(n)"
 		result, err = exec.Execute(ctx, query, map[string]interface{}{"id": localID})
-		if err == nil && len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
-			if snode, ok := result.Rows[0][0].(*storage.Node); ok && snode != nil {
-				props := make(map[string]interface{}, len(snode.Properties))
-				for k, val := range snode.Properties {
-					props[k] = val
-				}
-				node := &nornicdb.Node{
-					ID:         string(snode.ID),
-					Labels:     snode.Labels,
-					Properties: props,
-					CreatedAt:  snode.CreatedAt,
-				}
-				return node, normalizeNodeElementID(node.ID), nil
+		if err == nil && len(result.Rows) > 0 {
+			if node, resolvedElementID, ok := linkNodeFromCypherRow(result.Rows[0]); ok {
+				return node, resolvedElementID, nil
 			}
 		}
 	}
 
 	return nil, elementID, nornicdb.ErrNotFound
+}
+
+func linkNodeFromCypherRow(row []interface{}) (*nornicdb.Node, string, bool) {
+	if len(row) < 2 {
+		return nil, "", false
+	}
+	snode, nodeOK := row[0].(*storage.Node)
+	elementID, idOK := row[1].(string)
+	if !nodeOK || snode == nil || !idOK || elementID == "" {
+		return nil, "", false
+	}
+	props := make(map[string]interface{}, len(snode.Properties))
+	for key, value := range snode.Properties {
+		props[key] = value
+	}
+	return &nornicdb.Node{
+		ID:         string(snode.ID),
+		Labels:     snode.Labels,
+		Properties: props,
+		CreatedAt:  snode.CreatedAt,
+	}, elementID, true
 }
 
 // handleTask implements the task tool - creates/manages tasks.
@@ -1193,7 +1207,7 @@ func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (i
 
 	// Update existing task
 	if id != "" {
-		taskEID := normalizeNodeElementID(id)
+		taskEID := s.nodeElementID(ctx, id)
 
 		// Delete task
 		if del {
@@ -1362,7 +1376,7 @@ func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (i
 				if strings.TrimSpace(depID) == "" {
 					continue
 				}
-				depElementID := normalizeNodeElementID(depID)
+				depElementID := s.nodeElementID(ctx, depID)
 				if _, err := runCypherMutationWithRetry(ctx, exec,
 					`MATCH (t:Task), (d:Task)
 					 WHERE elementId(t) = $id AND elementId(d) = $dep
@@ -1621,8 +1635,6 @@ func hasAnyTag(nodeTags, targetTags []string) bool {
 	return false
 }
 
-const nodeElementIDPrefix = "4:nornicdb:"
-
 func extractDatabaseArg(args map[string]interface{}) string {
 	if args == nil {
 		return ""
@@ -1642,6 +1654,10 @@ func extractDatabaseArg(args map[string]interface{}) string {
 }
 
 func normalizeNodeElementID(id string) string {
+	return normalizeNodeElementIDForDatabase("nornic", id)
+}
+
+func normalizeNodeElementIDForDatabase(database, id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return ""
@@ -1650,17 +1666,24 @@ func normalizeNodeElementID(id string) string {
 	if strings.HasPrefix(id, "4:") {
 		return id
 	}
-	return nodeElementIDPrefix + id
+	return storage.NodeElementID(database, storage.NodeID(id))
+}
+
+func (s *Server) nodeElementID(ctx context.Context, id string) string {
+	database := DatabaseFromContext(ctx)
+	if database == "" {
+		database = s.DefaultDatabaseName()
+	}
+	return normalizeNodeElementIDForDatabase(database, id)
 }
 
 // localNodeIDFromAny converts an arbitrary node identifier into the local
 // (per-database) id form expected by the storage layer. Three input shapes
 // are handled deterministically:
 //
-//  1. The NornicDB prefixed form ("4:nornicdb:<id>")  → strip the prefix.
-//  2. A Neo4j-style 3-segment elementId ("4:<db>:<id>") → strip both
+//  1. A Neo4j-style 3-segment elementId ("4:<db>:<id>") → strip both
 //     segments and return the trailing id.
-//  3. Anything else (bare id, malformed prefix, garbage) → return the
+//  2. Anything else (bare id, malformed prefix, garbage) → return the
 //     trimmed input unchanged.
 //
 // The 3-segment requirement makes the parse unambiguous: a string like
@@ -1671,9 +1694,6 @@ func localNodeIDFromAny(id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return ""
-	}
-	if strings.HasPrefix(id, nodeElementIDPrefix) {
-		return strings.TrimPrefix(id, nodeElementIDPrefix)
 	}
 	if strings.HasPrefix(id, "4:") {
 		// Require exactly the 3-segment Neo4j elementId shape: "4:db:id".
@@ -1961,7 +1981,7 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 	queue := []state{{
 		idLocal: startLocal,
 		dist:    0,
-		path:    []string{normalizeNodeElementID(startLocal)},
+		path:    []string{s.nodeElementID(ctx, startLocal)},
 	}}
 
 	related := make([]RelatedNode, 0)
@@ -1981,7 +2001,7 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 				continue
 			}
 			visited[neighbor] = true
-			nextPath := append(append([]string{}, cur.path...), normalizeNodeElementID(neighbor))
+			nextPath := append(append([]string{}, cur.path...), s.nodeElementID(ctx, neighbor))
 
 			ntype, ntitle := "Node", ""
 			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
@@ -1994,7 +2014,7 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 			}
 
 			related = append(related, RelatedNode{
-				ID:           normalizeNodeElementID(neighbor),
+				ID:           s.nodeElementID(ctx, neighbor),
 				Type:         ntype,
 				Title:        ntitle,
 				Distance:     cur.dist + 1,
@@ -2020,7 +2040,7 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 				continue
 			}
 			visited[neighbor] = true
-			nextPath := append(append([]string{}, cur.path...), normalizeNodeElementID(neighbor))
+			nextPath := append(append([]string{}, cur.path...), s.nodeElementID(ctx, neighbor))
 
 			ntype, ntitle := "Node", ""
 			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
@@ -2033,7 +2053,7 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 			}
 
 			related = append(related, RelatedNode{
-				ID:           normalizeNodeElementID(neighbor),
+				ID:           s.nodeElementID(ctx, neighbor),
 				Type:         ntype,
 				Title:        ntitle,
 				Distance:     cur.dist + 1,

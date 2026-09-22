@@ -43,7 +43,7 @@ LIMIT $topK
 				require.True(t, exec.LastHotPathTrace().CallTailTraversalFastPath, "fanout=%d depth=%d should use call-tail traversal hot path", fanout, depth)
 				require.Equal(t, []string{"nodeID", "score", "pathCount"}, res.Columns)
 				require.Len(t, res.Rows, 1)
-				assert.Equal(t, string(root.ID), res.Rows[0][0])
+				assert.Equal(t, storage.NodeElementID("test", root.ID), res.Rows[0][0])
 				expectedCount := minInt(pathCap, geometricPathCount(fanout, depth))
 				assert.EqualValues(t, expectedCount, toInt64ForTest(t, res.Rows[0][2]), "fanout=%d depth=%d pathCount", fanout, depth)
 			}
@@ -81,7 +81,7 @@ LIMIT $topK
 				require.True(t, exec.LastHotPathTrace().CallTailTraversalFastPath, "fanout=%d depth=%d should use call-tail traversal hot path", fanout, depth)
 				require.Equal(t, []string{"nodeID", "score", "nearest", "reachable"}, res.Columns)
 				require.Len(t, res.Rows, 1)
-				assert.Equal(t, string(root.ID), res.Rows[0][0])
+				assert.Equal(t, storage.NodeElementID("test", root.ID), res.Rows[0][0])
 				assert.EqualValues(t, 1, toInt64ForTest(t, res.Rows[0][2]), "fanout=%d depth=%d nearest", fanout, depth)
 				assert.EqualValues(t, geometricPathCount(fanout, depth), toInt64ForTest(t, res.Rows[0][3]), "fanout=%d depth=%d reachable", fanout, depth)
 			}
@@ -117,8 +117,8 @@ LIMIT $topK
 		require.True(t, exec.LastHotPathTrace().CallTailTraversalFastPath, "depth=%d should use call-tail traversal hot path", depth)
 		require.Equal(t, []string{"nodeID", "score", "maxDepth"}, res.Columns)
 		require.Len(t, res.Rows, 1, "depth=%d should only return the strong constrained root", depth)
-		assert.Equal(t, string(strongRoot.ID), res.Rows[0][0])
-		assert.NotEqual(t, string(weakRoot.ID), res.Rows[0][0])
+		assert.Equal(t, storage.NodeElementID("test", strongRoot.ID), res.Rows[0][0])
+		assert.NotEqual(t, storage.NodeElementID("test", weakRoot.ID), res.Rows[0][0])
 		assert.EqualValues(t, depth, toInt64ForTest(t, res.Rows[0][2]), "depth=%d maxDepth", depth)
 	}
 }

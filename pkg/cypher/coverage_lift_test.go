@@ -712,11 +712,11 @@ func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {
 		{expr: "properties(node)", want: map[string]interface{}{"name": "Ada", "score": 9}},
 		{expr: "type(edge)", want: "KNOWS"},
 		{expr: "id(edge)", want: "edge-1"},
-		{expr: "elementId(node)", want: "node-1"},
+		{expr: "elementId(node)", want: "4:nornic:node-1"},
 		{expr: "labels(node)", want: []interface{}{"Person", "Scientist"}},
 	} {
 		t.Run(tc.expr, func(t *testing.T) {
-			resolver, ok := compileCallTailDirectValueResolver(tc.expr)
+			resolver, ok := exec.compileCallTailDirectValueResolver(tc.expr)
 			require.True(t, ok)
 			got, ok := resolver(values)
 			require.True(t, ok)
@@ -724,9 +724,9 @@ func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {
 		})
 	}
 
-	_, ok = compileCallTailDirectValueResolver("properties(node, extra)")
+	_, ok = exec.compileCallTailDirectValueResolver("properties(node, extra)")
 	assert.False(t, ok)
-	_, ok = compileCallTailDirectValueResolver("bad-name")
+	_, ok = exec.compileCallTailDirectValueResolver("bad-name")
 	assert.False(t, ok)
 	_, _, ok = splitCallTailPropertyAccess("node.name.extra")
 	assert.False(t, ok)

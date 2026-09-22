@@ -139,7 +139,7 @@ func TestDeleteWithINQuery(t *testing.T) {
 
 		query := `MATCH (n:Person) WHERE elementId(n) IN $ids DETACH DELETE n RETURN count(n) as deleted`
 		params := map[string]interface{}{
-			"ids": []string{"4:nornicdb:node-1", "4:nornicdb:node-2"},
+			"ids": []string{storage.NodeElementID("test", "node-1"), storage.NodeElementID("test", "node-2")},
 		}
 		result, err := exec.Execute(ctx, query, params)
 		require.NoError(t, err)
@@ -196,7 +196,7 @@ func TestDeleteWithINQuery(t *testing.T) {
 
 		query := `MATCH (n:Person) WHERE elementId(n) IN $ids OR n.id IN $ids DETACH DELETE n RETURN count(n) as deleted`
 		params := map[string]interface{}{
-			"ids": []string{"4:nornicdb:node-1", "4:nornicdb:node-2"},
+			"ids": []string{storage.NodeElementID("test", "node-1"), storage.NodeElementID("test", "node-2")},
 		}
 		result, err := exec.Execute(ctx, query, params)
 		require.NoError(t, err)
@@ -410,7 +410,7 @@ func TestMatchWithINQuery(t *testing.T) {
 
 		query := `MATCH (n:Person) WHERE elementId(n) IN $ids RETURN n.id as id ORDER BY n.id`
 		params := map[string]interface{}{
-			"ids": []string{"4:nornicdb:node-1", "4:nornicdb:node-2"},
+			"ids": []string{storage.NodeElementID("test", "node-1"), storage.NodeElementID("test", "node-2")},
 		}
 		result, err := exec.Execute(ctx, query, params)
 		require.NoError(t, err)
@@ -449,7 +449,7 @@ func TestMatchWithINQuery(t *testing.T) {
 
 		query := `MATCH (n:Person) WHERE elementId(n) IN $ids OR n.id IN $ids RETURN n.id as id ORDER BY n.id`
 		params := map[string]interface{}{
-			"ids": []string{"4:nornicdb:node-1", "4:nornicdb:node-2"},
+			"ids": []string{storage.NodeElementID("test", "node-1"), storage.NodeElementID("test", "node-2")},
 		}
 		result, err := exec.Execute(ctx, query, params)
 		require.NoError(t, err)

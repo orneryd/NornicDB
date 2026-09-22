@@ -1681,7 +1681,7 @@ func (e *StorageExecutor) compileCallTailValueProjector(expr string) (callTailVa
 	if trimmed == "" || isAggregateExpression(trimmed) || strings.Contains(trimmed, "[") {
 		return nil, false
 	}
-	if resolver, ok := compileCallTailDirectValueResolver(trimmed); ok {
+	if resolver, ok := e.compileCallTailDirectValueResolver(trimmed); ok {
 		return func(values map[string]interface{}) interface{} {
 			value, _ := resolver(values)
 			return value
@@ -1713,7 +1713,7 @@ func (e *StorageExecutor) compileCallTailValueResolver(expr string) (callTailVal
 			return value, ok
 		}, true
 	}
-	if resolver, ok := compileCallTailDirectValueResolver(trimmed); ok {
+	if resolver, ok := e.compileCallTailDirectValueResolver(trimmed); ok {
 		return func(values map[string]interface{}, _ map[string]interface{}) (interface{}, bool) {
 			return resolver(values)
 		}, true
@@ -1740,7 +1740,7 @@ func (e *StorageExecutor) compileCallTailValueResolver(expr string) (callTailVal
 
 type callTailDirectValueResolver func(map[string]interface{}) (interface{}, bool)
 
-func compileCallTailDirectValueResolver(expr string) (callTailDirectValueResolver, bool) {
+func (e *StorageExecutor) compileCallTailDirectValueResolver(expr string) (callTailDirectValueResolver, bool) {
 	trimmed := strings.TrimSpace(expr)
 	if trimmed == "" {
 		return nil, false
@@ -1786,13 +1786,21 @@ func compileCallTailDirectValueResolver(expr string) (callTailDirectValueResolve
 				}
 				return callTailTypeValue(raw)
 			}, true
-		case "id", "elementid":
+		case "id":
 			return func(values map[string]interface{}) (interface{}, bool) {
 				raw, ok := values[arg]
 				if !ok || raw == nil {
 					return nil, false
 				}
 				return callTailIDValue(raw)
+			}, true
+		case "elementid":
+			return func(values map[string]interface{}) (interface{}, bool) {
+				raw, ok := values[arg]
+				if !ok || raw == nil {
+					return nil, false
+				}
+				return callTailElementIDValue(e.databaseName(), raw)
 			}, true
 		case "labels":
 			return func(values map[string]interface{}) (interface{}, bool) {
@@ -1920,6 +1928,28 @@ func callTailIDValue(raw interface{}) (interface{}, bool) {
 		}
 		id, ok := value["_id"]
 		return id, ok
+	default:
+		return nil, false
+	}
+}
+
+func callTailElementIDValue(database string, raw interface{}) (interface{}, bool) {
+	switch value := raw.(type) {
+	case *storage.Node:
+		if value == nil {
+			return nil, false
+		}
+		return storage.NodeElementID(database, value.ID), true
+	case *storage.Edge:
+		if value == nil {
+			return nil, false
+		}
+		return storage.RelationshipElementID(database, value.ID), true
+	case map[string]interface{}:
+		if elementID, ok := value["elementId"]; ok {
+			return elementID, true
+		}
+		return nil, false
 	default:
 		return nil, false
 	}

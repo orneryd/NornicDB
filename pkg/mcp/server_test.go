@@ -762,8 +762,9 @@ func TestServerUtilityHelpers(t *testing.T) {
 	require.NotContains(t, args, "database")
 	require.NotContains(t, args, "db")
 
-	require.Equal(t, "4:nornicdb:node-1", normalizeNodeElementID("node-1"))
+	require.Equal(t, "4:nornic:node-1", normalizeNodeElementID("node-1"))
 	require.Equal(t, "4:tenant:node-1", normalizeNodeElementID("4:tenant:node-1"))
+	require.Equal(t, "4:tenant_a:node-1", normalizeNodeElementIDForDatabase("tenant_a", "node-1"))
 	require.Equal(t, "node-1", localNodeIDFromAny("4:nornicdb:node-1"))
 	require.Equal(t, "node-2", localNodeIDFromAny("4:tenant:node-2"))
 	require.Equal(t, "", localNodeIDFromAny(" "))

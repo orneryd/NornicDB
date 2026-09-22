@@ -11,8 +11,9 @@ import (
 // makeCtx builds a Context with the given nodes and rels for testing.
 func makeCtx(nodes map[string]*storage.Node, rels map[string]*storage.Edge) Context {
 	return Context{
-		Nodes: nodes,
-		Rels:  rels,
+		Nodes:    nodes,
+		Rels:     rels,
+		Database: "test",
 		Eval: func(expr string) (interface{}, error) {
 			return nil, nil
 		},
@@ -22,8 +23,9 @@ func makeCtx(nodes map[string]*storage.Node, rels map[string]*storage.Edge) Cont
 // makeCtxWithEval builds a Context where Eval returns the given value for any expr.
 func makeCtxWithEval(v interface{}) Context {
 	return Context{
-		Nodes: map[string]*storage.Node{},
-		Rels:  map[string]*storage.Edge{},
+		Nodes:    map[string]*storage.Node{},
+		Rels:     map[string]*storage.Edge{},
+		Database: "test",
 		Eval: func(expr string) (interface{}, error) {
 			return v, nil
 		},
@@ -74,7 +76,7 @@ func TestEvalElementID_ViaRel(t *testing.T) {
 	ctx := makeCtx(nil, map[string]*storage.Edge{"r": rel})
 	v, _, err := EvaluateFunction("elementid", []string{"r"}, ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "5:nornicdb:nornic:r1", v)
+	assert.Equal(t, "5:test:nornic:r1", v)
 }
 
 func TestEvalElementID_NoArgs(t *testing.T) {

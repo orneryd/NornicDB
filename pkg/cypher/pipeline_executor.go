@@ -205,8 +205,11 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 	for _, k := range keywords {
 		for _, p := range findAllTopLevelPipelineKeywordPositions(cypher, k.name) {
 			if k.kind == pipelineClauseMatch {
-				preceding := strings.TrimRight(strings.ToUpper(cypher[:p]), " \t\n\r")
+				preceding := strings.TrimSpace(strings.ToUpper(cypher[:p]))
 				if strings.HasSuffix(preceding, "OPTIONAL") {
+					continue
+				}
+				if strings.HasSuffix(preceding, "ON") {
 					continue
 				}
 			}
@@ -1316,6 +1319,8 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			}
 		}
 		var relationshipPattern *mergeRelationshipPattern
+		var nodePathVariable string
+		var nodePathBinding string
 		mergeBody := strings.TrimSpace(substituted)
 		if startsWithKeywordFold(mergeBody, "MERGE") {
 			mergeBody = strings.TrimSpace(mergeBody[len("MERGE"):])
@@ -1325,6 +1330,10 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				if parseErr != nil {
 					return nil, nil, parseErr
 				}
+			} else if nodePathVariable = extractPathAssignmentVariable(mergeBody); nodePathVariable != "" {
+				mergeBody = strings.TrimSpace(mergeBody[strings.Index(mergeBody, "=")+1:])
+				nodePathBinding = e.extractVarName(mergeBody)
+				substituted = "MERGE " + mergeBody
 			}
 		}
 		merged, err := e.executeMergeWithContext(ctx, substituted, nodeContext, relContext)
@@ -1345,6 +1354,12 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		}
 		for name, relationship := range relContext {
 			newRow[name] = relationship
+		}
+		if nodePathVariable != "" {
+			if node := nodeContext[nodePathBinding]; node != nil {
+				path := PathResult{Nodes: []*storage.Node{node}}
+				newRow[nodePathVariable] = e.pathToMap(path)
+			}
 		}
 		if relationshipPattern != nil {
 			startNode := nodeContext[relationshipPattern.startVariable]
@@ -1421,7 +1436,7 @@ func (e *StorageExecutor) materializePipelinePropertyExpressions(clause string, 
 }
 
 // executeCreateWithRefsOrCompound runs a CREATE or MATCH...CREATE query and
-// returns the created-node refs. Handles both the standalone CREATE case and
+// returns the created entity refs. Handles both the standalone CREATE case and
 // the synthetic `MATCH (x) WHERE id(x) = "..." MATCH (y) ... CREATE ...`
 // prefix we prepend for pre-bound variables.
 func (e *StorageExecutor) executeCreateWithRefsOrCompound(ctx context.Context, query string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
@@ -1430,23 +1445,11 @@ func (e *StorageExecutor) executeCreateWithRefsOrCompound(ctx context.Context, q
 	if strings.HasPrefix(upper, "CREATE") {
 		return e.executeCreateWithRefs(ctx, query)
 	}
-	// MATCH ... CREATE ... — use the compound handler and try to derive the
-	// created-node refs by parsing the CREATE part. Simpler: run the query
-	// via executeInternal and re-scan the storage for nodes referenced by
-	// bare variable patterns. For now we fall back to running it directly
-	// and capturing stats only; binding propagation of newly-created nodes
-	// through compound MATCH+CREATE is not needed by the seeder (the only
-	// newly-bound name inside a single block is captured by the subsequent
-	// CREATE in the same block when they share the pipeline).
-	//
-	// Concretely: in our pipeline the second CREATE `CREATE (c)-[:REL]->(o)`
-	// references `o` which was bound by the previous CREATE clause. Because
-	// we split each CREATE into its own pipeline clause, that earlier CREATE
-	// is its own standalone CREATE and goes through executeCreateWithRefs
-	// above, populating refsNodes. The MATCH+CREATE branch here handles
-	// compound shapes only for completeness; populated refs empty.
-	result, err := e.executeCompoundMatchCreate(ctx, query)
-	return result, nil, nil, err
+	// MATCH ... CREATE ... — retain both the matched node bindings and newly
+	// created relationship bindings. Later pipeline clauses (for example SET
+	// on a relationship created here) must continue from this exact mutation,
+	// never fall back and execute the CREATE a second time.
+	return e.executeCompoundMatchCreateWithRefs(ctx, query)
 }
 
 // pipelineApplyWith drops / renames binding keys according to a WITH clause.

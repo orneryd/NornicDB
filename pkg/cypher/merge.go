@@ -750,13 +750,16 @@ func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher 
 	returnIdxInMerge := findKeywordIndex(mergeClause, "RETURN")
 	aggregateCountOnly := false
 	aggregateCountAlias := "count(*)"
+	aggregateCountExpr := "*"
 	if returnIdxInMerge > 0 {
 		returnPart := strings.TrimSpace(mergeClause[returnIdxInMerge+len("RETURN"):])
 		items := e.parseReturnItems(returnPart)
 		if len(items) == 1 {
-			expr := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(items[0].expr), " ", ""))
-			if expr == "COUNT(*)" {
+			name, expression, distinct, aggregate := parsePipelineAggregate(items[0].expr)
+			if aggregate && name == "count" && !distinct {
 				aggregateCountOnly = true
+				aggregateCountExpr = expression
+				aggregateCountAlias = items[0].expr
 				if items[0].alias != "" {
 					aggregateCountAlias = items[0].alias
 				}
@@ -785,6 +788,13 @@ func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher 
 		return result, nil
 	}
 
+	var aggregateCount int64
+	countMergedBinding := func(nodes map[string]*storage.Node, relationships map[string]*storage.Edge) {
+		if aggregateCountExpr == "*" || e.evaluateExpressionWithContext(ctx, aggregateCountExpr, nodes, relationships) != nil {
+			aggregateCount++
+		}
+	}
+
 	// For each set of matched nodes, execute the MERGE with context
 	for _, nodeContext := range matchedNodes {
 		mergeResult, err := e.executeMergeWithContext(ctx, mergeClause, nodeContext, matchedRels)
@@ -805,36 +815,27 @@ func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher 
 		}
 		if !aggregateCountOnly {
 			result.Rows = append(result.Rows, mergeResult.Rows...)
+		} else {
+			countMergedBinding(nodeContext, matchedRels)
 		}
 	}
 
 	// If no matched nodes but had OPTIONAL MATCH, still try to execute MERGE
 	if len(matchedNodes) == 0 {
-		mergeResult, err := e.executeMergeWithContext(ctx, mergeClause, make(map[string]*storage.Node), make(map[string]*storage.Edge))
+		nodeContext := make(map[string]*storage.Node)
+		relContext := make(map[string]*storage.Edge)
+		mergeResult, err := e.executeMergeWithContext(ctx, mergeClause, nodeContext, relContext)
 		if err != nil {
 			return nil, err
 		}
 		result = mergeResult
+		if aggregateCountOnly {
+			countMergedBinding(nodeContext, relContext)
+		}
 	}
 	if aggregateCountOnly {
-		countValue := int64(len(matchedNodes))
-		countQuery := strings.TrimSpace(matchClause) + " RETURN count(*) AS " + aggregateCountAlias
-		if countRes, err := e.executeMatch(ctx, countQuery); err == nil {
-			if len(countRes.Rows) > 0 && len(countRes.Rows[0]) > 0 {
-				switch v := countRes.Rows[0][0].(type) {
-				case int:
-					countValue = int64(v)
-				case int32:
-					countValue = int64(v)
-				case int64:
-					countValue = v
-				case float64:
-					countValue = int64(v)
-				}
-			}
-		}
 		result.Columns = []string{aggregateCountAlias}
-		result.Rows = [][]interface{}{{countValue}}
+		result.Rows = [][]interface{}{{aggregateCount}}
 	}
 
 	return result, nil
@@ -1925,7 +1926,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 
 	// Parse node pattern
 	varName, labels, matchProps, err := e.parseMergePattern(ctx, mergePattern)
-	if err != nil || varName == "" {
+	if err != nil {
 		varName = e.extractVarName(mergePattern)
 		labels = e.extractLabels(mergePattern)
 		matchProps = make(map[string]interface{})
@@ -2025,8 +2026,10 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	e.notifyNodeMutated(string(node.ID))
 	e.cacheMergeNode(labels, matchProps, node)
 
-	// Add this node to context for subsequent MERGEs
-	nodeContext[varName] = node
+	// Anonymous pattern nodes do not introduce a variable into scope.
+	if varName != "" {
+		nodeContext[varName] = node
+	}
 
 	// Handle second MERGE (usually relationship creation)
 	if secondMergeIdx > 0 {
@@ -2174,7 +2177,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		relContext[parsedPattern.relVariable] = edge
 	}
 	applySetClause := func(clauseIdx, keywordLength int) error {
-		if clauseIdx < 0 || parsedPattern.relVariable == "" {
+		if clauseIdx < 0 {
 			return nil
 		}
 		setEnd := len(cypher)
@@ -2190,12 +2193,37 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			}
 		}
 		setClause := strings.TrimSpace(cypher[clauseIdx+keywordLength : setEnd])
-		if propertiesSet := e.applySetToRelationshipWithContext(ctx, edge, parsedPattern.relVariable, setClause, nodeContext, relContext); propertiesSet > 0 {
-			if err := store.UpdateEdge(edge); err != nil {
+		for variable, node := range nodeContext {
+			beforeProperties := cloneNodePropertiesMap(node.Properties)
+			beforeLabels := append([]string(nil), node.Labels...)
+			e.applySetToNodeWithContext(ctx, node, variable, setClause, nodeContext, relContext)
+			propertiesSet := changedPropertyCount(beforeProperties, node.Properties)
+			labelsAdded := addedLabelCount(beforeLabels, node.Labels)
+			if propertiesSet == 0 && labelsAdded == 0 {
+				continue
+			}
+			if err := store.UpdateNode(node); err != nil {
+				node.Properties = beforeProperties
+				node.Labels = beforeLabels
+				return localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+			}
+			result.Stats.PropertiesSet += propertiesSet
+			result.Stats.LabelsAdded += labelsAdded
+			e.notifyNodeMutated(string(node.ID))
+		}
+		for variable, relationship := range relContext {
+			beforeProperties := cloneNodePropertiesMap(relationship.Properties)
+			e.applySetToRelationshipWithContext(ctx, relationship, variable, setClause, nodeContext, relContext)
+			propertiesSet := changedPropertyCount(beforeProperties, relationship.Properties)
+			if propertiesSet == 0 {
+				continue
+			}
+			if err := store.UpdateEdge(relationship); err != nil {
+				relationship.Properties = beforeProperties
 				return localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
 			}
 			result.Stats.PropertiesSet += propertiesSet
-			e.notifyEdgeMutated(string(edge.ID))
+			e.notifyEdgeMutated(string(relationship.ID))
 		}
 		return nil
 	}
@@ -2255,21 +2283,21 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 			}
 			right := strings.TrimSpace(assignment[eqIdx+1:])
 			if v, ok := resolveDirectParamRef(ctx, right); ok {
-				if props, ok := toStringAnyMap(v); ok {
+				if props, ok := propertyMapForSetValue(v); ok {
 					edge.Properties = setPropertyMap(props)
 					propertiesSet += len(props)
 					continue
 				}
 			}
 			if v, ok := resolveContextPathRef(ctx, right); ok {
-				if props, ok := toStringAnyMap(v); ok {
+				if props, ok := propertyMapForSetValue(v); ok {
 					edge.Properties = setPropertyMap(props)
 					propertiesSet += len(props)
 					continue
 				}
 			}
 			evaluated := e.evaluateSetExpressionWithContext(ctx, right, nodeContext, fullRelContext)
-			if props, ok := toStringAnyMap(evaluated); ok {
+			if props, ok := propertyMapForSetValue(evaluated); ok {
 				edge.Properties = setPropertyMap(props)
 				propertiesSet += len(props)
 			}
@@ -2367,19 +2395,19 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 			}
 			right := strings.TrimSpace(assignment[eqIdx+1:])
 			if v, ok := resolveDirectParamRef(ctx, right); ok {
-				if props, ok := toStringAnyMap(v); ok {
+				if props, ok := propertyMapForSetValue(v); ok {
 					node.Properties = setPropertyMap(props)
 					continue
 				}
 			}
 			if v, ok := resolveContextPathRef(ctx, right); ok {
-				if props, ok := toStringAnyMap(v); ok {
+				if props, ok := propertyMapForSetValue(v); ok {
 					node.Properties = setPropertyMap(props)
 					continue
 				}
 			}
 			evaluated := e.evaluateSetExpressionWithContext(ctx, right, fullContext, relContext)
-			if props, ok := toStringAnyMap(evaluated); ok {
+			if props, ok := propertyMapForSetValue(evaluated); ok {
 				node.Properties = setPropertyMap(props)
 			}
 			continue

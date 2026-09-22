@@ -494,7 +494,7 @@ func TestResolveBindingExprUnboundVariable(t *testing.T) {
 		require.Nil(t, exec.resolveBindingExpr(ctx, "ghost.prop", b, rels))
 	})
 	t.Run("elementId still resolves for a real relationship binding", func(t *testing.T) {
-		require.Equal(t, "e1", exec.resolveBindingExpr(ctx, "elementId(rel)", b, rels))
+		require.Equal(t, "5:relseed:e1", exec.resolveBindingExpr(ctx, "elementId(rel)", b, rels))
 	})
 	t.Run("property access still resolves for a real relationship binding", func(t *testing.T) {
 		require.Equal(t, "reducer", exec.resolveBindingExpr(ctx, "rel.kind", b, rels))

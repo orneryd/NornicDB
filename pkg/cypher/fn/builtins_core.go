@@ -54,10 +54,10 @@ func evalElementID(ctx Context, args []string) (interface{}, error) {
 	}
 	inner := strings.TrimSpace(args[0])
 	if node, ok := ctx.Nodes[inner]; ok && node != nil {
-		return fmt.Sprintf("4:nornicdb:%s", node.ID), nil
+		return storage.NodeElementID(ctx.Database, node.ID), nil
 	}
 	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
-		return fmt.Sprintf("5:nornicdb:%s", rel.ID), nil
+		return storage.RelationshipElementID(ctx.Database, rel.ID), nil
 	}
 	return nil, nil
 }

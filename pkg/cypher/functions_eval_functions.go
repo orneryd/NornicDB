@@ -138,6 +138,22 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 			// Evaluate the index
 			index := e.evaluateExpressionWithContext(ctx, indexExpr, nodes, rels)
+			if key, ok := index.(string); ok {
+				switch value := baseVal.(type) {
+				case map[string]interface{}:
+					return value[key]
+				case *storage.Node:
+					if value != nil {
+						return value.Properties[key]
+					}
+					return nil
+				case *storage.Edge:
+					if value != nil {
+						return value.Properties[key]
+					}
+					return nil
+				}
+			}
 			var idx int64
 			switch v := index.(type) {
 			case int64:
@@ -201,8 +217,9 @@ skipArrayIndexing:
 	if name, inner, ok := parseFunctionCallWS(expr); ok {
 		args := e.splitFunctionArgs(inner)
 		ctx := cypherfn.Context{
-			Nodes: nodes,
-			Rels:  rels,
+			Nodes:    nodes,
+			Rels:     rels,
+			Database: e.databaseName(),
 			Eval: func(argExpr string) (interface{}, error) {
 				return e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), nil
 			},

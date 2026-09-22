@@ -19,6 +19,13 @@ type failingNodeLookupEngine struct {
 	byLabelErr  error
 }
 
+func (e *failingNodeLookupEngine) Namespace() string {
+	if provider, ok := e.Engine.(interface{ Namespace() string }); ok {
+		return provider.Namespace()
+	}
+	return ""
+}
+
 func (e *failingNodeLookupEngine) AllNodes() ([]*storage.Node, error) {
 	if e.allNodesErr != nil {
 		return nil, e.allNodesErr

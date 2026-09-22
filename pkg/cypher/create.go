@@ -1045,6 +1045,15 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 //	MATCH (s2:Supplier {supplierID: 2}), (c2:Category {categoryID: 2})
 //	CREATE (p2:Product {...})
 func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	result, _, _, err := e.executeCompoundMatchCreateWithRefs(ctx, cypher)
+	return result, err
+}
+
+// executeCompoundMatchCreateWithRefs executes a compound MATCH/CREATE query
+// and retains the entity bindings produced by the mutation. Callers that
+// continue with later clauses need these references so the query is not
+// partially executed and then retried through another mutation handler.
+func (e *StorageExecutor) executeCompoundMatchCreateWithRefs(ctx context.Context, cypher string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
 	// Substitute parameters AFTER routing to avoid keyword detection issues.
 	// If the query includes SET += (map merge), keep the SET segment intact
 	// so $props can be resolved from context instead of string-substitution.
@@ -1092,7 +1101,7 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 	for _, block := range blocks {
 		blockResult, err := e.executeMatchCreateBlock(ctx, block, allNodeVars, allEdgeVars)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 		// Accumulate stats
 		result.Stats.NodesCreated += blockResult.Stats.NodesCreated
@@ -1107,7 +1116,7 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 		}
 	}
 
-	return result, nil
+	return result, allNodeVars, allEdgeVars, nil
 }
 
 // splitMatchCreateBlocks splits a query into independent MATCH...CREATE blocks

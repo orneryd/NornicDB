@@ -409,7 +409,7 @@ RETURN count(n) AS prepared
 `, map[string]interface{}{"rows": rows})
 	require.NoError(t, err)
 	require.Equal(t, []string{"prepared"}, res.Columns)
-	require.Len(t, res.Rows, 2)
+	require.Equal(t, [][]interface{}{{int64(2)}}, res.Rows)
 
 	nodes, err := store.GetNodesByLabel("Annotation")
 	require.NoError(t, err)

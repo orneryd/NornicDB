@@ -38,7 +38,7 @@ func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string)
 	// Find properties block
 	propsStart := strings.Index(pattern, "{")
 	labelPart := pattern
-	if propsStart > 0 {
+	if propsStart >= 0 {
 		labelPart = pattern[:propsStart]
 		propsEnd := strings.LastIndex(pattern, "}")
 		if propsEnd > propsStart {

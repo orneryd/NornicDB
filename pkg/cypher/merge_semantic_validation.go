@@ -151,6 +151,35 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		}
 		scope.bind(pathVariable)
 	}
+	if err := e.validateMergeActionScopes(scope, clause); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
+	type actionPosition struct {
+		index   int
+		keyword string
+	}
+	actions := make([]actionPosition, 0, 2)
+	for _, keyword := range []string{"ON CREATE SET", "ON MATCH SET"} {
+		if index := findKeywordIndexInContext(clause, keyword); index >= 0 {
+			actions = append(actions, actionPosition{index: index, keyword: keyword})
+		}
+	}
+	for _, action := range actions {
+		end := len(clause)
+		for _, candidate := range actions {
+			if candidate.index > action.index && candidate.index < end {
+				end = candidate.index
+			}
+		}
+		body := strings.TrimSpace(clause[action.index+len(action.keyword) : end])
+		if err := e.validateSetClauseScope(scope, "SET "+body); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

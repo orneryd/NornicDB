@@ -1021,10 +1021,10 @@ func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b
 	if strings.HasPrefix(strings.ToLower(expr), "elementid(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[len("elementId(") : len(expr)-1])
 		if node := b[inner]; node != nil {
-			return string(node.ID)
+			return storage.NodeElementID(e.databaseName(), node.ID)
 		}
 		if edge := rels[inner]; edge != nil {
-			return string(edge.ID)
+			return storage.RelationshipElementID(e.databaseName(), edge.ID)
 		}
 		return nil
 	}

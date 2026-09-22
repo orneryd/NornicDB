@@ -317,9 +317,9 @@ func TestNormalizeNodeElementID(t *testing.T) {
 		{"foreign elementId passes through unchanged",
 			"4:otherdb:xyz", "4:otherdb:xyz"},
 		{"bare id is prefixed",
-			"node-123", "4:nornicdb:node-123"},
+			"node-123", "4:nornic:node-123"},
 		{"bare id is trimmed before prefixing",
-			"  node-123  ", "4:nornicdb:node-123"},
+			"  node-123  ", "4:nornic:node-123"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

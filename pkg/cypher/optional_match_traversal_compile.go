@@ -143,8 +143,9 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 	captured := expr
 	return func(row traversalOptRow) interface{} {
 		fnCtx := cypherfn.Context{
-			Nodes: row.nodes,
-			Rels:  row.rels,
+			Nodes:    row.nodes,
+			Rels:     row.rels,
+			Database: e.databaseName(),
 			Eval: func(argExpr string) (interface{}, error) {
 				if argFn, ok := compiledArgs[strings.TrimSpace(argExpr)]; ok {
 					return argFn(row), nil

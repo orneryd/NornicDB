@@ -65,7 +65,7 @@ func TestFunctionElementId(t *testing.T) {
 
 	result := e.evaluateExpressionWithContext(ctx, "elementId(n)", nodes, nil)
 
-	expected := "4:nornicdb:node-1"
+	expected := "4:test:node-1"
 	if result != expected {
 		t.Errorf("elementId(n) = %v, want %v", result, expected)
 	}

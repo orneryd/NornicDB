@@ -14,6 +14,9 @@ import (
 type Context struct {
 	Nodes map[string]*storage.Node
 	Rels  map[string]*storage.Edge
+	// Database identifies the graph namespace used to construct elementId()
+	// values. Empty uses the storage package's default database name.
+	Database string
 
 	Eval func(expr string) (interface{}, error)
 	Now  func() time.Time

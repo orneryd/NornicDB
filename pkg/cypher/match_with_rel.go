@@ -854,8 +854,9 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 			(strings.EqualFold(name, "toLower") || strings.EqualFold(name, "toUpper")) {
 			nodeCtx, edgeCtx := withWhereValueContext(values)
 			functionCtx := cypherfn.Context{
-				Nodes: nodeCtx,
-				Rels:  edgeCtx,
+				Nodes:    nodeCtx,
+				Rels:     edgeCtx,
+				Database: e.databaseName(),
 				Eval: func(argExpr string) (interface{}, error) {
 					value := e.evaluateExpressionFromValues(argExpr, values)
 					if literal, ok := value.(string); ok && literal == strings.TrimSpace(argExpr) {
@@ -912,21 +913,34 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 			return time.Now().Format("2006-01-02T15:04:05")
 		}
 
-		// elementId(n) / id(n)
-		if matchFuncStartAndSuffix(expr, "elementid") || matchFuncStartAndSuffix(expr, "id") {
-			inner := extractFuncArgs(expr, "elementid")
-			if inner == "" {
-				inner = extractFuncArgs(expr, "id")
+		// elementId(n) / id(n). elementId() is an opaque, typed identifier;
+		// keep it distinct from the storage identifier returned by id().
+		isElementID := matchFuncStartAndSuffix(expr, "elementid")
+		if isElementID || matchFuncStartAndSuffix(expr, "id") {
+			inner := extractFuncArgs(expr, "id")
+			if isElementID {
+				inner = extractFuncArgs(expr, "elementid")
 			}
 			inner = strings.TrimSpace(inner)
 			if val, ok := values[inner]; ok {
 				if node, ok := val.(*storage.Node); ok && node != nil {
+					if isElementID {
+						return storage.NodeElementID(e.databaseName(), node.ID)
+					}
 					return string(node.ID)
 				}
 				if rel, ok := val.(*storage.Edge); ok && rel != nil {
+					if isElementID {
+						return storage.RelationshipElementID(e.databaseName(), rel.ID)
+					}
 					return string(rel.ID)
 				}
 				if nodeMap, ok := val.(map[string]interface{}); ok {
+					if isElementID {
+						if elementID, ok := nodeMap["elementId"]; ok {
+							return elementID
+						}
+					}
 					if id, ok := nodeMap["id"]; ok {
 						return id
 					}

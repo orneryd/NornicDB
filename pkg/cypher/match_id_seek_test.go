@@ -80,7 +80,7 @@ func TestMatchWhereElementIDEquality_UsesDirectLookupWithoutAllNodesScan(t *test
 
 	res, err := exec.Execute(ctx, `
 		MATCH (n)
-		WHERE elementId(n) = "4:nornicdb:target-elem-id"
+		WHERE elementId(n) = "4:test:target-elem-id"
 		RETURN n.text AS text
 		LIMIT 1
 	`, nil)
@@ -155,7 +155,7 @@ func TestMatchWhereElementIDInParam_UsesDirectLookupWithoutAllNodesScan(t *testi
 		RETURN n.text AS text
 		ORDER BY text
 	`, map[string]interface{}{
-		"ids": []interface{}{"4:nornicdb:el-in-2", "4:nornicdb:el-in-1"},
+		"ids": []interface{}{"4:test:el-in-2", "4:test:el-in-1"},
 	})
 	require.NoError(t, err)
 	require.Equal(t, []string{"text"}, res.Columns)
@@ -187,7 +187,7 @@ func TestMatchWhereElementIDEqualityParam_UsesDirectLookupWithoutAllNodesScan(t 
 		RETURN n.text AS text
 		LIMIT 1
 	`, map[string]interface{}{
-		"id": "4:nornicdb:param-elem-id",
+		"id": "4:test:param-elem-id",
 	})
 	require.NoError(t, err)
 	require.Equal(t, []string{"text"}, res.Columns)
@@ -247,7 +247,7 @@ func TestMatchWhereElementIDEqualityParam_WithLabel_UsesDirectLookup(t *testing.
 		WHERE elementId(t) = $id
 		RETURN t.title AS title
 	`, map[string]interface{}{
-		"id": "4:nornicdb:labeled-param-id",
+		"id": "4:test:labeled-param-id",
 	})
 	require.NoError(t, err)
 	require.Equal(t, []string{"title"}, res.Columns)

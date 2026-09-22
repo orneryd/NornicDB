@@ -79,8 +79,9 @@ func TestBuiltinsCore(t *testing.T) {
 	r := &storage.Edge{ID: storage.EdgeID("r1"), Type: "KNOWS", Properties: map[string]any{"since": 2020}}
 
 	ctx := Context{
-		Nodes: map[string]*storage.Node{"n": n},
-		Rels:  map[string]*storage.Edge{"r": r},
+		Nodes:    map[string]*storage.Node{"n": n},
+		Rels:     map[string]*storage.Edge{"r": r},
+		Database: "test",
 		Eval: func(expr string) (interface{}, error) {
 			switch expr {
 			case "node_expr":
@@ -112,8 +113,8 @@ func TestBuiltinsCore(t *testing.T) {
 	}{
 		{name: "id from ctx nodes", fn: "id", args: []string{"n"}, want: "n1"},
 		{name: "id from eval getter", fn: "id", args: []string{"getter"}, want: "custom-id"},
-		{name: "elementId node", fn: "elementid", args: []string{"n"}, want: "4:nornicdb:n1"},
-		{name: "elementId rel", fn: "elementid", args: []string{"r"}, want: "5:nornicdb:r1"},
+		{name: "elementId node", fn: "elementid", args: []string{"n"}, want: "4:test:n1"},
+		{name: "elementId rel", fn: "elementid", args: []string{"r"}, want: "5:test:r1"},
 		{name: "type from rel", fn: "type", args: []string{"r"}, want: "KNOWS"},
 		{name: "type from map", fn: "type", args: []string{"rel_map"}, want: "LIKES"},
 		{name: "size string", fn: "size", args: []string{"string_expr"}, want: int64(5)},
