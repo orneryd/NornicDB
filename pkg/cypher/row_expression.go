@@ -293,6 +293,13 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 				operator = "<>"
 			}
 			leftValue, rightValue = normalizeRowIdentityComparison(left, right, leftValue, rightValue)
+			if operator == "=" || operator == "<>" {
+				equal := cypherEquality(leftValue, rightValue)
+				if equal == nil || operator == "=" {
+					return equal, true
+				}
+				return !equal.(bool), true
+			}
 			return compareWithOperator(leftValue, rightValue, operator), true
 		}
 	}
@@ -337,7 +344,11 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		if !ok {
 			return nil, false
 		}
-		indexValue, ok := e.evaluateRowExpression(expr[open+1:len(expr)-1], values)
+		subscript := strings.TrimSpace(expr[open+1 : len(expr)-1])
+		if rangeIndex := strings.Index(subscript, ".."); rangeIndex >= 0 {
+			return e.evaluateRowListSlice(base, strings.TrimSpace(subscript[:rangeIndex]), strings.TrimSpace(subscript[rangeIndex+2:]), values)
+		}
+		indexValue, ok := e.evaluateRowExpression(subscript, values)
 		if !ok {
 			return nil, false
 		}
@@ -406,6 +417,66 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		return nil, false
 	}
 	return value, true
+}
+
+func (e *StorageExecutor) evaluateRowListSlice(base interface{}, lowerExpression, upperExpression string, values map[string]interface{}) (interface{}, bool) {
+	if base == nil {
+		return nil, true
+	}
+	baseType := reflect.TypeOf(base)
+	if baseType == nil || (baseType.Kind() != reflect.Slice && baseType.Kind() != reflect.Array) {
+		return nil, false
+	}
+	items := toAnySlice(base)
+	lower, upper := 0, len(items)
+	if lowerExpression != "" {
+		value, ok := e.evaluateRowExpression(lowerExpression, values)
+		if !ok {
+			return nil, false
+		}
+		if value == nil {
+			return nil, true
+		}
+		lower, ok = rowSubscriptIndex(value)
+		if !ok {
+			return nil, false
+		}
+	}
+	if upperExpression != "" {
+		value, ok := e.evaluateRowExpression(upperExpression, values)
+		if !ok {
+			return nil, false
+		}
+		if value == nil {
+			return nil, true
+		}
+		upper, ok = rowSubscriptIndex(value)
+		if !ok {
+			return nil, false
+		}
+	}
+	if lower < 0 {
+		lower += len(items)
+	}
+	if upper < 0 {
+		upper += len(items)
+	}
+	if lower < 0 {
+		lower = 0
+	}
+	if lower > len(items) {
+		lower = len(items)
+	}
+	if upper < 0 {
+		upper = 0
+	}
+	if upper > len(items) {
+		upper = len(items)
+	}
+	if lower >= upper {
+		return []interface{}{}, true
+	}
+	return append([]interface{}(nil), items[lower:upper]...), true
 }
 
 // evaluateRowCaseExpression evaluates CASE against the complete heterogeneous

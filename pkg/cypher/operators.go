@@ -448,6 +448,16 @@ func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr strin
 			if left == nil || right == nil {
 				return nil, true
 			}
+			if op.op == "=" || op.op == "<>" || op.op == "!=" {
+				equal := cypherEquality(left, right)
+				if equal == nil {
+					return nil, true
+				}
+				if op.op != "=" {
+					return !equal.(bool), true
+				}
+				return equal, true
+			}
 			return op.eval(left, right), true
 		}
 	}

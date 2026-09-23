@@ -461,6 +461,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, true, err
 			}
 		case pipelineClauseWith:
+			if err := e.validatePipelineProjectionSubscripts(rows, clause.text, "WITH"); err != nil {
+				return nil, true, err
+			}
 			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text)
 			if !ok {
 				return nil, false, nil
@@ -477,9 +480,15 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				scope[alias] = struct{}{}
 			}
 		case pipelineClauseReturn:
+			if err := e.validatePipelineProjectionSubscripts(rows, clause.text, "RETURN"); err != nil {
+				return nil, true, err
+			}
 			final, ok := e.pipelineApplyReturn(rows, clause.text)
 			if !ok {
 				return nil, false, nil
+			}
+			if len(final.Columns) == 0 && strings.TrimSpace(strings.TrimPrefix(clause.text, "RETURN")) == "*" {
+				final.Columns = pipelineScopeColumns(scope)
 			}
 			result.Columns = final.Columns
 			result.Rows = final.Rows
@@ -1459,6 +1468,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") || len(e.splitNodePatterns(pattern)) != 1 {
 		return nil, false, nil
 	}
+	pathVariable := extractPathAssignmentVariable(pattern)
 	basePattern := e.parseNodePattern(ctx, pattern)
 	if basePattern.variable == "" {
 		return nil, false, nil
@@ -1475,7 +1485,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 				continue
 			}
 			if materializedWhere == "" || e.evaluateWithWhereCondition(ctx, materializedWhere, map[string]interface{}(row)) {
-				out = append(out, row)
+				out = append(out, e.pipelineBindZeroLengthPath(row, pathVariable, node))
 			}
 			continue
 		}
@@ -1490,17 +1500,32 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			candidateCache[cacheKey] = nodes
 		}
 		for _, node := range nodes {
-			joined := make(pipelineRow, len(row)+1)
+			joined := make(pipelineRow, len(row)+2)
 			for name, value := range row {
 				joined[name] = value
 			}
 			joined[nodePattern.variable] = node
+			if pathVariable != "" {
+				joined[pathVariable] = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
+			}
 			if materializedWhere == "" || e.evaluateWithWhereCondition(ctx, materializedWhere, map[string]interface{}(joined)) {
 				out = append(out, joined)
 			}
 		}
 	}
 	return out, true, nil
+}
+
+func (e *StorageExecutor) pipelineBindZeroLengthPath(row pipelineRow, variable string, node *storage.Node) pipelineRow {
+	if variable == "" {
+		return row
+	}
+	joined := make(pipelineRow, len(row)+1)
+	for name, value := range row {
+		joined[name] = value
+	}
+	joined[variable] = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
+	return joined
 }
 
 func (e *StorageExecutor) materializePipelinePredicateExpressions(expression string, row pipelineRow) string {
@@ -2406,6 +2431,11 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		for _, key := range groupOrder {
 			group := groups[key]
 			newRow := pipelineRow{}
+			for name, value := range group.first {
+				if strings.HasPrefix(name, "$") {
+					newRow[name] = value
+				}
+			}
 			for _, projection := range projections {
 				if !projection.aggregate {
 					value, ok := e.evaluateRowExpression(projection.expr, group.first)
@@ -2453,6 +2483,11 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	orderScopes := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
 		newRow := pipelineRow{}
+		for name, value := range row {
+			if strings.HasPrefix(name, "$") {
+				newRow[name] = value
+			}
+		}
 		ok := true
 		for _, rawItem := range items {
 			item := strings.TrimSpace(rawItem)
@@ -3156,6 +3191,17 @@ func pipelineWildcardColumns(rows []pipelineRow) []string {
 	columns := make([]string, 0, len(seen))
 	for column := range seen {
 		columns = append(columns, column)
+	}
+	sort.Strings(columns)
+	return columns
+}
+
+func pipelineScopeColumns(scope map[string]struct{}) []string {
+	columns := make([]string, 0, len(scope))
+	for column := range scope {
+		if !strings.HasPrefix(column, "$") {
+			columns = append(columns, column)
+		}
 	}
 	sort.Strings(columns)
 	return columns
