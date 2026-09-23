@@ -2,6 +2,8 @@
 package cypher
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -11,6 +13,25 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPinnedTimezoneArchiveIsCompatibleWithGoZoneinfoLoading(t *testing.T) {
+	archive, err := zip.NewReader(bytes.NewReader(temporalZoneinfoArchive), int64(len(temporalZoneinfoArchive)))
+	require.NoError(t, err)
+	require.NotEmpty(t, archive.File)
+
+	foundStockholm := false
+	for _, file := range archive.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		require.Equalf(t, uint16(zip.Store), file.Method,
+			"%s must be stored without compression for Go's ZONEINFO loader", file.Name)
+		if strings.TrimPrefix(file.Name, "./") == "Europe/Stockholm" {
+			foundStockholm = true
+		}
+	}
+	require.True(t, foundStockholm)
+}
 
 func TestTemporalMapConstructorsUseSharedComponentSemantics(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)

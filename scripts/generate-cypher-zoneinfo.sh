@@ -41,7 +41,11 @@ zic -b slim -d "${work_directory}/compiled" \
 find "${work_directory}/compiled" -exec touch -t 200001010000 {} +
 (
 	cd "${work_directory}/compiled"
-	find . -type f | LC_ALL=C sort | zip -X -q "${work_directory}/zoneinfo.zip" -@
+	# Go's time.LoadLocation accepts ZONEINFO zip archives only when every
+	# member is stored without compression. The server can read either form,
+	# but keeping one archive consumable by both the server and Bolt clients
+	# guarantees that conformance comparisons use the same historical rules.
+	find . -type f | LC_ALL=C sort | zip -0 -X -q "${work_directory}/zoneinfo.zip" -@
 )
 mv "${work_directory}/zoneinfo.zip" "${OUTPUT_PATH}"
 
