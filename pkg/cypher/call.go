@@ -4167,12 +4167,12 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 	case strings.Contains(upper, "DB.CLEARQUERYCACHES"):
 		result, err = e.callDbClearQueryCaches()
 	// APOC Dynamic Cypher Execution
+	case strings.Contains(upper, "APOC.CYPHER.RUNMANY"):
+		result, err = e.callApocCypherRunMany(ctx, callCypher)
 	case strings.Contains(upper, "APOC.CYPHER.RUN"):
 		result, err = e.callApocCypherRun(ctx, callCypher)
 	case strings.Contains(upper, "APOC.CYPHER.DOITALL"):
 		result, err = e.callApocCypherRun(ctx, callCypher) // Alias
-	case strings.Contains(upper, "APOC.CYPHER.RUNMANY"):
-		result, err = e.callApocCypherRunMany(ctx, callCypher)
 	// APOC Periodic/Batch Operations
 	case strings.Contains(upper, "APOC.PERIODIC.ITERATE"):
 		result, err = e.callApocPeriodicIterate(ctx, callCypher)

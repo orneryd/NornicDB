@@ -501,6 +501,7 @@ type SmartQueryCache struct {
 // smartCachedResult extends cachedResult with label tracking.
 type smartCachedResult struct {
 	result    *ExecuteResult
+	trace     HotPathTrace
 	timestamp time.Time
 	ttl       time.Duration
 	labels    []string // Labels this query depends on
@@ -562,6 +563,11 @@ func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*E
 }
 
 func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
+	result, _, found := sc.getWithTrace(key)
+	return result, found
+}
+
+func (sc *SmartQueryCache) getWithTrace(key string) (*ExecuteResult, HotPathTrace, bool) {
 	sc.mu.RLock()
 	cached, exists := sc.cache[key]
 	sc.mu.RUnlock()
@@ -572,7 +578,7 @@ func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
 		sc.mu.Unlock()
 		// Plan 04-03 D-12a: cross-cutting cache_misses_total{cache="query_result"}.
 		sc.observeMiss()
-		return nil, false
+		return nil, HotPathTrace{}, false
 	}
 
 	// Check TTL
@@ -586,7 +592,7 @@ func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
 		// both observations so dashboards see the cause-and-effect.
 		sc.observeMiss()
 		sc.observeEviction("ttl")
-		return nil, false
+		return nil, HotPathTrace{}, false
 	}
 
 	// Update LRU
@@ -599,7 +605,7 @@ func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
 
 	// Plan 04-03 D-12a: cross-cutting cache_hits_total{cache="query_result"}.
 	sc.observeHit()
-	return cached.result, true
+	return cached.result, cached.trace, true
 }
 
 // PutWithLabels stores a result with associated labels for smart invalidation.
@@ -608,6 +614,10 @@ func (sc *SmartQueryCache) PutWithLabels(cypher string, params map[string]interf
 }
 
 func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl time.Duration, labels []string) {
+	sc.putWithLabelsAndTrace(key, result, ttl, labels, HotPathTrace{})
+}
+
+func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
@@ -624,6 +634,7 @@ func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl 
 	// Add new entry
 	entry := &smartCachedResult{
 		result:    result,
+		trace:     trace,
 		timestamp: time.Now(),
 		ttl:       ttl,
 		labels:    labels,

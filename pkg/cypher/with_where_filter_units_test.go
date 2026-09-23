@@ -70,7 +70,7 @@ func TestParseWithWhereLabelTest(t *testing.T) {
 	})
 }
 
-func TestWithWhereNodeHasAllLabels(t *testing.T) {
+func TestEntityLabelAndTypePredicate(t *testing.T) {
 	node := &storage.Node{Labels: []string{"Workload", "Deployable"}}
 
 	cases := []struct {
@@ -88,14 +88,17 @@ func TestWithWhereNodeHasAllLabels(t *testing.T) {
 		{"nil node cannot satisfy a label test", (*storage.Node)(nil), []string{"Workload"}, false},
 		{"missing binding cannot satisfy a label test", nil, []string{"Workload"}, false},
 		{"scalar binding is not a node", int64(7), []string{"Workload"}, false},
-		{"edge binding is not a node", &storage.Edge{Type: "RUNS_IN"}, []string{"Workload"}, false},
+		{"relationship type present", &storage.Edge{Type: "RUNS_IN"}, []string{"RUNS_IN"}, true},
+		{"relationship type is case sensitive", &storage.Edge{Type: "RUNS_IN"}, []string{"runs_in"}, false},
+		{"relationship has only one type", &storage.Edge{Type: "RUNS_IN"}, []string{"RUNS_IN", "OTHER"}, false},
 		{"node with no labels", &storage.Node{}, []string{"Workload"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, withWhereNodeHasAllLabels(tc.value, tc.required))
+			assert.Equal(t, tc.want, entityHasAllLabelsOrTypesPredicate(tc.value, tc.required))
 		})
 	}
+	assert.Nil(t, entityHasAllLabelsOrTypes(nil, []string{"Workload"}), "a null binding projects as null")
 }
 
 func TestWithWhereNeedsFullEvaluator(t *testing.T) {

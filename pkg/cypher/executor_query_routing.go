@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -549,8 +548,16 @@ func (e *StorageExecutor) executeTopLevelUnwind(ctx context.Context, cypher stri
 
 // executeReturn handles simple RETURN statements (e.g., "RETURN 1").
 func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if params := getParamsFromContext(ctx); params != nil {
+	params := getParamsFromContext(ctx)
+	if params != nil {
 		cypher = e.substituteParams(cypher, params)
+	}
+	row := make(pipelineRow, len(e.fabricRecordBindings)+len(params))
+	for name, value := range e.fabricRecordBindings {
+		row[name] = value
+	}
+	for name, value := range params {
+		row["$"+name] = value
 	}
 
 	returnIdx := findKeywordIndex(cypher, "RETURN")
@@ -587,6 +594,9 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		if err := e.validateRowSubscriptTypes(part, pipelineRow{}); err != nil {
 			return nil, err
 		}
+		if err := e.validateRowConversionArguments(part, row); err != nil {
+			return nil, err
+		}
 
 		columns = append(columns, alias)
 
@@ -602,32 +612,23 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 			}
 		}
 
-		result, defined := e.evaluateRowExpression(part, pipelineRow{})
-		if !defined {
-			result, defined = e.evaluateExpressionWithContextDefined(ctx, part, nil, nil)
-		}
-		if defined {
-			values = append(values, result)
-			continue
+		if variable := undefinedStandaloneMapValue(part); variable != "" {
+			return nil, newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"UndefinedVariable",
+				"variable is not defined: "+variable,
+			)
 		}
 
-		if part == "1" || strings.HasPrefix(strings.ToLower(part), "true") {
-			values = append(values, int64(1))
-		} else if part == "0" || strings.HasPrefix(strings.ToLower(part), "false") {
-			values = append(values, int64(0))
-		} else if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") {
-			values = append(values, part[1:len(part)-1])
-		} else if strings.HasPrefix(part, "\"") && strings.HasSuffix(part, "\"") {
-			values = append(values, part[1:len(part)-1])
-		} else {
-			if val, err := strconv.ParseInt(part, 10, 64); err == nil {
-				values = append(values, val)
-			} else if val, err := strconv.ParseFloat(part, 64); err == nil {
-				values = append(values, val)
-			} else {
-				values = append(values, part)
-			}
+		result, defined := e.evaluateRowExpression(part, row)
+		if !defined {
+			return nil, newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"UnexpectedSyntax",
+				"could not parse RETURN expression: "+part,
+			)
 		}
+		values = append(values, result)
 	}
 
 	return &ExecuteResult{
@@ -707,6 +708,15 @@ func (e *StorageExecutor) validateSyntax(cypher string) error {
 	if err := validateUnicodeOperators(cypher); err != nil {
 		return err
 	}
+	if err := validateUnicodeStringLiterals(cypher); err != nil {
+		return err
+	}
+	if err := validateStaticMapKeys(cypher); err != nil {
+		return err
+	}
+	if err := validateNumericLiterals(cypher); err != nil {
+		return err
+	}
 	if config.IsANTLRParser() {
 		return e.validateSyntaxANTLR(cypher)
 	}
@@ -763,18 +773,22 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 
 		if parenCount < 0 || bracketCount < 0 || braceCount < 0 {
-			return localizedError(localization.CypherTransactionsSyntaxUnbalancedAt(i), nil)
+			return newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"UnexpectedSyntax",
+				fmt.Sprintf("syntax error: unbalanced delimiter at position %d", i),
+			)
 		}
 	}
 
 	if parenCount != 0 {
-		return localizedError(localization.CypherTransactionsSyntaxUnbalancedParentheses(), nil)
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced parentheses")
 	}
 	if bracketCount != 0 {
-		return localizedError(localization.CypherTransactionsSyntaxUnbalancedSquareBrackets(), nil)
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced square brackets")
 	}
 	if braceCount != 0 {
-		return localizedError(localization.CypherTransactionsSyntaxUnbalancedCurlyBraces(), nil)
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced curly braces")
 	}
 	if inString {
 		return localizedError(localization.CypherTransactionsSyntaxUnclosedQuote(), nil)

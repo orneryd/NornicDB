@@ -1301,6 +1301,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	cypher = trimBOM(cypher)
 	cypher = normalizeCypherSyntaxConfusables(cypher)
+	cypher = stripCypherComments(cypher)
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if cypher == "" {
@@ -1463,6 +1464,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Store params in context for handlers to use
 	ctx = context.WithValue(ctx, paramsKey, params)
+	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {
+		return nil, err
+	}
 
 	// Check query limits if storage engine supports it
 	// Uses interface{} to avoid importing multidb package (prevents circular dependencies)
@@ -1535,7 +1539,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)
 			}
 		}
-		if cached, found := e.cache.get(resultCacheKey); found {
+		if cached, trace, found := e.cache.getWithTrace(resultCacheKey); found {
+			e.restoreHotPathTrace(trace)
 			return cached, nil
 		}
 	}
@@ -1601,7 +1606,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Retain the revision captured before execution. A read overlapping a
 	// mutation must not publish its stale result under the newer revision.
 	if err == nil && resultCacheKey != "" {
-		e.cache.putWithLabels(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher))
+		e.cache.putWithLabelsAndTrace(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace())
 	}
 
 	// Invalidate caches on write operations (using cached analysis)

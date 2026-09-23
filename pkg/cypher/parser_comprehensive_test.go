@@ -470,7 +470,7 @@ func TestParseWhereOperators(t *testing.T) {
 			name:        "NOT",
 			query:       "MATCH (n:Item) WHERE NOT n.available = true RETURN n",
 			expectErr:   false,
-			expectRows:  2, // Cherry (false) and Date (null)
+			expectRows:  1, // Cherry (false); NOT null remains null and is filtered.
 			description: "NOT logical operator",
 		},
 		{

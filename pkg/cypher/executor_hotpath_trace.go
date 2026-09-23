@@ -30,6 +30,15 @@ func (e *StorageExecutor) resetHotPathTrace() {
 	e.hotPathTraceState.mu.Unlock()
 }
 
+func (e *StorageExecutor) restoreHotPathTrace(trace HotPathTrace) {
+	if e.hotPathTraceState == nil {
+		e.hotPathTraceState = &hotPathTraceState{}
+	}
+	e.hotPathTraceState.mu.Lock()
+	e.hotPathTraceState.trace = trace
+	e.hotPathTraceState.mu.Unlock()
+}
+
 func (e *StorageExecutor) markOuterIndexTopKUsed() {
 	if e.hotPathTraceState == nil {
 		e.hotPathTraceState = &hotPathTraceState{}

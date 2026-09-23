@@ -358,6 +358,7 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 		// evaluate with the general Apply + Optional path.
 		return e.applyGeneralOptionalClause(ctx, rows, clause)
 	}
+	pathVariable := extractPathAssignmentVariable(clause.pattern)
 
 	out := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
@@ -396,7 +397,11 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 		}
 
 		if seed == nil {
-			out = append(out, extendTraversalRow(row, newNodeVar, nil, eps.relVar, nil))
+			empty := extendTraversalRow(row, newNodeVar, nil, eps.relVar, nil)
+			if pathVariable != "" {
+				empty = extendTraversalRowMulti(empty, nil, nil, map[string]interface{}{pathVariable: nil})
+			}
+			out = append(out, empty)
 			continue
 		}
 
@@ -411,12 +416,30 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 			if !e.traversalOptionalWhereMatches(ctx, clause.where, cand) {
 				continue
 			}
+			if pathVariable != "" {
+				pathSource, pathTarget := srcNode, tgtNode
+				if srcBound && !tgtBound {
+					pathTarget = rel.node
+				} else if !srcBound && tgtBound {
+					pathSource = rel.node
+				}
+				path := PathResult{
+					Nodes:         []*storage.Node{pathSource, pathTarget},
+					Relationships: []*storage.Edge{rel.edge},
+					Length:        1,
+				}
+				cand = extendTraversalRowMulti(cand, nil, nil, map[string]interface{}{pathVariable: e.pathToMap(path)})
+			}
 			cand.optionalMatched = true
 			out = append(out, cand)
 			matched = true
 		}
 		if !matched {
-			out = append(out, extendTraversalRow(row, newNodeVar, nil, eps.relVar, nil))
+			empty := extendTraversalRow(row, newNodeVar, nil, eps.relVar, nil)
+			if pathVariable != "" {
+				empty = extendTraversalRowMulti(empty, nil, nil, map[string]interface{}{pathVariable: nil})
+			}
+			out = append(out, empty)
 		}
 	}
 	return out, nil

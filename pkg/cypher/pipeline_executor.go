@@ -24,6 +24,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"strconv"
@@ -354,6 +355,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			return result, true, err
 		}
 	}
+	originalClauses := clauses
 
 	// Substitute $param placeholders up-front — this is the same pass the
 	// other top-level handlers perform. After this step the clause texts are
@@ -384,11 +386,17 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 	// their `$name` expression keys so list/map inputs are not stringified while
 	// crossing WITH and UNWIND horizons.
 	initialRow := pipelineRow{}
+	for name, value := range e.fabricRecordBindings {
+		initialRow[name] = value
+	}
 	for name, value := range params {
 		initialRow["$"+name] = value
 	}
 	rows := []pipelineRow{initialRow}
 	scope := make(map[string]struct{})
+	for name := range e.fabricRecordBindings {
+		scope[name] = struct{}{}
+	}
 
 	for idx, clause := range clauses {
 		switch clause.kind {
@@ -464,6 +472,12 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			if err := e.validatePipelineRangeArguments(rows, clause.text, "WITH"); err != nil {
 				return nil, true, err
 			}
+			if err := e.validatePipelineConversionArguments(rows, clause.text, "WITH"); err != nil {
+				return nil, true, err
+			}
+			if err := e.validatePipelineGraphFunctionArguments(rows, clause.text, "WITH"); err != nil {
+				return nil, true, err
+			}
 			if err := e.validatePipelineProjectionSubscripts(rows, clause.text, "WITH"); err != nil {
 				return nil, true, err
 			}
@@ -489,7 +503,16 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				scope[alias] = struct{}{}
 			}
 		case pipelineClauseReturn:
+			if err := validateDeletedEntityProjection(rows, clause.text); err != nil {
+				return nil, true, err
+			}
 			if err := e.validatePipelineRangeArguments(rows, clause.text, "RETURN"); err != nil {
+				return nil, true, err
+			}
+			if err := e.validatePipelineConversionArguments(rows, clause.text, "RETURN"); err != nil {
+				return nil, true, err
+			}
+			if err := e.validatePipelineGraphFunctionArguments(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
 			if err := e.validatePipelineProjectionSubscripts(rows, clause.text, "RETURN"); err != nil {
@@ -498,12 +521,17 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			if err := e.validatePipelineSizeArguments(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
-			final, ok := e.pipelineApplyReturn(rows, clause.text)
+			final, ok := e.pipelineApplyReturn(ctx, rows, clause.text)
 			if !ok {
 				return nil, false, nil
 			}
 			if len(final.Columns) == 0 && strings.TrimSpace(strings.TrimPrefix(clause.text, "RETURN")) == "*" {
 				final.Columns = pipelineScopeColumns(scope)
+			}
+			if idx < len(originalClauses) && originalClauses[idx].kind == pipelineClauseReturn {
+				if columns := pipelineReturnSourceColumns(originalClauses[idx].text); len(columns) == len(final.Columns) {
+					final.Columns = columns
+				}
 			}
 			result.Columns = final.Columns
 			result.Rows = final.Rows
@@ -584,7 +612,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 			rows = append(rows, row)
 		}
 	}
-	result, projected := e.pipelineApplyReturn(rows, clauses[1].text)
+	result, projected := e.pipelineApplyReturn(ctx, rows, clauses[1].text)
 	if !projected {
 		return nil, false, nil
 	}
@@ -795,6 +823,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		stats.NodesDeleted++
 		e.removeNodeFromSearch(string(nodeID))
 	}
+	markPipelineRowsDeletedEntities(rows, nodeIDs, deletedEdges)
 	return stats, true, nil
 }
 
@@ -2320,12 +2349,18 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	orderTerms := parseOrderByTerms(body)
 	withSkip, withLimit := 0, -1
 	if skipIndex := topLevelKeywordIndex(body, "SKIP"); skipIndex >= 0 {
-		tail := strings.TrimSpace(body[skipIndex+len("SKIP"):])
-		fmt.Sscanf(tail, "%d", &withSkip)
+		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "SKIP"), rows)
+		if !ok {
+			return nil, false
+		}
+		withSkip = value
 	}
 	if limitIndex := topLevelKeywordIndex(body, "LIMIT"); limitIndex >= 0 {
-		tail := strings.TrimSpace(body[limitIndex+len("LIMIT"):])
-		fmt.Sscanf(tail, "%d", &withLimit)
+		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "LIMIT"), rows)
+		if !ok {
+			return nil, false
+		}
+		withLimit = value
 	}
 	postWithWhere := ""
 	if whereIdx := topLevelKeywordIndex(body, "WHERE"); whereIdx >= 0 {
@@ -2416,7 +2451,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 				if projection.aggregate {
 					continue
 				}
-				value, ok := e.evaluateRowExpression(projection.expr, row)
+				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
 				if !ok {
 					return nil, false
 				}
@@ -2447,6 +2482,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		for _, key := range groupOrder {
 			group := groups[key]
 			newRow := pipelineRow{}
+			projectedExpressions := make(pipelineRow, len(projections))
 			for name, value := range group.first {
 				if strings.HasPrefix(name, "$") {
 					newRow[name] = value
@@ -2454,11 +2490,12 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			}
 			for _, projection := range projections {
 				if !projection.aggregate {
-					value, ok := e.evaluateRowExpression(projection.expr, group.first)
+					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, group.first)
 					if !ok {
 						return nil, false
 					}
 					newRow[projection.alias] = value
+					projectedExpressions[projection.expr] = value
 					continue
 				}
 				var value interface{}
@@ -2472,10 +2509,14 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 					return nil, false
 				}
 				newRow[projection.alias] = value
+				projectedExpressions[projection.expr] = value
 			}
-			orderScope := make(pipelineRow, len(group.first)+len(newRow))
+			orderScope := make(pipelineRow, len(group.first)+len(projectedExpressions)+len(newRow))
 			for name, value := range group.first {
 				orderScope[name] = value
+			}
+			for expression, value := range projectedExpressions {
+				orderScope[expression] = value
 			}
 			for name, value := range newRow {
 				orderScope[name] = value
@@ -2530,7 +2571,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			// expression operator. Keep this as the only expression path so
 			// nested collection literals and postfix operations are parsed as a
 			// whole expression rather than mistaken for specialized shapes.
-			if value, projected := e.evaluateRowExpression(expr, row); projected {
+			if value, projected := e.evaluateRowExpressionWithContext(ctx, expr, row); projected {
 				newRow[alias] = value
 				continue
 			}
@@ -2571,6 +2612,37 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		return nil, false
 	}
 	return applyPipelineWindow(out, withSkip, withLimit), true
+}
+
+func pipelinePaginationExpression(body, keyword string) string {
+	index := topLevelKeywordIndex(body, keyword)
+	if index < 0 {
+		return ""
+	}
+	expression := strings.TrimSpace(body[index+len(keyword):])
+	end := len(expression)
+	for _, nextKeyword := range []string{"SKIP", "LIMIT"} {
+		if nextIndex := topLevelKeywordIndex(expression, nextKeyword); nextIndex >= 0 && nextIndex < end {
+			end = nextIndex
+		}
+	}
+	return strings.TrimSpace(expression[:end])
+}
+
+func (e *StorageExecutor) evaluatePipelinePagination(ctx context.Context, expression string, rows []pipelineRow) (int, bool) {
+	values := make(pipelineRow)
+	if len(rows) > 0 {
+		values = rows[0]
+	}
+	value, evaluated := e.evaluateRowExpressionWithContext(ctx, expression, values)
+	if !evaluated {
+		return 0, false
+	}
+	integer, valid := cypherIntegerValue(value)
+	if !valid || integer < 0 || int64(int(integer)) != integer {
+		return 0, false
+	}
+	return int(integer), true
 }
 
 // orderPipelineRows applies every ORDER BY term lexicographically. WITH has
@@ -2737,17 +2809,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow
 	if name, inner, distinct, ok := parsePipelineAggregate(expr); ok {
 		return e.evaluatePipelineAggregate(rows, name, inner, distinct)
 	}
-	if left, right, ok := splitByOperatorWithOptions(expr, "+", true, true); ok {
-		leftValue, leftOK := e.evaluatePipelineAggregateExpression(rows, left)
-		rightValue, rightOK := e.evaluatePipelineAggregateExpression(rows, right)
-		if !leftOK || !rightOK {
-			return nil, false
-		}
-		value := e.add(leftValue, rightValue)
-		return value, value != nil
-	}
-	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		inner := strings.TrimSpace(expr[1 : len(expr)-1])
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
 		result := make(map[string]interface{})
 		if inner == "" {
 			return result, true
@@ -2766,8 +2828,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow
 		}
 		return result, true
 	}
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
-		inner := strings.TrimSpace(expr[1 : len(expr)-1])
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
 		if inner == "" {
 			return []interface{}{}, true
 		}
@@ -2785,6 +2846,16 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow
 	}
 	if spans := findAggregateSpans(expr); len(spans) > 0 {
 		values := make(pipelineRow, len(spans))
+		// Mixed aggregate expressions are evaluated after isolating aggregate
+		// calls, but their non-aggregate terms still resolve against the group's
+		// grouping row. Preserve that scope in the shared row evaluator instead
+		// of adding operator-specific aggregate paths.
+		if len(rows) > 0 {
+			values = make(pipelineRow, len(rows[0])+len(spans))
+			for name, value := range rows[0] {
+				values[name] = value
+			}
+		}
 		var rewritten strings.Builder
 		last := 0
 		for index, span := range spans {
@@ -2940,7 +3011,7 @@ func pipelineAggregateNumber(value interface{}) (float64, bool, bool) {
 //
 // Returns (nil, false) if any item can't be projected, so the caller falls
 // back to the established RETURN projection.
-func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string) (*ExecuteResult, bool) {
+func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "RETURN"))
 	body = strings.TrimPrefix(body, "return")
 	modifierStart := len(body)
@@ -3036,7 +3107,7 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 				if projection.isAggr {
 					continue
 				}
-				value, ok := e.evaluateRowExpression(projection.expr, inputRow)
+				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, inputRow)
 				if !ok {
 					return nil, false
 				}
@@ -3067,7 +3138,7 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 			outRow := make([]interface{}, 0, len(projs))
 			for _, projection := range projs {
 				if !projection.isAggr {
-					value, ok := e.evaluateRowExpression(projection.expr, group.first)
+					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, group.first)
 					if !ok {
 						return nil, false
 					}
@@ -3100,7 +3171,7 @@ func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string)
 	for _, row := range rows {
 		projected := make(pipelineRow, len(projs))
 		for _, p := range projs {
-			val, ok := e.evaluateRowExpression(p.expr, row)
+			val, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
 			if !ok {
 				return nil, false
 			}
@@ -3477,8 +3548,7 @@ func parseLiteralScalarForPipeline(s string) (interface{}, bool) {
 		return nil, false
 	}
 	// Quoted string.
-	if (strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) ||
-		(strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) {
+	if isWholeCypherQuotedString(s) {
 		return decodeCypherQuotedString(s)
 	}
 	// Bool.
@@ -3505,26 +3575,46 @@ func parseIntFast(s string) (int64, bool) {
 	if s == "" {
 		return 0, false
 	}
-	var sign int64 = 1
-	i := 0
+	negative := false
+	digits := 0
 	if s[0] == '-' {
-		sign = -1
-		i = 1
+		negative = true
+		digits = 1
 	} else if s[0] == '+' {
-		i = 1
+		digits = 1
 	}
-	if i == len(s) {
+	if digits == len(s) {
 		return 0, false
 	}
-	var n int64
-	for ; i < len(s); i++ {
-		c := s[i]
-		if c < '0' || c > '9' {
-			return 0, false
+	base := 10
+	if digits+2 <= len(s) && s[digits] == '0' {
+		switch s[digits+1] {
+		case 'x', 'X':
+			base = 16
+			digits += 2
+		case 'o', 'O':
+			base = 8
+			digits += 2
 		}
-		n = n*10 + int64(c-'0')
 	}
-	return n * sign, true
+	if base == 10 {
+		value, err := strconv.ParseInt(s, 10, 64)
+		return value, err == nil
+	}
+	if digits == len(s) {
+		return 0, false
+	}
+	magnitude, err := strconv.ParseUint(s[digits:], base, 64)
+	if err != nil || numericMagnitudeOverflowsInt64(magnitude, negative) {
+		return 0, false
+	}
+	if !negative {
+		return int64(magnitude), true
+	}
+	if magnitude == uint64(math.MaxInt64)+1 {
+		return math.MinInt64, true
+	}
+	return -int64(magnitude), true
 }
 
 func parseFloatFast(s string) (float64, bool) {
@@ -3534,6 +3624,10 @@ func parseFloatFast(s string) (float64, bool) {
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
 		return 0, false
+	}
+	// Cypher canonicalizes every floating-point zero to positive zero.
+	if f == 0 {
+		return 0, true
 	}
 	return f, true
 }

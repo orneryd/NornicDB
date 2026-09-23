@@ -40,6 +40,24 @@ func TestListSliceEvaluatesBoundsAndPropagatesNull(t *testing.T) {
 	require.Nil(t, result.Rows[0][0])
 }
 
+func TestMapSubscriptPropagatesNullAndClassifiesNonStringKeys(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "map_subscript_types"))
+	ctx := context.Background()
+
+	result, err := exec.Execute(ctx, "WITH {name: 'Mats'} AS value RETURN value[null]", nil)
+	require.NoError(t, err)
+	require.Nil(t, result.Rows[0][0])
+
+	_, err = exec.Execute(ctx, "WITH $value AS value, $key AS key RETURN value[key]", map[string]interface{}{
+		"value": map[string]interface{}{"name": "Mats"},
+		"key":   int64(0),
+	})
+	require.Error(t, err)
+	var semanticError *SemanticError
+	require.ErrorAs(t, err, &semanticError)
+	require.Equal(t, "MapElementAccessByNonString", semanticError.Detail)
+}
+
 func TestSizeRejectsPathsAndPatternPredicates(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "size_argument_types"))
 	rows := []pipelineRow{{"p": map[string]interface{}{"_pathResult": PathResult{}}}}

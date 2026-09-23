@@ -1327,13 +1327,15 @@ func parseCosineReturnShape(items []returnItem, varName string) (cosineIdx int, 
 
 func parseVarPropertyRef(expr string) (string, string, bool) {
 	expr = strings.TrimSpace(expr)
-	parts := strings.Split(expr, ".")
-	if len(parts) != 2 {
+	dot := strings.IndexByte(expr, '.')
+	if dot <= 0 || dot == len(expr)-1 {
 		return "", "", false
 	}
-	v := strings.TrimSpace(parts[0])
-	p := strings.TrimSpace(parts[1])
-	if v == "" || p == "" || strings.Contains(v, " ") || strings.Contains(p, " ") {
+	v := strings.TrimSpace(expr[:dot])
+	rawProperty := strings.TrimSpace(expr[dot+1:])
+	p := normalizePropertyKey(rawProperty)
+	delimited := len(rawProperty) >= 2 && rawProperty[0] == '`' && rawProperty[len(rawProperty)-1] == '`'
+	if v == "" || p == "" || strings.Contains(v, " ") || (!delimited && (strings.Contains(p, " ") || strings.Contains(p, "."))) {
 		return "", "", false
 	}
 	return v, p, true

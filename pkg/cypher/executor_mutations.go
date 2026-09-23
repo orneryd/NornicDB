@@ -2839,7 +2839,22 @@ func (e *StorageExecutor) evaluateExistsSubquery(ctx context.Context, node *stor
 		return true // No valid subquery, pass through
 	}
 
-	// Execute the subquery with the current node as context
+	// Full existential bodies share the converged clause pipeline. Seed the
+	// correlated entity as an input row so MATCH/WITH/aggregation/WHERE/RETURN
+	// retain their normal streaming semantics instead of growing a second
+	// subquery executor.
+	if clauses, ok := splitPipelineClauses(subquery); ok && len(clauses) > 1 {
+		correlated := e.cloneWithStorage(e.getStorage(ctx))
+		correlated.fabricRecordBindings = cloneStringAnyMap(e.fabricRecordBindings)
+		if correlated.fabricRecordBindings == nil {
+			correlated.fabricRecordBindings = make(map[string]interface{})
+		}
+		correlated.fabricRecordBindings[variable] = node
+		result, handled, err := correlated.executePipeline(ctx, subquery)
+		return err == nil && handled && result != nil && len(result.Rows) > 0
+	}
+
+	// Execute compact pattern bodies with the common pattern matcher.
 	return e.checkSubqueryMatch(ctx, node, variable, subquery)
 }
 

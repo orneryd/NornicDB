@@ -2550,7 +2550,7 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 	}
 
 	if variable, labels, ok := parseWithWhereLabelTest(whereClause); ok {
-		return withWhereNodeHasAllLabels(pathCtx.nodes[variable], labels)
+		return entityHasAllLabelsOrTypesPredicate(pathCtx.nodes[variable], labels)
 	}
 
 	// Handle membership predicates before comparison operators so list literals

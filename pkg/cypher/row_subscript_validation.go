@@ -85,7 +85,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 	if object, isMap := toStringAnyMap(base); isMap {
 		_ = object
 		if _, valid := index.(string); !valid {
-			return invalidSubscriptTypeError("map subscript requires a STRING key", index)
+			return mapElementAccessByNonStringError(index)
 		}
 		return nil
 	}
@@ -170,7 +170,7 @@ func matchingRowDelimiterStart(expression string, closeIndex int, open, close by
 }
 
 func isRowReceiverIdentifierByte(value byte) bool {
-	return value == '_' || value == '.' || value == '`' ||
+	return value == '_' || value == '.' || value == '`' || value == '$' ||
 		(value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
 		(value >= '0' && value <= '9') || value >= 0x80
 }
@@ -189,6 +189,14 @@ func invalidSubscriptTypeError(message string, value interface{}) error {
 		"Neo.ClientError.Statement.TypeError",
 		"InvalidArgumentType",
 		fmt.Sprintf("%s, got %T", message, value),
+	)
+}
+
+func mapElementAccessByNonStringError(value interface{}) error {
+	return newSemanticError(
+		"Neo.ClientError.Statement.TypeError",
+		"MapElementAccessByNonString",
+		fmt.Sprintf("map subscript requires a STRING key, got %T", value),
 	)
 }
 

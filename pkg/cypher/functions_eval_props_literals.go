@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -144,10 +143,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	}
 
 	// Number literal
-	if num, err := strconv.ParseInt(expr, 10, 64); err == nil {
+	if num, ok := parseIntFast(expr); ok {
 		return num
 	}
-	if num, err := strconv.ParseFloat(expr, 64); err == nil {
+	if num, ok := parseFloatFast(expr); ok {
 		return num
 	}
 

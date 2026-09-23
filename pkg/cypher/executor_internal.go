@@ -20,6 +20,7 @@ import (
 // on ctx), avoiding nested implicit transactions and misrouting.
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
 	cypher = normalizeCypherSyntaxConfusables(cypher)
+	cypher = stripCypherComments(cypher)
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if cypher == "" {

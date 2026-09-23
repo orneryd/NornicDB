@@ -3666,6 +3666,9 @@ func compareValuesForSort(a, b interface{}) int {
 	if b == nil {
 		return -1
 	}
+	if comparison, temporal := compareTemporalOrdering(a, b); temporal {
+		return comparison
+	}
 
 	aRank := cypherSortRank(a)
 	bRank := cypherSortRank(b)
@@ -3744,6 +3747,11 @@ func cypherSortRank(value interface{}) int {
 		return 5
 	case bool:
 		return 6
+	}
+	if object, isMap := toStringAnyMap(value); isMap {
+		if _, isPath := object["_pathResult"]; isPath {
+			return 4
+		}
 	}
 	if number, ok := cypherSortNumber(value); ok {
 		if math.IsNaN(number) {

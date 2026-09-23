@@ -26,9 +26,6 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 	if e.matchSemanticValidationCache.contains(cypher) {
 		return nil
 	}
-	if findKeywordIndexInContext(cypher, "MATCH") < 0 {
-		return nil
-	}
 	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
 		for _, branch := range branches {
 			if err := e.validateMatchSemanticScopes(branch); err != nil {
@@ -51,6 +48,12 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 				return err
 			}
 		case pipelineClauseWith:
+			if containsMalformedCreateClauseToken(clause.text) {
+				return nil
+			}
+			if err := validateWithOrderBySemanticScope(scope, clause.text); err != nil {
+				return err
+			}
 			scope = projectMatchSemanticScope(scope, clause.text)
 		case pipelineClauseUnwind:
 			if alias := unwindBindingName(clause.text); alias != "" {
@@ -68,8 +71,56 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 	return nil
 }
 
+func validateWithOrderBySemanticScope(input matchSemanticScope, clause string) error {
+	body := strings.TrimSpace(clause[len("WITH"):])
+	orderIndex := topLevelKeywordIndex(body, "ORDER BY")
+	if orderIndex < 0 {
+		return nil
+	}
+	orderBody := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
+	projectionBody := strings.TrimSpace(body[:orderIndex])
+	hasProjectionAggregate := false
+	for _, item := range splitTopLevelComma(projectionBody) {
+		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+		if containsAggregateFunc(expression) {
+			hasProjectionAggregate = true
+			break
+		}
+	}
+	if err := validateReturnOrderBySemanticScope("RETURN " + body); err != nil {
+		return err
+	}
+	output := projectMatchSemanticScope(input, clause)
+	for _, term := range parseOrderByClause(orderBody) {
+		if containsAggregateFunc(term.column) && !hasProjectionAggregate {
+			return newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"InvalidAggregation",
+				"ORDER BY cannot introduce an aggregate after a non-aggregating WITH",
+			)
+		}
+		for _, reference := range semanticExpressionReferences(term.column) {
+			base := strings.SplitN(reference, ".", 2)[0]
+			if _, available := input[base]; available {
+				continue
+			}
+			if _, projected := output[base]; projected {
+				continue
+			}
+			return createUndefinedVariableError(base)
+		}
+	}
+	return nil
+}
+
 func validateReturnSemanticScope(scope matchSemanticScope, clause string) error {
+	if err := validateReturnOrderBySemanticScope(clause); err != nil {
+		return err
+	}
 	body := strings.TrimSpace(clause[len("RETURN"):])
+	if err := validateReturnAggregationSemantics(body); err != nil {
+		return err
+	}
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
 			body = strings.TrimSpace(body[:index])
@@ -80,6 +131,12 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 	}
 	for _, raw := range splitTopLevelComma(body) {
 		expression, _ := parseProjectionExprAlias(strings.TrimSpace(raw))
+		if err := validateGraphFunctionSemanticTypes(expression, scope); err != nil {
+			return err
+		}
+		if err := validateKnownFunctionsInExpression(expression); err != nil {
+			return err
+		}
 		if expression == "*" {
 			if len(scope) == 0 {
 				return newSemanticError(
@@ -192,7 +249,14 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 }
 
 func (e *StorageExecutor) validateMatchWhereSimpleOperands(scope matchSemanticScope, whereClause string) error {
-	whereClause = strings.TrimSpace(whereClause)
+	whereClause = strings.TrimSpace(maskSubqueryBodies(whereClause))
+	if containsAggregateFunc(whereClause) {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidAggregation",
+			"aggregate expressions are not allowed in WHERE",
+		)
+	}
 	for _, operator := range []string{" OR ", " XOR ", " AND "} {
 		if left, right, found := splitByOperatorWithOptions(whereClause, operator, true, true); found {
 			if err := e.validateMatchWhereSimpleOperands(scope, left); err != nil {
@@ -201,9 +265,22 @@ func (e *StorageExecutor) validateMatchWhereSimpleOperands(scope matchSemanticSc
 			return e.validateMatchWhereSimpleOperands(scope, right)
 		}
 	}
+	if err := e.validateWherePatternExpressionScope(scope, whereClause); err != nil {
+		return err
+	}
 	if operands, _, comparison := splitComparisonChain(whereClause); comparison {
 		for _, operand := range operands {
 			operand = strings.TrimSpace(operand)
+			if variable, _, propertyAccess := parseVarPropertyRef(operand); propertyAccess {
+				switch scope[normalizeProjectionColumnName(variable)] {
+				case matchBindingPath, matchBindingRelationshipList, matchBindingNodeList:
+					return newSemanticError(
+						"Neo.ClientError.Statement.SyntaxError",
+						"InvalidArgumentType",
+						fmt.Sprintf("property access is not supported on %s", variable),
+					)
+				}
+			}
 			if _, literal := parseLiteralValueFromComputedRow(operand); literal {
 				continue
 			}
@@ -231,6 +308,88 @@ func (e *StorageExecutor) validateMatchWhereSimpleOperands(scope matchSemanticSc
 		}
 	}
 	return nil
+}
+
+func (e *StorageExecutor) validateWherePatternExpressionScope(scope matchSemanticScope, expression string) error {
+	expression = strings.TrimSpace(expression)
+	if inner, enclosed := stripEnclosingExpressionParentheses(expression); enclosed {
+		if variable := simpleSemanticIdentifier(inner); variable != "" {
+			if _, inScope := scope[variable]; !inScope {
+				if _, externallyBound := e.fabricRecordBindings[variable]; !externallyBound {
+					return createUndefinedVariableError(variable)
+				}
+			}
+			return newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"InvalidArgumentType",
+				"a node pattern is not a boolean predicate",
+			)
+		}
+	}
+	if !containsRelExistencePattern(expression) {
+		return nil
+	}
+	for _, variable := range append(extractNodeVariables(expression), extractRelationshipVariables(expression)...) {
+		if _, inScope := scope[variable]; inScope {
+			continue
+		}
+		if _, externallyBound := e.fabricRecordBindings[variable]; externallyBound {
+			continue
+		}
+		return createUndefinedVariableError(variable)
+	}
+	return nil
+}
+
+func maskSubqueryBodies(expression string) string {
+	masked := []byte(expression)
+	for index := 0; index < len(expression); index++ {
+		name, next, ok := scanIdentifierToken(expression, index)
+		if !ok || (!strings.EqualFold(name, "exists") && !strings.EqualFold(name, "count") && !strings.EqualFold(name, "collect")) {
+			continue
+		}
+		open := skipSpaces(expression, next)
+		if open >= len(expression) || expression[open] != '{' {
+			continue
+		}
+		close := matchingSemanticBrace(expression, open)
+		if close < 0 {
+			continue
+		}
+		for position := open + 1; position < close; position++ {
+			masked[position] = ' '
+		}
+		index = close
+	}
+	return string(masked)
+}
+
+func matchingSemanticBrace(expression string, open int) int {
+	depth := 0
+	var quote byte
+	for index := open; index < len(expression); index++ {
+		current := expression[index]
+		if quote != 0 {
+			if current == quote && (index == 0 || expression[index-1] != '\\') {
+				quote = 0
+			}
+			continue
+		}
+		if current == '\'' || current == '"' || current == '`' {
+			quote = current
+			continue
+		}
+		switch current {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
 }
 
 func bindMatchSemanticKind(scope matchSemanticScope, variable string, kind matchBindingKind) error {
@@ -428,17 +587,24 @@ func simpleSemanticIdentifier(expression string) string {
 }
 
 func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
-	for _, variable := range extractNodeVariables(clause) {
+	pattern := strings.TrimSpace(clause)
+	for _, keyword := range []string{"CREATE", "MERGE"} {
+		if startsWithKeywordFold(pattern, keyword) {
+			pattern = strings.TrimSpace(pattern[len(keyword):])
+			break
+		}
+	}
+	for _, variable := range extractNodeVariables(pattern) {
 		if _, found := scope[variable]; !found {
 			scope[variable] = matchBindingNode
 		}
 	}
-	for _, variable := range extractRelationshipVariables(clause) {
+	for _, variable := range extractRelationshipVariables(pattern) {
 		if _, found := scope[variable]; !found {
 			scope[variable] = matchBindingRelationship
 		}
 	}
-	for _, patternPart := range splitTopLevelComma(clause) {
+	for _, patternPart := range splitTopLevelComma(pattern) {
 		if variable := extractPathAssignmentVariable(strings.TrimSpace(patternPart)); variable != "" {
 			if _, found := scope[variable]; !found {
 				scope[variable] = matchBindingPath

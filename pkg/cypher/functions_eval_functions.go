@@ -1671,11 +1671,7 @@ skipArrayIndexing:
 
 	// rand() - random float between 0 and 1
 	if lowerExpr == "rand()" {
-		b := make([]byte, 8)
-		_, _ = rand.Read(b)
-		// Convert to float between 0 and 1
-		val := float64(b[0]^b[1]^b[2]^b[3]) / 256.0
-		return val
+		return randomCypherFloat()
 	}
 
 	// ========================================
@@ -2054,4 +2050,10 @@ skipArrayIndexing:
 
 	// Fall through to remaining evaluation logic.
 	return e.evaluateExpressionWithContextFullMath(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+}
+
+func randomCypherFloat() float64 {
+	var bytes [8]byte
+	_, _ = rand.Read(bytes[:])
+	return float64(bytes[0]^bytes[1]^bytes[2]^bytes[3]) / 256.0
 }

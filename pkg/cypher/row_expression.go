@@ -22,11 +22,27 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	if inner, ok := stripEnclosingExpressionParentheses(expr); ok {
 		return e.evaluateRowExpression(inner, values)
 	}
+	if caseEnd := leadingCaseExpressionEnd(expr); caseEnd > 0 && strings.TrimSpace(expr[caseEnd:]) != "" {
+		caseValue, ok := e.evaluateRowCaseExpression(strings.TrimSpace(expr[:caseEnd]), values)
+		if !ok {
+			return nil, false
+		}
+		const caseBinding = "__nornic_case_value"
+		scope := make(map[string]interface{}, len(values)+1)
+		for name, value := range values {
+			scope[name] = value
+		}
+		scope[caseBinding] = caseValue
+		return e.evaluateRowExpression(caseBinding+expr[caseEnd:], scope)
+	}
 	if value, ok := values[expr]; ok {
 		return value, true
 	}
 	if value, ok := parseLiteralValueFromComputedRow(expr); ok {
 		return value, true
+	}
+	if variable, labels, labelPredicate := parseWithWhereLabelTest(expr); labelPredicate {
+		return entityHasAllLabelsOrTypes(values[variable], labels), true
 	}
 	if isCaseExpression(expr) {
 		return e.evaluateRowCaseExpression(expr, values)
@@ -83,6 +99,12 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			return value
 		}, expr); handled {
 			return value, true
+		}
+		if value, matched, resolved := e.evaluateRowMathFunction(function, argument, values); matched {
+			return value, resolved
+		}
+		if value, matched, resolved := e.evaluateRowExtensionFunction(function, argument, values); matched {
+			return value, resolved
 		}
 		switch strings.ToLower(function) {
 		case "coalesce":
@@ -248,6 +270,29 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 				return nil, false
 			}
 			return toAnySlice(items), true
+		case "properties":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			if value == nil {
+				return nil, true
+			}
+			switch entity := value.(type) {
+			case *storage.Node:
+				if entity == nil {
+					return nil, true
+				}
+				return entity.Properties, true
+			case *storage.Edge:
+				if entity == nil {
+					return nil, true
+				}
+				return entity.Properties, true
+			default:
+				object, isMap := toStringAnyMap(value)
+				return object, isMap
+			}
 		case "keys":
 			value, resolved := e.evaluateRowExpression(argument, values)
 			if !resolved {
@@ -307,6 +352,28 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 				result[index] = label
 			}
 			return result, true
+		case "type":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			if value == nil {
+				return nil, true
+			}
+			switch relationship := value.(type) {
+			case *storage.Edge:
+				if relationship == nil {
+					return nil, true
+				}
+				return relationship.Type, true
+			default:
+				if object, isMap := toStringAnyMap(value); isMap {
+					if relationshipType, exists := object["type"].(string); exists {
+						return relationshipType, true
+					}
+				}
+				return nil, false
+			}
 		}
 	}
 
@@ -416,7 +483,7 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		return predicate.match(leftText, rightText), true
 	}
 
-	if open := strings.LastIndex(expr, "["); open > 0 && strings.HasSuffix(expr, "]") {
+	if open := strings.LastIndex(expr, "["); open > 0 && strings.HasSuffix(expr, "]") && rowSubscriptReceiverStart(expr, open) == 0 {
 		base, ok := e.evaluateRowExpression(expr[:open], values)
 		if !ok {
 			return nil, false
@@ -428,6 +495,16 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		indexValue, ok := e.evaluateRowExpression(subscript, values)
 		if !ok {
 			return nil, false
+		}
+		if base == nil || indexValue == nil {
+			return nil, true
+		}
+		if object, isObject := toStringAnyMap(base); isObject {
+			key, isString := indexValue.(string)
+			if !isString {
+				return nil, false
+			}
+			return object[key], true
 		}
 		index, ok := rowSubscriptIndex(indexValue)
 		if !ok {
@@ -1089,8 +1166,9 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 }
 
 func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, bool) {
-	for _, property := range strings.Split(chain, ".") {
-		property = strings.TrimSpace(property)
+	for start := 0; start < len(chain); {
+		end := nextRowPropertySeparator(chain, start)
+		property := normalizePropertyKey(strings.TrimSpace(chain[start:end]))
 		if property == "" {
 			return nil, false
 		}
@@ -1105,35 +1183,62 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 				return nil, false
 			}
 			value = propertyValue
-			continue
+		} else {
+			switch typed := value.(type) {
+			case *storage.Node:
+				if typed == nil {
+					return nil, true
+				}
+				propertyValue, _ := getNodePropertyValue(typed, property)
+				if _, isStringList := propertyValue.([]string); isStringList {
+					// Parsed node-property literals can remain []string in an in-memory
+					// streaming row while persisted reads expose the same Cypher list
+					// as []interface{}. Keep both physical sources observationally equal.
+					propertyValue = toAnySlice(propertyValue)
+				}
+				value = propertyValue
+			case *storage.Edge:
+				if typed == nil {
+					return nil, true
+				}
+				value = typed.Properties[property]
+			default:
+				object, ok := toStringAnyMap(value)
+				if !ok {
+					return nil, false
+				}
+				value = object[property]
+			}
 		}
-		switch typed := value.(type) {
-		case *storage.Node:
-			if typed == nil {
-				return nil, true
-			}
-			propertyValue, _ := getNodePropertyValue(typed, property)
-			if _, isStringList := propertyValue.([]string); isStringList {
-				// Parsed node-property literals can remain []string in an in-memory
-				// streaming row while persisted reads expose the same Cypher list
-				// as []interface{}. Keep both physical sources observationally equal.
-				propertyValue = toAnySlice(propertyValue)
-			}
-			value = propertyValue
-		case *storage.Edge:
-			if typed == nil {
-				return nil, true
-			}
-			value = typed.Properties[property]
-		default:
-			object, ok := toStringAnyMap(value)
-			if !ok {
-				return nil, false
-			}
-			value = object[property]
+		if end == len(chain) {
+			break
 		}
+		start = end + 1
 	}
 	return value, true
+}
+
+// nextRowPropertySeparator finds the next chain dot outside a backtick-
+// delimited identifier. Doubled backticks escape a literal backtick and do not
+// close the identifier. Scanning avoids splitting and reallocating the entire
+// chain for each row in the streaming executor.
+func nextRowPropertySeparator(chain string, start int) int {
+	delimited := false
+	for index := start; index < len(chain); index++ {
+		switch chain[index] {
+		case '`':
+			if delimited && index+1 < len(chain) && chain[index+1] == '`' {
+				index++
+				continue
+			}
+			delimited = !delimited
+		case '.':
+			if !delimited {
+				return index
+			}
+		}
+	}
+	return len(chain)
 }
 
 func stripEnclosingExpressionParentheses(expr string) (string, bool) {
@@ -1267,7 +1372,7 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 		return false
 	}
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
-		return withWhereNodeHasAllLabels(values[variable], labels)
+		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, true); ok {
 		return e.evaluateRowPredicate(ctx, left, values) || e.evaluateRowPredicate(ctx, right, values)
@@ -1275,11 +1380,22 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, true); ok {
 		return e.evaluateRowPredicate(ctx, left, values) && e.evaluateRowPredicate(ctx, right, values)
 	}
-	if hasPrefixFoldASCII(expression, "NOT ") {
-		return !e.evaluateRowPredicate(ctx, strings.TrimSpace(expression[4:]), values)
-	}
+	// EXISTS and NOT EXISTS are complete predicates. Resolve both before the
+	// generic NOT operator so a subquery is evaluated against its correlated
+	// typed row bindings rather than being treated as a scalar expression.
 	if matched, recognized := e.evaluateRowExistsPredicate(ctx, expression, values); recognized {
 		return matched
+	}
+	if hasPrefixFoldASCII(expression, "NOT ") {
+		inner := strings.TrimSpace(expression[4:])
+		if value, resolved := e.evaluateRowExpression(inner, values); resolved {
+			if value == nil {
+				return false
+			}
+			boolean, isBoolean := value.(bool)
+			return isBoolean && !boolean
+		}
+		return !e.evaluateRowPredicate(ctx, inner, values)
 	}
 	if matched, recognized := e.evaluateRowCountSubqueryPredicate(expression, values); recognized {
 		return matched
@@ -1435,6 +1551,22 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	subquery := e.extractSubquery(trimmed, prefix)
 	if subquery == "" {
 		return false, false
+	}
+	if clauses, ok := splitPipelineClauses(subquery); ok && len(clauses) > 1 {
+		correlated := e.cloneWithStorage(e.getStorage(ctx))
+		correlated.fabricRecordBindings = make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
+		for name, value := range e.fabricRecordBindings {
+			correlated.fabricRecordBindings[name] = value
+		}
+		for name, value := range values {
+			correlated.fabricRecordBindings[name] = value
+		}
+		result, handled, err := correlated.executePipeline(ctx, subquery)
+		matched := err == nil && handled && result != nil && len(result.Rows) > 0
+		if negated {
+			matched = !matched
+		}
+		return matched, true
 	}
 	if !hasPrefixFold(strings.TrimSpace(subquery), "MATCH ") {
 		subquery = "MATCH " + strings.TrimSpace(subquery)

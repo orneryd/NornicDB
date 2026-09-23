@@ -355,6 +355,9 @@ func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExp
 
 		result, err := e.executeInternal(ctx, "RETURN "+valueExpr+" AS value", params)
 		if err != nil {
+			if isValidIdentifier(valueExpr) {
+				return nil, localizedError(localization.CypherCommandRoutingParameterExpressionUnresolved(key, valueExpr), nerrors.ErrExpressionEvaluationFailed)
+			}
 			cause := fmt.Errorf("%w: parameter %s: %w", nerrors.ErrExpressionEvaluationFailed, key, err)
 			return nil, localizedError(localization.CypherCommandRoutingParameterEvaluationFailed(key, err), cause)
 		}

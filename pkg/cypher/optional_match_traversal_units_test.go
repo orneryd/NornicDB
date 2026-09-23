@@ -646,6 +646,39 @@ func TestCompiledVarProjection_UnboundFallsBackToEvaluator(t *testing.T) {
 		"an unbound variable projection must produce exactly the full evaluator's result")
 }
 
+func TestOptionalMatchProjectionUsesSharedEntityPredicateSemantics(t *testing.T) {
+	exec, ctx := newUnitExecutor(t)
+	_, err := exec.Execute(ctx, `CREATE (:Single)-[:OTHER]->(:Target)`, nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, `
+		MATCH (n:Single)-[r]->(x)
+		OPTIONAL MATCH (n)-[:TYPE]-(m)
+		RETURN r:OTHER AS relationshipTypeMatches, r:other AS relationshipTypeCaseMismatch, m:TYPE AS missingNodeLabel
+	`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"relationshipTypeMatches", "relationshipTypeCaseMismatch", "missingNodeLabel"}, result.Columns)
+	require.Equal(t, [][]interface{}{{true, false, nil}}, result.Rows)
+}
+
+func TestOptionalMatchAggregateCaseTreatsNullBindingAsNull(t *testing.T) {
+	exec, ctx := newUnitExecutor(t)
+	row := traversalOptRow{
+		nodes: map[string]*storage.Node{"n": nil},
+		rels:  map[string]*storage.Edge{},
+	}
+	require.True(t, exec.evaluateRowPredicate(ctx, "n IS NULL", pipelineRow{"n": nil}))
+	caseExpression := `CASE WHEN n IS NULL THEN null ELSE {value: n.value} END`
+	parsed, err := parseCaseExpression(caseExpression)
+	require.NoError(t, err)
+	require.Equal(t, "n IS NULL", parsed.whenClauses[0].condition)
+	direct, evaluated := exec.evaluateRowExpression(caseExpression, pipelineRow{"n": nil})
+	require.True(t, evaluated)
+	require.Nil(t, direct)
+	project := exec.compileTraversalProjection(ctx, caseExpression)
+	require.Nil(t, project(row))
+}
+
 // TestSupport_DisconnectedOptionalBareVarReturn pins the exact review shape
 // "MATCH (a)-[r]->(b) OPTIONAL MATCH (x:X) RETURN a, x": a trailing OPTIONAL
 // MATCH with no previously bound variable is a legal disconnected optional

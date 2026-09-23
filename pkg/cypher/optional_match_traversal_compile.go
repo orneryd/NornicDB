@@ -51,8 +51,38 @@ func (e *StorageExecutor) compileTraversalProjection(ctx context.Context, expr s
 	}
 	captured := expr
 	return func(row traversalOptRow) interface{} {
-		return e.evaluateExpressionWithContext(ctx, captured, row.nodes, row.rels)
+		return e.evaluateTraversalRowExpression(ctx, captured, row)
 	}
+}
+
+// evaluateTraversalRowExpression routes every non-fast-path projection through
+// the shared heterogeneous row evaluator used by the converged pipeline. The
+// graph evaluator remains a compatibility fallback only for expression shapes
+// the row evaluator does not yet recognize; it is not a separate projection
+// implementation.
+func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, expr string, row traversalOptRow) interface{} {
+	values := make(map[string]interface{}, len(row.nodes)+len(row.rels)+len(row.values))
+	for variable, node := range row.nodes {
+		if node == nil {
+			values[variable] = nil
+		} else {
+			values[variable] = node
+		}
+	}
+	for variable, relationship := range row.rels {
+		if relationship == nil {
+			values[variable] = nil
+		} else {
+			values[variable] = relationship
+		}
+	}
+	for variable, value := range row.values {
+		values[variable] = value
+	}
+	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, values); ok {
+		return value
+	}
+	return e.evaluateExpressionWithContext(ctx, expr, row.nodes, row.rels)
 }
 
 // tryCompileTraversalExpr compiles the supported expression shapes. ok=false
@@ -99,7 +129,7 @@ func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, expr stri
 			if v, ok := fastTraversalExprValue(captured, row); ok {
 				return v
 			}
-			return e.evaluateExpressionWithContext(ctx, captured, row.nodes, row.rels)
+			return e.evaluateTraversalRowExpression(ctx, captured, row)
 		}, true
 	}
 
@@ -162,6 +192,6 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 		}
 		// Function not in the registry (e.g. length(), exists()): defer to the
 		// full evaluator's legacy branches.
-		return e.evaluateExpressionWithContext(ctx, captured, row.nodes, row.rels)
+		return e.evaluateTraversalRowExpression(ctx, captured, row)
 	}, true
 }

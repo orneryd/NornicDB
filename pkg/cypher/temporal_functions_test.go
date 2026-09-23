@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTemporalMapConstructorsUseSharedComponentSemantics(t *testing.T) {
@@ -222,6 +223,16 @@ func TestTemporalComparisonUsesNeo4jValueOrdering(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTemporalOrderByUsesNeo4jValueOrdering(t *testing.T) {
+	earlierTime := CypherTime{Time: time.Date(1970, 1, 1, 12, 35, 15, 0, time.FixedZone("+05:00", 5*60*60))}
+	laterTime := CypherTime{Time: time.Date(1970, 1, 1, 10, 35, 0, 0, time.FixedZone("-08:00", -8*60*60))}
+	require.Less(t, compareValuesForSort(earlierTime, laterTime), 0)
+
+	earlierDateTime := CypherDateTime{Time: time.Date(1984, 10, 11, 12, 31, 14, 645876123, time.FixedZone("+00:17", 17*60))}
+	laterDateTime := CypherDateTime{Time: time.Date(1984, 10, 11, 12, 30, 14, 12, time.FixedZone("+00:15", 15*60))}
+	require.Less(t, compareValuesForSort(earlierDateTime, laterDateTime), 0)
 }
 
 func TestTemporalArithmeticPreservesTypedValueSemantics(t *testing.T) {

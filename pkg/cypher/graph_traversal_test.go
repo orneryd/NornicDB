@@ -187,7 +187,7 @@ func TestSimplifiedGraphTraversal(t *testing.T) {
 		MATCH (seed:Person {id: "alice"})
 		MATCH path = (seed)-[r*1..2]-(connected)
 		RETURN seed.name as seed_name, 
-		       type(r) as rel_type,
+		       type(head(r)) as rel_type,
 		       connected.name as connected_name,
 		       length(path) as distance
 	`, nil)

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,6 +32,40 @@ func TestUnwindExistsSubqueryCorrelatesOuterBindings(t *testing.T) {
 		RETURN workload.name
 	`)
 	require.Equal(t, [][]interface{}{{"beta"}}, notExists.Rows)
+}
+
+func TestExistsSubqueryCarriesCorrelationThroughAggregation(t *testing.T) {
+	executor := setupTestExecutor(t)
+	executeBehaviorQuery(t, executor, `
+		CREATE (a:A)-[:R]->(:B),
+		       (a)-[:R]->(:C),
+		       (a)-[:R]->(:D)
+	`)
+
+	result := executeBehaviorQuery(t, executor, `
+		MATCH (n)
+		WHERE EXISTS {
+			MATCH (n)-->(m)
+			WITH n, count(*) AS degree
+			WHERE degree = 3
+			RETURN true
+		}
+		RETURN labels(n)
+	`)
+	require.Equal(t, [][]interface{}{{[]interface{}{"A"}}}, result.Rows)
+}
+
+func TestExistsSubqueryRejectsUpdatingClauses(t *testing.T) {
+	executor := setupTestExecutor(t)
+	_, err := executor.Execute(context.Background(), `
+		MATCH (n)
+		WHERE EXISTS { MATCH (n)-->(m) SET m.value = 'invalid' }
+		RETURN n
+	`, nil)
+	require.Error(t, err)
+	var semanticError *SemanticError
+	require.True(t, errors.As(err, &semanticError))
+	require.Equal(t, "InvalidClauseComposition", semanticError.Detail)
 }
 
 func TestExistsSubqueryAppliesPatternPropertiesAndIdentityPredicates(t *testing.T) {

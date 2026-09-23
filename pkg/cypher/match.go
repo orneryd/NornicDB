@@ -29,19 +29,7 @@ func isAggregateFunc(expr string) bool {
 // containsAggregateFunc checks if expression contains any aggregate function
 // (handles expressions like SUM(a) + SUM(b))
 func containsAggregateFunc(expr string) bool {
-	upper := strings.ToUpper(expr)
-	// Check for aggregate function names followed by opening paren (with optional whitespace)
-	for _, fn := range []string{"COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT", "STDEVP", "STDEV"} {
-		idx := strings.Index(upper, fn)
-		if idx >= 0 {
-			// Check if followed by ( with optional whitespace
-			rest := strings.TrimSpace(upper[idx+len(fn):])
-			if len(rest) > 0 && rest[0] == '(' {
-				return true
-			}
-		}
-	}
-	return false
+	return len(findAggregateSpans(expr)) > 0
 }
 
 // isAggregateFuncName checks if expr starts with a specific aggregate function (whitespace-tolerant)
@@ -304,12 +292,10 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	if isStandaloneWith {
-		if countKeywordOccurrences(upper, "WITH") > 1 {
-			if pipelineResult, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
-				return pipelineResult, err
-			}
+		if pipelineResult, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
+			return pipelineResult, err
 		}
-		// Has standalone WITH clause - delegate to special handler
+		// Unsupported shapes retain their existing atomic physical operator.
 		return e.executeMatchWithClause(ctx, cypher)
 	}
 

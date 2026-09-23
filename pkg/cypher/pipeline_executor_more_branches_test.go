@@ -59,11 +59,11 @@ func TestPipelineApplyReturn_AdditionalBranches(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	rows := []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}
-	res, ok := exec.pipelineApplyReturn(rows, "RETURN ")
+	res, ok := exec.pipelineApplyReturn(context.Background(), rows, "RETURN ")
 	require.False(t, ok)
 	require.Nil(t, res)
 
-	res, ok = exec.pipelineApplyReturn(rows, "RETURN count(*) AS c, count(x) AS cx")
+	res, ok = exec.pipelineApplyReturn(context.Background(), rows, "RETURN count(*) AS c, count(x) AS cx")
 	require.True(t, ok)
 	require.Equal(t, []string{"c", "cx"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -71,7 +71,7 @@ func TestPipelineApplyReturn_AdditionalBranches(t *testing.T) {
 	require.EqualValues(t, int64(2), res.Rows[0][1])
 
 	mixRows := []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}
-	res, ok = exec.pipelineApplyReturn(mixRows, "RETURN count(*) AS c, x")
+	res, ok = exec.pipelineApplyReturn(context.Background(), mixRows, "RETURN count(*) AS c, x")
 	require.True(t, ok)
 	require.Len(t, res.Rows, 2)
 	require.EqualValues(t, int64(1), res.Rows[0][0])
@@ -79,7 +79,7 @@ func TestPipelineApplyReturn_AdditionalBranches(t *testing.T) {
 	require.EqualValues(t, int64(1), res.Rows[1][0])
 	require.EqualValues(t, int64(2), res.Rows[1][1])
 
-	res, ok = exec.pipelineApplyReturn(mixRows, "RETURN missing")
+	res, ok = exec.pipelineApplyReturn(context.Background(), mixRows, "RETURN missing")
 	require.False(t, ok)
 	require.Nil(t, res)
 }

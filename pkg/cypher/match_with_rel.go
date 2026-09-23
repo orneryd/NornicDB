@@ -748,7 +748,7 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 	// pass-through at the end of this function and admits every row -- the
 	// filter is silently not applied.
 	if variable, labels, ok := parseWithWhereLabelTest(whereClause); ok {
-		return withWhereNodeHasAllLabels(values[variable], labels)
+		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
 	}
 
 	// Handle comparison operators
@@ -1302,28 +1302,7 @@ func (e *StorageExecutor) evaluateConditionFromValues(condition string, values m
 }
 
 func parseLiteralValueFromComputedRow(expr string) (interface{}, bool) {
-	trimmed := strings.TrimSpace(expr)
-	if strings.EqualFold(trimmed, "NULL") {
-		return nil, true
-	}
-	if strings.EqualFold(trimmed, "TRUE") {
-		return true, true
-	}
-	if strings.EqualFold(trimmed, "FALSE") {
-		return false, true
-	}
-	if len(trimmed) >= 2 {
-		if isWholeCypherQuotedString(trimmed) {
-			return decodeCypherQuotedString(trimmed)
-		}
-	}
-	if num, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-		return num, true
-	}
-	if num, err := strconv.ParseFloat(trimmed, 64); err == nil {
-		return num, true
-	}
-	return nil, false
+	return parseLiteralScalarForPipeline(expr)
 }
 
 // evaluateMapLiteralFromValues evaluates a map literal using computed values

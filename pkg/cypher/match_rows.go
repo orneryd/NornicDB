@@ -214,27 +214,52 @@ func parseWithWhereLabelTest(whereClause string) (string, []string, bool) {
 	return variable, labels, true
 }
 
-// withWhereNodeHasAllLabels reports whether a bound value is a node carrying
-// every required label. Cypher's `n:A:B` is a conjunction, so every label must
-// be present; a value that is not a node cannot satisfy a label test.
-func withWhereNodeHasAllLabels(value interface{}, required []string) bool {
-	node, ok := value.(*storage.Node)
-	if !ok || node == nil {
-		return false
+// entityHasAllLabelsOrTypes evaluates Cypher's colon predicate for a graph
+// entity. Nodes test labels and relationships test their single relationship
+// type. A null binding produces null so projections preserve Cypher's
+// three-valued semantics; predicate callers coerce that null to false.
+func entityHasAllLabelsOrTypes(value interface{}, required []string) interface{} {
+	if value == nil {
+		return nil
 	}
-	for _, want := range required {
-		found := false
-		for _, have := range node.Labels {
-			if have == want {
-				found = true
-				break
+	switch entity := value.(type) {
+	case *storage.Node:
+		if entity == nil {
+			return nil
+		}
+		for _, want := range required {
+			found := false
+			for _, have := range entity.Labels {
+				if have == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
 			}
 		}
-		if !found {
-			return false
+		return true
+	case *storage.Edge:
+		if entity == nil {
+			return nil
 		}
+		for _, want := range required {
+			if entity.Type != want {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
 	}
-	return true
+}
+
+// entityHasAllLabelsOrTypesPredicate applies WHERE's truthiness to a colon
+// predicate. In WHERE, both null and false reject the row.
+func entityHasAllLabelsOrTypesPredicate(value interface{}, required []string) bool {
+	matched, _ := entityHasAllLabelsOrTypes(value, required).(bool)
+	return matched
 }
 
 // withWhereIsLabelTest reports whether the predicate is a bare label test,
@@ -321,7 +346,7 @@ func substituteWithWhereLabelTests(whereClause string, values map[string]interfa
 			i = j
 			continue
 		}
-		if withWhereNodeHasAllLabels(values[variable], labels) {
+		if entityHasAllLabelsOrTypesPredicate(values[variable], labels) {
 			out.WriteString("true")
 		} else {
 			out.WriteString("false")
@@ -604,40 +629,7 @@ func mapLookupCaseInsensitive(m map[string]interface{}, key string) (interface{}
 // compareOrderValues compares two values for ordering
 // Returns -1 if a < b, 0 if a == b, 1 if a > b
 func (e *StorageExecutor) compareOrderValues(a, b interface{}) int {
-	// Handle nil values (nulls last)
-	if a == nil && b == nil {
-		return 0
-	}
-	if a == nil {
-		return 1 // nil goes last
-	}
-	if b == nil {
-		return -1 // non-nil before nil
-	}
-
-	// Try numeric comparison
-	numA, okA := toFloat64(a)
-	numB, okB := toFloat64(b)
-	if okA && okB {
-		if numA < numB {
-			return -1
-		}
-		if numA > numB {
-			return 1
-		}
-		return 0
-	}
-
-	// String comparison
-	strA := fmt.Sprintf("%v", a)
-	strB := fmt.Sprintf("%v", b)
-	if strA < strB {
-		return -1
-	}
-	if strA > strB {
-		return 1
-	}
-	return 0
+	return compareValuesForSort(a, b)
 }
 
 // splitOutsideParens splits a string by delimiter, respecting parentheses

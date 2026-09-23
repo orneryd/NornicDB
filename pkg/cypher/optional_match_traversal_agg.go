@@ -75,7 +75,10 @@ func findAggregateSpans(expr string) []aggregateSpan {
 			if !strings.HasPrefix(lower[i:], fn) {
 				continue
 			}
-			if i > 0 && isIdentByte(lower[i-1]) {
+			// A qualified function whose terminal component happens to have an
+			// aggregate name (for example apoc.coll.sum()) is not a Cypher
+			// aggregate. It is evaluated once per row by the same expression path.
+			if i > 0 && (isIdentByte(lower[i-1]) || lower[i-1] == '.') {
 				continue
 			}
 			j := i + len(fn)

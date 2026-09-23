@@ -57,7 +57,7 @@ func (e *StorageExecutor) executeMixedPatternMatch(
 		rows = filtered
 	}
 
-	result, ok := e.pipelineApplyReturn(rows, "RETURN "+returnClause)
+	result, ok := e.pipelineApplyReturn(ctx, rows, "RETURN "+returnClause)
 	if !ok {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: &QueryStats{}}, nil
 	}

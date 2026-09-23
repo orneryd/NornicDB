@@ -655,20 +655,25 @@ func TestExecuteReturn_Branches(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "RETURN clause not found")
 
-	// Parameter substitution + aliases + null + int/float/bool/string fallback.
+	// Parameter substitution + aliases + scalar literals.
 	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"x": int64(7)})
-	res, err := exec.executeReturn(ctxWithParams, "RETURN $x AS x, null AS n, 1 AS one, 0 AS zero, 3.14 AS pi, 's' AS s, bareword AS b")
+	res, err := exec.executeReturn(ctxWithParams, "RETURN $x AS x, null AS n, 1 AS one, 0 AS zero, 3.14 AS pi, 's' AS s")
 	require.NoError(t, err)
-	require.Equal(t, []string{"x", "n", "one", "zero", "pi", "s", "b"}, res.Columns)
+	require.Equal(t, []string{"x", "n", "one", "zero", "pi", "s"}, res.Columns)
 	require.Len(t, res.Rows, 1)
-	require.Len(t, res.Rows[0], 7)
+	require.Len(t, res.Rows[0], 6)
 	assert.Equal(t, int64(7), res.Rows[0][0])
 	assert.Nil(t, res.Rows[0][1])
 	assert.Equal(t, int64(1), res.Rows[0][2])
 	assert.Equal(t, int64(0), res.Rows[0][3])
 	assert.Equal(t, 3.14, res.Rows[0][4])
 	assert.Equal(t, "s", res.Rows[0][5])
-	assert.Equal(t, "bareword", res.Rows[0][6])
+
+	_, err = exec.executeReturn(ctx, "RETURN bareword AS b")
+	require.Error(t, err)
+	semanticError, ok := err.(*SemanticError)
+	require.True(t, ok)
+	require.Equal(t, "UnexpectedSyntax", semanticError.Detail)
 
 	// Expression evaluation branch (evaluateExpressionWithContext result != nil).
 	exprRes, err := exec.executeReturn(ctx, "RETURN toUpper('abc') AS up")

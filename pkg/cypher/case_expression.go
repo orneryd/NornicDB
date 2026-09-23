@@ -40,6 +40,37 @@ func isCaseExpression(expr string) bool {
 	return strings.HasPrefix(upper, "CASE") && strings.HasSuffix(upper, "END")
 }
 
+// leadingCaseExpressionEnd returns the exclusive end of a leading CASE ... END
+// expression, including nested CASE expressions. A trailing operator or
+// postfix expression is deliberately excluded so callers can treat CASE as an
+// atomic operand without allowing operators inside WHEN predicates to escape.
+func leadingCaseExpressionEnd(expr string) int {
+	expr = strings.TrimSpace(expr)
+	depth := 0
+	for index := 0; index < len(expr); {
+		if expr[index] == '\'' || expr[index] == '"' || expr[index] == '`' {
+			index = numericValidationSkipQuoted(expr, index)
+			continue
+		}
+		word, next, ok := scanIdentifierToken(expr, index)
+		if !ok {
+			index++
+			continue
+		}
+		switch {
+		case strings.EqualFold(word, "case"):
+			depth++
+		case strings.EqualFold(word, "end") && depth > 0:
+			depth--
+			if depth == 0 {
+				return next
+			}
+		}
+		index = next
+	}
+	return -1
+}
+
 // parseCaseExpression parses a CASE expression into its components.
 // Supports both searched and simple CASE expressions.
 func parseCaseExpression(expr string) (*caseExpression, error) {
@@ -58,9 +89,10 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 		whenClauses: []caseWhenClause{},
 	}
 
-	// Determine if this is a simple CASE or searched CASE
-	// Simple CASE has an expression after CASE before the first WHEN
-	firstWhenIdx := indexCaseInsensitive(content, "WHEN")
+	// Only keywords at the current CASE level delimit the outer expression.
+	// A plain string search incorrectly treats WHEN/ELSE from a nested CASE as
+	// belonging to its parent.
+	firstWhenIdx := findCaseKeywordAtLevel(content, 0, "WHEN")
 	if firstWhenIdx == -1 {
 		return nil, localizedError(localization.CypherCoreCaseWhenRequired(), nil)
 	}
@@ -72,49 +104,44 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 		ce.testExpression = beforeFirstWhen
 	}
 
-	// Parse WHEN clauses and ELSE clause
-	remaining := content[firstWhenIdx:]
-
-	// Split by WHEN (but not within strings or nested expressions)
-	whenSections := splitByKeyword(remaining, "WHEN")
-
-	for i, section := range whenSections {
-		if i == 0 && strings.TrimSpace(section) == "" {
-			continue // Skip empty first section
+	for cursor := firstWhenIdx; cursor < len(content); {
+		conditionStart := cursor + len("WHEN")
+		thenIndex := findCaseKeywordAtLevel(content, conditionStart, "THEN")
+		if thenIndex < 0 {
+			return nil, localizedError(localization.CypherCoreCaseThenRequired(content[cursor:]), nil)
 		}
-
-		section = strings.TrimSpace(section)
-		if section == "" {
-			continue
+		condition := strings.TrimSpace(content[conditionStart:thenIndex])
+		resultStart := thenIndex + len("THEN")
+		nextWhen := findCaseKeywordAtLevel(content, resultStart, "WHEN")
+		nextElse := findCaseKeywordAtLevel(content, resultStart, "ELSE")
+		resultEnd := len(content)
+		next := len(content)
+		if nextWhen >= 0 && nextWhen < resultEnd {
+			resultEnd, next = nextWhen, nextWhen
 		}
-
-		// Check if this section contains ELSE
-		elseIdx := indexCaseInsensitive(section, "ELSE")
-		if elseIdx >= 0 {
-			// Split into WHEN part and ELSE part
-			whenPart := strings.TrimSpace(section[:elseIdx])
-			elsePart := strings.TrimSpace(section[elseIdx+4:])
-
-			// Parse the WHEN clause if not empty
-			if whenPart != "" {
-				clause, err := parseWhenClause(whenPart, ce.isSimple)
-				if err != nil {
-					return nil, err
-				}
-				ce.whenClauses = append(ce.whenClauses, clause)
-			}
-
-			// Set ELSE result
-			ce.elseResult = elsePart
-			break // ELSE is always last
+		if nextElse >= 0 && nextElse < resultEnd {
+			resultEnd, next = nextElse, nextElse
+		}
+		result := strings.TrimSpace(content[resultStart:resultEnd])
+		if condition == "" || result == "" {
+			return nil, localizedError(localization.CypherCoreCaseThenRequired(content[cursor:]), nil)
+		}
+		clause := caseWhenClause{result: result}
+		if ce.isSimple {
+			clause.value = condition
 		} else {
-			// Regular WHEN clause
-			clause, err := parseWhenClause(section, ce.isSimple)
-			if err != nil {
-				return nil, err
-			}
-			ce.whenClauses = append(ce.whenClauses, clause)
+			clause.condition = condition
 		}
+		ce.whenClauses = append(ce.whenClauses, clause)
+
+		if next == len(content) {
+			break
+		}
+		if next == nextElse {
+			ce.elseResult = strings.TrimSpace(content[nextElse+len("ELSE"):])
+			break
+		}
+		cursor = nextWhen
 	}
 
 	if len(ce.whenClauses) == 0 {
@@ -122,6 +149,67 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 	}
 
 	return ce, nil
+}
+
+// findCaseKeywordAtLevel finds a CASE grammar keyword while ignoring quoted
+// text, nested delimiters, and complete nested CASE ... END expressions.
+func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
+	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, 0, 0
+	for index := start; index < len(expression); {
+		if expression[index] == '\'' || expression[index] == '"' || expression[index] == '`' {
+			index = numericValidationSkipQuoted(expression, index)
+			continue
+		}
+		switch expression[index] {
+		case '(':
+			parenDepth++
+			index++
+			continue
+		case ')':
+			parenDepth--
+			index++
+			continue
+		case '[':
+			bracketDepth++
+			index++
+			continue
+		case ']':
+			bracketDepth--
+			index++
+			continue
+		case '{':
+			braceDepth++
+			index++
+			continue
+		case '}':
+			braceDepth--
+			index++
+			continue
+		}
+		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 || !isCaseWordStart(expression, index) {
+			index++
+			continue
+		}
+		end := index + 1
+		for end < len(expression) && isNumericIdentifierByte(expression[end]) {
+			end++
+		}
+		word := expression[index:end]
+		if strings.EqualFold(word, "CASE") {
+			caseDepth++
+		} else if strings.EqualFold(word, "END") && caseDepth > 0 {
+			caseDepth--
+		} else if caseDepth == 0 && strings.EqualFold(word, keyword) {
+			return index
+		}
+		index = end
+	}
+	return -1
+}
+
+func isCaseWordStart(expression string, index int) bool {
+	return (index == 0 || !isNumericIdentifierByte(expression[index-1])) &&
+		isASCIIIdentifierStart(expression[index])
 }
 
 // parseWhenClause parses a single WHEN ... THEN ... clause.
