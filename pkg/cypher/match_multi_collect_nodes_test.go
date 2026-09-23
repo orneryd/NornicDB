@@ -12,10 +12,12 @@ import (
 
 type collectNodesLabelProbeEngine struct {
 	storage.Engine
-	streamCalls      int
-	labelCalls       int
-	labelLookupCalls int
-	labelIDs         []storage.NodeID
+	streamCalls         int
+	labelCalls          int
+	labelLookupCalls    int
+	projectedLabelCalls int
+	labelIDs            []storage.NodeID
+	projectedNodes      []*storage.Node
 }
 
 func (e *collectNodesLabelProbeEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
@@ -41,6 +43,19 @@ func (e *collectNodesLabelProbeEngine) ForEachNodeIDByLabel(label string, visit 
 	for _, id := range e.labelIDs {
 		if !visit(id) {
 			return nil
+		}
+	}
+	return nil
+}
+
+func (e *collectNodesLabelProbeEngine) StreamNodesByLabelProjected(_ string, _ []string, visit func(*storage.Node) error) error {
+	if e.projectedNodes == nil {
+		return storage.ErrNotImplemented
+	}
+	e.projectedLabelCalls++
+	for _, node := range e.projectedNodes {
+		if err := visit(node); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -79,4 +94,28 @@ func TestCollectNodesWithStreaming_LabelLimitPrefersLabelLookup(t *testing.T) {
 	require.Len(t, nodes, 3)
 	assert.GreaterOrEqual(t, probe.labelLookupCalls, 1, "label-id lookup path must be used")
 	assert.Equal(t, 0, probe.streamCalls, "full streaming scan must be skipped")
+}
+
+func TestCollectNodesWithStreaming_UsesLabelIndexedStreamForResidualFilters(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+	probe := &collectNodesLabelProbeEngine{
+		Engine: base,
+		projectedNodes: []*storage.Node{
+			{ID: "person-1", Labels: []string{"Person"}, Properties: map[string]any{"age": int64(20)}},
+			{ID: "person-2", Labels: []string{"Person"}, Properties: map[string]any{"age": int64(40)}},
+		},
+	}
+	exec := NewStorageExecutor(probe)
+	probe.labelCalls = 0
+
+	nodes, err := exec.collectNodesWithStreaming(
+		context.Background(), []string{"Person"}, nil, "n", "n.age > 30", -1,
+	)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	assert.Equal(t, storage.NodeID("person-2"), nodes[0].ID)
+	assert.Equal(t, 1, probe.projectedLabelCalls, "label-indexed streaming must supply the scan")
+	assert.Equal(t, 0, probe.streamCalls, "the converged collector must not scan unrelated labels")
+	assert.Equal(t, 0, probe.labelCalls, "the collector must not materialize the complete label population")
 }

@@ -29,6 +29,18 @@ func (e *seedLabelBehaviorEngine) GetNodesByLabel(label string) ([]*storage.Node
 	return nodes, nil
 }
 
+func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+	if label == e.errorLabel {
+		return fmt.Errorf("forced label error for %s", label)
+	}
+	if label == e.nilLabel {
+		if err := visit(nil); err != nil {
+			return err
+		}
+	}
+	return e.MemoryEngine.StreamNodesByLabelProjected(label, properties, visit)
+}
+
 func TestSeedNodesFromOuterMatch_ErrorAndNilBranches(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })

@@ -69,7 +69,11 @@ type BadgerTransaction struct {
 	pendingEdges map[EdgeID]*Edge
 	deletedNodes map[NodeID]struct{}
 	deletedEdges map[EdgeID]struct{}
-	operations   []Operation
+	// snapshotLabelNodes retains completed, immutable label streams for the
+	// lifetime of this pinned snapshot. Bounded/aborted streams are never
+	// cached, so LIMIT preserves early termination and memory proportionality.
+	snapshotLabelNodes map[string][]*Node
+	operations         []Operation
 
 	// Buffered writes - collected during transaction, flushed at commit
 	// This batches all writes together for better performance while maintaining ACID guarantees
@@ -1543,6 +1547,126 @@ func (tx *BadgerTransaction) GetNodesByLabel(label string) ([]*Node, error) {
 		}
 		return false
 	}), nil
+}
+
+// StreamNodesByLabelProjected visits label matches from the transaction's
+// pinned snapshot and overlays pending writes as one stream. The callback can
+// stop iteration without forcing the transaction to resolve or copy the rest
+// of the label population.
+func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
+	if visit == nil {
+		return ErrInvalidData
+	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return err
+	}
+
+	hasPending := len(tx.pendingNodes) > 0 || len(tx.deletedNodes) > 0
+	var seen map[NodeID]struct{}
+	if hasPending {
+		seen = make(map[NodeID]struct{}, len(tx.pendingNodes))
+	}
+	normalizedLabel := normalizeLabel(label)
+	matchesLabel := func(node *Node) bool {
+		if node == nil {
+			return false
+		}
+		for _, candidate := range node.Labels {
+			if normalizeLabel(candidate) == normalizedLabel {
+				return true
+			}
+		}
+		return false
+	}
+	emitCommitted := func(node *Node) error {
+		if node == nil {
+			return nil
+		}
+		if !hasPending {
+			return visit(node)
+		}
+		if _, deleted := tx.deletedNodes[node.ID]; deleted {
+			seen[node.ID] = struct{}{}
+			return nil
+		}
+		if pending, exists := tx.pendingNodes[node.ID]; exists {
+			seen[node.ID] = struct{}{}
+			if matchesLabel(pending) {
+				return visit(projectCachedNodeForRead(pending, properties))
+			}
+			return nil
+		}
+		return visit(node)
+	}
+
+	cacheKey := normalizeLabel(label)
+	if cached, ok := tx.snapshotLabelNodes[cacheKey]; ok {
+		for _, node := range cached {
+			projected := node
+			if properties != nil {
+				projected = projectCachedNodeForRead(node, properties)
+			}
+			if err := emitCommitted(projected); err != nil {
+				return err
+			}
+		}
+		return tx.streamPendingLabelNodesLocked(matchesLabel, seen, properties, visit)
+	}
+
+	var err error
+	var completed []*Node
+	streamVisit := emitCommitted
+	if properties == nil {
+		completed = make([]*Node, 0)
+		streamVisit = func(node *Node) error {
+			completed = append(completed, node)
+			return emitCommitted(node)
+		}
+	}
+	if tx.snapshotTx != nil {
+		err = tx.engine.streamNodesByLabelFromPhysicalSnapshot(label, tx.withSnapshotViewLocked, properties, streamVisit)
+	} else if tx.readTS.IsZero() {
+		err = tx.engine.StreamNodesByLabelProjected(label, properties, streamVisit)
+	} else {
+		err = tx.engine.streamNodesByLabelVisibleAtSnapshotWithView(
+			label, tx.readTS, tx.withSnapshotViewLocked, properties, streamVisit,
+		)
+	}
+	if err != nil {
+		return err
+	}
+	if properties == nil {
+		if tx.snapshotLabelNodes == nil {
+			tx.snapshotLabelNodes = make(map[string][]*Node)
+		}
+		tx.snapshotLabelNodes[cacheKey] = completed
+	}
+	return tx.streamPendingLabelNodesLocked(matchesLabel, seen, properties, visit)
+}
+
+func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
+	matchesLabel func(*Node) bool,
+	seen map[NodeID]struct{},
+	properties []string,
+	visit func(*Node) error,
+) error {
+	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
+		return nil
+	}
+	for id, node := range tx.pendingNodes {
+		if _, emitted := seen[id]; emitted {
+			continue
+		}
+		if _, deleted := tx.deletedNodes[id]; deleted || !matchesLabel(node) {
+			continue
+		}
+		if err := visit(projectCachedNodeForRead(node, properties)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetFirstNodeByLabel returns the first visible node with the given label.

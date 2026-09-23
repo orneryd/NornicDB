@@ -1214,6 +1214,52 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	store := e.getStorage(ctx)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
 	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	hideSystemNodes := shouldHideSystemNodes(store)
+	capacity := 0
+	if limit > 0 {
+		capacity = limit
+	}
+	collected := make([]*storage.Node, 0, capacity)
+	var whereFilter FilterFunc
+	if strings.TrimSpace(whereClause) != "" {
+		if fastIN, ok := e.buildBoundInFastFilter(whereVariable, whereClause); ok {
+			whereFilter = fastIN
+		} else if compiled, ok := e.getCompiledSimpleWhere(ctx, whereVariable, whereClause); ok {
+			whereFilter = compiled
+		} else {
+			whereFilter = func(node *storage.Node) bool {
+				return e.evaluateWhere(ctx, node, whereVariable, whereClause)
+			}
+		}
+	}
+	collect := func(node *storage.Node) error {
+		if node == nil || (hideSystemNodes && isSystemNode(node)) {
+			return nil
+		}
+		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
+			return nil
+		}
+		if len(properties) > 0 && !e.nodeMatchesProps(node, properties) {
+			return nil
+		}
+		if whereFilter != nil && !whereFilter(node) {
+			return nil
+		}
+		if hasViewport && canCheckViewport {
+			visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+			if err != nil {
+				return err
+			}
+			if !visible {
+				return nil
+			}
+		}
+		collected = append(collected, node)
+		if limit > 0 && len(collected) >= limit {
+			return storage.ErrIterationStopped
+		}
+		return nil
+	}
 
 	// Pattern-inline property fast-path: when the pattern carries inline
 	// equality on one or more indexed properties (labelled or labelless), we
@@ -1259,15 +1305,30 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 		}
 	}
 
-	// For label-constrained LIMIT queries, prefer direct label lookup over full
-	// graph streaming. This avoids scanning unrelated labels until LIMIT is met
-	// (a major latency issue for sparse labels like SystemPrompt).
+	// A label-indexed stream is the primary physical scan for every labelled
+	// MATCH. It preserves the shared row pipeline while keeping work
+	// proportional to the matching label, applies residual predicates before
+	// materialising rows, and lets LIMIT stop the storage iterator early.
+	if len(labels) > 0 {
+		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
+			err := reader.StreamNodesByLabelProjected(labels[0], nil, collect)
+			if err == nil || err == storage.ErrIterationStopped {
+				return collected, nil
+			}
+			if err != storage.ErrNotImplemented {
+				return nil, err
+			}
+			collected = collected[:0]
+		}
+	}
+
+	// Compatibility path for stores that expose label IDs but not label-node
+	// streaming. This still avoids a full graph scan for bounded simple reads.
 	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
 		ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
 		if err != nil {
 			return nil, err
 		}
-		hideSystemNodes := shouldHideSystemNodes(store)
 		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
 		for _, id := range ids {
 			node, getErr := store.GetNode(id)
@@ -1303,60 +1364,14 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	// LIMIT additionally stops storage iteration as soon as enough qualifying
 	// nodes have been produced.
 	if streamer, ok := store.(storage.StreamingEngine); ok {
-		capacity := 0
-		if limit > 0 {
-			capacity = limit
-		}
-		nodes = make([]*storage.Node, 0, capacity)
-		var whereFilter FilterFunc
-		if strings.TrimSpace(whereClause) != "" {
-			if fastIN, ok := e.buildBoundInFastFilter(whereVariable, whereClause); ok {
-				whereFilter = fastIN
-			} else if compiled, ok := e.getCompiledSimpleWhere(ctx, whereVariable, whereClause); ok {
-				whereFilter = compiled
-			} else {
-				whereFilter = func(node *storage.Node) bool {
-					return e.evaluateWhere(ctx, node, whereVariable, whereClause)
-				}
-			}
-		}
-		hideSystemNodes := shouldHideSystemNodes(store)
-		err = streamer.StreamNodes(ctx, func(node *storage.Node) error {
-			if hideSystemNodes && isSystemNode(node) {
-				return nil
-			}
-			if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
-				return nil
-			}
-			if len(properties) > 0 && !e.nodeMatchesProps(node, properties) {
-				return nil
-			}
-			if whereFilter != nil && !whereFilter(node) {
-				return nil
-			}
-			if hasViewport && canCheckViewport {
-				visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
-				if err != nil {
-					return err
-				}
-				if !visible {
-					return nil
-				}
-			}
-
-			nodes = append(nodes, node)
-			if limit > 0 && len(nodes) >= limit {
-				return storage.ErrIterationStopped
-			}
-			return nil
-		})
+		err = streamer.StreamNodes(ctx, collect)
 		if err == storage.ErrIterationStopped {
 			err = nil
 		}
 		if err != nil {
 			return nil, err
 		}
-		return nodes, nil
+		return collected, nil
 	}
 
 	// Compatibility fallback for storage implementations without StreamingEngine.
@@ -1370,7 +1385,6 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	}
 
 	// Filter out system nodes (labels starting with _)
-	hideSystemNodes := shouldHideSystemNodes(store)
 	filteredNodes := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
 		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {

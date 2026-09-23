@@ -151,15 +151,39 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(label string, version MV
 // index in that snapshot already represents membership at BEGIN, so work is
 // proportional to the matching label rather than every stored node.
 func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
-	deregister, err := b.beginMVCCSnapshotRead(version)
+	nodes := make([]*Node, 0)
+	err := b.streamNodesByLabelVisibleAtSnapshotWithView(label, version, view, nil, func(node *Node) error {
+		nodes = append(nodes, node)
+		return nil
+	})
 	if err != nil {
 		return nil, err
+	}
+	return nodes, nil
+}
+
+// streamNodesByLabelVisibleAtSnapshotWithView visits snapshot-visible label
+// matches directly from the label index. Unlike the slice-returning adapter,
+// it preserves early termination and never materialises nodes the caller does
+// not consume.
+func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
+	label string,
+	version MVCCVersion,
+	view func(func(*badger.Txn) error) error,
+	properties []string,
+	visit func(*Node) error,
+) error {
+	if visit == nil {
+		return ErrInvalidData
+	}
+	deregister, err := b.beginMVCCSnapshotRead(version)
+	if err != nil {
+		return err
 	}
 	defer deregister()
 
 	normalizedLabel := normalizeLabel(label)
-	nodes := make([]*Node, 0)
-	err = view(func(txn *badger.Txn) error {
+	return view(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(normalizedLabel)
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
@@ -188,15 +212,100 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(label string, ve
 				}
 			}
 			if matched {
-				nodes = append(nodes, node)
+				if err := visit(projectCachedNodeForRead(node, properties)); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
+}
+
+// streamNodesByLabelFromPhysicalSnapshot visits the node bodies represented by
+// a pinned Badger read transaction. Because both the label index and node key
+// are read from the same immutable physical snapshot, no per-candidate logical
+// MVCC-head lookup is required.
+func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshot(
+	label string,
+	view func(func(*badger.Txn) error) error,
+	properties []string,
+	visit func(*Node) error,
+) error {
+	if visit == nil {
+		return ErrInvalidData
 	}
-	return nodes, nil
+	normalizedLabel := normalizeLabel(label)
+	include := propertyProjectionSet(properties)
+	nowNanos := DecayScoringTime()
+	return view(func(txn *badger.Txn) error {
+		prefix := labelIndexPrefix(normalizedLabel)
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			indexKey := it.Item().Key()
+			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(normalizedLabel))
+			if !ok {
+				continue
+			}
+			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
+			if !ok || nodeID == "" || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
+				continue
+			}
+			item, getErr := txn.Get(nodeKey(nodeID))
+			if getErr == badger.ErrKeyNotFound {
+				continue
+			}
+			if getErr != nil {
+				return getErr
+			}
+			var node *Node
+			itemVersion := item.Version()
+			if cached, ok := b.cacheLoadNodeBody(nodeID, itemVersion); ok {
+				if properties == nil {
+					node, getErr = b.loadNodeEmbeddings(txn, cached, nodeID)
+					if getErr != nil {
+						return getErr
+					}
+				} else {
+					node = projectCachedNodeForRead(cached, properties)
+				}
+			}
+			if node == nil {
+				if err := item.Value(func(value []byte) error {
+					if properties == nil {
+						decoded, decodeErr := b.decodeNode(namespaceForNodeID(nodeID), value)
+						if decodeErr != nil {
+							return decodeErr
+						}
+						b.cacheStoreNodeBody(nodeID, itemVersion, decoded)
+						node, decodeErr = b.loadNodeEmbeddings(txn, decoded, nodeID)
+						return decodeErr
+					}
+					var decodeErr error
+					node, decodeErr = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
+					return decodeErr
+				}); err != nil {
+					return err
+				}
+			}
+			if node == nil || b.filterNodeByDecay(node, nowNanos) {
+				continue
+			}
+			matched := false
+			for _, existing := range node.Labels {
+				if normalizeLabel(existing) == normalizedLabel {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				if err := visit(node); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {

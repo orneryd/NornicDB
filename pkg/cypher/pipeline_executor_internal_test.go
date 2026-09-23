@@ -1,9 +1,11 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,4 +38,26 @@ func TestCanExecuteAsPipeline_SimpleSeederShape(t *testing.T) {
 	require.Equal(t, pipelineClauseUnwind, clauses[4].kind)
 	require.Equal(t, pipelineClauseMatch, clauses[5].kind)
 	require.Equal(t, pipelineClauseCreate, clauses[6].kind)
+}
+
+func TestPipelineSimpleNodeReadPlan_HandlesBoundedLabelStream(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = store.Close() })
+	for index := 0; index < 20; index++ {
+		_, err := store.CreateNode(&storage.Node{
+			ID:         storage.NodeID("nornic:" + string(rune('a'+index))),
+			Labels:     []string{"Person"},
+			Properties: map[string]any{"name": index},
+		})
+		require.NoError(t, err)
+	}
+	exec := NewStorageExecutor(store)
+	query := "MATCH (n:Person) RETURN n.name LIMIT 3"
+	clauses, ok := canExecuteAsPipeline(query)
+	require.True(t, ok)
+
+	result, handled, err := exec.tryExecutePipelineSimpleNodeReadPlan(context.Background(), clauses, nil)
+	require.NoError(t, err)
+	require.True(t, handled, "bounded single-node reads must use the pipeline's fused physical operator")
+	require.Len(t, result.Rows, 3)
 }

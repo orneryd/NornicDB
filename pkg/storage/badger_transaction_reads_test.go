@@ -88,6 +88,86 @@ func nodeIDs(nodes []*Node) []string {
 	return out
 }
 
+func TestTxReads_StreamNodesByLabelProjected_MergesSnapshotAndPendingWrites(t *testing.T) {
+	engine := txReadFixture(t)
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	bob, err := tx.GetNode("test:bob")
+	require.NoError(t, err)
+	bob.Properties["name"] = "Robert"
+	bob.Properties["secret"] = "not projected"
+	require.NoError(t, tx.UpdateNode(bob))
+	require.NoError(t, tx.DeleteNode("test:carol"))
+	_, err = tx.CreateNode(&Node{
+		ID: "test:erin", Labels: []string{"Person"},
+		Properties: map[string]any{"name": "Erin", "secret": "not projected"},
+	})
+	require.NoError(t, err)
+
+	var nodes []*Node
+	err = tx.StreamNodesByLabelProjected("Person", []string{"name"}, func(node *Node) error {
+		nodes = append(nodes, node)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"test:alice", "test:bob", "test:dave", "test:erin"}, nodeIDs(nodes))
+	for _, node := range nodes {
+		require.NotContains(t, node.Properties, "secret")
+	}
+	for _, node := range nodes {
+		if node.ID == "test:bob" {
+			require.Equal(t, "Robert", node.Properties["name"])
+		}
+	}
+}
+
+func TestTxReads_StreamNodesByLabelProjected_StopsWithoutMaterializingRemainder(t *testing.T) {
+	engine := txReadFixture(t)
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	visited := 0
+	err = tx.StreamNodesByLabelProjected("Person", nil, func(*Node) error {
+		visited++
+		return ErrIterationStopped
+	})
+	require.ErrorIs(t, err, ErrIterationStopped)
+	require.Equal(t, 1, visited)
+}
+
+func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *testing.T) {
+	engine := txReadFixture(t)
+	reader, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, reader.SetNamespace("test"))
+	t.Cleanup(func() { _ = reader.Rollback() })
+
+	writer, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, writer.SetNamespace("test"))
+	bob, err := writer.GetNode("test:bob")
+	require.NoError(t, err)
+	bob.Properties["name"] = "Changed after reader began"
+	require.NoError(t, writer.UpdateNode(bob))
+	require.NoError(t, writer.Commit())
+
+	readNames := func() map[NodeID]string {
+		t.Helper()
+		names := make(map[NodeID]string)
+		err := reader.StreamNodesByLabelProjected("Person", nil, func(node *Node) error {
+			names[node.ID] = node.Properties["name"].(string)
+			return nil
+		})
+		require.NoError(t, err)
+		return names
+	}
+	require.Equal(t, "Bob", readNames()["test:bob"])
+	require.Equal(t, "Bob", readNames()["test:bob"], "cached replay must retain the reader's begin snapshot")
+}
+
 func TestTxReads_GetEdge_Committed(t *testing.T) {
 	engine := txReadFixture(t)
 	tx, err := engine.BeginTransaction()

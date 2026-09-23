@@ -94,6 +94,17 @@ func (w *transactionStorageWrapper) snapshotMutatedNodeIDs() map[string]struct{}
 	return out
 }
 
+func (w *transactionStorageWrapper) clearMutatedNodeIDs(processed map[string]struct{}) {
+	if len(processed) == 0 || len(w.mutatedNodeIDs) == 0 {
+		return
+	}
+	w.mutatedNodeIDsMu.Lock()
+	for id := range processed {
+		delete(w.mutatedNodeIDs, id)
+	}
+	w.mutatedNodeIDsMu.Unlock()
+}
+
 // Write operations - go through transaction for atomicity
 func (w *transactionStorageWrapper) CreateNode(node *storage.Node) (storage.NodeID, error) {
 	if w.namespace == "" {
@@ -193,6 +204,34 @@ func (w *transactionStorageWrapper) GetNodesByLabel(label string) ([]*storage.No
 		return nodes, nil
 	}
 	return w.toUserNodes(nodes), nil
+}
+
+// StreamNodesByLabelProjected keeps labelled MATCH reads on the transaction's
+// pinned snapshot while preserving the storage iterator's early-stop signal.
+// Namespace conversion happens per visited node, so unconsumed nodes are never
+// copied into a transaction-local result slice.
+func (w *transactionStorageWrapper) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+	if visit == nil {
+		return storage.ErrInvalidData
+	}
+	return w.tx.StreamNodesByLabelProjected(label, properties, func(node *storage.Node) error {
+		if node == nil {
+			return nil
+		}
+		if w.namespace == "" {
+			return visit(node)
+		}
+		if !strings.HasPrefix(string(node.ID), w.namespace+w.separator) {
+			return nil
+		}
+		// Streaming readers treat nodes as immutable, matching
+		// NamespacedEngine.StreamNodesByLabelProjected. Strip only the ID
+		// prefix here; a second deep property copy would make every explicit
+		// transaction scan allocate once more per visited node.
+		out := *node
+		out.ID = w.unprefixNodeID(out.ID)
+		return visit(&out)
+	})
 }
 
 func (w *transactionStorageWrapper) GetFirstNodeByLabel(label string) (*storage.Node, error) {

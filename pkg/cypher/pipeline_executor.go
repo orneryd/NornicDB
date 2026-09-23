@@ -551,6 +551,8 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	}
 
 	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	hint := e.pipelineMatchHint(clauses[1:])
+	boundedSimpleProjection := whereClause == "" && hint.earlyLimit > 0 && pipelineSimpleNodeProjections(items, nodePattern.variable)
 	if whereClause == "" && len(items) == 1 && len(nodePattern.properties) == 0 && isAggregateFuncName(items[0].expr, "count") {
 		inner := strings.TrimSpace(extractFuncInner(items[0].expr))
 		if inner == "*" || inner == nodePattern.variable {
@@ -580,7 +582,19 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, true, err
 	}
 	if !usedIndex {
-		return nil, false, nil
+		if !boundedSimpleProjection {
+			return nil, false, nil
+		}
+		candidates, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, hint)
+		if err != nil {
+			return nil, true, err
+		}
+	}
+	if boundedSimpleProjection {
+		if len(candidates) > hint.earlyLimit {
+			candidates = candidates[:hint.earlyLimit]
+		}
+		return projectPipelineSimpleNodeRead(candidates, items, nodePattern.variable), true, nil
 	}
 	rows := make([]pipelineRow, 0, len(candidates))
 	for _, node := range candidates {
@@ -588,7 +602,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		for name, value := range params {
 			row["$"+name] = value
 		}
-		if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
+		if whereClause == "" || e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
 			rows = append(rows, row)
 		}
 	}
@@ -597,6 +611,56 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, false, nil
 	}
 	return result, true, nil
+}
+
+func projectPipelineSimpleNodeRead(nodes []*storage.Node, items []returnItem, variable string) *ExecuteResult {
+	result := &ExecuteResult{
+		Columns: make([]string, len(items)),
+		Rows:    make([][]interface{}, 0, len(nodes)),
+		Stats:   &QueryStats{},
+	}
+	for index, item := range items {
+		result.Columns[index] = item.expr
+		if item.alias != "" {
+			result.Columns[index] = item.alias
+		}
+	}
+	prefix := variable + "."
+	for _, node := range nodes {
+		row := make([]interface{}, len(items))
+		for index, item := range items {
+			expression := strings.TrimSpace(item.expr)
+			if expression == variable {
+				row[index] = node
+				continue
+			}
+			property := normalizeProjectionColumnName(strings.TrimSpace(expression[len(prefix):]))
+			row[index] = node.Properties[property]
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	return result
+}
+
+func pipelineSimpleNodeProjections(items []returnItem, variable string) bool {
+	if len(items) == 0 || variable == "" {
+		return false
+	}
+	for _, item := range items {
+		expression := strings.TrimSpace(item.expr)
+		if expression == variable {
+			continue
+		}
+		prefix := variable + "."
+		if !strings.HasPrefix(expression, prefix) {
+			return false
+		}
+		property := strings.TrimSpace(expression[len(prefix):])
+		if property == "" || strings.ContainsAny(property, ".()[]{}+-*/%^<>=, ") {
+			return false
+		}
+	}
+	return true
 }
 
 // tryExecutePipelineOptionalMatchPlan selects the optimized physical operator

@@ -21,6 +21,7 @@ var firstUseGraphPattern = regexp.MustCompile(`(?is)\bUSE\s+([A-Za-z_][A-Za-z0-9
 type TransactionContext struct {
 	tx              interface{} // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
 	engine          storage.Engine
+	storageWrapper  *transactionStorageWrapper
 	active          bool
 	wal             *storage.WAL
 	walSeqStart     uint64
@@ -217,6 +218,10 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
 		return nil, localizedError(localization.CypherTransactionsCommitFailed(err), err)
 	}
+	if e.txContext.storageWrapper != nil {
+		txExec := e.cloneWithStorage(e.txContext.storageWrapper)
+		txExec.promoteNodeLookupCacheTo(e)
+	}
 
 	if e.txContext.fabricRemoteExe != nil {
 		_ = e.txContext.fabricRemoteExe.Close()
@@ -330,26 +335,34 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 			return nil, err
 		}
 		if inlineEmbeddingEnabled {
-			if err := txExec.applyInlineEmbeddingMutations(ctx, txWrapper.snapshotMutatedNodeIDs()); err != nil {
+			mutated := txWrapper.snapshotMutatedNodeIDs()
+			if err := txExec.applyInlineEmbeddingMutations(ctx, mutated); err != nil {
 				return nil, err
 			}
+			txWrapper.clearMutatedNodeIDs(mutated)
 		}
 		return result, nil
 	}
 
-	// Create a transactional wrapper that routes writes through the transaction.
-	// IMPORTANT: carry namespace info so writes remain correctly prefixed in multi-db.
-	engines := e.resolveImplicitTxEngines()
-	separator := ":"
-	if engines.namespace == "" {
-		separator = ""
-	}
-	txWrapper := &transactionStorageWrapper{
-		tx:             tx,
-		underlying:     e.storage,
-		namespace:      engines.namespace,
-		separator:      separator,
-		mutatedNodeIDs: make(map[string]struct{}),
+	// Reuse one storage adapter for the explicit transaction lifetime. Besides
+	// preserving namespace and mutation state, this prevents every statement
+	// (including RETURN literals) from allocating and reseeding a 1000-entry
+	// transaction lookup cache.
+	txWrapper := e.txContext.storageWrapper
+	if txWrapper == nil || txWrapper.tx != tx {
+		engines := e.resolveImplicitTxEngines()
+		separator := ":"
+		if engines.namespace == "" {
+			separator = ""
+		}
+		txWrapper = &transactionStorageWrapper{
+			tx:             tx,
+			underlying:     e.storage,
+			namespace:      engines.namespace,
+			separator:      separator,
+			mutatedNodeIDs: make(map[string]struct{}),
+		}
+		e.txContext.storageWrapper = txWrapper
 	}
 
 	// Pass the wrapper through context (same pattern as implicit transactions)
@@ -363,9 +376,11 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		return nil, err
 	}
 	if inlineEmbeddingEnabled {
-		if err := txExec.applyInlineEmbeddingMutations(txCtx, txWrapper.snapshotMutatedNodeIDs()); err != nil {
+		mutated := txWrapper.snapshotMutatedNodeIDs()
+		if err := txExec.applyInlineEmbeddingMutations(txCtx, mutated); err != nil {
 			return nil, err
 		}
+		txWrapper.clearMutatedNodeIDs(mutated)
 	}
 	return result, nil
 }

@@ -90,27 +90,8 @@ func filterNodesByRequiredLabels(nodes []*storage.Node, labels []string) []*stor
 }
 
 func (e *StorageExecutor) loadNodesWithTemporalViewport(ctx context.Context, labels []string) ([]*storage.Node, error) {
-	store := e.getStorage(ctx)
-	var (
-		nodes []*storage.Node
-		err   error
-	)
-	if len(labels) > 0 {
-		nodes, err = store.GetNodesByLabel(labels[0])
-	} else {
-		nodes, err = store.AllNodes()
-	}
-	if err != nil {
-		return nil, err
-	}
-	nodes = filterNodesByRequiredLabels(nodes, labels)
-	if viewport, ok := TemporalViewportFromContext(ctx); ok && viewport.Enabled() {
-		if checker, canCheck := store.(temporalCurrentNodeChecker); canCheck {
-			nodes, err = filterNodesByTemporalViewport(nodes, viewport, checker)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	return nodes, nil
+	// Traversal seeds use the same label-indexed, viewport-aware streaming
+	// collector as node MATCH. Keeping this adapter avoids a second physical
+	// scan path that materialises GetNodesByLabel inside explicit transactions.
+	return e.collectNodesWithStreaming(ctx, labels, nil, "", "", -1)
 }
