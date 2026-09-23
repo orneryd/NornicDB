@@ -328,6 +328,14 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 				return err
 			}
+			// Snapshot traversal is driven by versioned adjacency records rather
+			// than the latest-only outgoing/incoming indexes. Bulk creates must
+			// publish both views in the same commit, just like transactional
+			// CreateEdge; otherwise the relationship body exists but a following
+			// transaction cannot discover it from either endpoint.
+			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, nil, edge, version); err != nil {
+				return err
+			}
 			// Create-only path: primary key IS the current head body.
 			if err := b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false); err != nil {
 				return err
