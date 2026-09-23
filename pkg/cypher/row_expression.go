@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"math"
 	"reflect"
 	"regexp"
 	"sort"
@@ -30,8 +31,7 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	if isCaseExpression(expr) {
 		return e.evaluateRowCaseExpression(expr, values)
 	}
-	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		inner := strings.TrimSpace(expr[1 : len(expr)-1])
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
 		result := make(map[string]interface{})
 		if inner == "" {
 			return result, true
@@ -54,8 +54,7 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		return value, ok
 	}
 
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
-		inner := strings.TrimSpace(expr[1 : len(expr)-1])
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
 		if inner == "" {
 			return []interface{}{}, true
 		}
@@ -86,6 +85,17 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			return value, true
 		}
 		switch strings.ToLower(function) {
+		case "coalesce":
+			for _, expression := range splitTopLevelComma(argument) {
+				value, resolved := e.evaluateRowExpression(strings.TrimSpace(expression), values)
+				if !resolved {
+					return nil, false
+				}
+				if value != nil {
+					return value, true
+				}
+			}
+			return nil, true
 		case "tostring":
 			value, resolved := e.evaluateRowExpression(argument, values)
 			if !resolved {
@@ -311,29 +321,41 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		}
 	}
 
-	for _, operator := range []string{"<=", ">=", "<>", "!=", "=", "<", ">"} {
-		if left, right, ok := splitByOperatorWithOptions(expr, operator, true, true); ok {
-			leftValue, leftOK := e.evaluateRowExpression(left, values)
-			rightValue, rightOK := e.evaluateRowExpression(right, values)
-			if !leftOK || !rightOK {
-				return nil, false
-			}
-			if leftValue == nil || rightValue == nil {
-				return nil, true
-			}
-			if operator == "!=" {
-				operator = "<>"
-			}
-			leftValue, rightValue = normalizeRowIdentityComparison(left, right, leftValue, rightValue)
-			if operator == "=" || operator == "<>" {
-				equal := cypherEquality(leftValue, rightValue)
-				if equal == nil || operator == "=" {
-					return equal, true
-				}
-				return !equal.(bool), true
-			}
-			return compareWithOperator(leftValue, rightValue, operator), true
+	// NOT binds less tightly than comparisons and postfix predicates. Parsing
+	// it before those operators makes the complete remainder its operand, so
+	// `NOT a = b`, `NOT a IS NULL`, and `NOT a IN xs` follow Cypher's grammar.
+	if len(expr) > len("NOT") && strings.EqualFold(expr[:len("NOT")], "NOT") &&
+		(isASCIISpace(expr[len("NOT")]) || expr[len("NOT")] == '(') {
+		value, ok := e.evaluateRowExpression(strings.TrimSpace(expr[len("NOT"):]), values)
+		if !ok {
+			return nil, false
 		}
+		if value == nil {
+			return nil, true
+		}
+		boolean, ok := value.(bool)
+		if !ok {
+			return nil, false
+		}
+		return !boolean, true
+	}
+
+	resolved := true
+	result, comparison := evaluateComparisonChain(expr, func(operand string) interface{} {
+		value, ok := e.evaluateRowExpression(operand, values)
+		if !ok {
+			resolved = false
+		}
+		if isRowIdentityExpression(operand) {
+			value = rowIdentityPayload(value)
+		}
+		return value
+	}, compareCypherPredicateValue)
+	if comparison {
+		if !resolved {
+			return nil, false
+		}
+		return result, true
 	}
 
 	for _, predicate := range []struct {
@@ -355,20 +377,43 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		}
 	}
 
-	if len(expr) > len("NOT") && strings.EqualFold(expr[:len("NOT")], "NOT") &&
-		(isASCIISpace(expr[len("NOT")]) || expr[len("NOT")] == '(') {
-		value, ok := e.evaluateRowExpression(strings.TrimSpace(expr[len("NOT"):]), values)
-		if !ok {
+	if left, right, ok := splitByOperatorWithOptions(expr, " NOT IN ", true, true); ok {
+		value, evaluated := e.evaluateRowMembershipValue(left, right, values)
+		if !evaluated || value == nil {
+			return value, evaluated
+		}
+		return !value.(bool), true
+	}
+	if left, right, ok := splitByOperatorWithOptions(expr, " IN ", true, true); ok {
+		return e.evaluateRowMembershipValue(left, right, values)
+	}
+
+	for _, predicate := range []struct {
+		operator string
+		match    func(string, string) bool
+	}{
+		{operator: " STARTS WITH ", match: strings.HasPrefix},
+		{operator: " ENDS WITH ", match: strings.HasSuffix},
+		{operator: " CONTAINS ", match: strings.Contains},
+	} {
+		left, right, matched := splitByOperatorWithOptions(expr, predicate.operator, true, true)
+		if !matched {
+			continue
+		}
+		leftValue, leftOK := e.evaluateRowExpression(left, values)
+		rightValue, rightOK := e.evaluateRowExpression(right, values)
+		if !leftOK || !rightOK {
 			return nil, false
 		}
-		if value == nil {
+		if leftValue == nil || rightValue == nil {
 			return nil, true
 		}
-		boolean, ok := value.(bool)
-		if !ok {
-			return nil, false
+		leftText, leftIsText := leftValue.(string)
+		rightText, rightIsText := rightValue.(string)
+		if !leftIsText || !rightIsText {
+			return nil, true
 		}
-		return !boolean, true
+		return predicate.match(leftText, rightText), true
 	}
 
 	if open := strings.LastIndex(expr, "["); open > 0 && strings.HasSuffix(expr, "]") {
@@ -398,44 +443,74 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		return items[index], true
 	}
 
-	if left, right, ok := splitByOperatorWithOptions(expr, "+", true, false); ok {
+	if left, right, operator, ok := splitRowArithmeticTier(expr, "+-"); ok {
 		leftValue, leftOK := e.evaluateRowExpression(left, values)
 		rightValue, rightOK := e.evaluateRowExpression(right, values)
 		if !leftOK || !rightOK {
 			return nil, false
 		}
-		if leftText, ok := leftValue.(string); ok {
-			if rightText, ok := rightValue.(string); ok {
-				return leftText + rightText, true
+		if operator == '+' {
+			if leftText, ok := leftValue.(string); ok {
+				if rightText, ok := rightValue.(string); ok {
+					return leftText + rightText, true
+				}
 			}
-		}
-		return e.add(leftValue, rightValue), true
-	}
-	if left, right, ok := splitByOperatorWithOptions(expr, "-", true, false); ok && isBinaryRowSubtraction(left) {
-		leftValue, leftOK := e.evaluateRowExpression(left, values)
-		rightValue, rightOK := e.evaluateRowExpression(right, values)
-		if !leftOK || !rightOK {
-			return nil, false
+			return e.add(leftValue, rightValue), true
 		}
 		return e.subtract(leftValue, rightValue), true
 	}
 
-	for _, arithmetic := range []struct {
-		operator string
-		apply    func(interface{}, interface{}) interface{}
-	}{
-		{operator: "%", apply: e.modulo},
-		{operator: "*", apply: e.multiply},
-		{operator: "/", apply: e.divide},
-	} {
-		if left, right, ok := splitByOperatorWithOptions(expr, arithmetic.operator, false, true); ok {
-			leftValue, leftOK := e.evaluateRowExpression(left, values)
-			rightValue, rightOK := e.evaluateRowExpression(right, values)
-			if !leftOK || !rightOK {
+	if left, right, operator, ok := splitRowArithmeticTier(expr, "*/%"); ok {
+		leftValue, leftOK := e.evaluateRowExpression(left, values)
+		rightValue, rightOK := e.evaluateRowExpression(right, values)
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		switch operator {
+		case '*':
+			return e.multiply(leftValue, rightValue), true
+		case '/':
+			return e.divide(leftValue, rightValue), true
+		default:
+			return e.modulo(leftValue, rightValue), true
+		}
+	}
+
+	if left, right, _, ok := splitRowArithmeticTier(expr, "^"); ok {
+		leftValue, leftOK := e.evaluateRowExpression(left, values)
+		rightValue, rightOK := e.evaluateRowExpression(right, values)
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		if leftValue == nil || rightValue == nil {
+			return nil, true
+		}
+		base, baseOK := toFloat64(leftValue)
+		exponent, exponentOK := toFloat64(rightValue)
+		if !baseOK || !exponentOK {
+			return nil, false
+		}
+		return math.Pow(base, exponent), true
+	}
+
+	if len(expr) > 1 && (expr[0] == '-' || expr[0] == '+') {
+		value, ok := e.evaluateRowExpression(strings.TrimSpace(expr[1:]), values)
+		if !ok {
+			return nil, false
+		}
+		if expr[0] == '+' {
+			if _, numeric := toFloat64(value); !numeric && value != nil {
 				return nil, false
 			}
-			return arithmetic.apply(leftValue, rightValue), true
+			return value, true
 		}
+		if value == nil {
+			return nil, true
+		}
+		if _, numeric := toFloat64(value); !numeric {
+			return nil, false
+		}
+		return e.subtract(int64(0), value), true
 	}
 
 	if dot := strings.Index(expr, "."); dot > 0 {
@@ -451,6 +526,230 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	return value, true
 }
 
+// splitRowArithmeticTier splits at the rightmost top-level operator in one
+// precedence tier. Cypher's binary arithmetic operators are left-associative,
+// so evaluating the left side recursively preserves source order even when a
+// tier contains different operators.
+func splitRowArithmeticTier(expr, operators string) (left, right string, operator byte, ok bool) {
+	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	quote := byte(0)
+	operatorIndex := -1
+	for index := 0; index < len(expr); index++ {
+		current := expr[index]
+		if quote != 0 {
+			if current == quote {
+				if index+1 < len(expr) && expr[index+1] == quote {
+					index++
+					continue
+				}
+				quote = 0
+			}
+			continue
+		}
+		switch current {
+		case '\'', '"', '`':
+			quote = current
+			continue
+		case '(':
+			parenDepth++
+			continue
+		case ')':
+			parenDepth--
+			continue
+		case '[':
+			bracketDepth++
+			continue
+		case ']':
+			bracketDepth--
+			continue
+		case '{':
+			braceDepth++
+			continue
+		case '}':
+			braceDepth--
+			continue
+		}
+		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 || !strings.ContainsRune(operators, rune(current)) {
+			continue
+		}
+		if (current == '+' || current == '-') && rowArithmeticSignIsUnary(expr, index) {
+			continue
+		}
+		operatorIndex = index
+		operator = current
+	}
+	if operatorIndex < 0 {
+		return "", "", 0, false
+	}
+	return strings.TrimSpace(expr[:operatorIndex]), strings.TrimSpace(expr[operatorIndex+1:]), operator, true
+}
+
+func rowArithmeticSignIsUnary(expr string, index int) bool {
+	previous := index - 1
+	for previous >= 0 && isASCIIWhitespace(expr[previous]) {
+		previous--
+	}
+	if previous < 0 {
+		return true
+	}
+	if (expr[previous] == 'e' || expr[previous] == 'E') && previous > 0 && index+1 < len(expr) &&
+		expr[previous-1] >= '0' && expr[previous-1] <= '9' && expr[index+1] >= '0' && expr[index+1] <= '9' {
+		return true
+	}
+	return strings.ContainsRune("([{,:+-*/%^=<>|", rune(expr[previous]))
+}
+
+func compareCypherOrderedValues(left, right interface{}) (int, bool) {
+	if comparison, temporal := compareTemporalOrdering(left, right); temporal {
+		return comparison, true
+	}
+	leftNumber, leftIsNumber := strictNumericValue(left)
+	rightNumber, rightIsNumber := strictNumericValue(right)
+	if leftIsNumber || rightIsNumber {
+		if !leftIsNumber || !rightIsNumber {
+			return 0, false
+		}
+		switch {
+		case leftNumber < rightNumber:
+			return -1, true
+		case leftNumber > rightNumber:
+			return 1, true
+		default:
+			return 0, true
+		}
+	}
+	leftText, leftIsText := left.(string)
+	rightText, rightIsText := right.(string)
+	if leftIsText || rightIsText {
+		if !leftIsText || !rightIsText {
+			return 0, false
+		}
+		switch {
+		case leftText < rightText:
+			return -1, true
+		case leftText > rightText:
+			return 1, true
+		default:
+			return 0, true
+		}
+	}
+	leftBoolean, leftIsBoolean := left.(bool)
+	rightBoolean, rightIsBoolean := right.(bool)
+	if leftIsBoolean || rightIsBoolean {
+		if !leftIsBoolean || !rightIsBoolean {
+			return 0, false
+		}
+		switch {
+		case leftBoolean == rightBoolean:
+			return 0, true
+		case !leftBoolean && rightBoolean:
+			return -1, true
+		default:
+			return 1, true
+		}
+	}
+	leftList, leftIsList := cypherListValue(left)
+	rightList, rightIsList := cypherListValue(right)
+	if leftIsList || rightIsList {
+		if !leftIsList || !rightIsList {
+			return 0, false
+		}
+		sharedLength := len(leftList)
+		if len(rightList) < sharedLength {
+			sharedLength = len(rightList)
+		}
+		for index := 0; index < sharedLength; index++ {
+			equal := cypherEquality(leftList[index], rightList[index])
+			if equal == nil {
+				return 0, false
+			}
+			if equal.(bool) {
+				continue
+			}
+			comparison, comparable := compareCypherOrderedValues(leftList[index], rightList[index])
+			if !comparable {
+				return 0, false
+			}
+			return comparison, true
+		}
+		switch {
+		case len(leftList) < len(rightList):
+			return -1, true
+		case len(leftList) > len(rightList):
+			return 1, true
+		default:
+			return 0, true
+		}
+	}
+	return 0, false
+}
+
+func compareCypherPredicateValue(left, right interface{}, operator string) interface{} {
+	if left == nil || right == nil {
+		return nil
+	}
+	if leftNode, ok := left.(*storage.Node); ok {
+		rightNode, rightIsNode := right.(*storage.Node)
+		if !rightIsNode || rightNode == nil {
+			return false
+		}
+		switch operator {
+		case "=":
+			return leftNode.ID == rightNode.ID
+		case "<>", "!=":
+			return leftNode.ID != rightNode.ID
+		default:
+			return nil
+		}
+	}
+	if leftEdge, ok := left.(*storage.Edge); ok {
+		rightEdge, rightIsEdge := right.(*storage.Edge)
+		if !rightIsEdge || rightEdge == nil {
+			return false
+		}
+		switch operator {
+		case "=":
+			return leftEdge.ID == rightEdge.ID
+		case "<>", "!=":
+			return leftEdge.ID != rightEdge.ID
+		default:
+			return nil
+		}
+	}
+	if operator == "=" || operator == "<>" || operator == "!=" {
+		equal := cypherEquality(left, right)
+		matched, known := equal.(bool)
+		if !known {
+			return nil
+		}
+		if operator == "=" {
+			return matched
+		}
+		return !matched
+	}
+	comparison, comparable := compareCypherOrderedValues(left, right)
+	if !comparable {
+		return nil
+	}
+	switch operator {
+	case "<":
+		return comparison < 0
+	case ">":
+		return comparison > 0
+	case "<=":
+		return comparison <= 0
+	case ">=":
+		return comparison >= 0
+	default:
+		return nil
+	}
+}
+
+func compareCypherPredicateValues(left, right interface{}, operator string) bool {
+	matched, known := compareCypherPredicateValue(left, right, operator).(bool)
+	return known && matched
+}
+
 func (e *StorageExecutor) evaluateRowListSlice(base interface{}, lowerExpression, upperExpression string, values map[string]interface{}) (interface{}, bool) {
 	if base == nil {
 		return nil, true
@@ -460,7 +759,8 @@ func (e *StorageExecutor) evaluateRowListSlice(base interface{}, lowerExpression
 		return nil, false
 	}
 	items := toAnySlice(base)
-	lower, upper := 0, len(items)
+	length := len(items)
+	lower, upper := 0, length
 	if lowerExpression != "" {
 		value, ok := e.evaluateRowExpression(lowerExpression, values)
 		if !ok {
@@ -488,22 +788,22 @@ func (e *StorageExecutor) evaluateRowListSlice(base interface{}, lowerExpression
 		}
 	}
 	if lower < 0 {
-		lower += len(items)
+		lower += length
 	}
 	if upper < 0 {
-		upper += len(items)
+		upper += length
 	}
 	if lower < 0 {
 		lower = 0
 	}
-	if lower > len(items) {
-		lower = len(items)
+	if lower > length {
+		lower = length
 	}
 	if upper < 0 {
 		upper = 0
 	}
-	if upper > len(items) {
-		upper = len(items)
+	if upper > length {
+		upper = length
 	}
 	if lower >= upper {
 		return []interface{}{}, true
@@ -863,6 +1163,47 @@ func stripEnclosingExpressionParentheses(expr string) (string, bool) {
 	return strings.TrimSpace(expr[1 : len(expr)-1]), true
 }
 
+func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
+	if len(expr) < 2 || expr[0] != open || expr[len(expr)-1] != close {
+		return "", false
+	}
+	depth := 0
+	quote := byte(0)
+	for index := 0; index < len(expr); index++ {
+		current := expr[index]
+		if quote != 0 {
+			if current == quote {
+				if index+1 < len(expr) && expr[index+1] == quote {
+					index++
+					continue
+				}
+				quote = 0
+			}
+			continue
+		}
+		if current == '\'' || current == '"' || current == '`' {
+			quote = current
+			continue
+		}
+		switch current {
+		case open:
+			depth++
+		case close:
+			depth--
+			if depth == 0 && index != len(expr)-1 {
+				return "", false
+			}
+			if depth < 0 {
+				return "", false
+			}
+		}
+	}
+	if depth != 0 || quote != 0 {
+		return "", false
+	}
+	return strings.TrimSpace(expr[1 : len(expr)-1]), true
+}
+
 func evaluateRowBooleanOperator(operator string, left, right interface{}) (interface{}, bool) {
 	leftBool, leftIsBool := left.(bool)
 	rightBool, rightIsBool := right.(bool)
@@ -974,19 +1315,20 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 			return ok && value != nil
 		}
 	}
-	for _, operator := range []string{"<=", ">=", "<>", "!=", "=", "<", ">"} {
-		if left, right, ok := splitByOperatorWithOptions(expression, operator, true, true); ok {
-			leftValue, leftOK := e.evaluateRowExpression(left, values)
-			rightValue, rightOK := e.evaluateRowExpression(right, values)
-			if !leftOK || !rightOK {
-				return false
-			}
-			if operator == "!=" {
-				operator = "<>"
-			}
-			leftValue, rightValue = normalizeRowIdentityComparison(left, right, leftValue, rightValue)
-			return compareWithOperator(leftValue, rightValue, operator)
+	resolved := true
+	comparisonResult, comparison := evaluateComparisonChain(expression, func(operand string) interface{} {
+		value, ok := e.evaluateRowExpression(operand, values)
+		if !ok {
+			resolved = false
 		}
+		if isRowIdentityExpression(operand) {
+			value = rowIdentityPayload(value)
+		}
+		return value
+	}, compareCypherPredicateValue)
+	if comparison {
+		matched, known := comparisonResult.(bool)
+		return resolved && known && matched
 	}
 	value, ok := e.evaluateRowExpression(expression, values)
 	return ok && isTruthy(value)
@@ -1022,24 +1364,52 @@ func looksLikeRowRelationshipPattern(expression string) bool {
 }
 
 func (e *StorageExecutor) evaluateRowMembership(left, right string, values map[string]interface{}) bool {
+	value, ok := e.evaluateRowMembershipValue(left, right, values)
+	return ok && value == true
+}
+
+func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values map[string]interface{}) (interface{}, bool) {
 	needle, leftOK := e.evaluateRowExpression(left, values)
 	haystack, rightOK := e.evaluateRowExpression(right, values)
 	if !leftOK || !rightOK {
-		return false
+		return nil, false
+	}
+	if haystack == nil {
+		return nil, true
+	}
+	haystackType := reflect.TypeOf(haystack)
+	if haystackType == nil || (haystackType.Kind() != reflect.Slice && haystackType.Kind() != reflect.Array) {
+		return nil, false
+	}
+	items := toAnySlice(haystack)
+	if len(items) == 0 {
+		return false, true
+	}
+	if needle == nil {
+		return nil, true
 	}
 	identityMembership := isRowIdentityExpression(left)
 	if identityMembership {
 		needle = rowIdentityPayload(needle)
 	}
-	for _, item := range toAnySlice(haystack) {
+	containsUnknown := false
+	for _, item := range items {
 		if identityMembership {
 			item = rowIdentityPayload(item)
 		}
-		if e.compareEqual(needle, item) {
-			return true
+		equal := cypherEquality(needle, item)
+		if equal == nil {
+			containsUnknown = true
+			continue
+		}
+		if equal.(bool) {
+			return true, true
 		}
 	}
-	return false
+	if containsUnknown {
+		return nil, true
+	}
+	return false, true
 }
 
 func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {

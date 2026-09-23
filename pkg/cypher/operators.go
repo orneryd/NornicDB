@@ -775,7 +775,7 @@ func (e *StorageExecutor) divide(left, right interface{}) interface{} {
 	}
 	l, okL := toFloat64(left)
 	r, okR := toFloat64(right)
-	if !okL || !okR || r == 0 {
+	if !okL || !okR {
 		return nil
 	}
 	// Cypher integer division truncates toward zero whenever both operands are
@@ -787,8 +787,13 @@ func (e *StorageExecutor) divide(left, right interface{}) interface{} {
 	leftIsInteger := leftIsInt64 || leftIsInt
 	rightIsInteger := rightIsInt64 || rightIsInt
 	if leftIsInteger && rightIsInteger {
+		if r == 0 {
+			return nil
+		}
 		return int64(l) / int64(r)
 	}
+	// Floating-point division follows IEEE 754 as required by Cypher. In
+	// particular, 0.0 / 0.0 produces NaN, whose equality is non-reflexive.
 	return l / r
 }
 
@@ -803,7 +808,7 @@ func (e *StorageExecutor) divide(left, right interface{}) interface{} {
 //
 // # Returns
 //
-//   - int64 remainder
+//   - int64 when both operands are integers, float64 otherwise
 //   - nil if divisor is zero or operands invalid
 //
 // # Example
@@ -816,7 +821,14 @@ func (e *StorageExecutor) modulo(left, right interface{}) interface{} {
 	if !okL || !okR || r == 0 {
 		return nil
 	}
-	return int64(l) % int64(r)
+	_, leftIsInt64 := left.(int64)
+	_, rightIsInt64 := right.(int64)
+	_, leftIsInt := left.(int)
+	_, rightIsInt := right.(int)
+	if (leftIsInt64 || leftIsInt) && (rightIsInt64 || rightIsInt) {
+		return int64(l) % int64(r)
+	}
+	return math.Mod(l, r)
 }
 
 // subtract handles subtraction including date arithmetic.

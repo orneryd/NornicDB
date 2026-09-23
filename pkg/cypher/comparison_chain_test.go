@@ -59,13 +59,66 @@ func TestComparisonChainsSupportArbitraryLength(t *testing.T) {
 		return values[operand]
 	}
 
-	result, ok := evaluateComparisonChain("a < b = c <> d <= e", resolve, compareWithOperator)
+	result, ok := evaluateComparisonChain("a < b = c <> d <= e", resolve, func(left, right interface{}, operator string) interface{} {
+		return compareWithOperator(left, right, operator)
+	})
 	if !ok || result != true {
 		t.Fatalf("expected an arbitrary-length comparison chain to match, got %#v, %v", result, ok)
 	}
 	for operand := range values {
 		if resolutionCount[operand] != 1 {
 			t.Fatalf("expected %q to be resolved once, got %d", operand, resolutionCount[operand])
+		}
+	}
+}
+
+func TestRowPipelineComparisonChainsUseEveryAdjacentPair(t *testing.T) {
+	exec := &StorageExecutor{}
+	values := map[string]interface{}{
+		"number": int8(2),
+		"text":   "b",
+	}
+
+	for expression, want := range map[string]interface{}{
+		"1 < number <= 2 < 3": true,
+		"1 < number < 2 < 3":  false,
+		"'a' <= text <= 'c'":  true,
+		"'a' < text < 'b'":    false,
+	} {
+		got, ok := exec.evaluateRowExpression(expression, values)
+		if !ok || got != want {
+			t.Fatalf("%s: got %#v, %v; want %#v, true", expression, got, ok, want)
+		}
+	}
+}
+
+func TestConvergedMatchFiltersArbitraryLengthComparisonChains(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	for index, properties := range []map[string]interface{}{
+		{"number": int64(1), "text": "a"},
+		{"number": int64(2), "text": "b"},
+		{"number": int64(3), "text": "c"},
+	} {
+		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(string(rune('a' + index))), Properties: properties})
+		if err != nil {
+			t.Fatalf("create node: %v", err)
+		}
+	}
+
+	for query, wantRows := range map[string]int{
+		"MATCH (n) WHERE 1 < n.number <= 3 RETURN n.number":  2,
+		"MATCH (n) WHERE 'a' <= n.text <= 'c' RETURN n.text": 3,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		if len(result.Rows) != wantRows {
+			t.Fatalf("%s: got %d rows, want %d", query, len(result.Rows), wantRows)
 		}
 	}
 }

@@ -759,29 +759,7 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 
 			leftVal := e.evaluateExpressionFromValues(left, values)
 			rightVal := e.parseValue(ctx, right)
-
-			switch op {
-			case "=":
-				return fmt.Sprintf("%v", leftVal) == fmt.Sprintf("%v", rightVal)
-			case "<>", "!=":
-				return fmt.Sprintf("%v", leftVal) != fmt.Sprintf("%v", rightVal)
-			case ">":
-				lf, lok := toFloat64(leftVal)
-				rf, rok := toFloat64(rightVal)
-				return lok && rok && lf > rf
-			case "<":
-				lf, lok := toFloat64(leftVal)
-				rf, rok := toFloat64(rightVal)
-				return lok && rok && lf < rf
-			case ">=":
-				lf, lok := toFloat64(leftVal)
-				rf, rok := toFloat64(rightVal)
-				return lok && rok && lf >= rf
-			case "<=":
-				lf, lok := toFloat64(leftVal)
-				rf, rok := toFloat64(rightVal)
-				return lok && rok && lf <= rf
-			}
+			return compareCypherPredicateValues(leftVal, rightVal, op)
 		}
 	}
 
@@ -1315,7 +1293,7 @@ func (e *StorageExecutor) evaluateConditionFromValues(condition string, values m
 		}
 		return value
 	}
-	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareWithOperator); ok {
+	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareCypherPredicateValue); ok {
 		matched, _ := result.(bool)
 		return matched
 	}

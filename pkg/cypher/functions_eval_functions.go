@@ -596,7 +596,7 @@ skipArrayIndexing:
 					}
 					// Skip if value is in valuesToRemove
 					for _, vr := range valuesToRemove {
-						if e.compareEqual(v, vr) {
+						if (v == nil && vr == nil) || e.compareEqual(v, vr) {
 							skip = true
 							break
 						}

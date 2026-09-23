@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -29,8 +30,6 @@ func TestStringFunctionsUseUnicodeCodePoints(t *testing.T) {
 		{name: "substring", query: `RETURN substring('привет', 1, 3) AS value`, want: "рив"},
 		{name: "left", query: `RETURN left('привет', 2) AS value`, want: "пр"},
 		{name: "right", query: `RETURN right('привет', 2) AS value`, want: "ет"},
-		{name: "string index", query: `RETURN 'привет'[1] AS value`, want: "р"},
-		{name: "negative string index", query: `RETURN '東京'[-1] AS value`, want: "京"},
 	}
 
 	for _, tt := range tests {
@@ -39,6 +38,18 @@ func TestStringFunctionsUseUnicodeCodePoints(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{tt.want}}, result.Rows)
 		})
+	}
+
+	for _, query := range []string{
+		`RETURN 'привет'[1] AS value`,
+		`RETURN '東京'[-1] AS value`,
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err)
+		var semanticError *SemanticError
+		require.True(t, errors.As(err, &semanticError))
+		require.Equal(t, "Neo.ClientError.Statement.TypeError", semanticError.Code)
+		require.Equal(t, "InvalidArgumentType", semanticError.Detail)
 	}
 }
 

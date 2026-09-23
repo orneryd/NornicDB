@@ -49,26 +49,42 @@ func (scan *comparisonChainScan) operand(expression string, index int) string {
 func evaluateComparisonChain(
 	expression string,
 	resolve func(string) interface{},
-	compare func(interface{}, interface{}, string) bool,
+	compare func(interface{}, interface{}, string) interface{},
 ) (interface{}, bool) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
 		return nil, false
 	}
+	normalizeIdentity := false
+	for index := 0; index <= scan.count; index++ {
+		if isRowIdentityExpression(scan.operand(expression, index)) {
+			normalizeIdentity = true
+			break
+		}
+	}
 
 	left := resolve(scan.operand(expression, 0))
+	if normalizeIdentity {
+		left = rowIdentityPayload(left)
+	}
 	hasNull := false
 	for index := 0; index < scan.count; index++ {
 		span := scan.operator(index)
 		operator := expression[span.offset : span.offset+span.length]
 		right := resolve(scan.operand(expression, index+1))
+		if normalizeIdentity {
+			right = rowIdentityPayload(right)
+		}
 		if left == nil || right == nil {
 			hasNull = true
 		} else {
 			if operator == "!=" {
 				operator = "<>"
 			}
-			if !compare(left, right, operator) {
+			comparison := compare(left, right, operator)
+			if comparison == nil {
+				hasNull = true
+			} else if matched, ok := comparison.(bool); !ok || !matched {
 				return false, true
 			}
 		}

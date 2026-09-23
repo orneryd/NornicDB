@@ -1360,10 +1360,10 @@ func TestParseValuePlainString(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	// Test comparison with unquoted string that isn't a number or boolean
+	// An unquoted word is an identifier, not a string literal.
 	_, err = exec.Execute(ctx, "MATCH (n:PlainStr) WHERE n.status = active RETURN n", nil)
-	require.NoError(t, err)
-	// "active" without quotes is parsed as plain string
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "variable active is not defined")
 }
 
 func TestStringPredicateRejectsUndefinedVariable(t *testing.T) {

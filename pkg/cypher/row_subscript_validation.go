@@ -48,7 +48,11 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 	if open <= 0 || !strings.HasSuffix(expression, "]") {
 		return nil
 	}
-	baseExpression := strings.TrimSpace(expression[:open])
+	receiverStart := rowSubscriptReceiverStart(expression, open)
+	if receiverStart < 0 || receiverStart >= open {
+		return nil
+	}
+	baseExpression := strings.TrimSpace(expression[receiverStart:open])
 	indexExpression := strings.TrimSpace(expression[open+1 : len(expression)-1])
 	if err := e.validateRowSubscriptTypes(baseExpression, row); err != nil {
 		return err
@@ -101,6 +105,74 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return invalidSubscriptTypeError("list subscript requires an INTEGER index", index)
 	}
 	return nil
+}
+
+// rowSubscriptReceiverStart finds the primary expression immediately to the
+// left of a postfix subscript. It prevents validators from treating a whole
+// lower-precedence expression such as `3 IN values[0..1]` as the slice
+// receiver while retaining chained, parenthesized, literal, and property
+// receivers.
+func rowSubscriptReceiverStart(expression string, open int) int {
+	end := open - 1
+	for end >= 0 && isASCIIWhitespace(expression[end]) {
+		end--
+	}
+	if end < 0 {
+		return -1
+	}
+	start := end
+	switch expression[end] {
+	case ']':
+		start = matchingRowDelimiterStart(expression, end, '[', ']')
+		if start > 0 {
+			return rowSubscriptReceiverStart(expression, start)
+		}
+		return start
+	case ')':
+		start = matchingRowDelimiterStart(expression, end, '(', ')')
+		if start < 0 {
+			return -1
+		}
+		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
+			start--
+		}
+		return start
+	case '\'', '"':
+		quote := expression[end]
+		for start--; start >= 0; start-- {
+			if expression[start] == quote && (start == 0 || expression[start-1] != '\\') {
+				return start
+			}
+		}
+		return -1
+	default:
+		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
+			start--
+		}
+		return start
+	}
+}
+
+func matchingRowDelimiterStart(expression string, closeIndex int, open, close byte) int {
+	depth := 0
+	for index := closeIndex; index >= 0; index-- {
+		switch expression[index] {
+		case close:
+			depth++
+		case open:
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func isRowReceiverIdentifierByte(value byte) bool {
+	return value == '_' || value == '.' || value == '`' ||
+		(value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
+		(value >= '0' && value <= '9') || value >= 0x80
 }
 
 func isCypherInteger(value interface{}) bool {

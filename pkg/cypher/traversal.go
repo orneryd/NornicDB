@@ -2600,7 +2600,7 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 		}
 		return value
 	}
-	if result, ok := evaluateComparisonChain(whereClause, resolveComparisonOperand, e.compareValues); ok {
+	if result, ok := evaluateComparisonChain(whereClause, resolveComparisonOperand, compareCypherPredicateValue); ok {
 		matched, _ := result.(bool)
 		return matched
 	}
@@ -2823,46 +2823,5 @@ func (e *StorageExecutor) compareValues(left, right interface{}, op string) bool
 		}
 	}
 
-	// String comparison
-	leftStr, leftIsStr := left.(string)
-	rightStr, rightIsStr := right.(string)
-	if leftIsStr && rightIsStr {
-		switch op {
-		case "=":
-			return leftStr == rightStr
-		case "<>":
-			return leftStr != rightStr
-		case "<":
-			return leftStr < rightStr
-		case ">":
-			return leftStr > rightStr
-		case "<=":
-			return leftStr <= rightStr
-		case ">=":
-			return leftStr >= rightStr
-		}
-	}
-
-	// Numeric comparison - convert to float64 for comparison
-	leftNum, leftOk := toFloat64(left)
-	rightNum, rightOk := toFloat64(right)
-	if leftOk && rightOk {
-		switch op {
-		case "=":
-			return leftNum == rightNum
-		case "<>":
-			return leftNum != rightNum
-		case "<":
-			return leftNum < rightNum
-		case ">":
-			return leftNum > rightNum
-		case "<=":
-			return leftNum <= rightNum
-		case ">=":
-			return leftNum >= rightNum
-		}
-	}
-
-	// Fallback: string comparison
-	return fmt.Sprintf("%v", left) == fmt.Sprintf("%v", right) && op == "="
+	return compareCypherPredicateValues(left, right, op)
 }

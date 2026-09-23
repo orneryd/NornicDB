@@ -43,8 +43,9 @@ func TestMatchIndexSeekHelperFunctions(t *testing.T) {
 	cmp, ok = compareLiteralValues("x", "y", "!=")
 	require.True(t, ok)
 	require.True(t, cmp)
-	_, ok = compareLiteralValues("x", "y", ">")
-	require.False(t, ok)
+	cmp, ok = compareLiteralValues("x", "y", ">")
+	require.True(t, ok)
+	require.False(t, cmp)
 
 	require.Equal(
 		t,

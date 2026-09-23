@@ -107,7 +107,7 @@ func (e *StorageExecutor) edgeMatchesProps(edge *storage.Edge, props map[string]
 	return true
 }
 
-// compareEqual handles equality comparison with type coercion.
+// compareEqual handles Cypher equality comparison.
 //
 // # Parameters
 //
@@ -116,32 +116,18 @@ func (e *StorageExecutor) edgeMatchesProps(edge *storage.Edge, props map[string]
 //
 // # Returns
 //
-//   - true if values are equal (with type coercion)
+//   - true if values are equal under Cypher's type-family rules
 //
 // # Example
 //
 //	compareEqual(int64(42), float64(42.0))  // true
 //	compareEqual("hello", "hello")          // true
 //	compareEqual(nil, nil)                  // true
-//	compareEqual(42, "42")                  // true (string coercion)
+//	compareEqual(42, "42")                  // false (different type families)
 func (e *StorageExecutor) compareEqual(actual, expected interface{}) bool {
-	// Handle nil
-	if actual == nil && expected == nil {
-		return true
-	}
-	if actual == nil || expected == nil {
-		return false
-	}
-
-	// Try numeric comparison
-	actualNum, actualOk := toFloat64(actual)
-	expectedNum, expectedOk := toFloat64(expected)
-	if actualOk && expectedOk {
-		return actualNum == expectedNum
-	}
-
-	// String comparison
-	return fmt.Sprintf("%v", actual) == fmt.Sprintf("%v", expected)
+	equal := cypherEquality(actual, expected)
+	matched, _ := equal.(bool)
+	return matched
 }
 
 // compareGreater handles > comparison.
@@ -155,14 +141,8 @@ func (e *StorageExecutor) compareEqual(actual, expected interface{}) bool {
 //
 //   - true if actual > expected
 func (e *StorageExecutor) compareGreater(actual, expected interface{}) bool {
-	actualNum, actualOk := toFloat64(actual)
-	expectedNum, expectedOk := toFloat64(expected)
-	if actualOk && expectedOk {
-		return actualNum > expectedNum
-	}
-
-	// String comparison as fallback
-	return fmt.Sprintf("%v", actual) > fmt.Sprintf("%v", expected)
+	comparison, comparable := compareCypherOrderedValues(actual, expected)
+	return comparable && comparison > 0
 }
 
 // compareLess handles < comparison.
@@ -176,14 +156,8 @@ func (e *StorageExecutor) compareGreater(actual, expected interface{}) bool {
 //
 //   - true if actual < expected
 func (e *StorageExecutor) compareLess(actual, expected interface{}) bool {
-	actualNum, actualOk := toFloat64(actual)
-	expectedNum, expectedOk := toFloat64(expected)
-	if actualOk && expectedOk {
-		return actualNum < expectedNum
-	}
-
-	// String comparison as fallback
-	return fmt.Sprintf("%v", actual) < fmt.Sprintf("%v", expected)
+	comparison, comparable := compareCypherOrderedValues(actual, expected)
+	return comparable && comparison < 0
 }
 
 // compareRegex handles =~ regex comparison.

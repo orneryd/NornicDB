@@ -371,6 +371,14 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, 
 		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 			continue
 		}
+		actual, exists := node.Properties[property]
+		if !exists {
+			continue
+		}
+		equal := cypherEquality(actual, value)
+		if matched, known := equal.(bool); !known || !matched {
+			continue
+		}
 		nodes = append(nodes, node)
 	}
 
@@ -1534,26 +1542,12 @@ func parseLiteralValue(raw string) (interface{}, bool) {
 func compareLiteralValues(left, right interface{}, op string) (bool, bool) {
 	switch op {
 	case "=", "!=", "<>":
-		eq := fmt.Sprintf("%v", left) == fmt.Sprintf("%v", right)
-		if op == "=" {
-			return eq, true
+		return compareCypherPredicateValues(left, right, op), true
+	case ">", "<", ">=", "<=":
+		if _, comparable := compareCypherOrderedValues(left, right); !comparable {
+			return false, false
 		}
-		return !eq, true
-	}
-	lf, lok := toFloat64(left)
-	rf, rok := toFloat64(right)
-	if !lok || !rok {
-		return false, false
-	}
-	switch op {
-	case ">":
-		return lf > rf, true
-	case "<":
-		return lf < rf, true
-	case ">=":
-		return lf >= rf, true
-	case "<=":
-		return lf <= rf, true
+		return compareCypherPredicateValues(left, right, op), true
 	default:
 		return false, false
 	}

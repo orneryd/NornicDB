@@ -215,7 +215,7 @@ func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition strin
 	resolveComparisonOperand := func(operand string) interface{} {
 		return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
 	}
-	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareWithOperator); ok {
+	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareCypherPredicateValue); ok {
 		matched, _ := result.(bool)
 		return matched
 	}
@@ -342,13 +342,8 @@ func compareValues(a, b interface{}) bool {
 		return false
 	}
 
-	numA, okA := strictNumericValue(a)
-	numB, okB := strictNumericValue(b)
-	if okA && okB {
-		return numA == numB
-	}
-	if okA != okB {
-		return false
+	if equal, numeric := cypherNumericEquality(a, b); numeric {
+		return equal
 	}
 
 	return reflect.DeepEqual(a, b)

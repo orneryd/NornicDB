@@ -47,7 +47,7 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-			if err := validateMatchClauseBindings(scope, clause.text); err != nil {
+			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseWith:
@@ -102,7 +102,7 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 	return nil
 }
 
-func validateMatchClauseBindings(scope matchSemanticScope, clause string) error {
+func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, clause string) error {
 	pattern := strings.TrimSpace(clause)
 	for _, keyword := range []string{"OPTIONAL MATCH", "MATCH"} {
 		if startsWithKeywordFold(pattern, keyword) {
@@ -188,10 +188,36 @@ func validateMatchClauseBindings(scope matchSemanticScope, clause string) error 
 		}
 
 	}
-	return validateMatchWhereSimpleOperands(scope, whereClause)
+	return e.validateMatchWhereSimpleOperands(scope, whereClause)
 }
 
-func validateMatchWhereSimpleOperands(scope matchSemanticScope, whereClause string) error {
+func (e *StorageExecutor) validateMatchWhereSimpleOperands(scope matchSemanticScope, whereClause string) error {
+	whereClause = strings.TrimSpace(whereClause)
+	for _, operator := range []string{" OR ", " XOR ", " AND "} {
+		if left, right, found := splitByOperatorWithOptions(whereClause, operator, true, true); found {
+			if err := e.validateMatchWhereSimpleOperands(scope, left); err != nil {
+				return err
+			}
+			return e.validateMatchWhereSimpleOperands(scope, right)
+		}
+	}
+	if operands, _, comparison := splitComparisonChain(whereClause); comparison {
+		for _, operand := range operands {
+			operand = strings.TrimSpace(operand)
+			if _, literal := parseLiteralValueFromComputedRow(operand); literal {
+				continue
+			}
+			identifier := simpleSemanticIdentifier(operand)
+			if identifier == "" {
+				continue
+			}
+			_, inScope := scope[identifier]
+			_, externallyBound := e.fabricRecordBindings[identifier]
+			if !inScope && !externallyBound {
+				return createUndefinedVariableError(identifier)
+			}
+		}
+	}
 	for _, operator := range []string{" STARTS WITH ", " ENDS WITH ", " CONTAINS ", " NOT IN ", " IN ", "=~"} {
 		left, _, found := splitByOperatorWithOptions(whereClause, operator, true, true)
 		if !found {
