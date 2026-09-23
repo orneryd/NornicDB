@@ -5107,33 +5107,37 @@ func (e *StorageExecutor) buildJoinedResult(ctx context.Context, rows []joinedRo
 		}
 	}
 
+	// Issue #500: ORDER BY may reference a variable bound by this join even
+	// when no RETURN item projects it. Resolve such terms as hidden return
+	// items before the row-projection loop below, so they are evaluated by
+	// this site's own evaluator (evaluateExpressionWithContext) instead of
+	// being silently dropped by the legacy orderResultRows sink. This
+	// function has no DISTINCT/aggregation branch of its own (aggregation
+	// already delegated away above), so hidden items always apply here when
+	// present.
+	visibleCount := len(returnItems)
+	orderSpecs, hiddenItems := e.buildHiddenOrderBySpecs(extractJoinedOrderByExpr(restOfQuery), result.Columns, returnItems)
+	allItems := returnItems
+	if len(hiddenItems) > 0 {
+		allItems = append(append([]returnItem{}, returnItems...), hiddenItems...)
+	}
+
 	for _, joinedRow := range rows {
-		row := make([]interface{}, len(returnItems))
+		row := make([]interface{}, len(allItems))
 		nodeCtx, relCtx := buildJoinedEvaluationContext(joinedRow, sourceVar, targetVar, relVar)
-		for i, item := range returnItems {
+		for i, item := range allItems {
 			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, relCtx)
 		}
 		result.Rows = append(result.Rows, row)
 	}
 
-	orderByIdx := findKeywordIndex(restOfQuery, "ORDER")
-	if orderByIdx > 0 {
-		orderStart := orderByIdx + 5
-		for orderStart < len(restOfQuery) && isWhitespace(restOfQuery[orderStart]) {
-			orderStart++
+	if len(orderSpecs) > 0 {
+		result.Rows = e.orderRowsBySpecs(result.Rows, orderSpecs)
+	}
+	if len(hiddenItems) > 0 {
+		for i, row := range result.Rows {
+			result.Rows[i] = row[:visibleCount]
 		}
-		if orderStart+2 <= len(restOfQuery) && strings.EqualFold(restOfQuery[orderStart:orderStart+2], "BY") {
-			orderStart += 2
-		}
-		orderPart := restOfQuery[orderStart:]
-		endIdx := len(orderPart)
-		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
-				endIdx = idx
-			}
-		}
-		orderExpr := strings.TrimSpace(orderPart[:endIdx])
-		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderExpr)
 	}
 
 	skipIdx := findKeywordIndex(restOfQuery, "SKIP")
@@ -5169,6 +5173,31 @@ func (e *StorageExecutor) buildJoinedResult(ctx context.Context, rows []joinedRo
 	}
 
 	return result, nil
+}
+
+// extractJoinedOrderByExpr extracts the ORDER BY clause text (comma-separated
+// terms, no trailing SKIP/LIMIT) from a buildJoinedResult restOfQuery tail.
+// Returns "" when there is no ORDER BY.
+func extractJoinedOrderByExpr(restOfQuery string) string {
+	orderByIdx := findKeywordIndex(restOfQuery, "ORDER")
+	if orderByIdx <= 0 {
+		return ""
+	}
+	orderStart := orderByIdx + 5
+	for orderStart < len(restOfQuery) && isWhitespace(restOfQuery[orderStart]) {
+		orderStart++
+	}
+	if orderStart+2 <= len(restOfQuery) && strings.EqualFold(restOfQuery[orderStart:orderStart+2], "BY") {
+		orderStart += 2
+	}
+	orderPart := restOfQuery[orderStart:]
+	endIdx := len(orderPart)
+	for _, kw := range []string{"SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
+			endIdx = idx
+		}
+	}
+	return strings.TrimSpace(orderPart[:endIdx])
 }
 
 // tryBuildJoinedGroupedCollectResult implements Cypher grouping semantics for

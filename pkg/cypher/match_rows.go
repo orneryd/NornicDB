@@ -407,7 +407,9 @@ func (e *StorageExecutor) orderRowsBySpecs(rows [][]interface{}, orderSpecs []or
 		return rows
 	}
 
-	sort.Slice(rows, func(i, j int) bool {
+	// Stable: rows whose ORDER BY keys compare equal on every spec keep the
+	// relative order they had before sorting (issue #500 design 4.1 step 4).
+	sort.SliceStable(rows, func(i, j int) bool {
 		for _, spec := range orderSpecs {
 			left := rows[i][spec.colIdx]
 			right := rows[j][spec.colIdx]
@@ -445,13 +447,10 @@ func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, column
 			continue
 		}
 
-		tokens := strings.Fields(part)
-		if len(tokens) == 0 {
+		colName, descending := splitOrderByDirection(part)
+		if colName == "" {
 			continue
 		}
-
-		colName := tokens[0]
-		descending := len(tokens) > 1 && strings.ToUpper(tokens[1]) == "DESC"
 
 		colIdx := findOrderByColumnIndex(columns, colName)
 
@@ -498,6 +497,98 @@ func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, column
 	return specs
 }
 
+// splitOrderByDirection splits a single ORDER BY term into its expression and
+// direction. The trailing direction keyword is only recognized as the last
+// whitespace run at paren depth 0, so a function-call key with internal
+// spaces (e.g. "coalesce(a, b) DESC") survives intact instead of being
+// mangled by a naive strings.Fields split on the first two tokens (issue
+// #500: "0)" in "coalesce(a, 0) DESC" was previously misread as the
+// direction).
+func splitOrderByDirection(part string) (expr string, descending bool) {
+	part = strings.TrimSpace(part)
+	if part == "" {
+		return "", false
+	}
+
+	depth := 0
+	lastSpace := -1
+	for i, r := range part {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ' ', '\t', '\n':
+			if depth == 0 {
+				lastSpace = i
+			}
+		}
+	}
+
+	if lastSpace == -1 {
+		return part, false
+	}
+
+	trailing := strings.TrimSpace(part[lastSpace+1:])
+	switch strings.ToUpper(trailing) {
+	case "ASC", "ASCENDING":
+		return strings.TrimSpace(part[:lastSpace]), false
+	case "DESC", "DESCENDING":
+		return strings.TrimSpace(part[:lastSpace]), true
+	default:
+		return part, false
+	}
+}
+
+// buildHiddenOrderBySpecs resolves an ORDER BY clause (already extracted,
+// comma-separated terms, no trailing SKIP/LIMIT) against the columns and
+// return items of a single non-DISTINCT, non-aggregating projection site.
+// It is the shared mechanism behind issue #500's fix: ORDER BY may legally
+// reference any variable bound before RETURN, not only the projected
+// columns, so a term that resolves to neither an alias/column name nor an
+// existing RETURN item's expression text becomes a hidden returnItem
+// (alias "\x00ob<i>", a value no user-chosen alias can collide with). The
+// caller must project that hidden item with its own per-row evaluator
+// (mirroring how it evaluates a normal RETURN item, so a hidden ".id",
+// "coalesce(...)", etc. agrees with what RETURN would have produced), sort
+// on the returned orderSpecs, then strip every hidden column from both Rows
+// and Columns before returning the result. Skipped entirely for DISTINCT and
+// aggregating projections, whose dedupe/grouping keys are the projected row
+// itself (design fable-500-design.md section 4.1).
+func (e *StorageExecutor) buildHiddenOrderBySpecs(orderExpr string, columns []string, items []returnItem) (specs []orderSpec, hidden []returnItem) {
+	orderExpr = strings.TrimSpace(orderExpr)
+	if orderExpr == "" {
+		return nil, nil
+	}
+
+	nextIdx := len(items)
+	for _, part := range splitOutsideParens(orderExpr, ',') {
+		expr, descending := splitOrderByDirection(part)
+		if expr == "" {
+			continue
+		}
+
+		colIdx := findOrderByColumnIndex(columns, expr)
+		if colIdx == -1 {
+			for i, item := range items {
+				if strings.EqualFold(strings.TrimSpace(item.expr), expr) {
+					colIdx = i
+					break
+				}
+			}
+		}
+		if colIdx == -1 {
+			hidden = append(hidden, returnItem{expr: expr, alias: "\x00ob" + strconv.Itoa(len(hidden))})
+			colIdx = nextIdx
+			nextIdx++
+		}
+
+		specs = append(specs, orderSpec{colIdx: colIdx, descending: descending})
+	}
+
+	return specs, hidden
+}
+
 func findOrderByColumnIndex(columns []string, colName string) int {
 	for i, col := range columns {
 		if strings.EqualFold(col, colName) {
@@ -532,7 +623,17 @@ func extractOrderByPropertyValue(value interface{}, propPath []string) interface
 		case *storage.Node:
 			switch {
 			case strings.EqualFold(part, "id"):
-				current = string(v.ID)
+				// Cypher property access is property-or-null, never the
+				// internal node ID (matches resolveReturnItem after "Fixes
+				// #404", which removed the equivalent internal-ID fallback
+				// from RETURN evaluation; issue #500).
+				if v.Properties != nil {
+					if propVal, ok := mapLookupCaseInsensitive(v.Properties, "id"); ok {
+						current = propVal
+						break
+					}
+				}
+				current = nil
 			case strings.EqualFold(part, "createdAt"):
 				// Cypher property access should prefer explicit node properties.
 				// Fall back to metadata field for nodes without a createdAt property.

@@ -488,7 +488,34 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 				return fastResult, nil
 			}
 		}
-		result, err := e.executeMatchWithRelationshipsWithPath(ctx, patternForParsing, whereClause, returnItems, nil, pathVariable, earlyLimit)
+		// Issue #500: ORDER BY may reference a variable bound by this pattern
+		// even when no RETURN item projects it (e.g. "RETURN e.id ORDER BY
+		// e.name"). Resolve such terms as hidden return items *before*
+		// calling executeMatchWithRelationshipsWithPath, so they are
+		// projected by this site's own evaluator instead of being silently
+		// dropped by the legacy resolver below. Skipped for DISTINCT/
+		// aggregation, whose keys are the already-projected row.
+		useHiddenOrderBy := hasOrderBy && !distinct && !hasAggregation
+		visibleCount := len(returnItems)
+		matchItems := returnItems
+		var hiddenOrderSpecs []orderSpec
+		var hiddenItems []returnItem
+		if useHiddenOrderBy {
+			previewColumns := make([]string, len(returnItems))
+			for i, item := range returnItems {
+				if item.alias != "" {
+					previewColumns[i] = item.alias
+				} else {
+					previewColumns[i] = item.expr
+				}
+			}
+			hiddenOrderSpecs, hiddenItems = e.buildHiddenOrderBySpecs(orderExpr, previewColumns, returnItems)
+			if len(hiddenItems) > 0 {
+				matchItems = append(append([]returnItem{}, returnItems...), hiddenItems...)
+			}
+		}
+
+		result, err := e.executeMatchWithRelationshipsWithPath(ctx, patternForParsing, whereClause, matchItems, nil, pathVariable, earlyLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -509,7 +536,18 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 
 		// Apply ORDER BY (whitespace-tolerant) - ORDER BY is NOT handled inside executeMatchWithRelationships
 		if hasOrderBy {
-			result.Rows = e.orderResultRowsForReturnItems(result.Rows, result.Columns, returnItems, orderExpr)
+			if useHiddenOrderBy {
+				result.Rows = e.orderRowsBySpecs(result.Rows, hiddenOrderSpecs)
+			} else {
+				result.Rows = e.orderResultRowsForReturnItems(result.Rows, result.Columns, returnItems, orderExpr)
+			}
+		}
+
+		if len(hiddenItems) > 0 {
+			result.Columns = result.Columns[:visibleCount]
+			for i, row := range result.Rows {
+				result.Rows[i] = row[:visibleCount]
+			}
 		}
 
 		// Apply SKIP
@@ -902,6 +940,23 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 
 	// Note: skipIdx, skip, limitIdx and limit are already parsed earlier for streaming optimization
 
+	// Issue #500: for the post-projection ORDER BY path, resolve terms that
+	// reference a bound variable but are not projected as hidden return
+	// items, evaluated below by the same resolveReturnItem call every other
+	// row cell goes through. Skipped for DISTINCT, whose dedupe key is the
+	// projected row itself (design fable-500-design.md section 4.1).
+	useHiddenOrderBy := orderRowsAfterProjection && !distinct
+	visibleCount := len(returnItems)
+	rowItems := returnItems
+	var hiddenOrderSpecs []orderSpec
+	var hiddenItems []returnItem
+	if useHiddenOrderBy {
+		hiddenOrderSpecs, hiddenItems = e.buildHiddenOrderBySpecs(orderExprEarly, result.Columns, returnItems)
+		if len(hiddenItems) > 0 {
+			rowItems = append(append([]returnItem{}, returnItems...), hiddenItems...)
+		}
+	}
+
 	// Build result rows with SKIP and LIMIT
 	seen := make(map[string]bool) // For DISTINCT
 	rowCount := 0
@@ -916,8 +971,8 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			break
 		}
 
-		row := make([]interface{}, len(returnItems))
-		for j, item := range returnItems {
+		row := make([]interface{}, len(rowItems))
+		for j, item := range rowItems {
 			// Check for COLLECT { } subquery
 			if hasSubqueryPattern(item.expr, collectSubqueryRe) {
 				// Execute the subquery with the current node as context
@@ -945,7 +1000,16 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	if orderRowsAfterProjection {
-		result.Rows = e.orderResultRowsForReturnItems(result.Rows, result.Columns, returnItems, orderExprEarly)
+		if useHiddenOrderBy {
+			result.Rows = e.orderRowsBySpecs(result.Rows, hiddenOrderSpecs)
+		} else {
+			result.Rows = e.orderResultRowsForReturnItems(result.Rows, result.Columns, returnItems, orderExprEarly)
+		}
+		if len(hiddenItems) > 0 {
+			for i, row := range result.Rows {
+				result.Rows[i] = row[:visibleCount]
+			}
+		}
 		result.Rows = sliceRows(result.Rows, skip, limit)
 	}
 

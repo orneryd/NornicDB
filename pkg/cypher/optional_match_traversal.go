@@ -392,25 +392,105 @@ func (e *StorageExecutor) projectTraversalOptionalRows(ctx context.Context, rows
 			return nil, err
 		}
 		result.Rows = aggRows
-	} else {
-		// Compile each projection item once; per row only the compiled
-		// closures run (see optional_match_traversal_compile.go).
-		projectors := make([]compiledTraversalProjection, len(items))
-		for i, item := range items {
-			projectors[i] = e.compileTraversalProjection(ctx, item.expr)
+		e.applyTraversalReturnModifiers(result, returnClause)
+		return result, nil
+	}
+
+	// Issue #500: ORDER BY may reference a variable bound by this traversal
+	// even when no RETURN item projects it. Resolve such terms as hidden
+	// return items before compiling projectors, so they are projected by
+	// the same compiled-closure evaluator as every other RETURN item instead
+	// of being silently dropped by applyTraversalReturnModifiers's legacy
+	// sink (orderResultRows). The aggregate branch above returns before
+	// reaching here, matching design fable-500-design.md section 4.1
+	// ("DISTINCT / aggregation: do not add hidden items").
+	visibleCount := len(items)
+	orderSpecs, hiddenItems := e.buildHiddenOrderBySpecs(extractTraversalOrderByExpr(returnClause), result.Columns, items)
+	items = append(items, hiddenItems...)
+
+	// Compile each projection item once; per row only the compiled
+	// closures run (see optional_match_traversal_compile.go).
+	projectors := make([]compiledTraversalProjection, len(items))
+	for i, item := range items {
+		projectors[i] = e.compileTraversalProjection(ctx, item.expr)
+	}
+	result.Rows = make([][]interface{}, 0, len(rows))
+	for _, row := range rows {
+		outRow := make([]interface{}, len(items))
+		for i := range items {
+			outRow[i] = projectors[i](row)
 		}
-		result.Rows = make([][]interface{}, 0, len(rows))
-		for _, row := range rows {
-			outRow := make([]interface{}, len(items))
-			for i := range items {
-				outRow[i] = projectors[i](row)
-			}
-			result.Rows = append(result.Rows, outRow)
+		result.Rows = append(result.Rows, outRow)
+	}
+
+	if len(orderSpecs) > 0 {
+		result.Rows = e.orderRowsBySpecs(result.Rows, orderSpecs)
+	}
+	e.applyTraversalSkipLimit(result, returnClause)
+	if len(hiddenItems) > 0 {
+		for i, row := range result.Rows {
+			result.Rows[i] = row[:visibleCount]
 		}
 	}
 
-	e.applyTraversalReturnModifiers(result, returnClause)
 	return result, nil
+}
+
+// extractTraversalOrderByExpr extracts the ORDER BY clause text (comma-
+// separated terms, no trailing SKIP/LIMIT) from a RETURN clause tail such as
+// the one projectTraversalOptionalRows receives. Returns "" when there is no
+// ORDER BY.
+func extractTraversalOrderByExpr(returnClause string) string {
+	orderByIdx := findMultiWordKeywordIndex(returnClause, "ORDER", "BY")
+	if orderByIdx < 0 {
+		return ""
+	}
+	orderPart := returnClause[orderByIdx:]
+	if mIdx := findKeywordIndex(orderPart, "BY"); mIdx >= 0 {
+		orderPart = orderPart[mIdx+len("BY"):]
+	}
+	endIdx := len(orderPart)
+	for _, kw := range []string{"SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
+			endIdx = idx
+		}
+	}
+	return strings.TrimSpace(orderPart[:endIdx])
+}
+
+// applyTraversalSkipLimit applies SKIP/LIMIT from the RETURN clause tail.
+// Split out of applyTraversalReturnModifiers so the hidden-order-by branch of
+// projectTraversalOptionalRows can apply SKIP/LIMIT without re-running that
+// function's ORDER BY handling (orderResultRows), which is the legacy sink
+// issue #500 fixes.
+func (e *StorageExecutor) applyTraversalSkipLimit(result *ExecuteResult, returnClause string) {
+	skip := 0
+	if skipIdx := findKeywordIndex(returnClause, "SKIP"); skipIdx >= 0 {
+		if fields := strings.Fields(returnClause[skipIdx+len("SKIP"):]); len(fields) > 0 {
+			if s, err := strconv.Atoi(fields[0]); err == nil {
+				skip = s
+			}
+		}
+	}
+	limit := -1
+	if limitIdx := findKeywordIndex(returnClause, "LIMIT"); limitIdx >= 0 {
+		if fields := strings.Fields(returnClause[limitIdx+len("LIMIT"):]); len(fields) > 0 {
+			if l, err := strconv.Atoi(fields[0]); err == nil {
+				limit = l
+			}
+		}
+	}
+	if skip > 0 || limit >= 0 {
+		start := skip
+		if start > len(result.Rows) {
+			start = len(result.Rows)
+		}
+		end := len(result.Rows)
+		if limit >= 0 && start+limit < end {
+			end = start + limit
+		}
+		result.Rows = result.Rows[start:end]
+	}
 }
 
 // isSimpleTraversalIdentifier reports whether s is a bare Cypher identifier
