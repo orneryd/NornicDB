@@ -25,8 +25,8 @@ func parseTemporalText(kind, text string) (interface{}, bool) {
 		value, ok := parseCypherLocalDateTimeText(text)
 		return CypherLocalDateTime{Time: value}, ok
 	case "datetime":
-		value, _, ok := parseCypherDateTimeText(text)
-		return value, ok
+		value, zoneID, ok := parseCypherDateTimeText(text)
+		return CypherDateTime{Time: value, ZoneID: zoneID}, ok
 	case "duration":
 		value, ok := parseCypherDurationText(text)
 		return value, ok

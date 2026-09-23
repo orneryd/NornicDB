@@ -31,6 +31,9 @@ func coerceTemporalTime(value interface{}) (time.Time, bool) {
 	case float64:
 		return time.Unix(int64(v), 0).UTC(), true
 	default:
+		if temporal, ok := value.(interface{ TemporalTime() time.Time }); ok {
+			return temporal.TemporalTime().UTC(), true
+		}
 		if s, ok := value.(fmt.Stringer); ok {
 			return parseTemporalString(s.String())
 		}

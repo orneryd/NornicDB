@@ -42,11 +42,19 @@ func (CypherTime) TemporalPropertyKind() string          { return "time" }
 func (CypherLocalDateTime) TemporalPropertyKind() string { return "local-date-time" }
 func (CypherDateTime) TemporalPropertyKind() string      { return "zoned-date-time" }
 
+func (v CypherDate) TemporalTime() time.Time          { return v.Time }
+func (v CypherLocalTime) TemporalTime() time.Time     { return v.Time }
+func (v CypherTime) TemporalTime() time.Time          { return v.Time }
+func (v CypherLocalDateTime) TemporalTime() time.Time { return v.Time }
+func (v CypherDateTime) TemporalTime() time.Time      { return v.Time }
+
 func init() {
 	registerTemporalTimeExtension(41, CypherDate{}, func(value CypherDate) time.Time { return value.Time }, func(value time.Time) CypherDate { return CypherDate{Time: value} })
 	registerTemporalTimeExtension(42, CypherLocalTime{}, func(value CypherLocalTime) time.Time { return value.Time }, func(value time.Time) CypherLocalTime { return CypherLocalTime{Time: value} })
 	registerTemporalTimeExtension(43, CypherTime{}, func(value CypherTime) time.Time { return value.Time }, func(value time.Time) CypherTime { return CypherTime{Time: value} })
 	registerTemporalTimeExtension(44, CypherLocalDateTime{}, func(value CypherLocalDateTime) time.Time { return value.Time }, func(value time.Time) CypherLocalDateTime { return CypherLocalDateTime{Time: value} })
+	msgpack.RegisterExtEncoder(46, CypherDateTime{}, encodeCypherDateTime)
+	msgpack.RegisterExtDecoder(46, CypherDateTime{}, decodeCypherDateTime)
 	msgpack.RegisterExt(45, (*CypherDuration)(nil))
 }
 
@@ -113,6 +121,45 @@ func unmarshalTemporalTime(data []byte) (time.Time, error) {
 	nanos := int64(binary.BigEndian.Uint32(data[8:12]))
 	offset := int(int32(binary.BigEndian.Uint32(data[12:16])))
 	return time.Unix(seconds, nanos).In(time.FixedZone("", offset)), nil
+}
+
+func encodeCypherDateTime(_ *msgpack.Encoder, value reflect.Value) ([]byte, error) {
+	timestamp := value.Interface().(CypherDateTime)
+	zoneID := timestamp.ZoneID
+	data := make([]byte, 16+len(zoneID))
+	binary.BigEndian.PutUint64(data[0:8], uint64(timestamp.Time.Unix()))
+	binary.BigEndian.PutUint32(data[8:12], uint32(timestamp.Time.Nanosecond()))
+	_, offset := timestamp.Time.Zone()
+	binary.BigEndian.PutUint32(data[12:16], uint32(int32(offset)))
+	copy(data[16:], zoneID)
+	return data, nil
+}
+
+func decodeCypherDateTime(decoder *msgpack.Decoder, value reflect.Value, length int) error {
+	if length < 16 {
+		return fmt.Errorf("invalid CypherDateTime payload length %d", length)
+	}
+	data := make([]byte, length)
+	if err := decoder.ReadFull(data); err != nil {
+		return err
+	}
+	seconds := int64(binary.BigEndian.Uint64(data[0:8]))
+	nanos := int64(binary.BigEndian.Uint32(data[8:12]))
+	offset := int(int32(binary.BigEndian.Uint32(data[12:16])))
+	zoneID := string(data[16:])
+	location := time.FixedZone("", offset)
+	if zoneID != "" {
+		loaded, ok := loadPinnedTemporalLocation(zoneID)
+		if !ok {
+			return fmt.Errorf("unknown CypherDateTime zone %q", zoneID)
+		}
+		location = loaded
+	}
+	value.Set(reflect.ValueOf(CypherDateTime{
+		Time:   time.Unix(seconds, nanos).In(location),
+		ZoneID: zoneID,
+	}))
+	return nil
 }
 
 func (e *StorageExecutor) evaluateTemporalConstructor(ctxEval func(string) interface{}, expression string) (interface{}, bool) {
@@ -183,7 +230,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctxEval func(string) inter
 			case "localdatetime":
 				return CypherLocalDateTime{Time: now}, true
 			case "datetime":
-				return now, true
+				return CypherDateTime{Time: now}, true
 			default:
 				return nil, true
 			}
@@ -218,13 +265,13 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctxEval func(string) inter
 		if !secondsOK || !nanosOK {
 			return nil, true
 		}
-		return time.Unix(seconds, nanos).UTC(), true
+		return CypherDateTime{Time: time.Unix(seconds, nanos).UTC()}, true
 	case "datetime.fromepochmillis":
 		millis, valid := temporalInt(ctxEval(strings.TrimSpace(argument)))
 		if !valid {
 			return nil, true
 		}
-		return time.UnixMilli(millis).UTC(), true
+		return CypherDateTime{Time: time.UnixMilli(millis).UTC()}, true
 	default:
 		return nil, false
 	}
@@ -295,8 +342,9 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 		return CypherTime{Time: value}, true
 	case "localdatetime":
 		return CypherLocalDateTime{Time: value}, true
+	case "datetime":
+		return CypherDateTime{Time: value, ZoneID: zoneID}, true
 	default:
-		_ = zoneID
 		return value, true
 	}
 }
@@ -331,7 +379,7 @@ func projectTemporalValue(kind string, value interface{}) (interface{}, bool) {
 			if zoned {
 				location = clock.Location()
 			}
-			return time.Date(date.Year(), date.Month(), date.Day(), clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location), true
+			return CypherDateTime{Time: time.Date(date.Year(), date.Month(), date.Day(), clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location)}, true
 		}
 	}
 	return nil, false

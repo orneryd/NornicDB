@@ -79,3 +79,15 @@ func (m *MemoryEngine) BeginTransaction() (*BadgerTransaction, error) {
 func (m *MemoryEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	return m.BadgerEngine.DeleteByPrefix(prefix)
 }
+
+// Backup is intentionally unsupported for in-memory engines so the DB API
+// retains its portable JSON fallback for non-persistent storage.
+func (m *MemoryEngine) Backup(string) error {
+	return ErrNotImplemented
+}
+
+// Restore is intentionally unsupported for in-memory engines; the DB API
+// restores its portable JSON fallback instead.
+func (m *MemoryEngine) Restore(string) error {
+	return ErrNotImplemented
+}

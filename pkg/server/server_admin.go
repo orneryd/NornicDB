@@ -1,8 +1,10 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"runtime"
+	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -90,6 +92,10 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 		s.writeInvalidRequestBody(w, r)
 		return
 	}
+	if strings.TrimSpace(req.Path) == "" {
+		s.writeBoundaryError(w, r, http.StatusBadRequest, errors.New("backup path is required"), ErrBadRequest)
+		return
+	}
 
 	if err := s.db.Backup(r.Context(), req.Path); err != nil {
 		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
@@ -98,6 +104,35 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusOK, map[string]string{
 		"status": s.localizedText(w, r, localization.BackupComplete()),
+		"path":   req.Path,
+	})
+}
+
+func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writePostRequired(w, r)
+		return
+	}
+
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := s.readJSON(r, &req); err != nil {
+		s.writeInvalidRequestBody(w, r)
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		s.writeBoundaryError(w, r, http.StatusBadRequest, errors.New("backup path is required"), ErrBadRequest)
+		return
+	}
+
+	if err := s.db.Restore(r.Context(), req.Path); err != nil {
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]string{
+		"status": "restore complete",
 		"path":   req.Path,
 	})
 }

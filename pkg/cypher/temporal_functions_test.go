@@ -433,11 +433,11 @@ func TestDatetimeFunction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got, ok := result.Rows[0][0].(time.Time)
+		got, ok := result.Rows[0][0].(CypherDateTime)
 		if !ok {
-			t.Fatalf("Expected time.Time, got %T", result.Rows[0][0])
+			t.Fatalf("Expected CypherDateTime, got %T", result.Rows[0][0])
 		}
-		if got.IsZero() {
+		if got.Time.IsZero() {
 			t.Fatalf("Expected non-zero datetime")
 		}
 	})
@@ -447,12 +447,12 @@ func TestDatetimeFunction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got, ok := result.Rows[0][0].(time.Time)
+		got, ok := result.Rows[0][0].(CypherDateTime)
 		if !ok {
-			t.Fatalf("Expected time.Time, got %T", result.Rows[0][0])
+			t.Fatalf("Expected CypherDateTime, got %T", result.Rows[0][0])
 		}
-		if got.UTC().Format(time.RFC3339) != "2025-11-27T10:30:00Z" {
-			t.Errorf("Expected 2025-11-27T10:30:00Z, got %s", got.UTC().Format(time.RFC3339))
+		if got.Time.UTC().Format(time.RFC3339) != "2025-11-27T10:30:00Z" {
+			t.Errorf("Expected 2025-11-27T10:30:00Z, got %s", got.Time.UTC().Format(time.RFC3339))
 		}
 	})
 }
@@ -652,16 +652,16 @@ func TestDateComponentFunctions(t *testing.T) {
 			t.Fatalf("Query failed: %v", err)
 		}
 		row := result.Rows[0]
-		if row[0].(time.Time).Hour() != 14 || row[0].(time.Time).Minute() != 0 {
+		if row[0].(CypherDateTime).Time.Hour() != 14 || row[0].(CypherDateTime).Time.Minute() != 0 {
 			t.Fatalf("unexpected datetime.truncate hour: %v", row[0])
 		}
-		if row[1].(time.Time).Hour() != 14 || row[1].(time.Time).Minute() != 35 || row[1].(time.Time).Second() != 0 {
+		if row[1].(CypherDateTime).Time.Hour() != 14 || row[1].(CypherDateTime).Time.Minute() != 35 || row[1].(CypherDateTime).Time.Second() != 0 {
 			t.Fatalf("unexpected datetime.truncate minute: %v", row[1])
 		}
-		if row[2].(time.Time).Hour() != 14 || row[2].(time.Time).Minute() != 35 || row[2].(time.Time).Second() != 50 {
+		if row[2].(CypherDateTime).Time.Hour() != 14 || row[2].(CypherDateTime).Time.Minute() != 35 || row[2].(CypherDateTime).Time.Second() != 50 {
 			t.Fatalf("unexpected datetime.truncate second: %v", row[2])
 		}
-		if row[3].(time.Time).Hour() != 0 {
+		if row[3].(CypherDateTime).Time.Hour() != 0 {
 			t.Fatalf("unexpected datetime.truncate day: %v", row[3])
 		}
 		if row[4].(CypherTime).Time.Hour() != 14 || row[4].(CypherTime).Time.Minute() != 0 || row[5].(CypherTime).Time.Hour() != 14 || row[5].(CypherTime).Time.Minute() != 35 {

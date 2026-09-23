@@ -1985,7 +1985,7 @@ func applyUnwindMergeChainSetAssignment(
 		}
 		return changed, nil
 	}
-	val := resolveValue(assignment.expr, rowValues)
+	val := normalizePropValue(resolveValue(assignment.expr, rowValues))
 	if cur, exists := node.Properties[assignment.prop]; !exists || !reflect.DeepEqual(cur, val) {
 		node.Properties[assignment.prop] = val
 		return true, nil

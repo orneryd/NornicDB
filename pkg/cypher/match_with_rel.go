@@ -865,7 +865,7 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 		}
 
 		if strings.EqualFold(expr, "localdatetime()") {
-			return time.Now().Format("2006-01-02T15:04:05")
+			return CypherLocalDateTime{Time: time.Now()}
 		}
 
 		// elementId(n) / id(n). elementId() is an opaque, typed identifier;

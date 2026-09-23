@@ -3472,6 +3472,25 @@ func TestHandleBackup(t *testing.T) {
 	}
 }
 
+func TestHandleRestore(t *testing.T) {
+	server, auth := setupTestServer(t)
+	token := getAuthToken(t, auth, "admin")
+	backupPath := filepath.Join(t.TempDir(), "backup.json")
+	require.NoError(t, os.WriteFile(backupPath, []byte(`{"version":"1.0","nodes":[],"edges":[]}`), 0o600))
+
+	resp := makeRequest(t, server, "POST", "/admin/restore", map[string]interface{}{
+		"path": backupPath,
+	}, "Bearer "+token)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.Code)
+	}
+
+	resp = makeRequest(t, server, "POST", "/admin/restore", map[string]interface{}{}, "Bearer "+token)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for missing path, got %d", resp.Code)
+	}
+}
+
 // =============================================================================
 // Additional Coverage Tests
 // =============================================================================

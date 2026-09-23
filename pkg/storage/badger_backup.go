@@ -4,6 +4,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"os"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -49,6 +50,86 @@ func (b *BadgerEngine) Backup(path string) error {
 	}
 
 	return nil
+}
+
+// Restore loads a Badger streaming backup into the engine. The backup format
+// is the protobuf stream emitted by Backup, not the legacy JSON export.
+func (b *BadgerEngine) Restore(path string) error {
+	b.writeBarrier.Lock()
+	defer b.writeBarrier.Unlock()
+
+	b.mu.RLock()
+	closed := b.closed
+	db := b.db
+	b.mu.RUnlock()
+	if closed || db == nil {
+		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
+	}
+
+	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	defer file.Close()
+
+	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	if err := b.idDict.loadFromBadger(db); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	if err := b.propKeyDict.loadFromBadger(db); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+
+	b.invalidateCachesAfterRestore()
+	if err := b.initializeCounts(); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	return nil
+}
+
+func backupEngine(engine Engine, path string) error {
+	if backupable, ok := engine.(interface{ Backup(string) error }); ok {
+		return backupable.Backup(path)
+	}
+	return ErrNotImplemented
+}
+
+func restoreEngine(engine Engine, path string) error {
+	if restorable, ok := engine.(interface{ Restore(string) error }); ok {
+		return restorable.Restore(path)
+	}
+	return ErrNotImplemented
+}
+
+func (b *BadgerEngine) invalidateCachesAfterRestore() {
+	b.nodeCacheMu.Lock()
+	b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
+	b.nodeCacheMu.Unlock()
+
+	b.nodeBodyCacheMu.Lock()
+	b.nodeBodyCache = make(map[NodeID]*nodeBodyCacheEntry)
+	b.nodeBodyCacheLRU.Init()
+	b.nodeBodyCacheBytes = 0
+	b.nodeBodyCacheMu.Unlock()
+
+	b.edgeTypeCacheMu.Lock()
+	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
+	b.edgeTypeCacheMu.Unlock()
+
+	b.edgeCacheMu.Lock()
+	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+	b.edgeCacheMu.Unlock()
+
+	b.adjCacheMu.Lock()
+	b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	b.adjCacheMu.Unlock()
+
+	b.labelFirstNodeCacheMu.Lock()
+	b.labelFirstNodeCache = make(map[string]NodeID, b.labelFirstCacheMax)
+	b.labelFirstNodeCacheMu.Unlock()
 }
 
 // DeleteByPrefix deletes all nodes and edges with IDs starting with the given prefix.

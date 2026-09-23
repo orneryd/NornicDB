@@ -1592,7 +1592,7 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 			offsetSec, okOffset := toInt64Field(fields[2])
 			if okSec && okNsec && okOffset {
 				loc := time.FixedZone("", int(offsetSec))
-				return time.Unix(sec, nsec).In(loc), fieldsConsumed, nil
+				return cypher.CypherDateTime{Time: time.Unix(sec, nsec).In(loc)}, fieldsConsumed, nil
 			}
 		}
 		return map[string]any{"_type": "DateTime", "fields": fields}, fieldsConsumed, nil
@@ -1659,7 +1659,7 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 				if err != nil {
 					loc = time.UTC
 				}
-				return time.Unix(sec, nsec).In(loc), fieldsConsumed, nil
+				return cypher.CypherDateTime{Time: time.Unix(sec, nsec).In(loc), ZoneID: zoneID}, fieldsConsumed, nil
 			}
 		}
 		return map[string]any{"_type": "DateTimeZoneId", "fields": fields}, fieldsConsumed, nil

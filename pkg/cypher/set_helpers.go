@@ -281,6 +281,7 @@ func setNodeProperty(node *storage.Node, propName string, value interface{}) {
 	if node.Properties == nil {
 		node.Properties = make(map[string]interface{})
 	}
+	value = normalizePropValue(value)
 	if value == nil {
 		delete(node.Properties, propName)
 		return
@@ -292,6 +293,7 @@ func setRelationshipProperty(relationship *storage.Edge, propName string, value 
 	if relationship.Properties == nil {
 		relationship.Properties = make(map[string]interface{})
 	}
+	value = normalizePropValue(value)
 	if value == nil {
 		delete(relationship.Properties, propName)
 		return
@@ -491,7 +493,7 @@ func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
 
 	// datetime() - returns typed datetime
 	if lowerExpr == "datetime()" {
-		return time.Now().UTC()
+		return CypherDateTime{Time: time.Now().UTC()}
 	}
 
 	// randomUUID() or randomuuid()

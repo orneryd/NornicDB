@@ -421,12 +421,12 @@ func TestDateArithmeticQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got, ok := result.Rows[0][0].(time.Time)
+		got, ok := result.Rows[0][0].(CypherDateTime)
 		if !ok {
-			t.Fatalf("Expected time.Time, got %T", result.Rows[0][0])
+			t.Fatalf("Expected CypherDateTime, got %T", result.Rows[0][0])
 		}
-		if got.Hour() != 13 {
-			t.Errorf("Expected datetime hour 13, got %s", got.Format(time.RFC3339))
+		if got.Time.Hour() != 13 {
+			t.Errorf("Expected datetime hour 13, got %s", got.Time.Format(time.RFC3339))
 		}
 	})
 

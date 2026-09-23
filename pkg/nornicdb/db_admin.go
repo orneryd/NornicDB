@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"reflect"
@@ -1238,6 +1239,12 @@ type BackupableEngine interface {
 	Backup(path string) error
 }
 
+// RestorableEngine is implemented by engines that can load their native
+// streaming backup format without materializing the graph in memory.
+type RestorableEngine interface {
+	Restore(path string) error
+}
+
 func (db *DB) rebuildTemporalIndexesNoLock(ctx context.Context) error {
 	if maint, ok := db.baseStorage.(storage.TemporalMaintenanceEngine); ok {
 		return maint.RebuildTemporalIndexes(ctx)
@@ -1367,7 +1374,11 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 
 	// Check if storage engine supports backup
 	if backupable, ok := db.storage.(BackupableEngine); ok {
-		return backupable.Backup(path)
+		if err := backupable.Backup(path); err == nil {
+			return nil
+		} else if !errors.Is(err, storage.ErrNotImplemented) {
+			return err
+		}
 	}
 
 	// Fallback: Export as JSON for non-backupable engines (memory)
@@ -1400,9 +1411,8 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 	return nil
 }
 
-// Restore restores the database from a JSON backup file.
-// This is primarily for in-memory databases or cross-engine migration.
-// For BadgerDB production use, use the storage-level backup/restore.
+// Restore restores a native streaming backup, or a legacy JSON backup when
+// the current engine does not provide native restore support.
 //
 // Example:
 //
@@ -1413,8 +1423,45 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
+	restorable, supportsNativeRestore := db.storage.(RestorableEngine)
 	db.mu.RUnlock()
 
+	if supportsNativeRestore {
+		isJSON, err := isJSONBackupFile(path)
+		if err != nil {
+			return localizedError(localization.NornicDBCoreBackupReadFailed(err), err)
+		}
+		if !isJSON {
+			db.mu.Lock()
+			if db.closed {
+				db.mu.Unlock()
+				return ErrClosed
+			}
+			if err := restorable.Restore(path); err != nil {
+				if errors.Is(err, storage.ErrNotImplemented) {
+					db.mu.Unlock()
+					goto legacyJSONRestore
+				}
+				db.mu.Unlock()
+				return localizedError(localization.NornicDBCoreBackupParseFailed(err), err)
+			}
+			if err := db.rebuildTemporalIndexesNoLock(ctx); err != nil {
+				db.mu.Unlock()
+				return localizedError(localization.NornicDBCoreRestoreTemporalIndexesFailed(err), err)
+			}
+			if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
+				if err := maint.RebuildMVCCHeads(ctx); err != nil {
+					db.mu.Unlock()
+					return localizedError(localization.NornicDBCoreRestoreMVCCHeadsFailed(err), err)
+				}
+			}
+			db.mu.Unlock()
+			db.restartSearchAfterRestore(ctx)
+			return nil
+		}
+	}
+
+legacyJSONRestore:
 	// Read backup file
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1474,6 +1521,27 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 	}
 	db.mu.Unlock()
 
+	db.restartSearchAfterRestore(ctx)
+	return nil
+}
+
+func isJSONBackupFile(path string) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+
+	buffer := make([]byte, 4096)
+	read, err := file.Read(buffer)
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	trimmed := bytes.TrimSpace(buffer[:read])
+	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '['), nil
+}
+
+func (db *DB) restartSearchAfterRestore(ctx context.Context) {
 	// Restart search indexing after releasing the DB write lock; starting the
 	// background search build while Restore still holds db.mu deadlocks via
 	// startBackgroundTask's read lock.
@@ -1489,8 +1557,6 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 	} else if err != nil {
 		log.Printf("⚠️  Warning: failed to restart search indexing after restore: %v", err)
 	}
-
-	return nil
 }
 
 // ExportUserData exports all data for a user (GDPR compliance).

@@ -2907,14 +2907,14 @@ func TestEvaluateExpressionFromValues_MaterializesTemporalExpressions(t *testing
 	}
 
 	validFrom := exec.evaluateExpressionFromValues("datetime(row.valid_from_iso)", values)
-	validFromTime, ok := validFrom.(time.Time)
-	require.True(t, ok, "expected time.Time, got %T", validFrom)
-	require.Equal(t, "2026-03-20T20:22:20Z", validFromTime.UTC().Format(time.RFC3339))
+	validFromDateTime, ok := validFrom.(CypherDateTime)
+	require.True(t, ok, "expected CypherDateTime, got %T", validFrom)
+	require.Equal(t, "2026-03-20T20:22:20Z", validFromDateTime.Time.UTC().Format(time.RFC3339))
 	require.Nil(t, exec.evaluateExpressionFromValues("CASE WHEN row.valid_to_iso IS NULL THEN null ELSE datetime(row.valid_to_iso) END", values))
 	assertedAt := exec.evaluateExpressionFromValues("CASE WHEN row.asserted_at_iso IS NULL THEN null ELSE datetime(row.asserted_at_iso) END", values)
-	assertedAtTime, ok := assertedAt.(time.Time)
-	require.True(t, ok, "expected time.Time, got %T", assertedAt)
-	require.Equal(t, "2026-03-21T01:02:03Z", assertedAtTime.UTC().Format(time.RFC3339))
+	assertedAtDateTime, ok := assertedAt.(CypherDateTime)
+	require.True(t, ok, "expected CypherDateTime, got %T", assertedAt)
+	require.Equal(t, "2026-03-21T01:02:03Z", assertedAtDateTime.Time.UTC().Format(time.RFC3339))
 }
 
 func TestEvaluateCoalesceInContext_ResolvesComputedMapProperties(t *testing.T) {

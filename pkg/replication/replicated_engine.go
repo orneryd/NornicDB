@@ -35,6 +35,37 @@ func NewReplicatedEngine(inner storage.Engine, replicator Replicator, timeout ti
 	}
 }
 
+// GetInnerEngine exposes the local storage chain for maintenance operations.
+func (e *ReplicatedEngine) GetInnerEngine() storage.Engine {
+	if e == nil {
+		return nil
+	}
+	return e.Engine
+}
+
+// Backup delegates a native backup to the local storage chain. Replication
+// writes are already applied locally before their acknowledgement returns.
+func (e *ReplicatedEngine) Backup(path string) error {
+	if e == nil || e.Engine == nil {
+		return storage.ErrStorageClosed
+	}
+	if backupable, ok := e.Engine.(interface{ Backup(string) error }); ok {
+		return backupable.Backup(path)
+	}
+	return storage.ErrNotImplemented
+}
+
+// Restore delegates native restore to the local storage chain.
+func (e *ReplicatedEngine) Restore(path string) error {
+	if e == nil || e.Engine == nil {
+		return storage.ErrStorageClosed
+	}
+	if restorable, ok := e.Engine.(interface{ Restore(string) error }); ok {
+		return restorable.Restore(path)
+	}
+	return storage.ErrNotImplemented
+}
+
 // GraphMutationVersion exposes graph mutations applied to the local engine.
 func (e *ReplicatedEngine) GraphMutationVersion() (uint64, bool) {
 	provider, ok := e.Engine.(storage.GraphMutationVersionProvider)

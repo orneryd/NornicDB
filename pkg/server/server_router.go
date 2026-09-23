@@ -186,6 +186,7 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/stats", s.withAuth(s.handleAdminStats, auth.PermAdmin))
 	mux.HandleFunc("/admin/config", s.withAuth(s.handleAdminConfig, auth.PermAdmin))
 	mux.HandleFunc("/admin/backup", s.withAuth(s.handleBackup, auth.PermAdmin))
+	mux.HandleFunc("/admin/restore", s.withAuth(s.handleRestore, auth.PermAdmin))
 
 	// GPU control endpoints (NornicDB-specific)
 	mux.HandleFunc("/admin/gpu/status", s.withAuth(s.handleGPUStatus, auth.PermAdmin))

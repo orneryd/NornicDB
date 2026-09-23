@@ -49,7 +49,7 @@ func truncateTemporalValue(kind, unit string, value interface{}, fields map[stri
 		if zoneID != "" {
 			return CypherDateTime{Time: truncated, ZoneID: zoneID}, true
 		}
-		return truncated, true
+		return CypherDateTime{Time: truncated}, true
 	case "localtime":
 		return CypherLocalTime{Time: time.Date(1970, 1, 1, truncated.Hour(), truncated.Minute(), truncated.Second(), truncated.Nanosecond(), time.UTC)}, true
 	case "time":

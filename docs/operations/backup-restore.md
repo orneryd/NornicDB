@@ -61,14 +61,14 @@ fmt.Printf("Disk saved: %s\n", stats.DiskSavings)
 
 ## Online Backup
 
-NornicDB exposes a backup endpoint over HTTP. There is no `nornicdb backup` CLI subcommand; use the admin API or, for embedded deployments, the Go API. Backups always include user accounts stored in the system database.
+NornicDB exposes backup and restore endpoints over HTTP. There are no `nornicdb backup` or `nornicdb restore` CLI subcommands; use the admin API or, for embedded deployments, the Go API. Backups always include user accounts stored in the system database.
 
 ### API Backup
 
 ```bash
 curl -X POST http://localhost:7474/admin/backup \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"output": "/backups/backup-2024-12-01.tar.gz"}'
+  -d '{"path": "/backups/backup-2024-12-01.backup"}'
 ```
 
 The endpoint requires `admin` permission.
@@ -76,7 +76,7 @@ The endpoint requires `admin` permission.
 ### Go API Backup
 
 ```go
-err := db.Backup(ctx, "backup-20241201.json")
+err := db.Backup(ctx, "backup-20241201.backup")
 if err != nil {
     log.Fatal(err)
 }
@@ -84,12 +84,20 @@ if err != nil {
 
 ## Restore
 
-Restore is performed via the embedded Go API. There is no `/admin/restore` HTTP endpoint and no `nornicdb restore` CLI subcommand. To restore a remote instance, copy the data directory or use `docker cp`/Kubernetes volume restore patterns shown below.
+Restore is available through the admin HTTP API or the embedded Go API. The request uses the same `path` field as backup and requires `admin` permission.
+
+### API Restore
+
+```bash
+curl -X POST http://localhost:7474/admin/restore \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"path": "/backups/backup-2024-12-01.backup"}'
+```
 
 ### Go API Restore
 
 ```go
-err := db.Restore(ctx, "backup-20241201.json")
+err := db.Restore(ctx, "backup-20241201.backup")
 if err != nil {
     log.Fatal(err)
 }
@@ -104,9 +112,11 @@ curl http://localhost:7474/status -H "Authorization: Bearer $TOKEN"
 
 ### Note on Backup Format
 
-NornicDB uses JSON backup format which is portable across different storage backends.
-For production BadgerDB deployments, use the storage-level backup commands for
-incremental backups with better performance.
+Persistent BadgerDB deployments use Badger's streaming protobuf backup format;
+it is storage-native and avoids materializing all nodes and edges in memory.
+In-memory deployments fall back to the legacy JSON format. Restore accepts both
+formats, so use a `.backup` file for persistent databases and `.json` only for
+in-memory or legacy exports.
 
 ## Docker Backup
 
@@ -180,7 +190,7 @@ Schedule backups by calling the `/admin/backup` endpoint or by snapshotting the 
 # /etc/cron.d/nornicdb-backup
 0 2 * * * root curl -sf -X POST http://localhost:7474/admin/backup \
   -H "Authorization: Bearer $TOKEN" \
-  -d "{\"output\":\"/backups/nornicdb-$(date +\%Y\%m\%d).json\"}"
+  -d "{\"path\":\"/backups/nornicdb-$(date +\%Y\%m\%d).backup\"}"
 ```
 
 ### Kubernetes CronJob
@@ -205,7 +215,7 @@ spec:
                 - >-
                   curl -sf -X POST http://nornicdb:7474/admin/backup
                   -H "Authorization: Bearer $TOKEN"
-                  -d "{\"output\":\"/backups/backup-$(date +%Y%m%d).json\"}"
+                  -d "{\"path\":\"/backups/backup-$(date +%Y%m%d).backup\"}"
               env:
                 - name: TOKEN
                   valueFrom:
@@ -228,15 +238,15 @@ spec:
 
 ```bash
 # Keep last 7 daily backups
-find /backups -name "nornicdb-*.json" -mtime +7 -delete
+find /backups -name "nornicdb-*.backup" -mtime +7 -delete
 
 # Keep last 4 weekly backups
-find /backups/weekly -name "*.json" -mtime +28 -delete
+find /backups/weekly -name "*.backup" -mtime +28 -delete
 ```
 
 ## Cloud Backup
 
-Use the `/admin/backup` endpoint to write a JSON backup to a local path, then upload that file with the relevant cloud CLI.
+Use the `/admin/backup` endpoint to write a native backup stream to a local path, then upload that file with the relevant cloud CLI.
 
 ### AWS S3
 
@@ -244,18 +254,18 @@ Use the `/admin/backup` endpoint to write a JSON backup to a local path, then up
 # Trigger backup
 curl -sf -X POST http://localhost:7474/admin/backup \
   -H "Authorization: Bearer $TOKEN" \
-  -d "{\"output\":\"/backups/backup-$(date +%Y%m%d).json\"}"
+  -d "{\"path\":\"/backups/backup-$(date +%Y%m%d).backup\"}"
 
 # Upload
-aws s3 cp /backups/backup-$(date +%Y%m%d).json \
-  s3://mybucket/nornicdb/backup-$(date +%Y%m%d).json
+aws s3 cp /backups/backup-$(date +%Y%m%d).backup \
+  s3://mybucket/nornicdb/backup-$(date +%Y%m%d).backup
 ```
 
 ### Google Cloud Storage
 
 ```bash
-gsutil cp /backups/backup-$(date +%Y%m%d).json \
-  gs://mybucket/nornicdb/backup-$(date +%Y%m%d).json
+gsutil cp /backups/backup-$(date +%Y%m%d).backup \
+  gs://mybucket/nornicdb/backup-$(date +%Y%m%d).backup
 ```
 
 For restoring on a remote instance, copy the JSON file to the target host and call `db.Restore` from your application code, or replace the data directory while the server is stopped.

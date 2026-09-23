@@ -108,6 +108,7 @@
 //	  GET  /admin/stats               - System statistics (admin)
 //	  GET  /admin/config               - Server configuration (admin)
 //	  POST /admin/backup               - Create backup (admin)
+//	  POST /admin/restore              - Restore backup (admin)
 //	  GET  /admin/gpu/status           - GPU status (admin)
 //	  POST /admin/gpu/enable           - Enable GPU (admin)
 //	  POST /admin/gpu/disable          - Disable GPU (admin)

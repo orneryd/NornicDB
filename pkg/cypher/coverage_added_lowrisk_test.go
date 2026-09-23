@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -30,10 +29,10 @@ func TestExtractCreateVariableRefs_IgnoresEmptyPatternSegments(t *testing.T) {
 	require.ElementsMatch(t, []string{"a", "b"}, vars)
 }
 
-func TestDatetimeFunction_PassthroughTypedTime(t *testing.T) {
+func TestDatetimeFunction_PassthroughTypedDateTime(t *testing.T) {
 	exec := &StorageExecutor{}
 	out := exec.evaluateExpressionWithContext(context.Background(), "datetime(datetime())", nil, nil)
-	_, ok := out.(time.Time)
+	_, ok := out.(CypherDateTime)
 	require.True(t, ok)
 }
 

@@ -26,7 +26,7 @@ func TestTemporalParam_SubstitutionPreservesTypedBinding(t *testing.T) {
 	require.True(t, strings.Contains(out, "created_at:$dt"), "expected temporal param to remain bound, got: %s", out)
 }
 
-func TestTemporalParam_CreateAndReadBackAsTime(t *testing.T) {
+func TestTemporalParam_CreateAndReadBackAsDateTime(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_param_roundtrip"))
 	ctx := context.Background()
 	dt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.FixedZone("UTC+2", 2*3600))
@@ -39,12 +39,12 @@ func TestTemporalParam_CreateAndReadBackAsTime(t *testing.T) {
 	require.Len(t, result.Rows, 1)
 	require.Len(t, result.Rows[0], 1)
 
-	got, ok := result.Rows[0][0].(time.Time)
-	require.True(t, ok, "expected time.Time, got %T", result.Rows[0][0])
-	require.Equal(t, dt.UTC(), got.UTC())
+	got, ok := result.Rows[0][0].(CypherDateTime)
+	require.True(t, ok, "expected CypherDateTime, got %T", result.Rows[0][0])
+	require.Equal(t, dt.UTC(), got.Time.UTC())
 }
 
-func TestTemporalParam_UnwindNestedRowDatetimeRoundTripsAsTime(t *testing.T) {
+func TestTemporalParam_UnwindNestedRowDatetimeRoundTripsAsDateTime(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_unwind_nested"))
 	ctx := context.Background()
 	dt := time.Date(2026, 6, 19, 12, 0, 0, 123456000, time.UTC)
@@ -63,12 +63,12 @@ SET n.created_at = row.created_at
 	result, err := exec.Execute(ctx, "MATCH (n:X {uuid:'1'}) RETURN n.created_at", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	got, ok := result.Rows[0][0].(time.Time)
-	require.True(t, ok, "expected time.Time, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
-	require.Equal(t, dt.UTC(), got.UTC())
+	got, ok := result.Rows[0][0].(CypherDateTime)
+	require.True(t, ok, "expected CypherDateTime, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
+	require.Equal(t, dt.UTC(), got.Time.UTC())
 }
 
-func TestTemporalParam_UnwindNestedRowDatetimeInMapLiteralRoundTripsAsTime(t *testing.T) {
+func TestTemporalParam_UnwindNestedRowDatetimeInMapLiteralRoundTripsAsDateTime(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_unwind_nested_map"))
 	ctx := context.Background()
 	dt := time.Date(2026, 6, 19, 12, 0, 0, 123456000, time.UTC)
@@ -87,12 +87,12 @@ SET n = {uuid: row.uuid, created_at: row.created_at}
 	result, err := exec.Execute(ctx, "MATCH (n:X {uuid:'1'}) RETURN n.created_at", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	got, ok := result.Rows[0][0].(time.Time)
-	require.True(t, ok, "expected time.Time, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
-	require.Equal(t, dt.UTC(), got.UTC())
+	got, ok := result.Rows[0][0].(CypherDateTime)
+	require.True(t, ok, "expected CypherDateTime, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
+	require.Equal(t, dt.UTC(), got.Time.UTC())
 }
 
-func TestTemporalParam_UnwindNestedRowDatetimeOnRelationshipRoundTripsAsTime(t *testing.T) {
+func TestTemporalParam_UnwindNestedRowDatetimeOnRelationshipRoundTripsAsDateTime(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_unwind_nested_rel"))
 	ctx := context.Background()
 	dt := time.Date(2026, 6, 19, 12, 0, 0, 123456000, time.UTC)
@@ -116,12 +116,12 @@ SET r.created_at = row.created_at
 	result, err := exec.Execute(ctx, "MATCH (:X)-[r:MENTIONS {uuid:'m1'}]->(:X) RETURN r.created_at", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	got, ok := result.Rows[0][0].(time.Time)
-	require.True(t, ok, "expected time.Time, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
-	require.Equal(t, dt.UTC(), got.UTC())
+	got, ok := result.Rows[0][0].(CypherDateTime)
+	require.True(t, ok, "expected CypherDateTime, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
+	require.Equal(t, dt.UTC(), got.Time.UTC())
 }
 
-func TestTemporalParam_UnwindNestedRowDatetimeInWholeRowMapsRoundTripsAsTime(t *testing.T) {
+func TestTemporalParam_UnwindNestedRowDatetimeInWholeRowMapsRoundTripsAsDateTime(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_unwind_nested_whole_row"))
 	ctx := context.Background()
 	dt := time.Date(2026, 6, 19, 12, 0, 0, 123456000, time.UTC)
@@ -155,14 +155,14 @@ SET r += row
 	result, err := exec.Execute(ctx, "MATCH (n:X {uuid:'1'}) RETURN n.created_at", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	nodeTime, ok := result.Rows[0][0].(time.Time)
-	require.True(t, ok, "expected node time.Time, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
-	require.Equal(t, dt.UTC(), nodeTime.UTC())
+	nodeDateTime, ok := result.Rows[0][0].(CypherDateTime)
+	require.True(t, ok, "expected node CypherDateTime, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
+	require.Equal(t, dt.UTC(), nodeDateTime.Time.UTC())
 
 	result, err = exec.Execute(ctx, "MATCH (:X)-[r:MENTIONS {uuid:'m1'}]->(:X) RETURN r.created_at", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	relTime, ok := result.Rows[0][0].(time.Time)
-	require.True(t, ok, "expected relationship time.Time, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
-	require.Equal(t, dt.UTC(), relTime.UTC())
+	relDateTime, ok := result.Rows[0][0].(CypherDateTime)
+	require.True(t, ok, "expected relationship CypherDateTime, got %T (%v)", result.Rows[0][0], result.Rows[0][0])
+	require.Equal(t, dt.UTC(), relDateTime.Time.UTC())
 }

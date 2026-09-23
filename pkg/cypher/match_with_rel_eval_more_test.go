@@ -74,9 +74,9 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 	require.Equal(t, int64(3), mapLit["cnt"])
 
 	dt := exec.evaluateExpressionFromValues("datetime(rowTime)", values)
-	dtTime, ok := dt.(time.Time)
-	require.True(t, ok, "expected time.Time, got %T", dt)
-	require.Equal(t, "2026-03-20T20:22:20Z", dtTime.UTC().Format(time.RFC3339))
+	dtDateTime, ok := dt.(CypherDateTime)
+	require.True(t, ok, "expected CypherDateTime, got %T", dt)
+	require.Equal(t, "2026-03-20T20:22:20Z", dtDateTime.Time.UTC().Format(time.RFC3339))
 	require.Nil(t, exec.evaluateExpressionFromValues("datetime('not-a-time')", values))
 
 	local, ok := exec.evaluateExpressionFromValues("localdatetime()", values).(CypherLocalDateTime)

@@ -103,6 +103,46 @@ func TestBadgerEngine_Backup(t *testing.T) {
 	})
 }
 
+func TestBadgerEngine_RestoreNativeStream(t *testing.T) {
+	sourceDir := t.TempDir()
+	source, err := NewBadgerEngine(sourceDir)
+	require.NoError(t, err)
+	defer source.Close()
+
+	nodeID := NodeID("backup:n1")
+	_, err = source.CreateNode(&Node{
+		ID:         nodeID,
+		Labels:     []string{"Backup"},
+		Properties: map[string]interface{}{"name": "source"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, source.CreateEdge(&Edge{
+		ID:        EdgeID("backup:e1"),
+		StartNode: nodeID,
+		EndNode:   nodeID,
+		Type:      "SELF",
+	}))
+
+	backupPath := filepath.Join(t.TempDir(), "nornicdb.backup")
+	require.NoError(t, source.Backup(backupPath))
+	backupBytes, err := os.ReadFile(backupPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, backupBytes)
+	require.NotEqual(t, byte('{'), backupBytes[0])
+
+	target, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	defer target.Close()
+	require.NoError(t, target.Restore(backupPath))
+
+	node, err := target.GetNode(nodeID)
+	require.NoError(t, err)
+	require.Equal(t, "source", node.Properties["name"])
+	edges, err := target.GetOutgoingEdges(nodeID)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+}
+
 func generateUniqueTestID() string {
 	id := atomic.AddInt64(&testIDCounter, 1)
 	return prefixTestID(fmt.Sprintf("test-backup-%d-%d", os.Getpid(), id))

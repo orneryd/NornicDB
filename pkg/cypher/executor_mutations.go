@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
@@ -2241,6 +2242,13 @@ func normalizePropsMap(value interface{}, source string) (map[string]interface{}
 
 func normalizePropValue(value interface{}) interface{} {
 	switch v := value.(type) {
+	case time.Time:
+		return CypherDateTime{Time: v}
+	case *time.Time:
+		if v == nil {
+			return nil
+		}
+		return CypherDateTime{Time: *v}
 	case int:
 		return int64(v)
 	case int8:
