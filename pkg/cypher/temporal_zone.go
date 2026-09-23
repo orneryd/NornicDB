@@ -1,40 +1,70 @@
 package cypher
 
 import (
+	"archive/zip"
+	"bytes"
+	_ "embed"
+	"io"
 	"strings"
+	"sync"
 	"time"
-	_ "time/tzdata"
 )
 
-const (
-	neo4jStockholmHistoricalOffset = 53*60 + 28
-	neo4jStockholmTransitionYear   = 1893
-	neo4jStockholmTransitionMonth  = time.April
-	neo4jStockholmTransitionDay    = 1
-)
+//go:embed temporal_zoneinfo.zip
+var temporalZoneinfoArchive []byte
 
-var neo4jStockholmHistoricalLocation = time.FixedZone("Europe/Stockholm", neo4jStockholmHistoricalOffset)
+var (
+	temporalZoneFilesOnce sync.Once
+	temporalZoneFiles     map[string]*zip.File
+	temporalLocationCache sync.Map
+)
 
 // loadTemporalLocationAt resolves a named zone using Neo4j's Java-time
-// semantics. The Java tzdb used by Neo4j starts Europe/Stockholm at +00:53:28
-// and transitions to +01:00 on 1893-04-01. Some Unix tzdata builds instead
-// expose an earlier local-mean-time offset of +01:12:12, so using the host
-// zone database directly makes pre-1893 Cypher values OS-dependent.
-func loadTemporalLocationAt(zoneID string, date time.Time) (*time.Location, bool) {
-	if zoneID == "Europe/Stockholm" && stockholmUsesNeo4jHistoricalOffset(date) {
-		return neo4jStockholmHistoricalLocation, true
-	}
+// semantics. The date is retained in the signature because callers resolve a
+// zone while constructing a calendar value; all dates now use the same pinned
+// server tzdb instead of host-specific historical rules.
+func loadTemporalLocationAt(zoneID string, _ time.Time) (*time.Location, bool) {
 	return loadTemporalLocation(zoneID)
 }
 
-func stockholmUsesNeo4jHistoricalOffset(date time.Time) bool {
-	if date.Year() != neo4jStockholmTransitionYear {
-		return date.Year() < neo4jStockholmTransitionYear
+func loadPinnedTemporalLocation(zoneID string) (*time.Location, bool) {
+	if zoneID == "UTC" {
+		return time.UTC, true
 	}
-	if date.Month() != neo4jStockholmTransitionMonth {
-		return date.Month() < neo4jStockholmTransitionMonth
+	if cached, ok := temporalLocationCache.Load(zoneID); ok {
+		return cached.(*time.Location), true
 	}
-	return date.Day() < neo4jStockholmTransitionDay
+	temporalZoneFilesOnce.Do(func() {
+		temporalZoneFiles = make(map[string]*zip.File)
+		archive, err := zip.NewReader(bytes.NewReader(temporalZoneinfoArchive), int64(len(temporalZoneinfoArchive)))
+		if err != nil {
+			return
+		}
+		for _, file := range archive.File {
+			if !file.FileInfo().IsDir() {
+				temporalZoneFiles[strings.TrimPrefix(file.Name, "./")] = file
+			}
+		}
+	})
+	file := temporalZoneFiles[zoneID]
+	if file == nil {
+		return nil, false
+	}
+	reader, err := file.Open()
+	if err != nil {
+		return nil, false
+	}
+	data, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil {
+		return nil, false
+	}
+	location, err := time.LoadLocationFromTZData(zoneID, data)
+	if err != nil {
+		return nil, false
+	}
+	actual, _ := temporalLocationCache.LoadOrStore(zoneID, location)
+	return actual.(*time.Location), true
 }
 
 // normalizeTemporalNamedZone reapplies named-zone rules after calendar

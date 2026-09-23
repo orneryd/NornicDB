@@ -222,8 +222,7 @@ func parseCypherDateTimeText(text string) (time.Time, string, bool) {
 }
 
 func loadTemporalLocation(zoneID string) (*time.Location, bool) {
-	location, err := time.LoadLocation(zoneID)
-	return location, err == nil
+	return loadPinnedTemporalLocation(zoneID)
 }
 
 func splitClockOffset(text string) (string, int, bool) {

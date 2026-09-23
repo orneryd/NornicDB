@@ -76,6 +76,56 @@ func TestNamedTimezoneUsesNeo4jHistoricalRulesIndependentlyOfHostTZData(t *testi
 	}
 }
 
+func TestNamedTimezoneAliasesUsePinnedMainTzdbHistory(t *testing.T) {
+	tests := []struct {
+		text   string
+		offset int
+	}{
+		{"1818-07-21T12:00:00[Europe/Stockholm]", 53*60 + 28},
+		{"1818-07-21T12:00:00[Europe/Oslo]", 53*60 + 28},
+		{"1940-07-01T12:00:00[Europe/Stockholm]", 2 * 60 * 60},
+		{"1945-07-01T12:00:00[Europe/Stockholm]", 3 * 60 * 60},
+		{"2015-07-21T12:00:00[Europe/Stockholm]", 2 * 60 * 60},
+	}
+	for _, test := range tests {
+		t.Run(test.text, func(t *testing.T) {
+			value, _, ok := parseCypherDateTimeText(test.text)
+			require.True(t, ok)
+			_, offset := value.Zone()
+			require.Equal(t, test.offset, offset)
+		})
+	}
+}
+
+func TestDirectTemporalStringProjectionUsesCypherFormatting(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	tests := []struct {
+		expression string
+		want       string
+	}{
+		{"toString(datetime('2015-07-21T21:40:32.142+02:00'))", "2015-07-21T21:40:32.142+02:00"},
+		{"toString(datetime('2015-07-21T21:40:32.142[Europe/Stockholm]'))", "2015-07-21T21:40:32.142+02:00[Europe/Stockholm]"},
+	}
+	for _, test := range tests {
+		result, err := executor.Execute(ctx, "RETURN "+test.expression+" AS value", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{test.want}}, result.Rows)
+	}
+}
+
+func BenchmarkLoadPinnedTemporalLocationCached(b *testing.B) {
+	if _, ok := loadTemporalLocation("Europe/Stockholm"); !ok {
+		b.Fatal("pinned timezone was not loaded")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, ok := loadTemporalLocation("Europe/Stockholm"); !ok {
+			b.Fatal("cached pinned timezone was not loaded")
+		}
+	}
+}
+
 func TestTemporalWeekConstructionInheritsBaseDateWeekday(t *testing.T) {
 	value, ok := buildTemporalValue("date", map[string]interface{}{
 		"date": CypherDate{Time: time.Date(1816, 12, 31, 0, 0, 0, 0, time.UTC)},

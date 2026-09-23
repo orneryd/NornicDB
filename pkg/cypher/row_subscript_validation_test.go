@@ -40,6 +40,33 @@ func TestListSliceEvaluatesBoundsAndPropagatesNull(t *testing.T) {
 	require.Nil(t, result.Rows[0][0])
 }
 
+func TestDirectListSubscriptsUseTheSharedTypedEvaluator(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "direct_list_subscripts"))
+	ctx := context.Background()
+
+	for _, query := range []string{
+		"RETURN 5[0]",
+		"RETURN [1, 2, 3][1.5]",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err)
+		var semanticError *SemanticError
+		require.ErrorAs(t, err, &semanticError)
+		require.Equal(t, "Neo.ClientError.Statement.TypeError", semanticError.Code)
+	}
+
+	nullSlice, err := exec.Execute(ctx, "RETURN [1, 2, 3][null..2] AS value", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil}}, nullSlice.Rows)
+
+	bounded, err := exec.Execute(ctx, "RETURN [1, 2, 3, 4][$lower..$upper] AS value", map[string]interface{}{
+		"lower": int64(1),
+		"upper": int64(3),
+	})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{int64(2), int64(3)}}}, bounded.Rows)
+}
+
 func TestMapSubscriptPropagatesNullAndClassifiesNonStringKeys(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "map_subscript_types"))
 	ctx := context.Background()
