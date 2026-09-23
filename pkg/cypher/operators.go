@@ -635,6 +635,9 @@ func (e *StorageExecutor) splitByOperator(expr, op string) []string {
 //	add(5.0, 3)                                  // float64(8.0)
 //	add("2025-01-01", &CypherDuration{Days: 5})  // "2025-01-06T00:00:00Z"
 func (e *StorageExecutor) add(left, right interface{}) interface{} {
+	if result, handled := addTemporalValues(left, right); handled {
+		return result
+	}
 	// Cypher list concatenation:
 	// - list + list
 	// - list + scalar
@@ -709,6 +712,16 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 //	multiply(5, 3)    // int64(15)
 //	multiply(5.0, 3)  // float64(15.0)
 func (e *StorageExecutor) multiply(left, right interface{}) interface{} {
+	if factor, ok := toFloat64(right); ok {
+		if result, handled := scaleTemporalDuration(left, factor); handled {
+			return result
+		}
+	}
+	if factor, ok := toFloat64(left); ok {
+		if result, handled := scaleTemporalDuration(right, factor); handled {
+			return result
+		}
+	}
 	l, okL := toFloat64(left)
 	r, okR := toFloat64(right)
 	if !okL || !okR {
@@ -745,6 +758,11 @@ func (e *StorageExecutor) multiply(left, right interface{}) interface{} {
 //	divide(10, 3)  // float64(3.333...)
 //	divide(10, 0)  // nil (division by zero)
 func (e *StorageExecutor) divide(left, right interface{}) interface{} {
+	if divisor, ok := toFloat64(right); ok && divisor != 0 {
+		if result, handled := scaleTemporalDuration(left, 1/divisor); handled {
+			return result
+		}
+	}
 	l, okL := toFloat64(left)
 	r, okR := toFloat64(right)
 	if !okL || !okR || r == 0 {
@@ -817,6 +835,9 @@ func (e *StorageExecutor) modulo(left, right interface{}) interface{} {
 //	subtract("2025-01-06", &CypherDuration{Days: 5})  // "2025-01-01T00:00:00Z"
 //	subtract("2025-01-06", "2025-01-01")              // &CypherDuration{Days: 5}
 func (e *StorageExecutor) subtract(left, right interface{}) interface{} {
+	if result, handled := subtractTemporalValues(left, right); handled {
+		return result
+	}
 	// Handle date - duration = date
 	if dur, ok := right.(*CypherDuration); ok {
 		result := subtractDurationFromDate(left, dur)

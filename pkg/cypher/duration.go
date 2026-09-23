@@ -152,31 +152,63 @@ func (d *CypherDuration) UnmarshalMsgpack(data []byte) error {
 //	zeroDur := &CypherDuration{}
 //	_ = zeroDur.String() // serializes as "PT0S"
 func (d *CypherDuration) String() string {
+	return FormatCypherDuration(d.Years*12+d.Months, d.Days, d.Hours*3_600+d.Minutes*60+d.Seconds, d.Nanos)
+}
+
+// FormatCypherDuration renders Neo4j's independent month, day, second, and
+// nanosecond duration groups in canonical Cypher ISO form.
+func FormatCypherDuration(months, days, seconds, nanos int64) string {
+	seconds += nanos / 1_000_000_000
+	nanos %= 1_000_000_000
+	if seconds < 0 && nanos > 0 {
+		seconds++
+		nanos -= 1_000_000_000
+	} else if seconds > 0 && nanos < 0 {
+		seconds--
+		nanos += 1_000_000_000
+	}
+
 	var sb strings.Builder
 	sb.WriteString("P")
-	if d.Years > 0 {
-		sb.WriteString(fmt.Sprintf("%dY", d.Years))
+	if years := months / 12; years != 0 {
+		sb.WriteString(fmt.Sprintf("%dY", years))
 	}
-	if d.Months > 0 {
-		sb.WriteString(fmt.Sprintf("%dM", d.Months))
+	if monthsOfYear := months % 12; monthsOfYear != 0 {
+		sb.WriteString(fmt.Sprintf("%dM", monthsOfYear))
 	}
-	if d.Days > 0 {
-		sb.WriteString(fmt.Sprintf("%dD", d.Days))
+	if days != 0 {
+		sb.WriteString(fmt.Sprintf("%dD", days))
 	}
-	if d.Hours > 0 || d.Minutes > 0 || d.Seconds > 0 || d.Nanos > 0 {
+	if seconds != 0 || nanos != 0 {
 		sb.WriteString("T")
-		if d.Hours > 0 {
-			sb.WriteString(fmt.Sprintf("%dH", d.Hours))
+		hours := seconds / 3_600
+		seconds %= 3_600
+		minutes := seconds / 60
+		seconds %= 60
+		if hours != 0 {
+			sb.WriteString(fmt.Sprintf("%dH", hours))
 		}
-		if d.Minutes > 0 {
-			sb.WriteString(fmt.Sprintf("%dM", d.Minutes))
+		if minutes != 0 {
+			sb.WriteString(fmt.Sprintf("%dM", minutes))
 		}
-		if d.Seconds > 0 || d.Nanos > 0 {
-			if d.Nanos > 0 {
-				fraction := strings.TrimRight(fmt.Sprintf("%09d", d.Nanos), "0")
-				sb.WriteString(fmt.Sprintf("%d.%sS", d.Seconds, fraction))
+		if seconds != 0 || nanos != 0 {
+			sign := ""
+			if seconds < 0 || (seconds == 0 && nanos < 0) {
+				sign = "-"
+			}
+			wholeSeconds := seconds
+			if wholeSeconds < 0 {
+				wholeSeconds = -wholeSeconds
+			}
+			fractionNanos := nanos
+			if fractionNanos < 0 {
+				fractionNanos = -fractionNanos
+			}
+			if fractionNanos != 0 {
+				fraction := strings.TrimRight(fmt.Sprintf("%09d", fractionNanos), "0")
+				sb.WriteString(fmt.Sprintf("%s%d.%sS", sign, wholeSeconds, fraction))
 			} else {
-				sb.WriteString(fmt.Sprintf("%dS", d.Seconds))
+				sb.WriteString(fmt.Sprintf("%s%dS", sign, wholeSeconds))
 			}
 		}
 	}

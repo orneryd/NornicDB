@@ -40,6 +40,7 @@ func (CypherDate) TemporalPropertyKind() string          { return "date" }
 func (CypherLocalTime) TemporalPropertyKind() string     { return "local-time" }
 func (CypherTime) TemporalPropertyKind() string          { return "time" }
 func (CypherLocalDateTime) TemporalPropertyKind() string { return "local-date-time" }
+func (CypherDateTime) TemporalPropertyKind() string      { return "zoned-date-time" }
 
 func init() {
 	registerTemporalTimeExtension(41, CypherDate{}, func(value CypherDate) time.Time { return value.Time }, func(value time.Time) CypherDate { return CypherDate{Time: value} })
@@ -120,6 +121,47 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctxEval func(string) inter
 		return nil, false
 	}
 	kind := strings.ToLower(name)
+	if kind == "duration.between" || kind == "duration.inmonths" || kind == "duration.indays" || kind == "duration.inseconds" {
+		arguments := e.splitFunctionArgs(argument)
+		if len(arguments) != 2 {
+			return nil, true
+		}
+		leftExpression := strings.TrimSpace(arguments[0])
+		rightExpression := strings.TrimSpace(arguments[1])
+		if strings.EqualFold(leftExpression, "null") || strings.EqualFold(rightExpression, "null") {
+			return nil, true
+		}
+		if leftExpression == rightExpression {
+			return &CypherDuration{}, true
+		}
+		left := ctxEval(leftExpression)
+		right := ctxEval(rightExpression)
+		if left == nil || right == nil {
+			return nil, true
+		}
+		return durationBetweenTemporalValues(strings.TrimPrefix(kind, "duration."), left, right)
+	}
+	if strings.HasSuffix(kind, ".truncate") {
+		kind = strings.TrimSuffix(kind, ".truncate")
+		arguments := e.splitFunctionArgs(argument)
+		if len(arguments) < 2 || len(arguments) > 3 {
+			return nil, true
+		}
+		unit, unitOK := ctxEval(strings.TrimSpace(arguments[0])).(string)
+		if !unitOK {
+			return nil, true
+		}
+		value := ctxEval(strings.TrimSpace(arguments[1]))
+		fields := map[string]interface{}{}
+		if len(arguments) == 3 {
+			var fieldsOK bool
+			fields, fieldsOK = toStringAnyMap(ctxEval(strings.TrimSpace(arguments[2])))
+			if !fieldsOK {
+				return nil, true
+			}
+		}
+		return truncateTemporalValue(kind, unit, value, fields)
+	}
 	if dot := strings.IndexByte(kind, '.'); dot > 0 {
 		suffix := kind[dot+1:]
 		if suffix == "transaction" || suffix == "statement" || suffix == "realtime" {
@@ -128,21 +170,44 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctxEval func(string) inter
 	}
 	switch kind {
 	case "date", "localtime", "time", "localdatetime", "datetime", "duration":
-		value := ctxEval(strings.TrimSpace(argument))
-		if value == nil && strings.TrimSpace(argument) != "" {
+		argument = strings.TrimSpace(argument)
+		if argument == "" {
+			now := time.Now()
+			switch kind {
+			case "date":
+				return CypherDate{Time: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)}, true
+			case "localtime":
+				return CypherLocalTime{Time: now}, true
+			case "time":
+				return CypherTime{Time: now}, true
+			case "localdatetime":
+				return CypherLocalDateTime{Time: now}, true
+			case "datetime":
+				return now, true
+			default:
+				return nil, true
+			}
+		}
+		value := ctxEval(argument)
+		if value == nil {
 			return nil, true
 		}
 		if text, isString := value.(string); isString {
-			return parseTemporalText(kind, text)
+			parsed, valid := parseTemporalText(kind, text)
+			if !valid {
+				return nil, true
+			}
+			return parsed, true
 		}
 		if converted, valid := projectTemporalValue(kind, value); valid {
 			return converted, true
 		}
 		fields, isMap := toStringAnyMap(value)
 		if !isMap {
-			return nil, false
+			return nil, true
 		}
-		return buildTemporalValue(kind, fields)
+		built, _ := buildTemporalValue(kind, fields)
+		return built, true
 	case "datetime.fromepoch":
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) != 2 {
@@ -414,6 +479,25 @@ func temporalLocation(fields map[string]interface{}, zoned bool) (*time.Location
 }
 
 func parseTemporalOffset(value string) (int, bool) {
+	if len(value) == 5 || len(value) == 7 {
+		sign := 1
+		if value[0] == '-' {
+			sign = -1
+		} else if value[0] != '+' {
+			return 0, false
+		}
+		hour, errHour := strconv.Atoi(value[1:3])
+		minute, errMinute := strconv.Atoi(value[3:5])
+		second := 0
+		var errSecond error
+		if len(value) == 7 {
+			second, errSecond = strconv.Atoi(value[5:7])
+		}
+		if errHour != nil || errMinute != nil || errSecond != nil || minute > 59 || second > 59 {
+			return 0, false
+		}
+		return sign * (hour*3600 + minute*60 + second), true
+	}
 	if len(value) != 6 && len(value) != 9 {
 		return 0, false
 	}
@@ -498,9 +582,10 @@ func buildDurationFromFields(fields map[string]interface{}) *CypherDuration {
 	if nanos == 1_000_000_000 {
 		secondsInt++
 		nanos = 0
+	} else if nanos == -1_000_000_000 {
+		secondsInt--
+		nanos = 0
 	}
-	extraDays := secondsInt / 86_400
-	secondsInt %= 86_400
 	hours := secondsInt / 3_600
 	secondsInt %= 3_600
 	minutes := secondsInt / 60
@@ -509,7 +594,7 @@ func buildDurationFromFields(fields map[string]interface{}) *CypherDuration {
 	return &CypherDuration{
 		Years:   totalMonths / 12,
 		Months:  totalMonths % 12,
-		Days:    int64(wholeDays) + extraDays,
+		Days:    int64(wholeDays),
 		Hours:   hours,
 		Minutes: minutes,
 		Seconds: secondsInt,

@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -188,7 +189,7 @@ func TestDurationBetween(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("duration between dates", func(t *testing.T) {
-		result, err := executor.Execute(ctx, "RETURN duration.between('2025-01-01', '2025-01-06') AS d", nil)
+		result, err := executor.Execute(ctx, "RETURN duration.between(date('2025-01-01'), date('2025-01-06')) AS d", nil)
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -202,7 +203,7 @@ func TestDurationBetween(t *testing.T) {
 	})
 
 	t.Run("duration between datetimes", func(t *testing.T) {
-		result, err := executor.Execute(ctx, "RETURN duration.between('2025-01-01T10:00:00', '2025-01-01T12:30:00') AS d", nil)
+		result, err := executor.Execute(ctx, "RETURN duration.between(localdatetime('2025-01-01T10:00:00'), localdatetime('2025-01-01T12:30:00')) AS d", nil)
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -224,16 +225,16 @@ func TestDurationInDays(t *testing.T) {
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
-	result, err := executor.Execute(ctx, "RETURN duration.inDays(duration('P10D')) AS d", nil)
+	result, err := executor.Execute(ctx, "RETURN duration.inDays(date('2025-01-01'), date('2025-01-11')) AS d", nil)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
-	got, ok := result.Rows[0][0].(float64)
+	got, ok := result.Rows[0][0].(*CypherDuration)
 	if !ok {
-		t.Fatalf("Expected float64, got %T", result.Rows[0][0])
+		t.Fatalf("Expected CypherDuration, got %T", result.Rows[0][0])
 	}
-	if got != 10.0 {
-		t.Errorf("Expected 10 days, got %f", got)
+	if got.Days != 10 {
+		t.Errorf("Expected 10 days, got %d", got.Days)
 	}
 }
 
@@ -245,16 +246,16 @@ func TestDurationInSeconds(t *testing.T) {
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
-	result, err := executor.Execute(ctx, "RETURN duration.inSeconds(duration('PT1H')) AS s", nil)
+	result, err := executor.Execute(ctx, "RETURN duration.inSeconds(localtime('10:00'), localtime('11:00')) AS s", nil)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
-	got, ok := result.Rows[0][0].(float64)
+	got, ok := result.Rows[0][0].(*CypherDuration)
 	if !ok {
-		t.Fatalf("Expected float64, got %T", result.Rows[0][0])
+		t.Fatalf("Expected CypherDuration, got %T", result.Rows[0][0])
 	}
-	if got != 3600.0 {
-		t.Errorf("Expected 3600 seconds, got %f", got)
+	if got.Hours != 1 {
+		t.Errorf("Expected one hour, got %s", got)
 	}
 }
 
@@ -378,9 +379,12 @@ func TestDateArithmeticQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got := result.Rows[0][0].(string)
-		if !strings.HasPrefix(got, "2025-01-06") {
-			t.Errorf("Expected 2025-01-06*, got %s", got)
+		got, ok := result.Rows[0][0].(CypherDate)
+		if !ok {
+			t.Fatalf("Expected CypherDate, got %T", result.Rows[0][0])
+		}
+		if got.String() != "2025-01-06" {
+			t.Errorf("Expected 2025-01-06, got %s", got.String())
 		}
 	})
 
@@ -389,14 +393,17 @@ func TestDateArithmeticQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got := result.Rows[0][0].(string)
-		if !strings.HasPrefix(got, "2025-01-07") {
-			t.Errorf("Expected 2025-01-07*, got %s", got)
+		got, ok := result.Rows[0][0].(CypherDate)
+		if !ok {
+			t.Fatalf("Expected CypherDate, got %T", result.Rows[0][0])
+		}
+		if got.String() != "2025-01-07" {
+			t.Errorf("Expected 2025-01-07, got %s", got.String())
 		}
 	})
 
-	t.Run("date - date returns duration", func(t *testing.T) {
-		result, err := executor.Execute(ctx, "RETURN date('2025-01-10') - date('2025-01-01') AS diff", nil)
+	t.Run("duration between dates returns duration", func(t *testing.T) {
+		result, err := executor.Execute(ctx, "RETURN duration.between(date('2025-01-01'), date('2025-01-10')) AS diff", nil)
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -414,9 +421,12 @@ func TestDateArithmeticQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got := result.Rows[0][0].(string)
-		if !strings.Contains(got, "13:00:00") {
-			t.Errorf("Expected datetime with 13:00:00, got %s", got)
+		got, ok := result.Rows[0][0].(time.Time)
+		if !ok {
+			t.Fatalf("Expected time.Time, got %T", result.Rows[0][0])
+		}
+		if got.Hour() != 13 {
+			t.Errorf("Expected datetime hour 13, got %s", got.Format(time.RFC3339))
 		}
 	})
 
@@ -425,9 +435,12 @@ func TestDateArithmeticQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got := result.Rows[0][0].(string)
-		if !strings.HasPrefix(got, "2025-01-08") {
-			t.Errorf("Expected 2025-01-08*, got %s", got)
+		got, ok := result.Rows[0][0].(CypherDate)
+		if !ok {
+			t.Fatalf("Expected CypherDate, got %T", result.Rows[0][0])
+		}
+		if got.String() != "2025-01-08" {
+			t.Errorf("Expected 2025-01-08, got %s", got.String())
 		}
 	})
 }

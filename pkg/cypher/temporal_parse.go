@@ -36,6 +36,9 @@ func parseTemporalText(kind, text string) (interface{}, bool) {
 }
 
 func parseCypherDateText(text string) (time.Time, bool) {
+	if len(text) > 0 && (text[0] == '+' || text[0] == '-') {
+		return parseExpandedCypherDateText(text)
+	}
 	if len(text) < 4 {
 		return time.Time{}, false
 	}
@@ -104,6 +107,23 @@ func parseCypherDateText(text string) (time.Time, bool) {
 	return checkedDate(year, month, day)
 }
 
+func parseExpandedCypherDateText(text string) (time.Time, bool) {
+	separator := 1
+	for separator < len(text) && text[separator] >= '0' && text[separator] <= '9' {
+		separator++
+	}
+	if separator < 5 || separator+6 != len(text) || text[separator] != '-' || text[separator+3] != '-' {
+		return time.Time{}, false
+	}
+	year, err := strconv.Atoi(text[:separator])
+	month, monthOK := parseFixedDecimal(text, separator+1, 2)
+	day, dayOK := parseFixedDecimal(text, separator+4, 2)
+	if err != nil || !monthOK || !dayOK {
+		return time.Time{}, false
+	}
+	return checkedDate(year, month, day)
+}
+
 func checkedDate(year, month, day int) (time.Time, bool) {
 	value := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 	return value, value.Year() == year && int(value.Month()) == month && value.Day() == day
@@ -131,7 +151,11 @@ func parseCypherClockText(text string) (time.Time, bool) {
 func parseCypherTimeText(text string) (time.Time, bool) {
 	clock, offset, ok := splitClockOffset(text)
 	if !ok {
-		return time.Time{}, false
+		hour, minute, second, nanos, clockOK := parseClockComponents(text)
+		if !clockOK {
+			return time.Time{}, false
+		}
+		return time.Date(1970, 1, 1, hour, minute, second, nanos, time.UTC), true
 	}
 	hour, minute, second, nanos, ok := parseClockComponents(clock)
 	if !ok {
@@ -143,7 +167,11 @@ func parseCypherTimeText(text string) (time.Time, bool) {
 func parseCypherLocalDateTimeText(text string) (time.Time, bool) {
 	separator := strings.IndexByte(text, 'T')
 	if separator < 0 {
-		return time.Time{}, false
+		date, ok := parseCypherDateText(text)
+		if !ok {
+			return time.Time{}, false
+		}
+		return time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC), true
 	}
 	date, ok := parseCypherDateText(text[:separator])
 	if !ok {
@@ -176,9 +204,6 @@ func parseCypherDateTimeText(text string) (time.Time, string, bool) {
 	}
 	clockText := text[separator+1:]
 	clock, offset, hasOffset := splitClockOffset(clockText)
-	if zoneID == "" && !hasOffset {
-		return time.Time{}, "", false
-	}
 	if zoneID != "" && !hasOffset {
 		clock = clockText
 	}
@@ -351,10 +376,14 @@ func parseCypherDurationText(text string) (*CypherDuration, bool) {
 			continue
 		}
 		start := index
+		if text[index] == '+' || text[index] == '-' {
+			index++
+		}
+		digitsStart := index
 		for index < len(text) && ((text[index] >= '0' && text[index] <= '9') || text[index] == '.') {
 			index++
 		}
-		if start == index || index == len(text) {
+		if digitsStart == index || index == len(text) {
 			return nil, false
 		}
 		number, err := strconv.ParseFloat(text[start:index], 64)
@@ -435,16 +464,17 @@ func normalizeDuration(years, months, weeks, days, hours, minutes, seconds float
 	if nanos == 1_000_000_000 {
 		secondsInt++
 		nanos = 0
+	} else if nanos == -1_000_000_000 {
+		secondsInt--
+		nanos = 0
 	}
-	extraDays := secondsInt / 86_400
-	secondsInt %= 86_400
 	hour := secondsInt / 3_600
 	secondsInt %= 3_600
 	minute := secondsInt / 60
 	return &CypherDuration{
 		Years:   int64(wholeMonths) / 12,
 		Months:  int64(wholeMonths) % 12,
-		Days:    int64(wholeDays) + extraDays,
+		Days:    int64(wholeDays),
 		Hours:   hour,
 		Minutes: minute,
 		Seconds: secondsInt % 60,

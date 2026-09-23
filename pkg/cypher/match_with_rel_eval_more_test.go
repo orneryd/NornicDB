@@ -79,9 +79,9 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 	require.Equal(t, "2026-03-20T20:22:20Z", dtTime.UTC().Format(time.RFC3339))
 	require.Nil(t, exec.evaluateExpressionFromValues("datetime('not-a-time')", values))
 
-	local := exec.evaluateExpressionFromValues("localdatetime()", values).(string)
-	_, err := time.Parse("2006-01-02T15:04:05", local)
-	require.NoError(t, err)
+	local, ok := exec.evaluateExpressionFromValues("localdatetime()", values).(CypherLocalDateTime)
+	require.True(t, ok, "expected CypherLocalDateTime")
+	require.False(t, local.Time.IsZero())
 
 	coalesced := exec.evaluateExpressionFromValues("coalesce(missing, n.name)", values)
 	require.Equal(t, "alice", coalesced)

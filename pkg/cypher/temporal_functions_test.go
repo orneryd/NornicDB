@@ -136,6 +136,156 @@ func TestTemporalPropertyAccessorsUseTypedValues(t *testing.T) {
 	}
 }
 
+func TestTemporalValuesRoundTripThroughStringInComputedRows(t *testing.T) {
+	executor := &StorageExecutor{}
+	tests := []struct {
+		name       string
+		expression string
+		want       interface{}
+	}{
+		{name: "date text", expression: "toString(date({year: 1984, month: 10, day: 11}))", want: "1984-10-11"},
+		{name: "fixed offset date time text", expression: "toString(datetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123, timezone: '+01:00'}))", want: "1984-10-11T12:31:14.645876123+01:00"},
+		{name: "normalized duration text", expression: "toString(duration({minutes: 12, seconds: -60}))", want: "PT11M"},
+		{name: "negative fractional duration text", expression: "toString(duration({seconds: -2, milliseconds: 1}))", want: "PT-1.999S"},
+		{name: "negative subsecond duration text", expression: "toString(duration({days: 1, milliseconds: -1}))", want: "P1DT-0.001S"},
+		{name: "date round trip equality", expression: "date(toString(d)) = d", want: true},
+		{name: "date time round trip equality", expression: "datetime(toString(dt)) = dt", want: true},
+		{name: "duration round trip equality", expression: "duration(toString(duration({seconds: -2, milliseconds: -1}))) = duration({seconds: -2, milliseconds: -1})", want: true},
+	}
+	values := pipelineRow{
+		"d":  CypherDate{Time: time.Date(1984, 10, 11, 0, 0, 0, 0, time.UTC)},
+		"dt": time.Date(1984, 10, 11, 12, 31, 14, 645876123, time.FixedZone("+01:00", 3600)),
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := executor.evaluateRowExpression(test.expression, values)
+			if !ok {
+				t.Fatalf("expression %q was not evaluated", test.expression)
+			}
+			if got != test.want {
+				t.Fatalf("expression %q = %#v, want %#v", test.expression, got, test.want)
+			}
+		})
+	}
+}
+
+func TestTemporalComparisonUsesNeo4jValueOrdering(t *testing.T) {
+	executor := &StorageExecutor{}
+	tests := []struct {
+		name       string
+		expression string
+		want       bool
+	}{
+		{
+			name:       "zoned times compare by UTC clock value",
+			expression: "time({hour: 10, minute: 0, timezone: '+01:00'}) < time({hour: 9, minute: 35, second: 14, nanosecond: 645876123, timezone: '+00:00'})",
+			want:       true,
+		},
+		{
+			name:       "duration clock seconds do not normalize into days",
+			expression: "duration({days: 14, hours: 16, minutes: 13, seconds: 10}) = duration({days: 13, hours: 40, minutes: 13, seconds: 10})",
+			want:       false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := executor.evaluateRowExpression(test.expression, pipelineRow{})
+			if !ok {
+				t.Fatalf("expression %q was not evaluated", test.expression)
+			}
+			if got != test.want {
+				t.Fatalf("expression %q = %#v, want %v", test.expression, got, test.want)
+			}
+		})
+	}
+}
+
+func TestTemporalArithmeticPreservesTypedValueSemantics(t *testing.T) {
+	executor := &StorageExecutor{}
+	baseDuration := buildDurationFromFields(map[string]interface{}{
+		"years": int64(12), "months": int64(5), "days": int64(14),
+		"hours": int64(16), "minutes": int64(12), "seconds": int64(70), "nanoseconds": int64(2),
+	})
+	values := pipelineRow{
+		"dateValue":      CypherDate{Time: time.Date(1984, 10, 11, 0, 0, 0, 0, time.UTC)},
+		"localTimeValue": CypherLocalTime{Time: time.Date(1970, 1, 1, 12, 31, 14, 1, time.UTC)},
+		"dateTimeValue":  time.Date(1984, 10, 11, 12, 31, 14, 1, time.FixedZone("+01:00", 3600)),
+		"durationValue":  baseDuration,
+	}
+	tests := []struct {
+		expression string
+		want       string
+	}{
+		{expression: "dateValue + durationValue", want: "1997-03-25"},
+		{expression: "localTimeValue + durationValue", want: "04:44:24.000000003"},
+		{expression: "dateTimeValue - durationValue", want: "1972-04-26T20:18:03.999999999+01:00"},
+		{expression: "durationValue + durationValue", want: "P24Y10M28DT32H26M20.000000004S"},
+		{expression: "durationValue / 2", want: "P6Y2M22DT13H21M8.000000001S"},
+	}
+	for _, test := range tests {
+		t.Run(test.expression, func(t *testing.T) {
+			got, ok := executor.evaluateRowExpression(test.expression, values)
+			if !ok {
+				t.Fatalf("expression %q was not evaluated", test.expression)
+			}
+			if text := formatCypherValueString(got); text != test.want {
+				t.Fatalf("expression %q = %q, want %q (%T)", test.expression, text, test.want, got)
+			}
+		})
+	}
+}
+
+func TestTemporalTruncationUsesOneTypedImplementation(t *testing.T) {
+	executor := &StorageExecutor{}
+	tests := []struct {
+		expression string
+		want       string
+	}{
+		{expression: "date.truncate('week', date({year: 1984, month: 10, day: 11}), {dayOfWeek: 2})", want: "1984-10-09"},
+		{expression: "datetime.truncate('century', date({year: 2017, month: 10, day: 11}), {timezone: 'Europe/Stockholm'})", want: "2000-01-01T00:00+01:00[Europe/Stockholm]"},
+		{expression: "localdatetime.truncate('millisecond', localdatetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123}), {nanosecond: 2})", want: "1984-10-11T12:31:14.645000002"},
+		{expression: "localtime.truncate('minute', time({hour: 12, minute: 31, second: 14, timezone: '+01:00'}), {})", want: "12:31"},
+		{expression: "time.truncate('hour', localtime({hour: 12, minute: 31}), {timezone: '+01:00'})", want: "12:00+01:00"},
+	}
+	for _, test := range tests {
+		t.Run(test.expression, func(t *testing.T) {
+			got, ok := executor.evaluateRowExpression(test.expression, pipelineRow{})
+			if !ok {
+				t.Fatalf("expression %q was not evaluated", test.expression)
+			}
+			if text := formatCypherValueString(got); text != test.want {
+				t.Fatalf("expression %q = %q, want %q (%T)", test.expression, text, test.want, got)
+			}
+		})
+	}
+}
+
+func TestDurationBetweenFunctionsAlignTemporalTypes(t *testing.T) {
+	executor := &StorageExecutor{}
+	tests := []struct {
+		expression string
+		want       string
+	}{
+		{expression: "duration.between(localdatetime('2018-01-01T12:00'), localdatetime('2018-01-02T10:00'))", want: "PT22H"},
+		{expression: "duration.between(date('1984-10-11'), date('2015-06-24'))", want: "P30Y8M13D"},
+		{expression: "duration.inMonths(date('2018-03-11'), date('2016-06-24'))", want: "P-1Y-8M"},
+		{expression: "duration.inSeconds(datetime({year: 2017, month: 10, day: 29, hour: 0, timezone: 'Europe/Stockholm'}), localdatetime({year: 2017, month: 10, day: 29, hour: 4}))", want: "PT5H"},
+		{expression: "duration.inSeconds(localtime('12:34:54.7'), localtime('12:34:54.3'))", want: "PT-0.4S"},
+		{expression: "duration.inSeconds(localdatetime('-999999999-01-01'), localdatetime('+999999999-12-31T23:59:59'))", want: "PT17531639991215H59M59S"},
+	}
+	for _, test := range tests {
+		t.Run(test.expression, func(t *testing.T) {
+			got, ok := executor.evaluateRowExpression(test.expression, pipelineRow{})
+			if !ok {
+				t.Fatalf("expression %q was not evaluated", test.expression)
+			}
+			if text := formatCypherValueString(got); text != test.want {
+				t.Fatalf("expression %q = %q, want %q (%T)", test.expression, text, test.want, got)
+			}
+		})
+	}
+}
+
 func TestTimestampFunction(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
@@ -214,10 +364,12 @@ func TestDateFunction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got := result.Rows[0][0].(string)
-		// Should be in YYYY-MM-DD format
-		if _, err := time.Parse("2006-01-02", got); err != nil {
-			t.Errorf("Invalid date format: %s", got)
+		got, ok := result.Rows[0][0].(CypherDate)
+		if !ok {
+			t.Fatalf("Expected CypherDate, got %T", result.Rows[0][0])
+		}
+		if got.Time.IsZero() {
+			t.Error("Expected non-zero date")
 		}
 	})
 
@@ -226,9 +378,12 @@ func TestDateFunction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got := result.Rows[0][0].(string)
-		if got != "2025-11-27" {
-			t.Errorf("Expected 2025-11-27, got %s", got)
+		got, ok := result.Rows[0][0].(CypherDate)
+		if !ok {
+			t.Fatalf("Expected CypherDate, got %T", result.Rows[0][0])
+		}
+		if got.String() != "2025-11-27" {
+			t.Errorf("Expected 2025-11-27, got %s", got.String())
 		}
 	})
 }
@@ -246,10 +401,12 @@ func TestTimeFunction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got := result.Rows[0][0].(string)
-		// Should be in HH:MM:SS format
-		if _, err := time.Parse("15:04:05", got); err != nil {
-			t.Errorf("Invalid time format: %s", got)
+		got, ok := result.Rows[0][0].(CypherTime)
+		if !ok {
+			t.Fatalf("Expected CypherTime, got %T", result.Rows[0][0])
+		}
+		if got.Time.IsZero() {
+			t.Error("Expected non-zero time")
 		}
 	})
 
@@ -258,9 +415,12 @@ func TestTimeFunction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
-		got := result.Rows[0][0].(string)
-		if got != "14:30:00" {
-			t.Errorf("Expected 14:30:00, got %s", got)
+		got, ok := result.Rows[0][0].(CypherTime)
+		if !ok {
+			t.Fatalf("Expected CypherTime, got %T", result.Rows[0][0])
+		}
+		if got.String() != "14:30Z" {
+			t.Errorf("Expected 14:30Z, got %s", got.String())
 		}
 	})
 }
@@ -277,10 +437,12 @@ func TestLocaldatetimeFunction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
-	got := result.Rows[0][0].(string)
-	// Should be in YYYY-MM-DDTHH:MM:SS format (no timezone)
-	if _, err := time.Parse("2006-01-02T15:04:05", got); err != nil {
-		t.Errorf("Invalid localdatetime format: %s", got)
+	got, ok := result.Rows[0][0].(CypherLocalDateTime)
+	if !ok {
+		t.Fatalf("Expected CypherLocalDateTime, got %T", result.Rows[0][0])
+	}
+	if got.Time.IsZero() {
+		t.Error("Expected non-zero local datetime")
 	}
 }
 
@@ -296,10 +458,12 @@ func TestLocaltimeFunction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
-	got := result.Rows[0][0].(string)
-	// Should be in HH:MM:SS format
-	if _, err := time.Parse("15:04:05", got); err != nil {
-		t.Errorf("Invalid localtime format: %s", got)
+	got, ok := result.Rows[0][0].(CypherLocalTime)
+	if !ok {
+		t.Fatalf("Expected CypherLocalTime, got %T", result.Rows[0][0])
+	}
+	if got.Time.IsZero() {
+		t.Error("Expected non-zero local time")
 	}
 }
 
@@ -366,35 +530,35 @@ func TestDateComponentFunctions(t *testing.T) {
 			t.Fatalf("date.weekYear expected 2025, got %v", row[5])
 		}
 
-		result, err = executor.Execute(ctx, "RETURN date.truncate('year','2025-11-27') AS y, date.truncate('quarter','2025-11-27') AS q, date.truncate('month','2025-11-27') AS m, date.truncate('week','2025-11-27') AS w, date.truncate('day','2025-11-27') AS d", nil)
+		result, err = executor.Execute(ctx, "RETURN date.truncate('year',date('2025-11-27')) AS y, date.truncate('quarter',date('2025-11-27')) AS q, date.truncate('month',date('2025-11-27')) AS m, date.truncate('week',date('2025-11-27')) AS w, date.truncate('day',date('2025-11-27')) AS d", nil)
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
 		row = result.Rows[0]
-		if row[0] != "2025-01-01" || row[1] != "2025-10-01" || row[2] != "2025-11-01" || row[3] != "2025-11-24" || row[4] != "2025-11-27" {
+		if row[0].(CypherDate).String() != "2025-01-01" || row[1].(CypherDate).String() != "2025-10-01" || row[2].(CypherDate).String() != "2025-11-01" || row[3].(CypherDate).String() != "2025-11-24" || row[4].(CypherDate).String() != "2025-11-27" {
 			t.Fatalf("unexpected date.truncate output: %#v", row)
 		}
 	})
 
 	t.Run("datetime/time truncate and datetime components", func(t *testing.T) {
-		result, err := executor.Execute(ctx, "RETURN datetime.truncate('hour','2025-11-27T14:35:50Z') AS h, datetime.truncate('minute','2025-11-27T14:35:50Z') AS m, datetime.truncate('second','2025-11-27T14:35:50Z') AS s, datetime.truncate('day','2025-11-27T14:35:50Z') AS d, time.truncate('hour','14:35:50') AS th, time.truncate('minute','14:35:50') AS tm", nil)
+		result, err := executor.Execute(ctx, "RETURN datetime.truncate('hour',datetime('2025-11-27T14:35:50Z')) AS h, datetime.truncate('minute',datetime('2025-11-27T14:35:50Z')) AS m, datetime.truncate('second',datetime('2025-11-27T14:35:50Z')) AS s, datetime.truncate('day',datetime('2025-11-27T14:35:50Z')) AS d, time.truncate('hour',time('14:35:50')) AS th, time.truncate('minute',time('14:35:50')) AS tm", nil)
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
 		row := result.Rows[0]
-		if !strings.HasPrefix(row[0].(string), "2025-11-27T14:00:00") {
+		if row[0].(time.Time).Hour() != 14 || row[0].(time.Time).Minute() != 0 {
 			t.Fatalf("unexpected datetime.truncate hour: %v", row[0])
 		}
-		if !strings.HasPrefix(row[1].(string), "2025-11-27T14:35:00") {
+		if row[1].(time.Time).Hour() != 14 || row[1].(time.Time).Minute() != 35 || row[1].(time.Time).Second() != 0 {
 			t.Fatalf("unexpected datetime.truncate minute: %v", row[1])
 		}
-		if !strings.HasPrefix(row[2].(string), "2025-11-27T14:35:50") {
+		if row[2].(time.Time).Hour() != 14 || row[2].(time.Time).Minute() != 35 || row[2].(time.Time).Second() != 50 {
 			t.Fatalf("unexpected datetime.truncate second: %v", row[2])
 		}
-		if !strings.HasPrefix(row[3].(string), "2025-11-27T00:00:00") {
+		if row[3].(time.Time).Hour() != 0 {
 			t.Fatalf("unexpected datetime.truncate day: %v", row[3])
 		}
-		if row[4] != "14:00:00" || row[5] != "14:35:00" {
+		if row[4].(CypherTime).Time.Hour() != 14 || row[4].(CypherTime).Time.Minute() != 0 || row[5].(CypherTime).Time.Hour() != 14 || row[5].(CypherTime).Time.Minute() != 35 {
 			t.Fatalf("unexpected time.truncate outputs: %#v", row[4:6])
 		}
 

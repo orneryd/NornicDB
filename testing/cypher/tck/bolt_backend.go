@@ -366,44 +366,7 @@ func formatBoltTemporalOffset(offset int) string {
 }
 
 func formatBoltDuration(value dbtype.Duration) string {
-	years := value.Months / 12
-	months := value.Months % 12
-	days := value.Days + value.Seconds/86_400
-	secondsOfDay := value.Seconds % 86_400
-	hours := secondsOfDay / 3_600
-	secondsOfDay %= 3_600
-	minutes := secondsOfDay / 60
-	seconds := secondsOfDay % 60
-
-	var result strings.Builder
-	result.WriteByte('P')
-	if years != 0 {
-		fmt.Fprintf(&result, "%dY", years)
-	}
-	if months != 0 {
-		fmt.Fprintf(&result, "%dM", months)
-	}
-	if days != 0 {
-		fmt.Fprintf(&result, "%dD", days)
-	}
-	if hours != 0 || minutes != 0 || seconds != 0 || value.Nanos != 0 || result.Len() == 1 {
-		result.WriteByte('T')
-		if hours != 0 {
-			fmt.Fprintf(&result, "%dH", hours)
-		}
-		if minutes != 0 {
-			fmt.Fprintf(&result, "%dM", minutes)
-		}
-		if seconds != 0 || value.Nanos != 0 || (hours == 0 && minutes == 0) {
-			if value.Nanos == 0 {
-				fmt.Fprintf(&result, "%dS", seconds)
-			} else {
-				fraction := strings.TrimRight(fmt.Sprintf("%09d", value.Nanos), "0")
-				fmt.Fprintf(&result, "%d.%sS", seconds, fraction)
-			}
-		}
-	}
-	return result.String()
+	return cypher.FormatCypherDuration(value.Months, value.Days, value.Seconds, int64(value.Nanos))
 }
 
 func nodeFromBolt(node neo4j.Node) NodeValue {

@@ -750,6 +750,9 @@ func ValidatePropertyType(value interface{}, expectedType PropertyType) error {
 			return localizedError(localization.StorageValidationExpectedType("BOOLEAN", fmt.Sprintf("%T", value)), nil)
 		}
 	case PropertyTypeDate:
+		if temporalPropertyKind(value) == "date" {
+			return nil
+		}
 		switch v := value.(type) {
 		case time.Time:
 			return nil
@@ -762,6 +765,9 @@ func ValidatePropertyType(value interface{}, expectedType PropertyType) error {
 			return localizedError(localization.StorageValidationExpectedType("DATE", fmt.Sprintf("%T", value)), nil)
 		}
 	case PropertyTypeDateTime, PropertyTypeZonedDateTime:
+		if temporalPropertyKind(value) == "zoned-date-time" {
+			return nil
+		}
 		switch v := value.(type) {
 		case time.Time:
 			return nil
@@ -774,6 +780,9 @@ func ValidatePropertyType(value interface{}, expectedType PropertyType) error {
 			return localizedError(localization.StorageValidationExpectedType("ZONED DATETIME", fmt.Sprintf("%T", value)), nil)
 		}
 	case PropertyTypeLocalDateTime:
+		if temporalPropertyKind(value) == "local-date-time" {
+			return nil
+		}
 		switch v := value.(type) {
 		case string:
 			if isLocalDateTimeString(v) {
@@ -788,6 +797,14 @@ func ValidatePropertyType(value interface{}, expectedType PropertyType) error {
 	}
 
 	return nil
+}
+
+func temporalPropertyKind(value interface{}) string {
+	typed, ok := value.(interface{ TemporalPropertyKind() string })
+	if !ok {
+		return ""
+	}
+	return typed.TemporalPropertyKind()
 }
 
 func isZonedDateTimeString(raw string) bool {

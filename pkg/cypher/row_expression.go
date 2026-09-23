@@ -86,6 +86,15 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			return value, true
 		}
 		switch strings.ToLower(function) {
+		case "tostring":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			if value == nil {
+				return nil, true
+			}
+			return formatCypherValueString(value), true
 		case "length":
 			value, resolved := e.evaluateRowExpression(argument, values)
 			if !resolved {

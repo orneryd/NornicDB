@@ -398,6 +398,26 @@ func compareWithOperator(left, right interface{}, op string) bool {
 			return false // NULL comparisons with <, >, etc. are false
 		}
 	}
+	if equal, temporal := compareTemporalValues(left, right); temporal {
+		switch op {
+		case "=":
+			return equal
+		case "<>":
+			return !equal
+		}
+	}
+	if comparison, temporal := compareTemporalOrdering(left, right); temporal {
+		switch op {
+		case "<":
+			return comparison < 0
+		case ">":
+			return comparison > 0
+		case "<=":
+			return comparison <= 0
+		case ">=":
+			return comparison >= 0
+		}
+	}
 
 	// Try numeric comparison
 	numLeft, okLeft := toFloat64(left)

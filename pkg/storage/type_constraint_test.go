@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+type typedTemporalProperty string
+
+func (value typedTemporalProperty) TemporalPropertyKind() string { return string(value) }
+
 // TestValidatePropertyType tests property type validation.
 func TestValidatePropertyType(t *testing.T) {
 	tests := []struct {
@@ -55,6 +59,10 @@ func TestValidatePropertyType(t *testing.T) {
 		{"local datetime valid spaced format", "2025-11-27 10:30:00", PropertyTypeLocalDateTime, false},
 		{"local datetime invalid zoned format", "2025-11-27T10:30:00Z", PropertyTypeLocalDateTime, true},
 		{"legacy datetime alias accepts time.Time", time.Now(), PropertyTypeDateTime, false},
+		{"typed date value", typedTemporalProperty("date"), PropertyTypeDate, false},
+		{"typed zoned datetime value", typedTemporalProperty("zoned-date-time"), PropertyTypeZonedDateTime, false},
+		{"typed local datetime value", typedTemporalProperty("local-date-time"), PropertyTypeLocalDateTime, false},
+		{"typed local datetime is not zoned", typedTemporalProperty("local-date-time"), PropertyTypeZonedDateTime, true},
 		{"unknown type", "hello", PropertyType("WEIRD"), true},
 	}
 
