@@ -134,30 +134,33 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 	} else if _, bound := rows[0].nodes[varName]; bound {
 		return rows, nil
 	}
+	propertyExpressions := nodePatternPropertyExpressions(group)
 
 	candidates, err := e.loadNodesWithTemporalViewport(ctx, np.labels)
 	if err != nil {
 		return nil, err
 	}
-	filtered := make([]*storage.Node, 0, len(candidates))
-	for _, node := range candidates {
-		match := true
-		for k, expected := range np.properties {
-			actual, ok := node.Properties[k]
-			if !ok || !e.compareEqual(actual, expected) {
-				match = false
-				break
-			}
-		}
-		if match {
-			filtered = append(filtered, node)
-		}
-	}
 
 	out := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
+		scope := pipelineRowFromTraversalOptionalRow(row)
 		matched := false
-		for _, node := range filtered {
+		for _, node := range candidates {
+			propertyMatch := true
+			for name, expression := range propertyExpressions {
+				expected, resolved := e.evaluateRowExpression(expression, scope)
+				if !resolved {
+					expected = np.properties[name]
+				}
+				actual, exists := node.Properties[name]
+				if !exists || !e.compareEqual(actual, expected) {
+					propertyMatch = false
+					break
+				}
+			}
+			if !propertyMatch {
+				continue
+			}
 			cand := extendTraversalRow(row, varName, node, "", nil)
 			if !e.traversalOptionalWhereMatches(ctx, clause.where, cand) {
 				continue
@@ -171,6 +174,38 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 		}
 	}
 	return out, nil
+}
+
+func nodePatternPropertyExpressions(group string) map[string]string {
+	open := strings.IndexByte(group, '{')
+	close := strings.LastIndexByte(group, '}')
+	if open < 0 || close <= open {
+		return nil
+	}
+	expressions := make(map[string]string)
+	for _, pair := range splitTopLevelComma(group[open+1 : close]) {
+		separator := findTopLevelMapKeyValueSeparator(pair)
+		if separator <= 0 {
+			continue
+		}
+		name := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+		expressions[name] = strings.TrimSpace(pair[separator+1:])
+	}
+	return expressions
+}
+
+func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
+	scope := make(pipelineRow, len(row.nodes)+len(row.rels)+len(row.values))
+	for name, node := range row.nodes {
+		scope[name] = node
+	}
+	for name, relationship := range row.rels {
+		scope[name] = relationship
+	}
+	for name, value := range row.values {
+		scope[name] = value
+	}
+	return scope
 }
 
 // applyGeneralOptionalClause handles every clause shape the seeded single-hop

@@ -19,6 +19,59 @@ func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, val
 		}
 		return math.E, true, true
 	}
+	if name == "round" {
+		parts := e.splitFunctionArgs(argument)
+		if len(parts) < 1 || len(parts) > 3 {
+			return nil, true, false
+		}
+		value, resolved := e.evaluateRowExpression(strings.TrimSpace(parts[0]), values)
+		if !resolved {
+			return nil, true, false
+		}
+		if value == nil {
+			return nil, true, true
+		}
+		number, numeric := toFloat64(value)
+		if !numeric {
+			return nil, true, false
+		}
+		precision := 0
+		if len(parts) >= 2 {
+			precisionValue, ok := e.evaluateRowExpression(strings.TrimSpace(parts[1]), values)
+			if !ok {
+				return nil, true, false
+			}
+			var precisionOK bool
+			precision, precisionOK = toInt(precisionValue)
+			if !precisionOK || precision < 0 {
+				return nil, true, false
+			}
+		}
+		mode := "HALF_UP"
+		if len(parts) == 3 {
+			modeValue, ok := e.evaluateRowExpression(strings.TrimSpace(parts[2]), values)
+			if !ok {
+				return nil, true, false
+			}
+			if modeValue == nil {
+				return nil, true, true
+			}
+			var modeOK bool
+			mode, modeOK = modeValue.(string)
+			if !modeOK {
+				return nil, true, false
+			}
+		}
+		if len(parts) == 1 || (len(parts) == 2 && precision == 0) {
+			return float64(math.Floor(number + 0.5)), true, true
+		}
+		factor := math.Pow10(precision)
+		rounded, ok := roundRowNumber(number*factor, mode)
+		if !ok {
+			return nil, true, false
+		}
+		return rounded / factor, true, true
+	}
 
 	var unary func(float64) float64
 	switch name {
@@ -102,6 +155,40 @@ func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, val
 		return math.Atan2(leftNumber, rightNumber), true, true
 	}
 	return math.Pow(leftNumber, rightNumber), true, true
+}
+
+func roundRowNumber(value float64, mode string) (float64, bool) {
+	switch mode {
+	case "CEILING":
+		return math.Ceil(value), true
+	case "FLOOR":
+		return math.Floor(value), true
+	case "UP":
+		if value < 0 {
+			return math.Floor(value), true
+		}
+		return math.Ceil(value), true
+	case "DOWN":
+		return math.Trunc(value), true
+	case "HALF_EVEN":
+		return math.RoundToEven(value), true
+	case "HALF_UP":
+		return math.Round(value), true
+	case "HALF_DOWN":
+		absolute := math.Abs(value)
+		integer, fraction := math.Modf(absolute)
+		if fraction > 0.5 {
+			integer++
+		}
+		return math.Copysign(integer, value), true
+	case "UNNECESSARY":
+		if value != math.Trunc(value) {
+			return 0, false
+		}
+		return value, true
+	default:
+		return 0, false
+	}
 }
 
 func rowMathCot(value float64) float64 { return 1 / math.Tan(value) }

@@ -2673,15 +2673,32 @@ func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathCon
 		}
 		for _, path := range paths {
 			inner := e.buildPathContext(path, matches)
+			correlated := true
 			for name, node := range outer.nodes {
-				if _, exists := inner.nodes[name]; !exists {
-					inner.nodes[name] = node
+				if bound, exists := inner.nodes[name]; exists {
+					if bound == nil || node == nil || bound.ID != node.ID {
+						correlated = false
+						break
+					}
+					continue
 				}
+				inner.nodes[name] = node
+			}
+			if !correlated {
+				continue
 			}
 			for name, rel := range outer.rels {
-				if _, exists := inner.rels[name]; !exists {
-					inner.rels[name] = rel
+				if bound, exists := inner.rels[name]; exists {
+					if bound == nil || rel == nil || bound.ID != rel.ID {
+						correlated = false
+						break
+					}
+					continue
 				}
+				inner.rels[name] = rel
+			}
+			if !correlated {
+				continue
 			}
 			if innerWhere == "" || e.evaluateRowPredicate(ctx, innerWhere, pipelineRowFromPathContext(inner)) {
 				return true

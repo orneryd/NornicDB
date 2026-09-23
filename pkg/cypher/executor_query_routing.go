@@ -620,7 +620,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 			)
 		}
 
-		result, defined := e.evaluateRowExpression(part, row)
+		result, defined := e.evaluateRowExpressionWithContext(ctx, part, row)
 		if !defined {
 			return nil, newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",

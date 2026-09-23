@@ -47,6 +47,9 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	if isCaseExpression(expr) {
 		return e.evaluateRowCaseExpression(expr, values)
 	}
+	if value, matched, resolved := e.evaluateRowMapProjection(expr, values); matched {
+		return value, resolved
+	}
 	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
 		result := make(map[string]interface{})
 		if inner == "" {
@@ -107,6 +110,8 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			return value, resolved
 		}
 		switch strings.ToLower(function) {
+		case "reduce":
+			return e.evaluateRowReduce(argument, values)
 		case "coalesce":
 			for _, expression := range splitTopLevelComma(argument) {
 				value, resolved := e.evaluateRowExpression(strings.TrimSpace(expression), values)

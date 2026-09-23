@@ -772,6 +772,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			if perSeed == nil {
 				perSeed = &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}
 			}
+			perSeed = appendCorrelatedBinding(perSeed, nodePattern.variable, seedNode)
 
 			if combinedResult == nil {
 				combinedResult = &ExecuteResult{
@@ -819,6 +820,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 					// Log but continue with other seeds
 					continue
 				}
+				innerResult = appendCorrelatedBinding(innerResult, nodePattern.variable, seedNode)
 
 				if combinedResult == nil {
 					combinedResult = &ExecuteResult{
@@ -856,6 +858,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			// Log but continue with other seeds
 			continue
 		}
+		innerResult = appendCorrelatedBinding(innerResult, nodePattern.variable, seedNode)
 
 		if combinedResult == nil {
 			combinedResult = &ExecuteResult{
@@ -909,6 +912,22 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	}
 
 	return combinedResult, nil
+}
+
+func appendCorrelatedBinding(result *ExecuteResult, name string, value interface{}) *ExecuteResult {
+	if result == nil || name == "" {
+		return result
+	}
+	for _, column := range result.Columns {
+		if strings.EqualFold(strings.TrimSpace(column), name) {
+			return result
+		}
+	}
+	result.Columns = append(result.Columns, name)
+	for index := range result.Rows {
+		result.Rows[index] = append(result.Rows[index], value)
+	}
+	return result
 }
 
 func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, outerPart, seedVar, seedID, importVar string, cache map[string]map[string]interface{}) (interface{}, bool, error) {

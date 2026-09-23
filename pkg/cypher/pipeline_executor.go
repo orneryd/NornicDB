@@ -93,35 +93,6 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	if strings.Contains(upper, "ON CREATE SET") || strings.Contains(upper, "ON MATCH SET") || strings.Contains(cypher, "$(") {
 		return nil, false
 	}
-	// Top-level UNWIND mutation plans use the batch executor. WITH-bearing
-	// pipelines still require row projection here; direct UNWIND plans do not.
-	if clauses[0].kind == pipelineClauseUnwind {
-		hasWith := false
-		requiresBatchPlan := false
-		mergeCount := 0
-		for _, clause := range clauses {
-			hasWith = hasWith || clause.kind == pipelineClauseWith
-			if clause.kind == pipelineClauseMerge {
-				mergeCount++
-			}
-			switch clause.kind {
-			case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate,
-				pipelineClauseDelete, pipelineClauseSet, pipelineClauseRemove:
-				requiresBatchPlan = true
-			}
-		}
-		if mergeCount > 0 && (!hasWith || requiresBatchPlan || mergeCount > 1) {
-			return nil, false
-		}
-	}
-	hasMergeAction, hasSetAction := false, false
-	for _, clause := range clauses {
-		hasMergeAction = hasMergeAction || clause.kind == pipelineClauseMerge
-		hasSetAction = hasSetAction || clause.kind == pipelineClauseSet
-	}
-	if hasMergeAction && hasSetAction {
-		return nil, false
-	}
 	for _, clause := range clauses {
 		if clause.kind == pipelineClauseOptionalMatch && strings.Contains(clause.text, "*") {
 			return nil, false
@@ -346,6 +317,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			return nil, false, nil
 		}
 	}
+	// A batch operator is a fused physical implementation of this same logical
+	// pipeline. It may handle a recognized shape for throughput; unsupported
+	// shapes remain here and flow through the general row operators below.
 	if clauses[0].kind == pipelineClauseUnwind {
 		plan, err := e.prepareTopLevelUnwind(ctx, cypher)
 		if err != nil {
@@ -1228,7 +1202,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		if hasNullPatternBinding {
 			continue
 		}
-		substituted := clause
+		substituted := e.materializePipelinePropertyExpressions(clause, row)
 		var matchPieces []string
 		for name, val := range row {
 			if node, isNode := val.(*storage.Node); isNode {

@@ -47,6 +47,11 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			return nil, true, false
 		}
 		return randomCypherFloat(), true, true
+	case "randomuuid":
+		if strings.TrimSpace(argument) != "" {
+			return nil, true, false
+		}
+		return e.generateUUID(), true, true
 	case "toupper", "tolower", "trim", "ltrim", "rtrim":
 		value, ok := one()
 		text, textOK := value.(string)
@@ -191,6 +196,22 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			return nil, true, false
 		}
 		return strings.ReplaceAll(value, search, replacement), true, true
+	case "split":
+		arguments, ok := args()
+		if !ok || len(arguments) != 2 {
+			return nil, true, false
+		}
+		value, valueOK := arguments[0].(string)
+		delimiter, delimiterOK := arguments[1].(string)
+		if !valueOK || !delimiterOK {
+			return nil, true, false
+		}
+		parts := strings.Split(value, delimiter)
+		result := make([]interface{}, len(parts))
+		for index, part := range parts {
+			result[index] = part
+		}
+		return result, true, true
 	case "apoc.create.uuid":
 		return e.generateUUID(), true, true
 	case "apoc.text.join":

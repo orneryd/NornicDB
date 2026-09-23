@@ -2093,6 +2093,9 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 			}
 			return e.evaluateCoalesceInContext(trimmed, nodeMap, nil, values)
 		}
+		if val, resolved := e.evaluateRowExpressionWithContext(ctx, trimmed, pipelineRow(values)); resolved {
+			return val
+		}
 		val := e.evaluateExpressionFromValues(trimmed, values)
 		if literal, ok := val.(string); ok && literal == trimmed {
 			return e.parseValue(ctx, trimmed)

@@ -120,9 +120,6 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	matchMutation := (strings.HasPrefix(upperRest, "MATCH") || strings.HasPrefix(upperRest, "OPTIONAL MATCH")) &&
 		(findKeywordIndexInContext(plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(plan.remainder, "SET") >= 0)
 	if matchMutation {
-		if result, handled, err := e.executeSetBasedUnwindCreateOperator(ctx, plan); handled || err != nil {
-			return result, handled, err
-		}
 		if strings.HasPrefix(upperRest, "MATCH") {
 			if result, handled, err := e.executeUnwindRelationshipMergeBatch(ctx, plan.variable, plan.items, plan.remainder); handled {
 				return result, true, err
@@ -134,9 +131,6 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 				return result, true, err
 			}
 		}
-		if result, handled, err := e.executeUnwindCompoundMutationBatch(ctx, plan.variable, plan.parameterName, plan.items, plan.remainder); handled {
-			return result, true, err
-		}
 		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
 		mutationPart := plan.remainder
 		returnPart := ""
@@ -147,8 +141,24 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 		if result, handled, err := e.executeUnwindMergeChainBatch(ctx, plan.variable, plan.items, mutationPart, returnPart); handled {
 			return result, true, err
 		}
+		if result, handled, err := e.executeUnwindCompoundMutationBatch(ctx, plan.variable, plan.parameterName, plan.items, plan.remainder); handled {
+			return result, true, err
+		}
+		if result, handled, err := e.executeSetBasedUnwindCreateOperator(ctx, plan); handled || err != nil {
+			return result, handled, err
+		}
 	}
-	if strings.HasPrefix(upperRest, "CREATE") || strings.HasPrefix(upperRest, "MERGE") || strings.HasPrefix(upperRest, "OPTIONAL MATCH") {
+	if strings.HasPrefix(upperRest, "MERGE") || strings.HasPrefix(upperRest, "OPTIONAL MATCH") {
+		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
+		mutationPart := plan.remainder
+		returnPart := ""
+		if returnIndex > 0 {
+			mutationPart = strings.TrimSpace(plan.remainder[:returnIndex])
+			returnPart = strings.TrimSpace(plan.remainder[returnIndex:])
+		}
+		if result, handled, err := e.executeUnwindMergeChainBatch(ctx, plan.variable, plan.items, mutationPart, returnPart); handled {
+			return result, true, err
+		}
 		if result, handled, err := e.executeUnwindCompoundMutationBatch(ctx, plan.variable, plan.parameterName, plan.items, plan.remainder); handled {
 			return result, true, err
 		}
