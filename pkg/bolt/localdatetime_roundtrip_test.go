@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDecodePackStreamValue_LocalDateTimeStructure(t *testing.T) {
@@ -17,7 +19,52 @@ func TestDecodePackStreamValue_LocalDateTimeStructure(t *testing.T) {
 		t.Fatalf("decode localdatetime failed: %v", err)
 	}
 
-	requireNormalizedDateTime(t, got, want)
+	local, ok := got.(cypher.CypherLocalDateTime)
+	require.True(t, ok, "decoded type = %T", got)
+	require.Equal(t, want, local.Time)
+}
+
+func TestDecodePackStreamValueHydratesTemporalStructures(t *testing.T) {
+	date := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	clock := time.Date(1970, 1, 1, 12, 31, 14, 645876123, time.UTC)
+	zonedClock := time.Date(1970, 1, 1, 12, 31, 14, 645876123, time.FixedZone("", 3600))
+	localDateTime := time.Date(2026, 9, 14, 12, 31, 14, 645876123, time.UTC)
+
+	tests := []struct {
+		name   string
+		value  interface{}
+		assert func(*testing.T, interface{})
+	}{
+		{name: "date", value: cypher.CypherDate{Time: date}, assert: func(t *testing.T, got interface{}) {
+			require.Equal(t, cypher.CypherDate{Time: date}, got)
+		}},
+		{name: "local time", value: cypher.CypherLocalTime{Time: clock}, assert: func(t *testing.T, got interface{}) {
+			require.Equal(t, cypher.CypherLocalTime{Time: clock}, got)
+		}},
+		{name: "time", value: cypher.CypherTime{Time: zonedClock}, assert: func(t *testing.T, got interface{}) {
+			value, ok := got.(cypher.CypherTime)
+			require.True(t, ok, "decoded type = %T", got)
+			require.Equal(t, zonedClock.Hour(), value.Time.Hour())
+			_, offset := value.Time.Zone()
+			require.Equal(t, 3600, offset)
+		}},
+		{name: "local datetime", value: cypher.CypherLocalDateTime{Time: localDateTime}, assert: func(t *testing.T, got interface{}) {
+			require.Equal(t, cypher.CypherLocalDateTime{Time: localDateTime}, got)
+		}},
+		{name: "duration", value: &cypher.CypherDuration{Months: 2, Days: 3, Seconds: 4, Nanos: 5}, assert: func(t *testing.T, got interface{}) {
+			require.Equal(t, &cypher.CypherDuration{Months: 2, Days: 3, Seconds: 4, Nanos: 5}, got)
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded := encodePackStreamValue(test.value)
+			got, consumed, err := decodePackStreamValue(encoded, 0)
+			require.NoError(t, err)
+			require.Equal(t, len(encoded), consumed)
+			test.assert(t, got)
+		})
+	}
 }
 
 func TestBoltIntegration_LocalDateTimeParamRoundTrip_ServerStack(t *testing.T) {
@@ -68,7 +115,9 @@ func roundTripLocalDateTimeScenario(t *testing.T, writeMessage []byte, readQuery
 		t.Fatalf("expected one row with one field, got %#v", rows)
 	}
 
-	requireNormalizedDateTime(t, rows[0][0], want)
+	local, ok := rows[0][0].(cypher.CypherLocalDateTime)
+	require.True(t, ok, "round-trip type = %T", rows[0][0])
+	require.Equal(t, want, local.Time)
 }
 
 func runBoltStatementNoRecords(t *testing.T, conn net.Conn, message []byte) {
@@ -110,26 +159,4 @@ func buildRunMessageWithLocalDateTimeRows(query, uuid string, sec, nanos int64) 
 	buf = encodePackStreamLocalDateTimeInto(buf, sec, nanos)
 	buf = append(buf, 0xA0)
 	return buf
-}
-
-func requireNormalizedDateTime(t *testing.T, got any, want time.Time) {
-	t.Helper()
-
-	value, ok := got.(time.Time)
-	if !ok {
-		t.Fatalf("expected normalized time.Time, got %T (%#v)", got, got)
-	}
-	assertNormalizedDateTime(t, value, want)
-}
-
-func assertNormalizedDateTime(t *testing.T, got time.Time, want time.Time) {
-	t.Helper()
-
-	_, offset := got.Zone()
-	if offset != 0 {
-		t.Fatalf("expected zero-offset normalized time, got offset %d for %q", offset, got.Location())
-	}
-	if !got.Equal(want) {
-		t.Fatalf("expected normalized datetime %s, got %s", want.Format(time.RFC3339Nano), got.Format(time.RFC3339Nano))
-	}
 }

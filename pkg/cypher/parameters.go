@@ -446,6 +446,47 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 		}
 		return fmt.Sprintf("datetime('%s')", val.Format(time.RFC3339Nano))
 
+	case CypherDate:
+		return fmt.Sprintf("date('%s')", val.String())
+	case *CypherDate:
+		if val == nil {
+			return "null"
+		}
+		return fmt.Sprintf("date('%s')", val.String())
+	case CypherLocalTime:
+		return fmt.Sprintf("localtime('%s')", val.String())
+	case *CypherLocalTime:
+		if val == nil {
+			return "null"
+		}
+		return fmt.Sprintf("localtime('%s')", val.String())
+	case CypherTime:
+		return fmt.Sprintf("time('%s')", val.String())
+	case *CypherTime:
+		if val == nil {
+			return "null"
+		}
+		return fmt.Sprintf("time('%s')", val.String())
+	case CypherLocalDateTime:
+		return fmt.Sprintf("localdatetime('%s')", val.String())
+	case *CypherLocalDateTime:
+		if val == nil {
+			return "null"
+		}
+		return fmt.Sprintf("localdatetime('%s')", val.String())
+	case CypherDateTime:
+		return fmt.Sprintf("datetime('%s')", val.String())
+	case *CypherDateTime:
+		if val == nil {
+			return "null"
+		}
+		return fmt.Sprintf("datetime('%s')", val.String())
+	case *CypherDuration:
+		if val == nil {
+			return "null"
+		}
+		return fmt.Sprintf("duration('%s')", val.String())
+
 	case []interface{}:
 		// Convert array to Cypher list literal: [val1, val2, ...]
 		parts := make([]string, len(val))

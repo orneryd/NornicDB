@@ -1597,18 +1597,57 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 		}
 		return map[string]any{"_type": "DateTime", "fields": fields}, fieldsConsumed, nil
 
+	case 0x44: // Date: [days since Unix epoch]
+		if fieldCount >= 1 {
+			days, ok := toInt64Field(fields[0])
+			if ok {
+				return cypher.CypherDate{Time: time.Unix(days*86_400, 0).UTC()}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "Date", "fields": fields}, fieldsConsumed, nil
+
+	case 0x74: // LocalTime: [nanoseconds since midnight]
+		if fieldCount >= 1 {
+			nanos, ok := toInt64Field(fields[0])
+			if ok && nanos >= 0 && nanos < int64(24*time.Hour) {
+				return cypher.CypherLocalTime{Time: time.Unix(0, nanos).UTC()}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "LocalTime", "fields": fields}, fieldsConsumed, nil
+
+	case 0x54: // Time: [nanoseconds since midnight, offset seconds]
+		if fieldCount >= 2 {
+			nanos, okNanos := toInt64Field(fields[0])
+			offsetSeconds, okOffset := toInt64Field(fields[1])
+			if okNanos && okOffset && nanos >= 0 && nanos < int64(24*time.Hour) {
+				location := time.FixedZone("", int(offsetSeconds))
+				clock := time.Unix(0, nanos).UTC()
+				return cypher.CypherTime{Time: time.Date(1970, 1, 1, clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location)}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "Time", "fields": fields}, fieldsConsumed, nil
+
 	case 0x64: // LocalDateTime: [seconds, nanos]
 		if fieldCount >= 2 {
 			sec, okSec := toInt64Field(fields[0])
 			nsec, okNsec := toInt64Field(fields[1])
 			if okSec && okNsec {
-				// NornicDB's typed temporal param path is time.Time-based. Normalize
-				// naive/local datetimes to UTC on ingress so they round-trip as a
-				// hydratable DateTime instead of leaking an opaque 0x64 structure.
-				return time.Unix(sec, nsec).UTC(), fieldsConsumed, nil
+				return cypher.CypherLocalDateTime{Time: time.Unix(sec, nsec).UTC()}, fieldsConsumed, nil
 			}
 		}
 		return map[string]any{"_type": "LocalDateTime", "fields": fields}, fieldsConsumed, nil
+
+	case 0x45: // Duration: [months, days, seconds, nanoseconds]
+		if fieldCount >= 4 {
+			months, okMonths := toInt64Field(fields[0])
+			days, okDays := toInt64Field(fields[1])
+			seconds, okSeconds := toInt64Field(fields[2])
+			nanos, okNanos := toInt64Field(fields[3])
+			if okMonths && okDays && okSeconds && okNanos {
+				return &cypher.CypherDuration{Months: months, Days: days, Seconds: seconds, Nanos: nanos}, fieldsConsumed, nil
+			}
+		}
+		return map[string]any{"_type": "Duration", "fields": fields}, fieldsConsumed, nil
 
 	case 0x69, 0x66: // DateTime with zone id: [seconds, nanos, zoneId]
 		if fieldCount >= 3 {
