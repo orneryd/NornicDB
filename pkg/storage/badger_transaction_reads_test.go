@@ -130,12 +130,13 @@ func TestTxReads_StreamNodesByLabelProjected_StopsWithoutMaterializingRemainder(
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	visited := 0
-	err = tx.StreamNodesByLabelProjected("Person", nil, func(*Node) error {
+	err = tx.StreamNodesByLabelProjected("Person", []string{"name"}, func(*Node) error {
 		visited++
 		return ErrIterationStopped
 	})
 	require.ErrorIs(t, err, ErrIterationStopped)
 	require.Equal(t, 1, visited)
+	require.Empty(t, tx.snapshotProjectedLabelNodes, "an incomplete stream must not be cached")
 }
 
 func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *testing.T) {
@@ -157,7 +158,7 @@ func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *t
 	readNames := func() map[NodeID]string {
 		t.Helper()
 		names := make(map[NodeID]string)
-		err := reader.StreamNodesByLabelProjected("Person", nil, func(node *Node) error {
+		err := reader.StreamNodesByLabelProjected("Person", []string{"name"}, func(node *Node) error {
 			names[node.ID] = node.Properties["name"].(string)
 			return nil
 		})
@@ -165,7 +166,9 @@ func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *t
 		return names
 	}
 	require.Equal(t, "Bob", readNames()["test:bob"])
+	require.Len(t, reader.snapshotProjectedLabelNodes, 1, "a completed projection should be reusable")
 	require.Equal(t, "Bob", readNames()["test:bob"], "cached replay must retain the reader's begin snapshot")
+	require.Len(t, reader.snapshotProjectedLabelNodes, 1, "an equivalent projection should reuse its cache entry")
 }
 
 func TestTxReads_GetEdge_Committed(t *testing.T) {

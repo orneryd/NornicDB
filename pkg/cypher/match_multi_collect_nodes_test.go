@@ -18,6 +18,7 @@ type collectNodesLabelProbeEngine struct {
 	projectedLabelCalls int
 	labelIDs            []storage.NodeID
 	projectedNodes      []*storage.Node
+	projectedProperties []string
 }
 
 func (e *collectNodesLabelProbeEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
@@ -48,17 +49,42 @@ func (e *collectNodesLabelProbeEngine) ForEachNodeIDByLabel(label string, visit 
 	return nil
 }
 
-func (e *collectNodesLabelProbeEngine) StreamNodesByLabelProjected(_ string, _ []string, visit func(*storage.Node) error) error {
+func (e *collectNodesLabelProbeEngine) StreamNodesByLabelProjected(_ string, properties []string, visit func(*storage.Node) error) error {
 	if e.projectedNodes == nil {
 		return storage.ErrNotImplemented
 	}
 	e.projectedLabelCalls++
+	e.projectedProperties = append([]string(nil), properties...)
 	for _, node := range e.projectedNodes {
 		if err := visit(node); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func TestPipelineFilteredCountReducesProjectedLabelStream(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+	probe := &collectNodesLabelProbeEngine{
+		Engine: base,
+		projectedNodes: []*storage.Node{
+			{ID: "person-1", Labels: []string{"Person"}, Properties: map[string]any{"age": int64(20)}},
+			{ID: "person-2", Labels: []string{"Person"}, Properties: map[string]any{"age": int64(40)}},
+			{ID: "person-3", Labels: []string{"Person"}, Properties: map[string]any{"age": int64(50)}},
+		},
+	}
+	exec := NewStorageExecutor(probe)
+	probe.labelCalls = 0
+
+	result, err := exec.Execute(context.Background(),
+		"MATCH (person:Person) WHERE person.age > 30 RETURN count(person) AS count", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+	require.Equal(t, 1, probe.projectedLabelCalls)
+	require.Equal(t, []string{"age"}, probe.projectedProperties)
+	require.Equal(t, 0, probe.streamCalls)
+	require.Equal(t, 0, probe.labelCalls)
 }
 
 func TestCollectNodesWithStreaming_LabelLimitPrefersLabelLookup(t *testing.T) {

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,7 +75,11 @@ type BadgerTransaction struct {
 	// lifetime of this pinned snapshot. Bounded/aborted streams are never
 	// cached, so LIMIT preserves early termination and memory proportionality.
 	snapshotLabelNodes map[string][]*Node
-	operations         []Operation
+	// snapshotProjectedLabelNodes applies the same rule to exact property
+	// projections. Keeping it separate preserves full-node cache reuse while
+	// avoiding a full physical snapshot walk for every repeated projected read.
+	snapshotProjectedLabelNodes map[string][]*Node
+	operations                  []Operation
 
 	// Buffered writes - collected during transaction, flushed at commit
 	// This batches all writes together for better performance while maintaining ACID guarantees
@@ -1602,13 +1608,14 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	}
 
 	cacheKey := normalizeLabel(label)
-	if cached, ok := tx.snapshotLabelNodes[cacheKey]; ok {
+	cache := tx.snapshotLabelNodes
+	if properties != nil {
+		cacheKey = snapshotLabelProjectionKey(label, properties)
+		cache = tx.snapshotProjectedLabelNodes
+	}
+	if cached, ok := cache[cacheKey]; ok {
 		for _, node := range cached {
-			projected := node
-			if properties != nil {
-				projected = projectCachedNodeForRead(node, properties)
-			}
-			if err := emitCommitted(projected); err != nil {
+			if err := emitCommitted(node); err != nil {
 				return err
 			}
 		}
@@ -1616,14 +1623,10 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	}
 
 	var err error
-	var completed []*Node
-	streamVisit := emitCommitted
-	if properties == nil {
-		completed = make([]*Node, 0)
-		streamVisit = func(node *Node) error {
-			completed = append(completed, node)
-			return emitCommitted(node)
-		}
+	completed := make([]*Node, 0)
+	streamVisit := func(node *Node) error {
+		completed = append(completed, node)
+		return emitCommitted(node)
 	}
 	if tx.snapshotTx != nil {
 		err = tx.engine.streamNodesByLabelFromPhysicalSnapshot(label, tx.withSnapshotViewLocked, properties, streamVisit)
@@ -1642,8 +1645,32 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 			tx.snapshotLabelNodes = make(map[string][]*Node)
 		}
 		tx.snapshotLabelNodes[cacheKey] = completed
+	} else if len(tx.snapshotProjectedLabelNodes) < maxSnapshotProjectedLabelStreams {
+		if tx.snapshotProjectedLabelNodes == nil {
+			tx.snapshotProjectedLabelNodes = make(map[string][]*Node)
+		}
+		tx.snapshotProjectedLabelNodes[cacheKey] = completed
 	}
 	return tx.streamPendingLabelNodesLocked(matchesLabel, seen, properties, visit)
+}
+
+// A long-lived explicit transaction may execute many unrelated projections.
+// Keep the snapshot replay optimization bounded so retained decoded rows cannot
+// grow with the number of distinct query shapes.
+const maxSnapshotProjectedLabelStreams = 8
+
+func snapshotLabelProjectionKey(label string, properties []string) string {
+	canonical := append([]string(nil), properties...)
+	sort.Strings(canonical)
+	var key strings.Builder
+	key.WriteString(normalizeLabel(label))
+	key.WriteByte(0)
+	for _, property := range canonical {
+		key.WriteString(strconv.Itoa(len(property)))
+		key.WriteByte(':')
+		key.WriteString(property)
+	}
+	return key.String()
 }
 
 func (tx *BadgerTransaction) streamPendingLabelNodesLocked(

@@ -553,6 +553,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
 	hint := e.pipelineMatchHint(clauses[1:])
 	boundedSimpleProjection := whereClause == "" && hint.earlyLimit > 0 && pipelineSimpleNodeProjections(items, nodePattern.variable)
+	countColumn, filteredCount := pipelineSingleNodeCountProjection(items, nodePattern.variable)
 	if whereClause == "" && len(items) == 1 && len(nodePattern.properties) == 0 && isAggregateFuncName(items[0].expr, "count") {
 		inner := strings.TrimSpace(extractFuncInner(items[0].expr))
 		if inner == "*" || inner == nodePattern.variable {
@@ -582,6 +583,11 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, true, err
 	}
 	if !usedIndex {
+		if filteredCount && (whereClause != "" || len(nodePattern.properties) > 0) {
+			if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereClause, countColumn); streamed || streamErr != nil {
+				return result, true, streamErr
+			}
+		}
 		if !boundedSimpleProjection {
 			return nil, false, nil
 		}
@@ -611,6 +617,111 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, false, nil
 	}
 	return result, true, nil
+}
+
+func pipelineSingleNodeCountProjection(items []returnItem, variable string) (string, bool) {
+	if len(items) != 1 || variable == "" || !isAggregateFuncName(items[0].expr, "count") {
+		return "", false
+	}
+	inner := strings.TrimSpace(extractFuncInner(items[0].expr))
+	if inner != "*" && inner != variable {
+		return "", false
+	}
+	column := items[0].expr
+	if items[0].alias != "" {
+		column = items[0].alias
+	}
+	return column, true
+}
+
+// tryStreamPipelineFilteredNodeCount is the fused physical form of the
+// pipeline's MATCH -> filter -> count reduction. It consumes the same
+// snapshot-aware label stream as the general row operator but reduces each
+// qualifying binding immediately, avoiding a node slice and one map-backed
+// pipelineRow per match.
+func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
+	ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+	column string,
+) (*ExecuteResult, bool, error) {
+	if len(nodePattern.labels) == 0 {
+		return nil, false, nil
+	}
+	store := e.getStorage(ctx)
+	reader, ok := store.(storage.ProjectedLabelNodeReader)
+	if !ok {
+		return nil, false, nil
+	}
+
+	whereFilter := e.compileNodeWhereFilter(ctx, nodePattern.variable, whereClause)
+	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
+	hideSystemNodes := shouldHideSystemNodes(store)
+	viewport, hasViewport := TemporalViewportFromContext(ctx)
+	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	var count int64
+	err := reader.StreamNodesByLabelProjected(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
+		if node == nil || (hideSystemNodes && isSystemNode(node)) {
+			return nil
+		}
+		if !mergeNodeHasLabels(node, nodePattern.labels) || !e.nodeMatchesProps(node, nodePattern.properties) || !whereFilter(node) {
+			return nil
+		}
+		if hasViewport && canCheckViewport {
+			visible, visibleErr := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+			if visibleErr != nil {
+				return visibleErr
+			}
+			if !visible {
+				return nil
+			}
+		}
+		count++
+		return nil
+	})
+	if err == storage.ErrNotImplemented {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, true, localizedError(localization.CypherMatchingStorageFailed(err), err)
+	}
+	return &ExecuteResult{
+		Columns: []string{column},
+		Rows:    [][]interface{}{{count}},
+		Stats:   &QueryStats{},
+	}, true, nil
+}
+
+func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
+	properties := make([]string, 0, len(inline)+2)
+	seen := make(map[string]struct{}, len(inline)+2)
+	for property := range inline {
+		seen[property] = struct{}{}
+		properties = append(properties, property)
+	}
+	prefix := normalizeProjectionColumnName(variable) + "."
+	for _, reference := range semanticExpressionReferences(expression) {
+		if reference == normalizeProjectionColumnName(variable) {
+			return nil
+		}
+		if !strings.HasPrefix(reference, prefix) {
+			continue
+		}
+		property := strings.TrimPrefix(reference, prefix)
+		if nested := strings.IndexByte(property, '.'); nested >= 0 {
+			property = property[:nested]
+		}
+		if property == "" {
+			return nil
+		}
+		if _, exists := seen[property]; exists {
+			continue
+		}
+		seen[property] = struct{}{}
+		properties = append(properties, property)
+	}
+	sort.Strings(properties)
+	return properties
 }
 
 func projectPipelineSimpleNodeRead(nodes []*storage.Node, items []returnItem, variable string) *ExecuteResult {

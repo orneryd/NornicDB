@@ -18,6 +18,13 @@ import (
 // Pattern: MATCH (a:Label), (b:Label) WITH a, b LIMIT 1 CREATE (a)-[r:Type]->(b) DELETE r
 // This is a very common pattern in benchmarks and relationship tests.
 func (e *StorageExecutor) tryFastPathCompoundQuery(ctx context.Context, cypher string) (*ExecuteResult, bool) {
+	// Every shape handled below mutates a relationship and then deletes it.
+	// Reject ordinary reads before invoking the compound-shape matcher: a
+	// partial structural match must never perform speculative label scans on
+	// the way to the converged read pipeline.
+	if !containsKeywordOutsideStrings(cypher, "CREATE") || !containsKeywordOutsideStrings(cypher, "DELETE") {
+		return nil, false
+	}
 	if match, ok := matchCompoundQueryShape(cypher); ok {
 		switch match.Kind {
 		case shapeKindCompoundCreateDeleteRel:
