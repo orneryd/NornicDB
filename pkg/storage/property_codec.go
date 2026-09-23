@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
@@ -67,7 +68,7 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 		}
 		n := binary.PutUvarint(scratch, id)
 		buf.Write(scratch[:n])
-		valBytes, err := msgpack.Marshal(val)
+		valBytes, err := msgpack.Marshal(encodeStoredTemporalValue(val))
 		if err != nil {
 			return nil, fmt.Errorf("marshaling property %q value: %w", name, err)
 		}
@@ -151,12 +152,52 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 		if err != nil {
 			return nil, fmt.Errorf("decoding tokenized properties: key %q value: %w", name, err)
 		}
-		out[name] = val
+		out[name] = restoreStoredTemporalValue(val)
 	}
 	if reader.Len() != 0 {
 		return nil, fmt.Errorf("decoding tokenized properties: %d trailing bytes", reader.Len())
 	}
 	return out, nil
+}
+
+func encodeStoredTemporalValue(value any) any {
+	switch value := value.(type) {
+	case time.Time:
+		return storedTime{value: value}
+	case []interface{}:
+		result := make([]interface{}, len(value))
+		for index, item := range value {
+			result[index] = encodeStoredTemporalValue(item)
+		}
+		return result
+	case map[string]interface{}:
+		result := make(map[string]interface{}, len(value))
+		for key, item := range value {
+			result[key] = encodeStoredTemporalValue(item)
+		}
+		return result
+	default:
+		return value
+	}
+}
+
+func restoreStoredTemporalValue(value any) any {
+	switch value := value.(type) {
+	case storedTime:
+		return value.value
+	case []interface{}:
+		for index, item := range value {
+			value[index] = restoreStoredTemporalValue(item)
+		}
+		return value
+	case map[string]interface{}:
+		for key, item := range value {
+			value[key] = restoreStoredTemporalValue(item)
+		}
+		return value
+	default:
+		return value
+	}
 }
 
 // decodeStrictTypedValue decodes one msgpack-encoded property value

@@ -32,6 +32,8 @@ func validatePropertyValueForStorage(value interface{}) error {
 		float64,
 		time.Time:
 		return nil
+	case TemporalPropertyValue:
+		return nil
 	case []interface{}:
 		for i, item := range typedValue {
 			if err := validatePropertyValueForStorage(item); err != nil {
@@ -51,6 +53,12 @@ func validatePropertyValueForStorage(value interface{}) error {
 	default:
 		return localizedError(localization.StoragePropertyTypeUnsupported(fmt.Sprintf("%T", value)), nil)
 	}
+}
+
+// TemporalPropertyValue marks a typed temporal scalar that supplies its own
+// durable serialization while remaining opaque to the storage layer.
+type TemporalPropertyValue interface {
+	TemporalPropertyKind() string
 }
 
 func normalizePropertyMapShapes(properties map[string]interface{}) {

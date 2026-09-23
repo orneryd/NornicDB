@@ -850,6 +850,16 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 
 	// Handle function calls
 	if strings.Contains(expr, "(") && strings.Contains(expr, ")") {
+		if value, handled := e.evaluateTemporalConstructor(func(argument string) interface{} {
+			value, evaluated := e.evaluateRowExpression(argument, values)
+			if !evaluated {
+				return nil
+			}
+			return value
+		}, expr); handled {
+			return value
+		}
+
 		if name, inner, ok := parseFunctionCallWS(expr); ok &&
 			(strings.EqualFold(name, "toLower") || strings.EqualFold(name, "toUpper")) {
 			nodeCtx, edgeCtx := withWhereValueContext(values)
@@ -874,39 +884,6 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 				}
 				return value
 			}
-		}
-
-		if isFunctionCall(expr, "datetime") {
-			inner := strings.TrimSpace(expr[9 : len(expr)-1])
-			if inner == "" {
-				return time.Now().UTC()
-			}
-			val := e.evaluateExpressionFromValues(inner, values)
-			if literal, ok := val.(string); ok && literal == strings.TrimSpace(inner) {
-				if parsed, parsedOK := parseLiteralValueFromComputedRow(inner); parsedOK {
-					val = parsed
-				}
-			}
-			if val == nil {
-				return nil
-			}
-			if dt, ok := val.(time.Time); ok {
-				return dt
-			}
-			if str, ok := val.(string); ok {
-				str = strings.Trim(str, "'\"")
-				for _, layout := range []string{
-					time.RFC3339,
-					"2006-01-02T15:04:05",
-					"2006-01-02 15:04:05",
-					"2006-01-02",
-				} {
-					if t, err := time.Parse(layout, str); err == nil {
-						return t
-					}
-				}
-			}
-			return nil
 		}
 
 		if strings.EqualFold(expr, "localdatetime()") {

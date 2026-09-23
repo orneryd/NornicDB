@@ -1,11 +1,15 @@
 package cypher
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // CypherDate is a calendar date without a time or zone.
@@ -32,22 +36,113 @@ func (v CypherTime) String() string          { return formatTemporalClock(v.Time
 func (v CypherLocalDateTime) String() string { return formatTemporalDateTime(v.Time, false, "") }
 func (v CypherDateTime) String() string      { return formatTemporalDateTime(v.Time, true, v.ZoneID) }
 
+func (CypherDate) TemporalPropertyKind() string          { return "date" }
+func (CypherLocalTime) TemporalPropertyKind() string     { return "local-time" }
+func (CypherTime) TemporalPropertyKind() string          { return "time" }
+func (CypherLocalDateTime) TemporalPropertyKind() string { return "local-date-time" }
+
+func init() {
+	registerTemporalTimeExtension(41, CypherDate{}, func(value CypherDate) time.Time { return value.Time }, func(value time.Time) CypherDate { return CypherDate{Time: value} })
+	registerTemporalTimeExtension(42, CypherLocalTime{}, func(value CypherLocalTime) time.Time { return value.Time }, func(value time.Time) CypherLocalTime { return CypherLocalTime{Time: value} })
+	registerTemporalTimeExtension(43, CypherTime{}, func(value CypherTime) time.Time { return value.Time }, func(value time.Time) CypherTime { return CypherTime{Time: value} })
+	registerTemporalTimeExtension(44, CypherLocalDateTime{}, func(value CypherLocalDateTime) time.Time { return value.Time }, func(value time.Time) CypherLocalDateTime { return CypherLocalDateTime{Time: value} })
+	msgpack.RegisterExt(45, (*CypherDuration)(nil))
+}
+
+func registerTemporalTimeExtension[T any](id int8, prototype T, extract func(T) time.Time, construct func(time.Time) T) {
+	msgpack.RegisterExtEncoder(id, prototype, func(_ *msgpack.Encoder, value reflect.Value) ([]byte, error) {
+		return marshalTemporalTime(extract(value.Interface().(T))), nil
+	})
+	msgpack.RegisterExtDecoder(id, prototype, func(decoder *msgpack.Decoder, value reflect.Value, length int) error {
+		data := make([]byte, length)
+		if err := decoder.ReadFull(data); err != nil {
+			return err
+		}
+		decoded, err := unmarshalTemporalTime(data)
+		if err != nil {
+			return err
+		}
+		value.Set(reflect.ValueOf(construct(decoded)))
+		return nil
+	})
+}
+
+func (v *CypherDate) MarshalMsgpack() ([]byte, error)      { return marshalTemporalTime(v.Time), nil }
+func (v *CypherLocalTime) MarshalMsgpack() ([]byte, error) { return marshalTemporalTime(v.Time), nil }
+func (v *CypherTime) MarshalMsgpack() ([]byte, error)      { return marshalTemporalTime(v.Time), nil }
+func (v *CypherLocalDateTime) MarshalMsgpack() ([]byte, error) {
+	return marshalTemporalTime(v.Time), nil
+}
+
+func (v *CypherDate) UnmarshalMsgpack(data []byte) error {
+	value, err := unmarshalTemporalTime(data)
+	v.Time = value
+	return err
+}
+func (v *CypherLocalTime) UnmarshalMsgpack(data []byte) error {
+	value, err := unmarshalTemporalTime(data)
+	v.Time = value
+	return err
+}
+func (v *CypherTime) UnmarshalMsgpack(data []byte) error {
+	value, err := unmarshalTemporalTime(data)
+	v.Time = value
+	return err
+}
+func (v *CypherLocalDateTime) UnmarshalMsgpack(data []byte) error {
+	value, err := unmarshalTemporalTime(data)
+	v.Time = value
+	return err
+}
+
+func marshalTemporalTime(value time.Time) []byte {
+	data := make([]byte, 16)
+	binary.BigEndian.PutUint64(data[0:8], uint64(value.Unix()))
+	binary.BigEndian.PutUint32(data[8:12], uint32(value.Nanosecond()))
+	_, offset := value.Zone()
+	binary.BigEndian.PutUint32(data[12:16], uint32(int32(offset)))
+	return data
+}
+
+func unmarshalTemporalTime(data []byte) (time.Time, error) {
+	if len(data) != 16 {
+		return time.Time{}, fmt.Errorf("invalid temporal property payload length %d", len(data))
+	}
+	seconds := int64(binary.BigEndian.Uint64(data[0:8]))
+	nanos := int64(binary.BigEndian.Uint32(data[8:12]))
+	offset := int(int32(binary.BigEndian.Uint32(data[12:16])))
+	return time.Unix(seconds, nanos).In(time.FixedZone("", offset)), nil
+}
+
 func (e *StorageExecutor) evaluateTemporalConstructor(ctxEval func(string) interface{}, expression string) (interface{}, bool) {
 	name, argument, ok := parseFunctionCallWS(expression)
 	if !ok {
 		return nil, false
 	}
-	switch strings.ToLower(name) {
+	kind := strings.ToLower(name)
+	if dot := strings.IndexByte(kind, '.'); dot > 0 {
+		suffix := kind[dot+1:]
+		if suffix == "transaction" || suffix == "statement" || suffix == "realtime" {
+			kind = kind[:dot]
+		}
+	}
+	switch kind {
 	case "date", "localtime", "time", "localdatetime", "datetime", "duration":
 		value := ctxEval(strings.TrimSpace(argument))
+		if value == nil && strings.TrimSpace(argument) != "" {
+			return nil, true
+		}
 		if text, isString := value.(string); isString {
-			return parseTemporalText(strings.ToLower(name), text)
+			return parseTemporalText(kind, text)
+		}
+		if converted, valid := projectTemporalValue(kind, value); valid {
+			return converted, true
 		}
 		fields, isMap := toStringAnyMap(value)
 		if !isMap {
 			return nil, false
 		}
-		return buildTemporalValue(strings.ToLower(name), fields)
+		return buildTemporalValue(kind, fields)
 	case "datetime.fromepoch":
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) != 2 {
@@ -74,25 +169,51 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 	if kind == "duration" {
 		return buildDurationFromFields(fields), true
 	}
-	date, valid := buildDateFromFields(fields)
+	dateFields := fields
+	if source, exists := fields["datetime"]; exists {
+		dateFields = cloneTemporalFields(fields)
+		if _, hasDate := dateFields["date"]; !hasDate {
+			dateFields["date"] = source
+		}
+	}
+	date, valid := buildDateFromFields(dateFields)
 	if !valid && kind != "localtime" && kind != "time" {
 		return nil, true
 	}
 	if kind == "date" {
 		return CypherDate{Time: date}, true
 	}
-	hour := temporalFieldInt(fields, "hour", 0)
-	minute := temporalFieldInt(fields, "minute", 0)
-	second := temporalFieldInt(fields, "second", 0)
-	nanosecond := temporalFieldInt(fields, "nanosecond", 0) +
-		temporalFieldInt(fields, "microsecond", 0)*1_000 +
-		temporalFieldInt(fields, "millisecond", 0)*1_000_000
+	baseTime, baseZoned, hasBaseTime := temporalBaseTime(fields)
+	hour, minute, second, nanosecond := int64(0), int64(0), int64(0), int64(0)
+	if hasBaseTime {
+		hour, minute, second, nanosecond = int64(baseTime.Hour()), int64(baseTime.Minute()), int64(baseTime.Second()), int64(baseTime.Nanosecond())
+	}
+	hour = temporalFieldInt(fields, "hour", hour)
+	minute = temporalFieldInt(fields, "minute", minute)
+	second = temporalFieldInt(fields, "second", second)
+	if hasAnyTemporalField(fields, "nanosecond", "microsecond", "millisecond") {
+		nanosecond = temporalFieldInt(fields, "nanosecond", 0) +
+			temporalFieldInt(fields, "microsecond", 0)*1_000 +
+			temporalFieldInt(fields, "millisecond", 0)*1_000_000
+	}
 	if kind == "localtime" || kind == "time" {
 		date = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
-	zone, zoneID, zoneOK := temporalLocation(fields, kind == "time" || kind == "datetime")
+	zone, zoneID, zoneOK := temporalLocationForProjection(fields, kind == "time" || kind == "datetime", baseTime, baseZoned)
 	if !zoneOK {
 		return nil, true
+	}
+	if hasBaseTime && baseZoned && hasAnyTemporalField(fields, "timezone") && (kind == "time" || kind == "datetime") {
+		source := time.Date(date.Year(), date.Month(), date.Day(), baseTime.Hour(), baseTime.Minute(), baseTime.Second(), baseTime.Nanosecond(), baseTime.Location())
+		converted := source.In(zone)
+		date = converted
+		hour, minute, second, nanosecond = int64(converted.Hour()), int64(converted.Minute()), int64(converted.Second()), int64(converted.Nanosecond())
+		hour = temporalFieldInt(fields, "hour", hour)
+		minute = temporalFieldInt(fields, "minute", minute)
+		second = temporalFieldInt(fields, "second", second)
+		if hasAnyTemporalField(fields, "nanosecond", "microsecond", "millisecond") {
+			nanosecond = temporalFieldInt(fields, "nanosecond", 0) + temporalFieldInt(fields, "microsecond", 0)*1_000 + temporalFieldInt(fields, "millisecond", 0)*1_000_000
+		}
 	}
 	value := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), zone)
 	switch kind {
@@ -106,6 +227,42 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 		_ = zoneID
 		return value, true
 	}
+}
+
+func projectTemporalValue(kind string, value interface{}) (interface{}, bool) {
+	date, hasDate := temporalBaseDate(value)
+	clock, zoned, hasTime := temporalTimeParts(value)
+	switch kind {
+	case "date":
+		if hasDate {
+			return CypherDate{Time: time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)}, true
+		}
+	case "localtime":
+		if hasTime {
+			return CypherLocalTime{Time: time.Date(1970, 1, 1, clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), time.UTC)}, true
+		}
+	case "time":
+		if hasTime {
+			location := time.UTC
+			if zoned {
+				location = clock.Location()
+			}
+			return CypherTime{Time: time.Date(1970, 1, 1, clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location)}, true
+		}
+	case "localdatetime":
+		if hasDate && hasTime {
+			return CypherLocalDateTime{Time: time.Date(date.Year(), date.Month(), date.Day(), clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), time.UTC)}, true
+		}
+	case "datetime":
+		if hasDate && hasTime {
+			location := time.UTC
+			if zoned {
+				location = clock.Location()
+			}
+			return time.Date(date.Year(), date.Month(), date.Day(), clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location), true
+		}
+	}
+	return nil, false
 }
 
 func buildDateFromFields(fields map[string]interface{}) (time.Time, bool) {
@@ -138,7 +295,12 @@ func buildDateFromFields(fields map[string]interface{}) (time.Time, bool) {
 		return time.Date(int(year), 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(ordinal)-1), true
 	}
 	if quarter, exists := temporalOptionalInt(fields, "quarter"); exists {
-		day := temporalFieldInt(fields, "dayOfQuarter", 1)
+		day := int64(1)
+		if hasBase {
+			quarterStart := time.Date(base.Year(), time.Month((int(base.Month())-1)/3*3+1), 1, 0, 0, 0, 0, time.UTC)
+			day = int64(base.Sub(quarterStart)/(24*time.Hour)) + 1
+		}
+		day = temporalFieldInt(fields, "dayOfQuarter", day)
 		return time.Date(int(year), time.Month((quarter-1)*3+1), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(day)-1), true
 	}
 	month, day := int64(1), int64(1)
@@ -148,6 +310,67 @@ func buildDateFromFields(fields map[string]interface{}) (time.Time, bool) {
 	month = temporalFieldInt(fields, "month", month)
 	day = temporalFieldInt(fields, "day", day)
 	return time.Date(int(year), time.Month(month), int(day), 0, 0, 0, 0, time.UTC), true
+}
+
+func temporalBaseTime(fields map[string]interface{}) (time.Time, bool, bool) {
+	if value, exists := fields["time"]; exists {
+		return temporalTimeParts(value)
+	}
+	if value, exists := fields["datetime"]; exists {
+		return temporalTimeParts(value)
+	}
+	return time.Time{}, false, false
+}
+
+func temporalTimeParts(value interface{}) (time.Time, bool, bool) {
+	switch value := value.(type) {
+	case CypherLocalTime:
+		return value.Time, false, true
+	case CypherTime:
+		return value.Time, true, true
+	case CypherLocalDateTime:
+		return value.Time, false, true
+	case CypherDateTime:
+		return value.Time, true, true
+	case time.Time:
+		return value, true, true
+	default:
+		return time.Time{}, false, false
+	}
+}
+
+func cloneTemporalFields(fields map[string]interface{}) map[string]interface{} {
+	clone := make(map[string]interface{}, len(fields)+1)
+	for key, value := range fields {
+		clone[key] = value
+	}
+	return clone
+}
+
+func hasAnyTemporalField(fields map[string]interface{}, names ...string) bool {
+	for _, name := range names {
+		if _, exists := fields[name]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func temporalLocationForProjection(fields map[string]interface{}, zoned bool, base time.Time, baseZoned bool) (*time.Location, string, bool) {
+	if !zoned {
+		return time.UTC, "", true
+	}
+	if _, explicit := fields["timezone"]; explicit {
+		return temporalLocation(fields, true)
+	}
+	if baseZoned {
+		zoneID := ""
+		if strings.Contains(base.Location().String(), "/") {
+			zoneID = base.Location().String()
+		}
+		return base.Location(), zoneID, true
+	}
+	return time.UTC, "", true
 }
 
 func temporalBaseDate(value interface{}) (time.Time, bool) {

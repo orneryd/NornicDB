@@ -6,6 +6,9 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"time"
+
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"strconv"
 )
 
@@ -116,6 +119,12 @@ func canonicalValue(value any, ignoreListOrder bool) (any, error) {
 		return typedFloat(float64(v)), nil
 	case float64:
 		return typedFloat(v), nil
+	case dbtype.Date, dbtype.LocalTime, dbtype.Time, dbtype.LocalDateTime, dbtype.Duration, time.Time:
+		converted, err := convertBoltValue(v)
+		if err != nil {
+			return nil, err
+		}
+		return canonicalValue(converted, ignoreListOrder)
 	case []any:
 		items := make([]any, len(v))
 		for i := range v {

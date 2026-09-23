@@ -8,8 +8,11 @@ package storage
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -27,6 +30,8 @@ const (
 // touch gob, but historical bodies in pre-msgpack data directories still
 // decode through this path until the migration tool rewrites them.
 func init() {
+	msgpack.RegisterExtEncoder(40, storedTime{}, encodeStoredTime)
+	msgpack.RegisterExtDecoder(40, storedTime{}, decodeStoredTime)
 	gob.Register(int(0))
 	gob.Register(int32(0))
 	gob.Register(int64(0))
@@ -46,6 +51,46 @@ func init() {
 	gob.Register([]bool{})
 
 	gob.Register(map[string]interface{}{})
+}
+
+type storedTime struct{ value time.Time }
+
+func encodeStoredTime(_ *msgpack.Encoder, value reflect.Value) ([]byte, error) {
+	timestamp := value.Interface().(storedTime).value
+	zoneID := timestamp.Location().String()
+	if !strings.Contains(zoneID, "/") {
+		zoneID = ""
+	}
+	data := make([]byte, 16+len(zoneID))
+	binary.BigEndian.PutUint64(data[0:8], uint64(timestamp.Unix()))
+	binary.BigEndian.PutUint32(data[8:12], uint32(timestamp.Nanosecond()))
+	_, offset := timestamp.Zone()
+	binary.BigEndian.PutUint32(data[12:16], uint32(int32(offset)))
+	copy(data[16:], zoneID)
+	return data, nil
+}
+
+func decodeStoredTime(decoder *msgpack.Decoder, value reflect.Value, length int) error {
+	if length < 16 {
+		return fmt.Errorf("invalid stored time payload length %d", length)
+	}
+	data := make([]byte, length)
+	if err := decoder.ReadFull(data); err != nil {
+		return err
+	}
+	seconds := int64(binary.BigEndian.Uint64(data[0:8]))
+	nanos := int64(binary.BigEndian.Uint32(data[8:12]))
+	offset := int(int32(binary.BigEndian.Uint32(data[12:16])))
+	location := time.FixedZone("", offset)
+	if zoneID := string(data[16:]); zoneID != "" {
+		loaded, err := time.LoadLocation(zoneID)
+		if err != nil {
+			return err
+		}
+		location = loaded
+	}
+	value.Set(reflect.ValueOf(storedTime{value: time.Unix(seconds, nanos).In(location)}))
+	return nil
 }
 
 // encodeValue serializes value as msgpack with the standard header. There

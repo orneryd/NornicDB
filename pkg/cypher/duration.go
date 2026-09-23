@@ -51,6 +51,7 @@
 package cypher
 
 import (
+	"encoding/binary"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -109,6 +110,31 @@ type CypherDuration struct {
 	Minutes int64 // Clock minutes
 	Seconds int64 // Clock seconds
 	Nanos   int64 // Sub-second precision (nanoseconds)
+}
+
+// TemporalPropertyKind identifies durations as durable temporal properties.
+func (*CypherDuration) TemporalPropertyKind() string { return "duration" }
+
+// MarshalMsgpack encodes all duration components for msgpack extension storage.
+func (d *CypherDuration) MarshalMsgpack() ([]byte, error) {
+	data := make([]byte, 56)
+	values := [...]int64{d.Years, d.Months, d.Days, d.Hours, d.Minutes, d.Seconds, d.Nanos}
+	for index, value := range values {
+		binary.BigEndian.PutUint64(data[index*8:], uint64(value))
+	}
+	return data, nil
+}
+
+// UnmarshalMsgpack decodes all duration components from extension storage.
+func (d *CypherDuration) UnmarshalMsgpack(data []byte) error {
+	if len(data) != 56 {
+		return fmt.Errorf("invalid duration property payload length %d", len(data))
+	}
+	values := []*int64{&d.Years, &d.Months, &d.Days, &d.Hours, &d.Minutes, &d.Seconds, &d.Nanos}
+	for index, destination := range values {
+		*destination = int64(binary.BigEndian.Uint64(data[index*8:]))
+	}
+	return nil
 }
 
 // String returns the duration in ISO 8601 format.

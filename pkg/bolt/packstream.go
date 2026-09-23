@@ -583,10 +583,9 @@ func encodePackStreamDateTime(t time.Time) []byte {
 }
 
 func encodePackStreamDateInto(dst []byte, value time.Time) []byte {
-	epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	date := time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 	dst = append(dst, 0xB1, 0x44)
-	return encodePackStreamIntInto(dst, int64(date.Sub(epoch)/(24*time.Hour)))
+	return encodePackStreamIntInto(dst, date.Unix()/86_400)
 }
 
 func encodePackStreamLocalTimeInto(dst []byte, value time.Time) []byte {

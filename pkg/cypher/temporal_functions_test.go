@@ -64,6 +64,78 @@ func TestTemporalWeekConstructionInheritsBaseDateWeekday(t *testing.T) {
 	}
 }
 
+func TestTemporalProjectionUsesTypedIntermediateValues(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_projection"))
+	initial, evaluated := executor.evaluateRowExpression("date({year: 1984, month: 11, day: 11})", pipelineRow{})
+	if !evaluated {
+		t.Fatal("initial date expression was not evaluated")
+	}
+	if _, ok := initial.(CypherDate); !ok {
+		t.Fatalf("initial value type = %T, want CypherDate (value %#v)", initial, initial)
+	}
+	projectedValue, evaluated := executor.evaluateRowExpression("date({date: other, day: 28})", pipelineRow{"other": initial})
+	if !evaluated {
+		t.Fatal("projected date expression was not evaluated")
+	}
+	if _, ok := projectedValue.(CypherDate); !ok {
+		t.Fatalf("direct projected value type = %T, want CypherDate (value %#v)", projectedValue, projectedValue)
+	}
+	result, err := executor.Execute(context.Background(), `
+		WITH date({year: 1984, month: 11, day: 11}) AS other
+		RETURN date({date: other, day: 28}) AS projected`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Rows) != 1 || len(result.Rows[0]) != 1 {
+		t.Fatalf("unexpected result shape: %#v", result.Rows)
+	}
+	projected, ok := result.Rows[0][0].(CypherDate)
+	if !ok {
+		t.Fatalf("projected value type = %T, want CypherDate (value %#v)", result.Rows[0][0], result.Rows[0][0])
+	}
+	if got := projected.String(); got != "1984-11-28" {
+		t.Fatalf("projected date = %q, want %q", got, "1984-11-28")
+	}
+}
+
+func TestTemporalPropertyAccessorsUseTypedValues(t *testing.T) {
+	stockholm, err := time.LoadLocation("Europe/Stockholm")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		value    interface{}
+		property string
+		want     interface{}
+	}{
+		{name: "date year", value: CypherDate{Time: time.Date(1984, 10, 11, 0, 0, 0, 0, time.UTC)}, property: "year", want: int64(1984)},
+		{name: "date ISO week", value: CypherDate{Time: time.Date(1984, 1, 1, 0, 0, 0, 0, time.UTC)}, property: "week", want: int64(52)},
+		{name: "date ISO week year", value: CypherDate{Time: time.Date(1984, 1, 1, 0, 0, 0, 0, time.UTC)}, property: "weekYear", want: int64(1983)},
+		{name: "date day of quarter", value: CypherDate{Time: time.Date(1984, 11, 11, 0, 0, 0, 0, time.UTC)}, property: "dayOfQuarter", want: int64(42)},
+		{name: "local time microsecond", value: CypherLocalTime{Time: time.Date(1970, 1, 1, 12, 31, 14, 645876123, time.UTC)}, property: "microsecond", want: int64(645876)},
+		{name: "zoned offset seconds", value: CypherTime{Time: time.Date(1970, 1, 1, 12, 31, 14, 645876123, time.FixedZone("+01:00", 3600))}, property: "offsetSeconds", want: int64(3600)},
+		{name: "named timezone", value: time.Date(1984, 11, 11, 12, 31, 14, 645876123, stockholm), property: "timezone", want: "Europe/Stockholm"},
+		{name: "epoch milliseconds", value: time.Date(1984, 11, 11, 12, 31, 14, 645876123, stockholm), property: "epochMillis", want: int64(469020674645)},
+		{name: "duration total months", value: &CypherDuration{Years: 1, Months: 4, Days: 10, Hours: 1, Minutes: 1, Seconds: 1, Nanos: 111111111}, property: "months", want: int64(16)},
+		{name: "duration total microseconds", value: &CypherDuration{Years: 1, Months: 4, Days: 10, Hours: 1, Minutes: 1, Seconds: 1, Nanos: 111111111}, property: "microseconds", want: int64(3661111111)},
+		{name: "duration month within quarter", value: &CypherDuration{Years: 1, Months: 4}, property: "monthsOfQuarter", want: int64(1)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := evaluateRowPropertyChain(test.value, test.property)
+			if !ok {
+				t.Fatalf("property %q was not evaluated", test.property)
+			}
+			if got != test.want {
+				t.Fatalf("property %q = %#v, want %#v", test.property, got, test.want)
+			}
+		})
+	}
+}
+
 func TestTimestampFunction(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 

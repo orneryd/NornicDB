@@ -76,6 +76,15 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	}
 
 	if function, argument, ok := parseFunctionCallWS(expr); ok {
+		if value, handled := e.evaluateTemporalConstructor(func(inner string) interface{} {
+			value, evaluated := e.evaluateRowExpression(inner, values)
+			if !evaluated {
+				return nil
+			}
+			return value
+		}, expr); handled {
+			return value, true
+		}
 		switch strings.ToLower(function) {
 		case "length":
 			value, resolved := e.evaluateRowExpression(argument, values)
@@ -668,6 +677,13 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 		// the entity/map type switch just as we handle typed nil entities below.
 		if value == nil {
 			return nil, true
+		}
+		if propertyValue, temporal, supported := evaluateTemporalProperty(value, property); temporal {
+			if !supported {
+				return nil, false
+			}
+			value = propertyValue
+			continue
 		}
 		switch typed := value.(type) {
 		case *storage.Node:
