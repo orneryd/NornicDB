@@ -9,7 +9,9 @@ import (
 func TestStripCypherCommentsPreservesQuotedCommentMarkers(t *testing.T) {
 	query := "RETURN 'https://example.test/a/*b*/' AS url, `a//b` AS name"
 	require.Equal(t, query, stripCypherComments(query))
-	require.Equal(t, query, stripCypherComments(query))
+	require.Zero(t, testing.AllocsPerRun(1000, func() {
+		_ = stripCypherComments(query)
+	}))
 }
 
 func TestStripCypherCommentsPreservesClauseBoundaries(t *testing.T) {

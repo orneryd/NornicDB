@@ -169,5 +169,14 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
 		return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, values), true
 	}
+	// Pattern comprehensions can be nested in scalar functions. Resolve the
+	// graph-producing argument here, at the shared context-aware expression
+	// boundary, before the allocation-conscious scalar evaluator takes over.
+	if function, argument, ok := parseFunctionCallWS(strings.TrimSpace(expr)); ok && strings.EqualFold(function, "size") {
+		if pattern, projection, comprehension := splitPatternComprehension(argument); comprehension {
+			items := e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, values)
+			return int64(len(items)), true
+		}
+	}
 	return e.evaluateRowExpression(expr, values)
 }

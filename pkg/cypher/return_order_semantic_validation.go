@@ -473,7 +473,7 @@ func removeAggregateCalls(expression string) string {
 
 func isAggregateFunctionName(name string) bool {
 	switch strings.ToUpper(normalizeProjectionColumnName(name)) {
-	case "COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT", "STDEV", "STDEVP":
+	case "COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT", "STDEV", "STDEVP", "PERCENTILECONT", "PERCENTILEDISC":
 		return true
 	default:
 		return false

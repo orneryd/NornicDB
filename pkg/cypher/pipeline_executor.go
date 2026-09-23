@@ -472,6 +472,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			if err := e.validatePipelineRangeArguments(rows, clause.text, "WITH"); err != nil {
 				return nil, true, err
 			}
+			if err := e.validatePipelinePercentileArguments(rows, clause.text, "WITH"); err != nil {
+				return nil, true, err
+			}
 			if err := e.validatePipelineConversionArguments(rows, clause.text, "WITH"); err != nil {
 				return nil, true, err
 			}
@@ -507,6 +510,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, true, err
 			}
 			if err := e.validatePipelineRangeArguments(rows, clause.text, "RETURN"); err != nil {
+				return nil, true, err
+			}
+			if err := e.validatePipelinePercentileArguments(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
 			if err := e.validatePipelineConversionArguments(rows, clause.text, "RETURN"); err != nil {
@@ -2888,6 +2894,9 @@ func (e *StorageExecutor) evaluatePipelineAggregate(rows []pipelineRow, name, ex
 	if name == "count" && expr == "*" {
 		return int64(len(rows)), true
 	}
+	if name == "percentilecont" || name == "percentiledisc" {
+		return e.evaluatePipelinePercentile(rows, name, expr, distinct)
+	}
 	values := make([]interface{}, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
@@ -2957,8 +2966,8 @@ func (e *StorageExecutor) evaluatePipelineAggregate(rows []pipelineRow, name, ex
 		}
 		selected := values[0]
 		for _, value := range values[1:] {
-			less := compareForSort(value, selected)
-			if (name == "min" && less) || (name == "max" && compareForSort(selected, value)) {
+			comparison := compareValuesForSort(value, selected)
+			if (name == "min" && comparison < 0) || (name == "max" && comparison > 0) {
 				selected = value
 			}
 		}

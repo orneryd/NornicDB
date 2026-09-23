@@ -57,3 +57,23 @@ func TestPipelineWithOrderUsesProjectedAggregateValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(2), int64(7)}, {int64(1), int64(13)}}, result.Rows)
 }
+
+func TestPipelineMinMaxUseCypherAggregateValueOrder(t *testing.T) {
+	executor := &StorageExecutor{}
+	rows := []pipelineRow{
+		{"x": []interface{}{int64(1)}},
+		{"x": []interface{}{int64(2)}},
+		{"x": []interface{}{int64(2), int64(1)}},
+	}
+	maximum, ok := executor.evaluatePipelineAggregate(rows, "max", "x", false)
+	require.True(t, ok)
+	require.Equal(t, []interface{}{int64(2), int64(1)}, maximum)
+
+	mixed := []pipelineRow{{"x": int64(1)}, {"x": "a"}, {"x": []interface{}{int64(1), int64(2)}}, {"x": 0.2}, {"x": "b"}}
+	maximum, ok = executor.evaluatePipelineAggregate(mixed, "max", "x", false)
+	require.True(t, ok)
+	require.Equal(t, int64(1), maximum)
+	minimum, ok := executor.evaluatePipelineAggregate(mixed, "min", "x", false)
+	require.True(t, ok)
+	require.Equal(t, []interface{}{int64(1), int64(2)}, minimum)
+}

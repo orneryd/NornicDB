@@ -36,7 +36,9 @@ import (
 // traversalAggFnNames are the aggregate functions the traversal pipeline
 // accumulates, matching the executor-wide aggregateFnNames set. stdevp is
 // listed before stdev so prefix scanning matches the longer name first.
-var traversalAggFnNames = []string{"collect", "count", "sum", "avg", "min", "max", "stdevp", "stdev"}
+var traversalAggFnNames = []string{
+	"percentilecont", "percentiledisc", "collect", "count", "sum", "avg", "min", "max", "stdevp", "stdev",
+}
 
 // traversalAggSpec is one parsed aggregate call.
 type traversalAggSpec struct {

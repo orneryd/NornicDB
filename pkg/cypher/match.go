@@ -23,7 +23,9 @@ func isAggregateFunc(expr string) bool {
 		isFunctionCallWS(expr, "max") ||
 		isFunctionCallWS(expr, "collect") ||
 		isFunctionCallWS(expr, "stdev") ||
-		isFunctionCallWS(expr, "stdevp")
+		isFunctionCallWS(expr, "stdevp") ||
+		isFunctionCallWS(expr, "percentilecont") ||
+		isFunctionCallWS(expr, "percentiledisc")
 }
 
 // containsAggregateFunc checks if expression contains any aggregate function
