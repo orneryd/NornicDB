@@ -131,6 +131,7 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 	quoteChar := rune(0)
 	parenDepth := 0
 	bracketDepth := 0
+	braceDepth := 0
 
 	for i := 0; i <= len(expr)-len(op); i++ {
 		c := rune(expr[i])
@@ -150,7 +151,11 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 			bracketDepth++
 		case trackBrackets && c == ']' && !inQuote:
 			bracketDepth--
-		case !inQuote && parenDepth == 0 && (!trackBrackets || bracketDepth == 0):
+		case trackBrackets && c == '{' && !inQuote:
+			braceDepth++
+		case trackBrackets && c == '}' && !inQuote:
+			braceDepth--
+		case !inQuote && parenDepth == 0 && (!trackBrackets || (bracketDepth == 0 && braceDepth == 0)):
 			if operatorMatchesAt(expr, op, i, caseInsensitive) {
 				if op == "=" {
 					if i > 0 && (expr[i-1] == '<' || expr[i-1] == '>' || expr[i-1] == '!') {

@@ -247,6 +247,27 @@ func extendTraversalRow(row traversalOptRow, nodeVar string, node *storage.Node,
 // optSection is the raw text of all OPTIONAL MATCH clauses, and restOfQuery
 // begins at the first WITH/RETURN after them.
 func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Context, initialSection, nodePatternStr, optSection, restOfQuery string) (*ExecuteResult, error) {
+	optionalClauses := splitOptionalMatchClauses(optSection)
+	if len(optionalClauses) == 1 && optionalClauses[0].where == "" && findKeywordIndex(initialSection, "MATCH") < 0 {
+		initialPattern := strings.TrimSpace(nodePatternStr)
+		whereClause := ""
+		if whereIndex := findKeywordIndex(initialPattern, "WHERE"); whereIndex >= 0 {
+			whereClause = strings.TrimSpace(initialPattern[whereIndex+len("WHERE"):])
+			initialPattern = strings.TrimSpace(initialPattern[:whereIndex])
+		}
+		if !strings.Contains(initialPattern, "-[") {
+			source := e.parseNodePattern(ctx, initialPattern)
+			initialNodes, collectErr := e.collectOptionalMatchInitialNodes(ctx, source, whereClause, "", nil)
+			if collectErr != nil {
+				return nil, collectErr
+			}
+			rel := e.parseOptionalRelPattern(ctx, optionalClauses[0].pattern)
+			if result, handled, fastErr := e.tryFastCompoundOptionalMatchCount(initialNodes, source, rel, restOfQuery); handled || fastErr != nil {
+				return result, fastErr
+			}
+		}
+	}
+
 	returnVars := strings.Join(append(extractNodeVariables(nodePatternStr), extractRelationshipVariables(nodePatternStr)...), ", ")
 	if returnVars == "" {
 		returnVars = "*"
@@ -284,7 +305,7 @@ func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Contex
 		rows = append(rows, row)
 	}
 
-	for _, clause := range splitOptionalMatchClauses(optSection) {
+	for _, clause := range optionalClauses {
 		rows, err = e.applyTraversalOptionalClause(ctx, rows, clause)
 		if err != nil {
 			return nil, err

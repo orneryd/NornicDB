@@ -21,7 +21,9 @@ func isAggregateFunc(expr string) bool {
 		isFunctionCallWS(expr, "avg") ||
 		isFunctionCallWS(expr, "min") ||
 		isFunctionCallWS(expr, "max") ||
-		isFunctionCallWS(expr, "collect")
+		isFunctionCallWS(expr, "collect") ||
+		isFunctionCallWS(expr, "stdev") ||
+		isFunctionCallWS(expr, "stdevp")
 }
 
 // containsAggregateFunc checks if expression contains any aggregate function
@@ -29,7 +31,7 @@ func isAggregateFunc(expr string) bool {
 func containsAggregateFunc(expr string) bool {
 	upper := strings.ToUpper(expr)
 	// Check for aggregate function names followed by opening paren (with optional whitespace)
-	for _, fn := range []string{"COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT"} {
+	for _, fn := range []string{"COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT", "STDEVP", "STDEV"} {
 		idx := strings.Index(upper, fn)
 		if idx >= 0 {
 			// Check if followed by ( with optional whitespace

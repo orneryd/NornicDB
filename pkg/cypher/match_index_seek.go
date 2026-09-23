@@ -823,9 +823,8 @@ func (e *StorageExecutor) tryCollectNodesFromIDInParam(
 	if !ok {
 		return []*storage.Node{}, true, nil
 	}
-	list, ok := raw.([]interface{})
-	if !ok {
-		// Keep behavior explicit: IN parameter must be list-like for this path.
+	list := toAnySlice(raw)
+	if list == nil {
 		return []*storage.Node{}, true, nil
 	}
 	if len(list) == 0 {

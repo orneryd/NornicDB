@@ -110,7 +110,9 @@ func validateMatchClauseBindings(scope matchSemanticScope, clause string) error 
 			break
 		}
 	}
+	whereClause := ""
 	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
+		whereClause = strings.TrimSpace(pattern[where+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:where])
 	}
 	if mergePatternUsesParameterPredicate(pattern) {
@@ -185,6 +187,22 @@ func validateMatchClauseBindings(scope matchSemanticScope, clause string) error 
 			seenRelationships[variable] = struct{}{}
 		}
 
+	}
+	return validateMatchWhereSimpleOperands(scope, whereClause)
+}
+
+func validateMatchWhereSimpleOperands(scope matchSemanticScope, whereClause string) error {
+	for _, operator := range []string{" STARTS WITH ", " ENDS WITH ", " CONTAINS ", " NOT IN ", " IN ", "=~"} {
+		left, _, found := splitByOperatorWithOptions(whereClause, operator, true, true)
+		if !found {
+			continue
+		}
+		left = strings.TrimSpace(left)
+		if simpleSemanticIdentifier(left) == left {
+			if _, exists := scope[left]; !exists {
+				return createUndefinedVariableError(left)
+			}
+		}
 	}
 	return nil
 }

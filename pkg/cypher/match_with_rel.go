@@ -1358,7 +1358,7 @@ func parseLiteralValueFromComputedRow(expr string) (interface{}, bool) {
 		return false, true
 	}
 	if len(trimmed) >= 2 {
-		if (trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') || (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') {
+		if isWholeCypherQuotedString(trimmed) {
 			return decodeCypherQuotedString(trimmed)
 		}
 	}

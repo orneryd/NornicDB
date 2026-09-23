@@ -72,13 +72,10 @@ func TestMatchWhereSize(t *testing.T) {
 		assert.Equal(t, "small", result.Rows[1][0])
 	})
 
-	t.Run("WHERE size(n.content) < 100 returns small and empty (nil size 0)", func(t *testing.T) {
+	t.Run("WHERE size(n.content) < 100 excludes null content", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "MATCH (n:Doc) WHERE size(n.content) < 100 RETURN n.name AS name ORDER BY n.name", nil)
 		require.NoError(t, err)
-		// n1 content len 5, n3 content missing -> size 0
-		require.Len(t, result.Rows, 2)
-		assert.Equal(t, "empty", result.Rows[0][0])
-		assert.Equal(t, "small", result.Rows[1][0])
+		require.Equal(t, [][]interface{}{{"small"}}, result.Rows)
 	})
 }
 

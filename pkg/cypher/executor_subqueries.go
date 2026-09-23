@@ -806,7 +806,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 				if whereIdx > 0 {
 					// There's already a WHERE clause - append with AND
 					beforeWhere := patternPart[:whereIdx]
-					afterWhere := patternPart[whereIdx+7:] // Skip " WHERE "
+					afterWhere := patternPart[whereIdx+len("WHERE"):]
 					substitutedBody = "MATCH " + beforeWhere + " WHERE " + seedFilter + " AND " + afterWhere + " " + returnPart
 				} else {
 					// No existing WHERE - add one
@@ -1178,10 +1178,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 
 	trimmedOuter := strings.TrimSpace(outerPart)
 	hasOuterPipelineClauses := findKeywordIndex(trimmedOuter, "WITH") >= 0 ||
-		findKeywordIndex(trimmedOuter, "RETURN") >= 0 ||
-		findKeywordIndex(trimmedOuter, "ORDER BY") >= 0 ||
-		findKeywordIndex(trimmedOuter, "SKIP") >= 0 ||
-		findKeywordIndex(trimmedOuter, "LIMIT") >= 0
+		findKeywordIndex(trimmedOuter, "RETURN") >= 0
 
 	// Fast path for simple seeded MATCH queries without relationship patterns:
 	//   MATCH (v[:Label] {props}) [WHERE ...]

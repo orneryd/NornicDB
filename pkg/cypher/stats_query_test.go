@@ -563,7 +563,7 @@ func TestSumWithArithmetic(t *testing.T) {
 
 		// SUM(a) = 1+3 = 4, SUM(b) = 2+4 = 6, total = 10
 		total := result.Rows[0][0]
-		assert.Equal(t, float64(10), total)
+		assert.Equal(t, int64(10), total)
 	})
 }
 

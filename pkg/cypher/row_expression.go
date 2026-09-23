@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -26,6 +27,9 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	if value, ok := parseLiteralValueFromComputedRow(expr); ok {
 		return value, true
 	}
+	if isCaseExpression(expr) {
+		return e.evaluateRowCaseExpression(expr, values)
+	}
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
 		result := make(map[string]interface{})
@@ -45,6 +49,9 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			result[key] = value
 		}
 		return result, true
+	}
+	if value, matched, ok := e.evaluateRowListComprehension(expr, values); matched {
+		return value, ok
 	}
 
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
@@ -70,6 +77,28 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 
 	if function, argument, ok := parseFunctionCallWS(expr); ok {
 		switch strings.ToLower(function) {
+		case "length":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			if value == nil {
+				return nil, true
+			}
+			if path, isPath := toStringAnyMap(value); isPath {
+				if length, exists := path["length"]; exists {
+					switch distance := length.(type) {
+					case int:
+						return int64(distance), true
+					case int64:
+						return distance, true
+					}
+				}
+				if relationships, exists := path["relationships"]; exists {
+					return int64(len(toAnySlice(relationships))), true
+				}
+			}
+			return nil, false
 		case "abs":
 			value, resolved := e.evaluateRowExpression(argument, values)
 			if !resolved {
@@ -138,6 +167,27 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			default:
 				return int64(len(items)), true
 			}
+		case "nodes", "relationships":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			if value == nil {
+				return nil, true
+			}
+			path, isPath := toStringAnyMap(value)
+			if !isPath {
+				return nil, false
+			}
+			key := "nodes"
+			if strings.EqualFold(function, "relationships") {
+				key = "rels"
+			}
+			items, found := path[key]
+			if !found {
+				return nil, false
+			}
+			return toAnySlice(items), true
 		case "keys":
 			value, resolved := e.evaluateRowExpression(argument, values)
 			if !resolved {
@@ -178,6 +228,9 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			if !resolved {
 				return nil, false
 			}
+			if value == nil {
+				return nil, true
+			}
 			var labels []string
 			switch entity := value.(type) {
 			case *storage.Node:
@@ -198,7 +251,7 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	}
 
 	for _, operator := range []string{" OR ", " XOR ", " AND "} {
-		if left, right, ok := splitByOperatorWithOptions(expr, operator, true, false); ok {
+		if left, right, ok := splitByOperatorWithOptions(expr, operator, true, true); ok {
 			leftValue, leftOK := e.evaluateRowExpression(left, values)
 			rightValue, rightOK := e.evaluateRowExpression(right, values)
 			if !leftOK || !rightOK {
@@ -221,6 +274,7 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			if operator == "!=" {
 				operator = "<>"
 			}
+			leftValue, rightValue = normalizeRowIdentityComparison(left, right, leftValue, rightValue)
 			return compareWithOperator(leftValue, rightValue, operator), true
 		}
 	}
@@ -244,8 +298,9 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		}
 	}
 
-	if hasPrefixFoldASCII(expr, "NOT ") {
-		value, ok := e.evaluateRowExpression(strings.TrimSpace(expr[len("NOT "):]), values)
+	if len(expr) > len("NOT") && strings.EqualFold(expr[:len("NOT")], "NOT") &&
+		(isASCIISpace(expr[len("NOT")]) || expr[len("NOT")] == '(') {
+		value, ok := e.evaluateRowExpression(strings.TrimSpace(expr[len("NOT"):]), values)
 		if !ok {
 			return nil, false
 		}
@@ -333,6 +388,181 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		return nil, false
 	}
 	return value, true
+}
+
+// evaluateRowCaseExpression evaluates CASE against the complete heterogeneous
+// row. This keeps CASE semantics available after WITH/UNWIND and in the
+// converged pipeline, where bindings are not limited to graph entities.
+func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[string]interface{}) (interface{}, bool) {
+	parsed, err := parseCaseExpression(expr)
+	if err != nil {
+		return nil, false
+	}
+	if parsed.isSimple {
+		testValue, ok := e.evaluateRowExpression(parsed.testExpression, values)
+		if !ok {
+			return nil, false
+		}
+		for _, clause := range parsed.whenClauses {
+			whenValue, ok := e.evaluateRowExpression(clause.value, values)
+			if !ok {
+				return nil, false
+			}
+			if compareValues(testValue, whenValue) {
+				return e.evaluateRowExpression(clause.result, values)
+			}
+		}
+	} else {
+		for _, clause := range parsed.whenClauses {
+			if e.evaluateRowPredicate(context.Background(), clause.condition, values) {
+				return e.evaluateRowExpression(clause.result, values)
+			}
+		}
+	}
+	if parsed.elseResult == "" {
+		return nil, true
+	}
+	return e.evaluateRowExpression(parsed.elseResult, values)
+}
+
+// evaluateRowListComprehension evaluates a comprehension against typed row
+// bindings. The loop value remains a node, relationship, map, path, or scalar;
+// it is never converted to query text.
+func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[string]interface{}) (interface{}, bool, bool) {
+	if len(expr) < 2 || expr[0] != '[' || expr[len(expr)-1] != ']' {
+		return nil, false, false
+	}
+	variable, listExpression, predicate, projection, matched := parseListComprehension(expr[1 : len(expr)-1])
+	if !matched {
+		return nil, false, false
+	}
+	listValue, ok := e.evaluateRowExpression(listExpression, values)
+	if !ok {
+		return nil, true, false
+	}
+	if listValue == nil {
+		return nil, true, true
+	}
+	valueType := reflect.TypeOf(listValue)
+	if valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array {
+		return nil, true, false
+	}
+	items := toAnySlice(listValue)
+	result := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		scope := make(map[string]interface{}, len(values)+1)
+		for name, value := range values {
+			scope[name] = value
+		}
+		scope[variable] = item
+		if predicate != "" {
+			condition, evaluated := e.evaluateRowExpression(predicate, scope)
+			if !evaluated {
+				return nil, true, false
+			}
+			matches, isBoolean := condition.(bool)
+			if condition == nil || (isBoolean && !matches) {
+				continue
+			}
+			if !isBoolean {
+				return nil, true, false
+			}
+		}
+		value := item
+		if projection != "" {
+			var evaluated bool
+			value, evaluated = e.evaluateRowExpression(projection, scope)
+			if !evaluated {
+				return nil, true, false
+			}
+		}
+		result = append(result, value)
+	}
+	return result, true, true
+}
+
+func parseListComprehension(inner string) (variable, listExpression, predicate, projection string, ok bool) {
+	inIndex := findListComprehensionToken(inner, " IN ")
+	if inIndex <= 0 {
+		return "", "", "", "", false
+	}
+	variable = strings.TrimSpace(inner[:inIndex])
+	if !isValidIdentifier(variable) {
+		return "", "", "", "", false
+	}
+	rest := inner[inIndex+len(" IN "):]
+	whereIndex := findListComprehensionToken(rest, " WHERE ")
+	pipeIndex := findListComprehensionToken(rest, "|")
+	endList := len(rest)
+	if whereIndex >= 0 && whereIndex < endList {
+		endList = whereIndex
+	}
+	if pipeIndex >= 0 && pipeIndex < endList {
+		endList = pipeIndex
+	}
+	listExpression = strings.TrimSpace(rest[:endList])
+	if listExpression == "" {
+		return "", "", "", "", false
+	}
+	if whereIndex >= 0 {
+		conditionEnd := len(rest)
+		if pipeIndex > whereIndex {
+			conditionEnd = pipeIndex
+		}
+		predicate = strings.TrimSpace(rest[whereIndex+len(" WHERE ") : conditionEnd])
+		if predicate == "" {
+			return "", "", "", "", false
+		}
+	}
+	if pipeIndex >= 0 {
+		projection = strings.TrimSpace(rest[pipeIndex+1:])
+		if projection == "" {
+			return "", "", "", "", false
+		}
+	}
+	return variable, listExpression, predicate, projection, true
+}
+
+func findListComprehensionToken(expression, token string) int {
+	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	var quote rune
+	escaped := false
+	for index, current := range expression {
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if current == '\\' {
+				escaped = true
+				continue
+			}
+			if current == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch current {
+		case '\'', '"', '`':
+			quote = current
+		case '(':
+			parenDepth++
+		case ')':
+			parenDepth--
+		case '[':
+			bracketDepth++
+		case ']':
+			bracketDepth--
+		case '{':
+			braceDepth++
+		case '}':
+			braceDepth--
+		}
+		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && index+len(token) <= len(expression) && strings.EqualFold(expression[index:index+len(token)], token) {
+			return index
+		}
+	}
+	return -1
 }
 
 func isBinaryRowSubtraction(left string) bool {
@@ -444,7 +674,14 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 			if typed == nil {
 				return nil, true
 			}
-			value = typed.Properties[property]
+			propertyValue, _ := getNodePropertyValue(typed, property)
+			if _, isStringList := propertyValue.([]string); isStringList {
+				// Parsed node-property literals can remain []string in an in-memory
+				// streaming row while persisted reads expose the same Cypher list
+				// as []interface{}. Keep both physical sources observationally equal.
+				propertyValue = toAnySlice(propertyValue)
+			}
+			value = propertyValue
 		case *storage.Edge:
 			if typed == nil {
 				return nil, true
@@ -553,16 +790,22 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
 		return withWhereNodeHasAllLabels(values[variable], labels)
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, false); ok {
+	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, true); ok {
 		return e.evaluateRowPredicate(ctx, left, values) || e.evaluateRowPredicate(ctx, right, values)
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, false); ok {
+	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, true); ok {
 		return e.evaluateRowPredicate(ctx, left, values) && e.evaluateRowPredicate(ctx, right, values)
 	}
 	if hasPrefixFoldASCII(expression, "NOT ") {
 		return !e.evaluateRowPredicate(ctx, strings.TrimSpace(expression[4:]), values)
 	}
-	if nodeCtx, _ := withWhereValueContext(values); len(nodeCtx) > 0 {
+	if matched, recognized := e.evaluateRowExistsPredicate(ctx, expression, values); recognized {
+		return matched
+	}
+	if matched, recognized := e.evaluateRowCountSubqueryPredicate(expression, values); recognized {
+		return matched
+	}
+	if nodeCtx, _ := withWhereValueContext(values); len(nodeCtx) > 0 && looksLikeRowRelationshipPattern(expression) {
 		if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, expression, nodeCtx); recognized {
 			return matches
 		}
@@ -576,18 +819,22 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 	if left, right, ok := splitByOperatorWithOptions(expression, " CONTAINS ", true, true); ok {
 		return e.evaluateRowStringPredicate(left, right, values, strings.Contains)
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " IN ", true, true); ok {
-		needle, leftOK := e.evaluateRowExpression(left, values)
-		haystack, rightOK := e.evaluateRowExpression(right, values)
-		if !leftOK || !rightOK {
+	if left, right, ok := splitByOperatorWithOptions(expression, "=~", false, true); ok {
+		leftValue, leftOK := e.evaluateRowExpression(left, values)
+		rightValue, rightOK := e.evaluateRowExpression(right, values)
+		text, textOK := leftValue.(string)
+		pattern, patternOK := rightValue.(string)
+		if !leftOK || !rightOK || !textOK || !patternOK {
 			return false
 		}
-		for _, item := range toAnySlice(haystack) {
-			if e.compareEqual(needle, item) {
-				return true
-			}
-		}
-		return false
+		matched, err := regexp.MatchString(pattern, text)
+		return err == nil && matched
+	}
+	if left, right, ok := splitByOperatorWithOptions(expression, " NOT IN ", true, true); ok {
+		return !e.evaluateRowMembership(left, right, values)
+	}
+	if left, right, ok := splitByOperatorWithOptions(expression, " IN ", true, true); ok {
+		return e.evaluateRowMembership(left, right, values)
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
 		if hasSuffixFoldASCII(expression, strings.ToLower(operator)) {
@@ -609,11 +856,116 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 			if operator == "!=" {
 				operator = "<>"
 			}
+			leftValue, rightValue = normalizeRowIdentityComparison(left, right, leftValue, rightValue)
 			return compareWithOperator(leftValue, rightValue, operator)
 		}
 	}
 	value, ok := e.evaluateRowExpression(expression, values)
 	return ok && isTruthy(value)
+}
+
+func normalizeRowIdentityComparison(leftExpr, rightExpr string, leftValue, rightValue interface{}) (interface{}, interface{}) {
+	if !isRowIdentityExpression(leftExpr) && !isRowIdentityExpression(rightExpr) {
+		return leftValue, rightValue
+	}
+	return rowIdentityPayload(leftValue), rowIdentityPayload(rightValue)
+}
+
+func isRowIdentityExpression(expression string) bool {
+	name, _, ok := parseFunctionCallWS(strings.TrimSpace(expression))
+	return ok && (strings.EqualFold(name, "id") || strings.EqualFold(name, "elementId"))
+}
+
+func rowIdentityPayload(value interface{}) interface{} {
+	text, ok := value.(string)
+	if !ok {
+		return value
+	}
+	parts := strings.SplitN(text, ":", 3)
+	if len(parts) == 3 && (parts[0] == "4" || parts[0] == "5") {
+		return parts[2]
+	}
+	return text
+}
+
+func looksLikeRowRelationshipPattern(expression string) bool {
+	return strings.Contains(expression, "-[") || strings.Contains(expression, "]-") ||
+		strings.Contains(expression, "--") || strings.Contains(expression, "<-") || strings.Contains(expression, "->")
+}
+
+func (e *StorageExecutor) evaluateRowMembership(left, right string, values map[string]interface{}) bool {
+	needle, leftOK := e.evaluateRowExpression(left, values)
+	haystack, rightOK := e.evaluateRowExpression(right, values)
+	if !leftOK || !rightOK {
+		return false
+	}
+	identityMembership := isRowIdentityExpression(left)
+	if identityMembership {
+		needle = rowIdentityPayload(needle)
+	}
+	for _, item := range toAnySlice(haystack) {
+		if identityMembership {
+			item = rowIdentityPayload(item)
+		}
+		if e.compareEqual(needle, item) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
+	trimmed := strings.TrimSpace(expression)
+	negated := hasPrefixFold(trimmed, "NOT EXISTS")
+	if !negated && !hasPrefixFold(trimmed, "EXISTS") {
+		return false, false
+	}
+	prefix := "EXISTS"
+	if negated {
+		prefix = "NOT EXISTS"
+	}
+	subquery := e.extractSubquery(trimmed, prefix)
+	if subquery == "" {
+		return false, false
+	}
+	if !hasPrefixFold(strings.TrimSpace(subquery), "MATCH ") {
+		subquery = "MATCH " + strings.TrimSpace(subquery)
+	}
+	path := PathContext{nodes: make(map[string]*storage.Node), rels: make(map[string]*storage.Edge)}
+	for name, value := range values {
+		switch entity := value.(type) {
+		case *storage.Node:
+			if entity != nil {
+				path.nodes[name] = entity
+			}
+		case *storage.Edge:
+			if entity != nil {
+				path.rels[name] = entity
+			}
+		}
+	}
+	matched := e.pathSubqueryMatches(ctx, path, subquery)
+	if negated {
+		matched = !matched
+	}
+	return matched, true
+}
+
+func (e *StorageExecutor) evaluateRowCountSubqueryPredicate(expression string, values map[string]interface{}) (bool, bool) {
+	if !hasPrefixFold(strings.TrimSpace(expression), "COUNT") || !hasSubqueryPattern(expression, countSubqueryRe) {
+		return false, false
+	}
+	for variable, value := range values {
+		node, ok := value.(*storage.Node)
+		if !ok || node == nil {
+			continue
+		}
+		subquery := e.extractSubquery(expression, "COUNT")
+		if strings.Contains(subquery, "("+variable+")") || strings.Contains(subquery, "("+variable+":") {
+			return e.evaluateCountSubqueryComparison(node, variable, expression), true
+		}
+	}
+	return false, true
 }
 
 func (e *StorageExecutor) evaluateRowStringPredicate(left, right string, values map[string]interface{}, predicate func(string, string) bool) bool {

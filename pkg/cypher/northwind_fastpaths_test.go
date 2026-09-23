@@ -128,7 +128,7 @@ func TestNorthwindFastPaths(t *testing.T) {
 		require.Equal(t, []string{"p.productName", "totalOrdered"}, res.Columns)
 		require.GreaterOrEqual(t, len(res.Rows), 1)
 		assert.Equal(t, "Chai", res.Rows[0][0])
-		assert.Equal(t, float64(5), res.Rows[0][1])
+		assert.Equal(t, int64(5), res.Rows[0][1])
 	})
 
 	t.Run("Orders per customer", func(t *testing.T) {

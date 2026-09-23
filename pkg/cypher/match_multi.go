@@ -1135,7 +1135,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 
 	// Property access: var.prop — check node bindings first, then
 	// relationship bindings (e.g. "rel.evidence_source").
-	if dotIdx := strings.Index(expr, "."); dotIdx > 0 {
+	if dotIdx := strings.Index(expr, "."); dotIdx > 0 && isSimpleIdentifierOrProperty(expr) {
 		varName := expr[:dotIdx]
 		propName := expr[dotIdx+1:]
 		if node := b[varName]; node != nil {
@@ -1294,15 +1294,20 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 		return filtered, nil
 	}
 
-	// Determine if we can use streaming optimization
-	canStream := len(properties) == 0 // Can't filter properties inline yet
-
 	var nodes []*storage.Node
 	var err error
 
-	if canStream && limit > 0 {
-		// Use streaming with early termination for LIMIT queries
-		nodes = make([]*storage.Node, 0)
+	// Streaming is the shared scan primitive for the converged executor. Apply
+	// every residual filter in the visitor so both bounded and unbounded scans
+	// avoid the storage APIs that first materialize the complete population.
+	// LIMIT additionally stops storage iteration as soon as enough qualifying
+	// nodes have been produced.
+	if streamer, ok := store.(storage.StreamingEngine); ok {
+		capacity := 0
+		if limit > 0 {
+			capacity = limit
+		}
+		nodes = make([]*storage.Node, 0, capacity)
 		var whereFilter FilterFunc
 		if strings.TrimSpace(whereClause) != "" {
 			if fastIN, ok := e.buildBoundInFastFilter(whereVariable, whereClause); ok {
@@ -1315,50 +1320,46 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 				}
 			}
 		}
-		if streamer, ok := store.(storage.StreamingEngine); ok {
-			hideSystemNodes := shouldHideSystemNodes(store)
-			err = streamer.StreamNodes(ctx, func(node *storage.Node) error {
-				// Skip system nodes (labels starting with _)
-				if hideSystemNodes && isSystemNode(node) {
-					return nil
-				}
-
-				// Check label filter.
-				if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
-					return nil // Skip this node
-				}
-				if whereFilter != nil && !whereFilter(node) {
-					return nil
-				}
-				if hasViewport && canCheckViewport {
-					visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
-					if err != nil {
-						return err
-					}
-					if !visible {
-						return nil
-					}
-				}
-
-				nodes = append(nodes, node)
-				if len(nodes) >= limit {
-					return storage.ErrIterationStopped // Early termination
-				}
+		hideSystemNodes := shouldHideSystemNodes(store)
+		err = streamer.StreamNodes(ctx, func(node *storage.Node) error {
+			if hideSystemNodes && isSystemNode(node) {
 				return nil
-			})
-			// ErrIterationStopped is expected
-			if err == storage.ErrIterationStopped {
-				err = nil
 			}
-			if err != nil {
-				return nil, err
+			if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
+				return nil
 			}
-			return nodes, nil
+			if len(properties) > 0 && !e.nodeMatchesProps(node, properties) {
+				return nil
+			}
+			if whereFilter != nil && !whereFilter(node) {
+				return nil
+			}
+			if hasViewport && canCheckViewport {
+				visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+				if err != nil {
+					return err
+				}
+				if !visible {
+					return nil
+				}
+			}
+
+			nodes = append(nodes, node)
+			if limit > 0 && len(nodes) >= limit {
+				return storage.ErrIterationStopped
+			}
+			return nil
+		})
+		if err == storage.ErrIterationStopped {
+			err = nil
 		}
-		// Fall through to standard path if streaming not supported
+		if err != nil {
+			return nil, err
+		}
+		return nodes, nil
 	}
 
-	// Standard path: load all nodes then filter (use same store as CREATE for consistency)
+	// Compatibility fallback for storage implementations without StreamingEngine.
 	if len(labels) > 0 {
 		nodes, err = store.GetNodesByLabel(labels[0])
 	} else {

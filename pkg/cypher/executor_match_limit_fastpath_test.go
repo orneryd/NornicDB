@@ -126,3 +126,26 @@ func TestSimpleMatchLimitFastPath_DoesNotCaptureWhereShape(t *testing.T) {
 	trace := exec.LastHotPathTrace()
 	require.False(t, trace.SimpleMatchLimitFastPath)
 }
+
+func TestConvergedMatchPipelineStreamsUnboundedCandidates(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	ns := storage.NewNamespacedEngine(base, "test")
+	counting := &countingStreamingEngine{Engine: ns}
+	exec := NewStorageExecutor(counting)
+	ctx := context.Background()
+
+	for i := 0; i < 8; i++ {
+		_, err := exec.Execute(ctx, fmt.Sprintf("CREATE (n:Thing {id:%d})", i), nil)
+		require.NoError(t, err)
+	}
+	counting.streamNodesCalls = 0
+	counting.allNodesCalls = 0
+	counting.labelCalls = 0
+
+	result, err := exec.Execute(ctx, "MATCH (n:Thing) WHERE n.id >= 0 RETURN n.id ORDER BY n.id", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 8)
+	require.Greater(t, counting.streamNodesCalls, 0, "the row pipeline must use the shared streaming scan")
+	require.Equal(t, 0, counting.allNodesCalls, "the row pipeline must not materialize the complete store through AllNodes")
+	require.Equal(t, 0, counting.labelCalls, "the row pipeline must not materialize a complete label population")
+}

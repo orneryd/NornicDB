@@ -2,17 +2,27 @@ package cypher
 
 import "testing"
 
-// TestPipelineRejectsCommaMatchThenCreate pins the pipeline splitter's
-// behaviour on the setup-style `MATCH (a), (b) CREATE ...` query used by
-// TestCallLeadingVectorYieldTailClausePermutations. This shape has MATCH +
-// CREATE but no WITH/UNWIND, so the pipeline splitter MUST reject it (ok=false)
-// — otherwise the router will divert the query from executeCompoundMatchCreate
-// and break the comma-split MATCH binding logic.
-func TestPipelineRejectsCommaMatchThenCreate(t *testing.T) {
+func TestPipelineAcceptsCommaMatchThenCreate(t *testing.T) {
 	q := `MATCH (o:OriginalText {id:'o1'}), (t:TranslatedText {id:'t1'}) CREATE (o)-[:TRANSLATES_TO]->(t)`
 	_, ok := canExecuteAsPipeline(q)
+	if !ok {
+		t.Fatalf("pipeline splitter must accept comma-MATCH+CREATE")
+	}
+}
+
+func TestPipelineLeavesStandaloneCreateReturnAtomic(t *testing.T) {
+	q := `CREATE (node:Item {num: 1}) RETURN node`
+	_, ok := canExecuteAsPipeline(q)
 	if ok {
-		t.Fatalf("pipeline splitter must reject comma-MATCH+CREATE (no WITH/UNWIND) — got ok=true")
+		t.Fatalf("standalone CREATE ... RETURN must remain one atomic write operator")
+	}
+}
+
+func TestPipelineAppliesStandaloneCreateReturnWindow(t *testing.T) {
+	q := `CREATE (node:Item {num: 1}) RETURN node LIMIT 0`
+	_, ok := canExecuteAsPipeline(q)
+	if !ok {
+		t.Fatalf("CREATE ... RETURN with a result window must use the row pipeline")
 	}
 }
 

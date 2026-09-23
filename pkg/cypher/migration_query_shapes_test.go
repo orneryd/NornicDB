@@ -564,7 +564,7 @@ RETURN key AS lookupKey,
            reviewedAt: t.reviewedAt,
            submitter: t.submitter,
            isRefetch: t.isRefetch
-       }) AS texts
+       } END) AS texts
 `
 
 	// Sanity check the non-UNWIND shape for a key with no translation row.
@@ -993,7 +993,6 @@ LIMIT 30`
 	require.NoError(t, shapeDirectErr)
 	require.NotNil(t, shapeDirectRes)
 	require.Len(t, shapeDirectRes.Rows, 1, "direct executeMultiMatch should return row for full shape")
-
 	res, err := exec.Execute(ctx, shape, map[string]interface{}{
 		"language": "es",
 		"pagePath": "/benefits",

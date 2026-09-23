@@ -2656,7 +2656,7 @@ func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathCon
 		pattern = strings.TrimSpace(pattern[:whereIdx])
 	}
 
-	if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
+	if looksLikeRowRelationshipPattern(pattern) {
 		matches := e.parseTraversalPattern(ctx, pattern)
 		if matches == nil {
 			return false
@@ -2683,7 +2683,7 @@ func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathCon
 					inner.rels[name] = rel
 				}
 			}
-			if innerWhere == "" || e.evaluateWhereOnPath(ctx, innerWhere, inner) {
+			if innerWhere == "" || e.evaluateRowPredicate(ctx, innerWhere, pipelineRowFromPathContext(inner)) {
 				return true
 			}
 		}
@@ -2710,11 +2710,22 @@ func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathCon
 		if nodePattern.variable != "" {
 			inner.nodes[nodePattern.variable] = node
 		}
-		if innerWhere == "" || e.evaluateWhereOnPath(ctx, innerWhere, inner) {
+		if innerWhere == "" || e.evaluateRowPredicate(ctx, innerWhere, pipelineRowFromPathContext(inner)) {
 			return true
 		}
 	}
 	return false
+}
+
+func pipelineRowFromPathContext(path PathContext) map[string]interface{} {
+	row := make(map[string]interface{}, len(path.nodes)+len(path.rels))
+	for name, node := range path.nodes {
+		row[name] = node
+	}
+	for name, relationship := range path.rels {
+		row[name] = relationship
+	}
+	return row
 }
 
 // evaluatePathValue parses a literal value from a WHERE clause expression.
@@ -2782,6 +2793,34 @@ func (e *StorageExecutor) compareValues(left, right interface{}, op string) bool
 			return left != right
 		}
 		return false
+	}
+	if leftNode, ok := left.(*storage.Node); ok {
+		rightNode, rightOK := right.(*storage.Node)
+		if !rightOK || leftNode == nil || rightNode == nil {
+			return false
+		}
+		switch op {
+		case "=":
+			return leftNode.ID == rightNode.ID
+		case "<>":
+			return leftNode.ID != rightNode.ID
+		default:
+			return false
+		}
+	}
+	if leftEdge, ok := left.(*storage.Edge); ok {
+		rightEdge, rightOK := right.(*storage.Edge)
+		if !rightOK || leftEdge == nil || rightEdge == nil {
+			return false
+		}
+		switch op {
+		case "=":
+			return leftEdge.ID == rightEdge.ID
+		case "<>":
+			return leftEdge.ID != rightEdge.ID
+		default:
+			return false
+		}
 	}
 
 	// String comparison

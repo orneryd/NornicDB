@@ -798,10 +798,11 @@ func TestExecuteAggregationEmptyResultSet(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// Aggregation on empty set - non-aggregate column should be nil
+	// A non-aggregate projection is a grouping key. With no input rows there
+	// are no groups, so Cypher returns no rows rather than inventing a null key.
 	result, err := exec.Execute(ctx, "MATCH (n:NonExistentLabel) RETURN n.name, sum(n.val)", nil)
 	require.NoError(t, err)
-	assert.Nil(t, result.Rows[0][0]) // No nodes, so non-aggregate is nil
+	assert.Empty(t, result.Rows)
 }
 
 func TestExecuteAggregationSumNoMatch(t *testing.T) {
@@ -1365,7 +1366,7 @@ func TestParseValuePlainString(t *testing.T) {
 	// "active" without quotes is parsed as plain string
 }
 
-func TestEvaluateStringOpNonVariablePrefix(t *testing.T) {
+func TestStringPredicateRejectsUndefinedVariable(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 
 	store := storage.NewNamespacedEngine(baseStore, "test")
@@ -1381,13 +1382,11 @@ func TestEvaluateStringOpNonVariablePrefix(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	// CONTAINS with expression that doesn't start with n.
-	result, err := exec.Execute(ctx, "MATCH (n:StrNV) WHERE something CONTAINS 'test' RETURN n", nil)
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 1) // Non-property comparison returns true (includes all)
+	_, err = exec.Execute(ctx, "MATCH (n:StrNV) WHERE something CONTAINS 'test' RETURN n", nil)
+	require.Error(t, err)
 }
 
-func TestEvaluateInOpNonVariablePrefix(t *testing.T) {
+func TestMembershipPredicateRejectsUndefinedVariable(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 
 	store := storage.NewNamespacedEngine(baseStore, "test")
@@ -1403,10 +1402,8 @@ func TestEvaluateInOpNonVariablePrefix(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	// IN with expression that doesn't start with n.
-	result, err := exec.Execute(ctx, "MATCH (n:InNV) WHERE something IN ['a', 'b'] RETURN n", nil)
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 1) // Non-property comparison returns true
+	_, err = exec.Execute(ctx, "MATCH (n:InNV) WHERE something IN ['a', 'b'] RETURN n", nil)
+	require.Error(t, err)
 }
 
 func TestEvaluateIsNullNonVariablePrefix(t *testing.T) {
