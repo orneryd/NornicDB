@@ -35,6 +35,15 @@ func TestPipelineApplyWith_AdditionalBranches(t *testing.T) {
 	require.EqualValues(t, int64(9), out[0]["score"])
 	require.EqualValues(t, int64(42), out[0]["answer"])
 
+	// Nested literals and postfix operations share the converged expression
+	// evaluator instead of being classified by a list-subscript specialization.
+	out, ok = exec.pipelineApplyWith(context.Background(), []pipelineRow{{"x": int64(7)}},
+		"WITH [x, [], {}] AS values, [x, []][1] AS nested")
+	require.True(t, ok)
+	require.Len(t, out, 1)
+	require.Equal(t, []interface{}{int64(7), []interface{}{}, map[string]interface{}{}}, out[0]["values"])
+	require.Equal(t, []interface{}{}, out[0]["nested"])
+
 	// COUNT without alias is unsupported in WITH projection and must fall back.
 	out, ok = exec.pipelineApplyWith(context.Background(), rows, "WITH count(*)")
 	require.False(t, ok)

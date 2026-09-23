@@ -2308,11 +2308,12 @@ func (e *StorageExecutor) executeCreateWithRefsOrCompound(ctx context.Context, q
 //   - plain variables:     `WITH a, b`            carries each forward
 //   - map placeholder:     `WITH o, {}`           drops the {} projection
 //   - variable → alias:    `WITH a AS b`          renames
-//   - property → alias:    `WITH a.name AS n`     projects node property
-//   - literal → alias:     `WITH 42 AS x`         binds scalar literal
+//   - expression → alias:  `WITH a.name AS n`     evaluates a row expression
 //   - aggregate pass-thru: `WITH count(*) AS c`   counts current rows
 //
-// Anything else returns ok=false so the caller can fall back.
+// Projection expressions use the same row-expression operator as WHERE,
+// RETURN, and ORDER BY so list, map, property, and postfix operations cannot
+// diverge between pipeline clauses.
 func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "WITH"))
 	body = strings.TrimPrefix(body, "with")
@@ -2525,41 +2526,12 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 				continue
 			}
 
-			// 2. List subscript (values[0]).
-			if value, matched, ok := pipelineListSubscript(row, expr); matched {
-				if !ok {
-					return nil, false
-				}
-				newRow[alias] = value
-				continue
-			}
-
+			// All non-binding projections are evaluated by the converged row
+			// expression operator. Keep this as the only expression path so
+			// nested collection literals and postfix operations are parsed as a
+			// whole expression rather than mistaken for specialized shapes.
 			if value, projected := e.evaluateRowExpression(expr, row); projected {
 				newRow[alias] = value
-				continue
-			}
-
-			// 3. Property access (var.prop).
-			if dot := strings.Index(expr, "."); dot > 0 {
-				base := strings.TrimSpace(expr[:dot])
-				field := strings.TrimSpace(expr[dot+1:])
-				if baseVal, found := row[base]; found {
-					if node, isNode := baseVal.(*storage.Node); isNode && node != nil {
-						newRow[alias] = node.Properties[field]
-						continue
-					}
-					if m, isMap := toStringAnyMap(baseVal); isMap {
-						newRow[alias] = m[field]
-						continue
-					}
-				}
-			}
-
-			// 4. Literal scalar (number, quoted string, bool, null). Covers
-			// `WITH 42 AS x` and the post-$param-substitution form like
-			// `WITH 'hi' AS note`.
-			if val, lit := parseLiteralScalarForPipeline(expr); lit {
-				newRow[alias] = val
 				continue
 			}
 
@@ -3270,62 +3242,6 @@ func pipelineValueKey(value interface{}) string {
 		}
 	}
 	return fmt.Sprintf("%T:%#v", value, value)
-}
-
-func pipelineListSubscript(row pipelineRow, expr string) (interface{}, bool, bool) {
-	open := strings.LastIndex(expr, "[")
-	if open <= 0 || !strings.HasSuffix(expr, "]") {
-		return nil, false, false
-	}
-	base := strings.TrimSpace(expr[:open])
-	indexText := strings.TrimSpace(expr[open+1 : len(expr)-1])
-	index, ok := pipelineIntegerExpression(row, indexText)
-	if !ok || index < 0 {
-		return nil, true, false
-	}
-	value, exists := row[base]
-	if !exists {
-		return nil, true, false
-	}
-	items := toAnySlice(value)
-	if index >= len(items) {
-		return nil, true, true
-	}
-	return items[index], true, true
-}
-
-func pipelineIntegerExpression(row pipelineRow, expression string) (int, bool) {
-	expression = strings.TrimSpace(expression)
-	if matchFuncStartAndSuffix(expression, "size") {
-		name := strings.TrimSpace(extractFuncArgs(expression, "size"))
-		value, exists := row[name]
-		if !exists {
-			return 0, false
-		}
-		return len(toAnySlice(value)), true
-	}
-	if value, exists := row[expression]; exists {
-		number, ok := toFloat64(value)
-		if !ok || number != float64(int(number)) {
-			return 0, false
-		}
-		return int(number), true
-	}
-	for _, operator := range []string{"+", "-"} {
-		if left, right, found := splitByOperatorWithOptions(expression, operator, false, true); found {
-			leftValue, leftOK := pipelineIntegerExpression(row, left)
-			rightValue, rightOK := pipelineIntegerExpression(row, right)
-			if !leftOK || !rightOK {
-				return 0, false
-			}
-			if operator == "+" {
-				return leftValue + rightValue, true
-			}
-			return leftValue - rightValue, true
-		}
-	}
-	value, err := strconv.Atoi(expression)
-	return value, err == nil
 }
 
 // ---- helpers ----

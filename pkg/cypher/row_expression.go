@@ -716,6 +716,16 @@ func compareCypherPredicateValue(left, right interface{}, operator string) inter
 			return nil
 		}
 	}
+	if operator != "=" && operator != "<>" && operator != "!=" {
+		leftNumber, leftIsNumber := strictNumericValue(left)
+		rightNumber, rightIsNumber := strictNumericValue(right)
+		if (leftIsNumber && math.IsNaN(leftNumber)) || (rightIsNumber && math.IsNaN(rightNumber)) {
+			if leftIsNumber && rightIsNumber {
+				return false
+			}
+			return nil
+		}
+	}
 	if operator == "=" || operator == "<>" || operator == "!=" {
 		equal := cypherEquality(left, right)
 		matched, known := equal.(bool)

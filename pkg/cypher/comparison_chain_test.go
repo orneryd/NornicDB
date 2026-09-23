@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 
@@ -119,6 +120,48 @@ func TestConvergedMatchFiltersArbitraryLengthComparisonChains(t *testing.T) {
 		}
 		if len(result.Rows) != wantRows {
 			t.Fatalf("%s: got %d rows, want %d", query, len(result.Rows), wantRows)
+		}
+	}
+}
+
+func TestConvergedRowsCompareOnlyCompatibleTypeFamilies(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CREATE ()-[:T]->()", nil)
+	if err != nil {
+		t.Fatalf("setup query: %v", err)
+	}
+	for _, operator := range []string{"<", "<=", ">=", ">"} {
+		query := `
+			MATCH p = (n)-[r]->()
+			WITH [n, r, p, '', 1, 3.14, true, null, [], {}] AS types
+			UNWIND range(0, size(types) - 1) AS i
+			UNWIND range(0, size(types) - 1) AS j
+			WITH types[i] AS lhs, types[j] AS rhs
+			WHERE i <> j
+			WITH lhs, rhs, lhs ` + operator + ` rhs AS result
+			WHERE result
+			RETURN lhs, rhs`
+		result, queryErr := exec.Execute(ctx, query, nil)
+		if queryErr != nil {
+			t.Fatalf("operator %s: %v", operator, queryErr)
+		}
+		if len(result.Rows) != 1 {
+			t.Fatalf("operator %s: got %#v, want one numeric row", operator, result.Rows)
+		}
+	}
+}
+
+func TestNumericNaNIsUnordered(t *testing.T) {
+	nan := math.NaN()
+	for _, operator := range []string{"<", "<=", ">", ">="} {
+		if got := compareCypherPredicateValue(nan, float64(1), operator); got != false {
+			t.Fatalf("NaN %s 1: got %#v, want false", operator, got)
+		}
+		if got := compareCypherPredicateValue(nan, "a", operator); got != nil {
+			t.Fatalf("NaN %s string: got %#v, want null", operator, got)
 		}
 	}
 }
