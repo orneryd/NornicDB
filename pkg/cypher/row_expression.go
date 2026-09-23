@@ -136,6 +136,38 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			default:
 				return nil, false
 			}
+		case "sign":
+			value, resolved := e.evaluateRowExpression(argument, values)
+			if !resolved {
+				return nil, false
+			}
+			if value == nil {
+				return nil, true
+			}
+			number, numeric := toFloat64(value)
+			if !numeric {
+				return nil, false
+			}
+			switch {
+			case number < 0:
+				return int64(-1), true
+			case number > 0:
+				return int64(1), true
+			default:
+				return int64(0), true
+			}
+		case "range":
+			parts := e.splitFunctionArgs(argument)
+			arguments := make([]interface{}, len(parts))
+			for index, part := range parts {
+				value, resolved := e.evaluateRowExpression(strings.TrimSpace(part), values)
+				if !resolved {
+					return nil, false
+				}
+				arguments[index] = value
+			}
+			result, err := evaluateCypherRange(arguments)
+			return result, err == nil
 		case "head", "last", "tail", "reverse", "size":
 			value, resolved := e.evaluateRowExpression(argument, values)
 			if !resolved {

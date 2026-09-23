@@ -213,7 +213,7 @@ func parseCypherDateTimeText(text string) (time.Time, string, bool) {
 	}
 	location := time.FixedZone("", offset)
 	if zoneID != "" {
-		location, ok = loadTemporalLocation(zoneID)
+		location, ok = loadTemporalLocationAt(zoneID, date)
 		if !ok {
 			return time.Time{}, "", false
 		}

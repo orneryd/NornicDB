@@ -461,6 +461,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, true, err
 			}
 		case pipelineClauseWith:
+			if err := e.validatePipelineRangeArguments(rows, clause.text, "WITH"); err != nil {
+				return nil, true, err
+			}
 			if err := e.validatePipelineProjectionSubscripts(rows, clause.text, "WITH"); err != nil {
 				return nil, true, err
 			}
@@ -474,6 +477,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			rows = newRows
 			scope = pipelineProjectionScope(scope, clause.text)
 		case pipelineClauseUnwind:
+			if err := e.validatePipelineRangeArguments(rows, clause.text, "UNWIND"); err != nil {
+				return nil, true, err
+			}
 			newRows, ok := e.pipelineApplyUnwind(ctx, rows, clause.text)
 			if !ok {
 				return nil, false, nil
@@ -483,6 +489,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				scope[alias] = struct{}{}
 			}
 		case pipelineClauseReturn:
+			if err := e.validatePipelineRangeArguments(rows, clause.text, "RETURN"); err != nil {
+				return nil, true, err
+			}
 			if err := e.validatePipelineProjectionSubscripts(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
@@ -3393,30 +3402,16 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		if len(args) < 2 || len(args) > 3 {
 			return nil, false
 		}
-		start, startOK := pipelineIntegerExpression(row, args[0])
-		end, endOK := pipelineIntegerExpression(row, args[1])
-		step := 1
-		stepOK := true
-		if len(args) == 3 {
-			step, stepOK = pipelineIntegerExpression(row, args[2])
-		}
-		if !startOK || !endOK || !stepOK {
-			return nil, false
-		}
-		if step == 0 {
-			step = 1
-		}
-		items := make([]interface{}, 0)
-		if step > 0 {
-			for value := start; value <= end; value += step {
-				items = append(items, int64(value))
+		arguments := make([]interface{}, len(args))
+		for index, argument := range args {
+			value, resolved := e.evaluateRowExpression(strings.TrimSpace(argument), row)
+			if !resolved {
+				return nil, false
 			}
-		} else {
-			for value := start; value >= end; value += step {
-				items = append(items, int64(value))
-			}
+			arguments[index] = value
 		}
-		return items, true
+		items, err := evaluateCypherRange(arguments)
+		return items, err == nil
 	}
 	if value, ok := e.evaluateRowExpression(expr, row); ok {
 		return toAnySlice(value), true

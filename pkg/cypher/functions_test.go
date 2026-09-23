@@ -2064,8 +2064,8 @@ func TestFunctionAdditionalListMapAndDegreeCoverage(t *testing.T) {
 		t.Fatalf("range(5,1,-2) = %#v, want [5 3 1]", gotRangeNeg)
 	}
 	gotRangeZero := e.evaluateExpressionWithContext(ctx, "range(1,3,0)", nodes, nil)
-	if !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3)}, gotRangeZero) {
-		t.Fatalf("range(1,3,0) = %#v, want [1 2 3]", gotRangeZero)
+	if gotRangeZero != nil {
+		t.Fatalf("range(1,3,0) = %#v, want invalid evaluation", gotRangeZero)
 	}
 	gotSliceEmpty := e.evaluateExpressionWithContext(ctx, "slice([1,2,3], 2, 1)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{}, gotSliceEmpty) {

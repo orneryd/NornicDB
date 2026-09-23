@@ -581,6 +581,9 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		if err := validateStaticMembershipOperand(part); err != nil {
 			return nil, err
 		}
+		if err := e.validateRangeCalls(part, pipelineRow{}); err != nil {
+			return nil, err
+		}
 
 		columns = append(columns, alias)
 

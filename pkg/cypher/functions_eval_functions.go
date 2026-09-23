@@ -348,41 +348,15 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "range") {
 		inner := extractFuncArgs(expr, "range")
 		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			startValue := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			endValue := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			startNumber, startOK := toFloat64(startValue)
-			endNumber, endOK := toFloat64(endValue)
-			if !startOK || !endOK {
-				return []interface{}{}
-			}
-			start := int64(startNumber)
-			end := int64(endNumber)
-			step := int64(1)
-			if len(args) >= 3 {
-				stepValue := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				stepNumber, stepOK := toFloat64(stepValue)
-				if !stepOK {
-					return []interface{}{}
-				}
-				step = int64(stepNumber)
-			}
-			if step == 0 {
-				step = 1
-			}
-			var result []interface{}
-			if step > 0 {
-				for i := start; i <= end; i += step {
-					result = append(result, i)
-				}
-			} else {
-				for i := start; i >= end; i += step {
-					result = append(result, i)
-				}
-			}
-			return result
+		arguments := make([]interface{}, len(args))
+		for index, argument := range args {
+			arguments[index] = e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(argument), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
-		return []interface{}{}
+		result, err := evaluateCypherRange(arguments)
+		if err != nil {
+			return nil
+		}
+		return result
 	}
 
 	// slice(list, start, end) - get sublist from start to end (exclusive)

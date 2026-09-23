@@ -51,6 +51,30 @@ func TestTemporalMapConstructorsUseSharedComponentSemantics(t *testing.T) {
 	}
 }
 
+func TestNamedTimezoneUsesNeo4jHistoricalRulesIndependentlyOfHostTZData(t *testing.T) {
+	value, zoneID, ok := parseCypherDateTimeText("1818-07-21T21:40:32.142[Europe/Stockholm]")
+	if !ok {
+		t.Fatal("historical Stockholm datetime was not parsed")
+	}
+	if got, want := zoneID, "Europe/Stockholm"; got != want {
+		t.Fatalf("zone ID = %q, want %q", got, want)
+	}
+	if got, want := formatTemporalDateTime(value, true, zoneID), "1818-07-21T21:40:32.142+00:53:28[Europe/Stockholm]"; got != want {
+		t.Fatalf("historical datetime = %q, want %q", got, want)
+	}
+	if _, offset := value.Zone(); offset != 53*60+28 {
+		t.Fatalf("historical offset = %d, want %d", offset, 53*60+28)
+	}
+
+	transition, _, ok := parseCypherDateTimeText("1893-04-01T00:00:00[Europe/Stockholm]")
+	if !ok {
+		t.Fatal("Stockholm transition datetime was not parsed")
+	}
+	if _, offset := transition.Zone(); offset != 60*60 {
+		t.Fatalf("transition offset = %d, want %d", offset, 60*60)
+	}
+}
+
 func TestTemporalWeekConstructionInheritsBaseDateWeekday(t *testing.T) {
 	value, ok := buildTemporalValue("date", map[string]interface{}{
 		"date": CypherDate{Time: time.Date(1816, 12, 31, 0, 0, 0, 0, time.UTC)},

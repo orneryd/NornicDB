@@ -268,6 +268,12 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 	if !zoneOK {
 		return nil, true
 	}
+	if zoneID != "" {
+		zone, zoneOK = loadTemporalLocationAt(zoneID, date)
+		if !zoneOK {
+			return nil, true
+		}
+	}
 	if hasBaseTime && baseZoned && hasAnyTemporalField(fields, "timezone") && (kind == "time" || kind == "datetime") {
 		source := time.Date(date.Year(), date.Month(), date.Day(), baseTime.Hour(), baseTime.Minute(), baseTime.Second(), baseTime.Nanosecond(), baseTime.Location())
 		converted := source.In(zone)
@@ -281,6 +287,7 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 		}
 	}
 	value := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), zone)
+	value = normalizeTemporalNamedZone(value)
 	switch kind {
 	case "localtime":
 		return CypherLocalTime{Time: value}, true
