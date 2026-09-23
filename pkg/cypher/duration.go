@@ -147,7 +147,8 @@ func (d *CypherDuration) String() string {
 		}
 		if d.Seconds > 0 || d.Nanos > 0 {
 			if d.Nanos > 0 {
-				sb.WriteString(fmt.Sprintf("%d.%09dS", d.Seconds, d.Nanos))
+				fraction := strings.TrimRight(fmt.Sprintf("%09d", d.Nanos), "0")
+				sb.WriteString(fmt.Sprintf("%d.%sS", d.Seconds, fraction))
 			} else {
 				sb.WriteString(fmt.Sprintf("%dS", d.Seconds))
 			}

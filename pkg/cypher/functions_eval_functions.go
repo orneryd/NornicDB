@@ -1175,6 +1175,11 @@ skipArrayIndexing:
 	// ========================================
 	// Date/Time Functions (Neo4j compatible)
 	// ========================================
+	if value, handled := e.evaluateTemporalConstructor(func(argument string) interface{} {
+		return e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	}, expr); handled {
+		return value
+	}
 
 	// timestamp() - current Unix timestamp in milliseconds
 	if lowerExpr == "timestamp()" {

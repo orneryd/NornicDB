@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -398,7 +399,19 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 		}
 		return dst
 	case time.Time:
-		return encodePackStreamDateTimeIntoWithUTC(dst, val, useUTCDateTimeStructs)
+		return encodePackStreamZonedDateTimeIntoWithUTC(dst, val, useUTCDateTimeStructs)
+	case cypher.CypherDate:
+		return encodePackStreamDateInto(dst, val.Time)
+	case cypher.CypherLocalTime:
+		return encodePackStreamLocalTimeInto(dst, val.Time)
+	case cypher.CypherTime:
+		return encodePackStreamTimeInto(dst, val.Time)
+	case cypher.CypherLocalDateTime:
+		return encodePackStreamLocalDateTimeValueInto(dst, val.Time)
+	case cypher.CypherDateTime:
+		return encodePackStreamCypherDateTimeInto(dst, val, useUTCDateTimeStructs)
+	case *cypher.CypherDuration:
+		return encodePackStreamCypherDurationInto(dst, val)
 	case time.Duration:
 		// Encode duration as milliseconds (signed).
 		return encodePackStreamIntInto(dst, val.Milliseconds())
@@ -454,6 +467,18 @@ func encodePackStreamValue(v any) []byte {
 		return buf
 	case time.Time:
 		return encodePackStreamDateTime(val)
+	case cypher.CypherDate:
+		return encodePackStreamDateInto(nil, val.Time)
+	case cypher.CypherLocalTime:
+		return encodePackStreamLocalTimeInto(nil, val.Time)
+	case cypher.CypherTime:
+		return encodePackStreamTimeInto(nil, val.Time)
+	case cypher.CypherLocalDateTime:
+		return encodePackStreamLocalDateTimeValueInto(nil, val.Time)
+	case cypher.CypherDateTime:
+		return encodePackStreamCypherDateTimeInto(nil, val, true)
+	case *cypher.CypherDuration:
+		return encodePackStreamCypherDurationInto(nil, val)
 	case string:
 		return encodePackStreamString(val)
 	// List types
@@ -538,8 +563,77 @@ func encodePackStreamDateTimeIntoWithUTC(dst []byte, t time.Time, useUTCDateTime
 	return dst
 }
 
+func encodePackStreamZonedDateTimeIntoWithUTC(dst []byte, value time.Time, useUTCDateTimeStructs bool) []byte {
+	zoneID := value.Location().String()
+	if !strings.Contains(zoneID, "/") {
+		return encodePackStreamDateTimeIntoWithUTC(dst, value, useUTCDateTimeStructs)
+	}
+	signature := byte(0x69)
+	if !useUTCDateTimeStructs {
+		signature = 0x66
+	}
+	dst = append(dst, 0xB3, signature)
+	dst = encodePackStreamIntInto(dst, value.Unix())
+	dst = encodePackStreamIntInto(dst, int64(value.Nanosecond()))
+	return encodePackStreamStringInto(dst, zoneID)
+}
+
 func encodePackStreamDateTime(t time.Time) []byte {
 	return encodePackStreamDateTimeInto(nil, t)
+}
+
+func encodePackStreamDateInto(dst []byte, value time.Time) []byte {
+	epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	date := time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
+	dst = append(dst, 0xB1, 0x44)
+	return encodePackStreamIntInto(dst, int64(date.Sub(epoch)/(24*time.Hour)))
+}
+
+func encodePackStreamLocalTimeInto(dst []byte, value time.Time) []byte {
+	nanos := int64(value.Hour())*int64(time.Hour) + int64(value.Minute())*int64(time.Minute) +
+		int64(value.Second())*int64(time.Second) + int64(value.Nanosecond())
+	dst = append(dst, 0xB1, 0x74)
+	return encodePackStreamIntInto(dst, nanos)
+}
+
+func encodePackStreamTimeInto(dst []byte, value time.Time) []byte {
+	dst = append(dst, 0xB2, 0x54)
+	dst = encodePackStreamIntInto(dst, int64(value.Hour())*int64(time.Hour)+int64(value.Minute())*int64(time.Minute)+int64(value.Second())*int64(time.Second)+int64(value.Nanosecond()))
+	_, offset := value.Zone()
+	return encodePackStreamIntInto(dst, int64(offset))
+}
+
+func encodePackStreamLocalDateTimeValueInto(dst []byte, value time.Time) []byte {
+	naive := time.Date(value.Year(), value.Month(), value.Day(), value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), time.UTC)
+	dst = append(dst, 0xB2, 0x64)
+	dst = encodePackStreamIntInto(dst, naive.Unix())
+	return encodePackStreamIntInto(dst, int64(naive.Nanosecond()))
+}
+
+func encodePackStreamCypherDateTimeInto(dst []byte, value cypher.CypherDateTime, useUTCDateTimeStructs bool) []byte {
+	if value.ZoneID == "" {
+		return encodePackStreamDateTimeIntoWithUTC(dst, value.Time, useUTCDateTimeStructs)
+	}
+	signature := byte(0x69)
+	if !useUTCDateTimeStructs {
+		signature = 0x66
+	}
+	dst = append(dst, 0xB3, signature)
+	dst = encodePackStreamIntInto(dst, value.Time.Unix())
+	dst = encodePackStreamIntInto(dst, int64(value.Time.Nanosecond()))
+	return encodePackStreamStringInto(dst, value.ZoneID)
+}
+
+func encodePackStreamCypherDurationInto(dst []byte, value *cypher.CypherDuration) []byte {
+	if value == nil {
+		return append(dst, 0xC0)
+	}
+	dst = append(dst, 0xB4, 0x45)
+	dst = encodePackStreamIntInto(dst, value.Years*12+value.Months)
+	dst = encodePackStreamIntInto(dst, value.Days)
+	seconds := value.Hours*3600 + value.Minutes*60 + value.Seconds
+	dst = encodePackStreamIntInto(dst, seconds)
+	return encodePackStreamIntInto(dst, value.Nanos)
 }
 
 func encodePackStreamIntInto(dst []byte, val int64) []byte {

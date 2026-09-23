@@ -3,12 +3,66 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+func TestTemporalMapConstructorsUseSharedComponentSemantics(t *testing.T) {
+	baseEngine := newTestMemoryEngine(t)
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(baseEngine, "test"))
+	ctx := context.Background()
+
+	tests := []struct {
+		expression string
+		expected   string
+	}{
+		{"date({year: 1817, week: 1})", "1816-12-30"},
+		{"date({year: 1984, quarter: 3, dayOfQuarter: 45})", "1984-08-14"},
+		{"localtime({hour: 12, minute: 31, second: 14, millisecond: 123, microsecond: 456, nanosecond: 789})", "12:31:14.123456789"},
+		{"time({hour: 12, minute: 34, second: 56, timezone: '+02:05:59'})", "12:34:56+02:05:59"},
+		{"localdatetime({year: 1984, ordinalDay: 202, hour: 12})", "1984-07-20T12:00"},
+		{"datetime({year: 1984, ordinalDay: 202, timezone: 'Europe/Stockholm'})", "1984-07-20T00:00+02:00[Europe/Stockholm]"},
+		{"datetime.fromepoch(416779, 999999999)", "1970-01-05T19:46:19.999999999Z"},
+		{"datetime.fromepochmillis(237821673987)", "1977-07-15T13:34:33.987Z"},
+		{"duration({months: 5, days: 1.5})", "P5M1DT12H"},
+		{"duration({months: 0.75})", "P22DT19H51M49.5S"},
+	}
+
+	for _, test := range tests {
+		result, err := executor.Execute(ctx, "RETURN "+test.expression+" AS value", nil)
+		if err != nil {
+			t.Fatalf("%s failed: %v", test.expression, err)
+		}
+		got := fmt.Sprint(result.Rows[0][0])
+		if value, ok := result.Rows[0][0].(time.Time); ok {
+			zoneID := ""
+			if strings.Contains(value.Location().String(), "/") {
+				zoneID = value.Location().String()
+			}
+			got = formatTemporalDateTime(value, true, zoneID)
+		}
+		if got != test.expected {
+			t.Fatalf("%s = %q, want %q", test.expression, got, test.expected)
+		}
+	}
+}
+
+func TestTemporalWeekConstructionInheritsBaseDateWeekday(t *testing.T) {
+	value, ok := buildTemporalValue("date", map[string]interface{}{
+		"date": CypherDate{Time: time.Date(1816, 12, 31, 0, 0, 0, 0, time.UTC)},
+		"week": int64(2),
+	})
+	if !ok {
+		t.Fatal("week date was not constructed")
+	}
+	if got := value.(CypherDate).String(); got != "1817-01-07" {
+		t.Fatalf("week date = %q, want %q", got, "1817-01-07")
+	}
+}
 
 func TestTimestampFunction(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)

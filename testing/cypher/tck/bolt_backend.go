@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 )
 
@@ -299,11 +301,109 @@ func convertBoltValue(value any) (any, error) {
 			result[key] = converted
 		}
 		return result, nil
+	case dbtype.Date:
+		return v.Time().Format("2006-01-02"), nil
+	case dbtype.LocalTime:
+		return formatBoltTemporalClock(v.Time(), false), nil
+	case dbtype.Time:
+		return formatBoltTemporalClock(v.Time(), true), nil
+	case dbtype.LocalDateTime:
+		return formatBoltTemporalDateTime(v.Time(), false), nil
+	case time.Time:
+		return formatBoltTemporalDateTime(v, true), nil
+	case dbtype.Duration:
+		return formatBoltDuration(v), nil
 	case nil, bool, string, int, int32, int64, float32, float64:
 		return v, nil
 	default:
 		return nil, fmt.Errorf("unsupported Bolt value %T", value)
 	}
+}
+
+func formatBoltTemporalClock(value time.Time, zoned bool) string {
+	format := "15:04"
+	if value.Second() != 0 || value.Nanosecond() != 0 {
+		format = "15:04:05"
+		if value.Nanosecond() != 0 {
+			format += ".999999999"
+		}
+	}
+	result := value.Format(format)
+	if zoned {
+		_, offset := value.Zone()
+		result += formatBoltTemporalOffset(offset)
+	}
+	return result
+}
+
+func formatBoltTemporalDateTime(value time.Time, zoned bool) string {
+	result := value.Format("2006-01-02T") + formatBoltTemporalClock(value, zoned)
+	if zoned {
+		zoneID := value.Location().String()
+		if zoneID != "" && zoneID != "UTC" && zoneID != "Local" && !strings.HasPrefix(zoneID, "Offset") {
+			result += "[" + zoneID + "]"
+		}
+	}
+	return result
+}
+
+func formatBoltTemporalOffset(offset int) string {
+	if offset == 0 {
+		return "Z"
+	}
+	sign := '+'
+	if offset < 0 {
+		sign = '-'
+		offset = -offset
+	}
+	hours := offset / 3600
+	minutes := offset % 3600 / 60
+	seconds := offset % 60
+	if seconds == 0 {
+		return fmt.Sprintf("%c%02d:%02d", sign, hours, minutes)
+	}
+	return fmt.Sprintf("%c%02d:%02d:%02d", sign, hours, minutes, seconds)
+}
+
+func formatBoltDuration(value dbtype.Duration) string {
+	years := value.Months / 12
+	months := value.Months % 12
+	days := value.Days + value.Seconds/86_400
+	secondsOfDay := value.Seconds % 86_400
+	hours := secondsOfDay / 3_600
+	secondsOfDay %= 3_600
+	minutes := secondsOfDay / 60
+	seconds := secondsOfDay % 60
+
+	var result strings.Builder
+	result.WriteByte('P')
+	if years != 0 {
+		fmt.Fprintf(&result, "%dY", years)
+	}
+	if months != 0 {
+		fmt.Fprintf(&result, "%dM", months)
+	}
+	if days != 0 {
+		fmt.Fprintf(&result, "%dD", days)
+	}
+	if hours != 0 || minutes != 0 || seconds != 0 || value.Nanos != 0 || result.Len() == 1 {
+		result.WriteByte('T')
+		if hours != 0 {
+			fmt.Fprintf(&result, "%dH", hours)
+		}
+		if minutes != 0 {
+			fmt.Fprintf(&result, "%dM", minutes)
+		}
+		if seconds != 0 || value.Nanos != 0 || (hours == 0 && minutes == 0) {
+			if value.Nanos == 0 {
+				fmt.Fprintf(&result, "%dS", seconds)
+			} else {
+				fraction := strings.TrimRight(fmt.Sprintf("%09d", value.Nanos), "0")
+				fmt.Fprintf(&result, "%d.%sS", seconds, fraction)
+			}
+		}
+	}
+	return result.String()
 }
 
 func nodeFromBolt(node neo4j.Node) NodeValue {
