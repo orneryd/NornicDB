@@ -503,7 +503,9 @@ func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, column
 // spaces (e.g. "coalesce(a, b) DESC") survives intact instead of being
 // mangled by a naive strings.Fields split on the first two tokens (issue
 // #500: "0)" in "coalesce(a, 0) DESC" was previously misread as the
-// direction).
+// direction). Parentheses and whitespace inside string literals ('...',
+// "...") and backtick-quoted identifiers are ignored, so a key such as
+// coalesce(n.x, ')') or n.`a b` keeps its trailing direction keyword.
 func splitOrderByDirection(part string) (expr string, descending bool) {
 	part = strings.TrimSpace(part)
 	if part == "" {
@@ -512,13 +514,28 @@ func splitOrderByDirection(part string) (expr string, descending bool) {
 
 	depth := 0
 	lastSpace := -1
+	var quote rune
+	escaped := false
 	for i, r := range part {
+		if quote != 0 {
+			switch {
+			case escaped:
+				escaped = false
+			case r == '\\' && quote != '`':
+				escaped = true
+			case r == quote:
+				quote = 0
+			}
+			continue
+		}
 		switch r {
+		case '\'', '"', '`':
+			quote = r
 		case '(':
 			depth++
 		case ')':
 			depth--
-		case ' ', '\t', '\n':
+		case ' ', '\t', '\n', '\r':
 			if depth == 0 {
 				lastSpace = i
 			}

@@ -20,7 +20,8 @@ import (
 // BenchmarkTraversalOptionalMatch_OrderByHiddenKey is
 // BenchmarkTraversalOptionalMatch_FanOutProjection's shape with a hidden
 // ORDER BY key (e.name, unprojected in FanOut's RETURN) plus LIMIT, exercising
-// buildTraversalHiddenOrderBy's per-row hidden-column projection and sort.
+// buildHiddenOrderBySpecs's per-row hidden-column projection and sort in
+// projectTraversalOptionalRows.
 func BenchmarkTraversalOptionalMatch_OrderByHiddenKey(b *testing.B) {
 	base := storage.NewMemoryEngine()
 	store := storage.NewNamespacedEngine(base, "bench")

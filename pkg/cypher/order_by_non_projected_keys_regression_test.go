@@ -426,3 +426,29 @@ func TestOrderByNonProjectedKeys_Distinct(t *testing.T) {
 		}
 	})
 }
+
+func TestSplitOrderByDirection(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantExpr string
+		wantDesc bool
+	}{
+		{"n.name", "n.name", false},
+		{"n.name DESC", "n.name", true},
+		{"n.name descending", "n.name", true},
+		{"n.name ASCENDING", "n.name", false},
+		{"  coalesce(e.x, 0)   DESC  ", "coalesce(e.x, 0)", true},
+		{"coalesce(n.x, ')') DESC", "coalesce(n.x, ')')", true},
+		{`coalesce(n.x, "(") ASC`, `coalesce(n.x, "(")`, false},
+		{"n.`weird name` DESC", "n.`weird name`", true},
+		{"n.`a) b` DESC", "n.`a) b`", true},
+		{"'a DESC'", "'a DESC'", false},
+		{`coalesce(n.x, 'it\'s ) DESC') DESC`, `coalesce(n.x, 'it\'s ) DESC')`, true},
+		{"n.desc", "n.desc", false},
+	}
+	for _, tc := range cases {
+		expr, desc := splitOrderByDirection(tc.in)
+		require.Equal(t, tc.wantExpr, expr, "input %q", tc.in)
+		require.Equal(t, tc.wantDesc, desc, "input %q", tc.in)
+	}
+}
