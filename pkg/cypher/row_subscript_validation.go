@@ -119,3 +119,42 @@ func invalidSubscriptTypeError(message string, value interface{}) error {
 		fmt.Sprintf("%s, got %T", message, value),
 	)
 }
+
+func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clause, keyword string) error {
+	body := strings.TrimSpace(clause)
+	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
+		return nil
+	}
+	body = strings.TrimSpace(body[len(keyword):])
+	for _, item := range splitTopLevelComma(body) {
+		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+		name, argument, functionCall := parseFunctionCallWS(expression)
+		if !functionCall || !strings.EqualFold(name, "size") {
+			continue
+		}
+		argument = strings.TrimSpace(argument)
+		if containsRelExistencePattern(argument) && strings.HasPrefix(argument, "(") {
+			return newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"UnexpectedSyntax",
+				"size() does not accept a pattern predicate; use a pattern comprehension",
+			)
+		}
+		for _, row := range rows {
+			value, ok := e.evaluateRowExpression(argument, row)
+			if !ok || value == nil {
+				continue
+			}
+			if path, isMap := toStringAnyMap(value); isMap {
+				if _, isPath := path["_pathResult"]; isPath {
+					return newSemanticError(
+						"Neo.ClientError.Statement.SyntaxError",
+						"InvalidArgumentType",
+						"size() does not accept PATH values; use length()",
+					)
+				}
+			}
+		}
+	}
+	return nil
+}

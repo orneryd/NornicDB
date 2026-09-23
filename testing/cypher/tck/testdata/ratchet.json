@@ -97,8 +97,13 @@
     "expressions/existentialSubqueries/ExistentialSubquery1.feature",
     "expressions/graph/Graph7.feature",
     "expressions/graph/Graph8.feature",
+    "expressions/list/List1.feature",
     "expressions/list/List12.feature",
+    "expressions/list/List2.feature",
+    "expressions/list/List3.feature",
     "expressions/list/List4.feature",
+    "expressions/list/List5.feature",
+    "expressions/list/List6.feature",
     "expressions/list/List9.feature",
     "expressions/literals/Literals1.feature",
     "expressions/mathematical/Mathematical11.feature",
@@ -24558,11 +24563,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:991f5facb309ef676614c0fb307c6737e1cb6bc48c9fff9197ecc9fe4cea7a96",
-      "gap_id": "tck-gap-de8bf248817a",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24570,11 +24571,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:991f5facb309ef676614c0fb307c6737e1cb6bc48c9fff9197ecc9fe4cea7a96",
-      "gap_id": "tck-gap-33ae8796753c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24742,11 +24739,7 @@
       "example_row": "492017b1b8c8beeb",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:44a7de76279e042b4a5fc4081ff4c81d7dcd9c50d60718ab111d05a08625ce8a",
-      "gap_id": "tck-gap-f73cc1408681",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24754,11 +24747,7 @@
       "example_row": "492017b1b8c8beeb",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:44a7de76279e042b4a5fc4081ff4c81d7dcd9c50d60718ab111d05a08625ce8a",
-      "gap_id": "tck-gap-311c7cff5f15",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24798,11 +24787,7 @@
       "example_row": "bbe6ec296700c8e6",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:44a7de76279e042b4a5fc4081ff4c81d7dcd9c50d60718ab111d05a08625ce8a",
-      "gap_id": "tck-gap-ae1bfc9fbd5e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24810,11 +24795,7 @@
       "example_row": "bbe6ec296700c8e6",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:44a7de76279e042b4a5fc4081ff4c81d7dcd9c50d60718ab111d05a08625ce8a",
-      "gap_id": "tck-gap-758474645fe4",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24838,11 +24819,7 @@
       "example_row": "12ca608846e3c4fb",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:81c8f3efcbe8ad5fa6c18402f9957b3d4b7f7728cf92b16990b885ff633fc2e1",
-      "gap_id": "tck-gap-c36f4266b82e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24850,11 +24827,7 @@
       "example_row": "12ca608846e3c4fb",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:81c8f3efcbe8ad5fa6c18402f9957b3d4b7f7728cf92b16990b885ff633fc2e1",
-      "gap_id": "tck-gap-8d350f8d75d6",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24862,11 +24835,7 @@
       "example_row": "19a9ca6cd91ca37d",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:43198968e9104181f6bd8845f7c0cb0bd7082b9b4d8c462e53c24847e352bb73",
-      "gap_id": "tck-gap-20e0a79de9ad",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24874,11 +24843,7 @@
       "example_row": "19a9ca6cd91ca37d",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:43198968e9104181f6bd8845f7c0cb0bd7082b9b4d8c462e53c24847e352bb73",
-      "gap_id": "tck-gap-c8881c32e6fd",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24886,11 +24851,7 @@
       "example_row": "25048caaf32123a9",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:08264a4029b2d9170fe237a53d9f4c74265eb3a934399455ce03fc365252f77c",
-      "gap_id": "tck-gap-2d25ab1939e2",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24898,11 +24859,7 @@
       "example_row": "25048caaf32123a9",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:08264a4029b2d9170fe237a53d9f4c74265eb3a934399455ce03fc365252f77c",
-      "gap_id": "tck-gap-32f8bef40677",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24910,11 +24867,7 @@
       "example_row": "2cdc545fa8a6587f",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e3eea4833a0cb43e003abb62cbd106404798506c06fa9697047790ae1038cf69",
-      "gap_id": "tck-gap-94a14a3248e0",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24922,11 +24875,7 @@
       "example_row": "2cdc545fa8a6587f",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e3eea4833a0cb43e003abb62cbd106404798506c06fa9697047790ae1038cf69",
-      "gap_id": "tck-gap-63ad944b0e31",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24934,11 +24883,7 @@
       "example_row": "305997e08e3be9a5",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d8a1997fea7e11751f952fa8555091bb07e560eaddaf89d46a4f9ec0c75c7d52",
-      "gap_id": "tck-gap-b995e922d0a6",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24946,11 +24891,7 @@
       "example_row": "305997e08e3be9a5",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d8a1997fea7e11751f952fa8555091bb07e560eaddaf89d46a4f9ec0c75c7d52",
-      "gap_id": "tck-gap-dc7320763305",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24958,11 +24899,7 @@
       "example_row": "356ab038ba624d99",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:08264a4029b2d9170fe237a53d9f4c74265eb3a934399455ce03fc365252f77c",
-      "gap_id": "tck-gap-85695398e2f5",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24970,11 +24907,7 @@
       "example_row": "356ab038ba624d99",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:08264a4029b2d9170fe237a53d9f4c74265eb3a934399455ce03fc365252f77c",
-      "gap_id": "tck-gap-aece4dc0e152",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24982,11 +24915,7 @@
       "example_row": "44382e1d9b3ec190",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d8a1997fea7e11751f952fa8555091bb07e560eaddaf89d46a4f9ec0c75c7d52",
-      "gap_id": "tck-gap-d47295ba1731",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -24994,11 +24923,7 @@
       "example_row": "44382e1d9b3ec190",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d8a1997fea7e11751f952fa8555091bb07e560eaddaf89d46a4f9ec0c75c7d52",
-      "gap_id": "tck-gap-abc3f9a32c1d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25006,11 +24931,7 @@
       "example_row": "605f29810953c98e",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:af33338cd5e58d4ab2ee3d5fe39b874ed09f134c4eabf6a44d2fa79273732234",
-      "gap_id": "tck-gap-33b006985f02",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25018,11 +24939,7 @@
       "example_row": "605f29810953c98e",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:af33338cd5e58d4ab2ee3d5fe39b874ed09f134c4eabf6a44d2fa79273732234",
-      "gap_id": "tck-gap-9af39a153d0b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25030,11 +24947,7 @@
       "example_row": "6b16c38c2194cb33",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e3eea4833a0cb43e003abb62cbd106404798506c06fa9697047790ae1038cf69",
-      "gap_id": "tck-gap-9d7e8dd70a4b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25042,11 +24955,7 @@
       "example_row": "6b16c38c2194cb33",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e3eea4833a0cb43e003abb62cbd106404798506c06fa9697047790ae1038cf69",
-      "gap_id": "tck-gap-77843492b4a0",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25054,11 +24963,7 @@
       "example_row": "6bb155f3aeb9bdee",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d8a1997fea7e11751f952fa8555091bb07e560eaddaf89d46a4f9ec0c75c7d52",
-      "gap_id": "tck-gap-e35ef45b841d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25066,11 +24971,7 @@
       "example_row": "6bb155f3aeb9bdee",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d8a1997fea7e11751f952fa8555091bb07e560eaddaf89d46a4f9ec0c75c7d52",
-      "gap_id": "tck-gap-d25bfb28d284",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25078,11 +24979,7 @@
       "example_row": "9e90815cdd15ed18",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:59efd09cb155eafdd61c93c594767aebfd271aabaffce9a281bed1b1950675f2",
-      "gap_id": "tck-gap-3bb177a33dc5",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25090,11 +24987,7 @@
       "example_row": "9e90815cdd15ed18",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:59efd09cb155eafdd61c93c594767aebfd271aabaffce9a281bed1b1950675f2",
-      "gap_id": "tck-gap-b44c668629dc",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25102,11 +24995,7 @@
       "example_row": "df785146eb153945",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d8a1997fea7e11751f952fa8555091bb07e560eaddaf89d46a4f9ec0c75c7d52",
-      "gap_id": "tck-gap-0f78eb3e9fc3",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25114,11 +25003,7 @@
       "example_row": "df785146eb153945",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d8a1997fea7e11751f952fa8555091bb07e560eaddaf89d46a4f9ec0c75c7d52",
-      "gap_id": "tck-gap-09f8779c8f22",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25126,11 +25011,7 @@
       "example_row": "e4828b2b48238eb7",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:43198968e9104181f6bd8845f7c0cb0bd7082b9b4d8c462e53c24847e352bb73",
-      "gap_id": "tck-gap-def97657a048",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25138,11 +25019,7 @@
       "example_row": "e4828b2b48238eb7",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:43198968e9104181f6bd8845f7c0cb0bd7082b9b4d8c462e53c24847e352bb73",
-      "gap_id": "tck-gap-c90402841c8f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25150,11 +25027,7 @@
       "example_row": "e73e80957e80a092",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b8c1bfd13f57185c91665d3e388740306ddb1ed96b0ad910b86266897d3b4336",
-      "gap_id": "tck-gap-1ff04e15136e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25162,11 +25035,7 @@
       "example_row": "e73e80957e80a092",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b8c1bfd13f57185c91665d3e388740306ddb1ed96b0ad910b86266897d3b4336",
-      "gap_id": "tck-gap-dae434b3a770",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25174,11 +25043,7 @@
       "example_row": "f1c035b2f9f8323e",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:08264a4029b2d9170fe237a53d9f4c74265eb3a934399455ce03fc365252f77c",
-      "gap_id": "tck-gap-16779e8adc4d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25186,11 +25051,7 @@
       "example_row": "f1c035b2f9f8323e",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:08264a4029b2d9170fe237a53d9f4c74265eb3a934399455ce03fc365252f77c",
-      "gap_id": "tck-gap-d679cafa937c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25198,11 +25059,7 @@
       "example_row": "f9ca823e233d5007",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e3eea4833a0cb43e003abb62cbd106404798506c06fa9697047790ae1038cf69",
-      "gap_id": "tck-gap-1bd411913170",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25210,11 +25067,7 @@
       "example_row": "f9ca823e233d5007",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e3eea4833a0cb43e003abb62cbd106404798506c06fa9697047790ae1038cf69",
-      "gap_id": "tck-gap-40e3961b7fa6",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25310,11 +25163,7 @@
       "example_row": "a5d76bf51537e1e2",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d4f61beb54a20e7d4654b66400b50a17dff0bc8935bb3919989e7d3d5bf63453",
-      "gap_id": "tck-gap-32354a6c7c06",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25322,11 +25171,7 @@
       "example_row": "a5d76bf51537e1e2",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d4f61beb54a20e7d4654b66400b50a17dff0bc8935bb3919989e7d3d5bf63453",
-      "gap_id": "tck-gap-dd46d109f389",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25350,11 +25195,7 @@
       "example_row": "eb9f3419cfc5813a",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d4f61beb54a20e7d4654b66400b50a17dff0bc8935bb3919989e7d3d5bf63453",
-      "gap_id": "tck-gap-0c71b2572467",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison1.feature",
@@ -25362,11 +25203,7 @@
       "example_row": "eb9f3419cfc5813a",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d4f61beb54a20e7d4654b66400b50a17dff0bc8935bb3919989e7d3d5bf63453",
-      "gap_id": "tck-gap-c5e84d33a971",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/comparison"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/comparison/Comparison2.feature",
@@ -27638,11 +27475,7 @@
       "example_row": "065d1cdda1b552df",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:6d3ea5dbdec4f3b0671569a3adbfdbe7953f71ea2d983db8a9a0557118826edb",
-      "gap_id": "tck-gap-9906e887bb2d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27650,11 +27483,7 @@
       "example_row": "065d1cdda1b552df",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:6d3ea5dbdec4f3b0671569a3adbfdbe7953f71ea2d983db8a9a0557118826edb",
-      "gap_id": "tck-gap-154f8df83b1b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27662,11 +27491,7 @@
       "example_row": "344ba191da2cf4e7",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:6d3ea5dbdec4f3b0671569a3adbfdbe7953f71ea2d983db8a9a0557118826edb",
-      "gap_id": "tck-gap-f25b899b3e33",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27674,11 +27499,7 @@
       "example_row": "344ba191da2cf4e7",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:6d3ea5dbdec4f3b0671569a3adbfdbe7953f71ea2d983db8a9a0557118826edb",
-      "gap_id": "tck-gap-b258f5aebc81",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27686,11 +27507,7 @@
       "example_row": "115a742a9326164f",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:6d3ea5dbdec4f3b0671569a3adbfdbe7953f71ea2d983db8a9a0557118826edb",
-      "gap_id": "tck-gap-9273481da990",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27698,11 +27515,7 @@
       "example_row": "115a742a9326164f",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:6d3ea5dbdec4f3b0671569a3adbfdbe7953f71ea2d983db8a9a0557118826edb",
-      "gap_id": "tck-gap-2317ed884d18",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27710,11 +27523,7 @@
       "example_row": "dc44dc3d224d3691",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:6d3ea5dbdec4f3b0671569a3adbfdbe7953f71ea2d983db8a9a0557118826edb",
-      "gap_id": "tck-gap-a22772916ac0",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27722,11 +27531,7 @@
       "example_row": "dc44dc3d224d3691",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:6d3ea5dbdec4f3b0671569a3adbfdbe7953f71ea2d983db8a9a0557118826edb",
-      "gap_id": "tck-gap-0581cd70705c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27734,11 +27539,7 @@
       "example_row": "5cbb6f9462b44ad5",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-32490f938428",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27746,11 +27547,7 @@
       "example_row": "5cbb6f9462b44ad5",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-25991e37c7f6",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27758,11 +27555,7 @@
       "example_row": "28143797d4d522e4",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-2d76d14f9744",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27770,11 +27563,7 @@
       "example_row": "28143797d4d522e4",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-c462e849e813",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27782,11 +27571,7 @@
       "example_row": "9f7901f9bd2ec8bc",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-3cf327e5516b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27794,11 +27579,7 @@
       "example_row": "9f7901f9bd2ec8bc",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-8f4e2b9991b5",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27806,11 +27587,7 @@
       "example_row": "b8744014a7a1aae1",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-ca565466eeec",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27818,11 +27595,7 @@
       "example_row": "b8744014a7a1aae1",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-0ca0814170e7",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27830,11 +27603,7 @@
       "example_row": "9e05be65bd61e4e0",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-e63cca3f9078",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27842,11 +27611,7 @@
       "example_row": "9e05be65bd61e4e0",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-913055ee5557",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27854,11 +27619,7 @@
       "example_row": "02e33746a1dc404a",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-3129e19ff9d3",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27866,11 +27627,7 @@
       "example_row": "02e33746a1dc404a",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-f154b47d1f72",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27878,11 +27635,7 @@
       "example_row": "078fadd5c4f68e31",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-8375ec858190",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27890,11 +27643,7 @@
       "example_row": "078fadd5c4f68e31",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-48a85528eb04",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27902,11 +27651,7 @@
       "example_row": "2641ef488685f1c9",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-7d113415029e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27914,11 +27659,7 @@
       "example_row": "2641ef488685f1c9",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-d12a78efc8bf",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27926,11 +27667,7 @@
       "example_row": "e980c13a531b15b8",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-07975c733578",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27938,11 +27675,7 @@
       "example_row": "e980c13a531b15b8",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-1d266afc686c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27950,11 +27683,7 @@
       "example_row": "a9b8912d609e4307",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-670b80b6670f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27962,11 +27691,7 @@
       "example_row": "a9b8912d609e4307",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-cf05e83c2f4b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27974,11 +27699,7 @@
       "example_row": "91345fbd76c46f0e",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-467c07fd6e75",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27986,11 +27707,7 @@
       "example_row": "91345fbd76c46f0e",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-f046ba1e0b3d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -27998,11 +27715,7 @@
       "example_row": "5e1164944ba16b4a",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-7f5c730a7c26",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -28010,11 +27723,7 @@
       "example_row": "5e1164944ba16b4a",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-55078f085bfe",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -28022,11 +27731,7 @@
       "example_row": "563b4da731456c6d",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-1ee788f6f49f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -28034,11 +27739,7 @@
       "example_row": "563b4da731456c6d",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-46ff44d085d3",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -28046,11 +27747,7 @@
       "example_row": "7a84a9815c00cd6a",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-1d6fd8486977",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List1.feature",
@@ -28058,11 +27755,7 @@
       "example_row": "7a84a9815c00cd6a",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b3a00d2619e52b8a65681f9febc4213223bfd24278ec579b2ccbda43ca688ca6",
-      "gap_id": "tck-gap-fd335ee0e77b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List11.feature",
@@ -29470,11 +29163,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:989f0692f6f280810947e5d45346cd40940d904af9cb9fb3b3c244845dc181bc",
-      "gap_id": "tck-gap-fb99dc43355d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29482,11 +29171,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:989f0692f6f280810947e5d45346cd40940d904af9cb9fb3b3c244845dc181bc",
-      "gap_id": "tck-gap-2d59357fc8ad",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29494,11 +29179,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:392026e03a62ad7a2b61596e9ccfc270ddfb28a666a1dd5ff9307c86c24399cc",
-      "gap_id": "tck-gap-2ac592cf6e23",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29506,11 +29187,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:392026e03a62ad7a2b61596e9ccfc270ddfb28a666a1dd5ff9307c86c24399cc",
-      "gap_id": "tck-gap-f4b7bdcf4d53",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29646,11 +29323,7 @@
       "example_row": "09bff985eee5cc6b",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ac9c509fef1b4197b711ac79fd228b6cd80d13ffcd3cb86d754883b27e2fefb9",
-      "gap_id": "tck-gap-fef034936238",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29658,11 +29331,7 @@
       "example_row": "09bff985eee5cc6b",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ac9c509fef1b4197b711ac79fd228b6cd80d13ffcd3cb86d754883b27e2fefb9",
-      "gap_id": "tck-gap-eefce591f717",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29670,11 +29339,7 @@
       "example_row": "0d664d1d43ce4f6a",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:822feb40178496df5ad0e962dca06d024129f03370a6ff9845ed3f9412544eba",
-      "gap_id": "tck-gap-5d1cf923f7c9",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29682,11 +29347,7 @@
       "example_row": "0d664d1d43ce4f6a",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:822feb40178496df5ad0e962dca06d024129f03370a6ff9845ed3f9412544eba",
-      "gap_id": "tck-gap-c70fd935988b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29694,11 +29355,7 @@
       "example_row": "566f3452e5cfa9ef",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ac9c509fef1b4197b711ac79fd228b6cd80d13ffcd3cb86d754883b27e2fefb9",
-      "gap_id": "tck-gap-1ec090ef9280",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29706,11 +29363,7 @@
       "example_row": "566f3452e5cfa9ef",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ac9c509fef1b4197b711ac79fd228b6cd80d13ffcd3cb86d754883b27e2fefb9",
-      "gap_id": "tck-gap-2bdcb1b88eab",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29718,11 +29371,7 @@
       "example_row": "61e65435ead2438b",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ac9c509fef1b4197b711ac79fd228b6cd80d13ffcd3cb86d754883b27e2fefb9",
-      "gap_id": "tck-gap-76163f083736",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29730,11 +29379,7 @@
       "example_row": "61e65435ead2438b",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ac9c509fef1b4197b711ac79fd228b6cd80d13ffcd3cb86d754883b27e2fefb9",
-      "gap_id": "tck-gap-acc48610f73b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29742,11 +29387,7 @@
       "example_row": "7239da0b295257ea",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:822feb40178496df5ad0e962dca06d024129f03370a6ff9845ed3f9412544eba",
-      "gap_id": "tck-gap-85d46dcb222d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List2.feature",
@@ -29754,11 +29395,7 @@
       "example_row": "7239da0b295257ea",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:822feb40178496df5ad0e962dca06d024129f03370a6ff9845ed3f9412544eba",
-      "gap_id": "tck-gap-78390c290992",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List3.feature",
@@ -29814,11 +29451,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:44a7de76279e042b4a5fc4081ff4c81d7dcd9c50d60718ab111d05a08625ce8a",
-      "gap_id": "tck-gap-c073e88beee4",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List3.feature",
@@ -29826,11 +29459,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:44a7de76279e042b4a5fc4081ff4c81d7dcd9c50d60718ab111d05a08625ce8a",
-      "gap_id": "tck-gap-c26a2c361480",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List3.feature",
@@ -29870,11 +29499,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:44a7de76279e042b4a5fc4081ff4c81d7dcd9c50d60718ab111d05a08625ce8a",
-      "gap_id": "tck-gap-6883c997ffa4",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List3.feature",
@@ -29882,11 +29507,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:44a7de76279e042b4a5fc4081ff4c81d7dcd9c50d60718ab111d05a08625ce8a",
-      "gap_id": "tck-gap-251cb0b9013e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List4.feature",
@@ -29926,11 +29547,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:92c8f9e813c4016a97a15acb1c39d0aea3096bf6d1482351b8afa365d462683c",
-      "gap_id": "tck-gap-b734babf789a",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -29938,11 +29555,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:92c8f9e813c4016a97a15acb1c39d0aea3096bf6d1482351b8afa365d462683c",
-      "gap_id": "tck-gap-1e5aafa96c28",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -29950,11 +29563,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:db2ec273c21133468628bb53ac3de9b6387174cee91b53c80aa31fef90dd9999",
-      "gap_id": "tck-gap-42c61bd91427",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -29962,11 +29571,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:db2ec273c21133468628bb53ac3de9b6387174cee91b53c80aa31fef90dd9999",
-      "gap_id": "tck-gap-18cef4498d66",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -29974,11 +29579,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:626d3894ab5c7f2b964d0142a5fb50aa81edab33e9adef9738fa978ff4461db5",
-      "gap_id": "tck-gap-e44b85f156f5",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -29986,11 +29587,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:626d3894ab5c7f2b964d0142a5fb50aa81edab33e9adef9738fa978ff4461db5",
-      "gap_id": "tck-gap-744f485612dc",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -29998,11 +29595,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:60d1887b2de4f3c8996fe093b6c5ad508e74c3919018b04481af09360ced5214",
-      "gap_id": "tck-gap-b9a6541fa385",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30010,11 +29603,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:60d1887b2de4f3c8996fe093b6c5ad508e74c3919018b04481af09360ced5214",
-      "gap_id": "tck-gap-6e74fd3a745f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30022,11 +29611,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:3e47c33f25e2f070c04f8b3938fff79f8547ef105d3e0cf8a7c549564d3edd45",
-      "gap_id": "tck-gap-e4c9feb34362",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30034,11 +29619,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:3e47c33f25e2f070c04f8b3938fff79f8547ef105d3e0cf8a7c549564d3edd45",
-      "gap_id": "tck-gap-9e6bf4a1d0b1",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30046,11 +29627,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:60ab346ca604e3d3e1983d2175bbf292e884cb88bcf736f8f6861580ce4586e0",
-      "gap_id": "tck-gap-d00d69f9edb3",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30058,11 +29635,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:60ab346ca604e3d3e1983d2175bbf292e884cb88bcf736f8f6861580ce4586e0",
-      "gap_id": "tck-gap-7a2285956f4c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30070,11 +29643,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:3f22c3ae1369613a6572be1523c4359ce77f9b3b1e70daa8227df7f6862aded5",
-      "gap_id": "tck-gap-557e3c6296d7",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30082,11 +29651,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:3f22c3ae1369613a6572be1523c4359ce77f9b3b1e70daa8227df7f6862aded5",
-      "gap_id": "tck-gap-a0c04901ea7a",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30094,11 +29659,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b1f11fdf327fd7baeaaf83a6ded7a5242eb8caedf2bdb36447432c5ead79556f",
-      "gap_id": "tck-gap-40fa37794cc5",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30106,11 +29667,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:b1f11fdf327fd7baeaaf83a6ded7a5242eb8caedf2bdb36447432c5ead79556f",
-      "gap_id": "tck-gap-07f8b1846e9b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30118,11 +29675,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:dd6726d634ee3a0e429cddc462c40cdffd2ac79c33435baf828b6937ed4f734b",
-      "gap_id": "tck-gap-7b53bc30da29",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30130,11 +29683,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:dd6726d634ee3a0e429cddc462c40cdffd2ac79c33435baf828b6937ed4f734b",
-      "gap_id": "tck-gap-a80a6cd66500",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30142,11 +29691,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:449eee764ba7bb2dab9142e4d9129e3e91b5014b2529ac77ae4fed3a8209b69c",
-      "gap_id": "tck-gap-ae573aa103ca",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30154,11 +29699,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:449eee764ba7bb2dab9142e4d9129e3e91b5014b2529ac77ae4fed3a8209b69c",
-      "gap_id": "tck-gap-c6c8379a8bcd",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30198,11 +29739,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:37a29d9cd6f4e6cb6d9f6a57f2a7cd520e21ebf6c11c85ccc587634c6a6cbc37",
-      "gap_id": "tck-gap-79168950a53e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30210,11 +29747,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:37a29d9cd6f4e6cb6d9f6a57f2a7cd520e21ebf6c11c85ccc587634c6a6cbc37",
-      "gap_id": "tck-gap-ace77826814c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30222,11 +29755,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:3bf901fbb8af967b6304eb1442914bce2f06bc23aa637caae8dde5a70a9f7313",
-      "gap_id": "tck-gap-59dd14ee9d97",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30234,11 +29763,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:3bf901fbb8af967b6304eb1442914bce2f06bc23aa637caae8dde5a70a9f7313",
-      "gap_id": "tck-gap-bbd7787acf43",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30246,11 +29771,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e48dd8c70d4e3e4331da36c3908e600b97cf74d2e4ba10db2750d85bb278f2ea",
-      "gap_id": "tck-gap-d7911ba11ff1",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30258,11 +29779,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e48dd8c70d4e3e4331da36c3908e600b97cf74d2e4ba10db2750d85bb278f2ea",
-      "gap_id": "tck-gap-1e470eb545dc",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30302,11 +29819,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:f0db5c1e2745006e67064a2cfc3812fd187363df373ce0d9538fc36638863729",
-      "gap_id": "tck-gap-03be51088cfd",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30314,11 +29827,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:f0db5c1e2745006e67064a2cfc3812fd187363df373ce0d9538fc36638863729",
-      "gap_id": "tck-gap-a760771afdf1",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30326,11 +29835,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ecd4aa77010fe536260fd460ac49a14c208517a714c16e8e161ac6b6ea867dab",
-      "gap_id": "tck-gap-68e40eef94f2",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30338,11 +29843,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ecd4aa77010fe536260fd460ac49a14c208517a714c16e8e161ac6b6ea867dab",
-      "gap_id": "tck-gap-5cae9e0ac58f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30350,11 +29851,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e48dd8c70d4e3e4331da36c3908e600b97cf74d2e4ba10db2750d85bb278f2ea",
-      "gap_id": "tck-gap-ef8f14d0ab79",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30362,11 +29859,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e48dd8c70d4e3e4331da36c3908e600b97cf74d2e4ba10db2750d85bb278f2ea",
-      "gap_id": "tck-gap-50552a8e2184",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30374,11 +29867,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:37a29d9cd6f4e6cb6d9f6a57f2a7cd520e21ebf6c11c85ccc587634c6a6cbc37",
-      "gap_id": "tck-gap-b38a8f38db87",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30386,11 +29875,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:37a29d9cd6f4e6cb6d9f6a57f2a7cd520e21ebf6c11c85ccc587634c6a6cbc37",
-      "gap_id": "tck-gap-f2cf06a25e37",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30414,11 +29899,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:f9d80d087cfd8dc9cc99e74818ffe8dbf1c92b3c4d8c573af9868057dec2283f",
-      "gap_id": "tck-gap-24551c08af3d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30426,11 +29907,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:f9d80d087cfd8dc9cc99e74818ffe8dbf1c92b3c4d8c573af9868057dec2283f",
-      "gap_id": "tck-gap-79552561067f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30438,11 +29915,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d2db71768c384e5603a3449f2653f1b169ef16e4d32c9bcdcb6bedeae84196ac",
-      "gap_id": "tck-gap-120f0b8f04da",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30450,11 +29923,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d2db71768c384e5603a3449f2653f1b169ef16e4d32c9bcdcb6bedeae84196ac",
-      "gap_id": "tck-gap-6784ef8440a0",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30462,11 +29931,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:c2f25529c65776f9b9f680eda4c43632c05f08a64a5f9d3dd345095d0be45c01",
-      "gap_id": "tck-gap-7b57f945ab0e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30474,11 +29939,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:c2f25529c65776f9b9f680eda4c43632c05f08a64a5f9d3dd345095d0be45c01",
-      "gap_id": "tck-gap-efa723727c65",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30486,11 +29947,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e287d65ffe1fe9c98a3e37693680249942543cfca6724dd125f363537961ed9c",
-      "gap_id": "tck-gap-6d610a616254",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30498,11 +29955,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e287d65ffe1fe9c98a3e37693680249942543cfca6724dd125f363537961ed9c",
-      "gap_id": "tck-gap-4b67824c1c6c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30510,11 +29963,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:cbebdcc81936a1fde284743d55b19abd3070aa81627fe32c67f0bd69fd10a00f",
-      "gap_id": "tck-gap-a1d64aca6694",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30522,11 +29971,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:cbebdcc81936a1fde284743d55b19abd3070aa81627fe32c67f0bd69fd10a00f",
-      "gap_id": "tck-gap-8f660cdb0bed",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30534,11 +29979,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:3e8f5f63a8e1e1cbebf5c538462c9d4cd72ae2c09ef59e840ef52477017d1314",
-      "gap_id": "tck-gap-cdd8194e6bf6",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30546,11 +29987,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:3e8f5f63a8e1e1cbebf5c538462c9d4cd72ae2c09ef59e840ef52477017d1314",
-      "gap_id": "tck-gap-388f2eedffd3",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30558,11 +29995,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e48dd8c70d4e3e4331da36c3908e600b97cf74d2e4ba10db2750d85bb278f2ea",
-      "gap_id": "tck-gap-ba6c6ce308fa",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30570,11 +30003,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:e48dd8c70d4e3e4331da36c3908e600b97cf74d2e4ba10db2750d85bb278f2ea",
-      "gap_id": "tck-gap-5a53a9fe786d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30582,11 +30011,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d46ec392097ea75d0dabeb6339318486645c372946fd8d3d8d5534ac5d8aa4d8",
-      "gap_id": "tck-gap-396924bc2547",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30594,11 +30019,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d46ec392097ea75d0dabeb6339318486645c372946fd8d3d8d5534ac5d8aa4d8",
-      "gap_id": "tck-gap-d9b9f236051f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30606,11 +30027,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:833adecb11ec929c7205e064fc1ad1df159e6f68c18d0af8bc6f33b73d2c22dd",
-      "gap_id": "tck-gap-481cc4ed501e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30618,11 +30035,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:833adecb11ec929c7205e064fc1ad1df159e6f68c18d0af8bc6f33b73d2c22dd",
-      "gap_id": "tck-gap-b4292e560b85",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30630,11 +30043,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:174e83a2b34995adef67fcafeff921b34413d8f4596b756dfab969f8ca35fc1a",
-      "gap_id": "tck-gap-f02c4b079920",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30642,11 +30051,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:174e83a2b34995adef67fcafeff921b34413d8f4596b756dfab969f8ca35fc1a",
-      "gap_id": "tck-gap-432266c66024",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30670,11 +30075,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:a70d05bea1f3d5f0f9d5ca00ad6963cf8feceeb175dfd3a0dc76e8784e0181d0",
-      "gap_id": "tck-gap-eb0bd514dffd",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30682,11 +30083,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:a70d05bea1f3d5f0f9d5ca00ad6963cf8feceeb175dfd3a0dc76e8784e0181d0",
-      "gap_id": "tck-gap-2d08e411a06b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30694,11 +30091,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:208502134895f92a637184181bdfff849008a94889bae7f5cd77da2c80af60e5",
-      "gap_id": "tck-gap-9cf22c8fd3bc",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30706,11 +30099,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:208502134895f92a637184181bdfff849008a94889bae7f5cd77da2c80af60e5",
-      "gap_id": "tck-gap-bc46ea4a15a3",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30718,11 +30107,7 @@
       "example_row": "0075a9c3a4e84b2d",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-01269e5567b1",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30730,11 +30115,7 @@
       "example_row": "0075a9c3a4e84b2d",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-c2ac096262e7",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30742,11 +30123,7 @@
       "example_row": "13c78d91a102b9d3",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-087e7f3d9d78",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30754,11 +30131,7 @@
       "example_row": "13c78d91a102b9d3",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-eb8d08360b12",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30766,11 +30139,7 @@
       "example_row": "625dde14e110e36e",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-8527040c3d1b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30778,11 +30147,7 @@
       "example_row": "625dde14e110e36e",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-1ece878720bf",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30790,11 +30155,7 @@
       "example_row": "792cee1c2eb3d681",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-4cc7f2e35b53",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30802,11 +30163,7 @@
       "example_row": "792cee1c2eb3d681",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-3d0b32a2a914",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30814,11 +30171,7 @@
       "example_row": "a333afa2be532b90",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-462ef4bbdc30",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30826,11 +30179,7 @@
       "example_row": "a333afa2be532b90",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-4515894d6cc8",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30854,11 +30203,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d4f61beb54a20e7d4654b66400b50a17dff0bc8935bb3919989e7d3d5bf63453",
-      "gap_id": "tck-gap-04ec9280cea7",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30866,11 +30211,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:d4f61beb54a20e7d4654b66400b50a17dff0bc8935bb3919989e7d3d5bf63453",
-      "gap_id": "tck-gap-a36b0bd963ca",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30878,11 +30219,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:438d7b573c6f06bea419bc743db683de62ed60cf55f6bef7d477e54d39560a90",
-      "gap_id": "tck-gap-2c6d13841398",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30890,11 +30227,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:438d7b573c6f06bea419bc743db683de62ed60cf55f6bef7d477e54d39560a90",
-      "gap_id": "tck-gap-f3479ebe55ed",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30902,11 +30235,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:833adecb11ec929c7205e064fc1ad1df159e6f68c18d0af8bc6f33b73d2c22dd",
-      "gap_id": "tck-gap-f7816b82c27f",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30914,11 +30243,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:833adecb11ec929c7205e064fc1ad1df159e6f68c18d0af8bc6f33b73d2c22dd",
-      "gap_id": "tck-gap-cd56235f3182",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30926,11 +30251,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:833adecb11ec929c7205e064fc1ad1df159e6f68c18d0af8bc6f33b73d2c22dd",
-      "gap_id": "tck-gap-fcb3fb17beb0",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30938,11 +30259,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:833adecb11ec929c7205e064fc1ad1df159e6f68c18d0af8bc6f33b73d2c22dd",
-      "gap_id": "tck-gap-bbb7cb98406d",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30950,11 +30267,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:42ee94246fe55acd2822b624c75c7e1e4a4384a1366d9b59008dc1244d9d0eb6",
-      "gap_id": "tck-gap-67f83806783c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List5.feature",
@@ -30962,11 +30275,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:42ee94246fe55acd2822b624c75c7e1e4a4384a1366d9b59008dc1244d9d0eb6",
-      "gap_id": "tck-gap-36a2a157e222",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -30974,11 +30283,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:c92ca55db5615765865f29a98d9ac872ae01a5fb78e8a352724a2ae9c4f65525",
-      "gap_id": "tck-gap-6a0a5896347a",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -30986,11 +30291,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:c92ca55db5615765865f29a98d9ac872ae01a5fb78e8a352724a2ae9c4f65525",
-      "gap_id": "tck-gap-885e79f88cf0",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31046,11 +30347,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:67d5a3dca8877fa63286dfd40a6c1ffd9ebff341f3e569f1497911c9be327eed",
-      "gap_id": "tck-gap-3b5c73eed9c8",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31058,11 +30355,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:67d5a3dca8877fa63286dfd40a6c1ffd9ebff341f3e569f1497911c9be327eed",
-      "gap_id": "tck-gap-a6b7963d35d1",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31070,11 +30363,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-9d5df0646b39",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31082,11 +30371,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:839af5fea1e1c97ad7fa674c715d397363cfe887039217ea1c30cc6aa7d78e78",
-      "gap_id": "tck-gap-6e09b5acb293",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31094,11 +30379,7 @@
       "example_row": "107b6d4b87c8bb8d",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-ea95571974f2",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31106,11 +30387,7 @@
       "example_row": "107b6d4b87c8bb8d",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-36ef8cd67ea6",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31118,11 +30395,7 @@
       "example_row": "5a656dc225c51e79",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-5f0f3cbaf93a",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31130,11 +30403,7 @@
       "example_row": "5a656dc225c51e79",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-36b1a2d95b7c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31142,11 +30411,7 @@
       "example_row": "5a656dc225c51e79-2",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-abd19fbffa31",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31154,11 +30419,7 @@
       "example_row": "5a656dc225c51e79-2",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-e0302f44ff8e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31166,11 +30427,7 @@
       "example_row": "5af4d4a7d2acda45",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-e682506274cb",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31178,11 +30435,7 @@
       "example_row": "5af4d4a7d2acda45",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-0c3148caaf35",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31190,11 +30443,7 @@
       "example_row": "6c67eeacc3b3bc15",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-39f3ecf61c2b",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31202,11 +30451,7 @@
       "example_row": "6c67eeacc3b3bc15",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-a9dbfd9d3efa",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31214,11 +30459,7 @@
       "example_row": "7e8ae39d748eedc2",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-3f7bbcf2f60e",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31226,11 +30467,7 @@
       "example_row": "7e8ae39d748eedc2",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-7c2bc41431e1",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31238,11 +30475,7 @@
       "example_row": "9820b7a62262e2d3",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-1b86075090f3",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31250,11 +30483,7 @@
       "example_row": "9820b7a62262e2d3",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-f11aeedef24c",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31262,11 +30491,7 @@
       "example_row": "fb009ac292d6b78c",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-a7dd39ee3a73",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -31274,11 +30499,7 @@
       "example_row": "fb009ac292d6b78c",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:7708d3ab4d357bcee63f71ab1c5c32fa2aef9e5c619fe52664305adc34b8610b",
-      "gap_id": "tck-gap-c79df841c3cf",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/list"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/list/List6.feature",
@@ -34431,7 +33652,7 @@
       "transaction_mode": "autocommit",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:66a9811dc943dd9ba15527c0c3b637498919dbf7ee823674ac5b5d75d04e7ce1",
+      "failure_signature": "sha256:a2488eef19a1ecd9870b7810e1350924379c7a1eca42cf96c0225b38837bc818",
       "gap_id": "tck-gap-6dece3539cdf",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/map"
@@ -34443,7 +33664,7 @@
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:66a9811dc943dd9ba15527c0c3b637498919dbf7ee823674ac5b5d75d04e7ce1",
+      "failure_signature": "sha256:a2488eef19a1ecd9870b7810e1350924379c7a1eca42cf96c0225b38837bc818",
       "gap_id": "tck-gap-be38f74c4338",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/map"
@@ -34455,7 +33676,7 @@
       "transaction_mode": "autocommit",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:d2683061897f2f70e585d8724b9a3d6ebe82b3838b81dfe8b11f26df539c3275",
+      "failure_signature": "sha256:a2488eef19a1ecd9870b7810e1350924379c7a1eca42cf96c0225b38837bc818",
       "gap_id": "tck-gap-27d85f245f41",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/map"
@@ -34467,7 +33688,7 @@
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:d2683061897f2f70e585d8724b9a3d6ebe82b3838b81dfe8b11f26df539c3275",
+      "failure_signature": "sha256:a2488eef19a1ecd9870b7810e1350924379c7a1eca42cf96c0225b38837bc818",
       "gap_id": "tck-gap-14e67c778b18",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/map"
@@ -34478,11 +33699,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:bfe89342845874d1ddc0bb38a8fb47475e2e7ca3d99ea485dd767abefb6379f8",
-      "gap_id": "tck-gap-f574f927aee8",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/map"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/map/Map2.feature",
@@ -34490,11 +33707,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:bfe89342845874d1ddc0bb38a8fb47475e2e7ca3d99ea485dd767abefb6379f8",
-      "gap_id": "tck-gap-8494405d90aa",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/map"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/map/Map3.feature",
@@ -38574,11 +37787,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:284edaa6a2b8a63d5ad924dfcc68a993ce455c7dca6d17cf4ea749135ed14575",
-      "gap_id": "tck-gap-72c9883c3177",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/precedence"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/precedence/Precedence3.feature",
@@ -38586,11 +37795,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:284edaa6a2b8a63d5ad924dfcc68a993ce455c7dca6d17cf4ea749135ed14575",
-      "gap_id": "tck-gap-82e97474aefa",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/precedence"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/precedence/Precedence3.feature",
@@ -38598,11 +37803,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:c618b37a29913370a14f4a8077a6c0ebf31e854b3e77609dd988725263bc83f4",
-      "gap_id": "tck-gap-bbaf861c0077",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/precedence"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/precedence/Precedence3.feature",
@@ -38610,11 +37811,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:c618b37a29913370a14f4a8077a6c0ebf31e854b3e77609dd988725263bc83f4",
-      "gap_id": "tck-gap-59ee5e1bf46a",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/precedence"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/precedence/Precedence3.feature",
@@ -38622,11 +37819,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:17a571a8a5bd1f37fad14a99fe62ed9e0a02fae8f8f0af439a12231d52b5d476",
-      "gap_id": "tck-gap-5dd9b08b5ec9",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/precedence"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/precedence/Precedence3.feature",
@@ -38634,11 +37827,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:17a571a8a5bd1f37fad14a99fe62ed9e0a02fae8f8f0af439a12231d52b5d476",
-      "gap_id": "tck-gap-30f8a089edd0",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/precedence"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/precedence/Precedence3.feature",
@@ -38670,11 +37859,7 @@
       "example_row": "single",
       "transaction_mode": "autocommit",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ca71179155eebb71f8cf9f5462e2bed57e877efe380c7ec91cacb6fd8e00296e",
-      "gap_id": "tck-gap-ec38756b8df4",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/precedence"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/precedence/Precedence3.feature",
@@ -38682,11 +37867,7 @@
       "example_row": "single",
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
-      "status": "expected-gap",
-      "failure_signature": "sha256:ca71179155eebb71f8cf9f5462e2bed57e877efe380c7ec91cacb6fd8e00296e",
-      "gap_id": "tck-gap-391500c7dfac",
-      "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
-      "workstream": "expressions/precedence"
+      "status": "pass"
     },
     {
       "feature_path": "expressions/precedence/Precedence3.feature",
@@ -38695,7 +37876,7 @@
       "transaction_mode": "autocommit",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:10059a69911d01e07da18d0a2bed88b39a5b326ee86e0dabff90a5e931e06ea8",
+      "failure_signature": "sha256:e1155cd2b7265452063978d69934e4502490658b09cd3a2a2a11254de23c8a87",
       "gap_id": "tck-gap-5a617dd9f530",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38707,7 +37888,7 @@
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:10059a69911d01e07da18d0a2bed88b39a5b326ee86e0dabff90a5e931e06ea8",
+      "failure_signature": "sha256:e1155cd2b7265452063978d69934e4502490658b09cd3a2a2a11254de23c8a87",
       "gap_id": "tck-gap-8a1f2b0619d5",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38719,7 +37900,7 @@
       "transaction_mode": "autocommit",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:3b3f29e1b2c15b569e55735366bae8ad37a00956f55fbe36ae46cbfd1ff15382",
+      "failure_signature": "sha256:8e254536443bcb4b1b09e3ea323b5b552b7483e20016c30a96e970d8cef5cae0",
       "gap_id": "tck-gap-579d0e3958de",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38731,7 +37912,7 @@
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:3b3f29e1b2c15b569e55735366bae8ad37a00956f55fbe36ae46cbfd1ff15382",
+      "failure_signature": "sha256:8e254536443bcb4b1b09e3ea323b5b552b7483e20016c30a96e970d8cef5cae0",
       "gap_id": "tck-gap-498bcaf160ba",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38743,7 +37924,7 @@
       "transaction_mode": "autocommit",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:2f671bd0c426c369ddd59ca1602fd78a6643938f6fc70e16aa180f307573219b",
+      "failure_signature": "sha256:458706b150c68ca37ed59262edaccad2c197f31283aecb1748577a1b425a445d",
       "gap_id": "tck-gap-ff02e048da9c",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38755,7 +37936,7 @@
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:2f671bd0c426c369ddd59ca1602fd78a6643938f6fc70e16aa180f307573219b",
+      "failure_signature": "sha256:458706b150c68ca37ed59262edaccad2c197f31283aecb1748577a1b425a445d",
       "gap_id": "tck-gap-75825d94383e",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38767,7 +37948,7 @@
       "transaction_mode": "autocommit",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:3b3f29e1b2c15b569e55735366bae8ad37a00956f55fbe36ae46cbfd1ff15382",
+      "failure_signature": "sha256:8e254536443bcb4b1b09e3ea323b5b552b7483e20016c30a96e970d8cef5cae0",
       "gap_id": "tck-gap-4236b1f6af6f",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38779,7 +37960,7 @@
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:3b3f29e1b2c15b569e55735366bae8ad37a00956f55fbe36ae46cbfd1ff15382",
+      "failure_signature": "sha256:8e254536443bcb4b1b09e3ea323b5b552b7483e20016c30a96e970d8cef5cae0",
       "gap_id": "tck-gap-47a0db2e4fe8",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38791,7 +37972,7 @@
       "transaction_mode": "autocommit",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:4d27355ab6116e385dcf217abbaa6eb89c43fbf115cdf5daf8e71e2c16591dbf",
+      "failure_signature": "sha256:e963292cf3f6bf126b493bdb2c73f55fca3c7d07c4751c9efcebd55f130d3e1f",
       "gap_id": "tck-gap-378fdce3b402",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38803,7 +37984,7 @@
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:4d27355ab6116e385dcf217abbaa6eb89c43fbf115cdf5daf8e71e2c16591dbf",
+      "failure_signature": "sha256:e963292cf3f6bf126b493bdb2c73f55fca3c7d07c4751c9efcebd55f130d3e1f",
       "gap_id": "tck-gap-c64417023c96",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38815,7 +37996,7 @@
       "transaction_mode": "autocommit",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:10059a69911d01e07da18d0a2bed88b39a5b326ee86e0dabff90a5e931e06ea8",
+      "failure_signature": "sha256:e1155cd2b7265452063978d69934e4502490658b09cd3a2a2a11254de23c8a87",
       "gap_id": "tck-gap-63d06359a075",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"
@@ -38827,7 +38008,7 @@
       "transaction_mode": "explicit-transaction",
       "route_mode": "normal",
       "status": "expected-gap",
-      "failure_signature": "sha256:10059a69911d01e07da18d0a2bed88b39a5b326ee86e0dabff90a5e931e06ea8",
+      "failure_signature": "sha256:e1155cd2b7265452063978d69934e4502490658b09cd3a2a2a11254de23c8a87",
       "gap_id": "tck-gap-77d832ed381e",
       "reason": "Engine behavior does not yet match the pinned openCypher TCK expectation.",
       "workstream": "expressions/precedence"

@@ -207,17 +207,18 @@ func (e *StorageExecutor) evaluateInOperator(ctx context.Context, leftExpr, righ
 	if value == nil {
 		return nil, true
 	}
-	containsNull := false
+	containsUnknown := false
 	for _, item := range list {
-		if item == nil {
-			containsNull = true
+		equal := cypherEquality(value, item)
+		if equal == nil {
+			containsUnknown = true
 			continue
 		}
-		if e.compareEqual(value, item) {
+		if equal.(bool) {
 			return true, true
 		}
 	}
-	if containsNull {
+	if containsUnknown {
 		return nil, true
 	}
 	return false, true

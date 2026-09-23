@@ -155,6 +155,9 @@ func evalSize(ctx Context, args []string) (interface{}, error) {
 		return int64(0), nil
 	}
 	v, _ := ctx.Eval(args[0])
+	if v == nil {
+		return nil, nil
+	}
 	switch vv := v.(type) {
 	case string:
 		return int64(cyphertext.Length(vv)), nil
@@ -163,7 +166,7 @@ func evalSize(ctx Context, args []string) (interface{}, error) {
 	case []string:
 		return int64(len(vv)), nil
 	}
-	return int64(0), nil
+	return nil, nil
 }
 
 func evalToLower(ctx Context, args []string) (interface{}, error) {

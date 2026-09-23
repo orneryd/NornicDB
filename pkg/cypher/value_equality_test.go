@@ -15,3 +15,11 @@ func TestCypherListEqualityPropagatesOnlyUnresolvedNullComparisons(t *testing.T)
 		[]interface{}{[]interface{}{int64(1)}, []interface{}{nil, "same"}},
 	))
 }
+
+func TestStaticMembershipRejectsLiteralNonLists(t *testing.T) {
+	for _, expression := range []string{"1 IN true", "1 IN 12", "1 IN 1.5", "1 IN 'value'", "1 IN {value: []}"} {
+		require.Error(t, validateStaticMembershipOperand(expression))
+	}
+	require.NoError(t, validateStaticMembershipOperand("1 IN [1, 2]"))
+	require.NoError(t, validateStaticMembershipOperand("null IN null"))
+}

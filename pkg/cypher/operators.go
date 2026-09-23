@@ -188,7 +188,7 @@ func hasTopLevelExpressionOperator(expr string) bool {
 		return false
 	}
 	switch expr[0] {
-	case '(', '[', '{':
+	case '(':
 		return false
 	}
 	if hasKeywordPrefixFoldASCII(expr, "case") {

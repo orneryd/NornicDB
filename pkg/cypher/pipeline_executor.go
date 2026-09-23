@@ -464,6 +464,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			if err := e.validatePipelineProjectionSubscripts(rows, clause.text, "WITH"); err != nil {
 				return nil, true, err
 			}
+			if err := e.validatePipelineSizeArguments(rows, clause.text, "WITH"); err != nil {
+				return nil, true, err
+			}
 			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text)
 			if !ok {
 				return nil, false, nil
@@ -481,6 +484,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			}
 		case pipelineClauseReturn:
 			if err := e.validatePipelineProjectionSubscripts(rows, clause.text, "RETURN"); err != nil {
+				return nil, true, err
+			}
+			if err := e.validatePipelineSizeArguments(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
 			final, ok := e.pipelineApplyReturn(rows, clause.text)

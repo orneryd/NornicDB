@@ -3853,7 +3853,7 @@ func (e *StorageExecutor) findRelatedNodes(sourceNode *storage.Node, pattern opt
 
 	for _, edge := range edges {
 		// Check relationship type if specified
-		if pattern.relType != "" && edge.Type != pattern.relType {
+		if !optionalRelationshipTypeMatches(pattern.relType, edge.Type) {
 			continue
 		}
 
@@ -3895,6 +3895,21 @@ func (e *StorageExecutor) findRelatedNodes(sourceNode *storage.Node, pattern opt
 	}
 
 	return results
+}
+
+func optionalRelationshipTypeMatches(filter, actual string) bool {
+	if filter == "" {
+		return true
+	}
+	if !strings.Contains(filter, "|") {
+		return filter == actual
+	}
+	for _, candidate := range strings.Split(filter, "|") {
+		if strings.TrimSpace(candidate) == actual {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *StorageExecutor) findOptionalRelatedNodes(ctx context.Context, sourceNode *storage.Node, patternText string, pattern optionalRelPattern) []optionalRelResult {

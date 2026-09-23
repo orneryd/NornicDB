@@ -39,3 +39,26 @@ func TestListSliceEvaluatesBoundsAndPropagatesNull(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, result.Rows[0][0])
 }
+
+func TestSizeRejectsPathsAndPatternPredicates(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "size_argument_types"))
+	rows := []pipelineRow{{"p": map[string]interface{}{"_pathResult": PathResult{}}}}
+
+	err := exec.validatePipelineSizeArguments(rows, "RETURN size(p)", "RETURN")
+	require.Error(t, err)
+	err = exec.validatePipelineSizeArguments(nil, "RETURN size((a)-->(b))", "RETURN")
+	require.Error(t, err)
+}
+
+func TestStaticSizeRejectsPathBindingsAcrossProjectionHorizons(t *testing.T) {
+	for _, query := range []string{
+		"MATCH p = (a)-[*]->(b) RETURN size(p)",
+		"MATCH p = (a)-->(b) WITH p AS route RETURN size(route)",
+	} {
+		err := validateStaticSizeArguments(query)
+		require.Error(t, err)
+		var semanticError *SemanticError
+		require.ErrorAs(t, err, &semanticError)
+		require.Equal(t, "InvalidArgumentType", semanticError.Detail)
+	}
+}
