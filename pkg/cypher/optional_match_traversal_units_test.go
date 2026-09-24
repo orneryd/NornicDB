@@ -146,7 +146,12 @@ func TestFastTraversalExprValue_AllShapes(t *testing.T) {
 
 	v, ok = fastTraversalExprValue("sc", row)
 	require.True(t, ok)
-	require.EqualValues(t, 7, v, "single-value pseudo-node unwraps to its scalar")
+	require.Equal(t, scalar, v, "a node whose only property is value stays a node")
+
+	row.values = map[string]interface{}{"x": int64(7)}
+	v, ok = fastTraversalExprValue("x", row)
+	require.True(t, ok)
+	require.EqualValues(t, 7, v, "a row value resolves from row.values")
 
 	v, ok = fastTraversalExprValue("r", row)
 	require.True(t, ok)

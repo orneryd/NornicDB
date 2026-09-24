@@ -565,8 +565,8 @@ func isSimpleTraversalIdentifier(s string) bool {
 // and a bare bound variable — without walking the full expression evaluator's
 // dispatch chain. It replicates evaluateExpressionWithContext's semantics for
 // exactly those shapes (nil bindings project as null, has_embedding reads
-// EmbedMeta, single-"value" pseudo-nodes unwrap to their scalar) and reports
-// ok=false for everything else so the caller falls back to the evaluator.
+// EmbedMeta, non-entity values come from row.values) and reports ok=false for
+// everything else so the caller falls back to the evaluator.
 func fastTraversalExprValue(expr string, row traversalOptRow) (interface{}, bool) {
 	expr = strings.TrimSpace(expr)
 
@@ -605,12 +605,6 @@ func fastTraversalExprValue(expr string, row traversalOptRow) (interface{}, bool
 	if node, ok := row.nodes[expr]; ok {
 		if node == nil {
 			return nil, true
-		}
-		// Scalar wrapper pseudo-node (YIELD variables): unwrap single "value".
-		if len(node.Properties) == 1 {
-			if val, hasValue := node.Properties["value"]; hasValue {
-				return val, true
-			}
 		}
 		return node, true
 	}

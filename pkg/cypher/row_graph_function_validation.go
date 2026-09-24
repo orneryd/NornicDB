@@ -1,10 +1,13 @@
 package cypher
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -182,9 +185,27 @@ func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, r
 	} else if relationship, valid := value.(*storage.Edge); valid && relationship != nil {
 		return nil
 	}
+	return invalidFunctionArgument(function, value)
+}
+
+// invalidFunctionArgument is the TypeError for a function argument of the
+// wrong type, shared by RETURN-row validation and the expression evaluator
+// (functionEvaluationFailure).
+func invalidFunctionArgument(function string, value interface{}) error {
 	return newSemanticError(
 		"Neo.ClientError.Statement.TypeError",
 		"InvalidArgumentValue",
-		fmt.Sprintf("%s() received an invalid %T argument", function, value),
+		(&cypherfn.ArgumentTypeError{Function: strings.ToLower(function), Value: value}).Error(),
 	)
+}
+
+// functionEvaluationFailure records an error returned by a registry function
+// as the expression failure of ctx, so it fails the statement instead of
+// evaluating to null.
+func functionEvaluationFailure(ctx context.Context, err error) {
+	var argumentError *cypherfn.ArgumentTypeError
+	if errors.As(err, &argumentError) {
+		err = invalidFunctionArgument(argumentError.Function, argumentError.Value)
+	}
+	recordExpressionFailure(ctx, err)
 }

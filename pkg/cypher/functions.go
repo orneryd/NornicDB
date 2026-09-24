@@ -116,7 +116,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			return nil
 		}
 	}
-	if v, ok := e.evaluateExpressionFastLeaf(expr, nodes, rels, paths); ok {
+	if v, ok := e.evaluateExpressionFastLeaf(ctx, expr, nodes, rels, paths); ok {
 		return v
 	}
 	if hasTopLevelExpressionOperator(expr) {
@@ -210,7 +210,7 @@ func isSimpleIdentifierOrProperty(expr string) bool {
 	return !expectIdentStart
 }
 
-func (e *StorageExecutor) evaluateExpressionFastLeaf(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult) (interface{}, bool) {
+func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult) (interface{}, bool) {
 	if isWholeCypherQuotedString(expr) {
 		if decoded, ok := decodeCypherQuotedString(expr); ok {
 			return decoded, true
@@ -262,8 +262,10 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(expr string, nodes map[stri
 			}
 			return nil, true
 		}
-		if val, ok := e.fabricRecordBindings[varName]; ok {
+		if val, ok := e.boundValue(ctx, varName); ok {
 			switch v := val.(type) {
+			case nil:
+				return nil, true
 			case map[string]interface{}:
 				if propVal, exists := v[propName]; exists {
 					return propVal, true
@@ -283,11 +285,6 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(expr string, nodes map[stri
 		if node == nil {
 			return nil, true
 		}
-		if len(node.Properties) == 1 {
-			if val, hasValue := node.Properties["value"]; hasValue {
-				return val, true
-			}
-		}
 		return node, true
 	}
 	if rel, ok := rels[expr]; ok {
@@ -296,7 +293,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(expr string, nodes map[stri
 		}
 		return rel, true
 	}
-	if val, ok := e.fabricRecordBindings[expr]; ok {
+	if val, ok := e.boundValue(ctx, expr); ok {
 		return val, true
 	}
 	if paths != nil {

@@ -310,7 +310,7 @@ func (e *StorageExecutor) evaluateInOp(ctx context.Context, node *storage.Node, 
 	rightIdent := strings.TrimSpace(right)
 	var listVal interface{}
 	if isValidIdentifier(rightIdent) {
-		if v, ok := e.fabricRecordBindings[rightIdent]; ok {
+		if v, ok := e.boundValue(ctx, rightIdent); ok {
 			listVal = v
 		}
 	}
@@ -429,7 +429,7 @@ func (e *StorageExecutor) evaluateIsNull(ctx context.Context, node *storage.Node
 		if isValidIdentifier(valExpr) {
 			// If the identifier is row-bound (fabric/correlated execution), evaluate
 			// actual null semantics from the binding.
-			if bound, ok := e.fabricRecordBindings[valExpr]; ok {
+			if bound, ok := e.boundValue(ctx, valExpr); ok {
 				if expectNotNull {
 					return bound != nil
 				}

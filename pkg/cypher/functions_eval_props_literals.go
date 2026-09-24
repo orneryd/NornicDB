@@ -51,8 +51,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			}
 			return nil
 		}
-		if val, ok := e.fabricRecordBindings[varName]; ok {
+		if val, ok := e.boundValue(ctx, varName); ok {
 			switch v := val.(type) {
+			case nil:
+				return nil
 			case map[string]interface{}:
 				if pv, exists := v[propName]; exists {
 					return pv
@@ -74,13 +76,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 		if node == nil {
 			return nil
 		}
-		// Check if this is a scalar wrapper (pseudo-node created for YIELD variables)
-		// If it only has a "value" property, return that value directly
-		if len(node.Properties) == 1 {
-			if val, hasValue := node.Properties["value"]; hasValue {
-				return val
-			}
-		}
 		return node
 	}
 	if rel, ok := rels[expr]; ok {
@@ -91,7 +86,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 		// returning a map caused drivers to receive a generic map and display null for r.
 		return rel
 	}
-	if val, ok := e.fabricRecordBindings[expr]; ok {
+	if val, ok := e.boundValue(ctx, expr); ok {
 		return val
 	}
 	// Check if this is a path variable - return the PathResult as a map

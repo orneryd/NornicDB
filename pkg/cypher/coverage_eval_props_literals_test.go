@@ -120,8 +120,14 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 		require.Equal(t, person, call("p"))
 	})
 
-	t.Run("scalar-wrapper node returns the value directly", func(t *testing.T) {
-		require.Equal(t, int64(42), call("scalar"))
+	t.Run("a node whose only property is value stays a node", func(t *testing.T) {
+		require.Equal(t, scalarBox, call("scalar"))
+	})
+
+	t.Run("a value-scope variable returns its value", func(t *testing.T) {
+		valueCtx := withValueBindings(ctx, map[string]interface{}{"v": int64(42), "m": map[string]interface{}{"a": int64(1)}})
+		require.Equal(t, int64(42), e.evaluateExpressionWithContextFullPropsLiterals(valueCtx, "v", "v", nodes, rels, paths, nil, nil, 0))
+		require.Equal(t, int64(1), e.evaluateExpressionWithContextFullPropsLiterals(valueCtx, "m.a", "m.a", nodes, rels, paths, nil, nil, 0))
 	})
 
 	t.Run("nil node variable returns nil", func(t *testing.T) {

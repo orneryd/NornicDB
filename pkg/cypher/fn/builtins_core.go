@@ -75,14 +75,25 @@ func evalLabels(ctx Context, args []string) (interface{}, error) {
 		return result, nil
 	}
 	v, _ := ctx.Eval(inner)
-	if node, ok := v.(*storage.Node); ok && node != nil {
-		result := make([]interface{}, len(node.Labels))
-		for i, label := range node.Labels {
+	switch value := v.(type) {
+	case nil:
+		return nil, nil
+	case *storage.Node:
+		if value == nil {
+			return nil, nil
+		}
+		result := make([]interface{}, len(value.Labels))
+		for i, label := range value.Labels {
 			result[i] = label
 		}
 		return result, nil
+	case map[string]interface{}:
+		// A node projected as a map (nodeToMap: _nodeId + labels).
+		if _, isNode := value["_nodeId"]; isNode {
+			return value["labels"], nil
+		}
 	}
-	return nil, nil
+	return nil, &ArgumentTypeError{Function: "labels", Value: v}
 }
 
 func evalType(ctx Context, args []string) (interface{}, error) {

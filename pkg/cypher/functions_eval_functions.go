@@ -216,7 +216,7 @@ skipArrayIndexing:
 	// ========================================
 	if name, inner, ok := parseFunctionCallWS(expr); ok {
 		args := e.splitFunctionArgs(inner)
-		ctx := cypherfn.Context{
+		fnCtx := cypherfn.Context{
 			Nodes:    nodes,
 			Rels:     rels,
 			Database: e.databaseName(),
@@ -226,8 +226,9 @@ skipArrayIndexing:
 			Now: time.Now,
 		}
 
-		if v, found, err := cypherfn.EvaluateFunction(name, args, ctx); found {
+		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
 			if err != nil {
+				functionEvaluationFailure(ctx, err)
 				return nil
 			}
 			return v
