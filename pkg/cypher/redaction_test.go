@@ -104,8 +104,7 @@ func TestRedactLiterals_EmptyQuery(t *testing.T) {
 }
 
 // TestRedactLiterals_CallUnionSubquery_PreservesStructure — NornicDB issue #563 defect 3:
-// a CALL { ... UNION ... } subquery is a valid, executable Cypher shape (Eshu's
-// entity-label lookups use it) but was collapsing to the whole-statement
+// a CALL { ... UNION ... } subquery is a valid, executable Cypher shape but was collapsing to the whole-statement
 // RedactedPlaceholder fallback instead of redacting only its literals.
 func TestRedactLiterals_CallUnionSubquery_PreservesStructure(t *testing.T) {
 	in := `CALL { MATCH (n:Foo) WHERE n.name = "alice" RETURN n AS x UNION MATCH (m:Bar) WHERE m.name = "bob" RETURN m AS x } RETURN x`
@@ -124,7 +123,7 @@ func TestRedactLiterals_CallUnionSubquery_PreservesStructure(t *testing.T) {
 }
 
 // TestRedactLiterals_CallUnion22Branches_PreservesStructure — the 22-branch
-// CALL{UNION} entity-label lookup shape from the #7014 regression scan.
+// CALL{UNION} entity-label lookup shape reported in NornicDB issue #563.
 func TestRedactLiterals_CallUnion22Branches_PreservesStructure(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("CALL { ")
@@ -197,7 +196,7 @@ func TestRedactLiterals_ListLiterals(t *testing.T) {
 
 // TestRedactLiterals_UnterminatedStringDoesNotLeak — defect-3 fix removed the
 // full cantlr.Parse gate; this proves the replacement lexer-level signals
-// (ERRCHAR token + unbalanced brace depth) still fail-closed on a truncated
+// (ERRCHAR token + unclosed brace) still fail closed on a truncated
 // string literal instead of leaking its partial content.
 func TestRedactLiterals_UnterminatedStringDoesNotLeak(t *testing.T) {
 	in := `MATCH (n {name: "ali`
@@ -225,12 +224,11 @@ func TestRedactLiterals_VarLengthTraversalWithListParams_PreservesStructure(t *t
 	}
 }
 
-// TestRedactLiterals_BareWordValueFailsClosed — NornicDB issue #563 review
-// finding C1: `MATCH (n {name: John Secret})` is not valid Cypher (an
+// TestRedactLiterals_BareWordValueFailsClosed — NornicDB issue #563: `MATCH (n {name: John Secret})` is not valid Cypher (an
 // unquoted bare-word value), but it lexes clean — no ERRCHAR, balanced
 // braces/parens — so before this fix it round-tripped through the token
-// walk verbatim instead of failing closed like main did. Two ID tokens
-// back to back with nothing between them (signal 5) must still fail closed
+// walk verbatim instead of failing closed. Two ID tokens back to back with
+// nothing between them (signal 4) must still fail closed
 // even though every bracket balances.
 func TestRedactLiterals_BareWordValueFailsClosed(t *testing.T) {
 	in := `MATCH (n {name: John Secret}) RETURN n`
@@ -241,11 +239,10 @@ func TestRedactLiterals_BareWordValueFailsClosed(t *testing.T) {
 }
 
 // TestRedactLiterals_NegativeDepthThenBalancedFailsClosed — NornicDB issue
-// #563 review finding C1: `) MATCH (n {name:'secret'}) (` has a closer
+// #563: `) MATCH (n {name:'secret'}) (` has a closer
 // before its matching opener. Depth dips to -1 and climbs back to exactly 0
-// by EOF, so a check that only looks at the final depth (`depth != 0`)
-// passes it through with the literal redacted but the invalid structure
-// intact. Depth must never be allowed to go negative, checked as it happens.
+// by EOF, so a check that only looks at the final depth would pass it
+// through. A closer with no open bracket must fail closed as it happens.
 func TestRedactLiterals_NegativeDepthThenBalancedFailsClosed(t *testing.T) {
 	in := `) MATCH (n {name:'secret'}) (`
 	out := RedactLiterals(in)
@@ -255,17 +252,16 @@ func TestRedactLiterals_NegativeDepthThenBalancedFailsClosed(t *testing.T) {
 }
 
 // TestRedactLiterals_ERRCHARGuardCatchesUnterminatedStringWithBalancedBrackets
-// — NornicDB issue #563 review finding C2: the ERRCHAR check is load-bearing
-// on its own, separately from listener.hadError, the depth check, and the
+// — NornicDB issue #563: the ERRCHAR check is load-bearing on its own,
+// separately from the lexer error listener, the bracket check, and the
 // bare-word-adjacency check. This query's only brackets are the balanced
-// `(n)` (no depth signal), the trailing text after the unclosed quote is a
-// single word with no adjacent ID pair (no signal-5 overlap), and the
-// lexer's error listener never fires for an unterminated CHAR_LITERAL (the
-// unclosed quote routes the lexer into an ERRCHAR token instead — see the
-// doc comment above). Verified by mutation: with the
-// `ttype == cantlr.CypherLexerERRCHAR` guard removed, this is the case that
-// leaks the partial secret text verbatim while every other existing test
-// keeps passing.
+// `(n)`, the trailing text after the unclosed quote is a single word with no
+// adjacent ID pair, and the lexer's error listener never fires for an
+// unterminated CHAR_LITERAL (the unclosed quote lexes as an ERRCHAR token
+// instead). With the `ttype == cantlr.CypherLexerERRCHAR` guard removed,
+// this test is the only RedactLiterals test that fails: the statement is
+// no longer redacted whole, although the grammar-rejected path still
+// replaces the partial secret word.
 func TestRedactLiterals_ERRCHARGuardCatchesUnterminatedStringWithBalancedBrackets(t *testing.T) {
 	in := `MATCH (n) WHERE n.name = 'unterminatedSecretXYZ RETURN n`
 	out := RedactLiterals(in)
@@ -277,10 +273,10 @@ func TestRedactLiterals_ERRCHARGuardCatchesUnterminatedStringWithBalancedBracket
 	}
 }
 
-// TestRedactLiterals_MalformedInputsNeverLeak — a fuzz-ish table of
-// malformed/adversarial inputs, each carrying a unique secret-shaped marker
-// that must never appear in the output, regardless of which fail-closed
-// signal (or combination) catches it.
+// TestRedactLiterals_MalformedInputsNeverLeak — a table of the malformed
+// inputs below, each carrying a unique marker that must not appear in the
+// output. TestRedactLiterals_InvalidStatementsNeverEmitInputWords covers
+// grammar-rejected statements that lex cleanly and balance their brackets.
 func TestRedactLiterals_MalformedInputsNeverLeak(t *testing.T) {
 	cases := []struct {
 		name   string
