@@ -13,10 +13,13 @@ import (
 
 type sizeTrackingStreamingInner struct {
 	storage.Engine
-	nodes             []*storage.Node
-	streamNodesCalls  int
-	streamPrefixCalls int
-	lastPrefix        string
+	nodes                     []*storage.Node
+	streamNodesCalls          int
+	streamPrefixCalls         int
+	lastPrefix                string
+	streamLabelProjectedCalls int
+	lastProjectedLabel        string
+	lastProjectedProperties   []string
 }
 
 type sizeTrackingLifecycleInner struct {
@@ -141,6 +144,66 @@ func TestSizeTrackingEngine_StreamNodesByPrefix_Delegates(t *testing.T) {
 	assert.Equal(t, 0, inner.streamNodesCalls)
 	assert.Equal(t, "tenant_a:", inner.lastPrefix)
 	assert.Equal(t, []storage.NodeID{"tenant_a:n1"}, got)
+}
+
+func (e *sizeTrackingStreamingInner) StreamNodesByLabelProjected(label string, properties []string, fn func(node *storage.Node) error) error {
+	e.streamLabelProjectedCalls++
+	e.lastProjectedLabel = label
+	e.lastProjectedProperties = properties
+	for _, node := range e.nodes {
+		matched := false
+		for _, l := range node.Labels {
+			if l == label {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		if err := fn(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TestSizeTrackingEngine_StreamNodesByLabelProjected_Delegates proves the
+// wrapper forwards label-scoped candidate streaming to the inner engine
+// instead of silently dropping storage.ProjectedLabelNodeReader. Eshu#7014
+// cause A: a wrapper that only embeds storage.Engine promotes exactly the
+// methods declared on that interface, not every method the dynamic inner
+// engine happens to implement, so an unforwarded optional interface makes a
+// label-scoped MATCH fall through to a whole-namespace storage.StreamNodes
+// scan (O(store) instead of O(label)).
+func TestSizeTrackingEngine_StreamNodesByLabelProjected_Delegates(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	inner := &sizeTrackingStreamingInner{
+		Engine: base,
+		nodes: []*storage.Node{
+			{ID: "tenant_a:n1", Labels: []string{"Repository"}},
+			{ID: "tenant_a:n2", Labels: []string{"Unrelated"}},
+			{ID: "tenant_a:n3", Labels: []string{"Repository"}},
+		},
+	}
+
+	wrappedEngine := newSizeTrackingEngine(inner, &DatabaseManager{}, "tenant_a")
+	labelReader, ok := wrappedEngine.(storage.ProjectedLabelNodeReader)
+	require.True(t, ok, "size tracking wrapper must preserve ProjectedLabelNodeReader")
+
+	var got []storage.NodeID
+	err := labelReader.StreamNodesByLabelProjected("Repository", []string{"name"}, func(node *storage.Node) error {
+		got = append(got, node.ID)
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, inner.streamLabelProjectedCalls)
+	assert.Equal(t, 0, inner.streamNodesCalls, "label-scoped MATCH must not fall back to a whole-namespace stream")
+	assert.Equal(t, "Repository", inner.lastProjectedLabel)
+	assert.Equal(t, []string{"name"}, inner.lastProjectedProperties)
+	assert.Equal(t, []storage.NodeID{"tenant_a:n1", "tenant_a:n3"}, got)
 }
 
 func TestSizeTrackingEngine_ForEachNodeIDByLabel_Delegates(t *testing.T) {

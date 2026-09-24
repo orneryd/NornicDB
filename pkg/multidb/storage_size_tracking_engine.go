@@ -30,6 +30,7 @@ var _ storage.MVCCVisibilityEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCIndexedVisibilityEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCHeadEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCLifecycleEngine = (*sizeTrackingEngine)(nil)
+var _ storage.ProjectedLabelNodeReader = (*sizeTrackingEngine)(nil)
 
 func (t *sizeTrackingEngine) ensureStorageSizeInitialized() error {
 	t.writeMu.Lock()
@@ -190,6 +191,19 @@ func (t *sizeTrackingEngine) StreamNodesByPrefix(ctx context.Context, prefix str
 		}
 		return nil
 	})
+}
+
+// StreamNodesByLabelProjected preserves label-indexed candidate streaming
+// across this wrapper boundary. Embedding storage.Engine only promotes the
+// methods declared on that interface, not every method the wrapped engine's
+// dynamic type happens to implement, so a label-scoped MATCH would otherwise
+// fail this type assertion and fall back to a whole-namespace StreamNodes
+// scan (O(store) instead of O(label); see eshu#7014 cause A).
+func (t *sizeTrackingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+	if reader, ok := t.Engine.(storage.ProjectedLabelNodeReader); ok {
+		return reader.StreamNodesByLabelProjected(label, properties, visit)
+	}
+	return storage.ErrNotImplemented
 }
 
 // ForEachNodeIDByLabel preserves label->ID lookup capabilities across wrapper
