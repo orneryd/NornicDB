@@ -287,6 +287,16 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		}
 	}
 
+	for _, node := range pendingNodes {
+		if err := validatePropertyValues(node.Properties); err != nil {
+			return nil, true, err
+		}
+	}
+	for _, edge := range pendingEdges {
+		if err := validatePropertyValues(edge.Properties); err != nil {
+			return nil, true, err
+		}
+	}
 	if len(pendingNodes) > 0 {
 		if err := store.BulkCreateNodes(pendingNodes); err != nil {
 			return nil, true, localizedError(localization.CypherMergeBulkCreateNodesFailed(err), err)

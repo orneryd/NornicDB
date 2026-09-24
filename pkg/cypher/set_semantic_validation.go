@@ -292,10 +292,25 @@ func validateSetPropertyValue(value interface{}) error {
 	return nil
 }
 
+// validatePropertyValues applies the property value rule
+// (validateSetPropertyValue: no maps, no nested lists, no entities) to every
+// value a CREATE or MERGE is about to store, as SET does (b968c6a2). It runs
+// at every CREATE / MERGE write: CREATE node preparation (also the auto-commit
+// node fast path) and relationships, MERGE node and relationship creation,
+// and the UNWIND batch creators.
+func validatePropertyValues(properties map[string]interface{}) error {
+	for _, value := range properties {
+		if err := validateSetPropertyValue(value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func invalidSetPropertyType(value interface{}) error {
 	return newSemanticError(
 		"Neo.ClientError.Statement.TypeError",
 		"InvalidPropertyType",
-		fmt.Sprintf("SET property value has unsupported type %T", value),
+		fmt.Sprintf("property value has unsupported type %T", value),
 	)
 }

@@ -121,6 +121,9 @@ func createRelationshipForMerge(
 	edge *storage.Edge,
 	matchProps map[string]interface{},
 ) (*storage.Edge, bool, error) {
+	if err := validatePropertyValues(edge.Properties); err != nil {
+		return nil, false, err
+	}
 	const maxBareCreateAttempts = 3
 	bareAttempts := 0
 

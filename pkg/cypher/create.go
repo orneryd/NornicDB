@@ -132,20 +132,8 @@ func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern str
 				return nil, err
 			}
 
-			// Endpoints: a bound variable is reused; anything else is created
-			// through the shared node creator.
-			sourceNode := chainedSourceNode
-			if sourceNode == nil {
-				sourceNode, err = e.createPatternEndpoint(ctx, sourceContent, createdNodes, createdEdges, result, store)
-				if err != nil {
-					return nil, err
-				}
-			}
-			targetNode, err := e.createPatternEndpoint(ctx, targetContent, createdNodes, createdEdges, result, store)
-			if err != nil {
-				return nil, err
-			}
-
+			// The relationship is parsed and validated before its endpoints
+			// are created, so a rejected pattern writes nothing.
 			// Parse relationship type and properties
 			relType, relProps := e.parseRelationshipTypeAndProps(ctx, relStr)
 
@@ -172,6 +160,24 @@ func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern str
 				if !isValidIdentifier(key) {
 					return nil, localizedError(localization.CypherMutationsInvalidRelationshipPropertyKey(key), nil)
 				}
+			}
+
+			if err := validatePropertyValues(relProps); err != nil {
+				return nil, err
+			}
+
+			// Endpoints: a bound variable is reused; anything else is created
+			// through the shared node creator.
+			sourceNode := chainedSourceNode
+			if sourceNode == nil {
+				sourceNode, err = e.createPatternEndpoint(ctx, sourceContent, createdNodes, createdEdges, result, store)
+				if err != nil {
+					return nil, err
+				}
+			}
+			targetNode, err := e.createPatternEndpoint(ctx, targetContent, createdNodes, createdEdges, result, store)
+			if err != nil {
+				return nil, err
 			}
 
 			// Handle reverse direction
@@ -451,6 +457,9 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 		if _, ok := val.(invalidPropertyValue); ok {
 			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
 		}
+	}
+	if err := validatePropertyValues(nodePattern.properties); err != nil {
+		return nodePatternInfo{}, err
 	}
 	return nodePattern, nil
 }

@@ -2263,6 +2263,9 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 							return nil, true, err
 						}
 					}
+					if err := validatePropertyValues(node.Properties); err != nil {
+						return nil, true, err
+					}
 					actualID, err := store.CreateNode(node)
 					if err != nil {
 						return nil, true, localizedError(localization.CypherMutationsUnwindMergeCreateFailed(err), err)

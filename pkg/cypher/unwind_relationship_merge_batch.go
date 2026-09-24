@@ -197,6 +197,16 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 	}
 
 	for _, edge := range updates {
+		if err := validatePropertyValues(edge.Properties); err != nil {
+			return nil, true, err
+		}
+	}
+	for _, edge := range pendingCreates {
+		if err := validatePropertyValues(edge.Properties); err != nil {
+			return nil, true, err
+		}
+	}
+	for _, edge := range updates {
 		if err := store.UpdateEdge(edge); err != nil {
 			return nil, true, localizedError(localization.CypherMergeUpdateEdgeFailed(err), err)
 		}
