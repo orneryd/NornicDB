@@ -362,13 +362,10 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 				}
 			}
 
-			// Fallback: keep previous prefix-based behavior.
-			for variable, node := range createdNodes {
-				if strings.HasPrefix(item.expr, variable) || item.expr == variable {
-					row[i] = e.resolveReturnItem(ctx, item, variable, node)
-					break
-				}
-			}
+			// Anything else (literals, parameters, arithmetic, expressions
+			// over several created variables) is evaluated as an expression
+			// against the created nodes and relationships.
+			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
 		}
 		result.Rows = [][]interface{}{row}
 	}
