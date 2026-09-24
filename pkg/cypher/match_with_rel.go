@@ -1039,17 +1039,8 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 			inner := extractFuncArgs(expr, "nodes")
 			if val, ok := values[inner]; ok {
 				if pathMap, ok := val.(map[string]interface{}); ok {
-					if pathNodes, ok := pathMap["nodes"]; ok {
-						switch nodes := pathNodes.(type) {
-						case []*storage.Node:
-							result := make([]interface{}, len(nodes))
-							for i, node := range nodes {
-								result[i] = node
-							}
-							return result
-						case []interface{}:
-							return nodes
-						}
+					if nodes, _, hasNodes, _ := pathValueParts(pathMap); hasNodes {
+						return nodes
 					}
 				}
 			}
@@ -1060,20 +1051,11 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 			inner := extractFuncArgs(expr, "relationships")
 			if val, ok := values[inner]; ok {
 				if pathMap, ok := val.(map[string]interface{}); ok {
-					if rels, ok := pathMap["rels"]; ok {
-						// Preserve native relationship values so Bolt encodes the list
-						// with relationship structure and expression evaluation retains
-						// relationship property/type semantics.
-						switch edges := rels.(type) {
-						case []*storage.Edge:
-							result := make([]interface{}, len(edges))
-							for i, edge := range edges {
-								result[i] = edge
-							}
-							return result
-						case []interface{}:
-							return edges
-						}
+					// Native relationship values, so Bolt encodes the list with
+					// relationship structure and expressions keep relationship
+					// property/type semantics.
+					if _, relationships, _, hasRelationships := pathValueParts(pathMap); hasRelationships {
+						return relationships
 					}
 				}
 			}

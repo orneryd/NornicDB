@@ -109,7 +109,7 @@ CREAT (m:ImplicitRollback {id: 2})
 RETURN n
 `, nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "CREATE...WITH")
+	require.Contains(t, err.Error(), "after it had written (WITH n")
 
 	res, err := exec.Execute(ctx, "MATCH (n:ImplicitRollback) RETURN count(n) AS cnt", nil)
 	require.NoError(t, err)

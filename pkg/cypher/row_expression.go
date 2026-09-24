@@ -279,15 +279,11 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			if !isPath {
 				return nil, false
 			}
-			key := "nodes"
+			nodes, relationships, hasNodes, hasRelationships := pathValueParts(path)
 			if strings.EqualFold(function, "relationships") {
-				key = "rels"
+				return relationships, hasRelationships
 			}
-			items, found := path[key]
-			if !found {
-				return nil, false
-			}
-			return toAnySlice(items), true
+			return nodes, hasNodes
 		case "properties":
 			value, resolved := e.evaluateRowExpression(argument, values)
 			if !resolved {

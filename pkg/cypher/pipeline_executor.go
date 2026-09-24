@@ -370,6 +370,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 		scope[name] = struct{}{}
 	}
 
+	wrote := false
 	for idx, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch:
@@ -379,7 +380,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, true, err
 			}
 			if !ok {
-				return nil, false, nil
+				return pipelineDecline(wrote, clause.text)
 			}
 			rows = newRows
 			addPipelinePatternBindings(e, scope, clause.text, "MATCH")
@@ -396,7 +397,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				return nil, true, err
 			}
 			if !ok {
-				return nil, false, nil
+				return pipelineDecline(wrote, clause.text)
 			}
 			rows = newRows
 			addPipelinePatternBindings(e, scope, clause.text, "CREATE")
@@ -404,6 +405,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				result.Stats.NodesCreated += stats.NodesCreated
 				result.Stats.RelationshipsCreated += stats.RelationshipsCreated
 			}
+			wrote = true
 		case pipelineClauseMerge:
 			newRows, stats, err := e.pipelineApplyMerge(ctx, rows, clause.text)
 			if err != nil {
@@ -416,30 +418,34 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				result.Stats.RelationshipsCreated += stats.RelationshipsCreated
 				result.Stats.PropertiesSet += stats.PropertiesSet
 			}
+			wrote = true
 		case pipelineClauseDelete:
 			stats, ok, err := e.pipelineApplyDelete(ctx, rows, scope, clause.text)
 			if err != nil {
 				return nil, true, err
 			}
 			if !ok {
-				return nil, false, nil
+				return pipelineDecline(wrote, clause.text)
 			}
 			result.Stats.NodesDeleted += stats.NodesDeleted
 			result.Stats.RelationshipsDeleted += stats.RelationshipsDeleted
+			wrote = true
 		case pipelineClauseSet:
 			stats, ok, err := e.pipelineApplySet(ctx, rows, clause.text)
 			if err != nil {
 				return nil, true, err
 			}
 			if !ok {
-				return nil, false, nil
+				return pipelineDecline(wrote, clause.text)
 			}
 			result.Stats.PropertiesSet += stats.PropertiesSet
 			result.Stats.LabelsAdded += stats.LabelsAdded
+			wrote = true
 		case pipelineClauseRemove:
 			if err := e.pipelineApplyRemove(ctx, rows, clause.text, result); err != nil {
 				return nil, true, err
 			}
+			wrote = true
 		case pipelineClauseWith:
 			if err := e.validatePipelineRangeArguments(rows, clause.text, "WITH"); err != nil {
 				return nil, true, err
@@ -461,7 +467,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			}
 			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text)
 			if !ok {
-				return nil, false, nil
+				return pipelineDecline(wrote, clause.text)
 			}
 			rows = newRows
 			scope = pipelineProjectionScope(scope, clause.text)
@@ -471,7 +477,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			}
 			newRows, ok := e.pipelineApplyUnwind(ctx, rows, clause.text)
 			if !ok {
-				return nil, false, nil
+				return pipelineDecline(wrote, clause.text)
 			}
 			rows = newRows
 			if alias := pipelineUnwindAlias(clause.text); alias != "" {
@@ -486,6 +492,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			result.Stats.RelationshipsCreated += stats.RelationshipsCreated
 			result.Stats.PropertiesSet += stats.PropertiesSet
 			result.Stats.LabelsAdded += stats.LabelsAdded
+			wrote = true
 		case pipelineClauseReturn:
 			if err := validateDeletedEntityProjection(rows, clause.text); err != nil {
 				return nil, true, err
@@ -510,7 +517,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			}
 			final, ok := e.pipelineApplyReturn(ctx, rows, clause.text)
 			if !ok {
-				return nil, false, nil
+				return pipelineDecline(wrote, clause.text)
 			}
 			if len(final.Columns) == 0 && strings.TrimSpace(strings.TrimPrefix(clause.text, "RETURN")) == "*" {
 				final.Columns = pipelineScopeColumns(scope)
@@ -533,6 +540,18 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 	}
 
 	return result, true, nil
+}
+
+// pipelineDecline is the pipeline's "shape unsupported" answer. Before any
+// clause has written it hands the statement to the other routes; once a
+// clause has written (CREATE, MERGE, DELETE, SET, REMOVE, FOREACH) the
+// statement cannot be run again by another route - that would repeat the
+// writes - so it is an error instead.
+func pipelineDecline(wrote bool, clause string) (*ExecuteResult, bool, error) {
+	if wrote {
+		return nil, true, localizedError(localization.CypherInvariantsPipelineDeclinedAfterWrite(clause), nil)
+	}
+	return nil, false, nil
 }
 
 // tryExecutePipelineSimpleNodeReadPlan applies cardinality and property-index
@@ -2329,56 +2348,49 @@ func (e *StorageExecutor) pipelineApplyCreate(ctx context.Context, rows []pipeli
 			}
 		}
 
-		// Package node bindings into a MATCH prefix so the CREATE handler
-		// sees the already-bound variables. We emit a chained
-		// `MATCH (a) WHERE id(a) = "..." MATCH (b) WHERE id(b) = "..."` which
-		// executeInternal resolves via executeCompoundMatchCreate.
-		var matchPieces []string
+		// The row's nodes and relationships are the CREATE's bound variables:
+		// the shared CREATE core reuses them as endpoints and binds every
+		// created node, relationship and named path back into the row, so
+		// later clauses (SET, WITH, RETURN p / length(p)) see this exact
+		// mutation.
+		nodes := make(map[string]*storage.Node)
+		edges := make(map[string]*storage.Edge)
 		for name, val := range row {
-			node, isNode := val.(*storage.Node)
-			if !isNode || node == nil {
-				continue
+			switch typed := val.(type) {
+			case *storage.Node:
+				if typed != nil {
+					nodes[name] = typed
+				}
+			case *storage.Edge:
+				if typed != nil {
+					edges[name] = typed
+				}
 			}
-			if !referencesVariable(substituted, name) {
-				continue
-			}
-			var label string
-			if len(node.Labels) > 0 {
-				label = ":" + node.Labels[0]
-			}
-			matchPieces = append(matchPieces,
-				fmt.Sprintf("(%s%s) WHERE id(%s) = %q", name, label, name, string(node.ID)))
 		}
-
-		var queryToRun string
-		if len(matchPieces) == 0 {
-			queryToRun = substituted
-		} else {
-			queryToRun = strings.Join(matchPieces, " MATCH ")
-			queryToRun = "MATCH " + queryToRun + " " + substituted
+		pattern := strings.TrimSpace(substituted)
+		if startsWithKeywordFold(pattern, "CREATE") {
+			pattern = strings.TrimSpace(pattern[len("CREATE"):])
 		}
-
-		subResult, refsNodes, refsEdges, err := e.executeCreateWithRefsOrCompound(ctx, queryToRun)
+		created := &ExecuteResult{Stats: &QueryStats{}}
+		paths, err := e.createPatternsInScope(ctx, pattern, nodes, edges, created)
 		if err != nil {
 			return nil, nil, true, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
 		}
-		if subResult != nil && subResult.Stats != nil {
-			stats.NodesCreated += subResult.Stats.NodesCreated
-			stats.RelationshipsCreated += subResult.Stats.RelationshipsCreated
-		}
+		stats.NodesCreated += created.Stats.NodesCreated
+		stats.RelationshipsCreated += created.Stats.RelationshipsCreated
 
-		// Merge newly-created node bindings into the row so subsequent
-		// pipeline steps can reference them (e.g. CREATE (c)-[:REL]->(o)
-		// where `o` was created by an earlier CREATE in the same pipeline).
-		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(refsNodes), len(refsEdges)))
+		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(nodes)+len(edges), len(paths)))
 		for k, v := range row {
 			newRow[k] = v
 		}
-		for k, n := range refsNodes {
+		for k, n := range nodes {
 			newRow[k] = n
 		}
-		for k, relationship := range refsEdges {
+		for k, relationship := range edges {
 			newRow[k] = relationship
+		}
+		for k, path := range paths {
+			newRow[k] = e.pathToMap(path)
 		}
 		out = append(out, newRow)
 	}
@@ -2552,23 +2564,6 @@ func (e *StorageExecutor) materializePipelinePropertyExpressions(clause string, 
 		cursor = end + 1
 	}
 	return output.String()
-}
-
-// executeCreateWithRefsOrCompound runs a CREATE or MATCH...CREATE query and
-// returns the created entity refs. Handles both the standalone CREATE case and
-// the synthetic `MATCH (x) WHERE id(x) = "..." MATCH (y) ... CREATE ...`
-// prefix we prepend for pre-bound variables.
-func (e *StorageExecutor) executeCreateWithRefsOrCompound(ctx context.Context, query string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
-	trimmed := strings.TrimSpace(query)
-	upper := strings.ToUpper(trimmed)
-	if strings.HasPrefix(upper, "CREATE") {
-		return e.executeCreateWithRefs(ctx, query)
-	}
-	// MATCH ... CREATE ... — retain both the matched node bindings and newly
-	// created relationship bindings. Later pipeline clauses (for example SET
-	// on a relationship created here) must continue from this exact mutation,
-	// never fall back and execute the CREATE a second time.
-	return e.executeCompoundMatchCreateWithRefs(ctx, query)
 }
 
 // pipelineApplyWith drops / renames binding keys according to a WITH clause.

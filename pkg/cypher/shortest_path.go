@@ -420,6 +420,42 @@ func (e *StorageExecutor) pathToMap(path PathResult) map[string]interface{} {
 	}
 }
 
+// pathValueParts returns the nodes and relationships of a path value. Path
+// values come in two map shapes - pathToMap's ("relationships" holds
+// relationship maps) and the path-context evaluator's ("rels" holds
+// relationships) - and both carry the PathResult under "_pathResult", which
+// is authoritative: nodes are *storage.Node and relationships *storage.Edge
+// whichever shape the value has. The "nodes" / "rels" keys are read only when
+// "_pathResult" is absent. hasNodes / hasRelationships report whether the
+// value carried them.
+func pathValueParts(path map[string]interface{}) (nodes, relationships []interface{}, hasNodes, hasRelationships bool) {
+	var result *PathResult
+	switch typed := path["_pathResult"].(type) {
+	case PathResult:
+		result = &typed
+	case *PathResult:
+		result = typed
+	}
+	if result != nil {
+		nodes = make([]interface{}, len(result.Nodes))
+		for index, node := range result.Nodes {
+			nodes[index] = node
+		}
+		relationships = make([]interface{}, len(result.Relationships))
+		for index, relationship := range result.Relationships {
+			relationships[index] = relationship
+		}
+		return nodes, relationships, true, true
+	}
+	if raw, found := path["nodes"]; found {
+		nodes, hasNodes = toAnySlice(raw), true
+	}
+	if raw, found := path["rels"]; found {
+		relationships, hasRelationships = toAnySlice(raw), true
+	}
+	return nodes, relationships, hasNodes, hasRelationships
+}
+
 // isShortestPathQuery checks if a query uses shortestPath or allShortestPaths
 func isShortestPathQuery(cypher string) bool {
 	upper := strings.ToUpper(cypher)

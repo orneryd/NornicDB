@@ -4,3 +4,6 @@
 - id: cypherinvariants.delete_by_prefix_transaction_unsupported
   description: Expanded pseudo-locale unsupported transactional DeleteByPrefix operation.
   other: "[!! DeleteByPrefix not supported within transaction context !!]"
+- id: cypherinvariants.pipeline_declined_after_write
+  description: Expanded pseudo-locale pipeline decline after a write.
+  other: "[!! pipeline could not finish a statement after it had written ({{.Clause}}); the statement was not run again !!]"
