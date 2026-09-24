@@ -148,8 +148,6 @@
   other: "SET += {{.Source}} debe ser un mapa; se obtuvo el tipo {{.ValueType}}"
 - id: cyphermutations.remove_match_required
   other: "REMOVE requiere primero una cláusula MATCH (p. ej., MATCH (n) REMOVE n.property)"
-- id: cyphermutations.unwind_keys_unsupported
-  other: "la función keys() con UNWIND no es compatible en este contexto"
 - id: cyphermutations.unwind_parameter_name_required
   other: "UNWIND requiere un nombre de parámetro válido después de $"
 - id: cyphermutations.unwind_parameters_required

@@ -149,8 +149,6 @@
   other: "[!! SET += {{.Source}} must be a map, got type {{.ValueType}} !!]"
 - id: cyphermutations.remove_match_required
   other: "[!! REMOVE requires a MATCH clause first (e.g., MATCH (n) REMOVE n.property) !!]"
-- id: cyphermutations.unwind_keys_unsupported
-  other: "[!! keys() function with UNWIND is not supported in this context !!]"
 - id: cyphermutations.unwind_parameter_name_required
   other: "[!! UNWIND requires a valid parameter name after $ !!]"
 - id: cyphermutations.unwind_parameters_required

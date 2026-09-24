@@ -2909,9 +2909,9 @@ func TestCypherHelpers_ExecuteUnwind_Branches(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires AS clause")
 
-	_, err = exec.executeUnwind(ctx, "UNWIND keys({a:1}) AS k RETURN k")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "keys() function")
+	keysRes, err := exec.executeUnwind(ctx, "UNWIND keys({a:1}) AS k RETURN k")
+	require.NoError(t, err)
+	assert.Equal(t, [][]interface{}{{"a"}}, keysRes.Rows)
 
 	aggRes, err := exec.executeUnwind(ctx, "UNWIND [1,2,3] AS x RETURN sum(x) AS s, count(x) AS c, avg(x) AS a, min(x) AS mn, max(x) AS mx, collect(x)[..2] AS cs")
 	require.NoError(t, err)
