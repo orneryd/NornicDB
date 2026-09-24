@@ -876,6 +876,13 @@ func (e *StorageExecutor) parseCreateIndexDDL(cypher string, prefixKeyword strin
 	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
+	// ON EACH [...] is fulltext-index syntax; for CREATE [RANGE|VECTOR] INDEX
+	// every item must be a plain variable.property reference, otherwise the
+	// leftover text (e.g. "p]") would be stored as the property name.
+	if startsWithKeywordFold(propsSegment, "EACH") || strings.HasPrefix(propsSegment, "[") ||
+		!qualifiedIndexPropertiesWellFormed(propsSegment) {
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("ON"), nil)
+	}
 
 	properties := e.parseQualifiedIndexProperties(propsSegment)
 	if len(properties) == 0 {
@@ -2194,6 +2201,31 @@ func (e *StorageExecutor) backfillPropertyIndex(label string, properties []strin
 		}
 	}
 	return nil
+}
+
+// qualifiedIndexPropertiesWellFormed reports whether every comma-separated item
+// of an index ON clause is a variable.property reference whose two parts are
+// identifiers or backtick-quoted names. An empty list is left to the caller's
+// "properties required" error.
+func qualifiedIndexPropertiesWellFormed(propertiesStr string) bool {
+	if strings.TrimSpace(propertiesStr) == "" {
+		return true
+	}
+	isName := func(token string) bool {
+		token = strings.TrimSpace(token)
+		if len(token) >= 2 && token[0] == '`' && token[len(token)-1] == '`' {
+			return len(token) > 2
+		}
+		return isValidIdentifier(token)
+	}
+	for _, part := range strings.Split(propertiesStr, ",") {
+		part = strings.TrimSpace(part)
+		dotIdx := strings.Index(part, ".")
+		if dotIdx <= 0 || !isName(part[:dotIdx]) || !isName(part[dotIdx+1:]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *StorageExecutor) parseQualifiedIndexProperties(propertiesStr string) []string {
