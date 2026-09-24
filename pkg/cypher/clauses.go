@@ -1949,6 +1949,44 @@ func unwindMergeKey(label string, props map[string]interface{}) string {
 	return string(encoded)
 }
 
+// requireUnwindMergeChainParameters reports a SET value in the batch plan that
+// is a bare $name parameter not supplied with the query, once per statement,
+// as requireSetParameter does on every other SET route.
+func requireUnwindMergeChainParameters(ctx context.Context, plan unwindMergeChainPlan) error {
+	check := func(assignments []unwindSimpleSetAssignment) error {
+		for _, assignment := range assignments {
+			if err := requireSetParameter(ctx, assignment.expr); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, step := range plan.steps {
+		var groups [][]unwindSimpleSetAssignment
+		if step.node != nil {
+			groups = append(groups, step.node.setAssignments, step.node.onCreateAssignments, step.node.onMatchAssignments)
+		}
+		if step.lookup != nil {
+			groups = append(groups, step.lookup.setAssignments)
+		}
+		if step.relationship != nil {
+			groups = append(groups, step.relationship.setAssignments)
+		}
+		for _, group := range groups {
+			if err := check(group); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// applyUnwindMergeChainSetAssignment applies one SET n.p = <row expr> or
+// SET n += <row expr> in the UNWIND ... MERGE chain batch fast path, with the
+// same value semantics as every other SET route (setNodeProperty,
+// setPropertyMapValue, validateSetPropertyValue): null removes the key, maps
+// and entities are not property values, += needs a map / node / relationship.
+// It reports whether the node changed so unchanged rows skip the write.
 func applyUnwindMergeChainSetAssignment(
 	node *storage.Node,
 	assignment unwindSimpleSetAssignment,
@@ -1958,29 +1996,24 @@ func applyUnwindMergeChainSetAssignment(
 	if node.Properties == nil {
 		node.Properties = make(map[string]interface{})
 	}
-	if assignment.mergeMap {
-		value := resolveValue(assignment.expr, rowValues)
-		props, err := normalizePropsMap(value, fmt.Sprintf("variable %s", assignment.expr))
-		if err != nil {
-			return false, err
-		}
-		changed := false
-		for prop, val := range props {
-			if cur, exists := node.Properties[prop]; !exists || !reflect.DeepEqual(cur, val) {
-				node.Properties[prop] = val
-				changed = true
-			}
-		}
-		return changed, nil
+	prop, value, props, err := unwindMergeChainAssignmentValues(assignment, rowValues, resolveValue)
+	if err != nil {
+		return false, err
 	}
-	val := normalizePropValue(resolveValue(assignment.expr, rowValues))
-	if cur, exists := node.Properties[assignment.prop]; !exists || !reflect.DeepEqual(cur, val) {
-		node.Properties[assignment.prop] = val
-		return true, nil
+	if props == nil {
+		return setNodePropertyIfChanged(node, prop, value), nil
 	}
-	return false, nil
+	changed := false
+	for prop, value := range props {
+		if setNodePropertyIfChanged(node, prop, normalizePropValue(value)) {
+			changed = true
+		}
+	}
+	return changed, nil
 }
 
+// applyUnwindMergeChainEdgeSetAssignment is applyUnwindMergeChainSetAssignment
+// for the merged relationship.
 func applyUnwindMergeChainEdgeSetAssignment(
 	edge *storage.Edge,
 	assignment unwindSimpleSetAssignment,
@@ -1990,27 +2023,68 @@ func applyUnwindMergeChainEdgeSetAssignment(
 	if edge.Properties == nil {
 		edge.Properties = make(map[string]interface{})
 	}
-	if assignment.mergeMap {
-		value := resolveValue(assignment.expr, rowValues)
-		props, err := normalizePropsMap(value, fmt.Sprintf("variable %s", assignment.expr))
-		if err != nil {
-			return false, err
-		}
-		changed := false
-		for prop, val := range props {
-			if cur, exists := edge.Properties[prop]; !exists || !reflect.DeepEqual(cur, val) {
-				edge.Properties[prop] = val
-				changed = true
-			}
-		}
-		return changed, nil
+	prop, value, props, err := unwindMergeChainAssignmentValues(assignment, rowValues, resolveValue)
+	if err != nil {
+		return false, err
 	}
-	val := normalizePropValue(resolveValue(assignment.expr, rowValues))
-	if cur, exists := edge.Properties[assignment.prop]; !exists || !reflect.DeepEqual(cur, val) {
-		edge.Properties[assignment.prop] = val
-		return true, nil
+	if props == nil {
+		return setRelationshipPropertyIfChanged(edge, prop, value), nil
 	}
-	return false, nil
+	changed := false
+	for prop, value := range props {
+		if setRelationshipPropertyIfChanged(edge, prop, normalizePropValue(value)) {
+			changed = true
+		}
+	}
+	return changed, nil
+}
+
+// unwindMergeChainAssignmentValues resolves one batch SET assignment: for
+// x.p = v it returns the property and its normalized, validated value (props
+// nil); for x += v the map / node / relationship entries (setPropertyMapValue).
+func unwindMergeChainAssignmentValues(
+	assignment unwindSimpleSetAssignment,
+	rowValues map[string]interface{},
+	resolveValue func(string, map[string]interface{}) interface{},
+) (string, interface{}, map[string]interface{}, error) {
+	value := resolveValue(assignment.expr, rowValues)
+	if !assignment.mergeMap {
+		value = normalizePropValue(value)
+		if err := validateSetPropertyValue(value); err != nil {
+			return "", nil, nil, err
+		}
+		return assignment.prop, value, nil, nil
+	}
+	props, err := setPropertyMapValue(value, "+=")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if props == nil {
+		props = map[string]interface{}{}
+	}
+	return "", nil, props, nil
+}
+
+// setNodePropertyIfChanged writes one SET value through setNodeProperty and
+// reports whether the node changed (a null removes the key).
+func setNodePropertyIfChanged(node *storage.Node, prop string, value interface{}) bool {
+	cur, exists := node.Properties[prop]
+	if value == nil && !exists || value != nil && exists && reflect.DeepEqual(cur, value) {
+		return false
+	}
+	setNodeProperty(node, prop, value)
+	return true
+}
+
+// setRelationshipPropertyIfChanged is setNodePropertyIfChanged for a
+// relationship.
+func setRelationshipPropertyIfChanged(edge *storage.Edge, prop string, value interface{}) bool {
+	cur, exists := edge.Properties[prop]
+	if value == nil && !exists || value != nil && exists && reflect.DeepEqual(cur, value) {
+		return false
+	}
+	setRelationshipProperty(edge, prop, value)
+	return true
 }
 
 func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwindVar string, items []interface{}, mutationPart, returnPart string) (*ExecuteResult, bool, error) {
@@ -2025,6 +2099,9 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 	e.markUnwindMergeChainBatchUsed()
 	if plan.simple {
 		e.markUnwindSimpleMergeBatchUsed()
+	}
+	if err := requireUnwindMergeChainParameters(ctx, plan); err != nil {
+		return nil, true, err
 	}
 
 	store := e.getStorage(ctx)

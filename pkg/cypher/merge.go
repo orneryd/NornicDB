@@ -645,7 +645,9 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 				}
 			}
 			setClause := strings.TrimSpace(cypher[onMatchIdx+13 : setEnd])
-			e.applySetToNode(ctx, node, varName, setClause)
+			if err := e.applySetToNode(ctx, node, varName, setClause); err != nil {
+				return nil, err
+			}
 			store.UpdateNode(node)
 			e.notifyNodeMutated(string(node.ID))
 		}
@@ -688,7 +690,9 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 					}
 				}
 				setClause := strings.TrimSpace(cypher[onCreateIdx+13 : setEnd])
-				e.applySetToNode(ctx, node, varName, setClause)
+				if err := e.applySetToNode(ctx, node, varName, setClause); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -702,7 +706,9 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 			}
 		}
 		setClause := strings.TrimSpace(cypher[setIdx+3 : setEnd]) // +3 to skip "SET"
-		e.applySetToNode(ctx, node, varName, setClause)
+		if err := e.applySetToNode(ctx, node, varName, setClause); err != nil {
+			return nil, err
+		}
 	}
 
 	// Persist updates
@@ -1985,7 +1991,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 				}
 			}
 			setClause := strings.TrimSpace(cypher[onMatchIdx+13 : setEnd])
-			e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext)
+			if err := e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext); err != nil {
+				return nil, err
+			}
 			store.UpdateNode(node)
 			e.notifyNodeMutated(string(node.ID))
 		}
@@ -2027,7 +2035,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 					}
 				}
 				setClause := strings.TrimSpace(cypher[onCreateIdx+13 : setEnd])
-				e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext)
+				if err := e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -2046,7 +2056,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			}
 		}
 		setClause := strings.TrimSpace(cypher[setIdx+3 : setEnd])
-		e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext)
+		if err := e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext); err != nil {
+			return nil, err
+		}
 	}
 
 	// Save updates
@@ -2252,7 +2264,11 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		for variable, node := range nodeContext {
 			beforeProperties := cloneNodePropertiesMap(node.Properties)
 			beforeLabels := append([]string(nil), node.Labels...)
-			e.applySetToNodeWithContext(ctx, node, variable, setClause, nodeContext, relContext)
+			if err := e.applySetToNodeWithContext(ctx, node, variable, setClause, nodeContext, relContext); err != nil {
+				node.Properties = beforeProperties
+				node.Labels = beforeLabels
+				return err
+			}
 			propertiesSet := changedPropertyCount(beforeProperties, node.Properties)
 			labelsAdded := addedLabelCount(beforeLabels, node.Labels)
 			if propertiesSet == 0 && labelsAdded == 0 {
@@ -2269,7 +2285,10 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		}
 		for variable, relationship := range relContext {
 			beforeProperties := cloneNodePropertiesMap(relationship.Properties)
-			e.applySetToRelationshipWithContext(ctx, relationship, variable, setClause, nodeContext, relContext)
+			if _, err := e.applySetToRelationshipWithContext(ctx, relationship, variable, setClause, nodeContext, relContext); err != nil {
+				relationship.Properties = beforeProperties
+				return err
+			}
 			propertiesSet := changedPropertyCount(beforeProperties, relationship.Properties)
 			if propertiesSet == 0 {
 				continue
@@ -2349,9 +2368,15 @@ func (e *StorageExecutor) resolveMergeRelationshipEndpoint(store storage.Engine,
 	return node, true, nil
 }
 
-func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) int {
+// applySetToRelationshipWithContext is the single per-relationship SET
+// applicator (pipeline, MERGE, CREATE ... SET). It applies every assignment in
+// setClause that targets varName: r = map / entity (replace), r += map / entity
+// (merge) and r.p = value. A null value removes the key. It returns the number
+// of properties written, or an error for a value Cypher cannot store
+// (replacing with a non-map, a map or entity as a property value).
+func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
 	if edge == nil || varName == "" {
-		return 0
+		return 0, nil
 	}
 	fullRelContext := make(map[string]*storage.Edge)
 	for k, v := range relContext {
@@ -2368,92 +2393,51 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 			continue
 		}
 
-		if assignment == varName || strings.HasPrefix(assignment, varName+" =") {
-			eqIdx := strings.Index(assignment, "=")
-			if eqIdx <= 0 {
-				continue
+		target, propName, operator, right := splitSetAssignment(assignment)
+		if target != varName {
+			continue
+		}
+		switch {
+		case operator == "=" && propName == "":
+			props, err := e.setReplacementMap(ctx, right, nodeContext, fullRelContext)
+			if err != nil {
+				return propertiesSet, err
 			}
-			right := strings.TrimSpace(assignment[eqIdx+1:])
-			if v, ok := resolveDirectParamRef(ctx, right); ok {
-				if props, ok := propertyMapForSetValue(v); ok {
-					edge.Properties = setPropertyMap(props)
-					propertiesSet += len(props)
-					continue
-				}
-			}
-			if v, ok := resolveContextPathRef(ctx, right); ok {
-				if props, ok := propertyMapForSetValue(v); ok {
-					edge.Properties = setPropertyMap(props)
-					propertiesSet += len(props)
-					continue
-				}
-			}
-			evaluated := e.evaluateSetExpressionWithContext(ctx, right, nodeContext, fullRelContext)
-			if props, ok := propertyMapForSetValue(evaluated); ok {
+			if props != nil {
 				edge.Properties = setPropertyMap(props)
 				propertiesSet += len(props)
 			}
-			continue
-		}
-
-		if plusEqIdx := strings.Index(assignment, "+="); plusEqIdx > 0 {
-			left := strings.TrimSpace(assignment[:plusEqIdx])
-			right := strings.TrimSpace(assignment[plusEqIdx+2:])
-			if left != varName {
-				continue
+		case operator == "+=":
+			props, err := e.setMergeMap(ctx, right, nodeContext, fullRelContext)
+			if err != nil {
+				return propertiesSet, err
 			}
-			evaluated := e.evaluateExpressionWithContext(ctx, right, nodeContext, fullRelContext)
-			if s, ok := evaluated.(string); ok && strings.TrimSpace(s) == strings.TrimSpace(right) {
-				evaluated = e.parseValue(ctx, strings.TrimSpace(right))
+			for k, v := range props {
+				setRelationshipProperty(edge, k, v)
+				propertiesSet++
 			}
-			if evaluated == nil {
-				evaluated = e.parseValue(ctx, strings.TrimSpace(right))
+		case operator == "=":
+			// Direct $param resolution (in setPropertyValue) preserves declared
+			// types (e.g. []string, []float64) end-to-end.
+			value, err := e.setPropertyValue(ctx, right, nodeContext, fullRelContext)
+			if err != nil {
+				return propertiesSet, err
 			}
-			if props, ok := toStringAnyMap(evaluated); ok {
-				if edge.Properties == nil {
-					edge.Properties = make(map[string]interface{})
-				}
-				for k, v := range props {
-					setRelationshipProperty(edge, k, v)
-					propertiesSet++
-				}
-			}
-			continue
-		}
-
-		if !strings.HasPrefix(assignment, varName+".") {
-			continue
-		}
-		eqIdx := strings.Index(assignment, "=")
-		if eqIdx <= 0 {
-			continue
-		}
-		propName := strings.TrimSpace(assignment[len(varName)+1 : eqIdx])
-		propValue := strings.TrimSpace(assignment[eqIdx+1:])
-		if propName == "" {
-			continue
-		}
-		if edge.Properties == nil {
-			edge.Properties = make(map[string]interface{})
-		}
-		// Direct $param resolution preserves declared types (e.g. []string,
-		// []float64) end-to-end. Without this branch, substituteParams's
-		// type-preserving short-circuit leaves the literal text "$name"
-		// here, and the generic expression evaluator would only return
-		// the unresolved string.
-		if v, ok := resolveDirectParamRef(ctx, propValue); ok {
-			setRelationshipProperty(edge, propName, normalizePropValue(v))
+			setRelationshipProperty(edge, propName, value)
 			propertiesSet++
-			continue
 		}
-		setRelationshipProperty(edge, propName, e.evaluateSetExpressionWithContext(ctx, propValue, nodeContext, fullRelContext))
-		propertiesSet++
 	}
-	return propertiesSet
+	return propertiesSet, nil
 }
 
-// applySetToNodeWithContext applies SET clauses with access to matched context.
-func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) {
+// applySetToNodeWithContext is the single per-node SET applicator used by
+// every SET route (MATCH / pipeline, MERGE in all its forms, CREATE ... SET).
+// It applies every assignment in setClause that targets varName: n = map /
+// entity (replace), n += map / entity (merge), n.p = value and n:L1:L2 labels.
+// A null value removes the key. It returns an error for a value Cypher cannot
+// store (replacing with a non-map, a map or entity as a property value);
+// assignments are validated statically by validatePipelineSetAssignments.
+func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) error {
 	// Add current node to context for self-references
 	fullContext := make(map[string]*storage.Node)
 	for k, v := range nodeContext {
@@ -2469,43 +2453,25 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 	for _, assignment := range assignments {
 		assignment = strings.TrimSpace(assignment)
 
-		// Support map-merge in MERGE-with-context flows:
-		// SET n += {...} / SET n += row.props
-		if plusEqIdx := strings.Index(assignment, "+="); plusEqIdx > 0 {
-			left := strings.TrimSpace(assignment[:plusEqIdx])
-			right := strings.TrimSpace(assignment[plusEqIdx+2:])
-			if left == varName {
-				e.applySetMapMergeToNode(ctx, node, varName, right, fullContext, relContext)
-			}
+		target, propName, operator, right := splitSetAssignment(assignment)
+		if target != varName {
 			continue
 		}
-
-		if assignment == varName || strings.HasPrefix(assignment, varName+" =") {
-			eqIdx := strings.Index(assignment, "=")
-			if eqIdx <= 0 {
-				continue
+		switch {
+		case operator == "+=":
+			if err := e.applySetMapMergeToNode(ctx, node, varName, right, fullContext, relContext); err != nil {
+				return err
 			}
-			right := strings.TrimSpace(assignment[eqIdx+1:])
-			if v, ok := resolveDirectParamRef(ctx, right); ok {
-				if props, ok := propertyMapForSetValue(v); ok {
-					node.Properties = setPropertyMap(props)
-					continue
-				}
+		case operator == "=" && propName == "":
+			props, err := e.setReplacementMap(ctx, right, fullContext, relContext)
+			if err != nil {
+				return err
 			}
-			if v, ok := resolveContextPathRef(ctx, right); ok {
-				if props, ok := propertyMapForSetValue(v); ok {
-					node.Properties = setPropertyMap(props)
-					continue
-				}
-			}
-			evaluated := e.evaluateSetExpressionWithContext(ctx, right, fullContext, relContext)
-			if props, ok := propertyMapForSetValue(evaluated); ok {
+			if props != nil {
 				node.Properties = setPropertyMap(props)
 			}
-			continue
-		}
-
-		if labelExpr, isLabelAssignment := parseSetLabelExpression(assignment, varName); isLabelAssignment {
+		case operator == ":":
+			labelExpr := right
 			if labelExpr == "" {
 				continue
 			}
@@ -2527,38 +2493,164 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 				}
 				continue
 			}
-			for _, label := range splitSetLabelChain(labelExpr) {
-				if !isValidIdentifier(label) || containsReservedKeyword(label) || containsString(node.Labels, label) {
-					continue
-				}
-				node.Labels = append(node.Labels, label)
+			labels, err := setLabelChain(labelExpr)
+			if err != nil {
+				continue // rejected by validatePipelineSetAssignments before execution
 			}
-			continue
+			for _, label := range labels {
+				if !containsString(node.Labels, label) {
+					node.Labels = append(node.Labels, label)
+				}
+			}
+		case operator == "=":
+			// Direct $param resolution (in setPropertyValue) preserves declared
+			// types end-to-end.
+			value, err := e.setPropertyValue(ctx, right, fullContext, relContext)
+			if err != nil {
+				return err
+			}
+			setNodeProperty(node, propName, value)
 		}
-
-		if !strings.HasPrefix(assignment, varName+".") {
-			continue
-		}
-
-		eqIdx := strings.Index(assignment, "=")
-		if eqIdx <= 0 {
-			continue
-		}
-
-		propName := strings.TrimSpace(assignment[len(varName)+1 : eqIdx])
-		propValue := strings.TrimSpace(assignment[eqIdx+1:])
-
-		// Direct $param resolution preserves declared types end-to-end.
-		// Without it, substituteParams's type-preserving short-circuit
-		// leaves "$name" as a literal and the generic evaluator returns
-		// the unresolved string.
-		if v, ok := resolveDirectParamRef(ctx, propValue); ok {
-			setNodeProperty(node, propName, normalizePropValue(v))
-			continue
-		}
-		// Evaluate expression with full context
-		setNodeProperty(node, propName, e.evaluateSetExpressionWithContext(ctx, propValue, fullContext, relContext))
 	}
+	return nil
+}
+
+// setPropertyValue evaluates the right-hand side of SET x.p = <expr>. A direct
+// $param keeps its declared Go type. A map, entity or nested list is rejected
+// with a TypeError, as in Neo4j.
+func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
+	if err := requireSetParameter(ctx, expr); err != nil {
+		return nil, err
+	}
+	var value interface{}
+	if v, ok := resolveDirectParamRef(ctx, expr); ok {
+		value = normalizePropValue(v)
+	} else {
+		value = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
+	}
+	if err := validateSetPropertyValue(value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+// setReplacementMap evaluates the right-hand side of SET x = <expr>: a map, or
+// a node / relationship whose properties are copied. It returns (nil, nil)
+// for null, which leaves the entity unchanged, and an error for any other
+// value or for a map holding a value a property cannot store.
+func (e *StorageExecutor) setReplacementMap(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
+	if err := requireSetParameter(ctx, expr); err != nil {
+		return nil, err
+	}
+	value, ok := resolveDirectParamRef(ctx, expr)
+	if !ok {
+		value, ok = resolveContextPathRef(ctx, expr)
+	}
+	if !ok {
+		value = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
+	}
+	return setPropertyMapValue(value, "=")
+}
+
+// setMergeMap evaluates the right-hand side of SET x += <expr> with the same
+// rules as setReplacementMap. Unresolved inline literals fall back to the
+// literal parser.
+func (e *StorageExecutor) setMergeMap(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
+	if err := requireSetParameter(ctx, expr); err != nil {
+		return nil, err
+	}
+	if v, ok := resolveDirectParamRef(ctx, expr); ok {
+		return setPropertyMapValue(v, "+=")
+	}
+	if v, ok := resolveContextPathRef(ctx, expr); ok {
+		return setPropertyMapValue(v, "+=")
+	}
+	evaluated := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+	if s, ok := evaluated.(string); ok && strings.TrimSpace(s) == strings.TrimSpace(expr) {
+		evaluated = e.parseValue(ctx, strings.TrimSpace(expr))
+	}
+	if evaluated == nil {
+		evaluated = e.parseValue(ctx, strings.TrimSpace(expr))
+	}
+	return setPropertyMapValue(evaluated, "+=")
+}
+
+// splitSetAssignment splits one SET assignment into its target variable,
+// property (for x.p = v), operator ("=", "+=" or ":" for labels) and
+// right-hand side. The operator is the first top-level "=" (preceded by "+"
+// for +=), so "=" or "+=" inside a value string does not change the form.
+// Targets may be parenthesized: SET (n).p = v. Unrecognized text yields an
+// empty operator.
+func splitSetAssignment(assignment string) (target, property, operator, right string) {
+	assignment = strings.TrimSpace(assignment)
+	eq := strings.IndexByte(assignment, '=')
+	if colon := strings.IndexByte(assignment, ':'); colon > 0 && (eq < 0 || colon < eq) {
+		// Label form x:L1:L2 / x:$(expr); a dynamic label expression may
+		// itself contain "=".
+		if target := strings.TrimSpace(assignment[:colon]); isValidIdentifier(target) {
+			return target, "", ":", strings.TrimSpace(assignment[colon+1:])
+		}
+	}
+	if eq < 0 {
+		return "", "", "", ""
+	}
+	left := assignment[:eq]
+	operator = "="
+	if eq > 0 && assignment[eq-1] == '+' {
+		left = assignment[:eq-1]
+		operator = "+="
+	}
+	target, property, hasProperty := parseSetAssignmentTarget(left)
+	if operator == "+=" && hasProperty {
+		return "", "", "", ""
+	}
+	return target, property, operator, strings.TrimSpace(assignment[eq+1:])
+}
+
+// requireSetParameter reports a SET value that is a bare $name parameter not
+// supplied with the query, as Neo4j does, instead of letting the unresolved
+// "$name" text be stored. Other expressions pass through unchanged.
+func requireSetParameter(ctx context.Context, expr string) error {
+	expr = strings.TrimSpace(expr)
+	if !strings.HasPrefix(expr, "$") {
+		return nil
+	}
+	name := expr[1:]
+	if !isValidIdentifier(name) {
+		return nil
+	}
+	params := getParamsFromContext(ctx)
+	if len(params) == 0 {
+		return localizedError(localization.CypherMutationsSetAssignmentParametersRequired(name), nil)
+	}
+	if _, ok := params[name]; !ok {
+		return localizedError(localization.CypherMutationsSetAssignmentParameterNotFound(name), nil)
+	}
+	return nil
+}
+
+// setPropertyMapValue converts a SET x = / x += source value into the property
+// map to write: maps as-is, nodes and relationships by their properties
+// (propertyMapForSetValue). Null yields (nil, nil). Anything else, or a map
+// holding a value a property cannot store, is an error.
+func setPropertyMapValue(value interface{}, operator string) (map[string]interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+	props, ok := propertyMapForSetValue(value)
+	if !ok {
+		return nil, newSemanticError(
+			"Neo.ClientError.Statement.TypeError",
+			"InvalidArgumentType",
+			fmt.Sprintf("SET %s requires a map, node or relationship, got type %T", operator, value),
+		)
+	}
+	for _, v := range props {
+		if err := validateSetPropertyValue(v); err != nil {
+			return nil, err
+		}
+	}
+	return props, nil
 }
 
 // evaluateSetExpressionWithContext evaluates SET clause expressions with context.
@@ -3247,7 +3339,9 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 			}
 			setClause := strings.TrimSpace(segment[onMatchIdx+12 : setEnd])
 			beforeProps := cloneNodePropertiesMap(node.Properties)
-			e.applySetToNode(ctx, node, varName, setClause)
+			if err := e.applySetToNode(ctx, node, varName, setClause); err != nil {
+				return nil, "", err
+			}
 			if !reflect.DeepEqual(beforeProps, node.Properties) {
 				store.UpdateNode(node)
 				e.notifyNodeMutated(string(node.ID))
@@ -3294,7 +3388,9 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 				}
 				setClause := strings.TrimSpace(segment[onCreateIdx+13 : setEnd])
 				beforeProps := cloneNodePropertiesMap(node.Properties)
-				e.applySetToNode(ctx, node, varName, setClause)
+				if err := e.applySetToNode(ctx, node, varName, setClause); err != nil {
+					return nil, "", err
+				}
 				if !reflect.DeepEqual(beforeProps, node.Properties) {
 					store.UpdateNode(node)
 					e.notifyNodeMutated(string(node.ID))
@@ -3314,7 +3410,9 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 		}
 		setClause := strings.TrimSpace(segment[setIdx+3 : setEnd])
 		beforeProps := cloneNodePropertiesMap(node.Properties)
-		e.applySetToNode(ctx, node, varName, setClause)
+		if err := e.applySetToNode(ctx, node, varName, setClause); err != nil {
+			return nil, "", err
+		}
 		if !reflect.DeepEqual(beforeProps, node.Properties) {
 			store.UpdateNode(node)
 			e.notifyNodeMutated(string(node.ID))
@@ -3601,21 +3699,8 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 			if chainBroken {
 				continue
 			}
-			for _, pattern := range e.splitCreatePatterns(strings.TrimSpace(segment[6:])) {
-				pattern = strings.TrimSpace(pattern)
-				if pattern == "" {
-					continue
-				}
-				createSegment := "CREATE " + pattern
-				if containsOutsideStrings(pattern, "->") || containsOutsideStrings(pattern, "<-") || containsOutsideStrings(pattern, "-[") {
-					if err := e.executeCreateRelSegment(ctx, createSegment, nodeContext, relContext, result); err != nil {
-						return nil, localizedError(localization.CypherMutationsRelationshipCreateFailed(err), err)
-					}
-					continue
-				}
-				if err := e.processCreateNode(ctx, pattern, nodeContext, result, e.getStorage(ctx)); err != nil {
-					return nil, localizedError(localization.CypherMutationsNodeCreateFailed(err), err)
-				}
+			if _, err := e.createPatternsInScope(ctx, strings.TrimSpace(segment[6:]), nodeContext, relContext, result); err != nil {
+				return nil, localizedError(localization.CypherMutationsNodeCreateFailed(err), err)
 			}
 		} else if strings.HasPrefix(upperSeg, "OPTIONAL MATCH") {
 			if chainBroken {

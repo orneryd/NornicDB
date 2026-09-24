@@ -2061,24 +2061,9 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 	createdNodes := make(map[string]*storage.Node)
 	nodes := make([]*storage.Node, 0, len(nodePatterns))
 	for _, nodePatternStr := range nodePatterns {
-		nodePattern := e.parseNodePattern(ctx, nodePatternStr)
-
-		for _, label := range nodePattern.labels {
-			if !isValidIdentifier(label) {
-				return nil, localizedError(localization.CypherCoreInvalidLabelName(label), nil), true
-			}
-			if containsReservedKeyword(label) {
-				return nil, localizedError(localization.CypherCoreInvalidLabelReserved(label), nil), true
-			}
-		}
-
-		for key, val := range nodePattern.properties {
-			if !isValidIdentifier(key) {
-				return nil, localizedError(localization.CypherCoreInvalidPropertyKey(key), nil), true
-			}
-			if _, ok := val.(invalidPropertyValue); ok {
-				return nil, localizedError(localization.CypherCoreInvalidPropertyValue(key), nil), true
-			}
+		nodePattern, err := e.prepareCreateNodePattern(ctx, nodePatternStr, createdNodes, nil)
+		if err != nil {
+			return nil, err, true
 		}
 
 		node := &storage.Node{

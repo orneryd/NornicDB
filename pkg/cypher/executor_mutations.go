@@ -953,388 +953,54 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	// MATCH ... SET n += $props SET n.foo = 1
 	// Collapse additional SET keywords into a single assignment list.
 	setPart = collapseChainedSetClauses(setPart)
-	setPartForAssignments := setPart
-
-	// Substitute params for simple SET assignments (e.g., n.prop = $value).
-	// For SET += $props, defer to executeSetMerge which reads params directly.
-	if params := getParamsFromContext(ctx); params != nil && !strings.Contains(setPart, "+=") {
-		setPartForAssignments = e.substituteParams(setPart, params)
-	}
-
-	// Split SET clause into individual assignments, respecting brackets
-	// e.g., "n.embedding = [0.1, 0.2], n.dim = 4" -> ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
-	assignments := e.splitSetAssignments(setPartForAssignments)
-
+	assignments := e.splitSetAssignments(setPart)
 	if len(assignments) == 0 || (len(assignments) == 1 && strings.TrimSpace(assignments[0]) == "") {
 		return nil, localizedError(localization.CypherMutationsSetAssignmentRequired(), nil)
 	}
 
+	// Apply SET through the shared per-entity applicator (pipelineApplySet ->
+	// applySetToNodeWithContext / applySetToRelationshipWithContext), exactly
+	// as the pipeline, MERGE and CREATE ... SET do. Only the targeted
+	// variable changes; other row bindings are evaluation scope.
+	targets := pipelineSetTargetVariables(assignments)
+	variable := ""
+	if len(targets) > 0 {
+		variable = targets[0]
+	}
 	colIndex := make(map[string]int, len(matchResult.Columns))
 	for i, col := range matchResult.Columns {
 		colIndex[col] = i
 	}
-	buildEvalNodes := func(row []interface{}) map[string]*storage.Node {
-		evalNodes := make(map[string]*storage.Node, len(matchResult.Columns))
+	rows := make([]pipelineRow, 0, len(matchResult.Rows))
+	for _, row := range matchResult.Rows {
+		bindings := make(pipelineRow, len(matchResult.Columns))
 		for i, col := range matchResult.Columns {
-			if i >= len(row) {
-				continue
+			if i < len(row) {
+				bindings[col] = row[i]
 			}
-			switch v := row[i].(type) {
-			case *storage.Node:
-				if v != nil {
-					evalNodes[col] = v
-				}
-			case *storage.Edge:
-				// Relationships belong exclusively in the relationship scope.
-				// Adding a synthetic node with the same variable would shadow it.
-				continue
-			case map[string]interface{}:
-				evalNodes[col] = &storage.Node{
-					ID:         storage.NodeID(col),
-					Properties: v,
-				}
+		}
+		for _, target := range targets {
+			if _, bound := colIndex[target]; !bound {
+				return nil, localizedError(localization.CypherMutationsUnknownSetVariable(target), nil)
+			}
+			switch bindings[target].(type) {
+			case *storage.Node, *storage.Edge:
 			default:
-				evalNodes[col] = &storage.Node{
-					ID: storage.NodeID(col),
-					Properties: map[string]interface{}{
-						"value": v,
-					},
-				}
+				return nil, localizedError(localization.CypherMutationsSetEntityRequired(target), nil)
 			}
 		}
-		return evalNodes
+		rows = append(rows, bindings)
 	}
-	buildEvalEdges := func(row []interface{}) map[string]*storage.Edge {
-		evalEdges := make(map[string]*storage.Edge, len(matchResult.Columns))
-		for i, col := range matchResult.Columns {
-			if i >= len(row) {
-				continue
-			}
-			if edge, ok := row[i].(*storage.Edge); ok && edge != nil {
-				evalEdges[col] = edge
-			}
+	if len(rows) > 0 {
+		setStats, _, err := e.pipelineApplySet(ctx, rows, "SET "+setPart)
+		if err != nil {
+			return nil, err
 		}
-		return evalEdges
-	}
-
-	var variable string
-	validAssignments := 0
-	for _, assignment := range assignments {
-		assignment = strings.TrimSpace(assignment)
-		if assignment == "" {
-			continue
-		}
-
-		// Support SET property merge in mixed assignment lists:
-		// SET n += $props, n.updated_at = $ts
-		plusEqIdx := strings.Index(assignment, "+=")
-		if plusEqIdx >= 0 {
-			leftVar := strings.TrimSpace(assignment[:plusEqIdx])
-			right := strings.TrimSpace(assignment[plusEqIdx+2:])
-			if leftVar == "" {
-				return nil, localizedError(localization.CypherMutationsSetMergeVariableRequired(), nil)
-			}
-			validAssignments++
-			variable = leftVar
-
-			var propsToMerge map[string]interface{}
-			var mapExpressions map[string]string
-			mapVarName := ""
-			paramMapUsed := false
-			if strings.HasPrefix(right, "{") {
-				parsedExpressions, err := parseSetMergeMapExpressionsStrict(right)
-				if err != nil {
-					return nil, localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
-				}
-				mapExpressions = parsedExpressions
-			} else if strings.HasPrefix(right, "$") {
-				paramName := strings.TrimSpace(right[1:])
-				if paramName == "" {
-					return nil, localizedError(localization.CypherMutationsSetMergeParameterNameRequired(), nil)
-				}
-				params := getParamsFromContext(ctx)
-				if params == nil {
-					return nil, localizedError(localization.CypherMutationsSetMergeParametersRequired(paramName), nil)
-				}
-				paramValue, exists := params[paramName]
-				if !exists {
-					return nil, localizedError(localization.CypherMutationsSetMergeParameterNotFound(paramName), nil)
-				}
-				propsMap, err := normalizePropsMap(paramValue, fmt.Sprintf("parameter $%s", paramName))
-				if err != nil {
-					return nil, err
-				}
-				propsToMerge = propsMap
-				paramMapUsed = true
-			} else if isValidIdentifier(right) {
-				mapVarName = right
-			} else {
-				return nil, localizedError(localization.CypherResidualSetMergeMapOrParameterRequired(right), nil)
-			}
-
-			targetIdx, hasTargetIdx := colIndex[leftVar]
-			mapIdx, hasMapIdx := colIndex[mapVarName]
-			for _, row := range matchResult.Rows {
-				propsForRow := propsToMerge
-				if mapExpressions != nil {
-					propsForRow = make(map[string]interface{}, len(mapExpressions))
-					nodes := buildEvalNodes(row)
-					edges := buildEvalEdges(row)
-					for key, expression := range mapExpressions {
-						propsForRow[key] = e.evaluateExpressionWithContext(ctx, expression, nodes, edges)
-					}
-				} else if mapVarName != "" && !paramMapUsed {
-					if !hasMapIdx || mapIdx >= len(row) {
-						return nil, localizedError(localization.CypherMutationsSetMergeMapScopeRequired(mapVarName), nil)
-					}
-					propsMap, err := normalizePropsMap(row[mapIdx], fmt.Sprintf("variable %s", mapVarName))
-					if err != nil {
-						return nil, err
-					}
-					propsForRow = propsMap
-				}
-
-				updated := false
-				if hasTargetIdx && targetIdx < len(row) {
-					switch entity := row[targetIdx].(type) {
-					case *storage.Node:
-						if entity == nil {
-							continue
-						}
-						for k, v := range propsForRow {
-							setNodeProperty(entity, k, v)
-							result.Stats.PropertiesSet++
-						}
-						if err := store.UpdateNode(entity); err != nil {
-							return nil, localizedError(localization.CypherMutationsSetMergeUpdateFailed(leftVar, err), err)
-						}
-						e.notifyNodeMutated(string(entity.ID))
-						updated = true
-					case *storage.Edge:
-						if entity == nil {
-							continue
-						}
-						if entity.Properties == nil {
-							entity.Properties = make(map[string]interface{})
-						}
-						for k, v := range propsForRow {
-							if v == nil {
-								delete(entity.Properties, k)
-							} else {
-								entity.Properties[k] = v
-							}
-							result.Stats.PropertiesSet++
-						}
-						if err := store.UpdateEdge(entity); err != nil {
-							return nil, localizedError(localization.CypherMutationsSetMergeUpdateFailed(leftVar, err), err)
-						}
-						e.notifyEdgeMutated(string(entity.ID))
-						updated = true
-					}
-				}
-				if updated {
-					continue
-				}
-
-				for _, val := range row {
-					node, ok := val.(*storage.Node)
-					if !ok || node == nil {
-						continue
-					}
-					for k, v := range propsForRow {
-						setNodeProperty(node, k, v)
-						result.Stats.PropertiesSet++
-					}
-					if err := store.UpdateNode(node); err != nil {
-						return nil, localizedError(localization.CypherMutationsSetMergeUpdateFailed(leftVar, err), err)
-					}
-					e.notifyNodeMutated(string(node.ID))
-				}
-			}
-			continue
-		}
-
-		// Check for label assignment: n:Label (no = sign, has : for label)
-		eqIdx := strings.Index(assignment, "=")
-		if eqIdx == -1 {
-			// Could be a label assignment like "n:Label"
-			colonIdx := strings.Index(assignment, ":")
-			if colonIdx > 0 {
-				// This is a label assignment
-				labelVar := strings.TrimSpace(assignment[:colonIdx])
-				labelExpr := strings.TrimSpace(assignment[colonIdx+1:])
-				labelNames := splitSetLabelChain(labelExpr)
-				if labelVar != "" && len(labelNames) > 0 {
-					for _, labelName := range labelNames {
-						if !isValidIdentifier(labelName) {
-							return nil, localizedError(localization.CypherMutationsInvalidLabelName(labelName), nil)
-						}
-						if containsReservedKeyword(labelName) {
-							return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(labelName), nil)
-						}
-					}
-					validAssignments++
-					variable = labelVar
-					// Add label to matched nodes
-					for _, row := range matchResult.Rows {
-						for _, val := range row {
-							node, ok := val.(*storage.Node)
-							if !ok || node == nil {
-								continue
-							}
-							for _, labelName := range labelNames {
-								if containsString(node.Labels, labelName) {
-									continue
-								}
-								oldLabels := make([]string, len(node.Labels))
-								copy(oldLabels, node.Labels)
-								node.Labels = append(node.Labels, labelName)
-								// Validate policy constraints before committing the label change.
-								if err := validatePolicyOnLabelChange(store, node, oldLabels); err != nil {
-									node.Labels = oldLabels // restore
-									return nil, err
-								}
-								// Labels are part of the embedding text; invalidate managed embeddings so they regenerate.
-								embeddingutil.InvalidateManagedEmbeddings(node)
-								if err := store.UpdateNode(node); err != nil {
-									node.Labels = oldLabels // restore
-									return nil, err
-								}
-								result.Stats.LabelsAdded++
-								e.notifyNodeMutated(string(node.ID))
-							}
-						}
-					}
-					continue
-				}
-			}
-			return nil, localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
-		}
-
-		left := strings.TrimSpace(assignment[:eqIdx])
-		right := strings.TrimSpace(assignment[eqIdx+1:])
-
-		resolvePropValue := func(row []interface{}) (interface{}, error) {
-			if strings.HasPrefix(right, "$") {
-				paramName := strings.TrimSpace(right[1:])
-				if paramName == "" {
-					return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNameRequired(), nil)
-				}
-				params := getParamsFromContext(ctx)
-				if params == nil {
-					return nil, localizedError(localization.CypherMutationsSetAssignmentParametersRequired(paramName), nil)
-				}
-				paramValue, exists := params[paramName]
-				if !exists {
-					return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNotFound(paramName), nil)
-				}
-				return normalizePropValue(paramValue), nil
-			}
-			return e.evaluateExpressionWithContext(ctx, right, buildEvalNodes(row), buildEvalEdges(row)), nil
-		}
-
-		// Extract the entity expression and property (or whole-variable map
-		// replacement). Cypher permits simple parenthesized entity expressions,
-		// such as SET (n).name = 'neo4j'.
-		targetVariable, targetProperty, hasProperty := parseSetAssignmentTarget(left)
-		validAssignments++
-		if !hasProperty {
-			variable = targetVariable
-			targetIdx, hasTargetIdx := colIndex[variable]
-			if !hasTargetIdx {
-				return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
-			}
-			// Replace properties on matched entities: SET n = { ... }
-			for _, row := range matchResult.Rows {
-				propValue, err := resolvePropValue(row)
-				if err != nil {
-					return nil, err
-				}
-				props, err := normalizePropsMap(propValue, "SET assignment")
-				if err != nil {
-					return nil, localizedError(localization.CypherResidualSetEntityAssignmentInvalid(assignment, err), err)
-				}
-				for _, propertyValue := range props {
-					if err := validateSetPropertyValue(propertyValue); err != nil {
-						return nil, err
-					}
-				}
-				if targetIdx >= len(row) {
-					continue
-				}
-				switch entity := row[targetIdx].(type) {
-				case *storage.Node:
-					if entity == nil {
-						continue
-					}
-					entity.Properties = setPropertyMap(props)
-					if err := store.UpdateNode(entity); err != nil {
-						return nil, localizedError(localization.CypherMutationsSetEntityReplaceFailed(variable, err), err)
-					}
-					result.Stats.PropertiesSet++
-					e.notifyNodeMutated(string(entity.ID))
-				case *storage.Edge:
-					if entity == nil {
-						continue
-					}
-					entity.Properties = setPropertyMap(props)
-					if err := store.UpdateEdge(entity); err != nil {
-						return nil, localizedError(localization.CypherMutationsSetEntityReplaceFailed(variable, err), err)
-					}
-					result.Stats.PropertiesSet++
-					e.notifyEdgeMutated(string(entity.ID))
-				default:
-					return nil, localizedError(localization.CypherMutationsSetEntityRequired(variable), nil)
-				}
-			}
-			continue
-		}
-		variable = targetVariable
-		propName := targetProperty
-		targetIdx, hasTargetIdx := colIndex[variable]
-		if !hasTargetIdx {
-			return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
-		}
-
-		// Update the target variable only; other entities may be carried in row scope.
-		for _, row := range matchResult.Rows {
-			propValue, err := resolvePropValue(row)
-			if err != nil {
-				return nil, err
-			}
-			if err := validateSetPropertyValue(propValue); err != nil {
-				return nil, err
-			}
-			if targetIdx >= len(row) {
-				continue
-			}
-			switch entity := row[targetIdx].(type) {
-			case *storage.Node:
-				if entity == nil {
-					continue
-				}
-				setNodeProperty(entity, propName, propValue)
-				if err := store.UpdateNode(entity); err != nil {
-					return nil, localizedError(localization.CypherMutationsSetPropertyFailed(variable, propName, err), err)
-				}
-				result.Stats.PropertiesSet++
-				e.notifyNodeMutated(string(entity.ID))
-			case *storage.Edge:
-				if entity == nil {
-					continue
-				}
-				setRelationshipProperty(entity, propName, propValue)
-				if err := store.UpdateEdge(entity); err != nil {
-					return nil, localizedError(localization.CypherMutationsSetPropertyFailed(variable, propName, err), err)
-				}
-				result.Stats.PropertiesSet++
-				e.notifyEdgeMutated(string(entity.ID))
-			default:
-				return nil, localizedError(localization.CypherMutationsSetPropertyEntityRequired(variable, propName), nil)
-			}
+		if setStats != nil {
+			result.Stats.PropertiesSet += setStats.PropertiesSet
+			result.Stats.LabelsAdded += setStats.LabelsAdded
 		}
 	}
-	_ = variable // silence unused warning
 
 	// If SET is followed by additional pipeline clauses (e.g. UNWIND/WITH), rerun
 	// the post-mutation read pipeline as MATCH ... <trailing clauses>.
@@ -1562,10 +1228,40 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	return result, nil
 }
 
-func splitSetLabelChain(expression string) []string {
-	parts := make([]string, 0, 2)
+// setLabelChain parses the label part of a SET n:L1:`L 2` assignment into
+// label names. It is the single label parser for every SET route (MATCH,
+// pipeline, CREATE, MERGE). Backtick-quoted labels may contain any characters
+// (doubled backticks escape one); unquoted labels must be identifiers and not
+// reserved words. An empty chain or an invalid unquoted label is an error.
+func setLabelChain(expression string) ([]string, error) {
+	labels := make([]string, 0, 2)
 	var current strings.Builder
+	quoted := false
 	inBacktick := false
+	flush := func() error {
+		label := current.String()
+		if !quoted {
+			label = strings.TrimSpace(label)
+		}
+		if label == "" {
+			if quoted {
+				return localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
+			}
+			return nil
+		}
+		if !quoted {
+			if !isValidIdentifier(label) {
+				return localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
+			}
+			if containsReservedKeyword(label) {
+				return localizedError(localization.CypherMutationsInvalidLabelReserved(label), nil)
+			}
+		}
+		labels = append(labels, label)
+		current.Reset()
+		quoted = false
+		return nil
+	}
 	for index := 0; index < len(expression); index++ {
 		ch := expression[index]
 		if ch == '`' {
@@ -1575,21 +1271,27 @@ func splitSetLabelChain(expression string) []string {
 				continue
 			}
 			inBacktick = !inBacktick
+			quoted = true
 			continue
 		}
 		if ch == ':' && !inBacktick {
-			if label := strings.TrimSpace(current.String()); label != "" {
-				parts = append(parts, label)
+			if err := flush(); err != nil {
+				return nil, err
 			}
-			current.Reset()
 			continue
 		}
 		current.WriteByte(ch)
 	}
-	if label := strings.TrimSpace(current.String()); label != "" {
-		parts = append(parts, label)
+	if inBacktick {
+		return nil, localizedError(localization.CypherMutationsInvalidLabelName(expression), nil)
 	}
-	return parts
+	if err := flush(); err != nil {
+		return nil, err
+	}
+	if len(labels) == 0 {
+		return nil, localizedError(localization.CypherMutationsInvalidLabelName(expression), nil)
+	}
+	return labels, nil
 }
 
 var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.|\+=|=)`)
@@ -2038,184 +1740,6 @@ func dedupeNonEmpty(groups ...[]string) []string {
 		}
 	}
 	return out
-}
-
-// executeSetMerge handles SET n += $properties for property merging.
-// This implements the Cypher property merge operator which merges properties from a map
-// or parameter into existing node properties.
-//
-// Example:
-//
-//	MATCH (n:Person) SET n += {age: 30, city: 'NYC'}  // Inline map
-//	MATCH (n:Person) SET n += $props                  // Parameter map
-//
-// Parameters are retrieved from context (stored during query execution).
-func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *ExecuteResult, setPart string, result *ExecuteResult, cypher string, returnIdx int) (*ExecuteResult, error) {
-	store := e.getStorage(ctx)
-	// Parse: n += $properties or n += {key: value}
-	plusEqIdx := strings.Index(setPart, "+=")
-	if plusEqIdx == -1 {
-		return nil, localizedError(localization.CypherMutationsSetMergeOperatorExpected(), nil)
-	}
-
-	variable := strings.TrimSpace(setPart[:plusEqIdx])
-	right := strings.TrimSpace(setPart[plusEqIdx+2:])
-
-	// Parse the properties to merge
-	var propsToMerge map[string]interface{}
-	var mapExpressions map[string]string
-	mapVarName := ""
-	paramMapUsed := false
-
-	if strings.HasPrefix(right, "{") {
-		// Preserve inline value expressions until each input row is in scope.
-		parsedExpressions, err := parseSetMergeMapExpressionsStrict(right)
-		if err != nil {
-			return nil, localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
-		}
-		mapExpressions = parsedExpressions
-	} else if strings.HasPrefix(right, "$") {
-		// Parameter reference: $properties
-		// Extract parameter name (remove $ prefix)
-		paramName := strings.TrimSpace(right[1:])
-		if paramName == "" {
-			return nil, localizedError(localization.CypherMutationsSetMergeParameterNameRequired(), nil)
-		}
-
-		// Retrieve parameters from context
-		params := getParamsFromContext(ctx)
-		if params == nil {
-			return nil, localizedError(localization.CypherMutationsSetMergeParametersRequired(paramName), nil)
-		}
-
-		// Look up the parameter value
-		paramValue, exists := params[paramName]
-		if !exists {
-			return nil, localizedError(localization.CypherMutationsSetMergeParameterNotFound(paramName), nil)
-		}
-
-		propsMap, err := normalizePropsMap(paramValue, fmt.Sprintf("parameter $%s", paramName))
-		if err != nil {
-			return nil, err
-		}
-		propsToMerge = propsMap
-		paramMapUsed = true
-	} else if isValidIdentifier(right) {
-		// Map variable: SET n += props
-		mapVarName = right
-	} else {
-		return nil, localizedError(localization.CypherResidualSetMergeMapOrParameterRequired(right), nil)
-	}
-
-	// Collect updated nodes for RETURN
-	var updatedNodes []*storage.Node
-	colIndex := make(map[string]int, len(matchResult.Columns))
-	for i, col := range matchResult.Columns {
-		colIndex[col] = i
-	}
-	targetIdx, hasTargetIdx := colIndex[variable]
-	mapIdx, hasMapIdx := colIndex[mapVarName]
-
-	// Update matched nodes
-	for _, row := range matchResult.Rows {
-		propsForRow := propsToMerge
-		if mapExpressions != nil {
-			nodes := make(map[string]*storage.Node, len(matchResult.Columns))
-			rels := make(map[string]*storage.Edge, len(matchResult.Columns))
-			for i, column := range matchResult.Columns {
-				if i >= len(row) {
-					continue
-				}
-				switch value := row[i].(type) {
-				case *storage.Node:
-					if value != nil {
-						nodes[column] = value
-					}
-				case *storage.Edge:
-					if value != nil {
-						rels[column] = value
-					}
-				case map[string]interface{}:
-					nodes[column] = &storage.Node{ID: storage.NodeID(column), Properties: value}
-				default:
-					nodes[column] = &storage.Node{ID: storage.NodeID(column), Properties: map[string]interface{}{"value": value}}
-				}
-			}
-			propsForRow = make(map[string]interface{}, len(mapExpressions))
-			for key, expression := range mapExpressions {
-				propsForRow[key] = e.evaluateExpressionWithContext(ctx, expression, nodes, rels)
-			}
-		} else if mapVarName != "" && !paramMapUsed {
-			if !hasMapIdx || mapIdx >= len(row) {
-				return nil, localizedError(localization.CypherMutationsSetMergeMapScopeRequired(mapVarName), nil)
-			}
-			propsMap, err := normalizePropsMap(row[mapIdx], fmt.Sprintf("variable %s", mapVarName))
-			if err != nil {
-				return nil, err
-			}
-			propsForRow = propsMap
-		}
-
-		// Prefer updating only the requested variable, fall back to scanning row.
-		if hasTargetIdx && targetIdx < len(row) {
-			node, ok := row[targetIdx].(*storage.Node)
-			if ok && node != nil {
-				for k, v := range propsForRow {
-					setNodeProperty(node, k, v)
-					result.Stats.PropertiesSet++
-				}
-				_ = store.UpdateNode(node)
-				e.notifyNodeMutated(string(node.ID))
-				updatedNodes = append(updatedNodes, node)
-				continue
-			}
-		}
-
-		for _, val := range row {
-			node, ok := val.(*storage.Node)
-			if !ok || node == nil {
-				continue
-			}
-
-			// Merge properties (new values override existing)
-			for k, v := range propsForRow {
-				setNodeProperty(node, k, v)
-				result.Stats.PropertiesSet++
-			}
-			_ = store.UpdateNode(node)
-			e.notifyNodeMutated(string(node.ID))
-			updatedNodes = append(updatedNodes, node)
-		}
-	}
-
-	// Handle RETURN clause
-	if returnIdx > 0 {
-		returnPart := strings.TrimSpace(cypher[returnIdx+6:])
-		returnItems := e.parseReturnItems(returnPart)
-		result.Columns = make([]string, len(returnItems))
-		for i, item := range returnItems {
-			if item.alias != "" {
-				result.Columns[i] = item.alias
-			} else {
-				result.Columns[i] = item.expr
-			}
-		}
-
-		// Return updated nodes (Neo4j compatible: return *storage.Node)
-		for _, storageNode := range updatedNodes {
-			newRow := make([]interface{}, len(returnItems))
-			for j, item := range returnItems {
-				newRow[j] = e.resolveReturnItem(ctx, item, variable, storageNode)
-			}
-			result.Rows = append(result.Rows, newRow)
-		}
-	} else {
-		// No RETURN clause - return matched count
-		result.Columns = []string{"matched"}
-		result.Rows = [][]interface{}{{len(matchResult.Rows)}}
-	}
-
-	return result, nil
 }
 
 func normalizePropsMap(value interface{}, source string) (map[string]interface{}, error) {

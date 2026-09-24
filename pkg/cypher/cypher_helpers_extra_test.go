@@ -2064,11 +2064,10 @@ func TestCypherHelpers_CompareValuesForSort(t *testing.T) {
 	assert.Equal(t, -1, compareValuesForSort(struct{ X int }{1}, struct{ X int }{2}))
 }
 
-func TestCypherHelpers_SubstituteNodeAndExecuteSetMerge(t *testing.T) {
+func TestCypherHelpers_SubstituteNodeAndNormalizeProps(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
-	ctx := context.Background()
 
 	node := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}
 	_, err := eng.CreateNode(node)
@@ -2079,38 +2078,6 @@ func TestCypherHelpers_SubstituteNodeAndExecuteSetMerge(t *testing.T) {
 	assert.Contains(t, sub, "(n1)-[:KNOWS]->")
 	sub = exec.substituteNodeInSubquery("MATCH (n:Person)-[:KNOWS]->(m) RETURN n.name", "n", node)
 	assert.Contains(t, sub, "(n1:Person)-[:KNOWS]->")
-
-	matchResult := &ExecuteResult{
-		Columns: []string{"n", "props"},
-		Rows:    [][]interface{}{{node, map[string]interface{}{"city": "NYC"}}},
-	}
-	out := &ExecuteResult{Stats: &QueryStats{}}
-	_, err = exec.executeSetMerge(ctx, matchResult, "n += {country: 'US'}", out, "", -1)
-	require.NoError(t, err)
-	assert.Equal(t, "US", node.Properties["country"])
-
-	// map variable path
-	out = &ExecuteResult{Stats: &QueryStats{}}
-	_, err = exec.executeSetMerge(ctx, matchResult, "n += props", out, "", -1)
-	require.NoError(t, err)
-	assert.Equal(t, "NYC", node.Properties["city"])
-
-	// parameter map path
-	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"p": map[string]interface{}{"age": int(41)}})
-	out = &ExecuteResult{Stats: &QueryStats{}}
-	_, err = exec.executeSetMerge(ctxWithParams, matchResult, "n += $p", out, "", -1)
-	require.NoError(t, err)
-	assert.Equal(t, int64(41), node.Properties["age"])
-
-	// Error branches.
-	_, err = exec.executeSetMerge(ctx, matchResult, "n = {x:1}", &ExecuteResult{Stats: &QueryStats{}}, "", -1)
-	require.Error(t, err)
-	_, err = exec.executeSetMerge(ctx, matchResult, "n += $", &ExecuteResult{Stats: &QueryStats{}}, "", -1)
-	require.Error(t, err)
-	_, err = exec.executeSetMerge(ctx, matchResult, "n += $missing", &ExecuteResult{Stats: &QueryStats{}}, "", -1)
-	require.Error(t, err)
-	_, err = exec.executeSetMerge(ctx, &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{node}}}, "n += props", &ExecuteResult{Stats: &QueryStats{}}, "", -1)
-	require.Error(t, err)
 
 	// normalizePropsMap / normalizePropValue branches
 	props, err := normalizePropsMap(map[interface{}]interface{}{"a": int(1), "b": uint8(2), "c": float32(3.5), "d": []interface{}{int8(1), uint16(2)}}, "var props")

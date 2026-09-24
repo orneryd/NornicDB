@@ -115,7 +115,10 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 			return nil, true, localizedError(localization.CypherMergeRelationshipEndpointsNotBound(plan.merge.startVar, plan.merge.endVar), nil)
 		}
 
-		props := normalizeRelationshipBatchRowProperties(row, plan.vectorSetters)
+		props, storable := normalizeRelationshipBatchRowProperties(row, plan.vectorSetters)
+		if !storable {
+			return nil, false, nil
+		}
 		matchProps := relationshipBatchMatchProperties(plan.merge, row)
 		if relationshipMergeIdentityContainsNaN(matchProps) {
 			// NaN is non-reflexive in Cypher, so two NaN patterns must never
@@ -641,20 +644,39 @@ func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(match matchClauseS
 	return e.evaluateBatchLookupExpr(match, row, row)
 }
 
-func normalizeRelationshipBatchRowProperties(row map[string]interface{}, vectorSetters []relationshipVectorSetterSpec) map[string]interface{} {
+// normalizeRelationshipBatchRowProperties builds the property map written by
+// SET rel = row (plus the vector setters) with the same semantics as every
+// other SET route: null values are left out (setPropertyMap). It returns
+// false when the row holds a value a property cannot store, so the caller
+// falls back to the row-wise executor, which reports the error.
+func normalizeRelationshipBatchRowProperties(row map[string]interface{}, vectorSetters []relationshipVectorSetterSpec) (map[string]interface{}, bool) {
 	props := make(map[string]interface{}, util.SafePreallocSum(len(row), len(vectorSetters)))
 	for key, value := range row {
-		props[key] = normalizePropValue(value)
+		if value = normalizePropValue(value); value == nil {
+			continue
+		}
+		if validateSetPropertyValue(value) != nil {
+			return nil, false
+		}
+		props[key] = value
 	}
 	for _, setter := range vectorSetters {
 		if setter.propName == setter.rowField {
 			continue
 		}
-		if value, ok := row[setter.rowField]; ok {
-			props[setter.propName] = normalizePropValue(value)
+		value, ok := row[setter.rowField]
+		if !ok {
+			continue
 		}
+		if value = normalizePropValue(value); value == nil {
+			continue
+		}
+		if validateSetPropertyValue(value) != nil {
+			return nil, false
+		}
+		props[setter.propName] = value
 	}
-	return props
+	return props, true
 }
 
 func relationshipBatchMatchProperties(

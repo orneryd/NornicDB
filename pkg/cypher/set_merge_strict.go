@@ -26,42 +26,84 @@ func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s s
 // parseSetMergeMapExpressionsStrict validates an inline SET += map while
 // preserving each value expression for evaluation against an individual row.
 func parseSetMergeMapExpressionsStrict(s string) (map[string]string, error) {
+	expressions := make(map[string]string)
+	if err := forEachStrictMapEntry(s, func(key, value string) {
+		expressions[key] = value
+	}); err != nil {
+		return nil, err
+	}
+	return expressions, nil
+}
+
+// validateMapLiteralSyntax checks a map literal with the strict grammar of
+// parseSetMergeMapExpressionsStrict without building anything (hot CREATE
+// paths validate every row's property map).
+func validateMapLiteralSyntax(s string) error {
+	return forEachStrictMapEntry(s, func(string, string) {})
+}
+
+// forEachStrictMapEntry is the single strict map-literal scanner: {} required,
+// entries split at top-level commas (quotes and brackets respected), no empty
+// entry, a top-level ':' with a non-empty key and value. It calls entry for
+// each key / value expression and allocates nothing itself.
+func forEachStrictMapEntry(s string, entry func(key, value string)) error {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
-		return nil, localizedError(localization.CypherMergeMapLiteralEnclosureRequired(), nil)
+		return localizedError(localization.CypherMergeMapLiteralEnclosureRequired(), nil)
 	}
-
 	inner := strings.TrimSpace(s[1 : len(s)-1])
 	if inner == "" {
-		return map[string]string{}, nil
+		return nil
 	}
-
-	expressions := make(map[string]string)
-	pairs := splitTopLevelCommaKeepEmpty(inner)
-	for _, pair := range pairs {
+	check := func(pair string) error {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
-			return nil, localizedError(localization.CypherMergeMapEntryEmpty(), nil)
+			return localizedError(localization.CypherMergeMapEntryEmpty(), nil)
 		}
-
 		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx <= 0 || colonIdx == len(pair)-1 {
-			return nil, localizedError(localization.CypherMergeMapEntryInvalid(pair), nil)
+			return localizedError(localization.CypherMergeMapEntryInvalid(pair), nil)
 		}
-
 		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		if key == "" {
-			return nil, localizedError(localization.CypherMergeMapKeyEmpty(), nil)
+			return localizedError(localization.CypherMergeMapKeyEmpty(), nil)
 		}
 		value := strings.TrimSpace(pair[colonIdx+1:])
 		if value == "" {
-			return nil, localizedError(localization.CypherMergeMapValueEmpty(key), nil)
+			return localizedError(localization.CypherMergeMapValueEmpty(key), nil)
 		}
-
-		expressions[key] = value
+		entry(key, value)
+		return nil
 	}
-
-	return expressions, nil
+	inSingle, inDouble, depth, start := false, false, 0, 0
+	for i, r := range inner {
+		switch r {
+		case '\'':
+			if !inDouble && !isBackslashEscaped(inner, i) {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle && !isBackslashEscaped(inner, i) {
+				inDouble = !inDouble
+			}
+		case '(', '[', '{':
+			if !inSingle && !inDouble {
+				depth++
+			}
+		case ')', ']', '}':
+			if !inSingle && !inDouble && depth > 0 {
+				depth--
+			}
+		case ',':
+			if !inSingle && !inDouble && depth == 0 {
+				if err := check(inner[start:i]); err != nil {
+					return err
+				}
+				start = i + 1
+			}
+		}
+	}
+	return check(inner[start:])
 }
 
 // splitTopLevelCommaKeepEmpty is like splitTopLevelComma but preserves empty

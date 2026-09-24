@@ -414,7 +414,7 @@ func TestTryAsyncCreateNodeBatch_Branches(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid label name")
 }
 
-func TestExecuteCreateRelSegment_Branches(t *testing.T) {
+func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
@@ -431,35 +431,22 @@ func TestExecuteCreateRelSegment_Branches(t *testing.T) {
 	b := makeNode("b")
 
 	t.Run("parse error", func(t *testing.T) {
-		err := exec.executeCreateRelSegment(ctx, "CREATE (a)-[:KNOWS]->", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
+		_, err := exec.createPatternsInScope(ctx, "(a)-[:KNOWS]->", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse relationship pattern")
 	})
 
 	t.Run("unbound endpoint creates and binds node", func(t *testing.T) {
 		nodeCtx := map[string]*storage.Node{"a": a}
 		result := &ExecuteResult{Stats: &QueryStats{}}
-		err := exec.executeCreateRelSegment(ctx, "CREATE (a)-[:KNOWS]->(missing)", nodeCtx, map[string]*storage.Edge{}, result)
+		_, err := exec.createPatternsInScope(ctx, "(a)-[:KNOWS]->(missing)", nodeCtx, map[string]*storage.Edge{}, result)
 		require.NoError(t, err)
 		require.Contains(t, nodeCtx, "missing")
 		require.Equal(t, 1, result.Stats.NodesCreated)
 		require.Equal(t, 1, result.Stats.RelationshipsCreated)
 	})
 
-	t.Run("empty source id", func(t *testing.T) {
-		err := exec.executeCreateRelSegment(ctx, "CREATE (a)-[:KNOWS]->(b)", map[string]*storage.Node{"a": {ID: storage.NodeID("")}, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "source node a has empty ID")
-	})
-
-	t.Run("empty target id", func(t *testing.T) {
-		err := exec.executeCreateRelSegment(ctx, "CREATE (a)-[:KNOWS]->(b)", map[string]*storage.Node{"a": a, "b": {ID: storage.NodeID("")}}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "target node b has empty ID")
-	})
-
 	t.Run("relationship type required", func(t *testing.T) {
-		err := exec.executeCreateRelSegment(ctx, "CREATE (a)-[r]->(b)", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
+		_, err := exec.createPatternsInScope(ctx, "(a)-[r]->(b)", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "relationship type is required")
 	})
@@ -468,7 +455,7 @@ func TestExecuteCreateRelSegment_Branches(t *testing.T) {
 		edgeCtx := map[string]*storage.Edge{}
 		result := &ExecuteResult{Stats: &QueryStats{}}
 
-		err := exec.executeCreateRelSegment(ctx, "CREATE (a)-[r:KNOWS {since: 2020}]->(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result)
+		_, err := exec.createPatternsInScope(ctx, "(a)-[r:KNOWS {since: 2020}]->(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result)
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Stats.RelationshipsCreated)
 		require.Contains(t, edgeCtx, "r")
@@ -477,7 +464,7 @@ func TestExecuteCreateRelSegment_Branches(t *testing.T) {
 		assert.EqualValues(t, 2020, edgeCtx["r"].Properties["since"])
 
 		result2 := &ExecuteResult{Stats: &QueryStats{}}
-		err = exec.executeCreateRelSegment(ctx, "CREATE (a)<-[r2:KNOWS]-(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result2)
+		_, err = exec.createPatternsInScope(ctx, "(a)<-[r2:KNOWS]-(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result2)
 		require.NoError(t, err)
 		require.Contains(t, edgeCtx, "r2")
 		assert.Equal(t, storage.NodeID("b"), edgeCtx["r2"].StartNode)

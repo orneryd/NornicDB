@@ -356,7 +356,7 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 		"p": []string{"x", "y"},
 	})
 
-	propertiesSet := exec.applySetToRelationshipWithContext(
+	propertiesSet, err := exec.applySetToRelationshipWithContext(
 		ctxWithParams,
 		edge,
 		"r",
@@ -364,6 +364,7 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 		nodeCtx,
 		relCtx,
 	)
+	require.NoError(t, err)
 	require.Equal(t, 3, propertiesSet)
 	require.EqualValues(t, int64(1), edge.Properties["a"])
 	require.Equal(t, []string{"x", "y"}, edge.Properties["tags"])
@@ -374,7 +375,7 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 	withExisting := wherePartNodePattern(nodePatternInfo{variable: "x"}, "n")
 	require.Equal(t, "x", withExisting.variable)
 
-	_, err := store.CreateNode(&storage.Node{ID: "na", Labels: []string{"N"}})
+	_, err = store.CreateNode(&storage.Node{ID: "na", Labels: []string{"N"}})
 	require.NoError(t, err)
 	_, err = store.CreateNode(&storage.Node{ID: "nb", Labels: []string{"N"}})
 	require.NoError(t, err)

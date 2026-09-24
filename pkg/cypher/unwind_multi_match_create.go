@@ -505,18 +505,25 @@ func evaluateBatchLookupOperand(expr, bindingVar string, bindingValue interface{
 	return nil, false
 }
 
-// buildPropsFromSpec assembles a property map for a CREATE from a row.
+// buildPropsFromSpec assembles a property map for a CREATE from a row with
+// the same value semantics as the CREATE core: values are normalized
+// (normalizePropValue) and a null value leaves the property unset.
 func buildPropsFromSpec(row map[string]any, rowRefs map[string]string, literals map[string]any) map[string]any {
 	props := make(map[string]any, len(rowRefs)+len(literals))
+	put := func(name string, value any) {
+		if value = normalizePropValue(value); value != nil {
+			props[name] = value
+		}
+	}
 	for propName, rowField := range rowRefs {
 		if row != nil {
 			if v, ok := row[rowField]; ok {
-				props[propName] = v
+				put(propName, v)
 			}
 		}
 	}
 	for k, v := range literals {
-		props[k] = v
+		put(k, v)
 	}
 	return props
 }

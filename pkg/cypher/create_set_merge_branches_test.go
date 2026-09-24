@@ -9,114 +9,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestApplySetMergeToCreated_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
+// TestCreateSetMerge_Branches covers CREATE ... SET x += ..., which applies
+// through the shared SET applicator (applySetToNodeWithContext /
+// applySetToRelationshipWithContext) like every other SET route.
+func TestCreateSetMerge_Branches(t *testing.T) {
 	ctx := context.Background()
+	run := func(t *testing.T, query string, params map[string]interface{}) (*ExecuteResult, error) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+		return exec.Execute(ctx, query, params)
+	}
 
-	node := &storage.Node{ID: "n1", Labels: []string{"N"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node)
-	require.NoError(t, err)
-
-	edge := &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "REL", Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge))
-
-	t.Run("invalid syntax missing +=", func(t *testing.T) {
-		err := exec.applySetMergeToCreated(ctx, "n = {x:1}", map[string]*storage.Node{"n": node}, nil, &ExecuteResult{Stats: &QueryStats{}}, store)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid SET += syntax")
-	})
-
-	t.Run("parameter name missing after $", func(t *testing.T) {
-		err := exec.applySetMergeToCreated(ctx, "n += $", map[string]*storage.Node{"n": node}, nil, &ExecuteResult{Stats: &QueryStats{}}, store)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "valid parameter name")
-	})
-
-	t.Run("parameter context missing", func(t *testing.T) {
-		err := exec.applySetMergeToCreated(ctx, "n += $props", map[string]*storage.Node{"n": node}, nil, &ExecuteResult{Stats: &QueryStats{}}, store)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "requires parameters")
-	})
-
-	t.Run("parameter not found", func(t *testing.T) {
-		ctxParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"other": map[string]interface{}{"x": 1}})
-		err := exec.applySetMergeToCreated(ctxParams, "n += $props", map[string]*storage.Node{"n": node}, nil, &ExecuteResult{Stats: &QueryStats{}}, store)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not found")
-	})
-
-	t.Run("inline map parse failure", func(t *testing.T) {
-		err := exec.applySetMergeToCreated(ctx, "n += ", map[string]*storage.Node{"n": node}, nil, &ExecuteResult{Stats: &QueryStats{}}, store)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse properties")
-	})
-
-	t.Run("inline map trailing comma failure", func(t *testing.T) {
-		err := exec.applySetMergeToCreated(ctx, "n += {a: 1,}", map[string]*storage.Node{"n": node}, nil, &ExecuteResult{Stats: &QueryStats{}}, store)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse properties")
-	})
-
-	t.Run("unknown variable", func(t *testing.T) {
-		err := exec.applySetMergeToCreated(ctx, "x += {a: 1}", map[string]*storage.Node{"n": node}, map[string]*storage.Edge{"r": edge}, &ExecuteResult{Stats: &QueryStats{}}, store)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown variable")
-	})
+	for name, tc := range map[string]struct {
+		query  string
+		params map[string]interface{}
+	}{
+		"parameter name missing after $": {query: "CREATE (n:N) SET n += $ RETURN n"},
+		"parameter not supplied":         {query: "CREATE (n:N) SET n += $props RETURN n"},
+		"parameter not found":            {query: "CREATE (n:N) SET n += $props RETURN n", params: map[string]interface{}{"other": map[string]interface{}{"x": 1}}},
+		"empty right-hand side":          {query: "CREATE (n:N) SET n += RETURN n"},
+		"inline map trailing comma":      {query: "CREATE (n:N) SET n += {a: 1,} RETURN n"},
+		"unknown variable":               {query: "CREATE (n:N)-[r:REL]->(m:N) SET x += {a: 1} RETURN n"},
+		"map variable missing in scope":  {query: "CREATE (n:N) SET n += row RETURN n"},
+		"scalar parameter is not a map":  {query: "CREATE (n:N) SET n += $props RETURN n", params: map[string]interface{}{"props": int64(1)}},
+		"map value that is itself a map": {query: "CREATE (n:N) SET n += {a: {b: 1}} RETURN n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := run(t, tc.query, tc.params)
+			require.Error(t, err, tc.query)
+		})
+	}
 
 	t.Run("node update from inline map", func(t *testing.T) {
-		res := &ExecuteResult{Stats: &QueryStats{}}
-		err := exec.applySetMergeToCreated(ctx, "n += {age: 30, city: 'NY'}", map[string]*storage.Node{"n": node}, nil, res, store)
+		res, err := run(t, "CREATE (n:N) SET n += {age: 30, city: 'NY'} RETURN n.age AS age, n.city AS city", nil)
 		require.NoError(t, err)
-		assert.EqualValues(t, 30, node.Properties["age"])
-		assert.Equal(t, "NY", node.Properties["city"])
+		assert.Equal(t, []interface{}{int64(30), "NY"}, res.Rows[0])
 		assert.Equal(t, 2, res.Stats.PropertiesSet)
 	})
 
 	t.Run("edge update from params map", func(t *testing.T) {
-		ctxParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"props": map[string]interface{}{"weight": int64(7)}})
-		res := &ExecuteResult{Stats: &QueryStats{}}
-		err := exec.applySetMergeToCreated(ctxParams, "r += $props", nil, map[string]*storage.Edge{"r": edge}, res, store)
+		res, err := run(t, "CREATE (:N)-[r:REL]->(:N) SET r += $props RETURN r.weight AS w", map[string]interface{}{"props": map[string]interface{}{"weight": int64(7)}})
 		require.NoError(t, err)
-		assert.EqualValues(t, 7, edge.Properties["weight"])
+		assert.Equal(t, []interface{}{int64(7)}, res.Rows[0])
 		assert.Equal(t, 1, res.Stats.PropertiesSet)
 	})
 
-	t.Run("node update from map variable in params", func(t *testing.T) {
-		ctxParams := context.WithValue(ctx, paramsKey, map[string]interface{}{
-			"row": map[string]interface{}{
-				"lang": "es",
-				"rank": int64(3),
-			},
+	t.Run("node update from dotted parameter map", func(t *testing.T) {
+		res, err := run(t, "CREATE (n:N) SET n += $row.properties RETURN n.country AS c", map[string]interface{}{
+			"row": map[string]interface{}{"properties": map[string]interface{}{"country": "US"}},
 		})
-		res := &ExecuteResult{Stats: &QueryStats{}}
-		err := exec.applySetMergeToCreated(ctxParams, "n += row", map[string]*storage.Node{"n": node}, nil, res, store)
 		require.NoError(t, err)
-		assert.Equal(t, "es", node.Properties["lang"])
-		assert.EqualValues(t, 3, node.Properties["rank"])
-		assert.Equal(t, 2, res.Stats.PropertiesSet)
-	})
-
-	t.Run("node update from dotted map variable in params", func(t *testing.T) {
-		ctxParams := context.WithValue(ctx, paramsKey, map[string]interface{}{
-			"row": map[string]interface{}{
-				"properties": map[string]interface{}{
-					"country": "US",
-				},
-			},
-		})
-		res := &ExecuteResult{Stats: &QueryStats{}}
-		err := exec.applySetMergeToCreated(ctxParams, "n += row.properties", map[string]*storage.Node{"n": node}, nil, res, store)
-		require.NoError(t, err)
-		assert.Equal(t, "US", node.Properties["country"])
+		assert.Equal(t, []interface{}{"US"}, res.Rows[0])
 		assert.Equal(t, 1, res.Stats.PropertiesSet)
-	})
-
-	t.Run("map variable missing in scope", func(t *testing.T) {
-		err := exec.applySetMergeToCreated(ctx, "n += row", map[string]*storage.Node{"n": node}, nil, &ExecuteResult{Stats: &QueryStats{}}, store)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not found in scope")
 	})
 }
 
