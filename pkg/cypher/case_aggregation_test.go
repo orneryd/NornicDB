@@ -223,7 +223,7 @@ func TestEvaluateCaseExpressionDirectly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			result := exec.evaluateCaseExpression(ctx, tt.expr, nodes, nil)
+			result := exec.evaluateCaseExpression(ctx, tt.expr, nodes, nil, nil, nil, nil, 0)
 			assert.Equal(t, tt.expected, result, "evaluateCaseExpression(ctx, %q)", tt.expr)
 		})
 	}

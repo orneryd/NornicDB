@@ -347,28 +347,24 @@ func (e *StorageExecutor) executeShortestPathQuery(ctx context.Context, query *S
 			}
 		}
 
-		// Build rows from paths
+		// Build rows from paths. Every item is evaluated with the same path
+		// context the MATCH traversal routes use (path variable, start and end
+		// node), so length(p) + 1, size(nodes(p)) or nodes(p)[0].id are full
+		// expressions rather than a bare path function.
 		for _, path := range allPaths {
 			row := make([]interface{}, len(returnItems))
+			pathContext := e.buildPathContext(path, &TraversalMatch{
+				StartNode:    query.startNode,
+				EndNode:      query.endNode,
+				PathVariable: query.pathVariable,
+			})
 
 			for i, item := range returnItems {
-				// Handle path variable and path functions
-				exprLower := strings.ToLower(item.expr)
-				pathVarLower := strings.ToLower(query.pathVariable)
-
-				// Check if expression is the path variable directly, or a path function like length(p), nodes(p), relationships(p)
-				isPathExpr := item.expr == query.pathVariable ||
-					strings.HasPrefix(item.expr, query.pathVariable+".") ||
-					strings.Contains(exprLower, "length("+pathVarLower+")") ||
-					strings.Contains(exprLower, "nodes("+pathVarLower+")") ||
-					strings.Contains(exprLower, "relationships("+pathVarLower+")")
-
-				if isPathExpr {
-					row[i] = e.pathToValue(path, item.expr, query.pathVariable)
-				} else {
-					// Try to evaluate as expression
-					row[i] = e.evaluatePathExpression(ctx, item.expr, path, query)
+				if item.expr == query.pathVariable {
+					row[i] = e.pathToMap(path)
+					continue
 				}
+				row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, pathContext)
 			}
 
 			result.Rows = append(result.Rows, row)
@@ -384,156 +380,6 @@ func (e *StorageExecutor) executeShortestPathQuery(ctx context.Context, query *S
 	return result, nil
 }
 
-// pathToValue converts a path to the requested value
-func (e *StorageExecutor) pathToValue(path PathResult, expr, pathVar string) interface{} {
-	if expr == pathVar {
-		// Return full path
-		return e.pathToMap(path)
-	}
-
-	// Handle path functions: length(p), nodes(p), relationships(p)
-	if matchFuncStart(expr, "length") {
-		return int64(path.Length)
-	}
-
-	if matchFuncStart(expr, "nodes") {
-		nodes := make([]interface{}, len(path.Nodes))
-		for i, n := range path.Nodes {
-			nodes[i] = n
-		}
-		return nodes
-	}
-
-	if matchFuncStart(expr, "relationships") {
-		rels := make([]interface{}, len(path.Relationships))
-		for i, r := range path.Relationships {
-			rels[i] = e.edgeToMap(r)
-		}
-		return rels
-	}
-
-	// Handle list comprehensions over path elements:
-	//   [n IN nodes(p) | n.<prop>]
-	//   [r IN relationships(p) | type(r)]
-	if v, ok := e.pathListComprehension(path, expr, pathVar); ok {
-		return v
-	}
-
-	return nil
-}
-
-// pathListComprehension evaluates `[var IN nodes(pathVar) | <expr>]` and
-// `[var IN relationships(pathVar) | <expr>]`. Returns (value, true) if expr
-// is recognised as a comprehension over a path source, otherwise (nil, false).
-func (e *StorageExecutor) pathListComprehension(path PathResult, expr, pathVar string) (interface{}, bool) {
-	expr = strings.TrimSpace(expr)
-	if !strings.HasPrefix(expr, "[") || !strings.HasSuffix(expr, "]") {
-		return nil, false
-	}
-	inner := strings.TrimSpace(expr[1 : len(expr)-1])
-	upper := strings.ToUpper(inner)
-	inIdx := strings.Index(upper, " IN ")
-	if inIdx <= 0 {
-		return nil, false
-	}
-	pipeIdx := strings.Index(inner[inIdx+4:], "|")
-	if pipeIdx < 0 {
-		return nil, false
-	}
-	pipeIdx += inIdx + 4
-	loopVar := strings.TrimSpace(inner[:inIdx])
-	listExpr := strings.TrimSpace(inner[inIdx+4 : pipeIdx])
-	transform := strings.TrimSpace(inner[pipeIdx+1:])
-
-	listExprLower := strings.ToLower(listExpr)
-	pathVarLower := strings.ToLower(pathVar)
-	switch {
-	case strings.HasPrefix(listExprLower, "nodes(") && strings.HasSuffix(listExprLower, ")") &&
-		strings.TrimSpace(listExpr[len("nodes("):len(listExpr)-1]) == pathVar:
-		out := make([]interface{}, len(path.Nodes))
-		for i, n := range path.Nodes {
-			out[i] = applyPathListTransform(transform, loopVar, "node", n, nil)
-		}
-		return out, true
-	case strings.HasPrefix(listExprLower, "relationships(") && strings.HasSuffix(listExprLower, ")") &&
-		strings.TrimSpace(listExpr[len("relationships("):len(listExpr)-1]) == pathVar:
-		out := make([]interface{}, len(path.Relationships))
-		for i, r := range path.Relationships {
-			out[i] = applyPathListTransform(transform, loopVar, "rel", nil, r)
-		}
-		return out, true
-	}
-	// Tolerate non-pathVar list expressions only when the iterator is over
-	// a path-shaped source we recognise; otherwise hand back to the caller.
-	_ = pathVarLower
-	return nil, false
-}
-
-// applyPathListTransform evaluates the projection expression of a path-rooted
-// list comprehension. Supports the common shapes:
-//   - <var>                       → element itself (node or rel map)
-//   - <var>.<property>            → property access on a node
-//   - id(<var>) / elementId(<var>) → node identifiers
-//   - type(<var>)                 → relationship type
-//   - labels(<var>)               → list of labels for a node
-//
-// More elaborate transforms fall through to nil rather than returning
-// nonsense; callers can extend this as needed.
-func applyPathListTransform(transform, loopVar, kind string, node *storage.Node, edge *storage.Edge) interface{} {
-	t := strings.TrimSpace(transform)
-	if t == loopVar {
-		if kind == "node" && node != nil {
-			return nodeToValue(node)
-		}
-		if kind == "rel" && edge != nil {
-			return edgeToValueShortestPath(edge)
-		}
-		return nil
-	}
-	// <var>.<prop>
-	if strings.HasPrefix(t, loopVar+".") {
-		prop := t[len(loopVar)+1:]
-		if kind == "node" && node != nil {
-			if v, ok := node.Properties[prop]; ok {
-				return v
-			}
-			return nil
-		}
-		if kind == "rel" && edge != nil {
-			if v, ok := edge.Properties[prop]; ok {
-				return v
-			}
-			return nil
-		}
-	}
-	// id(<var>) / elementId(<var>) — use the storage ID (string).
-	if strings.EqualFold(t, "id("+loopVar+")") || strings.EqualFold(t, "elementId("+loopVar+")") {
-		if kind == "node" && node != nil {
-			return string(node.ID)
-		}
-		if kind == "rel" && edge != nil {
-			return string(edge.ID)
-		}
-	}
-	// type(<var>) for relationships.
-	if strings.EqualFold(t, "type("+loopVar+")") {
-		if kind == "rel" && edge != nil {
-			return edge.Type
-		}
-	}
-	// labels(<var>) for nodes.
-	if strings.EqualFold(t, "labels("+loopVar+")") {
-		if kind == "node" && node != nil {
-			labels := make([]interface{}, len(node.Labels))
-			for i, l := range node.Labels {
-				labels[i] = l
-			}
-			return labels
-		}
-	}
-	return nil
-}
-
 func nodeToValue(n *storage.Node) interface{} {
 	props := make(map[string]interface{}, len(n.Properties))
 	for k, v := range n.Properties {
@@ -542,20 +388,6 @@ func nodeToValue(n *storage.Node) interface{} {
 	return map[string]interface{}{
 		"elementId":  string(n.ID),
 		"labels":     labelStringSlice(n.Labels),
-		"properties": props,
-	}
-}
-
-func edgeToValueShortestPath(edge *storage.Edge) interface{} {
-	props := make(map[string]interface{}, len(edge.Properties))
-	for k, v := range edge.Properties {
-		props[k] = v
-	}
-	return map[string]interface{}{
-		"elementId":  string(edge.ID),
-		"type":       edge.Type,
-		"start":      string(edge.StartNode),
-		"end":        string(edge.EndNode),
 		"properties": props,
 	}
 }
@@ -586,22 +418,6 @@ func (e *StorageExecutor) pathToMap(path PathResult) map[string]interface{} {
 		"relationships": rels,
 		"length":        int64(path.Length),
 	}
-}
-
-// evaluatePathExpression evaluates an expression in the context of a path
-func (e *StorageExecutor) evaluatePathExpression(ctx context.Context, expr string, path PathResult, query *ShortestPathQuery) interface{} {
-	// Build context from path
-	nodes := make(map[string]*storage.Node)
-	rels := make(map[string]*storage.Edge)
-
-	if query.startNode.variable != "" && len(path.Nodes) > 0 {
-		nodes[query.startNode.variable] = path.Nodes[0]
-	}
-	if query.endNode.variable != "" && len(path.Nodes) > 1 {
-		nodes[query.endNode.variable] = path.Nodes[len(path.Nodes)-1]
-	}
-
-	return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 }
 
 // isShortestPathQuery checks if a query uses shortestPath or allShortestPaths

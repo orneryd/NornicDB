@@ -777,16 +777,6 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	require.Len(t, paths, 2)
 
 	// Cover evaluatePathExpression helper.
-	path := PathResult{
-		Nodes:  []*storage.Node{{ID: "s1", Properties: map[string]interface{}{"name": "start"}}, {ID: "e1", Properties: map[string]interface{}{"name": "end"}}},
-		Length: 1,
-	}
-	q := &ShortestPathQuery{
-		startNode: nodePatternInfo{variable: "s"},
-		endNode:   nodePatternInfo{variable: "e"},
-	}
-	assert.Equal(t, "start", exec.evaluatePathExpression(ctx, "s.name", path, q))
-
 	// Sanity to ensure shortest path helper still identifies syntax.
 	assert.True(t, isShortestPathQuery("MATCH p=shortestPath((a)-[*]->(b)) RETURN p"))
 	assert.True(t, isShortestPathQuery("MATCH p=allShortestPaths((a)-[*]->(b)) RETURN p"))

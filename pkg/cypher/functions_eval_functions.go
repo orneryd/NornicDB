@@ -206,7 +206,7 @@ skipArrayIndexing:
 	// CASE Expressions (must be checked first)
 	// ========================================
 	if isCaseExpression(expr) {
-		return e.evaluateCaseExpression(ctx, expr, nodes, rels)
+		return e.evaluateCaseExpression(ctx, expr, nodes, rels, nil, nil, nil, 0)
 	}
 
 	lowerExpr := strings.ToLower(expr)

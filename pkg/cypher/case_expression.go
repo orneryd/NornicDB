@@ -237,7 +237,7 @@ func parseWhenClause(section string, isSimple bool) (caseWhenClause, error) {
 }
 
 // evaluateCaseExpression evaluates a CASE expression and returns the result.
-func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	ce, err := parseCaseExpression(expr)
 	if err != nil {
 		// Return nil if parsing fails
@@ -246,13 +246,13 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 
 	if ce.isSimple {
 		// Simple CASE: evaluate test expression once
-		testValue := e.evaluateExpressionWithContext(ctx, ce.testExpression, nodes, rels)
+		testValue := e.evaluateExpressionWithContextFull(ctx, ce.testExpression, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 
 		// Check each WHEN clause
 		for _, clause := range ce.whenClauses {
-			whenValue := e.evaluateExpressionWithContext(ctx, clause.value, nodes, rels)
+			whenValue := e.evaluateExpressionWithContextFull(ctx, clause.value, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if compareValues(testValue, whenValue) {
-				return e.evaluateExpressionWithContext(ctx, clause.result, nodes, rels)
+				return e.evaluateExpressionWithContextFull(ctx, clause.result, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			}
 		}
 	} else {
@@ -260,14 +260,14 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 		for _, clause := range ce.whenClauses {
 			conditionResult := e.evaluateCondition(ctx, clause.condition, nodes, rels)
 			if isTruthy(conditionResult) {
-				return e.evaluateExpressionWithContext(ctx, clause.result, nodes, rels)
+				return e.evaluateExpressionWithContextFull(ctx, clause.result, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			}
 		}
 	}
 
 	// No WHEN matched, return ELSE result or NULL
 	if ce.elseResult != "" {
-		return e.evaluateExpressionWithContext(ctx, ce.elseResult, nodes, rels)
+		return e.evaluateExpressionWithContextFull(ctx, ce.elseResult, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 	return nil
 }

@@ -314,7 +314,7 @@ func (e *StorageExecutor) executeAggregationSingleGroup(ctx context.Context, nod
 				count := int64(0)
 				for _, node := range nodes {
 					nodeMap := map[string]*storage.Node{variable: node}
-					result := e.evaluateCaseExpression(ctx, inner, nodeMap, nil)
+					result := e.evaluateCaseExpression(ctx, inner, nodeMap, nil, nil, nil, nil, 0)
 					// count() only counts non-NULL values
 					if result != nil {
 						count++
@@ -369,7 +369,7 @@ func (e *StorageExecutor) executeAggregationSingleGroup(ctx context.Context, nod
 				hasFloat := false
 				for _, node := range nodes {
 					nodeMap := map[string]*storage.Node{variable: node}
-					val := e.evaluateCaseExpression(ctx, inner, nodeMap, nil)
+					val := e.evaluateCaseExpression(ctx, inner, nodeMap, nil, nil, nil, nil, 0)
 					switch number := val.(type) {
 					case int:
 						sumInt += int64(number)

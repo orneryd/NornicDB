@@ -441,7 +441,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 			for _, wi := range parsedWithItems {
 				// Check if this is a CASE expression
 				if isCaseExpression(wi.expr) {
-					values[wi.alias] = e.evaluateCaseExpression(ctx, wi.expr, nodeMap, nil)
+					values[wi.alias] = e.evaluateCaseExpression(ctx, wi.expr, nodeMap, nil, nil, nil, nil, 0)
 				} else if strings.HasPrefix(wi.expr, nodePattern.variable+".") {
 					// Property access
 					propName := wi.expr[len(nodePattern.variable)+1:]
@@ -1141,7 +1141,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 
 			// Handle CASE expressions
 			if isCaseExpression(expr) {
-				row[i] = e.evaluateCaseExpression(ctx, expr, nodeMap, edgeMap)
+				row[i] = e.evaluateCaseExpression(ctx, expr, nodeMap, edgeMap, nil, nil, nil, 0)
 				continue
 			}
 

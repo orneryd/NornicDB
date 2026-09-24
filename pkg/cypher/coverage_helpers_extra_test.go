@@ -159,47 +159,6 @@ func TestCypherCoverage_ExecutorAccessorsAndFulltextExtraction(t *testing.T) {
 	require.Empty(t, exec.extractFulltextQuery("CALL db.labels()"))
 }
 
-func TestCypherCoverage_ShortestPathListTransforms(t *testing.T) {
-	node := &storage.Node{ID: "nornic:n1", Labels: []string{"Person", "Admin"}, Properties: map[string]interface{}{"name": "Ada"}}
-	edge := &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "nornic:n1", EndNode: "nornic:n2", Properties: map[string]interface{}{"since": int64(2024)}}
-	path := PathResult{Nodes: []*storage.Node{node}, Relationships: []*storage.Edge{edge}}
-	exec := &StorageExecutor{}
-
-	nodeNames, ok := exec.pathListComprehension(path, "[n IN nodes(p) | n.name]", "p")
-	require.True(t, ok)
-	require.Equal(t, []interface{}{"Ada"}, nodeNames)
-
-	nodeIDs, ok := exec.pathListComprehension(path, "[n IN nodes(p) | elementId(n)]", "p")
-	require.True(t, ok)
-	require.Equal(t, []interface{}{"nornic:n1"}, nodeIDs)
-
-	nodeLabels, ok := exec.pathListComprehension(path, "[n IN nodes(p) | labels(n)]", "p")
-	require.True(t, ok)
-	require.Equal(t, []interface{}{[]interface{}{"Person", "Admin"}}, nodeLabels)
-
-	relTypes, ok := exec.pathListComprehension(path, "[r IN relationships(p) | type(r)]", "p")
-	require.True(t, ok)
-	require.Equal(t, []interface{}{"KNOWS"}, relTypes)
-
-	relProps, ok := exec.pathListComprehension(path, "[r IN relationships(p) | r.since]", "p")
-	require.True(t, ok)
-	require.Equal(t, []interface{}{int64(2024)}, relProps)
-
-	relValues, ok := exec.pathListComprehension(path, "[r IN relationships(p) | r]", "p")
-	require.True(t, ok)
-	require.Equal(t, []interface{}{edgeToValueShortestPath(edge)}, relValues)
-
-	_, ok = exec.pathListComprehension(path, "n.name", "p")
-	require.False(t, ok)
-	_, ok = exec.pathListComprehension(path, "[n nodes(p) | n.name]", "p")
-	require.False(t, ok)
-	_, ok = exec.pathListComprehension(path, "[n IN nodes(other) | n.name]", "p")
-	require.False(t, ok)
-	require.Nil(t, applyPathListTransform("n.missing", "n", "node", node, nil))
-	require.Nil(t, applyPathListTransform("r.missing", "r", "rel", nil, edge))
-	require.Nil(t, applyPathListTransform("unknown(n)", "n", "node", node, nil))
-}
-
 func TestCypherCoverage_LiteralAndArgumentHelpers(t *testing.T) {
 	require.Equal(t, "null", cypherLiteral(nil))
 	require.Equal(t, "'O\\'Reilly'", cypherLiteral("O'Reilly"))
