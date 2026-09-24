@@ -761,6 +761,10 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		return err
 	}
 
+	if isGraphQueryStatement(cypher) && hasAdjacentOperands(cypher) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: an expression is followed by another expression without an operator")
+	}
+
 	parenCount := 0
 	bracketCount := 0
 	braceCount := 0
@@ -828,6 +832,160 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 
 	e.markCachedValidSyntax(cypher)
 	return nil
+}
+
+// hasAdjacentOperands reports two operands with no operator between them,
+// such as n.name 'x', (a =~ 'T.*')'T.*', 5 'x', [1] 'x' or n.a n.b, which
+// Neo4j rejects as a syntax error in every expression (RETURN, WITH, WHERE,
+// ORDER BY, SET, property maps). An operand ends with a string or number
+// literal, ')' , ']' or a property access (x.name); the next token may not
+// start another literal, $parameter or property access. A bare word followed
+// by a literal is a variable next to an operand (n 'x') unless it is one of
+// the keywords a literal may follow (literalLeadingKeywords); otherwise a bare
+// word resets the check.
+// It applies to graph queries only (isGraphQueryStatement): schema,
+// administration and knowledge-policy statements have their own grammars,
+// e.g. constraint contract blocks separate predicates by line breaks.
+func hasAdjacentOperands(cypher string) bool {
+	operandEnded := false
+	for index := 0; index < len(cypher); {
+		c := cypher[index]
+		switch {
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			index++
+		case c == '\'' || c == '"':
+			if operandEnded {
+				return true
+			}
+			end := index + 1
+			for end < len(cypher) {
+				if cypher[end] == c && !isBackslashEscaped(cypher, end) {
+					if end+1 < len(cypher) && cypher[end+1] == c {
+						end += 2 // a doubled quote is an escaped quote
+						continue
+					}
+					break
+				}
+				end++
+			}
+			index = end + 1
+			operandEnded = true
+		case c == '`':
+			end := strings.IndexByte(cypher[index+1:], '`')
+			if end < 0 {
+				return false
+			}
+			property := index > 0 && cypher[index-1] == '.'
+			index += end + 2
+			operandEnded = property
+		case c >= '0' && c <= '9':
+			if operandEnded {
+				return true
+			}
+			index++
+			for index < len(cypher) && (isIdentCharByte(cypher[index]) ||
+				(cypher[index] == '.' && index+1 < len(cypher) && cypher[index+1] >= '0' && cypher[index+1] <= '9')) {
+				index++
+			}
+			operandEnded = true
+		case c == '$':
+			if operandEnded {
+				return true
+			}
+			index++
+			for index < len(cypher) && isIdentCharByte(cypher[index]) {
+				index++
+			}
+			operandEnded = true
+		case isIdentCharByte(c):
+			start := index
+			for index < len(cypher) && isIdentCharByte(cypher[index]) {
+				index++
+			}
+			startsProperty := index < len(cypher) && cypher[index] == '.' &&
+				(index+1 >= len(cypher) || cypher[index+1] != '.')
+			if operandEnded && startsProperty {
+				return true
+			}
+			property := start > 0 && cypher[start-1] == '.' && (start < 2 || cypher[start-2] != '.')
+			if !property && !startsProperty && bareWordBeforeLiteral(cypher, start, index) {
+				return true
+			}
+			operandEnded = property
+		case c == ')' || c == ']':
+			index++
+			operandEnded = true
+		default:
+			index++
+			operandEnded = false
+		}
+	}
+	return false
+}
+
+// literalLeadingKeywords are the words a string / number literal or a
+// $parameter may directly follow in a graph query (RETURN 'x', LIMIT 5,
+// n.name CONTAINS 'x', STARTS WITH $p, CASE 'a' WHEN 'a' THEN 1 ELSE 2,
+// ORDER BY 1, LOAD CSV FROM 'url' ... FIELDTERMINATOR ';', IN TRANSACTIONS
+// OF 10 ROWS, USING PERIODIC COMMIT 500, SHORTEST 2, ...).
+var literalLeadingKeywords = map[string]struct{}{
+	"RETURN": {}, "WITH": {}, "WHERE": {}, "AND": {}, "OR": {}, "XOR": {}, "NOT": {},
+	"IN": {}, "IS": {}, "CASE": {}, "WHEN": {}, "THEN": {}, "ELSE": {}, "CONTAINS": {},
+	"SKIP": {}, "LIMIT": {}, "UNWIND": {}, "FROM": {}, "FIELDTERMINATOR": {}, "OF": {},
+	"DISTINCT": {}, "BY": {}, "YIELD": {}, "SHORTEST": {}, "ANY": {}, "ALL": {},
+	"COMMIT": {}, "USE": {}, "OFFSET": {}, "DELETE": {},
+}
+
+// bareWordBeforeLiteral reports whether the word cypher[start:end] (not a
+// property name) is followed by a string or number literal and
+// is not one of literalLeadingKeywords, i.e. a variable directly followed by
+// another operand. A word followed by '(' (a function call) or ':' (a map key
+// or label) is never such a variable.
+func bareWordBeforeLiteral(cypher string, start, end int) bool {
+	next := skipSpaces(cypher, end)
+	if next == end || next >= len(cypher) {
+		return false
+	}
+	// A $parameter after a word can be a node pattern's property map
+	// parameter ((n:Label $props)), so only string and number literals count.
+	switch c := cypher[next]; {
+	case c == '\'' || c == '"' || (c >= '0' && c <= '9'):
+	default:
+		return false
+	}
+	if c := cypher[start]; c >= '0' && c <= '9' {
+		return false
+	}
+	_, keyword := literalLeadingKeywords[strings.ToUpper(cypher[start:end])]
+	return !keyword
+}
+
+// isGraphQueryStatement reports whether a statement is a Cypher graph query:
+// it starts (after EXPLAIN / PROFILE) with MATCH, OPTIONAL MATCH, WITH,
+// RETURN, UNWIND, MERGE, CALL, FOREACH, LOAD CSV, UNION or USE, or with
+// CREATE followed by a pattern ("CREATE (" or "CREATE p = "). CREATE INDEX /
+// CONSTRAINT / DATABASE / USER and the other CREATE ... definitions are not.
+func isGraphQueryStatement(cypher string) bool {
+	query := strings.TrimSpace(cypher)
+	for _, prefix := range []string{"EXPLAIN", "PROFILE"} {
+		if matchKeywordAt(query, 0, prefix) {
+			query = strings.TrimSpace(query[len(prefix):])
+		}
+	}
+	for _, keyword := range []string{"MATCH", "OPTIONAL", "WITH", "RETURN", "UNWIND", "MERGE", "CALL", "FOREACH", "LOAD", "UNION", "USE"} {
+		if matchKeywordAt(query, 0, keyword) {
+			return true
+		}
+	}
+	if !matchKeywordAt(query, 0, "CREATE") {
+		return false
+	}
+	rest := strings.TrimSpace(query[len("CREATE"):])
+	if strings.HasPrefix(rest, "(") {
+		return true
+	}
+	name, next, ok := scanIdentifierToken(rest, 0)
+	return ok && name != "" && strings.HasPrefix(strings.TrimSpace(rest[next:]), "=")
 }
 
 func validateLeadingNodePatternTransition(cypher string) error {

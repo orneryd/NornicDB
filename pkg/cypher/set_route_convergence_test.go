@@ -93,7 +93,10 @@ func setRouteCases() []setRouteCase {
 		{name: "514 unwind create ref", stmt: "UNWIND ['x'] AS v CREATE (a:V {name: v}), (b:U {name: a.name}) RETURN b.name AS n", want: one("x")},
 		{name: "514 with create ref", stmt: "WITH 'x' AS v CREATE (a:V {name: v}), (b:U {name: a.name}) RETURN b.name AS n", want: one("x")},
 		{name: "514 trailing create ref", stmt: "CREATE (a:V {name: 'x'}) SET a.y = 1 CREATE (b:U {name: a.name}) RETURN b.name AS n", want: one("x")},
-		{name: "514 match create rel ref", setup: tOnly, stmt: "MATCH (t:T) CREATE (a:V {name: 'x'})-[:R]->(b:U {name: a.name}) RETURN b.name AS n", want: one("x")},
+		// Neo4j: a property may not read a node created by the same pattern.
+		{name: "514 match create rel ref", setup: tOnly, stmt: "MATCH (t:T) CREATE (a:V {name: 'x'})-[:R]->(b:U {name: a.name}) RETURN b.name AS n",
+			wantErr: true, check: countNodes, wantCheck: [][]interface{}{{int64(1)}}},
+		{name: "514 match create comma ref", setup: tOnly, stmt: "MATCH (t:T) CREATE (a:V {name: 'x'}), (a)-[:R]->(b:U {name: a.name}) RETURN b.name AS n", want: one("x")},
 		// The same on the UNWIND $rows bulk fast paths.
 		{name: "543 unwind rows create (a:)", setup: tOnly, stmt: "UNWIND $rows AS row CREATE (a:) RETURN a",
 			params: map[string]interface{}{"rows": []interface{}{map[string]interface{}{"id": int64(1)}}}, wantErr: true, check: countNodes, wantCheck: [][]interface{}{{int64(1)}}},
