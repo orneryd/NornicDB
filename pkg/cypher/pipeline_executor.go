@@ -2424,7 +2424,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		mergeBody := strings.TrimSpace(substituted)
 		if startsWithKeywordFold(mergeBody, "MERGE") {
 			mergeBody = strings.TrimSpace(mergeBody[len("MERGE"):])
-			if strings.Contains(mergeBody, "[") {
+			if open, _ := firstRelationshipBracket(mergeBody); open >= 0 {
 				var parseErr error
 				relationshipPattern, parseErr = e.parseMergeRelationshipPattern(ctx, mergeBody, nodeContext, relContext)
 				if parseErr != nil {
