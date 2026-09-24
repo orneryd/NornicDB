@@ -502,7 +502,23 @@ func compareWithOperator(left, right interface{}, op string) bool {
 		}
 	}
 
-	// Try numeric comparison
+	// Try numeric comparison: integers exactly, everything else as float64.
+	if comparison, integers := compareCypherIntegers(left, right); integers {
+		switch op {
+		case "<":
+			return comparison < 0
+		case ">":
+			return comparison > 0
+		case "<=":
+			return comparison <= 0
+		case ">=":
+			return comparison >= 0
+		case "=":
+			return comparison == 0
+		case "<>":
+			return comparison != 0
+		}
+	}
 	numLeft, okLeft := toFloat64(left)
 	numRight, okRight := toFloat64(right)
 	if okLeft && okRight {

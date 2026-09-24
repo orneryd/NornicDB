@@ -3707,8 +3707,11 @@ func compareValuesForSort(a, b interface{}) int {
 		}
 		return compareOrderedInts(len(aList), len(bList))
 	}
-	if aNumber, ok := cypherSortNumber(a); ok {
-		bNumber, _ := cypherSortNumber(b)
+	if comparison, integers := compareCypherIntegers(a, b); integers {
+		return comparison
+	}
+	if aNumber, ok := strictNumericValue(a); ok {
+		bNumber, _ := strictNumericValue(b)
 		if math.IsNaN(aNumber) && math.IsNaN(bNumber) {
 			return 0
 		}
@@ -3772,7 +3775,7 @@ func cypherSortRank(value interface{}) int {
 			return 4
 		}
 	}
-	if number, ok := cypherSortNumber(value); ok {
+	if number, ok := strictNumericValue(value); ok {
 		if math.IsNaN(number) {
 			return 8
 		}
@@ -3796,37 +3799,6 @@ func cypherSortList(value interface{}) ([]interface{}, bool) {
 		return nil, false
 	}
 	return toAnySlice(value), true
-}
-
-func cypherSortNumber(value interface{}) (float64, bool) {
-	switch number := value.(type) {
-	case int:
-		return float64(number), true
-	case int8:
-		return float64(number), true
-	case int16:
-		return float64(number), true
-	case int32:
-		return float64(number), true
-	case int64:
-		return float64(number), true
-	case uint:
-		return float64(number), true
-	case uint8:
-		return float64(number), true
-	case uint16:
-		return float64(number), true
-	case uint32:
-		return float64(number), true
-	case uint64:
-		return float64(number), true
-	case float32:
-		return float64(number), true
-	case float64:
-		return number, true
-	default:
-		return 0, false
-	}
 }
 
 func compareOrderedInts(left, right int) int {
