@@ -198,7 +198,7 @@ func (t *sizeTrackingEngine) StreamNodesByPrefix(ctx context.Context, prefix str
 // methods declared on that interface, not every method the wrapped engine's
 // dynamic type happens to implement, so a label-scoped MATCH would otherwise
 // fail this type assertion and fall back to a whole-namespace StreamNodes
-// scan (O(store) instead of O(label); see eshu#7014 cause A).
+// scan (O(store) instead of O(label); see #561).
 func (t *sizeTrackingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
 	if reader, ok := t.Engine.(storage.ProjectedLabelNodeReader); ok {
 		return reader.StreamNodesByLabelProjected(label, properties, visit)

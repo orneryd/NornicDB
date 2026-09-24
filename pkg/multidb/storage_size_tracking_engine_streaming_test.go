@@ -170,8 +170,8 @@ func (e *sizeTrackingStreamingInner) StreamNodesByLabelProjected(label string, p
 
 // TestSizeTrackingEngine_StreamNodesByLabelProjected_Delegates proves the
 // wrapper forwards label-scoped candidate streaming to the inner engine
-// instead of silently dropping storage.ProjectedLabelNodeReader. Eshu#7014
-// cause A: a wrapper that only embeds storage.Engine promotes exactly the
+// instead of silently dropping storage.ProjectedLabelNodeReader. #561:
+// a wrapper that only embeds storage.Engine promotes exactly the
 // methods declared on that interface, not every method the dynamic inner
 // engine happens to implement, so an unforwarded optional interface makes a
 // label-scoped MATCH fall through to a whole-namespace storage.StreamNodes

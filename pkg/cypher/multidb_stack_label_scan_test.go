@@ -21,7 +21,7 @@ import (
 // whole-namespace storage.StreamNodes scan for every label-scoped MATCH. An
 // in-process StorageExecutor built directly over storage.NamespacedEngine
 // (skipping multidb) never exercises this, which is why the regression only
-// showed up against a running server (upstream reference: eshu#7014 cause A).
+// showed up against a running server (see #561).
 //
 // This test builds the exact same stack the server builds
 // (DatabaseManager -> GetStorage -> sizeTrackingEngine) and measures
