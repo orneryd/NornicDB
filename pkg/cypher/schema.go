@@ -494,6 +494,17 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 		return nil, localizedError(localization.CypherSchemaNameRequired("DROP INDEX", "index"), nil)
 	}
 
+	if err := e.dropIndexByName(name, ifExists); err != nil {
+		return nil, err
+	}
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+// dropIndexByName removes the named index from the schema and tears down the
+// in-memory data that belongs to it. It is the single drop path for DROP INDEX
+// and the db.index.vector.drop / db.index.fulltext.drop procedures. A missing
+// index is a Neo.ClientError.Schema.IndexDropFailed error unless ifExists is set.
+func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 	// Look up the schema entry BEFORE dropping it so we can also tear down
 	// any in-memory index data the schema entry was the only handle for.
 	// Vector indexes carry their declared (label, property) — when the user
@@ -512,11 +523,11 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 		var missing *localization.LocalizedError
 		if errors.As(err, &missing) && missing.Message.ID == localization.MessageStorageSchemaIndexNotFound {
 			if ifExists {
-				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+				return nil
 			}
-			return nil, newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex", err.Error())
+			return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex", err.Error())
 		}
-		return nil, err
+		return err
 	}
 
 	// Tear down the matching in-memory vector data after the schema entry
@@ -532,8 +543,7 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 	if e.cache != nil {
 		e.cache.Invalidate()
 	}
-
-	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	return nil
 }
 
 // executeDropConstraint handles DROP CONSTRAINT commands.

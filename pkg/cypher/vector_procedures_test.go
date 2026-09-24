@@ -1754,18 +1754,18 @@ func TestCallDbIndexFulltextDrop(t *testing.T) {
 		assert.Equal(t, true, result.Rows[0][1])
 	})
 
-	t.Run("drop_nonexistent_index_succeeds", func(t *testing.T) {
-		// Drop should succeed even if index doesn't exist (idempotent)
-		result, err := exec.Execute(ctx,
+	t.Run("drop_nonexistent_index_errors", func(t *testing.T) {
+		// Like DROP INDEX, an unknown name is an error, not a reported drop.
+		_, err := exec.Execute(ctx,
 			"CALL db.index.fulltext.drop('nonexistent_index')", nil)
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-
-		assert.Equal(t, "nonexistent_index", result.Rows[0][0])
-		assert.Equal(t, true, result.Rows[0][1]) // NornicDB returns true (no-op)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nonexistent_index")
 	})
 
 	t.Run("drop_with_quoted_name", func(t *testing.T) {
+		_, err := exec.Execute(ctx,
+			"CALL db.index.fulltext.createNodeIndex('my_special_index', 'Node', 'prop')", nil)
+		require.NoError(t, err)
 		result, err := exec.Execute(ctx,
 			`CALL db.index.fulltext.drop("my_special_index")`, nil)
 		require.NoError(t, err)
@@ -1806,14 +1806,11 @@ func TestCallDbIndexVectorDrop(t *testing.T) {
 		assert.Equal(t, true, result.Rows[0][1])
 	})
 
-	t.Run("drop_nonexistent_vector_index_succeeds", func(t *testing.T) {
-		result, err := exec.Execute(ctx,
+	t.Run("drop_nonexistent_vector_index_errors", func(t *testing.T) {
+		_, err := exec.Execute(ctx,
 			"CALL db.index.vector.drop('nonexistent_vec_idx')", nil)
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-
-		assert.Equal(t, "nonexistent_vec_idx", result.Rows[0][0])
-		assert.Equal(t, true, result.Rows[0][1])
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nonexistent_vec_idx")
 	})
 }
 

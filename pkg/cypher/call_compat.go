@@ -828,7 +828,12 @@ func (e *StorageExecutor) callDbIndexFulltextDrop(cypher string) (*ExecuteResult
 
 	indexName := strings.Trim(strings.TrimSpace(cypher[idx+argsStart+1:idx+argsEnd]), "'\"")
 
-	// Drop fulltext index - NornicDB manages indexes internally, so this is a no-op but returns success
+	if err := e.dropIndexOfKind(indexName, "fulltext", func(schema *storage.SchemaManager) bool {
+		_, ok := schema.GetFulltextIndex(indexName)
+		return ok
+	}); err != nil {
+		return nil, err
+	}
 	return &ExecuteResult{
 		Columns: []string{"name", "dropped"},
 		Rows:    [][]interface{}{{indexName, true}},
@@ -851,13 +856,33 @@ func (e *StorageExecutor) callDbIndexVectorDrop(cypher string) (*ExecuteResult, 
 
 	indexName := strings.Trim(strings.TrimSpace(cypher[idx+argsStart+1:idx+argsEnd]), "'\"")
 
-	e.unregisterVectorSpace(indexName)
-
-	// Drop vector index - NornicDB manages indexes internally, so this is a no-op but returns success
+	if err := e.dropIndexOfKind(indexName, "vector", func(schema *storage.SchemaManager) bool {
+		_, ok := schema.GetVectorIndex(indexName)
+		return ok
+	}); err != nil {
+		return nil, err
+	}
 	return &ExecuteResult{
 		Columns: []string{"name", "dropped"},
 		Rows:    [][]interface{}{{indexName, true}},
 	}, nil
+}
+
+// dropIndexOfKind backs the db.index.<kind>.drop compatibility procedures: it
+// drops the named index through dropIndexByName (the DROP INDEX path) only when
+// an index of that kind exists under the name, and otherwise fails with
+// Neo.ClientError.Schema.IndexDropFailed, so a procedure never reports a drop
+// that did not happen and never drops an index of another kind.
+func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storage.SchemaManager) bool) error {
+	if isCompositeRoot(e.storage) {
+		return localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+	}
+	schema := e.storage.GetSchema()
+	if schema == nil || !exists(schema) {
+		return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex",
+			fmt.Sprintf("there is no %s index named %q", kind, name))
+	}
+	return e.dropIndexByName(name, false)
 }
 
 // splitArgsSimple splits comma-separated arguments, respecting quoted strings
