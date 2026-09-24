@@ -193,7 +193,7 @@ func TestStatementShapeHash_DifferentShapes_Differ(t *testing.T) {
 
 // buildLargeCypherStatement builds a syntactically simple but ~2KB Cypher
 // statement (a long WHERE OR-chain) for the BenchmarkStatementShapeHash
-// overhead measurement the eshu-7014-cause-C task asked for.
+// overhead measurement the NornicDB issue #563 task asked for.
 func buildLargeCypherStatement(targetBytes int) string {
 	var b strings.Builder
 	b.WriteString("MATCH (n) WHERE ")
@@ -212,7 +212,7 @@ func buildLargeCypherStatement(targetBytes int) string {
 // BenchmarkStatementShapeHash measures the per-call cost of hashing a ~2KB
 // already-redacted statement — the fallback path emitSlowQueryLog takes for
 // every non-EXPLAIN/PROFILE query once it has exceeded the slow-query
-// threshold (eshu-7014-cause-C defect 2). It never runs on the hot Execute()
+// threshold (NornicDB issue #563 defect 2). It never runs on the hot Execute()
 // path below that threshold.
 func BenchmarkStatementShapeHash(b *testing.B) {
 	redacted := RedactLiterals(buildLargeCypherStatement(2048))

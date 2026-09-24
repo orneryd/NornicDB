@@ -989,8 +989,8 @@ func (e *StorageExecutor) logger() *slog.Logger {
 //	msg="slow query"
 //	event="slow_query"
 //	plan_hash=<16-char hex; PlanHash(plan) when a plan tree is available,
-//	           else StatementShapeHash of the redacted statement (eshu-7014-
-//	           cause-C defect 2 — see StatementShapeHash's doc comment: it is
+//	           else StatementShapeHash of the redacted statement (NornicDB
+//	           issue #563 defect 2 — see StatementShapeHash's doc comment: it is
 //	           a statement-shape fingerprint, not a plan fingerprint)>
 //	cypher.duration_ms=<int64 millisecond delta>
 //	query=<RedactLiterals(query) truncated to 500 chars>

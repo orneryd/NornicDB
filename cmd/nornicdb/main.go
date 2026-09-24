@@ -1564,7 +1564,7 @@ func (e *DBQueryExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageExecutor
 		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
 			exec.SetInferenceManager(inferMgr)
 		}
-		// eshu-7014-cause-C defect 1: this is the sole wiring point for
+		// NornicDB issue #563 defect 1: this is the sole wiring point for
 		// every Bolt database-scoped executor (pkg/bolt/server.go's
 		// newDatabaseScopedCypherExecutor calls it via the
 		// databaseExecutorConfigurator interface). Without it, every Bolt

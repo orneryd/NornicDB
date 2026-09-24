@@ -117,7 +117,7 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 	if r.db != nil {
 		if baseExecutor := r.db.GetCypherExecutor(); baseExecutor != nil {
 			exec.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
-			// eshu-7014-cause-C defect 1: without this, Heimdall-routed
+			// NornicDB issue #563 defect 1: without this, Heimdall-routed
 			// queries against a non-default database log to io.Discard and
 			// never emit a slow_query record.
 			exec.SetLogger(baseExecutor.Logger())

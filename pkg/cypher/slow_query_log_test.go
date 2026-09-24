@@ -93,7 +93,7 @@ func TestExecutor_SlowQueryLog_Schema(t *testing.T) {
 	}
 }
 
-// TestExecutor_SlowQueryLog_PlanHashDistinguishesShape — eshu-7014-cause-C
+// TestExecutor_SlowQueryLog_PlanHashDistinguishesShape — NornicDB issue #563
 // defect 2: Execute's deferred emitSlowQueryLog(originalCypher, nil, dur)
 // always passed a nil plan, so plan_hash was "0000000000000000" for every
 // non-EXPLAIN/PROFILE query. That makes the field useless for grouping

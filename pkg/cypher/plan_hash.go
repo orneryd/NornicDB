@@ -70,7 +70,7 @@ func PlanHash(plan *ExecutionPlan) string {
 
 // StatementShapeHash returns a 16-char hex FNV-1a digest of a literal-redacted
 // Cypher statement's *shape*, for use as the slow-query log's plan_hash field
-// when no ExecutionPlan tree is available (eshu-7014-cause-C defect 2: the
+// when no ExecutionPlan tree is available (NornicDB issue #563 defect 2: the
 // normal, non-EXPLAIN/PROFILE Execute() path never builds one — it always
 // called PlanHash(nil), which collapses to the zero placeholder for every
 // single slow query, making the field useless for grouping).
