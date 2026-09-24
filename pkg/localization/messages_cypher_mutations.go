@@ -81,7 +81,6 @@ const (
 	MessageCypherMutationsSetMergeStringKeysRequired          MessageID = "cyphermutations.set_merge_string_keys_required"
 	MessageCypherMutationsSetMergeMapRequired                 MessageID = "cyphermutations.set_merge_map_required"
 	MessageCypherMutationsRemoveMatchRequired                 MessageID = "cyphermutations.remove_match_required"
-	MessageCypherMutationsUnwindKeysUnsupported               MessageID = "cyphermutations.unwind_keys_unsupported"
 	MessageCypherMutationsUnwindParameterNameRequired         MessageID = "cyphermutations.unwind_parameter_name_required"
 	MessageCypherMutationsUnwindParametersRequired            MessageID = "cyphermutations.unwind_parameters_required"
 	MessageCypherMutationsUnwindParameterNotFound             MessageID = "cyphermutations.unwind_parameter_not_found"
@@ -497,11 +496,6 @@ func CypherMutationsSetMergeMapRequired(source, valueType string) Message {
 // CypherMutationsRemoveMatchRequired identifies REMOVE without MATCH.
 func CypherMutationsRemoveMatchRequired() Message {
 	return cypherMutationsMessage(MessageCypherMutationsRemoveMatchRequired, "REMOVE requires a MATCH clause first (e.g., MATCH (n) REMOVE n.property)", nil)
-}
-
-// CypherMutationsUnwindKeysUnsupported identifies unsupported keys() use with UNWIND.
-func CypherMutationsUnwindKeysUnsupported() Message {
-	return cypherMutationsMessage(MessageCypherMutationsUnwindKeysUnsupported, "keys() function with UNWIND is not supported in this context", nil)
 }
 
 // CypherMutationsUnwindParameterNameRequired identifies an empty UNWIND parameter name.

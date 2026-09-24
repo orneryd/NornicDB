@@ -19,10 +19,6 @@ type topLevelUnwindPlan struct {
 // prepareTopLevelUnwind parses and evaluates the leading UNWIND exactly once
 // for both optimized physical operators and the general row pipeline.
 func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher string) (topLevelUnwindPlan, error) {
-	upper := strings.ToUpper(cypher)
-	if strings.Contains(upper, "KEYS(") && strings.Contains(upper, "UNWIND") {
-		return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindKeysUnsupported(), nil)
-	}
 	unwindIdx := findKeywordIndex(cypher, "UNWIND")
 	if unwindIdx == -1 {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)

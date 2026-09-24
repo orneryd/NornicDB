@@ -527,7 +527,6 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphermutations.unwind_double_malformed", Constructor: "CypherMutationsUnwindDoubleMalformed", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.unwind_first_as_required", Constructor: "CypherMutationsUnwindFirstASRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.unwind_fixed_chain_failed", Constructor: "CypherMutationsUnwindFixedChainFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
-	{ID: "cyphermutations.unwind_keys_unsupported", Constructor: "CypherMutationsUnwindKeysUnsupported", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.unwind_match_failed", Constructor: "CypherMutationsUnwindMatchFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.unwind_match_update_failed", Constructor: "CypherMutationsUnwindMatchUpdateFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.unwind_merge_create_failed", Constructor: "CypherMutationsUnwindMergeCreateFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
