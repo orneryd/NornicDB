@@ -101,6 +101,7 @@ func TestDB_SetEmbedder_ExistingQueueAppliesYieldFn(t *testing.T) {
 		embedQueueYieldFn: func() bool { return true },
 		config:            DefaultConfig(),
 	}
+	closeTestDBOnCleanup(t, db)
 
 	m := &mockEmbedder{dims: 8, model: "set-embedder"}
 	db.SetEmbedder(m)
@@ -139,6 +140,7 @@ func TestDB_BuildSearchIndexes_PropagatesGetOrCreateError(t *testing.T) {
 
 func TestDB_SetEmbedder_PanicsWhenBaseStorageNil(t *testing.T) {
 	db := &DB{config: DefaultConfig()}
+	closeTestDBOnCleanup(t, db)
 	require.Panics(t, func() {
 		db.SetEmbedder(&mockEmbedder{dims: 2, model: "panic-embedder"})
 	})
@@ -186,6 +188,7 @@ func TestDB_SetEmbedder_ClusteringFlagBranches(t *testing.T) {
 		cfg.Memory.KmeansClusterInterval = 0
 
 		db := &DB{baseStorage: base, config: cfg}
+		closeTestDBOnCleanup(t, db)
 		db.storage = storage.NewNamespacedEngine(base, "nornic")
 		db.searchServices = map[string]*dbSearchService{}
 		db.SetEmbedder(&mockEmbedder{dims: 4, model: "cluster-manual"})
@@ -208,6 +211,7 @@ func TestDB_SetEmbedder_ClusteringFlagBranches(t *testing.T) {
 		cfg.Memory.KmeansClusterInterval = time.Hour
 
 		db := &DB{baseStorage: base, config: cfg}
+		closeTestDBOnCleanup(t, db)
 		db.storage = storage.NewNamespacedEngine(base, "nornic")
 		db.searchServices = map[string]*dbSearchService{}
 		db.SetEmbedder(&mockEmbedder{dims: 4, model: "cluster-timer"})

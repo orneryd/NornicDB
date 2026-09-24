@@ -314,12 +314,14 @@ func TestDBWrapperHelpers_MaybeEnableReplicationPaths(t *testing.T) {
 func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 	t.Run("nil embedder is a no-op", func(t *testing.T) {
 		db := &DB{}
+		closeTestDBOnCleanup(t, db)
 		db.SetEmbedder(nil)
 		require.Nil(t, db.embedQueue)
 	})
 
 	t.Run("nil base storage panics", func(t *testing.T) {
 		db := &DB{}
+		closeTestDBOnCleanup(t, db)
 		require.PanicsWithValue(t, "nornicdb: baseStorage is nil in SetEmbedder", func() {
 			db.SetEmbedder(newMockEmbedder())
 		})
@@ -338,6 +340,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 			embedWorkerConfig: DefaultEmbedQueueConfig(),
 			embedQueueYieldFn: func() bool { calledYield = true; return true },
 		}
+		closeTestDBOnCleanup(t, db)
 		db.embedWorkerConfig.DeferWorkerStart = true
 
 		db.SetEmbedder(newMockEmbedder())
@@ -369,6 +372,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 			storage:     storage.NewNamespacedEngine(base, "nornic"),
 			embedQueue:  q,
 		}
+		closeTestDBOnCleanup(t, db)
 
 		next := newMockEmbedder()
 		db.SetEmbedder(next)
@@ -399,6 +403,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 			buildCtx:          context.Background(),
 			embedWorkerConfig: DefaultEmbedQueueConfig(),
 		}
+		closeTestDBOnCleanup(t, db)
 
 		db.SetEmbedder(newMockEmbedder())
 		require.NotNil(t, db.clusterTicker, "clustering timer should start when GPU clustering is enabled")

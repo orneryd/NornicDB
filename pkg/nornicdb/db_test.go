@@ -1945,6 +1945,7 @@ func TestRestore(t *testing.T) {
 		base := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{storage: base, config: DefaultConfig()}
+		closeTestDBOnCleanup(t, db)
 
 		p := filepath.Join(t.TempDir(), "bad.json")
 		require.NoError(t, os.WriteFile(p, []byte("{not-json"), 0644))
@@ -1964,6 +1965,7 @@ func TestRestore(t *testing.T) {
 			},
 			config: DefaultConfig(),
 		}
+		closeTestDBOnCleanup(t, db)
 
 		p := filepath.Join(t.TempDir(), "backup-node-fail.json")
 		require.NoError(t, os.WriteFile(p, []byte(`{"version":"1.0","created_at":"2026-03-10T00:00:00Z","nodes":[{"id":"n1","labels":["L"],"properties":{}}],"edges":[]}`), 0644))
@@ -1984,6 +1986,7 @@ func TestRestore(t *testing.T) {
 			},
 			config: DefaultConfig(),
 		}
+		closeTestDBOnCleanup(t, db)
 
 		p := filepath.Join(t.TempDir(), "backup-edge-fail.json")
 		require.NoError(t, os.WriteFile(p, []byte(`{"version":"1.0","created_at":"2026-03-10T00:00:00Z","nodes":[],"edges":[{"id":"e1","source":"n1","target":"n2","type":"REL","properties":{}}]}`), 0644))
@@ -2001,6 +2004,7 @@ func TestRestore(t *testing.T) {
 			config:         DefaultConfig(),
 			searchServices: make(map[string]*dbSearchService),
 		}
+		closeTestDBOnCleanup(t, db)
 
 		_, err := base.CreateNode(&storage.Node{
 			ID:     "n1",
@@ -2062,6 +2066,7 @@ func TestRestore(t *testing.T) {
 			config:         DefaultConfig(),
 			searchServices: make(map[string]*dbSearchService),
 		}
+		closeTestDBOnCleanup(t, db)
 
 		p := filepath.Join(t.TempDir(), "backup-mvcc-restore.json")
 		require.NoError(t, os.WriteFile(p, []byte(`{
@@ -2085,6 +2090,7 @@ func TestRestore(t *testing.T) {
 			config:         DefaultConfig(),
 			searchServices: make(map[string]*dbSearchService),
 		}
+		closeTestDBOnCleanup(t, db)
 
 		p := filepath.Join(t.TempDir(), "backup-temporal-rebuild-fail.json")
 		require.NoError(t, os.WriteFile(p, []byte(`{
@@ -2109,6 +2115,7 @@ func TestRestore(t *testing.T) {
 			config:         DefaultConfig(),
 			searchServices: make(map[string]*dbSearchService),
 		}
+		closeTestDBOnCleanup(t, db)
 
 		p := filepath.Join(t.TempDir(), "backup-mvcc-rebuild-fail.json")
 		require.NoError(t, os.WriteFile(p, []byte(`{
