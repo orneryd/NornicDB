@@ -55,7 +55,15 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 			operatorWidth = 1
 		}
 		if operator < 0 {
-			continue // label assignment
+			// Label assignment `n:Label[:Label2]`: the variable before the
+			// first colon must be bound, as for a property assignment.
+			if colon := strings.Index(assignment, ":"); colon > 0 {
+				target := normalizeProjectionColumnName(assignment[:colon])
+				if isValidIdentifier(target) && !scope.contains(target) {
+					return createUndefinedVariableError(target)
+				}
+			}
+			continue
 		}
 		target, _, _ := parseSetAssignmentTarget(assignment[:operator])
 		if target != "" && !scope.contains(target) {
