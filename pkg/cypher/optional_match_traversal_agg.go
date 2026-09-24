@@ -357,20 +357,19 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 }
 
 // evaluateMixedAggregate finalizes each aggregate span of a mixed item, then
-// evaluates the rewritten outer expression with the results substituted via
-// single-"value" pseudo-nodes (the executor's scalar-wrapper convention) —
-// the runtime equivalent of isolateAggregation's WITH x1, x2 ... rewrite.
+// evaluates the rewritten outer expression with the results bound as values
+// (valueBindings) — the runtime equivalent of isolateAggregation's
+// WITH x1, x2 ... rewrite.
 func (e *StorageExecutor) evaluateMixedAggregate(ctx context.Context, ti traversalAggItem, accums []traversalAggAccum, rowCount int64) interface{} {
-	nodes := make(map[string]*storage.Node, len(ti.specs))
+	values := valueBindingsLayer(ctx, len(ti.specs))
 	for n, spec := range ti.specs {
 		var vals []interface{}
 		if accums != nil {
 			vals = accums[n].values
 		}
-		result := e.finalizeTraversalAggregate(spec, vals, rowCount)
-		nodes[traversalAggPlaceholder(n)] = &storage.Node{Properties: map[string]interface{}{"value": result}}
+		values[traversalAggPlaceholder(n)] = e.finalizeTraversalAggregate(spec, vals, rowCount)
 	}
-	return e.evaluateExpressionWithContext(ctx, ti.rewritten, nodes, nil)
+	return e.evaluateExpressionWithContext(withValueBindings(ctx, values), ti.rewritten, map[string]*storage.Node{}, nil)
 }
 
 // finalizeTraversalAggregate reduces one aggregate call's accumulated

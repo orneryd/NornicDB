@@ -1034,39 +1034,33 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 	for _, row := range rows {
 		nodes := make(map[string]*storage.Node)
 		evalNodes := nodes
-		evalNodesShared := true
 		rels := make(map[string]*storage.Edge)
 		params := make(map[string]interface{})
 		for name, value := range getParamsFromContext(ctx) {
 			params[name] = value
 		}
+		var values map[string]interface{}
 		for name, value := range row {
 			switch entity := value.(type) {
 			case *storage.Node:
 				nodes[name] = entity
-				if !evalNodesShared {
-					evalNodes[name] = entity
-				}
 			case *storage.Edge:
 				rels[name] = entity
 			default:
+				// Row values (UNWIND / WITH maps, lists, scalars) are variables in
+				// the value scope; they also stay reachable as parameters for
+				// resolveContextPathRef.
 				params[name] = value
-				if evalNodesShared {
-					evalNodes = make(map[string]*storage.Node, util.SafePreallocSum(len(nodes), 1))
-					for nodeName, node := range nodes {
-						evalNodes[nodeName] = node
-					}
-					evalNodesShared = false
+				if values == nil {
+					values = valueBindingsLayer(ctx, len(row))
 				}
-				evalNodes[name] = &storage.Node{
-					ID: storage.NodeID(name),
-					Properties: map[string]interface{}{
-						"value": value,
-					},
-				}
+				values[name] = value
 			}
 		}
 		rowCtx := withParams(ctx, params)
+		if values != nil {
+			rowCtx = withValueBindings(rowCtx, values)
+		}
 		for _, variable := range targets {
 			if node := nodes[variable]; node != nil {
 				beforeProperties := cloneStringAnyMap(node.Properties)

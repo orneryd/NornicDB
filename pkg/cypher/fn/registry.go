@@ -7,6 +7,18 @@ import (
 	"time"
 )
 
+// ArgumentTypeError reports a function argument of a type the function does
+// not accept (labels() of a map, a number, ...). Callers turn it into a
+// Neo.ClientError.Statement.TypeError.
+type ArgumentTypeError struct {
+	Function string
+	Value    interface{}
+}
+
+func (e *ArgumentTypeError) Error() string {
+	return fmt.Sprintf("%s() received an invalid %T argument", e.Function, e.Value)
+}
+
 // Func evaluates a Cypher function call.
 //
 // args are the raw argument expressions (not pre-evaluated). Use ctx.Eval for

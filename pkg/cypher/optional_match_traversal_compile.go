@@ -186,6 +186,7 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 		}
 		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
 			if err != nil {
+				functionEvaluationFailure(ctx, err)
 				return nil
 			}
 			return v

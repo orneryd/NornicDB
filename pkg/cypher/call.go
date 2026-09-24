@@ -3890,6 +3890,7 @@ func (e *StorageExecutor) evaluateYieldWhere(ctx context.Context, whereExpr stri
 	// id(node), labels(node), and type(relationship) evaluate correctly.
 	nodes := make(map[string]*storage.Node)
 	rels := make(map[string]*storage.Edge)
+	values := valueBindingsLayer(ctx, len(yieldCtx))
 
 	for name, val := range yieldCtx {
 		// Preserve real graph entities.
@@ -3902,31 +3903,16 @@ func (e *StorageExecutor) evaluateYieldWhere(ctx context.Context, whereExpr stri
 			continue
 		}
 
-		// If the value is a map (legacy node-like result), wrap it as pseudo-node.
-		if mapVal, ok := val.(map[string]interface{}); ok {
-			props := make(map[string]interface{})
-			for k, v := range mapVal {
-				props[k] = v
-			}
-			nodes[name] = &storage.Node{
-				ID:         storage.NodeID(name),
-				Properties: props,
-			}
-		} else {
-			// For scalar values, create a node with that value as a property
-			nodes[name] = &storage.Node{
-				ID: storage.NodeID(name),
-				Properties: map[string]interface{}{
-					"value": val,
-				},
-			}
+		// Maps and scalars are values (valueBindings), not stand-in nodes.
+		values[name] = val
+		if _, isMap := val.(map[string]interface{}); !isMap {
 			// Also add the scalar value directly to enable direct comparisons like "score > 0.5"
 			yieldCtx[name] = val
 		}
 	}
 
 	// Try to evaluate using the expression evaluator with context
-	result := e.evaluateExpressionWithContext(ctx, whereExpr, nodes, rels)
+	result := e.evaluateExpressionWithContext(withValueBindings(ctx, values), whereExpr, nodes, rels)
 
 	// Convert result to boolean
 	switch v := result.(type) {

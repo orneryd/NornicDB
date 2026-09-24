@@ -298,15 +298,8 @@ func TestReduceExpressionWithAliasListContext(t *testing.T) {
 	store := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(store)
 	expr := "reduce(acc = [], t IN (file_tags + ['hello']) | CASE WHEN t IN acc THEN acc ELSE acc + t END)"
-	nodes := map[string]*storage.Node{
-		"file_tags": {
-			ID: storage.NodeID("file_tags"),
-			Properties: map[string]any{
-				"value": []any{"existing"},
-			},
-		},
-	}
-	ctx := context.Background()
+	nodes := map[string]*storage.Node{}
+	ctx := withValueBindings(context.Background(), map[string]interface{}{"file_tags": []any{"existing"}})
 
 	combined := exec.evaluateExpressionWithContext(ctx, "file_tags + ['hello']", nodes, map[string]*storage.Edge{})
 	combinedList, ok := combined.([]interface{})
@@ -318,21 +311,8 @@ func TestReduceExpressionWithAliasListContext(t *testing.T) {
 	require.True(t, ok, "expected reduce expression to evaluate to list, got %T (%v)", got, got)
 	assert.ElementsMatch(t, []interface{}{"existing", "hello"}, list)
 
-	condNodes := map[string]*storage.Node{
-		"acc": {
-			ID: storage.NodeID("acc"),
-			Properties: map[string]any{
-				"value": []any{"existing"},
-			},
-		},
-		"t": {
-			ID: storage.NodeID("t"),
-			Properties: map[string]any{
-				"value": "hello",
-			},
-		},
-	}
-	cond := exec.evaluateExpressionWithContext(ctx, "t IN acc", condNodes, map[string]*storage.Edge{})
+	condCtx := withValueBindings(context.Background(), map[string]interface{}{"acc": []any{"existing"}, "t": "hello"})
+	cond := exec.evaluateExpressionWithContext(condCtx, "t IN acc", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	condBool, ok := cond.(bool)
 	require.True(t, ok, "expected boolean for IN condition, got %T (%v)", cond, cond)
 	assert.False(t, condBool)

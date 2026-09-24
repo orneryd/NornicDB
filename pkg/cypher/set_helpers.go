@@ -104,22 +104,20 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 		}
 		return nil
 	}
-	evalNodes := make(map[string]*storage.Node, len(nodes)+len(getParamsFromContext(ctx)))
-	for name, value := range nodes {
-		evalNodes[name] = value
-	}
-	for name, value := range getParamsFromContext(ctx) {
-		if _, exists := evalNodes[name]; exists {
-			continue
+	// Row bindings from UNWIND / WITH that travel in the parameter context on
+	// fallback mutation paths are variables in the value scope.
+	params := getParamsFromContext(ctx)
+	evalCtx := ctx
+	if len(params) > 0 {
+		values := valueBindingsLayer(ctx, len(params))
+		for name, value := range params {
+			if _, isNode := nodes[name]; !isNode {
+				values[name] = value
+			}
 		}
-		switch bound := value.(type) {
-		case map[string]interface{}:
-			evalNodes[name] = &storage.Node{ID: storage.NodeID(name), Properties: bound}
-		default:
-			evalNodes[name] = &storage.Node{ID: storage.NodeID(name), Properties: map[string]interface{}{"value": bound}}
-		}
+		evalCtx = withValueBindings(ctx, values)
 	}
-	props, err := e.setMergeMap(ctx, rightExpr, evalNodes, rels)
+	props, err := e.setMergeMap(evalCtx, rightExpr, nodes, rels)
 	if err != nil {
 		return err
 	}

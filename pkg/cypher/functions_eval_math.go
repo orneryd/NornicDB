@@ -516,27 +516,23 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 				items = []interface{}{list}
 			}
 
-			// Apply reduce using variable bindings in evaluation context.
+			// Apply reduce with acc and item bound as variables (bindEvaluationValue):
+			// nodes / relationships as entities, anything else in the value scope.
 			// Text replacement is incorrect for identifiers and nested expressions.
+			tempNodes := make(map[string]*storage.Node, len(nodes)+2)
+			for k, v := range nodes {
+				tempNodes[k] = v
+			}
+			tempRels := make(map[string]*storage.Edge, len(rels)+2)
+			for k, v := range rels {
+				tempRels[k] = v
+			}
+			values := valueBindingsLayer(ctx, 2)
+			itemCtx := withValueBindings(ctx, values)
 			for _, item := range items {
-				// Create context with acc and item bound as scalar pseudo-nodes.
-				tempNodes := make(map[string]*storage.Node)
-				for k, v := range nodes {
-					tempNodes[k] = v
-				}
-				tempNodes[accName] = &storage.Node{
-					ID: storage.NodeID(accName),
-					Properties: map[string]interface{}{
-						"value": acc,
-					},
-				}
-				tempNodes[varName] = &storage.Node{
-					ID: storage.NodeID(varName),
-					Properties: map[string]interface{}{
-						"value": item,
-					},
-				}
-				acc = e.evaluateExpressionWithContextFull(ctx, reduceExpr, tempNodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+				bindEvaluationValue(accName, acc, tempNodes, tempRels, values)
+				bindEvaluationValue(varName, item, tempNodes, tempRels, values)
+				acc = e.evaluateExpressionWithContextFull(itemCtx, reduceExpr, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength)
 			}
 
 			return acc
@@ -1443,27 +1439,20 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 				return []interface{}{}
 			}
 			result := make([]interface{}, 0, len(items))
+			boundNodes := make(map[string]*storage.Node, len(nodes)+1)
+			for name, node := range nodes {
+				boundNodes[name] = node
+			}
+			boundRels := make(map[string]*storage.Edge, len(rels)+1)
+			for name, rel := range rels {
+				boundRels[name] = rel
+			}
+			values := valueBindingsLayer(ctx, 1)
+			itemCtx := withValueBindings(ctx, values)
 			for _, item := range items {
-				boundNodes := make(map[string]*storage.Node, len(nodes)+1)
-				for name, node := range nodes {
-					boundNodes[name] = node
-				}
-				boundRels := make(map[string]*storage.Edge, len(rels)+1)
-				for name, rel := range rels {
-					boundRels[name] = rel
-				}
-				switch value := item.(type) {
-				case *storage.Node:
-					boundNodes[varName] = value
-				case *storage.Edge:
-					boundRels[varName] = value
-				case map[string]interface{}:
-					boundNodes[varName] = &storage.Node{ID: storage.NodeID(varName), Properties: value}
-				default:
-					boundNodes[varName] = &storage.Node{ID: storage.NodeID(varName), Properties: map[string]interface{}{"value": value}}
-				}
-				if e.evaluateExpressionWithContextFull(ctx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength) == true {
-					result = append(result, e.evaluateExpressionWithContextFull(ctx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength))
+				bindEvaluationValue(varName, item, boundNodes, boundRels, values)
+				if e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength) == true {
+					result = append(result, e.evaluateExpressionWithContextFull(itemCtx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength))
 				}
 			}
 			return result
@@ -1624,15 +1613,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 					for name, relationship := range rels {
 						itemRels[name] = relationship
 					}
-					switch value := item.(type) {
-					case *storage.Node:
-						itemNodes[varName] = value
-					case *storage.Edge:
-						itemRels[varName] = value
-					default:
-						itemNodes[varName] = &storage.Node{Properties: map[string]interface{}{"value": value}}
-					}
-					result[i] = e.evaluateExpressionWithContextFull(ctx, transform, itemNodes, itemRels, paths, allPathEdges, allPathNodes, pathLength)
+					values := valueBindingsLayer(ctx, 1)
+					bindEvaluationValue(varName, item, itemNodes, itemRels, values)
+					result[i] = e.evaluateExpressionWithContextFull(withValueBindings(ctx, values), transform, itemNodes, itemRels, paths, allPathEdges, allPathNodes, pathLength)
 				}
 				return result
 			}
