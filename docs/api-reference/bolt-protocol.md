@@ -56,21 +56,19 @@ This is the key compatibility question: **what types are allowed as node/relatio
 
 ### NornicDB (this project)
 
-NornicDB allows **any PackStream-encodable value** as a property value, including:
+NornicDB stores the Neo4j property value types:
 
 - primitives: `null`, `boolean`, `integer`, `float`, `string`, `bytes`
-- lists/arrays of the above (including mixed-type lists)
-- **nested maps/objects** (`map<string, any>`) and combinations of nested maps + lists
+- temporal values
+- lists/arrays of the above
 
-This is closer to “document DB” semantics for properties and is more permissive than Neo4j.
+A map, or a list that contains lists or maps, is not a property value: CREATE, MERGE and SET reject it with `Neo.ClientError.Statement.TypeError`, as Neo4j does. Maps are still valid as parameters, in expressions and in results.
 
 Full reference with examples: `docs/user-guides/property-data-types.md`
 
 ### Neo4j (for comparison)
 
-Neo4j historically restricts property values to primitives + arrays of primitives (no nested maps as property values). Bolt/PackStream itself can represent maps anywhere, but Neo4j won’t store maps as properties.
-
-If you are aiming for strict Neo4j property semantics (maximum portability), avoid nested maps and prefer flattening or modeling via nodes/relationships.
+Neo4j restricts property values to primitives, temporal values and arrays of them; NornicDB applies the same rule. Bolt/PackStream itself can represent maps anywhere (parameters, results), but neither stores a map as a property. Flatten structured data or model it with nodes and relationships.
 
 ### Important edge case: reserved map shape
 
@@ -80,7 +78,7 @@ Over Bolt, NornicDB has a small convenience encoding that treats a map with keys
 - `labels`
   as a Node-like value.
 
-If you store a property whose value is a map with both of those keys, it may be encoded as a Node structure to the driver instead of a plain map. If you need to store arbitrary nested maps safely, avoid using `_nodeId`+`labels` together at the same nesting level.
+If a query returns a map with both of those keys (for example `RETURN {_nodeId: 'x', labels: []} AS m`), it may be encoded as a Node structure to the driver instead of a plain map. Avoid using `_nodeId` and `labels` together as keys of a map you return.
 
 ## Supported Bolt messages (transport-level)
 

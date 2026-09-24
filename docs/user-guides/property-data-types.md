@@ -6,7 +6,7 @@
 
 ## Overview
 
-NornicDB supports a rich set of data types for node and relationship properties, following Neo4j compatibility while extending support for complex nested structures. Properties are stored as `map[string]any` (key-value pairs) where values can be any supported type.
+NornicDB supports the Neo4j property value types for node and relationship properties: primitives, temporal values and lists of them. Properties are stored as `map[string]any` (key-value pairs). As in Neo4j, a map or a list that contains lists is not a property value: CREATE, MERGE and SET reject it with `Neo.ClientError.Statement.TypeError` (see [Maps are not property values](#maps-are-not-property-values)).
 
 ---
 
@@ -198,63 +198,27 @@ RETURN size(n.tags) AS tagCount
 
 ---
 
-#### Maps/Objects (`map[string]interface{}`)
-Nested key-value structures (JSON objects).
+#### Maps are not property values
+A map (`{street: "…", city: "…"}`), or a list that contains lists or maps, can't be stored as a property value. CREATE, MERGE and SET reject it with `Neo.ClientError.Statement.TypeError`, and the statement writes nothing, as in Neo4j:
 
-**Example:**
 ```cypher
-CREATE (n:Person {
-  name: "Alice",
-  address: {
-    street: "123 Main St",
-    city: "San Francisco",
-    state: "CA",
-    zip: "94102"
-  },
-  metadata: {
-    created: "2024-01-15",
-    version: 1,
-    active: true
-  }
-})
+CREATE (n:Person {address: {city: "San Francisco"}})   // TypeError
+CREATE (n:Person {matrix: [[1, 2], [3, 4]]})           // TypeError
+MATCH (n:Person) SET n.address = {city: "San Francisco"} // TypeError
 ```
 
-**Use Cases:**
-- Nested data structures
-- Configuration objects
-- Addresses, locations
-- Metadata, settings
+Maps are still ordinary values everywhere else: parameters, `WITH` / `RETURN` expressions, `UNWIND` rows, and map projections (`RETURN n {.name, .city}`).
 
-**Querying Nested Objects:**
+**Storing structured data:**
 ```cypher
-// Access nested properties
-MATCH (n:Person)
-RETURN n.address.city AS city
+// Flatten into properties
+CREATE (n:Person {name: "Alice", address_street: "123 Main St", address_city: "San Francisco"})
 
-// Filter by nested property
-MATCH (n:Person)
-WHERE n.address.state = "CA"
-RETURN n
-```
+// Or model it as a related node
+CREATE (p:Person {name: "Alice"})-[:LIVES_AT]->(:Address {street: "123 Main St", city: "San Francisco"})
 
-**Nested Objects:**
-Objects can be nested to any depth:
-```cypher
-CREATE (n:Document {
-  content: {
-    title: "Guide",
-    sections: {
-      intro: {
-        text: "Welcome",
-        author: "Alice"
-      },
-      body: {
-        text: "Main content",
-        author: "Bob"
-      }
-    }
-  }
-})
+// Or store a serialized string, and parse it in the application
+CREATE (n:Person {name: "Alice", metadata: '{"created": "2024-01-15", "version": 1}'})
 ```
 
 ---
@@ -493,23 +457,17 @@ CREATE (e:Event {
   speakers: ["Alice", "Bob", "Carol"],
   tags: ["graph-db", "conference", "networking"],
   
-  // Objects
-  schedule: {
-    start: datetime("2024-06-15T09:00:00Z"),
-    end: datetime("2024-06-17T17:00:00Z"),
-    timezone: "PST"
-  },
-  
-  // Nested objects
-  venue: {
-    name: "SF Convention Center",
-    address: {
-      street: "747 Howard St",
-      city: "San Francisco",
-      state: "CA",
-      zip: "94103"
-    }
-  }
+  // Temporal
+  start: datetime("2024-06-15T09:00:00Z"),
+  end: datetime("2024-06-17T17:00:00Z"),
+  timezone: "PST"
+})-[:HELD_AT]->(:Venue {
+  // Related data as its own node (maps are not property values)
+  name: "SF Convention Center",
+  street: "747 Howard St",
+  city: "San Francisco",
+  state: "CA",
+  zip: "94103"
 })
 ```
 
@@ -534,21 +492,20 @@ tags: ["tag1", "tag2", "tag3"]
 mixed: ["text", 42, true]
 ```
 
-### 3. Use Nested Objects for Related Data
-Group related properties in nested objects:
+### 3. Model Related Data as Nodes or Flat Properties
+Maps are not property values (a TypeError). Group related data in a related node, or in prefixed properties:
 
 ```cypher
-// ✅ Good: Grouped related data
-address: {
-  street: "123 Main St",
-  city: "San Francisco",
-  state: "CA"
-}
+// ✅ Related node
+(:Person {name: "Alice"})-[:LIVES_AT]->(:Address {street: "123 Main St", city: "San Francisco", state: "CA"})
 
-// ❌ Less clear: Flat structure
-street: "123 Main St",
-city: "San Francisco",
-state: "CA"
+// ✅ Flat properties
+address_street: "123 Main St",
+address_city: "San Francisco",
+address_state: "CA"
+
+// ❌ TypeError: a map is not a property value
+address: {street: "123 Main St", city: "San Francisco"}
 ```
 
 ### 4. Handle Null Values Explicitly
@@ -586,7 +543,6 @@ CREATE CONSTRAINT person_email_string FOR (p:Person) REQUIRE p.email IS :: STRIN
 ### Storage Limits
 - **String length**: No hard limit (limited by available memory)
 - **Array size**: No hard limit (limited by available memory)
-- **Object depth**: No hard limit (limited by available memory)
 - **Property count**: No hard limit per node
 
 ### Type Preservation
@@ -601,7 +557,7 @@ CREATE CONSTRAINT person_email_string FOR (p:Person) REQUIRE p.email IS :: STRIN
 
 ### Neo4j Compatibility
 - All Neo4j property types are supported
-- NornicDB extends support for nested objects and arrays
+- As in Neo4j, maps and lists of lists are not property values (TypeError on CREATE, MERGE and SET)
 - Type constraints follow Neo4j syntax
 
 ---
@@ -621,11 +577,11 @@ CREATE CONSTRAINT person_email_string FOR (p:Person) REQUIRE p.email IS :: STRIN
 **Supported Types:**
 - ✅ **Primitives**: `string`, `int`/`int64`, `float64`/`float32`, `bool`, `null`
 - ✅ **Temporal**: `time.Time` (dates/timestamps)
-- ✅ **Collections**: Arrays (`[]interface{}`, `[]string`, `[]int`, `[]float64`), Maps (`map[string]interface{}`)
-- ✅ **Nested**: Objects can be nested to any depth
+- ✅ **Collections**: Arrays (`[]interface{}`, `[]string`, `[]int`, `[]float64`) of primitive or temporal values
 - ✅ **Constraints**: Type constraints for schema enforcement
 
 **Not Supported as Properties:**
+- ❌ Maps and lists that contain lists or maps (TypeError on CREATE, MERGE and SET)
 - ❌ Functions, closures
 - ❌ Binary data (use base64 strings)
 - ❌ Circular references (will cause serialization issues)
@@ -633,7 +589,7 @@ CREATE CONSTRAINT person_email_string FOR (p:Person) REQUIRE p.email IS :: STRIN
 **Best Practices:**
 - Use appropriate types for clarity
 - Prefer homogeneous arrays
-- Group related data in nested objects
+- Group related data in related nodes or prefixed properties
 - Use `null` for optional fields
 - Enforce types with constraints
 
