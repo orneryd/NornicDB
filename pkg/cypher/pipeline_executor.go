@@ -1602,7 +1602,13 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 			return nil, true, err
 		}
 		if !handled {
-			result, err = e.executeMatchWithRelationshipsWithPath(ctx, materializedPattern, physicalWhere, returnItems, nil, pathVariable, rowHint.earlyLimit)
+			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(ctx, materializedPattern, row)
+			if seedRejected {
+				// The bound node fails the pattern's own labels or inline
+				// properties on that endpoint, so this row matches nothing.
+				continue
+			}
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.earlyLimit)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1673,6 +1679,56 @@ func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool 
 		}
 	}
 	return false
+}
+
+// pipelineTraversalSeedNodes looks up whether the traversal pattern's
+// start-node or end-node variable is already bound to a node by an earlier
+// clause in this row. When it is, the caller can seed
+// executeMatchWithRelationshipsWithPathSeeded from that single node instead
+// of expanding the whole pattern over the store and joining the bound value
+// afterward. Start-node binding takes priority; end-node binding is only
+// honored for non-chained patterns, since reversing a multi-segment chain
+// is not supported.
+//
+// The seeded endpoint skips the scan that would otherwise apply the pattern's
+// labels and inline properties for that endpoint, so they are checked here:
+// every label must be present and every inline property must match. When the
+// bound node fails them, rejected is true and the row matches nothing.
+func (e *StorageExecutor) pipelineTraversalSeedNodes(ctx context.Context, pattern string, row pipelineRow) (startSeedNodes, endSeedNodes []*storage.Node, rejected bool) {
+	matches := e.parseTraversalPattern(ctx, pattern)
+	if matches == nil {
+		return nil, nil, false
+	}
+	if node, ok := pipelineBoundNode(row, matches.StartNode.variable); ok {
+		if !e.matchesEndPattern(node, &matches.StartNode) {
+			return nil, nil, true
+		}
+		return []*storage.Node{node}, nil, false
+	}
+	if !matches.IsChained {
+		if node, ok := pipelineBoundNode(row, matches.EndNode.variable); ok {
+			if !e.matchesEndPattern(node, &matches.EndNode) {
+				return nil, nil, true
+			}
+			return nil, []*storage.Node{node}, false
+		}
+	}
+	return nil, nil, false
+}
+
+func pipelineBoundNode(row pipelineRow, variable string) (*storage.Node, bool) {
+	if variable == "" {
+		return nil, false
+	}
+	value, bound := row[variable]
+	if !bound {
+		return nil, false
+	}
+	node, ok := value.(*storage.Node)
+	if !ok || node == nil {
+		return nil, false
+	}
+	return node, true
 }
 
 func pipelineBindingValuesEqual(left, right interface{}) bool {

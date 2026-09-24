@@ -193,6 +193,17 @@ func (e *StorageExecutor) executeMatchWithRelationships(ctx context.Context, pat
 
 // executeMatchWithRelationshipsWithPath handles MATCH queries with relationship patterns and optional path variable
 func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, pathVariable string, earlyLimit int) (*ExecuteResult, error) {
+	return e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, earlyLimit)
+}
+
+// executeMatchWithRelationshipsWithPathSeeded is executeMatchWithRelationshipsWithPath
+// with an additional endSeedNodes parameter. When a pipeline row already binds
+// the pattern's end-node variable (but not its start-node variable), the
+// caller passes that node here so the traversal starts from the known
+// endpoint and walks backwards, instead of expanding the pattern over every
+// relationship in the store and joining the bound value afterward. seedNodes
+// (start-side) takes priority when both are supplied.
+func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, earlyLimit int) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -319,7 +330,11 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 
 	// Execute traversal with optimized start nodes if available
 	var paths []PathResult
-	if len(optimizedStartNodes) > 0 {
+	if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, optimizedStartNodes, endSeedNodes, whereClause); endSeeded {
+		// Final even when empty: a bound end node with no qualifying path must
+		// not fall through to the store-wide scan below.
+		paths = endSeededPaths
+	} else if len(optimizedStartNodes) > 0 {
 		// Use optimized start nodes for non-chained traversal. Chained traversal uses
 		// segment-aware expansion; feeding it through traverseGraphSequential can break
 		// semantics because it ignores segment topology.
@@ -702,6 +717,34 @@ func referencesTraversalVariable(expr string, variable string) bool {
 		return true
 	}
 	return false
+}
+
+// traverseFromEndSeeds walks a non-chained pattern backwards from nodes
+// already bound to its end variable, when no start-side seed exists. Rather
+// than expanding the pattern over every relationship in the store and joining
+// the bound value afterward (O(|E|)), it reverses the pattern, traverses from
+// each known endpoint (O(degree)), flips each path back and applies the WHERE
+// clause. seeded reports whether this path ran; when it did, the returned
+// paths are final even if empty. The caller is responsible for having checked
+// the end node's own labels and inline properties.
+func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *TraversalMatch, startSeedNodes, endSeedNodes []*storage.Node, whereClause string) (paths []PathResult, seeded bool) {
+	if len(startSeedNodes) > 0 || len(endSeedNodes) == 0 || matches.IsChained {
+		return nil, false
+	}
+	reversed := reverseTraversalMatch(matches)
+	if reversed == nil {
+		return nil, false
+	}
+	paths = make([]PathResult, 0, util.SafePreallocCap(len(endSeedNodes)))
+	for _, endNode := range endSeedNodes {
+		for _, reversedPath := range e.traverseFromNode(ctx, endNode, reversed) {
+			paths = append(paths, reversePathResult(reversedPath))
+		}
+	}
+	if whereClause != "" {
+		paths = e.filterPathsByWhere(ctx, paths, matches, whereClause)
+	}
+	return paths, true
 }
 
 func reverseTraversalMatch(match *TraversalMatch) *TraversalMatch {
