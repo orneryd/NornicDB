@@ -70,6 +70,19 @@ func validateGraphFunctionSemanticTypes(expression string, scope matchSemanticSc
 	if !strings.EqualFold(function, "labels") && !strings.EqualFold(function, "type") {
 		return nil
 	}
+	// A literal argument has a static type, so labels('x') / type(1) are
+	// compile-time type errors on every route, as in Neo4j (null is allowed).
+	if typeName := staticLiteralTypeName(argument); typeName != "" {
+		expected := "Node"
+		if strings.EqualFold(function, "type") {
+			expected = "Relationship"
+		}
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidArgumentType",
+			fmt.Sprintf("Type mismatch: expected %s but was %s", expected, typeName),
+		)
+	}
 	variable := simpleSemanticIdentifier(argument)
 	if variable == "" {
 		return nil
@@ -187,4 +200,43 @@ func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, r
 		"InvalidArgumentValue",
 		fmt.Sprintf("%s() received an invalid %T argument", function, value),
 	)
+}
+
+// staticLiteralTypeName returns the Cypher type name of a literal expression
+// (String, Integer, Float, Boolean, List, Map), or "" when the expression is not
+// a non-null literal.
+func staticLiteralTypeName(expression string) string {
+	expression = strings.TrimSpace(expression)
+	for {
+		inner, ok := stripEnclosingExpressionParentheses(expression)
+		if !ok {
+			break
+		}
+		expression = strings.TrimSpace(inner)
+	}
+	if _, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
+		if _, _, _, _, comprehension := parseListComprehension(expression[1 : len(expression)-1]); comprehension {
+			return ""
+		}
+		return "List"
+	}
+	if strings.HasPrefix(expression, "{") && strings.HasSuffix(expression, "}") {
+		return "Map"
+	}
+	value, literal := parseLiteralValueFromComputedRow(expression)
+	if !literal {
+		return ""
+	}
+	switch value.(type) {
+	case string:
+		return "String"
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return "Integer"
+	case float32, float64:
+		return "Float"
+	case bool:
+		return "Boolean"
+	default:
+		return ""
+	}
 }
