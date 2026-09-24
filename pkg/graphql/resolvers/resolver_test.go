@@ -1604,9 +1604,10 @@ func TestResolverNamespacedErrorAndFallbackCoverage(t *testing.T) {
 	})
 
 	t.Run("query search by property covers labels+limit and parse branches", func(t *testing.T) {
+		// A map is not a property value (#583), so meta is a string here.
 		metaNode := createNodeViaCypher(t, resolver, []string{"Person"}, map[string]interface{}{
 			"name": "MetaCarrier",
-			"meta": map[string]interface{}{"value": "Alice"},
+			"meta": "Alice",
 		})
 		require.NotNil(t, metaNode)
 
