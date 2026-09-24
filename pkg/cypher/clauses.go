@@ -18,23 +18,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
-// findStandaloneWithIndex finds the index of a standalone "WITH" keyword
-// that is NOT part of "STARTS WITH" or "ENDS WITH".
+// findStandaloneWithIndex finds the WITH clause keyword; the WITH of
+// STARTS WITH / ENDS WITH is never matched (keywordIndexFrom).
 // Returns -1 if not found.
 func findStandaloneWithIndex(s string) int {
-	opts := defaultKeywordScanOpts()
-
-	searchFrom := 0
-	for {
-		absolutePos := keywordIndexFrom(s, "WITH", searchFrom, opts)
-		if absolutePos == -1 {
-			return -1
-		}
-		if !prevWordEqualsIgnoreCase(s, absolutePos, "STARTS") && !prevWordEqualsIgnoreCase(s, absolutePos, "ENDS") {
-			return absolutePos
-		}
-		searchFrom = absolutePos + 4
-	}
+	return keywordIndexFrom(s, "WITH", 0, defaultKeywordScanOpts())
 }
 
 func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {

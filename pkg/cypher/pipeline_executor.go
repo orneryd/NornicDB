@@ -188,13 +188,6 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 					continue
 				}
 			}
-			// Skip "STARTS WITH" / "ENDS WITH".
-			if k.name == "WITH" {
-				preceding := strings.TrimRight(strings.ToUpper(cypher[:p]), " \t\n\r")
-				if strings.HasSuffix(preceding, "STARTS") || strings.HasSuffix(preceding, "ENDS") {
-					continue
-				}
-			}
 			boundaries = append(boundaries, pipelineBoundary{pos: p, kind: k.kind, name: k.name})
 		}
 	}
@@ -235,6 +228,7 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 	positions := make([]int, 0, 4)
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	inSingle, inDouble := false, false
+	withSearch := isWithKeyword(keyword)
 	for i := 0; i < len(query); i++ {
 		character := query[i]
 		if character == '\\' && (inSingle || inDouble) {
@@ -258,7 +252,9 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 			i+len(keyword) <= len(query) && strings.EqualFold(query[i:i+len(keyword)], keyword) &&
 			(i == 0 || !isAlphaNumericByte(query[i-1])) &&
 			(i+len(keyword) == len(query) || !isAlphaNumericByte(query[i+len(keyword)])) {
-			positions = append(positions, i)
+			if !withSearch || !isOperatorWith(query, i) {
+				positions = append(positions, i)
+			}
 			i += len(keyword) - 1
 			continue
 		}

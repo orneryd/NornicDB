@@ -74,6 +74,108 @@ func topLevelKeywordIndex(s, keyword string) int {
 	return keywordIndexFrom(s, keyword, 0, opts)
 }
 
+// isWithKeyword reports whether a keyword search is for the WITH clause.
+func isWithKeyword(keyword string) bool {
+	ks, ke := trimKeywordWSBounds(keyword)
+	if ke-ks != len("WITH") {
+		return false
+	}
+	for j := 0; j < len("WITH"); j++ {
+		if asciiUpper(keyword[ks+j]) != "WITH"[j] {
+			return false
+		}
+	}
+	return true
+}
+
+// isOperatorWith reports whether the WITH at pos belongs to the STARTS WITH /
+// ENDS WITH string operator rather than starting a WITH clause. Every keyword
+// scanner applies it when searching for WITH (keywordIndexFrom,
+// findKeywordIndexInContext, findAllTopLevelPipelineKeywordPositions), so no
+// caller splits a WHERE at the operator.
+//
+// The operator's STARTS / ENDS follows the end of an expression (an
+// identifier, ')', ']', '}', or a closing quote). A variable named starts /
+// ends before a WITH clause follows a keyword (AS, WITH, WHERE, AND, IN, ...),
+// a comma, an operator symbol, or a '.' (property key), so that WITH is a
+// clause: UNWIND [1] AS starts WITH starts RETURN starts.
+func isOperatorWith(s string, pos int) bool {
+	var wordStart int
+	switch {
+	case prevWordEqualsIgnoreCase(s, pos, "STARTS"):
+		wordStart = prevWordStart(s, pos)
+	case prevWordEqualsIgnoreCase(s, pos, "ENDS"):
+		wordStart = prevWordStart(s, pos)
+	default:
+		return false
+	}
+	i := wordStart - 1
+	for i >= 0 && isASCIISpace(s[i]) {
+		i--
+	}
+	if i < 0 {
+		return false
+	}
+	switch c := s[i]; {
+	case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
+		return true
+	case isIdentByte(c):
+		end := i + 1
+		for i >= 0 && isIdentByte(s[i]) {
+			i--
+		}
+		if i >= 0 && s[i] == '.' {
+			return true // n.name STARTS WITH ...
+		}
+		return !isExpressionBoundaryWord(s[i+1 : end])
+	default:
+		return false
+	}
+}
+
+// prevWordStart returns the start of the word that precedes pos (after
+// skipping whitespace), for a pos where prevWordEqualsIgnoreCase matched.
+func prevWordStart(s string, pos int) int {
+	i := pos - 1
+	for i >= 0 && isASCIISpace(s[i]) {
+		i--
+	}
+	for i >= 0 && isIdentByte(s[i]) {
+		i--
+	}
+	return i + 1
+}
+
+// isExpressionBoundaryWord reports whether word is a keyword after which an
+// expression starts (so a following starts / ends is a variable, not the end
+// of an expression).
+func isExpressionBoundaryWord(word string) bool {
+	switch len(word) {
+	case 2, 3, 4, 5, 6, 8:
+	default:
+		return false
+	}
+	for _, keyword := range [...]string{"AS", "WITH", "RETURN", "WHERE", "BY", "DISTINCT", "AND", "OR", "XOR", "NOT", "IN", "CASE", "WHEN", "THEN", "ELSE", "UNWIND", "SET", "YIELD"} {
+		if len(keyword) != len(word) {
+			continue
+		}
+		match := true
+		for j := 0; j < len(word); j++ {
+			if asciiUpper(word[j]) != keyword[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// keywordIndexFrom finds keyword from `from` on. When the keyword is WITH, the
+// WITH of STARTS WITH / ENDS WITH is skipped (isOperatorWith, checked at each
+// match in both scan loops, so cached results already exclude it).
 func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 	if isDefaultKeywordScanOpts(opts) {
 		return cachedKeywordIndexFromDefault(s, keyword, from)
@@ -233,6 +335,9 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 			continue
 		}
 		if !keywordRightBoundaryOK(s, endPos, opts.Boundary) {
+			continue
+		}
+		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
 			continue
 		}
 		return i
@@ -403,6 +508,9 @@ func keywordIndexFromDefault(s, keyword string, from int) int {
 			continue
 		}
 		if !keywordRightBoundaryOK(s, endPos, keywordBoundaryWord) {
+			continue
+		}
+		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
 			continue
 		}
 		return i

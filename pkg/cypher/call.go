@@ -3599,6 +3599,9 @@ func findKeywordIndexInContext(s, keyword string) int {
 					continue
 				}
 			}
+			if isWithKeyword(keyword) && isOperatorWith(s, i) {
+				continue
+			}
 			return i
 		}
 	}
