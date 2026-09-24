@@ -84,9 +84,24 @@ func validateStaticMapKeys(query string) error {
 // CALL {) rather than a node/relationship pattern property map. It scans
 // backward over whitespace to the nearest identifier token and matches it
 // case-insensitively against the subquery-introducing keywords the grammar
-// allows before a bare '{'. A property map is only ever preceded by a
-// pattern element (identifier, label, ')', or ']'), never by these keywords,
-// so this check is safe to apply at any paren/bracket nesting depth.
+// allows before a bare '{'.
+//
+// A plain word match is not enough: "count", "exists", "collect", and
+// "call" are also legal node-pattern variable names, label/type names, and
+// map keys, e.g. `MATCH (count {bad})`, `MATCH (n:Count {bad})`, or
+// `{call: 1}`. Two further checks narrow the match to genuine
+// subquery-expression position:
+//
+//  1. The keyword must not itself be a quoted or typed identifier: a word
+//     immediately preceded (after whitespace) by ':' is a label/type name,
+//     and one preceded by '`' is a backtick-quoted identifier. Both are
+//     rejected outright regardless of what follows the brace.
+//  2. The brace body must start like a subquery clause -- MATCH, OPTIONAL,
+//     CALL, WITH, UNWIND, RETURN, or a bare pattern element '(' -- which a
+//     genuine pattern property map's key/value body never does. This is
+//     what distinguishes `(EXISTS { MATCH ... })` (a grouped subquery
+//     expression, keyword also preceded by '(') from `(count {bad})` (a
+//     node pattern, invalid property map).
 func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 	index := braceIndex - 1
 	for index >= 0 && isCypherWhitespace(query[index]) {
@@ -102,6 +117,53 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 	}
 	switch strings.ToUpper(query[start:end]) {
 	case "EXISTS", "COUNT", "COLLECT", "CALL":
+	default:
+		return false
+	}
+	precedingToken := start - 1
+	for precedingToken >= 0 && isCypherWhitespace(query[precedingToken]) {
+		precedingToken--
+	}
+	if precedingToken >= 0 {
+		switch query[precedingToken] {
+		case ':', '`':
+			// Label/type name (`:Count {bad}`) or backtick-quoted
+			// identifier (`` `count` {bad} ``), never the keyword.
+			return false
+		}
+	}
+	return subqueryBraceBodyStartsLikeClause(query, braceIndex)
+}
+
+// subqueryBraceBodyStartsLikeClause reports whether the body of the brace at
+// braceIndex opens with a subquery clause keyword (MATCH, OPTIONAL, CALL,
+// WITH, UNWIND, RETURN) or a bare pattern element ('('), which is how every
+// EXISTS/COUNT/COLLECT/CALL subquery body starts. A malformed pattern
+// property map's body is a bare (invalid) key/value list and never starts
+// this way, so this rejects `(count {bad})` and `(n:Count {bad})` even
+// though the preceding-token check above cannot always tell a node-pattern
+// '(' apart from an expression-grouping '(' (both precede the keyword with
+// '(' in `(count {bad})` and `(EXISTS { MATCH ... })`).
+func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
+	index := braceIndex + 1
+	for index < len(query) && isCypherWhitespace(query[index]) {
+		index++
+	}
+	if index >= len(query) {
+		return false
+	}
+	if query[index] == '(' {
+		return true
+	}
+	start := index
+	for index < len(query) && isWordChar(query[index]) {
+		index++
+	}
+	if index == start {
+		return false
+	}
+	switch strings.ToUpper(query[start:index]) {
+	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN":
 		return true
 	default:
 		return false
