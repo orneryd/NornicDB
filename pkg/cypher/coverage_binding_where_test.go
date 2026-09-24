@@ -138,7 +138,7 @@ func TestCompileBindingInPredicate_AllBranches(t *testing.T) {
 		t.Helper()
 		pred, ok := e.compileBindingInPredicate(expr, op, negate)
 		require.True(t, ok, "compileBindingInPredicate failed for %q (op=%q)", expr, op)
-		return pred
+		return pred.predicate()
 	}
 
 	alice := makeBindingNode("n1", map[string]any{"age": int64(30), "role": "admin"})
@@ -225,19 +225,22 @@ func TestMakeCompiledBindingMembershipPredicate_HandlesComparableAndNonComparabl
 	// Mix comparable scalars with a non-comparable []interface{} slice item.
 	items := []interface{}{int64(30), "admin", nil, []interface{}{"sub"}}
 
-	pred := e.makeCompiledBindingMembershipPredicate(resolver, items, false)
+	truth := e.makeCompiledBindingMembershipPredicate(resolver, items)
 
 	alice := makeBindingNode("n1", map[string]any{"age": int64(30)})
 	b := binding{"n": alice}
-	require.True(t, pred(b, nil))
+	require.Equal(t, truthTrue, truth(b, nil))
 
+	// No match, but the list contains null: Cypher gives null (unknown), for
+	// IN and for its negation alike.
 	bob := makeBindingNode("n2", map[string]any{"age": int64(99)})
-	require.False(t, pred(binding{"n": bob}, nil))
+	require.Equal(t, truthUnknown, truth(binding{"n": bob}, nil))
+	require.Equal(t, truthUnknown, notTruth(truth)(binding{"n": bob}, nil))
+	require.Equal(t, truthFalse, notTruth(truth)(b, nil))
 
-	// Negated form
-	predNeg := e.makeCompiledBindingMembershipPredicate(resolver, items, true)
-	require.True(t, predNeg(binding{"n": bob}, nil))
-	require.False(t, predNeg(b, nil))
+	withoutNull := e.makeCompiledBindingMembershipPredicate(resolver, []interface{}{int64(30), "admin"})
+	require.Equal(t, truthFalse, withoutNull(binding{"n": bob}, nil))
+	require.Equal(t, truthTrue, notTruth(withoutNull)(binding{"n": bob}, nil))
 }
 
 // ============================================================================

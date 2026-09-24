@@ -194,6 +194,14 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 func (e *StorageExecutor) evaluateInOperator(ctx context.Context, leftExpr, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
 	value := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
 	listValue := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+	return cypherMembership(value, listValue)
+}
+
+// cypherMembership is Cypher's three-valued `value IN list`: nil for a null
+// list, false for an empty list, nil for a null value, true on a match, and
+// nil when the list holds an element whose comparison is unknown (null) and
+// nothing matched. ok is false when listValue is not a list.
+func cypherMembership(value, listValue interface{}) (interface{}, bool) {
 	if listValue == nil {
 		return nil, true
 	}

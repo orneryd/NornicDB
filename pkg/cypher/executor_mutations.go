@@ -3514,6 +3514,11 @@ func (e *StorageExecutor) evaluateInnerWhere(ctx context.Context, node *storage.
 	// Handle NOT prefix
 	if strings.HasPrefix(upperWhere, "NOT ") {
 		inner := strings.TrimSpace(whereClause[4:])
+		if truth, ok := inPredicateTruth(inner, func(expr string) interface{} {
+			return e.evaluateExpressionWithContext(ctx, expr, map[string]*storage.Node{variable: node}, nil)
+		}); ok {
+			return truth == truthFalse
+		}
 		return !e.evaluateInnerWhere(ctx, node, variable, inner)
 	}
 

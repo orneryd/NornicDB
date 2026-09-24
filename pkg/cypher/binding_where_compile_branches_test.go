@@ -104,8 +104,8 @@ func TestBindingWhereResolverAndLiteralListHelpers(t *testing.T) {
 
 	pred := exec.makeCompiledBindingMembershipPredicate(func(binding, map[string]interface{}) (interface{}, bool) {
 		return "x", true
-	}, []interface{}{"x", []interface{}{1}}, false)
-	require.True(t, pred(bind, nil))
+	}, []interface{}{"x", []interface{}{1}})
+	require.True(t, pred.predicate()(bind, nil))
 
 	require.True(t, normalizeBindingWhereClause("a\nAND\tb") == "a AND b")
 	p1 := exec.getCompiledBindingWhere(ctx, "a.age = 1")

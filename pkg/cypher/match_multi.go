@@ -2039,10 +2039,6 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 	if clause == "" {
 		return true
 	}
-	if hasPrefixFold(clause, "NOT ") {
-		return !e.evaluateWhereForContext(ctx, strings.TrimSpace(clause[4:]), nodes)
-	}
-
 	// Handle top-level conjunction/disjunction explicitly so each side can use
 	// the single-variable WHERE evaluator (supports relationship predicates).
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
@@ -2054,6 +2050,16 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 		left := strings.TrimSpace(clause[:andIdx])
 		right := strings.TrimSpace(clause[andIdx+5:])
 		return e.evaluateWhereForContext(ctx, left, nodes) && e.evaluateWhereForContext(ctx, right, nodes)
+	}
+	// NOT binds tighter than AND / OR, so it is handled after the top-level
+	// split: NOT a AND b is (NOT a) AND b, not NOT (a AND b).
+	if hasPrefixFold(clause, "NOT ") {
+		if truth, ok := inPredicateTruth(clause[4:], func(expr string) interface{} {
+			return e.evaluateExpressionWithContext(ctx, expr, nodes, nil)
+		}); ok {
+			return truth == truthFalse
+		}
+		return !e.evaluateWhereForContext(ctx, strings.TrimSpace(clause[4:]), nodes)
 	}
 
 	if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, clause, nodes); recognized {

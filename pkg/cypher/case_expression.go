@@ -297,6 +297,11 @@ func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition strin
 	// Handle NOT prefix
 	if strings.HasPrefix(upper, "NOT ") {
 		inner := strings.TrimSpace(condition[4:])
+		if truth, ok := inPredicateTruth(inner, func(expr string) interface{} {
+			return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+		}); ok {
+			return truth == truthFalse
+		}
 		return !e.evaluateCondition(ctx, inner, nodes, rels)
 	}
 

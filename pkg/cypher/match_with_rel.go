@@ -1272,6 +1272,11 @@ func (e *StorageExecutor) evaluateConditionFromValues(condition string, values m
 	}
 
 	if strings.HasPrefix(upper, "NOT ") {
+		if truth, ok := inPredicateTruth(condition[4:], func(expr string) interface{} {
+			return e.evaluateExpressionFromValues(expr, values)
+		}); ok {
+			return truth == truthFalse
+		}
 		return !e.evaluateConditionFromValues(strings.TrimSpace(condition[4:]), values)
 	}
 

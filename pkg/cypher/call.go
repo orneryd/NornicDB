@@ -1645,6 +1645,19 @@ func (e *StorageExecutor) tryCompileCallTailValueWhere(ctx context.Context, wher
 		}, true
 	}
 	if hasPrefixFoldASCII(clause, "NOT ") {
+		innerClause := strings.TrimSpace(clause[4:])
+		for strings.HasPrefix(innerClause, "(") && strings.HasSuffix(innerClause, ")") && findMatchingParen(innerClause, 0) == len(innerClause)-1 {
+			innerClause = strings.TrimSpace(innerClause[1 : len(innerClause)-1])
+		}
+		// NOT over a membership test: holds only when the membership is known
+		// false, so a null membership is not turned into true.
+		for _, op := range []string{" NOT IN ", " IN "} {
+			if truth, ok := e.compileCallTailValueInTruth(innerClause, op, op == " NOT IN "); ok {
+				return func(values map[string]interface{}, params map[string]interface{}) bool {
+					return truth(values, params) == truthFalse
+				}, true
+			}
+		}
 		inner, ok := e.tryCompileCallTailValueWhere(ctx, clause[4:])
 		if !ok {
 			return nil, false
@@ -2029,7 +2042,23 @@ func (e *StorageExecutor) compileCallTailValueStringPredicate(clause, op string)
 	}, true
 }
 
+// compileCallTailValueInPredicate compiles a CALL-tail `x IN list` /
+// `x NOT IN list` WHERE leaf; it holds only when compileCallTailValueInTruth is
+// known true.
 func (e *StorageExecutor) compileCallTailValueInPredicate(clause, op string, negate bool) (callTailValuePredicate, bool) {
+	truth, ok := e.compileCallTailValueInTruth(clause, op, negate)
+	if !ok {
+		return nil, false
+	}
+	return func(values map[string]interface{}, params map[string]interface{}) bool {
+		return truth(values, params) == truthTrue
+	}, true
+}
+
+// compileCallTailValueInTruth is the three-valued CALL-tail membership test:
+// an unresolved or null x, an unresolved, null or non-list right side, or a list
+// holding null without a match give truthUnknown, which negate leaves unknown.
+func (e *StorageExecutor) compileCallTailValueInTruth(clause, op string, negate bool) (func(map[string]interface{}, map[string]interface{}) cypherTruth, bool) {
 	idx := findTopLevelKeyword(clause, op)
 	if idx <= 0 {
 		return nil, false
@@ -2039,43 +2068,42 @@ func (e *StorageExecutor) compileCallTailValueInPredicate(clause, op string, neg
 		return nil, false
 	}
 	rightExpr := strings.TrimSpace(clause[idx+len(op):])
+	finish := func(truth cypherTruth) cypherTruth {
+		if negate {
+			return truth.not()
+		}
+		return truth
+	}
 	if literalItems, ok := parseBindingLiteralList(rightExpr); ok {
 		comparableSet, nonComparable := buildComparableMembershipIndex(literalItems)
-		return func(values map[string]interface{}, params map[string]interface{}) bool {
+		hasNull := listHasNull(literalItems)
+		return func(values map[string]interface{}, params map[string]interface{}) cypherTruth {
 			leftValue, ok := left(values, params)
 			if !ok {
-				return false
+				return truthUnknown
 			}
-			matched := evaluateComparableMembership(leftValue, comparableSet, nonComparable, e.compareEqual)
-			if negate {
-				return !matched
-			}
-			return matched
+			return finish(membershipTruth(leftValue, comparableSet, nonComparable, hasNull, e.compareEqual))
 		}, true
 	}
 	right, ok := e.compileCallTailValueResolver(rightExpr)
 	if !ok {
 		return nil, false
 	}
-	return func(values map[string]interface{}, params map[string]interface{}) bool {
+	return func(values map[string]interface{}, params map[string]interface{}) cypherTruth {
 		leftValue, ok := left(values, params)
 		if !ok {
-			return false
+			return truthUnknown
 		}
 		rightValue, ok := right(values, params)
-		if !ok {
-			return negate
+		if !ok || rightValue == nil {
+			return truthUnknown
 		}
 		items, ok := toInterfaceSlice(rightValue)
 		if !ok {
-			return negate
+			return truthUnknown
 		}
 		comparableSet, nonComparable := buildComparableMembershipIndex(items)
-		matched := evaluateComparableMembership(leftValue, comparableSet, nonComparable, e.compareEqual)
-		if negate {
-			return !matched
-		}
-		return matched
+		return finish(membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items), e.compareEqual))
 	}, true
 }
 

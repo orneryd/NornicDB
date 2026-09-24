@@ -244,7 +244,7 @@ func (e *StorageExecutor) evaluateStringOp(ctx context.Context, node *storage.No
 	return true
 }
 
-// evaluateInOp handles IN [list] operator.
+// evaluateInOp handles the IN [list] / NOT IN [list] operator for a single node.
 //
 // # Parameters
 //
@@ -254,13 +254,22 @@ func (e *StorageExecutor) evaluateStringOp(ctx context.Context, node *storage.No
 //
 // # Returns
 //
-//   - true if the property value is in the list
+//   - true only if the membership test is known true (see evaluateInOpTruth;
+//     a null result drops the row like false)
 //
 // # Example
 //
 //	evaluateInOp(node, "n", "n.status IN ['active', 'pending']")
 //	// Returns true if node.Properties["status"] is "active" or "pending"
 func (e *StorageExecutor) evaluateInOp(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
+	return e.evaluateInOpTruth(ctx, node, variable, whereClause) == truthTrue
+}
+
+// evaluateInOpTruth evaluates a single-node `x IN list` / `x NOT IN list`
+// WHERE leaf with the same three-valued membership as the expression
+// evaluator (cypherMembership): null x, a null list, or a list that holds null
+// without a match give unknown, and NOT IN of unknown stays unknown.
+func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.Node, variable, whereClause string) cypherTruth {
 	upperClause := strings.ToUpper(whereClause)
 
 	// Cypher: `<expr> NOT IN <list>` must split on " NOT IN ", not on
@@ -277,7 +286,7 @@ func (e *StorageExecutor) evaluateInOp(ctx context.Context, node *storage.Node, 
 	} else {
 		splitIdx = strings.Index(upperClause, " IN ")
 		if splitIdx < 0 {
-			return true
+			return truthTrue
 		}
 	}
 	inIdx := splitIdx
@@ -290,7 +299,7 @@ func (e *StorageExecutor) evaluateInOp(ctx context.Context, node *storage.Node, 
 	leftRefsVar := containsIdentifierToken(left, variable)
 	rightRefsVar := containsIdentifierToken(right, variable)
 	if !leftRefsVar && !rightRefsVar {
-		return true
+		return truthTrue
 	}
 
 	nodes := map[string]*storage.Node{
@@ -301,12 +310,6 @@ func (e *StorageExecutor) evaluateInOp(ctx context.Context, node *storage.Node, 
 	//   n.prop IN ['a', 'b']
 	//   'a' IN n.listProp
 	value := e.evaluateExpressionWithContext(ctx, left, nodes, nil)
-	if value == nil {
-		// Neo4j semantics: NULL IN list yields NULL → false in WHERE,
-		// for both IN and NOT IN (NOT NULL is also NULL → false).
-		return false
-	}
-
 	rightIdent := strings.TrimSpace(right)
 	var listVal interface{}
 	if isValidIdentifier(rightIdent) {
@@ -317,22 +320,18 @@ func (e *StorageExecutor) evaluateInOp(ctx context.Context, node *storage.Node, 
 	if listVal == nil {
 		listVal = e.evaluateExpressionWithContext(ctx, right, nodes, nil)
 	}
-	items, ok := toInterfaceSlice(listVal)
+	membership, ok := cypherMembership(value, listVal)
 	if !ok {
-		return false
+		return truthUnknown
 	}
-
-	matched := false
-	for _, item := range items {
-		if e.compareEqual(value, item) {
-			matched = true
-			break
-		}
+	truth := truthUnknown
+	if matched, known := membership.(bool); known {
+		truth = truthOf(matched)
 	}
 	if negate {
-		return !matched
+		return truth.not()
 	}
-	return matched
+	return truth
 }
 
 func toInterfaceSlice(v interface{}) ([]interface{}, bool) {

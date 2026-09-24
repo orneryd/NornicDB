@@ -1454,7 +1454,11 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 		return err == nil && matched
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " NOT IN ", true, true); ok {
-		return !e.evaluateRowMembership(left, right, values)
+		// x NOT IN list holds only when the membership is known false; a null
+		// membership (null x, null list, or a null element without a match)
+		// drops the row.
+		membership, known := e.evaluateRowMembershipValue(left, right, values)
+		return known && membership == false
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " IN ", true, true); ok {
 		return e.evaluateRowMembership(left, right, values)

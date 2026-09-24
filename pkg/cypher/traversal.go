@@ -2546,6 +2546,11 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 	// Handle NOT prefix (before operators so "->" in NOT (n)-[:X]->() is not parsed as ">")
 	if strings.HasPrefix(upperClause, "NOT ") {
 		inner := strings.TrimSpace(whereClause[4:])
+		if truth, ok := inPredicateTruth(inner, func(expr string) interface{} {
+			return e.evaluateExpressionWithPathContext(ctx, expr, pathCtx)
+		}); ok {
+			return truth == truthFalse
+		}
 		return !e.evaluateWhereOnPath(ctx, inner, pathCtx)
 	}
 

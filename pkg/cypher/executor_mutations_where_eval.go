@@ -14,7 +14,8 @@ type simpleWhereCacheKey struct {
 	clause   string
 }
 
-var compiledSimpleWhereCache sync.Map // map[simpleWhereCacheKey]func(*storage.Node) bool
+var compiledSimpleWhereCache sync.Map      // map[simpleWhereCacheKey]func(*storage.Node) bool
+var compiledSimpleWhereTruthCache sync.Map // map[simpleWhereCacheKey]func(*storage.Node) cypherTruth
 
 func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
 	if fastIN, ok := e.buildBoundInFastFilter(variable, whereClause); ok {
@@ -122,10 +123,44 @@ func (e *StorageExecutor) compileNodeWhereFilter(ctx context.Context, variable, 
 	}
 }
 
+// compileSimpleWhere compiles a single-node WHERE clause into a filter that is
+// true only when the clause is known true (Cypher three-valued logic).
 func (e *StorageExecutor) compileSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
+	truth, ok := e.compileSimpleWhereTruth(ctx, variable, whereClause)
+	if !ok {
+		return nil, false
+	}
+	return func(node *storage.Node) bool { return truth(node) == truthTrue }, true
+}
+
+// getCompiledSimpleWhereTruth is the three-valued counterpart of
+// getCompiledSimpleWhere, with the same caching rules.
+func (e *StorageExecutor) getCompiledSimpleWhereTruth(ctx context.Context, variable, whereClause string) (func(*storage.Node) cypherTruth, bool) {
+	trimmedClause := strings.TrimSpace(whereClause)
+	if strings.Contains(trimmedClause, "$") || len(e.fabricRecordBindings) > 0 {
+		return e.compileSimpleWhereTruth(ctx, variable, trimmedClause)
+	}
+	key := simpleWhereCacheKey{variable: variable, clause: trimmedClause}
+	if cached, ok := compiledSimpleWhereTruthCache.Load(key); ok {
+		if fn, okFn := cached.(func(*storage.Node) cypherTruth); okFn {
+			return fn, true
+		}
+	}
+	fn, ok := e.compileSimpleWhereTruth(ctx, variable, trimmedClause)
+	if ok {
+		compiledSimpleWhereTruthCache.Store(key, fn)
+	}
+	return fn, ok
+}
+
+// compileSimpleWhereTruth compiles the single-node WHERE fast path with Cypher's
+// three-valued logic: AND / OR / NOT combine true, false and unknown (null),
+// and `n.p IN list` is unknown for a missing / null property, a null list, or a
+// list that holds null without a match. The other leaves are two-valued.
+func (e *StorageExecutor) compileSimpleWhereTruth(ctx context.Context, variable, whereClause string) (func(*storage.Node) cypherTruth, bool) {
 	whereClause = strings.TrimSpace(whereClause)
 	if whereClause == "" {
-		return func(*storage.Node) bool { return true }, true
+		return func(*storage.Node) cypherTruth { return truthTrue }, true
 	}
 
 	if strings.HasPrefix(whereClause, "(") && strings.HasSuffix(whereClause, ")") {
@@ -144,16 +179,16 @@ func (e *StorageExecutor) compileSimpleWhere(ctx context.Context, variable, wher
 			}
 		}
 		if outer {
-			return e.compileSimpleWhere(ctx, variable, strings.TrimSpace(whereClause[1:len(whereClause)-1]))
+			return e.compileSimpleWhereTruth(ctx, variable, strings.TrimSpace(whereClause[1:len(whereClause)-1]))
 		}
 	}
 
 	if andIdx := findTopLevelKeyword(whereClause, " AND "); andIdx > 0 {
-		left, okLeft := e.compileSimpleWhere(ctx, variable, strings.TrimSpace(whereClause[:andIdx]))
-		right, okRight := e.compileSimpleWhere(ctx, variable, strings.TrimSpace(whereClause[andIdx+5:]))
+		left, okLeft := e.compileSimpleWhereTruth(ctx, variable, strings.TrimSpace(whereClause[:andIdx]))
+		right, okRight := e.compileSimpleWhereTruth(ctx, variable, strings.TrimSpace(whereClause[andIdx+5:]))
 		if okLeft && okRight {
-			return func(node *storage.Node) bool {
-				return left(node) && right(node)
+			return func(node *storage.Node) cypherTruth {
+				return truthAndLazy(left(node), func() cypherTruth { return right(node) })
 			}, true
 		}
 		return nil, false
@@ -163,22 +198,22 @@ func (e *StorageExecutor) compileSimpleWhere(ctx context.Context, variable, wher
 		leftExpr := strings.TrimSpace(whereClause[:orIdx])
 		rightExpr := strings.TrimSpace(whereClause[orIdx+4:])
 		if isConstantTrueEquality(leftExpr) || isConstantTrueEquality(rightExpr) {
-			return func(*storage.Node) bool { return true }, true
+			return func(*storage.Node) cypherTruth { return truthTrue }, true
 		}
-		left, okLeft := e.compileSimpleWhere(ctx, variable, leftExpr)
-		right, okRight := e.compileSimpleWhere(ctx, variable, rightExpr)
+		left, okLeft := e.compileSimpleWhereTruth(ctx, variable, leftExpr)
+		right, okRight := e.compileSimpleWhereTruth(ctx, variable, rightExpr)
 		if okLeft && okRight {
-			return func(node *storage.Node) bool {
-				return left(node) || right(node)
+			return func(node *storage.Node) cypherTruth {
+				return truthOrLazy(left(node), func() cypherTruth { return right(node) })
 			}, true
 		}
 		return nil, false
 	}
 
 	if hasPrefixFold(whereClause, "NOT ") {
-		inner, ok := e.compileSimpleWhere(ctx, variable, strings.TrimSpace(whereClause[4:]))
+		inner, ok := e.compileSimpleWhereTruth(ctx, variable, strings.TrimSpace(whereClause[4:]))
 		if ok {
-			return func(node *storage.Node) bool { return !inner(node) }, true
+			return func(node *storage.Node) cypherTruth { return inner(node).not() }, true
 		}
 		return nil, false
 	}
@@ -189,17 +224,65 @@ func (e *StorageExecutor) compileSimpleWhere(ctx context.Context, variable, wher
 		return nil, false
 	}
 
+	// Simple IN fast-path: <var>.<prop> IN [<literal-list>] | $param | binding.
+	// Keeps semantics for the common membership predicate while avoiding
+	// per-row expression parsing/evaluation.
+	if inIdx := findTopLevelKeyword(whereClause, " IN "); inIdx > 0 {
+		left := strings.TrimSpace(whereClause[:inIdx])
+		right := strings.TrimSpace(whereClause[inIdx+4:])
+		varPrefix := variable + "."
+		if strings.HasPrefix(left, varPrefix) {
+			prop := strings.TrimSpace(left[len(varPrefix):])
+			if isValidIdentifier(prop) {
+				var listVal interface{}
+				if isValidIdentifier(right) && len(e.fabricRecordBindings) > 0 {
+					listVal = e.fabricRecordBindings[right]
+				} else {
+					listVal = e.resolveSimpleWhereValue(ctx, right)
+				}
+				if listVal == nil {
+					return func(*storage.Node) cypherTruth { return truthUnknown }, true
+				}
+				if items, ok := toInterfaceSlice(listVal); ok {
+					comparableSet, nonComparable := buildComparableMembershipIndex(items)
+					hasNull := listHasNull(items)
+					return func(node *storage.Node) cypherTruth {
+						actual, _ := getNodePropertyValue(node, prop)
+						return membershipTruth(actual, comparableSet, nonComparable, hasNull, e.compareEqual)
+					}, true
+				}
+			}
+		}
+	}
+
+	leaf, ok := e.compileSimpleWhereLeaf(ctx, variable, whereClause)
+	if !ok {
+		return nil, false
+	}
+	return func(node *storage.Node) cypherTruth { return truthOf(leaf(node)) }, true
+}
+
+// resolveSimpleWhereValue resolves the right-hand side of a single-node WHERE
+// fast-path predicate: a $param (typed), a $param path, or a literal.
+func (e *StorageExecutor) resolveSimpleWhereValue(ctx context.Context, raw string) interface{} {
+	if v, ok := resolveDirectParamRef(ctx, raw); ok {
+		return v
+	}
+	if v, ok := resolveParamPathRef(ctx, raw); ok {
+		return normalizePropValue(v)
+	}
+	return e.parseValue(ctx, raw)
+}
+
+// compileSimpleWhereLeaf compiles the two-valued single-node WHERE leaves
+// (labels, string operators, IS [NOT] NULL, comparisons) for
+// compileSimpleWhereTruth.
+func (e *StorageExecutor) compileSimpleWhereLeaf(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
 	getProp := func(node *storage.Node, propName string) (any, bool) {
 		return getNodePropertyValue(node, propName)
 	}
 	resolveValue := func(raw string) interface{} {
-		if v, ok := resolveDirectParamRef(ctx, raw); ok {
-			return v
-		}
-		if v, ok := resolveParamPathRef(ctx, raw); ok {
-			return normalizePropValue(v)
-		}
-		return e.parseValue(ctx, raw)
+		return e.resolveSimpleWhereValue(ctx, raw)
 	}
 
 	const prefixSep = "."
@@ -271,35 +354,6 @@ func (e *StorageExecutor) compileSimpleWhere(ctx context.Context, variable, wher
 	}
 	if fn, ok := compileStringOp("ENDS WITH"); ok {
 		return fn, true
-	}
-
-	// Simple IN fast-path: <var>.<prop> IN [<literal-list>]
-	// Keeps semantics for the common membership predicate while avoiding
-	// per-row expression parsing/evaluation.
-	if inIdx := findTopLevelKeyword(whereClause, " IN "); inIdx > 0 {
-		left := strings.TrimSpace(whereClause[:inIdx])
-		right := strings.TrimSpace(whereClause[inIdx+4:])
-		if strings.HasPrefix(left, varPrefix) {
-			prop := strings.TrimSpace(left[len(varPrefix):])
-			if isValidIdentifier(prop) {
-				var listVal interface{}
-				if isValidIdentifier(right) && len(e.fabricRecordBindings) > 0 {
-					listVal = e.fabricRecordBindings[right]
-				} else {
-					listVal = resolveValue(right)
-				}
-				if items, ok := toInterfaceSlice(listVal); ok {
-					comparableSet, nonComparable := buildComparableMembershipIndex(items)
-					return func(node *storage.Node) bool {
-						actual, exists := getProp(node, prop)
-						if !exists || actual == nil {
-							return false
-						}
-						return evaluateComparableMembership(actual, comparableSet, nonComparable, e.compareEqual)
-					}, true
-				}
-			}
-		}
 	}
 
 	if hasSuffixFold(whereClause, " IS NOT NULL") {
@@ -418,9 +472,22 @@ func (e *StorageExecutor) compileSimpleWhere(ctx context.Context, variable, wher
 	return nil, false
 }
 
+// evaluateWhere reports whether a single-node WHERE clause holds, i.e. is
+// known true under Cypher's three-valued logic (null and false both drop the
+// row).
 func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
+	return e.evaluateWhereTruth(ctx, node, variable, whereClause) == truthTrue
+}
+
+// evaluateWhereTruth evaluates a single-node WHERE clause with Cypher's
+// three-valued logic: AND / OR / NOT combine true, false and unknown (null),
+// and IN is unknown for a null operand, a null list, or a list that holds null
+// without a match, so NOT (x IN null) stays unknown instead of becoming true.
+// Leaves that cannot be unknown here are evaluated two-valued; everything from
+// IS NULL onward is handled by evaluateWhereLeaf.
+func (e *StorageExecutor) evaluateWhereTruth(ctx context.Context, node *storage.Node, variable, whereClause string) cypherTruth {
 	whereClause = strings.TrimSpace(whereClause)
-	if compiled, ok := e.getCompiledSimpleWhere(ctx, variable, whereClause); ok {
+	if compiled, ok := e.getCompiledSimpleWhereTruth(ctx, variable, whereClause); ok {
 		return compiled(node)
 	}
 
@@ -442,7 +509,7 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 			}
 		}
 		if isOuterParen {
-			return e.evaluateWhere(ctx, node, variable, whereClause[1:len(whereClause)-1])
+			return e.evaluateWhereTruth(ctx, node, variable, whereClause[1:len(whereClause)-1])
 		}
 	}
 
@@ -451,7 +518,9 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 	if andIdx := findTopLevelKeyword(whereClause, " AND "); andIdx > 0 {
 		left := strings.TrimSpace(whereClause[:andIdx])
 		right := strings.TrimSpace(whereClause[andIdx+5:])
-		return e.evaluateWhere(ctx, node, variable, left) && e.evaluateWhere(ctx, node, variable, right)
+		return truthAndLazy(e.evaluateWhereTruth(ctx, node, variable, left), func() cypherTruth {
+			return e.evaluateWhereTruth(ctx, node, variable, right)
+		})
 	}
 
 	// Handle OR at top level only.
@@ -464,31 +533,33 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 		// Fast tautology check: if either branch is a constant-true equality
 		// (e.g. '' = '' or 'x' = 'x'), the whole OR is true.
 		if isConstantTrueEquality(left) || isConstantTrueEquality(right) {
-			return true
+			return truthTrue
 		}
-		return e.evaluateWhere(ctx, node, variable, left) || e.evaluateWhere(ctx, node, variable, right)
+		return truthOrLazy(e.evaluateWhereTruth(ctx, node, variable, left), func() cypherTruth {
+			return e.evaluateWhereTruth(ctx, node, variable, right)
+		})
 	}
 
 	// Handle NOT EXISTS { } subquery FIRST (before other NOT handling)
 	// Uses regex for whitespace-flexible matching
 	if hasSubqueryPattern(whereClause, notExistsSubqueryRe) {
-		return e.evaluateNotExistsSubquery(ctx, node, variable, whereClause)
+		return truthOf(e.evaluateNotExistsSubquery(ctx, node, variable, whereClause))
 	}
 
 	// Handle EXISTS { } subquery (whitespace-flexible)
 	if hasSubqueryPattern(whereClause, existsSubqueryRe) {
-		return e.evaluateExistsSubquery(ctx, node, variable, whereClause)
+		return truthOf(e.evaluateExistsSubquery(ctx, node, variable, whereClause))
 	}
 
 	// Handle COUNT { } subquery with comparison (whitespace-flexible)
 	if hasSubqueryPattern(whereClause, countSubqueryRe) {
-		return e.evaluateCountSubqueryComparison(node, variable, whereClause)
+		return truthOf(e.evaluateCountSubqueryComparison(node, variable, whereClause))
 	}
 
 	// Handle NOT prefix
 	if hasPrefixFold(whereClause, "NOT ") {
 		inner := strings.TrimSpace(whereClause[4:])
-		return !e.evaluateWhere(ctx, node, variable, inner)
+		return e.evaluateWhereTruth(ctx, node, variable, inner).not()
 	}
 
 	// Handle label check: n:Label or variable:Label
@@ -503,27 +574,34 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 			if labelVar == variable {
 				for _, l := range node.Labels {
 					if l == labelName {
-						return true
+						return truthTrue
 					}
 				}
-				return false
+				return truthFalse
 			}
 		}
 	}
 
 	// Handle string operators (case-insensitive check)
 	if containsFold(whereClause, " CONTAINS ") {
-		return e.evaluateStringOp(ctx, node, variable, whereClause, "CONTAINS")
+		return truthOf(e.evaluateStringOp(ctx, node, variable, whereClause, "CONTAINS"))
 	}
 	if containsFold(whereClause, " STARTS WITH ") {
-		return e.evaluateStringOp(ctx, node, variable, whereClause, "STARTS WITH")
+		return truthOf(e.evaluateStringOp(ctx, node, variable, whereClause, "STARTS WITH"))
 	}
 	if containsFold(whereClause, " ENDS WITH ") {
-		return e.evaluateStringOp(ctx, node, variable, whereClause, "ENDS WITH")
+		return truthOf(e.evaluateStringOp(ctx, node, variable, whereClause, "ENDS WITH"))
 	}
 	if containsFold(whereClause, " IN ") {
-		return e.evaluateInOp(ctx, node, variable, whereClause)
+		return e.evaluateInOpTruth(ctx, node, variable, whereClause)
 	}
+	return truthOf(e.evaluateWhereLeaf(ctx, node, variable, whereClause))
+}
+
+// evaluateWhereLeaf evaluates the two-valued single-node WHERE leaves (IS NULL,
+// relationship patterns, comparisons, boolean expressions). It is reached only
+// through evaluateWhereTruth, after AND / OR / NOT and IN have been handled.
+func (e *StorageExecutor) evaluateWhereLeaf(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
 	if containsFold(whereClause, " IS NULL") {
 		return e.evaluateIsNull(ctx, node, variable, whereClause, false)
 	}

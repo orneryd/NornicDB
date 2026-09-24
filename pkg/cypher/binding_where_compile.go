@@ -12,8 +12,104 @@ import (
 
 type bindingWherePredicate func(binding, map[string]interface{}) bool
 
-var compiledBindingWhereCache sync.Map          // map[string]bindingWherePredicate
-var compiledSupportedBindingWhereCache sync.Map // map[string]bindingWherePredicate
+// cypherTruth is a Cypher three-valued boolean. A WHERE keeps a row only when
+// its predicate is truthTrue; truthUnknown is Cypher's null (for example
+// `x IN null`, or `2 IN [1, null]`). Combining predicates with NOT / AND / OR
+// must keep unknown distinct from false: NOT unknown is unknown, not true.
+type cypherTruth uint8
+
+const (
+	truthFalse cypherTruth = iota
+	truthTrue
+	truthUnknown
+)
+
+func truthOf(value bool) cypherTruth {
+	if value {
+		return truthTrue
+	}
+	return truthFalse
+}
+
+func (t cypherTruth) not() cypherTruth {
+	switch t {
+	case truthTrue:
+		return truthFalse
+	case truthFalse:
+		return truthTrue
+	default:
+		return truthUnknown
+	}
+}
+
+// truthAndLazy is Kleene AND; right is evaluated only when left is not false.
+func truthAndLazy(left cypherTruth, right func() cypherTruth) cypherTruth {
+	if left == truthFalse {
+		return truthFalse
+	}
+	r := right()
+	if r == truthFalse {
+		return truthFalse
+	}
+	if left == truthTrue && r == truthTrue {
+		return truthTrue
+	}
+	return truthUnknown
+}
+
+// truthOrLazy is Kleene OR; right is evaluated only when left is not true.
+func truthOrLazy(left cypherTruth, right func() cypherTruth) cypherTruth {
+	if left == truthTrue {
+		return truthTrue
+	}
+	r := right()
+	if r == truthTrue {
+		return truthTrue
+	}
+	if left == truthFalse && r == truthFalse {
+		return truthFalse
+	}
+	return truthUnknown
+}
+
+// bindingWhereTruth is the three-valued form of a compiled binding predicate.
+// Leaf predicates that can meet null (IN / NOT IN) return truthUnknown; the
+// others report their boolean result as known.
+type bindingWhereTruth func(binding, map[string]interface{}) cypherTruth
+
+func (t bindingWhereTruth) predicate() bindingWherePredicate {
+	return func(b binding, params map[string]interface{}) bool {
+		return t(b, params) == truthTrue
+	}
+}
+
+func liftBindingPredicate(predicate bindingWherePredicate) bindingWhereTruth {
+	return func(b binding, params map[string]interface{}) cypherTruth {
+		return truthOf(predicate(b, params))
+	}
+}
+
+func notTruth(inner bindingWhereTruth) bindingWhereTruth {
+	return func(b binding, params map[string]interface{}) cypherTruth {
+		return inner(b, params).not()
+	}
+}
+
+func andTruth(left, right bindingWhereTruth) bindingWhereTruth {
+	return func(b binding, params map[string]interface{}) cypherTruth {
+		return truthAndLazy(left(b, params), func() cypherTruth { return right(b, params) })
+	}
+}
+
+func orTruth(left, right bindingWhereTruth) bindingWhereTruth {
+	return func(b binding, params map[string]interface{}) cypherTruth {
+		return truthOrLazy(left(b, params), func() cypherTruth { return right(b, params) })
+	}
+}
+
+var compiledBindingWhereCache sync.Map               // map[string]bindingWherePredicate
+var compiledSupportedBindingWhereCache sync.Map      // map[string]bindingWherePredicate
+var compiledSupportedBindingWhereTruthCache sync.Map // map[string]bindingWhereTruth
 
 func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {
 	key := normalizeBindingWhereClause(whereClause)
@@ -58,6 +154,14 @@ func (e *StorageExecutor) compileBindingWhere(ctx context.Context, whereClause s
 // executor's graph. These closures intentionally remain executor-local and
 // therefore never enter compiledBindingWhereCache.
 func (e *StorageExecutor) tryCompileExecutorBindingWhere(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
+	truth, ok := e.tryCompileExecutorBindingWhereTruth(ctx, whereClause)
+	if !ok {
+		return nil, false
+	}
+	return truth.predicate(), true
+}
+
+func (e *StorageExecutor) tryCompileExecutorBindingWhereTruth(ctx context.Context, whereClause string) (bindingWhereTruth, bool) {
 	clause := strings.TrimSpace(whereClause)
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
 		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:orIdx])
@@ -65,9 +169,7 @@ func (e *StorageExecutor) tryCompileExecutorBindingWhere(ctx context.Context, wh
 		if !leftOK || !rightOK {
 			return nil, false
 		}
-		return func(b binding, params map[string]interface{}) bool {
-			return left(b, params) || right(b, params)
-		}, true
+		return orTruth(left, right), true
 	}
 	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
 		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:andIdx])
@@ -75,35 +177,31 @@ func (e *StorageExecutor) tryCompileExecutorBindingWhere(ctx context.Context, wh
 		if !leftOK || !rightOK {
 			return nil, false
 		}
-		return func(b binding, params map[string]interface{}) bool {
-			return left(b, params) && right(b, params)
-		}, true
+		return andTruth(left, right), true
 	}
 	if hasPrefixFold(clause, "NOT ") {
 		inner, ok := e.compileExecutorBindingWhereBranch(ctx, clause[4:])
 		if !ok {
 			return nil, false
 		}
-		return func(b binding, params map[string]interface{}) bool {
-			return !inner(b, params)
-		}, true
+		return notTruth(inner), true
 	}
 	match, ok := e.parseBoundRelationshipPattern(ctx, clause)
 	if !ok {
 		return nil, false
 	}
-	return func(b binding, params map[string]interface{}) bool {
+	return func(b binding, params map[string]interface{}) cypherTruth {
 		_ = params
-		return e.evaluateParsedBoundRelationshipPattern(ctx, match, map[string]*storage.Node(b))
+		return truthOf(e.evaluateParsedBoundRelationshipPattern(ctx, match, map[string]*storage.Node(b)))
 	}, true
 }
 
-func (e *StorageExecutor) compileExecutorBindingWhereBranch(ctx context.Context, clause string) (bindingWherePredicate, bool) {
+func (e *StorageExecutor) compileExecutorBindingWhereBranch(ctx context.Context, clause string) (bindingWhereTruth, bool) {
 	clause = strings.TrimSpace(clause)
-	if predicate, ok := e.tryCompileBindingWhere(ctx, clause); ok {
-		return predicate, true
+	if truth, ok := e.tryCompileBindingWhereTruth(ctx, clause); ok {
+		return truth, true
 	}
-	return e.tryCompileExecutorBindingWhere(ctx, clause)
+	return e.tryCompileExecutorBindingWhereTruth(ctx, clause)
 }
 
 func (e *StorageExecutor) getCompiledBindingWhereIfSupported(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
@@ -120,67 +218,86 @@ func (e *StorageExecutor) getCompiledBindingWhereIfSupported(ctx context.Context
 	return predicate, ok
 }
 
+func (e *StorageExecutor) getCompiledBindingWhereTruthIfSupported(ctx context.Context, whereClause string) (bindingWhereTruth, bool) {
+	key := normalizeBindingWhereClause(whereClause)
+	if cached, ok := compiledSupportedBindingWhereTruthCache.Load(key); ok {
+		if truth, ok := cached.(bindingWhereTruth); ok {
+			return truth, true
+		}
+	}
+	truth, ok := e.tryCompileBindingWhereTruth(ctx, key)
+	if ok {
+		compiledSupportedBindingWhereTruthCache.Store(key, truth)
+	}
+	return truth, ok
+}
+
+// tryCompileBindingWhere compiles a WHERE clause into a row predicate that is
+// true only when the clause is known true (Cypher three-valued logic: null and
+// false both drop the row).
 func (e *StorageExecutor) tryCompileBindingWhere(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
+	truth, ok := e.tryCompileBindingWhereTruth(ctx, whereClause)
+	if !ok {
+		return nil, false
+	}
+	return truth.predicate(), true
+}
+
+func (e *StorageExecutor) tryCompileBindingWhereTruth(ctx context.Context, whereClause string) (bindingWhereTruth, bool) {
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
-		return func(binding, map[string]interface{}) bool { return true }, true
+		return func(binding, map[string]interface{}) cypherTruth { return truthTrue }, true
 	}
 
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
-		left, okLeft := e.getCompiledBindingWhereIfSupported(ctx, clause[:orIdx])
-		right, okRight := e.getCompiledBindingWhereIfSupported(ctx, clause[orIdx+4:])
+		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[:orIdx])
+		right, okRight := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[orIdx+4:])
 		if !okLeft || !okRight {
 			return nil, false
 		}
-		return func(b binding, params map[string]interface{}) bool {
-			return left(b, params) || right(b, params)
-		}, true
+		return orTruth(left, right), true
 	}
 	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left, okLeft := e.getCompiledBindingWhereIfSupported(ctx, clause[:andIdx])
-		right, okRight := e.getCompiledBindingWhereIfSupported(ctx, clause[andIdx+5:])
+		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[:andIdx])
+		right, okRight := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[andIdx+5:])
 		if !okLeft || !okRight {
 			return nil, false
 		}
-		return func(b binding, params map[string]interface{}) bool {
-			return left(b, params) && right(b, params)
-		}, true
+		return andTruth(left, right), true
 	}
 	if hasPrefixFold(clause, "NOT ") {
-		inner, ok := e.getCompiledBindingWhereIfSupported(ctx, clause[4:])
+		inner, ok := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[4:])
 		if !ok {
 			return nil, false
 		}
-		return func(b binding, params map[string]interface{}) bool {
-			return !inner(b, params)
-		}, true
+		return notTruth(inner), true
 	}
 
 	if predicate, ok := e.compileBindingNullPredicate(clause, " IS NOT NULL", true); ok {
-		return predicate, true
+		return liftBindingPredicate(predicate), true
 	}
 	if predicate, ok := e.compileBindingNullPredicate(clause, " IS NULL", false); ok {
-		return predicate, true
+		return liftBindingPredicate(predicate), true
 	}
 
 	if predicate, ok := e.compileBindingStringPredicate(clause, " STARTS WITH "); ok {
-		return predicate, true
+		return liftBindingPredicate(predicate), true
 	}
 	if predicate, ok := e.compileBindingStringPredicate(clause, " ENDS WITH "); ok {
-		return predicate, true
+		return liftBindingPredicate(predicate), true
 	}
 	if predicate, ok := e.compileBindingStringPredicate(clause, " CONTAINS "); ok {
-		return predicate, true
+		return liftBindingPredicate(predicate), true
 	}
-	if predicate, ok := e.compileBindingInPredicate(clause, " IN ", false); ok {
-		return predicate, true
+	if truth, ok := e.compileBindingInPredicate(clause, " IN ", false); ok {
+		return truth, true
 	}
-	if predicate, ok := e.compileBindingInPredicate(clause, " NOT IN ", true); ok {
-		return predicate, true
+	if truth, ok := e.compileBindingInPredicate(clause, " NOT IN ", true); ok {
+		return truth, true
 	}
 
 	if predicate, ok := e.compileBindingComparisonPredicate(clause); ok {
-		return predicate, true
+		return liftBindingPredicate(predicate), true
 	}
 
 	return nil, false
@@ -331,7 +448,11 @@ func (e *StorageExecutor) compileBindingComparisonPredicate(clause string) (bind
 	return nil, false
 }
 
-func (e *StorageExecutor) compileBindingInPredicate(clause, op string, negate bool) (bindingWherePredicate, bool) {
+// compileBindingInPredicate compiles `x IN list` (negate=false) and
+// `x NOT IN list` (negate=true) with Cypher's null rules: a null or unresolved
+// x, a null or non-list right-hand side, or a list that contains null and no
+// match all give truthUnknown, which negation leaves unknown.
+func (e *StorageExecutor) compileBindingInPredicate(clause, op string, negate bool) (bindingWhereTruth, bool) {
 	idx := findTopLevelKeyword(clause, op)
 	if idx <= 0 {
 		return nil, false
@@ -343,79 +464,79 @@ func (e *StorageExecutor) compileBindingInPredicate(clause, op string, negate bo
 		return nil, false
 	}
 
+	var truth bindingWhereTruth
 	if listValues, ok := parseBindingLiteralList(rightExpr); ok {
-		return e.makeCompiledBindingMembershipPredicate(leftResolver, listValues, negate), true
-	}
-	if strings.HasPrefix(rightExpr, "$") {
+		truth = e.makeCompiledBindingMembershipPredicate(leftResolver, listValues)
+	} else if strings.HasPrefix(rightExpr, "$") {
 		paramName := strings.TrimSpace(strings.TrimPrefix(rightExpr, "$"))
 		if paramName == "" {
 			return nil, false
 		}
-		return e.makeCompiledParamMembershipPredicate(leftResolver, paramName, negate), true
+		truth = e.makeCompiledParamMembershipPredicate(leftResolver, paramName)
+	} else {
+		rightResolver, ok := e.compileBindingValueResolver(rightExpr)
+		if !ok {
+			return nil, false
+		}
+		truth = func(b binding, params map[string]interface{}) cypherTruth {
+			leftValue, ok := leftResolver(b, params)
+			if !ok {
+				return truthUnknown
+			}
+			rightValue, ok := rightResolver(b, params)
+			if !ok || rightValue == nil {
+				return truthUnknown
+			}
+			items, ok := toInterfaceSlice(rightValue)
+			if !ok {
+				return truthUnknown
+			}
+			comparableSet, nonComparable := buildComparableMembershipIndex(items)
+			return membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items), e.compareEqual)
+		}
 	}
-
-	rightResolver, ok := e.compileBindingValueResolver(rightExpr)
-	if !ok {
-		return nil, false
+	if negate {
+		return notTruth(truth), true
 	}
-	return func(b binding, params map[string]interface{}) bool {
-		leftValue, ok := leftResolver(b, params)
-		if !ok {
-			return false
-		}
-		rightValue, ok := rightResolver(b, params)
-		if !ok {
-			return false
-		}
-		items, ok := toInterfaceSlice(rightValue)
-		if !ok {
-			return false
-		}
-		comparableSet, nonComparable := buildComparableMembershipIndex(items)
-		matched := evaluateComparableMembership(leftValue, comparableSet, nonComparable, e.compareEqual)
-		if negate {
-			return !matched
-		}
-		return matched
-	}, true
+	return truth, true
 }
 
-func (e *StorageExecutor) makeCompiledBindingMembershipPredicate(leftResolver bindingValueResolver, items []interface{}, negate bool) bindingWherePredicate {
-	comparableSet := make(map[interface{}]struct{}, len(items))
-	nonComparable := make([]interface{}, 0)
+// membershipTruth is the three-valued result of `actual IN list` for a list
+// indexed by buildComparableMembershipIndex (which leaves out null items).
+func membershipTruth(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool, equals func(interface{}, interface{}) bool) cypherTruth {
+	if len(comparableSet) == 0 && len(nonComparable) == 0 && !hasNull {
+		return truthFalse // x IN [] is false, even for a null x
+	}
+	if actual == nil {
+		return truthUnknown
+	}
+	if evaluateComparableMembership(actual, comparableSet, nonComparable, equals) {
+		return truthTrue
+	}
+	if hasNull {
+		return truthUnknown
+	}
+	return truthFalse
+}
+
+func listHasNull(items []interface{}) bool {
 	for _, item := range items {
 		if item == nil {
-			continue
-		}
-		if isComparableValue(item) {
-			comparableSet[item] = struct{}{}
-		} else {
-			nonComparable = append(nonComparable, item)
+			return true
 		}
 	}
-	return func(b binding, params map[string]interface{}) bool {
+	return false
+}
+
+func (e *StorageExecutor) makeCompiledBindingMembershipPredicate(leftResolver bindingValueResolver, items []interface{}) bindingWhereTruth {
+	comparableSet, nonComparable := buildComparableMembershipIndex(items)
+	hasNull := listHasNull(items)
+	return func(b binding, params map[string]interface{}) cypherTruth {
 		leftValue, ok := leftResolver(b, params)
 		if !ok {
-			return false
+			return truthUnknown
 		}
-		matched := false
-		if isComparableValue(leftValue) {
-			if _, hit := comparableSet[leftValue]; hit {
-				matched = true
-			}
-		}
-		if !matched {
-			for _, item := range nonComparable {
-				if e.compareEqual(leftValue, item) {
-					matched = true
-					break
-				}
-			}
-		}
-		if negate {
-			return !matched
-		}
-		return matched
+		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull, e.compareEqual)
 	}
 }
 
@@ -425,54 +546,51 @@ type bindingParamMembershipCache struct {
 	length        int
 	comparable    map[interface{}]struct{}
 	nonComparable []interface{}
+	hasNull       bool
 }
 
-func (e *StorageExecutor) makeCompiledParamMembershipPredicate(leftResolver bindingValueResolver, paramName string, negate bool) bindingWherePredicate {
+func (e *StorageExecutor) makeCompiledParamMembershipPredicate(leftResolver bindingValueResolver, paramName string) bindingWhereTruth {
 	cache := &bindingParamMembershipCache{length: -1}
-	return func(bindingRow binding, params map[string]interface{}) bool {
-		if params == nil {
-			return negate
-		}
+	return func(bindingRow binding, params map[string]interface{}) cypherTruth {
 		rightValue, ok := params[paramName]
-		if !ok {
-			return negate
+		if !ok || rightValue == nil {
+			return truthUnknown
 		}
 		items, ok := toInterfaceSlice(rightValue)
 		if !ok {
-			return negate
+			return truthUnknown
 		}
 		leftValue, ok := leftResolver(bindingRow, params)
 		if !ok {
-			return false
+			return truthUnknown
 		}
 		firstElement := firstInterfaceElement(items)
-		comparableSet, nonComparable := cache.get(items, firstElement)
-		matched := evaluateComparableMembership(leftValue, comparableSet, nonComparable, e.compareBindingValuesEqual)
-		if negate {
-			return !matched
-		}
-		return matched
+		comparableSet, nonComparable, hasNull := cache.get(items, firstElement)
+		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull, e.compareBindingValuesEqual)
 	}
 }
 
-func (cache *bindingParamMembershipCache) get(items []interface{}, firstElement *interface{}) (map[interface{}]struct{}, []interface{}) {
+func (cache *bindingParamMembershipCache) get(items []interface{}, firstElement *interface{}) (map[interface{}]struct{}, []interface{}, bool) {
 	cache.RLock()
 	if cache.length == len(items) && cache.firstElement == firstElement && cache.comparable != nil {
 		comparableSet := cache.comparable
 		nonComparable := cache.nonComparable
+		hasNull := cache.hasNull
 		cache.RUnlock()
-		return comparableSet, nonComparable
+		return comparableSet, nonComparable, hasNull
 	}
 	cache.RUnlock()
 
 	comparableSet, nonComparable := buildComparableMembershipIndex(items)
+	hasNull := listHasNull(items)
 	cache.Lock()
 	cache.length = len(items)
 	cache.firstElement = firstElement
 	cache.comparable = comparableSet
 	cache.nonComparable = nonComparable
+	cache.hasNull = hasNull
 	cache.Unlock()
-	return comparableSet, nonComparable
+	return comparableSet, nonComparable, hasNull
 }
 
 func firstInterfaceElement(items []interface{}) *interface{} {
@@ -585,6 +703,11 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b bin
 		return e.evaluateBindingWhere(ctx, b, left, params) && e.evaluateBindingWhere(ctx, b, right, params)
 	}
 	if strings.HasPrefix(upper, "NOT ") {
+		if truth, ok := inPredicateTruth(clause[4:], func(expr string) interface{} {
+			return e.evaluateExpressionWithContext(ctx, expr, map[string]*storage.Node(b), nil)
+		}); ok {
+			return truth == truthFalse
+		}
 		return !e.evaluateBindingWhere(ctx, b, clause[4:], params)
 	}
 	if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, clause, map[string]*storage.Node(b)); recognized {
