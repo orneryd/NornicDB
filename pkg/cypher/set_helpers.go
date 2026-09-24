@@ -70,160 +70,40 @@ import (
 //	applySetToNode(node, "n", "n.name = 'Alice', n.age = 30")
 //	// node.Properties["name"] = "Alice"
 //	// node.Properties["age"] = int64(30)
-func (e *StorageExecutor) applySetToNode(ctx context.Context, node *storage.Node, varName string, setClause string) {
-	// MERGE/CREATE pipelines can emit chained SET keywords:
-	// SET n:Label SET n = $map
-	// Normalize to comma-separated assignments before parsing.
-	setClause = collapseChainedSetClauses(setClause)
-
-	// Split SET clause into individual assignments, respecting parentheses and quotes
-	assignments := e.splitSetAssignments(setClause)
-
-	for _, assignment := range assignments {
-		assignment = strings.TrimSpace(assignment)
-
-		// Handle map merge form: SET n += {...} / SET n += row.props
-		if plusEqIdx := strings.Index(assignment, "+="); plusEqIdx > 0 {
-			left := strings.TrimSpace(assignment[:plusEqIdx])
-			right := strings.TrimSpace(assignment[plusEqIdx+2:])
-			if left == varName {
-				e.applySetMapMergeToNode(ctx, node, varName, right, map[string]*storage.Node{varName: node}, nil)
-			}
-			continue
-		}
-
-		if labelExpr, isLabelAssignment := parseSetLabelExpression(assignment, varName); isLabelAssignment {
-			if labelExpr == "" {
-				continue
-			}
-			if strings.HasPrefix(labelExpr, "$(") && strings.HasSuffix(labelExpr, ")") {
-				innerExpr := strings.TrimSpace(labelExpr[2 : len(labelExpr)-1])
-				labelValue, ok := resolveContextPathRef(ctx, innerExpr)
-				if !ok {
-					labelValue = e.evaluateExpressionWithContext(ctx, innerExpr, map[string]*storage.Node{varName: node}, nil)
-				}
-				labels := toStringSlice(labelValue)
-				if len(labels) == 0 {
-					labels = toStringSlice(e.parseValue(ctx, innerExpr))
-				}
-				for _, label := range labels {
-					if label == "" || !isValidIdentifier(label) || containsReservedKeyword(label) || containsString(node.Labels, label) {
-						continue
-					}
-					node.Labels = append(node.Labels, label)
-				}
-				continue
-			}
-			if !isValidIdentifier(labelExpr) || containsReservedKeyword(labelExpr) {
-				continue
-			}
-			if !containsString(node.Labels, labelExpr) {
-				node.Labels = append(node.Labels, labelExpr)
-			}
-			continue
-		}
-
-		if !strings.HasPrefix(assignment, varName+".") {
-			if assignment == varName || strings.HasPrefix(assignment, varName+" =") {
-				eqIdx := strings.Index(assignment, "=")
-				if eqIdx <= 0 {
-					continue
-				}
-				right := strings.TrimSpace(assignment[eqIdx+1:])
-				if v, ok := resolveDirectParamRef(ctx, right); ok {
-					if props, ok := toStringAnyMap(v); ok {
-						node.Properties = setPropertyMap(props)
-						continue
-					}
-				}
-				if v, ok := resolveContextPathRef(ctx, right); ok {
-					if props, ok := toStringAnyMap(v); ok {
-						node.Properties = setPropertyMap(props)
-						continue
-					}
-				}
-				evaluated := e.evaluateExpressionWithContext(ctx, right, map[string]*storage.Node{varName: node}, nil)
-				if props, ok := toStringAnyMap(evaluated); ok {
-					node.Properties = setPropertyMap(props)
-				}
-				continue
-			}
-			continue
-		}
-
-		eqIdx := strings.Index(assignment, "=")
-		if eqIdx <= 0 {
-			continue
-		}
-
-		propName := strings.TrimSpace(assignment[len(varName)+1 : eqIdx])
-		propValue := strings.TrimSpace(assignment[eqIdx+1:])
-
-		// Direct $param resolution preserves declared types end-to-end.
-		// substituteParams's type-preserving short-circuit leaves "$name"
-		// here as a literal; without this branch the generic expression
-		// evaluator only returns the unresolved string.
-		if v, ok := resolveDirectParamRef(ctx, propValue); ok {
-			setNodeProperty(node, propName, normalizePropValue(v))
-			continue
-		}
-
-		// Evaluate with variable context first so expressions like
-		// "n.count + 1" are computed instead of stored as raw text.
-		evalNodes := map[string]*storage.Node{varName: node}
-		evaluated := e.evaluateExpressionWithContext(ctx, propValue, evalNodes, nil)
-
-		// Fallback to SET-specific evaluator when generic expression evaluation
-		// leaves the expression unresolved.
-		if s, ok := evaluated.(string); ok && strings.TrimSpace(s) == strings.TrimSpace(propValue) {
-			evaluated = e.evaluateSetExpression(propValue)
-		}
-		if evaluated == nil && !strings.EqualFold(strings.TrimSpace(propValue), "null") {
-			evaluated = e.evaluateSetExpression(propValue)
-		}
-
-		setNodeProperty(node, propName, evaluated)
-	}
+func (e *StorageExecutor) applySetToNode(ctx context.Context, node *storage.Node, varName string, setClause string) error {
+	// Plain MERGE ... SET / ON CREATE SET / ON MATCH SET use the same
+	// per-entity SET applicator as MATCH ... SET, MERGE in context and the
+	// pipeline, so every route has the same null, label and map semantics.
+	return e.applySetToNodeWithContext(ctx, node, varName, setClause, nil, nil)
 }
 
-func parseSetLabelExpression(assignment, variable string) (string, bool) {
-	if !strings.HasPrefix(assignment, variable) {
-		return "", false
-	}
-	remainder := strings.TrimSpace(assignment[len(variable):])
-	if !strings.HasPrefix(remainder, ":") {
-		return "", false
-	}
-	return strings.TrimSpace(remainder[1:]), true
-}
-
-func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) {
+// applySetMapMergeToNode applies SET n += <expr>: every key of the map (or of
+// the node / relationship) is written, and a null value removes the key.
+// Row bindings from UNWIND / WITH that travel in the parameter context are
+// visible to the expression. Non-map values are an error (setMergeMap).
+func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) error {
 	if node == nil {
-		return
+		return nil
 	}
-	// Direct $param resolution: the right-hand side of `SET n += $props`
-	// is the typed map the caller passed in. Skipping the
-	// expression-evaluator path keeps map[string]any from widening to
-	// map[string]interface{} with []interface{} value slices.
-	if m, ok := resolveDirectParamRef(ctx, rightExpr); ok {
-		if props, ok := toStringAnyMap(m); ok {
-			for k, v := range props {
-				setNodeProperty(node, k, normalizePropValue(v))
-			}
-			return
+	if err := requireSetParameter(ctx, rightExpr); err != nil {
+		return err
+	}
+	// Direct $param / row-path references skip the expression evaluator, so
+	// typed maps keep their Go value types and UNWIND rows stay cheap.
+	value, direct := resolveDirectParamRef(ctx, rightExpr)
+	if !direct {
+		value, direct = resolveContextPathRef(ctx, rightExpr)
+	}
+	if direct {
+		props, err := setPropertyMapValue(value, "+=")
+		if err != nil {
+			return err
 		}
-	}
-	if m, ok := resolveContextPathRef(ctx, rightExpr); ok {
-		if props, ok := toStringAnyMap(m); ok {
-			for k, v := range props {
-				setNodeProperty(node, k, normalizePropValue(v))
-			}
-			return
+		for k, v := range props {
+			setNodeProperty(node, k, normalizePropValue(v))
 		}
+		return nil
 	}
-	// UNWIND/WITH row bindings travel through the parameter context on fallback
-	// mutation paths. Expose map and scalar bindings to the same expression
-	// evaluator used for graph variables so inline maps can reference them.
 	evalNodes := make(map[string]*storage.Node, len(nodes)+len(getParamsFromContext(ctx)))
 	for name, value := range nodes {
 		evalNodes[name] = value
@@ -239,21 +119,14 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 			evalNodes[name] = &storage.Node{ID: storage.NodeID(name), Properties: map[string]interface{}{"value": bound}}
 		}
 	}
-	evaluated := e.evaluateExpressionWithContext(ctx, rightExpr, evalNodes, rels)
-
-	// Fallback for unresolved inline literals.
-	if s, ok := evaluated.(string); ok && strings.TrimSpace(s) == strings.TrimSpace(rightExpr) {
-		evaluated = e.parseValue(ctx, strings.TrimSpace(rightExpr))
+	props, err := e.setMergeMap(ctx, rightExpr, evalNodes, rels)
+	if err != nil {
+		return err
 	}
-	if evaluated == nil {
-		evaluated = e.parseValue(ctx, strings.TrimSpace(rightExpr))
+	for k, v := range props {
+		setNodeProperty(node, k, normalizePropValue(v))
 	}
-
-	if m, ok := toStringAnyMap(evaluated); ok {
-		for k, v := range m {
-			setNodeProperty(node, k, v)
-		}
-	}
+	return nil
 }
 
 // setNodeProperty sets a property on a node.

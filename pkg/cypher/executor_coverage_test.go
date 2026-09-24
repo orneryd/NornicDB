@@ -2283,26 +2283,27 @@ func TestLowLevelHelpers_AdditionalCoverage(t *testing.T) {
 	assert.Equal(t, int64(5), apocCollMin([]interface{}{int64(5), "x", int64(9)})) // non-numeric ignored
 	assert.Nil(t, apocCollMin("not-list"))
 
-	// executeCreateNodeSegment
-	anonymous, anonymousVar, err := exec.executeCreateNodeSegment(ctx, "CREATE (:Person {name:'x'})")
+	// createPatternsInScope: the shared CREATE core
+	nodes := map[string]*storage.Node{}
+	created := &ExecuteResult{Stats: &QueryStats{}}
+	_, err := exec.createPatternsInScope(ctx, "(:Person {name:'x'})", nodes, map[string]*storage.Edge{}, created)
 	require.NoError(t, err)
-	require.NotNil(t, anonymous)
-	assert.Empty(t, anonymousVar)
-	assert.Equal(t, "x", anonymous.Properties["name"])
+	assert.Equal(t, 1, created.Stats.NodesCreated)
+	assert.Empty(t, nodes, "an anonymous node binds no variable")
 
-	_, _, err = exec.executeCreateNodeSegment(ctx, "CREATE (n:123Bad)")
+	_, err = exec.createPatternsInScope(ctx, "(n:123Bad)", nodes, map[string]*storage.Edge{}, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid label name")
 
-	_, _, err = exec.executeCreateNodeSegment(ctx, "CREATE (n:Person {1bad: 1})")
+	_, err = exec.createPatternsInScope(ctx, "(n:Person {1bad: 1})", nodes, map[string]*storage.Edge{}, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid property key")
 
-	node, varName, err := exec.executeCreateNodeSegment(ctx, "CREATE (n:Person)")
+	_, err = exec.createPatternsInScope(ctx, "(n:Person)", nodes, map[string]*storage.Edge{}, created)
 	require.NoError(t, err)
-	require.Equal(t, "n", varName)
-	require.NotNil(t, node)
-	require.NotNil(t, node.Properties) // initialized for empty-property create
+	require.NotNil(t, nodes["n"])
+	require.NotNil(t, nodes["n"].Properties) // initialized for empty-property create
+
 }
 
 func TestExecuteMatchCreateBlock_SetMergeAndDeleteBranches(t *testing.T) {
@@ -2464,12 +2465,12 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	edgeVars := map[string]*storage.Edge{}
 	result := &ExecuteResult{Stats: &QueryStats{}}
 
-	err := exec.processCreateNode(ctx, "(a:Person {name:'alice'})", nodeVars, result, store)
+	_, err := exec.createPatternsInScope(ctx, "(a:Person {name:'alice'})", nodeVars, edgeVars, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "a")
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 
-	err = exec.processCreateRelationship(ctx, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, result, store)
+	_, err = exec.createPatternsInScope(ctx, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "b")
 	require.Contains(t, edgeVars, "r")
@@ -2477,7 +2478,7 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, int64(2020), edgeVars["r"].Properties["since"])
 
 	// Reverse arrow branch: created edge should start at inline node c and end at a.
-	err = exec.processCreateRelationship(ctx, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, result, store)
+	_, err = exec.createPatternsInScope(ctx, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "c")
 	require.Contains(t, edgeVars, "rb")
@@ -2485,50 +2486,52 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, nodeVars["a"].ID, edgeVars["rb"].EndNode)
 
 	// Invalid relationship shape.
-	err = exec.processCreateRelationship(ctx, "(a)-[:BROKEN](b)", nodeVars, edgeVars, result, store)
+	_, err = exec.createPatternsInScope(ctx, "(a)-[:BROKEN](b)", nodeVars, edgeVars, result)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid relationship pattern")
 
-	// Missing variable in context must error deterministically.
-	err = exec.processCreateRelationship(ctx, "(missing)-[:REL]->(a)", nodeVars, edgeVars, result, store)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to resolve source node")
-
-	created := &ExecuteResult{Stats: &QueryStats{}}
-	err = exec.applySetMergeToCreated(ctx, "a += {score: 5, active: true}", nodeVars, edgeVars, created, store)
+	// An endpoint variable not in scope is a new node (Neo4j CREATE semantics).
+	_, err = exec.createPatternsInScope(ctx, "(missing)-[:REL]->(a)", nodeVars, edgeVars, result)
 	require.NoError(t, err)
+	require.Contains(t, nodeVars, "missing")
+
+	// SET += on created entities goes through the shared SET applicator.
+	row := pipelineRow{}
+	for name, node := range nodeVars {
+		row[name] = node
+	}
+	for name, edge := range edgeVars {
+		row[name] = edge
+	}
+	stats, handled, err := exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a += {score: 5, active: true}")
+	require.NoError(t, err)
+	require.True(t, handled)
 	assert.Equal(t, int64(5), nodeVars["a"].Properties["score"])
 	assert.Equal(t, true, nodeVars["a"].Properties["active"])
-	assert.Equal(t, 2, created.Stats.PropertiesSet)
+	assert.Equal(t, 2, stats.PropertiesSet)
 
 	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{
 		"edgeProps": map[string]interface{}{"rank": int64(9)},
 	})
-	err = exec.applySetMergeToCreated(ctxWithParams, "r += $edgeProps", nodeVars, edgeVars, created, store)
+	stats, _, err = exec.pipelineApplySet(ctxWithParams, []pipelineRow{row}, "SET r += $edgeProps")
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), edgeVars["r"].Properties["rank"])
-	assert.Equal(t, 3, created.Stats.PropertiesSet)
+	assert.Equal(t, 1, stats.PropertiesSet)
 
 	// Strict error branches.
-	err = exec.applySetMergeToCreated(ctx, "a + {x:1}", nodeVars, edgeVars, created, store)
+	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a + {x:1}")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid SET += syntax")
 
-	err = exec.applySetMergeToCreated(ctx, "a += $missing", nodeVars, edgeVars, created, store)
+	_, _, err = exec.pipelineApplySet(context.WithValue(ctx, paramsKey, map[string]interface{}{"missing": int64(1)}), []pipelineRow{row}, "SET a += $missing")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires parameters")
+	assert.Contains(t, err.Error(), "requires a map")
 
-	err = exec.applySetMergeToCreated(context.WithValue(ctx, paramsKey, map[string]interface{}{"missing": int64(1)}), "a += $missing", nodeVars, edgeVars, created, store)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must be a map")
-
-	err = exec.applySetMergeToCreated(ctx, "a += {broken", nodeVars, edgeVars, created, store)
+	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a += {broken")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse properties")
 
-	err = exec.applySetMergeToCreated(ctx, "unknown += {x:1}", nodeVars, edgeVars, created, store)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown variable")
+	_, handled, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET unknown += {x:1}")
+	require.NoError(t, err)
+	assert.False(t, handled, "an unbound target is left to the caller")
 }
 
 func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
@@ -2570,11 +2573,11 @@ func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
 	assert.Equal(t, "x", relProps["note"])
 
 	relType, relProps = exec.parseRelationshipTypeAndProps(ctx, "r")
-	assert.Equal(t, "RELATED_TO", relType)
+	assert.Equal(t, "", relType)
 	assert.Empty(t, relProps)
 
 	relType, relProps = exec.parseRelationshipTypeAndProps(ctx, ":")
-	assert.Equal(t, "RELATED_TO", relType)
+	assert.Equal(t, "", relType)
 	assert.Empty(t, relProps)
 
 	source, rel, target, reverse, remainder, err := exec.parseCreateRelPatternWithVars("(a)-[r:KNOWS]->(b)-[:NEXT]->(c)")
@@ -2615,27 +2618,32 @@ func TestCreateHelpers_ResolveOrCreateAndMultipleCreates(t *testing.T) {
 	result := &ExecuteResult{Stats: &QueryStats{}}
 	ctx := context.Background()
 
-	_, err := exec.resolveOrCreateNode(ctx, "missingVar", nodeVars, result, store)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	edgeVars := map[string]*storage.Edge{}
 
-	n, err := exec.resolveOrCreateNode(ctx, "x:Node {id:'x1'}", nodeVars, result, store)
+	// An endpoint variable not in scope is a new node (Neo4j CREATE semantics).
+	missing, err := exec.createPatternEndpoint(ctx, "missingVar", nodeVars, edgeVars, result, store)
+	require.NoError(t, err)
+	require.NotNil(t, missing)
+	require.Contains(t, nodeVars, "missingVar")
+	assert.Equal(t, 1, result.Stats.NodesCreated)
+
+	n, err := exec.createPatternEndpoint(ctx, "x:Node {id:'x1'}", nodeVars, edgeVars, result, store)
 	require.NoError(t, err)
 	require.NotNil(t, n)
 	require.Contains(t, nodeVars, "x")
-	assert.Equal(t, 1, result.Stats.NodesCreated)
+	assert.Equal(t, 2, result.Stats.NodesCreated)
 
 	// Existing variable returns same node without creating a new one.
-	same, err := exec.resolveOrCreateNode(ctx, "x:Node {id:'different'}", nodeVars, result, store)
+	same, err := exec.createPatternEndpoint(ctx, "x:Node {id:'different'}", nodeVars, edgeVars, result, store)
 	require.NoError(t, err)
 	assert.Equal(t, n.ID, same.ID)
-	assert.Equal(t, 1, result.Stats.NodesCreated)
+	assert.Equal(t, 2, result.Stats.NodesCreated)
 
 	// Inline node without variable is created but not added to nodeVars.
-	inline, err := exec.resolveOrCreateNode(ctx, ":Leaf {k:1}", nodeVars, result, store)
+	inline, err := exec.createPatternEndpoint(ctx, ":Leaf {k:1}", nodeVars, edgeVars, result, store)
 	require.NoError(t, err)
 	require.NotNil(t, inline)
-	assert.Equal(t, 2, result.Stats.NodesCreated)
+	assert.Equal(t, 3, result.Stats.NodesCreated)
 	_, hasLeaf := nodeVars["Leaf"]
 	assert.False(t, hasLeaf)
 
@@ -2721,7 +2729,7 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 		allEdgeVars,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires parameters to be provided")
+	assert.Contains(t, err.Error(), "parameter $score")
 }
 
 func TestExecuteCompoundCreateWithDelete_AdditionalBranches(t *testing.T) {

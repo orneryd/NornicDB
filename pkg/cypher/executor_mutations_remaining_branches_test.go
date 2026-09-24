@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -23,33 +22,6 @@ func TestExecuteSet_TrailingFallbackMatchProjection(t *testing.T) {
 	require.Equal(t, []string{"flag"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, true, res.Rows[0][0])
-}
-
-func TestExecuteSetMerge_FallbackRowNodeScan(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "set_merge_row_scan_cov")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	node := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}
-	_, err := store.CreateNode(node)
-	require.NoError(t, err)
-
-	matchResult := &ExecuteResult{
-		Columns: []string{"n", "other"},
-		Rows:    [][]interface{}{{"not-a-node", node}},
-	}
-	result := &ExecuteResult{Stats: &QueryStats{}}
-
-	cypher := "MATCH (n:Person) SET n += {age: 30} RETURN n.age AS age"
-	out, err := exec.executeSetMerge(ctx, matchResult, "n += {age: 30}", result, cypher, strings.Index(strings.ToUpper(cypher), "RETURN"))
-	require.NoError(t, err)
-	require.NotNil(t, out)
-	require.EqualValues(t, int64(30), node.Properties["age"])
-	require.Equal(t, 1, out.Stats.PropertiesSet)
-	require.Equal(t, []string{"age"}, out.Columns)
-	require.Len(t, out.Rows, 1)
-	require.EqualValues(t, int64(30), out.Rows[0][0])
 }
 
 func TestCountSubqueryMatches_NoDirectionCountsBoth(t *testing.T) {
@@ -112,7 +84,7 @@ func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
 
 	_, err = exec.executeSet(ctx, "MATCH (n:P) SET += {a:1}")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "SET += requires a variable target")
+	require.Contains(t, err.Error(), "invalid SET assignment")
 
 	_, err = exec.executeSet(ctx, "MATCH (n:P) SET n += $")
 	require.Error(t, err)
@@ -129,18 +101,19 @@ func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
 
 	_, err = exec.executeSet(ctx, "MATCH (n:P) SET n += props")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "map variable in scope")
+	require.Contains(t, err.Error(), "requires a map")
 
 	_, err = exec.executeSet(ctx, "MATCH (n:P) WITH n, 1 AS props SET n += props")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "must be a map")
+	require.Contains(t, err.Error(), "requires a map")
 
-	// Alias-only scope forces fallback row node scan for SET += updates.
-	res, err := exec.executeSet(ctx, "MATCH (n:P {id:'p1'}) WITH n AS p SET n += {score: 7} RETURN p.score AS score")
+	// n is out of scope after WITH n AS p: SET n += ... must not fall back
+	// to writing whatever node the row holds.
+	_, err = exec.executeSet(ctx, "MATCH (n:P {id:'p1'}) WITH n AS p SET n += {score: 7} RETURN p.score AS score")
+	require.Error(t, err)
+	res, err := exec.Execute(ctx, "MATCH (n:P {id:'p1'}) RETURN n.score AS score", nil)
 	require.NoError(t, err)
-	require.Equal(t, []string{"score"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	require.EqualValues(t, int64(7), res.Rows[0][0])
+	require.Nil(t, res.Rows[0][0])
 }
 
 func TestValidatePolicyOnLabelChange_OutgoingAndIncomingViolations(t *testing.T) {

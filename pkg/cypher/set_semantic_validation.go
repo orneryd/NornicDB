@@ -44,9 +44,17 @@ func (e *StorageExecutor) validateSetSemanticScopes(cypher string) error {
 	return nil
 }
 
+// validateSetClauseScope is the statement-level check for one SET clause,
+// shared by every route (MATCH, CREATE, MERGE, pipeline, fast paths): the
+// assignment shapes (validatePipelineSetAssignments), bound target and value
+// variables, and known functions in the assigned values.
 func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, clause string) error {
 	body := strings.TrimSpace(clause[len("SET"):])
-	for _, assignment := range e.splitSetAssignments(body) {
+	assignments := e.splitSetAssignments(body)
+	if err := validatePipelineSetAssignments(assignments); err != nil {
+		return err
+	}
+	for _, assignment := range assignments {
 		assignment = strings.TrimSpace(assignment)
 		operator := strings.Index(assignment, "+=")
 		operatorWidth := 2
@@ -72,6 +80,9 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		expression := strings.TrimSpace(assignment[operator+operatorWidth:])
 		if missing := firstUndefinedSetExpressionVariable(expression, scope); missing != "" {
 			return createUndefinedVariableError(missing)
+		}
+		if err := validateKnownFunctionsInExpression(expression); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -243,6 +254,10 @@ func validateSetPropertyValue(value interface{}) error {
 	}
 	if _, invalid := value.(*PathResult); invalid {
 		return invalidSetPropertyType(value)
+	}
+	switch value.(type) {
+	case []float64, []float32, []int64, []int, []int32, []string, []bool:
+		return nil // typed lists of primitives (e.g. embeddings) are valid as-is
 	}
 	typeOf := reflect.TypeOf(value)
 	if typeOf != nil && typeOf.Kind() == reflect.Map {
