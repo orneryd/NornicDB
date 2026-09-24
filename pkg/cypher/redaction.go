@@ -1,10 +1,12 @@
 // Package cypher: D-04 query literal redactor for slow-query log emission (LOG-08).
 //
 // RedactLiterals walks the Cypher token stream, replacing STRING_LITERAL,
-// INTEGER, and FLOAT tokens with the constant RedactedPlaceholder. Identifiers,
-// keywords, and parameter REFERENCES ($name) are preserved verbatim because
-// parameter VALUES bind separately at execution time and never appear as
-// inline literals in the query text.
+// CHAR_LITERAL (NornicDB's grammar accepts single-quoted strings as an
+// alternate spelling of STRING_LITERAL — see CHAR_LITERAL in
+// CypherLexer.g4), INTEGER, and FLOAT tokens with the constant
+// RedactedPlaceholder. Identifiers, keywords, and parameter REFERENCES
+// ($name) are preserved verbatim because parameter VALUES bind separately at
+// execution time and never appear as inline literals in the query text.
 //
 // The redactor is invoked at every log emission site that includes raw query
 // text — currently the slow-query log (D-04c) — so PII stored in literal
@@ -40,10 +42,40 @@ func (l *redactSilentErrorListener) SyntaxError(_ antlr4.Recognizer, _ interface
 }
 
 // RedactLiterals returns the input query with literal tokens replaced by
-// RedactedPlaceholder. STRING_LITERAL, INTEGER, and FLOAT token types are
-// the redaction target set; all other tokens are emitted as their original
-// text. Empty queries and parse failures return RedactedPlaceholder
-// (fail-closed).
+// RedactedPlaceholder. STRING_LITERAL, CHAR_LITERAL, INTEGER, and FLOAT
+// token types are the redaction target set; all other tokens are emitted as
+// their original text. Empty queries and genuinely malformed/truncated
+// input return RedactedPlaceholder (fail-closed).
+//
+// eshu-7014-cause-C defect 3: this used to gate on a full cantlr.Parse of the
+// statement (the parser's Script rule) before doing the token-level redaction
+// below. That parser rule does not cover every shape NornicDB's own executor
+// accepts — CALL { ... UNION ... } subqueries, deep OR-chained CALL{UNION}
+// branch fan-outs, and multi-MATCH variable-length (*m..n) traversals with
+// only list/param filters all round-trip through the executor successfully
+// but failed cantlr.Parse's Script rule, so every one of these (valid,
+// already-executed) queries collapsed to the bare placeholder with no
+// structure at all. A full grammar parse is the wrong tool for "is this
+// safe to redact": the redactor only needs to know whether the LEXER
+// produced a genuinely broken token stream (one that could dribble out
+// partial literal content), not whether the statement satisfies the whole
+// parser grammar.
+//
+// Fail-closed now rests on three lexer-level signals instead:
+//  1. the lexer's own error listener fires (hadError);
+//  2. the lexer emits an ERRCHAR token — ANTLR's catch-all for input it
+//     cannot tokenize at all, e.g. a stray control character;
+//  3. paren/brace/bracket depth does not return to zero by EOF — this is
+//     what actually flags a truncated/incomplete statement such as
+//     `MATCH ((((` or an unterminated string like `MATCH (n {name: "ali`
+//     (the unterminated quote route the lexer into ERRCHAR + ID tokens
+//     rather than a well-formed STRING_LITERAL, so bullet 2 also catches
+//     it; the brace never closes either, so bullet 3 is defense in depth).
+//
+// All three are cheap, bracket/brace/paren content inside a completed
+// STRING_LITERAL or COMMENT token never perturbs the depth counter because
+// those are consumed as a single atomic token by the lexer, not as
+// individual characters.
 //
 // Performance: this is NOT on the production hot path — it fires only on the
 // slow-query log emission path (cypher.duration_ms >= SlowQueryThreshold),
@@ -53,17 +85,6 @@ func RedactLiterals(query string) string {
 		return RedactedPlaceholder
 	}
 
-	// Step 1: parser-level syntax check. Fail-closed on syntax errors —
-	// better to lose query readability than to leak partial literal content
-	// through a half-tokenized input that the lexer happily accepted.
-	if _, err := cantlr.Parse(query); err != nil {
-		return RedactedPlaceholder
-	}
-
-	// Step 2: token-stream walk. The grammar parsed cleanly, so any literal
-	// tokens we encounter here are well-formed and safe to substitute. We
-	// run a fresh lexer pass (not reusing the parser's token stream) so the
-	// hot-path Parse cache stays untouched.
 	input := antlr4.NewInputStream(query)
 	lexer := cantlr.NewCypherLexer(input)
 	listener := &redactSilentErrorListener{}
@@ -72,6 +93,7 @@ func RedactLiterals(query string) string {
 
 	var b strings.Builder
 	b.Grow(len(query))
+	depth := 0
 
 	for {
 		tok := lexer.NextToken()
@@ -82,19 +104,26 @@ func RedactLiterals(query string) string {
 		if ttype == antlr4.TokenEOF {
 			break
 		}
-		if listener.hadError {
+		if listener.hadError || ttype == cantlr.CypherLexerERRCHAR {
 			return RedactedPlaceholder
 		}
 		switch ttype {
 		case cantlr.CypherLexerSTRING_LITERAL,
+			cantlr.CypherLexerCHAR_LITERAL,
 			cantlr.CypherLexerINTEGER,
 			cantlr.CypherLexerFLOAT:
 			b.WriteString(RedactedPlaceholder)
+		case cantlr.CypherLexerLPAREN, cantlr.CypherLexerLBRACE, cantlr.CypherLexerLBRACK:
+			depth++
+			b.WriteString(tok.GetText())
+		case cantlr.CypherLexerRPAREN, cantlr.CypherLexerRBRACE, cantlr.CypherLexerRBRACK:
+			depth--
+			b.WriteString(tok.GetText())
 		default:
 			b.WriteString(tok.GetText())
 		}
 	}
-	if listener.hadError {
+	if listener.hadError || depth != 0 {
 		return RedactedPlaceholder
 	}
 	out := b.String()

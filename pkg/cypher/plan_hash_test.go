@@ -6,6 +6,7 @@ package cypher
 
 import (
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -166,5 +167,62 @@ func TestPlanHash_SupportedArgTypes(t *testing.T) {
 	}
 	if len(seen) != len(all) {
 		t.Fatalf("expected distinct hashes for distinct supported arg types; got %v", all)
+	}
+}
+
+// TestStatementShapeHash_SameShapeDifferentLiterals_Equal — two invocations of
+// the same statement shape, differing only in redacted-out literal values,
+// MUST hash identically.
+func TestStatementShapeHash_SameShapeDifferentLiterals_Equal(t *testing.T) {
+	a := RedactLiterals(`MATCH (n {name: "alice"}) RETURN n`)
+	b := RedactLiterals(`MATCH (n {name: "bob"}) RETURN n`)
+	if StatementShapeHash(a) != StatementShapeHash(b) {
+		t.Fatalf("expected equal shape hash for same-shape statements, got %q vs %q", StatementShapeHash(a), StatementShapeHash(b))
+	}
+}
+
+// TestStatementShapeHash_DifferentShapes_Differ — different statement shapes
+// MUST hash differently.
+func TestStatementShapeHash_DifferentShapes_Differ(t *testing.T) {
+	a := RedactLiterals(`MATCH (n {name: "alice"}) RETURN n`)
+	b := RedactLiterals(`MATCH (n) WHERE n.age > 5 RETURN n`)
+	if StatementShapeHash(a) == StatementShapeHash(b) {
+		t.Fatalf("expected distinct shape hash for distinct statement shapes, got %q for both", StatementShapeHash(a))
+	}
+}
+
+// buildLargeCypherStatement builds a syntactically simple but ~2KB Cypher
+// statement (a long WHERE OR-chain) for the BenchmarkStatementShapeHash
+// overhead measurement the eshu-7014-cause-C task asked for.
+func buildLargeCypherStatement(targetBytes int) string {
+	var b strings.Builder
+	b.WriteString("MATCH (n) WHERE ")
+	for i := 0; b.Len() < targetBytes; i++ {
+		if i > 0 {
+			b.WriteString(" OR ")
+		}
+		b.WriteString("n.k")
+		b.WriteString(string(rune('a' + (i % 26))))
+		b.WriteString(" = 12345")
+	}
+	b.WriteString(" RETURN n")
+	return b.String()
+}
+
+// BenchmarkStatementShapeHash measures the per-call cost of hashing a ~2KB
+// already-redacted statement — the fallback path emitSlowQueryLog takes for
+// every non-EXPLAIN/PROFILE query once it has exceeded the slow-query
+// threshold (eshu-7014-cause-C defect 2). It never runs on the hot Execute()
+// path below that threshold.
+func BenchmarkStatementShapeHash(b *testing.B) {
+	redacted := RedactLiterals(buildLargeCypherStatement(2048))
+	if len(redacted) < 2000 {
+		b.Fatalf("fixture too small: %d bytes", len(redacted))
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(redacted)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = StatementShapeHash(redacted)
 	}
 }

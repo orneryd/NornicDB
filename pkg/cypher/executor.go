@@ -988,23 +988,35 @@ func (e *StorageExecutor) logger() *slog.Logger {
 //	level=WARN
 //	msg="slow query"
 //	event="slow_query"
-//	plan_hash=<16-char hex from PlanHash; "0000000000000000" when plan is nil>
+//	plan_hash=<16-char hex; PlanHash(plan) when a plan tree is available,
+//	           else StatementShapeHash of the redacted statement (eshu-7014-
+//	           cause-C defect 2 — see StatementShapeHash's doc comment: it is
+//	           a statement-shape fingerprint, not a plan fingerprint)>
 //	cypher.duration_ms=<int64 millisecond delta>
 //	query=<RedactLiterals(query) truncated to 500 chars>
 //
-// Performance: PlanHash + RedactLiterals only fire when this method is called,
-// i.e., only when the executor's measured duration exceeded the configured
-// threshold. The hot path (Execute fast return) never enters this method.
+// Performance: PlanHash/StatementShapeHash + RedactLiterals only fire when
+// this method is called, i.e., only when the executor's measured duration
+// exceeded the configured threshold. The hot path (Execute fast return)
+// never enters this method.
 func (e *StorageExecutor) emitSlowQueryLog(query string, plan *ExecutionPlan, duration time.Duration) {
 	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
 		return
 	}
 	redacted := RedactLiterals(query)
+	hash := PlanHash(plan)
+	if plan == nil || plan.Root == nil {
+		// The normal (non-EXPLAIN/PROFILE) Execute() path never builds an
+		// ExecutionPlan tree, so PlanHash would otherwise always collapse to
+		// the zero placeholder here. Hash on statement shape instead so
+		// distinct query shapes are still distinguishable in the log.
+		hash = StatementShapeHash(redacted)
+	}
 	if len(redacted) > 500 {
 		redacted = redacted[:500]
 	}
 	e.logEvent(slog.LevelWarn, localization.CypherSlowQueryEvent(
-		PlanHash(plan),
+		hash,
 		duration.Milliseconds(),
 		redacted,
 	))

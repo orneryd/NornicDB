@@ -281,6 +281,12 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
 			executor.SetInferenceManager(inferMgr)
 		}
+		// eshu-7014-cause-C defect 1: without this, every query against a
+		// composite/remote-auth-scoped database executor logs to io.Discard
+		// and never emits a slow_query record, no matter how
+		// NORNICDB_SLOW_QUERY_THRESHOLD is configured.
+		executor.SetLogger(baseExec.Logger())
+		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
 	}
 
 	if q := s.db.GetEmbedQueue(); q != nil {
@@ -336,6 +342,13 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
 			executor.SetInferenceManager(inferMgr)
 		}
+		// eshu-7014-cause-C defect 1: this is the executor behind every
+		// HTTP POST /db/{name}/tx/commit for a non-default database — the
+		// overwhelming majority of Eshu's NornicDB traffic. Without
+		// inheriting the base executor's logger + threshold here, none of
+		// it ever emits a slow_query record.
+		executor.SetLogger(baseExec.Logger())
+		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
 	}
 
 	// Wire embed queue callback for per-database executor mutations.

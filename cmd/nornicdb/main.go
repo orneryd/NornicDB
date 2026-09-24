@@ -1564,6 +1564,15 @@ func (e *DBQueryExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageExecutor
 		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
 			exec.SetInferenceManager(inferMgr)
 		}
+		// eshu-7014-cause-C defect 1: this is the sole wiring point for
+		// every Bolt database-scoped executor (pkg/bolt/server.go's
+		// newDatabaseScopedCypherExecutor calls it via the
+		// databaseExecutorConfigurator interface). Without it, every Bolt
+		// query — with or without an explicit database — logs to
+		// io.Discard and never emits a slow_query record, matching the gap
+		// newTxScopedExecutor below already closes for tx-scoped executors.
+		exec.SetLogger(baseExec.Logger())
+		exec.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
 	}
 	if searchSvc, err := e.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
 		exec.SetSearchService(searchSvc)

@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+	"strings"
 )
 
 // Sentinel separator bytes prevent canonical-form collisions via concatenation.
@@ -64,6 +65,40 @@ func PlanHash(plan *ExecutionPlan) string {
 	}
 	h := fnv.New64a()
 	canonicalizePlan(h, plan.Root)
+	return fmt.Sprintf("%016x", h.Sum64())
+}
+
+// StatementShapeHash returns a 16-char hex FNV-1a digest of a literal-redacted
+// Cypher statement's *shape*, for use as the slow-query log's plan_hash field
+// when no ExecutionPlan tree is available (eshu-7014-cause-C defect 2: the
+// normal, non-EXPLAIN/PROFILE Execute() path never builds one — it always
+// called PlanHash(nil), which collapses to the zero placeholder for every
+// single slow query, making the field useless for grouping).
+//
+// This is NOT a plan hash — it never sees the chosen execution plan, only
+// the query text after RedactLiterals has already stripped literal values.
+// It hashes on statement shape instead: whitespace is collapsed to single
+// spaces and trimmed first, so two invocations of the same statement that
+// differ only in incidental formatting (or, since literals are already
+// redacted, only in the literal values a caller supplied) still hash
+// identically, while two textually different statements — even ones that
+// happen to compile to the same physical plan — hash differently. Callers
+// that need true plan-level grouping should thread a real *ExecutionPlan
+// through PlanHash instead; this is the best available fallback until one is
+// cheaply available on the hot Execute() path (see the TRC-04 note on
+// PlanHash's caller in executor.go).
+//
+// Nil-safety mirrors PlanHash: an empty/whitespace-only input returns the
+// same "0000000000000000" zero placeholder PlanHash(nil) returns, so callers
+// cannot distinguish "no plan and no text" from "no plan tree" by field value
+// alone — both mean "nothing to group on".
+func StatementShapeHash(redactedQuery string) string {
+	normalized := strings.Join(strings.Fields(redactedQuery), " ")
+	if normalized == "" {
+		return "0000000000000000"
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(normalized))
 	return fmt.Sprintf("%016x", h.Sum64())
 }
 

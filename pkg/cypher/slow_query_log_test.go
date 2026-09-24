@@ -93,6 +93,51 @@ func TestExecutor_SlowQueryLog_Schema(t *testing.T) {
 	}
 }
 
+// TestExecutor_SlowQueryLog_PlanHashDistinguishesShape — eshu-7014-cause-C
+// defect 2: Execute's deferred emitSlowQueryLog(originalCypher, nil, dur)
+// always passed a nil plan, so plan_hash was "0000000000000000" for every
+// non-EXPLAIN/PROFILE query. That makes the field useless for grouping
+// slow-query records by statement shape. Two queries of the same shape but
+// different literal values MUST produce the same hash; two different shapes
+// MUST produce different hashes; and the hash MUST NOT be the zero
+// placeholder for an ordinary executed query.
+func TestExecutor_SlowQueryLog_PlanHashDistinguishesShape(t *testing.T) {
+	te := observability.NewTestEnv(t)
+	te.CaptureRecords()
+
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "slow_query_shape_test")
+	exec := NewStorageExecutor(store)
+	exec.SetLogger(te.Logger)
+	exec.SetSlowQueryThreshold(1 * time.Nanosecond)
+
+	ctx := context.Background()
+	_, _ = exec.Execute(ctx, `MATCH (n {name: "alice"}) RETURN n`, nil)
+	_, _ = exec.Execute(ctx, `MATCH (n {name: "bob"}) RETURN n`, nil)
+	_, _ = exec.Execute(ctx, `MATCH (n) WHERE n.age > 5 RETURN n`, nil)
+
+	var hashes []string
+	for _, rec := range te.LoggedRecords() {
+		if rec["event"] != "slow_query" {
+			continue
+		}
+		ph, _ := rec["plan_hash"].(string)
+		hashes = append(hashes, ph)
+	}
+	if len(hashes) != 3 {
+		t.Fatalf("expected 3 slow_query records, got %d: %v", len(hashes), hashes)
+	}
+	if hashes[0] == "0000000000000000" {
+		t.Fatalf("plan_hash is the zero placeholder for a non-EXPLAIN query: %v", hashes)
+	}
+	if hashes[0] != hashes[1] {
+		t.Fatalf("same-shape queries with different literals produced different plan_hash: %q vs %q", hashes[0], hashes[1])
+	}
+	if hashes[0] == hashes[2] {
+		t.Fatalf("different-shape queries produced the same plan_hash: %q", hashes[0])
+	}
+}
+
 // TestExecutor_SlowQueryLog_TruncatesAt500 — query attr is exactly <= 500 chars
 // even when the redacted query is longer.
 func TestExecutor_SlowQueryLog_TruncatesAt500(t *testing.T) {
