@@ -229,6 +229,12 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	inSingle, inDouble := false, false
 	withSearch := isWithKeyword(keyword)
+	if keyword == "" {
+		return positions
+	}
+	// Compare the first byte before the case-insensitive keyword match, so
+	// most positions cost one byte comparison instead of an EqualFold call.
+	first := asciiUpper(keyword[0])
 	for i := 0; i < len(query); i++ {
 		character := query[i]
 		if character == '\\' && (inSingle || inDouble) {
@@ -248,7 +254,7 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 		if inSingle || inDouble {
 			continue
 		}
-		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 &&
+		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && asciiUpper(character) == first &&
 			i+len(keyword) <= len(query) && strings.EqualFold(query[i:i+len(keyword)], keyword) &&
 			(i == 0 || !isAlphaNumericByte(query[i-1])) &&
 			(i+len(keyword) == len(query) || !isAlphaNumericByte(query[i+len(keyword)])) {
