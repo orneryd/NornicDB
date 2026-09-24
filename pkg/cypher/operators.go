@@ -424,7 +424,7 @@ func (e *StorageExecutor) hasOperatorOutsideQuotes(expr, op string) bool {
 //	evaluateComparisonExpr("5 > 3", nodes, rels)        // true
 //	evaluateComparisonExpr("'abc' = 'abc'", nodes, rels) // true
 //	evaluateComparisonExpr("n.age >= 18", nodes, rels)   // depends on n.age
-func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
 	// Try operators in order of specificity
 	ops := []struct {
 		op   string
@@ -443,8 +443,8 @@ func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr strin
 	for _, op := range ops {
 		leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, op.op, false, false)
 		if ok {
-			left := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-			right := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+			left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if left == nil || right == nil {
 				return nil, true
 			}
@@ -524,11 +524,11 @@ func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
 //	evaluateArithmeticExpr("5 + 3", nodes, rels)             // int64(8)
 //	evaluateArithmeticExpr("10 / 3", nodes, rels)            // float64(3.333...)
 //	evaluateArithmeticExpr("date('2025-01-01') + duration('P5D')", ...) // "2025-01-06..."
-func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	// Cypher exponentiation always yields a floating-point value.
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "^", true, false); ok {
-		left, leftOK := toFloat64(e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels))
-		right, rightOK := toFloat64(e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels))
+		left, leftOK := toFloat64(e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+		right, rightOK := toFloat64(e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 		if leftOK && rightOK {
 			return math.Pow(left, right)
 		}
@@ -537,27 +537,27 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 	// Handle + operator (date + duration, or numeric addition)
 	// Try with spaces first, then without
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " + ", true, false); ok {
-		left := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-		right := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return e.add(left, right)
 	}
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "+", true, false); ok {
-		left := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-		right := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return e.add(left, right)
 	}
 
 	// Handle * operator
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "*", true, false); ok {
-		left := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-		right := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return e.multiply(left, right)
 	}
 
 	// Handle / operator
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "/", true, false); ok {
-		left := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-		right := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if divisor, numeric := toFloat64(right); numeric && divisor == 0 && left != nil {
 			recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero"))
 		}
@@ -566,8 +566,8 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 
 	// Handle % operator
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "%", true, false); ok {
-		left := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-		right := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if divisor, numeric := toFloat64(right); numeric && divisor == 0 && left != nil {
 			recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero"))
 		}
@@ -577,14 +577,14 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 	// Handle - operator (binary subtraction, not unary minus)
 	// Try with spaces first, then without (but be careful with unary minus)
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " - ", true, false); ok {
-		left := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-		right := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return e.subtract(left, right)
 	}
 	// For - without spaces, only split if both sides would be valid expressions
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "-", true, false); ok && leftExpr != "" {
-		left := e.evaluateExpressionWithContext(ctx, leftExpr, nodes, rels)
-		right := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
+		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if left != nil && right != nil {
 			return e.subtract(left, right)
 		}

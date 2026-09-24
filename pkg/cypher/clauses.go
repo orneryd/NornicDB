@@ -4243,7 +4243,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 							computedValues[rowIdx] = make(map[string]interface{})
 						}
 						nodeMap, relMap := buildJoinedEvaluationContext(r, sourceVar, targetVar, relVar)
-						computedValues[rowIdx][alias] = e.evaluateCaseExpression(ctx, expr, nodeMap, relMap)
+						computedValues[rowIdx][alias] = e.evaluateCaseExpression(ctx, expr, nodeMap, relMap, nil, nil, nil, 0)
 					}
 				}
 			}
@@ -4369,7 +4369,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 				count := int64(0)
 				for _, r := range rows {
 					nodeMap, relMap := buildJoinedEvaluationContext(r, sourceVar, targetVar, relVar)
-					result := e.evaluateCaseExpression(ctx, inner, nodeMap, relMap)
+					result := e.evaluateCaseExpression(ctx, inner, nodeMap, relMap, nil, nil, nil, 0)
 					// count() only counts non-NULL values
 					if result != nil {
 						count++
@@ -5087,7 +5087,7 @@ func (e *StorageExecutor) tryBuildJoinedGroupedCollectResult(ctx context.Context
 				}
 				var val interface{}
 				if isCaseExpression(normalizedInner) {
-					val = e.evaluateCaseExpression(ctx, normalizedInner, nodeCtx, relCtx)
+					val = e.evaluateCaseExpression(ctx, normalizedInner, nodeCtx, relCtx, nil, nil, nil, 0)
 				} else {
 					val = e.evaluateExpressionWithContext(ctx, normalizedInner, nodeCtx, relCtx)
 				}

@@ -327,11 +327,15 @@ func (e *StorageExecutor) projectCreatedReturnItem(ctx context.Context, item ret
 		return int64(0)
 	}
 
-	// Path variables first (RETURN p, nodes(p), relationships(p), length(p))
-	if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
-		if path, ok := createdPaths[varName]; ok {
-			return e.pathToValue(path, item.expr, varName)
+	// Items over a created path (RETURN p, length(p) + 1, size(nodes(p)),
+	// nodes(p)[0].id, ...) are evaluated with a path context holding the
+	// created paths, nodes and relationships - the same evaluator the MATCH
+	// path routes use.
+	if pathVar, ok := referencedCreatedPath(item.expr, createdPaths); ok {
+		if item.expr == pathVar {
+			return e.pathToMap(createdPaths[pathVar])
 		}
+		return e.evaluateExpressionWithPathContext(ctx, item.expr, createdPathContext(createdNodes, createdEdges, createdPaths))
 	}
 
 	// Relationship variables next (RETURN r, r.prop, id(r), type(r), ...)
@@ -389,6 +393,28 @@ func referencesOtherCreatedVariable(expr, varName string, nodes map[string]*stor
 		}
 	}
 	return false
+}
+
+// referencedCreatedPath returns the created path variable an item mentions.
+func referencedCreatedPath(expr string, createdPaths map[string]PathResult) (string, bool) {
+	for name := range createdPaths {
+		if containsIdentifierToken(expr, name) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// createdPathContext is the evaluation scope of a CREATE ... RETURN item that
+// uses a created path: the created paths by name plus the created nodes and
+// relationships.
+func createdPathContext(nodes map[string]*storage.Node, edges map[string]*storage.Edge, createdPaths map[string]PathResult) PathContext {
+	paths := make(map[string]*PathResult, len(createdPaths))
+	for name := range createdPaths {
+		path := createdPaths[name]
+		paths[name] = &path
+	}
+	return PathContext{nodes: nodes, rels: edges, paths: paths}
 }
 
 func (e *StorageExecutor) resolveCreatePropertyReferences(

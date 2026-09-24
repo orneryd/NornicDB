@@ -9,14 +9,14 @@ import (
 )
 
 // evaluateStringConcatWithContext handles string concatenation with + operator.
-func (e *StorageExecutor) evaluateStringConcatWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) string {
+func (e *StorageExecutor) evaluateStringConcatWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) string {
 	var result strings.Builder
 
 	// Split by + but respect quotes and parentheses
 	parts := e.splitByPlus(expr)
 
 	for _, part := range parts {
-		val := e.evaluateExpressionWithContext(ctx, part, nodes, rels)
+		val := e.evaluateExpressionWithContextFull(ctx, part, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		result.WriteString(fmt.Sprintf("%v", val))
 	}
 
