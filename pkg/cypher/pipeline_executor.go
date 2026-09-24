@@ -1511,11 +1511,11 @@ func (e *StorageExecutor) pipelineMatchHint(remaining []pipelineClause) pipeline
 			return hint
 		}
 	}
-	skip, hasSkip := parseIntModifier(body, "SKIP")
+	skip, hasSkip := e.parseIntModifier(body, "SKIP")
 	if hasSkip && skip != 0 {
 		return hint
 	}
-	limit, hasLimit := parseIntModifier(body, "LIMIT")
+	limit, hasLimit := e.parseIntModifier(body, "LIMIT")
 	if !hasLimit || limit < 0 {
 		return hint
 	}
@@ -3492,11 +3492,11 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		return nil, false
 	}
 	skip := 0
-	if value, ok := parseIntModifier(modifiers, "SKIP"); ok {
+	if value, ok := e.parseIntModifier(modifiers, "SKIP"); ok {
 		skip = value
 	}
 	limit := -1
-	if value, ok := parseIntModifier(modifiers, "LIMIT"); ok {
+	if value, ok := e.parseIntModifier(modifiers, "LIMIT"); ok {
 		limit = value
 	}
 	projectedRows = applyPipelineWindow(projectedRows, skip, limit)

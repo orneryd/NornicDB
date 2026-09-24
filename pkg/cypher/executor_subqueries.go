@@ -3497,8 +3497,8 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 func (e *StorageExecutor) applyResultModifiers(result *ExecuteResult, modifiers string) (*ExecuteResult, error) {
 	orderByCol, orderByDesc, hasOrderBy := parseOrderByModifier(modifiers)
 	orderTerms := parseOrderByTerms(modifiers)
-	skip, hasSkip := parseIntModifier(modifiers, "SKIP")
-	limit, hasLimit := parseIntModifier(modifiers, "LIMIT")
+	skip, hasSkip := e.parseIntModifier(modifiers, "SKIP")
+	limit, hasLimit := e.parseIntModifier(modifiers, "LIMIT")
 
 	if hasOrderBy && len(orderTerms) == 1 && hasLimit && limit >= 0 {
 		if colIdx := findColumnIndexByName(result.Columns, orderByCol); colIdx >= 0 {
@@ -3847,7 +3847,14 @@ func parseOrderByModifier(modifiers string) (column string, descending bool, ok 
 	return terms[0].column, terms[0].descending, terms[0].column != ""
 }
 
-func parseIntModifier(modifiers, keyword string) (value int, ok bool) {
+// parseIntModifier returns the SKIP or LIMIT value in a RETURN/WITH modifier
+// tail. A plain integer is read directly; anything else (1 + 1, $s + 1 after
+// parameter substitution, toInteger('2')) is evaluated as a constant
+// expression through evaluatePipelinePagination, the same evaluation WITH uses,
+// so every route applies SKIP/LIMIT expressions instead of ignoring them.
+// ok is false when the keyword is absent or the value is not a non-negative
+// integer.
+func (e *StorageExecutor) parseIntModifier(modifiers, keyword string) (value int, ok bool) {
 	idx := findKeywordIndex(modifiers, keyword)
 	if idx == -1 {
 		return 0, false
@@ -3863,11 +3870,13 @@ func parseIntModifier(modifiers, keyword string) (value int, ok bool) {
 		}
 	}
 	vs := strings.TrimSpace(kwPart[:nextKw])
-	v, err := strconv.Atoi(vs)
-	if err != nil {
+	if v, err := strconv.Atoi(vs); err == nil {
+		return v, true
+	}
+	if vs == "" {
 		return 0, false
 	}
-	return v, true
+	return e.evaluatePipelinePagination(context.Background(), vs, nil)
 }
 
 func findColumnIndexByName(cols []string, name string) int {
