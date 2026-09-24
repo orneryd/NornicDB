@@ -11,7 +11,18 @@ type paginationExpression struct {
 	value   string
 }
 
+// extractPaginationExpressions returns the SKIP / LIMIT expressions of the
+// statement's WITH and RETURN clauses. Each UNION branch has its own SKIP /
+// LIMIT, so the branches are read one by one; otherwise the last RETURN of a
+// branch would run into the next branch (LIMIT 2 UNION ALL MATCH …).
 func extractPaginationExpressions(cypher string) []paginationExpression {
+	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
+		var result []paginationExpression
+		for _, branch := range branches {
+			result = append(result, extractPaginationExpressions(branch)...)
+		}
+		return result
+	}
 	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
 		return nil

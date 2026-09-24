@@ -5,6 +5,28 @@ import (
 	"strings"
 )
 
+// scanSymbolicName reads the Cypher symbolic name (variable, alias, property
+// key) that starts at s[start]: a plain identifier, or a backtick-quoted one in
+// which a doubled backtick stands for a backtick (`the g`, `a“b`). It returns
+// the name as written (quotes included; normalizeProjectionColumnName removes
+// them), the offset after it, and whether a name starts there.
+func scanSymbolicName(s string, start int) (string, int, bool) {
+	if start < len(s) && s[start] == '`' {
+		for index := start + 1; index < len(s); index++ {
+			if s[index] != '`' {
+				continue
+			}
+			if index+1 < len(s) && s[index+1] == '`' {
+				index++
+				continue
+			}
+			return s[start : index+1], index + 1, index > start+1
+		}
+		return "", start, false
+	}
+	return scanIdentifierToken(s, start)
+}
+
 // unquoteBacktickIdentifier removes surrounding backticks from a Cypher identifier.
 //
 // Neo4j/Cypher uses backticks for escaping identifiers. For system commands like

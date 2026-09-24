@@ -597,9 +597,11 @@ func invalidRelationshipPattern(pattern string) bool {
 	return false
 }
 
+// simpleSemanticIdentifier returns the variable an expression consists of,
+// plain or backtick-quoted (`x y`), unquoted; "" for any other expression.
 func simpleSemanticIdentifier(expression string) string {
 	expression = strings.TrimSpace(expression)
-	name, next, ok := scanIdentifierToken(expression, 0)
+	name, next, ok := scanSymbolicName(expression, 0)
 	if !ok || strings.TrimSpace(expression[next:]) != "" {
 		return ""
 	}

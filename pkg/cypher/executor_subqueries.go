@@ -3580,6 +3580,10 @@ func parseOrderByTerms(modifiers string) []orderByTerm {
 	return parseOrderByClause(modifiers[orderByIndex+len("ORDER BY"):])
 }
 
+// parseOrderByClause parses the sort items that follow ORDER BY. The list ends
+// at SKIP / LIMIT, and at the WHERE that may follow ORDER BY in a WITH clause
+// (WITH n ORDER BY n.x WHERE n.y > 0): that WHERE filters the sorted rows and
+// is not part of the last sort item.
 func parseOrderByClause(clause string) []orderByTerm {
 	clause = strings.TrimSpace(clause)
 	end := len(clause)
@@ -3587,6 +3591,9 @@ func parseOrderByClause(clause string) []orderByTerm {
 		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
 			end = index
 		}
+	}
+	if index := topLevelKeywordIndex(clause, "WHERE"); index >= 0 && index < end {
+		end = index
 	}
 	clause = strings.TrimSpace(clause[:end])
 	parts := splitTopLevelComma(clause)
