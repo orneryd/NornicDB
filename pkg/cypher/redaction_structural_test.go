@@ -28,8 +28,10 @@ func TestRedactLiterals_InvalidStatementsNeverEmitInputWords(t *testing.T) {
 		{"bare_word_before_literal", `MATCH (n {name: John 'x'}) RETURN n`, []string{"John", "x"}},
 		{"literal_before_bare_word", `MATCH (n {name: 'x' Secret}) RETURN n`, []string{"Secret", "x"}},
 		{"dotted_bare_word_in_invalid_map", `MATCH (n {pw: John.Secret, }) RETURN n`, []string{"John", "Secret"}},
-		{"comment_in_invalid_statement", `MATCH (n {pw: /* Secret */ x y}) RETURN n`, []string{"Secret"}},
-		{"hex_in_invalid_statement", `MATCH (n {pw: 0xBEEF y z}) RETURN n`, []string{"0xBEEF", "BEEF"}},
+		{"comment_in_invalid_statement", `MATCH (n {pw: /* Secret */ x}) RETURN n,`, []string{"Secret"}},
+		{"hex_in_invalid_statement", `MATCH (n {pw: 0xBEEF}) RETURN n,`, []string{"0xBEEF", "BEEF"}},
+		{"backtick_in_invalid_statement", "MATCH (n {pw: `hunter2`}) RETURN n,", []string{"hunter2"}},
+		{"line_comment_in_invalid_statement", `RETURN n, // hunter2`, []string{"hunter2"}},
 	}
 	keywords := map[string]bool{
 		"MATCH": true, "RETURN": true, "WHERE": true, "AND": true,

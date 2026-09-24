@@ -76,9 +76,10 @@ func (l *redactSilentErrorListener) SyntaxError(_ antlr4.Recognizer, _ interface
 //
 // Signal 4 also fires on a few valid statements. Keywords the lexer
 // tokenizes never lex as ID, but some Cypher keywords (NULLS, FIRST, LAST,
-// USE, LOAD, CSV, HEADERS, FROM, ERROR, CONTINUE, FINISH) are not lexer
-// tokens, so statements such as `ORDER BY n.x DESC NULLS LAST` are redacted
-// whole. That is the safe direction.
+// USE, LOAD, CSV, HEADERS, FROM, ERROR, CONTINUE, FINISH, ZONED, LOCAL,
+// DATETIME, TRAILING) are not lexer tokens, so statements such as
+// `ORDER BY n.x DESC NULLS LAST` and `CREATE CONSTRAINT ... IS :: ZONED
+// DATETIME` are redacted whole. That is the safe direction.
 //
 // Step 2 checks the statement against the grammar with cantlr.Validate.
 // When the grammar accepts it, the output keeps every identifier and
