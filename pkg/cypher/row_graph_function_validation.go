@@ -10,6 +10,11 @@ import (
 
 func validateGraphFunctionSemanticTypes(expression string, scope matchSemanticScope) error {
 	expression = strings.TrimSpace(expression)
+	// (labels(x)) is checked like labels(x), as the conversion-function
+	// validator does.
+	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
+		return validateGraphFunctionSemanticTypes(inner, scope)
+	}
 	if inner, enclosed := stripEnclosingRowDelimiter(expression, '[', ']'); enclosed {
 		_, listExpression, predicate, projection, comprehension := parseListComprehension(inner)
 		if comprehension {
@@ -114,6 +119,11 @@ func (e *StorageExecutor) validatePipelineGraphFunctionArguments(rows []pipeline
 
 func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, row pipelineRow) error {
 	expression = strings.TrimSpace(expression)
+	// (labels(x)) is checked like labels(x), as the conversion-function
+	// validator does.
+	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
+		return e.validateRowGraphFunctionArguments(inner, row)
+	}
 	if inner, enclosed := stripEnclosingRowDelimiter(expression, '[', ']'); enclosed {
 		variable, listExpression, predicate, projection, comprehension := parseListComprehension(inner)
 		if comprehension {
