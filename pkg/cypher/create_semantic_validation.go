@@ -118,9 +118,9 @@ func unwindBindingName(clause string) string {
 		for start < len(clause) && isWhitespace(clause[start]) {
 			start++
 		}
-		name, _, ok := scanIdentifierToken(clause, start)
+		name, _, ok := scanSymbolicName(clause, start)
 		if ok {
-			return name
+			return normalizeProjectionColumnName(name)
 		}
 	}
 	return ""

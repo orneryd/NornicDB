@@ -434,7 +434,7 @@ func semanticExpressionReferences(expression string) []string {
 				continue
 			}
 		}
-		name, next, ok := scanIdentifierToken(expression, index)
+		name, next, ok := scanSymbolicName(expression, index)
 		if !ok {
 			index++
 			continue
@@ -451,11 +451,11 @@ func semanticExpressionReferences(expression string) []string {
 			continue
 		}
 		normalized := normalizeProjectionColumnName(name)
-		if isSemanticLiteralWord(normalized) {
+		if name[0] != '`' && isSemanticLiteralWord(normalized) {
 			continue
 		}
 		if cursor < len(expression) && expression[cursor] == '.' {
-			property, propertyEnd, propertyOK := scanIdentifierToken(expression, cursor+1)
+			property, propertyEnd, propertyOK := scanSymbolicName(expression, cursor+1)
 			if propertyOK {
 				normalized += "." + normalizePropertyKey(property)
 				index = propertyEnd
