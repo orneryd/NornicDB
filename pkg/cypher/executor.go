@@ -1464,6 +1464,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {
 		return nil, err
 	}
+	if err := validateMembershipParameters(cypher, params); err != nil {
+		return nil, err
+	}
 
 	// Check query limits if storage engine supports it
 	// Uses interface{} to avoid importing multidb package (prevents circular dependencies)

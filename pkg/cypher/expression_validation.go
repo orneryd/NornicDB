@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -25,6 +26,70 @@ func validateStaticMembershipOperand(expression string) error {
 		"InvalidArgumentType",
 		fmt.Sprintf("IN requires a LIST on the right-hand side, got %s", right),
 	)
+}
+
+// validateMembershipParameters rejects `x IN $p` when the parameter $p is bound
+// to a non-null value that is not a list, before any route executes the
+// statement. Without it the outcome depended on the route: the RETURN evaluator
+// raised a type error while every WHERE evaluator (compiled binding predicate,
+// index seek, generic fallback) silently treated the value as "no match".
+// Only a parameter that is the whole right-hand operand is checked; `$p.list`,
+// `$p[0]` or `$p + [1]` are expressions whose type is not the parameter's.
+func validateMembershipParameters(cypher string, params map[string]interface{}) error {
+	if len(params) == 0 || !strings.Contains(cypher, "$") {
+		return nil
+	}
+	upper := strings.ToUpper(cypher)
+	for i := 0; i < len(cypher); i++ {
+		switch cypher[i] {
+		case '\'', '"', '`':
+			quote := cypher[i]
+			i++
+			for i < len(cypher) && (cypher[i] != quote || (quote != '`' && isBackslashEscaped(cypher, i))) {
+				i++
+			}
+			continue
+		}
+		if !strings.HasPrefix(upper[i:], "IN") || (i > 0 && isIdentByte(cypher[i-1])) ||
+			i+2 >= len(cypher) || isIdentByte(cypher[i+2]) {
+			continue
+		}
+		j := skipSpaces(cypher, i+2)
+		if j >= len(cypher) || cypher[j] != '$' {
+			continue
+		}
+		start := j + 1
+		end := start
+		for end < len(cypher) && isIdentByte(cypher[end]) {
+			end++
+		}
+		if end == start {
+			continue
+		}
+		next := skipSpaces(cypher, end)
+		if next < len(cypher) && strings.IndexByte(")],}|", cypher[next]) < 0 && !isIdentByte(cypher[next]) {
+			continue
+		}
+		name := cypher[start:end]
+		value, bound := params[name]
+		if !bound || value == nil || isCypherListParameter(value) {
+			continue
+		}
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidArgumentType",
+			fmt.Sprintf("IN requires a LIST on the right-hand side, got $%s = %v", name, value),
+		)
+	}
+	return nil
+}
+
+func isCypherListParameter(value interface{}) bool {
+	if _, isBytes := value.([]byte); isBytes {
+		return false
+	}
+	kind := reflect.TypeOf(value).Kind()
+	return kind == reflect.Slice || kind == reflect.Array
 }
 
 // validateStaticSizeArguments rejects size(PATH) before query execution. A
