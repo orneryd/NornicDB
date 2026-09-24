@@ -698,6 +698,9 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 	if comparison, temporal := compareTemporalOrdering(left, right); temporal {
 		return comparison, true
 	}
+	if comparison, integers := compareCypherIntegers(left, right); integers {
+		return comparison, true
+	}
 	leftNumber, leftIsNumber := strictNumericValue(left)
 	rightNumber, rightIsNumber := strictNumericValue(right)
 	if leftIsNumber || rightIsNumber {

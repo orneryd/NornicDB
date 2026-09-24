@@ -1,6 +1,9 @@
 package cypher
 
-import "reflect"
+import (
+	"cmp"
+	"reflect"
+)
 
 // cypherEquality applies Cypher's three-valued structural equality. A nil
 // result represents unknown, which occurs when no definite inequality exists
@@ -91,6 +94,37 @@ func cypherNumericEquality(left, right interface{}) (bool, bool) {
 		return false, true
 	}
 	return leftNumber == rightNumber, true
+}
+
+// compareCypherIntegers orders two integer values exactly, including values
+// above 2^53 (where float64 can no longer tell neighbours apart) and mixed
+// signed/unsigned values. ok is false unless both values are integers; callers
+// then fall back to their float64 comparison. Ordering operators, ORDER BY and
+// CASE comparisons all go through this so they agree with numeric equality.
+func compareCypherIntegers(left, right interface{}) (comparison int, ok bool) {
+	leftSigned, leftIsSigned := cypherSignedInteger(left)
+	leftUnsigned, leftIsUnsigned := cypherUnsignedInteger(left)
+	rightSigned, rightIsSigned := cypherSignedInteger(right)
+	rightUnsigned, rightIsUnsigned := cypherUnsignedInteger(right)
+	if !(leftIsSigned || leftIsUnsigned) || !(rightIsSigned || rightIsUnsigned) {
+		return 0, false
+	}
+	switch {
+	case leftIsSigned && rightIsSigned:
+		return cmp.Compare(leftSigned, rightSigned), true
+	case leftIsUnsigned && rightIsUnsigned:
+		return cmp.Compare(leftUnsigned, rightUnsigned), true
+	case leftIsSigned:
+		if leftSigned < 0 {
+			return -1, true
+		}
+		return cmp.Compare(uint64(leftSigned), rightUnsigned), true
+	default:
+		if rightSigned < 0 {
+			return 1, true
+		}
+		return cmp.Compare(leftUnsigned, uint64(rightSigned)), true
+	}
 }
 
 func cypherSignedInteger(value interface{}) (int64, bool) {
