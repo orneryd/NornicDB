@@ -3090,10 +3090,15 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 				if err != nil {
 					return nil, localizedError(localization.CypherMutationsNodeCreateFailed(err), err)
 				}
-				if node != nil && varName != "" {
+				if node == nil {
+					continue
+				}
+				// Every created node counts, named or anonymous; only named
+				// nodes are bound for later patterns and RETURN.
+				result.Stats.NodesCreated++
+				addOptimisticNodeID(result, node.ID)
+				if varName != "" {
 					nodeContext[varName] = node
-					result.Stats.NodesCreated++
-					addOptimisticNodeID(result, node.ID)
 				}
 			}
 			for _, pattern := range relationshipPatterns {
