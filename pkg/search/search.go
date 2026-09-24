@@ -4951,12 +4951,14 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Read the pointer once under the lock: resetANNForBuild may clear it as
+	// soon as the lock is released (#593).
 	s.pipelineMu.RLock()
-	if s.vectorPipeline != nil {
-		s.pipelineMu.RUnlock()
-		return s.vectorPipeline, nil
-	}
+	pipeline := s.vectorPipeline
 	s.pipelineMu.RUnlock()
+	if pipeline != nil {
+		return pipeline, nil
+	}
 
 	s.pipelineMu.Lock()
 	defer s.pipelineMu.Unlock()
