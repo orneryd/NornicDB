@@ -89,12 +89,24 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 }
 
 func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindingScope) string {
-	locals := make(map[string]struct{})
-	for name := range scope.names {
-		locals[name] = struct{}{}
+	for _, name := range expressionFreeVariables(expression) {
+		if _, exists := scope.names[name]; !exists {
+			return name
+		}
 	}
+	return ""
+}
+
+// expressionFreeVariables returns the variables an expression reads, in order
+// of appearance: identifiers outside string literals that are not parameters,
+// property or map keys, function names, keywords, or names the expression binds
+// itself (list comprehension iterators, reduce / all / any / none / single).
+// It is the one reference scanner for the static SET and CREATE checks.
+func expressionFreeVariables(expression string) []string {
+	locals := make(map[string]struct{})
 	collectListComprehensionBindings(expression, locals)
 	collectFunctionExpressionBindings(expression, locals)
+	var names []string
 	for index := 0; index < len(expression); {
 		character := expression[index]
 		if character == '\'' || character == '"' || character == '`' {
@@ -127,12 +139,12 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 		upper := strings.ToUpper(name)
 		if previous != '$' && previous != '.' && following != '(' && following != ':' && !setExpressionKeyword(upper) {
 			if _, exists := locals[name]; !exists {
-				return name
+				names = append(names, name)
 			}
 		}
 		index = next
 	}
-	return ""
+	return names
 }
 
 func collectFunctionExpressionBindings(expression string, bindings map[string]struct{}) {

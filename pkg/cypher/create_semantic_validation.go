@@ -147,6 +147,10 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 			}
 		}
 
+		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables); err != nil {
+			return err
+		}
+
 		for _, nodePattern := range e.splitNodePatterns(pattern) {
 			variable := createNodePatternVariable(nodePattern)
 			if err := e.validateCreatePatternExpressions(scope, nodePattern); err != nil {
@@ -273,36 +277,103 @@ func createUndefinedVariableError(variable string) error {
 }
 
 func (e *StorageExecutor) validateCreatePatternExpressions(scope *semanticBindingScope, pattern string) error {
-	open := strings.Index(pattern, "{")
-	close := strings.LastIndex(pattern, "}")
-	if open < 0 || close <= open {
+	properties, ok := createPropertyMapBody(pattern)
+	if !ok {
 		return nil
 	}
-	return e.validateCreatePropertyExpressions(scope, pattern[open+1:close])
+	return e.validateCreatePropertyExpressions(scope, properties)
 }
 
 func (e *StorageExecutor) validateCreateRelationshipExpressions(scope *semanticBindingScope, pattern string) error {
+	for _, properties := range createRelationshipPropertyMapBodies(pattern) {
+		if err := e.validateCreatePropertyExpressions(scope, properties); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// createPropertyMapBody returns the text between the braces of a node (or
+// relationship) pattern's property map.
+func createPropertyMapBody(pattern string) (string, bool) {
+	open := strings.Index(pattern, "{")
+	close := strings.LastIndex(pattern, "}")
+	if open < 0 || close <= open {
+		return "", false
+	}
+	return pattern[open+1 : close], true
+}
+
+// createRelationshipPropertyMapBodies returns the property map text of every
+// relationship ([...]) in a CREATE path pattern.
+func createRelationshipPropertyMapBodies(pattern string) []string {
+	var bodies []string
 	for offset := 0; offset < len(pattern); {
 		open := strings.Index(pattern[offset:], "[")
 		if open < 0 {
-			return nil
+			break
 		}
 		open += offset
 		close := findMatchingBracket(pattern, open)
 		if close < 0 {
-			return nil
+			break
 		}
-		content := pattern[open+1 : close]
-		propsOpen := strings.Index(content, "{")
-		propsClose := strings.LastIndex(content, "}")
-		if propsOpen >= 0 && propsClose > propsOpen {
-			if err := e.validateCreatePropertyExpressions(scope, content[propsOpen+1:propsClose]); err != nil {
-				return err
-			}
+		if properties, ok := createPropertyMapBody(pattern[open+1 : close]); ok {
+			bodies = append(bodies, properties)
 		}
 		offset = close + 1
 	}
+	return bodies
+}
+
+// validateCreateSamePatternReferences rejects a property value that reads a
+// node or relationship created by the same CREATE path pattern, including a
+// node's own map ((a {x: a.y})), as Neo4j does: the entity does not exist yet
+// when its pattern's properties are evaluated. A later comma-separated pattern
+// may read it, and names bound inside the expression (list comprehension
+// iterators, reduce / all / any / none / single) are not references.
+func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern string, relationshipVariables []string) error {
+	created := make(map[string]string)
+	nodePatterns := e.splitNodePatterns(pattern)
+	for _, nodePattern := range nodePatterns {
+		if variable := createNodePatternVariable(nodePattern); variable != "" && !scope.contains(variable) {
+			created[variable] = "Node"
+		}
+	}
+	for _, variable := range relationshipVariables {
+		created[variable] = "Relationship"
+	}
+	if len(created) == 0 {
+		return nil
+	}
+	maps := createRelationshipPropertyMapBodies(pattern)
+	for _, nodePattern := range nodePatterns {
+		if properties, ok := createPropertyMapBody(nodePattern); ok {
+			maps = append(maps, properties)
+		}
+	}
+	for _, properties := range maps {
+		for _, pair := range e.splitPropertyPairs(properties) {
+			separator := findTopLevelMapKeyValueSeparator(pair)
+			if separator <= 0 {
+				continue
+			}
+			for _, variable := range expressionFreeVariables(pair[separator+1:]) {
+				if kind, ok := created[variable]; ok {
+					return createSamePatternReferenceError(variable, kind)
+				}
+			}
+		}
+	}
 	return nil
+}
+
+func createSamePatternReferenceError(variable, kind string) error {
+	return newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"VariableCreatedInSameClause",
+		fmt.Sprintf("The %s variable '%s' is referencing a %s that is created in the same CREATE clause which is not allowed. Please only reference variables created in earlier clauses.", kind, variable, kind),
+	)
 }
 
 func (e *StorageExecutor) validateCreatePropertyExpressions(scope *semanticBindingScope, properties string) error {
