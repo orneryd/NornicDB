@@ -87,11 +87,20 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	if !ok {
 		return nil, false
 	}
+	// Dynamic-label assignments are atomic operators owned by their
+	// parse-once mutation plans.
+	if strings.Contains(cypher, "$(") {
+		return nil, false
+	}
+	// MERGE actions (ON CREATE SET / ON MATCH SET) stay part of their MERGE
+	// clause (splitPipelineClauses) and pipelineApplyMerge applies them. The
+	// MERGE routes (executeMerge*, executeUnwind and its UNWIND batch
+	// operators) run MERGE actions faster for ingestion shapes but have no
+	// REMOVE, so a statement with MERGE actions runs here only when it also
+	// removes something.
 	upper := strings.ToUpper(cypher)
-	// Inline MERGE actions and dynamic-label assignments are atomic operators
-	// owned by their parse-once mutation plans. The row pipeline must not split
-	// them into independent MERGE/SET clauses until it can retain that atomicity.
-	if strings.Contains(upper, "ON CREATE SET") || strings.Contains(upper, "ON MATCH SET") || strings.Contains(cypher, "$(") {
+	if (strings.Contains(upper, "ON CREATE SET") || strings.Contains(upper, "ON MATCH SET")) &&
+		(!strings.Contains(upper, "REMOVE") || !containsRemoveClauseAnywhere(cypher)) {
 		return nil, false
 	}
 	for _, clause := range clauses {
@@ -417,6 +426,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 				result.Stats.NodesCreated += stats.NodesCreated
 				result.Stats.RelationshipsCreated += stats.RelationshipsCreated
 				result.Stats.PropertiesSet += stats.PropertiesSet
+				result.Stats.LabelsAdded += stats.LabelsAdded
 			}
 			wrote = true
 		case pipelineClauseDelete:
@@ -2422,22 +2432,27 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		var nodePathVariable string
 		var nodePathBinding string
 		mergeBody := strings.TrimSpace(substituted)
+		// The MERGE pattern without its ON CREATE SET / ON MATCH SET actions.
+		mergePattern := mergeBody
+		onMatchSet := ""
 		if startsWithKeywordFold(mergeBody, "MERGE") {
 			mergeBody = strings.TrimSpace(mergeBody[len("MERGE"):])
-			if open, _ := firstRelationshipBracket(mergeBody); open >= 0 {
+			mergePattern, _, onMatchSet = splitMergeClauseActions(mergeBody)
+			if open, _ := firstRelationshipBracket(mergePattern); open >= 0 {
 				var parseErr error
-				relationshipPattern, parseErr = e.parseMergeRelationshipPattern(ctx, mergeBody, nodeContext, relContext)
+				relationshipPattern, parseErr = e.parseMergeRelationshipPattern(ctx, mergePattern, nodeContext, relContext)
 				if parseErr != nil {
 					return nil, nil, parseErr
 				}
-			} else if nodePathVariable = extractPathAssignmentVariable(mergeBody); nodePathVariable != "" {
+			} else if nodePathVariable = extractPathAssignmentVariable(mergePattern); nodePathVariable != "" {
 				mergeBody = strings.TrimSpace(mergeBody[strings.Index(mergeBody, "=")+1:])
-				nodePathBinding = e.extractVarName(mergeBody)
+				mergePattern = strings.TrimSpace(mergePattern[strings.Index(mergePattern, "=")+1:])
+				nodePathBinding = e.extractVarName(mergePattern)
 				substituted = "MERGE " + mergeBody
 			}
 		}
 		if relationshipPattern == nil {
-			nodePattern := mergeBody
+			nodePattern := mergePattern
 			variable, labels, properties, parseErr := e.parseMergePattern(ctx, nodePattern)
 			if parseErr == nil {
 				properties = e.resolveMergePropsWithContext(ctx, properties, nodeContext, relContext)
@@ -2448,6 +2463,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 						return nil, nil, findErr
 					}
 					if len(matches) > 0 {
+						matchedRows := make([]pipelineRow, 0, len(matches))
 						for _, node := range matches {
 							expanded := make(pipelineRow, util.SafePreallocSum(len(row), 2))
 							for name, value := range row {
@@ -2460,8 +2476,22 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 								path := PathResult{Nodes: []*storage.Node{node}}
 								expanded[nodePathVariable] = e.pathToMap(path)
 							}
-							out = append(out, expanded)
+							matchedRows = append(matchedRows, expanded)
 						}
+						// ON MATCH SET applies to every matched row, through
+						// the shared SET applicator.
+						if onMatchSet != "" {
+							setStats, ok, setErr := e.pipelineApplySet(ctx, matchedRows, "SET "+onMatchSet)
+							if setErr != nil {
+								return nil, nil, setErr
+							}
+							if !ok {
+								return nil, nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid ON MATCH SET: "+onMatchSet)
+							}
+							stats.PropertiesSet += setStats.PropertiesSet
+							stats.LabelsAdded += setStats.LabelsAdded
+						}
+						out = append(out, matchedRows...)
 						continue
 					}
 				}
@@ -2522,6 +2552,42 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		out = append(out, newRow)
 	}
 	return out, stats, nil
+}
+
+// containsRemoveClauseAnywhere reports a REMOVE keyword outside strings,
+// including one nested in a FOREACH body or subquery.
+func containsRemoveClauseAnywhere(cypher string) bool {
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens = false
+	opts.SkipBrackets = false
+	return keywordIndexFrom(cypher, "REMOVE", 0, opts) >= 0
+}
+
+// splitMergeClauseActions splits the text after MERGE ("pattern [ON CREATE
+// SET a] [ON MATCH SET b]", actions in either order) into the pattern and the
+// ON CREATE SET / ON MATCH SET assignment lists ("" when absent).
+func splitMergeClauseActions(mergeBody string) (pattern, onCreateSet, onMatchSet string) {
+	onCreate := findKeywordIndex(mergeBody, "ON CREATE SET")
+	onMatch := findKeywordIndex(mergeBody, "ON MATCH SET")
+	end := len(mergeBody)
+	for _, index := range [...]int{onCreate, onMatch} {
+		if index >= 0 && index < end {
+			end = index
+		}
+	}
+	action := func(start, keywordLength, other int) string {
+		if start < 0 {
+			return ""
+		}
+		stop := len(mergeBody)
+		if other > start {
+			stop = other
+		}
+		return strings.TrimSpace(mergeBody[start+keywordLength : stop])
+	}
+	return strings.TrimSpace(mergeBody[:end]),
+		action(onCreate, len("ON CREATE SET"), onMatch),
+		action(onMatch, len("ON MATCH SET"), onCreate)
 }
 
 // materializePipelinePropertyExpressions evaluates property-map values using

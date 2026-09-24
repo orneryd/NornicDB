@@ -222,7 +222,6 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 
 	startsWithMatch := strings.HasPrefix(upperQuery, "MATCH")
-	startsWithOptionalMatch := strings.HasPrefix(upperQuery, "OPTIONAL MATCH")
 	startsWithCreate := strings.HasPrefix(upperQuery, "CREATE")
 	startsWithMerge := strings.HasPrefix(upperQuery, "MERGE")
 
@@ -255,7 +254,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 
 skipMatchCallRoute:
 	if startsWithMerge {
-		if !containsKeywordOutsideStrings(cypher, "SET") {
+		// REMOVE is a row clause: statements with one run on the pipeline,
+		// which applies MERGE actions, SET and REMOVE row by row.
+		if !containsKeywordOutsideStrings(cypher, "SET") || containsKeywordOutsideStrings(cypher, "REMOVE") {
 			if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
 				return result, err
 			}
@@ -310,7 +311,7 @@ skipMatchCallRoute:
 	}
 
 	if startsWithMatch && mergeIdx > 0 {
-		if !containsKeywordOutsideStrings(cypher, "SET") {
+		if !containsKeywordOutsideStrings(cypher, "SET") || containsKeywordOutsideStrings(cypher, "REMOVE") {
 			if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
 				return result, err
 			}
@@ -354,6 +355,11 @@ skipMatchCallRoute:
 		}
 	}
 
+	if startsWithCreate && hasSet && containsKeywordOutsideStrings(cypher, "REMOVE") {
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
+	}
 	if startsWithCreate && !isCreateProcedureCommand(cypher) && hasSet && !hasOnCreateSet && !hasOnMatchSet &&
 		findMultiWordKeywordIndex(cypher, "CREATE", "DECAY PROFILE") != 0 &&
 		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION PROFILE") != 0 &&
@@ -383,10 +389,8 @@ skipMatchCallRoute:
 	}
 
 	if containsKeywordOutsideStrings(cypher, "REMOVE") {
-		if startsWithMatch || startsWithOptionalMatch {
-			if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
-				return result, err
-			}
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
 		}
 		return e.executeRemove(ctx, cypher)
 	}
