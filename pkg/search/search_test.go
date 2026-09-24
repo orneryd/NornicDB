@@ -3543,7 +3543,7 @@ func TestService_VectorAccessAndClear(t *testing.T) {
 	rawVec, ok := svc.getVectorForCypher("v1")
 	require.True(t, ok)
 	require.Len(t, rawVec, 3)
-	assert.Equal(t, float32(1), rawVec[0])
+	assert.InDelta(t, 1.0, rawVec[0], 1e-6) // SIMD normalization may differ by 1 ulp (#595)
 
 	svc.ClearVectorIndex()
 	assert.Equal(t, 0, svc.vectorIndex.Count())

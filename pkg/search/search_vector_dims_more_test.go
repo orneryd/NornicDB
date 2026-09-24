@@ -53,11 +53,11 @@ func TestService_GetVectorForCypher_MoreBranches(t *testing.T) {
 	require.NoError(t, svc.vectorIndex.Add("idx", []float32{1, 0, 0}))
 	v, ok := svc.getVectorForCypher("idx")
 	require.True(t, ok)
-	require.Equal(t, []float32{1, 0, 0}, v)
+	require.InDeltaSlice(t, []float32{1, 0, 0}, v, 1e-6) // SIMD normalization may differ by 1 ulp (#595)
 	v[0] = 9
 	v2, ok := svc.getVectorForCypher("idx")
 	require.True(t, ok)
-	require.Equal(t, float32(1), v2[0])
+	require.InDelta(t, 1.0, v2[0], 1e-6)
 
 	// vector file store takes precedence when configured.
 	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 3)
