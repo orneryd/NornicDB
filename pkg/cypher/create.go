@@ -339,7 +339,7 @@ func (e *StorageExecutor) projectCreatedReturnItem(ctx context.Context, item ret
 	// This matches Neo4j expectations that `r` is returned as a relationship
 	// structure and can be used in functions like id(r)/type(r).
 	if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
-		if edge, ok := createdEdges[varName]; ok && edge != nil {
+		if edge, ok := createdEdges[varName]; ok && edge != nil && !referencesOtherCreatedVariable(item.expr, varName, createdNodes, createdEdges) {
 			// Direct relationship reference.
 			if item.expr == varName {
 				return edge
@@ -363,7 +363,7 @@ func (e *StorageExecutor) projectCreatedReturnItem(ctx context.Context, item ret
 	// - other expressions that reference a single variable
 	varName := extractVariableNameFromReturnItem(item.expr)
 	if varName != "" {
-		if node, ok := createdNodes[varName]; ok {
+		if node, ok := createdNodes[varName]; ok && !referencesOtherCreatedVariable(item.expr, varName, createdNodes, createdEdges) {
 			return e.resolveReturnItem(ctx, item, varName, node)
 		}
 	}
@@ -372,6 +372,23 @@ func (e *StorageExecutor) projectCreatedReturnItem(ctx context.Context, item ret
 	// over several created variables) is evaluated as an expression
 	// against the created nodes and relationships.
 	return e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
+}
+
+// referencesOtherCreatedVariable reports whether expr mentions a created node or
+// relationship other than varName, e.g. a.v + b.v. Such items need the full
+// expression evaluator; the single-variable shortcuts would see only varName.
+func referencesOtherCreatedVariable(expr, varName string, nodes map[string]*storage.Node, edges map[string]*storage.Edge) bool {
+	for name := range nodes {
+		if name != varName && containsIdentifierToken(expr, name) {
+			return true
+		}
+	}
+	for name := range edges {
+		if name != varName && containsIdentifierToken(expr, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *StorageExecutor) resolveCreatePropertyReferences(

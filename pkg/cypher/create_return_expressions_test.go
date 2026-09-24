@@ -62,6 +62,7 @@ func TestCreateReturnEvaluatesEveryItem(t *testing.T) {
 					{"CREATE (ab:P {v: 3}), (a:P {v: 4}) RETURN ab.v AS x, a.v AS y", [][]interface{}{{int64(3), int64(4)}}},
 					{"CREATE (a:P {v: 5}) CREATE (:Q) RETURN 1 AS ok, a.v AS v", [][]interface{}{{int64(1), int64(5)}}},
 					{"CREATE (a:P {v: 6}) RETURN count(*) AS c, count(a) AS ca", [][]interface{}{{int64(1), int64(1)}}},
+					{"CREATE (a:P {v: 1}), (b:Q {v: 3}) RETURN a.v + b.v AS s", [][]interface{}{{int64(4)}}},
 				} {
 					res, err := exec.Execute(ctx, tc.q, params)
 					require.NoError(t, err, tc.q)
@@ -70,4 +71,36 @@ func TestCreateReturnEvaluatesEveryItem(t *testing.T) {
 			})
 		}
 	}
+}
+
+// projectCreatedReturnItem covers every kind of RETURN item after CREATE:
+// relationship variables, their properties and functions, paths, count() of a
+// null expression, and expressions over several created variables.
+func TestProjectCreatedReturnItemBranches(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+
+	res, err := exec.Execute(ctx, "CREATE (a:P {v: 1})-[r:R {w: 2}]->(b:Q {v: 3}) RETURN r.w AS w, r.missing AS m, type(r) AS t, a.v + b.v AS s, count(a.missing) AS c0, count(r) AS c1", nil)
+	require.NoError(t, err)
+	assert.Equal(t, [][]interface{}{{int64(2), nil, "R", int64(4), int64(0), int64(1)}}, res.Rows)
+
+	res, err = exec.Execute(ctx, "CREATE (a:P {v: 5})-[r:R {w: 6}]->(:Q) RETURN r.w + a.v AS s, a.v * r.w AS m", nil)
+	require.NoError(t, err)
+	assert.Equal(t, [][]interface{}{{int64(11), int64(30)}}, res.Rows)
+
+	res, err = exec.Execute(ctx, "CREATE (a:P)-[r:R]->(:Q) RETURN r", nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	_, isEdge := res.Rows[0][0].(*storage.Edge)
+	assert.True(t, isEdge, "RETURN r yields the created relationship")
+
+	res, err = exec.Execute(ctx, "CREATE p = (:P)-[:R]->(:Q) RETURN length(p) AS l", nil)
+	require.NoError(t, err)
+	assert.Equal(t, [][]interface{}{{int64(1)}}, res.Rows)
+
+	item := returnItem{expr: "x.v", alias: "v"}
+	node := &storage.Node{ID: "n1", Properties: map[string]interface{}{"v": int64(9)}}
+	assert.Equal(t, int64(9), exec.projectCreatedReturnItem(ctx, item, map[string]*storage.Node{"x": node}, nil, nil))
+	assert.Equal(t, int64(3), exec.projectCreatedReturnItem(ctx, returnItem{expr: "1 + 2"}, nil, nil, nil))
+	assert.Equal(t, int64(1), exec.projectCreatedReturnItem(ctx, returnItem{expr: "count(*)"}, nil, nil, nil))
 }
