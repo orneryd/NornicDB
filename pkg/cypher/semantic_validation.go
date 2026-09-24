@@ -17,6 +17,9 @@ func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
 	if err := validateStaticSizeArguments(cypher); err != nil {
 		return err
 	}
+	if err := validateStaticGraphFunctionArguments(cypher); err != nil {
+		return err
+	}
 	if err := e.validateStaticPaginationExpressions(cypher); err != nil {
 		return err
 	}
