@@ -4,3 +4,6 @@
 - id: cypherinvariants.delete_by_prefix_transaction_unsupported
   description: DeleteByPrefix cannot run inside a transaction. DeleteByPrefix is an untranslated API method name.
   other: DeleteByPrefix not supported within transaction context
+- id: cypherinvariants.pipeline_declined_after_write
+  description: A statement the pipeline executor started writing could not be finished there; running it again on another route would repeat the writes. Clause is the untranslated Cypher clause text.
+  other: 'pipeline could not finish a statement after it had written ({{.Clause}}); the statement was not run again'

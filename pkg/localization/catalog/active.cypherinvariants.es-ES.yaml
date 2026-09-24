@@ -4,3 +4,6 @@
 - id: cypherinvariants.delete_by_prefix_transaction_unsupported
   description: DeleteByPrefix no se puede ejecutar dentro de una transacción. DeleteByPrefix no se traduce.
   other: DeleteByPrefix no se admite dentro del contexto de una transacción
+- id: cypherinvariants.pipeline_declined_after_write
+  description: La canalización no pudo terminar una sentencia después de escribir; ejecutarla de nuevo por otra ruta repetiría las escrituras. Clause no se traduce.
+  other: 'la canalización no pudo terminar una sentencia después de haber escrito ({{.Clause}}); la sentencia no se volvió a ejecutar'

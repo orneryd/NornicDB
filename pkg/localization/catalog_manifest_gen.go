@@ -331,6 +331,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphergraphprocedures.variable_not_found", Constructor: "CypherGraphProceduresVariableNotFound", Fields: []string{"QuotedVariable", "Variable"}, PluralForms: []string{"other"}},
 	{ID: "cypherinvariants.delete_by_prefix_transaction_unsupported", Constructor: "CypherInvariantsDeleteByPrefixTransactionUnsupported", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherinvariants.pipeline_create_failed", Constructor: "CypherInvariantsPipelineCreateFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "cypherinvariants.pipeline_declined_after_write", Constructor: "CypherInvariantsPipelineDeclinedAfterWrite", Fields: []string{"Clause"}, PluralForms: []string{"other"}},
 	{ID: "cypherknowledgepolicy.argument_string_required", Constructor: "CypherKnowledgePolicyArgumentStringRequired", Fields: []string{"Position"}, PluralForms: []string{"other"}},
 	{ID: "cypherknowledgepolicy.binding_table_unavailable", Constructor: "CypherKnowledgePolicyBindingTableUnavailable", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherknowledgepolicy.decay_options_map_required", Constructor: "CypherKnowledgePolicyDecayOptionsMapRequired", Fields: []string{"ValueType"}, PluralForms: []string{"other"}},
