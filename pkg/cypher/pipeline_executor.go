@@ -2764,15 +2764,10 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			if item == "" || item == "{}" {
 				continue
 			}
-			upper := strings.ToUpper(item)
-			var expr, alias string
-			if asIdx := strings.Index(upper, " AS "); asIdx > 0 {
-				expr = strings.TrimSpace(item[:asIdx])
-				alias = strings.TrimSpace(item[asIdx+4:])
-			} else {
-				expr = item
-				alias = item
-			}
+			// Same alias parsing as the aggregating path above, so a
+			// backtick-quoted alias is keyed identically here, in
+			// projectionAliases (DISTINCT) and in later clauses.
+			expr, alias := parseProjectionExprAlias(item)
 
 			// 1. Exact binding match.
 			if val, found := row[expr]; found {

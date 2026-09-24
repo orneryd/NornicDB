@@ -38,6 +38,13 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	if value, ok := values[expr]; ok {
 		return value, true
 	}
+	// A backtick-quoted variable (`my x`) names the same binding as its
+	// unquoted form, which is how projection aliases are keyed.
+	if name := normalizeProjectionColumnName(expr); name != expr {
+		if value, ok := values[name]; ok {
+			return value, true
+		}
+	}
 	if value, ok := parseLiteralValueFromComputedRow(expr); ok {
 		return value, true
 	}
