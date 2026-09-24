@@ -2066,42 +2066,9 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 				continue
 			}
 
-			// Check edge variables first (for RETURN e after CREATE relationship)
-			found := false
-			for varName, edge := range edgeVars {
-				if item.expr == varName || strings.HasPrefix(item.expr, varName+".") {
-					if item.expr == varName {
-						// Return the edge directly
-						row[i] = edge
-					} else {
-						// Return edge property
-						propName := item.expr[len(varName)+1:]
-						row[i] = edge.Properties[propName]
-					}
-					found = true
-					break
-				}
-			}
-			if found {
-				continue
-			}
-
-			// Find node variable that matches
-			// Check if expression contains the variable (for function calls like id(a))
-			found = false
-			for varName, node := range nodeVars {
-				// Check if expression starts with variable (property access) or contains it (function calls)
-				if strings.HasPrefix(item.expr, varName) || strings.Contains(item.expr, "("+varName+")") || strings.Contains(item.expr, "("+varName+" ") {
-					row[i] = e.resolveReturnItem(ctx, item, varName, node)
-					found = true
-					break
-				}
-			}
-			if !found {
-				// Expression doesn't match any variable - might be a literal or complex expression
-				// Try to evaluate it with empty context (will return nil if can't evaluate)
-				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeVars, edgeVars)
-			}
+			// Everything else goes through the shared CREATE RETURN projection,
+			// over the matched and the newly created variables.
+			row[i] = e.projectCreatedReturnItem(ctx, item, nodeVars, edgeVars, nil)
 		}
 		result.Rows = [][]interface{}{row}
 	}

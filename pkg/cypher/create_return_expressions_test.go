@@ -63,6 +63,9 @@ func TestCreateReturnEvaluatesEveryItem(t *testing.T) {
 					{"CREATE (a:P {v: 5}) CREATE (:Q) RETURN 1 AS ok, a.v AS v", [][]interface{}{{int64(1), int64(5)}}},
 					{"CREATE (a:P {v: 6}) RETURN count(*) AS c, count(a) AS ca", [][]interface{}{{int64(1), int64(1)}}},
 					{"CREATE (a:P {v: 1}), (b:Q {v: 3}) RETURN a.v + b.v AS s", [][]interface{}{{int64(4)}}},
+					{"CREATE (a:P {v: 2}), (b:Q {v: 3}) RETURN a.v * b.v AS m, [a.v, b.v] AS l", [][]interface{}{{int64(6), []interface{}{int64(2), int64(3)}}}},
+					{"CREATE (a:P {name: 'x'}), (b:Q {name: 'y'}) RETURN a.name + b.name AS s", [][]interface{}{{"xy"}}},
+					{"CREATE (a:P {v: 5})-[r:R {w: 6}]->(:Q) RETURN r.w + a.v AS s, [r.w, a.v, [a.v]] AS l", [][]interface{}{{int64(11), []interface{}{int64(6), int64(5), []interface{}{int64(5)}}}}},
 				} {
 					res, err := exec.Execute(ctx, tc.q, params)
 					require.NoError(t, err, tc.q)
@@ -103,4 +106,16 @@ func TestProjectCreatedReturnItemBranches(t *testing.T) {
 	assert.Equal(t, int64(9), exec.projectCreatedReturnItem(ctx, item, map[string]*storage.Node{"x": node}, nil, nil))
 	assert.Equal(t, int64(3), exec.projectCreatedReturnItem(ctx, returnItem{expr: "1 + 2"}, nil, nil, nil))
 	assert.Equal(t, int64(1), exec.projectCreatedReturnItem(ctx, returnItem{expr: "count(*)"}, nil, nil, nil))
+}
+
+// MATCH ... CREATE ... RETURN uses the same projection: items over several
+// variables (matched and created) are evaluated as one expression (#569).
+func TestMatchCreateReturnOverSeveralVariables(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Seed {v: 10})", nil)
+	require.NoError(t, err)
+	res, err := exec.Execute(ctx, "MATCH (s:Seed) CREATE (a:P {v: 1})-[r:R {w: 2}]->(s) RETURN s.v + a.v AS x, r.w * a.v AS y, [s.v, a.v] AS l, a.v AS v, count(*) AS c", nil)
+	require.NoError(t, err)
+	assert.Equal(t, [][]interface{}{{int64(11), int64(2), []interface{}{int64(10), int64(1)}, int64(1), int64(1)}}, res.Rows)
 }

@@ -150,7 +150,21 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 		return num
 	}
 
-	// Array literal [a, b, c]
+	// List literal [a, b, c]: every element is an expression evaluated in the
+	// same context (as the row and path evaluators do), so [a.v, b.v] yields
+	// the property values rather than their text.
+	if inner, isList := stripEnclosingRowDelimiter(expr, '[', ']'); isList {
+		inner = strings.TrimSpace(inner)
+		if inner == "" {
+			return []interface{}{}
+		}
+		elements := e.splitArrayElements(inner)
+		result := make([]interface{}, len(elements))
+		for i, element := range elements {
+			result[i] = e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(element), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		}
+		return result
+	}
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
 		return e.parseArrayValue(ctx, expr)
 	}

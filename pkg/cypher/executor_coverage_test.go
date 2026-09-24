@@ -2697,7 +2697,7 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, int64(20), res.Rows[0][0])
-	assert.Nil(t, res.Rows[0][1])
+	assert.Equal(t, "LIKES", res.Rows[0][1]) // type(r) of the created relationship
 	assert.Equal(t, int64(2), res.Rows[0][2])
 	assert.Equal(t, 1, res.Stats.RelationshipsCreated)
 	assert.GreaterOrEqual(t, res.Stats.PropertiesSet, 2)
