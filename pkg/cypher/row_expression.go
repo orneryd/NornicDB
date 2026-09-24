@@ -1399,6 +1399,17 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 	if expression == "" {
 		return false
 	}
+	// A predicate wholly wrapped in one matching outer paren pair — e.g.
+	// `(EXISTS { ... })`, `(a.x = 1 OR EXISTS { ... })` — must be unwrapped
+	// before the OR/AND/EXISTS/COUNT recognizers below, which only look for
+	// their marker at the top level of the expression. Without this, the
+	// wrapping parens hide a top-level " OR "/" AND " or an EXISTS/COUNT
+	// prefix from those recognizers, silently falling through to the
+	// generic comparison/expression evaluators and returning a wrong
+	// (false) result instead of evaluating the subquery.
+	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
+		return e.evaluateRowPredicate(ctx, inner, values)
+	}
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
 		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
 	}

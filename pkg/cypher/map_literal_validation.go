@@ -36,6 +36,9 @@ func validateStaticMapKeys(query string) error {
 		if query[index] != '{' {
 			continue
 		}
+		if precedingSubqueryExpressionKeyword(query, index) {
+			continue
+		}
 		close := findMatchingDelimiter(query, index, '{', '}')
 		if close < 0 {
 			continue
@@ -74,6 +77,39 @@ func validateStaticMapKeys(query string) error {
 		}
 	}
 	return nil
+}
+
+// precedingSubqueryExpressionKeyword reports whether the '{' at braceIndex
+// opens a brace-bodied subquery expression (EXISTS {, COUNT {, COLLECT {, or
+// CALL {) rather than a node/relationship pattern property map. It scans
+// backward over whitespace to the nearest identifier token and matches it
+// case-insensitively against the subquery-introducing keywords the grammar
+// allows before a bare '{'. A property map is only ever preceded by a
+// pattern element (identifier, label, ')', or ']'), never by these keywords,
+// so this check is safe to apply at any paren/bracket nesting depth.
+func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
+	index := braceIndex - 1
+	for index >= 0 && isCypherWhitespace(query[index]) {
+		index--
+	}
+	end := index + 1
+	for index >= 0 && isWordChar(query[index]) {
+		index--
+	}
+	start := index + 1
+	if start >= end {
+		return false
+	}
+	switch strings.ToUpper(query[start:end]) {
+	case "EXISTS", "COUNT", "COLLECT", "CALL":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCypherWhitespace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 func insidePatternDelimiter(query string, end int) bool {
