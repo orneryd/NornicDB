@@ -389,7 +389,7 @@ func (e *StorageExecutor) splitSetAssignments(setClause string) []string {
 				quoteChar = c
 			} else if c == quoteChar {
 				// Check for escaped quote
-				if i > 0 && setClause[i-1] != '\\' {
+				if i > 0 && !isBackslashEscaped(setClause, i) {
 					inQuote = false
 				}
 			}
@@ -731,7 +731,7 @@ func (e *StorageExecutor) splitFunctionArgs(args string) []string {
 		case '\'':
 			if !inDoubleQuote {
 				// Check for escape sequence
-				if i > 0 && args[i-1] == '\\' {
+				if isBackslashEscaped(args, i) {
 					current.WriteByte(c)
 				} else {
 					inSingleQuote = !inSingleQuote
@@ -743,7 +743,7 @@ func (e *StorageExecutor) splitFunctionArgs(args string) []string {
 		case '"':
 			if !inSingleQuote {
 				// Check for escape sequence
-				if i > 0 && args[i-1] == '\\' {
+				if isBackslashEscaped(args, i) {
 					current.WriteByte(c)
 				} else {
 					inDoubleQuote = !inDoubleQuote

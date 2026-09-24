@@ -34,7 +34,7 @@ func scanOptionalPatternShape(pattern string) (nodeGroups, brackets int) {
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
 		if inQuote {
-			if c == quoteChar && (i == 0 || pattern[i-1] != '\\') {
+			if c == quoteChar && !isBackslashEscaped(pattern, i) {
 				inQuote = false
 			}
 			continue

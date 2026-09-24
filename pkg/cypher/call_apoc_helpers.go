@@ -32,7 +32,7 @@ func findMatchingDelimiter(s string, startIdx int, opener, closer rune) int {
 		c := rune(s[i])
 
 		if inQuote {
-			if c == quoteChar && (i == 0 || s[i-1] != '\\') {
+			if c == quoteChar && !isBackslashEscaped(s, i) {
 				inQuote = false
 			}
 			continue
@@ -80,7 +80,7 @@ func (e *StorageExecutor) parseApocCypherRunArgs(ctx context.Context, argsStr st
 	// Find matching closing quote
 	quoteEnd := -1
 	for i := quoteStart + 1; i < len(argsStr); i++ {
-		if rune(argsStr[i]) == quoteChar && (i == 0 || argsStr[i-1] != '\\') {
+		if rune(argsStr[i]) == quoteChar && !isBackslashEscaped(argsStr, i) {
 			quoteEnd = i
 			break
 		}
@@ -170,7 +170,7 @@ func (e *StorageExecutor) extractQuotedString(s string) (string, string, error) 
 
 	// Find matching closing quote
 	for i := 1; i < len(s); i++ {
-		if rune(s[i]) == quoteChar && (i == 1 || s[i-1] != '\\') {
+		if rune(s[i]) == quoteChar && !isBackslashEscaped(s, i) {
 			return s[1:i], s[i+1:], nil
 		}
 	}
@@ -225,7 +225,7 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 	for i, c := range s {
 		if inQuote {
 			current.WriteRune(c)
-			if c == quoteChar && (i == 0 || s[i-1] != '\\') {
+			if c == quoteChar && !isBackslashEscaped(s, i) {
 				inQuote = false
 			}
 			continue

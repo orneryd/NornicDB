@@ -66,7 +66,7 @@ func findAggregateSpans(expr string) []aggregateSpan {
 		c := lower[i]
 		if c == '\'' || c == '"' || c == '`' {
 			j := i + 1
-			for j < len(lower) && (lower[j] != c || lower[j-1] == '\\') {
+			for j < len(lower) && (lower[j] != c || isBackslashEscaped(lower, j)) {
 				j++
 			}
 			i = j + 1

@@ -1181,7 +1181,7 @@ func normalizeAnonymousTraversalRelationships(pattern string) string {
 		character := pattern[index]
 		if quote != 0 {
 			normalized.WriteByte(character)
-			if character == quote && (index == 0 || pattern[index-1] != '\\') {
+			if character == quote && !isBackslashEscaped(pattern, index) {
 				quote = 0
 			}
 			index++
@@ -1260,7 +1260,7 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 		c := pattern[i]
 
 		// Handle quotes
-		if (c == '\'' || c == '"') && (i == 0 || pattern[i-1] != '\\') {
+		if (c == '\'' || c == '"') && !isBackslashEscaped(pattern, i) {
 			if !inQuote {
 				inQuote = true
 				quoteChar = c
@@ -1464,7 +1464,7 @@ func findMatchingBracket(s string, startIdx int) int {
 
 	for i := startIdx; i < len(s); i++ {
 		c := s[i]
-		if (c == '\'' || c == '"') && (i == 0 || s[i-1] != '\\') {
+		if (c == '\'' || c == '"') && !isBackslashEscaped(s, i) {
 			if !inQuote {
 				inQuote = true
 				quoteChar = c
@@ -1504,7 +1504,7 @@ func findMatchingParen(s string, startIdx int) int {
 		c := s[i]
 
 		// Handle quotes
-		if (c == '\'' || c == '"') && (i == 0 || s[i-1] != '\\') {
+		if (c == '\'' || c == '"') && !isBackslashEscaped(s, i) {
 			if !inQuote {
 				inQuote = true
 				quoteChar = c

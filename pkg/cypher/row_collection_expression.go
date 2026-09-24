@@ -71,7 +71,7 @@ func rowTopLevelPipeIndex(expression string) int {
 	for index := 0; index < len(expression); index++ {
 		current := expression[index]
 		if quote != 0 {
-			if current == quote && (index == 0 || expression[index-1] != '\\') {
+			if current == quote && !isBackslashEscaped(expression, index) {
 				quote = 0
 			}
 			continue

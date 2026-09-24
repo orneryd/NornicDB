@@ -771,7 +771,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		c := cypher[i]
 
 		if inString {
-			if c == stringChar && (i == 0 || cypher[i-1] != '\\') {
+			if c == stringChar && !isBackslashEscaped(cypher, i) {
 				inString = false
 			}
 			continue

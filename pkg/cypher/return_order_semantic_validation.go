@@ -282,7 +282,7 @@ func matchingExpressionBracket(expression string, open int) int {
 	for index := open; index < len(expression); index++ {
 		current := expression[index]
 		if quote != 0 {
-			if current == quote && (index == 0 || expression[index-1] != '\\') {
+			if current == quote && !isBackslashEscaped(expression, index) {
 				quote = 0
 			}
 			continue
@@ -486,7 +486,7 @@ func matchingExpressionParenthesis(expression string, open int) int {
 	for index := open; index < len(expression); index++ {
 		current := expression[index]
 		if quote != 0 {
-			if current == quote && (index == 0 || expression[index-1] != '\\') {
+			if current == quote && !isBackslashEscaped(expression, index) {
 				quote = 0
 			}
 			continue

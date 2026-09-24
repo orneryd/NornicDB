@@ -102,7 +102,7 @@ func isNonFunctionSemanticKeyword(name string) bool {
 func skipQuotedSemanticText(expression string, start int) int {
 	quote := expression[start]
 	for index := start + 1; index < len(expression); index++ {
-		if expression[index] == quote && expression[index-1] != '\\' {
+		if expression[index] == quote && !isBackslashEscaped(expression, index) {
 			return index + 1
 		}
 	}

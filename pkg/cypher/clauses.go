@@ -2907,11 +2907,11 @@ func rewriteUnwindCorrelationToIn(query string, variable string, paramName strin
 	inDouble := false
 	for i := 0; i < len(query); i++ {
 		ch := query[i]
-		if ch == '\'' && !inDouble && (i == 0 || query[i-1] != '\\') {
+		if ch == '\'' && !inDouble && !isBackslashEscaped(query, i) {
 			inSingle = !inSingle
 			continue
 		}
-		if ch == '"' && !inSingle && (i == 0 || query[i-1] != '\\') {
+		if ch == '"' && !inSingle && !isBackslashEscaped(query, i) {
 			inDouble = !inDouble
 			continue
 		}

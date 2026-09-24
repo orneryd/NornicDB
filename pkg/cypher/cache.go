@@ -769,11 +769,11 @@ func extractLabelsFromQuery(cypher string) []string {
 	inDouble := false
 	for i := 0; i < len(cypher); i++ {
 		ch := cypher[i]
-		if ch == '\'' && !inDouble && (i == 0 || cypher[i-1] != '\\') {
+		if ch == '\'' && !inDouble && !isBackslashEscaped(cypher, i) {
 			inSingle = !inSingle
 			continue
 		}
-		if ch == '"' && !inSingle && (i == 0 || cypher[i-1] != '\\') {
+		if ch == '"' && !inSingle && !isBackslashEscaped(cypher, i) {
 			inDouble = !inDouble
 			continue
 		}

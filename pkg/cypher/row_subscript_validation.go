@@ -140,7 +140,7 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 	case '\'', '"':
 		quote := expression[end]
 		for start--; start >= 0; start-- {
-			if expression[start] == quote && (start == 0 || expression[start-1] != '\\') {
+			if expression[start] == quote && !isBackslashEscaped(expression, start) {
 				return start
 			}
 		}
