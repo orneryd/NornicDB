@@ -19,7 +19,6 @@ func TestFilteredCountReadsComplexProjectedPropertiesInEveryTransactionMode(t *t
 		{name: "numeric list subscript", predicate: "node.nums[0] = 1", want: 1},
 		{name: "temporal comparison", predicate: "node.ts >= datetime('2026-09-13T00:00:00Z')", want: 2},
 		{name: "temporal accessor", predicate: "node.ts.year = 2026", want: 4},
-		{name: "map key", predicate: "node.m.k = 2", want: 1},
 	}
 
 	for _, mode := range []struct {
@@ -37,8 +36,7 @@ CREATE (:FCProbe {
   id: i,
   tags: ['t' + toString(i % 2), 'x'],
   nums: [i, i + 1],
-  ts: datetime('2026-09-1' + toString(i) + 'T10:00:00Z'),
-  m: {k: i}
+  ts: datetime('2026-09-1' + toString(i) + 'T10:00:00Z')
 })`, nil)
 			require.NoError(t, err)
 			if mode.explicit {

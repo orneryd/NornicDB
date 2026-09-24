@@ -595,7 +595,7 @@ RETURN count(t) AS prepared
 	require.True(t, seenString, "expected string translationId row to remain distinct")
 }
 
-func TestUnwindMergeBatch_MultiPropertyMerge_NestedMapValuesDoNotCollapse(t *testing.T) {
+func TestUnwindMergeBatch_MultiPropertyMerge_NestedMapValuesAreRejected(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
@@ -623,47 +623,18 @@ ON CREATE SET t.translatedText = row.translatedText
 ON MATCH SET t.translatedText = row.translatedText
 RETURN count(t) AS prepared
 `, map[string]interface{}{"rows": rows})
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-	require.Equal(t, int64(2), toInt64ForTest(t, res.Rows[0][0]))
-	require.True(t, exec.LastHotPathTrace().UnwindSimpleMergeBatch)
+	// A map, or a list holding a map or null, is not a property value
+	// (#583): the batch MERGE fails and writes nothing.
+	_ = res
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "TypeError")
 
 	nodes, err := store.GetNodesByLabel("TranslatedText")
 	require.NoError(t, err)
-	require.Len(t, nodes, 2)
-
-	seenNumeric := false
-	seenString := false
-	for _, n := range nodes {
-		m, ok := n.Properties["translationId"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if inner, ok := m["id"]; ok {
-			switch v := inner.(type) {
-			case int:
-				if v == 1 {
-					seenNumeric = true
-					require.Equal(t, "nested-numeric", n.Properties["translatedText"])
-				}
-			case int64:
-				if v == 1 {
-					seenNumeric = true
-					require.Equal(t, "nested-numeric", n.Properties["translatedText"])
-				}
-			case string:
-				if v == "1" {
-					seenString = true
-					require.Equal(t, "nested-string", n.Properties["translatedText"])
-				}
-			}
-		}
-	}
-	require.True(t, seenNumeric, "expected nested numeric map key to remain distinct")
-	require.True(t, seenString, "expected nested string map key to remain distinct")
+	require.Len(t, nodes, 0)
 }
 
-func TestUnwindMergeBatch_MultiPropertyMerge_NestedSliceAndNilValuesDoNotCollapse(t *testing.T) {
+func TestUnwindMergeBatch_MultiPropertyMerge_NestedSliceValuesAreRejected(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
@@ -691,45 +662,15 @@ ON CREATE SET t.translatedText = row.translatedText
 ON MATCH SET t.translatedText = row.translatedText
 RETURN count(t) AS prepared
 `, map[string]interface{}{"rows": rows})
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-	require.Equal(t, int64(2), toInt64ForTest(t, res.Rows[0][0]))
-	require.True(t, exec.LastHotPathTrace().UnwindSimpleMergeBatch)
+	// A map, or a list holding a map or null, is not a property value
+	// (#583): the batch MERGE fails and writes nothing.
+	_ = res
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "TypeError")
 
 	nodes, err := store.GetNodesByLabel("TranslatedText")
 	require.NoError(t, err)
-	require.Len(t, nodes, 2)
-
-	seenNumeric := false
-	seenString := false
-	for _, n := range nodes {
-		list, ok := n.Properties["translationId"].([]interface{})
-		if !ok || len(list) != 4 {
-			continue
-		}
-		switch v := list[0].(type) {
-		case int:
-			if v == 1 {
-				seenNumeric = true
-				require.Nil(t, list[2])
-				require.Equal(t, "slice-numeric", n.Properties["translatedText"])
-			}
-		case int64:
-			if v == 1 {
-				seenNumeric = true
-				require.Nil(t, list[2])
-				require.Equal(t, "slice-numeric", n.Properties["translatedText"])
-			}
-		case string:
-			if v == "1" {
-				seenString = true
-				require.Nil(t, list[2])
-				require.Equal(t, "slice-string", n.Properties["translatedText"])
-			}
-		}
-	}
-	require.True(t, seenNumeric, "expected nested slice numeric key to remain distinct")
-	require.True(t, seenString, "expected nested slice string key to remain distinct")
+	require.Len(t, nodes, 0)
 }
 
 func TestGenericMerge_MultiPropertyLookup_UsesCompositeSchemaPath(t *testing.T) {

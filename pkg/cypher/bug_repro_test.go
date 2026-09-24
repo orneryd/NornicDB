@@ -491,6 +491,16 @@ func TestBug8_MatchUnwindCreateWithListProperty_NArityMatrix(t *testing.T) {
 			`, leadingMatches, createMap)
 
 			_, err = exec.Execute(ctx, query, map[string]interface{}{"rows": rows})
+			if tc.nestedVec {
+				// A list of lists is not a property value (#583): the statement
+				// fails and creates nothing.
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "TypeError")
+				countRes, countErr := exec.Execute(ctx, `MATCH (c:Item) RETURN count(c) AS n`, nil)
+				require.NoError(t, countErr)
+				assert.Equal(t, int64(0), countRes.Rows[0][0])
+				return
+			}
 			require.NoError(t, err)
 
 			countRes, err := exec.Execute(ctx, `MATCH (c:Item) RETURN count(c) AS n`, nil)
