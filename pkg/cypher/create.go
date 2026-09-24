@@ -300,77 +300,78 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 			} else {
 				result.Columns[i] = item.expr
 			}
-			if isAggregateFuncName(item.expr, "count") {
-				inner := strings.TrimSpace(extractFuncInner(item.expr))
-				if inner == "*" {
-					row[i] = int64(1)
-				} else if value := e.evaluateExpressionWithContext(ctx, inner, createdNodes, createdEdges); value != nil {
-					row[i] = int64(1)
-				} else {
-					row[i] = int64(0)
-				}
-				continue
-			}
-
-			// Path variables first (RETURN p, nodes(p), relationships(p), length(p))
-			if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
-				if path, ok := createdPaths[varName]; ok {
-					row[i] = e.pathToValue(path, item.expr, varName)
-					continue
-				}
-			}
-
-			// Relationship variables next (RETURN r, r.prop, id(r), type(r), ...)
-			//
-			// This matches Neo4j expectations that `r` is returned as a relationship
-			// structure and can be used in functions like id(r)/type(r).
-			if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
-				if edge, ok := createdEdges[varName]; ok && edge != nil {
-					// Direct relationship reference.
-					if item.expr == varName {
-						row[i] = edge
-						continue
-					}
-					// Relationship property access: r.someProp
-					if strings.HasPrefix(item.expr, varName+".") {
-						propName := strings.TrimSpace(item.expr[len(varName)+1:])
-						if v, ok := edge.Properties[propName]; ok {
-							row[i] = v
-						} else {
-							row[i] = nil
-						}
-						continue
-					}
-					// Functions over relationships (id(r), type(r), properties(r), ...)
-					row[i] = e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
-					continue
-				}
-			}
-
-			// Resolve the return expression against the created variables.
-			//
-			// The RETURN item may be:
-			// - variable: a
-			// - property access: a.name
-			// - function call: id(a), elementId(a), labels(a)
-			// - other expressions that reference a single variable
-			varName := extractVariableNameFromReturnItem(item.expr)
-			if varName != "" {
-				if node, ok := createdNodes[varName]; ok {
-					row[i] = e.resolveReturnItem(ctx, item, varName, node)
-					continue
-				}
-			}
-
-			// Anything else (literals, parameters, arithmetic, expressions
-			// over several created variables) is evaluated as an expression
-			// against the created nodes and relationships.
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
+			row[i] = e.projectCreatedReturnItem(ctx, item, createdNodes, createdEdges, createdPaths)
 		}
 		result.Rows = [][]interface{}{row}
 	}
 
 	return result, nil
+}
+
+// projectCreatedReturnItem evaluates one RETURN item of a CREATE ... RETURN
+// statement against what the CREATE produced: count(...), created paths,
+// relationships and nodes by variable, and every other item (literals,
+// parameters, arithmetic, expressions over several variables) as an expression.
+// It is the single RETURN projection for the CREATE routes that project their
+// own RETURN - executeCreate, executeCreateWithRefs and the auto-commit
+// node-only fast path tryAsyncCreateNodeBatch - so they return the same values.
+func (e *StorageExecutor) projectCreatedReturnItem(ctx context.Context, item returnItem, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, createdPaths map[string]PathResult) interface{} {
+	if isAggregateFuncName(item.expr, "count") {
+		inner := strings.TrimSpace(extractFuncInner(item.expr))
+		if inner == "*" {
+			return int64(1)
+		}
+		if value := e.evaluateExpressionWithContext(ctx, inner, createdNodes, createdEdges); value != nil {
+			return int64(1)
+		}
+		return int64(0)
+	}
+
+	// Path variables first (RETURN p, nodes(p), relationships(p), length(p))
+	if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
+		if path, ok := createdPaths[varName]; ok {
+			return e.pathToValue(path, item.expr, varName)
+		}
+	}
+
+	// Relationship variables next (RETURN r, r.prop, id(r), type(r), ...)
+	//
+	// This matches Neo4j expectations that `r` is returned as a relationship
+	// structure and can be used in functions like id(r)/type(r).
+	if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
+		if edge, ok := createdEdges[varName]; ok && edge != nil {
+			// Direct relationship reference.
+			if item.expr == varName {
+				return edge
+			}
+			// Relationship property access: r.someProp
+			if strings.HasPrefix(item.expr, varName+".") {
+				propName := strings.TrimSpace(item.expr[len(varName)+1:])
+				return edge.Properties[propName]
+			}
+			// Functions over relationships (id(r), type(r), properties(r), ...)
+			return e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
+		}
+	}
+
+	// Resolve the return expression against the created variables.
+	//
+	// The RETURN item may be:
+	// - variable: a
+	// - property access: a.name
+	// - function call: id(a), elementId(a), labels(a)
+	// - other expressions that reference a single variable
+	varName := extractVariableNameFromReturnItem(item.expr)
+	if varName != "" {
+		if node, ok := createdNodes[varName]; ok {
+			return e.resolveReturnItem(ctx, item, varName, node)
+		}
+	}
+
+	// Anything else (literals, parameters, arithmetic, expressions
+	// over several created variables) is evaluated as an expression
+	// against the created nodes and relationships.
+	return e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
 }
 
 func (e *StorageExecutor) resolveCreatePropertyReferences(
@@ -669,24 +670,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 				result.Columns[i] = item.expr
 			}
 
-			// Find the matching node for this return item
-			for variable, node := range createdNodes {
-				// Fast path: direct variable/property prefix match.
-				if strings.HasPrefix(item.expr, variable) || item.expr == variable {
-					row[i] = e.resolveReturnItem(ctx, item, variable, node)
-					break
-				}
-			}
-
-			// If not resolved by prefix match, try extracting the referenced variable
-			// (covers function calls like id(a), elementId(a), etc.).
-			if row[i] == nil {
-				if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
-					if node, ok := createdNodes[varName]; ok {
-						row[i] = e.resolveReturnItem(ctx, item, varName, node)
-					}
-				}
-			}
+			row[i] = e.projectCreatedReturnItem(ctx, item, createdNodes, createdEdges, nil)
 		}
 		result.Rows = [][]interface{}{row}
 	}
