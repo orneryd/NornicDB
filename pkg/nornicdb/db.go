@@ -1813,8 +1813,17 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 	return newEmbedder, nil
 }
 
-// BuildSearchIndexes builds the search indexes from loaded data.
-// Call this after loading data to enable search functionality.
+// BuildSearchIndexes builds the search indexes of the default database from
+// its data. Call this after loading data to enable search functionality.
+//
+// It is coordinated with the database's initial search-index build, the one
+// startup or the first write starts in the background (startSearchIndexBuild):
+// when that hasn't started, this call runs it; when it is running, this call
+// waits for it and then rebuilds, so the result includes data loaded while it
+// ran. Otherwise an initial build starting after this one returns would put
+// the service back into "building", and searches would fail with
+// ErrSearchIndexBuilding until it finished. Once the initial build is done,
+// each call rebuilds the indexes.
 func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	db.mu.RLock()
 	closed := db.closed
@@ -1823,9 +1832,29 @@ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 		return ErrClosed
 	}
 
-	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
+	dbName := db.defaultDatabaseName()
+	svc, err := db.GetOrCreateSearchService(dbName, db.storage)
 	if err != nil {
 		return err
+	}
+	db.searchServicesMu.RLock()
+	entry := db.searchServices[dbName]
+	db.searchServicesMu.RUnlock()
+	if entry != nil && entry.svc == svc && entry.buildDone != nil {
+		ranInitial := false
+		var initialErr error
+		entry.buildOnce.Do(func() {
+			ranInitial = true
+			initialErr = db.runInitialSearchIndexBuild(entry, ctx)
+		})
+		if ranInitial {
+			return initialErr
+		}
+		select {
+		case <-entry.buildDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	return svc.BuildIndexes(ctx)
 }

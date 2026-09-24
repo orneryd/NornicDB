@@ -34,6 +34,9 @@
 - id: mcp.recall_failed
   description: Error al recuperar nodos. Cause no se traduce.
   other: "no se pudieron recuperar los nodos: {{.Cause}}"
+- id: mcp.discover_failed
+  description: Error en la búsqueda de discover. Cause no se traduce.
+  other: "la búsqueda de discover falló: {{.Cause}}"
 - id: mcp.invalid_relation
   description: Error de relación. Relation no se traduce.
   other: 'relación no válida: "{{.Relation}}" (debe ser un identificador válido y no vacío, p. ej. relates_to, depends_on)'

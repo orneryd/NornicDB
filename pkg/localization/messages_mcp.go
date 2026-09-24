@@ -18,6 +18,7 @@ const (
 	MessageMCPStoreNoExecutor         MessageID = "mcp.store_no_executor"
 	MessageMCPNodeNotFound            MessageID = "mcp.node_not_found"
 	MessageMCPRecallFailed            MessageID = "mcp.recall_failed"
+	MessageMCPDiscoverFailed          MessageID = "mcp.discover_failed"
 	MessageMCPInvalidRelation         MessageID = "mcp.invalid_relation"
 	MessageMCPSourceNotFound          MessageID = "mcp.source_node_not_found"
 	MessageMCPTargetNotFound          MessageID = "mcp.target_node_not_found"
@@ -85,6 +86,9 @@ func MCPNodeNotFound(id string) Message {
 }
 func MCPRecallFailed(cause error) Message {
 	return mcpCauseMessage(MessageMCPRecallFailed, "failed to recall nodes: ", cause)
+}
+func MCPDiscoverFailed(cause error) Message {
+	return mcpCauseMessage(MessageMCPDiscoverFailed, "discover search failed: ", cause)
 }
 func MCPInvalidRelation(relation string) Message {
 	return mcpDataMessage(MessageMCPInvalidRelation, "invalid relation: "+strconv.Quote(relation)+" (must be a non-empty valid identifier, e.g. relates_to, depends_on)", map[string]any{"Relation": relation})

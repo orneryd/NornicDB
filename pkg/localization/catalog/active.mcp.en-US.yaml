@@ -34,6 +34,9 @@
 - id: mcp.recall_failed
   description: MCP recall failure. Cause is diagnostic text.
   other: "failed to recall nodes: {{.Cause}}"
+- id: mcp.discover_failed
+  description: MCP discover search failure. Cause is diagnostic text.
+  other: "discover search failed: {{.Cause}}"
 - id: mcp.invalid_relation
   description: MCP relation validation error. Relation is user-supplied data.
   other: 'invalid relation: "{{.Relation}}" (must be a non-empty valid identifier, e.g. relates_to, depends_on)'
