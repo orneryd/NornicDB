@@ -118,10 +118,7 @@ func splitOptionalMatchClauses(section string) []optionalMatchClause {
 // relationships ("[:TYPE]", "[*1..2]") contribute nothing.
 func extractRelationshipVariables(matchClause string) []string {
 	var vars []string
-	for i := 0; i < len(matchClause); i++ {
-		if matchClause[i] != '[' {
-			continue
-		}
+	for i, end := nextRelationshipBracket(matchClause, 0); i >= 0; i, end = nextRelationshipBracket(matchClause, end+1) {
 		j := i + 1
 		for j < len(matchClause) && isWhitespace(matchClause[j]) {
 			j++
@@ -146,58 +143,57 @@ func extractRelationshipVariables(matchClause string) []string {
 // direction. It returns an error for patterns without two node endpoints.
 func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, pattern string) (optionalClauseEndpoints, error) {
 	eps := optionalClauseEndpoints{direction: "both"}
+	// Anonymous relationships (-->, <--, --) become bracketed ones, so the
+	// relationship bracket below always carries the direction.
 	pattern = normalizeAnonymousTraversalRelationships(pattern)
-	if strings.Contains(pattern, "<-") {
-		eps.direction = "in"
-	} else if strings.Contains(pattern, "->") {
-		eps.direction = "out"
-	}
 
 	openIdx := strings.Index(pattern, "(")
 	if openIdx < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointMissing(truncateQuery(pattern, 60)), nil)
 	}
-	closeIdx := strings.Index(pattern[openIdx:], ")")
-	if closeIdx <= 0 {
+	closeIdx := findMatchingParen(pattern, openIdx)
+	if closeIdx < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
-	eps.source = e.parseNodePattern(ctx, pattern[openIdx:openIdx+closeIdx+1])
+	eps.source = e.parseNodePattern(ctx, pattern[openIdx:closeIdx+1])
 
-	if brIdx := strings.Index(pattern, "["); brIdx >= 0 {
-		brEnd := strings.Index(pattern[brIdx:], "]")
-		if brEnd > 0 {
-			relStr := pattern[brIdx+1 : brIdx+brEnd]
-			if colonIdx := strings.Index(relStr, ":"); colonIdx >= 0 {
-				eps.relVar = strings.TrimSpace(relStr[:colonIdx])
-				relType := strings.TrimSpace(relStr[colonIdx+1:])
-				if propIdx := strings.Index(relType, "{"); propIdx >= 0 {
-					relType = strings.TrimSpace(relType[:propIdx])
-				}
-				if starIdx := strings.Index(relType, "*"); starIdx >= 0 {
-					relType = strings.TrimSpace(relType[:starIdx])
-				}
-				eps.relType = relType
-			} else if starIdx := strings.Index(relStr, "*"); starIdx >= 0 {
-				eps.relVar = strings.TrimSpace(relStr[:starIdx])
-			} else {
-				eps.relVar = strings.TrimSpace(relStr)
-			}
+	rest := pattern[closeIdx+1:]
+	if relOpen, relClose := firstRelationshipBracket(rest); relOpen >= 0 {
+		// The arrows around the relationship give the direction.
+		if strings.HasSuffix(strings.TrimSpace(rest[:relOpen]), "<-") {
+			eps.direction = "in"
+		} else if strings.HasPrefix(strings.TrimSpace(rest[relClose+1:]), "->") {
+			eps.direction = "out"
+		} else {
+			eps.direction = "both"
 		}
-	}
-
-	rest := pattern[openIdx+closeIdx+1:]
-	if relEnd := strings.Index(rest, "]"); relEnd >= 0 {
-		rest = rest[relEnd+1:]
+		relStr := rest[relOpen+1 : relClose]
+		if colonIdx := strings.Index(relStr, ":"); colonIdx >= 0 {
+			eps.relVar = strings.TrimSpace(relStr[:colonIdx])
+			relType := strings.TrimSpace(relStr[colonIdx+1:])
+			if propIdx := strings.Index(relType, "{"); propIdx >= 0 {
+				relType = strings.TrimSpace(relType[:propIdx])
+			}
+			if starIdx := strings.Index(relType, "*"); starIdx >= 0 {
+				relType = strings.TrimSpace(relType[:starIdx])
+			}
+			eps.relType = relType
+		} else if starIdx := strings.Index(relStr, "*"); starIdx >= 0 {
+			eps.relVar = strings.TrimSpace(relStr[:starIdx])
+		} else {
+			eps.relVar = strings.TrimSpace(relStr)
+		}
+		rest = rest[relClose+1:]
 	}
 	tOpen := strings.Index(rest, "(")
 	if tOpen < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointMissing(truncateQuery(pattern, 60)), nil)
 	}
-	tClose := strings.Index(rest[tOpen:], ")")
-	if tClose <= 0 {
+	tClose := findMatchingParen(rest, tOpen)
+	if tClose < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
-	eps.target = e.parseNodePattern(ctx, rest[tOpen:tOpen+tClose+1])
+	eps.target = e.parseNodePattern(ctx, rest[tOpen:tClose+1])
 	return eps, nil
 }
 

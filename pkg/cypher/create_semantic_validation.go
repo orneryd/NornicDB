@@ -175,11 +175,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 }
 
 func validateCreateRelationshipShape(pattern string) error {
-	open := strings.Index(pattern, "[")
-	close := -1
-	if open >= 0 {
-		close = findMatchingBracket(pattern, open)
-	}
+	open, close := firstRelationshipBracket(pattern)
 	if open < 0 || close < 0 {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
