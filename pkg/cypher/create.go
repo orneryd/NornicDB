@@ -714,7 +714,7 @@ func (e *StorageExecutor) splitCreatePatterns(pattern string) []string {
 		c := pattern[i]
 
 		// Handle string literal boundaries
-		if (c == '\'' || c == '"') && (i == 0 || pattern[i-1] != '\\') {
+		if (c == '\'' || c == '"') && !isBackslashEscaped(pattern, i) {
 			if !inString {
 				// Starting a string literal
 				inString = true
@@ -904,7 +904,7 @@ func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string,
 				}
 			}
 		} else if c == quoteChar {
-			if i > 0 && rest[i-1] != '\\' {
+			if i > 0 && !isBackslashEscaped(rest, i) {
 				inQuote = false
 			}
 		}
@@ -954,7 +954,7 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
-		if (c == '\'' || c == '"') && (i == 0 || pattern[i-1] != '\\') {
+		if (c == '\'' || c == '"') && !isBackslashEscaped(pattern, i) {
 			if !inString {
 				inString = true
 				stringChar = c
@@ -1055,7 +1055,7 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 						break
 					}
 				}
-			} else if c == quoteChar && (i == 0 || relStr[i-1] != '\\') {
+			} else if c == quoteChar && !isBackslashEscaped(relStr, i) {
 				inQuote = false
 			}
 		}

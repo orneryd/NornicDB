@@ -47,7 +47,7 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 	for i := openIdx; i < len(expr); i++ {
 		ch := rune(expr[i])
 		if inQuote {
-			if ch == quoteChar && (i == 0 || expr[i-1] != '\\') {
+			if ch == quoteChar && !isBackslashEscaped(expr, i) {
 				inQuote = false
 				quoteChar = 0
 			}

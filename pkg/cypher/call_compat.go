@@ -869,7 +869,7 @@ func (e *StorageExecutor) splitArgsSimple(args string) []string {
 
 	for i := 0; i < len(args); i++ {
 		c := args[i]
-		if (c == '\'' || c == '"') && (i == 0 || args[i-1] != '\\') {
+		if (c == '\'' || c == '"') && !isBackslashEscaped(args, i) {
 			if !inQuote {
 				inQuote = true
 				quoteChar = c
@@ -900,7 +900,7 @@ func (e *StorageExecutor) splitArgsRespectingArrays(args string) []string {
 
 	for i := 0; i < len(args); i++ {
 		c := args[i]
-		if (c == '\'' || c == '"') && (i == 0 || args[i-1] != '\\') {
+		if (c == '\'' || c == '"') && !isBackslashEscaped(args, i) {
 			if !inQuote {
 				inQuote = true
 				quoteChar = c

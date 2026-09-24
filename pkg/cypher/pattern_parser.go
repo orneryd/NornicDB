@@ -679,7 +679,7 @@ func (e *StorageExecutor) splitArrayElements(inner string) []string {
 				quoteChar = c
 			} else if c == quoteChar {
 				escaped := false
-				if i > 0 && inner[i-1] == '\\' {
+				if isBackslashEscaped(inner, i) {
 					escaped = true
 				}
 				if !escaped {

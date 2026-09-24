@@ -164,7 +164,7 @@ func namedFunctionArguments(expression, function string) []string {
 		if quote == '\'' || quote == '"' || quote == '`' {
 			index++
 			for index < len(lower) {
-				if lower[index] == quote && (index == 0 || lower[index-1] != '\\') {
+				if lower[index] == quote && !isBackslashEscaped(lower, index) {
 					index++
 					break
 				}

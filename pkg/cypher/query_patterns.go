@@ -164,7 +164,7 @@ func countRelationshipPatterns(s string) int {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 
-		if (c == '\'' || c == '"') && (i == 0 || s[i-1] != '\\') {
+		if (c == '\'' || c == '"') && !isBackslashEscaped(s, i) {
 			if !inQuote {
 				inQuote = true
 				quoteChar = c

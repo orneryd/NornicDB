@@ -90,7 +90,7 @@ func splitProcedureTopLevelComma(s string) []string {
 	for i, ch := range s {
 		if inQuote {
 			cur.WriteRune(ch)
-			if ch == quoteChar && (i == 0 || s[i-1] != '\\') {
+			if ch == quoteChar && !isBackslashEscaped(s, i) {
 				inQuote = false
 				quoteChar = 0
 			}

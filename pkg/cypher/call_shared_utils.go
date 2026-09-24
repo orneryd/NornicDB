@@ -23,11 +23,11 @@ func splitTopLevelComma(input string) []string {
 	for i, r := range input {
 		switch r {
 		case '\'':
-			if !inDouble && (i == 0 || input[i-1] != '\\') {
+			if !inDouble && !isBackslashEscaped(input, i) {
 				inSingle = !inSingle
 			}
 		case '"':
-			if !inSingle && (i == 0 || input[i-1] != '\\') {
+			if !inSingle && !isBackslashEscaped(input, i) {
 				inDouble = !inDouble
 			}
 		case '(', '[', '{':

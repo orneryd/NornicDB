@@ -1268,7 +1268,7 @@ func stripEnclosingExpressionParentheses(expr string) (string, bool) {
 	for i := 0; i < len(expr); i++ {
 		character := expr[i]
 		if quote != 0 {
-			if character == quote && (i == 0 || expr[i-1] != '\\') {
+			if character == quote && !isBackslashEscaped(expr, i) {
 				quote = 0
 			}
 			continue

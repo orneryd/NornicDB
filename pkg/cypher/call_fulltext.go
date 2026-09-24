@@ -551,7 +551,7 @@ func extractQuotedPhrasesAndStrip(s string) (stripped string, phrases []string) 
 
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
-		if ch == '"' && (i == 0 || s[i-1] != '\\') {
+		if ch == '"' && !isBackslashEscaped(s, i) {
 			if !inQuote {
 				inQuote = true
 				phraseStart = i + 1
