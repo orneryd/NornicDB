@@ -345,7 +345,9 @@ func TestMergeNode_StandaloneSetAfterMerge(t *testing.T) {
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "ImportEdgeVersion", res.Rows[0][0])
 	require.Equal(t, "TJ Sweet", res.Rows[0][1])
-	require.NotNil(t, res.Rows[0][2])
+	// valid_to = CASE WHEN null IS NULL THEN null ... END evaluates to null, so
+	// the property is not stored (it used to be stored as the CASE text).
+	require.Nil(t, res.Rows[0][2])
 	require.Equal(t, "tx-5671c64f-000001", res.Rows[0][3])
 }
 

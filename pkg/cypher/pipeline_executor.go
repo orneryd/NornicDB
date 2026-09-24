@@ -1031,6 +1031,10 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 		return nil, true, err
 	}
 	simpleTarget, simpleProperty, simpleExpression, simplePropertyAssignment := pipelineSimplePropertyAssignment(assignments)
+	targets := pipelineSetTargetVariables(assignments)
+	if len(targets) == 0 {
+		return nil, false, nil
+	}
 	for _, row := range rows {
 		nodes := make(map[string]*storage.Node)
 		evalNodes := nodes
@@ -1067,22 +1071,22 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 			}
 		}
 		rowCtx := withParams(ctx, params)
-		targets := pipelineSetTargetVariables(assignments)
-		if len(targets) == 0 {
-			return nil, false, nil
-		}
 		for _, variable := range targets {
 			if node := nodes[variable]; node != nil {
 				beforeProperties := cloneStringAnyMap(node.Properties)
 				beforeLabels := append([]string(nil), node.Labels...)
 				if simplePropertyAssignment && simpleTarget == variable {
-					value := e.evaluatePipelineSetValue(rowCtx, simpleExpression, evalNodes, rels)
-					if err := validateSetPropertyValue(value); err != nil {
+					value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
+					if err != nil {
 						return nil, true, err
 					}
 					setNodeProperty(node, simpleProperty, value)
 				} else {
-					e.applySetToNodeWithContext(rowCtx, node, variable, body, evalNodes, rels)
+					if err := e.applySetToNodeWithContext(rowCtx, node, variable, body, evalNodes, rels); err != nil {
+						node.Properties = beforeProperties
+						node.Labels = beforeLabels
+						return nil, true, err
+					}
 				}
 				if !reflect.DeepEqual(beforeLabels, node.Labels) {
 					if err := validatePolicyOnLabelChange(store, node, beforeLabels); err != nil {
@@ -1105,13 +1109,16 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 			if relationship := rels[variable]; relationship != nil {
 				beforeProperties := cloneStringAnyMap(relationship.Properties)
 				if simplePropertyAssignment && simpleTarget == variable {
-					value := e.evaluatePipelineSetValue(rowCtx, simpleExpression, evalNodes, rels)
-					if err := validateSetPropertyValue(value); err != nil {
+					value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
+					if err != nil {
 						return nil, true, err
 					}
 					setRelationshipProperty(relationship, simpleProperty, value)
 				} else {
-					e.applySetToRelationshipWithContext(rowCtx, relationship, variable, body, evalNodes, rels)
+					if _, err := e.applySetToRelationshipWithContext(rowCtx, relationship, variable, body, evalNodes, rels); err != nil {
+						relationship.Properties = beforeProperties
+						return nil, true, err
+					}
 				}
 				if err := store.UpdateEdge(relationship); err != nil {
 					relationship.Properties = beforeProperties
@@ -1127,45 +1134,40 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 	return stats, true, nil
 }
 
+// pipelineSimplePropertyAssignment recognizes the single x.p = <expr> SET
+// (the common case) so pipelineApplySet can skip re-splitting per row.
 func pipelineSimplePropertyAssignment(assignments []string) (target, property, expression string, ok bool) {
 	if len(assignments) != 1 {
 		return "", "", "", false
 	}
-	assignment := strings.TrimSpace(assignments[0])
-	if strings.Contains(assignment, "+=") {
+	target, property, operator, expression := splitSetAssignment(assignments[0])
+	if operator != "=" || property == "" || expression == "" {
 		return "", "", "", false
 	}
-	equalIndex := strings.Index(assignment, "=")
-	if equalIndex <= 0 {
-		return "", "", "", false
-	}
-	target, property, hasProperty := parseSetAssignmentTarget(strings.TrimSpace(assignment[:equalIndex]))
-	if !hasProperty {
-		return "", "", "", false
-	}
-	expression = strings.TrimSpace(assignment[equalIndex+1:])
-	return target, property, expression, expression != ""
+	return target, property, expression, true
 }
 
-func (e *StorageExecutor) evaluatePipelineSetValue(ctx context.Context, expression string, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) interface{} {
-	if value, ok := resolveDirectParamRef(ctx, expression); ok {
-		return normalizePropValue(value)
-	}
-	return e.evaluateSetExpressionWithContext(ctx, expression, nodes, relationships)
-}
-
+// validatePipelineSetAssignments statically checks SET assignment shapes for
+// every route (it runs from validateSetClauseScope before execution): x = v,
+// x.p = v, x += map and x:L1:L2 with a bound-identifier target, a non-empty
+// right-hand side, a parseable inline map for +=, no scalar literal for +=,
+// and a valid label chain (setLabelChain). Forms are split by
+// splitSetAssignment, the splitter the applicators use.
 func validatePipelineSetAssignments(assignments []string) error {
 	for _, raw := range assignments {
 		assignment := strings.TrimSpace(raw)
 		if assignment == "" {
 			return localizedError(localization.CypherMutationsSetAssignmentRequired(), nil)
 		}
-		if plusIndex := strings.Index(assignment, "+="); plusIndex >= 0 {
-			target := strings.TrimSpace(assignment[:plusIndex])
-			right := strings.TrimSpace(assignment[plusIndex+2:])
-			if !isValidIdentifier(target) || right == "" {
-				return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
-			}
+		target, _, operator, right := splitSetAssignment(assignment)
+		if operator == "" || !isValidIdentifier(target) || right == "" {
+			return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
+		}
+		if right == "$" {
+			return localizedError(localization.CypherMutationsSetAssignmentParameterNameRequired(), nil)
+		}
+		switch operator {
+		case "+=":
 			if strings.HasPrefix(right, "{") {
 				if _, err := parseSetMergeMapExpressionsStrict(right); err != nil {
 					return localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
@@ -1173,28 +1175,12 @@ func validatePipelineSetAssignments(assignments []string) error {
 			} else if _, scalar := parseLiteralScalarForPipeline(right); scalar {
 				return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
 			}
-			continue
-		}
-		if equalIndex := strings.Index(assignment, "="); equalIndex >= 0 {
-			target := strings.TrimSpace(assignment[:equalIndex])
-			right := strings.TrimSpace(assignment[equalIndex+1:])
-			variable, _, _ := parseSetAssignmentTarget(target)
-			if !isValidIdentifier(variable) || right == "" {
-				return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
+		case ":":
+			if strings.HasPrefix(right, "$(") {
+				continue // dynamic labels are resolved at run time
 			}
-			continue
-		}
-		colonIndex := strings.Index(assignment, ":")
-		if colonIndex <= 0 || !isValidIdentifier(strings.TrimSpace(assignment[:colonIndex])) {
-			return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
-		}
-		labels := splitSetLabelChain(strings.TrimSpace(assignment[colonIndex+1:]))
-		if len(labels) == 0 {
-			return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
-		}
-		for _, label := range labels {
-			if !isValidIdentifier(label) {
-				return localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
+			if _, err := setLabelChain(right); err != nil {
+				return err
 			}
 		}
 	}
@@ -1231,27 +1217,21 @@ func addedLabelCount(before, after []string) int {
 	return added
 }
 
+// pipelineSetTargetVariables lists the variables a SET clause writes, in
+// first-appearance order, using the shared splitSetAssignment.
 func pipelineSetTargetVariables(assignments []string) []string {
 	seen := make(map[string]struct{})
 	var targets []string
 	for _, assignment := range assignments {
-		left := strings.TrimSpace(assignment)
-		if idx := strings.Index(left, "+="); idx >= 0 {
-			left = strings.TrimSpace(left[:idx])
-		} else if idx := strings.Index(left, "="); idx >= 0 {
-			left = strings.TrimSpace(left[:idx])
-		}
-		if idx := strings.IndexAny(left, ".:"); idx >= 0 {
-			left = strings.TrimSpace(left[:idx])
-		}
-		if !isValidIdentifier(left) {
+		target, _, operator, _ := splitSetAssignment(assignment)
+		if operator == "" || !isValidIdentifier(target) {
 			continue
 		}
-		if _, exists := seen[left]; exists {
+		if _, exists := seen[target]; exists {
 			continue
 		}
-		seen[left] = struct{}{}
-		targets = append(targets, left)
+		seen[target] = struct{}{}
+		targets = append(targets, target)
 	}
 	return targets
 }

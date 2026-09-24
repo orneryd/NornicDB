@@ -2420,7 +2420,7 @@ func TestCreateSetAndSetMergeBranches(t *testing.T) {
 	// parameter branches
 	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person) SET n.age = $age RETURN n")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires parameters to be provided")
+	assert.Contains(t, err.Error(), "parameter $age")
 
 	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"x": int64(1)})
 	_, err = exec.executeCreateSet(ctxWithParams, "CREATE (n:Person) SET n.age = $age RETURN n")
@@ -2430,7 +2430,7 @@ func TestCreateSetAndSetMergeBranches(t *testing.T) {
 	// property replacement must use map
 	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person) SET n = 1 RETURN n")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must be a map")
+	assert.Contains(t, err.Error(), "requires a map")
 
 	// unknown variable branches
 	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person) SET m.age = 1 RETURN n")
@@ -2439,7 +2439,7 @@ func TestCreateSetAndSetMergeBranches(t *testing.T) {
 
 	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person)-[r:KNOWS]->(m:Person) SET z += {x:1} RETURN n")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown variable in SET +=")
+	assert.Contains(t, err.Error(), "unknown variable in SET clause")
 
 	// invalid label name in SET label assignment
 	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person) SET n:bad-label RETURN n")
@@ -2460,68 +2460,6 @@ func TestCreateSetAndSetMergeBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, noReturnRes.Rows)
 	require.Equal(t, "node", noReturnRes.Columns[0])
-
-	// executeSetMerge branches
-	target := &storage.Node{ID: "sm1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "merge"}}
-	_, err = store.CreateNode(target)
-	require.NoError(t, err)
-
-	matchResult := &ExecuteResult{
-		Columns: []string{"n", "props"},
-		Rows: [][]interface{}{
-			{target, map[string]interface{}{"k": int64(9)}},
-		},
-	}
-
-	mergeOut := &ExecuteResult{Stats: &QueryStats{}}
-	_, err = exec.executeSetMerge(ctx, matchResult, "n props", mergeOut, "MATCH (n) SET n props", -1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected += operator")
-
-	_, err = exec.executeSetMerge(ctx, matchResult, "n += ", mergeOut, "MATCH (n) SET n += ", -1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires a map or parameter")
-
-	_, err = exec.executeSetMerge(ctx, matchResult, "n += $props", mergeOut, "MATCH (n) SET n += $props", -1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires parameters to be provided")
-
-	ctxParam := context.WithValue(ctx, paramsKey, map[string]interface{}{"props": map[interface{}]interface{}{1: "x"}})
-	_, err = exec.executeSetMerge(ctxParam, matchResult, "n += $props", mergeOut, "MATCH (n) SET n += $props", -1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "string keys")
-
-	_, err = exec.executeSetMerge(ctx, matchResult, "n += missingMap", mergeOut, "MATCH (n) SET n += missingMap", -1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing \"missingMap\"")
-
-	_, err = exec.executeSetMerge(ctx, matchResult, "n += {invalid}", mergeOut, "MATCH (n) SET n += {invalid}", -1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse properties in SET +=")
-
-	_, err = exec.executeSetMerge(ctx, matchResult, "n += {a: 1,}", mergeOut, "MATCH (n) SET n += {a: 1,}", -1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse properties in SET +=")
-
-	badMapResult := &ExecuteResult{Columns: []string{"n", "props"}, Rows: [][]interface{}{{target, true}}}
-	_, err = exec.executeSetMerge(ctx, badMapResult, "n += props", mergeOut, "MATCH (n) SET n += props", -1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must be a map")
-
-	okSetMergeResult := &ExecuteResult{Stats: &QueryStats{}}
-	ctxGoodParam := context.WithValue(ctx, paramsKey, map[string]interface{}{"props": map[string]interface{}{"age": int64(44)}})
-	retQuery := "MATCH (n) SET n += $props RETURN n.age AS age"
-	retIdx := strings.Index(strings.ToUpper(retQuery), "RETURN")
-	got, err := exec.executeSetMerge(ctxGoodParam, matchResult, "n += $props", okSetMergeResult, retQuery, retIdx)
-	require.NoError(t, err)
-	require.NotEmpty(t, got.Rows)
-	assert.EqualValues(t, 44, got.Rows[0][0])
-
-	noReturnSetMerge := &ExecuteResult{Stats: &QueryStats{}}
-	got, err = exec.executeSetMerge(ctx, matchResult, "n += {active: true}", noReturnSetMerge, "MATCH (n) SET n += {active: true}", -1)
-	require.NoError(t, err)
-	require.Equal(t, []string{"matched"}, got.Columns)
-	require.EqualValues(t, 1, got.Rows[0][0])
 }
 
 func TestEmbedQueryChunkedAndVectorQueryNodeBranches(t *testing.T) {
@@ -3236,10 +3174,12 @@ func TestExecuteSet_AdditionalMapAndLabelValidationBranches(t *testing.T) {
 	require.True(t, errors.As(err, &semanticError))
 	assert.Equal(t, "UndefinedVariable", semanticError.Detail)
 
-	// Escaped-label normalization branch (`Quoted``Label` -> Quoted`Label) still fails identifier validation.
-	_, err = exec.Execute(ctx, "MATCH (n:P) SET n:`Quoted``Label` RETURN n", nil)
-	require.Error(t, err)
-	assert.Contains(t, strings.ToLower(err.Error()), "invalid label name")
+	// A backtick-quoted label may contain any character; a doubled backtick
+	// escapes one (`Quoted``Label` -> Quoted`Label), as in Neo4j.
+	quoted, err := exec.Execute(ctx, "MATCH (n:P) SET n:`Quoted``Label` RETURN labels(n) AS l", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, quoted.Rows)
+	assert.Contains(t, quoted.Rows[0][0], "Quoted`Label")
 
 	// Unescaped keyword label currently accepted by parser/runtime.
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n:RETURN RETURN n", nil)

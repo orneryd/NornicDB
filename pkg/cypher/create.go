@@ -5,7 +5,6 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,7 +14,25 @@ import (
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
-func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
+// createOutcome is what one CREATE pattern produced.
+type createOutcome struct {
+	result    *ExecuteResult
+	nodes     map[string]*storage.Node
+	edges     map[string]*storage.Edge
+	paths     map[string]PathResult
+	cypher    string // the statement after parameter substitution
+	returnIdx int    // index of RETURN in cypher, or -1
+}
+
+// createFromPattern is the single CREATE pattern executor: parameter
+// substitution, validation (empty / invalid / reserved labels, property keys
+// and values, relationship types), property references to variables created
+// earlier in the same pattern, relationship chains and named paths (p = ...).
+// Every CREATE route that creates from pattern text - CREATE (executeCreate),
+// CREATE ... SET, CREATE ... WITH ... DELETE and the pipeline's CREATE step
+// (executeCreateWithRefs) - uses it, so they create the same graph and reject
+// the same patterns.
+func (e *StorageExecutor) createFromPattern(ctx context.Context, cypher string) (*createOutcome, error) {
 	// Substitute parameters AFTER routing to avoid keyword detection issues
 	if params := getParamsFromContext(ctx); params != nil {
 		cypher = e.substituteParams(cypher, params)
@@ -26,7 +43,6 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 		Rows:    [][]interface{}{},
 		Stats:   &QueryStats{},
 	}
-	store := e.getStorage(ctx)
 
 	// Parse CREATE pattern
 	pattern := cypher[6:] // Skip "CREATE"
@@ -37,6 +53,33 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 		pattern = cypher[6:returnIdx]
 	}
 	pattern = strings.TrimSpace(pattern)
+
+	createdNodes := make(map[string]*storage.Node)
+	createdEdges := make(map[string]*storage.Edge)
+	createdPaths, err := e.createPatternsInScope(ctx, pattern, createdNodes, createdEdges, result)
+	if err != nil {
+		return nil, err
+	}
+	return &createOutcome{
+		result:    result,
+		nodes:     createdNodes,
+		edges:     createdEdges,
+		paths:     createdPaths,
+		cypher:    cypher,
+		returnIdx: returnIdx,
+	}, nil
+}
+
+// createPatternsInScope is the single CREATE executor for pattern text (the
+// part after CREATE, comma-separated patterns). nodes and edges hold the
+// variables already in scope (from MATCH, WITH, UNWIND or an earlier CREATE);
+// relationship endpoints that name a bound variable reuse it, and every
+// created node / relationship is bound into them. Nodes - standalone and
+// inline endpoints - go through createNodeFromPattern, so every route
+// validates labels and properties and resolves property references the same
+// way. Stats go to result. It returns the named paths (p = ...).
+func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, result *ExecuteResult) (map[string]PathResult, error) {
+	store := e.getStorage(ctx)
 
 	// Split into individual patterns (nodes and relationships)
 	allPatterns := e.splitCreatePatterns(pattern)
@@ -59,73 +102,14 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 	}
 
 	// First, create all nodes
-	createdNodes := make(map[string]*storage.Node)
-	createdEdges := make(map[string]*storage.Edge)
 	createdPaths := make(map[string]PathResult)
 	for _, nodePatternStr := range nodePatterns {
 		nodePatternStr = strings.TrimSpace(nodePatternStr)
 		if nodePatternStr == "" {
 			continue
 		}
-		if err := e.validateCreatePatternPropertyMap(ctx, nodePatternStr); err != nil {
+		if _, err := e.createNodeFromPattern(ctx, nodePatternStr, createdNodes, createdEdges, result, store); err != nil {
 			return nil, err
-		}
-
-		nodePattern := e.parseNodePattern(ctx, nodePatternStr)
-		e.resolveCreatePropertyReferences(ctx, nodePatternStr, nodePattern.properties, createdNodes, createdEdges)
-
-		// Check for empty label (e.g., "n:" or ":") - only check before properties
-		patternBeforeProps := nodePatternStr
-		if braceIdx := strings.Index(nodePatternStr, "{"); braceIdx >= 0 {
-			patternBeforeProps = nodePatternStr[:braceIdx]
-		}
-		// Check if there's a colon that doesn't have a label after it
-		if strings.Contains(patternBeforeProps, ":") && len(nodePattern.labels) == 0 {
-			return nil, localizedError(localization.CypherResidualEmptyLabelAfterColon(nodePatternStr), nil)
-		}
-
-		// SECURITY: Validate labels to prevent injection attacks
-		for _, label := range nodePattern.labels {
-			if !isValidIdentifier(label) {
-				return nil, localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
-			}
-			if containsReservedKeyword(label) {
-				return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(label), nil)
-			}
-		}
-
-		// SECURITY: Validate property keys and values
-		for key, val := range nodePattern.properties {
-			if !isValidIdentifier(key) {
-				return nil, localizedError(localization.CypherMutationsInvalidPropertyKey(key), nil)
-			}
-			// Check for invalid property values (malformed syntax)
-			if _, ok := val.(invalidPropertyValue); ok {
-				return nil, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
-			}
-		}
-
-		// Create the node
-		node := &storage.Node{
-			ID:         storage.NodeID(e.generateID()),
-			Labels:     nodePattern.labels,
-			Properties: nodePattern.properties,
-		}
-
-		actualID, err := store.CreateNode(node)
-		if err != nil {
-			return nil, localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
-		}
-		if actualID != "" {
-			node.ID = actualID
-		}
-		e.notifyNodeMutated(string(node.ID))
-
-		result.Stats.NodesCreated++
-		addOptimisticNodeID(result, node.ID)
-
-		if nodePattern.variable != "" {
-			createdNodes[nodePattern.variable] = node
 		}
 	}
 
@@ -148,68 +132,18 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 				return nil, err
 			}
 
-			// Parse node patterns first to get variable names for lookup
-			sourcePattern := e.parseNodePattern(ctx, "("+sourceContent+")")
-			targetPattern := e.parseNodePattern(ctx, "("+targetContent+")")
-
-			// Determine source node - either lookup by variable or create inline
-			var sourceNode *storage.Node
-			if chainedSourceNode != nil {
-				sourceNode = chainedSourceNode
-			} else if sourcePattern.variable != "" {
-				if node, exists := createdNodes[sourcePattern.variable]; exists {
-					sourceNode = node
-				}
-			}
+			// Endpoints: a bound variable is reused; anything else is created
+			// through the shared node creator.
+			sourceNode := chainedSourceNode
 			if sourceNode == nil {
-				// Create new node
-				sourceNode = &storage.Node{
-					ID:         storage.NodeID(e.generateID()),
-					Labels:     sourcePattern.labels,
-					Properties: sourcePattern.properties,
-				}
-				actualID, err := store.CreateNode(sourceNode)
+				sourceNode, err = e.createPatternEndpoint(ctx, sourceContent, createdNodes, createdEdges, result, store)
 				if err != nil {
-					return nil, localizedError(localization.CypherMutationsCreateSourceNodeFailed(err), err)
-				}
-				if actualID != "" {
-					sourceNode.ID = actualID
-				}
-				e.notifyNodeMutated(string(sourceNode.ID))
-				result.Stats.NodesCreated++
-				addOptimisticNodeID(result, sourceNode.ID)
-				if sourcePattern.variable != "" {
-					createdNodes[sourcePattern.variable] = sourceNode
+					return nil, err
 				}
 			}
-
-			// Determine target node - either lookup by variable or create inline
-			var targetNode *storage.Node
-			if targetPattern.variable != "" {
-				if node, exists := createdNodes[targetPattern.variable]; exists {
-					targetNode = node
-				}
-			}
-			if targetNode == nil {
-				// Create new node
-				targetNode = &storage.Node{
-					ID:         storage.NodeID(e.generateID()),
-					Labels:     targetPattern.labels,
-					Properties: targetPattern.properties,
-				}
-				actualID, err := store.CreateNode(targetNode)
-				if err != nil {
-					return nil, localizedError(localization.CypherMutationsCreateTargetNodeFailed(err), err)
-				}
-				if actualID != "" {
-					targetNode.ID = actualID
-				}
-				e.notifyNodeMutated(string(targetNode.ID))
-				result.Stats.NodesCreated++
-				addOptimisticNodeID(result, targetNode.ID)
-				if targetPattern.variable != "" {
-					createdNodes[targetPattern.variable] = targetNode
-				}
+			targetNode, err := e.createPatternEndpoint(ctx, targetContent, createdNodes, createdEdges, result, store)
+			if err != nil {
+				return nil, err
 			}
 
 			// Parse relationship type and properties
@@ -224,8 +158,12 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 				relVar = strings.TrimSpace(relStr)
 			}
 
+			// CREATE needs exactly one relationship type.
+			if relType == "" {
+				return nil, localizedError(localization.CypherMergeRelationshipTypeRequired(), nil)
+			}
 			// SECURITY: Validate relationship type
-			if relType != "" && !isValidIdentifier(relType) {
+			if !isValidIdentifier(relType) {
 				return nil, localizedError(localization.CypherMutationsInvalidRelationshipType(relType), nil)
 			}
 
@@ -285,27 +223,84 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 			}
 		}
 	}
+	return createdPaths, nil
+}
 
-	// Handle RETURN clause
-	if returnIdx > 0 {
-		returnPart := strings.TrimSpace(cypher[returnIdx+6:])
-		returnItems := e.parseReturnItems(returnPart)
-
-		result.Columns = make([]string, len(returnItems))
-		row := make([]interface{}, len(returnItems))
-
-		for i, item := range returnItems {
-			if item.alias != "" {
-				result.Columns[i] = item.alias
-			} else {
-				result.Columns[i] = item.expr
-			}
-			row[i] = e.projectCreatedReturnItem(ctx, item, createdNodes, createdEdges, createdPaths)
-		}
-		result.Rows = [][]interface{}{row}
+// createNodeFromPattern creates one node from a CREATE node pattern through
+// prepareCreateNodePattern (validation, property references), records it in
+// result's stats and binds its variable in nodes.
+func (e *StorageExecutor) createNodeFromPattern(ctx context.Context, pattern string, nodes map[string]*storage.Node, edges map[string]*storage.Edge, result *ExecuteResult, store storage.Engine) (*storage.Node, error) {
+	nodePattern, err := e.prepareCreateNodePattern(ctx, pattern, nodes, edges)
+	if err != nil {
+		return nil, err
 	}
+	if nodePattern.properties == nil {
+		nodePattern.properties = make(map[string]interface{})
+	}
+	node := &storage.Node{
+		ID:         storage.NodeID(e.generateID()),
+		Labels:     nodePattern.labels,
+		Properties: nodePattern.properties,
+	}
+	actualID, err := store.CreateNode(node)
+	if err != nil {
+		return nil, localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
+	}
+	if actualID != "" {
+		node.ID = actualID
+	}
+	e.notifyNodeMutated(string(node.ID))
+	result.Stats.NodesCreated++
+	addOptimisticNodeID(result, node.ID)
+	if nodePattern.variable != "" {
+		nodes[nodePattern.variable] = node
+	}
+	return node, nil
+}
 
-	return result, nil
+// createPatternEndpoint resolves a relationship endpoint in a CREATE pattern:
+// a variable already bound in nodes is reused, anything else is created with
+// createNodeFromPattern.
+func (e *StorageExecutor) createPatternEndpoint(ctx context.Context, content string, nodes map[string]*storage.Node, edges map[string]*storage.Edge, result *ExecuteResult, store storage.Engine) (*storage.Node, error) {
+	content = strings.TrimSpace(content)
+	variable := content
+	if end := strings.IndexAny(content, ":{ "); end >= 0 {
+		variable = strings.TrimSpace(content[:end])
+	}
+	if node := nodes[variable]; variable != "" && node != nil {
+		return node, nil
+	}
+	return e.createNodeFromPattern(ctx, "("+content+")", nodes, edges, result, store)
+}
+
+// projectCreateReturn fills out.result with the RETURN row of a CREATE
+// statement, if it has one, using projectCreatedReturnItem over the created
+// nodes, relationships and named paths.
+func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOutcome) {
+	if out.returnIdx <= 0 {
+		return
+	}
+	returnItems := e.parseReturnItems(strings.TrimSpace(out.cypher[out.returnIdx+6:]))
+	out.result.Columns = make([]string, len(returnItems))
+	row := make([]interface{}, len(returnItems))
+	for i, item := range returnItems {
+		if item.alias != "" {
+			out.result.Columns[i] = item.alias
+		} else {
+			out.result.Columns[i] = item.expr
+		}
+		row[i] = e.projectCreatedReturnItem(ctx, item, out.nodes, out.edges, out.paths)
+	}
+	out.result.Rows = [][]interface{}{row}
+}
+
+func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	out, err := e.createFromPattern(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
+	e.projectCreateReturn(ctx, out)
+	return out.result, nil
 }
 
 // projectCreatedReturnItem evaluates one RETURN item of a CREATE ... RETURN
@@ -417,6 +412,49 @@ func createdPathContext(nodes map[string]*storage.Node, edges map[string]*storag
 	return PathContext{nodes: nodes, rels: edges, paths: paths}
 }
 
+// prepareCreateNodePattern parses and validates one CREATE node pattern. It is
+// shared by every CREATE route (createFromPattern and the auto-commit bulk fast
+// path tryAsyncCreateNodeBatch) so they reject the same patterns: malformed
+// property maps, an empty label after ':', invalid or reserved labels, invalid
+// property keys and values. Property values that reference variables created
+// earlier in the statement (b {name: a.name}) are resolved against nodes and
+// relationships.
+func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern string, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) (nodePatternInfo, error) {
+	if err := e.validateCreatePatternPropertyMap(ctx, pattern); err != nil {
+		return nodePatternInfo{}, err
+	}
+	nodePattern := e.parseNodePattern(ctx, pattern)
+	e.resolveCreatePropertyReferences(ctx, pattern, nodePattern.properties, nodes, relationships)
+
+	// An empty label (e.g. "n:" or ":") - only check before properties.
+	patternBeforeProps := pattern
+	if braceIdx := strings.Index(pattern, "{"); braceIdx >= 0 {
+		patternBeforeProps = pattern[:braceIdx]
+	}
+	if strings.Contains(patternBeforeProps, ":") && len(nodePattern.labels) == 0 {
+		return nodePatternInfo{}, localizedError(localization.CypherResidualEmptyLabelAfterColon(pattern), nil)
+	}
+	// SECURITY: Validate labels to prevent injection attacks
+	for _, label := range nodePattern.labels {
+		if !isValidIdentifier(label) {
+			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
+		}
+		if containsReservedKeyword(label) {
+			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidLabelReserved(label), nil)
+		}
+	}
+	// SECURITY: Validate property keys and values
+	for key, val := range nodePattern.properties {
+		if !isValidIdentifier(key) {
+			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidPropertyKey(key), nil)
+		}
+		if _, ok := val.(invalidPropertyValue); ok {
+			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
+		}
+	}
+	return nodePattern, nil
+}
+
 func (e *StorageExecutor) resolveCreatePropertyReferences(
 	ctx context.Context,
 	pattern string,
@@ -424,8 +462,11 @@ func (e *StorageExecutor) resolveCreatePropertyReferences(
 	nodes map[string]*storage.Node,
 	relationships map[string]*storage.Edge,
 ) {
+	if len(nodes) == 0 && len(relationships) == 0 {
+		return // no variable in scope that a property could reference
+	}
 	open := strings.IndexByte(pattern, '{')
-	if open < 0 {
+	if open < 0 || strings.IndexByte(pattern[open:], '.') < 0 {
 		return
 	}
 	close := e.findMatchingBrace(pattern, open)
@@ -469,7 +510,8 @@ func (e *StorageExecutor) validateCreatePatternPropertyMap(ctx context.Context, 
 		return localizedError(localization.CypherResidualPropertyMapSyntaxInvalid(pattern), nil)
 	}
 	propsLiteral := strings.TrimSpace(pattern[propsStart : propsEnd+1])
-	if _, err := e.parseSetMergeMapLiteralStrict(ctx, propsLiteral); err != nil {
+	// Syntax only: the values are parsed by parseNodePattern.
+	if err := validateMapLiteralSyntax(propsLiteral); err != nil {
 		return localizedError(localization.CypherMutationsInvalidPropertyMapCause(err), err)
 	}
 	return nil
@@ -493,232 +535,12 @@ func parseCreatePathAssignment(pattern string) (string, string) {
 // This is used by compound queries like CREATE...WITH...DELETE to avoid expensive O(n) scans
 // when looking up the created entities.
 func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
-	// Substitute parameters AFTER routing to avoid keyword detection issues
-	if params := getParamsFromContext(ctx); params != nil {
-		cypher = e.substituteParams(cypher, params)
+	out, err := e.createFromPattern(ctx, cypher)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-
-	result := &ExecuteResult{
-		Columns: []string{},
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-	store := e.getStorage(ctx)
-
-	// Parse CREATE pattern
-	pattern := cypher[6:] // Skip "CREATE"
-
-	// Use word boundary detection to avoid matching substrings
-	returnIdx := findKeywordIndex(cypher, "RETURN")
-	if returnIdx > 0 {
-		pattern = cypher[6:returnIdx]
-	}
-	pattern = strings.TrimSpace(pattern)
-
-	// Split into individual patterns (nodes and relationships)
-	allPatterns := e.splitCreatePatterns(pattern)
-
-	// Separate node patterns from relationship patterns
-	var nodePatterns []string
-	var relPatterns []string
-	for _, p := range allPatterns {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if containsOutsideStrings(p, "->") || containsOutsideStrings(p, "<-") || containsOutsideStrings(p, "-[") {
-			relPatterns = append(relPatterns, p)
-		} else {
-			nodePatterns = append(nodePatterns, p)
-		}
-	}
-
-	// First, create all nodes
-	createdNodes := make(map[string]*storage.Node)
-	createdEdges := make(map[string]*storage.Edge)
-
-	for _, nodePatternStr := range nodePatterns {
-		nodePatternStr = strings.TrimSpace(nodePatternStr)
-		if nodePatternStr == "" {
-			continue
-		}
-
-		nodePattern := e.parseNodePattern(ctx, nodePatternStr)
-
-		// Create the node
-		node := &storage.Node{
-			ID:         storage.NodeID(e.generateID()),
-			Labels:     nodePattern.labels,
-			Properties: nodePattern.properties,
-		}
-
-		actualID, err := store.CreateNode(node)
-		if err != nil {
-			return nil, nil, nil, localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
-		}
-		if actualID != "" {
-			node.ID = actualID
-		}
-		e.notifyNodeMutated(string(node.ID))
-
-		result.Stats.NodesCreated++
-		addOptimisticNodeID(result, node.ID)
-
-		if nodePattern.variable != "" {
-			createdNodes[nodePattern.variable] = node
-		}
-	}
-
-	// Then, create all relationships using variable references or inline node definitions
-	for _, relPatternStr := range relPatterns {
-		relPatternStr = strings.TrimSpace(relPatternStr)
-		if relPatternStr == "" {
-			continue
-		}
-
-		// Process relationship chains - keep going until no remainder
-		currentPattern := relPatternStr
-		var chainedSourceNode *storage.Node
-		for currentPattern != "" {
-			// Parse the relationship pattern: (varA)-[:TYPE {props}]->(varB)
-			sourceContent, relStr, targetContent, isReverse, remainder, err := e.parseCreateRelPatternWithVars(currentPattern)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-
-			// Parse node patterns first to get variable names for lookup
-			sourcePattern := e.parseNodePattern(ctx, "("+sourceContent+")")
-			targetPattern := e.parseNodePattern(ctx, "("+targetContent+")")
-
-			// Determine source node - either lookup by variable or create inline
-			var sourceNode *storage.Node
-			if chainedSourceNode != nil {
-				sourceNode = chainedSourceNode
-			} else if sourcePattern.variable != "" {
-				if node, exists := createdNodes[sourcePattern.variable]; exists {
-					sourceNode = node
-				}
-			}
-			if sourceNode == nil {
-				sourceNode = &storage.Node{
-					ID:         storage.NodeID(e.generateID()),
-					Labels:     sourcePattern.labels,
-					Properties: sourcePattern.properties,
-				}
-				actualID, err := store.CreateNode(sourceNode)
-				if err != nil {
-					return nil, nil, nil, localizedError(localization.CypherMutationsCreateSourceNodeFailed(err), err)
-				}
-				if actualID != "" {
-					sourceNode.ID = actualID
-				}
-				e.notifyNodeMutated(string(sourceNode.ID))
-				result.Stats.NodesCreated++
-				addOptimisticNodeID(result, sourceNode.ID)
-				if sourcePattern.variable != "" {
-					createdNodes[sourcePattern.variable] = sourceNode
-				}
-			}
-
-			// Determine target node - either lookup by variable or create inline
-			var targetNode *storage.Node
-			if targetPattern.variable != "" {
-				if node, exists := createdNodes[targetPattern.variable]; exists {
-					targetNode = node
-				}
-			}
-			if targetNode == nil {
-				targetNode = &storage.Node{
-					ID:         storage.NodeID(e.generateID()),
-					Labels:     targetPattern.labels,
-					Properties: targetPattern.properties,
-				}
-				actualID, err := store.CreateNode(targetNode)
-				if err != nil {
-					return nil, nil, nil, localizedError(localization.CypherMutationsCreateTargetNodeFailed(err), err)
-				}
-				if actualID != "" {
-					targetNode.ID = actualID
-				}
-				e.notifyNodeMutated(string(targetNode.ID))
-				result.Stats.NodesCreated++
-				addOptimisticNodeID(result, targetNode.ID)
-				if targetPattern.variable != "" {
-					createdNodes[targetPattern.variable] = targetNode
-				}
-			}
-
-			// Parse relationship type and properties
-			relType, relProps := e.parseRelationshipTypeAndProps(ctx, relStr)
-
-			// Extract relationship variable if present (e.g., "r:TYPE" -> "r")
-			relVar := ""
-			if colonIdx := strings.Index(relStr, ":"); colonIdx > 0 {
-				relVar = strings.TrimSpace(relStr[:colonIdx])
-			} else if !strings.Contains(relStr, "{") {
-				// No colon and no props - entire string might be variable
-				relVar = strings.TrimSpace(relStr)
-			}
-
-			// Handle direction
-			var startNode, endNode *storage.Node
-			if isReverse {
-				startNode, endNode = targetNode, sourceNode
-			} else {
-				startNode, endNode = sourceNode, targetNode
-			}
-
-			// Create the relationship
-			edge := &storage.Edge{
-				ID:         storage.EdgeID(e.generateID()),
-				Type:       relType,
-				StartNode:  startNode.ID,
-				EndNode:    endNode.ID,
-				Properties: relProps,
-			}
-
-			if err := store.CreateEdge(edge); err != nil {
-				return nil, nil, nil, localizedError(localization.CypherMutationsCreateRelationshipFailed(err), err)
-			}
-			e.notifyEdgeMutated(string(edge.ID))
-
-			if relVar != "" {
-				createdEdges[relVar] = edge
-			}
-			result.Stats.RelationshipsCreated++
-			addOptimisticRelationshipID(result, edge.ID)
-
-			// If there's more chain to process, continue with target as new source
-			if remainder != "" && (strings.HasPrefix(remainder, "-[") || strings.HasPrefix(remainder, "<-[")) {
-				chainedSourceNode = targetNode
-				currentPattern = "(" + targetContent + ")" + remainder
-			} else {
-				currentPattern = ""
-			}
-		}
-	}
-
-	// Handle RETURN clause
-	if returnIdx > 0 {
-		returnPart := strings.TrimSpace(cypher[returnIdx+6:])
-		returnItems := e.parseReturnItems(returnPart)
-
-		result.Columns = make([]string, len(returnItems))
-		row := make([]interface{}, len(returnItems))
-
-		for i, item := range returnItems {
-			if item.alias != "" {
-				result.Columns[i] = item.alias
-			} else {
-				result.Columns[i] = item.expr
-			}
-
-			row[i] = e.projectCreatedReturnItem(ctx, item, createdNodes, createdEdges, nil)
-		}
-		result.Rows = [][]interface{}{row}
-	}
-
-	return result, createdNodes, createdEdges, nil
+	e.projectCreateReturn(ctx, out)
+	return out.result, out.nodes, out.edges, nil
 }
 
 // splitCreatePatterns splits a CREATE pattern into individual patterns (nodes and relationships)
@@ -1049,11 +871,11 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 	return patterns
 }
 
-// parseRelationshipTypeAndProps parses "r:TYPE {props}" or ":TYPE {props}" or just "r" (variable only)
+// parseRelationshipTypeAndProps parses "r:TYPE {props}" or ":TYPE {props}". A pattern with no type ("r", ":") yields an empty type.
 // Returns the type and properties map
 func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string) (string, map[string]interface{}) {
 	relStr = strings.TrimSpace(relStr)
-	relType := "RELATED_TO"
+	relType := ""
 	var relProps map[string]interface{}
 
 	// Find properties block if present
@@ -1093,11 +915,9 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 	if colonIdx := strings.Index(relStr, ":"); colonIdx >= 0 {
 		// Has colon - everything after is the type
 		relType = strings.TrimSpace(relStr[colonIdx+1:])
-		if relType == "" {
-			relType = "RELATED_TO" // Handle case like ":" with no type
-		}
 	}
-	// If no colon, relStr is just a variable name like "r" - keep default RELATED_TO
+	// No colon ("r") or nothing after it (":") leaves the type empty; the
+	// CREATE core rejects a relationship without exactly one type.
 
 	if relProps == nil {
 		relProps = make(map[string]interface{})
@@ -1821,179 +1641,40 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			combinedNodeVars[k] = v
 		}
 
-		// TWO-PASS APPROACH: Create nodes first, then relationships
-		// This ensures that nodes created in the same CREATE clause are available
-		// when processing relationships that reference them.
-
-		// Collect all patterns from all clauses
-		var allNodePatterns []string
-		var allRelPatterns []string
-
+		// Each CREATE clause runs through the shared CREATE core in the scope
+		// of this row's bindings.
 		for _, clause := range createClauses {
-			clause = strings.TrimSpace(clause)
-			if clause == "" {
+			if clause = strings.TrimSpace(clause); clause == "" {
 				continue
 			}
-
-			// Split the clause into individual patterns (respecting nesting)
-			patterns := e.splitCreatePatterns(clause)
-
-			for _, pat := range patterns {
-				pat = strings.TrimSpace(pat)
-				if pat == "" {
-					continue
-				}
-
-				// Check if this individual pattern is a relationship or node
-				if containsOutsideStrings(pat, "->") || containsOutsideStrings(pat, "<-") || containsOutsideStrings(pat, "]-") {
-					allRelPatterns = append(allRelPatterns, pat)
-				} else {
-					allNodePatterns = append(allNodePatterns, pat)
-				}
-			}
-		}
-
-		// PASS 1: Create all nodes first
-		for _, np := range allNodePatterns {
-			err := e.processCreateNode(ctx, np, combinedNodeVars, result, store)
-			if err != nil {
+			if _, err := e.createPatternsInScope(ctx, clause, combinedNodeVars, edgeVars, result); err != nil {
 				return nil, err
 			}
 		}
 
-		// PASS 2: Create all relationships (now nodes are available)
-		for _, rp := range allRelPatterns {
-			err := e.processCreateRelationship(ctx, rp, combinedNodeVars, edgeVars, result, store)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		// Apply SET clause after CREATE (supports chained/mixed SET forms).
+		// Apply SET through the shared per-entity applicator, as MATCH ... SET,
+		// MERGE ... SET and CREATE ... SET do.
 		if setPart != "" {
 			setPart = collapseChainedSetClauses(setPart)
-			setPartForAssignments := setPart
-			if params := getParamsFromContext(ctx); params != nil && !strings.Contains(setPart, "+=") {
-				setPartForAssignments = e.substituteParams(setPart, params)
+			row := make(pipelineRow, len(combinedNodeVars)+len(edgeVars))
+			for name, node := range combinedNodeVars {
+				row[name] = node
 			}
-			assignments := e.splitSetAssignments(setPartForAssignments)
-			for _, assignment := range assignments {
-				assignment = strings.TrimSpace(assignment)
-				if assignment == "" {
-					continue
+			for name, edge := range edgeVars {
+				row[name] = edge
+			}
+			for _, variable := range pipelineSetTargetVariables(e.splitSetAssignments(setPart)) {
+				if row[variable] == nil {
+					return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
 				}
-				if strings.Contains(assignment, "+=") {
-					if err := e.applySetMergeToCreated(ctx, assignment, combinedNodeVars, edgeVars, result, store); err != nil {
-						return nil, err
-					}
-					continue
-				}
-				eqIdx := strings.Index(assignment, "=")
-				if eqIdx == -1 {
-					// Label assignment: n:Label
-					colonIdx := strings.Index(assignment, ":")
-					if colonIdx > 0 {
-						varName := strings.TrimSpace(assignment[:colonIdx])
-						newLabel := strings.TrimSpace(assignment[colonIdx+1:])
-						if len(newLabel) >= 2 && strings.HasPrefix(newLabel, "`") && strings.HasSuffix(newLabel, "`") {
-							newLabel = strings.ReplaceAll(newLabel[1:len(newLabel)-1], "``", "`")
-						}
-						if !isValidIdentifier(newLabel) {
-							return nil, localizedError(localization.CypherMutationsInvalidLabelName(newLabel), nil)
-						}
-						if containsReservedKeyword(newLabel) {
-							return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(newLabel), nil)
-						}
-						if node, exists := combinedNodeVars[varName]; exists {
-							if !containsString(node.Labels, newLabel) {
-								oldLabels := make([]string, len(node.Labels))
-								copy(oldLabels, node.Labels)
-								node.Labels = append(node.Labels, newLabel)
-								if err := validatePolicyOnLabelChange(store, node, oldLabels); err != nil {
-									node.Labels = oldLabels // restore
-									return nil, err
-								}
-								if err := store.UpdateNode(node); err != nil {
-									node.Labels = oldLabels // restore
-									return nil, localizedError(localization.CypherMutationsAddLabelFailed(err), err)
-								}
-								result.Stats.LabelsAdded++
-								e.notifyNodeMutated(string(node.ID))
-							}
-						}
-					}
-					continue
-				}
-				leftSide := strings.TrimSpace(assignment[:eqIdx])
-				rightSide := strings.TrimSpace(assignment[eqIdx+1:])
-				dotIdx := strings.Index(leftSide, ".")
-				value := e.parseValue(ctx, rightSide)
-				if strings.HasPrefix(rightSide, "$") {
-					paramName := strings.TrimSpace(rightSide[1:])
-					if paramName == "" {
-						return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNameRequired(), nil)
-					}
-					params := getParamsFromContext(ctx)
-					if params == nil {
-						return nil, localizedError(localization.CypherMutationsSetAssignmentParametersRequired(paramName), nil)
-					}
-					paramValue, exists := params[paramName]
-					if !exists {
-						return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNotFound(paramName), nil)
-					}
-					value = normalizePropValue(paramValue)
-				}
-				if dotIdx == -1 {
-					varName := strings.TrimSpace(leftSide)
-					props, err := normalizePropsMap(value, "SET assignment")
-					if err != nil {
-						return nil, err
-					}
-					if node, exists := combinedNodeVars[varName]; exists {
-						node.Properties = cloneStringAnyMap(props)
-						if err := store.UpdateNode(node); err != nil {
-							return nil, localizedError(localization.CypherMutationsReplaceNodePropertiesFailed(err), err)
-						}
-						result.Stats.PropertiesSet++
-						e.notifyNodeMutated(string(node.ID))
-					} else if edge, exists := edgeVars[varName]; exists {
-						edge.Properties = cloneStringAnyMap(props)
-						if err := store.UpdateEdge(edge); err != nil {
-							return nil, localizedError(localization.CypherMutationsReplaceEdgePropertiesFailed(err), err)
-						}
-						result.Stats.PropertiesSet++
-						e.notifyEdgeMutated(string(edge.ID))
-					} else {
-						return nil, localizedError(localization.CypherMutationsUnknownSetVariable(varName), nil)
-					}
-					continue
-				}
-
-				varName := strings.TrimSpace(leftSide[:dotIdx])
-				propName := strings.TrimSpace(leftSide[dotIdx+1:])
-				if node, exists := combinedNodeVars[varName]; exists {
-					if node.Properties == nil {
-						node.Properties = make(map[string]interface{})
-					}
-					node.Properties[propName] = value
-					if err := store.UpdateNode(node); err != nil {
-						return nil, localizedError(localization.CypherMutationsUpdateNodePropertyFailed(err), err)
-					}
-					result.Stats.PropertiesSet++
-					e.notifyNodeMutated(string(node.ID))
-				} else if edge, exists := edgeVars[varName]; exists {
-					if edge.Properties == nil {
-						edge.Properties = make(map[string]interface{})
-					}
-					edge.Properties[propName] = value
-					if err := store.UpdateEdge(edge); err != nil {
-						return nil, localizedError(localization.CypherMutationsUpdateEdgePropertyFailed(err), err)
-					}
-					result.Stats.PropertiesSet++
-					e.notifyEdgeMutated(string(edge.ID))
-				} else {
-					return nil, localizedError(localization.CypherMutationsUnknownSetVariable(varName), nil)
-				}
+			}
+			setStats, _, err := e.pipelineApplySet(ctx, []pipelineRow{row}, "SET "+setPart)
+			if err != nil {
+				return nil, err
+			}
+			if setStats != nil {
+				result.Stats.PropertiesSet += setStats.PropertiesSet
+				result.Stats.LabelsAdded += setStats.LabelsAdded
 			}
 		}
 
@@ -2102,108 +1783,6 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 	return result, nil
 }
 
-// processCreateNode creates a new node and adds it to the nodeVars map
-func (e *StorageExecutor) processCreateNode(ctx context.Context, pattern string, nodeVars map[string]*storage.Node, result *ExecuteResult, store storage.Engine) error {
-	nodeInfo := e.parseNodePattern(ctx, pattern)
-
-	// Create the node
-	node := &storage.Node{
-		ID:         storage.NodeID(e.generateID()),
-		Labels:     nodeInfo.labels,
-		Properties: nodeInfo.properties,
-	}
-
-	actualID, err := store.CreateNode(node)
-	if err != nil {
-		return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
-	}
-	if actualID != "" {
-		node.ID = actualID
-	}
-	e.notifyNodeMutated(string(node.ID))
-
-	result.Stats.NodesCreated++
-	addOptimisticNodeID(result, node.ID)
-
-	// Store in nodeVars for later reference
-	if nodeInfo.variable != "" {
-		nodeVars[nodeInfo.variable] = node
-	}
-
-	return nil
-}
-
-// processCreateRelationship creates a relationship between nodes in nodeVars
-func (e *StorageExecutor) processCreateRelationship(ctx context.Context, pattern string, nodeVars map[string]*storage.Node, edgeVars map[string]*storage.Edge, result *ExecuteResult, store storage.Engine) error {
-	// Parse relationship pattern: (a)-[r:TYPE {props}]->(b) or (a)<-[r:TYPE]-(b)
-	sourceContent, relContent, targetContent, isReverse, remainder, err := e.parseCreateRelPatternWithVars(pattern)
-	if err != nil {
-		return localizedError(localization.CypherResidualCreateRelationshipInvalid(pattern), nil)
-	}
-	if strings.TrimSpace(remainder) != "" {
-		return localizedError(localization.CypherResidualCreateRelationshipInvalid(pattern), nil)
-	}
-
-	relVar, relType, relPropsStr, err := parseCreateRelationshipContent(relContent)
-	if err != nil {
-		return localizedError(localization.CypherResidualCreateRelationshipInvalid(pattern), nil)
-	}
-
-	// Default relationship type
-	if relType == "" {
-		relType = "RELATED_TO"
-	}
-
-	// Parse relationship properties if present
-	var relProps map[string]interface{}
-	if relPropsStr != "" {
-		relProps = e.parseProperties(ctx, relPropsStr)
-	} else {
-		relProps = make(map[string]interface{})
-	}
-
-	// Resolve source node - could be a variable reference or inline node definition
-	sourceNode, err := e.resolveOrCreateNode(ctx, sourceContent, nodeVars, result, store)
-	if err != nil {
-		return localizedError(localization.CypherMutationsResolveSourceNodeFailed(err), err)
-	}
-
-	// Resolve target node - could be a variable reference or inline node definition
-	targetNode, err := e.resolveOrCreateNode(ctx, targetContent, nodeVars, result, store)
-	if err != nil {
-		return localizedError(localization.CypherMutationsResolveTargetNodeFailed(err), err)
-	}
-
-	// Handle reverse direction
-	startNode, endNode := sourceNode, targetNode
-	if isReverse {
-		startNode, endNode = targetNode, sourceNode
-	}
-
-	// Create the relationship
-	edge := &storage.Edge{
-		ID:         storage.EdgeID(e.generateID()),
-		StartNode:  startNode.ID,
-		EndNode:    endNode.ID,
-		Type:       relType,
-		Properties: relProps,
-	}
-
-	if err := store.CreateEdge(edge); err != nil {
-		return localizedError(localization.CypherMutationsCreateRelationshipFailed(err), err)
-	}
-
-	result.Stats.RelationshipsCreated++
-	addOptimisticRelationshipID(result, edge.ID)
-
-	// Store edge variable if present
-	if relVar != "" {
-		edgeVars[relVar] = edge
-	}
-
-	return nil
-}
-
 func parseCreateRelationshipContent(content string) (relVar string, relType string, relPropsStr string, err error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
@@ -2240,59 +1819,6 @@ func parseCreateRelationshipContent(content string) (relVar string, relType stri
 
 	relVar = strings.TrimSpace(head)
 	return relVar, "", relPropsStr, nil
-}
-
-// resolveOrCreateNode resolves a node reference, creating it if it's an inline definition.
-// Supports:
-//   - Simple variable: "p" -> looks up in nodeVars
-//   - Inline definition: "c:Company {name: 'Acme'}" -> creates node and adds to nodeVars
-func (e *StorageExecutor) resolveOrCreateNode(ctx context.Context, content string, nodeVars map[string]*storage.Node, result *ExecuteResult, store storage.Engine) (*storage.Node, error) {
-	content = strings.TrimSpace(content)
-
-	// Check if this is a simple variable reference (just alphanumeric)
-	if isSimpleVariable(content) {
-		node, exists := nodeVars[content]
-		if !exists {
-			return nil, localizedError(localization.CypherMutationsVariableNotFound(content, fmt.Sprint(getKeys(nodeVars))), nil)
-		}
-		return node, nil
-	}
-
-	// Parse as inline node definition: "varName:Label {props}" or ":Label {props}" or "varName:Label"
-	nodeInfo := e.parseNodePattern(ctx, "("+content+")")
-
-	// Check if we already have this variable
-	if nodeInfo.variable != "" {
-		if existingNode, exists := nodeVars[nodeInfo.variable]; exists {
-			return existingNode, nil
-		}
-	}
-
-	// Create new node
-	node := &storage.Node{
-		ID:         storage.NodeID(e.generateID()),
-		Labels:     nodeInfo.labels,
-		Properties: nodeInfo.properties,
-	}
-
-	actualID, err := store.CreateNode(node)
-	if err != nil {
-		return nil, localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
-	}
-	if actualID != "" {
-		node.ID = actualID
-	}
-	e.notifyNodeMutated(string(node.ID))
-
-	result.Stats.NodesCreated++
-	addOptimisticNodeID(result, node.ID)
-
-	// Store in nodeVars if it has a variable name
-	if nodeInfo.variable != "" {
-		nodeVars[nodeInfo.variable] = node
-	}
-
-	return node, nil
 }
 
 // isSimpleVariable checks if content is just a variable name (alphanumeric + underscore)
@@ -2450,160 +1976,42 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 		trailingPart = strings.TrimSpace(setTail[postSetIdx:])
 	}
 	setPart = collapseChainedSetClauses(setPart)
-	setPartForAssignments := setPart
 
-	// Substitute params for simple SET assignments (e.g., n.prop = $value).
-	// For SET += $props, defer to applySetMergeToCreated which reads params directly.
-	if params := getParamsFromContext(ctx); params != nil && !strings.Contains(setPart, "+=") {
-		setPartForAssignments = e.substituteParams(setPart, params)
-	}
-
-	// Pre-validate SET assignments BEFORE executing CREATE
-	// This ensures we fail fast and don't create nodes that would be orphaned
-	if !strings.Contains(setPartForAssignments, "+=") {
-		assignments := e.splitSetAssignments(setPartForAssignments)
-		if err := e.validateSetAssignments(assignments); err != nil {
-			return nil, err
-		}
-	}
-
-	// Execute CREATE first and get references to created entities
-	createResult, createdNodes, createdEdges, err := e.executeCreateWithRefs(ctx, createPart)
+	// Create through the shared CREATE core (validation, property references,
+	// named paths), then apply SET through the shared per-entity applicator
+	// (pipelineApplySet -> applySetToNodeWithContext /
+	// applySetToRelationshipWithContext) - the same code MATCH ... SET and
+	// MERGE ... SET use, so null removal, label chains, map / entity sources
+	// and value errors behave identically on every route. Assignment shapes
+	// and functions are validated for the whole statement beforehand
+	// (validateSetClauseScope).
+	created, err := e.createFromPattern(ctx, createPart)
 	if err != nil {
 		return nil, localizedError(localization.CypherMutationsCreateInCreateSetFailed(err), err)
 	}
-	result.Stats.NodesCreated = createResult.Stats.NodesCreated
-	result.Stats.RelationshipsCreated = createResult.Stats.RelationshipsCreated
+	createdNodes, createdEdges, createdPaths := created.nodes, created.edges, created.paths
+	result.Stats.NodesCreated = created.result.Stats.NodesCreated
+	result.Stats.RelationshipsCreated = created.result.Stats.RelationshipsCreated
 
-	// Handle regular and SET += assignments in order.
-	assignments := e.splitSetAssignments(setPartForAssignments)
-	for _, assignment := range assignments {
-		assignment = strings.TrimSpace(assignment)
-		if assignment == "" {
-			continue
+	row := make(pipelineRow, len(createdNodes)+len(createdEdges))
+	for name, node := range createdNodes {
+		row[name] = node
+	}
+	for name, edge := range createdEdges {
+		row[name] = edge
+	}
+	for _, variable := range pipelineSetTargetVariables(e.splitSetAssignments(setPart)) {
+		if row[variable] == nil {
+			return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
 		}
-		if strings.Contains(assignment, "+=") {
-			if err := e.applySetMergeToCreated(ctx, assignment, createdNodes, createdEdges, result, store); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		// Parse assignment: var.property = value
-		eqIdx := strings.Index(assignment, "=")
-		if eqIdx == -1 {
-			// Could be a label assignment like "n:Label"
-			colonIdx := strings.Index(assignment, ":")
-			if colonIdx > 0 {
-				varName := strings.TrimSpace(assignment[:colonIdx])
-				newLabel := strings.TrimSpace(assignment[colonIdx+1:])
-				if len(newLabel) >= 2 && strings.HasPrefix(newLabel, "`") && strings.HasSuffix(newLabel, "`") {
-					newLabel = strings.ReplaceAll(newLabel[1:len(newLabel)-1], "``", "`")
-				}
-				if !isValidIdentifier(newLabel) {
-					return nil, localizedError(localization.CypherMutationsInvalidLabelName(newLabel), nil)
-				}
-				if containsReservedKeyword(newLabel) {
-					return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(newLabel), nil)
-				}
-				if node, exists := createdNodes[varName]; exists {
-					// Add label to existing node
-					if !containsString(node.Labels, newLabel) {
-						oldLabels := make([]string, len(node.Labels))
-						copy(oldLabels, node.Labels)
-						node.Labels = append(node.Labels, newLabel)
-						if err := validatePolicyOnLabelChange(store, node, oldLabels); err != nil {
-							node.Labels = oldLabels // restore
-							return nil, err
-						}
-						if err := store.UpdateNode(node); err != nil {
-							node.Labels = oldLabels // restore
-							return nil, localizedError(localization.CypherMutationsAddLabelFailed(err), err)
-						}
-						result.Stats.LabelsAdded++
-						e.notifyNodeMutated(string(node.ID))
-					}
-				}
-			}
-			continue
-		}
-
-		leftSide := strings.TrimSpace(assignment[:eqIdx])
-		rightSide := strings.TrimSpace(assignment[eqIdx+1:])
-
-		// Evaluate against the complete CREATE row scope so property references,
-		// list concatenation, and functions have the same semantics as every
-		// other SET entry point.
-		varName, propName, hasProperty := parseSetAssignmentTarget(leftSide)
-		value := e.evaluateExpressionWithContext(ctx, rightSide, createdNodes, createdEdges)
-		if strings.HasPrefix(rightSide, "$") {
-			paramName := strings.TrimSpace(rightSide[1:])
-			if paramName == "" {
-				return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNameRequired(), nil)
-			}
-			params := getParamsFromContext(ctx)
-			if params == nil {
-				return nil, localizedError(localization.CypherMutationsSetAssignmentParametersRequired(paramName), nil)
-			}
-			paramValue, exists := params[paramName]
-			if !exists {
-				return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNotFound(paramName), nil)
-			}
-			value = normalizePropValue(paramValue)
-		}
-		if hasProperty {
-			if err := validateSetPropertyValue(value); err != nil {
-				return nil, err
-			}
-		}
-		if !hasProperty {
-			props, err := normalizePropsMap(value, "SET assignment")
-			if err != nil {
-				return nil, err
-			}
-			for _, propertyValue := range props {
-				if err := validateSetPropertyValue(propertyValue); err != nil {
-					return nil, err
-				}
-			}
-			if node, exists := createdNodes[varName]; exists {
-				node.Properties = cloneStringAnyMap(props)
-				if err := store.UpdateNode(node); err != nil {
-					return nil, localizedError(localization.CypherMutationsReplaceNodePropertiesFailed(err), err)
-				}
-				result.Stats.PropertiesSet++
-				e.notifyNodeMutated(string(node.ID))
-			} else if edge, exists := createdEdges[varName]; exists {
-				edge.Properties = cloneStringAnyMap(props)
-				if err := store.UpdateEdge(edge); err != nil {
-					return nil, localizedError(localization.CypherMutationsReplaceEdgePropertiesFailed(err), err)
-				}
-				result.Stats.PropertiesSet++
-				e.notifyEdgeMutated(string(edge.ID))
-			} else {
-				return nil, localizedError(localization.CypherMutationsUnknownSetVariable(varName), nil)
-			}
-			continue
-		}
-
-		// Apply to created node or edge
-		if node, exists := createdNodes[varName]; exists {
-			setNodeProperty(node, propName, value)
-			if err := store.UpdateNode(node); err != nil {
-				return nil, localizedError(localization.CypherMutationsUpdateNodePropertyFailed(err), err)
-			}
-			result.Stats.PropertiesSet++
-			e.notifyNodeMutated(string(node.ID))
-		} else if edge, exists := createdEdges[varName]; exists {
-			setRelationshipProperty(edge, propName, value)
-			if err := store.UpdateEdge(edge); err != nil {
-				return nil, localizedError(localization.CypherMutationsUpdateEdgePropertyFailed(err), err)
-			}
-			result.Stats.PropertiesSet++
-			e.notifyEdgeMutated(string(edge.ID))
-		} else {
-			return nil, localizedError(localization.CypherMutationsUnknownSetVariable(varName), nil)
-		}
+	}
+	setStats, _, err := e.pipelineApplySet(ctx, []pipelineRow{row}, "SET "+setPart)
+	if err != nil {
+		return nil, err
+	}
+	if setStats != nil {
+		result.Stats.PropertiesSet += setStats.PropertiesSet
+		result.Stats.LabelsAdded += setStats.LabelsAdded
 	}
 
 	// Process trailing clauses in CREATE...SET pipelines.
@@ -2639,6 +2047,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 
 			projectedNodes := make(map[string]*storage.Node)
 			projectedEdges := make(map[string]*storage.Edge)
+			projectedPaths := make(map[string]PathResult)
 			for _, item := range strings.Split(withProjection, ",") {
 				item = strings.TrimSpace(item)
 				if item == "" {
@@ -2665,6 +2074,10 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 					projectedEdges[alias] = edge
 					continue
 				}
+				if path, ok := createdPaths[strings.TrimSpace(expr)]; ok {
+					projectedPaths[alias] = path
+					continue
+				}
 
 				evaluated := e.evaluateExpressionWithContext(ctx, expr, createdNodes, createdEdges)
 				switch v := evaluated.(type) {
@@ -2689,6 +2102,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			for k, v := range projectedEdges {
 				createdEdges[k] = v
 			}
+			createdPaths = projectedPaths
 			continue
 		}
 
@@ -2721,34 +2135,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			} else {
 				result.Columns = append(result.Columns, item.expr)
 			}
-
-			// Prefer variable extracted from the return expression (handles elementId(n), n.prop, etc.)
-			if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
-				if node, ok := createdNodes[varName]; ok {
-					row[i] = e.resolveReturnItem(ctx, item, varName, node)
-					continue
-				}
-				if edge, ok := createdEdges[varName]; ok {
-					// Functions like type(r) need context evaluation; fall back to expression eval below.
-					if item.expr == varName {
-						row[i] = edge
-						continue
-					}
-				}
-			}
-
-			// Direct variable match (RETURN n)
-			if node, exists := createdNodes[item.expr]; exists {
-				row[i] = node
-				continue
-			}
-			if edge, exists := createdEdges[item.expr]; exists {
-				row[i] = edge
-				continue
-			}
-
-			// Evaluate expression with full context (e.g., elementId(n), type(r))
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
+			row[i] = e.projectCreatedReturnItem(ctx, item, createdNodes, createdEdges, createdPaths)
 		}
 
 		result.Rows = [][]interface{}{row}
@@ -2779,119 +2166,14 @@ func (e *StorageExecutor) applyCreateClausesInScope(
 	result *ExecuteResult,
 	store storage.Engine,
 ) error {
-	createClauses := SplitByCreate(strings.TrimSpace(createPart))
-	for _, clause := range createClauses {
-		clause = strings.TrimSpace(clause)
-		if clause == "" {
+	for _, clause := range SplitByCreate(strings.TrimSpace(createPart)) {
+		if clause = strings.TrimSpace(clause); clause == "" {
 			continue
 		}
-
-		var nodePatterns []string
-		var relPatterns []string
-		for _, pattern := range e.splitCreatePatterns(clause) {
-			pattern = strings.TrimSpace(pattern)
-			if pattern == "" {
-				continue
-			}
-			if containsOutsideStrings(pattern, "->") || containsOutsideStrings(pattern, "<-") || containsOutsideStrings(pattern, "]-") {
-				relPatterns = append(relPatterns, pattern)
-			} else {
-				nodePatterns = append(nodePatterns, pattern)
-			}
-		}
-
-		for _, np := range nodePatterns {
-			if err := e.processCreateNode(ctx, np, nodeVars, result, store); err != nil {
-				return err
-			}
-		}
-		for _, rp := range relPatterns {
-			if err := e.processCreateRelationship(ctx, rp, nodeVars, edgeVars, result, store); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// applySetMergeToCreated applies SET += property merge to created entities.
-func (e *StorageExecutor) applySetMergeToCreated(ctx context.Context, setPart string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, result *ExecuteResult, store storage.Engine) error {
-	// Parse: n += {prop: value, ...}
-	parts := strings.SplitN(setPart, "+=", 2)
-	if len(parts) != 2 {
-		return localizedError(localization.CypherMutationsSetMergeSyntaxInvalid(), nil)
-	}
-
-	varName := strings.TrimSpace(parts[0])
-	propsStr := strings.TrimSpace(parts[1])
-
-	var props map[string]interface{}
-	if strings.HasPrefix(propsStr, "$") {
-		// Parameter reference: $props
-		paramName := strings.TrimSpace(propsStr[1:])
-		if paramName == "" {
-			return localizedError(localization.CypherMutationsSetMergeParameterNameRequired(), nil)
-		}
-		params := getParamsFromContext(ctx)
-		if params == nil {
-			return localizedError(localization.CypherMutationsSetMergeParametersRequired(paramName), nil)
-		}
-		paramValue, exists := params[paramName]
-		if !exists {
-			return localizedError(localization.CypherMutationsSetMergeParameterNotFound(paramName), nil)
-		}
-		propsMap, err := normalizePropsMap(paramValue, fmt.Sprintf("parameter $%s", paramName))
-		if err != nil {
+		if _, err := e.createPatternsInScope(ctx, clause, nodeVars, edgeVars, result); err != nil {
 			return err
 		}
-		props = propsMap
-	} else if strings.HasPrefix(propsStr, "{") {
-		// Inline map literal: {key: value, ...}
-		parsedProps, err := e.parseSetMergeMapLiteralStrict(ctx, propsStr)
-		if err != nil {
-			return localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
-		}
-		props = parsedProps
-	} else {
-		if propsStr == "" {
-			return localizedError(localization.CypherMutationsSetMergeMapLiteralRequired(), nil)
-		}
-		// Map variable source in scope (e.g. SET n += row or SET n += row.properties).
-		// CREATE...SET execution does not carry row-scope columns, so resolve from params context.
-		sourceVal, found := resolveSetMergeSourceFromParams(getParamsFromContext(ctx), propsStr)
-		if !found {
-			return localizedError(localization.CypherMutationsSetMergeMapVariableNotFound(propsStr), nil)
-		}
-		propsMap, err := normalizePropsMap(sourceVal, fmt.Sprintf("variable %s", propsStr))
-		if err != nil {
-			return err
-		}
-		props = propsMap
 	}
-
-	// Apply to node or edge
-	if node, exists := createdNodes[varName]; exists {
-		for k, v := range props {
-			node.Properties[k] = v
-			result.Stats.PropertiesSet++
-		}
-		if err := store.UpdateNode(node); err != nil {
-			return localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
-		}
-		e.notifyNodeMutated(string(node.ID))
-	} else if edge, exists := createdEdges[varName]; exists {
-		for k, v := range props {
-			edge.Properties[k] = v
-			result.Stats.PropertiesSet++
-		}
-		if err := store.UpdateEdge(edge); err != nil {
-			return localizedError(localization.CypherMutationsUpdateEdgeFailed(err), err)
-		}
-		e.notifyEdgeMutated(string(edge.ID))
-	} else {
-		return localizedError(localization.CypherMutationsUnknownSetMergeVariable(varName), nil)
-	}
-
 	return nil
 }
 
@@ -3059,43 +2341,10 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 
 		if strings.HasPrefix(upperSeg, "CREATE") {
 			createContent := strings.TrimSpace(segment[6:])
-			patterns := e.splitCreatePatterns(createContent)
-			var nodePatterns, relationshipPatterns []string
-			for _, pattern := range patterns {
-				pattern = strings.TrimSpace(pattern)
-				if pattern == "" {
-					continue
-				}
-				if containsOutsideStrings(pattern, "->") || containsOutsideStrings(pattern, "<-") || containsOutsideStrings(pattern, "]-") {
-					relationshipPatterns = append(relationshipPatterns, pattern)
-				} else {
-					nodePatterns = append(nodePatterns, pattern)
-				}
-			}
-
-			// A CREATE clause has one scope. Bind every comma-separated node
-			// before resolving relationships so later patterns and later CREATE
-			// clauses can reference any variable introduced by the clause.
-			for _, pattern := range nodePatterns {
-				node, varName, err := e.executeCreateNodeSegment(ctx, "CREATE "+pattern)
-				if err != nil {
-					return nil, localizedError(localization.CypherMutationsNodeCreateFailed(err), err)
-				}
-				if node == nil {
-					continue
-				}
-				// Every created node counts, named or anonymous; only named
-				// nodes are bound for later patterns and RETURN.
-				result.Stats.NodesCreated++
-				addOptimisticNodeID(result, node.ID)
-				if varName != "" {
-					nodeContext[varName] = node
-				}
-			}
-			for _, pattern := range relationshipPatterns {
-				if err := e.executeCreateRelSegment(ctx, "CREATE "+pattern, nodeContext, edgeContext, result); err != nil {
-					return nil, localizedError(localization.CypherMutationsRelationshipCreateFailed(err), err)
-				}
+			// A CREATE clause has one scope; the shared CREATE core binds every
+			// node of the clause for later patterns, clauses and RETURN.
+			if _, err := e.createPatternsInScope(ctx, createContent, nodeContext, edgeContext, result); err != nil {
+				return nil, err
 			}
 		} else if strings.HasPrefix(upperSeg, "WITH") {
 			// Process WITH clause - extract variables and update context

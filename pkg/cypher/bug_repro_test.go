@@ -317,16 +317,22 @@ func TestBug6_UnwindMergeSetMapWithIndexedMapPropertyDoesNotPanic(t *testing.T) 
 		},
 	}
 
+	// A map is not a property value on any SET route (Neo4j TypeError), so the
+	// row carrying a map payload fails the statement loudly - without a panic
+	// and without writing a partial batch.
 	require.NotPanics(t, func() {
-		res, qErr := exec.Execute(ctx, `
+		_, qErr := exec.Execute(ctx, `
 			UNWIND $rows AS row
 			MERGE (n:BulkNode {uuid: row.uuid})
 			SET n = row
 			RETURN n.uuid AS uuid
 		`, params)
-		require.NoError(t, qErr)
-		require.Len(t, res.Rows, 2)
+		require.Error(t, qErr)
+		assert.Contains(t, qErr.Error(), "TypeError")
 	})
+	count, err := exec.Execute(ctx, "MATCH (n:BulkNode) RETURN count(n) AS c", nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count.Rows[0][0])
 }
 
 func TestBug7_UnwindMergeWithInlineSetNodeVectorPropertyPersistsRows(t *testing.T) {
@@ -561,11 +567,15 @@ func TestBug9_UnwindRelationshipVectorProcedure_NArityMatrix_NoSilentDropsOrErro
 		includeTags  bool
 		includeMeta  bool
 		nestedVector bool
+		// wantTypeError: a map (meta) or nested list (nested vector) row value is
+		// not a property value on any SET route, so SET e = edge fails loudly
+		// and nothing is written (no silent drop).
+		wantTypeError bool
 	}{
 		{name: "1row_base", rowCount: 1},
 		{name: "3rows_with_tags", rowCount: 3, includeTags: true},
-		{name: "7rows_with_tags_and_meta", rowCount: 7, includeTags: true, includeMeta: true},
-		{name: "9rows_nested_vector_and_meta", rowCount: 9, includeMeta: true, nestedVector: true},
+		{name: "7rows_with_tags_and_meta", rowCount: 7, includeTags: true, includeMeta: true, wantTypeError: true},
+		{name: "9rows_nested_vector_and_meta", rowCount: 9, includeMeta: true, nestedVector: true, wantTypeError: true},
 	}
 
 	for _, tc := range testCases {
@@ -630,6 +640,14 @@ func TestBug9_UnwindRelationshipVectorProcedure_NArityMatrix_NoSilentDropsOrErro
 				CALL db.create.setRelationshipVectorProperty(e, "fact_embedding", edge.fact_embedding)
 				RETURN edge.uuid AS uuid
 			`, map[string]interface{}{"entity_edges": edges})
+			if tc.wantTypeError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "TypeError")
+				countRes, err := exec.Execute(ctx, `MATCH ()-[e:RELATES_TO]->() RETURN count(e) AS n`, nil)
+				require.NoError(t, err)
+				assert.Equal(t, int64(0), countRes.Rows[0][0], "a rejected statement writes no relationships")
+				return
+			}
 			require.NoError(t, err, "matrix case should not fail at execution time")
 			require.Len(t, writeRes.Rows, tc.rowCount, "each input row should return one uuid")
 

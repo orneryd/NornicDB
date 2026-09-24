@@ -68,12 +68,11 @@ func TestExecuteCreate_BranchCoverage(t *testing.T) {
 		assert.EqualValues(t, 2, res.Rows[0][1])
 	})
 
-	t.Run("relationship variable without explicit type still binds", func(t *testing.T) {
-		res, err := exec.executeCreate(ctx, "CREATE (u:AnonA)-[rel]->(v:AnonB) RETURN rel")
-		require.NoError(t, err)
-		require.Len(t, res.Rows, 1)
-		require.Len(t, res.Rows[0], 1)
-		_, ok := res.Rows[0][0].(*storage.Edge)
-		assert.True(t, ok)
+	t.Run("relationship without a type is rejected", func(t *testing.T) {
+		// CREATE needs exactly one relationship type (statement validation
+		// and the CREATE core agree; there is no default type).
+		_, err := exec.executeCreate(ctx, "CREATE (u:AnonA)-[rel]->(v:AnonB) RETURN rel")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "relationship type is required")
 	})
 }

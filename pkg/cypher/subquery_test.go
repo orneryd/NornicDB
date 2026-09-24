@@ -794,7 +794,7 @@ func TestCallSubqueryInTransactions(t *testing.T) {
 			RETURN name
 		`, nil)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid SET assignment")
+		assert.Contains(t, err.Error(), "SET prop")
 	})
 
 	t.Run("stats accumulation across batches", func(t *testing.T) {
