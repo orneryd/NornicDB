@@ -100,19 +100,9 @@ func parseSimpleMatchSingleNodePattern(pattern string) (string, []string, bool) 
 		return "", nil, false
 	}
 
-	parts := strings.Split(inner, ":")
-	varName := strings.TrimSpace(parts[0])
-	if varName == "" {
+	varName, labels, ok := strictNodeHeadLabels(inner)
+	if !ok || varName == "" {
 		return "", nil, false
-	}
-
-	labels := make([]string, 0, len(parts)-1)
-	for _, p := range parts[1:] {
-		lbl := strings.TrimSpace(p)
-		if lbl == "" {
-			return "", nil, false
-		}
-		labels = append(labels, lbl)
 	}
 	return varName, labels, true
 }

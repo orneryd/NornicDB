@@ -1788,8 +1788,7 @@ func (e *StorageExecutor) extractVariableNamesFromPattern(pattern string) []stri
 			if inParen {
 				nodeContent := current.String()
 				// Extract variable name (before : or end)
-				varName := strings.Split(nodeContent, ":")[0]
-				varName = strings.TrimSpace(varName)
+				varName, _, _ := splitNodeHead(nodeContent)
 				// Remove any property part
 				if idx := strings.Index(varName, "{"); idx > 0 {
 					varName = strings.TrimSpace(varName[:idx])

@@ -775,7 +775,9 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		c := cypher[i]
 
 		if inString {
-			if c == stringChar && !isBackslashEscaped(cypher, i) {
+			// A backtick-quoted name has no backslash escapes (a doubled
+			// backtick closes and reopens it); string literals do.
+			if c == stringChar && (c == '`' || !isBackslashEscaped(cypher, i)) {
 				inString = false
 			}
 			continue
@@ -791,7 +793,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 
 		switch c {
-		case '"', '\'':
+		case '"', '\'', '`':
 			inString = true
 			stringChar = c
 		case '(':

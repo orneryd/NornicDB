@@ -264,28 +264,8 @@ func (e *StorageExecutor) extractVarName(pattern string) string {
 //	extractLabels("(n)")
 //	// Returns: []
 func (e *StorageExecutor) extractLabels(pattern string) []string {
-	pattern = strings.TrimSpace(pattern)
-	pattern = strings.TrimPrefix(pattern, "(")
-	pattern = strings.TrimSuffix(pattern, ")")
-
-	// Remove properties block
-	if propsStart := strings.Index(pattern, "{"); propsStart > 0 {
-		pattern = pattern[:propsStart]
-	}
-
-	// Split by : and extract labels
-	parts := strings.Split(pattern, ":")
-	labels := []string{}
-	for i := 1; i < len(parts); i++ {
-		label := strings.TrimSpace(parts[i])
-		// Remove spaces and trailing characters
-		if spaceIdx := strings.IndexAny(label, " {"); spaceIdx > 0 {
-			label = label[:spaceIdx]
-		}
-		if label != "" {
-			labels = append(labels, label)
-		}
-	}
+	head, _ := splitNodePatternProperties(pattern)
+	_, labels, _ := parseNodeHead(head)
 	return labels
 }
 

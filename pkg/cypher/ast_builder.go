@@ -673,9 +673,9 @@ func (b *ASTBuilder) parseRemove(text string) *ASTRemove {
 		item := ASTRemoveItem{}
 
 		// Check for label removal (n:Label) or property removal (n.prop)
-		if colonIdx := strings.Index(part, ":"); colonIdx > 0 {
+		if colonIdx := indexByteOutsideBackticks(part, ':'); colonIdx > 0 {
 			item.Variable = strings.TrimSpace(part[:colonIdx])
-			labels := strings.Split(part[colonIdx+1:], ":")
+			labels := labelChainNames(part[colonIdx+1:])
 			for _, l := range labels {
 				l = strings.TrimSpace(l)
 				if l != "" {

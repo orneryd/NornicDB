@@ -288,21 +288,10 @@ func (e *StorageExecutor) compileSimpleWhereLeaf(ctx context.Context, variable, 
 	const prefixSep = "."
 	varPrefix := variable + prefixSep
 
-	if colonIdx := strings.Index(whereClause, ":"); colonIdx > 0 {
-		labelVar := strings.TrimSpace(whereClause[:colonIdx])
-		labelName := strings.TrimSpace(whereClause[colonIdx+1:])
-		if labelVar == variable && labelName != "" &&
-			!strings.ContainsAny(labelVar, " .(") &&
-			!strings.ContainsAny(labelName, " .(=<>") {
-			return func(node *storage.Node) bool {
-				for _, label := range node.Labels {
-					if label == labelName {
-						return true
-					}
-				}
-				return false
-			}, true
-		}
+	if labelVar, labels, ok := parseWithWhereLabelTest(whereClause); ok && labelVar == variable {
+		return func(node *storage.Node) bool {
+			return entityHasAllLabelsOrTypesPredicate(node, labels)
+		}, true
 	}
 
 	compileStringOp := func(op string) (func(*storage.Node) bool, bool) {
@@ -562,24 +551,12 @@ func (e *StorageExecutor) evaluateWhereTruth(ctx context.Context, node *storage.
 		return e.evaluateWhereTruth(ctx, node, variable, inner).not()
 	}
 
-	// Handle label check: n:Label or variable:Label
-	if colonIdx := strings.Index(whereClause, ":"); colonIdx > 0 {
-		labelVar := strings.TrimSpace(whereClause[:colonIdx])
-		labelName := strings.TrimSpace(whereClause[colonIdx+1:])
-		// Check if this looks like a simple variable:Label pattern
-		if len(labelVar) > 0 && len(labelName) > 0 &&
-			!strings.ContainsAny(labelVar, " .(") &&
-			!strings.ContainsAny(labelName, " .(=<>") {
-			// If the variable matches our node variable, check the label
-			if labelVar == variable {
-				for _, l := range node.Labels {
-					if l == labelName {
-						return truthTrue
-					}
-				}
-				return truthFalse
-			}
+	// Handle label check: n:Label, n:A:B, n:`A B` (the shared label test).
+	if labelVar, labels, ok := parseWithWhereLabelTest(whereClause); ok && labelVar == variable {
+		if entityHasAllLabelsOrTypesPredicate(node, labels) {
+			return truthTrue
 		}
+		return truthFalse
 	}
 
 	// Handle string operators (case-insensitive check)

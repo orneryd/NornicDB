@@ -77,17 +77,11 @@ func parseRemoveTargetBindings(removePart string) removeTargetBindings {
 			}
 			continue
 		}
-		if colonIdx := strings.Index(item, ":"); colonIdx >= 0 {
-			varName := strings.TrimSpace(item[:colonIdx])
+		if varName, chain, hasLabels := splitNodeHead(item); hasLabels {
 			if !isValidIdentifier(varName) {
 				continue
 			}
-			for _, label := range strings.Split(item[colonIdx+1:], ":") {
-				label = strings.TrimSpace(label)
-				if label != "" {
-					bindings.labelsByVar[varName] = append(bindings.labelsByVar[varName], label)
-				}
-			}
+			bindings.labelsByVar[varName] = append(bindings.labelsByVar[varName], labelChainNames(chain)...)
 		}
 	}
 

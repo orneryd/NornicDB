@@ -203,15 +203,8 @@ func parseWithWhereLabelTest(whereClause string) (string, []string, bool) {
 	if !withWhereIsLabelTest(whereClause) {
 		return "", nil, false
 	}
-	// withWhereIsLabelTest has already established there is at least one colon
-	// with a non-empty segment either side, so Split yields two or more parts.
-	parts := strings.Split(strings.TrimSpace(whereClause), ":")
-	variable := strings.TrimSpace(parts[0])
-	labels := make([]string, 0, len(parts)-1)
-	for _, part := range parts[1:] {
-		labels = append(labels, strings.TrimSpace(part))
-	}
-	return variable, labels, true
+	variable, chain, _ := splitNodeHead(strings.TrimSpace(whereClause))
+	return variable, labelChainNames(chain), true
 }
 
 // entityHasAllLabelsOrTypes evaluates Cypher's colon predicate for a graph
@@ -267,21 +260,27 @@ func entityHasAllLabelsOrTypesPredicate(value interface{}, required []string) bo
 // splitting.
 func withWhereIsLabelTest(whereClause string) bool {
 	trimmed := strings.TrimSpace(whereClause)
-	if !strings.Contains(trimmed, ":") {
+	variable, chain, hasLabels := splitNodeHead(trimmed)
+	if !hasLabels || !isWithWhereIdentifier(variable) {
 		return false
 	}
-	if strings.ContainsAny(trimmed, "<>=!'\"") {
-		return false
-	}
-	for _, part := range strings.Split(trimmed, ":") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			return false
+	valid := true
+	wellFormed := eachChainLabel(chain, func(name string, quoted bool) {
+		if name == "" || (!quoted && !isWithWhereIdentifier(name)) {
+			valid = false
 		}
-		for _, r := range part {
-			if r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
-				return false
-			}
+	})
+	return wellFormed && valid
+}
+
+// isWithWhereIdentifier reports whether s is a plain identifier.
+func isWithWhereIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+			return false
 		}
 	}
 	return true
@@ -331,6 +330,16 @@ func substituteWithWhereLabelTests(whereClause string, values map[string]interfa
 		k := j
 		for k < len(whereClause) && whereClause[k] == ':' {
 			k++
+			if k < len(whereClause) && whereClause[k] == '`' {
+				name, end, ok := scanQuotedName(whereClause, k)
+				if !ok || name == "" {
+					labels = nil
+					break
+				}
+				labels = append(labels, name)
+				k = end
+				continue
+			}
 			start := k
 			for k < len(whereClause) && isWithWhereIdentPart(whereClause[k]) {
 				k++

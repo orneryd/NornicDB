@@ -24,6 +24,9 @@ type nodePatternInfo struct {
 	variable   string
 	labels     []string
 	properties map[string]interface{}
+	// labelErr is set when the label chain breaks the label rules
+	// (parseLabelChain); writers (CREATE, MERGE) reject the pattern.
+	labelErr error
 }
 
 // returnItem represents a single item in a RETURN clause

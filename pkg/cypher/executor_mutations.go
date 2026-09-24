@@ -29,38 +29,11 @@ func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string)
 	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
 		return "", nil, nil, localizedError(localization.CypherResidualMergePatternInvalid(pattern), nil)
 	}
-	pattern = pattern[1 : len(pattern)-1]
-
-	// Extract variable name and labels
-	varName := ""
-	labels := []string{}
-	props := make(map[string]interface{})
-
-	// Find properties block
-	propsStart := strings.Index(pattern, "{")
-	labelPart := pattern
-	if propsStart >= 0 {
-		labelPart = pattern[:propsStart]
-		propsEnd := strings.LastIndex(pattern, "}")
-		if propsEnd > propsStart {
-			propsStr := pattern[propsStart+1 : propsEnd]
-			props = e.parseProperties(ctx, propsStr)
-		}
+	info := e.parseNodePattern(ctx, pattern)
+	if info.labelErr != nil {
+		return "", nil, nil, info.labelErr
 	}
-
-	// Parse variable and labels
-	parts := strings.Split(labelPart, ":")
-	if len(parts) > 0 {
-		varName = strings.TrimSpace(parts[0])
-	}
-	for i := 1; i < len(parts); i++ {
-		label := strings.TrimSpace(parts[i])
-		if label != "" {
-			labels = append(labels, label)
-		}
-	}
-
-	return varName, labels, props, nil
+	return info.variable, info.labels, info.properties, nil
 }
 
 // nodeToMap converts a storage.Node to a map for result output.
@@ -1228,72 +1201,6 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	return result, nil
 }
 
-// setLabelChain parses the label part of a SET n:L1:`L 2` assignment into
-// label names. It is the single label parser for every SET route (MATCH,
-// pipeline, CREATE, MERGE). Backtick-quoted labels may contain any characters
-// (doubled backticks escape one); unquoted labels must be identifiers and not
-// reserved words. An empty chain or an invalid unquoted label is an error.
-func setLabelChain(expression string) ([]string, error) {
-	labels := make([]string, 0, 2)
-	var current strings.Builder
-	quoted := false
-	inBacktick := false
-	flush := func() error {
-		label := current.String()
-		if !quoted {
-			label = strings.TrimSpace(label)
-		}
-		if label == "" {
-			if quoted {
-				return localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
-			}
-			return nil
-		}
-		if !quoted {
-			if !isValidIdentifier(label) {
-				return localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
-			}
-			if containsReservedKeyword(label) {
-				return localizedError(localization.CypherMutationsInvalidLabelReserved(label), nil)
-			}
-		}
-		labels = append(labels, label)
-		current.Reset()
-		quoted = false
-		return nil
-	}
-	for index := 0; index < len(expression); index++ {
-		ch := expression[index]
-		if ch == '`' {
-			if inBacktick && index+1 < len(expression) && expression[index+1] == '`' {
-				current.WriteByte('`')
-				index++
-				continue
-			}
-			inBacktick = !inBacktick
-			quoted = true
-			continue
-		}
-		if ch == ':' && !inBacktick {
-			if err := flush(); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		current.WriteByte(ch)
-	}
-	if inBacktick {
-		return nil, localizedError(localization.CypherMutationsInvalidLabelName(expression), nil)
-	}
-	if err := flush(); err != nil {
-		return nil, err
-	}
-	if len(labels) == 0 {
-		return nil, localizedError(localization.CypherMutationsInvalidLabelName(expression), nil)
-	}
-	return labels, nil
-}
-
 var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.|\+=|=)`)
 
 // extractScopeVariablesFromSetAndReturn returns variable names referenced in
@@ -2030,17 +1937,8 @@ func (e *StorageExecutor) parseRemoveItems(removePart string) ([]string, []strin
 			}
 			continue
 		}
-		if colonIdx := strings.Index(part, ":"); colonIdx >= 0 {
-			labelExpr := strings.TrimSpace(part[colonIdx+1:])
-			if labelExpr == "" {
-				continue
-			}
-			for _, label := range strings.Split(labelExpr, ":") {
-				label = strings.TrimSpace(label)
-				if label != "" {
-					labels = append(labels, label)
-				}
-			}
+		if _, chain, hasLabels := splitNodeHead(part); hasLabels {
+			labels = append(labels, labelChainNames(chain)...)
 		}
 	}
 	return props, labels

@@ -1550,17 +1550,7 @@ func parseSimpleEndpointRef(content string) (string, []string, bool) {
 	if strings.Contains(content, "{") || strings.Contains(content, "}") || strings.Contains(content, "-") {
 		return "", nil, false
 	}
-	parts := strings.Split(content, ":")
-	v := strings.TrimSpace(parts[0])
-	labels := make([]string, 0, len(parts)-1)
-	for _, p := range parts[1:] {
-		lbl := strings.TrimSpace(p)
-		if lbl == "" {
-			return "", nil, false
-		}
-		labels = append(labels, lbl)
-	}
-	return v, labels, true
+	return strictNodeHeadLabels(content)
 }
 
 func (e *StorageExecutor) buildRelationshipContext(pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge) (map[string]*storage.Node, map[string]*storage.Edge, bool) {

@@ -427,21 +427,14 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	e.resolveCreatePropertyReferences(ctx, pattern, nodePattern.properties, nodes, relationships)
 
 	// An empty label (e.g. "n:" or ":") - only check before properties.
-	patternBeforeProps := pattern
-	if braceIdx := strings.Index(pattern, "{"); braceIdx >= 0 {
-		patternBeforeProps = pattern[:braceIdx]
-	}
-	if strings.Contains(patternBeforeProps, ":") && len(nodePattern.labels) == 0 {
+	head, _ := splitNodePatternProperties(pattern)
+	if indexByteOutsideBackticks(head, ':') >= 0 && len(nodePattern.labels) == 0 {
 		return nodePatternInfo{}, localizedError(localization.CypherResidualEmptyLabelAfterColon(pattern), nil)
 	}
-	// SECURITY: Validate labels to prevent injection attacks
-	for _, label := range nodePattern.labels {
-		if !isValidIdentifier(label) {
-			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
-		}
-		if containsReservedKeyword(label) {
-			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidLabelReserved(label), nil)
-		}
+	// SECURITY: labels follow the label rules (quoted labels may hold any
+	// character; unquoted labels are identifiers, not reserved words).
+	if nodePattern.labelErr != nil {
+		return nodePatternInfo{}, nodePattern.labelErr
 	}
 	// SECURITY: Validate property keys and values
 	for key, val := range nodePattern.properties {
@@ -465,7 +458,7 @@ func (e *StorageExecutor) resolveCreatePropertyReferences(
 	if len(nodes) == 0 && len(relationships) == 0 {
 		return // no variable in scope that a property could reference
 	}
-	open := strings.IndexByte(pattern, '{')
+	open := indexByteOutsideBackticks(pattern, '{')
 	if open < 0 || strings.IndexByte(pattern[open:], '.') < 0 {
 		return
 	}
@@ -501,15 +494,15 @@ func (e *StorageExecutor) resolveCreatePropertyReferences(
 }
 
 func (e *StorageExecutor) validateCreatePatternPropertyMap(ctx context.Context, pattern string) error {
-	propsStart := strings.Index(pattern, "{")
-	if propsStart < 0 {
+	_, props := splitNodePatternProperties(pattern)
+	if props == "" {
 		return nil
 	}
-	propsEnd := strings.LastIndex(pattern, "}")
-	if propsEnd < propsStart {
+	propsEnd := strings.LastIndex(props, "}")
+	if propsEnd < 0 {
 		return localizedError(localization.CypherResidualPropertyMapSyntaxInvalid(pattern), nil)
 	}
-	propsLiteral := strings.TrimSpace(pattern[propsStart : propsEnd+1])
+	propsLiteral := strings.TrimSpace(props[:propsEnd+1])
 	// Syntax only: the values are parsed by parseNodePattern.
 	if err := validateMapLiteralSyntax(propsLiteral); err != nil {
 		return localizedError(localization.CypherMutationsInvalidPropertyMapCause(err), err)
@@ -1790,7 +1783,7 @@ func parseCreateRelationshipContent(content string) (relVar string, relType stri
 	}
 
 	head := content
-	if braceStart := strings.Index(content, "{"); braceStart >= 0 {
+	if braceStart := indexByteOutsideBackticks(content, '{'); braceStart >= 0 {
 		braceEnd := strings.LastIndex(content, "}")
 		if braceEnd < braceStart {
 			return "", "", "", localizedError(localization.CypherMutationsRelationshipPropertiesInvalid(), nil)

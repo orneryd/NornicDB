@@ -292,7 +292,7 @@ func (e *StorageExecutor) validateCreateRelationshipExpressions(scope *semanticB
 // createPropertyMapBody returns the text between the braces of a node (or
 // relationship) pattern's property map.
 func createPropertyMapBody(pattern string) (string, bool) {
-	open := strings.Index(pattern, "{")
+	open := indexByteOutsideBackticks(pattern, '{')
 	close := strings.LastIndex(pattern, "}")
 	if open < 0 || close <= open {
 		return "", false

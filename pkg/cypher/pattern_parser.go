@@ -93,33 +93,36 @@ func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) 
 		labels:     []string{},
 		properties: make(map[string]interface{}),
 	}
+	head, props := splitNodePatternProperties(pattern)
+	if props != "" {
+		info.properties = e.parseProperties(ctx, props)
+	}
+	info.variable, info.labels, info.labelErr = parseNodeHead(head)
+	return info
+}
 
-	// Remove outer parens
+// splitNodePatternProperties strips the outer parentheses of a node pattern
+// and splits it at the property map's '{' (outside backtick-quoted labels).
+func splitNodePatternProperties(pattern string) (head, props string) {
 	pattern = strings.TrimSpace(pattern)
 	if strings.HasPrefix(pattern, "(") && strings.HasSuffix(pattern, ")") {
 		pattern = pattern[1 : len(pattern)-1]
 	}
-
-	// Extract properties
-	braceIdx := strings.Index(pattern, "{")
-	if braceIdx >= 0 {
-		propsStr := pattern[braceIdx:]
-		pattern = pattern[:braceIdx]
-		info.properties = e.parseProperties(ctx, propsStr)
+	if braceIdx := indexByteOutsideBackticks(pattern, '{'); braceIdx >= 0 {
+		return pattern[:braceIdx], pattern[braceIdx:]
 	}
+	return pattern, ""
+}
 
-	// Parse variable:Label:Label2
-	parts := strings.Split(strings.TrimSpace(pattern), ":")
-	if len(parts) > 0 && parts[0] != "" {
-		info.variable = strings.TrimSpace(parts[0])
+// parseNodeHead parses "n:L1:`L 2`" into the variable and label names
+// (parseLabelChain) and the label-rule error, if any.
+func parseNodeHead(head string) (variable string, labels []string, labelErr error) {
+	variable, chain, hasLabels := splitNodeHead(head)
+	if !hasLabels {
+		return variable, []string{}, nil
 	}
-	for i := 1; i < len(parts); i++ {
-		if label := strings.TrimSpace(parts[i]); label != "" {
-			info.labels = append(info.labels, label)
-		}
-	}
-
-	return info
+	labels, labelErr = parseLabelChain(chain)
+	return variable, labels, labelErr
 }
 
 // parseProperties parses a Cypher property map like {key1: value1, key2: value2}.

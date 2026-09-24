@@ -161,7 +161,7 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 		// Property maps are valid with or without a relationship type, e.g.
 		// [r {name: 'value'}] and [r:TYPE {name: 'value'}]. Remove the map
 		// before interpreting the remaining declaration as variable/type text.
-		if propsIdx := strings.Index(inner, "{"); propsIdx >= 0 {
+		if propsIdx := indexByteOutsideBackticks(inner, '{'); propsIdx >= 0 {
 			result.Properties = e.parseProperties(ctx, inner[propsIdx:])
 			inner = strings.TrimSpace(inner[:propsIdx])
 		}
@@ -1575,33 +1575,7 @@ func findMatchingParen(s string, startIdx int) int {
 
 // parseNodePatternFromString parses n:Label {props} from a string
 func (e *StorageExecutor) parseNodePatternFromString(ctx context.Context, s string) nodePatternInfo {
-	info := nodePatternInfo{
-		properties: make(map[string]interface{}),
-	}
-
-	s = strings.TrimSpace(s)
-
-	// Check for properties
-	if propsIdx := strings.Index(s, "{"); propsIdx >= 0 {
-		info.properties = e.parseProperties(ctx, s[propsIdx:])
-		s = s[:propsIdx]
-	}
-
-	// Check for labels
-	if colonIdx := strings.Index(s, ":"); colonIdx >= 0 {
-		info.variable = strings.TrimSpace(s[:colonIdx])
-		labelsStr := s[colonIdx+1:]
-		for _, label := range strings.Split(labelsStr, ":") {
-			label = strings.TrimSpace(label)
-			if label != "" {
-				info.labels = append(info.labels, label)
-			}
-		}
-	} else {
-		info.variable = strings.TrimSpace(s)
-	}
-
-	return info
+	return e.parseNodePattern(ctx, s)
 }
 
 // traverseGraph executes the traversal and returns all matching paths
