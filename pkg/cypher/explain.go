@@ -760,6 +760,13 @@ func (e *StorageExecutor) attachPlanMetadata(result *ExecuteResult, plan *Execut
 	return result
 }
 
+// StatementColumns returns the columns query declares (its YIELD or last
+// top-level RETURN), which its EXPLAIN reports, and which a statement that
+// failed while running reports with no rows over HTTP (#668).
+func (e *StorageExecutor) StatementColumns(query string) []string {
+	return e.inferExplainColumns(query)
+}
+
 func (e *StorageExecutor) inferExplainColumns(query string) []string {
 	// Neo4j EXPLAIN returns the same columns as the underlying query but no rows.
 	if y := parseYieldClause(query); y != nil {
@@ -800,20 +807,9 @@ func (e *StorageExecutor) inferExplainColumns(query string) []string {
 		}
 	}
 
-	if returnIdx := findKeywordIndex(query, "RETURN"); returnIdx >= 0 {
-		returnClause := strings.TrimSpace(query[returnIdx+len("RETURN"):])
-		items := e.parseReturnItems(returnClause)
-		cols := make([]string, 0, len(items))
-		for _, item := range items {
-			if item.alias != "" {
-				cols = append(cols, item.alias)
-			} else {
-				cols = append(cols, item.expr)
-			}
-		}
+	if cols := e.inferTopLevelReturnColumns(query); cols != nil {
 		return cols
 	}
-
 	return []string{}
 }
 

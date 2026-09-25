@@ -1105,6 +1105,20 @@ func statementError(err error) QueryError {
 	return QueryError{Code: code, Message: message}
 }
 
+// appendStatementFailure records a failed statement in response: its error
+// and, when it compiled and failed while running, its result with its
+// columns and no rows, as Neo4j's HTTP API reports it (#668). A statement
+// failing at compile time has no result.
+func appendStatementFailure(response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error) {
+	failure := statementError(err)
+	if executor != nil && !nornicerrors.IsCompileTimeStatus(failure.Code) {
+		if columns := executor.StatementColumns(query); len(columns) > 0 {
+			response.Results = append(response.Results, QueryResult{Columns: columns, Data: []ResultRow{}})
+		}
+	}
+	response.Errors = append(response.Errors, failure)
+}
+
 // QueryError is an error from a query (Neo4j format).
 type QueryError struct {
 	Code    string `json:"code"`
@@ -1352,7 +1366,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 		s.logSlowQuery(stmt.Statement, stmt.Parameters, queryDuration, err)
 
 		if err != nil {
-			response.Errors = append(response.Errors, statementError(err))
+			appendStatementFailure(&response, executor, queryStatement, err)
 			hasError = true
 			continue
 		}
@@ -1554,9 +1568,9 @@ func (s *Server) handleSingleStatementFastPath(w http.ResponseWriter, r *http.Re
 	if execErr != nil {
 		resp := TransactionResponse{
 			Results:       []QueryResult{},
-			Errors:        []QueryError{statementError(execErr)},
 			LastBookmarks: []string{s.generateBookmark()},
 		}
+		appendStatementFailure(&resp, executor, queryStatement, execErr)
 		s.writeJSON(w, http.StatusOK, resp)
 		return nil, true
 	}
@@ -1980,7 +1994,7 @@ func (s *Server) executeTxStatements(
 		execCtx := s.withDatabasePermissionChecker(ctx, claims, effectiveDB)
 		result, err := s.txSessions.ExecuteInSession(execCtx, session, queryStatement, stmt.Parameters)
 		if err != nil {
-			response.Errors = append(response.Errors, statementError(err))
+			appendStatementFailure(response, session.Executor, queryStatement, err)
 			return true
 		}
 		s.appendStatementResult(response, result, stmt.IncludeStats)

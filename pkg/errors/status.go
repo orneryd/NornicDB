@@ -19,6 +19,25 @@ const (
 	TransactionCommitFailed = "Neo.ClientError.Transaction.TransactionCommitFailed"
 )
 
+// compileTimeStatuses are the statuses Neo4j raises while compiling a
+// statement, before it runs.
+var compileTimeStatuses = map[string]struct{}{
+	StatementSyntaxError:                               {},
+	"Neo.ClientError.Statement.SemanticError":          {},
+	"Neo.ClientError.Statement.ParameterMissing":       {},
+	"Neo.ClientError.Procedure.ProcedureNotFound":      {},
+	"Neo.ClientError.Statement.NotSystemDatabaseError": {},
+}
+
+// IsCompileTimeStatus reports whether code is raised while a statement is
+// compiled. A statement failing with any other status compiled, so it has a
+// result with its columns, as Neo4j's HTTP API reports next to the error
+// (#668).
+func IsCompileTimeStatus(code string) bool {
+	_, ok := compileTimeStatuses[code]
+	return ok
+}
+
 // ErrCommitRolledBack marks a COMMIT failure after which nothing the
 // transaction wrote is stored (the failure was detected before any write), so
 // the outcome is known and the client connection can stay usable.
