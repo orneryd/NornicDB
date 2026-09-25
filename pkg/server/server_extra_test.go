@@ -2971,9 +2971,23 @@ func TestExecuteTxStatementsAdditionalBranches(t *testing.T) {
 	}, resp)
 	assert.NotEmpty(t, resp.Errors)
 
-	// 4) Read statement success path appends result.
+	// 4) The failed statement marked the transaction failed (#683): later
+	// statements in it are refused.
 	resp = &TransactionResponse{Results: make([]QueryResult, 0), Errors: make([]QueryError, 0)}
 	server.executeTxStatements(context.Background(), "", &auth.JWTClaims{Roles: []string{"viewer"}}, dbName, tx, []StatementRequest{
+		{Statement: "RETURN 1 AS n"},
+	}, resp)
+	assert.NotEmpty(t, resp.Errors)
+
+	// 5) Read statement success path appends result.
+	fresh, err := server.txSessions.Open(context.Background(), dbName)
+	assert.NoError(t, err)
+	if err != nil {
+		return
+	}
+	defer server.txSessions.RollbackAndDelete(context.Background(), fresh)
+	resp = &TransactionResponse{Results: make([]QueryResult, 0), Errors: make([]QueryError, 0)}
+	server.executeTxStatements(context.Background(), "", &auth.JWTClaims{Roles: []string{"viewer"}}, dbName, fresh, []StatementRequest{
 		{Statement: "RETURN 1 AS n"},
 	}, resp)
 	assert.NotEmpty(t, resp.Results)
