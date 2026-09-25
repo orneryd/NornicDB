@@ -2179,6 +2179,28 @@ type PathContext struct {
 	allPathNodes []*storage.Node        // All nodes in the path
 }
 
+// pathContextValues returns the path's variables as row values: nodes and
+// relationships as themselves, named paths as the pipeline's path maps.
+func (e *StorageExecutor) pathContextValues(pathCtx PathContext) map[string]interface{} {
+	values := make(map[string]interface{}, len(pathCtx.nodes)+len(pathCtx.rels)+len(pathCtx.paths))
+	for name, node := range pathCtx.nodes {
+		if node != nil {
+			values[name] = node
+		}
+	}
+	for name, relationship := range pathCtx.rels {
+		if relationship != nil {
+			values[name] = relationship
+		}
+	}
+	for name, path := range pathCtx.paths {
+		if path != nil {
+			values[name] = e.pathToMap(*path)
+		}
+	}
+	return values
+}
+
 // buildPathContext creates a context for evaluating expressions over a path
 func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatch) PathContext {
 	ctx := PathContext{
@@ -2610,28 +2632,25 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 		}
 	}
 
-	// Handle AND conditions
-	if idx := strings.Index(upperClause, " AND "); idx > 0 {
+	// Handle AND / OR conditions at top level: outside strings, parentheses,
+	// brackets and braces, so an AND / OR inside a subquery body stays in it.
+	if idx := findTopLevelKeyword(whereClause, " AND "); idx > 0 {
 		left := strings.TrimSpace(whereClause[:idx])
 		right := strings.TrimSpace(whereClause[idx+5:])
 		return e.evaluateWhereOnPath(ctx, left, pathCtx) && e.evaluateWhereOnPath(ctx, right, pathCtx)
 	}
-
-	// Handle OR conditions
-	if idx := strings.Index(upperClause, " OR "); idx > 0 {
+	if idx := findTopLevelKeyword(whereClause, " OR "); idx > 0 {
 		left := strings.TrimSpace(whereClause[:idx])
 		right := strings.TrimSpace(whereClause[idx+4:])
 		return e.evaluateWhereOnPath(ctx, left, pathCtx) || e.evaluateWhereOnPath(ctx, right, pathCtx)
 	}
 
-	// A whole [NOT] EXISTS { } predicate runs through the one subquery
-	// evaluator with the path's nodes and relationships bound (#652).
-	if negated, ok := wholeExistsPredicate(whereClause); ok {
-		exists := whereClause
-		if negated {
-			exists = strings.TrimSpace(whereClause[len("NOT"):])
-		}
-		return e.evaluateExistsSubqueryValue(ctx, exists, pathCtx.nodes, pathCtx.rels) != negated
+	// A clause with an EXISTS / COUNT / COLLECT subquery in it goes to the
+	// row predicate evaluator with the path's variables bound, so the
+	// subquery runs through the one subquery evaluator and a comparison
+	// around it (EXISTS { … } = false) is evaluated as an expression (#652).
+	if mayContainSubqueryExpression(whereClause) {
+		return e.evaluateRowPredicate(ctx, whereClause, e.pathContextValues(pathCtx))
 	}
 
 	// Handle NOT prefix (before operators so "->" in NOT (n)-[:X]->() is not parsed as ">")
