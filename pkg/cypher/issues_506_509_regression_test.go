@@ -58,6 +58,22 @@ func TestIssue507_CountOverSeveralCreates(t *testing.T) {
 	}
 }
 
+// TestIssue507_CreateSetWithoutReturnHasNoRows verifies CREATE ... SET
+// without RETURN returns no columns and no rows, as in Neo4j (#676 on the
+// CREATE ... SET route, which returned the created nodes as "node").
+func TestIssue507_CreateSetWithoutReturnHasNoRows(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "issue507createset"))
+	for _, query := range []string{
+		"CREATE (m:T {id: 4}) SET m.x = 5, m.x = 6",
+		"CREATE (a:T)-[:R]->(b:T) SET a.x = 1, b.y = 2",
+	} {
+		result, err := executor.Execute(context.Background(), query, nil)
+		require.NoError(t, err, query)
+		require.Empty(t, result.Columns, query)
+		require.Empty(t, result.Rows, query)
+	}
+}
+
 func TestIssue508_AggregatesPatternComprehension(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "issue508"))
 	ctx := context.Background()

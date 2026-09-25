@@ -2243,18 +2243,9 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 		}
 
 		result.Rows = [][]interface{}{row}
-	} else {
-		// No RETURN clause - return created entities by default
-		for _, node := range createdNodes {
-			if len(result.Columns) == 0 {
-				result.Columns = append(result.Columns, "node")
-			}
-			if len(result.Rows) == 0 {
-				result.Rows = append(result.Rows, []interface{}{})
-			}
-			result.Rows[0] = append(result.Rows[0], node)
-		}
 	}
+	// Without RETURN the statement has no columns and no rows, as in Neo4j
+	// (#507, #676).
 
 	return result, nil
 }

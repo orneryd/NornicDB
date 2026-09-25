@@ -2458,8 +2458,9 @@ func TestCreateSetAndSetMergeBranches(t *testing.T) {
 
 	noReturnRes, err := exec.executeCreateSet(ctx, "CREATE (n:DefaultNode {name:'d'}) SET n.flag = true")
 	require.NoError(t, err)
-	require.NotEmpty(t, noReturnRes.Rows)
-	require.Equal(t, "node", noReturnRes.Columns[0])
+	// Without RETURN: no columns and no rows, as in Neo4j (#507, #676).
+	require.Empty(t, noReturnRes.Columns)
+	require.Empty(t, noReturnRes.Rows)
 }
 
 func TestEmbedQueryChunkedAndVectorQueryNodeBranches(t *testing.T) {
