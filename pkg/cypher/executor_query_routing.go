@@ -604,13 +604,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	values := make([]interface{}, 0, len(parts))
 
 	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		alias := part
-		upperPart := strings.ToUpper(part)
-		if asIdx := strings.Index(upperPart, " AS "); asIdx != -1 {
-			alias = strings.TrimSpace(part[asIdx+4:])
-			part = strings.TrimSpace(part[:asIdx])
-		}
+		part, alias := parseProjectionExprAlias(part)
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
 		}

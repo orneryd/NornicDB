@@ -216,7 +216,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		returnPart := strings.TrimSpace(cypher[returnIdx+6:])
 		// Remove trailing clauses
 		for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-			if idx := findKeywordIndex(returnPart, kw); idx >= 0 {
+			if idx := topLevelKeywordIndex(returnPart, kw); idx >= 0 {
 				returnPart = strings.TrimSpace(returnPart[:idx])
 			}
 		}
@@ -317,7 +317,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	// Find end of RETURN clause
 	returnEndIdx := len(returnPart)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < returnEndIdx {
+		if idx := topLevelKeywordIndex(returnPart, keyword); idx >= 0 && idx < returnEndIdx {
 			returnEndIdx = idx
 		}
 	}
@@ -440,7 +440,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		// Parse ORDER/SKIP/LIMIT once so traversal can short-circuit when safe.
 		orderExpr := extractMatchOrderByClause(cypher, returnIdx)
 		hasOrderBy := orderExpr != ""
-		skipIdx := findKeywordIndex(cypher, "SKIP")
+		skipIdx := topLevelKeywordIndex(cypher, "SKIP")
 		skip := 0
 		if skipIdx > 0 {
 			skipPart := strings.TrimSpace(cypher[skipIdx+4:])
@@ -450,7 +450,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 				}
 			}
 		}
-		limitIdx := findKeywordIndex(cypher, "LIMIT")
+		limitIdx := topLevelKeywordIndex(cypher, "LIMIT")
 		limit := -1
 		if limitIdx > 0 {
 			limitPart := strings.TrimSpace(cypher[limitIdx+5:])
@@ -603,7 +603,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	// Parse SKIP and LIMIT early for streaming optimization
 	// Note: We can only use early termination when there's NO WHERE clause
 	// because WHERE filtering happens after loading nodes
-	skipIdx := findKeywordIndex(cypher, "SKIP")
+	skipIdx := topLevelKeywordIndex(cypher, "SKIP")
 	skip := 0
 	if skipIdx > 0 {
 		skipPart := strings.TrimSpace(cypher[skipIdx+4:])
@@ -614,7 +614,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		}
 	}
 
-	limitIdx := findKeywordIndex(cypher, "LIMIT")
+	limitIdx := topLevelKeywordIndex(cypher, "LIMIT")
 	limit := -1
 	if limitIdx > 0 {
 		limitPart := strings.TrimSpace(cypher[limitIdx+5:])
@@ -625,12 +625,12 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		}
 	}
 
-	hasOrderBy := findKeywordIndex(cypher, "ORDER") > 0
+	hasOrderBy := topLevelKeywordIndex(cypher, "ORDER") > 0
 
 	// Parse ORDER BY expression early for index-backed top-K planning.
 	orderExprEarly := ""
 	if hasOrderBy {
-		orderByIdx := findKeywordIndex(cypher, "ORDER")
+		orderByIdx := topLevelKeywordIndex(cypher, "ORDER")
 		if orderByIdx > 0 {
 			orderStart := orderByIdx + 5
 			for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
@@ -642,7 +642,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			orderPart := cypher[orderStart:]
 			endIdx := len(orderPart)
 			for _, kw := range []string{"SKIP", "LIMIT"} {
-				if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
+				if idx := topLevelKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
 					endIdx = idx
 				}
 			}
@@ -797,7 +797,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			return nil, err
 		}
 		// Apply ORDER BY to aggregated results (whitespace-tolerant)
-		orderByIdx := findKeywordIndex(cypher, "ORDER")
+		orderByIdx := topLevelKeywordIndex(cypher, "ORDER")
 		if orderByIdx > 0 {
 			orderStart := orderByIdx + 5
 			for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
@@ -809,7 +809,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			orderPart := cypher[orderStart:]
 			endIdx := len(orderPart)
 			for _, kw := range []string{"SKIP", "LIMIT"} {
-				if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
+				if idx := topLevelKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
 					endIdx = idx
 				}
 			}
@@ -818,7 +818,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		}
 
 		// Apply SKIP to aggregated results (whitespace-tolerant)
-		skipIdx := findKeywordIndex(cypher, "SKIP")
+		skipIdx := topLevelKeywordIndex(cypher, "SKIP")
 		skip := 0
 		if skipIdx > 0 {
 			skipPart := strings.TrimSpace(cypher[skipIdx+4:])
@@ -830,7 +830,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		}
 
 		// Apply LIMIT to aggregated results (whitespace-tolerant)
-		limitIdx := findKeywordIndex(cypher, "LIMIT")
+		limitIdx := topLevelKeywordIndex(cypher, "LIMIT")
 		limit := -1
 		if limitIdx > 0 {
 			limitPart := strings.TrimSpace(cypher[limitIdx+5:])
@@ -858,7 +858,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	// Parse ORDER BY (whitespace-tolerant)
-	orderByIdx := findKeywordIndex(cypher, "ORDER")
+	orderByIdx := topLevelKeywordIndex(cypher, "ORDER")
 	orderRowsAfterProjection := false
 	if orderByIdx > 0 && !usedIndexTopK {
 		orderStart := orderByIdx + 5
@@ -871,7 +871,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		orderPart := cypher[orderStart:]
 		endIdx := len(orderPart)
 		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
+			if idx := topLevelKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
 				endIdx = idx
 			}
 		}

@@ -3414,9 +3414,11 @@ func pipelineAggregateNumber(value interface{}) (float64, bool, bool) {
 func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "RETURN"))
 	body = strings.TrimPrefix(body, "return")
+	// Keywords inside braces (COLLECT { … ORDER BY … }) belong to nested
+	// expressions, as for WITH (#547).
 	modifierStart := len(body)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(body, keyword); idx >= 0 && idx < modifierStart {
+		if idx := topLevelKeywordIndex(body, keyword); idx >= 0 && idx < modifierStart {
 			modifierStart = idx
 		}
 	}
@@ -3463,14 +3465,8 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		if item == "" {
 			continue
 		}
-		upper := strings.ToUpper(item)
-		asIdx := strings.Index(upper, " AS ")
-		expr := item
-		alias := item
-		if asIdx > 0 {
-			expr = strings.TrimSpace(item[:asIdx])
-			alias = normalizeProjectionColumnName(item[asIdx+4:])
-		}
+		// Same alias parsing as WITH (parseProjectionExprAlias, #547).
+		expr, alias := parseProjectionExprAlias(item)
 		aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
 		if !isAggr && pipelineExpressionContainsAggregate(expr) {
 			isAggr = true

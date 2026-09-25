@@ -716,9 +716,8 @@ func (b *ASTBuilder) parseReturn(text string) *ASTReturn {
 		item := ASTReturnItem{RawText: part}
 
 		// Check for AS alias
-		upper := strings.ToUpper(part)
-		if asIdx := strings.LastIndex(upper, " AS "); asIdx > 0 {
-			item.Alias = strings.TrimSpace(part[asIdx+4:])
+		if asIdx := projectionAliasIndex(part); asIdx > 0 {
+			item.Alias = strings.TrimSpace(part[asIdx+len("AS"):])
 			part = strings.TrimSpace(part[:asIdx])
 		}
 
@@ -752,9 +751,8 @@ func (b *ASTBuilder) parseWith(text string) *ASTWith {
 		item := ASTReturnItem{RawText: part}
 
 		// Check for AS alias
-		upper := strings.ToUpper(part)
-		if asIdx := strings.LastIndex(upper, " AS "); asIdx > 0 {
-			item.Alias = strings.TrimSpace(part[asIdx+4:])
+		if asIdx := projectionAliasIndex(part); asIdx > 0 {
+			item.Alias = strings.TrimSpace(part[asIdx+len("AS"):])
 			part = strings.TrimSpace(part[:asIdx])
 		}
 

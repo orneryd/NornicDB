@@ -3320,9 +3320,8 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 			// Check for alias
 			alias := part
 			expr := part
-			upperPart := strings.ToUpper(part)
-			if asIdx := strings.Index(upperPart, " AS "); asIdx != -1 {
-				alias = strings.TrimSpace(part[asIdx+4:])
+			if asIdx := projectionAliasIndex(part); asIdx != -1 {
+				alias = strings.TrimSpace(part[asIdx+len("AS"):])
 				expr = strings.TrimSpace(part[:asIdx])
 			}
 
@@ -3459,9 +3458,8 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 		// Check for alias
 		alias := part
 		expr := part
-		upperPart := strings.ToUpper(part)
-		if asIdx := strings.Index(upperPart, " AS "); asIdx != -1 {
-			alias = strings.TrimSpace(part[asIdx+4:])
+		if asIdx := projectionAliasIndex(part); asIdx != -1 {
+			alias = strings.TrimSpace(part[asIdx+len("AS"):])
 			expr = strings.TrimSpace(part[:asIdx])
 		}
 
@@ -3630,8 +3628,11 @@ type orderByTerm struct {
 	descending bool
 }
 
+// parseOrderByTerms parses the ORDER BY of a projection's modifiers. Keywords
+// inside braces (COLLECT { … ORDER BY … }, map literals) belong to nested
+// expressions, never to the projection (#652, #547).
 func parseOrderByTerms(modifiers string) []orderByTerm {
-	orderByIndex := findKeywordIndex(modifiers, "ORDER BY")
+	orderByIndex := topLevelKeywordIndex(modifiers, "ORDER BY")
 	if orderByIndex < 0 {
 		return nil
 	}
@@ -3642,7 +3643,7 @@ func parseOrderByClause(clause string) []orderByTerm {
 	clause = strings.TrimSpace(clause)
 	end := len(clause)
 	for _, keyword := range []string{"LIMIT", "SKIP"} {
-		if index := findKeywordIndex(clause, keyword); index >= 0 && index < end {
+		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
 			end = index
 		}
 	}
