@@ -43,3 +43,21 @@ func TestShowColumnSetsMatchNeo4j(t *testing.T) {
 	}, result.Rows[0][2])
 	require.Equal(t, "STRING", result.Rows[0][3])
 }
+
+// TestFulltextWildcardSkipsRelationshipsWithoutIndexedProperties: as for
+// nodes and in Neo4j, a relationship with none of the index's properties has
+// no document, so the match-all wildcard doesn't return it (#547).
+func TestFulltextWildcardSkipsRelationshipsWithoutIndexedProperties(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	for _, query := range []string{
+		"CREATE FULLTEXT INDEX fw_rel FOR ()-[r:FWR]-() ON EACH [r.d]",
+		"CREATE (a:FW {d: 'hello'})-[:FWR {d: 'text'}]->(b:FW), (a)-[:FWR {x: 1}]->(b)",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+	}
+	result, err := exec.Execute(ctx, "CALL db.index.fulltext.queryRelationships('fw_rel', '*') YIELD relationship RETURN relationship.d AS d", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"text"}}, result.Rows)
+}
