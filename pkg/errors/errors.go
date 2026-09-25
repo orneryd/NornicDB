@@ -11,6 +11,10 @@ const (
 	TransientDeadlockDetected = "Neo.TransientError.Transaction.DeadlockDetected"
 	// TransientOutdated is the retryable wire error code for stale MVCC snapshots.
 	TransientOutdated = "Neo.TransientError.Transaction.Outdated"
+	// TransientMemoryPoolOutOfMemory is Neo4j's code for a transaction that
+	// exceeds its size limit (db.memory.transaction.max); NornicDB reports
+	// Badger's "Txn is too big" with it (#703).
+	TransientMemoryPoolOutOfMemory = "Neo.TransientError.General.MemoryPoolOutOfMemoryError"
 )
 
 var (
@@ -80,6 +84,9 @@ func MapTransientTransactionError(err error) (string, bool) {
 		stderrors.Is(err, ErrMVCCSnapshotGracefulCancel) ||
 		stderrors.Is(err, ErrMVCCSnapshotHardExpired) {
 		return TransientOutdated, true
+	}
+	if storage.IsTransactionTooBig(err) {
+		return TransientMemoryPoolOutOfMemory, true
 	}
 	return "", false
 }

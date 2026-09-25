@@ -221,7 +221,7 @@ func TestRecoveryChunking_NonOversizeErrorPropagates(t *testing.T) {
 	assert.Equal(t, []int{100}, eng.nodeBatchSizes)
 }
 
-// TestRecoveryChunking_StringMatchTooBigAlsoSplits — isRecoveryBatchTooLarge
+// TestRecoveryChunking_StringMatchTooBigAlsoSplits — IsTransactionTooBig
 // also accepts errors whose .Error() string contains the ErrTxnTooBig
 // message even if errors.Is() doesn't match (e.g. wrapped, re-formatted,
 // or coming from a backend that builds strings rather than wrapping the
@@ -338,7 +338,7 @@ func TestRecoveryChunking_PreservesOrderAcrossSplits(t *testing.T) {
 // false on nil error. Pin so a future refactor that adds a substring
 // check on err.Error() doesn't accidentally panic on nil.
 func TestIsRecoveryBatchTooLarge_RejectsNil(t *testing.T) {
-	assert.False(t, isRecoveryBatchTooLarge(nil),
+	assert.False(t, IsTransactionTooBig(nil),
 		"nil error must not be classified as 'batch too large'")
 }
 
@@ -347,14 +347,14 @@ func TestIsRecoveryBatchTooLarge_RejectsNil(t *testing.T) {
 // must trip the helper into the split branch.
 func TestIsRecoveryBatchTooLarge_AcceptsWrapped(t *testing.T) {
 	wrapped := fmt.Errorf("preface: %w", badger.ErrTxnTooBig)
-	assert.True(t, isRecoveryBatchTooLarge(wrapped),
+	assert.True(t, IsTransactionTooBig(wrapped),
 		"wrapped ErrTxnTooBig must be detected via errors.Is")
 
 	reformatted := errors.New("the message: " + badger.ErrTxnTooBig.Error())
-	assert.True(t, isRecoveryBatchTooLarge(reformatted),
+	assert.True(t, IsTransactionTooBig(reformatted),
 		"re-formatted (non-wrapping) ErrTxnTooBig must be detected via substring")
 
 	unrelated := errors.New("unrelated failure")
-	assert.False(t, isRecoveryBatchTooLarge(unrelated),
+	assert.False(t, IsTransactionTooBig(unrelated),
 		"unrelated errors must not trigger the split path")
 }
