@@ -2690,41 +2690,6 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 	return false
 }
 
-// compareCountWithIntegerLiteral evaluates "<op> <integer literal>" (=, <>,
-// !=, <, <=, >, >=) against count without building a row, the common shape of
-// COUNT { } predicates. ok is false for anything else, which the row predicate
-// evaluator handles.
-func compareCountWithIntegerLiteral(count int64, comparison string) (matched bool, ok bool) {
-	op := ""
-	for _, candidate := range [...]string{"<>", "!=", "<=", ">=", "=", "<", ">"} {
-		if strings.HasPrefix(comparison, candidate) {
-			op = candidate
-			break
-		}
-	}
-	if op == "" {
-		return false, false
-	}
-	literal, err := strconv.ParseInt(strings.TrimSpace(comparison[len(op):]), 10, 64)
-	if err != nil {
-		return false, false
-	}
-	switch op {
-	case "=":
-		return count == literal, true
-	case "<>", "!=":
-		return count != literal, true
-	case "<":
-		return count < literal, true
-	case "<=":
-		return count <= literal, true
-	case ">":
-		return count > literal, true
-	default:
-		return count >= literal, true
-	}
-}
-
 // validatePolicyOnLabelChange checks RELATIONSHIP_POLICY constraints when a node's labels
 // change. It validates all adjacent edges (outgoing and incoming) against the current
 // policy constraints to ensure no DISALLOWED pair is formed and any ALLOWED whitelist

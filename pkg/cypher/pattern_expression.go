@@ -202,8 +202,8 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 // evaluator with graph expressions that require storage access. Callers with
 // an execution context use this as the converged expression entry point.
 func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
-	if found := nestedSubqueryExpressions(strings.TrimSpace(expr)); found != nil {
-		rewritten, extended := e.materializeRowSubqueries(ctx, strings.TrimSpace(expr), values, found)
+	if plan := planRowSubqueries(strings.TrimSpace(expr)); plan != nil {
+		rewritten, extended := e.materializeRowSubqueries(ctx, plan, values)
 		return e.evaluateRowExpressionWithContext(ctx, rewritten, extended)
 	}
 	if subquery, ok := standaloneSubqueryExpression(expr); ok {

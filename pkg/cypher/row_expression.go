@@ -1432,6 +1432,23 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		return e.evaluateRowPredicate(ctx, inner, values)
 	}
+	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
+	// COUNT { … } + 1 > 1, …) are evaluated for the row first, unless AND / OR
+	// / XOR split the predicate: then each side evaluates its own.
+	plan := planRowSubqueries(expression)
+	if plan != nil && !plan.logical {
+		if plan.integerComparison != nil {
+			// COUNT { … } <op> <integer>: compare the count directly; a null
+			// or non-integer value takes the general comparison.
+			value, _ := e.evaluateRowSubqueryValue(ctx, plan.found[0].kind, plan.found[0].body, values)
+			if count, ok := value.(int64); ok {
+				return plan.integerComparison.holds(count)
+			}
+			return e.evaluateRowPredicate(ctx, plan.rewritten, plan.extendRow(pipelineRow(values), []interface{}{value}))
+		}
+		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
+		return e.evaluateRowPredicate(ctx, rewritten, extended)
+	}
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
 		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
 	}
@@ -1458,10 +1475,8 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 		}
 		return !e.evaluateRowPredicate(ctx, inner, values)
 	}
-	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
-	// COUNT { … } + 1 > 1, …) are evaluated for the row first.
-	if found := nestedSubqueryExpressions(expression); found != nil {
-		rewritten, extended := e.materializeRowSubqueries(ctx, expression, pipelineRow(values), found)
+	if plan != nil {
+		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
 		return e.evaluateRowPredicate(ctx, rewritten, extended)
 	}
 	if nodeCtx, _ := withWhereValueContext(values); len(nodeCtx) > 0 && looksLikeRowRelationshipPattern(expression) {
