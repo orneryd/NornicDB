@@ -100,7 +100,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 				call = name + "(" + strings.Join(bound, ", ") + ")"
 			}
 			var err error
-			result, err = e.executeCall(ctx, "CALL "+strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(call), "CALL"))+" "+yieldText)
+			result, err = e.executeProcedureCall(ctx, "CALL "+strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(call), "CALL"))+" "+yieldText, true)
 			if err != nil {
 				return nil, nil, true, err
 			}

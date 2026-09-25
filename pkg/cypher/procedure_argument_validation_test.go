@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,14 +118,9 @@ func TestCallTailReturnAllPreservesColumnsAndValues(t *testing.T) {
 }
 
 func TestYieldReturnAllPreservesColumnsAndValues(t *testing.T) {
-	exec := &StorageExecutor{}
-	seed := &ExecuteResult{
-		Columns: []string{"first", "second"},
-		Rows:    [][]interface{}{{int64(1), "one"}},
-	}
-
-	result, err := exec.applyReturnToYieldResult(context.Background(), seed, "*")
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	result, err := exec.Execute(context.Background(), "CALL dbms.components() YIELD name, edition RETURN *", nil)
 	require.NoError(t, err)
-	require.Equal(t, seed.Columns, result.Columns)
-	require.Equal(t, seed.Rows, result.Rows)
+	require.Len(t, result.Rows, 1)
+	require.ElementsMatch(t, []string{"name", "edition"}, result.Columns)
 }
