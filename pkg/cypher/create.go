@@ -2522,6 +2522,8 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 			returnClause := strings.TrimSpace(segment[6:])
 			items := e.parseReturnItems(returnClause)
 
+			// The CREATE routes' one RETURN projection (count(...) over the
+			// created row included, #507).
 			row := make([]interface{}, len(items))
 			for i, item := range items {
 				if item.alias != "" {
@@ -2529,7 +2531,7 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 				} else {
 					result.Columns = append(result.Columns, item.expr)
 				}
-				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeContext, edgeContext)
+				row[i] = e.projectCreatedReturnItem(ctx, item, nodeContext, edgeContext, nil)
 			}
 			result.Rows = append(result.Rows, row)
 		}
