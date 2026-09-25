@@ -182,21 +182,29 @@ func TestConstraintViolationStatusAndRolledBackCommit(t *testing.T) {
 }
 
 // TestMergeUniqueConflictIsRetrySafe covers #657: a UNIQUE violation of MERGE
-// work is a retry-safe race unless a SET writes the violated property.
+// work is a retry-safe race only when every SET write of the violated property
+// repeats the MERGE key; anything undecidable is not retry-safe.
 func TestMergeUniqueConflictIsRetrySafe(t *testing.T) {
 	violation := &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "U", Properties: []string{"k"}}
+	params := map[string]interface{}{"k": int64(7), "same": map[string]interface{}{"k": int64(7)}, "other": map[string]interface{}{"k": int64(5)}, "names": map[string]interface{}{"name": "x"}}
 	for statement, want := range map[string]bool{
 		"MERGE (u:U {k: 7})":                                    true,
 		"MERGE (u:U {k: $k}) SET u.name = 'x'":                  true,
-		"MERGE (u:U {k: $k}) SET u += $props":                   true,
+		"MERGE (u:U {k: $k}) SET u += $names":                   true,
+		"MERGE (u:U {k: $k}) SET u += $same":                    true,
+		"MERGE (u:U {k: $k}) SET u.k = 7":                       true,
 		"MERGE (u:U {k: $k}) SET u.name = 'k = 1'":              true,
+		"MERGE (u:U {k: $k}) SET u:Tagged":                      true,
 		"MERGE (u:U {k: 7}) SET u.k = 5":                        false,
+		"MERGE (u:U {k: $k}) SET u += $other":                   false,
+		"MERGE (u:U {k: $k}) SET u = $missing":                  false,
+		"MERGE (u:U {k: $k}) SET u.k = $k + 1":                  false,
 		"merge (u:U {n: 1}) on create set u.k = 5":              false,
 		"MERGE (u:U {n: 1}) ON MATCH SET u.name = 'x', u.k = 5": false,
 		"MERGE (u:U {n: 1}) SET u = {k: 5, n: 1}":               false,
 		"MERGE (u:U {n: 1}) SET u.`k` = 5":                      false,
 	} {
-		require.Equal(t, want, MergeUniqueConflictIsRetrySafe([]string{statement}, violation), statement)
+		require.Equal(t, want, MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: statement, Params: params}}, violation), statement)
 	}
-	require.False(t, MergeUniqueConflictIsRetrySafe([]string{"MERGE (u:U {k: 7})"}, stderrors.New("other")))
+	require.False(t, MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: "MERGE (u:U {k: 7})"}}, stderrors.New("other")))
 }

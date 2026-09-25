@@ -1481,7 +1481,7 @@ type Session struct {
 	txDatabase                      string
 	txHasMerge                      bool
 	txHasNonMergeWrite              bool
-	txMergeStatements               []string
+	txMergeStatements               []cypher.CommitStatement
 	txLifecycle                     transactionLifecycle
 	failedUntilReset                bool
 	transactionCleanupFailed        bool

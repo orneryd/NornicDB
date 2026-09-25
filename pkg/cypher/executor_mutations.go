@@ -1020,7 +1020,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	// MATCH ... SET n += $props SET n.foo = 1
 	// pipelineApplySet gets the clauses as written (their boundaries count for
 	// properties_set); the checks below see one assignment list.
-	assignments := e.splitSetAssignments(collapseChainedSetClauses(setPart))
+	assignments := splitSetAssignments(collapseChainedSetClauses(setPart))
 	if len(assignments) == 0 || (len(assignments) == 1 && strings.TrimSpace(assignments[0]) == "") {
 		return nil, localizedError(localization.CypherMutationsSetAssignmentRequired(), nil)
 	}

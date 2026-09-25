@@ -122,7 +122,7 @@ func deleteUndefinedVariableError(expression string) error {
 // variables, and known functions in the assigned values.
 func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, clause string) error {
 	body := strings.TrimSpace(clause[len("SET"):])
-	assignments := e.splitSetAssignments(body)
+	assignments := splitSetAssignments(body)
 	if err := validatePipelineSetAssignments(assignments); err != nil {
 		return err
 	}

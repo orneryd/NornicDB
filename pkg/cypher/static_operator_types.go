@@ -505,7 +505,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 		}
 		return visitPatternValues(pattern)
 	case pipelineClauseSet:
-		for _, assignment := range e.splitSetAssignments(strings.TrimSpace(text[len("SET"):])) {
+		for _, assignment := range splitSetAssignments(strings.TrimSpace(text[len("SET"):])) {
 			if operator := strings.Index(assignment, "="); operator > 0 && mayContainArithmetic(assignment[operator+1:]) {
 				if err := visit(assignment[operator+1:], false); err != nil {
 					return err
