@@ -3744,11 +3744,8 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 		return e.buildJoinedResult(ctx, joinedRows, nodePattern.variable, relPattern.targetVar, relPattern.relVar, restOfQuery)
 	}
 
-	// No WITH or RETURN, just return count
-	return &ExecuteResult{
-		Columns: []string{"matched"},
-		Rows:    [][]interface{}{{int64(len(joinedRows))}},
-	}, nil
+	// No WITH or RETURN: no columns and no rows, as in Neo4j (#676).
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
 func (e *StorageExecutor) collectOptionalMatchInitialNodes(

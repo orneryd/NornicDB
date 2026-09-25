@@ -541,11 +541,8 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 		}
 		_ = idx
 	}
-	if len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseSet {
-		result.Columns = []string{"matched"}
-		result.Rows = [][]interface{}{{len(rows)}}
-	}
-
+	// A statement ending with a write has no columns and no rows, as in
+	// Neo4j (#676).
 	return result, true, nil
 }
 
