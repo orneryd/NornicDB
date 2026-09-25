@@ -268,11 +268,6 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 			if index+1 < len(expression) && (expression[index+1] == '/' || expression[index+1] == '*') {
 				return comparisonChainScan{}, false, true
 			}
-		case 'C', 'c':
-			// A CASE block's WHEN comparisons are not the chain's (#699).
-			if (index == 0 || expression[index-1] != '.') && matchKeywordAt(expression, index, "CASE") {
-				return comparisonChainScan{}, false, true
-			}
 		}
 		operatorLength := 0
 		switch expression[index] {
@@ -308,6 +303,13 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 		if strings.TrimSpace(expression[operandStart:index]) == "" {
 			return comparisonChainScan{}, false, false
 		}
+		// A CASE block's WHEN comparisons are not the chain's (#699): a CASE
+		// enclosing this operator starts in the operand before it, which
+		// then goes to the full scan. Checking only there keeps the byte
+		// loop as it was.
+		if index-operandStart >= len("CASE") && operandMayContainCase(expression[operandStart:index]) {
+			return comparisonChainScan{}, false, true
+		}
 		scan.append(comparisonOperatorSpan{offset: index, length: operatorLength})
 		index += operatorLength - 1
 		operandStart = index + 1
@@ -316,4 +318,15 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 		return comparisonChainScan{}, false, false
 	}
 	return scan, true, false
+}
+
+// operandMayContainCase reports whether operand contains the letters "case"
+// in any letter case (a superset of the CASE keywords in it).
+func operandMayContainCase(operand string) bool {
+	for i := 0; i+4 <= len(operand); i++ {
+		if operand[i]|0x20 == 'c' && operand[i+1]|0x20 == 'a' && operand[i+2]|0x20 == 's' && operand[i+3]|0x20 == 'e' {
+			return true
+		}
+	}
+	return false
 }
