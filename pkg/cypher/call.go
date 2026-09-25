@@ -1411,6 +1411,13 @@ func callTailMapString(values map[string]interface{}, keys ...string) (string, b
 	return "", false
 }
 
+// callTailPlanClauseKeywords start the clauses a compiled CALL-tail
+// projection plan can't hold between its WITH and RETURN.
+var callTailPlanClauseKeywords = []string{
+	"MATCH", "OPTIONAL", "UNWIND", "CALL", "WITH", "CREATE", "MERGE",
+	"SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD", "UNION",
+}
+
 func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail string) (*callTailProjectionPlan, bool) {
 	trimmed := strings.TrimSpace(tail)
 	if !hasPrefixFoldASCII(trimmed, "WITH ") || isPotentialWriteTail(trimmed) {
@@ -1425,6 +1432,13 @@ func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail 
 	returnAndModifiers := strings.TrimSpace(trimmed[returnIdx+len("RETURN"):])
 	if beforeReturn == "" || returnAndModifiers == "" {
 		return nil, false
+	}
+	// The plan covers exactly WITH … [WHERE …] RETURN …; a tail with another
+	// clause between them (WITH label MATCH (n) RETURN …) is the pipeline's.
+	for _, keyword := range callTailPlanClauseKeywords {
+		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+			return nil, false
+		}
 	}
 
 	whereClause := ""
