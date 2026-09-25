@@ -106,3 +106,16 @@ func TestRowPropertyAccessOnNullEntity(t *testing.T) {
 		require.Nil(t, value)
 	}
 }
+
+// TestCommitFailureWroteNothing pins which failed COMMITs have a known
+// outcome: a local transaction's constraint violation or size-limit failure
+// (#703) wrote nothing; any other failure, and any fabric failure, is unknown.
+func TestCommitFailureWroteNothing(t *testing.T) {
+	violation := &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "U", Properties: []string{"k"}}
+	tooBig := stderrors.New("materializing mvcc commit state: Txn is too big to fit into one request")
+	require.True(t, commitFailureWroteNothing(true, violation))
+	require.True(t, commitFailureWroteNothing(true, tooBig))
+	require.False(t, commitFailureWroteNothing(true, stderrors.New("disk full")))
+	require.False(t, commitFailureWroteNothing(false, violation))
+	require.False(t, commitFailureWroteNothing(false, tooBig))
+}
