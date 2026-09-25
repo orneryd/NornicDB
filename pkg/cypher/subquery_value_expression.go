@@ -3,9 +3,11 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -193,6 +195,9 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		return value, ok, nil
 	}
 	if kind == "COUNT" {
+		if count, ok := e.boundDegreeCount(ctx, body, values); ok {
+			return count, true, nil
+		}
 		if nodes, rels, ok := boundPatternCountBindings(body, values); ok {
 			return int64(len(e.evaluateBoundPatternRows(ctx, body, nodes, rels))), true, nil
 		}
@@ -413,4 +418,113 @@ func containsIdentifierWord(text, name string) bool {
 		from = start + 1
 	}
 	return false
+}
+
+// boundDegreePattern is a COUNT body that is one directed hop from a bound
+// node to an anonymous, unlabelled node with no properties and no WHERE:
+// [MATCH] (v)-[:T|U]->(), (v)<-[:T]-(), ()-[:T]->(v), with the arrows in
+// either spelling (-->, -[r]->). Its count is the node's degree.
+var boundDegreePattern = regexp.MustCompile(`^(?i:MATCH\s+)?(?:\(\s*([A-Za-z_]\w*)\s*\)\s*(<?)-(?:\[\s*(?:[A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*\)|\(\s*\)\s*(<?)-(?:\[\s*(?:[A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*([A-Za-z_]\w*)\s*\))\s*$`)
+
+// boundDegreeShape is a parsed boundDegreePattern body: the bound variable,
+// the hop's direction from it and its relationship types. ok is false for any
+// other body.
+type boundDegreeShape struct {
+	variable string
+	outgoing bool
+	types    []string
+	ok       bool
+}
+
+// boundDegreeShapes caches parsed COUNT bodies; a body is parsed once, not
+// once per row. The cache stops growing at boundDegreeShapeCacheLimit bodies.
+var (
+	boundDegreeShapesMu sync.RWMutex
+	boundDegreeShapes   = make(map[string]boundDegreeShape)
+)
+
+const boundDegreeShapeCacheLimit = 1024
+
+// parseBoundDegreeShape parses body as a boundDegreePattern (cached).
+func parseBoundDegreeShape(body string) boundDegreeShape {
+	boundDegreeShapesMu.RLock()
+	shape, cached := boundDegreeShapes[body]
+	boundDegreeShapesMu.RUnlock()
+	if cached {
+		return shape
+	}
+	shape = parseBoundDegreeShapeText(body)
+	boundDegreeShapesMu.Lock()
+	if len(boundDegreeShapes) < boundDegreeShapeCacheLimit {
+		boundDegreeShapes[body] = shape
+	}
+	boundDegreeShapesMu.Unlock()
+	return shape
+}
+
+func parseBoundDegreeShapeText(body string) boundDegreeShape {
+	trimmed := strings.TrimSpace(body)
+	if len(trimmed) == 0 || strings.ContainsAny(trimmed, "{*,") {
+		return boundDegreeShape{}
+	}
+	match := boundDegreePattern.FindStringSubmatch(trimmed)
+	if match == nil {
+		return boundDegreeShape{}
+	}
+	variable, types := match[1], match[3]
+	outgoing := match[2] == "" && match[4] == ">"
+	incoming := match[2] == "<" && match[4] == ""
+	if variable == "" {
+		// ()-[:T]->(v) is an incoming hop of v.
+		variable, types = match[8], match[6]
+		outgoing = match[5] == "<" && match[7] == ""
+		incoming = match[5] == "" && match[7] == ">"
+	}
+	if outgoing == incoming {
+		return boundDegreeShape{}
+	}
+	var relTypes []string
+	for _, relType := range strings.Split(types, "|") {
+		if relType = strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(relType), ":")), "`"); relType != "" {
+			relTypes = append(relTypes, relType)
+		}
+	}
+	return boundDegreeShape{variable: variable, outgoing: outgoing, types: relTypes, ok: true}
+}
+
+// boundDegreeCount counts COUNT { (v)-[:T]->() } for a node bound in values
+// from its adjacency, without the traversal kernel. It takes only the exact
+// boundDegreePattern shape: a far end with a label, properties or a WHERE,
+// more hops, or an undirected hop go through the kernel, which applies them.
+func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, values map[string]interface{}) (int64, bool) {
+	shape := parseBoundDegreeShape(body)
+	if !shape.ok {
+		return 0, false
+	}
+	node, ok := values[shape.variable].(*storage.Node)
+	if !ok || node == nil {
+		return 0, false
+	}
+	return e.nodeDegreeCount(ctx, node, shape), true
+}
+
+// nodeDegreeCount is the degree of node along shape's direction and types.
+func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
+	store := e.getStorage(ctx)
+	var edges []*storage.Edge
+	if shape.outgoing {
+		edges, _ = store.GetOutgoingEdges(node.ID)
+	} else {
+		edges, _ = store.GetIncomingEdges(node.ID)
+	}
+	if len(shape.types) == 0 {
+		return int64(len(edges))
+	}
+	var count int64
+	for _, edge := range edges {
+		if e.edgeTypeMatches(edge.Type, shape.types) {
+			count++
+		}
+	}
+	return count
 }

@@ -107,6 +107,32 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 	for index >= 0 && isCypherWhitespace(query[index]) {
 		index--
 	}
+	// CALL (a, b) { … }: step back over the import list to the CALL.
+	if index >= 0 && query[index] == ')' {
+		depth := 0
+		for ; index >= 0; index-- {
+			if query[index] == ')' {
+				depth++
+			} else if query[index] == '(' {
+				depth--
+				if depth == 0 {
+					break
+				}
+			}
+		}
+		if index < 0 {
+			return false
+		}
+		index--
+		for index >= 0 && isCypherWhitespace(query[index]) {
+			index--
+		}
+		wordEnd := index + 1
+		for index >= 0 && isWordChar(query[index]) {
+			index--
+		}
+		return strings.EqualFold(query[index+1:wordEnd], "CALL")
+	}
 	end := index + 1
 	for index >= 0 && isWordChar(query[index]) {
 		index--

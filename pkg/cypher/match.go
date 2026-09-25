@@ -139,23 +139,24 @@ func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {
 		return ""
 	}
 	segment := cypher[whereIdx+5 : returnIdx]
-	upperSegment := strings.ToUpper(segment)
 	end := len(segment)
+	// Clause keywords inside a subquery expression's braces (COUNT { CALL (i)
+	// { … } RETURN o }) belong to it, not to the WHERE (#652).
 	for _, kw := range []string{
-		" OPTIONAL MATCH ",
-		" UNWIND ",
-		" CALL ",
-		" CREATE ",
-		" MERGE ",
-		" DELETE ",
-		" DETACH DELETE ",
-		" SET ",
-		" REMOVE ",
-		" ORDER BY ",
-		" SKIP ",
-		" LIMIT ",
+		"OPTIONAL MATCH",
+		"UNWIND",
+		"CALL",
+		"CREATE",
+		"MERGE",
+		"DELETE",
+		"DETACH DELETE",
+		"SET",
+		"REMOVE",
+		"ORDER BY",
+		"SKIP",
+		"LIMIT",
 	} {
-		if idx := findKeywordNotInBrackets(upperSegment, kw); idx >= 0 && idx < end {
+		if idx := topLevelKeywordIndex(segment, kw); idx >= 0 && idx < end {
 			end = idx
 		}
 	}
