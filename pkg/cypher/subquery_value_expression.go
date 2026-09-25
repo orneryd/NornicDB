@@ -151,26 +151,138 @@ func isWholeCollectItem(expr string) bool {
 	return ok && collect.kind == "COLLECT"
 }
 
-// materializeRowSubqueries replaces each subquery expression in expr with a
-// row variable bound to its value for the row, and returns the rewritten
-// expression and the extended row.
-func (e *StorageExecutor) materializeRowSubqueries(ctx context.Context, expr string, values pipelineRow, found []subqueryExpression) (string, pipelineRow) {
-	extended := make(pipelineRow, len(values)+len(found))
+// rowSubqueryPlan is an expression whose subquery expressions are replaced by
+// the row variables that hold their values (__subquery_value_N): the
+// subqueries, their variable names and the rewritten expression. logical is
+// true when the rewritten expression has a top-level AND / OR / XOR, which a
+// predicate splits before evaluating the subqueries, so each side's subquery
+// only runs when its value is needed.
+type rowSubqueryPlan struct {
+	found     []subqueryExpression
+	names     []string
+	rewritten string
+	logical   bool
+	// integerComparison is set when the rewritten predicate is exactly
+	// __subquery_value_0 <op> <integer literal> (COUNT { … } > 1): the
+	// comparison is parsed once and applied to an integer value directly.
+	integerComparison *integerComparison
+}
+
+// integerComparison is a comparison with an integer literal, parsed once.
+type integerComparison struct {
+	operator string
+	literal  int64
+}
+
+// parseIntegerComparison parses "<op> <integer literal>".
+func parseIntegerComparison(comparison string) (*integerComparison, bool) {
+	comparison = strings.TrimSpace(comparison)
+	for _, operator := range [...]string{"<>", "!=", "<=", ">=", "=", "<", ">"} {
+		if !strings.HasPrefix(comparison, operator) {
+			continue
+		}
+		literal, err := strconv.ParseInt(strings.TrimSpace(comparison[len(operator):]), 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		return &integerComparison{operator: operator, literal: literal}, true
+	}
+	return nil, false
+}
+
+// holds compares value with the literal, as the comparison evaluator does for
+// two integers.
+func (c *integerComparison) holds(value int64) bool {
+	switch c.operator {
+	case "=":
+		return value == c.literal
+	case "<>", "!=":
+		return value != c.literal
+	case "<":
+		return value < c.literal
+	case "<=":
+		return value <= c.literal
+	case ">":
+		return value > c.literal
+	default:
+		return value >= c.literal
+	}
+}
+
+// Row subquery plans are cached by expression text: an expression is planned
+// once, not once per row. The cache stops growing at
+// rowSubqueryPlanCacheLimit expressions.
+var (
+	rowSubqueryPlansMu sync.RWMutex
+	rowSubqueryPlans   = make(map[string]*rowSubqueryPlan)
+)
+
+const rowSubqueryPlanCacheLimit = 1024
+
+// planRowSubqueries returns expr's plan when it holds subquery expressions
+// inside a larger expression (nestedSubqueryExpressions), and nil otherwise.
+func planRowSubqueries(expr string) *rowSubqueryPlan {
+	if !mayContainSubqueryExpression(expr) {
+		return nil
+	}
+	rowSubqueryPlansMu.RLock()
+	plan, cached := rowSubqueryPlans[expr]
+	rowSubqueryPlansMu.RUnlock()
+	if cached {
+		return plan
+	}
+	if found := nestedSubqueryExpressions(expr); found != nil {
+		plan = &rowSubqueryPlan{found: found, names: make([]string, len(found))}
+		var rewritten strings.Builder
+		cursor := 0
+		for index, subquery := range found {
+			plan.names[index] = "__subquery_value_" + strconv.Itoa(index)
+			rewritten.WriteString(expr[cursor:subquery.start])
+			rewritten.WriteString(plan.names[index])
+			cursor = subquery.end
+		}
+		rewritten.WriteString(expr[cursor:])
+		plan.rewritten = rewritten.String()
+		for _, operator := range []string{" AND ", " OR ", " XOR "} {
+			if _, _, split := splitByOperatorWithOptions(plan.rewritten, operator, true, true); split {
+				plan.logical = true
+				break
+			}
+		}
+		if !plan.logical && len(found) == 1 && strings.HasPrefix(plan.rewritten, plan.names[0]) {
+			plan.integerComparison, _ = parseIntegerComparison(plan.rewritten[len(plan.names[0]):])
+		}
+	}
+	rowSubqueryPlansMu.Lock()
+	if len(rowSubqueryPlans) < rowSubqueryPlanCacheLimit {
+		rowSubqueryPlans[expr] = plan
+	}
+	rowSubqueryPlansMu.Unlock()
+	return plan
+}
+
+// materializeRowSubqueries evaluates each subquery expression of plan for the
+// row and returns the rewritten expression with the row extended by their
+// values.
+func (e *StorageExecutor) materializeRowSubqueries(ctx context.Context, plan *rowSubqueryPlan, values pipelineRow) (string, pipelineRow) {
+	subqueryValues := make([]interface{}, len(plan.found))
+	for index, subquery := range plan.found {
+		subqueryValues[index], _ = e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, values)
+	}
+	return plan.rewritten, plan.extendRow(values, subqueryValues)
+}
+
+// extendRow returns a copy of values with each subquery's value bound to its
+// variable.
+func (plan *rowSubqueryPlan) extendRow(values pipelineRow, subqueryValues []interface{}) pipelineRow {
+	extended := make(pipelineRow, len(values)+len(plan.found))
 	for name, value := range values {
 		extended[name] = value
 	}
-	var rewritten strings.Builder
-	cursor := 0
-	for index, subquery := range found {
-		name := "__subquery_value_" + strconv.Itoa(index)
-		value, _ := e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, values)
-		extended[name] = value
-		rewritten.WriteString(expr[cursor:subquery.start])
-		rewritten.WriteString(name)
-		cursor = subquery.end
+	for index, value := range subqueryValues {
+		extended[plan.names[index]] = value
 	}
-	rewritten.WriteString(expr[cursor:])
-	return rewritten.String(), extended
+	return extended
 }
 
 // correlatedSubqueryExecutor returns an executor whose pipeline sees the row's

@@ -77,10 +77,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	if expr == "" {
 		return nil
 	}
-	if found := nestedSubqueryExpressions(expr); found != nil {
+	if plan := planRowSubqueries(expr); plan != nil {
 		// Subquery expressions nested in a larger expression are evaluated
 		// for this row and the rest runs on the row evaluator.
-		rewritten, extended := e.materializeRowSubqueries(ctx, expr, entityRow(nodes, rels), found)
+		rewritten, extended := e.materializeRowSubqueries(ctx, plan, entityRow(nodes, rels))
 		value, _ := e.evaluateRowExpressionWithContext(ctx, rewritten, extended)
 		return value
 	}
