@@ -15,7 +15,7 @@ func BulkCreateNodesForRecovery(engine Engine, nodes []*Node) error {
 		return nil
 	}
 	if err := engine.BulkCreateNodes(nodes); err != nil {
-		if !isRecoveryBatchTooLarge(err) || len(nodes) == 1 {
+		if !IsTransactionTooBig(err) || len(nodes) == 1 {
 			return err
 		}
 		mid := len(nodes) / 2
@@ -34,7 +34,7 @@ func BulkCreateEdgesForRecovery(engine Engine, edges []*Edge) error {
 		return nil
 	}
 	if err := engine.BulkCreateEdges(edges); err != nil {
-		if !isRecoveryBatchTooLarge(err) || len(edges) == 1 {
+		if !IsTransactionTooBig(err) || len(edges) == 1 {
 			return err
 		}
 		mid := len(edges) / 2
@@ -46,7 +46,10 @@ func BulkCreateEdgesForRecovery(engine Engine, edges []*Edge) error {
 	return nil
 }
 
-func isRecoveryBatchTooLarge(err error) bool {
+// IsTransactionTooBig reports whether err is Badger's "Txn is too big" (the
+// transaction's writes exceed the engine's per-transaction limit), wrapped or
+// only kept as text by a wrapper that dropped the chain.
+func IsTransactionTooBig(err error) bool {
 	if err == nil {
 		return false
 	}

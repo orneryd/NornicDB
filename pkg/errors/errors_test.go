@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -39,6 +40,20 @@ func TestMapTransientTransactionError(t *testing.T) {
 			name: "merge commit-time unique conflict",
 			err:  MarkMergeCommitTimeUniqueConflict(fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "TerraformResource", Properties: []string{"uid"}, Message: "Node with uid=X already exists (nodeID: nornic:abc)"})),
 			want: TransientOutdated,
+			ok:   true,
+		},
+		{
+			// #703: Neo4j reports a transaction over its size limit as
+			// General.MemoryPoolOutOfMemoryError.
+			name: "transaction too big",
+			err:  fmt.Errorf("commit failed: %w", badger.ErrTxnTooBig),
+			want: TransientMemoryPoolOutOfMemory,
+			ok:   true,
+		},
+		{
+			name: "transaction too big kept only as text",
+			err:  stderrors.New("failed to delete node: " + badger.ErrTxnTooBig.Error()),
+			want: TransientMemoryPoolOutOfMemory,
 			ok:   true,
 		},
 		{
