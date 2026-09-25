@@ -486,6 +486,14 @@ func (e *StorageExecutor) evaluateWhereTruth(ctx context.Context, node *storage.
 	if compiled, ok := e.getCompiledSimpleWhereTruth(ctx, variable, whereClause); ok {
 		return compiled(node)
 	}
+	// A clause with an EXISTS / COUNT / COLLECT subquery in it goes whole to
+	// the row predicate evaluator with the node bound, so the subquery runs
+	// through the one subquery evaluator and a comparison or combination
+	// around it (EXISTS { … } = false, 0 = COUNT { … }) is evaluated as an
+	// expression (#652).
+	if mayContainSubqueryExpression(whereClause) {
+		return truthOf(e.evaluateRowPredicate(ctx, whereClause, map[string]interface{}{variable: node}))
+	}
 
 	// Handle parenthesized expressions - strip outer parens and recurse
 	if strings.HasPrefix(whereClause, "(") && strings.HasSuffix(whereClause, ")") {
@@ -534,22 +542,6 @@ func (e *StorageExecutor) evaluateWhereTruth(ctx context.Context, node *storage.
 		return truthOrLazy(e.evaluateWhereTruth(ctx, node, variable, left), func() cypherTruth {
 			return e.evaluateWhereTruth(ctx, node, variable, right)
 		})
-	}
-
-	// Handle NOT EXISTS { } subquery FIRST (before other NOT handling)
-	// Uses regex for whitespace-flexible matching
-	if hasSubqueryPattern(whereClause, notExistsSubqueryRe) {
-		return truthOf(e.evaluateNotExistsSubquery(ctx, node, variable, whereClause))
-	}
-
-	// Handle EXISTS { } subquery (whitespace-flexible)
-	if hasSubqueryPattern(whereClause, existsSubqueryRe) {
-		return truthOf(e.evaluateExistsSubquery(ctx, node, variable, whereClause))
-	}
-
-	// Handle COUNT { } subquery with comparison (whitespace-flexible)
-	if hasSubqueryPattern(whereClause, countSubqueryRe) {
-		return truthOf(e.evaluateCountSubqueryComparison(ctx, node, variable, whereClause, nil))
 	}
 
 	// Handle NOT prefix
@@ -893,14 +885,11 @@ func (e *StorageExecutor) resolveReturnItem(ctx context.Context, item returnItem
 		return node
 	}
 
-	// Check for COLLECT { } subquery FIRST (before other function checks)
-	// This is a Neo4j 5.0+ feature that executes a subquery and collects results
-	if hasSubqueryPattern(expr, collectSubqueryRe) {
-		// We need context to execute the subquery, but resolveReturnItem doesn't have it
-		// Return a placeholder that will be handled by the caller
-		// This is a limitation - we'll need to handle collect { } at a higher level
-		// For now, return nil and handle it in the calling code
-		return nil // Will be handled by evaluateCollectSubquery in calling code
+	// A whole COLLECT { } item is evaluated by the caller
+	// (evaluateCollectSubquery); a nested one is evaluated with the rest of its
+	// expression below.
+	if isWholeCollectItem(expr) {
+		return nil
 	}
 
 	// Check for CASE expression FIRST (before property access check)

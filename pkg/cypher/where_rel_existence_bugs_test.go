@@ -299,11 +299,15 @@ func TestCheckSubqueryMatch_BareBody(t *testing.T) {
 
 	connected := getNodeByName("connected")
 	orphan := getNodeByName("orphan")
+	subqueryExists := func(node *storage.Node, body string) bool {
+		value, ok := exec.evaluateRowSubqueryValue(ctx, "EXISTS", body, map[string]interface{}{"n": node})
+		return ok && value == true
+	}
 
-	assert.True(t, exec.nodeSubqueryExists(ctx, connected, "n", "(n)-->()"), "bare directed body should match connected")
-	assert.False(t, exec.nodeSubqueryExists(ctx, orphan, "n", "(n)-->()"), "bare directed body should not match orphan")
-	assert.True(t, exec.nodeSubqueryExists(ctx, connected, "n", "(n)--()"), "bare undirected body should match connected")
-	assert.False(t, exec.nodeSubqueryExists(ctx, orphan, "n", "(n)--()"), "bare undirected body should not match orphan")
+	assert.True(t, subqueryExists(connected, "(n)-->()"), "bare directed body should match connected")
+	assert.False(t, subqueryExists(orphan, "(n)-->()"), "bare directed body should not match orphan")
+	assert.True(t, subqueryExists(connected, "(n)--()"), "bare undirected body should match connected")
+	assert.False(t, subqueryExists(orphan, "(n)--()"), "bare undirected body should not match orphan")
 }
 
 func TestCountSubqueryMatches_BareBody(t *testing.T) {

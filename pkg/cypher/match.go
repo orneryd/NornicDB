@@ -922,9 +922,9 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			namedPathContext = e.buildPathContext(path, pathMatch)
 		}
 		for j, item := range returnItems {
-			// Check for COLLECT { } subquery
-			if hasSubqueryPattern(item.expr, collectSubqueryRe) {
-				// Execute the subquery with the current node as context
+			// A whole COLLECT { } item; a COLLECT nested in a larger
+			// expression is evaluated with the rest of it.
+			if isWholeCollectItem(item.expr) {
 				collected, err := e.evaluateCollectSubquery(ctx, node, nodePattern.variable, item.expr)
 				if err != nil {
 					return nil, localizedError(localization.CypherMatchingCollectSubqueryFailed(err), err)
