@@ -320,7 +320,7 @@ func (s *Session) handleRun(data []byte) error {
 	s.lastQueryIsWrite = isWrite
 	s.lastQueryDatabase = dbName
 	if s.inTransaction {
-		s.recordExplicitTransactionWrite(query, isWrite)
+		s.recordExplicitTransactionWrite(query, params, isWrite)
 	}
 
 	// Store result for PULL
@@ -463,14 +463,14 @@ func isRetryableBoltStatus(code string) bool {
 	return strings.HasPrefix(code, "Neo.TransientError.")
 }
 
-func (s *Session) recordExplicitTransactionWrite(query string, isWrite bool) {
+func (s *Session) recordExplicitTransactionWrite(query string, params map[string]any, isWrite bool) {
 	if !isWrite {
 		return
 	}
 	info := boltTxWriteAnalyzer.Analyze(query)
 	if info != nil && info.HasMerge {
 		s.txHasMerge = true
-		s.txMergeStatements = append(s.txMergeStatements, query)
+		s.txMergeStatements = append(s.txMergeStatements, cypher.CommitStatement{Query: query, Params: params})
 	}
 	if info == nil {
 		s.txHasNonMergeWrite = true

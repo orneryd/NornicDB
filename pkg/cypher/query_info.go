@@ -3,6 +3,7 @@ package cypher
 
 import (
 	stderrors "errors"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -337,76 +338,172 @@ func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
 	return true
 }
 
+// CommitStatement is one statement of a committing transaction with the
+// parameters it ran with.
+type CommitStatement struct {
+	Query  string
+	Params map[string]interface{}
+}
+
 // MergeUniqueConflictIsRetrySafe reports whether a commit-time UNIQUE
 // violation err of MERGE-only work (IsRetrySafeMergeCommitQuery) can succeed
-// when retried: the violated value must come from a MERGE pattern, which the
-// retry then matches. When a SET in one of the statements writes a violated
-// property explicitly (x.k = …, or a map literal with key k), the clash comes
-// from that SET, fails on every retry, and is reported as the constraint
-// violation it is (MERGE (u:U {k: 7}) SET u.k = 5 against a stored k = 5, #657).
-// A SET from a parameter map can't be inspected and keeps retrying, as before.
-func MergeUniqueConflictIsRetrySafe(statements []string, err error) bool {
+// when retried, so it is reported as a transient race: every value the
+// statements' SET items (SET, ON CREATE SET, ON MATCH SET) write to a violated
+// property must be the value a MERGE pattern of the statement keys on, which
+// the retry then matches. A SET writing any other value clashes on every retry
+// and is reported as the constraint violation it is (MERGE (u:U {k: 7})
+// SET u.k = 5 against a stored k = 5, #657). SET x = / += $map is decided by
+// the parameter map's keys and values. Whatever can't be decided statically (a
+// computed value, a map from a variable, a statement the clause splitter can't
+// split) is not retry-safe, so a real duplicate is never retried.
+func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) bool {
 	var violation *storage.ConstraintViolationError
 	if !stderrors.As(err, &violation) || violation == nil {
 		return false
 	}
 	for _, statement := range statements {
-		for _, property := range violation.Properties {
-			if statementSetsProperty(statement, property) {
-				return false
+		items, mergeKeys, ok := mergeStatementSetItems(statement.Query)
+		if !ok {
+			return false
+		}
+		for _, item := range items {
+			for _, property := range violation.Properties {
+				if !setItemKeepsMergeKey(item, property, mergeKeys, statement.Params) {
+					return false
+				}
 			}
 		}
 	}
 	return true
 }
 
-// statementSetsProperty reports whether a SET, ON CREATE SET or ON MATCH SET
-// of statement writes property explicitly.
-func statementSetsProperty(statement, property string) bool {
-	for offset := 0; offset < len(statement); {
-		index := findKeywordIndexInContext(statement[offset:], "SET")
-		if index < 0 {
-			return false
-		}
-		body := statement[offset+index+len("SET"):]
-		end := len(body)
-		for _, keyword := range [...]string{"SET", "ON CREATE", "ON MATCH", "MERGE", "MATCH", "CREATE", "WITH", "RETURN", "UNWIND", "DELETE", "REMOVE"} {
-			if next := findKeywordIndexInContext(body, keyword); next >= 0 && next < end {
-				end = next
-			}
-		}
-		for _, assignment := range splitTopLevelComma(body[:end]) {
-			if setAssignmentWritesProperty(strings.TrimSpace(assignment), property) {
-				return true
-			}
-		}
-		offset += index + len("SET")
+// mergeStatementSetItems returns the SET items of statement (its SET clauses
+// and its MERGE clauses' ON CREATE SET / ON MATCH SET lists) and the property
+// expressions its MERGE patterns key on. ok is false when the statement can't
+// be split into clauses.
+func mergeStatementSetItems(statement string) (items []string, mergeKeys map[string][]string, ok bool) {
+	clauses, ok := splitPipelineClauses(statement)
+	if !ok {
+		return nil, nil, false
 	}
-	return false
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseSet:
+			items = append(items, splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):]))...)
+		case pipelineClauseMerge:
+			pattern, onCreate, onMatch := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
+			items = append(items, splitSetAssignments(onCreate)...)
+			items = append(items, splitSetAssignments(onMatch)...)
+			mergeKeys = appendPatternPropertyExpressions(mergeKeys, pattern)
+		}
+	}
+	return items, mergeKeys, true
 }
 
-// setAssignmentWritesProperty reports whether one SET assignment writes
-// property: x.property = …, or x = / += a map literal with that key.
-func setAssignmentWritesProperty(assignment, property string) bool {
-	operator := strings.Index(assignment, "=")
-	if operator <= 0 {
+// appendPatternPropertyExpressions adds the key: expression pairs of the
+// property maps in pattern to keys.
+func appendPatternPropertyExpressions(keys map[string][]string, pattern string) map[string][]string {
+	for index := 0; index < len(pattern); index++ {
+		switch pattern[index] {
+		case '\'', '"':
+			index = skipQuotedSemanticText(pattern, index) - 1
+		case '{':
+			closing := findMatchingDelimiter(pattern, index, '{', '}')
+			if closing < 0 {
+				return keys
+			}
+			for _, pair := range splitTopLevelComma(pattern[index+1 : closing]) {
+				if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
+					if keys == nil {
+						keys = make(map[string][]string)
+					}
+					key := normalizePropertyKey(pair[:separator])
+					keys[key] = append(keys[key], strings.TrimSpace(pair[separator+1:]))
+				}
+			}
+			index = closing
+		}
+	}
+	return keys
+}
+
+// setItemKeepsMergeKey reports whether the SET item can't cause a UNIQUE
+// clash on property of its own: it doesn't write property, or it writes a
+// value a MERGE pattern keys property on.
+func setItemKeepsMergeKey(item, property string, mergeKeys map[string][]string, params map[string]interface{}) bool {
+	_, setProperty, operator, right := splitSetAssignment(item)
+	switch {
+	case operator == ":":
+		return true
+	case operator == "":
+		return false
+	case setProperty != "":
+		if normalizePropertyKey(setProperty) != property {
+			return true
+		}
+		value, ok := staticCommitValue(right, params)
+		return ok && isMergeKeyValue(value, mergeKeys[property], params)
+	}
+	var written map[string]interface{}
+	switch {
+	case strings.HasPrefix(right, "$") && isValidIdentifier(right[1:]):
+		parameter, ok := params[right[1:]].(map[string]interface{})
+		if !ok {
+			return false
+		}
+		written = parameter
+	case strings.HasPrefix(right, "{") && findMatchingDelimiter(right, 0, '{', '}') == len(right)-1:
+		for _, pair := range splitTopLevelComma(right[1 : len(right)-1]) {
+			separator := findTopLevelMapKeyValueSeparator(pair)
+			if separator <= 0 || normalizePropertyKey(pair[:separator]) != property {
+				continue
+			}
+			value, ok := staticCommitValue(pair[separator+1:], params)
+			return ok && isMergeKeyValue(value, mergeKeys[property], params)
+		}
+		return true
+	default:
 		return false
 	}
-	target := strings.TrimSpace(strings.TrimSuffix(assignment[:operator], "+"))
-	if dot := strings.LastIndex(target, "."); dot >= 0 {
-		return normalizePropertyKey(strings.TrimSpace(target[dot+1:])) == property
-	}
-	value := strings.TrimSpace(assignment[operator+1:])
-	if !strings.HasPrefix(value, "{") || findMatchingDelimiter(value, 0, '{', '}') != len(value)-1 {
-		return false
-	}
-	for _, pair := range splitTopLevelComma(value[1 : len(value)-1]) {
-		if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 &&
-			normalizePropertyKey(strings.TrimSpace(pair[:separator])) == property {
+	value, writes := written[property]
+	return !writes || isMergeKeyValue(value, mergeKeys[property], params)
+}
+
+// isMergeKeyValue reports whether value is one of the MERGE key expressions.
+func isMergeKeyValue(value interface{}, expressions []string, params map[string]interface{}) bool {
+	for _, expression := range expressions {
+		if key, ok := staticCommitValue(expression, params); ok && samePropertyValue(key, value) {
 			return true
 		}
 	}
 	return false
+}
+
+// staticCommitValue is the value of a parameter or a scalar literal
+// expression; ok is false for anything else.
+func staticCommitValue(expression string, params map[string]interface{}) (interface{}, bool) {
+	expression = strings.TrimSpace(expression)
+	if strings.HasPrefix(expression, "$") && isValidIdentifier(expression[1:]) {
+		value, ok := params[expression[1:]]
+		return value, ok
+	}
+	if len(expression) >= 2 && (expression[0] == '\'' || expression[0] == '"') &&
+		expression[len(expression)-1] == expression[0] && !strings.ContainsAny(expression[1:len(expression)-1], "\\'\"") {
+		return expression[1 : len(expression)-1], true
+	}
+	if integer, err := strconv.ParseInt(expression, 10, 64); err == nil {
+		return integer, true
+	}
+	if float, err := strconv.ParseFloat(expression, 64); err == nil {
+		return float, true
+	}
+	switch strings.ToLower(expression) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+	return nil, false
 }
 
 // containsKeyword checks if the query contains a keyword as a whole word.

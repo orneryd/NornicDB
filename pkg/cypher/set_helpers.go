@@ -265,7 +265,7 @@ func parseSetAssignmentTarget(target string) (variable string, property string, 
 //
 //	splitSetAssignments("n.embedding = [0.1, 0.2], n.dim = 4")
 //	// Returns: ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
-func (e *StorageExecutor) splitSetAssignments(setClause string) []string {
+func splitSetAssignments(setClause string) []string {
 	var assignments []string
 	var current strings.Builder
 	parenDepth := 0

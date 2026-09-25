@@ -1111,7 +1111,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 	// body may chain SET clauses (SET a SET b); the applicators keep their
 	// boundaries, which properties_set depends on (setWrites).
 	body := strings.TrimSpace(clause[len("SET"):])
-	assignments := e.splitSetAssignments(collapseChainedSetClauses(body))
+	assignments := splitSetAssignments(collapseChainedSetClauses(body))
 	if body == "" || len(assignments) == 0 {
 		return nil, false, nil
 	}

@@ -2412,7 +2412,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 	var writes setWrites
 	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
 		writes.endRun()
-		for _, assignment := range e.splitSetAssignments(segment) {
+		for _, assignment := range splitSetAssignments(segment) {
 			assignment = strings.TrimSpace(assignment)
 			if assignment == "" {
 				continue
@@ -2490,7 +2490,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 // applyNodeSetClause applies the assignments of one SET clause that target
 // varName to node (applySetToNodeWithContext), recording what they write.
 func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.Node, varName string, setClause string, fullContext map[string]*storage.Node, relContext map[string]*storage.Edge, writes *setWrites) error {
-	for _, assignment := range e.splitSetAssignments(setClause) {
+	for _, assignment := range splitSetAssignments(setClause) {
 		assignment = strings.TrimSpace(assignment)
 
 		target, propName, operator, right := splitSetAssignment(assignment)

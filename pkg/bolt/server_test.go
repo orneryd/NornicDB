@@ -2351,20 +2351,28 @@ var uidUniqueViolation = fmt.Errorf("commit failed: constraint violation: %w", &
 	Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
 })
 
-// TestSessionMergeCommitConflictRetryRequiresMergeKeyClash covers #657: a
-// clash on a value a SET wrote explicitly fails on every retry, so it isn't
-// a retry-safe MERGE race.
+// TestSessionMergeCommitConflictRetryRequiresMergeKeyClash covers #657: only
+// a clash on the MERGE key is a retry-safe race; a SET writing another value to
+// the constrained property fails on every retry, and what can't be decided is
+// not retried.
 func TestSessionMergeCommitConflictRetryRequiresMergeKeyClash(t *testing.T) {
+	props := map[string]any{"uid": "X", "props": map[string]any{"name": "n"}, "withUID": map[string]any{"uid": "X"}, "otherUID": map[string]any{"uid": "Y"}}
 	for query, retrySafe := range map[string]bool{
-		"MERGE (n:TerraformResource {uid: $uid}) SET n.name = $name":          true,
-		"MERGE (n:TerraformResource {uid: $uid}) SET n += $props":             true,
-		"MERGE (n:TerraformResource {name: $name}) SET n.uid = $uid":          false,
-		"MERGE (n:TerraformResource {name: $name}) SET n += {uid: 'x'}":       false,
-		"MERGE (n:TerraformResource {name: $name}) ON CREATE SET n.uid = 'x'": false,
-		"MERGE (n:TerraformResource {name: $name}) SET n.`uid` = 'x'":         false,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n.name = $uid":          true,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n += $props":            true,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n += $withUID":          true,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n.uid = 'X'":            true,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n += $otherUID":         false,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n += $missing":          false,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n = m":                  false,
+		"MERGE (n:TerraformResource {name: $uid}) SET n.uid = $uid":          false,
+		"MERGE (n:TerraformResource {name: 'a'}) SET n += {uid: 'x'}":        false,
+		"MERGE (n:TerraformResource {name: 'a'}) ON CREATE SET n.uid = 'x'":  false,
+		"MERGE (n:TerraformResource {name: 'a'}) ON MATCH SET n.`uid` = 'x'": false,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n.uid = toUpper($uid)":  false,
 	} {
 		session := &Session{inTransaction: true}
-		session.recordExplicitTransactionWrite(query, true)
+		session.recordExplicitTransactionWrite(query, props, true)
 		if got := session.canRetryMergeCommitConflict(uidUniqueViolation); got != retrySafe {
 			t.Fatalf("%s: retry-safe = %v, want %v", query, got, retrySafe)
 		}
@@ -2373,12 +2381,12 @@ func TestSessionMergeCommitConflictRetryRequiresMergeKeyClash(t *testing.T) {
 
 func TestSessionMergeCommitConflictRetryRequiresMergeOnlyTransaction(t *testing.T) {
 	session := &Session{inTransaction: true}
-	session.recordExplicitTransactionWrite("MERGE (n:TerraformResource {uid: $uid})", true)
+	session.recordExplicitTransactionWrite("MERGE (n:TerraformResource {uid: $uid})", nil, true)
 	if !session.canRetryMergeCommitConflict(uidUniqueViolation) {
 		t.Fatal("MERGE-only transaction should allow commit-time UNIQUE conflict retry classification")
 	}
 
-	session.recordExplicitTransactionWrite("CREATE (n:TerraformResource {uid: $uid})", true)
+	session.recordExplicitTransactionWrite("CREATE (n:TerraformResource {uid: $uid})", nil, true)
 	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
 		t.Fatal("mixed MERGE and non-MERGE write transaction should keep commit-time UNIQUE conflict as a hard commit failure")
 	}
@@ -2388,6 +2396,7 @@ func TestSessionMergeCommitConflictRetryRejectsMixedSingleStatementWrite(t *test
 	session := &Session{inTransaction: true}
 	session.recordExplicitTransactionWrite(
 		"CREATE (a:Audit {id: $id}) WITH a MERGE (n:TerraformResource {uid: $uid}) SET n.auditId = a.id",
+		nil,
 		true,
 	)
 	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
@@ -2399,6 +2408,7 @@ func TestSessionMergeCommitConflictRetryRejectsCallWithMerge(t *testing.T) {
 	session := &Session{inTransaction: true}
 	session.recordExplicitTransactionWrite(
 		"CALL custom.writeProc() YIELD value MERGE (n:TerraformResource {uid: value.uid}) RETURN n",
+		nil,
 		true,
 	)
 	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
