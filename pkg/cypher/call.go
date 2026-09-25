@@ -451,6 +451,12 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// ORDER BY and SKIP / LIMIT see all of them. MATCH tails keep their fused
 	// operators below and reach the pipeline before the per-row fallback.
 	if !tailStartsWithMatchClause(tail) && !isPotentialWriteTail(tail) {
+		// WITH … [WHERE] RETURN … projections keep their compiled row
+		// projection, which declines aggregation, DISTINCT and SKIP / LIMIT
+		// expressions.
+		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tail, expectedReturnColumnsFromTail(tail)); ok || err != nil {
+			return projected, err
+		}
 		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
 			return pipelined, err
 		}
@@ -1543,6 +1549,18 @@ func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail 
 	if returnProjection == "" {
 		return nil, false
 	}
+	// The plan projects row by row: aggregation, DISTINCT and SKIP / LIMIT
+	// expressions (LIMIT 0 + 1) are the pipeline's (executeCallTailPipeline).
+	if hasPrefixFoldASCII(withProjection, "DISTINCT") || hasPrefixFoldASCII(returnProjection, "DISTINCT") ||
+		containsAggregateFunc(withProjection) || containsAggregateFunc(returnProjection) || containsAggregateFunc(orderBy) {
+		return nil, false
+	}
+	if _, ok := resolveOptionalIntLiteralOrParam(ctx, limitToken); !ok {
+		return nil, false
+	}
+	if _, ok := resolveOptionalIntLiteralOrParam(ctx, skipToken); !ok {
+		return nil, false
+	}
 
 	withItems := e.parseReturnItems(withProjection)
 	returnItems := e.parseReturnItems(returnProjection)
@@ -2136,20 +2154,23 @@ func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, or
 	return projection, orderBy, limitToken, skipToken
 }
 
+// extractCallTailModifierToken returns the whole value of keyword (SKIP or
+// LIMIT) in modifiers, up to the next modifier: an expression such as
+// LIMIT 0 + 1 stays whole, so the projection plan declines it instead of
+// reading LIMIT 0 (#572).
 func extractCallTailModifierToken(modifiers, keyword string) string {
 	idx := topLevelKeywordIndex(modifiers, keyword)
 	if idx < 0 {
 		return ""
 	}
-	rest := strings.TrimSpace(modifiers[idx+len(keyword):])
-	if rest == "" {
-		return ""
+	rest := modifiers[idx+len(keyword):]
+	end := len(rest)
+	for _, next := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if nextIdx := topLevelKeywordIndex(rest, next); nextIdx >= 0 && nextIdx < end {
+			end = nextIdx
+		}
 	}
-	fields := strings.Fields(rest)
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[0]
+	return strings.TrimSpace(rest[:end])
 }
 
 func callTailHasRelationshipTypeConstraint(tail string) bool {

@@ -642,14 +642,19 @@ func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {
 	assert.Equal(t, []string{"name", "age"}, result.Columns)
 	assert.Equal(t, [][]interface{}{{"Cy", 41}, {"Ada", 37}}, result.Rows)
 
-	plan, ok = exec.parseCallTailProjectionPlan(ctx, "WITH name RETURN name SKIP $missing")
-	require.True(t, ok)
-	_, err = exec.executeCallTailProjectionPlan(ctx, plan, []map[string]interface{}{{"name": "Ada"}}, nil)
-	require.Error(t, err)
-	plan, ok = exec.parseCallTailProjectionPlan(ctx, "WITH name RETURN name LIMIT nope")
-	require.True(t, ok)
-	_, err = exec.executeCallTailProjectionPlan(ctx, plan, []map[string]interface{}{{"name": "Ada"}}, nil)
-	require.Error(t, err)
+	// SKIP / LIMIT that aren't a literal or a bound parameter, aggregation
+	// and DISTINCT are left to the pipeline, which evaluates or rejects them.
+	for _, tail := range []string{
+		"WITH name RETURN name SKIP $missing",
+		"WITH name RETURN name LIMIT nope",
+		"WITH name RETURN name LIMIT 0 + 1",
+		"WITH name RETURN count(name) AS c",
+		"WITH name RETURN DISTINCT name",
+		"WITH DISTINCT name RETURN name",
+	} {
+		_, ok = exec.parseCallTailProjectionPlan(ctx, tail)
+		assert.False(t, ok, tail)
+	}
 
 	_, ok = exec.parseCallTailProjectionPlan(ctx, "RETURN name")
 	assert.False(t, ok)
