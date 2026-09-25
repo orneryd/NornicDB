@@ -121,9 +121,12 @@ func TestHTTPExplicitTransactionEndsOnStatementError(t *testing.T) {
 		require.Empty(t, resp.Errors)
 		return int64(resp.Results[0].Data[0].Row[0].(float64))
 	}
-	for _, failing := range []struct{ stmt, code string }{
-		{"RETURN 1 / 0 AS x", "Neo.ClientError.Statement.ArithmeticError"},
-		{"RETRUN 1", "Neo.ClientError.Statement.SyntaxError"},
+	for _, failing := range []struct {
+		stmt, code string
+		results    int // the CREATE before it, and its columns if it compiled (#668)
+	}{
+		{"RETURN 1 / 0 AS x", "Neo.ClientError.Statement.ArithmeticError", 2},
+		{"RETRUN 1", "Neo.ClientError.Statement.SyntaxError", 1},
 	} {
 		t.Run(failing.stmt, func(t *testing.T) {
 			_, _ = post("/db/nornic/tx/commit", "MATCH (n:TxErr) DETACH DELETE n")
@@ -137,7 +140,7 @@ func TestHTTPExplicitTransactionEndsOnStatementError(t *testing.T) {
 			require.Equal(t, http.StatusOK, code)
 			require.Len(t, resp.Errors, 1)
 			require.Equal(t, failing.code, resp.Errors[0].Code)
-			require.Len(t, resp.Results, 1, "the statement after the failing one is not run")
+			require.Len(t, resp.Results, failing.results, "the statement after the failing one is not run")
 			for _, path := range []string{txPath, txPath + "/commit"} {
 				code, resp = post(path, "RETURN 1 AS one")
 				require.Equal(t, http.StatusNotFound, code, path)
@@ -149,7 +152,7 @@ func TestHTTPExplicitTransactionEndsOnStatementError(t *testing.T) {
 			code, resp = post("/db/nornic/tx", "CREATE (:TxErr {v: 'd'})", failing.stmt)
 			require.Equal(t, http.StatusCreated, code)
 			require.Equal(t, failing.code, resp.Errors[0].Code)
-			code, _ = post(strings.TrimSuffix(resp.Commit, "/commit")+"/commit")
+			code, _ = post(strings.TrimSuffix(resp.Commit, "/commit") + "/commit")
 			require.Equal(t, http.StatusNotFound, code)
 			require.Zero(t, stored())
 
@@ -163,4 +166,56 @@ func TestHTTPExplicitTransactionEndsOnStatementError(t *testing.T) {
 			require.Zero(t, stored())
 		})
 	}
+}
+
+// A statement that compiled and failed while running reports its columns with
+// no rows next to the error; a statement failing at compile time, or one
+// without columns, has no result (#668, as Neo4j 5.26).
+func TestHTTPFailedStatementReportsItsColumns(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	post := func(path string, statements ...string) (*httptest.ResponseRecorder, TransactionResponse) {
+		body := make([]map[string]any, 0, len(statements))
+		for _, statement := range statements {
+			body = append(body, map[string]any{"statement": statement})
+		}
+		rec := makeRequest(t, server, http.MethodPost, path, map[string]any{"statements": body}, token)
+		var resp TransactionResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), rec.Body.String())
+		require.Len(t, resp.Errors, 1, rec.Body.String())
+		return rec, resp
+	}
+	columnsOf := func(resp TransactionResponse) [][]string {
+		columns := [][]string{}
+		for _, result := range resp.Results {
+			require.Empty(t, result.Data)
+			columns = append(columns, result.Columns)
+		}
+		return columns
+	}
+
+	for statement, want := range map[string][][]string{
+		"RETURN 1 AS a, 1 / 0 AS x":                                  {{"a", "x"}},
+		"WITH 1 / 0 AS x RETURN x":                                   {{"x"}},
+		"UNWIND [1] AS d CALL { WITH d RETURN 1 / 0 AS z } RETURN z": {{"z"}},
+		"CREATE (n:F668) SET n.v = 1 / 0":                            {},
+		"RETUR 1":                                                    {},
+	} {
+		_, resp := post("/db/nornic/tx/commit", statement)
+		require.Equal(t, want, columnsOf(resp), statement)
+	}
+
+	_, resp := post("/db/nornic/tx/commit", "RETURN 1 AS a", "RETURN 1 / 0 AS x", "RETURN 2 AS b")
+	require.Len(t, resp.Results, 2)
+	require.Equal(t, []string{"a"}, resp.Results[0].Columns)
+	require.Len(t, resp.Results[0].Data, 1)
+	require.Equal(t, []string{"x"}, resp.Results[1].Columns)
+	require.Empty(t, resp.Results[1].Data)
+
+	rec := makeRequest(t, server, http.MethodPost, "/db/nornic/tx", map[string]any{"statements": []map[string]any{}}, token)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var opened TransactionResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &opened))
+	_, resp = post(strings.TrimSuffix(opened.Commit, "/commit"), "RETURN 1 / 0 AS x")
+	require.Equal(t, [][]string{{"x"}}, columnsOf(resp))
 }
