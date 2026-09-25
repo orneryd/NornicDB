@@ -7,7 +7,7 @@ import (
 )
 
 func TestCallSubqueryStringParsers(t *testing.T) {
-	parts := splitTopLevelAndCallSubquery("a = 1 AND b = 'x AND y' AND c = [1,2]")
+	parts := splitTopLevelAndConjuncts("a = 1 AND b = 'x AND y' AND c = [1,2]")
 	require.Equal(t, []string{"a = 1", "b = 'x AND y'", "c = [1,2]"}, parts)
 
 	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("a = b")

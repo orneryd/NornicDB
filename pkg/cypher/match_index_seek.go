@@ -1346,9 +1346,14 @@ func unwrapOuterParens(clause string) string {
 	return out
 }
 
+// splitTopLevelAndConjuncts splits a WHERE clause into its top-level AND
+// conjuncts. An AND inside a string, brackets or a CASE … END block (a WHEN
+// condition, #699) belongs to its operand. It is the one AND splitter of the
+// WHERE planners (index seek, cartesian and CREATE / MERGE filters, CALL
+// subquery correlation).
 func splitTopLevelAndConjuncts(clause string) []string {
 	inSingle, inDouble, inBacktick := false, false, false
-	paren, bracket, brace := 0, 0, 0
+	paren, bracket, brace, caseDepth := 0, 0, 0, 0
 	parts := make([]string, 0, 2)
 	start := 0
 	for i := 0; i < len(clause); i++ {
@@ -1404,8 +1409,20 @@ func splitTopLevelAndConjuncts(clause string) []string {
 				brace--
 			}
 			continue
+		case 'C', 'c':
+			if (i == 0 || clause[i-1] != '.') && matchKeywordAt(clause, i, "CASE") {
+				caseDepth++
+				i += len("CASE") - 1
+				continue
+			}
+		case 'E', 'e':
+			if caseDepth > 0 && (i == 0 || clause[i-1] != '.') && matchKeywordAt(clause, i, "END") {
+				caseDepth--
+				i += len("END") - 1
+				continue
+			}
 		}
-		if paren == 0 && bracket == 0 && brace == 0 && i+3 <= len(clause) && strings.EqualFold(clause[i:i+3], "AND") {
+		if paren == 0 && bracket == 0 && brace == 0 && caseDepth == 0 && i+3 <= len(clause) && strings.EqualFold(clause[i:i+3], "AND") {
 			prevOK := i == 0 || isWhitespace(clause[i-1]) || clause[i-1] == '('
 			nextIdx := i + 3
 			nextOK := nextIdx >= len(clause) || isWhitespace(clause[nextIdx]) || clause[nextIdx] == ')'

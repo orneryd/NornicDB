@@ -2723,7 +2723,7 @@ func normalizeCallSubqueryLookupString(s string) string {
 }
 
 func extractCallSubqueryCorrelationWhere(whereClause, importCol string) (matchVar, matchProp, otherWhere string, ok bool) {
-	terms := splitTopLevelAndCallSubquery(whereClause)
+	terms := splitTopLevelAndConjuncts(whereClause)
 	if len(terms) == 0 {
 		return "", "", "", false
 	}
@@ -2781,7 +2781,7 @@ func sanitizeCallSubqueryOtherWhere(otherWhere string, importCol string) (string
 	if strings.TrimSpace(otherWhere) == "" {
 		return "", true
 	}
-	terms := splitTopLevelAndCallSubquery(otherWhere)
+	terms := splitTopLevelAndConjuncts(otherWhere)
 	if len(terms) == 0 {
 		return "", true
 	}
@@ -2818,69 +2818,6 @@ func isCallSubqueryImportNotNullGuardTerm(term string, importCol string) bool {
 	return strings.EqualFold(parts[1], "IS") &&
 		strings.EqualFold(parts[2], "NOT") &&
 		strings.EqualFold(parts[3], "NULL")
-}
-
-func splitTopLevelAndCallSubquery(whereClause string) []string {
-	parts := make([]string, 0, 4)
-	start := 0
-	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(whereClause); i++ {
-		ch := whereClause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if findKeywordIndex(whereClause[i:], "AND") == 0 {
-			parts = append(parts, strings.TrimSpace(whereClause[start:i]))
-			i += len("AND") - 1
-			start = i + 1
-		}
-	}
-	parts = append(parts, strings.TrimSpace(whereClause[start:]))
-	return parts
 }
 
 func splitTopLevelEqualityCallSubquery(expr string) (lhs, rhs string, ok bool) {

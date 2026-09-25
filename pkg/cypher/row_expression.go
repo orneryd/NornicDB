@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"reflect"
+	"strconv"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -1430,7 +1431,53 @@ func rowSubscriptIndex(value interface{}) (int, bool) {
 	}
 }
 
+// evaluateRowPredicateWithCASEBound evaluates the CASE ... END blocks of
+// expression (their spans come from caseBlockSpans) against the row, binds each
+// value to a row variable that replaces the block, and evaluates the
+// predicate that remains. The value keeps its type (a list or map stays one),
+// unlike a literal substitution.
+func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context, expression string, spans []caseBlockSpan, values map[string]interface{}) bool {
+	scope := make(map[string]interface{}, len(values)+len(spans))
+	for name, value := range values {
+		scope[name] = value
+	}
+	var builder strings.Builder
+	builder.Grow(len(expression))
+	last := 0
+	for i, span := range spans {
+		value, ok := e.evaluateRowCaseExpression(expression[span.start:span.end], values)
+		if !ok {
+			return false
+		}
+		binding := "__nornic_case_value_" + strconv.Itoa(i)
+		scope[binding] = value
+		builder.WriteString(expression[last:span.start])
+		builder.WriteString(binding)
+		last = span.end
+	}
+	builder.WriteString(expression[last:])
+	return e.evaluateRowPredicateParts(ctx, builder.String(), scope)
+}
+
+// evaluateRowPredicate evaluates a WHERE predicate against a row.
+//
+// The operator scanners of evaluateRowPredicateParts are CASE-unaware (keeping
+// the hot scan cheap), so a CASE block would have the AND / > of its WHEN
+// conditions read as the predicate's own (#699). The blocks' values are bound
+// first, once per predicate, as the context evaluator substitutes them
+// (evaluateExpressionWithCASESubstituted).
 func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
+	if mayContainCaseKeyword(expression) {
+		if spans := caseBlockSpans(expression); len(spans) > 0 {
+			return e.evaluateRowPredicateWithCASEBound(ctx, expression, spans, values)
+		}
+	}
+	return e.evaluateRowPredicateParts(ctx, expression, values)
+}
+
+// evaluateRowPredicateParts is evaluateRowPredicate for a predicate whose CASE
+// blocks are bound; it recurses into its OR / AND / NOT parts.
+func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, expression string, values map[string]interface{}) bool {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return false
@@ -1444,7 +1491,7 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 	// generic comparison/expression evaluators and returning a wrong
 	// (false) result instead of evaluating the subquery.
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		return e.evaluateRowPredicate(ctx, inner, values)
+		return e.evaluateRowPredicateParts(ctx, inner, values)
 	}
 	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
 	// COUNT { … } + 1 > 1, …) are evaluated for the row first, unless AND / OR
@@ -1467,10 +1514,10 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, true); ok {
-		return e.evaluateRowPredicate(ctx, left, values) || e.evaluateRowPredicate(ctx, right, values)
+		return e.evaluateRowPredicateParts(ctx, left, values) || e.evaluateRowPredicateParts(ctx, right, values)
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, true); ok {
-		return e.evaluateRowPredicate(ctx, left, values) && e.evaluateRowPredicate(ctx, right, values)
+		return e.evaluateRowPredicateParts(ctx, left, values) && e.evaluateRowPredicateParts(ctx, right, values)
 	}
 	// EXISTS and NOT EXISTS are complete predicates. Resolve both before the
 	// generic NOT operator so a subquery is evaluated against its correlated
@@ -1487,7 +1534,7 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 			boolean, isBoolean := value.(bool)
 			return isBoolean && !boolean
 		}
-		return !e.evaluateRowPredicate(ctx, inner, values)
+		return !e.evaluateRowPredicateParts(ctx, inner, values)
 	}
 	if plan != nil {
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
