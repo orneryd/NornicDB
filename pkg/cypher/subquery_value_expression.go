@@ -2,6 +2,8 @@ package cypher
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -208,11 +210,12 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		return nil, false, err
 	}
 	if !handled || result == nil {
-		if kind == "COUNT" && (patternOnly || hasPrefixFold(strings.TrimSpace(body), "MATCH ")) {
-			nodes, rels := entityBindings(values)
-			return int64(len(e.evaluateBoundPatternRows(ctx, body, nodes, rels))), true, nil
+		// A body the pipeline declines (a CALL subquery in it, …) runs
+		// through the full executor with the row's values bound.
+		result, err = e.executeCorrelatedSubqueryBody(ctx, query, values)
+		if err != nil {
+			return nil, false, err
 		}
-		return nil, false, nil
 	}
 	if kind == "COUNT" {
 		return int64(len(result.Rows)), true, nil
@@ -224,6 +227,57 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		}
 	}
 	return collected, true, nil
+}
+
+// executeCorrelatedSubqueryBody runs a subquery body through the full
+// executor with the row's values it uses bound the way MATCH … CALL binds a
+// correlated subquery's imports: a node as MATCH (v) WHERE id(v) = $p, a
+// relationship as MATCH ()-[v]->() WHERE id(v) = $p, any other value as
+// WITH $p AS v. Row parameters stay available.
+func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+	params := make(map[string]interface{}, len(values))
+	for name, value := range getParamsFromContext(ctx) {
+		params[name] = value
+	}
+	names := make([]string, 0, len(values))
+	for name := range values {
+		if !strings.HasPrefix(name, "$") && containsIdentifierWord(query, name) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	var prefix strings.Builder
+	carried := make([]string, 0, len(names))
+	for index, name := range names {
+		param := fmt.Sprintf("__subquery_row_%d", index)
+		switch value := values[name].(type) {
+		case *storage.Node:
+			if value == nil {
+				params[param] = nil
+				carried = append(carried, "$"+param+" AS "+name)
+				continue
+			}
+			params[param] = string(value.ID)
+			fmt.Fprintf(&prefix, "MATCH (%s) WHERE id(%s) = $%s ", name, name, param)
+			carried = append(carried, name)
+		case *storage.Edge:
+			if value == nil {
+				params[param] = nil
+				carried = append(carried, "$"+param+" AS "+name)
+				continue
+			}
+			params[param] = string(value.ID)
+			fmt.Fprintf(&prefix, "MATCH ()-[%s]->() WHERE id(%s) = $%s ", name, name, param)
+			carried = append(carried, name)
+		default:
+			params[param] = value
+			carried = append(carried, "$"+param+" AS "+name)
+		}
+	}
+	if len(carried) > 0 {
+		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
+	}
+	return e.executeInternal(ctx, prefix.String()+query, params)
 }
 
 // evaluateRowComprehensionWithSubqueries evaluates [x IN list WHERE p | f]
@@ -294,7 +348,6 @@ func entityRow(nodes map[string]*storage.Node, rels map[string]*storage.Edge) pi
 	return values
 }
 
-// entityBindings splits a row's node and relationship values out of it.
 // boundPatternCountBindings reports whether a COUNT { body } is one pattern
 // with an optional WHERE ((a)-->(b) WHERE b.x > 1, with or without MATCH)
 // whose outer variables are all nodes or relationships, and returns them. Such
@@ -323,6 +376,7 @@ func boundPatternCountBindings(body string, values map[string]interface{}) (map[
 	return nodes, rels, true
 }
 
+// entityBindings splits a row's node and relationship values out of it.
 func entityBindings(values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge) {
 	nodes := make(map[string]*storage.Node)
 	rels := make(map[string]*storage.Edge)

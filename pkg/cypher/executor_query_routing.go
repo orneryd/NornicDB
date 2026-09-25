@@ -230,7 +230,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 
 	if startsWithMatch {
-		callIdx := findKeywordIndex(cypher, "CALL")
+		callIdx := topLevelKeywordIndex(cypher, "CALL")
 		if callIdx > 0 {
 			callPart := strings.TrimSpace(cypher[callIdx:])
 			if !isCallSubquery(callPart) {

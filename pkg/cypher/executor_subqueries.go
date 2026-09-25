@@ -42,8 +42,8 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 		cypher = e.substituteParams(cypher, params)
 	}
 
-	// Find CALL position
-	callIdx := findKeywordIndex(cypher, "CALL")
+	// Find the statement's CALL (not one nested in a subquery expression).
+	callIdx := topLevelKeywordIndex(cypher, "CALL")
 	if callIdx == -1 {
 		return nil, localizedError(localization.CypherSubqueriesCallNotFound(), nil)
 	}
@@ -411,8 +411,9 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 		cypher = e.substituteParams(cypher, params)
 	}
 
-	// Find CALL position
-	callIdx := findKeywordIndex(cypher, "CALL")
+	// Find the statement's CALL subquery (not one nested in a subquery
+	// expression).
+	callIdx := firstTopLevelCallSubquery(cypher)
 	if callIdx == -1 {
 		return nil, localizedError(localization.CypherSubqueriesCallNotFound(), nil)
 	}

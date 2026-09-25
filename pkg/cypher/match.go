@@ -165,7 +165,7 @@ func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {
 func hasStandaloneWithClause(cypher string) bool {
 	searchStart := 0
 	for {
-		idx := findKeywordIndex(cypher[searchStart:], "WITH")
+		idx := topLevelKeywordIndex(cypher[searchStart:], "WITH")
 		if idx < 0 {
 			return false
 		}
@@ -211,7 +211,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	// Check for empty RETURN items
-	returnIdx := findKeywordIndex(cypher, "RETURN")
+	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
 	if returnIdx > 0 {
 		returnPart := strings.TrimSpace(cypher[returnIdx+6:])
 		// Remove trailing clauses
@@ -277,8 +277,8 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	// Check for WITH clause between MATCH and RETURN
 	// This handles MATCH ... WITH (CASE WHEN) ... RETURN queries
 	// But we must avoid false positives from "STARTS WITH" or "ENDS WITH" in WHERE clauses
-	withIdx := findKeywordIndex(cypher, "WITH")
-	returnIdx = findKeywordIndex(cypher, "RETURN")
+	withIdx := topLevelKeywordIndex(cypher, "WITH")
+	returnIdx = topLevelKeywordIndex(cypher, "RETURN")
 
 	// Check if WITH is actually a standalone clause (not part of "STARTS WITH" or "ENDS WITH")
 	isStandaloneWith := false
@@ -298,7 +298,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	// Check for UNWIND clause between MATCH and RETURN
-	unwindIdx := findKeywordIndex(cypher, "UNWIND")
+	unwindIdx := topLevelKeywordIndex(cypher, "UNWIND")
 	if unwindIdx > 0 && (returnIdx == -1 || unwindIdx < returnIdx) {
 		// Has UNWIND clause - delegate to special handler
 		return e.executeMatchUnwind(ctx, cypher)
@@ -358,14 +358,14 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	if params := getParamsFromContext(ctx); params != nil {
 		originalUpper := strings.ToUpper(originalCypher)
 		rawWhereIdx := findKeywordNotInBrackets(originalUpper, " WHERE ")
-		rawReturnIdx := findKeywordIndex(originalCypher, "RETURN")
+		rawReturnIdx := topLevelKeywordIndex(originalCypher, "RETURN")
 		if rawWhereIdx > 0 && rawReturnIdx > rawWhereIdx {
 			rawWherePart = strings.TrimSpace(originalCypher[rawWhereIdx+5 : rawReturnIdx])
 		}
 	}
 	// Use findKeywordNotInBrackets to avoid matching WHERE inside list comprehensions like [x WHERE ...]
 	matchPart := cypher[5:] // Skip "MATCH"
-	optionalMatchIdx := findKeywordIndex(cypher, "OPTIONAL MATCH")
+	optionalMatchIdx := topLevelKeywordIndex(cypher, "OPTIONAL MATCH")
 	// Note: whereIdx already defined above for fast-path count optimization
 	if whereIdx > 0 && !(optionalMatchIdx > whereIdx && optionalMatchIdx < returnIdx) {
 		matchPart = cypher[5:whereIdx]
@@ -404,7 +404,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	// ..." queries to executeCompoundMatchOptionalMatch before they would ever
 	// reach this function.
 	if (containsOutsideStrings(matchPart, "-[") || containsOutsideStrings(matchPart, "]-")) &&
-		findKeywordIndex(matchPart, "OPTIONAL MATCH") >= 0 {
+		topLevelKeywordIndex(matchPart, "OPTIONAL MATCH") >= 0 {
 		return e.executeCompoundMatchOptionalMatch(ctx, originalCypher)
 	}
 	patternComponents := splitTopLevelComma(matchPart)
