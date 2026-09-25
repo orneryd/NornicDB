@@ -233,7 +233,6 @@ func (e *StorageExecutor) evaluateStringOp(ctx context.Context, node *storage.No
 	return true
 }
 
-
 // evaluateInOpTruth evaluates a single-node `x IN list` / `x NOT IN list`
 // WHERE leaf with the same three-valued membership as the expression
 // evaluator (cypherMembership): null x, a null list, or a list that holds null
