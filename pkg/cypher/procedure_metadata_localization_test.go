@@ -31,7 +31,7 @@ func TestShowProceduresLocalizesBuiltInMetadata(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := localization.WithPreferences(context.Background(), test.tag)
-			result, executeErr := exec.Execute(ctx, "SHOW PROCEDURES", nil)
+			result, executeErr := exec.Execute(ctx, "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem", nil)
 			require.NoError(t, executeErr)
 			require.Equal(t, []string{"name", "signature", "description", "mode", "worksOnSystem"}, result.Columns)
 
@@ -102,7 +102,7 @@ func TestShowProceduresPreservesUserDefinedLiteralMetadata(t *testing.T) {
 	exec.SetLocalizationRenderer(manager)
 
 	ctx := localization.WithPreferences(context.Background(), language.EuropeanSpanish)
-	result, err := exec.Execute(ctx, "SHOW PROCEDURES", nil)
+	result, err := exec.Execute(ctx, "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem", nil)
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{
 		"custom.localized_literal",

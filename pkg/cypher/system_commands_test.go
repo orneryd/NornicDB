@@ -347,7 +347,7 @@ func TestSystemCommands_ShowDatabases(t *testing.T) {
 		result, err := exec.Execute(ctx, "SHOW DATABASES", nil)
 		require.NoError(t, err)
 
-		expectedColumns := []string{"name", "type", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"}
+		expectedColumns := showDatabasesDefaultColumns
 		assert.Equal(t, expectedColumns, result.Columns)
 		assert.GreaterOrEqual(t, len(result.Rows), 3) // At least 3 databases
 
@@ -400,7 +400,7 @@ func TestSystemCommands_ShowDatabase(t *testing.T) {
 		result, err := exec.Execute(ctx, "SHOW DATABASE", nil)
 		require.NoError(t, err)
 
-		expectedColumns := []string{"name", "type", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"}
+		expectedColumns := showDatabasesDefaultColumns
 		assert.Equal(t, expectedColumns, result.Columns)
 		assert.Len(t, result.Rows, 1)
 		assert.Equal(t, "nornic", result.Rows[0][0]) // Default database name

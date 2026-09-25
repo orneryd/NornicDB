@@ -172,10 +172,14 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 		}
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"id", "name", "state", "populationPercent", "type", "entityType", "labelsOrTypes", "properties", "indexProvider", "owningConstraint", "lastRead", "readCount"},
+	// trackedSince, options, failureMessage and createStatement aren't known.
+	for i, row := range rows {
+		rows[i] = append(row, nil, nil, nil, nil)
+	}
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: append(append([]string(nil), showIndexesDefaultColumns...), "trackedSince", "options", "failureMessage", "createStatement"),
 		Rows:    rows,
-	}, nil
+	}, showIndexesDefaultColumns), nil
 }
 
 // executeShowConstraints handles SHOW CONSTRAINTS command
@@ -218,6 +222,8 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 				constraint.Properties,
 				ownedIndex,
 				nil,
+				nil, // options
+				nil, // createStatement
 				direction,
 				maxCount,
 				sourceLabel,
@@ -237,15 +243,18 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 				[]string{constraint.Property},
 				nil,
 				string(constraint.ExpectedType),
+				nil, nil, // options, createStatement
 				nil, nil, nil, nil, nil,
 			})
 		}
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"id", "name", "type", "entityType", "labelsOrTypes", "properties", "ownedIndex", "propertyType", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode"},
+	// Neo4j's full set, then NornicDB's cardinality / policy constraint
+	// columns, which only YIELD * or YIELD <column> show.
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: append(append([]string(nil), showConstraintsDefaultColumns...), "options", "createStatement", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode"),
 		Rows:    rows,
-	}, nil
+	}, showConstraintsDefaultColumns), nil
 }
 
 // showTailKeywords start the part of a SHOW command after the command itself.
@@ -273,7 +282,57 @@ func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string
 	if err != nil {
 		return nil, err
 	}
-	return e.applyShowTail(ctx, cypher, result)
+	return e.applyShowTail(ctx, cypher, result, showDefaultColumns(result))
+}
+
+// Neo4j's SHOW commands list a default set of columns, and YIELD * or YIELD
+// <column> the full set (#690). The listings build the full set in Neo4j's
+// order (NornicDB-only columns after it); these are the default sets.
+var (
+	showFunctionsDefaultColumns   = []string{"name", "category", "description"}
+	showProceduresDefaultColumns  = []string{"name", "description", "mode", "worksOnSystem"}
+	showDatabasesDefaultColumns   = []string{"name", "type", "aliases", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"}
+	showIndexesDefaultColumns     = []string{"id", "name", "state", "populationPercent", "type", "entityType", "labelsOrTypes", "properties", "indexProvider", "owningConstraint", "lastRead", "readCount"}
+	showConstraintsDefaultColumns = []string{"id", "name", "type", "entityType", "labelsOrTypes", "properties", "ownedIndex", "propertyType"}
+)
+
+// showDefaultColumns returns the default columns of a SHOW listing, which the
+// listing records under the "showDefaultColumns" metadata key; nil when every
+// column is a default one.
+func showDefaultColumns(result *ExecuteResult) []string {
+	if result == nil || result.Metadata == nil {
+		return nil
+	}
+	defaults, _ := result.Metadata["showDefaultColumns"].([]string)
+	return defaults
+}
+
+// withShowDefaultColumns records the default columns of a SHOW listing.
+func withShowDefaultColumns(result *ExecuteResult, defaults []string) *ExecuteResult {
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]interface{}, 1)
+	}
+	result.Metadata["showDefaultColumns"] = defaults
+	return result
+}
+
+// projectShowColumns keeps columns of result, in that order.
+func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult {
+	index := make(map[string]int, len(result.Columns))
+	for i, column := range result.Columns {
+		index[column] = i
+	}
+	rows := make([][]interface{}, len(result.Rows))
+	for r, row := range result.Rows {
+		projected := make([]interface{}, len(columns))
+		for c, column := range columns {
+			if i, ok := index[column]; ok && i < len(row) {
+				projected[c] = row[i]
+			}
+		}
+		rows[r] = projected
+	}
+	return &ExecuteResult{Columns: append([]string(nil), columns...), Rows: rows}
 }
 
 // applyShowTail applies a SHOW command's tail to its rows with Neo4j's SHOW
@@ -282,6 +341,10 @@ func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string
 //	SHOW … WHERE <predicate>
 //	SHOW … YIELD <items> [ORDER BY …] [SKIP n] [LIMIT n] [WHERE …] [RETURN …]
 //
+// Without YIELD, the result has the command's default columns (defaults;
+// nil: all of them), as has SHOW … WHERE; YIELD * and YIELD <column> reach
+// every column.
+//
 // YIELD selects and renames columns; its ORDER BY / SKIP / LIMIT page the
 // rows before its WHERE filters them; RETURN (with aggregation, DISTINCT,
 // ORDER BY and SKIP / LIMIT expressions) runs over all remaining rows. The
@@ -289,10 +352,13 @@ func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string
 // same row operators as every other clause. Any other form (RETURN after a
 // WHERE without YIELD, WITH, a WHERE before YIELD's ORDER BY, a non-literal
 // YIELD SKIP / LIMIT) is a SyntaxError, as in Neo4j.
-func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult) (*ExecuteResult, error) {
+func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
 	head := showCommandHead(query)
 	if len(head) == len(query) {
+		if defaults != nil {
+			return projectShowColumns(result, defaults), nil
+		}
 		return result, nil
 	}
 	tail := strings.TrimSpace(query[len(head):])
@@ -311,6 +377,9 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 			}
 		}
 		tail = "YIELD * WHERE " + where
+		if defaults != nil {
+			result = projectShowColumns(result, defaults)
+		}
 	}
 	body := strings.TrimSpace(tail[len("YIELD"):])
 
@@ -485,111 +554,165 @@ func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher stri
 				description = rendered
 			}
 		}
-		procedures = append(procedures, []interface{}{p.Name, p.Signature, description, string(p.Mode), p.WorksOnSystem})
+		arguments := make([]interface{}, 0, len(p.Params))
+		for _, param := range p.Params {
+			arguments = append(arguments, map[string]interface{}{"name": param.Name, "type": param.Type, "description": "", "isDeprecated": false})
+		}
+		returns := make([]interface{}, 0, len(p.Returns))
+		for _, column := range p.Returns {
+			returns = append(returns, map[string]interface{}{"name": column.Name, "type": column.Type, "description": "", "isDeprecated": false})
+		}
+		// admin, rolesExecution, rolesBoostedExecution, deprecatedBy and
+		// option aren't known.
+		procedures = append(procedures, []interface{}{p.Name, description, string(p.Mode), p.WorksOnSystem, p.Signature, arguments, returns, nil, nil, nil, false, nil, nil})
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "signature", "description", "mode", "worksOnSystem"},
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: []string{"name", "description", "mode", "worksOnSystem", "signature", "argumentDescription", "returnDescription", "admin", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy", "option"},
 		Rows:    procedures,
-	}, nil
+	}, showProceduresDefaultColumns), nil
 }
 
 // executeShowFunctions handles SHOW FUNCTIONS command
 func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Return list of available functions
+	// Each function: name, category (Neo4j's category names; kalman.* is
+	// NornicDB's own), signature, description, aggregating.
 	functions := [][]interface{}{
 		// Scalar functions
-		{"id", "id(entity :: ANY) :: INTEGER", "Returns the id of a node or relationship", false, false, false},
-		{"elementId", "elementId(entity :: ANY) :: STRING", "Returns the element id of a node or relationship", false, false, false},
-		{"labels", "labels(node :: NODE) :: LIST<STRING>", "Returns labels of a node", false, false, false},
-		{"type", "type(relationship :: RELATIONSHIP) :: STRING", "Returns the type of a relationship", false, false, false},
-		{"keys", "keys(entity :: ANY) :: LIST<STRING>", "Returns the property keys of a node or relationship", false, false, false},
-		{"properties", "properties(entity :: ANY) :: MAP", "Returns all properties of a node or relationship", false, false, false},
-		{"coalesce", "coalesce(expression :: ANY...) :: ANY", "Returns first non-null value", false, false, false},
-		{"head", "head(list :: LIST<ANY>) :: ANY", "Returns the first element of a list", false, false, false},
-		{"last", "last(list :: LIST<ANY>) :: ANY", "Returns the last element of a list", false, false, false},
-		{"tail", "tail(list :: LIST<ANY>) :: LIST<ANY>", "Returns all but the first element of a list", false, false, false},
-		{"size", "size(list :: LIST<ANY>) :: INTEGER", "Returns the number of elements in a list", false, false, false},
-		{"length", "length(path :: PATH) :: INTEGER", "Returns the length of a path", false, false, false},
-		{"reverse", "reverse(original :: LIST<ANY> | STRING) :: LIST<ANY> | STRING", "Reverses a list or string", false, false, false},
-		{"range", "range(start :: INTEGER, end :: INTEGER, step :: INTEGER = 1) :: LIST<INTEGER>", "Returns a list of integers", false, false, false},
-		{"toString", "toString(expression :: ANY) :: STRING", "Converts expression to string", false, false, false},
-		{"toInteger", "toInteger(expression :: ANY) :: INTEGER", "Converts expression to integer", false, false, false},
-		{"toFloat", "toFloat(expression :: ANY) :: FLOAT", "Converts expression to float", false, false, false},
-		{"toBoolean", "toBoolean(expression :: ANY) :: BOOLEAN", "Converts expression to boolean", false, false, false},
-		{"toLower", "toLower(original :: STRING) :: STRING", "Converts string to lowercase", false, false, false},
-		{"toUpper", "toUpper(original :: STRING) :: STRING", "Converts string to uppercase", false, false, false},
-		{"trim", "trim(original :: STRING) :: STRING", "Trims whitespace from string", false, false, false},
-		{"ltrim", "ltrim(original :: STRING) :: STRING", "Trims leading whitespace", false, false, false},
-		{"rtrim", "rtrim(original :: STRING) :: STRING", "Trims trailing whitespace", false, false, false},
-		{"replace", "replace(original :: STRING, search :: STRING, replace :: STRING) :: STRING", "Replaces all occurrences", false, false, false},
-		{"split", "split(original :: STRING, splitDelimiter :: STRING) :: LIST<STRING>", "Splits string by delimiter", false, false, false},
-		{"substring", "substring(original :: STRING, start :: INTEGER, length :: INTEGER = NULL) :: STRING", "Returns substring", false, false, false},
-		{"left", "left(original :: STRING, length :: INTEGER) :: STRING", "Returns left part of string", false, false, false},
-		{"right", "right(original :: STRING, length :: INTEGER) :: STRING", "Returns right part of string", false, false, false},
+		{"id", "Scalar", "id(entity :: ANY) :: INTEGER", "Returns the id of a node or relationship", false},
+		{"elementId", "Scalar", "elementId(entity :: ANY) :: STRING", "Returns the element id of a node or relationship", false},
+		{"labels", "List", "labels(node :: NODE) :: LIST<STRING>", "Returns labels of a node", false},
+		{"type", "Scalar", "type(relationship :: RELATIONSHIP) :: STRING", "Returns the type of a relationship", false},
+		{"keys", "List", "keys(entity :: ANY) :: LIST<STRING>", "Returns the property keys of a node or relationship", false},
+		{"properties", "Scalar", "properties(entity :: ANY) :: MAP", "Returns all properties of a node or relationship", false},
+		{"coalesce", "Scalar", "coalesce(expression :: ANY...) :: ANY", "Returns first non-null value", false},
+		{"head", "Scalar", "head(list :: LIST<ANY>) :: ANY", "Returns the first element of a list", false},
+		{"last", "Scalar", "last(list :: LIST<ANY>) :: ANY", "Returns the last element of a list", false},
+		{"tail", "List", "tail(list :: LIST<ANY>) :: LIST<ANY>", "Returns all but the first element of a list", false},
+		{"size", "Scalar", "size(list :: LIST<ANY>) :: INTEGER", "Returns the number of elements in a list", false},
+		{"length", "Scalar", "length(path :: PATH) :: INTEGER", "Returns the length of a path", false},
+		{"reverse", "String", "reverse(original :: LIST<ANY> | STRING) :: LIST<ANY> | STRING", "Reverses a list or string", false},
+		{"range", "List", "range(start :: INTEGER, end :: INTEGER, step :: INTEGER = 1) :: LIST<INTEGER>", "Returns a list of integers", false},
+		{"toString", "String", "toString(expression :: ANY) :: STRING", "Converts expression to string", false},
+		{"toInteger", "Scalar", "toInteger(expression :: ANY) :: INTEGER", "Converts expression to integer", false},
+		{"toFloat", "Scalar", "toFloat(expression :: ANY) :: FLOAT", "Converts expression to float", false},
+		{"toBoolean", "Scalar", "toBoolean(expression :: ANY) :: BOOLEAN", "Converts expression to boolean", false},
+		{"toLower", "String", "toLower(original :: STRING) :: STRING", "Converts string to lowercase", false},
+		{"toUpper", "String", "toUpper(original :: STRING) :: STRING", "Converts string to uppercase", false},
+		{"trim", "String", "trim(original :: STRING) :: STRING", "Trims whitespace from string", false},
+		{"ltrim", "String", "ltrim(original :: STRING) :: STRING", "Trims leading whitespace", false},
+		{"rtrim", "String", "rtrim(original :: STRING) :: STRING", "Trims trailing whitespace", false},
+		{"replace", "String", "replace(original :: STRING, search :: STRING, replace :: STRING) :: STRING", "Replaces all occurrences", false},
+		{"split", "String", "split(original :: STRING, splitDelimiter :: STRING) :: LIST<STRING>", "Splits string by delimiter", false},
+		{"substring", "String", "substring(original :: STRING, start :: INTEGER, length :: INTEGER = NULL) :: STRING", "Returns substring", false},
+		{"left", "String", "left(original :: STRING, length :: INTEGER) :: STRING", "Returns left part of string", false},
+		{"right", "String", "right(original :: STRING, length :: INTEGER) :: STRING", "Returns right part of string", false},
 		// Math functions
-		{"abs", "abs(expression :: NUMBER) :: NUMBER", "Returns absolute value", false, false, false},
-		{"ceil", "ceil(expression :: FLOAT) :: INTEGER", "Returns ceiling value", false, false, false},
-		{"floor", "floor(expression :: FLOAT) :: INTEGER", "Returns floor value", false, false, false},
-		{"round", "round(expression :: FLOAT) :: INTEGER", "Rounds to nearest integer", false, false, false},
-		{"sign", "sign(expression :: NUMBER) :: INTEGER", "Returns sign of number", false, false, false},
-		{"sqrt", "sqrt(expression :: FLOAT) :: FLOAT", "Returns square root", false, false, false},
-		{"rand", "rand() :: FLOAT", "Returns random float between 0 and 1", false, false, false},
-		{"randomUUID", "randomUUID() :: STRING", "Returns a random UUID", false, false, false},
-		{"sin", "sin(expression :: FLOAT) :: FLOAT", "Returns sine", false, false, false},
-		{"cos", "cos(expression :: FLOAT) :: FLOAT", "Returns cosine", false, false, false},
-		{"tan", "tan(expression :: FLOAT) :: FLOAT", "Returns tangent", false, false, false},
-		{"log", "log(expression :: FLOAT) :: FLOAT", "Returns natural logarithm", false, false, false},
-		{"log10", "log10(expression :: FLOAT) :: FLOAT", "Returns base-10 logarithm", false, false, false},
-		{"exp", "exp(expression :: FLOAT) :: FLOAT", "Returns e raised to power", false, false, false},
-		{"pi", "pi() :: FLOAT", "Returns pi constant", false, false, false},
-		{"e", "e() :: FLOAT", "Returns Euler's number", false, false, false},
+		{"abs", "Numeric", "abs(expression :: NUMBER) :: NUMBER", "Returns absolute value", false},
+		{"ceil", "Numeric", "ceil(expression :: FLOAT) :: INTEGER", "Returns ceiling value", false},
+		{"floor", "Numeric", "floor(expression :: FLOAT) :: INTEGER", "Returns floor value", false},
+		{"round", "Numeric", "round(expression :: FLOAT) :: INTEGER", "Rounds to nearest integer", false},
+		{"sign", "Numeric", "sign(expression :: NUMBER) :: INTEGER", "Returns sign of number", false},
+		{"sqrt", "Logarithmic", "sqrt(expression :: FLOAT) :: FLOAT", "Returns square root", false},
+		{"rand", "Numeric", "rand() :: FLOAT", "Returns random float between 0 and 1", false},
+		{"randomUUID", "Scalar", "randomUUID() :: STRING", "Returns a random UUID", false},
+		{"sin", "Trigonometric", "sin(expression :: FLOAT) :: FLOAT", "Returns sine", false},
+		{"cos", "Trigonometric", "cos(expression :: FLOAT) :: FLOAT", "Returns cosine", false},
+		{"tan", "Trigonometric", "tan(expression :: FLOAT) :: FLOAT", "Returns tangent", false},
+		{"log", "Logarithmic", "log(expression :: FLOAT) :: FLOAT", "Returns natural logarithm", false},
+		{"log10", "Logarithmic", "log10(expression :: FLOAT) :: FLOAT", "Returns base-10 logarithm", false},
+		{"exp", "Logarithmic", "exp(expression :: FLOAT) :: FLOAT", "Returns e raised to power", false},
+		{"pi", "Trigonometric", "pi() :: FLOAT", "Returns pi constant", false},
+		{"e", "Logarithmic", "e() :: FLOAT", "Returns Euler's number", false},
 		// Temporal functions
-		{"timestamp", "timestamp() :: INTEGER", "Returns current timestamp in milliseconds", false, false, false},
-		{"datetime", "datetime(input :: ANY = NULL) :: DATETIME", "Creates a datetime", false, false, false},
-		{"date", "date(input :: ANY = NULL) :: DATE", "Creates a date", false, false, false},
-		{"time", "time(input :: ANY = NULL) :: TIME", "Creates a time", false, false, false},
+		{"timestamp", "Scalar", "timestamp() :: INTEGER", "Returns current timestamp in milliseconds", false},
+		{"datetime", "Temporal", "datetime(input :: ANY = NULL) :: DATETIME", "Creates a datetime", false},
+		{"date", "Temporal", "date(input :: ANY = NULL) :: DATE", "Creates a date", false},
+		{"time", "Temporal", "time(input :: ANY = NULL) :: TIME", "Creates a time", false},
 		// Aggregation functions
-		{"count", "count(expression :: ANY) :: INTEGER", "Returns count", true, false, false},
-		{"sum", "sum(expression :: NUMBER) :: NUMBER", "Returns sum", true, false, false},
-		{"avg", "avg(expression :: NUMBER) :: FLOAT", "Returns average", true, false, false},
-		{"min", "min(expression :: ANY) :: ANY", "Returns minimum", true, false, false},
-		{"max", "max(expression :: ANY) :: ANY", "Returns maximum", true, false, false},
-		{"collect", "collect(expression :: ANY) :: LIST<ANY>", "Collects values into list", true, false, false},
+		{"count", "Aggregating", "count(expression :: ANY) :: INTEGER", "Returns count", true},
+		{"sum", "Aggregating", "sum(expression :: NUMBER) :: NUMBER", "Returns sum", true},
+		{"avg", "Aggregating", "avg(expression :: NUMBER) :: FLOAT", "Returns average", true},
+		{"min", "Aggregating", "min(expression :: ANY) :: ANY", "Returns minimum", true},
+		{"max", "Aggregating", "max(expression :: ANY) :: ANY", "Returns maximum", true},
+		{"collect", "Aggregating", "collect(expression :: ANY) :: LIST<ANY>", "Collects values into list", true},
 		// Predicate functions
-		{"exists", "exists(expression :: ANY) :: BOOLEAN", "Returns true if expression is not null", false, false, false},
-		{"isEmpty", "isEmpty(list :: LIST<ANY> | MAP | STRING) :: BOOLEAN", "Returns true if empty", false, false, false},
-		{"all", "all(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if all match", false, false, false},
-		{"any", "any(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if any match", false, false, false},
-		{"none", "none(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if none match", false, false, false},
-		{"single", "single(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if exactly one matches", false, false, false},
+		{"exists", "Predicate", "exists(expression :: ANY) :: BOOLEAN", "Returns true if expression is not null", false},
+		{"isEmpty", "Predicate", "isEmpty(list :: LIST<ANY> | MAP | STRING) :: BOOLEAN", "Returns true if empty", false},
+		{"all", "Predicate", "all(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if all match", false},
+		{"any", "Predicate", "any(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if any match", false},
+		{"none", "Predicate", "none(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if none match", false},
+		{"single", "Predicate", "single(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if exactly one matches", false},
 		// Spatial functions
-		{"point", "point(input :: MAP) :: POINT", "Creates a point", false, false, false},
-		{"distance", "distance(point1 :: POINT, point2 :: POINT) :: FLOAT", "Returns distance between points", false, false, false},
-		{"polygon", "polygon(points :: LIST<POINT>) :: POLYGON", "Creates a polygon from a list of points", false, false, false},
-		{"lineString", "lineString(points :: LIST<POINT>) :: LINESTRING", "Creates a lineString from a list of points", false, false, false},
-		{"point.intersects", "point.intersects(point :: POINT, polygon :: POLYGON) :: BOOLEAN", "Checks if point intersects with polygon", false, false, false},
-		{"point.contains", "point.contains(polygon :: POLYGON, point :: POINT) :: BOOLEAN", "Checks if polygon contains point", false, false, false},
+		{"point", "Spatial", "point(input :: MAP) :: POINT", "Creates a point", false},
+		{"distance", "Spatial", "distance(point1 :: POINT, point2 :: POINT) :: FLOAT", "Returns distance between points", false},
+		{"polygon", "Spatial", "polygon(points :: LIST<POINT>) :: POLYGON", "Creates a polygon from a list of points", false},
+		{"lineString", "Spatial", "lineString(points :: LIST<POINT>) :: LINESTRING", "Creates a lineString from a list of points", false},
+		{"point.intersects", "Spatial", "point.intersects(point :: POINT, polygon :: POLYGON) :: BOOLEAN", "Checks if point intersects with polygon", false},
+		{"point.contains", "Spatial", "point.contains(polygon :: POLYGON, point :: POINT) :: BOOLEAN", "Checks if polygon contains point", false},
 		// Vector functions
-		{"vector.similarity.cosine", "vector.similarity.cosine(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Cosine similarity", false, false, false},
-		{"vector.similarity.euclidean", "vector.similarity.euclidean(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Euclidean similarity", false, false, false},
+		{"vector.similarity.cosine", "Vector", "vector.similarity.cosine(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Cosine similarity", false},
+		{"vector.similarity.euclidean", "Vector", "vector.similarity.euclidean(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Euclidean similarity", false},
 		// Kalman filter functions
-		{"kalman.init", "kalman.init(config? :: MAP) :: STRING", "Create new Kalman filter state (basic scalar filter for noise smoothing)", false, false, false},
-		{"kalman.process", "kalman.process(measurement :: FLOAT, state :: STRING, target? :: FLOAT) :: MAP", "Process measurement, returns {value, state}", false, false, false},
-		{"kalman.predict", "kalman.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict state n steps into the future", false, false, false},
-		{"kalman.state", "kalman.state(state :: STRING) :: FLOAT", "Get current state estimate from state JSON", false, false, false},
-		{"kalman.reset", "kalman.reset(state :: STRING) :: STRING", "Reset filter state to initial values", false, false, false},
-		{"kalman.velocity.init", "kalman.velocity.init(initialPos? :: FLOAT, initialVel? :: FLOAT) :: STRING", "Create 2-state Kalman filter (position + velocity for trend tracking)", false, false, false},
-		{"kalman.velocity.process", "kalman.velocity.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, velocity, state}", false, false, false},
-		{"kalman.velocity.predict", "kalman.velocity.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict position n steps into the future", false, false, false},
-		{"kalman.adaptive.init", "kalman.adaptive.init(config? :: MAP) :: STRING", "Create adaptive Kalman filter (auto-switches between basic and velocity modes)", false, false, false},
-		{"kalman.adaptive.process", "kalman.adaptive.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, mode, state}", false, false, false},
+		{"kalman.init", "Kalman", "kalman.init(config? :: MAP) :: STRING", "Create new Kalman filter state (basic scalar filter for noise smoothing)", false},
+		{"kalman.process", "Kalman", "kalman.process(measurement :: FLOAT, state :: STRING, target? :: FLOAT) :: MAP", "Process measurement, returns {value, state}", false},
+		{"kalman.predict", "Kalman", "kalman.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict state n steps into the future", false},
+		{"kalman.state", "Kalman", "kalman.state(state :: STRING) :: FLOAT", "Get current state estimate from state JSON", false},
+		{"kalman.reset", "Kalman", "kalman.reset(state :: STRING) :: STRING", "Reset filter state to initial values", false},
+		{"kalman.velocity.init", "Kalman", "kalman.velocity.init(initialPos? :: FLOAT, initialVel? :: FLOAT) :: STRING", "Create 2-state Kalman filter (position + velocity for trend tracking)", false},
+		{"kalman.velocity.process", "Kalman", "kalman.velocity.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, velocity, state}", false},
+		{"kalman.velocity.predict", "Kalman", "kalman.velocity.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict position n steps into the future", false},
+		{"kalman.adaptive.init", "Kalman", "kalman.adaptive.init(config? :: MAP) :: STRING", "Create adaptive Kalman filter (auto-switches between basic and velocity modes)", false},
+		{"kalman.adaptive.process", "Kalman", "kalman.adaptive.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, mode, state}", false},
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "signature", "description", "aggregating", "isBuiltIn", "argumentDescription"},
-		Rows:    functions,
-	}, nil
+	rows := make([][]interface{}, 0, len(functions))
+	for _, function := range functions {
+		signature, _ := function[2].(string)
+		arguments, returns := functionSignatureDescriptions(signature)
+		// rolesExecution, rolesBoostedExecution and deprecatedBy aren't known.
+		rows = append(rows, []interface{}{function[0], function[1], function[3], signature, true, arguments, returns, function[4], nil, nil, false, nil})
+	}
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"},
+		Rows:    rows,
+	}, showFunctionsDefaultColumns), nil
+}
+
+// functionSignatureDescriptions derives SHOW FUNCTIONS' argumentDescription
+// (a list of {name, type, description, isDeprecated} maps) and
+// returnDescription from a signature "f(a :: T, b :: U = d) :: R". An argument
+// without a declared type is ANY.
+func functionSignatureDescriptions(signature string) ([]interface{}, string) {
+	open := strings.IndexByte(signature, '(')
+	if open < 0 {
+		return []interface{}{}, ""
+	}
+	closing := findMatchingParen(signature, open)
+	if closing < 0 {
+		return []interface{}{}, ""
+	}
+	returns := ""
+	if rest := strings.TrimSpace(signature[closing+1:]); strings.HasPrefix(rest, "::") {
+		returns = strings.TrimSpace(rest[2:])
+	}
+	arguments := []interface{}{}
+	for _, part := range splitTopLevelComma(signature[open+1 : closing]) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, typeName := part, "ANY"
+		if separator := strings.Index(part, "::"); separator >= 0 {
+			name = strings.TrimSpace(part[:separator])
+			typeName = strings.TrimSpace(part[separator+2:])
+			if defaultValue := strings.Index(typeName, "="); defaultValue >= 0 {
+				typeName = strings.TrimSpace(typeName[:defaultValue])
+			}
+		}
+		arguments = append(arguments, map[string]interface{}{"name": strings.TrimSuffix(name, "?"), "type": typeName, "description": "", "isDeprecated": false})
+	}
+	return arguments, returns
 }
 
 // executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
@@ -616,16 +739,14 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 		// already be set correctly by the server layer.
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "type", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"},
-		Rows: [][]interface{}{
-			{dbName, "standard", "read-write", "localhost:7687", "primary", true, "online", "online", "", true, true, []string{}},
-		},
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: showDatabasesColumns,
+		Rows:    [][]interface{}{showDatabaseRow(e.dbManager, dbName, "standard", "online", true)},
 		Stats: &QueryStats{
 			NodesCreated:         int(nodeCount),
 			RelationshipsCreated: int(edgeCount),
 		},
-	}, nil
+	}, showDatabasesDefaultColumns), nil
 }
 
 // executeShowDatabases handles SHOW DATABASES command (plural - lists all databases).
@@ -668,26 +789,40 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 	rows := make([][]interface{}, 0, len(databases))
 
 	for _, db := range databases {
-		rows = append(rows, []interface{}{
-			db.Name(),
-			db.Type(),
-			"read-write",
-			"localhost:7687",
-			"primary",
-			true,
-			db.Status(),
-			db.Status(),
-			"",
-			db.IsDefault(),
-			db.IsDefault(),
-			[]string{},
-		})
+		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault()))
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "type", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"},
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: showDatabasesColumns,
 		Rows:    rows,
-	}, nil
+	}, showDatabasesDefaultColumns), nil
+}
+
+// showDatabasesColumns is SHOW DATABASES' full column set, in Neo4j's order.
+var showDatabasesColumns = []string{"name", "type", "aliases", "access", "databaseID", "serverID", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "currentPrimariesCount", "currentSecondariesCount", "requestedPrimariesCount", "requestedSecondariesCount", "creationTime", "lastStartTime", "lastStopTime", "store", "lastCommittedTxn", "replicationLag", "constituents", "options"}
+
+// showDatabaseRow is one SHOW DATABASES row in showDatabasesColumns order.
+// The cluster and store columns NornicDB has no value for are null.
+func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool) []interface{} {
+	aliases := []string{}
+	if manager != nil {
+		for alias := range manager.ListAliases(name) {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+	}
+	return []interface{}{
+		name, databaseType, aliases, "read-write",
+		nil, nil, // databaseID, serverID
+		"localhost:7687", "primary", true,
+		status, status, "",
+		isDefault, isDefault,
+		nil, nil, nil, nil, // primaries / secondaries counts
+		nil, nil, nil, // creationTime, lastStartTime, lastStopTime
+		nil, nil, nil, // store, lastCommittedTxn, replicationLag
+		[]string{},
+		nil, // options
+	}
 }
 
 // executeCreateDatabase handles CREATE DATABASE command.

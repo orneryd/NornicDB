@@ -3114,8 +3114,9 @@ func TestShowConstraints_WithSchemaConstraintsAndPropertyTypes(t *testing.T) {
 		foundPropertyTypeRow bool
 	)
 	for _, row := range result.Rows {
-		if len(row) != 13 {
-			t.Fatalf("unexpected SHOW CONSTRAINTS row shape (expected 13 columns, got %d): %v", len(row), row)
+		// Neo4j's full column set (10) and NornicDB's constraint columns (5).
+		if len(row) != 15 {
+			t.Fatalf("unexpected SHOW CONSTRAINTS row shape (expected 15 columns, got %d): %v", len(row), row)
 		}
 		name, _ := row[1].(string)
 		typ, _ := row[2].(string)
