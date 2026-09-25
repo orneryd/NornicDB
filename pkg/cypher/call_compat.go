@@ -168,13 +168,13 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(cypher string) (
 				return nil
 			}
 			if wildcard {
-				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{edgeToMap(edge), 1.0}) {
+				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{e.procedureRelationship(edge), 1.0}) {
 					return storage.ErrIterationStopped
 				}
 				return nil
 			}
 			if edgeHasNonEmptyProperty(edge, presenceProp) {
-				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{edgeToMap(edge), 1.0}) {
+				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{e.procedureRelationship(edge), 1.0}) {
 					return storage.ErrIterationStopped
 				}
 			}
@@ -259,7 +259,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(cypher string) (
 	})
 	result.Rows = make([][]interface{}, 0, len(scored))
 	for _, s := range scored {
-		result.Rows = append(result.Rows, []interface{}{edgeToMap(s.edge), s.score})
+		result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(s.edge), s.score})
 	}
 	applyFulltextOptions(result, opts)
 
@@ -533,7 +533,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 			if err != nil {
 				continue
 			}
-			result.Rows = append(result.Rows, []interface{}{edgeToMap(edge), hit.Score})
+			result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(edge), hit.Score})
 		}
 		return result, nil
 	}
@@ -601,7 +601,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 	// Convert to result rows
 	for _, se := range scoredEdges {
 		result.Rows = append(result.Rows, []interface{}{
-			e.edgeToMap(se.edge),
+			e.procedureRelationship(se.edge),
 			se.score,
 		})
 	}
@@ -1083,7 +1083,7 @@ func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.
 
 	return &ExecuteResult{
 		Columns: []string{"relationship"},
-		Rows:    [][]interface{}{{e.edgeToMap(rel)}},
+		Rows:    [][]interface{}{{e.procedureRelationship(rel)}},
 	}, nil
 }
 

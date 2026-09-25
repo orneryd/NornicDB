@@ -240,10 +240,10 @@ func TestMCPBug2_FulltextRelationshipIndexTypeScope(t *testing.T) {
 	require.NotEmpty(t, res.Rows, "wildcard must surface at least one matching relationship")
 	for i := range res.Rows {
 		rel := rowCell(t, res, i, "relationship")
-		relMap, ok := rel.(map[string]interface{})
-		require.True(t, ok, "row %d: relationship must be a map, got %T", i, rel)
-		assert.Equal(t, "KNOWS", relMap["_type"],
-			"row %d: relationship-fulltext index scoped to KNOWS leaked %v", i, relMap["_type"])
+		edge, ok := rel.(*storage.Edge)
+		require.True(t, ok, "row %d: relationship must be a relationship, got %T", i, rel)
+		assert.Equal(t, "KNOWS", edge.Type,
+			"row %d: relationship-fulltext index scoped to KNOWS leaked %v", i, edge.Type)
 	}
 }
 
@@ -351,12 +351,10 @@ func TestMCPBug2_FulltextWildcard_FieldPresence_Relationship(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1,
 		"field-presence on relationships must return only the edge with a non-empty note property")
-	rel, ok := rowCell(t, res, 0, "relationship").(map[string]interface{})
+	rel, ok := rowCell(t, res, 0, "relationship").(*storage.Edge)
 	require.True(t, ok)
-	assert.Equal(t, "KNOWS", rel["_type"])
-	props, ok := rel["properties"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "friend", props["note"])
+	assert.Equal(t, "KNOWS", rel.Type)
+	assert.Equal(t, "friend", rel.Properties["note"])
 }
 
 // Bug 3 — a bare RETURN collect(...) after CALL ... YIELD ... WHERE

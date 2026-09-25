@@ -18,6 +18,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"strings"
 )
 
 // ============================================================================
@@ -287,7 +288,7 @@ LIMIT 5`
 		query := `
 CALL db.index.fulltext.queryNodes('node_search', 'authentication')
 YIELD node, score
-RETURN node.id as id, node.title as title, score
+RETURN elementId(node) as id, node.title as title, score
 ORDER BY score DESC
 LIMIT 10`
 
@@ -295,9 +296,11 @@ LIMIT 10`
 		require.NoError(t, err, "node_search index should work without explicit creation (Neo4j compatibility)")
 		require.GreaterOrEqual(t, len(result.Rows), 1, "Should find at least one result")
 
-		// First result should be the authentication-related node
-		firstId := result.Rows[0][0]
-		assert.Equal(t, "test-memory-1", firstId, "Authentication node should be returned first")
+		// First result should be the authentication-related node. node.id
+		// is the node's "id" property (null here, as in Neo4j); its identity
+		// is elementId(node).
+		firstId, _ := result.Rows[0][0].(string)
+		assert.True(t, strings.HasSuffix(firstId, "test-memory-1"), "Authentication node should be returned first, got %v", result.Rows[0][0])
 
 		// Score should be a positive BM25 value
 		score := result.Rows[0][2].(float64)
