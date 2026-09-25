@@ -121,3 +121,26 @@ func TestLengthRejectsGraphEntitiesAndAcceptsPaths(t *testing.T) {
 	}
 	require.NoError(t, validateGraphFunctionSemanticTypes("length(path)", matchSemanticScope{"path": matchBindingPath}))
 }
+
+// TestGraphFunctionsOfNullAreNull: a graph function of null is null, as in
+// Neo4j (keys(null) failed with "could not parse RETURN expression", #580).
+func TestGraphFunctionsOfNullAreNull(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	for _, function := range []string{"keys", "labels", "type", "properties", "id", "elementId", "startNode", "endNode", "nodes", "relationships", "length"} {
+		for _, argument := range []string{"null", "m"} {
+			query := "RETURN " + function + "(" + argument + ") AS v"
+			if argument == "m" {
+				query = "OPTIONAL MATCH (m:NoSuchLabel) RETURN " + function + "(m) AS v"
+				if function == "nodes" || function == "relationships" || function == "length" {
+					query = "OPTIONAL MATCH m = (:NoSuchLabel)-->() RETURN " + function + "(m) AS v"
+				} else if function == "type" || function == "startNode" || function == "endNode" {
+					query = "OPTIONAL MATCH ()-[m:NO_SUCH_TYPE]->() RETURN " + function + "(m) AS v"
+				}
+			}
+			result, err := executor.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Len(t, result.Rows, 1, query)
+			require.Nil(t, result.Rows[0][0], query)
+		}
+	}
+}
