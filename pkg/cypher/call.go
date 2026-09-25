@@ -39,17 +39,26 @@ func toFloat32Slice(v interface{}) []float32 {
 	return convert.ToFloat32Slice(v)
 }
 
-// yieldClause represents parsed YIELD information from a CALL statement.
-// Syntax: CALL procedure() YIELD var1, var2 AS alias WHERE condition RETURN ... ORDER BY ... LIMIT n SKIP m
+// yieldClause is a procedure call's YIELD: the yielded columns with their
+// aliases, and the WHERE, ORDER BY, SKIP and LIMIT that may follow them, in
+// that order (YIELD items [WHERE p] [ORDER BY o] [SKIP s] [LIMIT l]). They
+// see the aliases, as a WITH's do. A RETURN after the YIELD isn't part of it:
+// it starts the query's tail.
 type yieldClause struct {
-	items      []yieldItem // List of yielded items (possibly with aliases)
-	yieldAll   bool        // YIELD * - return all columns
-	where      string      // Optional WHERE condition after YIELD
-	hasReturn  bool        // Whether there's a RETURN clause after
-	returnExpr string      // The RETURN expression if present
-	orderBy    string      // ORDER BY clause (e.g., "score DESC")
-	limit      int         // LIMIT value (-1 if not specified)
-	skip       int         // SKIP value (-1 if not specified)
+	items    []yieldItem // List of yielded items (possibly with aliases)
+	yieldAll bool        // YIELD * - return all columns
+	where    string      // WHERE predicate, "" when absent
+	orderBy  string      // ORDER BY items, "" when absent
+	skip     string      // SKIP expression, "" when absent
+	limit    string      // LIMIT expression, "" when absent
+	// misplacedWhere is a WHERE after ORDER BY / SKIP / LIMIT, which Cypher
+	// rejects.
+	misplacedWhere bool
+}
+
+// hasModifiers reports whether the YIELD filters, orders or pages its rows.
+func (y *yieldClause) hasModifiers() bool {
+	return y.where != "" || y.orderBy != "" || y.skip != "" || y.limit != ""
 }
 
 // yieldItem represents a single item in a YIELD clause
@@ -64,7 +73,10 @@ type callSplit struct {
 }
 
 // parseYieldClause extracts YIELD information from a CALL statement.
-// Handles: YIELD *, YIELD a, b, YIELD a AS x, b AS y, YIELD a WHERE a.score > 0.5
+// Handles: YIELD *, YIELD a, b, YIELD a AS x, b AS y, YIELD a WHERE a.score > 0.5,
+// YIELD a ORDER BY a SKIP 1 LIMIT 2. Keywords are found at the top level, so
+// a WHERE / ORDER inside a subquery, a list or a string, and the WITH of
+// STARTS WITH, belong to the expression they are in.
 func parseYieldClause(cypher string) *yieldClause {
 	// Normalize whitespace: replace newlines/tabs with spaces for keyword detection
 	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
@@ -72,183 +84,66 @@ func parseYieldClause(cypher string) *yieldClause {
 	if yieldIdx == -1 {
 		return nil
 	}
+	result := &yieldClause{items: []yieldItem{}}
 
-	result := &yieldClause{
-		items: []yieldItem{},
-		limit: -1,
-		skip:  -1,
-	}
-
-	// Get everything after YIELD
 	afterYield := strings.TrimSpace(normalized[yieldIdx+len("YIELD"):])
-
-	// Check for YIELD *
-	trimmedYield := strings.TrimSpace(afterYield)
-	if len(trimmedYield) > 0 && trimmedYield[0] == '*' {
+	if len(afterYield) > 0 && afterYield[0] == '*' {
 		result.yieldAll = true
 		afterYield = strings.TrimSpace(afterYield[1:])
 	}
 
 	// Limit YIELD parsing to the CALL-clause scope only. Anything after the first
-	// outer clause boundary belongs to the subsequent query pipeline.
+	// outer clause boundary (and a RETURN) belongs to the subsequent query.
 	yieldScope := scopeYieldToCallClause(afterYield)
-	whereIdx := findKeywordIndexInContext(yieldScope, "WHERE")
-	returnIdx := findKeywordIndexInContext(yieldScope, "RETURN")
-	orderIdx := findKeywordIndexInContext(yieldScope, "ORDER")
-	limitIdx := findKeywordIndexInContext(yieldScope, "LIMIT")
-	skipIdx := findKeywordIndexInContext(yieldScope, "SKIP")
+	if returnIdx := topLevelKeywordIndex(yieldScope, "RETURN"); returnIdx >= 0 {
+		yieldScope = strings.TrimSpace(yieldScope[:returnIdx])
+	}
+	whereIdx := topLevelKeywordIndex(yieldScope, "WHERE")
+	orderIdx := topLevelKeywordIndex(yieldScope, "ORDER")
+	skipIdx := topLevelKeywordIndex(yieldScope, "SKIP")
+	limitIdx := topLevelKeywordIndex(yieldScope, "LIMIT")
+	positions := []int{whereIdx, orderIdx, skipIdx, limitIdx}
 
-	// Extract WHERE clause if present
-	if whereIdx != -1 {
-		whereEnd := len(yieldScope)
-		for _, idx := range []int{returnIdx, orderIdx, limitIdx, skipIdx} {
-			if idx != -1 && idx > whereIdx && idx < whereEnd {
-				whereEnd = idx
+	// part returns the text of the keyword at start, up to the next keyword.
+	part := func(start, keywordLen int) string {
+		end := len(yieldScope)
+		for _, idx := range positions {
+			if idx > start && idx < end {
+				end = idx
 			}
 		}
-		if whereEnd > whereIdx+5 {
-			result.where = strings.TrimSpace(yieldScope[whereIdx+5 : whereEnd])
-		} else {
-			result.where = strings.TrimSpace(yieldScope[whereIdx+5:])
+		return strings.TrimSpace(yieldScope[start+keywordLen : end])
+	}
+	if whereIdx >= 0 {
+		result.where = part(whereIdx, len("WHERE"))
+		for _, idx := range []int{orderIdx, skipIdx, limitIdx} {
+			if idx >= 0 && idx < whereIdx {
+				result.misplacedWhere = true
+			}
 		}
 	}
-
-	// Extract RETURN clause if present (strip and parse ORDER BY, LIMIT, SKIP)
-	if returnIdx != -1 {
-		result.hasReturn = true
-		returnPart := strings.TrimSpace(yieldScope[returnIdx+6:])
-
-		// Find ORDER BY, LIMIT, SKIP positions
-		orderIdx := findKeywordIndexInContext(returnPart, "ORDER")
-		limitIdx := findKeywordIndexInContext(returnPart, "LIMIT")
-		skipIdx := findKeywordIndexInContext(returnPart, "SKIP")
-
-		// Find where RETURN items end
-		endIdx := len(returnPart)
-		if orderIdx != -1 {
-			endIdx = min(endIdx, orderIdx)
+	if orderIdx >= 0 {
+		orderBy := part(orderIdx, len("ORDER"))
+		if len(orderBy) >= len("BY") && strings.EqualFold(orderBy[:len("BY")], "BY") {
+			orderBy = strings.TrimSpace(orderBy[len("BY"):])
 		}
-		if limitIdx != -1 {
-			endIdx = min(endIdx, limitIdx)
-		}
-		if skipIdx != -1 {
-			endIdx = min(endIdx, skipIdx)
-		}
-
-		result.returnExpr = strings.TrimSpace(returnPart[:endIdx])
-
-		// Parse ORDER BY clause
-		if orderIdx != -1 {
-			// Find end of ORDER BY (at LIMIT, SKIP, or end of string)
-			orderEnd := len(returnPart)
-			if limitIdx != -1 && limitIdx > orderIdx {
-				orderEnd = min(orderEnd, limitIdx)
-			}
-			if skipIdx != -1 && skipIdx > orderIdx {
-				orderEnd = min(orderEnd, skipIdx)
-			}
-			orderPart := strings.TrimSpace(returnPart[orderIdx:orderEnd])
-			// Strip "ORDER BY" prefix
-			if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER BY") {
-				result.orderBy = strings.TrimSpace(orderPart[8:])
-			} else if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER") {
-				result.orderBy = strings.TrimSpace(orderPart[5:])
-			}
-		}
-
-		// Parse LIMIT value
-		if limitIdx != -1 {
-			limitEnd := len(returnPart)
-			if skipIdx != -1 && skipIdx > limitIdx {
-				limitEnd = skipIdx
-			}
-			limitPart := strings.TrimSpace(returnPart[limitIdx+5 : limitEnd])
-			// Extract just the number
-			limitPart = strings.TrimSpace(strings.Split(limitPart, " ")[0])
-			if n, err := strconv.Atoi(limitPart); err == nil {
-				result.limit = n
-			}
-		}
-
-		// Parse SKIP value
-		if skipIdx != -1 {
-			skipEnd := len(returnPart)
-			if limitIdx != -1 && limitIdx > skipIdx {
-				skipEnd = limitIdx
-			}
-			skipPart := strings.TrimSpace(returnPart[skipIdx+4 : skipEnd])
-			// Extract just the number
-			skipPart = strings.TrimSpace(strings.Split(skipPart, " ")[0])
-			if n, err := strconv.Atoi(skipPart); err == nil {
-				result.skip = n
-			}
-		}
-	} else {
-		// No RETURN clause - parse ORDER BY, LIMIT, SKIP directly from afterYield
-		// Parse ORDER BY clause
-		if orderIdx != -1 {
-			// Find end of ORDER BY (at LIMIT, SKIP, or end of string)
-			orderEnd := len(yieldScope)
-			if limitIdx != -1 && limitIdx > orderIdx {
-				orderEnd = min(orderEnd, limitIdx)
-			}
-			if skipIdx != -1 && skipIdx > orderIdx {
-				orderEnd = min(orderEnd, skipIdx)
-			}
-			orderPart := strings.TrimSpace(yieldScope[orderIdx:orderEnd])
-			// Strip "ORDER BY" prefix
-			if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER BY") {
-				result.orderBy = strings.TrimSpace(orderPart[8:])
-			} else if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER") {
-				result.orderBy = strings.TrimSpace(orderPart[5:])
-			}
-		}
-
-		// Parse LIMIT value
-		if limitIdx != -1 {
-			limitEnd := len(yieldScope)
-			if skipIdx != -1 && skipIdx > limitIdx {
-				limitEnd = skipIdx
-			}
-			if orderIdx != -1 && orderIdx > limitIdx {
-				limitEnd = min(limitEnd, orderIdx)
-			}
-			limitPart := strings.TrimSpace(yieldScope[limitIdx+5 : limitEnd])
-			// Extract just the number
-			limitPart = strings.TrimSpace(strings.Split(limitPart, " ")[0])
-			if n, err := strconv.Atoi(limitPart); err == nil {
-				result.limit = n
-			}
-		}
-
-		// Parse SKIP value
-		if skipIdx != -1 {
-			skipEnd := len(yieldScope)
-			if limitIdx != -1 && limitIdx > skipIdx {
-				skipEnd = limitIdx
-			}
-			if orderIdx != -1 && orderIdx > skipIdx {
-				skipEnd = min(skipEnd, orderIdx)
-			}
-			skipPart := strings.TrimSpace(yieldScope[skipIdx+4 : skipEnd])
-			// Extract just the number
-			skipPart = strings.TrimSpace(strings.Split(skipPart, " ")[0])
-			if n, err := strconv.Atoi(skipPart); err == nil {
-				result.skip = n
-			}
-		}
+		result.orderBy = orderBy
+	}
+	if skipIdx >= 0 {
+		result.skip = part(skipIdx, len("SKIP"))
+	}
+	if limitIdx >= 0 {
+		result.limit = part(limitIdx, len("LIMIT"))
 	}
 
 	// Parse yield items (if not YIELD *)
 	if !result.yieldAll {
-		// Get the items part (before WHERE, RETURN, ORDER, LIMIT, SKIP)
 		itemsEnd := len(yieldScope)
-		for _, idx := range []int{whereIdx, returnIdx, orderIdx, limitIdx, skipIdx} {
+		for _, idx := range positions {
 			if idx != -1 && idx < itemsEnd {
 				itemsEnd = idx
 			}
 		}
-
 		itemsStr := strings.TrimSpace(yieldScope[:itemsEnd])
 		if itemsStr != "" {
 			// Split by comma, respecting AS keyword
@@ -257,17 +152,13 @@ func parseYieldClause(cypher string) *yieldClause {
 				if item == "" {
 					continue
 				}
-
 				yi := yieldItem{}
-				// Check for AS alias
 				upperItem := strings.ToUpper(item)
-				asIdx := strings.Index(upperItem, " AS ")
-				if asIdx != -1 {
+				if asIdx := strings.Index(upperItem, " AS "); asIdx != -1 {
 					yi.name = strings.TrimSpace(item[:asIdx])
 					yi.alias = strings.TrimSpace(item[asIdx+4:])
 				} else {
 					yi.name = item
-					yi.alias = ""
 				}
 				result.items = append(result.items, yi)
 			}
@@ -295,7 +186,7 @@ func findYieldOuterBoundary(afterYield string) int {
 		"WITH", "MATCH", "OPTIONAL", "UNWIND", "CALL",
 		"CREATE", "MERGE", "SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD",
 	} {
-		if idx := findKeywordIndexInContext(afterYield, kw); idx != -1 && idx < scopeEnd {
+		if idx := topLevelKeywordIndex(afterYield, kw); idx != -1 && idx < scopeEnd {
 			scopeEnd = idx
 		}
 	}
@@ -572,7 +463,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	}
 	combined := &ExecuteResult{Columns: append([]string(nil), prefixColumns...)}
 	for _, bindings := range projected {
-		procedureResult, err := e.executeCall(ctx, callParts.callOnly)
+		procedureResult, err := e.executeProcedureCall(ctx, callParts.callOnly, true)
 		if err != nil {
 			return nil, true, err
 		}
@@ -3587,8 +3478,11 @@ func findKeywordIndexInContext(s, keyword string) int {
 	return -1
 }
 
-// applyYieldFilter applies YIELD clause filtering to procedure results.
-// This handles column selection, aliasing, and WHERE filtering.
+// applyYieldFilter applies a procedure call's YIELD to the procedure's rows.
+// It selects and aliases the yielded columns, then filters the rows with the
+// YIELD's WHERE and orders / pages them with its ORDER BY / SKIP / LIMIT the
+// way a WITH does: through the pipeline, over the aliased rows, so the
+// predicate sees the aliases and evaluates like any other WHERE (#530).
 func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteResult, yield *yieldClause) (*ExecuteResult, error) {
 	if yield == nil {
 		return result, nil
@@ -3597,40 +3491,12 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		return nil, err
 	}
 
-	// Apply WHERE filter first
-	if yield.where != "" {
-		filteredRows := make([][]interface{}, 0)
-		for _, row := range result.Rows {
-			// Create a yield-context with the row values mapped to column names
-			yieldCtx := make(map[string]interface{})
-			for i, col := range result.Columns {
-				if i < len(row) {
-					yieldCtx[col] = row[i]
-				}
-			}
-
-			// Evaluate the WHERE condition
-			passes, err := e.evaluateYieldWhere(ctx, yield.where, yieldCtx)
-			if err != nil {
-				// If evaluation fails, include the row (conservative)
-				passes = true
-			}
-			if passes {
-				filteredRows = append(filteredRows, row)
-			}
-		}
-		result.Rows = filteredRows
-	}
-
 	// Apply column selection and aliasing (if not YIELD *)
 	if !yield.yieldAll && len(yield.items) > 0 {
-		// Build column index map
-		colIndex := make(map[string]int)
+		colIndex := make(map[string]int, len(result.Columns))
 		for i, col := range result.Columns {
 			colIndex[col] = i
 		}
-
-		// Build new columns and project rows
 		newColumns := make([]string, 0, len(yield.items))
 		for _, item := range yield.items {
 			if item.alias != "" {
@@ -3639,267 +3505,72 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 				newColumns = append(newColumns, item.name)
 			}
 		}
-
 		newRows := make([][]interface{}, 0, len(result.Rows))
 		for _, row := range result.Rows {
 			newRow := make([]interface{}, len(yield.items))
 			for i, item := range yield.items {
 				if idx, ok := colIndex[item.name]; ok && idx < len(row) {
 					newRow[i] = row[idx]
-				} else {
-					newRow[i] = nil
 				}
 			}
 			newRows = append(newRows, newRow)
 		}
-
 		result.Columns = newColumns
 		result.Rows = newRows
 	}
+	if !yield.hasModifiers() {
+		return result, nil
+	}
 
-	// Apply RETURN clause transformation if present
-	// RETURN allows projecting properties from yielded values and renaming columns
-	// Example: YIELD node, score RETURN node.id as id, node.type, score
-	if yield.hasReturn && yield.returnExpr != "" {
-		var err error
-		result, err = e.applyReturnToYieldResult(ctx, result, yield.returnExpr)
-		if err != nil {
-			return nil, err
+	rows := make([]pipelineRow, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		rows = append(rows, pipelineRow(seedValuesForRow(result, row)))
+	}
+	rows = e.filterPipelineRows(ctx, rows, yield.where)
+	if yield.orderBy != "" || yield.skip != "" || yield.limit != "" {
+		var with strings.Builder
+		with.WriteString("WITH *")
+		if yield.orderBy != "" {
+			with.WriteString(" ORDER BY " + yield.orderBy)
 		}
+		if yield.skip != "" {
+			with.WriteString(" SKIP " + yield.skip)
+		}
+		if yield.limit != "" {
+			with.WriteString(" LIMIT " + yield.limit)
+		}
+		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String())
+		if !ok {
+			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
+			// so only a parameter can make them invalid here.
+			return nil, newSemanticError(
+				"Neo.ClientError.Statement.ArgumentError",
+				"InvalidArgumentType",
+				"SKIP and LIMIT require a non-negative INTEGER",
+			)
+		}
+		rows = ordered
 	}
-
-	// Apply ORDER BY if present
-	if yield.orderBy != "" {
-		result = e.applyOrderByToResult(result, yield.orderBy)
+	result.Rows = make([][]interface{}, 0, len(rows))
+	for _, row := range rows {
+		values := make([]interface{}, len(result.Columns))
+		for i, column := range result.Columns {
+			values[i] = row[column]
+		}
+		result.Rows = append(result.Rows, values)
 	}
-
-	// Apply SKIP if present
-	if yield.skip > 0 && yield.skip < len(result.Rows) {
-		result.Rows = result.Rows[yield.skip:]
-	} else if yield.skip >= len(result.Rows) {
-		result.Rows = [][]interface{}{}
-	}
-
-	// Apply LIMIT if present
-	if yield.limit >= 0 && yield.limit < len(result.Rows) {
-		result.Rows = result.Rows[:yield.limit]
-	}
-
 	return result, nil
 }
 
-// applyReturnToYieldResult transforms procedure results based on a RETURN clause.
-// This handles property access (node.id), aliasing (AS), and expression evaluation.
-func (e *StorageExecutor) applyReturnToYieldResult(ctx context.Context, result *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
-	// Parse RETURN items
-	returnItems := splitReturnExpressions(returnExpr)
-	if len(returnItems) == 0 {
-		return result, nil
-	}
-	if len(returnItems) == 1 && strings.TrimSpace(returnItems[0]) == "*" {
-		return result, nil
-	}
-
-	// Build column index map for current result
-	colIndex := make(map[string]int)
-	for i, col := range result.Columns {
-		colIndex[col] = i
-	}
-
-	// Parse each return item to determine new columns and how to compute values
-	type returnItem struct {
-		expr  string // Original expression (e.g., "node.id", "score")
-		alias string // Column name in output (e.g., "id", "score")
-	}
-	var items []returnItem
-
-	for _, item := range returnItems {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-
-		ri := returnItem{expr: item, alias: item}
-
-		// Check for AS alias
-		upperItem := strings.ToUpper(item)
-		if asIdx := strings.Index(upperItem, " AS "); asIdx != -1 {
-			ri.expr = strings.TrimSpace(item[:asIdx])
-			ri.alias = strings.TrimSpace(item[asIdx+4:])
-		}
-
-		items = append(items, ri)
-	}
-
-	// Build new columns
-	newColumns := make([]string, len(items))
-	for i, item := range items {
-		newColumns[i] = item.alias
-	}
-
-	// Transform each row
-	newRows := make([][]interface{}, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		// Build yield-context with current row values
-		yieldCtx := make(map[string]interface{})
-		for i, col := range result.Columns {
-			if i < len(row) {
-				yieldCtx[col] = row[i]
-			}
-		}
-
-		// Evaluate each return expression
-		newRow := make([]interface{}, len(items))
-		for i, item := range items {
-			newRow[i] = e.evaluateReturnExprInContext(ctx, item.expr, yieldCtx)
-		}
-		newRows = append(newRows, newRow)
-	}
-
-	return &ExecuteResult{
-		Columns: newColumns,
-		Rows:    newRows,
-		Stats:   result.Stats,
-	}, nil
-}
-
-// evaluateReturnExprInContext evaluates a RETURN expression in the context of yielded values.
-// Handles: direct references (score), property access (node.id), and functions.
-func (e *StorageExecutor) evaluateReturnExprInContext(ctx context.Context, expr string, yieldCtx map[string]interface{}) interface{} {
-	expr = strings.TrimSpace(expr)
-
-	// Literal handling
-	if strings.EqualFold(expr, "null") {
-		return nil
-	}
-	if strings.EqualFold(expr, "true") {
-		return true
-	}
-	if strings.EqualFold(expr, "false") {
-		return false
-	}
-	if len(expr) >= 2 {
-		if (expr[0] == '\'' && expr[len(expr)-1] == '\'') || (expr[0] == '"' && expr[len(expr)-1] == '"') {
-			return expr[1 : len(expr)-1]
-		}
-	}
-	if i, err := strconv.ParseInt(expr, 10, 64); err == nil {
-		return i
-	}
-	if f, err := strconv.ParseFloat(expr, 64); err == nil {
-		return f
-	}
-
-	// Direct reference to a yielded value
-	if val, ok := yieldCtx[expr]; ok {
-		return val
-	}
-
-	// Build nodes and rels maps from context for function evaluation
-	nodes := make(map[string]*storage.Node)
-	rels := make(map[string]*storage.Edge)
-	for key, val := range yieldCtx {
-		if node, ok := val.(*storage.Node); ok && node != nil {
-			nodes[key] = node
-		}
-		if edge, ok := val.(*storage.Edge); ok && edge != nil {
-			rels[key] = edge
-		}
-	}
-
-	// Handle function calls (e.g., id(a), elementId(a), labels(a))
-	if strings.Contains(expr, "(") {
-		return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-	}
-
-	// Property access: node.property
-	if strings.Contains(expr, ".") {
-		parts := strings.SplitN(expr, ".", 2)
-		if len(parts) == 2 {
-			varName := strings.TrimSpace(parts[0])
-			propName := strings.TrimSpace(parts[1])
-
-			if val, ok := yieldCtx[varName]; ok {
-				// Handle *storage.Node (Neo4j compatible)
-				if node, ok := val.(*storage.Node); ok && node != nil {
-					// node.id is the "id" property, null when the node has
-					// none, as in Neo4j and on every other route: the
-					// internal ID is elementId(node) / id(node).
-					if propVal, ok := node.Properties[propName]; ok {
-						return propVal
-					}
-					return nil
-				}
-				// If the value is a map (legacy node representation), extract property
-				if mapVal, ok := val.(map[string]interface{}); ok {
-					// Try direct property access
-					if propVal, ok := mapVal[propName]; ok {
-						return propVal
-					}
-					// Try in "properties" sub-map (Neo4j style)
-					if props, ok := mapVal["properties"].(map[string]interface{}); ok {
-						if propVal, ok := props[propName]; ok {
-							return propVal
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Return nil for unresolved expressions
-	return nil
-}
-
-// evaluateYieldWhere evaluates a WHERE condition in the context of YIELD variables.
-func (e *StorageExecutor) evaluateYieldWhere(ctx context.Context, whereExpr string, yieldCtx map[string]interface{}) (bool, error) {
-	// Simple evaluation for common patterns
-	whereExpr = strings.TrimSpace(whereExpr)
-	if whereExpr == "" {
-		return true, nil
-	}
-
-	// Convert context for the expression evaluator.
-	// Preserve real yielded node/relationship values so functions like elementId(node),
-	// id(node), labels(node), and type(relationship) evaluate correctly.
-	nodes := make(map[string]*storage.Node)
-	rels := make(map[string]*storage.Edge)
-	values := valueBindingsLayer(ctx, len(yieldCtx))
-
-	for name, val := range yieldCtx {
-		// Preserve real graph entities.
-		if nodeVal, ok := val.(*storage.Node); ok && nodeVal != nil {
-			nodes[name] = nodeVal
-			continue
-		}
-		if relVal, ok := val.(*storage.Edge); ok && relVal != nil {
-			rels[name] = relVal
-			continue
-		}
-
-		// Maps and scalars are values (valueBindings), not stand-in nodes.
-		values[name] = val
-		if _, isMap := val.(map[string]interface{}); !isMap {
-			// Also add the scalar value directly to enable direct comparisons like "score > 0.5"
-			yieldCtx[name] = val
-		}
-	}
-
-	// Try to evaluate using the expression evaluator with context
-	result := e.evaluateExpressionWithContext(withValueBindings(ctx, values), whereExpr, nodes, rels)
-
-	// Convert result to boolean
-	switch v := result.(type) {
-	case bool:
-		return v, nil
-	case nil:
-		return false, nil
-	default:
-		return false, localizedError(localization.CypherCommandRoutingWhereBooleanRequired(fmt.Sprint(result)), nil)
-	}
-}
-
 func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	return e.executeProcedureCall(ctx, cypher, false)
+}
+
+// executeProcedureCall runs a procedure call and the tail after it. inQuery is
+// true when the call is part of a larger query whose other clauses the caller
+// runs (MATCH … CALL, a CALL in a tail): its YIELD may then filter, order and
+// page, which a standalone call can't (validateYieldModifiers).
+func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher string, inQuery bool) (*ExecuteResult, error) {
 	// Substitute parameters AFTER routing to avoid keyword detection issues
 	if params := getParamsFromContext(ctx); params != nil {
 		cypher = e.substituteParams(cypher, params)
@@ -3915,6 +3586,9 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 
 	// Parse YIELD clause for post-processing
 	yield := parseYieldClause(callCypher)
+	if err := e.validateYieldModifiers(yield, inQuery || strings.TrimSpace(tailCypher) != ""); err != nil {
+		return nil, err
+	}
 
 	// Registry-first path: canonical procedure contract for built-ins and UDFs.
 	ensureBuiltInProceduresRegistered()
@@ -3924,8 +3598,7 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		if err := validateProcedureArgumentPassingMode(proc.Spec, callCypher, hasTail); err != nil {
 			return nil, err
 		}
-		isInQuery := hasTail || (yield != nil && yield.hasReturn)
-		if err := validateProcedureYieldBindings(yield, isInQuery); err != nil {
+		if err := validateProcedureYieldBindings(yield, hasTail); err != nil {
 			return nil, err
 		}
 		args, err := extractProcedureInvocationArguments(ctx, proc.Spec, callCypher)

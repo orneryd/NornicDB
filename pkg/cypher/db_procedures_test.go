@@ -712,16 +712,18 @@ func TestCallDbInfoWithYieldAndWhere(t *testing.T) {
 	exec.Execute(ctx, `CREATE (n:User {name: 'Alice'})`, nil)
 	exec.Execute(ctx, `CREATE (n:User {name: 'Bob'})`, nil)
 
-	// Test YIELD with specific columns and WHERE filtering
-	result, err := exec.Execute(ctx, `CALL db.info() YIELD name, nodeCount WHERE nodeCount > 0`, nil)
-	if err != nil {
-		t.Fatalf("db.info() YIELD...WHERE failed: %v", err)
-	}
+	// YIELD with specific columns and WHERE filtering, in a query.
+	result, err := exec.Execute(ctx, `CALL db.info() YIELD name, nodeCount WHERE nodeCount > 0 RETURN name, nodeCount`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	result, err = exec.Execute(ctx, `CALL db.info() YIELD name, nodeCount WHERE nodeCount > 100 RETURN name, nodeCount`, nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
 
-	// Should have filtered results (only rows where nodeCount > 0)
-	if len(result.Rows) == 0 {
-		t.Log("Note: YIELD WHERE filtering may not be fully implemented")
-	}
+	// A standalone call can't filter, as in Neo4j.
+	_, err = exec.Execute(ctx, `CALL db.info() YIELD name, nodeCount WHERE nodeCount > 0`, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Cannot use standalone call with WHERE")
 }
 
 func TestCallDbLabelsWithYield(t *testing.T) {

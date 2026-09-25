@@ -533,7 +533,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 				}
 			}
 			evaluatedCall := e.substituteBoundVariablesInCall(callSection, nodeScope, relScope)
-			if _, err := e.executeCall(ctx, evaluatedCall); err != nil {
+			if _, err := e.executeProcedureCall(ctx, evaluatedCall, true); err != nil {
 				return nil, err
 			}
 		}

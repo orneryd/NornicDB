@@ -468,7 +468,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 				}
 			}
 			evaluatedCall := e.substituteBoundVariablesInCall(callSection, nodeScope, nil)
-			if _, err := e.executeCall(ctx, evaluatedCall); err != nil {
+			if _, err := e.executeProcedureCall(ctx, evaluatedCall, true); err != nil {
 				return nil, err
 			}
 		}

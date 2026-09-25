@@ -67,6 +67,9 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 		if err := validateProcedureYieldBindings(parseYieldClause(callParts.callOnly), true); err != nil {
 			return nil, err
 		}
+		if err := e.validateYieldModifiers(parseYieldClause(callParts.callOnly), true); err != nil {
+			return nil, err
+		}
 		if _, err := extractProcedureInvocationArguments(ctx, procedure.Spec, callParts.callOnly); err != nil {
 			return nil, err
 		}
@@ -187,7 +190,7 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 		evaluatedCall := e.substituteBoundVariablesInCall(callParts.callOnly, nodeContext, nil)
 
 		// Execute the CALL with evaluated values
-		result, err := e.executeCall(ctx, evaluatedCall)
+		result, err := e.executeProcedureCall(ctx, evaluatedCall, true)
 		if err != nil {
 			return nil, localizedError(localization.CypherSubqueriesCallForNodeFailed(string(node.ID), err), err)
 		}
@@ -3497,7 +3500,7 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 				newRow[i] = row[p.idx]
 				continue
 			}
-			newRow[i] = e.evaluateReturnExprInContext(ctx, p.expr, yieldCtx)
+			newRow[i], _ = e.evaluateRowExpressionWithContext(ctx, p.expr, pipelineRow(yieldCtx))
 		}
 		newRows = append(newRows, newRow)
 	}

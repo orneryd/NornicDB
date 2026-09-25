@@ -645,7 +645,7 @@ func TestExecuteCallWithYieldWhere(t *testing.T) {
 
 	t.Run("YIELD with WHERE filtering", func(t *testing.T) {
 		// WHERE should filter results
-		result, err := exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label = 'Memory'", nil)
+		result, err := exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label = 'Memory' RETURN label", nil)
 		require.NoError(t, err)
 		require.Equal(t, []string{"label"}, result.Columns)
 		require.Equal(t, 1, len(result.Rows), "WHERE should filter to only 'Memory' label")
@@ -655,7 +655,7 @@ func TestExecuteCallWithYieldWhere(t *testing.T) {
 	t.Run("YIELD with WHERE CONTAINS", func(t *testing.T) {
 		// WHERE with CONTAINS operator
 		// Search for 'd' which is only in "Todo"
-		result, err := exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label CONTAINS 'd'", nil)
+		result, err := exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label CONTAINS 'd' RETURN label", nil)
 		require.NoError(t, err)
 		foundLabels := make(map[string]bool)
 		for _, row := range result.Rows {
@@ -669,7 +669,7 @@ func TestExecuteCallWithYieldWhere(t *testing.T) {
 
 	t.Run("YIELD with WHERE <> (not equals)", func(t *testing.T) {
 		// WHERE with <> operator
-		result, err := exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label <> 'Memory'", nil)
+		result, err := exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label <> 'Memory' RETURN label", nil)
 		require.NoError(t, err)
 		for _, row := range result.Rows {
 			require.NotEqual(t, "Memory", row[0], "Memory should be filtered out")
@@ -744,10 +744,8 @@ func TestParseYieldClause(t *testing.T) {
 			name:   "yield with WHERE and RETURN",
 			cypher: "CALL db.labels() YIELD label WHERE label = 'Memory' RETURN label",
 			expected: &yieldClause{
-				items:      []yieldItem{{name: "label", alias: ""}},
-				where:      "label = 'Memory'",
-				hasReturn:  true,
-				returnExpr: "label",
+				items: []yieldItem{{name: "label", alias: ""}},
+				where: "label = 'Memory'",
 			},
 		},
 		{
@@ -898,10 +896,6 @@ func TestParseYieldClause(t *testing.T) {
 				}
 			}
 			assert.Equal(t, tt.expected.where, result.where, "where mismatch")
-			assert.Equal(t, tt.expected.hasReturn, result.hasReturn, "hasReturn mismatch")
-			if tt.expected.hasReturn {
-				assert.Equal(t, tt.expected.returnExpr, result.returnExpr, "returnExpr mismatch")
-			}
 		})
 	}
 }

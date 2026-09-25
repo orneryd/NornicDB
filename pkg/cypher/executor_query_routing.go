@@ -244,10 +244,13 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 				if hasMutationBeforeCall {
 					goto skipMatchCallRoute
 				}
+				// The pipeline runs a read-only registered procedure as a clause
+				// over every row, so the YIELD's WHERE sees the row's variables
+				// and later clauses see all rows; it declines other calls.
+				if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+					return result, err
+				}
 				if findKeywordIndex(cypher[:callIdx], "WITH") > 0 {
-					if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
-						return result, err
-					}
 					return e.executeMatchWithClause(ctx, cypher)
 				}
 				return e.executeMatchWithCallProcedure(ctx, cypher)

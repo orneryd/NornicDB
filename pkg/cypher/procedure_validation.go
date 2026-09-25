@@ -63,6 +63,42 @@ func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string,
 	)
 }
 
+// validateYieldModifiers checks a YIELD's WHERE / ORDER BY / SKIP / LIMIT
+// as Neo4j does when it compiles the statement: a standalone call (nothing
+// after the YIELD) can't have any of them, a WHERE must come before
+// ORDER BY / SKIP / LIMIT, and SKIP / LIMIT follow the same rules as in a
+// WITH or RETURN.
+func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail bool) error {
+	if yield == nil || !yield.hasModifiers() {
+		return nil
+	}
+	if !hasTail {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidSyntax",
+			"Cannot use standalone call with WHERE (instead use: `CALL ... WITH * WHERE ... RETURN *`)",
+		)
+	}
+	if yield.misplacedWhere {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidSyntax",
+			"Invalid input 'WHERE': a YIELD's WHERE must come before its ORDER BY, SKIP and LIMIT",
+		)
+	}
+	if yield.skip != "" {
+		if err := e.validateStaticPaginationExpression("SKIP", yield.skip); err != nil {
+			return err
+		}
+	}
+	if yield.limit != "" {
+		if err := e.validateStaticPaginationExpression("LIMIT", yield.limit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 	if yield == nil {
 		return nil
