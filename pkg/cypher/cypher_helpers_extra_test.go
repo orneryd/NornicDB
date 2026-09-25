@@ -2808,13 +2808,17 @@ func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
 	assert.EqualValues(t, 1, exec.countSubqueryMatches(a, "n", "MATCH ()-[:LIKES]->(n)"))
 	assert.EqualValues(t, 1, exec.countSubqueryMatches(a, "n", "MATCH ()-[r]->(n)"))
 
-	assert.True(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() }"))
-	assert.True(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } = 1"))
-	assert.True(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } != 2"))
-	assert.True(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } <= 1"))
-	assert.False(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } > 1"))
-	assert.False(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } = nope"))
-	assert.False(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() "))
+	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() }", nil))
+	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } = 1", nil))
+	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } != 2", nil))
+	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } <= 1", nil))
+	assert.False(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } > 1", nil))
+	assert.False(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } = nope", nil))
+	assert.False(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() ", nil))
+	assert.False(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } <> 1", nil))
+	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } <> 2", nil))
+	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } < x", map[string]interface{}{"x": int64(2)}))
+	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { (n)-[:KNOWS]->() } + 1 = 2", nil))
 }
 
 func TestCypherHelpers_ExtractionHelpers_Branches(t *testing.T) {

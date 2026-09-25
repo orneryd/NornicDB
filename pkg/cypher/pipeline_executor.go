@@ -1413,7 +1413,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		if hasNullPatternBinding {
 			continue
 		}
-		substituted := e.materializePipelinePropertyExpressions(clause, row)
+		substituted := e.materializePipelinePropertyExpressions(ctx, clause, row)
 		var matchPieces []string
 		for name, val := range row {
 			if node, isNode := val.(*storage.Node); isNode {
@@ -1603,7 +1603,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		materializedPattern := e.materializePipelinePropertyExpressions(pattern, row)
+		materializedPattern := e.materializePipelinePropertyExpressions(ctx, pattern, row)
 		materializedWhere := e.materializePipelinePredicateExpressions(whereClause, row)
 		physicalWhere := pipelineTraversalPushdownPredicate(materializedWhere, row, variables)
 		rowHint := hint
@@ -1786,7 +1786,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	candidateCache := make(map[string][]*storage.Node)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		materializedPattern := e.materializePipelinePropertyExpressions(pattern, row)
+		materializedPattern := e.materializePipelinePropertyExpressions(ctx, pattern, row)
 		materializedWhere := e.materializePipelinePredicateExpressions(whereClause, row)
 		nodePattern := e.parseNodePattern(ctx, materializedPattern)
 		if bound, exists := row[nodePattern.variable]; exists {
@@ -2342,7 +2342,7 @@ func (e *StorageExecutor) pipelineApplyCreate(ctx context.Context, rows []pipeli
 	for _, row := range rows {
 		// Substitute scalar bindings (e.g. prodRef.productID → literal) up
 		// front so the CREATE pattern parser sees a concrete value.
-		substituted := e.materializePipelinePropertyExpressions(clause, row)
+		substituted := e.materializePipelinePropertyExpressions(ctx, clause, row)
 		for name, val := range row {
 			if node, isNode := val.(*storage.Node); isNode {
 				if node != nil {
@@ -2441,7 +2441,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	stats := &QueryStats{}
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		substituted := e.materializePipelinePropertyExpressions(clause, row)
+		substituted := e.materializePipelinePropertyExpressions(ctx, clause, row)
 		nodeContext := make(map[string]*storage.Node)
 		relContext := make(map[string]*storage.Edge)
 		for name, value := range row {
@@ -2617,7 +2617,7 @@ func splitMergeClauseActions(mergeBody string) (pattern, onCreateSet, onMatchSet
 // the current row before the CREATE/MERGE parsers consume them. Substituting a
 // variable token alone is insufficient for expressions such as row.parts[0]
 // or row.value + '!': it can turn valid expressions into quoted source text.
-func (e *StorageExecutor) materializePipelinePropertyExpressions(clause string, row pipelineRow) string {
+func (e *StorageExecutor) materializePipelinePropertyExpressions(ctx context.Context, clause string, row pipelineRow) string {
 	var output strings.Builder
 	output.Grow(len(clause))
 	for cursor := 0; cursor < len(clause); {
@@ -2642,7 +2642,7 @@ func (e *StorageExecutor) materializePipelinePropertyExpressions(clause string, 
 			}
 			key := strings.TrimSpace(pair[:colon])
 			expression := strings.TrimSpace(pair[colon+1:])
-			if value, ok := e.evaluateRowExpression(expression, row); ok {
+			if value, ok := e.evaluateRowExpressionWithContext(ctx, expression, row); ok {
 				expression = e.valueToLiteral(value)
 			}
 			materialized = append(materialized, key+": "+expression)
@@ -3780,6 +3780,11 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
 	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
 		expr = inner
+	}
+	if mayContainSubqueryExpression(expr) {
+		if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
+			return toAnySlice(value), true
+		}
 	}
 	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
 		return items, true

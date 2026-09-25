@@ -126,10 +126,16 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 	}
 	if precedingToken >= 0 {
 		switch query[precedingToken] {
-		case ':', '`':
-			// Label/type name (`:Count {bad}`) or backtick-quoted
-			// identifier (`` `count` {bad} ``), never the keyword.
+		case '`':
+			// Backtick-quoted identifier (`` `count` {bad} ``), never the
+			// keyword.
 			return false
+		case ':':
+			// Label/type name (`:Count {bad}`), unless the colon separates
+			// a map key from its value ({k: COUNT { … }}).
+			if !colonIsMapKeySeparator(query, precedingToken) {
+				return false
+			}
 		}
 	}
 	return subqueryBraceBodyStartsLikeClause(query, braceIndex)
@@ -242,4 +248,32 @@ func undefinedStandaloneMapValue(expression string) string {
 		}
 	}
 	return ""
+}
+
+// colonIsMapKeySeparator reports whether the ':' at colon follows a map key
+// ({key: …} or {…, key: …}) rather than a variable or label in a pattern.
+func colonIsMapKeySeparator(query string, colon int) bool {
+	index := colon - 1
+	for index >= 0 && isCypherWhitespace(query[index]) {
+		index--
+	}
+	if index >= 0 && query[index] == '`' {
+		index--
+		for index >= 0 && query[index] != '`' {
+			index--
+		}
+		index--
+	} else {
+		end := index
+		for index >= 0 && isWordChar(query[index]) {
+			index--
+		}
+		if index == end {
+			return false
+		}
+	}
+	for index >= 0 && isCypherWhitespace(query[index]) {
+		index--
+	}
+	return index >= 0 && (query[index] == '{' || query[index] == ',')
 }

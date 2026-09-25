@@ -3034,7 +3034,7 @@ func (e *StorageExecutor) evaluateInnerWhere(ctx context.Context, node *storage.
 
 	// Check for nested COUNT subquery
 	if hasSubqueryPattern(whereClause, countSubqueryRe) {
-		return e.evaluateCountSubqueryComparison(node, variable, whereClause)
+		return e.evaluateCountSubqueryComparison(ctx, node, variable, whereClause, nil)
 	}
 
 	// Handle NOT prefix
@@ -3299,109 +3299,69 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 	return false
 }
 
-// evaluateCountSubqueryComparison evaluates COUNT { } subquery with comparison
-// Syntax: COUNT { MATCH (node)-[:TYPE]->(other) } > 5
-// Returns true if the comparison holds
-func (e *StorageExecutor) evaluateCountSubqueryComparison(node *storage.Node, variable, whereClause string) bool {
-	// Extract the subquery from COUNT { ... }
-	subquery := e.extractSubquery(whereClause, "COUNT")
-	if subquery == "" {
+// evaluateCountSubqueryComparison evaluates a predicate that starts with a
+// COUNT { } subquery over node (bound to variable), e.g.
+// COUNT { MATCH (n)-[:TYPE]->() } > 5. The count comes from
+// countSubqueryMatches; whatever follows the closing brace (a comparison with
+// a literal, a parameter or a row value, arithmetic, <>, IN, …) is evaluated
+// by the row predicate evaluator with the count in its place, over values (the
+// row, which holds node). No comparison means count > 0.
+func (e *StorageExecutor) evaluateCountSubqueryComparison(ctx context.Context, node *storage.Node, variable, whereClause string, values map[string]interface{}) bool {
+	trimmed := strings.TrimSpace(whereClause)
+	found := findSubqueryExpressions(trimmed)
+	if len(found) == 0 || found[0].kind != "COUNT" || found[0].start != 0 {
 		return false // Malformed COUNT subquery
 	}
-
-	// Count matching relationships
-	count := e.countSubqueryMatches(node, variable, subquery)
-
-	// Extract and evaluate the comparison operator
-	// Find the closing brace to get what comes after
-	upperClause := strings.ToUpper(whereClause)
-	countIdx := strings.Index(upperClause, "COUNT")
-	if countIdx < 0 {
-		return false
-	}
-
-	remaining := whereClause[countIdx:]
-	braceDepth := 0
-	closeIdx := -1
-	for i := 0; i < len(remaining); i++ {
-		if remaining[i] == '{' {
-			braceDepth++
-		} else if remaining[i] == '}' {
-			braceDepth--
-			if braceDepth == 0 {
-				closeIdx = i
-				break
-			}
-		}
-	}
-
-	if closeIdx == -1 {
-		// No closing brace, invalid
-		return false
-	}
-
-	// Get comparison part after COUNT { }
-	comparison := strings.TrimSpace(remaining[closeIdx+1:])
+	count := e.countSubqueryMatches(node, variable, found[0].body)
+	comparison := strings.TrimSpace(trimmed[found[0].end:])
 	if comparison == "" {
-		// No comparison, return true if count > 0
 		return count > 0
 	}
+	if matched, ok := compareCountWithIntegerLiteral(count, comparison); ok {
+		return matched
+	}
+	row := make(pipelineRow, len(values)+2)
+	for name, value := range values {
+		row[name] = value
+	}
+	row[variable] = node
+	const countName = "__count_subquery_value"
+	row[countName] = count
+	return e.evaluateRowPredicate(ctx, countName+" "+comparison, row)
+}
 
-	// Parse comparison operator and value
-	var op string
-	var valueStr string
-
-	if strings.HasPrefix(comparison, ">=") {
-		op = ">="
-		valueStr = strings.TrimSpace(comparison[2:])
-	} else if strings.HasPrefix(comparison, "<=") {
-		op = "<="
-		valueStr = strings.TrimSpace(comparison[2:])
-	} else if strings.HasPrefix(comparison, ">") {
-		op = ">"
-		valueStr = strings.TrimSpace(comparison[1:])
-	} else if strings.HasPrefix(comparison, "<") {
-		op = "<"
-		valueStr = strings.TrimSpace(comparison[1:])
-	} else if strings.HasPrefix(comparison, "=") {
-		op = "="
-		valueStr = strings.TrimSpace(comparison[1:])
-	} else if strings.HasPrefix(comparison, "!=") || strings.HasPrefix(comparison, "<>") {
-		op = "!="
-		if strings.HasPrefix(comparison, "!=") {
-			valueStr = strings.TrimSpace(comparison[2:])
-		} else {
-			valueStr = strings.TrimSpace(comparison[2:])
+// compareCountWithIntegerLiteral evaluates "<op> <integer literal>" (=, <>,
+// !=, <, <=, >, >=) against count without building a row, the common shape of
+// COUNT { } predicates. ok is false for anything else, which the row predicate
+// evaluator handles.
+func compareCountWithIntegerLiteral(count int64, comparison string) (matched bool, ok bool) {
+	op := ""
+	for _, candidate := range [...]string{"<>", "!=", "<=", ">=", "=", "<", ">"} {
+		if strings.HasPrefix(comparison, candidate) {
+			op = candidate
+			break
 		}
-	} else {
-		// No valid operator, treat as > 0
-		return count > 0
 	}
-
-	// Parse the comparison value
-	var compareValue int64
-	_, err := fmt.Sscanf(valueStr, "%d", &compareValue)
+	if op == "" {
+		return false, false
+	}
+	literal, err := strconv.ParseInt(strings.TrimSpace(comparison[len(op):]), 10, 64)
 	if err != nil {
-		// Invalid number, treat as false
-		return false
+		return false, false
 	}
-
-	// Perform comparison
 	switch op {
-	case ">":
-		return count > compareValue
-	case ">=":
-		return count >= compareValue
-	case "<":
-		return count < compareValue
-	case "<=":
-		return count <= compareValue
 	case "=":
-		return count == compareValue
-	case "!=":
-		return count != compareValue
+		return count == literal, true
+	case "<>", "!=":
+		return count != literal, true
+	case "<":
+		return count < literal, true
+	case "<=":
+		return count <= literal, true
+	case ">":
+		return count > literal, true
 	default:
-		return false
+		return count >= literal, true
 	}
 }
 

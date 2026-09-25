@@ -2040,10 +2040,7 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 			if pat == "" {
 				continue
 			}
-			if containsOutsideStrings(pat, "->") ||
-				containsOutsideStrings(pat, "<-") ||
-				containsOutsideStrings(pat, "]-") ||
-				containsOutsideStrings(pat, "-[") {
+			if patternHasRelationship(pat) {
 				return nil, nil, false
 			}
 			nodePatterns = append(nodePatterns, pat)

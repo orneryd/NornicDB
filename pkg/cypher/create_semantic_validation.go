@@ -133,8 +133,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 		if pattern == "" {
 			continue
 		}
-		isRelationshipPattern := containsOutsideStrings(pattern, "->") ||
-			containsOutsideStrings(pattern, "<-") || containsOutsideStrings(pattern, "-[")
+		isRelationshipPattern := patternHasRelationship(pattern)
 		relationshipVariables := extractRelationshipVariables(pattern)
 		for _, variable := range relationshipVariables {
 			if scope.contains(variable) {
