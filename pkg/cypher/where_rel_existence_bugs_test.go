@@ -300,10 +300,10 @@ func TestCheckSubqueryMatch_BareBody(t *testing.T) {
 	connected := getNodeByName("connected")
 	orphan := getNodeByName("orphan")
 
-	assert.True(t, exec.checkSubqueryMatch(ctx, connected, "n", "(n)-->()"), "bare directed body should match connected")
-	assert.False(t, exec.checkSubqueryMatch(ctx, orphan, "n", "(n)-->()"), "bare directed body should not match orphan")
-	assert.True(t, exec.checkSubqueryMatch(ctx, connected, "n", "(n)--()"), "bare undirected body should match connected")
-	assert.False(t, exec.checkSubqueryMatch(ctx, orphan, "n", "(n)--()"), "bare undirected body should not match orphan")
+	assert.True(t, exec.nodeSubqueryExists(ctx, connected, "n", "(n)-->()"), "bare directed body should match connected")
+	assert.False(t, exec.nodeSubqueryExists(ctx, orphan, "n", "(n)-->()"), "bare directed body should not match orphan")
+	assert.True(t, exec.nodeSubqueryExists(ctx, connected, "n", "(n)--()"), "bare undirected body should match connected")
+	assert.False(t, exec.nodeSubqueryExists(ctx, orphan, "n", "(n)--()"), "bare undirected body should not match orphan")
 }
 
 func TestCountSubqueryMatches_BareBody(t *testing.T) {
@@ -322,10 +322,10 @@ func TestCountSubqueryMatches_BareBody(t *testing.T) {
 	connected := getNodeByName("connected")
 	orphan := getNodeByName("orphan")
 
-	assert.Equal(t, int64(1), exec.countSubqueryMatches(connected, "n", "(n)-->()"))
-	assert.Equal(t, int64(0), exec.countSubqueryMatches(orphan, "n", "(n)-->()"))
-	assert.Equal(t, int64(1), exec.countSubqueryMatches(connected, "n", "(n)--()"))
-	assert.Equal(t, int64(0), exec.countSubqueryMatches(orphan, "n", "(n)--()"))
+	assert.Equal(t, int64(1), subqueryCount(t, exec, connected, "n", "(n)-->()"))
+	assert.Equal(t, int64(0), subqueryCount(t, exec, orphan, "n", "(n)-->()"))
+	assert.Equal(t, int64(1), subqueryCount(t, exec, connected, "n", "(n)--()"))
+	assert.Equal(t, int64(0), subqueryCount(t, exec, orphan, "n", "(n)--()"))
 	// MATCH-prefixed body should agree with the bare form.
-	assert.Equal(t, int64(1), exec.countSubqueryMatches(connected, "n", "MATCH (n)-->()"))
+	assert.Equal(t, int64(1), subqueryCount(t, exec, connected, "n", "MATCH (n)-->()"))
 }

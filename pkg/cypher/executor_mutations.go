@@ -2366,29 +2366,21 @@ func (e *StorageExecutor) idCounter() int64 {
 // evaluateExistsSubquery checks if an EXISTS { } subquery returns any matches
 // Syntax: EXISTS { MATCH (node)<-[:TYPE]-(other) }
 func (e *StorageExecutor) evaluateExistsSubquery(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
-	// Extract the subquery from EXISTS { ... }
 	subquery := e.extractSubquery(whereClause, "EXISTS")
 	if subquery == "" {
 		return true // No valid subquery, pass through
 	}
+	return e.nodeSubqueryExists(ctx, node, variable, subquery)
+}
 
-	// Full existential bodies share the converged clause pipeline. Seed the
-	// correlated entity as an input row so MATCH/WITH/aggregation/WHERE/RETURN
-	// retain their normal streaming semantics instead of growing a second
-	// subquery executor.
-	if clauses, ok := splitPipelineClauses(subquery); ok && len(clauses) > 1 {
-		correlated := e.cloneWithStorage(e.getStorage(ctx))
-		correlated.fabricRecordBindings = cloneStringAnyMap(e.fabricRecordBindings)
-		if correlated.fabricRecordBindings == nil {
-			correlated.fabricRecordBindings = make(map[string]interface{})
-		}
-		correlated.fabricRecordBindings[variable] = node
-		result, handled, err := correlated.executePipeline(ctx, subquery)
-		return err == nil && handled && result != nil && len(result.Rows) > 0
-	}
-
-	// Execute compact pattern bodies with the common pattern matcher.
-	return e.checkSubqueryMatch(ctx, node, variable, subquery)
+// nodeSubqueryExists is whether the EXISTS body subquery has a row for node
+// bound to variable. It runs through the one subquery evaluator
+// (rowSubqueryValue), as a subquery in RETURN or in a row WHERE does, so
+// bodies with several clauses or a CALL subquery are evaluated like any other
+// (#652).
+func (e *StorageExecutor) nodeSubqueryExists(ctx context.Context, node *storage.Node, variable, subquery string) bool {
+	value, ok := e.evaluateRowSubqueryValue(ctx, "EXISTS", subquery, map[string]interface{}{variable: node})
+	return ok && value == true
 }
 
 // evaluateNotExistsSubquery checks if a NOT EXISTS { } subquery returns no matches
@@ -2399,8 +2391,7 @@ func (e *StorageExecutor) evaluateNotExistsSubquery(ctx context.Context, node *s
 		return true // No valid subquery, pass through
 	}
 
-	// Return true if no matches found
-	return !e.checkSubqueryMatch(ctx, node, variable, subquery)
+	return !e.nodeSubqueryExists(ctx, node, variable, subquery)
 }
 
 // extractSubquery extracts the MATCH pattern from EXISTS { MATCH ... } or NOT EXISTS { MATCH ... }
@@ -2544,154 +2535,6 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
 		return len(incoming) > 0 || len(outgoing) > 0
 	}
-	return false
-}
-
-// checkSubqueryMatch checks if the subquery matches for a given node
-func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.Node, variable, subquery string) bool {
-	// Parse the MATCH pattern from the subquery
-	// Format: MATCH (var)<-[:TYPE]-(other) WHERE ...
-	//
-	// EXISTS { ... } and COUNT { ... } also allow an *implicit* MATCH: a
-	// bare pattern body with no "MATCH " keyword (e.g. "EXISTS { (n)--() }").
-	// The previous version required the "MATCH " prefix unconditionally, so
-	// a bare body always returned false here.
-	subquery = strings.TrimSpace(subquery)
-	upperSub := strings.ToUpper(subquery)
-
-	var pattern string
-	switch {
-	case strings.HasPrefix(upperSub, "MATCH "):
-		pattern = strings.TrimSpace(subquery[6:])
-	case strings.HasPrefix(subquery, "("):
-		pattern = subquery
-	default:
-		return false
-	}
-
-	// Split out any WHERE clause from the pattern
-	innerWhere := ""
-
-	// Use regex to find WHERE with any whitespace before it (including newlines)
-	whereRe := regexp.MustCompile(`(?i)\s+WHERE\s+`)
-	if loc := whereRe.FindStringIndex(pattern); loc != nil {
-		innerWhere = strings.TrimSpace(pattern[loc[1]:])
-		pattern = strings.TrimSpace(pattern[:loc[0]])
-	}
-
-	// An uncorrelated node-pattern subquery does not reference the outer
-	// variable, but it still determines EXISTS/NOT EXISTS for every outer row.
-	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
-		if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
-			return false
-		}
-		nodePattern := e.parseNodePattern(ctx, pattern)
-		if len(nodePattern.labels) == 0 && len(nodePattern.properties) == 0 {
-			return false
-		}
-		nodes, err := e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-		if err != nil {
-			return false
-		}
-		if len(nodePattern.properties) > 0 {
-			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
-		}
-		return len(nodes) > 0
-	}
-
-	// Use the shared one-hop pattern parser so target labels, inline property
-	// maps, relationship bindings, and predicates all see the same complete
-	// correlated row. The older edge-only path below predates inline target
-	// properties and can only evaluate the target node in isolation.
-	if strings.Count(pattern, "-[") == 1 &&
-		!hasSubqueryPattern(innerWhere, existsSubqueryRe) &&
-		!hasSubqueryPattern(innerWhere, countSubqueryRe) {
-		relPattern := e.parseOptionalRelPattern(ctx, pattern)
-		if relPattern.sourceVar == variable {
-			for _, related := range e.findRelatedNodes(node, relPattern) {
-				values := map[string]interface{}{variable: node}
-				if relPattern.targetVar != "" {
-					values[relPattern.targetVar] = related.node
-				}
-				if relPattern.relVar != "" {
-					values[relPattern.relVar] = related.edge
-				}
-				if innerWhere == "" || e.evaluateRowPredicate(ctx, innerWhere, values) {
-					return true
-				}
-			}
-			return false
-		}
-	}
-
-	// Check for chained relationship pattern (e.g., (p)-[:KNOWS]->()-[:KNOWS]->())
-	// Count the number of relationship hops by counting relationship brackets [-
-	// Each hop has one -[...]-
-	relationshipCount := strings.Count(pattern, "-[")
-	if relationshipCount > 1 {
-		return e.checkChainedPattern(node, variable, pattern, innerWhere)
-	}
-
-	// Extract the target variable name from pattern (e.g., "report" from "(m)-[:MANAGES]->(report)")
-	targetVar := e.extractTargetVariable(pattern, variable)
-
-	// Parse relationship pattern
-	// Simplified: check for incoming or outgoing relationships
-	var checkIncoming, checkOutgoing bool
-	var relTypes []string
-
-	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
-
-	// Check for matching edges
-	if checkIncoming {
-		edges, _ := e.storage.GetIncomingEdges(node.ID)
-		for _, edge := range edges {
-			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
-				// If there's an inner WHERE, check it against the connected node
-				// Only evaluate WHERE if we have a target variable (otherwise we can't match properties)
-				if innerWhere != "" && targetVar != "" {
-					sourceNode, err := e.storage.GetNode(edge.StartNode)
-					if err != nil || !e.evaluateInnerWhere(ctx, sourceNode, targetVar, innerWhere) {
-						continue
-					}
-				} else if innerWhere != "" && targetVar == "" {
-					// If we have a WHERE clause but no target variable, we can't evaluate it
-					// This means the pattern doesn't have a named target, so skip this edge
-					continue
-				}
-				return true
-			}
-		}
-	}
-
-	if checkOutgoing {
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
-		for _, edge := range edges {
-			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
-				// If there's an inner WHERE, check it against the connected node
-				// Only evaluate WHERE if we have a target variable (otherwise we can't match properties)
-				if innerWhere != "" && targetVar != "" {
-					targetNode, err := e.storage.GetNode(edge.EndNode)
-					if err != nil || !e.evaluateInnerWhere(ctx, targetNode, targetVar, innerWhere) {
-						continue
-					}
-				} else if innerWhere != "" && targetVar == "" {
-					// If we have a WHERE clause but no target variable, we can't evaluate it
-					// This means the pattern doesn't have a named target, so skip this edge
-					continue
-				}
-				return true
-			}
-		}
-	}
-
-	// If no direction specified, check both
-	if !checkIncoming && !checkOutgoing {
-		incoming, _ := e.storage.GetIncomingEdges(node.ID)
-		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
-		return len(incoming) > 0 || len(outgoing) > 0
-	}
-
 	return false
 }
 
@@ -3244,7 +3087,22 @@ func (e *StorageExecutor) evaluateCountSubqueryComparison(ctx context.Context, n
 	if len(found) == 0 || found[0].kind != "COUNT" || found[0].start != 0 {
 		return false // Malformed COUNT subquery
 	}
-	count := e.countSubqueryMatches(node, variable, found[0].body)
+	// The one subquery evaluator (rowSubqueryValue) counts the body with the
+	// row bound, as COUNT in RETURN does (#652): one directed hop from the
+	// node by its degree (boundDegreeCount), other patterns by the traversal
+	// kernel, anything else as a correlated pipeline.
+	var count int64
+	if shape := parseBoundDegreeShape(found[0].body); shape.ok && shape.variable == variable {
+		count = e.nodeDegreeCount(ctx, node, shape)
+	} else {
+		subqueryRow := make(map[string]interface{}, len(values)+1)
+		for name, value := range values {
+			subqueryRow[name] = value
+		}
+		subqueryRow[variable] = node
+		value, _ := e.evaluateRowSubqueryValue(ctx, "COUNT", found[0].body, subqueryRow)
+		count, _ = value.(int64)
+	}
 	comparison := strings.TrimSpace(trimmed[found[0].end:])
 	if comparison == "" {
 		return count > 0
@@ -3295,77 +3153,6 @@ func compareCountWithIntegerLiteral(count int64, comparison string) (matched boo
 	default:
 		return count >= literal, true
 	}
-}
-
-// countSubqueryMatches counts how many matches a subquery produces
-func (e *StorageExecutor) countSubqueryMatches(node *storage.Node, variable, subquery string) int64 {
-	// Parse the MATCH pattern from the subquery.
-	//
-	// COUNT { ... } allows an *implicit* MATCH: a bare pattern body with no
-	// "MATCH " keyword (e.g. "COUNT { (n)--() }"). The previous version
-	// required the "MATCH " prefix unconditionally, so a bare body always
-	// returned 0 here.
-	subquery = strings.TrimSpace(subquery)
-	upperSub := strings.ToUpper(subquery)
-
-	var pattern string
-	switch {
-	case strings.HasPrefix(upperSub, "MATCH "):
-		pattern = strings.TrimSpace(subquery[6:])
-	case strings.HasPrefix(subquery, "("):
-		pattern = subquery
-	default:
-		return 0
-	}
-
-	// Check if pattern references our variable
-	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
-		return 0
-	}
-
-	// Parse relationship pattern
-	var checkIncoming, checkOutgoing bool
-	var relTypes []string
-
-	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
-
-	if !checkIncoming && !checkOutgoing {
-		// Bracket-less pattern (e.g. "(n)-->()", "(n)--()") -- the checks
-		// above only recognize bracketed arrows.
-		if in, out, ok := bareRelDirection(pattern, variable); ok {
-			checkIncoming, checkOutgoing = in, out
-		}
-	}
-
-	// Count matching edges
-	var count int64
-
-	if checkIncoming {
-		edges, _ := e.storage.GetIncomingEdges(node.ID)
-		for _, edge := range edges {
-			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
-				count++
-			}
-		}
-	}
-
-	if checkOutgoing {
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
-		for _, edge := range edges {
-			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
-				count++
-			}
-		}
-	}
-
-	// If no direction specified, count both
-	if !checkIncoming && !checkOutgoing {
-		incoming, _ := e.storage.GetIncomingEdges(node.ID)
-		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
-		count = int64(len(incoming) + len(outgoing))
-	}
-
-	return count
 }
 
 // validatePolicyOnLabelChange checks RELATIONSHIP_POLICY constraints when a node's labels

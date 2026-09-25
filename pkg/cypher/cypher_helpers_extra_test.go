@@ -2802,11 +2802,13 @@ func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
 	a, err := eng.GetNode("a")
 	require.NoError(t, err)
 
-	assert.EqualValues(t, 0, exec.countSubqueryMatches(a, "n", "RETURN 1"))
-	assert.EqualValues(t, 0, exec.countSubqueryMatches(a, "n", "MATCH (x)-[:KNOWS]->()"))
-	assert.EqualValues(t, 1, exec.countSubqueryMatches(a, "n", "MATCH (n)-[:KNOWS]->()"))
-	assert.EqualValues(t, 1, exec.countSubqueryMatches(a, "n", "MATCH ()-[:LIKES]->(n)"))
-	assert.EqualValues(t, 1, exec.countSubqueryMatches(a, "n", "MATCH ()-[r]->(n)"))
+	// COUNT bodies go through the one subquery evaluator (#652): a body that
+	// doesn't use the row counts its own rows, as in Neo4j.
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "RETURN 1"))
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH (x)-[:KNOWS]->()"))
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH (n)-[:KNOWS]->()"))
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH ()-[:LIKES]->(n)"))
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH ()-[r]->(n)"))
 
 	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() }", nil))
 	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } = 1", nil))
@@ -3724,4 +3726,15 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 	require.Len(t, mapOut.Rows, 1)
 	assert.Equal(t, true, mapOut.Rows[0][0])
 	assert.Equal(t, "map", mapOut.Rows[0][1])
+}
+
+// subqueryCount is COUNT { body } for node bound to variable, through the one
+// subquery evaluator (rowSubqueryValue).
+func subqueryCount(t *testing.T, exec *StorageExecutor, node *storage.Node, variable, body string) int64 {
+	t.Helper()
+	value, ok, err := exec.rowSubqueryValue(context.Background(), "COUNT", body, map[string]interface{}{variable: node})
+	require.NoError(t, err)
+	require.True(t, ok)
+	count, _ := value.(int64)
+	return count
 }
