@@ -199,3 +199,40 @@ func TestSubqueryPredicatesOnEveryRoute(t *testing.T) {
 		}
 	}
 }
+
+// TestLeadingCountSubqueryInWhere pins a WHERE that starts with COUNT { … }:
+// it is a value compared like any other, so it holds for a body correlated
+// through a property or a WITH / UNWIND value, an uncorrelated body and a
+// CALL UNION body, as the parenthesised form and RETURN do; and a number
+// inside a subquery body is not a WHERE syntax error (#652). Expected rows
+// are Neo4j 5.26.30's.
+func TestLeadingCountSubqueryInWhere(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  [][]interface{}
+	}{
+		{"MATCH (i:W) WHERE COUNT { MATCH (o:W) WHERE o.n > i.n RETURN o } > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W) WHERE COUNT { MATCH (o:W) WHERE o.n > i.n RETURN o } = 0 RETURN i.id AS id ORDER BY id", [][]interface{}{{"c"}}},
+		{"MATCH (i:W) WHERE COUNT { MATCH (o:W) WHERE o.n > i.n } > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W) WHERE (COUNT { MATCH (o:W) WHERE o.n > i.n RETURN o }) > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W) WHERE COUNT { MATCH (o:X) RETURN o } > 0 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}, {"c"}}},
+		{"MATCH (i:W) WHERE COUNT { MATCH (o:W) RETURN o } = 3 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}, {"c"}}},
+		{"MATCH (i:W) WITH i, i.n AS k WHERE COUNT { MATCH (o:W) WHERE o.n > k RETURN o } > 0 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"UNWIND [1, 2, 3] AS k WITH k WHERE COUNT { MATCH (o:W) WHERE o.n > k RETURN o } > 0 RETURN k ORDER BY k", [][]interface{}{{int64(1)}, {int64(2)}}},
+		{"MATCH (i:W) WHERE COUNT { CALL () { RETURN 1 AS one UNION RETURN 2 AS one } RETURN one } = 2 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}, {"c"}}},
+		{"MATCH (i:W) WHERE COUNT { MATCH (i)-[:USES]->(o:W) WHERE o.n > 2 RETURN o } = 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (i:W) WHERE EXISTS { MATCH (i)-[:USES]->(o:W) WHERE o.n > 2 } RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (i:W) WHERE COUNT { (i)-[:USES]->() } = 2 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W) WHERE COUNT { (i)<--() } > 0 AND i.n > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W) WHERE size(COLLECT { MATCH (i)-->(o:W) WHERE o.n > 2 RETURN o.n }) = 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (i:W)-[r]->(x) WHERE COUNT { MATCH (o:W) WHERE o.n > x.n RETURN o } = 0 RETURN i.id AS i, x.id AS x ORDER BY i, x", [][]interface{}{{"a", "c"}, {"b", "c"}}},
+	} {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "leadingcount"))
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (a:W {id:'a', n:1})-[:USES]->(b:W {id:'b', n:2}), (c:W {id:'c', n:3}), (a)-[:USES]->(c), (b)-[:USES]->(c), (:X)", nil)
+		require.NoError(t, err)
+		result, err := exec.Execute(ctx, tc.query, nil)
+		require.NoError(t, err, tc.query)
+		require.Equal(t, tc.want, result.Rows, tc.query)
+	}
+}

@@ -1470,9 +1470,6 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 		}
 		return !e.evaluateRowPredicate(ctx, inner, values)
 	}
-	if matched, recognized := e.evaluateRowCountSubqueryPredicate(ctx, expression, values); recognized {
-		return matched
-	}
 	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
 	// COUNT { … } + 1 > 1, …) are evaluated for the row first.
 	if found := nestedSubqueryExpressions(expression); found != nil {
@@ -1687,23 +1684,6 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 		matched = !matched
 	}
 	return matched, true
-}
-
-func (e *StorageExecutor) evaluateRowCountSubqueryPredicate(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
-	if !hasPrefixFold(strings.TrimSpace(expression), "COUNT") || !hasSubqueryPattern(expression, countSubqueryRe) {
-		return false, false
-	}
-	for variable, value := range values {
-		node, ok := value.(*storage.Node)
-		if !ok || node == nil {
-			continue
-		}
-		subquery := e.extractSubquery(expression, "COUNT")
-		if strings.Contains(subquery, "("+variable+")") || strings.Contains(subquery, "("+variable+":") {
-			return e.evaluateCountSubqueryComparison(ctx, node, variable, expression, values), true
-		}
-	}
-	return false, true
 }
 
 func (e *StorageExecutor) evaluateRowStringPredicate(left, right string, values map[string]interface{}, predicate func(string, string) bool) bool {

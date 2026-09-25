@@ -2064,20 +2064,13 @@ func TestCypherHelpers_CompareValuesForSort(t *testing.T) {
 	assert.Equal(t, -1, compareValuesForSort(struct{ X int }{1}, struct{ X int }{2}))
 }
 
-func TestCypherHelpers_SubstituteNodeAndNormalizeProps(t *testing.T) {
+func TestCypherHelpers_NormalizeProps(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(eng)
 
 	node := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}
 	_, err := eng.CreateNode(node)
 	require.NoError(t, err)
-
-	// substituteNodeInSubquery
-	sub := exec.substituteNodeInSubquery("MATCH (n)-[:KNOWS]->(m) RETURN n.name", "n", node)
-	assert.Contains(t, sub, "(n1)-[:KNOWS]->")
-	sub = exec.substituteNodeInSubquery("MATCH (n:Person)-[:KNOWS]->(m) RETURN n.name", "n", node)
-	assert.Contains(t, sub, "(n1:Person)-[:KNOWS]->")
 
 	// normalizePropsMap / normalizePropValue branches
 	props, err := normalizePropsMap(map[interface{}]interface{}{"a": int(1), "b": uint8(2), "c": float32(3.5), "d": []interface{}{int8(1), uint16(2)}}, "var props")
@@ -2810,17 +2803,22 @@ func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
 	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH ()-[:LIKES]->(n)"))
 	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH ()-[r]->(n)"))
 
-	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() }", nil))
-	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } = 1", nil))
-	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } != 2", nil))
-	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } <= 1", nil))
-	assert.False(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } > 1", nil))
-	assert.False(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } = nope", nil))
-	assert.False(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() ", nil))
-	assert.False(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } <> 1", nil))
-	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } <> 2", nil))
-	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } < x", map[string]interface{}{"x": int64(2)}))
-	assert.True(t, exec.evaluateCountSubqueryComparison(context.Background(), a, "n", "COUNT { (n)-[:KNOWS]->() } + 1 = 2", nil))
+	// A leading COUNT { } in a WHERE is a value like any other: the row
+	// predicate evaluator compares it (#652).
+	row := map[string]interface{}{"n": a}
+	predicate := func(expression string, values map[string]interface{}) bool {
+		return exec.evaluateRowPredicate(context.Background(), expression, values)
+	}
+	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } = 1", row))
+	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } <> 2", row))
+	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } <= 1", row))
+	assert.False(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } > 1", row))
+	assert.False(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } <> 1", row))
+	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } < x", map[string]interface{}{"n": a, "x": int64(2)}))
+	assert.True(t, predicate("COUNT { (n)-[:KNOWS]->() } + 1 = 2", row))
+	// Uncorrelated, and correlated through a property, as in RETURN.
+	assert.True(t, predicate("COUNT { MATCH (x)-[:KNOWS]->() } = 1", row))
+	assert.True(t, predicate("COUNT { MATCH (o) WHERE o.id = n.id } = 0", row))
 }
 
 func TestCypherHelpers_ExtractionHelpers_Branches(t *testing.T) {
