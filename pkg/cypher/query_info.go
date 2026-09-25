@@ -2,8 +2,11 @@
 package cypher
 
 import (
+	stderrors "errors"
 	"strings"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // QueryInfo contains analyzed metadata extracted during query parsing.
@@ -332,6 +335,78 @@ func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
 		return false
 	}
 	return true
+}
+
+// MergeUniqueConflictIsRetrySafe reports whether a commit-time UNIQUE
+// violation err of MERGE-only work (IsRetrySafeMergeCommitQuery) can succeed
+// when retried: the violated value must come from a MERGE pattern, which the
+// retry then matches. When a SET in one of the statements writes a violated
+// property explicitly (x.k = …, or a map literal with key k), the clash comes
+// from that SET, fails on every retry, and is reported as the constraint
+// violation it is (MERGE (u:U {k: 7}) SET u.k = 5 against a stored k = 5, #657).
+// A SET from a parameter map can't be inspected and keeps retrying, as before.
+func MergeUniqueConflictIsRetrySafe(statements []string, err error) bool {
+	var violation *storage.ConstraintViolationError
+	if !stderrors.As(err, &violation) || violation == nil {
+		return false
+	}
+	for _, statement := range statements {
+		for _, property := range violation.Properties {
+			if statementSetsProperty(statement, property) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// statementSetsProperty reports whether a SET, ON CREATE SET or ON MATCH SET
+// of statement writes property explicitly.
+func statementSetsProperty(statement, property string) bool {
+	for offset := 0; offset < len(statement); {
+		index := findKeywordIndexInContext(statement[offset:], "SET")
+		if index < 0 {
+			return false
+		}
+		body := statement[offset+index+len("SET"):]
+		end := len(body)
+		for _, keyword := range [...]string{"SET", "ON CREATE", "ON MATCH", "MERGE", "MATCH", "CREATE", "WITH", "RETURN", "UNWIND", "DELETE", "REMOVE"} {
+			if next := findKeywordIndexInContext(body, keyword); next >= 0 && next < end {
+				end = next
+			}
+		}
+		for _, assignment := range splitTopLevelComma(body[:end]) {
+			if setAssignmentWritesProperty(strings.TrimSpace(assignment), property) {
+				return true
+			}
+		}
+		offset += index + len("SET")
+	}
+	return false
+}
+
+// setAssignmentWritesProperty reports whether one SET assignment writes
+// property: x.property = …, or x = / += a map literal with that key.
+func setAssignmentWritesProperty(assignment, property string) bool {
+	operator := strings.Index(assignment, "=")
+	if operator <= 0 {
+		return false
+	}
+	target := strings.TrimSpace(strings.TrimSuffix(assignment[:operator], "+"))
+	if dot := strings.LastIndex(target, "."); dot >= 0 {
+		return normalizePropertyKey(strings.TrimSpace(target[dot+1:])) == property
+	}
+	value := strings.TrimSpace(assignment[operator+1:])
+	if !strings.HasPrefix(value, "{") || findMatchingDelimiter(value, 0, '{', '}') != len(value)-1 {
+		return false
+	}
+	for _, pair := range splitTopLevelComma(value[1 : len(value)-1]) {
+		if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 &&
+			normalizePropertyKey(strings.TrimSpace(pair[:separator])) == property {
+			return true
+		}
+	}
+	return false
 }
 
 // containsKeyword checks if the query contains a keyword as a whole word.

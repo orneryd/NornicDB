@@ -86,17 +86,14 @@ func MapTransientTransactionError(err error) (string, bool) {
 
 // MarkMergeCommitTimeUniqueConflict wraps a UNIQUE constraint violation with a
 // dedicated sentinel when the caller knows it came from a retry-safe MERGE
-// commit race. Only a violation against a value another transaction committed
-// after this one began (ConstraintViolationError.Concurrent) is a race: a
-// violation against a value that was already stored fails the same way on
-// every retry, so it stays a constraint violation (Neo4j's
-// Schema.ConstraintValidationFailed). Other failures are returned unchanged.
+// commit race (cypher.MergeUniqueConflictIsRetrySafe). Non-UNIQUE failures are
+// returned unchanged.
 func MarkMergeCommitTimeUniqueConflict(err error) error {
 	if err == nil || stderrors.Is(err, ErrMergeCommitTimeUniqueConflict) {
 		return err
 	}
 	var violation *storage.ConstraintViolationError
-	if !stderrors.As(err, &violation) || violation == nil || violation.Type != storage.ConstraintUnique || !violation.Concurrent {
+	if !stderrors.As(err, &violation) || violation == nil || violation.Type != storage.ConstraintUnique {
 		return err
 	}
 	return &mergeCommitTimeUniqueConflictError{err: err}

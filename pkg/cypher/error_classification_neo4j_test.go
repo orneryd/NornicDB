@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -178,4 +179,24 @@ func TestConstraintViolationStatusAndRolledBackCommit(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (u:U) RETURN count(u) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), result.Rows[0][0])
+}
+
+// TestMergeUniqueConflictIsRetrySafe covers #657: a UNIQUE violation of MERGE
+// work is a retry-safe race unless a SET writes the violated property.
+func TestMergeUniqueConflictIsRetrySafe(t *testing.T) {
+	violation := &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "U", Properties: []string{"k"}}
+	for statement, want := range map[string]bool{
+		"MERGE (u:U {k: 7})":                                    true,
+		"MERGE (u:U {k: $k}) SET u.name = 'x'":                  true,
+		"MERGE (u:U {k: $k}) SET u += $props":                   true,
+		"MERGE (u:U {k: $k}) SET u.name = 'k = 1'":              true,
+		"MERGE (u:U {k: 7}) SET u.k = 5":                        false,
+		"merge (u:U {n: 1}) on create set u.k = 5":              false,
+		"MERGE (u:U {n: 1}) ON MATCH SET u.name = 'x', u.k = 5": false,
+		"MERGE (u:U {n: 1}) SET u = {k: 5, n: 1}":               false,
+		"MERGE (u:U {n: 1}) SET u.`k` = 5":                      false,
+	} {
+		require.Equal(t, want, MergeUniqueConflictIsRetrySafe([]string{statement}, violation), statement)
+	}
+	require.False(t, MergeUniqueConflictIsRetrySafe([]string{"MERGE (u:U {k: 7})"}, stderrors.New("other")))
 }

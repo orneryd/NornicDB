@@ -2931,9 +2931,7 @@ func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) err
 	if existingNode, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, value); constrained && cacheComplete {
 		if found && existingNode != node.ID {
 			if _, deleted := tx.deletedNodes[existingNode]; !deleted {
-				violation := uniqueConstraintViolation(c.Label, prop, value, existingNode)
-				violation.Concurrent = !tx.snapshotHasUniqueValueLocked(existingNode, c.Label, prop, value)
-				return violation
+				return uniqueConstraintViolation(c.Label, prop, value, existingNode)
 			}
 		}
 		return nil
@@ -2943,18 +2941,6 @@ func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) err
 	// the label scan. Normal schema creation/reload marks the cache complete
 	// once after rebuilding it from stored nodes, so hot writes avoid this path.
 	return tx.scanForUniqueViolation(tx.namespace, c.Label, prop, value, node.ID)
-}
-
-// snapshotHasUniqueValueLocked reports whether nodeID had label and
-// property = value in this transaction's snapshot. A UNIQUE violation against a
-// node that didn't is against a value committed after the transaction began
-// (ConstraintViolationError.Concurrent).
-func (tx *BadgerTransaction) snapshotHasUniqueValueLocked(nodeID NodeID, label, property string, value interface{}) bool {
-	node, err := tx.getCommittedNodeLocked(nodeID)
-	if err != nil || node == nil {
-		return false
-	}
-	return hasLabel(node.Labels, label) && compareValues(node.Properties[property], value)
 }
 
 func uniqueConstraintViolation(label, property string, value interface{}, nodeID NodeID) *ConstraintViolationError {
@@ -3037,9 +3023,7 @@ func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property s
 		}
 		if existingValue, ok := existingNode.Properties[property]; ok && compareValues(existingValue, value) {
 			message := localization.StorageValidationNodeUniqueExisting(property, value, string(existingNode.ID))
-			violation := newLocalizedConstraintViolation(ConstraintUnique, label, []string{property}, message, nil)
-			violation.Concurrent = !tx.snapshotHasUniqueValueLocked(existingNode.ID, label, property, value)
-			return violation
+			return newLocalizedConstraintViolation(ConstraintUnique, label, []string{property}, message, nil)
 		}
 	}
 
@@ -3859,12 +3843,6 @@ type ConstraintViolationError struct {
 	Properties []string
 	Message    string
 	Cause      error
-	// Concurrent is set on a UNIQUE violation against a value another
-	// transaction committed after this one began: the value wasn't there in
-	// this transaction's snapshot. A violation against a value that was
-	// already stored when the transaction began is not concurrent, and
-	// retrying the transaction can't succeed.
-	Concurrent bool
 }
 
 func (e *ConstraintViolationError) Error() string {

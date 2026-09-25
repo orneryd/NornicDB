@@ -2342,7 +2342,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
 		}
-		if info := e.analyzer.Analyze(cypher); IsRetrySafeMergeCommitQuery(info) {
+		if info := e.analyzer.Analyze(cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]string{cypher}, err) {
 			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 		}
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.

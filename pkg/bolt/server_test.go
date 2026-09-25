@@ -2260,7 +2260,6 @@ func TestMapBoltQueryErrorForQueryCommitTimeUniqueConflictRequiresMerge(t *testi
 		Label:      "TerraformResource",
 		Properties: []string{"uid"},
 		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
-		Concurrent: true,
 	}))
 	nonMergeErr := fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
 		Type:       storage.ConstraintUnique,
@@ -2313,7 +2312,6 @@ func TestMapBoltCommitErrorCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
 		Label:      "TerraformResource",
 		Properties: []string{"uid"},
 		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
-		Concurrent: true,
 	})
 
 	tests := []struct {
@@ -2345,15 +2343,43 @@ func TestMapBoltCommitErrorCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
 	}
 }
 
+// uidUniqueViolation is a commit-time UNIQUE violation on TerraformResource.uid.
+var uidUniqueViolation = fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
+	Type:       storage.ConstraintUnique,
+	Label:      "TerraformResource",
+	Properties: []string{"uid"},
+	Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+})
+
+// TestSessionMergeCommitConflictRetryRequiresMergeKeyClash covers #657: a
+// clash on a value a SET wrote explicitly fails on every retry, so it isn't
+// a retry-safe MERGE race.
+func TestSessionMergeCommitConflictRetryRequiresMergeKeyClash(t *testing.T) {
+	for query, retrySafe := range map[string]bool{
+		"MERGE (n:TerraformResource {uid: $uid}) SET n.name = $name":          true,
+		"MERGE (n:TerraformResource {uid: $uid}) SET n += $props":             true,
+		"MERGE (n:TerraformResource {name: $name}) SET n.uid = $uid":          false,
+		"MERGE (n:TerraformResource {name: $name}) SET n += {uid: 'x'}":       false,
+		"MERGE (n:TerraformResource {name: $name}) ON CREATE SET n.uid = 'x'": false,
+		"MERGE (n:TerraformResource {name: $name}) SET n.`uid` = 'x'":         false,
+	} {
+		session := &Session{inTransaction: true}
+		session.recordExplicitTransactionWrite(query, true)
+		if got := session.canRetryMergeCommitConflict(uidUniqueViolation); got != retrySafe {
+			t.Fatalf("%s: retry-safe = %v, want %v", query, got, retrySafe)
+		}
+	}
+}
+
 func TestSessionMergeCommitConflictRetryRequiresMergeOnlyTransaction(t *testing.T) {
 	session := &Session{inTransaction: true}
 	session.recordExplicitTransactionWrite("MERGE (n:TerraformResource {uid: $uid})", true)
-	if !session.canRetryMergeCommitConflict() {
+	if !session.canRetryMergeCommitConflict(uidUniqueViolation) {
 		t.Fatal("MERGE-only transaction should allow commit-time UNIQUE conflict retry classification")
 	}
 
 	session.recordExplicitTransactionWrite("CREATE (n:TerraformResource {uid: $uid})", true)
-	if session.canRetryMergeCommitConflict() {
+	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
 		t.Fatal("mixed MERGE and non-MERGE write transaction should keep commit-time UNIQUE conflict as a hard commit failure")
 	}
 }
@@ -2364,7 +2390,7 @@ func TestSessionMergeCommitConflictRetryRejectsMixedSingleStatementWrite(t *test
 		"CREATE (a:Audit {id: $id}) WITH a MERGE (n:TerraformResource {uid: $uid}) SET n.auditId = a.id",
 		true,
 	)
-	if session.canRetryMergeCommitConflict() {
+	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
 		t.Fatal("single statement mixing CREATE and MERGE should keep commit-time UNIQUE conflict as a hard commit failure")
 	}
 }
@@ -2375,7 +2401,7 @@ func TestSessionMergeCommitConflictRetryRejectsCallWithMerge(t *testing.T) {
 		"CALL custom.writeProc() YIELD value MERGE (n:TerraformResource {uid: value.uid}) RETURN n",
 		true,
 	)
-	if session.canRetryMergeCommitConflict() {
+	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
 		t.Fatal("statement mixing CALL and MERGE should keep commit-time UNIQUE conflict as a hard commit failure")
 	}
 }
