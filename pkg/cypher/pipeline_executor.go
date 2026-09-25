@@ -2752,6 +2752,14 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		postWithWhere = strings.TrimSpace(body[whereIdx+len("WHERE"):])
 		body = strings.TrimSpace(body[:whereIdx])
 	}
+	// WITH … [ORDER BY …] SKIP / LIMIT n WHERE p filters the rows SKIP /
+	// LIMIT keep, as Neo4j does ("take the first n, then filter"). Without
+	// SKIP / LIMIT the filter can run per row, before ordering: the result is
+	// the same.
+	windowedWhere := ""
+	if postWithWhere != "" && (withSkip > 0 || withLimit >= 0) {
+		windowedWhere, postWithWhere = postWithWhere, ""
+	}
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
 			body = strings.TrimSpace(body[:index])
@@ -2775,7 +2783,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
 			return nil, false
 		}
-		return applyPipelineWindow(out, withSkip, withLimit), true
+		return e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), true
 	}
 	items := splitTopLevelComma(body)
 	if len(items) == 0 {
@@ -2918,7 +2926,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 			return nil, false
 		}
-		return applyPipelineWindow(out, withSkip, withLimit), true
+		return e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), true
 	}
 
 	out := make([]pipelineRow, 0, len(rows))
@@ -2991,7 +2999,33 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 		return nil, false
 	}
-	return applyPipelineWindow(out, withSkip, withLimit), true
+	return e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), true
+}
+
+// filterPipelineWindow applies SKIP / LIMIT to rows, then keeps the rows of
+// the window whose scope (the row's projected and incoming values) satisfies
+// whereClause: the WHERE after WITH … SKIP / LIMIT.
+func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes []pipelineRow, skip, limit int, whereClause string) []pipelineRow {
+	if whereClause == "" {
+		return applyPipelineWindow(rows, skip, limit)
+	}
+	start, end := 0, len(rows)
+	if skip > 0 {
+		start = skip
+		if start > end {
+			start = end
+		}
+	}
+	if limit >= 0 && start+limit < end {
+		end = start + limit
+	}
+	filtered := make([]pipelineRow, 0, end-start)
+	for index := start; index < end; index++ {
+		if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(scopes[index])) {
+			filtered = append(filtered, rows[index])
+		}
+	}
+	return filtered
 }
 
 func pipelinePaginationExpression(body, keyword string) string {
@@ -3001,7 +3035,8 @@ func pipelinePaginationExpression(body, keyword string) string {
 	}
 	expression := strings.TrimSpace(body[index+len(keyword):])
 	end := len(expression)
-	for _, nextKeyword := range []string{"SKIP", "LIMIT"} {
+	// WITH … SKIP / LIMIT n WHERE p: the WHERE isn't part of n.
+	for _, nextKeyword := range []string{"SKIP", "LIMIT", "WHERE"} {
 		if nextIndex := topLevelKeywordIndex(expression, nextKeyword); nextIndex >= 0 && nextIndex < end {
 			end = nextIndex
 		}
