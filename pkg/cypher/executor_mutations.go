@@ -1286,9 +1286,9 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			result.Rows = append(result.Rows, newRow)
 		}
 	} else {
-		// Neo4j-compatible default for SET without RETURN: matched row count.
-		result.Columns = []string{"matched"}
-		result.Rows = [][]interface{}{{len(matchResult.Rows)}}
+		// SET without RETURN has no columns and no rows, as in Neo4j (#676).
+		result.Columns = []string{}
+		result.Rows = [][]interface{}{}
 	}
 
 	return result, nil

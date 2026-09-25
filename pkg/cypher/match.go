@@ -306,9 +306,9 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	if returnIdx == -1 {
-		// No RETURN clause - just match and return count
-		result.Columns = []string{"matched"}
-		result.Rows = [][]interface{}{{true}}
+		// No RETURN clause: no columns and no rows, as in Neo4j (#676).
+		result.Columns = []string{}
+		result.Rows = [][]interface{}{}
 		return result, nil
 	}
 
