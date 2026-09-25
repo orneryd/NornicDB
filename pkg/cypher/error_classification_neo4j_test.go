@@ -208,3 +208,56 @@ func TestMergeUniqueConflictIsRetrySafe(t *testing.T) {
 	}
 	require.False(t, MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: "MERGE (u:U {k: 7})"}}, stderrors.New("other")))
 }
+
+// TestErrorClassesMatchNeo4j covers the #657 error-class cases, each as Neo4j
+// 5.26 reports it: runtime failures in UNWIND projections, list
+// comprehensions and ORDER BY; missing parameters; unknown and failing
+// procedures.
+func TestErrorClassesMatchNeo4j(t *testing.T) {
+	exec := newClassificationExecutor(t)
+	const arithmetic = "Neo.ClientError.Statement.ArithmeticError"
+	for _, query := range []string{
+		"UNWIND [1, 0] AS d RETURN 1 / d AS x",
+		"RETURN [x IN [1, 0] | 1 / x] AS l",
+		"RETURN [x IN [1, 0] WHERE 1 / x > 0] AS l",
+		"RETURN [x IN [1, 0] WHERE x > 0 AND 1 / x > 0 OR NOT 1 / x = 1] AS l",
+		"UNWIND [1, 0] AS d RETURN d ORDER BY 1 / d",
+		"UNWIND [1, 0] AS d WITH d ORDER BY 1 / d RETURN d",
+		"UNWIND [1, 0] AS d WITH d ORDER BY d RETURN 1 / d AS x",
+	} {
+		requireStatus(t, exec, query, nil, arithmetic, "/ by zero")
+	}
+
+	const missing = "Neo.ClientError.Statement.ParameterMissing"
+	requireStatus(t, exec, "RETURN $p AS x", nil, missing, "Expected parameter(s): p")
+	requireStatus(t, exec, "RETURN $zz + $aa + $zz AS x", nil, missing, "Expected parameter(s): zz, aa")
+	requireStatus(t, exec, "MATCH (n) WHERE n.v = $p RETURN n", map[string]interface{}{"q": 1}, missing, "Expected parameter(s): p")
+	requireStatus(t, exec, "RETURN $`p q` AS x", nil, missing, "Expected parameter(s): p q")
+	for _, query := range []string{"RETURN '$p' AS s // $q", "RETURN 1 /* $c */ AS x", "EXPLAIN RETURN $p AS x"} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err, query)
+	}
+
+	requireStatus(t, exec, "CALL nope.x() YIELD y RETURN y", nil, "Neo.ClientError.Procedure.ProcedureNotFound",
+		"There is no procedure with the name `nope.x` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.")
+	requireStatus(t, exec, "CALL db.index.fulltext.queryNodes('nope', 'x') YIELD node RETURN node", nil, "Neo.ClientError.Procedure.ProcedureCallFailed",
+		"Failed to invoke procedure `db.index.fulltext.queryNodes`: Caused by: there is no such fulltext schema index: nope")
+	requireStatus(t, exec, "CALL db.index.fulltext.queryRelationships('nope', 'x') YIELD relationship RETURN relationship", nil, "Neo.ClientError.Procedure.ProcedureCallFailed",
+		"Failed to invoke procedure `db.index.fulltext.queryRelationships`: Caused by: there is no such fulltext schema index: nope")
+}
+
+// TestOrderByRepeatedProjectionExpression: an ORDER BY term that repeats a
+// projection expression orders by the projected column even when the alias
+// shadows a variable of the expression, as in Neo4j.
+func TestOrderByRepeatedProjectionExpression(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	for _, query := range []string{
+		"UNWIND ['abc', 'bbbbbbb', 'x'] AS s RETURN size(s) AS s ORDER BY size(s) DESC",
+		"UNWIND ['abc', 'bbbbbbb', 'x'] AS s WITH size(s) AS s ORDER BY size(s) DESC RETURN s",
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{int64(7)}, {int64(3)}, {int64(1)}}, result.Rows, query)
+	}
+}
