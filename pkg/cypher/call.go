@@ -503,68 +503,15 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 		}
 	}
 
-	var combined *ExecuteResult
-	for _, row := range seed.Rows {
-		params := map[string]interface{}{}
-		prefix := make([]string, 0, len(usedCols)+2)
-		withBindings := make([]string, 0, len(usedCols))
-		predicates := make([]string, 0, len(usedCols))
-		tailIsMatch := tailStartsWithMatchClause(tail)
-
-		for _, i := range usedCols {
-			if i >= len(row) {
-				continue
-			}
-			col := seed.Columns[i]
-			val := row[i]
-			if node, ok := val.(*storage.Node); ok {
-				pname := "seed_id_" + col
-				if node != nil {
-					params[pname] = string(node.ID)
-				} else {
-					params[pname] = nil
-				}
-				if tailIsMatch {
-					predicates = append(predicates, fmt.Sprintf("id(%s) = $%s", col, pname))
-				} else {
-					prefix = append(prefix, fmt.Sprintf("MATCH (%s) WHERE id(%s) = $%s", col, col, pname))
-					withBindings = append(withBindings, col)
-				}
-				continue
-			}
-			pname := "seed_" + col
-			params[pname] = val
-			withBindings = append(withBindings, fmt.Sprintf("$%s AS %s", pname, col))
-		}
-
-		query := buildCallTailPredicateInjection(tail, predicates)
-		if len(withBindings) > 0 {
-			prefix = append(prefix, "WITH "+strings.Join(withBindings, ", "))
-		}
-		if len(prefix) > 0 {
-			query = strings.Join(prefix, " ") + " " + query
-		}
-
-		inner, err := e.executeInternal(ctx, query, params)
+	results := make([]callTailRowResult, len(seed.Rows))
+	for i, row := range seed.Rows {
+		res, err := e.executeCallTailSingleRow(ctx, seed.Columns, row, tail, usedCols, expectedCols)
+		results[i] = callTailRowResult{idx: i, res: res, err: err}
 		if err != nil {
-			return nil, err
+			break
 		}
-		if len(expectedCols) > 0 && len(expectedCols) == len(inner.Columns) {
-			inner.Columns = append([]string{}, expectedCols...)
-		}
-		if combined == nil {
-			combined = &ExecuteResult{
-				Columns: append([]string{}, inner.Columns...),
-				Rows:    make([][]interface{}, 0, len(inner.Rows)),
-			}
-		}
-		combined.Rows = append(combined.Rows, inner.Rows...)
 	}
-
-	if combined == nil {
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-	return combined, nil
+	return combineCallTailRowResults(results, expectedCols)
 }
 
 // executeCallTailPipeline runs the clauses after CALL … YIELD as one pipeline
@@ -760,33 +707,39 @@ func (e *StorageExecutor) executeCallTailParallel(
 	wg.Wait()
 	close(results)
 
-	ordered := make([]*ExecuteResult, len(seed.Rows))
+	ordered := make([]callTailRowResult, len(seed.Rows))
 	for rr := range results {
-		if rr.err != nil {
-			return nil, true, rr.err
-		}
-		ordered[rr.idx] = rr.res
+		ordered[rr.idx] = rr
 	}
+	combined, err := combineCallTailRowResults(ordered, expectedCols)
+	return combined, true, err
+}
+
+// combineCallTailRowResults concatenates per-row CALL-tail results in row
+// order, for the sequential and the parallel per-row paths alike (#547): the
+// first failing row's error (in row order, so the parallel path reports the
+// same one), and the tail's columns when no row produced any.
+func combineCallTailRowResults(results []callTailRowResult, expectedCols []string) (*ExecuteResult, error) {
 	var combined *ExecuteResult
-	for _, inner := range ordered {
-		if inner == nil {
+	for _, result := range results {
+		if result.err != nil {
+			return nil, result.err
+		}
+		if result.res == nil {
 			continue
 		}
 		if combined == nil {
 			combined = &ExecuteResult{
-				Columns: append([]string{}, inner.Columns...),
-				Rows:    make([][]interface{}, 0, len(inner.Rows)),
+				Columns: append([]string{}, result.res.Columns...),
+				Rows:    make([][]interface{}, 0, len(result.res.Rows)),
 			}
 		}
-		combined.Rows = append(combined.Rows, inner.Rows...)
+		combined.Rows = append(combined.Rows, result.res.Rows...)
 	}
 	if combined == nil {
-		if len(expectedCols) > 0 {
-			return &ExecuteResult{Columns: append([]string{}, expectedCols...), Rows: [][]interface{}{}}, true, nil
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, true, nil
+		return &ExecuteResult{Columns: append([]string{}, expectedCols...), Rows: [][]interface{}{}}, nil
 	}
-	return combined, true, nil
+	return combined, nil
 }
 
 func (e *StorageExecutor) executeCallTailSingleRow(
@@ -2650,6 +2603,11 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 	}
 	secondWith := strings.TrimSpace(afterSecondWith[:returnIdx])
 	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
+	// The traversal fast paths implement RETURN … [LIMIT n] only; ORDER BY
+	// or SKIP goes to the pipeline, which applies them (#547).
+	if returnOptions.orderBy != "" || returnOptions.skipRaw != "" {
+		return nil, false
+	}
 	if !strings.HasPrefix(strings.ToUpper(matchSection), "MATCH ") {
 		return nil, false
 	}
@@ -2736,6 +2694,11 @@ func (e *StorageExecutor) parseCallTailFrontierReachablePlan(ctx context.Context
 	}
 	secondWith := strings.TrimSpace(afterSecondWith[:returnIdx])
 	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
+	// The traversal fast paths implement RETURN … [LIMIT n] only; ORDER BY
+	// or SKIP goes to the pipeline, which applies them (#547).
+	if returnOptions.orderBy != "" || returnOptions.skipRaw != "" {
+		return nil, false
+	}
 	match := e.parseTraversalPattern(ctx, matchPart)
 	if match == nil || match.StartNode.variable == "" {
 		return nil, false
@@ -2778,6 +2741,11 @@ func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Conte
 	}
 	matchWhere := strings.TrimSpace(normalized[len("MATCH"):returnIdx])
 	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(normalized[returnIdx+len("RETURN"):]))
+	// The traversal fast paths implement RETURN … [LIMIT n] only; ORDER BY
+	// or SKIP goes to the pipeline, which applies them (#547).
+	if returnOptions.orderBy != "" || returnOptions.skipRaw != "" {
+		return nil, false
+	}
 	whereIdx := findKeywordIndexInContext(matchWhere, "WHERE")
 	if whereIdx == -1 {
 		return nil, false
