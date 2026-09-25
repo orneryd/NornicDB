@@ -39,6 +39,11 @@ func TestMapTransientTransactionError(t *testing.T) {
 			want: "Neo.TransientError.Transaction.Outdated",
 		},
 		{
+			name: "transaction too big is a non-transient client error",
+			err:  stderrors.New("commit failed: Txn is too big to fit into one request"),
+			want: nornicerrors.ClientTransactionOutOfMemory,
+		},
+		{
 			name: "syntax error passthrough",
 			err:  stderrors.New("invalid input 'RETURNN'"),
 			want: "Neo.ClientError.Statement.SyntaxError",

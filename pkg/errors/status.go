@@ -60,6 +60,9 @@ type statusMessenger interface {
 //   - an error that carries its code (BoltErrorCode) keeps it;
 //   - transaction conflicts and MVCC pressure are transient
 //     (MapTransientTransactionError);
+//   - a transaction over the storage size limit is
+//     General.TransactionOutOfMemoryError, a ClientError drivers don't retry,
+//     with a message saying to split it;
 //   - a constraint violation is Schema.ConstraintValidationFailed;
 //   - a message that starts with (or contains) a "Neo.…: " code keeps that code;
 //   - anything else is Statement.SyntaxError.
@@ -97,6 +100,9 @@ func neo4jStatus(err error) (code, message string, classified bool) {
 	}
 	if transientCode, ok := MapTransientTransactionError(err); ok {
 		return transientCode, message, true
+	}
+	if storage.IsTransactionTooBig(err) {
+		return ClientTransactionOutOfMemory, transactionTooBigMessage(message), true
 	}
 	var violation *storage.ConstraintViolationError
 	if stderrors.As(err, &violation) && violation != nil {
