@@ -97,6 +97,15 @@ func addMergePatternBindings(scope *semanticBindingScope, clause string) {
 }
 
 func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string) error {
+	// Neo4j rejects EXISTS / COUNT / COLLECT { … } anywhere in a MERGE clause:
+	// its pattern, property maps and ON CREATE / ON MATCH SET actions.
+	if mayContainSubqueryExpression(clause) && len(findSubqueryExpressions(clause)) > 0 {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"SubqueryInMerge",
+			"Subquery expressions are not allowed in a MERGE clause.",
+		)
+	}
 	pattern := mergeClausePattern(clause)
 	if pattern == "" {
 		return nil
@@ -116,8 +125,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		)
 	}
 
-	relationshipPattern := containsOutsideStrings(pattern, "->") ||
-		containsOutsideStrings(pattern, "<-") || containsOutsideStrings(pattern, "-[")
+	relationshipPattern := patternHasRelationship(pattern)
 	relationshipVariables := extractRelationshipVariables(pattern)
 	for _, variable := range relationshipVariables {
 		if scope.contains(variable) {

@@ -549,7 +549,7 @@ func (e *StorageExecutor) evaluateWhereTruth(ctx context.Context, node *storage.
 
 	// Handle COUNT { } subquery with comparison (whitespace-flexible)
 	if hasSubqueryPattern(whereClause, countSubqueryRe) {
-		return truthOf(e.evaluateCountSubqueryComparison(node, variable, whereClause))
+		return truthOf(e.evaluateCountSubqueryComparison(ctx, node, variable, whereClause, nil))
 	}
 
 	// Handle NOT prefix

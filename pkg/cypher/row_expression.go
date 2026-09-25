@@ -1458,8 +1458,14 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 		}
 		return !e.evaluateRowPredicate(ctx, inner, values)
 	}
-	if matched, recognized := e.evaluateRowCountSubqueryPredicate(expression, values); recognized {
+	if matched, recognized := e.evaluateRowCountSubqueryPredicate(ctx, expression, values); recognized {
 		return matched
+	}
+	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
+	// COUNT { … } + 1 > 1, …) are evaluated for the row first.
+	if found := nestedSubqueryExpressions(expression); found != nil {
+		rewritten, extended := e.materializeRowSubqueries(ctx, expression, pipelineRow(values), found)
+		return e.evaluateRowPredicate(ctx, rewritten, extended)
 	}
 	if nodeCtx, _ := withWhereValueContext(values); len(nodeCtx) > 0 && looksLikeRowRelationshipPattern(expression) {
 		if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, expression, nodeCtx); recognized {
@@ -1628,15 +1634,7 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 		return false, false
 	}
 	if clauses, ok := splitPipelineClauses(subquery); ok && len(clauses) > 1 {
-		correlated := e.cloneWithStorage(e.getStorage(ctx))
-		correlated.fabricRecordBindings = make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
-		for name, value := range e.fabricRecordBindings {
-			correlated.fabricRecordBindings[name] = value
-		}
-		for name, value := range values {
-			correlated.fabricRecordBindings[name] = value
-		}
-		result, handled, err := correlated.executePipeline(ctx, subquery)
+		result, handled, err := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, subquery)
 		matched := err == nil && handled && result != nil && len(result.Rows) > 0
 		if negated {
 			matched = !matched
@@ -1645,6 +1643,17 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	}
 	if !hasPrefixFold(strings.TrimSpace(subquery), "MATCH ") {
 		subquery = "MATCH " + strings.TrimSpace(subquery)
+	}
+	// A body that reads a row value other than a node or relationship (a
+	// comprehension variable, a WITH value) runs as a correlated pipeline,
+	// which sees every row value; the path matcher sees only entities.
+	if subqueryReadsScalarRowValue(subquery, values) {
+		result, handled, err := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, subquery+" RETURN 1 AS __exists")
+		matched := err == nil && handled && result != nil && len(result.Rows) > 0
+		if negated {
+			matched = !matched
+		}
+		return matched, true
 	}
 	path := PathContext{nodes: make(map[string]*storage.Node), rels: make(map[string]*storage.Edge)}
 	for name, value := range values {
@@ -1666,7 +1675,7 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	return matched, true
 }
 
-func (e *StorageExecutor) evaluateRowCountSubqueryPredicate(expression string, values map[string]interface{}) (bool, bool) {
+func (e *StorageExecutor) evaluateRowCountSubqueryPredicate(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
 	if !hasPrefixFold(strings.TrimSpace(expression), "COUNT") || !hasSubqueryPattern(expression, countSubqueryRe) {
 		return false, false
 	}
@@ -1677,7 +1686,7 @@ func (e *StorageExecutor) evaluateRowCountSubqueryPredicate(expression string, v
 		}
 		subquery := e.extractSubquery(expression, "COUNT")
 		if strings.Contains(subquery, "("+variable+")") || strings.Contains(subquery, "("+variable+":") {
-			return e.evaluateCountSubqueryComparison(node, variable, expression), true
+			return e.evaluateCountSubqueryComparison(ctx, node, variable, expression, values), true
 		}
 	}
 	return false, true

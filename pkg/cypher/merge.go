@@ -585,7 +585,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 
 	// Extract MERGE pattern (e.g., "(n:Label {prop: value})")
 	mergePattern := strings.TrimSpace(cypher[mergeIdx+5 : patternEnd])
-	if containsOutsideStrings(mergePattern, "->") || containsOutsideStrings(mergePattern, "<-") || containsOutsideStrings(mergePattern, "-[") {
+	if patternHasRelationship(mergePattern) {
 		return e.executeMergeWithContext(ctx, cypher, make(map[string]*storage.Node), make(map[string]*storage.Edge))
 	}
 
