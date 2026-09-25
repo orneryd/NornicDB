@@ -54,8 +54,11 @@ func TestUnhandledStatementsReturnClassifiedSyntaxErrors(t *testing.T) {
 					require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
 
 					if mode == "explicit transaction" {
+						// The failed statement marks the transaction failed
+						// (#683): COMMIT rolls it back and reports it.
 						_, err = exec.Execute(ctx, "COMMIT", nil)
-						require.NoError(t, err)
+						require.Error(t, err)
+						require.Contains(t, err.Error(), "TransactionMarkedAsFailed")
 					}
 
 					// The rejected statement leaves the graph unchanged.

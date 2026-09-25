@@ -62,8 +62,10 @@ func TestTransactionalAdapterRollbackAfterRunError(t *testing.T) {
 		query             string
 		transactionActive bool
 	}{
-		{"RETURN 1 + {a: 1} AS x", false},
-		{"RETURN date('x') AS x", false},
+		// A failed statement leaves the transaction open and failed (#683):
+		// the ROLLBACK below ends it.
+		{"RETURN 1 + {a: 1} AS x", true},
+		{"RETURN date('x') AS x", true},
 		{"RETURN toInteger([1]) AS x", true},
 		{"RETURN range(1, 10, 0) AS x", true},
 	} {
