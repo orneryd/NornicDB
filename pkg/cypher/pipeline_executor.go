@@ -149,15 +149,14 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 		{"FOREACH", pipelineClauseForeach},
 		{"RETURN", pipelineClauseReturn},
 	}
-	// Clauses we don't yet model as their own kind force a fallback. Anything
+	// Clauses we don't yet model as their own kind force a fallback: a CALL
+	// clause of the statement itself. A CALL inside a subquery expression's
+	// body belongs to that body, which the subquery evaluator runs. Anything
 	// else — including $param references and arbitrary WHERE on bindings —
 	// is handled by the per-clause appliers below, which substitute params
 	// from context and respect node bindings supplied by the caller.
-	upper := strings.ToUpper(cypher)
-	for _, bad := range []string{"CALL "} {
-		if findKeywordIndex(upper, strings.TrimRight(bad, " ")) >= 0 {
-			return nil, false
-		}
+	if topLevelKeywordIndex(cypher, "CALL") >= 0 {
+		return nil, false
 	}
 
 	// Collect boundary positions for each supported keyword.
@@ -853,7 +852,7 @@ func (e *StorageExecutor) tryExecutePipelineOptionalMatchPlan(ctx context.Contex
 	}
 
 	optionalIndex := findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH")
-	returnIndex := findKeywordIndexInContext(cypher, "RETURN")
+	returnIndex := topLevelKeywordIndex(cypher, "RETURN")
 	if optionalIndex <= len("MATCH") || returnIndex <= optionalIndex {
 		return nil, false, nil
 	}
