@@ -2070,14 +2070,15 @@ func requireUnwindMergeChainParameters(ctx context.Context, plan unwindMergeChai
 // same value semantics as every other SET route (setNodeProperty,
 // setPropertyMapValue, validateSetPropertyValue): null removes the key, maps
 // and entities are not property values, += needs a map / node / relationship.
-// It returns how many properties it changed (added, replaced or removed):
-// the statement counts them as set, and a row that changed none skips the
-// write.
+// It records what it writes in writes (Neo4j's properties_set, setWrites) and
+// returns how many properties it changed (added, replaced or removed): a row
+// that changed none skips the write.
 func applyUnwindMergeChainSetAssignment(
 	node *storage.Node,
 	assignment unwindSimpleSetAssignment,
 	rowValues map[string]interface{},
 	resolveValue func(string, map[string]interface{}) interface{},
+	writes *setWrites,
 ) (int, error) {
 	if node.Properties == nil {
 		node.Properties = make(map[string]interface{})
@@ -2087,11 +2088,14 @@ func applyUnwindMergeChainSetAssignment(
 		return 0, err
 	}
 	if props == nil {
+		_, existed := node.Properties[prop]
+		writes.property(existed, prop, value)
 		if setNodePropertyIfChanged(node, prop, value) {
 			return 1, nil
 		}
 		return 0, nil
 	}
+	writes.mapEntries(node.Properties, props, false)
 	changed := 0
 	for prop, value := range props {
 		if setNodePropertyIfChanged(node, prop, normalizePropValue(value)) {
@@ -2108,6 +2112,7 @@ func applyUnwindMergeChainEdgeSetAssignment(
 	assignment unwindSimpleSetAssignment,
 	rowValues map[string]interface{},
 	resolveValue func(string, map[string]interface{}) interface{},
+	writes *setWrites,
 ) (int, error) {
 	if edge.Properties == nil {
 		edge.Properties = make(map[string]interface{})
@@ -2117,11 +2122,14 @@ func applyUnwindMergeChainEdgeSetAssignment(
 		return 0, err
 	}
 	if props == nil {
+		_, existed := edge.Properties[prop]
+		writes.property(existed, prop, value)
 		if setRelationshipPropertyIfChanged(edge, prop, value) {
 			return 1, nil
 		}
 		return 0, nil
 	}
+	writes.mapEntries(edge.Properties, props, false)
 	changed := 0
 	for prop, value := range props {
 		if setRelationshipPropertyIfChanged(edge, prop, normalizePropValue(value)) {
@@ -2273,20 +2281,23 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 		notified[key] = struct{}{}
 		e.notifyNodeMutated(key)
 	}
+	// applyRelationshipAssignments applies a SET clause's assignments to a
+	// merged relationship and returns what they changed and what they wrote
+	// (Neo4j's properties_set, setWrites).
 	applyRelationshipAssignments := func(
 		edge *storage.Edge,
 		assignments []unwindSimpleSetAssignment,
 		values map[string]interface{},
-	) (int, error) {
-		changed := 0
+	) (changed, written int, err error) {
+		var writes setWrites
 		for _, assignment := range assignments {
-			n, err := applyUnwindMergeChainEdgeSetAssignment(edge, assignment, values, resolveBatchValue)
+			n, err := applyUnwindMergeChainEdgeSetAssignment(edge, assignment, values, resolveBatchValue, &writes)
 			if err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 			changed += n
 		}
-		return changed, nil
+		return changed, writes.count, nil
 	}
 	// findRelationship prefers the batch-local relationship cache and only
 	// falls back to committed storage when both endpoints predate this batch.
@@ -2345,20 +2356,17 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 						Labels:     append([]string(nil), nodePlan.labels...),
 						Properties: cloneNodePropertiesMap(matchProps),
 					}
-					propertiesSet := 0
+					var writes setWrites
 					for _, assignment := range nodePlan.setAssignments {
-						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue)
-						if err != nil {
+						if _, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue, &writes); err != nil {
 							return nil, true, err
 						}
-						propertiesSet += n
 					}
+					writes.endRun()
 					for _, assignment := range nodePlan.onCreateAssignments {
-						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue)
-						if err != nil {
+						if _, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue, &writes); err != nil {
 							return nil, true, err
 						}
-						propertiesSet += n
 					}
 					if err := validatePropertyValues(node.Properties); err != nil {
 						return nil, true, err
@@ -2373,26 +2381,28 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 					e.cacheMergeNode(nodePlan.labels, matchProps, node)
 					result.Stats.NodesCreated++
 					countCreatedEntity(result.Stats, nodePlan.labels, matchProps)
-					result.Stats.PropertiesSet += propertiesSet
+					result.Stats.PropertiesSet += writes.count
 					notifyOnce(node.ID)
 				} else {
-					propertiesSet := 0
+					var writes setWrites
+					changed := 0
 					for _, assignment := range nodePlan.setAssignments {
-						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue)
+						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue, &writes)
 						if err != nil {
 							return nil, true, err
 						}
-						propertiesSet += n
+						changed += n
 					}
+					writes.endRun()
 					for _, assignment := range nodePlan.onMatchAssignments {
-						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue)
+						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue, &writes)
 						if err != nil {
 							return nil, true, err
 						}
-						propertiesSet += n
+						changed += n
 					}
-					if propertiesSet > 0 {
-						result.Stats.PropertiesSet += propertiesSet
+					result.Stats.PropertiesSet += writes.count
+					if changed > 0 {
 						if err := store.UpdateNode(node); err != nil {
 							return nil, true, localizedError(localization.CypherMutationsUnwindMergeUpdateFailed(err), err)
 						}
@@ -2432,16 +2442,17 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 				if node == nil {
 					rowValues[lookupPlan.varName] = nil
 				} else {
-					propertiesSet := 0
+					var writes setWrites
+					changed := 0
 					for _, assignment := range lookupPlan.setAssignments {
-						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue)
+						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue, &writes)
 						if err != nil {
 							return nil, true, err
 						}
-						propertiesSet += n
+						changed += n
 					}
-					if propertiesSet > 0 {
-						result.Stats.PropertiesSet += propertiesSet
+					result.Stats.PropertiesSet += writes.count
+					if changed > 0 {
 						if err := store.UpdateNode(node); err != nil {
 							return nil, true, localizedError(localization.CypherMutationsUnwindMatchUpdateFailed(err), err)
 						}
@@ -2494,7 +2505,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 					EndNode:    toNode.ID,
 					Properties: cloneNodePropertiesMap(matchProps),
 				}
-				propertiesSet, err := applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues)
+				_, propertiesSet, err := applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues)
 				if err != nil {
 					return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipAssignmentFailed(err), err)
 				}
@@ -2510,25 +2521,33 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 					countCreatedEntity(result.Stats, nil, matchProps)
 					result.Stats.PropertiesSet += propertiesSet
 					relationshipChanged = true
-				} else if changed, assignErr := applyRelationshipAssignments(createdEdge, relPlan.setAssignments, rowValues); assignErr != nil {
+				} else {
+					changed, written, assignErr := applyRelationshipAssignments(createdEdge, relPlan.setAssignments, rowValues)
+					if assignErr != nil {
+						return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipAssignmentFailed(assignErr), assignErr)
+					}
+					result.Stats.PropertiesSet += written
+					if changed > 0 {
+						if err := store.UpdateEdge(createdEdge); err != nil {
+							return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipUpdateFailed(err), err)
+						}
+						relationshipCache[relKey] = createdEdge
+						relationshipChanged = true
+					}
+				}
+			} else {
+				changed, written, assignErr := applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues)
+				if assignErr != nil {
 					return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipAssignmentFailed(assignErr), assignErr)
-				} else if changed > 0 {
-					result.Stats.PropertiesSet += changed
-					if err := store.UpdateEdge(createdEdge); err != nil {
+				}
+				result.Stats.PropertiesSet += written
+				if changed > 0 {
+					if err := store.UpdateEdge(edge); err != nil {
 						return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipUpdateFailed(err), err)
 					}
-					relationshipCache[relKey] = createdEdge
+					relationshipCache[relKey] = edge
 					relationshipChanged = true
 				}
-			} else if changed, assignErr := applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues); assignErr != nil {
-				return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipAssignmentFailed(assignErr), assignErr)
-			} else if changed > 0 {
-				result.Stats.PropertiesSet += changed
-				if err := store.UpdateEdge(edge); err != nil {
-					return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipUpdateFailed(err), err)
-				}
-				relationshipCache[relKey] = edge
-				relationshipChanged = true
 			}
 			// SET may change a property that participated in the MERGE pattern.
 			// Do not let a later row reuse an edge that no longer matches that

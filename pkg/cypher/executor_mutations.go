@@ -1018,9 +1018,9 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	}
 	// Neo4j-compatible chained SET support:
 	// MATCH ... SET n += $props SET n.foo = 1
-	// Collapse additional SET keywords into a single assignment list.
-	setPart = collapseChainedSetClauses(setPart)
-	assignments := e.splitSetAssignments(setPart)
+	// pipelineApplySet gets the clauses as written (their boundaries count for
+	// properties_set); the checks below see one assignment list.
+	assignments := e.splitSetAssignments(collapseChainedSetClauses(setPart))
 	if len(assignments) == 0 || (len(assignments) == 1 && strings.TrimSpace(assignments[0]) == "") {
 		return nil, localizedError(localization.CypherMutationsSetAssignmentRequired(), nil)
 	}
@@ -1340,38 +1340,41 @@ func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string 
 
 // collapseChainedSetClauses rewrites chained SET keywords into comma-separated assignments.
 // Example: "n += $props SET n.x = 1 SET n.y = 2" -> "n += $props, n.x = 1, n.y = 2".
+// Counting what a SET writes needs the clause boundaries, so the SET
+// applicators walk the clauses with nextChainedSetClause instead.
 func collapseChainedSetClauses(setPart string) string {
 	setPart = strings.TrimSpace(setPart)
-	if setPart == "" {
+	first, next, ok := nextChainedSetClause(setPart, 0)
+	if !ok {
 		return setPart
 	}
+	clause, next, ok := nextChainedSetClause(setPart, next)
+	if !ok {
+		return first
+	}
+	clauses := []string{first}
+	for ; ok; clause, next, ok = nextChainedSetClause(setPart, next) {
+		clauses = append(clauses, clause)
+	}
+	return strings.Join(clauses, ", ")
+}
 
-	opts := defaultKeywordScanOpts()
-	segments := make([]string, 0, 2)
-	start := 0
-	for {
-		nextSet := keywordIndexFrom(setPart, "SET", start, opts)
-		if nextSet < 0 {
-			break
+// nextChainedSetClause returns the next non-empty clause at or after start in
+// setPart, a SET assignment list that may chain further SET clauses
+// ("n += $props SET n.x = 1"), and the index where the clause after it
+// starts. ok is false when no clause is left.
+func nextChainedSetClause(setPart string, start int) (clause string, next int, ok bool) {
+	for start < len(setPart) {
+		end, after := len(setPart), len(setPart)
+		if idx := keywordIndexFrom(setPart, "SET", start, defaultKeywordScanOpts()); idx >= 0 {
+			end, after = idx, idx+len("SET")
 		}
-		segment := strings.TrimSpace(setPart[start:nextSet])
-		if segment != "" {
-			segments = append(segments, segment)
+		if clause = strings.TrimSpace(setPart[start:end]); clause != "" {
+			return clause, after, true
 		}
-		start = nextSet + len("SET")
-		for start < len(setPart) && isASCIISpace(setPart[start]) {
-			start++
-		}
+		start = after
 	}
-
-	tail := strings.TrimSpace(setPart[start:])
-	if tail != "" {
-		segments = append(segments, tail)
-	}
-	if len(segments) == 0 {
-		return setPart
-	}
-	return strings.Join(segments, ", ")
+	return "", len(setPart), false
 }
 
 // firstPostSetClauseIndex returns the first index of a clause keyword that can
@@ -1887,71 +1890,10 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 	e.normalizeSetMatchRowsToNodes(matchResult, store)
 	e.normalizeSetMatchRowsToEdges(matchResult, store)
 
-	removeTargets := parseRemoveTargetBindings(removePart)
-
 	// Update matched nodes and relationships for the variables explicitly named
-	// in the REMOVE clause.
-	for _, row := range matchResult.Rows {
-		for colIdx, val := range row {
-			if colIdx >= len(matchResult.Columns) {
-				continue
-			}
-			varName := matchResult.Columns[colIdx]
-			propTargets := removeTargets.propertyNames(varName)
-			labelTargets := removeTargets.labelNames(varName)
-			if len(propTargets) == 0 && len(labelTargets) == 0 {
-				continue
-			}
-			switch entity := val.(type) {
-			case *storage.Node:
-				if entity == nil {
-					continue
-				}
-				invalidated := false
-				for _, prop := range propTargets {
-					if _, exists := entity.Properties[prop]; exists {
-						delete(entity.Properties, prop)
-						result.Stats.PropertiesSet++ // Neo4j counts removals as properties set
-						if !embeddingutil.IsMetadataPropertyKey(prop) {
-							invalidated = true
-						}
-					}
-				}
-				if invalidated {
-					embeddingutil.InvalidateManagedEmbeddings(entity)
-				}
-				if len(labelTargets) > 0 {
-					oldLabels := make([]string, len(entity.Labels))
-					copy(oldLabels, entity.Labels)
-					next, removed := removeNodeLabels(entity.Labels, labelTargets)
-					if removed > 0 {
-						entity.Labels = next
-						if err := validatePolicyOnLabelChange(store, entity, oldLabels); err != nil {
-							entity.Labels = oldLabels
-							return nil, err
-						}
-					}
-				}
-				if err := store.UpdateNode(entity); err != nil {
-					return nil, err
-				}
-				e.notifyNodeMutated(string(entity.ID))
-			case *storage.Edge:
-				if entity == nil {
-					continue
-				}
-				for _, prop := range propTargets {
-					if _, exists := entity.Properties[prop]; exists {
-						delete(entity.Properties, prop)
-						result.Stats.PropertiesSet++ // Neo4j counts removals as properties set
-					}
-				}
-				if err := store.UpdateEdge(entity); err != nil {
-					return nil, err
-				}
-				e.notifyEdgeMutated(string(entity.ID))
-			}
-		}
+	// in the REMOVE clause, as the pipeline's REMOVE does.
+	if err := e.applyRemoveToMatchedRows(store, matchResult, removePart, result); err != nil {
+		return nil, err
 	}
 
 	// Handle RETURN. Build exactly one result row per matchResult row
@@ -2106,6 +2048,7 @@ func (e *StorageExecutor) applyRemoveToMatchedRows(
 							entity.Labels = oldLabels
 							return err
 						}
+						result.Stats.LabelsRemoved += int(removed)
 					}
 				}
 				if invalidated {

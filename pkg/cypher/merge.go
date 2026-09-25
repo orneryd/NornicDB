@@ -2285,14 +2285,15 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		for variable, node := range nodeContext {
 			beforeProperties := cloneNodePropertiesMap(node.Properties)
 			beforeLabels := append([]string(nil), node.Labels...)
-			if err := e.applySetToNodeWithContext(ctx, node, variable, setClause, nodeContext, relContext); err != nil {
+			written, err := e.applySetToNodeWithContext(ctx, node, variable, setClause, nodeContext, relContext)
+			if err != nil {
 				node.Properties = beforeProperties
 				node.Labels = beforeLabels
 				return err
 			}
-			propertiesSet := changedPropertyCount(beforeProperties, node.Properties)
+			result.Stats.PropertiesSet += written
 			labelsAdded := addedLabelCount(beforeLabels, node.Labels)
-			if propertiesSet == 0 && labelsAdded == 0 {
+			if labelsAdded == 0 && changedPropertyCount(beforeProperties, node.Properties) == 0 {
 				continue
 			}
 			if err := store.UpdateNode(node); err != nil {
@@ -2300,25 +2301,24 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 				node.Labels = beforeLabels
 				return localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
 			}
-			result.Stats.PropertiesSet += propertiesSet
 			result.Stats.LabelsAdded += labelsAdded
 			e.notifyNodeMutated(string(node.ID))
 		}
 		for variable, relationship := range relContext {
 			beforeProperties := cloneNodePropertiesMap(relationship.Properties)
-			if _, err := e.applySetToRelationshipWithContext(ctx, relationship, variable, setClause, nodeContext, relContext); err != nil {
+			written, err := e.applySetToRelationshipWithContext(ctx, relationship, variable, setClause, nodeContext, relContext)
+			if err != nil {
 				relationship.Properties = beforeProperties
 				return err
 			}
-			propertiesSet := changedPropertyCount(beforeProperties, relationship.Properties)
-			if propertiesSet == 0 {
+			result.Stats.PropertiesSet += written
+			if changedPropertyCount(beforeProperties, relationship.Properties) == 0 {
 				continue
 			}
 			if err := store.UpdateEdge(relationship); err != nil {
 				relationship.Properties = beforeProperties
 				return localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
 			}
-			result.Stats.PropertiesSet += propertiesSet
 			e.notifyEdgeMutated(string(relationship.ID))
 		}
 		return nil
@@ -2395,9 +2395,10 @@ func (e *StorageExecutor) resolveMergeRelationshipEndpoint(store storage.Engine,
 // applySetToRelationshipWithContext is the single per-relationship SET
 // applicator (pipeline, MERGE, CREATE ... SET). It applies every assignment in
 // setClause that targets varName: r = map / entity (replace), r += map / entity
-// (merge) and r.p = value. A null value removes the key. It returns the number
-// of properties written, or an error for a value Cypher cannot store
-// (replacing with a non-map, a map or entity as a property value).
+// (merge) and r.p = value. A null value removes the key. setClause may chain
+// several SET clauses (a SET b). It returns the number of properties written
+// by Neo4j's properties_set rule (setWrites), or an error for a value Cypher
+// cannot store (replacing with a non-map, a map or entity as a property value).
 func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
 	if edge == nil || varName == "" {
 		return 0, nil
@@ -2408,60 +2409,67 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 	}
 	fullRelContext[varName] = edge
 
-	propertiesSet := 0
-	setClause = collapseChainedSetClauses(setClause)
-	assignments := e.splitSetAssignments(setClause)
-	for _, assignment := range assignments {
-		assignment = strings.TrimSpace(assignment)
-		if assignment == "" {
-			continue
-		}
+	var writes setWrites
+	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+		writes.endRun()
+		for _, assignment := range e.splitSetAssignments(segment) {
+			assignment = strings.TrimSpace(assignment)
+			if assignment == "" {
+				continue
+			}
 
-		target, propName, operator, right := splitSetAssignment(assignment)
-		if target != varName {
-			continue
-		}
-		switch {
-		case operator == "=" && propName == "":
-			props, err := e.setReplacementMap(ctx, right, nodeContext, fullRelContext)
-			if err != nil {
-				return propertiesSet, err
+			target, propName, operator, right := splitSetAssignment(assignment)
+			if target != varName || propName == "" {
+				writes.endRun()
 			}
-			if props != nil {
-				edge.Properties = setPropertyMap(props)
-				propertiesSet += len(props)
+			if target != varName {
+				continue
 			}
-		case operator == "+=":
-			props, err := e.setMergeMap(ctx, right, nodeContext, fullRelContext)
-			if err != nil {
-				return propertiesSet, err
+			switch {
+			case operator == "=" && propName == "":
+				props, err := e.setReplacementMap(ctx, right, nodeContext, fullRelContext)
+				if err != nil {
+					return writes.count, err
+				}
+				if props != nil {
+					writes.mapEntries(edge.Properties, props, true)
+					edge.Properties = setPropertyMap(props)
+				}
+			case operator == "+=":
+				props, err := e.setMergeMap(ctx, right, nodeContext, fullRelContext)
+				if err != nil {
+					return writes.count, err
+				}
+				writes.mapEntries(edge.Properties, props, false)
+				for k, v := range props {
+					setRelationshipProperty(edge, k, v)
+				}
+			case operator == "=":
+				// Direct $param resolution (in setPropertyValue) preserves declared
+				// types (e.g. []string, []float64) end-to-end.
+				value, err := e.setPropertyValue(ctx, right, nodeContext, fullRelContext)
+				if err != nil {
+					return writes.count, err
+				}
+				_, existed := edge.Properties[propName]
+				writes.property(existed, propName, value)
+				setRelationshipProperty(edge, propName, value)
 			}
-			for k, v := range props {
-				setRelationshipProperty(edge, k, v)
-				propertiesSet++
-			}
-		case operator == "=":
-			// Direct $param resolution (in setPropertyValue) preserves declared
-			// types (e.g. []string, []float64) end-to-end.
-			value, err := e.setPropertyValue(ctx, right, nodeContext, fullRelContext)
-			if err != nil {
-				return propertiesSet, err
-			}
-			setRelationshipProperty(edge, propName, value)
-			propertiesSet++
 		}
 	}
-	return propertiesSet, nil
+	return writes.count, nil
 }
 
 // applySetToNodeWithContext is the single per-node SET applicator used by
 // every SET route (MATCH / pipeline, MERGE in all its forms, CREATE ... SET).
 // It applies every assignment in setClause that targets varName: n = map /
 // entity (replace), n += map / entity (merge), n.p = value and n:L1:L2 labels.
-// A null value removes the key. It returns an error for a value Cypher cannot
+// A null value removes the key. setClause may chain several SET clauses
+// (a SET b). It returns the number of properties written by Neo4j's
+// properties_set rule (setWrites), or an error for a value Cypher cannot
 // store (replacing with a non-map, a map or entity as a property value);
 // assignments are validated statically by validatePipelineSetAssignments.
-func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) error {
+func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
 	// Add current node to context for self-references
 	fullContext := make(map[string]*storage.Node)
 	for k, v := range nodeContext {
@@ -2469,21 +2477,32 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 	}
 	fullContext[varName] = node
 
-	setClause = collapseChainedSetClauses(setClause)
+	var writes setWrites
+	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+		writes.endRun()
+		if err := e.applyNodeSetClause(ctx, node, varName, segment, fullContext, relContext, &writes); err != nil {
+			return writes.count, err
+		}
+	}
+	return writes.count, nil
+}
 
-	// Split SET clause into individual assignments
-	assignments := e.splitSetAssignments(setClause)
-
-	for _, assignment := range assignments {
+// applyNodeSetClause applies the assignments of one SET clause that target
+// varName to node (applySetToNodeWithContext), recording what they write.
+func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.Node, varName string, setClause string, fullContext map[string]*storage.Node, relContext map[string]*storage.Edge, writes *setWrites) error {
+	for _, assignment := range e.splitSetAssignments(setClause) {
 		assignment = strings.TrimSpace(assignment)
 
 		target, propName, operator, right := splitSetAssignment(assignment)
+		if target != varName || propName == "" {
+			writes.endRun()
+		}
 		if target != varName {
 			continue
 		}
 		switch {
 		case operator == "+=":
-			if err := e.applySetMapMergeToNode(ctx, node, varName, right, fullContext, relContext); err != nil {
+			if err := e.applySetMapMergeToNode(ctx, node, varName, right, fullContext, relContext, writes); err != nil {
 				return err
 			}
 		case operator == "=" && propName == "":
@@ -2492,6 +2511,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 				return err
 			}
 			if props != nil {
+				writes.mapEntries(node.Properties, props, true)
 				node.Properties = setPropertyMap(props)
 			}
 		case operator == ":":
@@ -2533,6 +2553,8 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 			if err != nil {
 				return err
 			}
+			_, existed := node.Properties[propName]
+			writes.property(existed, propName, value)
 			setNodeProperty(node, propName, value)
 		}
 	}
