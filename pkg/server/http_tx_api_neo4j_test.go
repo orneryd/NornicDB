@@ -219,3 +219,28 @@ func TestHTTPFailedStatementReportsItsColumns(t *testing.T) {
 	_, resp = post(strings.TrimSuffix(opened.Commit, "/commit"), "RETURN 1 / 0 AS x")
 	require.Equal(t, [][]string{{"x"}}, columnsOf(resp))
 }
+
+// TestHTTPExplicitTransactionCommitFailureStatus verifies a COMMIT that fails
+// (a UNIQUE value another transaction committed first) reports the failure's
+// Neo4j status over HTTP, as Bolt does (#657).
+func TestHTTPExplicitTransactionCommitFailureStatus(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	post := func(path string, stmts ...string) TransactionResponse {
+		list := make([]map[string]any, 0, len(stmts))
+		for _, s := range stmts {
+			list = append(list, map[string]any{"statement": s})
+		}
+		rec := makeRequest(t, server, http.MethodPost, path, map[string]any{"statements": list}, token)
+		var resp TransactionResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), rec.Body.String())
+		return resp
+	}
+	require.Empty(t, post("/db/nornic/tx/commit", "CREATE CONSTRAINT cf_k FOR (n:CF) REQUIRE n.k IS UNIQUE").Errors)
+	open := post("/db/nornic/tx", "CREATE (:CF {k: 1})")
+	require.Empty(t, open.Errors)
+	require.Empty(t, post("/db/nornic/tx/commit", "CREATE (:CF {k: 1})").Errors)
+	resp := post(open.Commit[strings.Index(open.Commit, "/db/"):])
+	require.Len(t, resp.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Schema.ConstraintValidationFailed", resp.Errors[0].Code)
+}

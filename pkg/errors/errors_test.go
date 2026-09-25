@@ -133,3 +133,18 @@ func TestTransactionTooBigStatus(t *testing.T) {
 		})
 	}
 }
+
+// TestMarkCommitRolledBackIsIdempotent verifies nil stays nil and a failure
+// already tagged as rolled back is returned as it is.
+func TestMarkCommitRolledBackIsIdempotent(t *testing.T) {
+	if MarkCommitRolledBack(nil) != nil {
+		t.Fatal("nil must stay nil")
+	}
+	marked := MarkCommitRolledBack(stderrors.New("commit failed"))
+	if MarkCommitRolledBack(marked) != marked {
+		t.Fatal("an error already marked must be returned unchanged")
+	}
+	if !IsCommitRolledBack(marked) {
+		t.Fatal("marked error must report rolled back")
+	}
+}
