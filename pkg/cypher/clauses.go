@@ -624,6 +624,13 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 		}
 		return e.executeChainedCallSubquery(ctx, seed, restQuery)
 	}
+	// UNWIND ... CALL <procedure>: every unwound value calls the procedure,
+	// in the pipeline (pipelineApplyProcedureCall).
+	if startsWithKeywordFold(strings.TrimSpace(restQuery), "CALL") {
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
+	}
 
 	// Handle UNWIND ... CREATE/MERGE/MATCH ... mutation patterns.
 	if restQuery != "" {

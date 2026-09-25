@@ -245,6 +245,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 					goto skipMatchCallRoute
 				}
 				if findKeywordIndex(cypher[:callIdx], "WITH") > 0 {
+					if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+						return result, err
+					}
 					return e.executeMatchWithClause(ctx, cypher)
 				}
 				return e.executeMatchWithCallProcedure(ctx, cypher)
@@ -517,34 +520,34 @@ skipMatchCallRoute:
 		findMultiWordKeywordIndex(cypher, "SHOW", "RANGE INDEX") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEXES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEX") == 0:
-		return e.executeShowIndexes(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "INDEXES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "INDEX") == 0:
-		return e.executeShowIndexes(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "DECAY PROFILES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "PROMOTION PROFILES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "PROMOTION POLICIES") == 0:
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeKnowledgePolicyDDL)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "CONSTRAINTS") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "CONSTRAINT") == 0:
-		return e.executeShowConstraints(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowConstraints)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "PROCEDURES") == 0:
-		return e.executeShowProcedures(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowProcedures)
 	case findKeywordIndex(cypher, "SHOW FUNCTIONS") == 0:
-		return e.executeShowFunctions(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowFunctions)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "COMPOSITE DATABASES") == 0:
-		return e.executeShowCompositeDatabases(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowCompositeDatabases)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "CONSTITUENTS") == 0:
-		return e.executeShowConstituents(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowConstituents)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "DATABASES") == 0:
-		return e.executeShowDatabases(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowDatabases)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "DATABASE") == 0:
-		return e.executeShowDatabase(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowDatabase)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "ALIASES") == 0:
-		return e.executeShowAliases(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowAliases)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "SETTINGS") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "SETTING") == 0:
-		return e.executeShowSettings(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowSettings)
 	case findMultiWordKeywordIndex(cypher, "ALTER", "COMPOSITE DATABASE") == 0:
 		return e.executeAlterCompositeDatabase(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "ALTER", "DECAY PROFILE") == 0,
@@ -552,7 +555,7 @@ skipMatchCallRoute:
 		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION POLICY") == 0:
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "LIMITS") == 0:
-		return e.executeShowLimits(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowLimits)
 	default:
 		// Terminal chokepoint of the converged router: a statement that passed
 		// syntax validation but matches no handler is rejected here — never a

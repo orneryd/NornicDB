@@ -28,12 +28,6 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW SETTINGS"), nil)
 	}
 	tail := strings.TrimSpace(query[len(prefix):])
-	for _, field := range strings.Fields(strings.ToUpper(tail)) {
-		switch field {
-		case "YIELD", "WHERE", "RETURN", "ORDER", "SKIP", "LIMIT":
-			return nil, localizedError(localization.CypherTransactionsShowInTransactionUnsupported("SHOW SETTINGS "+field), nil)
-		}
-	}
 
 	selected := make(map[string]struct{})
 	if tail != "" {
@@ -178,10 +172,10 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 		}
 	}
 
-	return e.applyShowSchemaTail(ctx, cypher, &ExecuteResult{
+	return &ExecuteResult{
 		Columns: []string{"id", "name", "state", "populationPercent", "type", "entityType", "labelsOrTypes", "properties", "indexProvider", "owningConstraint", "lastRead", "readCount"},
 		Rows:    rows,
-	})
+	}, nil
 }
 
 // executeShowConstraints handles SHOW CONSTRAINTS command
@@ -248,67 +242,203 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 		}
 	}
 
-	return e.applyShowSchemaTail(ctx, cypher, &ExecuteResult{
+	return &ExecuteResult{
 		Columns: []string{"id", "name", "type", "entityType", "labelsOrTypes", "properties", "ownedIndex", "propertyType", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode"},
 		Rows:    rows,
-	})
+	}, nil
 }
 
-func (e *StorageExecutor) applyShowSchemaTail(ctx context.Context, cypher string, result *ExecuteResult) (*ExecuteResult, error) {
+// showTailKeywords start the part of a SHOW command after the command itself.
+var showTailKeywords = []string{"YIELD", "WHERE", "RETURN", "ORDER BY", "SKIP", "LIMIT"}
+
+// showCommandHead returns the SHOW command without its YIELD / WHERE /
+// RETURN / ORDER BY / SKIP / LIMIT tail, which applyShowTail handles.
+func showCommandHead(cypher string) string {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
-	if findKeywordIndexInContext(query, "YIELD") < 0 {
-		firstTail := len(query)
-		for _, keyword := range []string{"WHERE", "RETURN", "ORDER BY", "SKIP", "LIMIT"} {
-			if index := findKeywordIndexInContext(query, keyword); index >= 0 && index < firstTail {
-				firstTail = index
-			}
+	end := len(query)
+	for _, keyword := range showTailKeywords {
+		if index := findKeywordIndexInContext(query, keyword); index >= 0 && index < end {
+			end = index
 		}
-		if firstTail == len(query) {
-			return result, nil
-		}
-		query = query[:firstTail] + "YIELD * " + query[firstTail:]
 	}
-	yield := parseYieldClause(query)
-	if yield == nil {
-		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW schema YIELD"), nil)
-	}
-	if !yield.hasReturn {
-		return e.applyYieldFilter(ctx, result, yield)
-	}
-	projection := *yield
-	projection.hasReturn = false
-	projection.orderBy = ""
-	projection.skip = -1
-	projection.limit = -1
-	filtered, err := e.applyYieldFilter(ctx, result, &projection)
+	return strings.TrimSpace(query[:end])
+}
+
+// executeShowWithTail runs a SHOW command: run lists every row of the command
+// (given the command without its tail), and applyShowTail applies the tail.
+// Every SHOW command goes through it, so YIELD, WHERE, RETURN, aggregation,
+// ORDER BY and SKIP / LIMIT behave the same for all of them.
+func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	result, err := run(ctx, showCommandHead(cypher))
 	if err != nil {
 		return nil, err
 	}
-	rows := make([]pipelineRow, 0, len(filtered.Rows))
-	for _, values := range filtered.Rows {
-		row := make(pipelineRow, len(filtered.Columns))
-		for index, column := range filtered.Columns {
-			if index < len(values) {
-				row[column] = values[index]
+	return e.applyShowTail(ctx, cypher, result)
+}
+
+// applyShowTail applies a SHOW command's tail to its rows with Neo4j's SHOW
+// grammar:
+//
+//	SHOW … WHERE <predicate>
+//	SHOW … YIELD <items> [ORDER BY …] [SKIP n] [LIMIT n] [WHERE …] [RETURN …]
+//
+// YIELD selects and renames columns; its ORDER BY / SKIP / LIMIT page the
+// rows before its WHERE filters them; RETURN (with aggregation, DISTINCT,
+// ORDER BY and SKIP / LIMIT expressions) runs over all remaining rows. The
+// paging, filter and RETURN run as one pipeline (runPipelineClauses), the
+// same row operators as every other clause. Any other form (RETURN after a
+// WHERE without YIELD, WITH, a WHERE before YIELD's ORDER BY, a non-literal
+// YIELD SKIP / LIMIT) is a SyntaxError, as in Neo4j.
+func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult) (*ExecuteResult, error) {
+	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
+	head := showCommandHead(query)
+	if len(head) == len(query) {
+		return result, nil
+	}
+	tail := strings.TrimSpace(query[len(head):])
+	invalid := func() error {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause",
+			"invalid SHOW command: expected WHERE, or YIELD [ORDER BY] [SKIP] [LIMIT] [WHERE] [RETURN]")
+	}
+	if !startsWithKeywordFold(tail, "YIELD") {
+		if !startsWithKeywordFold(tail, "WHERE") {
+			return nil, invalid()
+		}
+		where := strings.TrimSpace(tail[len("WHERE"):])
+		for _, keyword := range []string{"RETURN", "ORDER BY", "SKIP", "LIMIT", "WITH", "YIELD"} {
+			if topLevelKeywordIndex(where, keyword) >= 0 {
+				return nil, invalid()
 			}
 		}
-		rows = append(rows, row)
+		tail = "YIELD * WHERE " + where
 	}
-	clause := "RETURN " + yield.returnExpr
-	if yield.orderBy != "" {
-		clause += " ORDER BY " + yield.orderBy
+	body := strings.TrimSpace(tail[len("YIELD"):])
+
+	// Segment boundaries, in the only order Neo4j accepts.
+	segments := []string{"ORDER BY", "SKIP", "LIMIT", "WHERE", "RETURN"}
+	positions := make([]int, len(segments))
+	itemsEnd := len(body)
+	for i, keyword := range segments {
+		positions[i] = topLevelKeywordIndex(body, keyword)
+		if positions[i] >= 0 && positions[i] < itemsEnd {
+			itemsEnd = positions[i]
+		}
 	}
-	if yield.skip >= 0 {
-		clause += fmt.Sprintf(" SKIP %d", yield.skip)
+	returnIndex := positions[4]
+	head4 := body
+	if returnIndex >= 0 {
+		head4 = body[:returnIndex]
 	}
-	if yield.limit >= 0 {
-		clause += fmt.Sprintf(" LIMIT %d", yield.limit)
+	for _, keyword := range []string{"WITH", "MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"} {
+		if topLevelKeywordIndex(head4, keyword) >= 0 {
+			return nil, invalid()
+		}
 	}
-	projected, ok := e.pipelineApplyReturn(ctx, rows, clause)
-	if !ok {
-		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW schema RETURN"), nil)
+	last := -1
+	for i := 0; i < 4; i++ {
+		position := topLevelKeywordIndex(head4, segments[i])
+		if position < 0 {
+			continue
+		}
+		if position < last {
+			return nil, invalid()
+		}
+		last = position
 	}
-	return projected, nil
+	segmentText := func(i int) string {
+		start := topLevelKeywordIndex(head4, segments[i])
+		if start < 0 {
+			return ""
+		}
+		end := len(head4)
+		for j := 0; j < 4; j++ {
+			if position := topLevelKeywordIndex(head4, segments[j]); position > start && position < end {
+				end = position
+			}
+		}
+		return strings.TrimSpace(head4[start+len(segments[i]) : end])
+	}
+	for _, i := range []int{1, 2} {
+		if value := segmentText(i); value != "" && !strings.HasPrefix(value, "$") {
+			if integer, literal := parseLiteralValueFromComputedRow(value); !literal {
+				return nil, invalid()
+			} else if _, isInteger := integer.(int64); !isInteger {
+				return nil, invalid()
+			}
+		}
+	}
+
+	items := strings.TrimSpace(body[:itemsEnd])
+	yield := parseYieldClause("CALL show() YIELD " + items)
+	if yield == nil || items == "" {
+		return nil, invalid()
+	}
+	// The yielded columns keep their original names too: YIELD's ORDER BY and
+	// WHERE may use either (YIELD name AS indexName WHERE name = 'x'), as in
+	// Neo4j. Without RETURN, the YIELD items are the result.
+	outputs := append([]string(nil), result.Columns...)
+	projected := &ExecuteResult{Columns: append([]string(nil), result.Columns...), Rows: result.Rows}
+	if !yield.yieldAll {
+		if err := validateYieldColumnsExist(result.Columns, yield); err != nil {
+			return nil, err
+		}
+		outputs = outputs[:0]
+		index := make(map[string]int, len(result.Columns))
+		for i, column := range result.Columns {
+			index[column] = i
+		}
+		sources := make([]int, 0, len(yield.items))
+		for _, item := range yield.items {
+			name := item.name
+			if item.alias != "" {
+				name = item.alias
+			}
+			outputs = append(outputs, name)
+			if name != item.name {
+				projected.Columns = append(projected.Columns, name)
+				sources = append(sources, index[item.name])
+			}
+		}
+		if len(sources) > 0 {
+			projected.Rows = make([][]interface{}, len(result.Rows))
+			for r, row := range result.Rows {
+				extended := append(append(make([]interface{}, 0, len(row)+len(sources)), row...), make([]interface{}, len(sources))...)
+				for s, source := range sources {
+					if source < len(row) {
+						extended[len(row)+s] = row[source]
+					}
+				}
+				projected.Rows[r] = extended
+			}
+		}
+	}
+
+	var clauses strings.Builder
+	paging := ""
+	for i, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if value := segmentText(i); value != "" {
+			paging += " " + keyword + " " + value
+		}
+	}
+	if paging != "" {
+		clauses.WriteString("WITH *" + paging + " ")
+	}
+	if where := segmentText(3); where != "" {
+		clauses.WriteString("WITH * WHERE " + where + " ")
+	}
+	if returnIndex >= 0 {
+		clauses.WriteString(strings.TrimSpace(body[returnIndex:]))
+	} else {
+		quoted := make([]string, len(outputs))
+		for i, column := range outputs {
+			quoted[i] = column
+			if name, next, ok := scanIdentifierToken(column, 0); !ok || name != column || next != len(column) {
+				quoted[i] = "`" + strings.ReplaceAll(column, "`", "``") + "` AS `" + strings.ReplaceAll(column, "`", "``") + "`"
+			}
+		}
+		clauses.WriteString("RETURN " + strings.Join(quoted, ", "))
+	}
+	return e.executeCallTail(ctx, projected, clauses.String())
 }
 
 func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*ExecuteResult, error) {

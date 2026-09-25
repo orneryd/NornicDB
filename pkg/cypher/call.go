@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"runtime"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 
@@ -445,6 +446,15 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
 		return projected, err
 	}
+	// A tail that doesn't start with MATCH (WITH, UNWIND, RETURN, a chained
+	// CALL, …) runs as one pipeline over every yielded row, so aggregation,
+	// ORDER BY and SKIP / LIMIT see all of them. MATCH tails keep their fused
+	// operators below and reach the pipeline before the per-row fallback.
+	if !tailStartsWithMatchClause(tail) && !isPotentialWriteTail(tail) {
+		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+			return pipelined, err
+		}
+	}
 	if pipelined, ok, err := e.tryExecuteCallTailProcedurePipeline(ctx, seed, tail); ok || err != nil {
 		return pipelined, err
 	}
@@ -479,9 +489,14 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 			return projected, err
 		}
 	}
-	// Fallback fast path for read-only tails: execute per-row tails concurrently.
-	// This preserves current semantics while reducing wall-clock fixed cost for
-	// CALL ... YIELD ... MATCH/RETURN tails that cannot use the set-based route.
+	if !isPotentialWriteTail(tail) {
+		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+			return pipelined, err
+		}
+	}
+	// Fallback fast path for read-only tails the pipeline declines: execute
+	// per-row tails concurrently. It runs the tail once per yielded row, so it
+	// can't aggregate across rows.
 	if len(seed.Rows) > 1 && !isPotentialWriteTail(tail) {
 		if parallel, ok, err := e.executeCallTailParallel(ctx, seed, tail, usedCols, expectedCols); ok || err != nil {
 			return parallel, err
@@ -550,6 +565,25 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 	return combined, nil
+}
+
+// executeCallTailPipeline runs the clauses after CALL … YIELD as one pipeline
+// (runPipelineClauses) whose input rows are the procedure's yielded rows. It
+// declines (ok false) when a tail clause isn't a pipeline clause.
+func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+	clauses, ok := pipelineClausesFor(tail)
+	if !ok || len(clauses) == 0 {
+		return nil, false, nil
+	}
+	rows := make([]pipelineRow, 0, len(seed.Rows))
+	for _, row := range seed.Rows {
+		rows = append(rows, pipelineRow(seedValuesForRow(seed, row)))
+	}
+	scope := make(map[string]struct{}, len(seed.Columns))
+	for _, column := range seed.Columns {
+		scope[column] = struct{}{}
+	}
+	return e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
 }
 
 func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
@@ -3930,7 +3964,10 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 	if params := getParamsFromContext(ctx); params != nil {
 		cypher = e.substituteParams(cypher, params)
 	}
-	parts := splitCallAndTail(cypher)
+	// A RETURN right after YIELD is the start of the tail, like any other
+	// clause, so it runs over all yielded rows (executeCallTail): an aggregate
+	// in it groups the rows, and ORDER BY / SKIP / LIMIT apply to all of them.
+	parts := splitChainedProcedureCall(cypher)
 	callCypher := parts.callOnly
 	tailCypher := parts.tail
 
@@ -4242,10 +4279,22 @@ func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
 		Columns: []string{"label"},
 		Rows:    make([][]interface{}, 0, len(labelSet)),
 	}
-	for label := range labelSet {
+	for _, label := range sortedStringSet(labelSet) {
 		result.Rows = append(result.Rows, []interface{}{label})
 	}
 	return result, nil
+}
+
+// sortedStringSet returns a set's members in sorted order, so procedures
+// listing schema tokens (db.labels, db.relationshipTypes, …) return the same
+// order on every call.
+func sortedStringSet(set map[string]bool) []string {
+	members := make([]string, 0, len(set))
+	for member := range set {
+		members = append(members, member)
+	}
+	sort.Strings(members)
+	return members
 }
 
 func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
@@ -4263,7 +4312,7 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 		Columns: []string{"relationshipType"},
 		Rows:    make([][]interface{}, 0, len(typeSet)),
 	}
-	for relType := range typeSet {
+	for _, relType := range sortedStringSet(typeSet) {
 		result.Rows = append(result.Rows, []interface{}{relType})
 	}
 	return result, nil
@@ -4616,7 +4665,7 @@ func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
 		Columns: []string{"propertyKey"},
 		Rows:    make([][]interface{}, 0, len(propSet)),
 	}
-	for prop := range propSet {
+	for _, prop := range sortedStringSet(propSet) {
 		result.Rows = append(result.Rows, []interface{}{prop})
 	}
 
