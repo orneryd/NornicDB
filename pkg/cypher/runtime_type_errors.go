@@ -281,6 +281,17 @@ func (e *StorageExecutor) recordRowOperatorFailure(ctx context.Context, expr str
 			return e.recordComprehensionOperatorFailure(ctx, variable, list, predicate, projection, values)
 		}
 	}
+	for _, keyword := range [...]string{"OR", "XOR", "AND"} {
+		if index := topLevelKeywordIndex(expression, keyword); index > 0 {
+			return e.recordUnresolvedOperandFailure(ctx, values, expression[:index], expression[index+len(keyword):])
+		}
+	}
+	if startsWithKeywordFold(expression, "NOT") {
+		return e.recordUnresolvedOperandFailure(ctx, values, expression[len("NOT"):])
+	}
+	if operands, _, comparison := splitComparisonChain(expression); comparison {
+		return e.recordUnresolvedOperandFailure(ctx, values, operands...)
+	}
 	if expression == "" || !isOperatorExpressionText(expression) {
 		return false
 	}
@@ -339,6 +350,18 @@ func (e *StorageExecutor) recordRowOperatorFailure(ctx context.Context, expr str
 		}
 		if err := propertyAccessTypeError(base); err != nil {
 			recordExpressionFailure(ctx, err)
+			return true
+		}
+	}
+	return false
+}
+
+// recordUnresolvedOperandFailure is recordRowOperatorFailure for the operands
+// of a boolean or comparison operator: it looks into each operand the row
+// evaluator can't resolve.
+func (e *StorageExecutor) recordUnresolvedOperandFailure(ctx context.Context, values pipelineRow, operands ...string) bool {
+	for _, operand := range operands {
+		if _, ok := e.evaluateRowExpression(operand, values); !ok && e.recordRowOperatorFailure(ctx, operand, values) {
 			return true
 		}
 	}
