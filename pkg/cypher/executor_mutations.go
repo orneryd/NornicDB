@@ -122,7 +122,7 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 		}
 	}
 
-	returnIdx := findKeywordIndex(cypher, "RETURN")
+	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
 	needEdgeStats := returnIdx > 0 || detach // always track for DETACH so stats are correct
 
 	// Streaming batched delete hot path for large DETACH DELETE scans.
@@ -575,7 +575,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 	if result == nil {
 		return
 	}
-	returnIdx := findKeywordIndex(cypher, "RETURN")
+	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
 	if returnIdx <= 0 {
 		return
 	}
@@ -863,9 +863,9 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
 
 	// Use word boundary detection to avoid matching substrings
-	matchIdx := findKeywordIndex(normalized, "MATCH")
-	setIdx := findKeywordIndex(normalized, "SET")
-	returnIdx := findKeywordIndex(normalized, "RETURN")
+	matchIdx := topLevelKeywordIndex(normalized, "MATCH")
+	setIdx := topLevelKeywordIndex(normalized, "SET")
+	returnIdx := topLevelKeywordIndex(normalized, "RETURN")
 
 	if matchIdx == -1 || setIdx == -1 {
 		return nil, localizedError(localization.CypherMutationsSetMatchRequired(), nil)

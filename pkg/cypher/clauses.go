@@ -887,7 +887,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 	// and combining results. This avoids silently returning only unwound values when
 	// a trailing MATCH pipeline is present.
 	if restQuery != "" && strings.HasPrefix(strings.ToUpper(restQuery), "MATCH ") {
-		returnIdx := findKeywordIndex(restQuery, "RETURN")
+		returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
 		mutationPart := restQuery
 		returnPart := ""
 		if returnIdx > 0 {
@@ -919,7 +919,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 		}
 
 		returnItems := []returnItem{}
-		if retIdx := findKeywordIndex(normalizedRestQuery, "RETURN"); retIdx > 0 {
+		if retIdx := topLevelKeywordIndex(normalizedRestQuery, "RETURN"); retIdx > 0 {
 			returnClause := strings.TrimSpace(normalizedRestQuery[retIdx+6:])
 			returnEnd := len(returnClause)
 			for _, keyword := range []string{"ORDER", "SKIP", "LIMIT"} {
@@ -2556,7 +2556,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 }
 
 func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
-	returnIdx := findKeywordIndex(restQuery, "RETURN")
+	returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
 	if returnIdx <= 0 {
 		return nil, false, nil
 	}
@@ -3159,7 +3159,7 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 	if !strings.HasPrefix(strings.ToUpper(trimmed), "MATCH ") {
 		return query
 	}
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if returnIdx <= 0 {
 		return query
 	}
@@ -3263,7 +3263,7 @@ func normalizeMultiMatchWhereClauses(query string) string {
 		return query
 	}
 
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if returnIdx <= 0 {
 		return query
 	}
@@ -3273,7 +3273,7 @@ func normalizeMultiMatchWhereClauses(query string) string {
 	searchFrom := len("MATCH")
 	secondMatchIdx := -1
 	if searchFrom < len(mainPart) {
-		if rel := findKeywordIndex(mainPart[searchFrom:], "MATCH"); rel >= 0 {
+		if rel := topLevelKeywordIndex(mainPart[searchFrom:], "MATCH"); rel >= 0 {
 			secondMatchIdx = searchFrom + rel
 		}
 	}
@@ -3573,8 +3573,8 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 
 	// Find WITH or RETURN after OPTIONAL MATCH
 	remainingAfterOptMatch := cypher[optMatchIdx+14:] // Skip "OPTIONAL MATCH"
-	withIdx := findKeywordIndex(remainingAfterOptMatch, "WITH")
-	returnIdx := findKeywordIndex(remainingAfterOptMatch, "RETURN")
+	withIdx := topLevelKeywordIndex(remainingAfterOptMatch, "WITH")
+	returnIdx := topLevelKeywordIndex(remainingAfterOptMatch, "RETURN")
 
 	// Determine where OPTIONAL MATCH pattern ends
 	optMatchEndIdx := len(remainingAfterOptMatch)
