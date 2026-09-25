@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -71,5 +72,130 @@ func TestCountSubqueryDegreeFastPathShapes(t *testing.T) {
 		result, err = exec.Execute(ctx, "MATCH (a:D {id:'a'}) WHERE COUNT { "+tc.body+" } = $n RETURN a.id AS id", map[string]interface{}{"n": tc.want})
 		require.NoError(t, err, tc.body)
 		require.Len(t, result.Rows, 1, "WHERE form: %s", tc.body)
+	}
+}
+
+// TestSubqueryPredicatesOnEveryRoute pins EXISTS / COUNT / COLLECT subqueries
+// in WHERE and RETURN across the statement shapes that reach different WHERE
+// evaluators and clause splitters (#652): single-node, cartesian, WITH,
+// OPTIONAL MATCH, relationship and named-path patterns, UNWIND … MATCH,
+// aggregation, SET, DETACH DELETE and MERGE. Only a whole [NOT] EXISTS { }
+// is an existence test; a comparison around a subquery (EXISTS { … } = false,
+// 0 = COUNT { … }) is an expression, and a RETURN / CALL inside a subquery
+// body is not a clause of the statement. Expected rows are Neo4j 5.26.30's.
+func TestSubqueryPredicatesOnEveryRoute(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  [][]interface{}
+	}{
+		{"MATCH (i:W709p) RETURN i.id AS id, COUNT { (i)-->() } + COUNT { (i)<--() } AS s ORDER BY id", [][]interface{}{{"a", int64(2)}, {"b", int64(1)}, {"c", int64(1)}}},
+		{"MATCH (i:W709p) WHERE i.f = EXISTS { (i)-->() } RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (i:W709p) WHERE EXISTS { (i)-->() } = false RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE EXISTS { MATCH (i)-->() } = false RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WITH i WHERE EXISTS { (i)-->() } = false RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE EXISTS { (i)-->() } <> true RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE false = EXISTS { (i)-->() } RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE COUNT { (i)-->() } + COUNT { (i)<--() } = 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE 1 = COUNT { (i)-->() } RETURN i.id AS id ORDER BY id", [][]interface{}{}},
+		{"MATCH (i:W709p) WHERE 0 < COUNT { (i)-->() } RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE i.f AND COUNT { (i)-->() } > 0 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o }) > 1 RETURN i.id AS id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p)-[r]->(x) WHERE EXISTS { CALL (x) { MATCH (x)<--(y) RETURN y } RETURN y } RETURN x.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p)-[r]->(x) WHERE NOT EXISTS { CALL (x) { MATCH (x)-->(y) RETURN y } RETURN y } RETURN x.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p)-[r]->(x) WHERE COUNT { CALL (i) { MATCH (i)-->(y) RETURN y } RETURN y } = 2 RETURN x.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p)-[r]->(x) WHERE EXISTS { (x)-->() } = false RETURN x.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p)-[r]->(x) WHERE NOT  EXISTS { (x)<--(i) } RETURN x.id AS id ORDER BY id", [][]interface{}{}},
+		{"MATCH (i:W709p) WHERE EXISTS { (i)-->() } OR i.id = 'c' RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE NOT EXISTS { (i)-->() } AND i.f RETURN i.id AS id ORDER BY id", [][]interface{}{{"c"}}},
+		{"MATCH (i:W709p) WHERE NOT  EXISTS { (i)-->() } RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE NOT EXISTS { (i)-->() } = true RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) RETURN i.id AS id, size(COLLECT { MATCH (i)-->(o) CALL (o) { RETURN o.id AS z } RETURN z }) AS l ORDER BY id", [][]interface{}{{"a", int64(2)}, {"b", int64(0)}, {"c", int64(0)}}},
+		{"MATCH (i:W709p) RETURN i.id AS id, COLLECT { MATCH (i)-->(o) RETURN o.id ORDER BY o.id }[0] AS l ORDER BY id", [][]interface{}{{"a", "b"}, {"b", nil}, {"c", nil}}},
+		{"MATCH (i:W709p) RETURN i.id AS id, EXISTS { MATCH (i)-->(o) CALL (o) { RETURN o.id AS one } RETURN o } AS e, COUNT { MATCH (i)-->(o) CALL (o) { RETURN o.id AS one } RETURN o } AS c ORDER BY id", [][]interface{}{{"a", true, int64(2)}, {"b", false, int64(0)}, {"c", false, int64(0)}}},
+		{"MATCH (i:W709p) WHERE EXISTS { MATCH (i)-->(o) CALL (o) { RETURN o.id AS one } RETURN o } RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p)-[r]->(x) WHERE EXISTS { MATCH (i)-->(y) WHERE y.id = 'b' OR y.id = 'zz' } RETURN x.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p)-[r]->(x) WHERE EXISTS { MATCH (i)-->(y) WHERE y.id = 'zz' AND y.f } OR x.id = 'c' RETURN x.id AS id ORDER BY id", [][]interface{}{{"c"}}},
+		{"MATCH p = (i:W709p)-[r]->(x) WHERE length(p) = COUNT { (x)<--() } RETURN x.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH p = (i:W709p)-[r]->(x) WHERE length(p) = 1 AND NOT EXISTS { (x)-->() } RETURN x.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p)-[r]->(x) WHERE COUNT { (i)-->() } = 2 AND x.f RETURN x.id AS id ORDER BY id", [][]interface{}{{"c"}}},
+		{"MATCH (i:W709p)-[r]->(x) WHERE 0 = COUNT { (x)-->() } RETURN x.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE EXISTS { MATCH (i)-->(y) WHERE y.id = 'b' OR y.id = 'zz' } RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE EXISTS { (i)-->() } = false RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p), (z:W709p {id:'a'}) WHERE EXISTS { (i)-->() } = false RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WITH i WHERE EXISTS { (i)-->() } = false RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (z:W709p {id:'a'}) OPTIONAL MATCH (z)-->(i) WHERE EXISTS { (i)-->() } = false RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p)-[r]-(x) WHERE EXISTS { (i)-->() } = false RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"UNWIND ['a','b','c'] AS k MATCH (i:W709p {id:k}) WHERE EXISTS { (i)-->() } = false RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE EXISTS { (i)-->() } = false WITH count(*) AS c RETURN c", [][]interface{}{{int64(2)}}},
+		{"MATCH p=(i:W709p)-->() WHERE EXISTS { (i)-->() } = false RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{}},
+		{"MATCH (i:W709p) WHERE EXISTS { (i)-->() } = false SET i.hit = true RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE EXISTS { (i)-->() } = false DETACH DELETE i RETURN count(*) AS c", [][]interface{}{{int64(2)}}},
+		{"MATCH (i:W709p) WHERE EXISTS { (i)-->() } = false RETURN count(i) AS c", [][]interface{}{{int64(2)}}},
+		{"MATCH (i:W709p) WITH i, 1 AS one WHERE EXISTS { (i)-->() } = false RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MERGE (i:W709p {id:'a'}) WITH i WHERE EXISTS { (i)-->() } = false RETURN i.id AS id", [][]interface{}{}},
+		{"MATCH (i:W709p) WHERE COUNT { (i)-->() } = 2 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p), (z:W709p {id:'a'}) WHERE COUNT { (i)-->() } = 2 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WITH i WHERE COUNT { (i)-->() } = 2 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (z:W709p {id:'a'}) OPTIONAL MATCH (z)-->(i) WHERE COUNT { (i)-->() } = 2 RETURN i.id AS id ORDER BY id", [][]interface{}{{nil}}},
+		{"MATCH (i:W709p)-[r]-(x) WHERE COUNT { (i)-->() } = 2 RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"UNWIND ['a','b','c'] AS k MATCH (i:W709p {id:k}) WHERE COUNT { (i)-->() } = 2 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE COUNT { (i)-->() } = 2 WITH count(*) AS c RETURN c", [][]interface{}{{int64(1)}}},
+		{"MATCH p=(i:W709p)-->() WHERE COUNT { (i)-->() } = 2 RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE COUNT { (i)-->() } = 2 SET i.hit = true RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE COUNT { (i)-->() } = 2 DETACH DELETE i RETURN count(*) AS c", [][]interface{}{{int64(1)}}},
+		{"MATCH (i:W709p) WHERE COUNT { (i)-->() } = 2 RETURN count(i) AS c", [][]interface{}{{int64(1)}}},
+		{"MATCH (i:W709p) WITH i, 1 AS one WHERE COUNT { (i)-->() } = 2 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MERGE (i:W709p {id:'a'}) WITH i WHERE COUNT { (i)-->() } = 2 RETURN i.id AS id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p), (z:W709p {id:'a'}) WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WITH i WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (z:W709p {id:'a'}) OPTIONAL MATCH (z)-->(i) WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p)-[r]-(x) WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"UNWIND ['a','b','c'] AS k MATCH (i:W709p {id:k}) WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } WITH count(*) AS c RETURN c", [][]interface{}{{int64(2)}}},
+		{"MATCH p=(i:W709p)-->() WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{}},
+		{"MATCH (i:W709p) WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } SET i.hit = true RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MATCH (i:W709p) WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } DETACH DELETE i RETURN count(*) AS c", [][]interface{}{{int64(2)}}},
+		{"MATCH (i:W709p) WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN count(i) AS c", [][]interface{}{{int64(2)}}},
+		{"MATCH (i:W709p) WITH i, 1 AS one WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}, {"c"}}},
+		{"MERGE (i:W709p {id:'a'}) WITH i WHERE NOT EXISTS { CALL (i) { MATCH (i)-->(o) RETURN o } RETURN o } RETURN i.id AS id", [][]interface{}{}},
+		{"MATCH (i:W709p) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p), (z:W709p {id:'a'}) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WITH i WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (z:W709p {id:'a'}) OPTIONAL MATCH (z)-->(i) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{nil}}},
+		{"MATCH (i:W709p)-[r]-(x) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"UNWIND ['a','b','c'] AS k MATCH (i:W709p {id:k}) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 WITH count(*) AS c RETURN c", [][]interface{}{{int64(1)}}},
+		{"MATCH p=(i:W709p)-->() WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 SET i.hit = true RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 DETACH DELETE i RETURN count(*) AS c", [][]interface{}{{int64(1)}}},
+		{"MATCH (i:W709p) WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN count(i) AS c", [][]interface{}{{int64(1)}}},
+		{"MATCH (i:W709p) WITH i, 1 AS one WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MERGE (i:W709p {id:'a'}) WITH i WHERE size(COLLECT { MATCH (i)-->(o) RETURN o.id }) > 1 RETURN i.id AS id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (i:W709p), (z:W709p {id:'a'}) WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (i:W709p) WITH i WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (z:W709p {id:'a'}) OPTIONAL MATCH (z)-->(i) WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN i.id AS id ORDER BY id", [][]interface{}{{"b"}}},
+		{"MATCH (i:W709p)-[r]-(x) WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"UNWIND ['a','b','c'] AS k MATCH (i:W709p {id:k}) WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (i:W709p) WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' WITH count(*) AS c RETURN c", [][]interface{}{{int64(2)}}},
+		{"MATCH p=(i:W709p)-->() WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN DISTINCT i.id AS id ORDER BY id", [][]interface{}{{"a"}}},
+		{"MATCH (i:W709p) WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' SET i.hit = true RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (i:W709p) WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' DETACH DELETE i RETURN count(*) AS c", [][]interface{}{{int64(2)}}},
+		{"MATCH (i:W709p) WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN count(i) AS c", [][]interface{}{{int64(2)}}},
+		{"MATCH (i:W709p) WITH i, 1 AS one WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN i.id AS id ORDER BY id", [][]interface{}{{"a"}, {"b"}}},
+		{"MERGE (i:W709p {id:'a'}) WITH i WHERE 0 = COUNT { (i)<--() } OR i.id = 'b' RETURN i.id AS id", [][]interface{}{{"a"}}},
+	} {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "subqueryroutes"))
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (a:W709p {id:'a', f:true})-[:USES]->(b:W709p {id:'b', f:false}), (a)-[:USES]->(c:W709p {id:'c', f:true})", nil)
+		require.NoError(t, err)
+		result, err := exec.Execute(ctx, tc.query, nil)
+		require.NoError(t, err, tc.query)
+		if strings.Contains(tc.query, "ORDER BY") {
+			require.Equal(t, tc.want, result.Rows, tc.query)
+		} else {
+			require.ElementsMatch(t, tc.want, result.Rows, tc.query)
+		}
 	}
 }
