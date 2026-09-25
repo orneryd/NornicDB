@@ -24,6 +24,7 @@ func TestSearchedCaseInWhere(t *testing.T) {
 		"MATCH (w:W) WHERE NOT CASE WHEN w.n > 2 THEN true ELSE false END RETURN w.id AS id ORDER BY id":                       {"b"},
 		"MATCH (w:W) WHERE CASE WHEN w.n > 2 AND w.n < 4 THEN 1 ELSE 0 END = 1 RETURN w.id AS id ORDER BY id":                  {"a"},
 		"MATCH (w:W) WHERE CASE WHEN w.n > 2 OR w.id = 'b' THEN true ELSE false END AND w.n < 5 RETURN w.id AS id ORDER BY id": {"a", "b"},
+		"MATCH p = (a:W)-->(b:W) WHERE CASE WHEN a.n > 2 THEN length(p) ELSE 0 END = 1 RETURN a.id AS id":                      {"a"},
 		"MATCH (a:W)-[r:R]->(b:W) WHERE CASE WHEN r.w > 1 THEN b.n ELSE 0 END = 1 RETURN a.id AS id":                           {"a"},
 		"UNWIND [1, 5] AS x WITH x WHERE CASE WHEN x > 2 THEN x ELSE 0 END > 4 RETURN x AS id":                                 {int64(5)},
 	} {
