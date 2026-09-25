@@ -55,6 +55,10 @@ const (
 	pipelineClauseUnwind
 	pipelineClauseReturn
 	pipelineClauseForeach
+	// pipelineClauseCall is a procedure call, CALL proc(args) YIELD … [WHERE …]
+	// (splitPipelineClausesAllowingProcedureCalls only; a CALL { } subquery
+	// is not a pipeline clause).
+	pipelineClauseCall
 )
 
 // pipelineClause is one segment of the pipeline. `text` includes the leading
@@ -84,7 +88,30 @@ type pipelineRow map[string]interface{}
 // subquery, etc.) causes a false return so the
 // caller can select a specialized physical plan.
 func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
-	clauses, ok := splitPipelineClauses(cypher)
+	clauses, ok := pipelineClausesFor(cypher)
+	if !ok {
+		return nil, false
+	}
+	// Must contain at least two clauses.
+	if len(clauses) < 2 && (len(clauses) == 0 || clauses[0].kind != pipelineClauseForeach) {
+		return nil, false
+	}
+	// Standalone CREATE ... RETURN remains one atomic write operator. CREATE
+	// participates in the row pipeline as soon as another clause establishes
+	// or consumes a row horizon.
+	if len(clauses) == 2 && clauses[0].kind == pipelineClauseCreate && clauses[1].kind == pipelineClauseReturn {
+		returnBody := strings.TrimSpace(clauses[1].text[len("RETURN"):])
+		if firstTopLevelModifierIndex(returnBody) < 0 {
+			return nil, false
+		}
+	}
+	return clauses, true
+}
+
+// pipelineClausesFor splits a statement, or the clauses after a CALL …
+// YIELD, into pipeline clauses when every clause is one the pipeline runs.
+func pipelineClausesFor(cypher string) ([]pipelineClause, bool) {
+	clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher)
 	if !ok {
 		return nil, false
 	}
@@ -111,19 +138,6 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	}
 	for _, clause := range clauses {
 		if clause.kind == pipelineClauseOptionalMatch && strings.Contains(clause.text, "*") {
-			return nil, false
-		}
-	}
-	// Must contain at least two clauses.
-	if len(clauses) < 2 && (len(clauses) == 0 || clauses[0].kind != pipelineClauseForeach) {
-		return nil, false
-	}
-	// Standalone CREATE ... RETURN remains one atomic write operator. CREATE
-	// participates in the row pipeline as soon as another clause establishes
-	// or consumes a row horizon.
-	if len(clauses) == 2 && clauses[0].kind == pipelineClauseCreate && clauses[1].kind == pipelineClauseReturn {
-		returnBody := strings.TrimSpace(clauses[1].text[len("RETURN"):])
-		if firstTopLevelModifierIndex(returnBody) < 0 {
 			return nil, false
 		}
 	}
@@ -205,7 +219,19 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 // top-level MATCH/CREATE/WITH/UNWIND/RETURN keywords. Returns (clauses, true)
 // on success. On anything unsupported (e.g. nested MERGE or CALL subquery)
 // returns (nil, false) so the caller falls back.
-func parsePipelineClauses(cypher string) ([]pipelineClause, bool) {
+func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
+	return splitPipelineClausesWithProcedureCalls(cypher, false)
+}
+
+// splitPipelineClausesAllowingProcedureCalls is splitPipelineClauses that also
+// accepts top-level procedure calls (CALL proc(args) YIELD …) as clauses of
+// kind pipelineClauseCall, for the pipeline executor. The semantic
+// validators keep using splitPipelineClauses, which rejects any CALL.
+func splitPipelineClausesAllowingProcedureCalls(cypher string) ([]pipelineClause, bool) {
+	return splitPipelineClausesWithProcedureCalls(cypher, true)
+}
+
+func splitPipelineClausesWithProcedureCalls(cypher string, allowProcedureCalls bool) ([]pipelineClause, bool) {
 	type kw struct {
 		name string
 		kind pipelineClauseKind
@@ -232,8 +258,12 @@ func parsePipelineClauses(cypher string) ([]pipelineClause, bool) {
 	// else — including $param references and arbitrary WHERE on bindings —
 	// is handled by the per-clause appliers below, which substitute params
 	// from context and respect node bindings supplied by the caller.
-	if topLevelKeywordIndex(cypher, "CALL") >= 0 {
-		return nil, false
+	upper := strings.ToUpper(cypher)
+	if findKeywordIndex(upper, "CALL") >= 0 {
+		if !allowProcedureCalls || !pipelineProcedureCallsAreClauses(cypher) {
+			return nil, false
+		}
+		keywords = append(keywords, kw{"CALL", pipelineClauseCall})
 	}
 
 	// Collect boundary positions for each supported keyword.
@@ -442,12 +472,6 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 		return result, true, err
 	}
 
-	result := &ExecuteResult{
-		Columns: []string{},
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-
 	// Start with one binding row. Parameters retain their typed values under
 	// their `$name` expression keys so list/map inputs are not stringified while
 	// crossing WITH and UNWIND horizons.
@@ -464,6 +488,21 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 		scope[name] = struct{}{}
 	}
 
+	return e.runPipelineClauses(ctx, rows, scope, clauses, originalClauses)
+}
+
+// runPipelineClauses threads the binding rows through the clauses, starting
+// from rows (one empty row for a whole statement, or the rows a procedure
+// yielded for the clauses after CALL … YIELD). originalClauses are the clause
+// texts before parameter substitution, which name RETURN columns. It returns
+// (result, true, nil), (nil, false, nil) when a clause shape is unsupported
+// before anything was written, or (nil, true, err).
+func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause) (*ExecuteResult, bool, error) {
+	result := &ExecuteResult{
+		Columns: []string{},
+		Rows:    [][]interface{}{},
+		Stats:   &QueryStats{},
+	}
 	wrote := false
 	for idx, clause := range clauses {
 		switch clause.kind {
@@ -571,6 +610,18 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 			rows = newRows
 			if alias := pipelineUnwindAlias(clause.text); alias != "" {
 				scope[alias] = struct{}{}
+			}
+		case pipelineClauseCall:
+			newRows, yielded, ok, err := e.pipelineApplyProcedureCall(ctx, rows, clause.text)
+			if err != nil {
+				return nil, true, err
+			}
+			if !ok {
+				return pipelineDecline(wrote, clause.text)
+			}
+			rows = newRows
+			for _, name := range yielded {
+				scope[name] = struct{}{}
 			}
 		case pipelineClauseForeach:
 			stats, err := e.pipelineApplyForeach(ctx, rows, clause.text)

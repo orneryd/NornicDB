@@ -31,8 +31,14 @@ func TestShowSettingsSelectionAndUnsupportedComposition(t *testing.T) {
 	require.Equal(t, "db.memory.transaction.total.max", result.Rows[0][0])
 	require.Equal(t, "db.nornic.query_plan_cache.max_entries", result.Rows[1][0])
 
-	_, err = executor.Execute(context.Background(), "SHOW SETTINGS YIELD name", nil)
-	require.Error(t, err)
+	// YIELD / WHERE / RETURN apply to SHOW SETTINGS like every SHOW command.
+	result, err = executor.Execute(context.Background(), "SHOW SETTINGS YIELD name WHERE name = 'db.memory.transaction.total.max' RETURN count(*) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	result, err = executor.Execute(context.Background(), "SHOW SETTINGS db.nornic.query_plan_cache.max_entries, db.memory.transaction.total.max YIELD name ORDER BY name DESC LIMIT 1", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"name"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"db.nornic.query_plan_cache.max_entries"}}, result.Rows)
 }
 
 func TestShowSettingsUsesResolvedValuesAndRedactsSecrets(t *testing.T) {
