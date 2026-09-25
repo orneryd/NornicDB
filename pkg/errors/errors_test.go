@@ -37,16 +37,9 @@ func TestMapTransientTransactionError(t *testing.T) {
 		},
 		{
 			name: "merge commit-time unique conflict",
-			err:  MarkMergeCommitTimeUniqueConflict(fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "TerraformResource", Properties: []string{"uid"}, Message: "Node with uid=X already exists (nodeID: nornic:abc)", Concurrent: true})),
+			err:  MarkMergeCommitTimeUniqueConflict(fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "TerraformResource", Properties: []string{"uid"}, Message: "Node with uid=X already exists (nodeID: nornic:abc)"})),
 			want: TransientOutdated,
 			ok:   true,
-		},
-		{
-			// #657: a duplicate of a value stored before the transaction began
-			// fails on every retry, so it isn't a race.
-			name: "merge unique violation against a stored value is not transient",
-			err:  MarkMergeCommitTimeUniqueConflict(fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "TerraformResource", Properties: []string{"uid"}, Message: "Node with uid=X already exists (nodeID: nornic:abc)"})),
-			ok:   false,
 		},
 		{
 			name: "ordinary error",
@@ -83,7 +76,6 @@ func TestMarkMergeCommitTimeUniqueConflict(t *testing.T) {
 		Label:      "TerraformResource",
 		Properties: []string{"uid"},
 		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
-		Concurrent: true,
 	})
 	marked := MarkMergeCommitTimeUniqueConflict(uniqueErr)
 	if !IsMergeCommitTimeUniqueConflict(marked) {
@@ -101,15 +93,5 @@ func TestMarkMergeCommitTimeUniqueConflict(t *testing.T) {
 	})
 	if got := MarkMergeCommitTimeUniqueConflict(nonUniqueErr); got != nonUniqueErr {
 		t.Fatal("non-unique constraint violation should not be wrapped")
-	}
-
-	storedValueErr := fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
-		Type:       storage.ConstraintUnique,
-		Label:      "TerraformResource",
-		Properties: []string{"uid"},
-		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
-	})
-	if got := MarkMergeCommitTimeUniqueConflict(storedValueErr); got != storedValueErr {
-		t.Fatal("a unique violation against a value stored before the transaction began should not be wrapped")
 	}
 }

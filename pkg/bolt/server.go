@@ -1481,6 +1481,7 @@ type Session struct {
 	txDatabase                      string
 	txHasMerge                      bool
 	txHasNonMergeWrite              bool
+	txMergeStatements               []string
 	txLifecycle                     transactionLifecycle
 	failedUntilReset                bool
 	transactionCleanupFailed        bool

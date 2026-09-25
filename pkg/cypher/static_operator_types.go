@@ -392,13 +392,23 @@ func staticParameterOperand(value interface{}) staticOperand {
 	return staticOperand{}
 }
 
-// clauseOperatorExpressions returns the expressions of one clause whose
-// operators are type-checked: projections, WHERE, ORDER BY, SET values,
-// UNWIND lists and pattern property values.
-func (e *StorageExecutor) clauseOperatorExpressions(clause pipelineClause) []string {
+// mayContainArithmetic is the cheap precheck before an expression is
+// type-checked: an arithmetic operator needs one of these characters.
+func mayContainArithmetic(text string) bool {
+	return strings.ContainsAny(text, "+-*/%^")
+}
+
+// forEachClauseOperatorExpression visits the expressions of one clause whose
+// operators are type-checked (projections, WHERE, ORDER BY, SET values,
+// UNWIND lists, pattern property values) and that may contain arithmetic.
+// afterProjection is set for the WHERE and ORDER BY of a RETURN / WITH, which
+// see the projection's aliases. It allocates only for clauses with arithmetic.
+func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause, visit func(expression string, afterProjection bool) error) error {
 	text := strings.TrimSpace(clause.text)
-	var expressions []string
-	addPatternValues := func(pattern string) {
+	if !mayContainArithmetic(text) {
+		return nil
+	}
+	visitPatternValues := func(pattern string) error {
 		for index := 0; index < len(pattern); index++ {
 			switch pattern[index] {
 			case '\'', '"':
@@ -406,27 +416,37 @@ func (e *StorageExecutor) clauseOperatorExpressions(clause pipelineClause) []str
 			case '{':
 				closing := findMatchingDelimiter(pattern, index, '{', '}')
 				if closing < 0 {
-					return
+					return nil
 				}
-				for _, pair := range splitTopLevelComma(pattern[index+1 : closing]) {
-					if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-						expressions = append(expressions, pair[separator+1:])
+				if body := pattern[index+1 : closing]; mayContainArithmetic(body) {
+					for _, pair := range splitTopLevelComma(body) {
+						if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
+							if err := visit(pair[separator+1:], false); err != nil {
+								return err
+							}
+						}
 					}
 				}
 				index = closing
 			}
 		}
+		return nil
 	}
-	addPredicate := func(body string) {
-		if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
-			predicate := body[where+len("WHERE"):]
-			for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-				if index := topLevelKeywordIndex(predicate, keyword); index >= 0 {
-					predicate = predicate[:index]
-				}
-			}
-			expressions = append(expressions, predicate)
+	visitPredicate := func(body string, afterProjection bool) error {
+		where := topLevelKeywordIndex(body, "WHERE")
+		if where < 0 {
+			return nil
 		}
+		predicate := body[where+len("WHERE"):]
+		for _, keyword := range [...]string{"ORDER BY", "SKIP", "LIMIT"} {
+			if index := topLevelKeywordIndex(predicate, keyword); index >= 0 {
+				predicate = predicate[:index]
+			}
+		}
+		if !mayContainArithmetic(predicate) {
+			return nil
+		}
+		return visit(predicate, afterProjection)
 	}
 	switch clause.kind {
 	case pipelineClauseReturn, pipelineClauseWith:
@@ -439,20 +459,32 @@ func (e *StorageExecutor) clauseOperatorExpressions(clause pipelineClause) []str
 		if startsWithKeywordFold(projection, "DISTINCT") {
 			projection = projection[len("DISTINCT"):]
 		}
-		for _, item := range splitTopLevelComma(projection) {
-			expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
-			expressions = append(expressions, expression)
+		if mayContainArithmetic(projection) {
+			for _, item := range splitTopLevelComma(projection) {
+				expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+				if mayContainArithmetic(expression) {
+					if err := visit(expression, false); err != nil {
+						return err
+					}
+				}
+			}
 		}
-		addPredicate(body)
+		if err := visitPredicate(body, true); err != nil {
+			return err
+		}
 		if order := topLevelKeywordIndex(body, "ORDER BY"); order >= 0 {
 			orderBody := body[order+len("ORDER BY"):]
-			for _, keyword := range []string{"SKIP", "LIMIT", "WHERE"} {
+			for _, keyword := range [...]string{"SKIP", "LIMIT", "WHERE"} {
 				if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
 					orderBody = orderBody[:index]
 				}
 			}
-			for _, term := range parseOrderByClause(orderBody) {
-				expressions = append(expressions, term.column)
+			if mayContainArithmetic(orderBody) {
+				for _, term := range parseOrderByClause(orderBody) {
+					if err := visit(term.column, true); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	case pipelineClauseMatch, pipelineClauseOptionalMatch:
@@ -460,41 +492,53 @@ func (e *StorageExecutor) clauseOperatorExpressions(clause pipelineClause) []str
 		if where := topLevelKeywordIndex(text, "WHERE"); where >= 0 {
 			pattern = text[:where]
 		}
-		addPatternValues(pattern)
-		addPredicate(text)
+		if err := visitPatternValues(pattern); err != nil {
+			return err
+		}
+		return visitPredicate(text, false)
 	case pipelineClauseCreate, pipelineClauseMerge:
 		pattern := text
-		for _, keyword := range []string{"ON CREATE SET", "ON MATCH SET"} {
+		for _, keyword := range [...]string{"ON CREATE SET", "ON MATCH SET"} {
 			if index := findKeywordIndexInContext(pattern, keyword); index >= 0 {
 				pattern = pattern[:index]
 			}
 		}
-		addPatternValues(pattern)
+		return visitPatternValues(pattern)
 	case pipelineClauseSet:
 		for _, assignment := range e.splitSetAssignments(strings.TrimSpace(text[len("SET"):])) {
-			if operator := strings.Index(assignment, "="); operator > 0 {
-				expressions = append(expressions, assignment[operator+1:])
+			if operator := strings.Index(assignment, "="); operator > 0 && mayContainArithmetic(assignment[operator+1:]) {
+				if err := visit(assignment[operator+1:], false); err != nil {
+					return err
+				}
 			}
 		}
 	case pipelineClauseUnwind:
 		body := strings.TrimSpace(text[len("UNWIND"):])
 		if as := findKeywordIndexInContext(body, "AS"); as >= 0 {
-			expressions = append(expressions, body[:as])
-		}
-	}
-	return expressions
-}
-
-// validateStaticOperatorTypes type-checks the operators of one clause's
-// expressions with the clause's variable types.
-func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, scope staticTypeScope, params map[string]interface{}) error {
-	checker := staticOperatorChecker{scope: scope, params: params}
-	for _, expression := range e.clauseOperatorExpressions(clause) {
-		if _, err := checker.check(expression); err != nil {
-			return err
+			return visit(body[:as], false)
 		}
 	}
 	return nil
+}
+
+// validateStaticOperatorTypes type-checks the operators of one clause's
+// expressions with the clause's variable types; the WHERE and ORDER BY after
+// a projection use projectedScope (built only when needed), where the
+// projection's aliases replace the variables they rename
+// (RETURN n.num AS n ORDER BY n + 2).
+func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope, params map[string]interface{}) error {
+	var projected *staticOperatorChecker
+	return e.forEachClauseOperatorExpression(clause, func(expression string, afterProjection bool) error {
+		checker := staticOperatorChecker{scope: scope, params: params}
+		if afterProjection && projectedScope != nil {
+			if projected == nil {
+				projected = &staticOperatorChecker{scope: projectedScope(), params: params}
+			}
+			checker = *projected
+		}
+		_, err := checker.check(expression)
+		return err
+	})
 }
 
 // validateStaticOperatorParameters type-checks the operators of a statement
@@ -512,7 +556,7 @@ func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params
 		return nil
 	}
 	for _, clause := range clauses {
-		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{}, params); err != nil {
+		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{}, nil, params); err != nil {
 			return err
 		}
 	}

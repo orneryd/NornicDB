@@ -118,7 +118,6 @@ func (s *Session) handleRun(data []byte) error {
 	isWrite := requirements.Write
 	isSchema := requirements.Schema
 	isAdmin := requirements.Admin
-	upperQuery := strings.ToUpper(query)
 
 	// Check permissions based on query type (use canonical entitlement IDs from auth)
 	if s.authResult != nil {
@@ -321,7 +320,7 @@ func (s *Session) handleRun(data []byte) error {
 	s.lastQueryIsWrite = isWrite
 	s.lastQueryDatabase = dbName
 	if s.inTransaction {
-		s.recordExplicitTransactionWrite(upperQuery, isWrite)
+		s.recordExplicitTransactionWrite(query, isWrite)
 	}
 
 	// Store result for PULL
@@ -471,6 +470,7 @@ func (s *Session) recordExplicitTransactionWrite(query string, isWrite bool) {
 	info := boltTxWriteAnalyzer.Analyze(query)
 	if info != nil && info.HasMerge {
 		s.txHasMerge = true
+		s.txMergeStatements = append(s.txMergeStatements, query)
 	}
 	if info == nil {
 		s.txHasNonMergeWrite = true
@@ -481,8 +481,12 @@ func (s *Session) recordExplicitTransactionWrite(query string, isWrite bool) {
 	}
 }
 
-func (s *Session) canRetryMergeCommitConflict() bool {
-	return s.txHasMerge && !s.txHasNonMergeWrite
+// canRetryMergeCommitConflict reports whether a commit-time UNIQUE violation
+// err of the explicit transaction is a retry-safe MERGE race: every write was
+// MERGE-shaped and no SET in them wrote a violated property
+// (cypher.MergeUniqueConflictIsRetrySafe).
+func (s *Session) canRetryMergeCommitConflict(err error) bool {
+	return s.txHasMerge && !s.txHasNonMergeWrite && cypher.MergeUniqueConflictIsRetrySafe(s.txMergeStatements, err)
 }
 
 // truncateQuery truncates a query for logging.
@@ -1082,6 +1086,7 @@ func (s *Session) handleBegin(data []byte) error {
 	s.txDatabase = txDatabase
 	s.txHasMerge = false
 	s.txHasNonMergeWrite = false
+	s.txMergeStatements = nil
 	s.queryId = 0
 	s.latestStatementID = -1
 	s.resultStreams = make(map[int64]*resultStream)
@@ -1147,7 +1152,7 @@ func (s *Session) handleCommit(data []byte) error {
 		commitCallErr = txExec.CommitTransaction(ctx)
 		commitCallReturned = true
 		if err := commitCallErr; err != nil {
-			canRetryMergeConflict := s.canRetryMergeCommitConflict()
+			canRetryMergeConflict := s.canRetryMergeCommitConflict(err)
 			observedErr := err
 			if canRetryMergeConflict {
 				observedErr = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)

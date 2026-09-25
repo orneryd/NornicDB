@@ -82,7 +82,6 @@ var staticFunctionArguments = buildStaticFunctionArguments(map[string][]string{
 	"substring":        {"String", "Integer", "Integer"},
 	"split":            {"String", "String or List<String>"},
 	"replace":          {"String", "String", "String"},
-	"range":            {"Integer", "Integer", "Integer"},
 	"head":             {"List<T>"},
 	"last":             {"List<T>"},
 	"tail":             {"List<T>"},
@@ -284,11 +283,22 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 // one clause. A variable the clause binds itself (a list comprehension,
 // reduce, any / all / none / single) shadows the scope and is not checked.
 func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
+	return validateStaticFunctionVariablesIn(text, func() staticTypeScope { return scope })
+}
+
+// validateStaticFunctionVariablesIn is validateStaticFunctionVariables with
+// the scope built only when a function has a variable argument.
+func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope) error {
 	var locals map[string]struct{}
+	var scope *staticTypeScope
 	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string) error {
 		variable := simpleSemanticIdentifier(expression)
 		if variable == "" {
 			return nil
+		}
+		if scope == nil {
+			built := scopeOf()
+			scope = &built
 		}
 		typeName := scope.typeOf(variable)
 		if typeName == "" || argument.accepts(typeName) {
@@ -318,6 +328,11 @@ func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]st
 	}
 	if startsWithKeywordFold(body, "DISTINCT") {
 		body = strings.TrimSpace(body[len("DISTINCT"):])
+	}
+	// Only a literal (or an alias of a variable that already has a literal
+	// type) gives a projected value a static type.
+	if len(scope.values) == 0 && !strings.ContainsAny(body, "'\"[{0123456789") && !containsFold(body, "true") && !containsFold(body, "false") {
+		return nil
 	}
 	var values map[string]string
 	for _, raw := range splitTopLevelComma(body) {

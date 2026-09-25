@@ -70,7 +70,7 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			if err := validateStaticFunctionVariables(projection, input); err != nil {
 				return err
 			}
-			if err := e.validateStaticOperatorTypes(clause, input, nil); err != nil {
+			if err := e.validateStaticOperatorTypes(clause, input, func() staticTypeScope { return projectionAliasScope(input, clause.text) }, nil); err != nil {
 				return err
 			}
 			scope = projectMatchSemanticScope(scope, clause.text)
@@ -495,10 +495,59 @@ func isSchemaCommandStatement(cypher string) bool {
 // clause: function arguments (validateStaticFunctionVariables) and operators
 // (validateStaticOperatorTypes).
 func (e *StorageExecutor) validateStaticClauseTypes(clause pipelineClause, scope staticTypeScope) error {
-	if err := validateStaticFunctionVariables(clause.text, scope); err != nil {
+	var projectedScope func() staticTypeScope
+	if clause.kind == pipelineClauseReturn {
+		projection, rest := splitWithProjection(clause.text)
+		var projected *staticTypeScope
+		projectedScope = func() staticTypeScope {
+			if projected == nil {
+				built := projectionAliasScope(scope, clause.text)
+				projected = &built
+			}
+			return *projected
+		}
+		if err := validateStaticFunctionVariables(projection, scope); err != nil {
+			return err
+		}
+		if err := validateStaticFunctionVariablesIn(rest, projectedScope); err != nil {
+			return err
+		}
+	} else if err := validateStaticFunctionVariables(clause.text, scope); err != nil {
 		return err
 	}
-	return e.validateStaticOperatorTypes(clause, scope, nil)
+	return e.validateStaticOperatorTypes(clause, scope, projectedScope, nil)
+}
+
+// projectionAliasScope is the scope of the WHERE / ORDER BY after a RETURN or
+// WITH projection: the incoming variables, with each projection alias
+// replacing the variable of the same name (RETURN n.num AS n ORDER BY n + 2
+// sees n as a number, not the node).
+func projectionAliasScope(input staticTypeScope, clause string) staticTypeScope {
+	body := strings.TrimSpace(clause)
+	for _, keyword := range []string{"RETURN", "WITH"} {
+		if startsWithKeywordFold(body, keyword) {
+			body = strings.TrimSpace(body[len(keyword):])
+			break
+		}
+	}
+	projected := projectMatchSemanticScope(input.kinds, "WITH "+body)
+	projectedValues := projectStaticValueTypes(input, "WITH "+body)
+	kinds := make(matchSemanticScope, len(input.kinds)+len(projected))
+	for name, kind := range input.kinds {
+		kinds[name] = kind
+	}
+	values := make(map[string]string, len(input.values)+len(projectedValues))
+	for name, typeName := range input.values {
+		values[name] = typeName
+	}
+	for name, kind := range projected {
+		kinds[name] = kind
+		delete(values, name)
+	}
+	for name, typeName := range projectedValues {
+		values[name] = typeName
+	}
+	return staticTypeScope{kinds: kinds, values: values}
 }
 
 // splitWithProjection splits a WITH clause into its projection and the WHERE /
