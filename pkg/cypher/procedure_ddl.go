@@ -37,9 +37,22 @@ type persistedProcedureRecord struct {
 	UpdatedAt   int64    `msgpack:"updated_at"`
 }
 
+// isCreateProcedureCommand reports whether cypher is CREATE [OR REPLACE]
+// PROCEDURE. It runs on every statement's routing, so it doesn't allocate.
 func isCreateProcedureCommand(cypher string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(cypher))
-	return strings.HasPrefix(upper, "CREATE PROCEDURE") || strings.HasPrefix(upper, "CREATE OR REPLACE PROCEDURE")
+	rest := strings.TrimSpace(cypher)
+	if !startsWithKeywordFold(rest, "CREATE") {
+		return false
+	}
+	rest = strings.TrimSpace(rest[len("CREATE"):])
+	if startsWithKeywordFold(rest, "OR") {
+		rest = strings.TrimSpace(rest[len("OR"):])
+		if !startsWithKeywordFold(rest, "REPLACE") {
+			return false
+		}
+		rest = strings.TrimSpace(rest[len("REPLACE"):])
+	}
+	return startsWithKeywordFold(rest, "PROCEDURE")
 }
 
 func isDropProcedureCommand(cypher string) bool {
