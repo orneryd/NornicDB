@@ -41,7 +41,7 @@ func TestProcedureDifferentialNeo4j(t *testing.T) {
 	t.Run("unknown procedure error parity", func(t *testing.T) {
 		_, nornicErr := nornic.Execute(ctx, "CALL does.not.exist()", nil)
 		require.Error(t, nornicErr)
-		require.Contains(t, strings.ToLower(nornicErr.Error()), "unknown procedure")
+		require.Contains(t, nornicErr.Error(), "Neo.ClientError.Procedure.ProcedureNotFound: There is no procedure with the name")
 
 		_, neoErr := runNeo4jQuery(ctx, driver, "CALL does.not.exist()")
 		require.Error(t, neoErr)

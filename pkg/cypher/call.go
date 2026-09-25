@@ -3966,7 +3966,7 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		}
 		result, err := proc.Handler(ctx, e, callCypher, args)
 		if err != nil {
-			return nil, err
+			return nil, procedureRuntimeError(procName, err)
 		}
 		if yield != nil {
 			result, err = e.applyYieldFilter(ctx, result, yield)
@@ -4199,15 +4199,14 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		// Extract procedure name for clearer error
 		procName := extractProcedureName(callCypher)
 		return nil, newSemanticError(
-			"Neo.ClientError.Procedure.ProcedureError",
+			"Neo.ClientError.Procedure.ProcedureNotFound",
 			"ProcedureNotFound",
-			fmt.Sprintf("unknown procedure %s", procName),
+			fmt.Sprintf("There is no procedure with the name `%s` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.", procName),
 		)
 	}
 
-	// Return error if procedure failed
 	if err != nil {
-		return nil, err
+		return nil, procedureRuntimeError(procName, err)
 	}
 
 	// Apply YIELD clause filtering (WHERE, column selection, aliasing)

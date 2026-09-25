@@ -67,8 +67,22 @@ type statusMessenger interface {
 // The message is the error's text, or its StatusMessage when it has one, and
 // never repeats the code: a leading "<code>: " is removed.
 func Neo4jStatus(err error) (code, message string) {
+	code, message, _ = neo4jStatus(err)
+	return code, message
+}
+
+// HasNeo4jStatus reports whether err carries its own Neo4j status (a status
+// code, a transient transaction failure, a constraint violation or a "Neo."
+// prefix), rather than getting Neo4jStatus's SyntaxError default.
+func HasNeo4jStatus(err error) bool {
+	_, _, classified := neo4jStatus(err)
+	return classified
+}
+
+// neo4jStatus is Neo4jStatus, and whether err's status came from err itself.
+func neo4jStatus(err error) (code, message string, classified bool) {
 	if err == nil {
-		return StatementSyntaxError, ""
+		return StatementSyntaxError, "", false
 	}
 	message = err.Error()
 	var coded statusCoder
@@ -76,28 +90,28 @@ func Neo4jStatus(err error) (code, message string) {
 		if code = coded.BoltErrorCode(); code != "" {
 			var messenger statusMessenger
 			if stderrors.As(err, &messenger) {
-				return code, messenger.StatusMessage()
+				return code, messenger.StatusMessage(), true
 			}
-			return code, trimStatusPrefix(message, code)
+			return code, trimStatusPrefix(message, code), true
 		}
 	}
 	if transientCode, ok := MapTransientTransactionError(err); ok {
-		return transientCode, message
+		return transientCode, message, true
 	}
 	var violation *storage.ConstraintViolationError
 	if stderrors.As(err, &violation) && violation != nil {
-		return ConstraintValidationFailed, message
+		return ConstraintValidationFailed, message, true
 	}
 	if start := strings.Index(message, "Neo."); start >= 0 {
 		rest := message[start:]
 		if separator := strings.Index(rest, ":"); separator > 0 {
-			return strings.TrimSpace(rest[:separator]), strings.TrimSpace(rest[separator+1:])
+			return strings.TrimSpace(rest[:separator]), strings.TrimSpace(rest[separator+1:]), true
 		}
 		if start == 0 {
-			return message, message
+			return message, message, true
 		}
 	}
-	return StatementSyntaxError, message
+	return StatementSyntaxError, message, false
 }
 
 // Neo4jCommitStatus is Neo4jStatus for a failed COMMIT: a failure with no more

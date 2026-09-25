@@ -444,6 +444,11 @@ func classifyBoltError(err error) error {
 	if len(parts) > 0 && parts[len(parts)-1] != "" {
 		errorType = parts[len(parts)-1]
 	}
+	// Neo4j reports an unknown procedure as Procedure.ProcedureNotFound; the
+	// openCypher error type for it is ProcedureError (detail ProcedureNotFound).
+	if errorType == "ProcedureNotFound" {
+		errorType = "ProcedureError"
+	}
 	phase := "runtime"
 	// The Neo4j status namespace identifies the subsystem, not the TCK phase.
 	// Statement.TypeError and Statement.ArgumentError are runtime failures;

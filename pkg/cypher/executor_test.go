@@ -2082,7 +2082,7 @@ func TestExecuteUnknownProcedure(t *testing.T) {
 
 	_, err := exec.Execute(ctx, "CALL unknown.procedure()", nil)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown procedure")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Procedure.ProcedureNotFound")
 }
 
 func TestExecuteAndOrOperators(t *testing.T) {

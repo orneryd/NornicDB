@@ -404,9 +404,9 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 	}
 
 	_, err = exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.resolve('4:nornicdb:edge-1', '', '')", nil)
-	require.EqualError(t, err, "entity not found: 4:nornicdb:edge-1")
+	require.EqualError(t, err, "Failed to invoke procedure `nornicdb.knowledgepolicy.resolve`: Caused by: entity not found: 4:nornicdb:edge-1")
 	_, err = exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.resolve('5:nornicdb:node-1', '', '')", nil)
-	require.EqualError(t, err, "entity not found: 5:nornicdb:node-1")
+	require.EqualError(t, err, "Failed to invoke procedure `nornicdb.knowledgepolicy.resolve`: Caused by: entity not found: 5:nornicdb:node-1")
 }
 
 func TestE2E_CallNornicDbKnowledgePolicyDeindexStatus(t *testing.T) {

@@ -317,11 +317,13 @@ func TestUnwindFastPathsShareSetCreateSemantics(t *testing.T) {
 			wantCheck: [][]interface{}{{[]interface{}{"y"}, int64(7)}},
 		},
 		{
+			// A missing parameter is the statement's ParameterMissing error,
+			// raised before any route runs, as in Neo4j (#657).
 			name:     "merge-chain SET rejects a missing parameter",
 			stmt:     "UNWIND $rows AS row MATCH (a:R {id: row.a}) MATCH (b:R {id: row.b}) MERGE (a)-[rel:DEP]->(b) SET rel.t = $missing",
 			rows:     []interface{}{map[string]interface{}{"a": "r1", "b": "r2"}},
-			fastPath: func(tr HotPathTrace) bool { return tr.UnwindMergeChainBatch },
-			wantErr:  "$missing",
+			fastPath: func(tr HotPathTrace) bool { return !tr.UnwindMergeChainBatch },
+			wantErr:  "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): missing",
 		},
 		{
 			name:      "merge-chain SET null removes the key",
