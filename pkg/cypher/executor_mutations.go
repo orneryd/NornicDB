@@ -2343,10 +2343,9 @@ func (e *StorageExecutor) evaluateCollectSubquery(ctx context.Context, node *sto
 	if topLevelKeywordIndex(collect.body, "RETURN") < 0 {
 		return nil, localizedError(localization.CypherResidualCollectSubqueryReturnRequired(), nil)
 	}
-	value, evaluated, err := e.rowSubqueryValue(ctx, collect.kind, collect.body, map[string]interface{}{variable: node})
-	if err == nil && !evaluated {
-		err = localizedError(localization.CypherResidualCollectSubquerySyntaxInvalid(), nil)
-	}
+	// A COLLECT body is always evaluated (rowSubqueryValue); only its error
+	// can stop it.
+	value, _, err := e.rowSubqueryValue(ctx, collect.kind, collect.body, map[string]interface{}{variable: node})
 	if err != nil {
 		return nil, localizedError(localization.CypherResidualCollectSubqueryExecutionFailed(err), err)
 	}
