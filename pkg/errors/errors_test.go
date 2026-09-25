@@ -3,6 +3,7 @@ package errors
 import (
 	stderrors "errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -43,18 +44,11 @@ func TestMapTransientTransactionError(t *testing.T) {
 			ok:   true,
 		},
 		{
-			// #703: Neo4j reports a transaction over its size limit as
-			// General.MemoryPoolOutOfMemoryError.
-			name: "transaction too big",
+			// #703: retrying a transaction over the size limit fails the
+			// same way, so it is not transient (see TestTransactionTooBigStatus).
+			name: "transaction too big is not transient",
 			err:  fmt.Errorf("commit failed: %w", badger.ErrTxnTooBig),
-			want: TransientMemoryPoolOutOfMemory,
-			ok:   true,
-		},
-		{
-			name: "transaction too big kept only as text",
-			err:  stderrors.New("failed to delete node: " + badger.ErrTxnTooBig.Error()),
-			want: TransientMemoryPoolOutOfMemory,
-			ok:   true,
+			ok:   false,
 		},
 		{
 			name: "ordinary error",
@@ -108,5 +102,34 @@ func TestMarkMergeCommitTimeUniqueConflict(t *testing.T) {
 	})
 	if got := MarkMergeCommitTimeUniqueConflict(nonUniqueErr); got != nonUniqueErr {
 		t.Fatal("non-unique constraint violation should not be wrapped")
+	}
+}
+
+// TestTransactionTooBigStatus verifies that a transaction over the storage size
+// limit reports Neo4j's non-transient General.TransactionOutOfMemoryError, with
+// the cause and how to split the work, whether the error kept Badger's sentinel
+// or only its text (#703).
+func TestTransactionTooBigStatus(t *testing.T) {
+	for name, err := range map[string]error{
+		"sentinel":  fmt.Errorf("commit failed: %w", badger.ErrTxnTooBig),
+		"text only": stderrors.New("failed to delete node: " + badger.ErrTxnTooBig.Error()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, message := Neo4jStatus(err)
+			if code != ClientTransactionOutOfMemory {
+				t.Fatalf("code = %q, want %q", code, ClientTransactionOutOfMemory)
+			}
+			if !HasNeo4jStatus(err) {
+				t.Fatal("HasNeo4jStatus = false, want true")
+			}
+			if commitCode, _ := Neo4jCommitStatus(err); commitCode != ClientTransactionOutOfMemory {
+				t.Fatalf("commit code = %q, want %q", commitCode, ClientTransactionOutOfMemory)
+			}
+			for _, want := range []string{badger.ErrTxnTooBig.Error(), "CALL { ... } IN TRANSACTIONS"} {
+				if !strings.Contains(message, want) {
+					t.Fatalf("message %q does not contain %q", message, want)
+				}
+			}
+		})
 	}
 }

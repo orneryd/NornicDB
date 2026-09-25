@@ -11,10 +11,11 @@ const (
 	TransientDeadlockDetected = "Neo.TransientError.Transaction.DeadlockDetected"
 	// TransientOutdated is the retryable wire error code for stale MVCC snapshots.
 	TransientOutdated = "Neo.TransientError.Transaction.Outdated"
-	// TransientMemoryPoolOutOfMemory is Neo4j's code for a transaction that
-	// exceeds its size limit (db.memory.transaction.max); NornicDB reports
-	// Badger's "Txn is too big" with it (#703).
-	TransientMemoryPoolOutOfMemory = "Neo.TransientError.General.MemoryPoolOutOfMemoryError"
+	// ClientTransactionOutOfMemory is Neo4j's code for a transaction that used
+	// more memory than one transaction may. NornicDB reports Badger's "Txn is
+	// too big" with it (#703). It is a ClientError, not transient: retrying
+	// the same transaction fails the same way, so drivers must not retry it.
+	ClientTransactionOutOfMemory = "Neo.ClientError.General.TransactionOutOfMemoryError"
 )
 
 var (
@@ -85,10 +86,14 @@ func MapTransientTransactionError(err error) (string, bool) {
 		stderrors.Is(err, ErrMVCCSnapshotHardExpired) {
 		return TransientOutdated, true
 	}
-	if storage.IsTransactionTooBig(err) {
-		return TransientMemoryPoolOutOfMemory, true
-	}
 	return "", false
+}
+
+// transactionTooBigMessage is the message a client gets for a transaction
+// over the storage size limit: the cause, and how to split the work.
+func transactionTooBigMessage(cause string) string {
+	return "The transaction is too large to commit as one transaction (" + cause +
+		"). Split the work into smaller transactions, for example with CALL { ... } IN TRANSACTIONS."
 }
 
 // MarkMergeCommitTimeUniqueConflict wraps a UNIQUE constraint violation with a
