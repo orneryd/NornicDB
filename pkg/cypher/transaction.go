@@ -28,6 +28,18 @@ type TransactionContext struct {
 	database        string
 	txID            string
 	fabricRemoteExe *fabric.RemoteFragmentExecutor
+	// failed is the error of the first statement that failed in the
+	// transaction. A failed transaction stays open so ROLLBACK discards what
+	// it wrote; any other statement is refused and COMMIT rolls it back, as in
+	// Neo4j (#683).
+	failed error
+}
+
+// queryOnFailedTransactionError is the error of a statement sent to a
+// transaction a previous statement failed in.
+func queryOnFailedTransactionError(cause error) error {
+	return newSemanticError("Neo.TransientError.Transaction.QueryExecutionFailedOnTransaction", "QueryExecutionFailedOnTransaction",
+		"The transaction was marked as failed because a query failed: "+cause.Error())
 }
 
 // parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
@@ -158,6 +170,14 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
+	}
+	// A transaction a statement failed in can't commit: it is rolled back.
+	if cause := e.txContext.failed; cause != nil {
+		if _, err := e.handleRollback(); err != nil {
+			return nil, err
+		}
+		return nil, newSemanticError("Neo.ClientError.Transaction.TransactionMarkedAsFailed", "TransactionMarkedAsFailed",
+			"The transaction was rolled back because a statement in it failed: "+cause.Error())
 	}
 	// Commit based on transaction type
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)
