@@ -22,8 +22,8 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -2089,56 +2089,12 @@ func (e *StorageExecutor) compileCallTailValueInPredicate(clause, op string, neg
 	}, true
 }
 
-// compileCallTailValueInTruth is the three-valued CALL-tail membership test:
-// an unresolved or null x, an unresolved, null or non-list right side, or a list
-// holding null without a match give truthUnknown, which negate leaves unknown.
+// compileCallTailValueInTruth is the three-valued CALL-tail membership test,
+// the shared compiled IN (compileMembershipTruth) over the yielded values.
 func (e *StorageExecutor) compileCallTailValueInTruth(clause, op string, negate bool) (func(map[string]interface{}, map[string]interface{}) cypherTruth, bool) {
-	idx := findTopLevelKeyword(clause, op)
-	if idx <= 0 {
-		return nil, false
-	}
-	left, ok := e.compileCallTailValueResolver(clause[:idx])
-	if !ok {
-		return nil, false
-	}
-	rightExpr := strings.TrimSpace(clause[idx+len(op):])
-	finish := func(truth cypherTruth) cypherTruth {
-		if negate {
-			return truth.not()
-		}
-		return truth
-	}
-	if literalItems, ok := parseBindingLiteralList(rightExpr); ok {
-		comparableSet, nonComparable := buildComparableMembershipIndex(literalItems)
-		hasNull := listHasNull(literalItems)
-		return func(values map[string]interface{}, params map[string]interface{}) cypherTruth {
-			leftValue, ok := left(values, params)
-			if !ok {
-				return truthUnknown
-			}
-			return finish(membershipTruth(leftValue, comparableSet, nonComparable, hasNull, e.compareEqual))
-		}, true
-	}
-	right, ok := e.compileCallTailValueResolver(rightExpr)
-	if !ok {
-		return nil, false
-	}
-	return func(values map[string]interface{}, params map[string]interface{}) cypherTruth {
-		leftValue, ok := left(values, params)
-		if !ok {
-			return truthUnknown
-		}
-		rightValue, ok := right(values, params)
-		if !ok || rightValue == nil {
-			return truthUnknown
-		}
-		items, ok := toInterfaceSlice(rightValue)
-		if !ok {
-			return truthUnknown
-		}
-		comparableSet, nonComparable := buildComparableMembershipIndex(items)
-		return finish(membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items), e.compareEqual))
-	}, true
+	return compileMembershipTruth(e, clause, op, negate, func(expression string) (func(map[string]interface{}, map[string]interface{}) (interface{}, bool), bool) {
+		return e.compileCallTailValueResolver(expression)
+	})
 }
 
 func (e *StorageExecutor) compileCallTailValueComparisonPredicate(clause string) (callTailValuePredicate, bool) {

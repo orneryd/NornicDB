@@ -453,37 +453,54 @@ func (e *StorageExecutor) compileBindingComparisonPredicate(clause string) (bind
 // x, a null or non-list right-hand side, or a list that contains null and no
 // match all give truthUnknown, which negation leaves unknown.
 func (e *StorageExecutor) compileBindingInPredicate(clause, op string, negate bool) (bindingWhereTruth, bool) {
+	truth, ok := compileMembershipTruth(e, clause, op, negate, func(expression string) (func(binding, map[string]interface{}) (interface{}, bool), bool) {
+		return e.compileBindingValueResolver(expression)
+	})
+	if !ok {
+		return nil, false
+	}
+	return bindingWhereTruth(truth), true
+}
+
+// compileMembershipTruth is the one compiled `x [NOT] IN list` test, for any
+// row type R: the MATCH WHERE compiler (R = binding) and the CALL-tail WHERE
+// compiler (R = the yielded values) share it (#547). resolve compiles an
+// operand into a resolver over R. The list is a literal (indexed once), a
+// $parameter (indexed once per distinct list value) or any other resolvable
+// expression. Three-valued: an unresolved or null x, a null or non-list
+// right side, or a list holding null without a match give truthUnknown, which
+// negate leaves unknown.
+func compileMembershipTruth[R any](e *StorageExecutor, clause, op string, negate bool, resolve func(string) (func(R, map[string]interface{}) (interface{}, bool), bool)) (func(R, map[string]interface{}) cypherTruth, bool) {
 	idx := findTopLevelKeyword(clause, op)
 	if idx <= 0 {
 		return nil, false
 	}
 	leftExpr := strings.TrimSpace(clause[:idx])
 	rightExpr := strings.TrimSpace(clause[idx+len(op):])
-	leftResolver, ok := e.compileBindingValueResolver(leftExpr)
+	left, ok := resolve(leftExpr)
 	if !ok {
 		return nil, false
 	}
-
-	var truth bindingWhereTruth
+	var truth func(R, map[string]interface{}) cypherTruth
 	if listValues, ok := parseBindingLiteralList(rightExpr); ok {
-		truth = e.makeCompiledBindingMembershipPredicate(leftResolver, listValues)
+		truth = staticMembershipTruth(e, left, listValues)
 	} else if strings.HasPrefix(rightExpr, "$") {
 		paramName := strings.TrimSpace(strings.TrimPrefix(rightExpr, "$"))
 		if paramName == "" {
 			return nil, false
 		}
-		truth = e.makeCompiledParamMembershipPredicate(leftResolver, paramName)
+		truth = paramMembershipTruth(e, left, paramName)
 	} else {
-		rightResolver, ok := e.compileBindingValueResolver(rightExpr)
+		right, ok := resolve(rightExpr)
 		if !ok {
 			return nil, false
 		}
-		truth = func(b binding, params map[string]interface{}) cypherTruth {
-			leftValue, ok := leftResolver(b, params)
+		truth = func(row R, params map[string]interface{}) cypherTruth {
+			leftValue, ok := left(row, params)
 			if !ok {
 				return truthUnknown
 			}
-			rightValue, ok := rightResolver(b, params)
+			rightValue, ok := right(row, params)
 			if !ok || rightValue == nil {
 				return truthUnknown
 			}
@@ -492,11 +509,13 @@ func (e *StorageExecutor) compileBindingInPredicate(clause, op string, negate bo
 				return truthUnknown
 			}
 			comparableSet, nonComparable := buildComparableMembershipIndex(items)
-			return membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items), e.compareEqual)
+			return membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items), e.compareBindingValuesEqual)
 		}
 	}
 	if negate {
-		return notTruth(truth), true
+		return func(row R, params map[string]interface{}) cypherTruth {
+			return truth(row, params).not()
+		}, true
 	}
 	return truth, true
 }
@@ -529,14 +548,19 @@ func listHasNull(items []interface{}) bool {
 }
 
 func (e *StorageExecutor) makeCompiledBindingMembershipPredicate(leftResolver bindingValueResolver, items []interface{}) bindingWhereTruth {
+	return bindingWhereTruth(staticMembershipTruth(e, leftResolver, items))
+}
+
+// staticMembershipTruth is membership in a literal list, indexed once.
+func staticMembershipTruth[R any, L ~func(R, map[string]interface{}) (interface{}, bool)](e *StorageExecutor, left L, items []interface{}) func(R, map[string]interface{}) cypherTruth {
 	comparableSet, nonComparable := buildComparableMembershipIndex(items)
 	hasNull := listHasNull(items)
-	return func(b binding, params map[string]interface{}) cypherTruth {
-		leftValue, ok := leftResolver(b, params)
+	return func(row R, params map[string]interface{}) cypherTruth {
+		leftValue, ok := left(row, params)
 		if !ok {
 			return truthUnknown
 		}
-		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull, e.compareEqual)
+		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull, e.compareBindingValuesEqual)
 	}
 }
 
@@ -550,8 +574,14 @@ type bindingParamMembershipCache struct {
 }
 
 func (e *StorageExecutor) makeCompiledParamMembershipPredicate(leftResolver bindingValueResolver, paramName string) bindingWhereTruth {
+	return bindingWhereTruth(paramMembershipTruth(e, leftResolver, paramName))
+}
+
+// paramMembershipTruth is membership in a $parameter list, indexed once per
+// distinct list value (bindingParamMembershipCache).
+func paramMembershipTruth[R any, L ~func(R, map[string]interface{}) (interface{}, bool)](e *StorageExecutor, left L, paramName string) func(R, map[string]interface{}) cypherTruth {
 	cache := &bindingParamMembershipCache{length: -1}
-	return func(bindingRow binding, params map[string]interface{}) cypherTruth {
+	return func(row R, params map[string]interface{}) cypherTruth {
 		rightValue, ok := params[paramName]
 		if !ok || rightValue == nil {
 			return truthUnknown
@@ -560,7 +590,7 @@ func (e *StorageExecutor) makeCompiledParamMembershipPredicate(leftResolver bind
 		if !ok {
 			return truthUnknown
 		}
-		leftValue, ok := leftResolver(bindingRow, params)
+		leftValue, ok := left(row, params)
 		if !ok {
 			return truthUnknown
 		}
