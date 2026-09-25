@@ -140,7 +140,7 @@ func TestGraphFunctionsOfNullAreNull(t *testing.T) {
 			result, err := executor.Execute(ctx, query, nil)
 			require.NoError(t, err, query)
 			require.Len(t, result.Rows, 1, query)
-			require.Nil(t, result.Rows[0][0], query)
+			require.True(t, result.Rows[0][0] == nil, "%s: got %#v, want untyped null", query, result.Rows[0][0])
 		}
 	}
 }

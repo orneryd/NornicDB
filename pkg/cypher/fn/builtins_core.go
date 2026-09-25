@@ -163,23 +163,20 @@ func evalKeys(ctx Context, args []string) (interface{}, error) {
 //   - a node or relationship converted to a map (nodeToMap / edgeToMap:
 //     "_nodeId" / "_edgeId" with the properties under "properties"): the
 //     keys of those properties;
-//   - any other map: all of its keys;
-//   - null (a null node or relationship included): null, as in Neo4j.
+//   - any other map: all of its keys.
 //
 // It returns false for any other value.
 func PropertyKeys(value interface{}) ([]interface{}, bool) {
 	var properties map[string]interface{}
 	switch v := value.(type) {
-	case nil:
-		return nil, true
 	case *storage.Node:
 		if v == nil {
-			return nil, true
+			return nil, false
 		}
 		properties = v.Properties
 	case *storage.Edge:
 		if v == nil {
-			return nil, true
+			return nil, false
 		}
 		properties = v.Properties
 	case map[string]interface{}:

@@ -358,6 +358,18 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			if !resolved {
 				return nil, false
 			}
+			switch entity := value.(type) {
+			case nil:
+				return nil, true
+			case *storage.Node:
+				if entity == nil {
+					return nil, true
+				}
+			case *storage.Edge:
+				if entity == nil {
+					return nil, true
+				}
+			}
 			if object, isMap := toStringAnyMap(value); isMap {
 				value = object
 			}
