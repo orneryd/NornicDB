@@ -265,8 +265,8 @@ func subscriptReceiverError(base, index interface{}) error {
 // evaluator could not resolve because an operator got an operand it can't
 // take: a division by zero or an arithmetic TypeError, a unary minus of a
 // non-number, or a property access on a value without properties. It looks
-// through parentheses, operands and function arguments for the failing
-// operator and reports whether it recorded one.
+// through parentheses, operands, function arguments and list comprehensions
+// for the failing operator and reports whether it recorded one.
 func (e *StorageExecutor) recordRowOperatorFailure(ctx context.Context, expr string, values pipelineRow) bool {
 	expression := strings.TrimSpace(expr)
 	for {
@@ -275,6 +275,11 @@ func (e *StorageExecutor) recordRowOperatorFailure(ctx context.Context, expr str
 			break
 		}
 		expression = strings.TrimSpace(inner)
+	}
+	if len(expression) >= 2 && expression[0] == '[' && expression[len(expression)-1] == ']' {
+		if variable, list, predicate, projection, comprehension := parseListComprehension(expression[1 : len(expression)-1]); comprehension {
+			return e.recordComprehensionOperatorFailure(ctx, variable, list, predicate, projection, values)
+		}
 	}
 	if expression == "" || !isOperatorExpressionText(expression) {
 		return false
@@ -335,6 +340,39 @@ func (e *StorageExecutor) recordRowOperatorFailure(ctx context.Context, expr str
 		if err := propertyAccessTypeError(base); err != nil {
 			recordExpressionFailure(ctx, err)
 			return true
+		}
+	}
+	return false
+}
+
+// recordComprehensionOperatorFailure is recordRowOperatorFailure for
+// [variable IN list WHERE predicate | projection]: it looks for the failing
+// operator in the list, then in the predicate and projection of each element,
+// as evaluateRowListComprehension evaluates them.
+func (e *StorageExecutor) recordComprehensionOperatorFailure(ctx context.Context, variable, list, predicate, projection string, values pipelineRow) bool {
+	listValue, ok := e.evaluateRowExpression(list, values)
+	if !ok {
+		return e.recordRowOperatorFailure(ctx, list, values)
+	}
+	for _, item := range toAnySlice(listValue) {
+		scope := make(pipelineRow, len(values)+1)
+		for name, value := range values {
+			scope[name] = value
+		}
+		scope[variable] = item
+		if predicate != "" {
+			condition, evaluated := e.evaluateRowExpression(predicate, scope)
+			if !evaluated {
+				return e.recordRowOperatorFailure(ctx, predicate, scope)
+			}
+			if matches, isBoolean := condition.(bool); condition == nil || (isBoolean && !matches) {
+				continue
+			}
+		}
+		if projection != "" {
+			if _, evaluated := e.evaluateRowExpression(projection, scope); !evaluated {
+				return e.recordRowOperatorFailure(ctx, projection, scope)
+			}
 		}
 	}
 	return false

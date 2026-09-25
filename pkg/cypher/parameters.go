@@ -235,6 +235,72 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 	return result.String()
 }
 
+// validateStatementParameters is Neo4j's ParameterMissing check: every
+// parameter the statement references ($name, $0, $`quoted name`) outside
+// string literals and comments must be supplied, and the error lists the
+// missing names in order of first appearance ("Expected parameter(s): p, q").
+// EXPLAIN doesn't run the statement and needs none, and the $names of a
+// CREATE PROCEDURE (a NornicDB extension) declare the procedure's arguments.
+// A statement without "$" costs one byte scan.
+func validateStatementParameters(cypher string, params map[string]interface{}) error {
+	if strings.IndexByte(cypher, '$') < 0 || startsWithKeywordFold(strings.TrimSpace(cypher), "EXPLAIN") || isCreateProcedureCommand(cypher) {
+		return nil
+	}
+	var missing []string
+	for index := 0; index < len(cypher); index++ {
+		switch cypher[index] {
+		case '\'', '"', '`':
+			index = skipQuotedSemanticText(cypher, index) - 1
+		case '/':
+			if index+1 < len(cypher) && cypher[index+1] == '/' {
+				if end := strings.IndexByte(cypher[index:], '\n'); end >= 0 {
+					index += end
+				} else {
+					index = len(cypher)
+				}
+			} else if index+1 < len(cypher) && cypher[index+1] == '*' {
+				if end := strings.Index(cypher[index+2:], "*/"); end >= 0 {
+					index += end + 3
+				} else {
+					index = len(cypher)
+				}
+			}
+		case '$':
+			start := index + 1
+			var name string
+			if start < len(cypher) && cypher[start] == '`' {
+				end := skipQuotedSemanticText(cypher, start)
+				name = normalizePropertyKey(cypher[start:end])
+				index = end - 1
+			} else {
+				end := start
+				for end < len(cypher) && isWordChar(cypher[end]) {
+					end++
+				}
+				name = cypher[start:end]
+				index = end - 1
+			}
+			if name == "" {
+				continue
+			}
+			if _, supplied := params[name]; supplied {
+				continue
+			}
+			known := false
+			for _, previous := range missing {
+				known = known || previous == name
+			}
+			if !known {
+				missing = append(missing, name)
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return newSemanticError("Neo.ClientError.Statement.ParameterMissing", "MissingParameter", "Expected parameter(s): "+strings.Join(missing, ", "))
+}
+
 // resolveDirectParamRef returns the typed parameter value for a literal
 // "$name" reference, paired with true. Returns (nil, false) when the
 // expression isn't a bare $param reference or the parameter isn't

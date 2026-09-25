@@ -143,12 +143,10 @@ func TestCaseExpression_Parameters(t *testing.T) {
 			params: map[string]interface{}{"n": int64(2)},
 			want:   "two",
 		},
-		{
-			name:  "missing parameter is null and falls through",
-			query: "RETURN coalesce($missing, 7) AS r",
-			want:  int64(7),
-		},
 	}
+	// A missing parameter is the statement's error, as in Neo4j (#657).
+	_, err := exec.Execute(ctx, "RETURN coalesce($missing, 7) AS r", nil)
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): missing")
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			res, err := exec.Execute(ctx, tc.query, tc.params)

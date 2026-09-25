@@ -1501,6 +1501,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := e.validateSemanticScopes(cypher); err != nil {
 		return nil, err
 	}
+	if err := validateStatementParameters(cypher, params); err != nil {
+		return nil, err
+	}
 	if err := e.validateStaticOperatorParameters(cypher, params); err != nil {
 		return nil, err
 	}

@@ -132,16 +132,21 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(cypher string) (
 		return result, nil
 	}
 
-	// Look up the index's declared scope. Missing index, missing schema,
-	// or a node-only index (no relationship_types declared) all fall
-	// through to the unscoped scan so legacy queries keep working.
+	// Look up the index's declared scope. A missing index fails as for
+	// queryNodes (requireFulltextIndex); a built-in name, or a node-only index
+	// (no relationship_types declared), falls through to the unscoped scan.
 	var targetTypes []string
 	var targetProperties []string
+	declared := false
 	if schema := e.storage.GetSchema(); schema != nil {
 		if ftIdx, exists := schema.GetFulltextIndex(indexName); exists {
 			targetTypes = ftIdx.RelationshipTypes
 			targetProperties = ftIdx.Properties
+			declared = true
 		}
+	}
+	if err := requireFulltextIndex(indexName, declared); err != nil {
+		return nil, err
 	}
 
 	wildcard := isFulltextWildcard(query)

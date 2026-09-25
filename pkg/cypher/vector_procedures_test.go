@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/textchunk"
@@ -670,13 +671,11 @@ func TestVectorSearchQueryModes(t *testing.T) {
 	})
 
 	t.Run("parameter_reference_without_params", func(t *testing.T) {
-		// Test that syntax is accepted but returns empty when no params provided
-		result, err := exec.Execute(ctx,
+		// A missing parameter is the statement's ParameterMissing error, as in
+		// Neo4j (#657).
+		_, err := exec.Execute(ctx,
 			"CALL db.index.vector.queryNodes('doc_idx', 10, $queryVector) YIELD node, score", nil)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		// Empty because parameter not provided
-		assert.Empty(t, result.Rows, "Parameter queries return empty when parameter not provided")
+		require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): queryVector")
 	})
 
 	t.Run("parameter_reference_with_vector_param", func(t *testing.T) {
@@ -751,8 +750,7 @@ func TestVectorSearchQueryModes(t *testing.T) {
 		_, err := exec.Execute(ctx,
 			"CALL db.index.vector.queryNodes('doc_idx', 10, $missingParam) YIELD node, score",
 			map[string]interface{}{"otherParam": []float32{0.1, 0.2}})
-		require.Error(t, err, "Should error when parameter not found")
-		assert.Contains(t, err.Error(), "not provided", "Error should mention parameter not provided")
+		require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): missingParam")
 	})
 
 	t.Run("parameter_reference_invalid_type", func(t *testing.T) {
@@ -1563,9 +1561,17 @@ func TestCallDbIndexFulltextQueryRelationships(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("query_relationship_fulltext", func(t *testing.T) {
-		result, err := exec.Execute(ctx, "CALL db.index.fulltext.queryRelationships('rel_text_idx', 'searchable') YIELD relationship, score", nil)
+		result, err := exec.Execute(ctx, "CALL db.index.fulltext.queryRelationships('default', 'searchable') YIELD relationship, score", nil)
 		require.NoError(t, err)
 		assert.NotNil(t, result)
+	})
+
+	t.Run("missing_index_fails_like_queryNodes", func(t *testing.T) {
+		// As in Neo4j and as for queryNodes (#657).
+		_, err := exec.Execute(ctx, "CALL db.index.fulltext.queryRelationships('rel_text_idx', 'searchable') YIELD relationship, score", nil)
+		require.EqualError(t, err, "Failed to invoke procedure `db.index.fulltext.queryRelationships`: Caused by: there is no such fulltext schema index: rel_text_idx")
+		code, _ := nornicerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Procedure.ProcedureCallFailed", code)
 	})
 }
 

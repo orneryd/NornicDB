@@ -37,6 +37,25 @@ import (
 //	- Term frequency (TF): How often query terms appear
 //	- Inverse document frequency (IDF): How rare terms are
 //	- Field length normalization: Shorter fields score higher
+//
+// builtInFulltextIndexes are the fulltext index names that need no CREATE
+// FULLTEXT INDEX: they search the default searchable properties.
+var builtInFulltextIndexes = map[string]bool{
+	"default":     true,
+	"node_search": true,
+}
+
+// requireFulltextIndex is Neo4j's check shared by the fulltext query
+// procedures (nodes and relationships): querying a fulltext index that
+// doesn't exist (declared is false) fails, unless the name is a built-in one
+// or empty.
+func requireFulltextIndex(indexName string, declared bool) error {
+	if declared || indexName == "" || builtInFulltextIndexes[indexName] {
+		return nil
+	}
+	return localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
+}
+
 func (e *StorageExecutor) callDbIndexFulltextQueryNodes(cypher string) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"node", "score"},
@@ -65,16 +84,8 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(cypher string) (*Execute
 		}
 	}
 
-	// Known built-in index names that don't require explicit creation
-	// These use the default searchable properties for Neo4j compatibility
-	builtInIndexes := map[string]bool{
-		"default":     true,
-		"node_search": true, // Built-in fulltext search index
-	}
-
-	// Neo4j compatibility: error if index doesn't exist and isn't a built-in
-	if len(targetProperties) == 0 && indexName != "" && !builtInIndexes[indexName] {
-		return nil, localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
+	if err := requireFulltextIndex(indexName, len(targetProperties) > 0); err != nil {
+		return nil, err
 	}
 
 	// Default searchable properties if no index config or using built-in index

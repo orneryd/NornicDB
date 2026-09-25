@@ -1,6 +1,10 @@
 package cypher
 
-import "fmt"
+import (
+	"fmt"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+)
 
 // SemanticError describes a Cypher validation failure that must retain its
 // Neo4j-compatible Bolt classification and conformance detail.
@@ -43,6 +47,33 @@ func invalidBooleanOperandError(value interface{}) error {
 		Detail:  "InvalidArgumentType",
 		Message: fmt.Sprintf("boolean operator requires BOOLEAN or NULL operands, got %T", value),
 	}
+}
+
+// procedureCallFailedError is Neo4j's Procedure.ProcedureCallFailed: a
+// procedure failed while running, with a cause that carries no status of its
+// own (#657).
+type procedureCallFailedError struct {
+	procedure string
+	cause     error
+}
+
+func (e *procedureCallFailedError) Error() string {
+	return fmt.Sprintf("Failed to invoke procedure `%s`: Caused by: %s", e.procedure, e.cause.Error())
+}
+func (e *procedureCallFailedError) Unwrap() error { return e.cause }
+func (e *procedureCallFailedError) BoltErrorCode() string {
+	return "Neo.ClientError.Procedure.ProcedureCallFailed"
+}
+
+// procedureRuntimeError is the error of procedure failing while running with
+// err: ProcedureCallFailed, as in Neo4j, unless err carries its own status
+// (a Cypher error of a statement the procedure ran, a transient failure, ...).
+// Every CALL dispatch reports procedure failures through it.
+func procedureRuntimeError(procedure string, err error) error {
+	if nornicerrors.HasNeo4jStatus(err) {
+		return err
+	}
+	return &procedureCallFailedError{procedure: procedure, cause: err}
 }
 
 func newSemanticError(code, detail, message string) error {

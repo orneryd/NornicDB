@@ -568,8 +568,8 @@ func TestCallUnknownProcedure(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for unknown procedure")
 	}
-	if !strings.Contains(err.Error(), "unknown procedure") {
-		t.Errorf("Expected 'unknown procedure' error, got: %v", err)
+	if !strings.Contains(err.Error(), "Neo.ClientError.Procedure.ProcedureNotFound: There is no procedure with the name") {
+		t.Errorf("Expected ProcedureNotFound error, got: %v", err)
 	}
 }
 

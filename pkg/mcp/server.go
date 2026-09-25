@@ -836,7 +836,8 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 			b.WriteString(" WHERE ")
 			b.WriteString(strings.Join(conds, " AND "))
 		}
-		b.WriteString(" RETURN n, elementId(n) LIMIT $limit")
+		// The type and tag filters run below, before limit is applied.
+		b.WriteString(" RETURN n, elementId(n)")
 
 		result, err := exec.Execute(ctx, b.String(), params)
 		if err != nil {

@@ -656,16 +656,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 
 		result, defined := e.evaluateRowExpressionWithContext(ctx, part, row)
 		if !defined {
-			if failure := getExpressionFailure(ctx); failure != nil {
-				return nil, failure
-			}
-			err := newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"UnexpectedSyntax",
-				"could not parse RETURN expression: "+part,
-			)
-			recordExpressionFailure(ctx, err)
-			return nil, err
+			return nil, unresolvedReturnItemError(ctx, part)
 		}
 		values = append(values, result)
 	}
@@ -1109,4 +1100,20 @@ func (e *StorageExecutor) markCachedValidSyntax(cypher string) {
 	}
 	c.cache[cypher] = struct{}{}
 	c.mu.Unlock()
+}
+
+// unresolvedReturnItemError is the error of a RETURN item the row evaluator
+// could not resolve: the failure it recorded (a division by zero, a runtime
+// TypeError, ...), or a SyntaxError for the item. It records the error.
+func unresolvedReturnItemError(ctx context.Context, item string) error {
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return failure
+	}
+	err := newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"UnexpectedSyntax",
+		"could not parse RETURN expression: "+item,
+	)
+	recordExpressionFailure(ctx, err)
+	return err
 }
