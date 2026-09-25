@@ -3877,14 +3877,9 @@ func (e *StorageExecutor) evaluateReturnExprInContext(ctx context.Context, expr 
 			if val, ok := yieldCtx[varName]; ok {
 				// Handle *storage.Node (Neo4j compatible)
 				if node, ok := val.(*storage.Node); ok && node != nil {
-					// Handle special "id" property
-					if propName == "id" {
-						if propVal, ok := node.Properties["id"]; ok {
-							return propVal
-						}
-						return string(node.ID)
-					}
-					// Regular property access
+					// node.id is the "id" property, null when the node has
+					// none, as in Neo4j and on every other route: the
+					// internal ID is elementId(node) / id(node).
 					if propVal, ok := node.Properties[propName]; ok {
 						return propVal
 					}

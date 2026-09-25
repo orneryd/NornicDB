@@ -1536,8 +1536,8 @@ func TestCallDbIndexVectorQueryRelationships_UsesSearchServiceRelationshipVector
 	result, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('rel_idx_search', 1, [1.0, 0.0, 0.0]) YIELD relationship, score", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	relationship := result.Rows[0][0].(map[string]interface{})
-	require.Equal(t, "rel-best", relationship["_id"])
+	relationship := result.Rows[0][0].(*storage.Edge)
+	require.Equal(t, "rel-best", string(relationship.ID))
 	require.Greater(t, result.Rows[0][1].(float64), 0.99)
 }
 

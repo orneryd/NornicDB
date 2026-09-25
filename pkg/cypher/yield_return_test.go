@@ -65,7 +65,7 @@ func TestYieldReturnIntegration(t *testing.T) {
 		result, err := exec.Execute(ctx, `
 			CALL db.index.fulltext.queryNodes('node_search', 'authentication')
 			YIELD node, score
-			RETURN node.id AS id, node.title AS title, score
+			RETURN elementId(node) AS id, node.title AS title, score
 		`, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"id", "title", "score"}, result.Columns)
@@ -96,7 +96,7 @@ func TestYieldReturnIntegration(t *testing.T) {
 		result, err := exec.Execute(ctx, `
 			CALL db.index.fulltext.queryNodes('node_search', 'authentication')
 			YIELD node, score
-			RETURN node.id AS id, node.title AS title, score
+			RETURN elementId(node) AS id, node.title AS title, score
 			ORDER BY score DESC
 			LIMIT 5
 		`, nil)
@@ -256,7 +256,7 @@ func TestYieldReturnIntegration(t *testing.T) {
 		result, err := exec.Execute(ctx, `
 			CALL db.index.fulltext.queryNodes('node_search', 'database')
 			YIELD node, score
-			RETURN node.id AS id, node.title AS title, score
+			RETURN elementId(node) AS id, node.title AS title, score
 			ORDER BY score DESC
 			LIMIT 5
 		`, nil)
