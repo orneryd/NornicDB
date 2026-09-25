@@ -923,8 +923,9 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	if afterCall != "" {
 		return e.processAfterCallSubquery(ctx, combinedResult, afterCall)
 	}
-
-	return combinedResult, nil
+	// A statement that ends with the CALL has no columns and no rows, as in
+	// Neo4j; its writes are counted (#507, #676).
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: combinedResult.Stats}, nil
 }
 
 func appendCorrelatedBinding(result *ExecuteResult, name string, value interface{}) *ExecuteResult {
@@ -1651,7 +1652,9 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 	if strings.TrimSpace(afterCall) != "" {
 		return e.processAfterCallSubquery(ctx, combined, afterCall)
 	}
-	return combined, nil
+	// A statement that ends with the CALL has no columns and no rows, as in
+	// Neo4j; its writes are counted (#507, #676).
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: combined.Stats}, nil
 }
 
 // executeCallInTransactions executes a CALL {} IN TRANSACTIONS query
