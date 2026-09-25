@@ -163,6 +163,12 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(cypher string) (
 				return nil
 			}
 			if wildcard {
+				// As for nodes (and in Neo4j), a relationship with none of the
+				// indexed properties has no document, so the wildcard skips it
+				// (#547).
+				if len(targetProperties) > 0 && !edgeHasAnyNonEmptyProperty(edge, targetProperties) {
+					return nil
+				}
 				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{e.procedureRelationship(edge), 1.0}) {
 					return storage.ErrIterationStopped
 				}
@@ -272,6 +278,18 @@ func buildEdgeFulltextDoc(edge *storage.Edge, properties []string) *ftDoc {
 // edgeHasNonEmptyProperty mirrors nodeHasNonEmptyProperty: the
 // `<prop>:*` Lucene field-presence query treats empty strings as
 // missing values.
+// edgeHasAnyNonEmptyProperty reports whether edge has a non-empty value for
+// any of props (the relationship has a fulltext document for an index on
+// them).
+func edgeHasAnyNonEmptyProperty(edge *storage.Edge, props []string) bool {
+	for _, prop := range props {
+		if edgeHasNonEmptyProperty(edge, prop) {
+			return true
+		}
+	}
+	return false
+}
+
 func edgeHasNonEmptyProperty(edge *storage.Edge, propName string) bool {
 	if edge == nil {
 		return false
