@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
@@ -574,104 +575,127 @@ func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher stri
 }
 
 // executeShowFunctions handles SHOW FUNCTIONS command
-func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Each function: name, category (Neo4j's category names; kalman.* is
-	// NornicDB's own), signature, description, aggregating.
-	functions := [][]interface{}{
-		// Scalar functions
-		{"id", "Scalar", "id(entity :: ANY) :: INTEGER", "Returns the id of a node or relationship", false},
-		{"elementId", "Scalar", "elementId(entity :: ANY) :: STRING", "Returns the element id of a node or relationship", false},
-		{"labels", "List", "labels(node :: NODE) :: LIST<STRING>", "Returns labels of a node", false},
-		{"type", "Scalar", "type(relationship :: RELATIONSHIP) :: STRING", "Returns the type of a relationship", false},
-		{"keys", "List", "keys(entity :: ANY) :: LIST<STRING>", "Returns the property keys of a node or relationship", false},
-		{"properties", "Scalar", "properties(entity :: ANY) :: MAP", "Returns all properties of a node or relationship", false},
-		{"coalesce", "Scalar", "coalesce(expression :: ANY...) :: ANY", "Returns first non-null value", false},
-		{"head", "Scalar", "head(list :: LIST<ANY>) :: ANY", "Returns the first element of a list", false},
-		{"last", "Scalar", "last(list :: LIST<ANY>) :: ANY", "Returns the last element of a list", false},
-		{"tail", "List", "tail(list :: LIST<ANY>) :: LIST<ANY>", "Returns all but the first element of a list", false},
-		{"size", "Scalar", "size(list :: LIST<ANY>) :: INTEGER", "Returns the number of elements in a list", false},
-		{"length", "Scalar", "length(path :: PATH) :: INTEGER", "Returns the length of a path", false},
-		{"reverse", "String", "reverse(original :: LIST<ANY> | STRING) :: LIST<ANY> | STRING", "Reverses a list or string", false},
-		{"range", "List", "range(start :: INTEGER, end :: INTEGER, step :: INTEGER = 1) :: LIST<INTEGER>", "Returns a list of integers", false},
-		{"toString", "String", "toString(expression :: ANY) :: STRING", "Converts expression to string", false},
-		{"toInteger", "Scalar", "toInteger(expression :: ANY) :: INTEGER", "Converts expression to integer", false},
-		{"toFloat", "Scalar", "toFloat(expression :: ANY) :: FLOAT", "Converts expression to float", false},
-		{"toBoolean", "Scalar", "toBoolean(expression :: ANY) :: BOOLEAN", "Converts expression to boolean", false},
-		{"toLower", "String", "toLower(original :: STRING) :: STRING", "Converts string to lowercase", false},
-		{"toUpper", "String", "toUpper(original :: STRING) :: STRING", "Converts string to uppercase", false},
-		{"trim", "String", "trim(original :: STRING) :: STRING", "Trims whitespace from string", false},
-		{"ltrim", "String", "ltrim(original :: STRING) :: STRING", "Trims leading whitespace", false},
-		{"rtrim", "String", "rtrim(original :: STRING) :: STRING", "Trims trailing whitespace", false},
-		{"replace", "String", "replace(original :: STRING, search :: STRING, replace :: STRING) :: STRING", "Replaces all occurrences", false},
-		{"split", "String", "split(original :: STRING, splitDelimiter :: STRING) :: LIST<STRING>", "Splits string by delimiter", false},
-		{"substring", "String", "substring(original :: STRING, start :: INTEGER, length :: INTEGER = NULL) :: STRING", "Returns substring", false},
-		{"left", "String", "left(original :: STRING, length :: INTEGER) :: STRING", "Returns left part of string", false},
-		{"right", "String", "right(original :: STRING, length :: INTEGER) :: STRING", "Returns right part of string", false},
-		// Math functions
-		{"abs", "Numeric", "abs(expression :: NUMBER) :: NUMBER", "Returns absolute value", false},
-		{"ceil", "Numeric", "ceil(expression :: FLOAT) :: INTEGER", "Returns ceiling value", false},
-		{"floor", "Numeric", "floor(expression :: FLOAT) :: INTEGER", "Returns floor value", false},
-		{"round", "Numeric", "round(expression :: FLOAT) :: INTEGER", "Rounds to nearest integer", false},
-		{"sign", "Numeric", "sign(expression :: NUMBER) :: INTEGER", "Returns sign of number", false},
-		{"sqrt", "Logarithmic", "sqrt(expression :: FLOAT) :: FLOAT", "Returns square root", false},
-		{"rand", "Numeric", "rand() :: FLOAT", "Returns random float between 0 and 1", false},
-		{"randomUUID", "Scalar", "randomUUID() :: STRING", "Returns a random UUID", false},
-		{"sin", "Trigonometric", "sin(expression :: FLOAT) :: FLOAT", "Returns sine", false},
-		{"cos", "Trigonometric", "cos(expression :: FLOAT) :: FLOAT", "Returns cosine", false},
-		{"tan", "Trigonometric", "tan(expression :: FLOAT) :: FLOAT", "Returns tangent", false},
-		{"log", "Logarithmic", "log(expression :: FLOAT) :: FLOAT", "Returns natural logarithm", false},
-		{"log10", "Logarithmic", "log10(expression :: FLOAT) :: FLOAT", "Returns base-10 logarithm", false},
-		{"exp", "Logarithmic", "exp(expression :: FLOAT) :: FLOAT", "Returns e raised to power", false},
-		{"pi", "Trigonometric", "pi() :: FLOAT", "Returns pi constant", false},
-		{"e", "Logarithmic", "e() :: FLOAT", "Returns Euler's number", false},
-		// Temporal functions
-		{"timestamp", "Scalar", "timestamp() :: INTEGER", "Returns current timestamp in milliseconds", false},
-		{"datetime", "Temporal", "datetime(input :: ANY = NULL) :: DATETIME", "Creates a datetime", false},
-		{"date", "Temporal", "date(input :: ANY = NULL) :: DATE", "Creates a date", false},
-		{"time", "Temporal", "time(input :: ANY = NULL) :: TIME", "Creates a time", false},
-		// Aggregation functions
-		{"count", "Aggregating", "count(expression :: ANY) :: INTEGER", "Returns count", true},
-		{"sum", "Aggregating", "sum(expression :: NUMBER) :: NUMBER", "Returns sum", true},
-		{"avg", "Aggregating", "avg(expression :: NUMBER) :: FLOAT", "Returns average", true},
-		{"min", "Aggregating", "min(expression :: ANY) :: ANY", "Returns minimum", true},
-		{"max", "Aggregating", "max(expression :: ANY) :: ANY", "Returns maximum", true},
-		{"collect", "Aggregating", "collect(expression :: ANY) :: LIST<ANY>", "Collects values into list", true},
-		// Predicate functions
-		{"exists", "Predicate", "exists(expression :: ANY) :: BOOLEAN", "Returns true if expression is not null", false},
-		{"isEmpty", "Predicate", "isEmpty(list :: LIST<ANY> | MAP | STRING) :: BOOLEAN", "Returns true if empty", false},
-		{"all", "Predicate", "all(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if all match", false},
-		{"any", "Predicate", "any(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if any match", false},
-		{"none", "Predicate", "none(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if none match", false},
-		{"single", "Predicate", "single(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if exactly one matches", false},
-		// Spatial functions
-		{"point", "Spatial", "point(input :: MAP) :: POINT", "Creates a point", false},
-		{"distance", "Spatial", "distance(point1 :: POINT, point2 :: POINT) :: FLOAT", "Returns distance between points", false},
-		{"polygon", "Spatial", "polygon(points :: LIST<POINT>) :: POLYGON", "Creates a polygon from a list of points", false},
-		{"lineString", "Spatial", "lineString(points :: LIST<POINT>) :: LINESTRING", "Creates a lineString from a list of points", false},
-		{"point.intersects", "Spatial", "point.intersects(point :: POINT, polygon :: POLYGON) :: BOOLEAN", "Checks if point intersects with polygon", false},
-		{"point.contains", "Spatial", "point.contains(polygon :: POLYGON, point :: POINT) :: BOOLEAN", "Checks if polygon contains point", false},
-		// Vector functions
-		{"vector.similarity.cosine", "Vector", "vector.similarity.cosine(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Cosine similarity", false},
-		{"vector.similarity.euclidean", "Vector", "vector.similarity.euclidean(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Euclidean similarity", false},
-		// Kalman filter functions
-		{"kalman.init", "Kalman", "kalman.init(config? :: MAP) :: STRING", "Create new Kalman filter state (basic scalar filter for noise smoothing)", false},
-		{"kalman.process", "Kalman", "kalman.process(measurement :: FLOAT, state :: STRING, target? :: FLOAT) :: MAP", "Process measurement, returns {value, state}", false},
-		{"kalman.predict", "Kalman", "kalman.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict state n steps into the future", false},
-		{"kalman.state", "Kalman", "kalman.state(state :: STRING) :: FLOAT", "Get current state estimate from state JSON", false},
-		{"kalman.reset", "Kalman", "kalman.reset(state :: STRING) :: STRING", "Reset filter state to initial values", false},
-		{"kalman.velocity.init", "Kalman", "kalman.velocity.init(initialPos? :: FLOAT, initialVel? :: FLOAT) :: STRING", "Create 2-state Kalman filter (position + velocity for trend tracking)", false},
-		{"kalman.velocity.process", "Kalman", "kalman.velocity.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, velocity, state}", false},
-		{"kalman.velocity.predict", "Kalman", "kalman.velocity.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict position n steps into the future", false},
-		{"kalman.adaptive.init", "Kalman", "kalman.adaptive.init(config? :: MAP) :: STRING", "Create adaptive Kalman filter (auto-switches between basic and velocity modes)", false},
-		{"kalman.adaptive.process", "Kalman", "kalman.adaptive.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, mode, state}", false},
-	}
+// showFunctionsTable lists the built-in functions SHOW FUNCTIONS reports.
+// Each function: name, category (Neo4j's category names; kalman.* is
+// NornicDB's own), signature, description, aggregating.
+var showFunctionsTable = [][]interface{}{
+	// Scalar functions
+	{"id", "Scalar", "id(entity :: ANY) :: INTEGER", "Returns the id of a node or relationship", false},
+	{"elementId", "Scalar", "elementId(entity :: ANY) :: STRING", "Returns the element id of a node or relationship", false},
+	{"labels", "List", "labels(node :: NODE) :: LIST<STRING>", "Returns labels of a node", false},
+	{"type", "Scalar", "type(relationship :: RELATIONSHIP) :: STRING", "Returns the type of a relationship", false},
+	{"keys", "List", "keys(entity :: ANY) :: LIST<STRING>", "Returns the property keys of a node or relationship", false},
+	{"properties", "Scalar", "properties(entity :: ANY) :: MAP", "Returns all properties of a node or relationship", false},
+	{"coalesce", "Scalar", "coalesce(expression :: ANY...) :: ANY", "Returns first non-null value", false},
+	{"head", "Scalar", "head(list :: LIST<ANY>) :: ANY", "Returns the first element of a list", false},
+	{"last", "Scalar", "last(list :: LIST<ANY>) :: ANY", "Returns the last element of a list", false},
+	{"tail", "List", "tail(list :: LIST<ANY>) :: LIST<ANY>", "Returns all but the first element of a list", false},
+	{"size", "Scalar", "size(list :: LIST<ANY>) :: INTEGER", "Returns the number of elements in a list", false},
+	{"length", "Scalar", "length(path :: PATH) :: INTEGER", "Returns the length of a path", false},
+	{"reverse", "String", "reverse(original :: LIST<ANY> | STRING) :: LIST<ANY> | STRING", "Reverses a list or string", false},
+	{"range", "List", "range(start :: INTEGER, end :: INTEGER, step :: INTEGER = 1) :: LIST<INTEGER>", "Returns a list of integers", false},
+	{"toString", "String", "toString(expression :: ANY) :: STRING", "Converts expression to string", false},
+	{"toInteger", "Scalar", "toInteger(expression :: ANY) :: INTEGER", "Converts expression to integer", false},
+	{"toFloat", "Scalar", "toFloat(expression :: ANY) :: FLOAT", "Converts expression to float", false},
+	{"toBoolean", "Scalar", "toBoolean(expression :: ANY) :: BOOLEAN", "Converts expression to boolean", false},
+	{"toLower", "String", "toLower(original :: STRING) :: STRING", "Converts string to lowercase", false},
+	{"toUpper", "String", "toUpper(original :: STRING) :: STRING", "Converts string to uppercase", false},
+	{"trim", "String", "trim(original :: STRING) :: STRING", "Trims whitespace from string", false},
+	{"ltrim", "String", "ltrim(original :: STRING) :: STRING", "Trims leading whitespace", false},
+	{"rtrim", "String", "rtrim(original :: STRING) :: STRING", "Trims trailing whitespace", false},
+	{"replace", "String", "replace(original :: STRING, search :: STRING, replace :: STRING) :: STRING", "Replaces all occurrences", false},
+	{"split", "String", "split(original :: STRING, splitDelimiter :: STRING) :: LIST<STRING>", "Splits string by delimiter", false},
+	{"substring", "String", "substring(original :: STRING, start :: INTEGER, length :: INTEGER = NULL) :: STRING", "Returns substring", false},
+	{"left", "String", "left(original :: STRING, length :: INTEGER) :: STRING", "Returns left part of string", false},
+	{"right", "String", "right(original :: STRING, length :: INTEGER) :: STRING", "Returns right part of string", false},
+	// Math functions
+	{"abs", "Numeric", "abs(expression :: NUMBER) :: NUMBER", "Returns absolute value", false},
+	{"ceil", "Numeric", "ceil(expression :: FLOAT) :: INTEGER", "Returns ceiling value", false},
+	{"floor", "Numeric", "floor(expression :: FLOAT) :: INTEGER", "Returns floor value", false},
+	{"round", "Numeric", "round(expression :: FLOAT) :: INTEGER", "Rounds to nearest integer", false},
+	{"sign", "Numeric", "sign(expression :: NUMBER) :: INTEGER", "Returns sign of number", false},
+	{"sqrt", "Logarithmic", "sqrt(expression :: FLOAT) :: FLOAT", "Returns square root", false},
+	{"rand", "Numeric", "rand() :: FLOAT", "Returns random float between 0 and 1", false},
+	{"randomUUID", "Scalar", "randomUUID() :: STRING", "Returns a random UUID", false},
+	{"sin", "Trigonometric", "sin(expression :: FLOAT) :: FLOAT", "Returns sine", false},
+	{"cos", "Trigonometric", "cos(expression :: FLOAT) :: FLOAT", "Returns cosine", false},
+	{"tan", "Trigonometric", "tan(expression :: FLOAT) :: FLOAT", "Returns tangent", false},
+	{"log", "Logarithmic", "log(expression :: FLOAT) :: FLOAT", "Returns natural logarithm", false},
+	{"log10", "Logarithmic", "log10(expression :: FLOAT) :: FLOAT", "Returns base-10 logarithm", false},
+	{"exp", "Logarithmic", "exp(expression :: FLOAT) :: FLOAT", "Returns e raised to power", false},
+	{"pi", "Trigonometric", "pi() :: FLOAT", "Returns pi constant", false},
+	{"e", "Logarithmic", "e() :: FLOAT", "Returns Euler's number", false},
+	// Temporal functions
+	{"timestamp", "Scalar", "timestamp() :: INTEGER", "Returns current timestamp in milliseconds", false},
+	{"datetime", "Temporal", "datetime(input :: ANY = NULL) :: DATETIME", "Creates a datetime", false},
+	{"date", "Temporal", "date(input :: ANY = NULL) :: DATE", "Creates a date", false},
+	{"time", "Temporal", "time(input :: ANY = NULL) :: TIME", "Creates a time", false},
+	// Aggregation functions
+	{"count", "Aggregating", "count(expression :: ANY) :: INTEGER", "Returns count", true},
+	{"sum", "Aggregating", "sum(expression :: NUMBER) :: NUMBER", "Returns sum", true},
+	{"avg", "Aggregating", "avg(expression :: NUMBER) :: FLOAT", "Returns average", true},
+	{"min", "Aggregating", "min(expression :: ANY) :: ANY", "Returns minimum", true},
+	{"max", "Aggregating", "max(expression :: ANY) :: ANY", "Returns maximum", true},
+	{"collect", "Aggregating", "collect(expression :: ANY) :: LIST<ANY>", "Collects values into list", true},
+	// Predicate functions
+	{"exists", "Predicate", "exists(expression :: ANY) :: BOOLEAN", "Returns true if expression is not null", false},
+	{"isEmpty", "Predicate", "isEmpty(list :: LIST<ANY> | MAP | STRING) :: BOOLEAN", "Returns true if empty", false},
+	{"all", "Predicate", "all(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if all match", false},
+	{"any", "Predicate", "any(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if any match", false},
+	{"none", "Predicate", "none(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if none match", false},
+	{"single", "Predicate", "single(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if exactly one matches", false},
+	// Spatial functions
+	{"point", "Spatial", "point(input :: MAP) :: POINT", "Creates a point", false},
+	{"distance", "Spatial", "distance(point1 :: POINT, point2 :: POINT) :: FLOAT", "Returns distance between points", false},
+	{"polygon", "Spatial", "polygon(points :: LIST<POINT>) :: POLYGON", "Creates a polygon from a list of points", false},
+	{"lineString", "Spatial", "lineString(points :: LIST<POINT>) :: LINESTRING", "Creates a lineString from a list of points", false},
+	{"point.intersects", "Spatial", "point.intersects(point :: POINT, polygon :: POLYGON) :: BOOLEAN", "Checks if point intersects with polygon", false},
+	{"point.contains", "Spatial", "point.contains(polygon :: POLYGON, point :: POINT) :: BOOLEAN", "Checks if polygon contains point", false},
+	// Vector functions
+	{"vector.similarity.cosine", "Vector", "vector.similarity.cosine(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Cosine similarity", false},
+	{"vector.similarity.euclidean", "Vector", "vector.similarity.euclidean(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Euclidean similarity", false},
+	// Kalman filter functions
+	{"kalman.init", "Kalman", "kalman.init(config? :: MAP) :: STRING", "Create new Kalman filter state (basic scalar filter for noise smoothing)", false},
+	{"kalman.process", "Kalman", "kalman.process(measurement :: FLOAT, state :: STRING, target? :: FLOAT) :: MAP", "Process measurement, returns {value, state}", false},
+	{"kalman.predict", "Kalman", "kalman.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict state n steps into the future", false},
+	{"kalman.state", "Kalman", "kalman.state(state :: STRING) :: FLOAT", "Get current state estimate from state JSON", false},
+	{"kalman.reset", "Kalman", "kalman.reset(state :: STRING) :: STRING", "Reset filter state to initial values", false},
+	{"kalman.velocity.init", "Kalman", "kalman.velocity.init(initialPos? :: FLOAT, initialVel? :: FLOAT) :: STRING", "Create 2-state Kalman filter (position + velocity for trend tracking)", false},
+	{"kalman.velocity.process", "Kalman", "kalman.velocity.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, velocity, state}", false},
+	{"kalman.velocity.predict", "Kalman", "kalman.velocity.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict position n steps into the future", false},
+	{"kalman.adaptive.init", "Kalman", "kalman.adaptive.init(config? :: MAP) :: STRING", "Create adaptive Kalman filter (auto-switches between basic and velocity modes)", false},
+	{"kalman.adaptive.process", "Kalman", "kalman.adaptive.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, mode, state}", false},
+}
 
-	rows := make([][]interface{}, 0, len(functions))
-	for _, function := range functions {
-		signature, _ := function[2].(string)
-		arguments, returns := functionSignatureDescriptions(signature)
-		// rolesExecution, rolesBoostedExecution and deprecatedBy aren't known.
-		rows = append(rows, []interface{}{function[0], function[1], function[3], signature, true, arguments, returns, function[4], nil, nil, false, nil})
+var (
+	showFunctionRowsOnce  sync.Once
+	showFunctionRowsCache [][]interface{}
+)
+
+// showFunctionRows returns SHOW FUNCTIONS' full rows, built once from
+// showFunctionsTable. Callers copy the rows they hand out.
+func showFunctionRows() [][]interface{} {
+	showFunctionRowsOnce.Do(func() {
+		rows := make([][]interface{}, 0, len(showFunctionsTable))
+		for _, function := range showFunctionsTable {
+			signature, _ := function[2].(string)
+			arguments, returns := functionSignatureDescriptions(signature)
+			// rolesExecution, rolesBoostedExecution and deprecatedBy aren't known.
+			rows = append(rows, []interface{}{function[0], function[1], function[3], signature, true, arguments, returns, function[4], nil, nil, false, nil})
+		}
+		showFunctionRowsCache = rows
+	})
+	return showFunctionRowsCache
+}
+
+func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// The listing is static: its rows (with the argument and return
+	// descriptions parsed from each signature) are built once, and each call
+	// gets its own copy of them.
+	cached := showFunctionRows()
+	rows := make([][]interface{}, len(cached))
+	for i, row := range cached {
+		rows[i] = append([]interface{}(nil), row...)
 	}
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"},
