@@ -250,12 +250,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
 		failure := localizedError(localization.CypherTransactionsCommitFailed(err), err)
-		// A local transaction checks constraints before it writes anything
-		// (BadgerTransaction.Commit), so a constraint violation leaves nothing
-		// of it stored. A fabric transaction may fail after some constituents
-		// committed, so it is not marked.
-		var violation *storage.ConstraintViolationError
-		if localTx && errors.As(err, &violation) {
+		if commitFailureWroteNothing(localTx, err) {
 			failure = nornicerrors.MarkCommitRolledBack(failure)
 		}
 		return nil, failure
@@ -282,6 +277,25 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// commitFailureWroteNothing reports whether a failed COMMIT left nothing of
+// the transaction stored, so its outcome is known (the Bolt session keeps its
+// connection). A local transaction (BadgerTransaction.Commit) fails before
+// it writes anything on:
+//   - a constraint violation, checked before the write;
+//   - a transaction over the store's size limit (storage.IsTransactionTooBig),
+//     raised while its writes are staged in the one Badger transaction, which
+//     is then discarded.
+//
+// A fabric transaction may fail after some constituents committed, so its
+// failures are never marked.
+func commitFailureWroteNothing(localTx bool, err error) bool {
+	if !localTx {
+		return false
+	}
+	var violation *storage.ConstraintViolationError
+	return errors.As(err, &violation) || storage.IsTransactionTooBig(err)
 }
 
 // handleRollback rolls back the active transaction.
