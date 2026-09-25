@@ -131,6 +131,26 @@ func standaloneSubqueryExpression(expr string) (subqueryExpression, bool) {
 	return found[0], true
 }
 
+// wholeExistsPredicate reports whether a WHERE predicate is exactly
+// EXISTS { … } or NOT EXISTS { … }, and which. Only such a predicate is a
+// subquery test on its own; one that compares or combines the subquery
+// (EXISTS { … } = false) is an expression with the subquery as one of its
+// values.
+func wholeExistsPredicate(predicate string) (negated bool, ok bool) {
+	predicate = strings.TrimSpace(predicate)
+	if len(predicate) > len("NOT") && matchKeywordAt(predicate, 0, "NOT") {
+		return true, isStandaloneExistsSubquery(strings.TrimSpace(predicate[len("NOT"):]))
+	}
+	return false, isStandaloneExistsSubquery(predicate)
+}
+
+// isWholeCollectItem reports whether a projection item is exactly one
+// COLLECT { … } subquery, rather than an expression containing one.
+func isWholeCollectItem(expr string) bool {
+	collect, ok := standaloneSubqueryExpression(expr)
+	return ok && collect.kind == "COLLECT"
+}
+
 // materializeRowSubqueries replaces each subquery expression in expr with a
 // row variable bound to its value for the row, and returns the rewritten
 // expression and the extended row.
@@ -210,17 +230,12 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	if kind == "COUNT" && topLevelKeywordIndex(query, "RETURN") < 0 {
 		query += " RETURN 1 AS __count"
 	}
-	result, handled, err := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
+	result, err := e.runCorrelatedSubquery(ctx, query, values)
 	if err != nil {
 		return nil, false, err
 	}
-	if !handled || result == nil {
-		// A body the pipeline declines (a CALL subquery in it, …) runs
-		// through the full executor with the row's values bound.
-		result, err = e.executeCorrelatedSubqueryBody(ctx, query, values)
-		if err != nil {
-			return nil, false, err
-		}
+	if result == nil {
+		return nil, false, nil
 	}
 	if kind == "COUNT" {
 		return int64(len(result.Rows)), true, nil
@@ -232,6 +247,22 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		}
 	}
 	return collected, true, nil
+}
+
+// runCorrelatedSubquery runs a subquery body for a row: as a pipeline
+// correlated with the row's values, and through the full executor with those
+// values bound when the pipeline declines the body (a CALL subquery or a
+// procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
+// here, so a body gives the same rows whichever of them wraps it.
+func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+	result, handled, err := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if handled && result != nil {
+		return result, nil
+	}
+	return e.executeCorrelatedSubqueryBody(ctx, query, values)
 }
 
 // executeCorrelatedSubqueryBody runs a subquery body through the full

@@ -1553,28 +1553,28 @@ func TestCypherHelpers_EvaluateInnerWhereBranches(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "(n.age = 30)"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age = 30 AND n.name = 'alice'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age = 99 OR n.name = 'alice'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "NOT n.age = 99"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.bio CONTAINS 'hello'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name STARTS WITH 'ali'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name ENDS WITH 'ice'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "'a' IN n.tags"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name IS NOT NULL"))
-	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "n.missing IS NOT NULL"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.missing IS NULL"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "id(n) = 'n-123'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "elementId(n) = 'n-123'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age >= 30"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age <= 30"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age > 29"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age < 31"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name =~ 'a.*'"))
-	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age = 99"))
-	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "x.age = 30")) // wrong variable branch
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", ""))            // empty where clause includes
-	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "MALFORMED"))  // malformed non-empty clause excludes
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "(n.age = 30)"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age = 30 AND n.name = 'alice'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age = 99 OR n.name = 'alice'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "NOT n.age = 99"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.bio CONTAINS 'hello'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name STARTS WITH 'ali'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name ENDS WITH 'ice'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "'a' IN n.tags"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name IS NOT NULL"))
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", "n.missing IS NOT NULL"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.missing IS NULL"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "id(n) = 'n-123'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "elementId(n) = 'n-123'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age >= 30"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age <= 30"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age > 29"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age < 31"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name =~ 'a.*'"))
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", "n.age = 99"))
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", "x.age = 30")) // wrong variable branch
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", ""))            // empty where clause includes
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", "MALFORMED"))  // malformed non-empty clause excludes
 }
 
 func TestCypherHelpers_NormalizePropValueAndMap(t *testing.T) {

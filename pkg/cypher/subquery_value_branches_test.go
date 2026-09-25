@@ -84,7 +84,9 @@ func TestSubqueryValueEvaluatorBranches(t *testing.T) {
 	require.NoError(t, err)
 	node := nodesResult.Rows[0][0].(*storage.Node)
 	require.True(t, exec.evaluateWhere(ctx, node, "n", "COUNT { (n)-->() } > 0"))
-	require.True(t, exec.evaluateInnerWhere(ctx, node, "n", "COUNT { (n)-->() } = 1"))
+	require.True(t, exec.evaluateWhere(ctx, node, "n", "0 < COUNT { (n)-->() }"))
+	require.True(t, exec.evaluateWhere(ctx, node, "n", "EXISTS { (n)-->() } = true"))
+	require.False(t, exec.evaluateWhere(ctx, node, "n", "EXISTS { (n)-->() } = false"))
 }
 
 // TestSubqueryBodiesWithCallSubqueries covers #652 bodies that contain a CALL

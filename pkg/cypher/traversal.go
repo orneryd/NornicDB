@@ -2624,13 +2624,14 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 		return e.evaluateWhereOnPath(ctx, left, pathCtx) || e.evaluateWhereOnPath(ctx, right, pathCtx)
 	}
 
-	if hasSubqueryPattern(whereClause, notExistsSubqueryRe) {
-		subquery := e.extractSubquery(whereClause, "NOT EXISTS")
-		return !e.pathSubqueryMatches(ctx, pathCtx, subquery)
-	}
-	if hasSubqueryPattern(whereClause, existsSubqueryRe) {
-		subquery := e.extractSubquery(whereClause, "EXISTS")
-		return e.pathSubqueryMatches(ctx, pathCtx, subquery)
+	// A whole [NOT] EXISTS { } predicate runs through the one subquery
+	// evaluator with the path's nodes and relationships bound (#652).
+	if negated, ok := wholeExistsPredicate(whereClause); ok {
+		exists := whereClause
+		if negated {
+			exists = strings.TrimSpace(whereClause[len("NOT"):])
+		}
+		return e.evaluateExistsSubqueryValue(ctx, exists, pathCtx.nodes, pathCtx.rels) != negated
 	}
 
 	// Handle NOT prefix (before operators so "->" in NOT (n)-[:X]->() is not parsed as ">")

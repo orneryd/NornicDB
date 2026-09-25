@@ -1621,21 +1621,23 @@ func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values 
 
 func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
 	trimmed := strings.TrimSpace(expression)
-	negated := hasPrefixFold(trimmed, "NOT EXISTS")
-	if !negated && !hasPrefixFold(trimmed, "EXISTS") {
+	// Only a whole [NOT] EXISTS { } is this predicate: EXISTS { … } = false
+	// is a comparison, evaluated with the subquery as one of its values.
+	negated, whole := wholeExistsPredicate(trimmed)
+	if !whole {
 		return false, false
 	}
-	prefix := "EXISTS"
+	exists := trimmed
 	if negated {
-		prefix = "NOT EXISTS"
+		exists = strings.TrimSpace(trimmed[len("NOT"):])
 	}
-	subquery := e.extractSubquery(trimmed, prefix)
+	subquery := strings.TrimSpace(exists[strings.IndexByte(exists, '{')+1 : len(exists)-1])
 	if subquery == "" {
 		return false, false
 	}
 	if clauses, ok := splitPipelineClauses(subquery); ok && len(clauses) > 1 {
-		result, handled, err := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, subquery)
-		matched := err == nil && handled && result != nil && len(result.Rows) > 0
+		result, err := e.runCorrelatedSubquery(ctx, subquery, values)
+		matched := err == nil && result != nil && len(result.Rows) > 0
 		if negated {
 			matched = !matched
 		}
@@ -1648,8 +1650,8 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	// comprehension variable, a WITH value) runs as a correlated pipeline,
 	// which sees every row value; the path matcher sees only entities.
 	if subqueryReadsScalarRowValue(subquery, values) {
-		result, handled, err := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, subquery+" RETURN 1 AS __exists")
-		matched := err == nil && handled && result != nil && len(result.Rows) > 0
+		result, err := e.runCorrelatedSubquery(ctx, subquery+" RETURN 1 AS __exists", values)
+		matched := err == nil && result != nil && len(result.Rows) > 0
 		if negated {
 			matched = !matched
 		}
