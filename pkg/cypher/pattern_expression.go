@@ -235,34 +235,10 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		if e.recordRowSizeArgumentFailure(ctx, expr, values) {
 			return nil, false
 		}
-		arithmeticExpr := strings.TrimSpace(expr)
-		for {
-			inner, enclosed := stripEnclosingExpressionParentheses(arithmeticExpr)
-			if !enclosed {
-				break
-			}
-			arithmeticExpr = inner
-		}
-		// The row evaluator reports an arithmetic error (division by zero,
-		// INTEGER overflow, a non-arithmetic operand) as "unresolved"; record
-		// the statement error for the top-level operator.
-		for _, tier := range []string{"+-", "*/%"} {
-			left, right, operator, arithmetic := splitRowArithmeticTier(arithmeticExpr, tier)
-			if !arithmetic {
-				continue
-			}
-			leftValue, leftOK := e.evaluateRowExpression(left, values)
-			rightValue, rightOK := e.evaluateRowExpression(right, values)
-			if !leftOK || !rightOK {
-				break
-			}
-			if divisor, numeric := toFloat64(rightValue); (operator == '/' || operator == '%') && leftValue != nil && numeric && divisor == 0 {
-				recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero"))
-			} else if err := arithmeticError(operator, leftValue, rightValue); err != nil {
-				recordExpressionFailure(ctx, err)
-			}
-			break
-		}
+		// The row evaluator reports an operator error (division by zero,
+		// INTEGER overflow, an operand of the wrong type) as "unresolved";
+		// record the statement error of the operator that failed.
+		e.recordRowOperatorFailure(ctx, expr, values)
 	}
 	if function, arguments, functionCall := parseFunctionCallWS(strings.TrimSpace(expr)); functionCall && strings.EqualFold(function, "substring") {
 		parts := splitTopLevelComma(arguments)

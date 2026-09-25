@@ -100,7 +100,8 @@ func TestStaticSizeRejectsPathBindingsAcrossProjectionHorizons(t *testing.T) {
 		"MATCH p = (a)-[*]->(b) RETURN size(p)",
 		"MATCH p = (a)-->(b) WITH p AS route RETURN size(route)",
 	} {
-		err := validateStaticSizeArguments(query)
+		exec, _ := newUnitExecutor(t)
+		err := exec.validateMatchSemanticScopes(query)
 		require.Error(t, err)
 		var semanticError *SemanticError
 		require.ErrorAs(t, err, &semanticError)

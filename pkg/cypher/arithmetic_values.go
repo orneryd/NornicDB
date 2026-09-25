@@ -1,10 +1,7 @@
 package cypher
 
 import (
-	"fmt"
 	"math"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Value-level Cypher arithmetic shared by every evaluator (add, subtract,
@@ -18,7 +15,7 @@ import (
 //   - an INTEGER op FLOAT (or FLOAT op FLOAT) is IEEE float arithmetic;
 //   - a null operand makes the result null (strings and lists included:
 //     'a' + null and [1] + null are null);
-//   - booleans, maps, nodes and relationships are not arithmetic operands.
+//   - any other operand type is a TypeError (runtimeArithmeticTypeError).
 
 // cypherIntegerOperand returns v as an int64 when it is a Cypher INTEGER.
 func cypherIntegerOperand(v interface{}) (int64, bool) {
@@ -151,47 +148,16 @@ func isNonNumericArithmeticOperand(v interface{}) bool {
 	return false
 }
 
-// arithmeticOperandTypeError is Neo4j's Type mismatch error for a value that
-// is never an operand of arithmetic: a boolean, a map, a node or a
-// relationship. Strings are left to the + and temporal rules (NornicDB also
-// carries dates as strings).
-func arithmeticOperandTypeError(op byte, left, right interface{}) error {
-	if left == nil || right == nil {
-		return nil
-	}
-	for _, operand := range []interface{}{left, right} {
-		switch operand.(type) {
-		case bool, *storage.Node, *storage.Edge:
-			return arithmeticTypeMismatch(op, operand)
-		case map[string]interface{}:
-			if _, isPath := operand.(map[string]interface{})["_pathResult"]; !isPath {
-				return arithmeticTypeMismatch(op, operand)
-			}
-		}
-	}
-	return nil
-}
-
-func arithmeticTypeMismatch(op byte, operand interface{}) error {
-	expected := "Float, Integer, Duration, Date, Time, LocalTime, LocalDateTime or DateTime"
-	if op == '+' {
-		expected = "Float, Integer, String or List<T>"
-	}
-	return newSemanticError(
-		"Neo.ClientError.Statement.SyntaxError",
-		"InvalidArgumentType",
-		fmt.Sprintf("Type mismatch: expected %s but was %s", expected, cypherValueTypeName(operand)),
-	)
-}
-
 // arithmeticError is the statement error of left op right, or nil: an
-// INTEGER overflow or an operand type error. Context-aware evaluators record
-// it (recordExpressionFailure); the value helpers return null for it.
+// INTEGER overflow or an operand type error (runtimeArithmeticTypeError, a
+// TypeError: operand types known at compile time were rejected before the
+// statement ran). Context-aware evaluators record it
+// (recordExpressionFailure); the value helpers return null for it.
 func arithmeticError(op byte, left, right interface{}) error {
 	if left == nil || right == nil {
 		return nil
 	}
-	if err := arithmeticOperandTypeError(op, left, right); err != nil {
+	if err := runtimeArithmeticTypeError(op, left, right); err != nil {
 		return err
 	}
 	if _, _, err := numericArithmetic(op, left, right); err != nil {

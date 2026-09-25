@@ -107,10 +107,25 @@ func (e *StorageExecutor) validateRowConversionArguments(expression string, row 
 		return newSemanticError(
 			"Neo.ClientError.Statement.TypeError",
 			"InvalidArgumentValue",
-			fmt.Sprintf("%s() cannot convert value of type %T", function, value),
+			fmt.Sprintf("Invalid input for function '%s()': Expected %s, got: %s", conversionFunctionNames[name], conversionFunctionInputs[name], neo4jValueRepr(value)),
 		)
 	}
 	return nil
+}
+
+// conversionFunctionNames and conversionFunctionInputs word a conversion
+// function's run-time TypeError as Neo4j does: "Invalid input for function
+// 'toInteger()': Expected a String, Float, Integer or Boolean, got: …".
+var conversionFunctionNames = map[string]string{
+	"tointeger": "toInteger", "toint": "toInteger", "tofloat": "toFloat", "toboolean": "toBoolean", "tostring": "toString",
+}
+
+var conversionFunctionInputs = map[string]string{
+	"tointeger": "a String, Float, Integer or Boolean",
+	"toint":     "a String, Float, Integer or Boolean",
+	"tofloat":   "a String, Float or Integer",
+	"toboolean": "a Boolean, Integer or String",
+	"tostring":  "a String, Float, Integer, Boolean, Temporal or Duration",
 }
 
 func validConversionArgument(function string, value interface{}) bool {

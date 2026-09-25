@@ -14,10 +14,7 @@ func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
 	if err := validateStaticQuantifierTypes(cypher); err != nil {
 		return err
 	}
-	if err := validateStaticSizeArguments(cypher); err != nil {
-		return err
-	}
-	if err := validateStaticGraphFunctionArguments(cypher); err != nil {
+	if err := validateStaticFunctionArguments(cypher); err != nil {
 		return err
 	}
 	if err := e.validateStaticPaginationExpressions(cypher); err != nil {
@@ -81,9 +78,6 @@ func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
 						if simpleSemanticIdentifier(alias) == "" && !(len(alias) >= 2 && alias[0] == '`' && alias[len(alias)-1] == '`') {
 							return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid RETURN alias")
 						}
-					}
-					if err := validateGraphFunctionSemanticTypes(expression, nil); err != nil {
-						return err
 					}
 					if err := validateKnownFunctionsInExpression(expression); err != nil {
 						return err

@@ -33,7 +33,12 @@ NornicDB returns Neo4j-shaped error codes (`Neo.ClientError.*`, `Neo.TransientEr
 For explicit `BEGIN`/`COMMIT` transactions, a retryable `COMMIT` failure is
 delivered as `FAILURE` without closing the Bolt connection. The session remains
 in the normal failed-until-`RESET` state, so drivers can reset and retry on the
-same socket. Non-retryable uncertain commit failures still close the connection.
+same socket. A `COMMIT` rejected by a constraint check (`Neo.ClientError.Schema.ConstraintValidationFailed`)
+is found before anything is written, so it also keeps the connection: nothing of the
+transaction is stored. Non-retryable uncertain commit failures still close the connection.
+
+Error messages don't repeat the code: the code is in the error's code field, the message is
+the text after it (Bolt and HTTP alike).
 
 ### Retry these — transient
 
@@ -44,7 +49,7 @@ same socket. Non-retryable uncertain commit failures still close the connection.
 | `commit failed: conflict: node <id> has adjacent edge <eid> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Same, propagated through an adjacent edge. |
 | `... conflict: edge <id> changed after transaction start` (statement-time, no `commit failed:` prefix) | `Neo.TransientError.Transaction.Outdated` | `MERGE ... SET` on a relationship a peer committed after your transaction began — the edge is live at latest-committed state but invisible to your snapshot. Retry on a fresh transaction converges. |
 | `... waiting for transaction lock` | `Neo.TransientError.Transaction.DeadlockDetected` | Lock contention. |
-| `commit failed: constraint violation: ... already exists` **AND every statement in the group is `MERGE`-shaped** | `Neo.ClientError.Transaction.TransactionCommitFailed` | Two writers raced on the same `MERGE (n {uid:...})`. See "MERGE under concurrent writers" below. |
+| `commit failed: constraint violation: ... already exists` **AND every statement in the group is `MERGE`-shaped** **AND the clashing value was committed by another writer after your transaction began** | `Neo.TransientError.Transaction.Outdated` | Two writers raced on the same `MERGE (n {uid:...})`. See "MERGE under concurrent writers" below. |
 
 Both classifier paths work:
 
@@ -68,8 +73,8 @@ if strings.Contains(err.Error(), "commit failed") &&
 
 ### Do not retry — permanent
 
-- `Neo.ClientError.Statement.SyntaxError` / `Neo.ClientError.Schema.*` — fix the query.
-- `commit failed: constraint violation: ...` on a `CREATE`/`SET`-only group — re-running double-applies. Surface to the caller.
+- `Neo.ClientError.Statement.SyntaxError` / `Neo.ClientError.Statement.TypeError` / `Neo.ClientError.Schema.*` — fix the query or the data.
+- `Neo.ClientError.Schema.ConstraintValidationFailed` (`commit failed: constraint violation: ...`) on a `CREATE`/`SET` group, or against a value that was already stored when the transaction began — re-running fails the same way or double-applies. Surface to the caller.
 - Anything not in the transient table above.
 
 ## MERGE under concurrent writers

@@ -397,13 +397,12 @@ func (s *Session) logRunTiming(status, dbName, query string, duration time.Durat
 		localization.BoltRunEvent(dbName, status, rows, duration))
 }
 
+// mapBoltQueryError is the Bolt status of a statement error: result-stream
+// failures, which only Bolt has, then nornicerrors.Neo4jStatus, the status
+// every protocol reports.
 func mapBoltQueryError(err error) (code, message string) {
 	if err == nil {
-		return "Neo.ClientError.Statement.SyntaxError", ""
-	}
-	var permissionDenied *cypher.PermissionDeniedError
-	if errors.As(err, &permissionDenied) {
-		return "Neo.ClientError.Security.Forbidden", permissionDenied.Error()
+		return nornicerrors.Neo4jStatus(err)
 	}
 	if errors.Is(err, resultstream.ErrCapacity) || errors.Is(err, resultstream.ErrClosed) {
 		return "Neo.TransientError.General.DatabaseUnavailable", err.Error()
@@ -414,29 +413,7 @@ func mapBoltQueryError(err error) (code, message string) {
 	if errors.Is(err, resultstream.ErrExpiredQID) || errors.Is(err, resultstream.ErrGoneQID) || errors.Is(err, resultstream.ErrInvalidated) {
 		return "Neo.ClientError.Statement.EntityNotFound", err.Error()
 	}
-	var classified interface {
-		BoltErrorCode() string
-	}
-	if errors.As(err, &classified) && classified.BoltErrorCode() != "" {
-		return classified.BoltErrorCode(), err.Error()
-	}
-	msg := err.Error()
-	if strings.HasPrefix(msg, "Neo.") {
-		if idx := strings.Index(msg, ":"); idx > 0 {
-			return strings.TrimSpace(msg[:idx]), strings.TrimSpace(msg[idx+1:])
-		}
-		return msg, msg
-	}
-	if start := strings.Index(msg, "Neo."); start >= 0 {
-		rest := msg[start:]
-		if idx := strings.Index(rest, ":"); idx > 0 {
-			return strings.TrimSpace(rest[:idx]), strings.TrimSpace(rest[idx+1:])
-		}
-	}
-	if transientCode, ok := nornicerrors.MapTransientTransactionError(err); ok {
-		return transientCode, msg
-	}
-	return "Neo.ClientError.Statement.SyntaxError", msg
+	return nornicerrors.Neo4jStatus(err)
 }
 
 func mapBoltQueryErrorForQuery(err error, query string) (code, message string) {
@@ -459,9 +436,11 @@ func boltErrorDetail(err error) string {
 	return ""
 }
 
-// mapBoltCommitError preserves Bolt's commit-failed fallback for ordinary
-// errors while allowing MERGE transaction conflicts to surface as Neo4j
-// transient errors for clients that choose retry-managed transaction APIs.
+// mapBoltCommitError is the Bolt status of a failed COMMIT
+// (nornicerrors.Neo4jCommitStatus: a constraint violation is
+// ConstraintValidationFailed, an unclassified failure TransactionCommitFailed)
+// while allowing MERGE transaction conflicts to surface as Neo4j transient
+// errors for clients that choose retry-managed transaction APIs.
 //
 // A commit-time UNIQUE constraint violation from a concurrent MERGE race is
 // resolvable by a fresh attempt: the loser, on retry, observes the peer's
@@ -474,12 +453,9 @@ func mapBoltCommitError(err error, canRetryMergeConflict bool) (code, message st
 	if canRetryMergeConflict {
 		err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 	}
-	code, message = mapBoltQueryError(err)
+	code, message = nornicerrors.Neo4jCommitStatus(err)
 	if err != nil && canRetryMergeConflict && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
 		return nornicerrors.TransientOutdated, message
-	}
-	if code == "Neo.ClientError.Statement.SyntaxError" {
-		return "Neo.ClientError.Transaction.TransactionCommitFailed", message
 	}
 	return code, message
 }
@@ -1178,8 +1154,14 @@ func (s *Session) handleCommit(data []byte) error {
 			}
 			s.txLifecycle.finishCommit(observedErr)
 			code, message := mapBoltCommitError(err, canRetryMergeConflict)
+			// A retryable failure, or one after which nothing was written
+			// (nornicerrors.IsCommitRolledBack: a constraint violation found
+			// before the write), has a known outcome: the session keeps its
+			// connection, as Neo4j's does. Any other failure leaves the
+			// outcome unknown and closes it.
 			retryable := isRetryableBoltStatus(code)
-			if retryable {
+			knownOutcome := retryable || nornicerrors.IsCommitRolledBack(err)
+			if knownOutcome {
 				s.clearExplicitTransactionState()
 			} else {
 				s.markTransactionCleanupFailed()
@@ -1190,7 +1172,7 @@ func (s *Session) handleCommit(data []byte) error {
 			if flushErr := s.flushIfPending(); flushErr != nil {
 				return flushErr
 			}
-			if retryable {
+			if knownOutcome {
 				return nil
 			}
 			return fmt.Errorf("COMMIT outcome is unknown: %w", err)

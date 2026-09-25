@@ -74,7 +74,9 @@ func TestRuntimeExpressionFailuresRollbackAllWrites(t *testing.T) {
 }
 
 func TestRuntimeExpressionFailureExplicitTransaction(t *testing.T) {
-	for _, query := range []string{"CREATE (:W {v: 1 / 0})", "RETURN 1 / 0 AS x", "RETURN substring('abc', -1) AS x", "RETURN true + 1 AS x", "RETURN date('bad') AS x"} {
+	// w.v + true is a TypeError only once w.v is read; true + 1 is rejected
+	// when the statement is compiled (a SyntaxError, as in Neo4j #657).
+	for _, query := range []string{"CREATE (:W {v: 1 / 0})", "RETURN 1 / 0 AS x", "RETURN substring('abc', -1) AS x", "MATCH (w:W) RETURN w.v + true AS x", "RETURN date('bad') AS x"} {
 		t.Run(query, func(t *testing.T) {
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 			exec := NewStorageExecutor(engine)

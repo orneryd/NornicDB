@@ -2260,6 +2260,7 @@ func TestMapBoltQueryErrorForQueryCommitTimeUniqueConflictRequiresMerge(t *testi
 		Label:      "TerraformResource",
 		Properties: []string{"uid"},
 		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+		Concurrent: true,
 	}))
 	nonMergeErr := fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
 		Type:       storage.ConstraintUnique,
@@ -2281,16 +2282,18 @@ func TestMapBoltQueryErrorForQueryCommitTimeUniqueConflictRequiresMerge(t *testi
 			wantCode: nornicerrors.TransientOutdated,
 		},
 		{
-			name:     "create duplicate remains hard error",
+			// A duplicate outside a MERGE race is a constraint violation, as
+			// in Neo4j (#657).
+			name:     "create duplicate is a constraint violation",
 			err:      nonMergeErr,
 			query:    "CREATE (r:TerraformResource {uid: 'X'})",
-			wantCode: "Neo.ClientError.Statement.SyntaxError",
+			wantCode: "Neo.ClientError.Schema.ConstraintValidationFailed",
 		},
 		{
-			name:     "empty query remains hard error",
+			name:     "empty query duplicate is a constraint violation",
 			err:      nonMergeErr,
 			query:    "",
-			wantCode: "Neo.ClientError.Statement.SyntaxError",
+			wantCode: "Neo.ClientError.Schema.ConstraintValidationFailed",
 		},
 	}
 
@@ -2310,6 +2313,7 @@ func TestMapBoltCommitErrorCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
 		Label:      "TerraformResource",
 		Properties: []string{"uid"},
 		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+		Concurrent: true,
 	})
 
 	tests := []struct {
@@ -2323,9 +2327,11 @@ func TestMapBoltCommitErrorCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
 			wantCode: nornicerrors.TransientOutdated,
 		},
 		{
-			name:     "non-merge transaction duplicate remains commit failed",
+			// A duplicate outside a MERGE race is a constraint violation, as
+			// in Neo4j (#657).
+			name:     "non-merge transaction duplicate is a constraint violation",
 			canRetry: false,
-			wantCode: "Neo.ClientError.Transaction.TransactionCommitFailed",
+			wantCode: "Neo.ClientError.Schema.ConstraintValidationFailed",
 		},
 	}
 
