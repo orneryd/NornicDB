@@ -19,10 +19,17 @@ const sizeArgumentTypes = "String or List<T>"
 // "Type mismatch: expected <expected> but was <type>". size() of a map, node,
 // relationship, path, number or boolean fails with it on every route (#600).
 func typeMismatchError(expected string, value interface{}) error {
+	return typeNameMismatchError(expected, cypherValueTypeName(value))
+}
+
+// typeNameMismatchError is typeMismatchError for an argument whose type is
+// known by name: the static checks (staticFunctionArguments) and the runtime
+// ones report the same error.
+func typeNameMismatchError(expected, typeName string) error {
 	return newSemanticError(
 		"Neo.ClientError.Statement.SyntaxError",
 		"InvalidArgumentType",
-		fmt.Sprintf("Type mismatch: expected %s but was %s", expected, cypherValueTypeName(value)),
+		fmt.Sprintf("Type mismatch: expected %s but was %s", expected, typeName),
 	)
 }
 

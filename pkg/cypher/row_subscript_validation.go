@@ -99,7 +99,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 
 	baseType := reflect.TypeOf(base)
 	if baseType == nil || (baseType.Kind() != reflect.Slice && baseType.Kind() != reflect.Array) {
-		return invalidSubscriptTypeError("subscript receiver must be a LIST or MAP", base)
+		return subscriptReceiverError(base, index)
 	}
 	if !isCypherInteger(index) {
 		return invalidSubscriptTypeError("list subscript requires an INTEGER index", index)

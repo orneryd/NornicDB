@@ -36,15 +36,24 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 		return nil
 	}
 
+	if isSchemaCommandStatement(cypher) {
+		return nil
+	}
 	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
 		return nil
 	}
 	scope := make(matchSemanticScope)
+	// valueTypes holds the static types of variables bound to a literal by
+	// WITH … AS or UNWIND, for the function argument checks.
+	var valueTypes map[string]string
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
 			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
+				return err
+			}
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
 				return err
 			}
 		case pipelineClauseWith:
@@ -54,17 +63,51 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			if err := validateWithOrderBySemanticScope(scope, clause.text); err != nil {
 				return err
 			}
+			// The projection sees the incoming variables; WHERE / ORDER BY
+			// after it see the projected ones.
+			projection, rest := splitWithProjection(clause.text)
+			input := staticTypeScope{kinds: scope, values: valueTypes}
+			if err := validateStaticFunctionVariables(projection, input); err != nil {
+				return err
+			}
+			if err := e.validateStaticOperatorTypes(clause, input, nil); err != nil {
+				return err
+			}
 			scope = projectMatchSemanticScope(scope, clause.text)
+			valueTypes = projectStaticValueTypes(input, clause.text)
+			if err := validateStaticFunctionVariables(rest, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+				return err
+			}
 		case pipelineClauseUnwind:
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+				return err
+			}
 			if alias := unwindBindingName(clause.text); alias != "" {
 				scope[alias] = unwindMatchSemanticKind(clause.text, scope)
+				delete(valueTypes, alias)
+				if typeName := unwindStaticValueType(clause.text); typeName != "" {
+					if valueTypes == nil {
+						valueTypes = make(map[string]string)
+					}
+					valueTypes[alias] = typeName
+				}
 			}
 		case pipelineClauseReturn:
 			if err := validateReturnSemanticScope(scope, clause.text); err != nil {
 				return err
 			}
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+				return err
+			}
 		case pipelineClauseCreate, pipelineClauseMerge:
 			addMatchPatternBindingKinds(scope, clause.text)
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+				return err
+			}
+		default:
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+				return err
+			}
 		}
 	}
 	e.matchSemanticValidationCache.add(cypher)
@@ -151,9 +194,6 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 	}
 	for _, raw := range splitTopLevelComma(body) {
 		expression, _ := parseProjectionExprAlias(strings.TrimSpace(raw))
-		if err := validateGraphFunctionSemanticTypes(expression, scope); err != nil {
-			return err
-		}
 		if err := validateKnownFunctionsInExpression(expression); err != nil {
 			return err
 		}
@@ -426,6 +466,51 @@ func bindMatchSemanticKind(scope matchSemanticScope, variable string, kind match
 	}
 	scope[variable] = kind
 	return nil
+}
+
+// schemaCommandKeywords follow CREATE or DROP in a schema command.
+var schemaCommandKeywords = []string{"CONSTRAINT", "INDEX", "FULLTEXT", "VECTOR", "RANGE", "TEXT", "POINT", "LOOKUP", "BTREE", "OR REPLACE"}
+
+// isSchemaCommandStatement reports whether cypher is a schema command
+// (CREATE / DROP CONSTRAINT, INDEX, …): its patterns and expressions declare a
+// schema rule over a pattern (FOR ()-[r:T]-() REQUIRE …) and bind no clause
+// variables.
+func isSchemaCommandStatement(cypher string) bool {
+	trimmed := strings.TrimSpace(cypher)
+	for _, command := range []string{"CREATE", "DROP"} {
+		if !startsWithKeywordFold(trimmed, command) {
+			continue
+		}
+		rest := strings.TrimSpace(trimmed[len(command):])
+		for _, keyword := range schemaCommandKeywords {
+			if startsWithKeywordFold(rest, keyword) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validateStaticClauseTypes applies the compile-time type checks of one
+// clause: function arguments (validateStaticFunctionVariables) and operators
+// (validateStaticOperatorTypes).
+func (e *StorageExecutor) validateStaticClauseTypes(clause pipelineClause, scope staticTypeScope) error {
+	if err := validateStaticFunctionVariables(clause.text, scope); err != nil {
+		return err
+	}
+	return e.validateStaticOperatorTypes(clause, scope, nil)
+}
+
+// splitWithProjection splits a WITH clause into its projection and the WHERE /
+// ORDER BY / SKIP / LIMIT that follow it.
+func splitWithProjection(clause string) (projection, rest string) {
+	end := len(clause)
+	for _, keyword := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
+		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
+			end = index
+		}
+	}
+	return clause[:end], clause[end:]
 }
 
 func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSemanticScope {

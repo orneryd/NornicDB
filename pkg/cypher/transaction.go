@@ -5,11 +5,13 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -242,11 +244,21 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 			_ = e.txContext.fabricRemoteExe.Close()
 			e.txContext.fabricRemoteExe = nil
 		}
+		_, localTx := e.txContext.tx.(*storage.BadgerTransaction)
 		e.txContext.active = false
 		e.txContext = nil
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-		return nil, localizedError(localization.CypherTransactionsCommitFailed(err), err)
+		failure := localizedError(localization.CypherTransactionsCommitFailed(err), err)
+		// A local transaction checks constraints before it writes anything
+		// (BadgerTransaction.Commit), so a constraint violation leaves nothing
+		// of it stored. A fabric transaction may fail after some constituents
+		// committed, so it is not marked.
+		var violation *storage.ConstraintViolationError
+		if localTx && errors.As(err, &violation) {
+			failure = nornicerrors.MarkCommitRolledBack(failure)
+		}
+		return nil, failure
 	}
 	if e.txContext.storageWrapper != nil {
 		txExec := e.cloneWithStorage(e.txContext.storageWrapper)

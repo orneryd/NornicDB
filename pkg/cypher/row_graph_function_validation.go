@@ -3,89 +3,12 @@ package cypher
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
-
-func validateGraphFunctionSemanticTypes(expression string, scope matchSemanticScope) error {
-	expression = strings.TrimSpace(expression)
-	// (labels(x)) is checked like labels(x), as the conversion-function
-	// validator does.
-	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		return validateGraphFunctionSemanticTypes(inner, scope)
-	}
-	if inner, enclosed := stripEnclosingRowDelimiter(expression, '[', ']'); enclosed {
-		_, listExpression, predicate, projection, comprehension := parseListComprehension(inner)
-		if comprehension {
-			for _, part := range []string{listExpression, predicate, projection} {
-				if err := validateGraphFunctionSemanticTypes(part, scope); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		for _, item := range splitTopLevelComma(inner) {
-			if err := validateGraphFunctionSemanticTypes(item, scope); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	function, argument, ok := parseFunctionCallWS(expression)
-	if !ok {
-		return nil
-	}
-	for _, item := range splitTopLevelComma(argument) {
-		if err := validateGraphFunctionSemanticTypes(item, scope); err != nil {
-			return err
-		}
-	}
-	// Literal arguments are checked for the whole statement by
-	// validateStaticGraphFunctionArguments; this walk checks the static type
-	// of bound variables.
-	if strings.EqualFold(function, "length") {
-		variable := simpleSemanticIdentifier(argument)
-		if variable == "" {
-			return nil
-		}
-		switch scope[variable] {
-		case matchBindingNode, matchBindingRelationship, matchBindingNodeList, matchBindingRelationshipList:
-			return newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"InvalidArgumentType",
-				fmt.Sprintf("length() received %s with an incompatible static type", variable),
-			)
-		default:
-			return nil
-		}
-	}
-	if !strings.EqualFold(function, "labels") && !strings.EqualFold(function, "type") {
-		return nil
-	}
-	variable := simpleSemanticIdentifier(argument)
-	if variable == "" {
-		return nil
-	}
-	kind := scope[variable]
-	invalid := false
-	if strings.EqualFold(function, "labels") {
-		invalid = kind == matchBindingPath || kind == matchBindingRelationship || kind == matchBindingRelationshipList || kind == matchBindingNodeList
-	} else {
-		invalid = kind == matchBindingPath || kind == matchBindingNode || kind == matchBindingRelationshipList || kind == matchBindingNodeList
-	}
-	if invalid {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidArgumentType",
-			fmt.Sprintf("%s() received %s with an incompatible static type", function, variable),
-		)
-	}
-	return nil
-}
 
 func (e *StorageExecutor) validatePipelineGraphFunctionArguments(rows []pipelineRow, clause, keyword string) error {
 	body := strings.TrimSpace(clause)
@@ -190,103 +113,6 @@ func invalidFunctionArgument(function string, value interface{}) error {
 		"InvalidArgumentValue",
 		(&cypherfn.ArgumentTypeError{Function: strings.ToLower(function), Value: value}).Error(),
 	)
-}
-
-// graphFunctionArgumentType is what a graph function accepts: the type names
-// for its "Type mismatch" error, and whether a map is one of them.
-type graphFunctionArgumentType struct {
-	expected   string
-	acceptsMap bool
-}
-
-// staticGraphFunctionArgumentTypes are the argument types Neo4j accepts for
-// the graph functions, as named in its compile-time "Type mismatch" error, and
-// whether a map is one of them.
-var staticGraphFunctionArgumentTypes = map[string]graphFunctionArgumentType{
-	"labels":        {expected: "Node"},
-	"type":          {expected: "Relationship"},
-	"startnode":     {expected: "Relationship"},
-	"endnode":       {expected: "Relationship"},
-	"id":            {expected: "Node or Relationship"},
-	"elementid":     {expected: "Node or Relationship"},
-	"properties":    {expected: "Map, Node or Relationship", acceptsMap: true},
-	"keys":          {expected: "Map, Node or Relationship", acceptsMap: true},
-	"nodes":         {expected: "Path"},
-	"relationships": {expected: "Path"},
-	"length":        {expected: "Path"},
-}
-
-// validateStaticGraphFunctionArguments rejects a graph function called with an
-// argument whose static type it doesn't accept (labels('x'), type(1),
-// keys([1]), length(1 + 1), …) anywhere in the statement: projections, WHERE,
-// CASE, ORDER BY, SET values, pattern properties and subquery bodies. Neo4j
-// rejects these at compile time with "Type mismatch: expected X but was Y"
-// (a SyntaxError), whatever the data, so no route may evaluate them. The
-// argument's type is static when it is a literal, a list or map literal, or
-// arithmetic / concatenation of those (staticLiteralTypeName); null and any
-// expression over variables or parameters are left to the row evaluator.
-func validateStaticGraphFunctionArguments(cypher string) error {
-	for index := 0; index < len(cypher); {
-		switch cypher[index] {
-		case '\'', '"':
-			index = skipQuotedSemanticText(cypher, index)
-			continue
-		case '`':
-			if end := strings.IndexByte(cypher[index+1:], '`'); end >= 0 {
-				index += end + 2
-				continue
-			}
-			return nil
-		}
-		name, next, ok := scanIdentifierToken(cypher, index)
-		if !ok {
-			index++
-			continue
-		}
-		if index > 0 && (cypher[index-1] == '.' || cypher[index-1] == '$' || isIdentifierPart(cypher[index-1])) {
-			index = next
-			continue
-		}
-		open := skipSpaces(cypher, next)
-		if open >= len(cypher) || cypher[open] != '(' {
-			index = next
-			continue
-		}
-		accepted, graphFunction := lookupStaticGraphFunction(name)
-		if !graphFunction {
-			index = open + 1
-			continue
-		}
-		closing := findMatchingDelimiter(cypher, open, '(', ')')
-		if closing < 0 {
-			return nil
-		}
-		argument := strings.TrimSpace(cypher[open+1 : closing])
-		if typeName := staticLiteralTypeName(argument); typeName != "" && !(accepted.acceptsMap && typeName == "Map") {
-			return newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"InvalidArgumentType",
-				fmt.Sprintf("Type mismatch: expected %s but was %s", accepted.expected, typeName),
-			)
-		}
-		index = open + 1
-	}
-	return nil
-}
-
-// lookupStaticGraphFunction finds name in staticGraphFunctionArgumentTypes
-// case-insensitively without allocating: every statement's identifiers
-// followed by "(" (MATCH (, CASE (, …) pass through it.
-func lookupStaticGraphFunction(name string) (graphFunctionArgumentType, bool) {
-	var buffer [len("relationships")]byte
-	if len(name) > len(buffer) {
-		return graphFunctionArgumentType{}, false
-	}
-	for i := 0; i < len(name); i++ {
-		buffer[i] = asciiLowerByte(name[i])
-	}
-	accepted, ok := staticGraphFunctionArgumentTypes[string(buffer[:len(name)])]
-	return accepted, ok
 }
 
 // staticLiteralTypeName returns the Cypher type name of an expression whose

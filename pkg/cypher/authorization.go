@@ -261,6 +261,18 @@ type PermissionDeniedError struct {
 	Permission string
 }
 
+// BoltErrorCode is the Neo4j status of a permission failure, on Bolt and
+// HTTP alike (nornicerrors.Neo4jStatus).
+func (e *PermissionDeniedError) BoltErrorCode() string {
+	return "Neo.ClientError.Security.Forbidden"
+}
+
+// StatusMessage is the message clients see for a permission failure: the
+// missing permission only, whatever statement or procedure it was found in.
+func (e *PermissionDeniedError) StatusMessage() string {
+	return e.Error()
+}
+
 func (e *PermissionDeniedError) Error() string {
 	switch e.Permission {
 	case "schema":
