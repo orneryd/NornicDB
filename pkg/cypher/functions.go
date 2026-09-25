@@ -87,13 +87,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
 		return e.evaluatePatternComprehension(ctx, pattern, projection, nodes, rels)
 	}
-	if subquery, ok := standaloneCountSubquery(expr); ok {
-		return int64(len(e.evaluateBoundPatternRows(ctx, subquery, nodes, rels)))
-	}
 	if isStandaloneExistsSubquery(expr) {
 		return e.evaluateExistsSubqueryValue(ctx, expr, nodes, rels)
 	}
-	if subquery, ok := standaloneSubqueryExpression(expr); ok && subquery.kind == "COLLECT" {
+	if subquery, ok := standaloneSubqueryExpression(expr); ok {
 		value, _ := e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, entityRow(nodes, rels))
 		return value
 	}

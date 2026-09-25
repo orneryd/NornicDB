@@ -169,11 +169,31 @@ func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values
 // COUNT how many rows it has, COLLECT the list of its single returned column.
 // A body that is only a pattern is matched as MATCH <pattern>.
 func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool) {
+	value, ok, err := e.rowSubqueryValue(ctx, kind, body, values)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, false
+	}
+	return value, ok
+}
+
+// rowSubqueryValue is evaluateRowSubqueryValue returning the subquery's error
+// instead of recording it. It is the one evaluator of EXISTS / COUNT /
+// COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
+// SKIP / LIMIT and RETURN all apply.
+func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
 	if kind == "COMPREHENSION" {
-		return e.evaluateRowComprehensionWithSubqueries(ctx, body, values)
+		value, ok := e.evaluateRowComprehensionWithSubqueries(ctx, body, values)
+		return value, ok, nil
 	}
 	if kind == "EXISTS" {
-		return e.evaluateRowExistsPredicate(ctx, "EXISTS {"+body+"}", values)
+		value, ok := e.evaluateRowExistsPredicate(ctx, "EXISTS {"+body+"}", values)
+		return value, ok, nil
+	}
+	if kind == "COUNT" {
+		if nodes, rels, ok := boundPatternCountBindings(body, values); ok {
+			return int64(len(e.evaluateBoundPatternRows(ctx, body, nodes, rels))), true, nil
+		}
 	}
 	query := strings.TrimSpace(body)
 	patternOnly := strings.HasPrefix(query, "(")
@@ -185,18 +205,17 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 	}
 	result, handled, err := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
 	if err != nil {
-		recordExpressionFailure(ctx, err)
-		return nil, false
+		return nil, false, err
 	}
 	if !handled || result == nil {
 		if kind == "COUNT" && (patternOnly || hasPrefixFold(strings.TrimSpace(body), "MATCH ")) {
 			nodes, rels := entityBindings(values)
-			return int64(len(e.evaluateBoundPatternRows(ctx, body, nodes, rels))), true
+			return int64(len(e.evaluateBoundPatternRows(ctx, body, nodes, rels))), true, nil
 		}
-		return nil, false
+		return nil, false, nil
 	}
 	if kind == "COUNT" {
-		return int64(len(result.Rows)), true
+		return int64(len(result.Rows)), true, nil
 	}
 	collected := make([]interface{}, 0, len(result.Rows))
 	for _, row := range result.Rows {
@@ -204,7 +223,7 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 			collected = append(collected, row[0])
 		}
 	}
-	return collected, true
+	return collected, true, nil
 }
 
 // evaluateRowComprehensionWithSubqueries evaluates [x IN list WHERE p | f]
@@ -276,6 +295,34 @@ func entityRow(nodes map[string]*storage.Node, rels map[string]*storage.Edge) pi
 }
 
 // entityBindings splits a row's node and relationship values out of it.
+// boundPatternCountBindings reports whether a COUNT { body } is one pattern
+// with an optional WHERE ((a)-->(b) WHERE b.x > 1, with or without MATCH)
+// whose outer variables are all nodes or relationships, and returns them. Such
+// a count is the number of rows the traversal kernel expands from the bound
+// entities (evaluateBoundPatternRows, as for COUNT predicates in WHERE),
+// without running the body as a correlated pipeline per row.
+func boundPatternCountBindings(body string, values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
+	query := strings.TrimSpace(body)
+	if !hasPrefixFold(query, "MATCH") {
+		query = "MATCH " + query
+	}
+	clauses, ok := splitPipelineClauses(query)
+	if !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+		return nil, nil, false
+	}
+	for name, value := range values {
+		switch value.(type) {
+		case *storage.Node, *storage.Edge:
+			continue
+		}
+		if !strings.HasPrefix(name, "$") && containsIdentifierWord(body, name) {
+			return nil, nil, false
+		}
+	}
+	nodes, rels := entityBindings(values)
+	return nodes, rels, true
+}
+
 func entityBindings(values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge) {
 	nodes := make(map[string]*storage.Node)
 	rels := make(map[string]*storage.Edge)

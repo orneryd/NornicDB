@@ -2313,11 +2313,10 @@ func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
 		item := returnItem{expr: part}
 
 		// Check for AS alias
-		upperPart := strings.ToUpper(part)
-		asIdx := strings.Index(upperPart, " AS ")
+		asIdx := projectionAliasIndex(part)
 		if asIdx > 0 {
 			item.expr = strings.TrimSpace(part[:asIdx])
-			item.alias = normalizeProjectionColumnName(part[asIdx+4:])
+			item.alias = normalizeProjectionColumnName(part[asIdx+len("AS"):])
 		} else {
 			// Handle map projection without AS alias: n { .*, key: value } -> column name is "n"
 			// Neo4j infers the column name from the variable before the map projection
@@ -2438,91 +2437,25 @@ func (e *StorageExecutor) extractSubquery(whereClause, prefix string) string {
 	return ""
 }
 
-// extractCollectSubquery extracts the subquery body from COLLECT { ... }
-func (e *StorageExecutor) extractCollectSubquery(expr string) string {
-	// Find "collect" (case-insensitive)
-	upperExpr := strings.ToUpper(expr)
-	collectIdx := strings.Index(upperExpr, "COLLECT")
-	if collectIdx < 0 {
-		return ""
-	}
-
-	// Find the opening brace after COLLECT
-	rest := expr[collectIdx+7:] // Skip "COLLECT"
-	braceStart := strings.Index(rest, "{")
-	if braceStart < 0 {
-		return ""
-	}
-
-	// Find matching closing brace
-	depth := 0
-	for i := braceStart; i < len(rest); i++ {
-		if rest[i] == '{' {
-			depth++
-		} else if rest[i] == '}' {
-			depth--
-			if depth == 0 {
-				return strings.TrimSpace(rest[braceStart+1 : i])
-			}
-		}
-	}
-
-	return ""
-}
-
-// evaluateCollectSubquery executes a COLLECT { } subquery for a given node and returns collected values
+// evaluateCollectSubquery evaluates a COLLECT { … } projection item for one
+// node bound to variable, through the shared subquery evaluator
+// (rowSubqueryValue), so the body's ORDER BY and SKIP / LIMIT apply.
 func (e *StorageExecutor) evaluateCollectSubquery(ctx context.Context, node *storage.Node, variable, subquery string) ([]interface{}, error) {
-	// Extract the subquery body from COLLECT { ... }
-	subqueryBody := e.extractCollectSubquery(subquery)
-	if subqueryBody == "" {
+	collect, ok := standaloneSubqueryExpression(subquery)
+	if !ok || collect.kind != "COLLECT" {
 		return nil, localizedError(localization.CypherResidualCollectSubquerySyntaxInvalid(), nil)
 	}
-
-	// The subquery body should be a complete query like:
-	// MATCH (p)-[:KNOWS]->(friend) RETURN friend.name
-	// We need to execute it with the node bound to the variable.
-	// We'll add a WHERE clause to bind the variable to the node ID.
-	// Format: MATCH (p)-[:KNOWS]->(friend) WHERE id(p) = nodeID RETURN friend.name
-
-	// Find WHERE clause position (if any)
-	whereIdx := findKeywordIndex(subqueryBody, "WHERE")
-	returnIdx := findKeywordIndex(subqueryBody, "RETURN")
-
-	var substitutedQuery string
-	if whereIdx > 0 && whereIdx < returnIdx {
-		// WHERE clause exists - add id() check to it
-		whereClause := strings.TrimSpace(subqueryBody[whereIdx+5 : returnIdx])
-		beforeWhere := strings.TrimSpace(subqueryBody[:whereIdx])
-		afterReturn := subqueryBody[returnIdx:]
-		// Add id() check: WHERE id(variable) = nodeID AND existing_where_clause
-		newWhere := fmt.Sprintf("WHERE id(%s) = %s AND %s", variable, quoteCypherStringLiteral(string(node.ID)), whereClause)
-		substitutedQuery = strings.TrimSpace(beforeWhere + " " + newWhere + " " + afterReturn)
-	} else if returnIdx > 0 {
-		// No WHERE clause - add one before RETURN
-		beforeReturn := subqueryBody[:returnIdx]
-		afterReturn := subqueryBody[returnIdx:]
-		// Add WHERE clause: WHERE id(variable) = nodeID
-		newWhere := fmt.Sprintf(" WHERE id(%s) = %s", variable, quoteCypherStringLiteral(string(node.ID)))
-		substitutedQuery = beforeReturn + newWhere + afterReturn
-	} else {
-		// No RETURN clause - this shouldn't happen, but handle it
+	if topLevelKeywordIndex(collect.body, "RETURN") < 0 {
 		return nil, localizedError(localization.CypherResidualCollectSubqueryReturnRequired(), nil)
 	}
-
-	// Execute the subquery
-	subqueryResult, err := e.executeInternal(ctx, substitutedQuery, nil)
+	value, evaluated, err := e.rowSubqueryValue(ctx, collect.kind, collect.body, map[string]interface{}{variable: node})
+	if err == nil && !evaluated {
+		err = localizedError(localization.CypherResidualCollectSubquerySyntaxInvalid(), nil)
+	}
 	if err != nil {
 		return nil, localizedError(localization.CypherResidualCollectSubqueryExecutionFailed(err), err)
 	}
-
-	// Collect all values from the first column of the subquery result
-	collected := make([]interface{}, 0, len(subqueryResult.Rows))
-	for _, row := range subqueryResult.Rows {
-		if len(row) > 0 {
-			collected = append(collected, row[0])
-		}
-	}
-
+	collected, _ := value.([]interface{})
 	return collected, nil
 }
 

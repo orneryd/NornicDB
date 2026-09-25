@@ -123,13 +123,12 @@ func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*Exec
 			continue
 		}
 
-		upperItem := strings.ToUpper(item)
-		asIdx := strings.Index(upperItem, " AS ")
+		asIdx := projectionAliasIndex(item)
 		var alias string
 		var expr string
 		if asIdx > 0 {
 			expr = strings.TrimSpace(item[:asIdx])
-			alias = strings.TrimSpace(item[asIdx+4:])
+			alias = strings.TrimSpace(item[asIdx+len("AS"):])
 		} else {
 			expr = item
 			alias = item
@@ -4212,12 +4211,11 @@ func (e *StorageExecutor) executeJoinedRowsWithOptionalMatch(ctx context.Context
 			if item == "" {
 				continue
 			}
-			upperItem := strings.ToUpper(item)
 			alias := item
 			expr := item
-			if asIdx := strings.Index(upperItem, " AS "); asIdx > 0 {
+			if asIdx := projectionAliasIndex(item); asIdx > 0 {
 				expr = strings.TrimSpace(item[:asIdx])
-				alias = strings.TrimSpace(item[asIdx+4:])
+				alias = strings.TrimSpace(item[asIdx+len("AS"):])
 			}
 			values[alias] = e.evaluateExpressionWithContext(ctx, expr, nodeCtx, relCtx)
 			if len(computedRows) == 0 {
@@ -4411,11 +4409,10 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 		// Check if any item is a CASE expression
 		for _, item := range withItems {
 			item = strings.TrimSpace(item)
-			upperItem := strings.ToUpper(item)
-			asIdx := strings.Index(upperItem, " AS ")
+			asIdx := projectionAliasIndex(item)
 			if asIdx > 0 {
 				expr := strings.TrimSpace(item[:asIdx])
-				alias := strings.TrimSpace(item[asIdx+4:])
+				alias := strings.TrimSpace(item[asIdx+len("AS"):])
 
 				if isCaseExpression(expr) {
 					// Evaluate CASE for each row

@@ -422,9 +422,8 @@ func expectedReturnColumnsFromTail(tail string) []string {
 		if expr == "" {
 			continue
 		}
-		upperExpr := strings.ToUpper(expr)
-		if asIdx := strings.Index(upperExpr, " AS "); asIdx >= 0 {
-			alias := normalizeProjectionColumnName(expr[asIdx+4:])
+		if asIdx := projectionAliasIndex(expr); asIdx >= 0 {
+			alias := normalizeProjectionColumnName(expr[asIdx+len("AS"):])
 			if alias != "" {
 				cols = append(cols, alias)
 				continue
@@ -3743,10 +3742,9 @@ func (e *StorageExecutor) applyReturnToYieldResult(ctx context.Context, result *
 		ri := returnItem{expr: item, alias: item}
 
 		// Check for AS alias
-		upperItem := strings.ToUpper(item)
-		if asIdx := strings.Index(upperItem, " AS "); asIdx != -1 {
+		if asIdx := projectionAliasIndex(item); asIdx != -1 {
 			ri.expr = strings.TrimSpace(item[:asIdx])
-			ri.alias = strings.TrimSpace(item[asIdx+4:])
+			ri.alias = strings.TrimSpace(item[asIdx+len("AS"):])
 		}
 
 		items = append(items, ri)

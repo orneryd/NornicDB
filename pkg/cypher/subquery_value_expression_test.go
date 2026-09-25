@@ -87,3 +87,60 @@ func TestSubqueryExpressionsRejectedInMerge(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.Rows[0][0])
 }
+
+// TestWholeSubqueryItemsWithOrderBy covers the #652 section on ORDER BY /
+// LIMIT inside a COLLECT or COUNT subquery that is a whole RETURN or WITH item
+// (rejected, or null, before). Expected rows are Neo4j 5.26's.
+func TestWholeSubqueryItemsWithOrderBy(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornicdb652order"))
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, "CREATE (a:W {id: 'a'})-[:USES]->(b:W {id: 'b'}), (c:W {id: 'c'}), (a)-[:USES]->(c)", nil)
+	require.NoError(t, err)
+	for query, want := range map[string][][]interface{}{
+		"MATCH (i:W) RETURN i.id AS id, COLLECT { MATCH (i)-->(o) RETURN o.id ORDER BY o.id } AS l ORDER BY id":              {{"a", []interface{}{"b", "c"}}, {"b", []interface{}{}}, {"c", []interface{}{}}},
+		"MATCH (i:W) RETURN i.id AS id, COLLECT { MATCH (i)-->(o) RETURN o.id ORDER BY o.id DESC LIMIT 1 } AS l ORDER BY id": {{"a", []interface{}{"c"}}, {"b", []interface{}{}}, {"c", []interface{}{}}},
+		"MATCH (i:W) WITH i, COLLECT { MATCH (i)-->(o) RETURN o.id ORDER BY o.id } AS l RETURN i.id AS id, l ORDER BY id":    {{"a", []interface{}{"b", "c"}}, {"b", []interface{}{}}, {"c", []interface{}{}}},
+		"MATCH (i:W) RETURN i.id AS id, COUNT { MATCH (i)-->(o) RETURN o ORDER BY o.id } AS l ORDER BY id":                   {{"a", int64(2)}, {"b", int64(0)}, {"c", int64(0)}},
+		"MATCH (i:W) RETURN i.id AS id, size(COLLECT { MATCH (i)-->(o) RETURN o.id ORDER BY o.id }) AS l ORDER BY id":        {{"a", int64(2)}, {"b", int64(0)}, {"c", int64(0)}},
+	} {
+		result, err := executor.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows, query)
+	}
+}
+
+// TestProjectionAliasIndexIsTopLevel: the alias AS of a projection item is the
+// one outside strings and nested expressions (#652, #547).
+func TestProjectionAliasIndexIsTopLevel(t *testing.T) {
+	for item, want := range map[string][2]string{
+		"n.id AS id":                            {"n.id", "id"},
+		"'a AS b' AS s":                         {"'a AS b'", "s"},
+		"COUNT { UNWIND [1, 2] AS y RETURN y }": {"COUNT { UNWIND [1, 2] AS y RETURN y }", "COUNT { UNWIND [1, 2] AS y RETURN y }"},
+		"COLLECT { UNWIND l AS y RETURN y ORDER BY y } AS l": {"COLLECT { UNWIND l AS y RETURN y ORDER BY y }", "l"},
+		"[x IN [1] | x] AS `my list`":                        {"[x IN [1] | x]", "my list"},
+		"n.alias":                                            {"n.alias", "n.alias"},
+	} {
+		expr, alias := parseProjectionExprAlias(item)
+		require.Equal(t, want, [2]string{expr, alias}, item)
+	}
+}
+
+// TestSubqueryItemsWithNestedKeywords: keywords inside a whole subquery item
+// (AS, ORDER BY, LIMIT) belong to the subquery on every projection route, and
+// a COUNT body reading an outer scalar isn't counted without it.
+func TestSubqueryItemsWithNestedKeywords(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	_, err := executor.Execute(ctx, "CREATE (a:K {id: 'a'})-[:T]->(:K {id: 'bb'}), (a)-[:T]->(:K {id: 'cccccc'})", nil)
+	require.NoError(t, err)
+	for query, want := range map[string][][]interface{}{
+		"UNWIND [1, 2, 3] AS x RETURN x, COLLECT { UNWIND [3, 1, 2] AS y RETURN y ORDER BY y } AS l ORDER BY x DESC LIMIT 2": {{int64(3), []interface{}{int64(1), int64(2), int64(3)}}, {int64(2), []interface{}{int64(1), int64(2), int64(3)}}},
+		"UNWIND [1] AS x RETURN COUNT { UNWIND [1, 2] AS y RETURN y } AS c, x":                                               {{int64(2), int64(1)}},
+		"RETURN 'a AS b' AS s, [x IN [1] | x] AS l":                                                                          {{"a AS b", []interface{}{int64(1)}}},
+		"WITH 5 AS k MATCH (i:K {id: 'a'}) RETURN COUNT { (i)-->(o) WHERE size(o.id) < k } AS c":                             {{int64(1)}},
+		"MATCH (i:K {id: 'a'}) RETURN COUNT { (i)-->(o) WHERE size(o.id) < 5 } AS c":                                         {{int64(1)}},
+	} {
+		result, err := executor.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows, query)
+	}
+}
