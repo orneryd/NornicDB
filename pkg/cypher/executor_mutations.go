@@ -2313,36 +2313,6 @@ func (e *StorageExecutor) evaluateCollectSubquery(ctx context.Context, node *sto
 	return collected, nil
 }
 
-// substituteNodeInSubquery substitutes a node variable in a subquery with its actual ID
-// Example: MATCH (p)-[:KNOWS]->(friend) RETURN friend.name
-//
-//	where p is bound to a node -> MATCH (nodeID)-[:KNOWS]->(friend) RETURN friend.name
-func (e *StorageExecutor) substituteNodeInSubquery(subquery, variable string, node *storage.Node) string {
-	// Replace (variable) or (variable:Label) patterns with the actual node ID
-	// We need to be careful to only replace node patterns, not property accesses
-	result := subquery
-
-	// Pattern 1: (variable) -> (nodeID)
-	// Use word boundaries to avoid matching variable names that are substrings
-	pattern1 := regexp.MustCompile(`\(` + regexp.QuoteMeta(variable) + `\)`)
-	replacement1 := "(" + string(node.ID) + ")"
-	result = pattern1.ReplaceAllString(result, replacement1)
-
-	// Pattern 2: (variable:Label) -> (nodeID:Label)
-	// This preserves the label
-	labelPattern := regexp.MustCompile(`\(` + regexp.QuoteMeta(variable) + `:([^)]+)\)`)
-	result = labelPattern.ReplaceAllStringFunc(result, func(match string) string {
-		// Extract the label part
-		labelMatch := regexp.MustCompile(`:` + `([^)]+)`).FindStringSubmatch(match)
-		if len(labelMatch) > 1 {
-			return "(" + string(node.ID) + ":" + labelMatch[1] + ")"
-		}
-		return "(" + string(node.ID) + ")"
-	})
-
-	return result
-}
-
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
 // like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
 // Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
@@ -2718,52 +2688,6 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 		}
 	}
 	return false
-}
-
-// evaluateCountSubqueryComparison evaluates a predicate that starts with a
-// COUNT { } subquery over node (bound to variable), e.g.
-// COUNT { MATCH (n)-[:TYPE]->() } > 5. The count comes from
-// countSubqueryMatches; whatever follows the closing brace (a comparison with
-// a literal, a parameter or a row value, arithmetic, <>, IN, …) is evaluated
-// by the row predicate evaluator with the count in its place, over values (the
-// row, which holds node). No comparison means count > 0.
-func (e *StorageExecutor) evaluateCountSubqueryComparison(ctx context.Context, node *storage.Node, variable, whereClause string, values map[string]interface{}) bool {
-	trimmed := strings.TrimSpace(whereClause)
-	found := findSubqueryExpressions(trimmed)
-	if len(found) == 0 || found[0].kind != "COUNT" || found[0].start != 0 {
-		return false // Malformed COUNT subquery
-	}
-	// The one subquery evaluator (rowSubqueryValue) counts the body with the
-	// row bound, as COUNT in RETURN does (#652): one directed hop from the
-	// node by its degree (boundDegreeCount), other patterns by the traversal
-	// kernel, anything else as a correlated pipeline.
-	var count int64
-	if shape := parseBoundDegreeShape(found[0].body); shape.ok && shape.variable == variable {
-		count = e.nodeDegreeCount(ctx, node, shape)
-	} else {
-		subqueryRow := make(map[string]interface{}, len(values)+1)
-		for name, value := range values {
-			subqueryRow[name] = value
-		}
-		subqueryRow[variable] = node
-		value, _ := e.evaluateRowSubqueryValue(ctx, "COUNT", found[0].body, subqueryRow)
-		count, _ = value.(int64)
-	}
-	comparison := strings.TrimSpace(trimmed[found[0].end:])
-	if comparison == "" {
-		return count > 0
-	}
-	if matched, ok := compareCountWithIntegerLiteral(count, comparison); ok {
-		return matched
-	}
-	row := make(pipelineRow, len(values)+2)
-	for name, value := range values {
-		row[name] = value
-	}
-	row[variable] = node
-	const countName = "__count_subquery_value"
-	row[countName] = count
-	return e.evaluateRowPredicate(ctx, countName+" "+comparison, row)
 }
 
 // compareCountWithIntegerLiteral evaluates "<op> <integer literal>" (=, <>,

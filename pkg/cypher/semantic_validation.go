@@ -52,9 +52,9 @@ func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
 	}
 	if clauses, ok := splitPipelineClauses(cypher); ok {
 		for _, clause := range clauses {
+			// Subquery bodies are checked as their own statements.
 			if whereIndex := topLevelKeywordIndex(clause.text, "WHERE"); whereIndex >= 0 &&
-				!hasSubqueryPattern(clause.text, existsSubqueryRe) &&
-				hasUnexpectedIdentifierAfterNumber(clause.text[whereIndex+len("WHERE"):]) {
+				hasUnexpectedIdentifierAfterNumber(maskSubqueryBodies(clause.text[whereIndex+len("WHERE"):])) {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unexpected identifier in WHERE")
 			}
 			if clause.kind == pipelineClauseReturn {
