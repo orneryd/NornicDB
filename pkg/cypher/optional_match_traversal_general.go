@@ -25,12 +25,15 @@ import (
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
-// scanOptionalPatternShape counts top-level node groups '(' and relationship
-// bracket sections '[' outside quoted strings. Used to route a clause to the
-// seeded single-hop fast path (2 groups, 1 bracket) or the general path.
+// scanOptionalPatternShape counts top-level node groups '(' and relationships
+// outside quoted strings: bracket sections '[' and bracketless hops (-->, <--,
+// --, <-->, which parseOptionalClauseEndpoints normalizes to -[]->). Used to
+// route a clause to the seeded single-hop fast path (2 groups, 1
+// relationship) or the general path.
 func scanOptionalPatternShape(pattern string) (nodeGroups, brackets int) {
 	var inQuote bool
 	var quoteChar byte
+	depth := 0
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
 		if inQuote {
@@ -47,6 +50,14 @@ func scanOptionalPatternShape(pattern string) (nodeGroups, brackets int) {
 			nodeGroups++
 		case '[':
 			brackets++
+			depth++
+		case ']':
+			depth--
+		case '-':
+			if depth == 0 && i+1 < len(pattern) && pattern[i+1] == '-' {
+				brackets++
+				i++
+			}
 		}
 	}
 	return nodeGroups, brackets
