@@ -1432,7 +1432,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			shortcutSafe := true
 			if whereIdx := findKeywordIndex(nonEmptyMatchClauses[0], "WHERE"); whereIdx > 0 {
 				whereClause := strings.TrimSpace(nonEmptyMatchClauses[0][whereIdx+5:])
-				for _, term := range splitTopLevelAndCartesian(whereClause) {
+				for _, term := range splitTopLevelAndConjuncts(whereClause) {
 					if _, _, _, ok := parseNotRelationshipExistenceTerm(strings.TrimSpace(term)); ok {
 						shortcutSafe = false
 						break
@@ -1648,7 +1648,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 				endVar   string
 			}, 0, 2)
 			remainingTerms := make([]string, 0, 4)
-			for _, term := range splitTopLevelAndCartesian(postFilterWhere) {
+			for _, term := range splitTopLevelAndConjuncts(postFilterWhere) {
 				term = strings.TrimSpace(term)
 				if term == "" {
 					continue
@@ -2619,7 +2619,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 	}
 
 	eqConstraints := make([]cartesianEqConstraint, 0, 4)
-	for _, term := range splitTopLevelAndCartesian(whereClause) {
+	for _, term := range splitTopLevelAndConjuncts(whereClause) {
 		term = strings.TrimSpace(term)
 		if term == "" {
 			continue
@@ -2895,7 +2895,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 		}
 
 		if whereForClause != "" {
-			for _, term := range splitTopLevelAndCartesian(whereForClause) {
+			for _, term := range splitTopLevelAndConjuncts(whereForClause) {
 				term = strings.TrimSpace(term)
 				if term != "" {
 					allWhereTerms = append(allWhereTerms, term)

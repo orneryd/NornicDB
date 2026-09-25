@@ -1472,7 +1472,7 @@ func (e *StorageExecutor) extractIndexedEqualityFromWhereTerm(variable, term str
 		return prop, lit, true
 	}
 
-	parts := splitTopLevelAndCartesian(term)
+	parts := splitTopLevelAndConjuncts(term)
 	if len(parts) < 2 {
 		return "", nil, false
 	}

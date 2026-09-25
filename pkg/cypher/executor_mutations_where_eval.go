@@ -606,25 +606,17 @@ func (e *StorageExecutor) evaluateWhereLeaf(ctx context.Context, node *storage.N
 		return e.evaluateRelationshipPatternInWhere(node, variable, pattern)
 	}
 
-	// Determine operator and split accordingly
-	var op string
-	var opIdx int
-
-	// Check operators in order of length (longest first to avoid partial matches)
-	operators := []string{"<>", "!=", ">=", "<=", "=~", ">", "<", "="}
-	for _, testOp := range operators {
-		idx := strings.Index(whereClause, testOp)
-		if idx >= 0 {
-			op = testOp
-			opIdx = idx
-			break
-		}
-	}
-
-	if op == "" {
+	// The comparison is the top-level operator of the leaf: operators inside
+	// strings, brackets and CASE … END blocks belong to their operands (#699).
+	// A chain (a < b < c) is evaluated as a whole.
+	scan, comparison := scanComparisonChain(whereClause)
+	if !comparison || scan.count != 1 {
 		// No comparison operator - may be a boolean expression (e.g. exists(n.prop))
 		return e.evaluateWhereAsBoolean(ctx, whereClause, variable, node)
 	}
+	span := scan.operator(0)
+	op := whereClause[span.offset : span.offset+span.length]
+	opIdx := span.offset
 
 	left := strings.TrimSpace(whereClause[:opIdx])
 	right := strings.TrimSpace(whereClause[opIdx+len(op):])
@@ -676,6 +668,13 @@ func (e *StorageExecutor) evaluateWhereLeaf(ctx context.Context, node *storage.N
 	}
 
 	propName := left[len(variable)+1:]
+	if strings.HasPrefix(propName, "`") {
+		propName = normalizePropertyKey(propName)
+	} else if !isValidIdentifier(propName) {
+		// Left is an expression over the property (n.v + CASE … END, n.v * 2),
+		// not the property itself (#699).
+		return e.evaluateWhereAsBoolean(ctx, whereClause, variable, node)
+	}
 
 	// Get actual value - check EmbedMeta first for embedding metadata
 	var actualVal any

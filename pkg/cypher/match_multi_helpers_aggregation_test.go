@@ -27,7 +27,7 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		_, _, _, ok = parseCartesianNullTerm("a.name = 1")
 		require.False(t, ok)
 
-		parts := splitTopLevelAndCartesian("a.x = 1 AND 'x AND y' = 'x AND y' AND [1,2] = [1,2]")
+		parts := splitTopLevelAndConjuncts("a.x = 1 AND 'x AND y' = 'x AND y' AND [1,2] = [1,2]")
 		require.Equal(t, []string{"a.x = 1", "'x AND y' = 'x AND y'", "[1,2] = [1,2]"}, parts)
 
 		vv, pp, ok := parseCartesianVarProp(" a.`p` ")

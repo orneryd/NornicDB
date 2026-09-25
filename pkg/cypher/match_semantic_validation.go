@@ -258,7 +258,7 @@ func (e *StorageExecutor) validateMatchWhereSimpleOperands(scope matchSemanticSc
 		)
 	}
 	for _, operator := range []string{" OR ", " XOR ", " AND "} {
-		if left, right, found := splitByOperatorWithOptions(whereClause, operator, true, true); found {
+		if left, right, found := splitByOperatorOutsideCase(whereClause, operator, true, true); found {
 			if err := e.validateMatchWhereSimpleOperands(scope, left); err != nil {
 				return err
 			}
@@ -296,7 +296,7 @@ func (e *StorageExecutor) validateMatchWhereSimpleOperands(scope matchSemanticSc
 		}
 	}
 	for _, operator := range []string{" STARTS WITH ", " ENDS WITH ", " CONTAINS ", " NOT IN ", " IN ", "=~"} {
-		left, _, found := splitByOperatorWithOptions(whereClause, operator, true, true)
+		left, _, found := splitByOperatorOutsideCase(whereClause, operator, true, true)
 		if !found {
 			continue
 		}

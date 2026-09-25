@@ -92,7 +92,7 @@ func TestCallSubqueryHelpers_WithParsingAndNullGuards(t *testing.T) {
 }
 
 func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
-	parts := splitTopLevelAndCallSubquery("n.id = outer AND size([x IN [1,2] WHERE x = 1]) > 0 AND 'A AND B' = 'A AND B'")
+	parts := splitTopLevelAndConjuncts("n.id = outer AND size([x IN [1,2] WHERE x = 1]) > 0 AND 'A AND B' = 'A AND B'")
 	require.Equal(t, []string{
 		"n.id = outer",
 		"size([x IN [1,2] WHERE x = 1]) > 0",

@@ -119,7 +119,7 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 
 	var scan comparisonChainScan
 	operandStart := 0
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, 0, 0
 	var quote byte
 	inLineComment, inBlockComment := false, false
 
@@ -187,8 +187,22 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 		case '}':
 			braceDepth--
 			continue
+		case 'C', 'c':
+			// CASE … END nests like parentheses: the comparisons of its WHEN
+			// conditions are not the chain's (#699).
+			if (index == 0 || expression[index-1] != '.') && matchKeywordAt(expression, index, "CASE") {
+				caseDepth++
+				index += len("CASE") - 1
+				continue
+			}
+		case 'E', 'e':
+			if caseDepth > 0 && (index == 0 || expression[index-1] != '.') && matchKeywordAt(expression, index, "END") {
+				caseDepth--
+				index += len("END") - 1
+				continue
+			}
 		}
-		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 {
+		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 || caseDepth != 0 {
 			continue
 		}
 
@@ -252,6 +266,11 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 			return comparisonChainScan{}, false, true
 		case '/':
 			if index+1 < len(expression) && (expression[index+1] == '/' || expression[index+1] == '*') {
+				return comparisonChainScan{}, false, true
+			}
+		case 'C', 'c':
+			// A CASE block's WHEN comparisons are not the chain's (#699).
+			if (index == 0 || expression[index-1] != '.') && matchKeywordAt(expression, index, "CASE") {
 				return comparisonChainScan{}, false, true
 			}
 		}

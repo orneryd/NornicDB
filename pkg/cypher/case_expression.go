@@ -468,6 +468,20 @@ func findTopLevelKeyword(s, keyword string) int {
 				depth--
 			}
 			continue
+		case 'C', 'c':
+			// CASE … END nests like parentheses: the AND / OR / comparison
+			// of a WHEN condition is not a top-level operator (#699).
+			if (i == 0 || s[i-1] != '.') && matchKeywordAt(s, i, "CASE") {
+				depth++
+				i += len("CASE") - 1
+				continue
+			}
+		case 'E', 'e':
+			if depth > 0 && (i == 0 || s[i-1] != '.') && matchKeywordAt(s, i, "END") {
+				depth--
+				i += len("END") - 1
+				continue
+			}
 		}
 		if depth == 0 && strings.EqualFold(s[i:i+len(keyword)], keyword) {
 			return i

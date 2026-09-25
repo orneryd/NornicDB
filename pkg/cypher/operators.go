@@ -174,13 +174,108 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 }
 
 func splitByOperatorWithOptions(expr, op string, caseInsensitive, trackBrackets bool) (string, string, bool) {
+	return splitAtOperator(expr, op, findTopLevelOperator(expr, op, caseInsensitive, trackBrackets))
+}
+
+// splitByOperatorOutsideCase is splitByOperatorWithOptions for predicates
+// scanned as written: an operator inside a CASE ... END block is not top-level
+// (#699). findTopLevelOperator is CASE-unaware to keep the hot scan cheap, and
+// the context evaluator substitutes CASE blocks before scanning
+// (evaluateExpressionWithCASESubstituted); the row predicate evaluator and the
+// MATCH WHERE validation scan the text itself, so they split with this.
+func splitByOperatorOutsideCase(expr, op string, caseInsensitive, trackBrackets bool) (string, string, bool) {
 	idx := findTopLevelOperator(expr, op, caseInsensitive, trackBrackets)
+	for idx > 0 && mayContainCaseKeyword(expr[:idx]) {
+		end := enclosingCaseBlockEnd(expr, idx)
+		if end < 0 {
+			break
+		}
+		// The block closes at top level, so the search resumes after it in the
+		// top-level state.
+		next := findTopLevelOperator(expr[end+1:], op, caseInsensitive, trackBrackets)
+		if next < 0 {
+			idx = -1
+			break
+		}
+		idx = end + 1 + next
+	}
+	return splitAtOperator(expr, op, idx)
+}
+
+// splitAtOperator splits expr around the op at idx, or reports false for -1.
+func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 	if idx < 0 {
 		return "", "", false
 	}
 	left := strings.TrimSpace(expr[:idx])
 	right := strings.TrimSpace(expr[idx+len(op):])
 	return left, right, true
+}
+
+// enclosingCaseBlockEnd returns the index of the last byte of the END that
+// closes the CASE … END block enclosing expr[at], or -1 when expr[at] is not
+// inside one. A CASE counts only outside quotes, brackets and property access
+// (n.case); an unterminated CASE extends to the end of expr.
+func enclosingCaseBlockEnd(expr string, at int) int {
+	depth, nest := 0, 0
+	var quote byte
+	for i := 0; i < len(expr); i++ {
+		if i >= at && depth == 0 {
+			return -1
+		}
+		c := expr[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '(', '[', '{':
+			nest++
+		case ')', ']', '}':
+			nest--
+		default:
+			if nest != 0 || (i > 0 && expr[i-1] == '.') {
+				continue
+			}
+			if c|0x20 == 'c' && matchKeywordAt(expr, i, "CASE") {
+				depth++
+				i += len("CASE") - 1
+			} else if depth > 0 && c|0x20 == 'e' && matchKeywordAt(expr, i, "END") {
+				depth--
+				i += len("END") - 1
+				if depth == 0 && i >= at {
+					return i
+				}
+			}
+		}
+	}
+	return len(expr) - 1
+}
+
+// mayContainCaseKeyword reports whether s contains the letters "case" in any
+// letter case (a superset of the CASE keywords in s). It searches for the 'c'
+// and 'C' bytes, so text without them is rejected at memchr speed.
+func mayContainCaseKeyword(s string) bool {
+	return hasASEAfterByte(s, 'c') || hasASEAfterByte(s, 'C')
+}
+
+// hasASEAfterByte reports whether some c in s is followed by "ase" in any
+// letter case.
+func hasASEAfterByte(s string, c byte) bool {
+	for {
+		i := strings.IndexByte(s, c)
+		if i < 0 || i+4 > len(s) {
+			return false
+		}
+		if s[i+1]|0x20 == 'a' && s[i+2]|0x20 == 's' && s[i+3]|0x20 == 'e' {
+			return true
+		}
+		s = s[i+1:]
+	}
 }
 
 func hasTopLevelExpressionOperator(expr string) bool {
@@ -192,7 +287,11 @@ func hasTopLevelExpressionOperator(expr string) bool {
 		return false
 	}
 	if hasKeywordPrefixFoldASCII(expr, "case") {
-		return false
+		// A leading CASE … END is the whole expression unless something
+		// follows it (CASE … END > 4, CASE … END + 1): then that is a
+		// top-level operator (#699).
+		end := leadingCaseExpressionEnd(expr)
+		return end > 0 && strings.TrimSpace(expr[end:]) != ""
 	}
 	if hasPrefixFoldASCII(expr, "not ") || hasSuffixFoldASCII(expr, " is null") || hasSuffixFoldASCII(expr, " is not null") {
 		return true
