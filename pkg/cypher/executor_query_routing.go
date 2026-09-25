@@ -490,7 +490,7 @@ skipMatchCallRoute:
 	case isDropProcedureCommand(cypher):
 		return e.executeDropProcedure(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "DROP", "INDEX") == 0:
-		return e.executeDropIndex(ctx, cypher)
+		return e.countSchemaChanges(ctx, cypher, e.executeDropIndex)
 	case findKeywordIndex(cypher, "DROP") == 0:
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
 	case findKeywordIndex(cypher, "WITH") == 0:

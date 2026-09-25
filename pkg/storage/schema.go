@@ -1766,6 +1766,25 @@ func (sm *SchemaManager) GetAllPropertyTypeConstraints() []PropertyTypeConstrain
 	return result
 }
 
+// SchemaObjectCounts returns how many indexes and constraints the schema
+// holds, as Neo4j's schema counters count them: the index a constraint owns
+// belongs to the constraint and is not an index of its own. Constraints are
+// the ones SHOW CONSTRAINTS lists (constraints, property type constraints and
+// constraint contracts).
+func (sm *SchemaManager) SchemaObjectCounts() (indexes, constraints int) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	indexes = len(sm.propertyIndexes) + len(sm.compositeIndexes) + len(sm.fulltextIndexes) + len(sm.vectorIndexes)
+	for _, idx := range sm.rangeIndexes {
+		if idx.OwningConstraint == "" {
+			indexes++
+		}
+	}
+	constraints = len(sm.constraints) + len(sm.propertyTypeConstraints) + len(sm.constraintContracts)
+	return indexes, constraints
+}
+
 // GetIndexes returns all indexes.
 func (sm *SchemaManager) GetIndexes() []interface{} {
 	sm.mu.RLock()

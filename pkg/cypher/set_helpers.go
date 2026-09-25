@@ -65,9 +65,9 @@ var nodeSetSnapshotPool = sync.Pool{New: func() any { return make(map[string]int
 // MERGE's ON CREATE SET, ON MATCH SET and SET use it, so they apply SET with
 // the same per-entity applicator as MATCH ... SET and the pipeline
 // (applySetToNodeWithContext: same null, label and map semantics) and count
-// it by the same rule (changedPropertyCount, addedLabelCount). It reports
-// whether the node changed, so callers persist only a changed node. stats may
-// be nil.
+// it by the same rule (Neo4j's properties_set, setWrites; addedLabelCount).
+// It reports whether the node changed (changedPropertyCount), so callers
+// persist only a changed node. stats may be nil.
 //
 //	applyCountedNodeSet(ctx, node, "n", "n.name = 'Alice', n.age = 30", nil, nil, stats)
 //	// node.Properties["name"] = "Alice", node.Properties["age"] = int64(30)
@@ -83,23 +83,23 @@ func (e *StorageExecutor) applyCountedNodeSet(ctx context.Context, node *storage
 		beforeProperties[key] = value
 	}
 	labelsBefore := len(node.Labels)
-	if err := e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext); err != nil {
+	written, err := e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext)
+	if err != nil {
 		return false, err
 	}
-	propertiesSet := changedPropertyCount(beforeProperties, node.Properties)
 	labelsAdded := len(node.Labels) - labelsBefore
 	if stats != nil {
-		stats.PropertiesSet += propertiesSet
+		stats.PropertiesSet += written
 		stats.LabelsAdded += labelsAdded
 	}
-	return propertiesSet > 0 || labelsAdded > 0, nil
+	return labelsAdded > 0 || changedPropertyCount(beforeProperties, node.Properties) > 0, nil
 }
 
 // applySetMapMergeToNode applies SET n += <expr>: every key of the map (or of
 // the node / relationship) is written, and a null value removes the key.
 // Row bindings from UNWIND / WITH that travel in the parameter context are
 // visible to the expression. Non-map values are an error (setMergeMap).
-func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) error {
+func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, writes *setWrites) error {
 	if node == nil {
 		return nil
 	}
@@ -117,6 +117,7 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 		if err != nil {
 			return err
 		}
+		writes.mapEntries(node.Properties, props, false)
 		for k, v := range props {
 			setNodeProperty(node, k, normalizePropValue(v))
 		}
@@ -139,6 +140,7 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 	if err != nil {
 		return err
 	}
+	writes.mapEntries(node.Properties, props, false)
 	for k, v := range props {
 		setNodeProperty(node, k, normalizePropValue(v))
 	}

@@ -61,22 +61,22 @@ func TestApplyUnwindMergeChainEdgeSetAssignment_Branches(t *testing.T) {
 		return row[expr]
 	}
 
-	changed, err := applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver)
+	changed, err := applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
 	require.NoError(t, err)
 	require.Equal(t, 2, changed)
 	require.Equal(t, "v", edge.Properties["k"])
 	require.EqualValues(t, 1, edge.Properties["n"])
 
-	changed, err = applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver)
+	changed, err = applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
 	require.NoError(t, err)
 	require.Equal(t, 0, changed)
 
-	changed, err = applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{prop: "name", expr: "name"}, rowValues, resolver)
+	changed, err = applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{prop: "name", expr: "name"}, rowValues, resolver, &setWrites{})
 	require.NoError(t, err)
 	require.Equal(t, 1, changed)
 	require.Equal(t, "primary", edge.Properties["name"])
 
-	changed, err = applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "bad"}, map[string]interface{}{"bad": int64(5)}, resolver)
+	changed, err = applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "bad"}, map[string]interface{}{"bad": int64(5)}, resolver, &setWrites{})
 	require.Error(t, err)
 	require.Equal(t, 0, changed)
 }

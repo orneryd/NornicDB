@@ -71,25 +71,24 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 
 	upper := strings.ToUpper(cypher)
 
-	var result *ExecuteResult
-	var err error
-
 	// Order matters: check more specific patterns first
+	var run func(context.Context, string) (*ExecuteResult, error)
 	if strings.Contains(upper, "CREATE CONSTRAINT") {
-		result, err = e.executeCreateConstraint(ctx, cypher)
+		run = e.executeCreateConstraint
 	} else if strings.Contains(upper, "DROP CONSTRAINT") {
-		result, err = e.executeDropConstraint(ctx, cypher)
+		run = e.executeDropConstraint
 	} else if strings.Contains(upper, "CREATE FULLTEXT INDEX") {
-		result, err = e.executeCreateFulltextIndex(ctx, cypher)
+		run = e.executeCreateFulltextIndex
 	} else if strings.Contains(upper, "CREATE VECTOR INDEX") {
-		result, err = e.executeCreateVectorIndex(ctx, cypher)
+		run = e.executeCreateVectorIndex
 	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
-		result, err = e.executeCreateRangeIndex(ctx, cypher)
+		run = e.executeCreateRangeIndex
 	} else if strings.Contains(upper, "CREATE INDEX") {
-		result, err = e.executeCreateIndex(ctx, cypher)
+		run = e.executeCreateIndex
 	} else {
 		return nil, localizedError(localization.CypherSchemaUnknownCommand(cypher), nil)
 	}
+	result, err := e.countSchemaChanges(ctx, cypher, run)
 
 	// Invalidate query cache — cached SHOW INDEXES/CONSTRAINTS results are now stale.
 	if err == nil && e.cache != nil {
@@ -97,6 +96,36 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	}
 
 	return result, err
+}
+
+// countSchemaChanges runs a schema command and reports the indexes and
+// constraints it created or dropped in the result's counters, as Neo4j's
+// summary does (#507): CREATE INDEX -> indexes_added 1, DROP CONSTRAINT ->
+// constraints_removed 1, and nothing for an IF [NOT] EXISTS that did nothing.
+// The counts are the difference in the schema's objects across the command
+// (SchemaObjectCounts), so every CREATE / DROP form is counted the same way.
+func (e *StorageExecutor) countSchemaChanges(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	schema := e.storage.GetSchema()
+	if schema == nil {
+		return run(ctx, cypher)
+	}
+	indexesBefore, constraintsBefore := schema.SchemaObjectCounts()
+	result, err := run(ctx, cypher)
+	if err != nil || result == nil {
+		return result, err
+	}
+	indexesAfter, constraintsAfter := schema.SchemaObjectCounts()
+	if indexesAfter == indexesBefore && constraintsAfter == constraintsBefore {
+		return result, nil
+	}
+	if result.Stats == nil {
+		result.Stats = &QueryStats{}
+	}
+	result.Stats.IndexesAdded += max(indexesAfter-indexesBefore, 0)
+	result.Stats.IndexesRemoved += max(indexesBefore-indexesAfter, 0)
+	result.Stats.ConstraintsAdded += max(constraintsAfter-constraintsBefore, 0)
+	result.Stats.ConstraintsRemoved += max(constraintsBefore-constraintsAfter, 0)
+	return result, nil
 }
 
 func flushPendingAsyncWritesBeforeSchemaDDL(engine storage.Engine) error {

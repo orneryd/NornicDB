@@ -43,4 +43,9 @@ func addQueryStats(total, delta *QueryStats) {
 	total.RelationshipsDeleted += delta.RelationshipsDeleted
 	total.PropertiesSet += delta.PropertiesSet
 	total.LabelsAdded += delta.LabelsAdded
+	total.LabelsRemoved += delta.LabelsRemoved
+	total.IndexesAdded += delta.IndexesAdded
+	total.IndexesRemoved += delta.IndexesRemoved
+	total.ConstraintsAdded += delta.ConstraintsAdded
+	total.ConstraintsRemoved += delta.ConstraintsRemoved
 }

@@ -412,6 +412,33 @@ type QueryStats struct {
 	RelationshipsDeleted int
 	PropertiesSet        int
 	LabelsAdded          int
+	LabelsRemoved        int
+	IndexesAdded         int
+	IndexesRemoved       int
+	ConstraintsAdded     int
+	ConstraintsRemoved   int
+}
+
+// boltStatsMetadata is the "stats" entry of a PULL / DISCARD SUCCESS: every
+// counter, or nil when the statement wrote nothing (Neo4j then sends no
+// stats). The drivers read it as the summary counters.
+func boltStatsMetadata(stats *QueryStats) map[string]any {
+	if stats == nil || *stats == (QueryStats{}) {
+		return nil
+	}
+	return map[string]any{
+		"nodes-created":         int64(stats.NodesCreated),
+		"nodes-deleted":         int64(stats.NodesDeleted),
+		"relationships-created": int64(stats.RelationshipsCreated),
+		"relationships-deleted": int64(stats.RelationshipsDeleted),
+		"properties-set":        int64(stats.PropertiesSet),
+		"labels-added":          int64(stats.LabelsAdded),
+		"labels-removed":        int64(stats.LabelsRemoved),
+		"indexes-added":         int64(stats.IndexesAdded),
+		"indexes-removed":       int64(stats.IndexesRemoved),
+		"constraints-added":     int64(stats.ConstraintsAdded),
+		"constraints-removed":   int64(stats.ConstraintsRemoved),
+	}
 }
 
 // BoltAuthenticator is the interface for authenticating Bolt protocol connections.
@@ -2481,6 +2508,11 @@ func (a *boltQueryExecutorAdapter) Execute(ctx context.Context, query string, pa
 			RelationshipsDeleted: result.Stats.RelationshipsDeleted,
 			PropertiesSet:        result.Stats.PropertiesSet,
 			LabelsAdded:          result.Stats.LabelsAdded,
+			LabelsRemoved:        result.Stats.LabelsRemoved,
+			IndexesAdded:         result.Stats.IndexesAdded,
+			IndexesRemoved:       result.Stats.IndexesRemoved,
+			ConstraintsAdded:     result.Stats.ConstraintsAdded,
+			ConstraintsRemoved:   result.Stats.ConstraintsRemoved,
 		}
 	}
 	return qr, nil
