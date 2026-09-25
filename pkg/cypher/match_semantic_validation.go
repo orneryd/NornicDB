@@ -36,13 +36,33 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 		return nil
 	}
 
-	clauses, ok := splitPipelineClauses(cypher)
+	clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher)
 	if !ok {
 		return nil
 	}
 	scope := make(matchSemanticScope)
 	for _, clause := range clauses {
 		switch clause.kind {
+		case pipelineClauseCall:
+			// CALL proc() YIELD x: a yielded name must be new (Neo4j:
+			// VariableAlreadyBound). YIELD * names nothing statically, so
+			// the rest of the statement isn't checked.
+			yield := parseYieldClause(clause.text)
+			if yield == nil || yield.yieldAll {
+				e.matchSemanticValidationCache.add(cypher)
+				return nil
+			}
+			for _, item := range yield.items {
+				name := item.name
+				if item.alias != "" {
+					name = item.alias
+				}
+				if _, bound := scope[name]; bound {
+					return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+						fmt.Sprintf("procedure output %s shadows an existing variable", name))
+				}
+				scope[name] = matchBindingUnknown
+			}
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
 			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
 				return err
