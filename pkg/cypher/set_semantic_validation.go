@@ -391,6 +391,6 @@ func invalidSetPropertyType(value interface{}) error {
 	return newSemanticError(
 		"Neo.ClientError.Statement.TypeError",
 		"InvalidPropertyType",
-		fmt.Sprintf("property value has unsupported type %T", value),
+		fmt.Sprintf("property value has unsupported type %s", cypherTypeName(value)),
 	)
 }

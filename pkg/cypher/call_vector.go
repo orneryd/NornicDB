@@ -112,7 +112,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 			}
 			queryVector = embedded
 		default:
-			return nil, localizedError(localization.CypherSpecializedCallsParameterUnsupportedType(input.paramName, fmt.Sprintf("%T", val)), nil)
+			return nil, localizedError(localization.CypherSpecializedCallsParameterUnsupportedType(input.paramName, cypherTypeName(val)), nil)
 		}
 	} else {
 		// No query input provided - check if this might be a substituted invalid parameter

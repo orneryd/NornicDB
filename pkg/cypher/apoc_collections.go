@@ -891,51 +891,6 @@ func apocCollOccurrences(listVal, value interface{}) int64 {
 // Type and Map Functions
 // ========================================
 
-// getCypherType returns the Cypher type name for a value.
-//
-// # Parameters
-//
-//   - val: The value to check
-//
-// # Returns
-//
-//   - The Cypher type name as a string
-//
-// # Example
-//
-//	getCypherType(42)         // "INTEGER"
-//	getCypherType(3.14)       // "FLOAT"
-//	getCypherType("hello")    // "STRING"
-//	getCypherType(nil)        // "NULL"
-func getCypherType(val interface{}) string {
-	if val == nil {
-		return "NULL"
-	}
-	switch v := val.(type) {
-	case bool:
-		return "BOOLEAN"
-	case int, int32, int64:
-		return "INTEGER"
-	case float32, float64:
-		return "FLOAT"
-	case string:
-		return "STRING"
-	case []interface{}, []string:
-		return "LIST"
-	case map[string]interface{}:
-		return "MAP"
-	case *storage.Node:
-		return "NODE"
-	case *storage.Edge:
-		return "RELATIONSHIP"
-	case *CypherDuration:
-		return "DURATION"
-	default:
-		_ = v
-		return "ANY"
-	}
-}
-
 // mergeMaps merges two maps, with map2 values overriding map1.
 //
 // # Parameters

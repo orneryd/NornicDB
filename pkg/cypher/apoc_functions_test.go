@@ -405,9 +405,9 @@ func TestGetCypherType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := getCypherType(tt.input)
+		got := apocValueTypeName(tt.input)
 		if got != tt.expected {
-			t.Errorf("getCypherType(%v) = %s, want %s", tt.input, got, tt.expected)
+			t.Errorf("apocValueTypeName(%v) = %s, want %s", tt.input, got, tt.expected)
 		}
 	}
 }

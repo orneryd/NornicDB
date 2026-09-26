@@ -907,25 +907,7 @@ skipArrayIndexing:
 	// valueType(value) - returns the type of a value as a string
 	if matchFuncStartAndSuffix(expr, "valuetype") {
 		inner := extractFuncArgs(expr, "valuetype")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		switch val.(type) {
-		case nil:
-			return "NULL"
-		case bool:
-			return "BOOLEAN"
-		case int, int64, int32:
-			return "INTEGER"
-		case float64, float32:
-			return "FLOAT"
-		case string:
-			return "STRING"
-		case []interface{}:
-			return "LIST"
-		case map[string]interface{}:
-			return "MAP"
-		default:
-			return "ANY"
-		}
+		return cypherTypeSystemName(e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 	}
 
 	// ========================================
@@ -1934,7 +1916,7 @@ skipArrayIndexing:
 	if isFunctionCall(expr, "apoc.meta.type") {
 		inner := strings.TrimSpace(expr[15 : len(expr)-1])
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		return getCypherType(val)
+		return apocValueTypeName(val)
 	}
 
 	// apoc.meta.isType(value, typeName) - Check if value is of given type
@@ -1949,7 +1931,7 @@ skipArrayIndexing:
 				return false
 			}
 			typeName = strings.Trim(typeName, "'\"")
-			actualType := getCypherType(val)
+			actualType := apocValueTypeName(val)
 			return strings.EqualFold(actualType, typeName)
 		}
 		return false

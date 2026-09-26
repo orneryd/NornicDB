@@ -28,7 +28,7 @@ func cypherRegexMatch(text, pattern interface{}) (interface{}, error) {
 		return nil, newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"InvalidArgumentType",
-			fmt.Sprintf("Type mismatch: expected String but was %s", cypherValueTypeName(operand)),
+			fmt.Sprintf("Type mismatch: expected String but was %s", cypherTypeName(operand)),
 		)
 	}
 	re, err := GetCachedRegex(anchoredRegexPattern(patternString))

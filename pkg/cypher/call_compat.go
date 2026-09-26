@@ -466,7 +466,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 			}
 			queryVector = embedded
 		default:
-			return nil, localizedError(localization.CypherProceduresParameterUnsupportedType(input.paramName, fmt.Sprintf("%T", val)), nil)
+			return nil, localizedError(localization.CypherProceduresParameterUnsupportedType(input.paramName, cypherTypeName(val)), nil)
 		}
 	} else {
 		// No query input provided - check if this might be a substituted invalid parameter

@@ -2688,7 +2688,7 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 		return nil, newSemanticError(
 			"Neo.ClientError.Statement.TypeError",
 			"InvalidArgumentType",
-			fmt.Sprintf("SET %s requires a map, node or relationship, got type %T", operator, value),
+			fmt.Sprintf("SET %s requires a map, node or relationship, got type %s", operator, cypherTypeName(value)),
 		)
 	}
 	for _, v := range props {
