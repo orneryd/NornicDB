@@ -1463,9 +1463,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return nil, queryOnFailedTransactionError(tx.failed)
 		}
 		defer func() {
-			if retErr != nil && tx.active && tx.failed == nil {
-				tx.failed = retErr
-			}
+			e.failTransaction(retErr)
 		}()
 	}
 

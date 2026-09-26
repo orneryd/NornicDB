@@ -35,6 +35,26 @@ type TransactionContext struct {
 	failed error
 }
 
+// failTransaction records err as the active explicit transaction's failure
+// and returns err. The first failure wins: it is the cause COMMIT reports. It
+// is the one rule for a statement that fails inside a transaction, whether it
+// ran through Execute or an inline transaction script (#683).
+func (e *StorageExecutor) failTransaction(err error) error {
+	if tx := e.txContext; err != nil && tx != nil && tx.active && tx.failed == nil {
+		tx.failed = err
+	}
+	return err
+}
+
+// abortTransaction fails the active transaction with err and ends it: what an
+// inline transaction script (BEGIN … COMMIT in one request) does when its
+// statement fails, since no later ROLLBACK can reach it. It returns err.
+func (e *StorageExecutor) abortTransaction(err error) error {
+	e.failTransaction(err)
+	_, _ = e.handleRollback()
+	return err
+}
+
 // queryOnFailedTransactionError is the error of a statement sent to a
 // transaction a previous statement failed in.
 func queryOnFailedTransactionError(cause error) error {
