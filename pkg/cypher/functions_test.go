@@ -2566,7 +2566,7 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "valueType([1])", nodes, nil); got != "LIST" {
 		t.Fatalf("valueType([1]) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "valueType(n)", nodes, nil); got != "ANY" {
+	if got := e.evaluateExpressionWithContext(ctx, "valueType(n)", nodes, nil); got != "NODE" {
 		t.Fatalf("valueType(n) = %#v", got)
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "collect(null)", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {

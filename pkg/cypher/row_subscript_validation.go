@@ -188,7 +188,7 @@ func invalidSubscriptTypeError(message string, value interface{}) error {
 	return newSemanticError(
 		"Neo.ClientError.Statement.TypeError",
 		"InvalidArgumentType",
-		fmt.Sprintf("%s, got %T", message, value),
+		fmt.Sprintf("%s, got %s", message, cypherTypeName(value)),
 	)
 }
 

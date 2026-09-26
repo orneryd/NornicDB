@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // sizeArgumentTypes is size()'s accepted argument types as Neo4j names them.
@@ -19,7 +18,7 @@ const sizeArgumentTypes = "String or List<T>"
 // "Type mismatch: expected <expected> but was <type>". size() of a map, node,
 // relationship, path, number or boolean fails with it on every route (#600).
 func typeMismatchError(expected string, value interface{}) error {
-	return typeNameMismatchError(expected, cypherValueTypeName(value))
+	return typeNameMismatchError(expected, cypherTypeName(value))
 }
 
 // typeNameMismatchError is typeMismatchError for an argument whose type is
@@ -51,45 +50,6 @@ func sizeArgumentError(value interface{}) error {
 		return nil
 	}
 	return typeMismatchError(sizeArgumentTypes, value)
-}
-
-// pathTypeMarker names a path value (paths are carried as maps holding a
-// _pathResult) for cypherValueTypeName.
-type pathTypeMarker struct{}
-
-// cypherValueTypeName is the Cypher type name Neo4j uses in type errors.
-func cypherValueTypeName(value interface{}) string {
-	switch v := value.(type) {
-	case pathTypeMarker, *PathResult, PathResult:
-		return "Path"
-	case *storage.Node:
-		return "Node"
-	case *storage.Edge:
-		return "Relationship"
-	case bool:
-		return "Boolean"
-	case string:
-		return "String"
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return "Integer"
-	case float32, float64:
-		return "Float"
-	case map[string]interface{}:
-		if _, isPath := v["_pathResult"]; isPath {
-			return "Path"
-		}
-		return "Map"
-	}
-	if value == nil {
-		return "Null"
-	}
-	switch reflect.TypeOf(value).Kind() {
-	case reflect.Map:
-		return "Map"
-	case reflect.Slice, reflect.Array:
-		return "List"
-	}
-	return fmt.Sprintf("%T", value)
 }
 
 // recordRowSizeArgumentFailure records the size() type error of an

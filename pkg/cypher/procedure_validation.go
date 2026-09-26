@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 )
@@ -130,7 +129,7 @@ func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{},
 			return nil, newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
 				"InvalidArgumentType",
-				fmt.Sprintf("procedure %s argument %s requires %s but received %s", spec.Name, parameter.Name, parameter.Type, procedureValueType(coerced[index])),
+				fmt.Sprintf("procedure %s argument %s requires %s but received %s", spec.Name, parameter.Name, parameter.Type, cypherTypeSystemName(coerced[index])),
 			)
 		}
 		coerced[index] = value
@@ -234,26 +233,6 @@ func isFloatProcedureValue(value interface{}) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func procedureValueType(value interface{}) string {
-	if value == nil {
-		return "NULL"
-	}
-	if isIntegerProcedureValue(value) {
-		return "INTEGER"
-	}
-	if isFloatProcedureValue(value) {
-		return "FLOAT"
-	}
-	switch value.(type) {
-	case string:
-		return "STRING"
-	case bool:
-		return "BOOLEAN"
-	default:
-		return strings.ToUpper(reflect.TypeOf(value).String())
 	}
 }
 

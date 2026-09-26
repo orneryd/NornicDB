@@ -130,18 +130,18 @@ func TestApocCollections_FromPairsAndFromLists(t *testing.T) {
 }
 
 func TestApocCollections_GetCypherType(t *testing.T) {
-	assert.Equal(t, "NULL", getCypherType(nil))
-	assert.Equal(t, "BOOLEAN", getCypherType(true))
-	assert.Equal(t, "INTEGER", getCypherType(int64(1)))
-	assert.Equal(t, "FLOAT", getCypherType(1.5))
-	assert.Equal(t, "STRING", getCypherType("x"))
-	assert.Equal(t, "LIST", getCypherType([]interface{}{1}))
-	assert.Equal(t, "LIST", getCypherType([]string{"a"}))
-	assert.Equal(t, "MAP", getCypherType(map[string]interface{}{"k": "v"}))
-	assert.Equal(t, "NODE", getCypherType(&storage.Node{}))
-	assert.Equal(t, "RELATIONSHIP", getCypherType(&storage.Edge{}))
-	assert.Equal(t, "DURATION", getCypherType(&CypherDuration{}))
-	assert.Equal(t, "ANY", getCypherType(struct{}{}))
+	assert.Equal(t, "NULL", apocValueTypeName(nil))
+	assert.Equal(t, "BOOLEAN", apocValueTypeName(true))
+	assert.Equal(t, "INTEGER", apocValueTypeName(int64(1)))
+	assert.Equal(t, "FLOAT", apocValueTypeName(1.5))
+	assert.Equal(t, "STRING", apocValueTypeName("x"))
+	assert.Equal(t, "LIST", apocValueTypeName([]interface{}{1}))
+	assert.Equal(t, "LIST", apocValueTypeName([]string{"a"}))
+	assert.Equal(t, "MAP", apocValueTypeName(map[string]interface{}{"k": "v"}))
+	assert.Equal(t, "NODE", apocValueTypeName(&storage.Node{}))
+	assert.Equal(t, "RELATIONSHIP", apocValueTypeName(&storage.Edge{}))
+	assert.Equal(t, "DURATION", apocValueTypeName(&CypherDuration{}))
+	assert.Equal(t, "ANY", apocValueTypeName(struct{}{}))
 }
 
 func TestApocCollections_DispatchBranches_FromExpressionEvaluator(t *testing.T) {

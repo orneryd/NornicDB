@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 
@@ -111,7 +112,7 @@ func invalidFunctionArgument(function string, value interface{}) error {
 	return newSemanticError(
 		"Neo.ClientError.Statement.TypeError",
 		"InvalidArgumentValue",
-		(&cypherfn.ArgumentTypeError{Function: strings.ToLower(function), Value: value}).Error(),
+		fmt.Sprintf("%s() received an invalid %s argument", strings.ToLower(function), cypherTypeName(value)),
 	)
 }
 
@@ -156,15 +157,9 @@ func staticLiteralTypeName(expression string) string {
 	if !literal {
 		return ""
 	}
-	switch value.(type) {
-	case string:
-		return "String"
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return "Integer"
-	case float32, float64:
-		return "Float"
-	case bool:
-		return "Boolean"
+	switch kind := cypherValueKindOf(value); kind {
+	case valueKindString, valueKindInteger, valueKindFloat, valueKindBoolean:
+		return valueTypeNames[kind].cypher
 	default:
 		return ""
 	}
