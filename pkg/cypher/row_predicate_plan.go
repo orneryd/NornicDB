@@ -87,130 +87,167 @@ const (
 	rowPredicateComparison
 	rowPredicateIsNull
 	rowPredicateIsNotNull
+	rowPredicateAnd
+	rowPredicateOr
 )
 
-// rowPredicatePart is one top-level AND part of a planned predicate.
+// rowPredicatePart is a node of a planned predicate: an AND or OR of parts, a
+// comparison or null test of simple operands, or text.
 type rowPredicatePart struct {
 	kind     rowPredicatePartKind
 	text     string
 	left     rowOperand
 	right    rowOperand
 	operator string
+	parts    []rowPredicatePart
 }
 
-// rowPredicatePlan is a planned predicate: its AND parts, in order.
+// rowPredicatePlan is a planned predicate.
 type rowPredicatePlan struct {
-	parts []rowPredicatePart
+	root rowPredicatePart
 }
 
 // rowPredicatePlans caches plans by predicate text; a nil plan (a predicate
 // with nothing to plan) is cached too.
 var rowPredicatePlans = newBoundedCache[string, *rowPredicatePlan](1024)
 
-// planRowPredicate returns the plan of a predicate that is AND parts at least
-// one of which is a comparison or null test of simple operands, and nil for
-// any other predicate: one with a top-level OR / XOR, a subquery or braces,
-// or no part the plan can evaluate without the text.
+// planRowPredicate returns the plan of a predicate that has at least one
+// comparison or null test of simple operands, combined with AND / OR, and nil
+// for any other predicate (one with a subquery or braces, or nothing to plan).
 func planRowPredicate(expression string) *rowPredicatePlan {
 	if plan, cached := rowPredicatePlans.get(expression); cached {
 		return plan
 	}
-	plan := buildRowPredicatePlan(expression)
+	var plan *rowPredicatePlan
+	if !strings.ContainsAny(expression, "{}") {
+		if root, planned := planRowPredicatePart(expression); planned {
+			plan = &rowPredicatePlan{root: root}
+		}
+	}
 	rowPredicatePlans.put(expression, plan)
 	return plan
 }
 
-func buildRowPredicatePlan(expression string) *rowPredicatePlan {
-	if strings.ContainsAny(expression, "{}") {
-		return nil
+// planRowPredicatePart plans text in the order evaluateRowPredicate evaluates
+// it: enclosing parentheses, then a label test (kept as text), then a
+// top-level OR, then a top-level AND, then a comparison or null test of
+// simple operands. Anything else is text. planned reports whether the part,
+// or one below it, is not text.
+func planRowPredicatePart(text string) (rowPredicatePart, bool) {
+	text = strings.TrimSpace(text)
+	textPart := rowPredicatePart{kind: rowPredicateText, text: text}
+	if text == "" {
+		return textPart, false
 	}
-	for _, operator := range []string{" OR ", " XOR "} {
-		if _, _, split := splitByOperatorWithOptions(expression, operator, true, true); split {
-			return nil
+	if inner, ok := stripEnclosingExpressionParentheses(text); ok {
+		part, planned := planRowPredicatePart(inner)
+		if !planned {
+			return textPart, false
 		}
+		return part, true
 	}
-	var conjuncts []string
-	rest := expression
-	for {
-		left, right, split := splitByOperatorWithOptions(rest, " AND ", true, true)
-		if !split {
-			conjuncts = append(conjuncts, strings.TrimSpace(rest))
-			break
+	if _, _, ok := parseWithWhereLabelTest(text); ok {
+		return textPart, false
+	}
+	if _, _, split := splitByOperatorWithOptions(text, " XOR ", true, true); split {
+		return textPart, false
+	}
+	for _, logical := range []struct {
+		operator string
+		kind     rowPredicatePartKind
+	}{{" OR ", rowPredicateOr}, {" AND ", rowPredicateAnd}} {
+		if _, _, split := splitByOperatorWithOptions(text, logical.operator, true, true); !split {
+			continue
 		}
-		conjuncts = append(conjuncts, strings.TrimSpace(left))
-		rest = right
-	}
-	plan := &rowPredicatePlan{parts: make([]rowPredicatePart, 0, len(conjuncts))}
-	planned := false
-	for _, conjunct := range conjuncts {
-		part := planRowPredicatePart(conjunct)
-		if part.kind != rowPredicateText {
-			planned = true
+		node := rowPredicatePart{kind: logical.kind, text: text}
+		planned := false
+		rest := text
+		for {
+			left, right, split := splitByOperatorWithOptions(rest, logical.operator, true, true)
+			if !split {
+				left = rest
+			}
+			part, partPlanned := planRowPredicatePart(left)
+			planned = planned || partPlanned
+			node.parts = append(node.parts, part)
+			if !split {
+				break
+			}
+			rest = right
 		}
-		plan.parts = append(plan.parts, part)
+		if !planned {
+			return textPart, false
+		}
+		return node, true
 	}
-	if !planned {
-		return nil
+	if leaf, ok := planRowPredicateLeaf(text); ok {
+		return leaf, true
 	}
-	return plan
+	return textPart, false
 }
 
-// planRowPredicatePart classifies one AND part. Only shapes evaluateRowPredicate
-// would evaluate as a plain comparison or null test are planned; anything
-// that one of its earlier branches handles (parentheses, labels, NOT, EXISTS,
-// IN, string operators, =~) stays text.
-func planRowPredicatePart(conjunct string) rowPredicatePart {
-	text := rowPredicatePart{kind: rowPredicateText, text: conjunct}
-	if conjunct == "" || strings.ContainsAny(conjunct, "()[]:`'\"") || hasPrefixFoldASCII(conjunct, "NOT ") {
-		return text
+// planRowPredicateLeaf plans a comparison of two simple operands or a null test
+// of one. A shape one of evaluateRowPredicate's earlier branches handles (NOT,
+// EXISTS, IN, string operators, =~, labels, calls, lists, strings) isn't one.
+func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
+	if strings.ContainsAny(text, "()[]:`'\"") || hasPrefixFoldASCII(text, "NOT ") {
+		return rowPredicatePart{}, false
 	}
-	upper := strings.ToUpper(conjunct)
+	upper := strings.ToUpper(text)
 	for _, keyword := range []string{" IN ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ", "=~", "EXISTS", "COUNT", "COLLECT"} {
 		if strings.Contains(upper, keyword) {
-			return text
+			return rowPredicatePart{}, false
 		}
 	}
 	for _, test := range []struct {
 		suffix string
 		kind   rowPredicatePartKind
 	}{{" IS NOT NULL", rowPredicateIsNotNull}, {" IS NULL", rowPredicateIsNull}} {
-		if hasSuffixFoldASCII(conjunct, test.suffix) {
-			operand, ok := parseRowOperand(conjunct[:len(conjunct)-len(test.suffix)])
+		if hasSuffixFoldASCII(text, test.suffix) {
+			operand, ok := parseRowOperand(text[:len(text)-len(test.suffix)])
 			if !ok || operand.kind == rowOperandLiteral {
-				return text
+				return rowPredicatePart{}, false
 			}
-			return rowPredicatePart{kind: test.kind, text: conjunct, left: operand}
+			return rowPredicatePart{kind: test.kind, text: text, left: operand}, true
 		}
 	}
-	operands, operators, ok := splitComparisonChain(conjunct)
+	operands, operators, ok := splitComparisonChain(text)
 	if !ok || len(operands) != 2 || len(operators) != 1 {
-		return text
+		return rowPredicatePart{}, false
 	}
 	left, leftOK := parseRowOperand(operands[0])
 	right, rightOK := parseRowOperand(operands[1])
 	if !leftOK || !rightOK {
-		return text
+		return rowPredicatePart{}, false
 	}
 	operator := operators[0]
 	if operator == "!=" {
 		operator = "<>"
 	}
-	return rowPredicatePart{kind: rowPredicateComparison, text: conjunct, left: left, right: right, operator: operator}
+	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: operator}, true
 }
 
-// evaluateRowPredicatePlan evaluates a planned predicate for a row: its AND
-// parts in order, stopping at the first that doesn't hold.
+// evaluateRowPredicatePlan evaluates a planned predicate for a row.
 func (e *StorageExecutor) evaluateRowPredicatePlan(ctx context.Context, plan *rowPredicatePlan, values map[string]interface{}) bool {
-	for i := range plan.parts {
-		if !e.evaluateRowPredicatePart(ctx, &plan.parts[i], values) {
-			return false
-		}
-	}
-	return true
+	return e.evaluateRowPredicatePart(ctx, &plan.root, values)
 }
 
 func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *rowPredicatePart, values map[string]interface{}) bool {
 	switch part.kind {
+	case rowPredicateAnd:
+		for i := range part.parts {
+			if !e.evaluateRowPredicatePart(ctx, &part.parts[i], values) {
+				return false
+			}
+		}
+		return true
+	case rowPredicateOr:
+		for i := range part.parts {
+			if e.evaluateRowPredicatePart(ctx, &part.parts[i], values) {
+				return true
+			}
+		}
+		return false
 	case rowPredicateComparison:
 		left, leftOK := part.left.resolve(values)
 		right, rightOK := part.right.resolve(values)
@@ -234,6 +271,8 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 		}
 		return value != nil
 	default:
-		return e.evaluateRowPredicateText(ctx, part.text, values)
+		// Text parts go through the whole row predicate evaluator: they have
+		// no plan of their own, so this doesn't come back here.
+		return e.evaluateRowPredicate(ctx, part.text, values)
 	}
 }
