@@ -202,7 +202,7 @@ type runningTransaction struct {
 	query        string
 	queryNumber  uint64 // 0 while no statement runs
 	queryStarted time.Time
-	cancel       context.CancelFunc
+	statement    *statementContext // the running statement, cancelled by TERMINATE
 }
 
 // id is the transaction's Neo4j id, <database>-transaction-<n>.
@@ -254,22 +254,22 @@ func (r *runningTransactionRegistry) end(tx *runningTransaction) {
 	r.mu.Unlock()
 }
 
-// startQuery records the statement tx runs; cancel stops it on TERMINATE.
-func (tx *runningTransaction) startQuery(query string, cancel context.CancelFunc) {
+// startQuery records the statement tx runs; TERMINATE cancels it.
+func (tx *runningTransaction) startQuery(query string, statement *statementContext) {
 	tx.mu.Lock()
 	tx.query = query
 	tx.queryNumber = runningTransactions.nextQry.Add(1)
 	tx.queryStarted = time.Now()
-	tx.cancel = cancel
+	tx.statement = statement
 	tx.mu.Unlock()
-	if tx.terminated.Load() && cancel != nil {
-		cancel()
+	if tx.terminated.Load() {
+		statement.cancel(context.Canceled)
 	}
 }
 
 func (tx *runningTransaction) endQuery() {
 	tx.mu.Lock()
-	tx.query, tx.queryNumber, tx.cancel = "", 0, nil
+	tx.query, tx.queryNumber, tx.statement = "", 0, nil
 	tx.mu.Unlock()
 }
 
@@ -302,10 +302,10 @@ func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, 
 	}
 	tx.terminated.Store(true)
 	tx.mu.Lock()
-	cancel := tx.cancel
+	statement := tx.statement
 	tx.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if statement != nil {
+		statement.cancel(context.Canceled)
 	}
 	return tx, true
 }
@@ -321,7 +321,7 @@ func transactionTerminatedError() error {
 // auto-commit transaction it is). The zero value's done does nothing.
 type runningStatement struct {
 	tx         *runningTransaction
-	cancel     context.CancelFunc
+	statement  *statementContext
 	autoCommit bool
 }
 
@@ -334,24 +334,85 @@ func (s runningStatement) done() {
 	} else {
 		s.tx.endQuery()
 	}
-	s.cancel()
+	s.statement.cancel(context.Canceled)
 }
 
-// statementContext is a running statement's context: TERMINATE cancels it,
-// and its value for ctxKeyRunningTransaction is the statement's
-// transaction. An auto-commit statement's transaction lives in the same
-// allocation (autoCommitStatementContext), so registering a statement costs
-// the cancellable context and this one value.
+// statementContext is a running statement's context: TERMINATE and the
+// statement's end cancel it, and its value for ctxKeyRunningTransaction is
+// the statement's transaction. It is its own cancellable context rather than
+// a context.WithCancel (a context and a closure per statement): Done's
+// channel is made only when something waits on it, and the parent's
+// cancellation reaches it through context.AfterFunc from then on; Err reads
+// the parent directly. An auto-commit statement's transaction lives in the
+// same allocation (autoCommitStatementContext), so registering a statement
+// is one allocation.
 type statementContext struct {
-	context.Context
-	tx *runningTransaction
+	parent context.Context
+	tx     *runningTransaction
+
+	mu   sync.Mutex
+	done chan struct{} // made by Done
+	err  error         // set by cancel
+	stop func() bool   // releases the AfterFunc on parent
 }
+
+func (c *statementContext) Deadline() (time.Time, bool) { return c.parent.Deadline() }
 
 func (c *statementContext) Value(key any) any {
 	if _, ok := key.(ctxKeyRunningTransaction); ok {
 		return c.tx
 	}
-	return c.Context.Value(key)
+	return c.parent.Value(key)
+}
+
+// Err is the statement's cancellation, or the parent's (which then cancels
+// the statement, so Done is closed whenever Err is not nil).
+func (c *statementContext) Err() error {
+	c.mu.Lock()
+	err := c.err
+	c.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := c.parent.Err(); err != nil {
+		c.cancel(err)
+		return err
+	}
+	return nil
+}
+
+func (c *statementContext) Done() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done == nil {
+		c.done = make(chan struct{})
+		if c.err != nil {
+			close(c.done)
+		} else if c.parent.Done() != nil {
+			parent := c.parent
+			c.stop = context.AfterFunc(parent, func() { c.cancel(parent.Err()) })
+		}
+	}
+	return c.done
+}
+
+// cancel cancels the statement with err; the first cancellation wins.
+func (c *statementContext) cancel(err error) {
+	c.mu.Lock()
+	if c.err != nil {
+		c.mu.Unlock()
+		return
+	}
+	c.err = err
+	if c.done != nil {
+		close(c.done)
+	}
+	stop := c.stop
+	c.stop = nil
+	c.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
 }
 
 type autoCommitStatementContext struct {
@@ -373,17 +434,16 @@ func (e *StorageExecutor) withRunningStatement(ctx context.Context, query string
 		if tx.terminated.Load() {
 			return ctx, runningStatement{}, transactionTerminatedError()
 		}
-		cancelCtx, cancel := context.WithCancel(ctx)
-		tx.startQuery(query, cancel)
-		return &statementContext{Context: cancelCtx, tx: tx}, runningStatement{tx: tx, cancel: cancel}, nil
+		statement := &statementContext{parent: ctx, tx: tx}
+		tx.startQuery(query, statement)
+		return statement, runningStatement{tx: tx, statement: statement}, nil
 	}
-	cancelCtx, cancel := context.WithCancel(ctx)
-	statement := &autoCommitStatementContext{statementContext: statementContext{Context: cancelCtx}}
+	statement := &autoCommitStatementContext{statementContext: statementContext{parent: ctx}}
 	tx := &statement.transaction
 	statement.tx = tx
 	runningTransactions.register(ctx, tx, e.currentDatabaseName())
-	tx.startQuery(query, cancel)
-	return statement, runningStatement{tx: tx, cancel: cancel, autoCommit: true}, nil
+	tx.startQuery(query, &statement.statementContext)
+	return &statement.statementContext, runningStatement{tx: tx, statement: &statement.statementContext, autoCommit: true}, nil
 }
 
 // showTransactionsColumns is SHOW TRANSACTIONS' full column set in Neo4j
