@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -211,4 +212,35 @@ func TestMatchMergeSetHonorsWithWindow(t *testing.T) {
 	result, err = exec.Execute(ctx, "MATCH (w:W) RETURN count(w) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+}
+
+// TestReturnProjectionPlanIsParsedOncePerText: a RETURN clause is parsed
+// once per text; a result's columns are its own (changing them doesn't
+// change the cached plan), and the cache is cleared at its limit.
+func TestReturnProjectionPlanIsParsedOncePerText(t *testing.T) {
+	exec, ctx := newMergeReturnRouteExecutor(t)
+	clause := "RETURN 1 AS one, 'x' AS two ORDER BY one LIMIT 1"
+	first, ok := exec.pipelineApplyReturn(ctx, []pipelineRow{{}}, clause)
+	require.True(t, ok)
+	require.Equal(t, []string{"one", "two"}, first.Columns)
+	first.Columns[0] = "changed"
+	require.Same(t, returnProjectionPlanFor(clause), returnProjectionPlanFor(clause))
+
+	second, ok := exec.pipelineApplyReturn(ctx, []pipelineRow{{}}, clause)
+	require.True(t, ok)
+	require.Equal(t, []string{"one", "two"}, second.Columns)
+	require.Equal(t, [][]interface{}{{int64(1), "x"}}, second.Rows)
+
+	require.False(t, returnProjectionPlanFor("RETURN ").valid)
+
+	returnProjectionPlans.Lock()
+	for index := len(returnProjectionPlans.plans); index < returnProjectionPlanLimit; index++ {
+		returnProjectionPlans.plans[fmt.Sprintf("RETURN %d", index)] = &returnProjectionPlan{}
+	}
+	returnProjectionPlans.Unlock()
+	returnProjectionPlanFor("RETURN 'after the limit'")
+	returnProjectionPlans.RLock()
+	size := len(returnProjectionPlans.plans)
+	returnProjectionPlans.RUnlock()
+	require.Equal(t, 1, size)
 }

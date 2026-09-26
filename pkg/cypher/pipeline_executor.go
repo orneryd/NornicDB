@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -3416,6 +3417,98 @@ func pipelineAggregateNumber(value interface{}) (float64, bool, bool) {
 	}
 }
 
+// returnProjection is one RETURN item: its expression, its column name, and
+// for an aggregating item the aggregate (aggregateName empty when the
+// aggregate is nested in a larger expression, aggregateExpr then being the
+// whole expression).
+type returnProjection struct {
+	expr          string
+	alias         string
+	isAggr        bool
+	aggregateName string
+	aggregateExpr string
+	distinct      bool
+}
+
+// returnProjectionPlan is a RETURN clause parsed for pipelineApplyReturn:
+// its items, columns, DISTINCT and trailing ORDER BY / SKIP / LIMIT. A plan
+// depends only on the clause text, so it is parsed once per text
+// (returnProjectionPlanFor). valid is false when the clause has no items.
+type returnProjectionPlan struct {
+	valid        bool
+	star         bool
+	distinct     bool
+	modifiers    string
+	projections  []returnProjection
+	columns      []string
+	hasAggregate bool
+}
+
+// returnProjectionPlans caches parsed RETURN clauses by text. Plans are
+// immutable once cached; the cache is cleared when it reaches
+// returnProjectionPlanLimit entries, which bounds it for workloads with
+// unbounded distinct query texts.
+var returnProjectionPlans = struct {
+	sync.RWMutex
+	plans map[string]*returnProjectionPlan
+}{plans: make(map[string]*returnProjectionPlan)}
+
+const returnProjectionPlanLimit = 4096
+
+func returnProjectionPlanFor(clause string) *returnProjectionPlan {
+	returnProjectionPlans.RLock()
+	plan, cached := returnProjectionPlans.plans[clause]
+	returnProjectionPlans.RUnlock()
+	if cached {
+		return plan
+	}
+	plan = parseReturnProjectionPlan(clause)
+	returnProjectionPlans.Lock()
+	if len(returnProjectionPlans.plans) >= returnProjectionPlanLimit {
+		returnProjectionPlans.plans = make(map[string]*returnProjectionPlan)
+	}
+	returnProjectionPlans.plans[clause] = plan
+	returnProjectionPlans.Unlock()
+	return plan
+}
+
+func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
+	body := strings.TrimSpace(strings.TrimPrefix(clause, "RETURN"))
+	body = strings.TrimPrefix(body, "return")
+	modifierStart := len(body)
+	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
+		modifierStart = cut
+	}
+	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
+	body = strings.TrimSpace(body[:modifierStart])
+	body, plan.distinct = cutDistinct(body)
+	if body == "*" {
+		plan.valid, plan.star = true, true
+		return plan
+	}
+	for _, rawItem := range splitTopLevelComma(body) {
+		item := strings.TrimSpace(rawItem)
+		if item == "" {
+			continue
+		}
+		expr, alias := item, item
+		if asIdx := strings.Index(strings.ToUpper(item), " AS "); asIdx > 0 {
+			expr = strings.TrimSpace(item[:asIdx])
+			alias = normalizeProjectionColumnName(item[asIdx+4:])
+		}
+		aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
+		if !isAggr && pipelineExpressionContainsAggregate(expr) {
+			isAggr = true
+			aggregateExpr = expr
+		}
+		plan.hasAggregate = plan.hasAggregate || isAggr
+		plan.projections = append(plan.projections, returnProjection{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct})
+		plan.columns = append(plan.columns, alias)
+	}
+	plan.valid = len(plan.projections) > 0
+	return plan
+}
+
 // pipelineApplyReturn projects each binding row through the RETURN list.
 // Supports:
 //   - `count(*)` / `count(var)` (aggregate — collapses all rows to one)
@@ -3427,17 +3520,12 @@ func pipelineAggregateNumber(value interface{}) (float64, bool, bool) {
 // Returns (nil, false) if any item can't be projected, so the caller falls
 // back to the established RETURN projection.
 func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
-	body := strings.TrimSpace(strings.TrimPrefix(clause, "RETURN"))
-	body = strings.TrimPrefix(body, "return")
-	modifierStart := len(body)
-	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
-		modifierStart = cut
+	plan := returnProjectionPlanFor(clause)
+	if !plan.valid {
+		return nil, false
 	}
-	modifiers := strings.TrimSpace(body[modifierStart:])
-	body = strings.TrimSpace(body[:modifierStart])
-	returnDistinct := false
-	body, returnDistinct = cutDistinct(body)
-	if body == "*" {
+	modifiers, returnDistinct := plan.modifiers, plan.distinct
+	if plan.star {
 		columns := pipelineWildcardColumns(rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}
 		for _, row := range rows {
@@ -3453,56 +3541,8 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		result, err := e.applyResultModifiers(result, modifiers)
 		return result, err == nil
 	}
-	items := splitTopLevelComma(body)
-	if len(items) == 0 {
-		return nil, false
-	}
-
-	type proj struct {
-		expr          string
-		alias         string
-		isAggr        bool
-		aggregateName string
-		aggregateExpr string
-		distinct      bool
-	}
-	var projs []proj
-	hasAggregate := false
-	for _, rawItem := range items {
-		item := strings.TrimSpace(rawItem)
-		if item == "" {
-			continue
-		}
-		upper := strings.ToUpper(item)
-		asIdx := strings.Index(upper, " AS ")
-		expr := item
-		alias := item
-		if asIdx > 0 {
-			expr = strings.TrimSpace(item[:asIdx])
-			alias = normalizeProjectionColumnName(item[asIdx+4:])
-		}
-		aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
-		if !isAggr && pipelineExpressionContainsAggregate(expr) {
-			isAggr = true
-			aggregateExpr = expr
-		}
-		if isAggr {
-			hasAggregate = true
-		}
-		projection := proj{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct}
-		if isAggr {
-			projection.aggregateExpr = aggregateExpr
-		}
-		projs = append(projs, projection)
-	}
-	if len(projs) == 0 {
-		return nil, false
-	}
-
-	result := &ExecuteResult{}
-	for _, p := range projs {
-		result.Columns = append(result.Columns, p.alias)
-	}
+	projs, hasAggregate := plan.projections, plan.hasAggregate
+	result := &ExecuteResult{Columns: append([]string(nil), plan.columns...)}
 
 	if hasAggregate {
 		type returnGroup struct {
