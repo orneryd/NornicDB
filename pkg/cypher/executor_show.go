@@ -540,19 +540,37 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	if where := segmentText(3); where != "" {
 		clauses.WriteString("WITH * WHERE " + where + " ")
 	}
-	if returnIndex >= 0 {
-		clauses.WriteString(strings.TrimSpace(body[returnIndex:]))
-	} else {
-		quoted := make([]string, len(outputs))
-		for i, column := range outputs {
-			quoted[i] = column
-			if name, next, ok := scanIdentifierToken(column, 0); !ok || name != column || next != len(column) {
-				quoted[i] = "`" + strings.ReplaceAll(column, "`", "``") + "` AS `" + strings.ReplaceAll(column, "`", "``") + "`"
-			}
+	quoted := make([]string, len(outputs))
+	for i, column := range outputs {
+		quoted[i] = column
+		if name, next, ok := scanIdentifierToken(column, 0); !ok || name != column || next != len(column) {
+			quoted[i] = "`" + strings.ReplaceAll(column, "`", "``") + "` AS `" + strings.ReplaceAll(column, "`", "``") + "`"
 		}
+	}
+	if returnIndex >= 0 {
+		clauses.WriteString(showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", ")))
+	} else {
 		clauses.WriteString("RETURN " + strings.Join(quoted, ", "))
 	}
 	return e.executeCallTail(ctx, projected, clauses.String())
+}
+
+// showReturnStarAsYielded replaces the * of a SHOW command's RETURN (RETURN
+// *, RETURN DISTINCT *, RETURN *, x) with the YIELD's columns in YIELD
+// order. The SHOW's rows also carry the columns it didn't yield, for its
+// WHERE and ORDER BY, but RETURN * means the yielded ones, in the order
+// they were yielded, as in Neo4j.
+func showReturnStarAsYielded(returnClause, yielded string) string {
+	rest := strings.TrimSpace(returnClause[len("RETURN"):])
+	prefix := "RETURN "
+	if startsWithKeywordFold(rest, "DISTINCT") {
+		rest = strings.TrimSpace(rest[len("DISTINCT"):])
+		prefix = "RETURN DISTINCT "
+	}
+	if !strings.HasPrefix(rest, "*") {
+		return returnClause
+	}
+	return prefix + yielded + rest[1:]
 }
 
 func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*ExecuteResult, error) {

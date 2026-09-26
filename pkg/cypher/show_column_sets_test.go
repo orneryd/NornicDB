@@ -101,3 +101,24 @@ func TestFulltextWildcardSkipsRelationshipsWithoutIndexedProperties(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"text"}}, result.Rows)
 }
+
+// TestShowReturnStarIsTheYieldedColumns: RETURN * after a SHOW's YIELD lists
+// the yielded columns in YIELD order, through a WHERE or ORDER BY too, as in
+// Neo4j 5.26.30.
+func TestShowReturnStarIsTheYieldedColumns(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	full := []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"}
+	for query, want := range map[string][]string{
+		"SHOW FUNCTIONS YIELD name, category RETURN * LIMIT 1":              {"name", "category"},
+		"SHOW FUNCTIONS YIELD name AS n, category WHERE n = 'abs' RETURN *": {"n", "category"},
+		"SHOW FUNCTIONS YIELD * WHERE name = 'abs' RETURN *":                full,
+		"SHOW FUNCTIONS YIELD * ORDER BY name LIMIT 1 RETURN *":             full,
+		"SHOW FUNCTIONS YIELD category RETURN DISTINCT * ORDER BY category": {"category"},
+		"SHOW FUNCTIONS YIELD name, category RETURN *, 1 AS one LIMIT 1":    {"name", "category", "one"},
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Columns, query)
+	}
+}
