@@ -244,3 +244,25 @@ func TestReturnProjectionPlanIsParsedOncePerText(t *testing.T) {
 	returnProjectionPlans.RUnlock()
 	require.Equal(t, 1, size)
 }
+
+// TestEmptyProjectionItemIsSyntaxError: an empty RETURN or WITH item is
+// Neo4j's SyntaxError, wherever it is in the list.
+func TestEmptyProjectionItemIsSyntaxError(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+	for _, query := range []string{
+		"RETURN 1,,2",
+		"RETURN , 1",
+		"RETURN 1,",
+		"UNWIND [1] AS x RETURN x,, x + 1 AS y",
+		"WITH 1 AS a,, 2 AS b RETURN a",
+		"UNWIND [1] AS x WITH x, WHERE x > 0 RETURN x",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError", query)
+	}
+	result, err := exec.Execute(ctx, "WITH [1, 2] AS l, {a: 1, b: 2} AS m RETURN l, m.a AS a", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{int64(1), int64(2)}, int64(1)}}, result.Rows)
+}

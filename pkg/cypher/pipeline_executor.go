@@ -3487,10 +3487,8 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 		return plan
 	}
 	for _, rawItem := range splitTopLevelComma(body) {
+		// Semantic validation rejects an empty item (RETURN 1,,2).
 		item := strings.TrimSpace(rawItem)
-		if item == "" {
-			continue
-		}
 		expr, alias := item, item
 		if asIdx := strings.Index(strings.ToUpper(item), " AS "); asIdx > 0 {
 			expr = strings.TrimSpace(item[:asIdx])
