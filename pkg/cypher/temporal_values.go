@@ -705,3 +705,55 @@ func formatTemporalOffset(offset int) string {
 	}
 	return fmt.Sprintf("%c%02d:%02d:%02d", sign, hours, minutes, seconds)
 }
+
+// temporalConstructorTypes names the value each temporal constructor builds,
+// as Neo4j's errors name it.
+var temporalConstructorTypes = map[string]string{
+	"date":          "Date",
+	"datetime":      "DateTime",
+	"localdatetime": "LocalDateTime",
+	"time":          "Time",
+	"localtime":     "LocalTime",
+	"duration":      "Duration",
+}
+
+// isTemporalConstructor reports date, datetime, localdatetime, time,
+// localtime and duration.
+func isTemporalConstructor(function string) bool {
+	_, ok := temporalConstructorTypes[strings.ToLower(function)]
+	return ok
+}
+
+// temporalConstructorError is the statement error of a temporal constructor
+// that built no value from a non-null input, as Neo4j 5.26 reports it: a
+// SyntaxError for text it can't parse, ExecutionFailed for a map with
+// invalid fields, and ProcedureCallFailed for a value of another type. It is
+// nil for a null input, which gives null.
+func temporalConstructorError(function string, input interface{}) error {
+	typeName := temporalConstructorTypes[strings.ToLower(function)]
+	switch value := input.(type) {
+	case nil:
+		return nil
+	case string:
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
+			fmt.Sprintf("Text cannot be parsed to a %s\n%q\n ^", typeName, value))
+	case map[string]interface{}:
+		return newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",
+			fmt.Sprintf("invalid %s value: %v", typeName, value))
+	case bool:
+		return temporalCallSignatureError(typeName, fmt.Sprintf("Boolean('%t')", value))
+	case float32, float64:
+		return temporalCallSignatureError(typeName, fmt.Sprintf("Double(%v)", value))
+	}
+	if integer, ok := cypherIntegerValue(input); ok {
+		return temporalCallSignatureError(typeName, fmt.Sprintf("Long(%d)", integer))
+	}
+	return temporalCallSignatureError(typeName, fmt.Sprintf("%v", input))
+}
+
+// temporalCallSignatureError is Neo4j's error for a temporal constructor
+// called with a value of a type it doesn't take.
+func temporalCallSignatureError(typeName, provided string) error {
+	return newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument",
+		fmt.Sprintf("Invalid call signature for %sFunction: Provided input was [%s]", typeName, provided))
+}

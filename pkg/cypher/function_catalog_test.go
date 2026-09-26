@@ -140,3 +140,37 @@ func TestFunctionCatalogIsTheOneTable(t *testing.T) {
 	require.Len(t, result.Rows, count)
 	require.Len(t, builtInCypherFunctions, len(cypherFunctionCatalog))
 }
+
+// TestTemporalConstructorErrorsMatchNeo4j: a temporal constructor that can't
+// build a value from its input fails the statement with Neo4j 5.26.30's
+// error, on every route, instead of evaluating to null.
+func TestTemporalConstructorErrorsMatchNeo4j(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporalerr"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:TemporalErr {a: 1})", nil)
+	require.NoError(t, err)
+	for query, want := range map[string]string{
+		"RETURN date('x') AS v":                                        "SyntaxError: Text cannot be parsed to a Date",
+		"RETURN datetime('x') AS v":                                    "SyntaxError: Text cannot be parsed to a DateTime",
+		"RETURN localdatetime('x') AS v":                               "SyntaxError: Text cannot be parsed to a LocalDateTime",
+		"RETURN time('x') AS v":                                        "SyntaxError: Text cannot be parsed to a Time",
+		"WITH 'x' AS s RETURN localtime(s) AS v":                       "SyntaxError: Text cannot be parsed to a LocalTime",
+		"UNWIND ['x'] AS s RETURN duration(s) AS v":                    "SyntaxError: Text cannot be parsed to a Duration",
+		"RETURN datetime('2020-02-30T10:00') AS v":                     "SyntaxError",
+		"RETURN datetime(1) AS v":                                      "ProcedureCallFailed: Invalid call signature for DateTimeFunction: Provided input was [Long(1)]",
+		"RETURN time(true) AS v":                                       "ProcedureCallFailed: Invalid call signature for TimeFunction: Provided input was [Boolean('true')]",
+		"RETURN date({year: 'x'}) AS v":                                "Neo.DatabaseError.Statement.ExecutionFailed",
+		"CREATE (n:TemporalErr {d: datetime('x')}) RETURN n.d":         "Text cannot be parsed to a DateTime",
+		"MATCH (n:TemporalErr) WHERE datetime('x') IS NULL RETURN n.a": "Text cannot be parsed to a DateTime",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		require.Contains(t, err.Error(), want, query)
+	}
+	result, err := exec.Execute(ctx, "MATCH (n:TemporalErr) WHERE n.d IS NOT NULL RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows, "the failed CREATE stores nothing")
+	result, err = exec.Execute(ctx, "RETURN datetime(null) AS v, date('2020-01-01') IS NOT NULL AS w", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil, true}}, result.Rows)
+}
