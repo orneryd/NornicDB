@@ -252,10 +252,13 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 }
 
 // extractProcedureName extracts the procedure name from a CALL statement for error messages.
+// callProcedureNamePattern matches CALL followed by a procedure name
+// ("CALL db.labels()" -> "db.labels"). It is compiled once: authorization
+// looks up the procedure of every statement.
+var callProcedureNamePattern = regexp.MustCompile(`(?i)CALL\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)`)
+
 func extractProcedureName(cypher string) string {
-	// Match CALL followed by procedure name (e.g., "CALL db.labels()" -> "db.labels")
-	re := regexp.MustCompile(`(?i)CALL\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)`)
-	matches := re.FindStringSubmatch(cypher)
+	matches := callProcedureNamePattern.FindStringSubmatch(cypher)
 	if len(matches) > 1 {
 		return matches[1]
 	}
