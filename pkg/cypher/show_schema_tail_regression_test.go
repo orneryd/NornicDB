@@ -28,7 +28,8 @@ func TestShowSchemaYieldWhereReturn(t *testing.T) {
 		{"SHOW INDEXES YIELD name, labelsOrTypes WHERE name = 'alpha' RETURN labelsOrTypes", []string{"labelsOrTypes"}, [][]interface{}{{[]string{"A"}}}},
 		{"SHOW CONSTRAINTS YIELD name RETURN name ORDER BY name DESC", []string{"name"}, [][]interface{}{{"kz"}, {"ka"}}},
 		{"SHOW INDEXES YIELD name AS indexName WHERE name = 'alpha' RETURN indexName AS title", []string{"title"}, [][]interface{}{{"alpha"}}},
-		{"SHOW INDEXES YIELD * RETURN count(*) AS total", []string{"total"}, [][]interface{}{{int64(4)}}},
+		// The four range indexes and the two token lookup indexes (#530).
+		{"SHOW INDEXES YIELD * RETURN count(*) AS total", []string{"total"}, [][]interface{}{{int64(6)}}},
 		{"SHOW CONSTRAINTS YIELD name ORDER BY name LIMIT 1", []string{"name"}, [][]interface{}{{"ka"}}},
 		{"SHOW CONSTRAINTS YIELD name WHERE name = 'missing' RETURN count(*) AS total", []string{"total"}, [][]interface{}{{int64(0)}}},
 	} {

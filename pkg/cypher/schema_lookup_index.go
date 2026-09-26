@@ -30,7 +30,8 @@ var (
 func (e *StorageExecutor) executeCreateLookupIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	name, ifNotExists, entityType, ok := parseCreateLookupIndex(cypher)
 	if !ok {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE LOOKUP INDEX"), nil)
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			"Invalid CREATE LOOKUP INDEX: expected FOR (n) ON EACH labels(n) or FOR ()-[r]-() ON EACH type(r)")
 	}
 	if err := e.storage.GetSchema().AddLookupIndex(name, entityType); err != nil {
 		var localized *localization.LocalizedError
