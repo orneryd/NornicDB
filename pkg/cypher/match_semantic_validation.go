@@ -146,9 +146,7 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 			body = strings.TrimSpace(body[:index])
 		}
 	}
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	for _, raw := range splitTopLevelComma(body) {
 		expression, _ := parseProjectionExprAlias(strings.TrimSpace(raw))
 		if err := validateGraphFunctionSemanticTypes(expression, scope); err != nil {
@@ -435,9 +433,7 @@ func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSem
 			body = strings.TrimSpace(body[:index])
 		}
 	}
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 
 	output := make(matchSemanticScope)
 	for _, raw := range splitTopLevelComma(body) {

@@ -60,8 +60,22 @@ func TestCoverageLiftVectorRelationshipHelpers(t *testing.T) {
 	_, ok = exec.resolveCosineQueryVector(ctx, "''")
 	assert.False(t, ok)
 
-	assert.Equal(t, "n.score", trimOptionalDistinctPrefix(" DISTINCT n.score"))
-	assert.Equal(t, "DIST", trimOptionalDistinctPrefix("DIST"))
+	for text, want := range map[string]struct {
+		rest     string
+		distinct bool
+	}{
+		" DISTINCT n.score": {"n.score", true},
+		"DIST":              {"DIST", false},
+		"DISTINCT{a: 1}":    {"{a: 1}", true},
+		"distinct(n.g)":     {"(n.g)", true},
+		"DISTINCT\n x":      {"x", true},
+		"distinctName":      {"distinctName", false},
+		"DISTINCT":          {"DISTINCT", false},
+	} {
+		rest, distinct := cutDistinct(text)
+		assert.Equal(t, want.rest, rest, text)
+		assert.Equal(t, want.distinct, distinct, text)
+	}
 	assert.True(t, withProjectionContainsVariable([]returnItem{{expr: "e"}, {expr: "score"}}, "E"))
 	assert.False(t, withProjectionContainsVariable([]returnItem{{expr: "edge"}}, "e"))
 }

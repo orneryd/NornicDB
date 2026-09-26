@@ -522,7 +522,7 @@ func (e *StorageExecutor) analyzeReturnClause(query string) *PlanOperator {
 	}
 
 	// Check for DISTINCT
-	if len(returnClause) >= 8 && strings.EqualFold(strings.TrimSpace(returnClause)[:8], "DISTINCT") {
+	if _, distinct := cutDistinct(returnClause); distinct {
 		return &PlanOperator{
 			OperatorType:  "Distinct",
 			Description:   "Remove duplicates",

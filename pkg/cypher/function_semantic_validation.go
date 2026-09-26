@@ -70,7 +70,7 @@ func validateKnownFunctionsInExpression(expression string) error {
 
 func isNonFunctionSemanticKeyword(name string) bool {
 	switch name {
-	case "and", "call", "case", "create", "delete", "detach", "do", "else", "end", "foreach", "in", "match", "merge", "not", "on", "optional", "or", "remove", "return", "set", "starts", "then", "unwind", "when", "where", "with", "xor":
+	case "and", "call", "case", "create", "delete", "detach", "distinct", "do", "else", "end", "foreach", "in", "match", "merge", "not", "on", "optional", "or", "remove", "return", "set", "starts", "then", "unwind", "when", "where", "with", "xor":
 		return true
 	default:
 		return false

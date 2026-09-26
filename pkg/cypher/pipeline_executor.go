@@ -1572,7 +1572,7 @@ func (e *StorageExecutor) pipelineMatchHint(remaining []pipelineClause) pipeline
 		return hint
 	}
 	body := strings.TrimSpace(terminalReturn[len("RETURN"):])
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
+	if _, distinct := cutDistinct(body); distinct {
 		return hint
 	}
 	for _, item := range e.parseReturnItems(body) {
@@ -2744,10 +2744,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		}
 	}
 	withDistinct := false
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		withDistinct = true
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, withDistinct = cutDistinct(body)
 	if strings.TrimSpace(body) == "*" {
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
@@ -3225,10 +3222,7 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 	}
 	name = strings.ToLower(strings.TrimSpace(expr[:open]))
 	inner = strings.TrimSpace(extractFuncInner(expr))
-	if strings.HasPrefix(strings.ToUpper(inner), "DISTINCT ") {
-		distinct = true
-		inner = strings.TrimSpace(inner[len("DISTINCT "):])
-	}
+	inner, distinct = cutDistinct(inner)
 	if inner == "" {
 		return "", "", false, false
 	}
@@ -3469,10 +3463,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 	modifiers := strings.TrimSpace(body[modifierStart:])
 	body = strings.TrimSpace(body[:modifierStart])
 	returnDistinct := false
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		returnDistinct = true
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, returnDistinct = cutDistinct(body)
 	if body == "*" {
 		columns := pipelineWildcardColumns(rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}

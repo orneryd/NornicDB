@@ -4200,10 +4200,7 @@ func (e *StorageExecutor) executeJoinedRowsWithOptionalMatch(ctx context.Context
 	}
 
 	distinct := false
-	if strings.HasPrefix(strings.ToUpper(withClause), "DISTINCT ") {
-		distinct = true
-		withClause = strings.TrimSpace(withClause[9:])
-	}
+	withClause, distinct = cutDistinct(withClause)
 
 	withItems := e.splitWithItems(withClause)
 	type computedRow struct {
@@ -4716,9 +4713,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 			// COLLECT(DISTINCT expression) - may have suffix like [..10]
 			inner, suffix, _ := extractFuncArgsWithSuffix(item.expr, "collect")
 			// Skip "DISTINCT " prefix
-			if strings.HasPrefix(strings.ToUpper(inner), "DISTINCT ") {
-				inner = strings.TrimSpace(inner[9:])
-			}
+			inner, _ = cutDistinct(inner)
 			seen := make(map[string]bool) // Use string key for map comparison
 			var collected []interface{}
 
@@ -5262,10 +5257,7 @@ func (e *StorageExecutor) tryBuildJoinedGroupedCollectResult(ctx context.Context
 
 			// COLLECT and COLLECT(DISTINCT) over grouped rows.
 			inner, suffix, _ := extractFuncArgsWithSuffix(expr, "collect")
-			distinct := strings.HasPrefix(strings.ToUpper(strings.TrimSpace(inner)), "DISTINCT ")
-			if distinct {
-				inner = strings.TrimSpace(inner[len("DISTINCT "):])
-			}
+			inner, distinct := cutDistinct(inner)
 			collected := make([]interface{}, 0, len(g.rows))
 			seen := map[string]struct{}{}
 			for _, r := range g.rows {
