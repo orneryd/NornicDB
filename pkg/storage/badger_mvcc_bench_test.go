@@ -25,9 +25,33 @@ type mvccTombstoneBenchChain struct {
 	tombstoneVersions []MVCCVersion
 }
 
+// mvccBenchRetainedVersions is the history the MVCC benchmarks keep per
+// key: more than the longest chain they build (1,000 cycles of a live
+// version and a tombstone), so every version they read or prune exists.
+const mvccBenchRetainedVersions = 4096
+
+// newMVCCHistoryBenchEngine is an in-memory engine that keeps
+// mvccBenchRetainedVersions versions per key. The production default is
+// head-only (MaxVersionsPerKey = 0), under which prior versions aren't
+// archived, so the history and prune benchmarks would read or prune
+// nothing (#731).
+func newMVCCHistoryBenchEngine(b *testing.B) *MemoryEngine {
+	b.Helper()
+	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+		InMemory: true,
+		EngineOptions: EngineOptions{
+			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: mvccBenchRetainedVersions},
+		},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	return &MemoryEngine{BadgerEngine: engine}
+}
+
 func seedConcurrentPruneBenchEngine(b *testing.B, nodeCount, initialVersions int) *MemoryEngine {
 	b.Helper()
-	engine := NewMemoryEngine()
+	engine := newMVCCHistoryBenchEngine(b)
 	for i := 0; i < nodeCount; i++ {
 		id := NodeID(prefixTestID(fmt.Sprintf("bench-prune-concurrent-%03d", i)))
 		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
@@ -92,7 +116,7 @@ func startConcurrentPruneBenchWriter(engine *MemoryEngine, nodeCount int) func()
 
 func buildMVCCBenchChain(b *testing.B, chainLength int) mvccBenchChain {
 	b.Helper()
-	engine := NewMemoryEngine()
+	engine := newMVCCHistoryBenchEngine(b)
 	b.Cleanup(func() { _ = engine.Close() })
 
 	nodeID := NodeID(prefixTestID(fmt.Sprintf("bench-chain-%d", chainLength)))
@@ -139,7 +163,7 @@ func benchmarkMVCCChainPosition(b *testing.B, chainLength int, selector func([]M
 
 func buildMVCCTombstoneBenchChain(b *testing.B, cycles int) mvccTombstoneBenchChain {
 	b.Helper()
-	engine := NewMemoryEngine()
+	engine := newMVCCHistoryBenchEngine(b)
 	b.Cleanup(func() { _ = engine.Close() })
 
 	nodeID := NodeID(prefixTestID(fmt.Sprintf("bench-tombstone-chain-%d", cycles)))
@@ -421,7 +445,7 @@ func BenchmarkBadgerEngine_PruneMVCCVersions(b *testing.B) {
 		b.Run(fmt.Sprintf("versions=%d", versionsPerKey), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				engine := NewMemoryEngine()
+				engine := newMVCCHistoryBenchEngine(b)
 				nodeID := NodeID(prefixTestID(fmt.Sprintf("bench-prune-%d-%03d", versionsPerKey, i)))
 				_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
 				if err != nil {
