@@ -3167,7 +3167,11 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		return projections[index].expr, projections[index].alias
 	})
 	out := make([]pipelineRow, 0, len(rows))
-	orderScopes := make([]pipelineRow, 0, len(rows))
+	needsOrderScopes := len(orderTerms) > 0 || withDistinct
+	var orderScopes []pipelineRow
+	if needsOrderScopes {
+		orderScopes = make([]pipelineRow, 0, len(rows))
+	}
 	for _, row := range rows {
 		newRow := pipelineRow{}
 		for name, value := range row {
@@ -3176,19 +3180,14 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			}
 		}
 		ok := true
-		for _, rawItem := range items {
-			item := strings.TrimSpace(rawItem)
-			if item == "" || item == "{}" {
-				continue
-			}
-			// Same alias parsing as the aggregating path above, so a
-			// backtick-quoted alias is keyed identically here, in
-			// projectionAliases (DISTINCT) and in later clauses.
-			expr, alias := parseProjectionExprAlias(item)
-
+		// The items were parsed once above (projections), with the same
+		// alias parsing as the aggregating path, so a backtick-quoted alias is
+		// keyed identically here, in projectionAliases (DISTINCT) and in later
+		// clauses.
+		for _, projection := range projections {
 			// 1. Exact binding match.
-			if val, found := row[expr]; found {
-				newRow[alias] = val
+			if val, found := row[projection.expr]; found {
+				newRow[projection.alias] = val
 				continue
 			}
 
@@ -3196,8 +3195,8 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			// expression operator. Keep this as the only expression path so
 			// nested collection literals and postfix operations are parsed as a
 			// whole expression rather than mistaken for specialized shapes.
-			if value, projected := e.evaluateRowExpressionWithContext(ctx, expr, row); projected {
-				newRow[alias] = value
+			if value, projected := e.evaluateRowExpressionWithContext(ctx, projection.expr, row); projected {
+				newRow[projection.alias] = value
 				continue
 			}
 
@@ -3208,30 +3207,26 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		if !ok {
 			return nil, false
 		}
-		if postWithWhere != "" {
-			predicateScope := make(map[string]interface{}, len(row)+len(newRow))
+		// The WHERE, ORDER BY and DISTINCT see the incoming row with the
+		// projection over it; the merged scope is built only when one of them
+		// needs it.
+		var scope pipelineRow
+		if postWithWhere != "" || needsOrderScopes {
+			scope = make(pipelineRow, len(row)+len(newRow))
 			for name, value := range row {
-				predicateScope[name] = value
+				scope[name] = value
 			}
 			for name, value := range newRow {
-				predicateScope[name] = value
+				scope[name] = value
 			}
-			if !e.evaluateWithWhereCondition(ctx, postWithWhere, predicateScope) {
-				continue
-			}
+		}
+		if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, scope) {
+			continue
 		}
 		out = append(out, newRow)
-		orderScope := make(pipelineRow, len(row)+len(newRow)+len(orderedExpressions))
-		for name, value := range row {
-			orderScope[name] = value
+		if needsOrderScopes {
+			orderScopes = append(orderScopes, scope)
 		}
-		for _, ordered := range orderedExpressions {
-			orderScope[ordered.expression] = newRow[ordered.alias]
-		}
-		for name, value := range newRow {
-			orderScope[name] = value
-		}
-		orderScopes = append(orderScopes, orderScope)
 	}
 	if withDistinct {
 		out, orderScopes = deduplicatePipelineRowsWithScopes(out, orderScopes, projectionAliases)
@@ -3967,30 +3962,15 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		return result, err == nil
 	}
 
-	// Without DISTINCT, ORDER BY, SKIP or LIMIT the projected values are the
-	// result rows: no per-row map or ORDER BY scope is needed.
-	if modifiers == "" && !returnDistinct {
-		result.Rows = make([][]interface{}, 0, len(rows))
-		for _, row := range rows {
-			outRow := make([]interface{}, len(projs))
-			for index, p := range projs {
-				value, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
-				if !ok {
-					return nil, false
-				}
-				outRow[index] = value
-			}
-			result.Rows = append(result.Rows, outRow)
-		}
-		return result, true
-	}
-
+	// ORDER BY and DISTINCT see the incoming row with the projection over
+	// it; the merged scope is built only when one of them needs it.
 	orderTerms := parseOrderByTerms(modifiers)
-	orderedExpressions := orderedProjectionExpressions(orderTerms, len(projs), func(index int) (string, string) {
-		return projs[index].expr, projs[index].alias
-	})
+	needsOrderScopes := len(orderTerms) > 0 || returnDistinct
 	projectedRows := make([]pipelineRow, 0, len(rows))
-	orderScopes := make([]pipelineRow, 0, len(rows))
+	var orderScopes []pipelineRow
+	if needsOrderScopes {
+		orderScopes = make([]pipelineRow, 0, len(rows))
+	}
 	for _, row := range rows {
 		projected := make(pipelineRow, len(projs))
 		for _, p := range projs {
@@ -4000,7 +3980,11 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 			}
 			projected[p.alias] = val
 		}
-		scope := make(pipelineRow, len(row)+len(projected)+len(orderedExpressions))
+		projectedRows = append(projectedRows, projected)
+		if !needsOrderScopes {
+			continue
+		}
+		scope := make(pipelineRow, len(row)+len(projected))
 		for name, value := range row {
 			scope[name] = value
 		}
@@ -4010,13 +3994,12 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		for name, value := range projected {
 			scope[name] = value
 		}
-		projectedRows = append(projectedRows, projected)
 		orderScopes = append(orderScopes, scope)
 	}
 	if returnDistinct {
 		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(projectedRows, orderScopes, result.Columns)
 	}
-	if !e.orderPipelineRowsWithScopes(ctx, projectedRows, orderScopes, orderTerms) {
+	if !e.orderPipelineRowsWithScopes(projectedRows, orderScopes, orderTerms) {
 		return nil, false
 	}
 	skip := 0
@@ -4432,6 +4415,13 @@ func parseIntFast(s string) (int64, bool) {
 		}
 	}
 	if base == 10 {
+		// Only digits can follow the sign; checking first keeps text that
+		// isn't a number (n.name, e.uuid) from building a parse error.
+		for i := digits; i < len(s); i++ {
+			if s[i] < '0' || s[i] > '9' {
+				return 0, false
+			}
+		}
 		value, err := strconv.ParseInt(s, 10, 64)
 		return value, err == nil
 	}
@@ -4451,8 +4441,22 @@ func parseIntFast(s string) (int64, bool) {
 	return -int64(magnitude), true
 }
 
+// startsLikeDecimalNumber reports whether s can be a decimal number: after an
+// optional sign, a digit, or a '.' followed by a digit. Text that can't be one
+// (e.uuid, n.name) is rejected before strconv builds a parse error for it.
+func startsLikeDecimalNumber(s string) bool {
+	i := 0
+	if i < len(s) && (s[i] == '-' || s[i] == '+') {
+		i++
+	}
+	if i < len(s) && s[i] == '.' {
+		i++
+	}
+	return i < len(s) && s[i] >= '0' && s[i] <= '9'
+}
+
 func parseFloatFast(s string) (float64, bool) {
-	if !strings.ContainsAny(s, ".eE") {
+	if !strings.ContainsAny(s, ".eE") || !startsLikeDecimalNumber(s) {
 		return 0, false
 	}
 	f, err := strconv.ParseFloat(s, 64)

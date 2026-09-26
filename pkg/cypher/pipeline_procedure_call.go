@@ -60,6 +60,9 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		return nil, nil, false, nil
 	}
 	invocation := strings.TrimSpace(clause[:yieldIndex])
+	if err := validateProcedureCallArguments(invocation); err != nil {
+		return nil, nil, true, err
+	}
 	yieldBody := strings.TrimSpace(clause[yieldIndex+len("YIELD"):])
 	where := ""
 	if whereIndex := topLevelKeywordIndex(yieldBody, "WHERE"); whereIndex >= 0 {

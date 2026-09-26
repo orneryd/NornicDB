@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -135,4 +137,32 @@ func TestParseIntFast(t *testing.T) {
 	require.False(t, ok)
 	_, ok = parseIntFast("12x")
 	require.False(t, ok)
+}
+
+// TestFastNumberParsersMatchStrconv pins that the numeric pre-checks of
+// parseIntFast / parseFloatFast only skip text strconv would reject: every
+// input parses to the same result as before.
+func TestFastNumberParsersMatchStrconv(t *testing.T) {
+	for _, input := range []string{
+		"0", "7", "-7", "+7", "9223372036854775807", "9223372036854775808", "-9223372036854775808",
+		"1.5", ".5", "-.5", "+.5", "1e5", "1E-3", "-2.5e3", "0.0", "-0.0", "1.", "5.e2",
+		"e.uuid", "n.name", "e", "E5", ".e5", "-", "+", ".", "-.", "1a", "a1", "1.2.3",
+		"NaN", "Inf", "Infinity", "-Infinity", "1_000", "0x1F", "0o17", "",
+	} {
+		wantInt, errInt := strconv.ParseInt(input, 10, 64)
+		gotInt, okInt := parseIntFast(input)
+		if !strings.HasPrefix(strings.TrimLeft(input, "+-"), "0x") && !strings.HasPrefix(strings.TrimLeft(input, "+-"), "0o") {
+			require.Equal(t, errInt == nil, okInt, "parseIntFast(%q)", input)
+			if okInt {
+				require.Equal(t, wantInt, gotInt, "parseIntFast(%q)", input)
+			}
+		}
+		wantFloat, errFloat := strconv.ParseFloat(input, 64)
+		wantOK := errFloat == nil && strings.ContainsAny(input, ".eE")
+		gotFloat, okFloat := parseFloatFast(input)
+		require.Equal(t, wantOK, okFloat, "parseFloatFast(%q)", input)
+		if okFloat && wantFloat != 0 {
+			require.Equal(t, wantFloat, gotFloat, "parseFloatFast(%q)", input)
+		}
+	}
 }
