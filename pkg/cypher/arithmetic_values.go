@@ -3,6 +3,7 @@ package cypher
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -122,6 +123,9 @@ func numericArithmetic(op byte, left, right interface{}) (value interface{}, han
 	if !leftNumeric || !rightNumeric || isNonNumericArithmeticOperand(left) || isNonNumericArithmeticOperand(right) {
 		return nil, false, nil
 	}
+	if divisionByZero(op, left, right) {
+		return nil, false, nil
+	}
 	switch op {
 	case '+':
 		return l + r, true, nil
@@ -133,12 +137,91 @@ func numericArithmetic(op byte, left, right interface{}) (value interface{}, han
 		// IEEE 754: x / 0.0 is ±Inf and 0.0 / 0.0 is NaN.
 		return l / r, true, nil
 	case '%':
-		if r == 0 {
-			return nil, false, nil
-		}
+		// IEEE 754 remainder: x % 0.0 is NaN.
 		return math.Mod(l, r), true, nil
 	}
 	return nil, false, nil
+}
+
+// divisionByZeroError is Neo4j's error for an INTEGER / or % by zero.
+func divisionByZeroError() error {
+	return newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero")
+}
+
+// divisionByZero reports Neo4j's "/ by zero" ArithmeticError for numeric
+// operands: a / whose divisor is an INTEGER zero, whatever the dividend's
+// type, and a % of two INTEGERs with a zero divisor. A FLOAT 0.0 divisor, or
+// a % with a FLOAT operand, is IEEE 754 (±Infinity or NaN). A / of
+// literal-only operands is folded instead (foldedDivisionByZero).
+func divisionByZero(op byte, left, right interface{}) bool {
+	if op != '/' && op != '%' {
+		return false
+	}
+	if _, numeric := toFloat64(left); !numeric || left == nil || isNonNumericArithmeticOperand(left) {
+		return false
+	}
+	divisor, rightInt := cypherIntegerOperand(right)
+	if !rightInt || divisor != 0 {
+		return false
+	}
+	if op == '%' {
+		_, leftInt := cypherIntegerOperand(left)
+		return leftInt
+	}
+	return true
+}
+
+// foldedDivisionByZero is Neo4j's compile-time folding of a / whose operands
+// are literal-only expressions (numbers, arithmetic operators, parentheses):
+// a FLOAT divided by an INTEGER zero is ±Infinity (NaN for 0.0 / 0) rather
+// than the "/ by zero" error. An INTEGER dividend still fails, and an operand
+// with a variable, parameter or function call is not folded:
+// RETURN 1.0 / (1 - 1) is Infinity, RETURN toFloat(1) / 0 fails.
+func foldedDivisionByZero(leftExpr, rightExpr string, left, right interface{}) (interface{}, bool) {
+	if !divisionByZero('/', left, right) {
+		return nil, false
+	}
+	if _, leftInt := cypherIntegerOperand(left); leftInt {
+		return nil, false
+	}
+	if !isConstantNumericExpression(leftExpr) || !isConstantNumericExpression(rightExpr) {
+		return nil, false
+	}
+	dividend, _ := toFloat64(left)
+	zero := 0.0
+	return dividend / zero, true
+}
+
+// isConstantNumericExpression reports an expression made only of number
+// literals (decimal, float, exponent, hex, octal), arithmetic operators and
+// parentheses.
+func isConstantNumericExpression(expr string) bool {
+	numbers := 0
+	for i := 0; i < len(expr); {
+		ch := expr[i]
+		switch {
+		case ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '(' || ch == ')' ||
+			ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' || ch == '^':
+			i++
+		case ch >= '0' && ch <= '9' || ch == '.' && i+1 < len(expr) && expr[i+1] >= '0' && expr[i+1] <= '9':
+			numbers++
+			start := i
+			i++
+			for i < len(expr) {
+				c := expr[i]
+				if c >= '0' && c <= '9' || c == '.' || c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+					i++
+				} else if (c == '+' || c == '-') && (expr[i-1] == 'e' || expr[i-1] == 'E') && !strings.ContainsAny(expr[start:i], "xX") {
+					i++
+				} else {
+					break
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return numbers > 0
 }
 
 // isNonNumericArithmeticOperand reports values toFloat64 may accept but that

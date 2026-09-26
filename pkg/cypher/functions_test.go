@@ -1138,11 +1138,11 @@ func TestValueTypeFunction(t *testing.T) {
 		expected string
 	}{
 		{"valueType(null)", "NULL"},
-		{"valueType(true)", "BOOLEAN"},
-		{"valueType(123)", "INTEGER"},
-		{"valueType(3.14)", "FLOAT"},
-		{"valueType('hello')", "STRING"},
-		{"valueType([1, 2, 3])", "LIST"},
+		{"valueType(true)", "BOOLEAN NOT NULL"},
+		{"valueType(123)", "INTEGER NOT NULL"},
+		{"valueType(3.14)", "FLOAT NOT NULL"},
+		{"valueType('hello')", "STRING NOT NULL"},
+		{"valueType([1, 2, 3])", "LIST<INTEGER NOT NULL> NOT NULL"},
 	}
 
 	for _, tt := range tests {
@@ -2147,8 +2147,10 @@ func TestFunctionAdditionalMathNilAndFallbackBranches(t *testing.T) {
 		}
 	}
 
-	if got := e.evaluateExpressionWithContext(ctx, "isNaN('x')", nodes, rels); got != false {
-		t.Fatalf("isNaN('x') = %#v, want false", got)
+	// isNaN of a string is a type error in Neo4j; the expression evaluator
+	// reports errors as null.
+	if got := e.evaluateExpressionWithContext(ctx, "isNaN('x')", nodes, rels); got != nil {
+		t.Fatalf("isNaN('x') = %#v, want nil", got)
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(123)", nodes, rels); got != false {
 		t.Fatalf("isEmpty(123) = %#v, want false", got)
@@ -2534,7 +2536,7 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	}
 
 	// List conversion functions.
-	if got := e.evaluateExpressionWithContext(ctx, "toIntegerList(n.mixed)", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3), nil, nil, nil}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "toIntegerList(n.mixed)", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3), nil, int64(1), nil}, got) {
 		t.Fatalf("toIntegerList(n.mixed) unexpected: %#v", got)
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "toIntegerList('bad')", nodes, nil); got != nil {
@@ -2546,7 +2548,7 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "toFloatList('bad')", nodes, nil); got != nil {
 		t.Fatalf("toFloatList('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toBooleanList(n.mixedB)", nodes, nil); !reflect.DeepEqual([]interface{}{true, false, nil, nil}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "toBooleanList(n.mixedB)", nodes, nil); !reflect.DeepEqual([]interface{}{true, false, nil, true}, got) {
 		t.Fatalf("toBooleanList(n.mixedB) unexpected: %#v", got)
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "toBooleanList('bad')", nodes, nil); got != nil {
@@ -2560,13 +2562,13 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	}
 
 	// Utility + aggregate-in-expression branches.
-	if got := e.evaluateExpressionWithContext(ctx, "valueType({k: 1})", nodes, nil); got != "MAP" {
+	if got := e.evaluateExpressionWithContext(ctx, "valueType({k: 1})", nodes, nil); got != "MAP NOT NULL" {
 		t.Fatalf("valueType({k:1}) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "valueType([1])", nodes, nil); got != "LIST" {
+	if got := e.evaluateExpressionWithContext(ctx, "valueType([1])", nodes, nil); got != "LIST<INTEGER NOT NULL> NOT NULL" {
 		t.Fatalf("valueType([1]) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "valueType(n)", nodes, nil); got != "ANY" {
+	if got := e.evaluateExpressionWithContext(ctx, "valueType(n)", nodes, nil); got != "NODE NOT NULL" {
 		t.Fatalf("valueType(n) = %#v", got)
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "collect(null)", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
@@ -2672,20 +2674,17 @@ func TestFunctionFullMath_AdditionalInvalidInputBranches(t *testing.T) {
 		t.Fatalf("point.contains invalid input should be false, got %#v", got)
 	}
 
-	if got := e.evaluateExpressionWithContext(ctx, "isNaN('bad')", nodes, nil); got != false {
-		t.Fatalf("isNaN('bad') should be false, got %#v", got)
+	if got := e.evaluateExpressionWithContext(ctx, "isNaN('bad')", nodes, nil); got != nil {
+		t.Fatalf("isNaN('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "all(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
-		t.Fatalf("all invalid input should be false, got %#v", got)
-	}
-	if got := e.evaluateExpressionWithContext(ctx, "any(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
-		t.Fatalf("any invalid input should be false, got %#v", got)
-	}
-	if got := e.evaluateExpressionWithContext(ctx, "none(x IN 'bad' WHERE x > 0)", nodes, nil); got != true {
-		t.Fatalf("none invalid input should be true, got %#v", got)
-	}
-	if got := e.evaluateExpressionWithContext(ctx, "single(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
-		t.Fatalf("single invalid input should be false, got %#v", got)
+	// A string literal in a list position is rejected before evaluation
+	// (validateListOperands); evaluated anyway, it is the one-element list
+	// ['bad'], and 'bad' > 0 is null.
+	for _, function := range []string{"all", "any", "none", "single"} {
+		expression := function + "(x IN 'bad' WHERE x > 0)"
+		if got := e.evaluateExpressionWithContext(ctx, expression, nodes, nil); got != nil {
+			t.Fatalf("%s should be nil, got %#v", expression, got)
+		}
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "filter(x IN 'bad' WHERE x > 0)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
 		t.Fatalf("filter invalid input should return empty list, got %#v", got)

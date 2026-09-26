@@ -42,9 +42,9 @@ func isCompositeAllowedCommand(cypher string) bool {
 		"SHOW ALIASES", "SHOW LIMITS", "SHOW PROCEDURES", "SHOW FUNCTIONS", "SHOW SETTING",
 		// Schema introspection/DDL commands pass through to their own handlers
 		// which return more specific composite-root error messages.
-		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX",
+		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX", "SHOW LOOKUP INDEX",
 		"SHOW CONSTRAINT",
-		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX",
+		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX", "CREATE LOOKUP INDEX",
 		"CREATE CONSTRAINT",
 		"DROP INDEX", "DROP CONSTRAINT",
 		"CREATE DATABASE", "DROP DATABASE",
@@ -83,6 +83,8 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		run = e.executeCreateVectorIndex
 	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
 		run = e.executeCreateRangeIndex
+	} else if findMultiWordKeywordIndex(cypher, "CREATE", "LOOKUP INDEX") == 0 {
+		run = e.executeCreateLookupIndex
 	} else if strings.Contains(upper, "CREATE INDEX") {
 		run = e.executeCreateIndex
 	} else {
@@ -685,36 +687,17 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 	return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE INDEX"), nil)
 }
 
-// executeCreateRangeIndex handles CREATE RANGE INDEX commands.
-//
-// Supported syntax:
-//
-//	CREATE RANGE INDEX index_name IF NOT EXISTS FOR (n:Label) ON (n.property)
-//
-// Range indexes optimize queries with range predicates (>, <, >=, <=, BETWEEN).
+// executeCreateRangeIndex handles CREATE RANGE INDEX. In Neo4j 5 a RANGE
+// index is the default index CREATE INDEX makes, so the statement runs as
+// CREATE INDEX: single or composite properties, node or relationship
+// patterns, as SHOW INDEXES' createStatement writes it (#531, #530).
 func (e *StorageExecutor) executeCreateRangeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	parsed, err := e.parseCreateIndexDDL(cypher, "CREATE RANGE INDEX")
-	if err != nil {
+	start := findMultiWordKeywordIndex(cypher, "CREATE", "RANGE INDEX")
+	end, ok := keywordSpanAt(cypher, start, "CREATE RANGE INDEX")
+	if start < 0 || !ok {
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE RANGE INDEX"), nil)
 	}
-	if parsed.isRelationship {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE RANGE INDEX"), nil)
-	}
-
-	if len(parsed.properties) != 1 {
-		return nil, localizedError(localization.CypherSchemaRangeIndexSinglePropertyRequired(len(parsed.properties)), nil)
-	}
-
-	indexName := parsed.indexName
-	if indexName == "" {
-		indexName = fmt.Sprintf("range_idx_%s_%s", strings.ToLower(parsed.label), parsed.properties[0])
-	}
-
-	if err := e.storage.GetSchema().AddRangeIndex(indexName, parsed.label, parsed.properties[0]); err != nil {
-		return nil, localizedError(localization.CypherSchemaCreateRangeIndexFailed(err), err)
-	}
-
-	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	return e.executeCreateIndex(ctx, "CREATE INDEX"+cypher[end:])
 }
 
 type parsedCreateIndexDDL struct {
@@ -1310,8 +1293,14 @@ func splitDDLOptionsTail(s string) (expr string, optionsTail string) {
 	return s, ""
 }
 
+// parseConstraintQualifiedProperty reads a constraint's single property,
+// n.prop, also in the parentheses Neo4j writes it with in a createStatement:
+// (n.prop).
 func parseConstraintQualifiedProperty(expr string) (string, string, bool) {
 	expr = strings.TrimSpace(expr)
+	if inner, wrapped := stripEnclosingExpressionParentheses(expr); wrapped {
+		expr = strings.TrimSpace(inner)
+	}
 	if strings.ContainsAny(expr, ",()") {
 		return "", "", false
 	}

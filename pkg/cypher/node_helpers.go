@@ -186,31 +186,46 @@ func nodeVersionAtNanos(node *storage.Node, createdAt int64) int64 {
 //	result := exec.edgeToMap(edge)
 //	// result = {"_edgeId": "e1", "type": "KNOWS", "startNode": "n1", ...}
 func (e *StorageExecutor) edgeToMap(edge *storage.Edge) map[string]interface{} {
-	props := edge.Properties
-	be := unwrapBadgerEngine(e.storage)
-	if be != nil {
-		nowNanos := storage.DecayScoringTime()
-		createdAt := edge.CreatedAt.UnixNano()
-		versionAt := createdAt
-		if !edge.UpdatedAt.IsZero() {
-			versionAt = edge.UpdatedAt.UnixNano()
-		}
-		filtered := make(map[string]interface{}, len(edge.Properties))
-		for k, v := range edge.Properties {
-			if be.FilterEdgePropertyByDecay(edge.ID, edge.Type, k, createdAt, versionAt, nowNanos) {
-				continue
-			}
-			filtered[k] = v
-		}
-		props = filtered
-	}
 	return map[string]interface{}{
 		"_edgeId":    string(edge.ID),
 		"type":       edge.Type,
 		"startNode":  string(edge.StartNode),
 		"endNode":    string(edge.EndNode),
-		"properties": props,
+		"properties": e.decayVisibleEdgeProperties(edge),
 	}
+}
+
+// decayVisibleEdgeProperties returns edge's properties without the ones decay
+// hides at the current scoring time (the edge's own map when decay filtering
+// doesn't apply).
+func (e *StorageExecutor) decayVisibleEdgeProperties(edge *storage.Edge) map[string]interface{} {
+	be := unwrapBadgerEngine(e.storage)
+	if be == nil {
+		return edge.Properties
+	}
+	nowNanos := storage.DecayScoringTime()
+	createdAt := edge.CreatedAt.UnixNano()
+	versionAt := createdAt
+	if !edge.UpdatedAt.IsZero() {
+		versionAt = edge.UpdatedAt.UnixNano()
+	}
+	filtered := make(map[string]interface{}, len(edge.Properties))
+	for k, v := range edge.Properties {
+		if be.FilterEdgePropertyByDecay(edge.ID, edge.Type, k, createdAt, versionAt, nowNanos) {
+			continue
+		}
+		filtered[k] = v
+	}
+	return filtered
+}
+
+// procedureRelationship is a relationship a procedure yields: the
+// relationship itself (Neo4j's RELATIONSHIP, so `rel.prop` and Bolt see a
+// relationship, not a map), with the properties decay hides removed.
+func (e *StorageExecutor) procedureRelationship(edge *storage.Edge) *storage.Edge {
+	visible := *edge
+	visible.Properties = e.decayVisibleEdgeProperties(edge)
+	return &visible
 }
 
 // extractVarName extracts the variable name from a pattern like "(n:Label {...})".

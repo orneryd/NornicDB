@@ -189,7 +189,12 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 		for variable, value := range row.values {
 			scope[variable] = value
 		}
-		if value, evaluated := e.evaluateRowExpression(projection, scope); evaluated {
+		value, evaluated, err := e.evaluateRowValue(projection, scope)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
+		}
+		if evaluated {
 			values = append(values, value)
 			continue
 		}
@@ -202,6 +207,18 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 // evaluator with graph expressions that require storage access. Callers with
 // an execution context use this as the converged expression entry point.
 func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
+	// A row variable, or a plain property chain on one (e.uuid), resolves
+	// without the graph-expression checks below, which can't match it.
+	if value, bound := values[expr]; bound {
+		return value, true
+	}
+	if variable, chain, ok := rowPropertyChainShape(expr); ok {
+		if base, bound := values[variable]; bound {
+			if value, resolved := evaluateRowPropertyChain(base, chain); resolved {
+				return value, true
+			}
+		}
+	}
 	if plan := planRowSubqueries(strings.TrimSpace(expr)); plan != nil {
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, values)
 		return e.evaluateRowExpressionWithContext(ctx, rewritten, extended)
@@ -225,50 +242,38 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 			return int64(len(items)), true
 		}
 	}
-	value, resolved := e.evaluateRowExpression(expr, values)
-	// A =~ with a non-string operand or an invalid pattern evaluates to null
-	// in the row evaluator; report it as the statement error.
-	if strings.Contains(expr, "=~") {
-		e.recordRowRegexFailure(ctx, expr, values)
+	// The row evaluator's error is the statement's: it is recorded, and the
+	// expression is unresolved.
+	value, resolved, err := e.evaluateRowValue(expr, values)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, false
 	}
-	if !resolved {
-		if e.recordRowSizeArgumentFailure(ctx, expr, values) {
+	if !resolved && containsRelExistencePattern(expr) {
+		// The row evaluator doesn't read the graph: an expression with a
+		// relationship pattern inside an operator or comprehension
+		// (size([(n)--() | 1]) > 0, [x IN l | size([(x)-->() | 1])]) is
+		// evaluated whole by the shared evaluator against the row's entities
+		// and values, recording its errors on ctx. Text it doesn't recognize
+		// comes back unchanged: unresolved. Other expressions the row
+		// evaluator leaves unresolved stay unresolved (a malformed literal
+		// such as [, ] is a syntax error, not a value). Subquery expressions
+		// were evaluated above.
+		trimmed := strings.TrimSpace(expr)
+		nodes, rels := entityScopesFromValues(values)
+		value, resolved = e.evaluateExpressionWithContextDefined(withValueBindings(ctx, values), trimmed, nodes, rels)
+		if getExpressionFailure(ctx) != nil {
 			return nil, false
 		}
-		arithmeticExpr := strings.TrimSpace(expr)
-		for {
-			inner, enclosed := stripEnclosingExpressionParentheses(arithmeticExpr)
-			if !enclosed {
-				break
-			}
-			arithmeticExpr = inner
-		}
-		// The row evaluator reports an arithmetic error (division by zero,
-		// INTEGER overflow, a non-arithmetic operand) as "unresolved"; record
-		// the statement error for the top-level operator.
-		for _, tier := range []string{"+-", "*/%"} {
-			left, right, operator, arithmetic := splitRowArithmeticTier(arithmeticExpr, tier)
-			if !arithmetic {
-				continue
-			}
-			leftValue, leftOK := e.evaluateRowExpression(left, values)
-			rightValue, rightOK := e.evaluateRowExpression(right, values)
-			if !leftOK || !rightOK {
-				break
-			}
-			if divisor, numeric := toFloat64(rightValue); (operator == '/' || operator == '%') && leftValue != nil && numeric && divisor == 0 {
-				recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero"))
-			} else if err := arithmeticError(operator, leftValue, rightValue); err != nil {
-				recordExpressionFailure(ctx, err)
-			}
-			break
+		if text, ok := value.(string); ok && text == trimmed && !isWholeCypherQuotedString(trimmed) {
+			return nil, false
 		}
 	}
 	if function, arguments, functionCall := parseFunctionCallWS(strings.TrimSpace(expr)); functionCall && strings.EqualFold(function, "substring") {
 		parts := splitTopLevelComma(arguments)
 		if len(parts) == 2 || len(parts) == 3 {
 			for _, argument := range parts[1:] {
-				position, valid := e.evaluateRowExpression(argument, values)
+				position, valid, _ := e.evaluateRowValue(argument, values)
 				if numeric, ok := toInt(position); valid && ok && numeric < 0 {
 					recordExpressionFailure(ctx, newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidSubstringIndex", "Cannot handle negative start index nor negative length"))
 					break
@@ -277,29 +282,4 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		}
 	}
 	return value, resolved
-}
-
-// recordRowRegexFailure records the error of a top-level text =~ pattern
-// whose operands are not strings or whose pattern is invalid.
-func (e *StorageExecutor) recordRowRegexFailure(ctx context.Context, expr string, values pipelineRow) {
-	expression := strings.TrimSpace(expr)
-	for {
-		inner, enclosed := stripEnclosingExpressionParentheses(expression)
-		if !enclosed {
-			break
-		}
-		expression = inner
-	}
-	left, right, regex := splitByOperatorWithOptions(expression, "=~", false, true)
-	if !regex {
-		return
-	}
-	leftValue, leftOK := e.evaluateRowExpression(left, values)
-	rightValue, rightOK := e.evaluateRowExpression(right, values)
-	if !leftOK || !rightOK {
-		return
-	}
-	if _, err := cypherRegexMatch(leftValue, rightValue); err != nil {
-		recordExpressionFailure(ctx, err)
-	}
 }

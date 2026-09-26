@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,17 +39,26 @@ func toFloat32Slice(v interface{}) []float32 {
 	return convert.ToFloat32Slice(v)
 }
 
-// yieldClause represents parsed YIELD information from a CALL statement.
-// Syntax: CALL procedure() YIELD var1, var2 AS alias WHERE condition RETURN ... ORDER BY ... LIMIT n SKIP m
+// yieldClause is a procedure call's YIELD: the yielded columns with their
+// aliases, and the WHERE, ORDER BY, SKIP and LIMIT that may follow them, in
+// that order (YIELD items [WHERE p] [ORDER BY o] [SKIP s] [LIMIT l]). They
+// see the aliases, as a WITH's do. A RETURN after the YIELD isn't part of it:
+// it starts the query's tail.
 type yieldClause struct {
-	items      []yieldItem // List of yielded items (possibly with aliases)
-	yieldAll   bool        // YIELD * - return all columns
-	where      string      // Optional WHERE condition after YIELD
-	hasReturn  bool        // Whether there's a RETURN clause after
-	returnExpr string      // The RETURN expression if present
-	orderBy    string      // ORDER BY clause (e.g., "score DESC")
-	limit      int         // LIMIT value (-1 if not specified)
-	skip       int         // SKIP value (-1 if not specified)
+	items    []yieldItem // List of yielded items (possibly with aliases)
+	yieldAll bool        // YIELD * - return all columns
+	where    string      // WHERE predicate, "" when absent
+	orderBy  string      // ORDER BY items, "" when absent
+	skip     string      // SKIP expression, "" when absent
+	limit    string      // LIMIT expression, "" when absent
+	// misplacedWhere is a WHERE after ORDER BY / SKIP / LIMIT, which Cypher
+	// rejects.
+	misplacedWhere bool
+}
+
+// hasModifiers reports whether the YIELD filters, orders or pages its rows.
+func (y *yieldClause) hasModifiers() bool {
+	return y.where != "" || y.orderBy != "" || y.skip != "" || y.limit != ""
 }
 
 // yieldItem represents a single item in a YIELD clause
@@ -63,7 +73,10 @@ type callSplit struct {
 }
 
 // parseYieldClause extracts YIELD information from a CALL statement.
-// Handles: YIELD *, YIELD a, b, YIELD a AS x, b AS y, YIELD a WHERE a.score > 0.5
+// Handles: YIELD *, YIELD a, b, YIELD a AS x, b AS y, YIELD a WHERE a.score > 0.5,
+// YIELD a ORDER BY a SKIP 1 LIMIT 2. Keywords are found at the top level, so
+// a WHERE / ORDER inside a subquery, a list or a string, and the WITH of
+// STARTS WITH, belong to the expression they are in.
 func parseYieldClause(cypher string) *yieldClause {
 	// Normalize whitespace: replace newlines/tabs with spaces for keyword detection
 	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
@@ -71,183 +84,66 @@ func parseYieldClause(cypher string) *yieldClause {
 	if yieldIdx == -1 {
 		return nil
 	}
+	result := &yieldClause{items: []yieldItem{}}
 
-	result := &yieldClause{
-		items: []yieldItem{},
-		limit: -1,
-		skip:  -1,
-	}
-
-	// Get everything after YIELD
 	afterYield := strings.TrimSpace(normalized[yieldIdx+len("YIELD"):])
-
-	// Check for YIELD *
-	trimmedYield := strings.TrimSpace(afterYield)
-	if len(trimmedYield) > 0 && trimmedYield[0] == '*' {
+	if len(afterYield) > 0 && afterYield[0] == '*' {
 		result.yieldAll = true
 		afterYield = strings.TrimSpace(afterYield[1:])
 	}
 
 	// Limit YIELD parsing to the CALL-clause scope only. Anything after the first
-	// outer clause boundary belongs to the subsequent query pipeline.
+	// outer clause boundary (and a RETURN) belongs to the subsequent query.
 	yieldScope := scopeYieldToCallClause(afterYield)
-	whereIdx := findKeywordIndexInContext(yieldScope, "WHERE")
-	returnIdx := findKeywordIndexInContext(yieldScope, "RETURN")
-	orderIdx := findKeywordIndexInContext(yieldScope, "ORDER")
-	limitIdx := findKeywordIndexInContext(yieldScope, "LIMIT")
-	skipIdx := findKeywordIndexInContext(yieldScope, "SKIP")
+	if returnIdx := topLevelKeywordIndex(yieldScope, "RETURN"); returnIdx >= 0 {
+		yieldScope = strings.TrimSpace(yieldScope[:returnIdx])
+	}
+	whereIdx := topLevelKeywordIndex(yieldScope, "WHERE")
+	orderIdx := topLevelKeywordIndex(yieldScope, "ORDER")
+	skipIdx := topLevelKeywordIndex(yieldScope, "SKIP")
+	limitIdx := topLevelKeywordIndex(yieldScope, "LIMIT")
+	positions := []int{whereIdx, orderIdx, skipIdx, limitIdx}
 
-	// Extract WHERE clause if present
-	if whereIdx != -1 {
-		whereEnd := len(yieldScope)
-		for _, idx := range []int{returnIdx, orderIdx, limitIdx, skipIdx} {
-			if idx != -1 && idx > whereIdx && idx < whereEnd {
-				whereEnd = idx
+	// part returns the text of the keyword at start, up to the next keyword.
+	part := func(start, keywordLen int) string {
+		end := len(yieldScope)
+		for _, idx := range positions {
+			if idx > start && idx < end {
+				end = idx
 			}
 		}
-		if whereEnd > whereIdx+5 {
-			result.where = strings.TrimSpace(yieldScope[whereIdx+5 : whereEnd])
-		} else {
-			result.where = strings.TrimSpace(yieldScope[whereIdx+5:])
+		return strings.TrimSpace(yieldScope[start+keywordLen : end])
+	}
+	if whereIdx >= 0 {
+		result.where = part(whereIdx, len("WHERE"))
+		for _, idx := range []int{orderIdx, skipIdx, limitIdx} {
+			if idx >= 0 && idx < whereIdx {
+				result.misplacedWhere = true
+			}
 		}
 	}
-
-	// Extract RETURN clause if present (strip and parse ORDER BY, LIMIT, SKIP)
-	if returnIdx != -1 {
-		result.hasReturn = true
-		returnPart := strings.TrimSpace(yieldScope[returnIdx+6:])
-
-		// Find ORDER BY, LIMIT, SKIP positions
-		orderIdx := findKeywordIndexInContext(returnPart, "ORDER")
-		limitIdx := findKeywordIndexInContext(returnPart, "LIMIT")
-		skipIdx := findKeywordIndexInContext(returnPart, "SKIP")
-
-		// Find where RETURN items end
-		endIdx := len(returnPart)
-		if orderIdx != -1 {
-			endIdx = min(endIdx, orderIdx)
+	if orderIdx >= 0 {
+		orderBy := part(orderIdx, len("ORDER"))
+		if len(orderBy) >= len("BY") && strings.EqualFold(orderBy[:len("BY")], "BY") {
+			orderBy = strings.TrimSpace(orderBy[len("BY"):])
 		}
-		if limitIdx != -1 {
-			endIdx = min(endIdx, limitIdx)
-		}
-		if skipIdx != -1 {
-			endIdx = min(endIdx, skipIdx)
-		}
-
-		result.returnExpr = strings.TrimSpace(returnPart[:endIdx])
-
-		// Parse ORDER BY clause
-		if orderIdx != -1 {
-			// Find end of ORDER BY (at LIMIT, SKIP, or end of string)
-			orderEnd := len(returnPart)
-			if limitIdx != -1 && limitIdx > orderIdx {
-				orderEnd = min(orderEnd, limitIdx)
-			}
-			if skipIdx != -1 && skipIdx > orderIdx {
-				orderEnd = min(orderEnd, skipIdx)
-			}
-			orderPart := strings.TrimSpace(returnPart[orderIdx:orderEnd])
-			// Strip "ORDER BY" prefix
-			if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER BY") {
-				result.orderBy = strings.TrimSpace(orderPart[8:])
-			} else if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER") {
-				result.orderBy = strings.TrimSpace(orderPart[5:])
-			}
-		}
-
-		// Parse LIMIT value
-		if limitIdx != -1 {
-			limitEnd := len(returnPart)
-			if skipIdx != -1 && skipIdx > limitIdx {
-				limitEnd = skipIdx
-			}
-			limitPart := strings.TrimSpace(returnPart[limitIdx+5 : limitEnd])
-			// Extract just the number
-			limitPart = strings.TrimSpace(strings.Split(limitPart, " ")[0])
-			if n, err := strconv.Atoi(limitPart); err == nil {
-				result.limit = n
-			}
-		}
-
-		// Parse SKIP value
-		if skipIdx != -1 {
-			skipEnd := len(returnPart)
-			if limitIdx != -1 && limitIdx > skipIdx {
-				skipEnd = limitIdx
-			}
-			skipPart := strings.TrimSpace(returnPart[skipIdx+4 : skipEnd])
-			// Extract just the number
-			skipPart = strings.TrimSpace(strings.Split(skipPart, " ")[0])
-			if n, err := strconv.Atoi(skipPart); err == nil {
-				result.skip = n
-			}
-		}
-	} else {
-		// No RETURN clause - parse ORDER BY, LIMIT, SKIP directly from afterYield
-		// Parse ORDER BY clause
-		if orderIdx != -1 {
-			// Find end of ORDER BY (at LIMIT, SKIP, or end of string)
-			orderEnd := len(yieldScope)
-			if limitIdx != -1 && limitIdx > orderIdx {
-				orderEnd = min(orderEnd, limitIdx)
-			}
-			if skipIdx != -1 && skipIdx > orderIdx {
-				orderEnd = min(orderEnd, skipIdx)
-			}
-			orderPart := strings.TrimSpace(yieldScope[orderIdx:orderEnd])
-			// Strip "ORDER BY" prefix
-			if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER BY") {
-				result.orderBy = strings.TrimSpace(orderPart[8:])
-			} else if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER") {
-				result.orderBy = strings.TrimSpace(orderPart[5:])
-			}
-		}
-
-		// Parse LIMIT value
-		if limitIdx != -1 {
-			limitEnd := len(yieldScope)
-			if skipIdx != -1 && skipIdx > limitIdx {
-				limitEnd = skipIdx
-			}
-			if orderIdx != -1 && orderIdx > limitIdx {
-				limitEnd = min(limitEnd, orderIdx)
-			}
-			limitPart := strings.TrimSpace(yieldScope[limitIdx+5 : limitEnd])
-			// Extract just the number
-			limitPart = strings.TrimSpace(strings.Split(limitPart, " ")[0])
-			if n, err := strconv.Atoi(limitPart); err == nil {
-				result.limit = n
-			}
-		}
-
-		// Parse SKIP value
-		if skipIdx != -1 {
-			skipEnd := len(yieldScope)
-			if limitIdx != -1 && limitIdx > skipIdx {
-				skipEnd = limitIdx
-			}
-			if orderIdx != -1 && orderIdx > skipIdx {
-				skipEnd = min(skipEnd, orderIdx)
-			}
-			skipPart := strings.TrimSpace(yieldScope[skipIdx+4 : skipEnd])
-			// Extract just the number
-			skipPart = strings.TrimSpace(strings.Split(skipPart, " ")[0])
-			if n, err := strconv.Atoi(skipPart); err == nil {
-				result.skip = n
-			}
-		}
+		result.orderBy = orderBy
+	}
+	if skipIdx >= 0 {
+		result.skip = part(skipIdx, len("SKIP"))
+	}
+	if limitIdx >= 0 {
+		result.limit = part(limitIdx, len("LIMIT"))
 	}
 
 	// Parse yield items (if not YIELD *)
 	if !result.yieldAll {
-		// Get the items part (before WHERE, RETURN, ORDER, LIMIT, SKIP)
 		itemsEnd := len(yieldScope)
-		for _, idx := range []int{whereIdx, returnIdx, orderIdx, limitIdx, skipIdx} {
+		for _, idx := range positions {
 			if idx != -1 && idx < itemsEnd {
 				itemsEnd = idx
 			}
 		}
-
 		itemsStr := strings.TrimSpace(yieldScope[:itemsEnd])
 		if itemsStr != "" {
 			// Split by comma, respecting AS keyword
@@ -256,17 +152,13 @@ func parseYieldClause(cypher string) *yieldClause {
 				if item == "" {
 					continue
 				}
-
 				yi := yieldItem{}
-				// Check for AS alias
 				upperItem := strings.ToUpper(item)
-				asIdx := strings.Index(upperItem, " AS ")
-				if asIdx != -1 {
+				if asIdx := strings.Index(upperItem, " AS "); asIdx != -1 {
 					yi.name = strings.TrimSpace(item[:asIdx])
 					yi.alias = strings.TrimSpace(item[asIdx+4:])
 				} else {
 					yi.name = item
-					yi.alias = ""
 				}
 				result.items = append(result.items, yi)
 			}
@@ -294,7 +186,7 @@ func findYieldOuterBoundary(afterYield string) int {
 		"WITH", "MATCH", "OPTIONAL", "UNWIND", "CALL",
 		"CREATE", "MERGE", "SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD",
 	} {
-		if idx := findKeywordIndexInContext(afterYield, kw); idx != -1 && idx < scopeEnd {
+		if idx := topLevelKeywordIndex(afterYield, kw); idx != -1 && idx < scopeEnd {
 			scopeEnd = idx
 		}
 	}
@@ -395,9 +287,11 @@ func tailStartsWithMatchClause(tail string) bool {
 	return strings.HasPrefix(trimmed, "MATCH ") || strings.HasPrefix(trimmed, "OPTIONAL MATCH ")
 }
 
+// expectedReturnColumnsFromTail is the column names of the tail's RETURN:
+// the one outside any CALL { } subquery, whose own RETURN is inside braces.
 func expectedReturnColumnsFromTail(tail string) []string {
 	trimmed := strings.TrimSpace(tail)
-	retIdx := findKeywordIndexInContext(trimmed, "RETURN")
+	retIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if retIdx == -1 {
 		return nil
 	}
@@ -407,7 +301,7 @@ func expectedReturnColumnsFromTail(tail string) []string {
 	}
 	end := len(returnPart)
 	for _, kw := range []string{"ORDER", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndexInContext(returnPart, kw); idx != -1 && idx < end {
+		if idx := topLevelKeywordIndex(returnPart, kw); idx != -1 && idx < end {
 			end = idx
 		}
 	}
@@ -444,6 +338,21 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
 		return projected, err
 	}
+	// A tail that doesn't start with MATCH (WITH, UNWIND, RETURN, a chained
+	// CALL, …) runs as one pipeline over every yielded row, so aggregation,
+	// ORDER BY and SKIP / LIMIT see all of them. MATCH tails keep their fused
+	// operators below and reach the pipeline before the per-row fallback.
+	if !tailStartsWithMatchClause(tail) && !isPotentialWriteTail(tail) {
+		// WITH … [WHERE] RETURN … projections keep their compiled row
+		// projection, which declines aggregation, DISTINCT and SKIP / LIMIT
+		// expressions.
+		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tail, expectedReturnColumnsFromTail(tail)); ok || err != nil {
+			return projected, err
+		}
+		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+			return pipelined, err
+		}
+	}
 	if pipelined, ok, err := e.tryExecuteCallTailProcedurePipeline(ctx, seed, tail); ok || err != nil {
 		return pipelined, err
 	}
@@ -478,77 +387,48 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 			return projected, err
 		}
 	}
-	// Fallback fast path for read-only tails: execute per-row tails concurrently.
-	// This preserves current semantics while reducing wall-clock fixed cost for
-	// CALL ... YIELD ... MATCH/RETURN tails that cannot use the set-based route.
+	if !isPotentialWriteTail(tail) {
+		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+			return pipelined, err
+		}
+	}
+	// Fallback fast path for read-only tails the pipeline declines: execute
+	// per-row tails concurrently. It runs the tail once per yielded row, so it
+	// can't aggregate across rows.
 	if len(seed.Rows) > 1 && !isPotentialWriteTail(tail) {
 		if parallel, ok, err := e.executeCallTailParallel(ctx, seed, tail, usedCols, expectedCols); ok || err != nil {
 			return parallel, err
 		}
 	}
 
-	var combined *ExecuteResult
-	for _, row := range seed.Rows {
-		params := map[string]interface{}{}
-		prefix := make([]string, 0, len(usedCols)+2)
-		withBindings := make([]string, 0, len(usedCols))
-		predicates := make([]string, 0, len(usedCols))
-		tailIsMatch := tailStartsWithMatchClause(tail)
-
-		for _, i := range usedCols {
-			if i >= len(row) {
-				continue
-			}
-			col := seed.Columns[i]
-			val := row[i]
-			if node, ok := val.(*storage.Node); ok {
-				pname := "seed_id_" + col
-				if node != nil {
-					params[pname] = string(node.ID)
-				} else {
-					params[pname] = nil
-				}
-				if tailIsMatch {
-					predicates = append(predicates, fmt.Sprintf("id(%s) = $%s", col, pname))
-				} else {
-					prefix = append(prefix, fmt.Sprintf("MATCH (%s) WHERE id(%s) = $%s", col, col, pname))
-					withBindings = append(withBindings, col)
-				}
-				continue
-			}
-			pname := "seed_" + col
-			params[pname] = val
-			withBindings = append(withBindings, fmt.Sprintf("$%s AS %s", pname, col))
-		}
-
-		query := buildCallTailPredicateInjection(tail, predicates)
-		if len(withBindings) > 0 {
-			prefix = append(prefix, "WITH "+strings.Join(withBindings, ", "))
-		}
-		if len(prefix) > 0 {
-			query = strings.Join(prefix, " ") + " " + query
-		}
-
-		inner, err := e.executeInternal(ctx, query, params)
+	results := make([]callTailRowResult, len(seed.Rows))
+	for i, row := range seed.Rows {
+		res, err := e.executeCallTailSingleRow(ctx, seed.Columns, row, tail, usedCols, expectedCols)
+		results[i] = callTailRowResult{idx: i, res: res, err: err}
 		if err != nil {
-			return nil, err
+			break
 		}
-		if len(expectedCols) > 0 && len(expectedCols) == len(inner.Columns) {
-			inner.Columns = append([]string{}, expectedCols...)
-		}
-		if combined == nil {
-			combined = &ExecuteResult{
-				Columns: append([]string{}, inner.Columns...),
-				Rows:    make([][]interface{}, 0, len(inner.Rows)),
-			}
-		}
-		combined.Rows = append(combined.Rows, inner.Rows...)
 	}
+	return combineCallTailRowResults(results, expectedCols)
+}
 
-	if combined == nil {
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+// executeCallTailPipeline runs the clauses after CALL … YIELD as one pipeline
+// (runPipelineClauses) whose input rows are the procedure's yielded rows. It
+// declines (ok false) when a tail clause isn't a pipeline clause.
+func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+	clauses, ok := pipelineClausesFor(tail)
+	if !ok || len(clauses) == 0 {
+		return nil, false, nil
 	}
-	return combined, nil
+	rows := make([]pipelineRow, 0, len(seed.Rows))
+	for _, row := range seed.Rows {
+		rows = append(rows, callTailRow(ctx, seed, row))
+	}
+	scope := make(map[string]struct{}, len(seed.Columns))
+	for _, column := range seed.Columns {
+		scope[column] = struct{}{}
+	}
+	return e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
 }
 
 func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
@@ -567,7 +447,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 
 	rows := make([]pipelineRow, 0, len(seed.Rows))
 	for _, row := range seed.Rows {
-		rows = append(rows, pipelineRow(seedValuesForRow(seed, row)))
+		rows = append(rows, callTailRow(ctx, seed, row))
 	}
 	projected, ok := e.pipelineApplyWith(ctx, rows, prefix)
 	if !ok {
@@ -584,7 +464,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	}
 	combined := &ExecuteResult{Columns: append([]string(nil), prefixColumns...)}
 	for _, bindings := range projected {
-		procedureResult, err := e.executeCall(ctx, callParts.callOnly)
+		procedureResult, err := e.executeProcedureCall(ctx, callParts.callOnly, true)
 		if err != nil {
 			return nil, true, err
 		}
@@ -725,33 +605,39 @@ func (e *StorageExecutor) executeCallTailParallel(
 	wg.Wait()
 	close(results)
 
-	ordered := make([]*ExecuteResult, len(seed.Rows))
+	ordered := make([]callTailRowResult, len(seed.Rows))
 	for rr := range results {
-		if rr.err != nil {
-			return nil, true, rr.err
-		}
-		ordered[rr.idx] = rr.res
+		ordered[rr.idx] = rr
 	}
+	combined, err := combineCallTailRowResults(ordered, expectedCols)
+	return combined, true, err
+}
+
+// combineCallTailRowResults concatenates per-row CALL-tail results in row
+// order, for the sequential and the parallel per-row paths alike (#547): the
+// first failing row's error (in row order, so the parallel path reports the
+// same one), and the tail's columns when no row produced any.
+func combineCallTailRowResults(results []callTailRowResult, expectedCols []string) (*ExecuteResult, error) {
 	var combined *ExecuteResult
-	for _, inner := range ordered {
-		if inner == nil {
+	for _, result := range results {
+		if result.err != nil {
+			return nil, result.err
+		}
+		if result.res == nil {
 			continue
 		}
 		if combined == nil {
 			combined = &ExecuteResult{
-				Columns: append([]string{}, inner.Columns...),
-				Rows:    make([][]interface{}, 0, len(inner.Rows)),
+				Columns: append([]string{}, result.res.Columns...),
+				Rows:    make([][]interface{}, 0, len(result.res.Rows)),
 			}
 		}
-		combined.Rows = append(combined.Rows, inner.Rows...)
+		combined.Rows = append(combined.Rows, result.res.Rows...)
 	}
 	if combined == nil {
-		if len(expectedCols) > 0 {
-			return &ExecuteResult{Columns: append([]string{}, expectedCols...), Rows: [][]interface{}{}}, true, nil
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, true, nil
+		return &ExecuteResult{Columns: append([]string{}, expectedCols...), Rows: [][]interface{}{}}, nil
 	}
-	return combined, true, nil
+	return combined, nil
 }
 
 func (e *StorageExecutor) executeCallTailSingleRow(
@@ -1008,24 +894,35 @@ func (e *StorageExecutor) executeCallTailSetBased(
 	return res, true
 }
 
+// callTailProjectionPlan is a CALL tail that is exactly WITH … [WHERE …]
+// RETURN …, run over the yielded rows by the pipeline's WITH and RETURN
+// appliers without the general pipeline's routing.
 type callTailProjectionPlan struct {
-	withItems     []returnItem
-	whereClause   string
-	returnItems   []returnItem
-	orderBy       string
-	limitToken    string
-	skipToken     string
-	columns       []string
-	whereFilter   callTailValuePredicate
-	withProject   []callTailValueProjector
-	returnProject []callTailValueProjector
-	withIdentity  bool
+	withClause   string
+	returnClause string
+	// limitToken / skipToken are the RETURN's LIMIT / SKIP, a literal or a
+	// parameter, checked per execution (the parameter's value can change).
+	limitToken string
+	skipToken  string
+	// passThroughWith is a WITH whose items are all row variables under
+	// their own names, with no ORDER BY / SKIP / LIMIT / DISTINCT: it only
+	// filters (withWhere). The plan then filters the rows with the pipeline's
+	// row filter instead of rebuilding each one; the RETURN (never *) reads
+	// only the variables the WITH keeps.
+	passThroughWith bool
+	withWhere       string
 }
 
-type callTailValueProjector func(map[string]interface{}) interface{}
-type callTailValuePredicate func(map[string]interface{}, map[string]interface{}) bool
-type callTailValueResolver func(map[string]interface{}, map[string]interface{}) (interface{}, bool)
+// Parsed CALL-tail plans, cached by tail text: a nil plan (a tail the plan
+// doesn't cover) is cached too.
+var (
+	callTailProjectionPlans        = newBoundedCache[string, *callTailProjectionPlan](1024)
+	callTailRelationshipMatchPlans = newBoundedCache[string, *callTailRelationshipMatchPlan](1024)
+)
 
+// callTailRelationshipMatchPlan is a CALL tail MATCH (a)-[r:T {key: y.p}]->(b)
+// [WHERE …] WITH … RETURN … over a yielded relationship y: r is bound to y
+// itself when its type and key property match, and a and b to its end nodes.
 type callTailRelationshipMatchPlan struct {
 	startVar       string
 	startLabel     string
@@ -1033,11 +930,10 @@ type callTailRelationshipMatchPlan struct {
 	relType        string
 	propertyKey    string
 	propertyExpr   string
-	propertyValue  callTailValueProjector
 	propertySource string
 	endVar         string
 	endLabel       string
-	whereFilter    callTailValuePredicate
+	whereClause    string
 	projection     *callTailProjectionPlan
 }
 
@@ -1063,79 +959,45 @@ func (e *StorageExecutor) tryExecuteCallTailProjectionFilter(
 	if !ok {
 		return nil, false, nil
 	}
-	valueRows := make([]map[string]interface{}, 0, len(seed.Rows))
+	rows := make([]pipelineRow, 0, len(seed.Rows))
 	for _, seedRow := range seed.Rows {
-		valueRows = append(valueRows, seedValuesForRow(seed, seedRow))
+		rows = append(rows, callTailRow(ctx, seed, seedRow))
 	}
-	result, err := e.executeCallTailProjectionPlan(ctx, plan, valueRows, expectedCols)
-	if err != nil {
-		return nil, true, err
+	result, ok := e.executeCallTailProjectionPlan(ctx, plan, rows, expectedCols)
+	if !ok {
+		return nil, false, nil
 	}
 	e.markCallTailProjectionFastPathUsed()
 	return result, true, nil
 }
 
+// executeCallTailProjectionPlan applies the plan's WITH (and its WHERE), then
+// its RETURN with ORDER BY / SKIP / LIMIT, with the pipeline's appliers. ok is
+// false when an applier declines; nothing has been written then.
 func (e *StorageExecutor) executeCallTailProjectionPlan(
 	ctx context.Context,
 	plan *callTailProjectionPlan,
-	valueRows []map[string]interface{},
+	rows []pipelineRow,
 	expectedCols []string,
-) (*ExecuteResult, error) {
-	params := getParamsFromContext(ctx)
-	limit, ok := resolveOptionalIntLiteralOrParam(ctx, plan.limitToken)
+) (*ExecuteResult, bool) {
+	var projected []pipelineRow
+	if plan.passThroughWith {
+		projected = e.filterPipelineRows(ctx, rows, plan.withWhere)
+	} else {
+		var ok bool
+		projected, ok = e.pipelineApplyWith(ctx, rows, plan.withClause)
+		if !ok {
+			return nil, false
+		}
+	}
+	result, ok := e.pipelineApplyReturn(ctx, projected, plan.returnClause)
 	if !ok {
-		return nil, localizedError(localization.CypherCommandRoutingCallTailLimitInvalid(plan.limitToken), nil)
-	}
-	skip, ok := resolveOptionalIntLiteralOrParam(ctx, plan.skipToken)
-	if !ok {
-		return nil, localizedError(localization.CypherCommandRoutingCallTailSkipInvalid(plan.skipToken), nil)
-	}
-
-	result := &ExecuteResult{
-		Columns: append([]string{}, plan.columns...),
-		Rows:    make([][]interface{}, 0, len(valueRows)),
-	}
-	for _, values := range valueRows {
-		projectedValues := values
-		if !plan.withIdentity {
-			projectedValues = make(map[string]interface{}, util.SafePreallocSum(len(values), len(plan.withItems)))
-			for key, value := range values {
-				projectedValues[key] = value
-			}
-			for i, item := range plan.withItems {
-				alias := item.alias
-				if alias == "" {
-					alias = item.expr
-				}
-				projectedValues[alias] = plan.withProject[i](values)
-			}
-		}
-		if plan.whereFilter != nil && !plan.whereFilter(projectedValues, params) {
-			continue
-		}
-		row := make([]interface{}, len(plan.returnItems))
-		for i := range plan.returnItems {
-			row[i] = plan.returnProject[i](projectedValues)
-		}
-		result.Rows = append(result.Rows, row)
-	}
-	if plan.orderBy != "" {
-		result = e.applyOrderByToResult(result, plan.orderBy)
-	}
-	if skip > 0 {
-		if skip >= len(result.Rows) {
-			result.Rows = [][]interface{}{}
-		} else {
-			result.Rows = result.Rows[skip:]
-		}
-	}
-	if limit >= 0 && limit < len(result.Rows) {
-		result.Rows = result.Rows[:limit]
+		return nil, false
 	}
 	if len(expectedCols) > 0 && len(expectedCols) == len(result.Columns) {
 		result.Columns = append([]string{}, expectedCols...)
 	}
-	return result, nil
+	return result, true
 }
 
 func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
@@ -1148,43 +1010,25 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 	if !ok {
 		return nil, false, nil
 	}
-	params := getParamsFromContext(ctx)
-	valueRows := make([]map[string]interface{}, 0, len(seed.Rows))
+	rows := make([]pipelineRow, 0, len(seed.Rows))
 	for _, seedRow := range seed.Rows {
-		values := seedValuesForRow(seed, seedRow)
-		relRaw, ok := values[plan.propertySource]
-		if !ok {
+		values := callTailRow(ctx, seed, seedRow)
+		relationship, ok := values[plan.propertySource].(*storage.Edge)
+		if !ok || relationship == nil {
 			continue
 		}
-		relMap, ok := callTailRelationshipMap(relRaw)
-		if !ok {
+		if plan.relType != "" && !strings.EqualFold(relationship.Type, plan.relType) {
 			continue
 		}
-		if plan.relType != "" {
-			if relType, _ := callTailMapString(relMap, "_type", "type"); !strings.EqualFold(relType, plan.relType) {
-				continue
-			}
-		}
-		if plan.propertyKey != "" {
-			expected := plan.propertyValue(values)
-			if expected == nil {
-				continue
-			}
-			actual := extractPropertyFromValue(relMap, plan.propertyKey)
-			if !e.compareEqual(actual, expected) {
-				continue
-			}
-		}
-		startID, okStart := callTailMapString(relMap, "_start", "start", "startNode", "start_node")
-		endID, okEnd := callTailMapString(relMap, "_end", "end", "endNode", "end_node")
-		if !okStart || !okEnd || startID == "" || endID == "" {
+		expected, _ := e.evaluateRowExpressionWithContext(ctx, plan.propertyExpr, values)
+		if expected == nil || !e.compareEqual(relationship.Properties[plan.propertyKey], expected) {
 			continue
 		}
-		startNode, err := e.storage.GetNode(storage.NodeID(startID))
+		startNode, err := e.storage.GetNode(relationship.StartNode)
 		if err != nil || startNode == nil {
 			continue
 		}
-		endNode, err := e.storage.GetNode(storage.NodeID(endID))
+		endNode, err := e.storage.GetNode(relationship.EndNode)
 		if err != nil || endNode == nil {
 			continue
 		}
@@ -1194,51 +1038,66 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		if plan.endLabel != "" && !containsString(endNode.Labels, plan.endLabel) {
 			continue
 		}
-
-		matched := make(map[string]interface{}, util.SafePreallocSum(len(values), 3))
+		matched := make(pipelineRow, util.SafePreallocSum(len(values), 3))
 		for key, value := range values {
 			matched[key] = value
 		}
 		matched[plan.startVar] = startNode
-		matched[plan.relVar] = relMap
+		matched[plan.relVar] = relationship
 		matched[plan.endVar] = endNode
-		if plan.whereFilter != nil && !plan.whereFilter(matched, params) {
+		if plan.whereClause != "" && !e.evaluateRowPredicate(ctx, plan.whereClause, matched) {
 			continue
 		}
-		valueRows = append(valueRows, matched)
+		rows = append(rows, matched)
 	}
-	result, err := e.executeCallTailProjectionPlan(ctx, plan.projection, valueRows, expectedCols)
-	if err != nil {
-		return nil, true, err
+	result, ok := e.executeCallTailProjectionPlan(ctx, plan.projection, rows, expectedCols)
+	if !ok {
+		return nil, false, nil
 	}
 	e.markCallTailProjectionFastPathUsed()
 	return result, true, nil
 }
 
+// parseCallTailRelationshipMatchPlan returns the tail's relationship MATCH
+// plan, parsed once per tail text, when its projection's LIMIT / SKIP resolve
+// for this execution.
 func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context, tail string) (*callTailRelationshipMatchPlan, bool) {
+	plan, cached := callTailRelationshipMatchPlans.get(tail)
+	if !cached {
+		plan = e.planCallTailRelationshipMatch(tail)
+		callTailRelationshipMatchPlans.put(tail, plan)
+	}
+	if plan == nil || !callTailPlanTokensResolve(ctx, plan.projection) {
+		return nil, false
+	}
+	return plan, true
+}
+
+// planCallTailRelationshipMatch parses a relationship MATCH tail, or returns nil.
+func (e *StorageExecutor) planCallTailRelationshipMatch(tail string) *callTailRelationshipMatchPlan {
 	trimmed := strings.TrimSpace(tail)
 	if !hasPrefixFoldASCII(trimmed, "MATCH ") || isPotentialWriteTail(trimmed) {
-		return nil, false
+		return nil
 	}
 	parts, ok := parseCallTailRelationshipPattern(trimmed)
 	if !ok {
-		return nil, false
+		return nil
 	}
 	rest := strings.TrimSpace(parts.rest)
 	withIdx := topLevelKeywordIndex(rest, "WITH")
 	if withIdx < 0 {
-		return nil, false
+		return nil
 	}
 	whereClause := strings.TrimSpace(rest[:withIdx])
 	if whereClause != "" {
 		if !hasPrefixFoldASCII(whereClause, "WHERE ") {
-			return nil, false
+			return nil
 		}
 		whereClause = strings.TrimSpace(whereClause[len("WHERE "):])
 	}
-	projection, ok := e.parseCallTailProjectionPlan(ctx, strings.TrimSpace(rest[withIdx:]))
-	if !ok {
-		return nil, false
+	projection := e.planCallTailProjection(strings.TrimSpace(rest[withIdx:]))
+	if projection == nil {
+		return nil
 	}
 	propertyExpr := strings.TrimSpace(parts.propertyExpr)
 	propertySource := ""
@@ -1246,19 +1105,7 @@ func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context
 		propertySource = strings.TrimSpace(propertyExpr[:dotIdx])
 	}
 	if parts.propertyKey == "" || propertySource == "" {
-		return nil, false
-	}
-	propertyProjector, ok := e.compileCallTailValueProjector(propertyExpr)
-	if !ok {
-		return nil, false
-	}
-	var whereFilter callTailValuePredicate
-	if whereClause != "" {
-		predicate, ok := e.tryCompileCallTailValueWhere(ctx, whereClause)
-		if !ok {
-			return nil, false
-		}
-		whereFilter = predicate
+		return nil
 	}
 	return &callTailRelationshipMatchPlan{
 		startVar:       parts.startVar,
@@ -1267,13 +1114,12 @@ func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context
 		relType:        parts.relType,
 		propertyKey:    parts.propertyKey,
 		propertyExpr:   propertyExpr,
-		propertyValue:  propertyProjector,
 		propertySource: propertySource,
 		endVar:         parts.endVar,
 		endLabel:       parts.endLabel,
-		whereFilter:    whereFilter,
+		whereClause:    whereClause,
 		projection:     projection,
-	}, true
+	}
 }
 
 func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternParts, bool) {
@@ -1490,410 +1336,105 @@ func findTopLevelByte(input string, target byte) int {
 	return -1
 }
 
-func callTailRelationshipMap(raw interface{}) (map[string]interface{}, bool) {
-	switch value := raw.(type) {
-	case map[string]interface{}:
-		return value, true
-	case map[interface{}]interface{}:
-		return normalizeInterfaceMap(value), true
-	case *storage.Edge:
-		if value == nil {
-			return nil, false
-		}
-		return edgeToMap(value), true
-	default:
+// callTailPlanClauseKeywords start the clauses a compiled CALL-tail
+// projection plan can't hold between its WITH and RETURN.
+var callTailPlanClauseKeywords = []string{
+	"MATCH", "OPTIONAL", "UNWIND", "CALL", "WITH", "CREATE", "MERGE",
+	"SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD", "UNION",
+}
+
+// parseCallTailProjectionPlan returns the tail's projection plan, parsed once
+// per tail text, when its LIMIT / SKIP resolve to integers for this execution.
+func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail string) (*callTailProjectionPlan, bool) {
+	plan, cached := callTailProjectionPlans.get(tail)
+	if !cached {
+		plan = e.planCallTailProjection(tail)
+		callTailProjectionPlans.put(tail, plan)
+	}
+	if plan == nil || !callTailPlanTokensResolve(ctx, plan) {
 		return nil, false
 	}
+	return plan, true
 }
 
-func callTailMapString(values map[string]interface{}, keys ...string) (string, bool) {
-	for _, key := range keys {
-		value, ok := values[key]
-		if !ok || value == nil {
-			continue
-		}
-		switch v := value.(type) {
-		case string:
-			return v, true
-		case storage.NodeID:
-			return string(v), true
-		case storage.EdgeID:
-			return string(v), true
-		default:
-			return fmt.Sprint(v), true
-		}
+// callTailPlanTokensResolve reports whether the plan's LIMIT and SKIP are a
+// literal or a bound integer parameter; other forms are the pipeline's.
+func callTailPlanTokensResolve(ctx context.Context, plan *callTailProjectionPlan) bool {
+	if _, ok := resolveOptionalIntLiteralOrParam(ctx, plan.limitToken); !ok {
+		return false
 	}
-	return "", false
+	_, ok := resolveOptionalIntLiteralOrParam(ctx, plan.skipToken)
+	return ok
 }
 
-func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail string) (*callTailProjectionPlan, bool) {
+// planCallTailProjection parses a tail that is exactly WITH … [WHERE …]
+// RETURN …, or returns nil.
+func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectionPlan {
 	trimmed := strings.TrimSpace(tail)
 	if !hasPrefixFoldASCII(trimmed, "WITH ") || isPotentialWriteTail(trimmed) {
-		return nil, false
+		return nil
 	}
 	withIdx := len("WITH ")
 	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if returnIdx < 0 {
-		return nil, false
+		return nil
 	}
 	beforeReturn := strings.TrimSpace(trimmed[withIdx:returnIdx])
 	returnAndModifiers := strings.TrimSpace(trimmed[returnIdx+len("RETURN"):])
 	if beforeReturn == "" || returnAndModifiers == "" {
-		return nil, false
+		return nil
+	}
+	// The plan covers exactly WITH … [WHERE …] RETURN …; a tail with another
+	// clause between them (WITH label MATCH (n) RETURN …) is the pipeline's.
+	for _, keyword := range callTailPlanClauseKeywords {
+		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+			return nil
+		}
 	}
 
-	whereClause := ""
 	withProjection := beforeReturn
 	if whereIdx := topLevelKeywordIndex(beforeReturn, "WHERE"); whereIdx >= 0 {
 		withProjection = strings.TrimSpace(beforeReturn[:whereIdx])
-		whereClause = strings.TrimSpace(beforeReturn[whereIdx+len("WHERE"):])
 	}
 	if withProjection == "" {
-		return nil, false
+		return nil
 	}
 	returnProjection, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(returnAndModifiers)
 	if returnProjection == "" {
-		return nil, false
+		return nil
 	}
-
+	// The plan projects row by row: aggregation, DISTINCT and SKIP / LIMIT
+	// expressions (LIMIT 0 + 1) are the pipeline's (executeCallTailPipeline).
+	if hasPrefixFoldASCII(withProjection, "DISTINCT") || hasPrefixFoldASCII(returnProjection, "DISTINCT") ||
+		containsAggregateFunc(withProjection) || containsAggregateFunc(returnProjection) || containsAggregateFunc(orderBy) {
+		return nil
+	}
 	withItems := e.parseReturnItems(withProjection)
 	returnItems := e.parseReturnItems(returnProjection)
 	if len(withItems) == 0 || len(returnItems) == 0 || hasStarReturnItem(withItems) || hasStarReturnItem(returnItems) {
-		return nil, false
+		return nil
 	}
-	withProject := make([]callTailValueProjector, len(withItems))
-	for i, item := range withItems {
-		projector, ok := e.compileCallTailValueProjector(item.expr)
-		if !ok {
-			return nil, false
-		}
-		withProject[i] = projector
+	plan := &callTailProjectionPlan{
+		withClause:   "WITH " + beforeReturn,
+		returnClause: "RETURN " + returnAndModifiers,
+		limitToken:   limitToken,
+		skipToken:    skipToken,
 	}
-	returnProject := make([]callTailValueProjector, len(returnItems))
-	columns := make([]string, len(returnItems))
-	for i, item := range returnItems {
-		projector, ok := e.compileCallTailValueProjector(item.expr)
-		if !ok {
-			return nil, false
-		}
-		returnProject[i] = projector
-		if item.alias != "" {
-			columns[i] = item.alias
-		} else {
-			columns[i] = item.expr
+	plan.passThroughWith = true
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+			plan.passThroughWith = false
 		}
 	}
-	var whereFilter callTailValuePredicate
-	if whereClause != "" {
-		predicate, ok := e.tryCompileCallTailValueWhere(ctx, whereClause)
-		if !ok {
-			return nil, false
-		}
-		whereFilter = predicate
-	}
-	return &callTailProjectionPlan{
-		withItems:     withItems,
-		whereClause:   whereClause,
-		returnItems:   returnItems,
-		orderBy:       orderBy,
-		limitToken:    limitToken,
-		skipToken:     skipToken,
-		columns:       columns,
-		whereFilter:   whereFilter,
-		withProject:   withProject,
-		returnProject: returnProject,
-		withIdentity:  callTailProjectionItemsAreIdentity(withItems),
-	}, true
-}
-
-func (e *StorageExecutor) tryCompileCallTailValueWhere(ctx context.Context, whereClause string) (callTailValuePredicate, bool) {
-	_ = ctx
-	clause := strings.TrimSpace(whereClause)
-	if clause == "" {
-		return func(map[string]interface{}, map[string]interface{}) bool { return true }, true
-	}
-	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") {
-		closeIdx := findMatchingParen(clause, 0)
-		if closeIdx != len(clause)-1 {
-			break
-		}
-		inner := strings.TrimSpace(clause[1:closeIdx])
-		if inner == "" || inner == clause {
-			break
-		}
-		clause = inner
-	}
-	if idx := findTopLevelKeyword(clause, " AND "); idx > 0 {
-		left, okLeft := e.tryCompileCallTailValueWhere(ctx, clause[:idx])
-		right, okRight := e.tryCompileCallTailValueWhere(ctx, clause[idx+5:])
-		if !okLeft || !okRight {
-			return nil, false
-		}
-		return func(values map[string]interface{}, params map[string]interface{}) bool {
-			return left(values, params) && right(values, params)
-		}, true
-	}
-	if idx := findTopLevelKeyword(clause, " OR "); idx > 0 {
-		left, okLeft := e.tryCompileCallTailValueWhere(ctx, clause[:idx])
-		right, okRight := e.tryCompileCallTailValueWhere(ctx, clause[idx+4:])
-		if !okLeft || !okRight {
-			return nil, false
-		}
-		return func(values map[string]interface{}, params map[string]interface{}) bool {
-			return left(values, params) || right(values, params)
-		}, true
-	}
-	if hasPrefixFoldASCII(clause, "NOT ") {
-		innerClause := strings.TrimSpace(clause[4:])
-		for strings.HasPrefix(innerClause, "(") && strings.HasSuffix(innerClause, ")") && findMatchingParen(innerClause, 0) == len(innerClause)-1 {
-			innerClause = strings.TrimSpace(innerClause[1 : len(innerClause)-1])
-		}
-		// NOT over a membership test: holds only when the membership is known
-		// false, so a null membership is not turned into true.
-		for _, op := range []string{" NOT IN ", " IN "} {
-			if truth, ok := e.compileCallTailValueInTruth(innerClause, op, op == " NOT IN "); ok {
-				return func(values map[string]interface{}, params map[string]interface{}) bool {
-					return truth(values, params) == truthFalse
-				}, true
-			}
-		}
-		inner, ok := e.tryCompileCallTailValueWhere(ctx, clause[4:])
-		if !ok {
-			return nil, false
-		}
-		return func(values map[string]interface{}, params map[string]interface{}) bool {
-			return !inner(values, params)
-		}, true
-	}
-	if predicate, ok := e.compileCallTailValueNullPredicate(clause, " IS NOT NULL", true); ok {
-		return predicate, true
-	}
-	if predicate, ok := e.compileCallTailValueNullPredicate(clause, " IS NULL", false); ok {
-		return predicate, true
-	}
-	for _, op := range []string{" STARTS WITH ", " ENDS WITH ", " CONTAINS "} {
-		if predicate, ok := e.compileCallTailValueStringPredicate(clause, op); ok {
-			return predicate, true
+	for _, item := range withItems {
+		if !isValidIdentifier(item.expr) || (item.alias != "" && item.alias != item.expr) {
+			plan.passThroughWith = false
 		}
 	}
-	if predicate, ok := e.compileCallTailValueInPredicate(clause, " NOT IN ", true); ok {
-		return predicate, true
+	if whereIdx := topLevelKeywordIndex(beforeReturn, "WHERE"); whereIdx >= 0 {
+		plan.withWhere = strings.TrimSpace(beforeReturn[whereIdx+len("WHERE"):])
 	}
-	if predicate, ok := e.compileCallTailValueInPredicate(clause, " IN ", false); ok {
-		return predicate, true
-	}
-	if predicate, ok := e.compileCallTailValueComparisonPredicate(clause); ok {
-		return predicate, true
-	}
-	return nil, false
-}
-
-func (e *StorageExecutor) compileCallTailValueProjector(expr string) (callTailValueProjector, bool) {
-	trimmed := strings.TrimSpace(expr)
-	if trimmed == "" || isAggregateExpression(trimmed) || strings.Contains(trimmed, "[") {
-		return nil, false
-	}
-	if resolver, ok := e.compileCallTailDirectValueResolver(trimmed); ok {
-		return func(values map[string]interface{}) interface{} {
-			value, _ := resolver(values)
-			return value
-		}, true
-	}
-	return func(values map[string]interface{}) interface{} {
-		return e.evaluateExpressionFromValues(trimmed, values)
-	}, true
-}
-
-func (e *StorageExecutor) compileCallTailValueResolver(expr string) (callTailValueResolver, bool) {
-	trimmed := strings.TrimSpace(expr)
-	if trimmed == "" {
-		return nil, false
-	}
-	if literal, ok := parseLiteralValueFromComputedRow(trimmed); ok {
-		return func(map[string]interface{}, map[string]interface{}) (interface{}, bool) { return literal, true }, true
-	}
-	if strings.HasPrefix(trimmed, "$") {
-		paramName := strings.TrimSpace(strings.TrimPrefix(trimmed, "$"))
-		if paramName == "" {
-			return nil, false
-		}
-		return func(_ map[string]interface{}, params map[string]interface{}) (interface{}, bool) {
-			if params == nil {
-				return nil, false
-			}
-			value, ok := params[paramName]
-			return value, ok
-		}, true
-	}
-	if resolver, ok := e.compileCallTailDirectValueResolver(trimmed); ok {
-		return func(values map[string]interface{}, _ map[string]interface{}) (interface{}, bool) {
-			return resolver(values)
-		}, true
-	}
-	return func(values map[string]interface{}, params map[string]interface{}) (interface{}, bool) {
-		if value, ok := values[trimmed]; ok {
-			return value, true
-		}
-		if params != nil {
-			if value, ok := params[trimmed]; ok {
-				return value, true
-			}
-		}
-		value := e.evaluateExpressionFromValues(trimmed, values)
-		if value == nil {
-			return nil, false
-		}
-		if s, ok := value.(string); ok && s == trimmed {
-			return nil, false
-		}
-		return value, true
-	}, true
-}
-
-type callTailDirectValueResolver func(map[string]interface{}) (interface{}, bool)
-
-func (e *StorageExecutor) compileCallTailDirectValueResolver(expr string) (callTailDirectValueResolver, bool) {
-	trimmed := strings.TrimSpace(expr)
-	if trimmed == "" {
-		return nil, false
-	}
-	if isValidIdentifier(trimmed) {
-		name := trimmed
-		return func(values map[string]interface{}) (interface{}, bool) {
-			value, ok := values[name]
-			return value, ok
-		}, true
-	}
-	if variable, property, ok := splitCallTailPropertyAccess(trimmed); ok {
-		return func(values map[string]interface{}) (interface{}, bool) {
-			raw, ok := values[variable]
-			if !ok || raw == nil {
-				return nil, false
-			}
-			return callTailPropertyValue(raw, property)
-		}, true
-	}
-	for _, name := range []string{"properties", "type", "id", "elementId", "labels"} {
-		if !matchFuncStartAndSuffix(trimmed, name) {
-			continue
-		}
-		arg := strings.TrimSpace(extractFuncArgs(trimmed, name))
-		if !isValidIdentifier(arg) {
-			return nil, false
-		}
-		switch strings.ToLower(name) {
-		case "properties":
-			return func(values map[string]interface{}) (interface{}, bool) {
-				raw, ok := values[arg]
-				if !ok || raw == nil {
-					return nil, false
-				}
-				return callTailPropertiesValue(raw)
-			}, true
-		case "type":
-			return func(values map[string]interface{}) (interface{}, bool) {
-				raw, ok := values[arg]
-				if !ok || raw == nil {
-					return nil, false
-				}
-				return callTailTypeValue(raw)
-			}, true
-		case "id":
-			return func(values map[string]interface{}) (interface{}, bool) {
-				raw, ok := values[arg]
-				if !ok || raw == nil {
-					return nil, false
-				}
-				return callTailIDValue(raw)
-			}, true
-		case "elementid":
-			return func(values map[string]interface{}) (interface{}, bool) {
-				raw, ok := values[arg]
-				if !ok || raw == nil {
-					return nil, false
-				}
-				return callTailElementIDValue(e.databaseName(), raw)
-			}, true
-		case "labels":
-			return func(values map[string]interface{}) (interface{}, bool) {
-				raw, ok := values[arg]
-				if !ok || raw == nil {
-					return nil, false
-				}
-				return callTailLabelsValue(raw)
-			}, true
-		}
-	}
-	return nil, false
-}
-
-func splitCallTailPropertyAccess(expr string) (variable, property string, ok bool) {
-	dotIdx := strings.IndexByte(expr, '.')
-	if dotIdx <= 0 || dotIdx != strings.LastIndexByte(expr, '.') || dotIdx == len(expr)-1 {
-		return "", "", false
-	}
-	variable = strings.TrimSpace(expr[:dotIdx])
-	property = strings.TrimSpace(expr[dotIdx+1:])
-	if !isValidIdentifier(variable) || !isValidIdentifier(property) {
-		return "", "", false
-	}
-	return variable, property, true
-}
-
-func callTailPropertyValue(raw interface{}, property string) (interface{}, bool) {
-	switch value := raw.(type) {
-	case *storage.Node:
-		if value == nil {
-			return nil, false
-		}
-		propertyValue, ok := value.Properties[property]
-		return propertyValue, ok
-	case *storage.Edge:
-		if value == nil {
-			return nil, false
-		}
-		propertyValue, ok := value.Properties[property]
-		return propertyValue, ok
-	case map[string]interface{}:
-		if props, ok := value["properties"].(map[string]interface{}); ok {
-			if propertyValue, exists := props[property]; exists {
-				return propertyValue, true
-			}
-		}
-		propertyValue, ok := value[property]
-		return propertyValue, ok
-	default:
-		return nil, false
-	}
-}
-
-func callTailPropertiesValue(raw interface{}) (interface{}, bool) {
-	switch value := raw.(type) {
-	case *storage.Node:
-		if value == nil {
-			return nil, false
-		}
-		return cloneStringInterfaceMap(value.Properties), true
-	case *storage.Edge:
-		if value == nil {
-			return nil, false
-		}
-		return cloneStringInterfaceMap(value.Properties), true
-	case map[string]interface{}:
-		if props, ok := value["properties"].(map[string]interface{}); ok {
-			return cloneStringInterfaceMap(props), true
-		}
-		out := make(map[string]interface{}, len(value))
-		for key, val := range value {
-			if strings.HasPrefix(key, "_") {
-				continue
-			}
-			out[key] = val
-		}
-		return out, true
-	default:
-		return nil, false
-	}
+	return plan
 }
 
 func cloneStringInterfaceMap(values map[string]interface{}) map[string]interface{} {
@@ -1904,241 +1445,6 @@ func cloneStringInterfaceMap(values map[string]interface{}) map[string]interface
 	return out
 }
 
-func callTailTypeValue(raw interface{}) (interface{}, bool) {
-	switch value := raw.(type) {
-	case *storage.Edge:
-		if value == nil {
-			return nil, false
-		}
-		return value.Type, true
-	case map[string]interface{}:
-		if relType, ok := value["type"]; ok {
-			return relType, true
-		}
-		relType, ok := value["_type"]
-		return relType, ok
-	default:
-		return nil, false
-	}
-}
-
-func callTailIDValue(raw interface{}) (interface{}, bool) {
-	switch value := raw.(type) {
-	case *storage.Node:
-		if value == nil {
-			return nil, false
-		}
-		return string(value.ID), true
-	case *storage.Edge:
-		if value == nil {
-			return nil, false
-		}
-		return string(value.ID), true
-	case map[string]interface{}:
-		if id, ok := value["id"]; ok {
-			return id, true
-		}
-		id, ok := value["_id"]
-		return id, ok
-	default:
-		return nil, false
-	}
-}
-
-func callTailElementIDValue(database string, raw interface{}) (interface{}, bool) {
-	switch value := raw.(type) {
-	case *storage.Node:
-		if value == nil {
-			return nil, false
-		}
-		return storage.NodeElementID(database, value.ID), true
-	case *storage.Edge:
-		if value == nil {
-			return nil, false
-		}
-		return storage.RelationshipElementID(database, value.ID), true
-	case map[string]interface{}:
-		if elementID, ok := value["elementId"]; ok {
-			return elementID, true
-		}
-		return nil, false
-	default:
-		return nil, false
-	}
-}
-
-func callTailLabelsValue(raw interface{}) (interface{}, bool) {
-	switch value := raw.(type) {
-	case *storage.Node:
-		if value == nil {
-			return nil, false
-		}
-		labels := make([]interface{}, len(value.Labels))
-		for i, label := range value.Labels {
-			labels[i] = label
-		}
-		return labels, true
-	case map[string]interface{}:
-		labels, ok := value["labels"]
-		return labels, ok
-	default:
-		return nil, false
-	}
-}
-
-func (e *StorageExecutor) compileCallTailValueNullPredicate(clause, op string, expectNotNull bool) (callTailValuePredicate, bool) {
-	idx := findTopLevelKeyword(clause, op)
-	if idx <= 0 {
-		return nil, false
-	}
-	resolver, ok := e.compileCallTailValueResolver(clause[:idx])
-	if !ok {
-		return nil, false
-	}
-	return func(values map[string]interface{}, params map[string]interface{}) bool {
-		value, ok := resolver(values, params)
-		if expectNotNull {
-			return ok && value != nil
-		}
-		return !ok || value == nil
-	}, true
-}
-
-func (e *StorageExecutor) compileCallTailValueStringPredicate(clause, op string) (callTailValuePredicate, bool) {
-	idx := findTopLevelKeyword(clause, op)
-	if idx <= 0 {
-		return nil, false
-	}
-	left, okLeft := e.compileCallTailValueResolver(clause[:idx])
-	right, okRight := e.compileCallTailValueResolver(clause[idx+len(op):])
-	if !okLeft || !okRight {
-		return nil, false
-	}
-	return func(values map[string]interface{}, params map[string]interface{}) bool {
-		leftValue, ok := left(values, params)
-		if !ok {
-			return false
-		}
-		rightValue, ok := right(values, params)
-		if !ok {
-			return false
-		}
-		leftString, okLeft := leftValue.(string)
-		rightString, okRight := rightValue.(string)
-		if !okLeft || !okRight {
-			return false
-		}
-		switch op {
-		case " STARTS WITH ":
-			return strings.HasPrefix(leftString, rightString)
-		case " ENDS WITH ":
-			return strings.HasSuffix(leftString, rightString)
-		case " CONTAINS ":
-			return strings.Contains(leftString, rightString)
-		default:
-			return false
-		}
-	}, true
-}
-
-// compileCallTailValueInPredicate compiles a CALL-tail `x IN list` /
-// `x NOT IN list` WHERE leaf; it holds only when compileCallTailValueInTruth is
-// known true.
-func (e *StorageExecutor) compileCallTailValueInPredicate(clause, op string, negate bool) (callTailValuePredicate, bool) {
-	truth, ok := e.compileCallTailValueInTruth(clause, op, negate)
-	if !ok {
-		return nil, false
-	}
-	return func(values map[string]interface{}, params map[string]interface{}) bool {
-		return truth(values, params) == truthTrue
-	}, true
-}
-
-// compileCallTailValueInTruth is the three-valued CALL-tail membership test:
-// an unresolved or null x, an unresolved, null or non-list right side, or a list
-// holding null without a match give truthUnknown, which negate leaves unknown.
-func (e *StorageExecutor) compileCallTailValueInTruth(clause, op string, negate bool) (func(map[string]interface{}, map[string]interface{}) cypherTruth, bool) {
-	idx := findTopLevelKeyword(clause, op)
-	if idx <= 0 {
-		return nil, false
-	}
-	left, ok := e.compileCallTailValueResolver(clause[:idx])
-	if !ok {
-		return nil, false
-	}
-	rightExpr := strings.TrimSpace(clause[idx+len(op):])
-	finish := func(truth cypherTruth) cypherTruth {
-		if negate {
-			return truth.not()
-		}
-		return truth
-	}
-	if literalItems, ok := parseBindingLiteralList(rightExpr); ok {
-		comparableSet, nonComparable := buildComparableMembershipIndex(literalItems)
-		hasNull := listHasNull(literalItems)
-		return func(values map[string]interface{}, params map[string]interface{}) cypherTruth {
-			leftValue, ok := left(values, params)
-			if !ok {
-				return truthUnknown
-			}
-			return finish(membershipTruth(leftValue, comparableSet, nonComparable, hasNull, e.compareEqual))
-		}, true
-	}
-	right, ok := e.compileCallTailValueResolver(rightExpr)
-	if !ok {
-		return nil, false
-	}
-	return func(values map[string]interface{}, params map[string]interface{}) cypherTruth {
-		leftValue, ok := left(values, params)
-		if !ok {
-			return truthUnknown
-		}
-		rightValue, ok := right(values, params)
-		if !ok || rightValue == nil {
-			return truthUnknown
-		}
-		items, ok := toInterfaceSlice(rightValue)
-		if !ok {
-			return truthUnknown
-		}
-		comparableSet, nonComparable := buildComparableMembershipIndex(items)
-		return finish(membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items), e.compareEqual))
-	}, true
-}
-
-func (e *StorageExecutor) compileCallTailValueComparisonPredicate(clause string) (callTailValuePredicate, bool) {
-	for _, op := range []string{"<=", ">=", "<>", "!=", "<", ">", "="} {
-		idx := findTopLevelKeyword(clause, op)
-		if idx <= 0 {
-			continue
-		}
-		if op == "=" && idx+1 < len(clause) && clause[idx+1] == '~' {
-			continue
-		}
-		left, okLeft := e.compileCallTailValueResolver(clause[:idx])
-		right, okRight := e.compileCallTailValueResolver(clause[idx+len(op):])
-		if !okLeft || !okRight {
-			return nil, false
-		}
-		return func(values map[string]interface{}, params map[string]interface{}) bool {
-			leftValue, ok := left(values, params)
-			if !ok {
-				return false
-			}
-			rightValue, ok := right(values, params)
-			if !ok {
-				return false
-			}
-			cmpOp := op
-			if cmpOp == "!=" {
-				cmpOp = "<>"
-			}
-			return compareWithOperator(leftValue, rightValue, cmpOp)
-		}, true
-	}
-	return nil, false
-}
-
 func hasStarReturnItem(items []returnItem) bool {
 	for _, item := range items {
 		if strings.TrimSpace(item.expr) == "*" {
@@ -2146,17 +1452,6 @@ func hasStarReturnItem(items []returnItem) bool {
 		}
 	}
 	return false
-}
-
-func callTailProjectionItemsAreIdentity(items []returnItem) bool {
-	for _, item := range items {
-		expr := strings.TrimSpace(item.expr)
-		alias := strings.TrimSpace(item.alias)
-		if !isValidIdentifier(expr) || (alias != "" && alias != expr) {
-			return false
-		}
-	}
-	return true
 }
 
 func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, orderBy, limitToken, skipToken string) {
@@ -2192,20 +1487,23 @@ func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, or
 	return projection, orderBy, limitToken, skipToken
 }
 
+// extractCallTailModifierToken returns the whole value of keyword (SKIP or
+// LIMIT) in modifiers, up to the next modifier: an expression such as
+// LIMIT 0 + 1 stays whole, so the projection plan declines it instead of
+// reading LIMIT 0 (#572).
 func extractCallTailModifierToken(modifiers, keyword string) string {
 	idx := topLevelKeywordIndex(modifiers, keyword)
 	if idx < 0 {
 		return ""
 	}
-	rest := strings.TrimSpace(modifiers[idx+len(keyword):])
-	if rest == "" {
-		return ""
+	rest := modifiers[idx+len(keyword):]
+	end := len(rest)
+	for _, next := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if nextIdx := topLevelKeywordIndex(rest, next); nextIdx >= 0 && nextIdx < end {
+			end = nextIdx
+		}
 	}
-	fields := strings.Fields(rest)
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[0]
+	return strings.TrimSpace(rest[:end])
 }
 
 func callTailHasRelationshipTypeConstraint(tail string) bool {
@@ -2258,6 +1556,14 @@ func (e *StorageExecutor) tryExecuteCallTailVariableLengthMaxLengthFastPath(
 	if !ok {
 		return nil, false, nil
 	}
+	limit, ok := resolveOptionalIntLiteralOrParam(ctx, plan.limitToken)
+	if !ok {
+		return nil, false, nil
+	}
+	skip, ok := resolveOptionalIntLiteralOrParam(ctx, plan.skipToken)
+	if !ok {
+		return nil, false, nil
+	}
 
 	result := &ExecuteResult{
 		Columns: make([]string, len(plan.returnItems)),
@@ -2307,17 +1613,15 @@ func (e *StorageExecutor) tryExecuteCallTailVariableLengthMaxLengthFastPath(
 	if plan.orderBy != "" {
 		result = e.applyOrderByToResult(result, plan.orderBy)
 	}
-	if plan.skip > 0 && plan.skip < len(result.Rows) {
-		result.Rows = result.Rows[plan.skip:]
-	} else if plan.skip >= len(result.Rows) {
-		result.Rows = [][]interface{}{}
-	}
-	if plan.limit >= 0 {
-		if plan.limit == 0 {
+	if skip > 0 {
+		if skip >= len(result.Rows) {
 			result.Rows = [][]interface{}{}
-		} else if plan.limit < len(result.Rows) {
-			result.Rows = result.Rows[:plan.limit]
+		} else {
+			result.Rows = result.Rows[skip:]
 		}
+	}
+	if limit >= 0 && limit < len(result.Rows) {
+		result.Rows = result.Rows[:limit]
 	}
 	if len(expectedCols) > 0 && len(expectedCols) == len(result.Columns) {
 		result.Columns = append([]string{}, expectedCols...)
@@ -2476,8 +1780,11 @@ type callTailVariableLengthMaxLengthPlan struct {
 	aggregateAlias string
 	returnItems    []returnItem
 	orderBy        string
-	limit          int
-	skip           int
+	// limitToken / skipToken are the RETURN's whole LIMIT / SKIP values,
+	// resolved when the plan runs; an expression other than a literal or a
+	// parameter makes the plan decline, so the pipeline evaluates it (#572).
+	limitToken string
+	skipToken  string
 }
 
 func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(ctx context.Context, tail string) (*callTailVariableLengthMaxLengthPlan, bool) {
@@ -2501,10 +1808,11 @@ func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(ctx context.C
 	if withClause == "" {
 		return nil, false
 	}
-	returnClause, orderBy, limit, skip := splitCallTailReturnOptions(strings.TrimSpace(trimmed[returnIdx+len("RETURN"):]))
+	returnClause, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(strings.TrimSpace(trimmed[returnIdx+len("RETURN"):]))
 	if returnClause == "" {
 		return nil, false
 	}
+	orderBy = strings.TrimSpace(strings.TrimPrefix(orderBy, "ORDER BY"))
 
 	pattern := matchClause
 	pathVar := ""
@@ -2569,8 +1877,8 @@ func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(ctx context.C
 		aggregateAlias: aggAlias,
 		returnItems:    returnItems,
 		orderBy:        orderBy,
-		limit:          limit,
-		skip:           skip,
+		limitToken:     limitToken,
+		skipToken:      skipToken,
 	}, true
 }
 
@@ -2658,7 +1966,12 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 		return nil, false
 	}
 	secondWith := strings.TrimSpace(afterSecondWith[:returnIdx])
-	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
+	returnClause, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
+	// The traversal fast paths implement RETURN … [LIMIT n] only; ORDER BY
+	// or SKIP goes to the pipeline, which applies them (#547).
+	if orderBy != "" || skipToken != "" {
+		return nil, false
+	}
 	if !strings.HasPrefix(strings.ToUpper(matchSection), "MATCH ") {
 		return nil, false
 	}
@@ -2711,7 +2024,7 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 		return nil, false
 	}
 	pathCapToken := strings.TrimSpace(secondItems[2][strings.Index(secondItems[2], "[0..")+4 : strings.LastIndex(secondItems[2], "]")])
-	returnItems := e.parseReturnItems(returnOptions.returnClause)
+	returnItems := e.parseReturnItems(returnClause)
 	if len(returnItems) != 3 || compactCypherFragment(returnItems[0].expr) != compactCypherFragment("elementId("+match.StartNode.variable+")") || returnItems[1].expr != "score" || compactCypherFragment(returnItems[2].expr) != compactCypherFragment("size("+pathsAlias+")") {
 		return nil, false
 	}
@@ -2721,7 +2034,7 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 		pathsAlias:   pathsAlias,
 		pathCapToken: pathCapToken,
 		returnItems:  returnItems,
-		limitToken:   returnOptions.limitRaw,
+		limitToken:   limitToken,
 	}, true
 }
 
@@ -2744,7 +2057,12 @@ func (e *StorageExecutor) parseCallTailFrontierReachablePlan(ctx context.Context
 		return nil, false
 	}
 	secondWith := strings.TrimSpace(afterSecondWith[:returnIdx])
-	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
+	returnClause, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
+	// The traversal fast paths implement RETURN … [LIMIT n] only; ORDER BY
+	// or SKIP goes to the pipeline, which applies them (#547).
+	if orderBy != "" || skipToken != "" {
+		return nil, false
+	}
 	match := e.parseTraversalPattern(ctx, matchPart)
 	if match == nil || match.StartNode.variable == "" {
 		return nil, false
@@ -2769,11 +2087,11 @@ func (e *StorageExecutor) parseCallTailFrontierReachablePlan(ctx context.Context
 	if !ok1 || !ok2 {
 		return nil, false
 	}
-	returnItems := e.parseReturnItems(returnOptions.returnClause)
+	returnItems := e.parseReturnItems(returnClause)
 	if len(returnItems) != 4 || compactCypherFragment(returnItems[0].expr) != compactCypherFragment("elementId("+match.StartNode.variable+")") || returnItems[1].expr != "score" || returnItems[2].expr != nearestAlias || returnItems[3].expr != reachableAlias {
 		return nil, false
 	}
-	return &callTailFrontierReachablePlan{match: match, nodeVar: match.StartNode.variable, nearestAlias: nearestAlias, reachableAlias: reachableAlias, returnItems: returnItems, limitToken: returnOptions.limitRaw}, true
+	return &callTailFrontierReachablePlan{match: match, nodeVar: match.StartNode.variable, nearestAlias: nearestAlias, reachableAlias: reachableAlias, returnItems: returnItems, limitToken: limitToken}, true
 }
 
 func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Context, tail string) (*callTailConstrainedMaxDepthPlan, bool) {
@@ -2786,7 +2104,12 @@ func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Conte
 		return nil, false
 	}
 	matchWhere := strings.TrimSpace(normalized[len("MATCH"):returnIdx])
-	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(normalized[returnIdx+len("RETURN"):]))
+	returnClause, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(strings.TrimSpace(normalized[returnIdx+len("RETURN"):]))
+	// The traversal fast paths implement RETURN … [LIMIT n] only; ORDER BY
+	// or SKIP goes to the pipeline, which applies them (#547).
+	if orderBy != "" || skipToken != "" {
+		return nil, false
+	}
 	whereIdx := findKeywordIndexInContext(matchWhere, "WHERE")
 	if whereIdx == -1 {
 		return nil, false
@@ -2809,7 +2132,7 @@ func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Conte
 	if !ok {
 		return nil, false
 	}
-	returnItems := e.parseReturnItems(returnOptions.returnClause)
+	returnItems := e.parseReturnItems(returnClause)
 	if len(returnItems) != 3 || compactCypherFragment(returnItems[0].expr) != compactCypherFragment("elementId("+match.StartNode.variable+")") || returnItems[1].expr != "score" {
 		return nil, false
 	}
@@ -2817,77 +2140,7 @@ func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Conte
 	if !ok {
 		return nil, false
 	}
-	return &callTailConstrainedMaxDepthPlan{match: match, nodeVar: match.StartNode.variable, aggregateExpr: returnItems[2].expr, aggregateAlias: alias, minWeightToken: minWeightToken, categoriesToken: categoriesToken, returnItems: returnItems, limitToken: returnOptions.limitRaw}, true
-}
-
-type callTailReturnOptionsRaw struct {
-	returnClause string
-	orderBy      string
-	limitRaw     string
-	skipRaw      string
-}
-
-func splitCallTailReturnOptionsRaw(returnAndTail string) callTailReturnOptionsRaw {
-	trimmed := strings.TrimSpace(returnAndTail)
-	if trimmed == "" {
-		return callTailReturnOptionsRaw{}
-	}
-	orderIdx := findKeywordIndexInContext(trimmed, "ORDER")
-	limitIdx := findKeywordIndexInContext(trimmed, "LIMIT")
-	skipIdx := findKeywordIndexInContext(trimmed, "SKIP")
-	end := len(trimmed)
-	for _, idx := range []int{orderIdx, limitIdx, skipIdx} {
-		if idx != -1 && idx < end {
-			end = idx
-		}
-	}
-	out := callTailReturnOptionsRaw{returnClause: strings.TrimSpace(trimmed[:end])}
-	if orderIdx != -1 {
-		orderEnd := len(trimmed)
-		for _, idx := range []int{limitIdx, skipIdx} {
-			if idx != -1 && idx > orderIdx && idx < orderEnd {
-				orderEnd = idx
-			}
-		}
-		orderPart := strings.TrimSpace(trimmed[orderIdx:orderEnd])
-		if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER BY") {
-			out.orderBy = strings.TrimSpace(orderPart[len("ORDER BY"):])
-		}
-	}
-	if limitIdx != -1 {
-		limitEnd := len(trimmed)
-		if skipIdx != -1 && skipIdx > limitIdx {
-			limitEnd = skipIdx
-		}
-		out.limitRaw = strings.TrimSpace(strings.Split(strings.TrimSpace(trimmed[limitIdx+len("LIMIT"):limitEnd]), " ")[0])
-	}
-	if skipIdx != -1 {
-		skipEnd := len(trimmed)
-		if limitIdx != -1 && limitIdx > skipIdx {
-			skipEnd = limitIdx
-		}
-		out.skipRaw = strings.TrimSpace(strings.Split(strings.TrimSpace(trimmed[skipIdx+len("SKIP"):skipEnd]), " ")[0])
-	}
-	return out
-}
-
-func splitCallTailReturnOptions(returnAndTail string) (string, string, int, int) {
-	raw := splitCallTailReturnOptionsRaw(returnAndTail)
-	limit := -1
-	if raw.limitRaw != "" {
-		if n, err := strconv.Atoi(raw.limitRaw); err == nil {
-			limit = n
-		}
-	}
-
-	skip := -1
-	if raw.skipRaw != "" {
-		if n, err := strconv.Atoi(raw.skipRaw); err == nil {
-			skip = n
-		}
-	}
-
-	return raw.returnClause, raw.orderBy, limit, skip
+	return &callTailConstrainedMaxDepthPlan{match: match, nodeVar: match.StartNode.variable, aggregateExpr: returnItems[2].expr, aggregateAlias: alias, minWeightToken: minWeightToken, categoriesToken: categoriesToken, returnItems: returnItems, limitToken: limitToken}, true
 }
 
 func (e *StorageExecutor) maxDepthForTraversalMatch(startNode *storage.Node, match *TraversalMatch) (int, error) {
@@ -2909,6 +2162,24 @@ type callTailPathPredicate struct {
 	requireAllNodesLabeled bool
 	minWeight              *float64
 	allowedCategory        map[string]struct{}
+}
+
+// callTailRow returns a yielded row as a pipeline row, with the statement's
+// parameters bound as "$name" the way the statement pipeline binds them, so a
+// typed parameter (a list or map the text substitution keeps typed) resolves
+// in a CALL tail's WHERE and projections.
+func callTailRow(ctx context.Context, seed *ExecuteResult, row []interface{}) pipelineRow {
+	params := getParamsFromContext(ctx)
+	values := make(pipelineRow, len(seed.Columns)+len(params))
+	for i, col := range seed.Columns {
+		if i < len(row) {
+			values[col] = row[i]
+		}
+	}
+	for name, value := range params {
+		values["$"+name] = value
+	}
+	return values
 }
 
 func seedValuesForRow(seed *ExecuteResult, row []interface{}) map[string]interface{} {
@@ -3607,8 +2878,11 @@ func findKeywordIndexInContext(s, keyword string) int {
 	return -1
 }
 
-// applyYieldFilter applies YIELD clause filtering to procedure results.
-// This handles column selection, aliasing, and WHERE filtering.
+// applyYieldFilter applies a procedure call's YIELD to the procedure's rows.
+// It selects and aliases the yielded columns, then filters the rows with the
+// YIELD's WHERE and orders / pages them with its ORDER BY / SKIP / LIMIT the
+// way a WITH does: through the pipeline, over the aliased rows, so the
+// predicate sees the aliases and evaluates like any other WHERE (#530).
 func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteResult, yield *yieldClause) (*ExecuteResult, error) {
 	if yield == nil {
 		return result, nil
@@ -3617,40 +2891,12 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		return nil, err
 	}
 
-	// Apply WHERE filter first
-	if yield.where != "" {
-		filteredRows := make([][]interface{}, 0)
-		for _, row := range result.Rows {
-			// Create a yield-context with the row values mapped to column names
-			yieldCtx := make(map[string]interface{})
-			for i, col := range result.Columns {
-				if i < len(row) {
-					yieldCtx[col] = row[i]
-				}
-			}
-
-			// Evaluate the WHERE condition
-			passes, err := e.evaluateYieldWhere(ctx, yield.where, yieldCtx)
-			if err != nil {
-				// If evaluation fails, include the row (conservative)
-				passes = true
-			}
-			if passes {
-				filteredRows = append(filteredRows, row)
-			}
-		}
-		result.Rows = filteredRows
-	}
-
 	// Apply column selection and aliasing (if not YIELD *)
 	if !yield.yieldAll && len(yield.items) > 0 {
-		// Build column index map
-		colIndex := make(map[string]int)
+		colIndex := make(map[string]int, len(result.Columns))
 		for i, col := range result.Columns {
 			colIndex[col] = i
 		}
-
-		// Build new columns and project rows
 		newColumns := make([]string, 0, len(yield.items))
 		for _, item := range yield.items {
 			if item.alias != "" {
@@ -3659,276 +2905,80 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 				newColumns = append(newColumns, item.name)
 			}
 		}
-
 		newRows := make([][]interface{}, 0, len(result.Rows))
 		for _, row := range result.Rows {
 			newRow := make([]interface{}, len(yield.items))
 			for i, item := range yield.items {
 				if idx, ok := colIndex[item.name]; ok && idx < len(row) {
 					newRow[i] = row[idx]
-				} else {
-					newRow[i] = nil
 				}
 			}
 			newRows = append(newRows, newRow)
 		}
-
 		result.Columns = newColumns
 		result.Rows = newRows
 	}
+	if !yield.hasModifiers() {
+		return result, nil
+	}
 
-	// Apply RETURN clause transformation if present
-	// RETURN allows projecting properties from yielded values and renaming columns
-	// Example: YIELD node, score RETURN node.id as id, node.type, score
-	if yield.hasReturn && yield.returnExpr != "" {
-		var err error
-		result, err = e.applyReturnToYieldResult(ctx, result, yield.returnExpr)
-		if err != nil {
-			return nil, err
+	rows := make([]pipelineRow, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		rows = append(rows, callTailRow(ctx, result, row))
+	}
+	rows = e.filterPipelineRows(ctx, rows, yield.where)
+	if yield.orderBy != "" || yield.skip != "" || yield.limit != "" {
+		var with strings.Builder
+		with.WriteString("WITH *")
+		if yield.orderBy != "" {
+			with.WriteString(" ORDER BY " + yield.orderBy)
 		}
+		if yield.skip != "" {
+			with.WriteString(" SKIP " + yield.skip)
+		}
+		if yield.limit != "" {
+			with.WriteString(" LIMIT " + yield.limit)
+		}
+		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String())
+		if !ok {
+			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
+			// so only a parameter can make them invalid here.
+			return nil, newSemanticError(
+				"Neo.ClientError.Statement.ArgumentError",
+				"InvalidArgumentType",
+				"SKIP and LIMIT require a non-negative INTEGER",
+			)
+		}
+		rows = ordered
 	}
-
-	// Apply ORDER BY if present
-	if yield.orderBy != "" {
-		result = e.applyOrderByToResult(result, yield.orderBy)
+	result.Rows = make([][]interface{}, 0, len(rows))
+	for _, row := range rows {
+		values := make([]interface{}, len(result.Columns))
+		for i, column := range result.Columns {
+			values[i] = row[column]
+		}
+		result.Rows = append(result.Rows, values)
 	}
-
-	// Apply SKIP if present
-	if yield.skip > 0 && yield.skip < len(result.Rows) {
-		result.Rows = result.Rows[yield.skip:]
-	} else if yield.skip >= len(result.Rows) {
-		result.Rows = [][]interface{}{}
-	}
-
-	// Apply LIMIT if present
-	if yield.limit >= 0 && yield.limit < len(result.Rows) {
-		result.Rows = result.Rows[:yield.limit]
-	}
-
 	return result, nil
 }
 
-// applyReturnToYieldResult transforms procedure results based on a RETURN clause.
-// This handles property access (node.id), aliasing (AS), and expression evaluation.
-func (e *StorageExecutor) applyReturnToYieldResult(ctx context.Context, result *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
-	// Parse RETURN items
-	returnItems := splitReturnExpressions(returnExpr)
-	if len(returnItems) == 0 {
-		return result, nil
-	}
-	if len(returnItems) == 1 && strings.TrimSpace(returnItems[0]) == "*" {
-		return result, nil
-	}
-
-	// Build column index map for current result
-	colIndex := make(map[string]int)
-	for i, col := range result.Columns {
-		colIndex[col] = i
-	}
-
-	// Parse each return item to determine new columns and how to compute values
-	type returnItem struct {
-		expr  string // Original expression (e.g., "node.id", "score")
-		alias string // Column name in output (e.g., "id", "score")
-	}
-	var items []returnItem
-
-	for _, item := range returnItems {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-
-		ri := returnItem{expr: item, alias: item}
-
-		// Check for AS alias
-		if asIdx := projectionAliasIndex(item); asIdx != -1 {
-			ri.expr = strings.TrimSpace(item[:asIdx])
-			ri.alias = strings.TrimSpace(item[asIdx+len("AS"):])
-		}
-
-		items = append(items, ri)
-	}
-
-	// Build new columns
-	newColumns := make([]string, len(items))
-	for i, item := range items {
-		newColumns[i] = item.alias
-	}
-
-	// Transform each row
-	newRows := make([][]interface{}, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		// Build yield-context with current row values
-		yieldCtx := make(map[string]interface{})
-		for i, col := range result.Columns {
-			if i < len(row) {
-				yieldCtx[col] = row[i]
-			}
-		}
-
-		// Evaluate each return expression
-		newRow := make([]interface{}, len(items))
-		for i, item := range items {
-			newRow[i] = e.evaluateReturnExprInContext(ctx, item.expr, yieldCtx)
-		}
-		newRows = append(newRows, newRow)
-	}
-
-	return &ExecuteResult{
-		Columns: newColumns,
-		Rows:    newRows,
-		Stats:   result.Stats,
-	}, nil
-}
-
-// evaluateReturnExprInContext evaluates a RETURN expression in the context of yielded values.
-// Handles: direct references (score), property access (node.id), and functions.
-func (e *StorageExecutor) evaluateReturnExprInContext(ctx context.Context, expr string, yieldCtx map[string]interface{}) interface{} {
-	expr = strings.TrimSpace(expr)
-
-	// Literal handling
-	if strings.EqualFold(expr, "null") {
-		return nil
-	}
-	if strings.EqualFold(expr, "true") {
-		return true
-	}
-	if strings.EqualFold(expr, "false") {
-		return false
-	}
-	if len(expr) >= 2 {
-		if (expr[0] == '\'' && expr[len(expr)-1] == '\'') || (expr[0] == '"' && expr[len(expr)-1] == '"') {
-			return expr[1 : len(expr)-1]
-		}
-	}
-	if i, err := strconv.ParseInt(expr, 10, 64); err == nil {
-		return i
-	}
-	if f, err := strconv.ParseFloat(expr, 64); err == nil {
-		return f
-	}
-
-	// Direct reference to a yielded value
-	if val, ok := yieldCtx[expr]; ok {
-		return val
-	}
-
-	// Build nodes and rels maps from context for function evaluation
-	nodes := make(map[string]*storage.Node)
-	rels := make(map[string]*storage.Edge)
-	for key, val := range yieldCtx {
-		if node, ok := val.(*storage.Node); ok && node != nil {
-			nodes[key] = node
-		}
-		if edge, ok := val.(*storage.Edge); ok && edge != nil {
-			rels[key] = edge
-		}
-	}
-
-	// Handle function calls (e.g., id(a), elementId(a), labels(a))
-	if strings.Contains(expr, "(") {
-		return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-	}
-
-	// Property access: node.property
-	if strings.Contains(expr, ".") {
-		parts := strings.SplitN(expr, ".", 2)
-		if len(parts) == 2 {
-			varName := strings.TrimSpace(parts[0])
-			propName := strings.TrimSpace(parts[1])
-
-			if val, ok := yieldCtx[varName]; ok {
-				// Handle *storage.Node (Neo4j compatible)
-				if node, ok := val.(*storage.Node); ok && node != nil {
-					// Handle special "id" property
-					if propName == "id" {
-						if propVal, ok := node.Properties["id"]; ok {
-							return propVal
-						}
-						return string(node.ID)
-					}
-					// Regular property access
-					if propVal, ok := node.Properties[propName]; ok {
-						return propVal
-					}
-					return nil
-				}
-				// If the value is a map (legacy node representation), extract property
-				if mapVal, ok := val.(map[string]interface{}); ok {
-					// Try direct property access
-					if propVal, ok := mapVal[propName]; ok {
-						return propVal
-					}
-					// Try in "properties" sub-map (Neo4j style)
-					if props, ok := mapVal["properties"].(map[string]interface{}); ok {
-						if propVal, ok := props[propName]; ok {
-							return propVal
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Return nil for unresolved expressions
-	return nil
-}
-
-// evaluateYieldWhere evaluates a WHERE condition in the context of YIELD variables.
-func (e *StorageExecutor) evaluateYieldWhere(ctx context.Context, whereExpr string, yieldCtx map[string]interface{}) (bool, error) {
-	// Simple evaluation for common patterns
-	whereExpr = strings.TrimSpace(whereExpr)
-	if whereExpr == "" {
-		return true, nil
-	}
-
-	// Convert context for the expression evaluator.
-	// Preserve real yielded node/relationship values so functions like elementId(node),
-	// id(node), labels(node), and type(relationship) evaluate correctly.
-	nodes := make(map[string]*storage.Node)
-	rels := make(map[string]*storage.Edge)
-	values := valueBindingsLayer(ctx, len(yieldCtx))
-
-	for name, val := range yieldCtx {
-		// Preserve real graph entities.
-		if nodeVal, ok := val.(*storage.Node); ok && nodeVal != nil {
-			nodes[name] = nodeVal
-			continue
-		}
-		if relVal, ok := val.(*storage.Edge); ok && relVal != nil {
-			rels[name] = relVal
-			continue
-		}
-
-		// Maps and scalars are values (valueBindings), not stand-in nodes.
-		values[name] = val
-		if _, isMap := val.(map[string]interface{}); !isMap {
-			// Also add the scalar value directly to enable direct comparisons like "score > 0.5"
-			yieldCtx[name] = val
-		}
-	}
-
-	// Try to evaluate using the expression evaluator with context
-	result := e.evaluateExpressionWithContext(withValueBindings(ctx, values), whereExpr, nodes, rels)
-
-	// Convert result to boolean
-	switch v := result.(type) {
-	case bool:
-		return v, nil
-	case nil:
-		return false, nil
-	default:
-		return false, localizedError(localization.CypherCommandRoutingWhereBooleanRequired(fmt.Sprint(result)), nil)
-	}
-}
-
 func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	return e.executeProcedureCall(ctx, cypher, false)
+}
+
+// executeProcedureCall runs a procedure call and the tail after it. inQuery is
+// true when the call is part of a larger query whose other clauses the caller
+// runs (MATCH … CALL, a CALL in a tail): its YIELD may then filter, order and
+// page, which a standalone call can't (validateYieldModifiers).
+func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher string, inQuery bool) (*ExecuteResult, error) {
 	// Substitute parameters AFTER routing to avoid keyword detection issues
 	if params := getParamsFromContext(ctx); params != nil {
 		cypher = e.substituteParams(cypher, params)
 	}
-	parts := splitCallAndTail(cypher)
+	// A RETURN right after YIELD is the start of the tail, like any other
+	// clause, so it runs over all yielded rows (executeCallTail): an aggregate
+	// in it groups the rows, and ORDER BY / SKIP / LIMIT apply to all of them.
+	parts := splitChainedProcedureCall(cypher)
 	callCypher := parts.callOnly
 	tailCypher := parts.tail
 
@@ -3936,6 +2986,9 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 
 	// Parse YIELD clause for post-processing
 	yield := parseYieldClause(callCypher)
+	if err := e.validateYieldModifiers(yield, inQuery || strings.TrimSpace(tailCypher) != ""); err != nil {
+		return nil, err
+	}
 
 	// Registry-first path: canonical procedure contract for built-ins and UDFs.
 	ensureBuiltInProceduresRegistered()
@@ -3945,8 +2998,7 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		if err := validateProcedureArgumentPassingMode(proc.Spec, callCypher, hasTail); err != nil {
 			return nil, err
 		}
-		isInQuery := hasTail || (yield != nil && yield.hasReturn)
-		if err := validateProcedureYieldBindings(yield, isInQuery); err != nil {
+		if err := validateProcedureYieldBindings(yield, hasTail); err != nil {
 			return nil, err
 		}
 		args, err := extractProcedureInvocationArguments(ctx, proc.Spec, callCypher)
@@ -4240,10 +3292,22 @@ func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
 		Columns: []string{"label"},
 		Rows:    make([][]interface{}, 0, len(labelSet)),
 	}
-	for label := range labelSet {
+	for _, label := range sortedStringSet(labelSet) {
 		result.Rows = append(result.Rows, []interface{}{label})
 	}
 	return result, nil
+}
+
+// sortedStringSet returns a set's members in sorted order, so procedures
+// listing schema tokens (db.labels, db.relationshipTypes, …) return the same
+// order on every call.
+func sortedStringSet(set map[string]bool) []string {
+	members := make([]string, 0, len(set))
+	for member := range set {
+		members = append(members, member)
+	}
+	sort.Strings(members)
+	return members
 }
 
 func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
@@ -4261,7 +3325,7 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 		Columns: []string{"relationshipType"},
 		Rows:    make([][]interface{}, 0, len(typeSet)),
 	}
-	for relType := range typeSet {
+	for _, relType := range sortedStringSet(typeSet) {
 		result.Rows = append(result.Rows, []interface{}{relType})
 	}
 	return result, nil
@@ -4614,7 +3678,7 @@ func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
 		Columns: []string{"propertyKey"},
 		Rows:    make([][]interface{}, 0, len(propSet)),
 	}
-	for prop := range propSet {
+	for _, prop := range sortedStringSet(propSet) {
 		result.Rows = append(result.Rows, []interface{}{prop})
 	}
 

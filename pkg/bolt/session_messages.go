@@ -258,17 +258,7 @@ func (s *Session) handleRun(data []byte) error {
 	defer runCancel()
 	s.setActiveRun(runCancel)
 	defer s.clearActiveRun()
-	ctx = cypher.WithAuthToken(ctx, s.forwardedAuthHeader)
-	if s.authResult != nil {
-		principal := s.authResult.PrincipalID
-		if principal == "" {
-			principal = auth.UsernamePrincipalID(s.authResult.Username)
-		}
-		ctx = cypher.WithAuthenticatedPrincipal(ctx, principal)
-		ctx = cypher.WithPermissionChecker(ctx, func(permission string) bool {
-			return s.authResult.HasPermission(permission)
-		})
-	}
+	ctx = s.withSessionIdentity(ctx)
 
 	runStart := time.Now()
 	result, err := executor.Execute(ctx, query, params)
@@ -1073,6 +1063,9 @@ func (s *Session) handleBegin(data []byte) error {
 		}
 	}
 	txParent = extractTraceparent(txParent, metadata)
+	// The transaction is the session's: SHOW TRANSACTIONS lists it with the
+	// session's connection and user from BEGIN on.
+	txParent = s.withSessionIdentity(txParent)
 
 	txExec, _ := s.executor.(TransactionalExecutor)
 	s.txLifecycle.setTimeoutCleanupFailureHandler(s.failClosedTransactionCleanup)
@@ -1632,4 +1625,48 @@ func (s *Session) writeMessageNoFlush(data []byte) error {
 		return err
 	}
 	return s.writer.WriteByte(0x00)
+}
+
+// withSessionIdentity adds what the executor knows about the session to a
+// statement's or transaction's context: the forwarded auth header, the
+// client connection, the user directory, and the authenticated user with
+// their principal and permissions.
+func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
+	ctx = cypher.WithAuthToken(ctx, s.forwardedAuthHeader)
+	ctx = cypher.WithRequestIdentity(ctx, s.requestIdentity())
+	if s.authResult != nil {
+		principal := s.authResult.PrincipalID
+		if principal == "" {
+			principal = auth.UsernamePrincipalID(s.authResult.Username)
+		}
+		ctx = cypher.WithAuthenticatedPrincipal(ctx, principal)
+		ctx = cypher.WithPermissionChecker(ctx, func(permission string) bool {
+			return s.authResult.HasPermission(permission)
+		})
+	}
+	return ctx
+}
+
+// requestIdentity is the session's identity for SHOW USERS, SHOW CURRENT
+// USER and SHOW TRANSACTIONS: its connection, its signed-in user and the
+// user store. It is built once and rebuilt only when the signed-in user
+// changes (LOGON / LOGOFF), so a statement doesn't rebuild it.
+func (s *Session) requestIdentity() *cypher.RequestIdentity {
+	if s.identity != nil && s.identityAuth == s.authResult {
+		return s.identity
+	}
+	identity := &cypher.RequestIdentity{Connection: cypher.ClientConnection{ID: s.connectionID, Protocol: "bolt"}}
+	if s.conn != nil && s.conn.RemoteAddr() != nil {
+		identity.Connection.Address = s.conn.RemoteAddr().String()
+	}
+	if s.server != nil && s.server.config != nil {
+		if lister, ok := s.server.config.Authenticator.(interface{ UserListings() []cypher.UserListing }); ok {
+			identity.Users = lister.UserListings
+		}
+	}
+	if s.authResult != nil && s.authResult.Username != "" {
+		identity.User = &cypher.AuthenticatedUser{Name: s.authResult.Username, Roles: s.authResult.Roles}
+	}
+	s.identity, s.identityAuth = identity, s.authResult
+	return identity
 }

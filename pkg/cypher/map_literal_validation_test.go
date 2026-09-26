@@ -33,10 +33,10 @@ func TestMapLiteralKeysAndValuesAreValidated(t *testing.T) {
 
 func TestMapLiteralArgumentsUseConvergedFunctionEvaluation(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewMemoryEngine())
-	value, ok := exec.evaluateRowExpression("apoc.map.merge({a: 1, b: 2}, {b: 3, c: 4})", pipelineRow{})
+	value, ok := rowValue(t, exec, "apoc.map.merge({a: 1, b: 2}, {b: 3, c: 4})", pipelineRow{})
 	if !ok {
-		left, leftOK := exec.evaluateRowExpression("{a: 1, b: 2}", pipelineRow{})
-		right, rightOK := exec.evaluateRowExpression("{b: 3, c: 4}", pipelineRow{})
+		left, leftOK := rowValue(t, exec, "{a: 1, b: 2}", pipelineRow{})
+		right, rightOK := rowValue(t, exec, "{b: 3, c: 4}", pipelineRow{})
 		t.Fatalf("map function was not evaluated; left=%#v/%v right=%#v/%v", left, leftOK, right, rightOK)
 	}
 	want := map[string]interface{}{"a": int64(1), "b": int64(3), "c": int64(4)}

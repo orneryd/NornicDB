@@ -572,8 +572,8 @@ func TestCypherHelpers_FindNodeByProperties_AndRangeIndex(t *testing.T) {
 	require.NoError(t, err)
 	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX FOR (n:Person) ON (n.age)")
 	require.NoError(t, err)
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_bad FOR (n:Person) ON (n.a, n.b)")
-	require.Error(t, err)
+	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_pair FOR (n:Person) ON (n.a, n.b)")
+	require.NoError(t, err)
 	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX nonsense")
 	require.Error(t, err)
 }
@@ -2152,50 +2152,6 @@ func TestCypherHelpers_TypedResultDecodeAndAssignBranches(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestCypherHelpers_CallEvaluationHelpers(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-
-	node := &storage.Node{
-		ID:         "n1",
-		Labels:     []string{"Doc"},
-		Properties: map[string]interface{}{"name": "alice", "id": "user-1"},
-	}
-	ctxVals := map[string]interface{}{
-		"score": 0.9,
-		"n":     node,
-		"m": map[string]interface{}{
-			"name": "bob",
-			"properties": map[string]interface{}{
-				"city": "NYC",
-			},
-		},
-	}
-
-	ctx := context.Background()
-	assert.Equal(t, 0.9, exec.evaluateReturnExprInContext(ctx, "score", ctxVals))
-	assert.Equal(t, "alice", exec.evaluateReturnExprInContext(ctx, "n.name", ctxVals))
-	assert.Equal(t, "user-1", exec.evaluateReturnExprInContext(ctx, "n.id", ctxVals))
-	assert.Equal(t, "bob", exec.evaluateReturnExprInContext(ctx, "m.name", ctxVals))
-	assert.Equal(t, "NYC", exec.evaluateReturnExprInContext(ctx, "m.city", ctxVals))
-	assert.Nil(t, exec.evaluateReturnExprInContext(ctx, "missing.field", ctxVals))
-
-	ok, err := exec.evaluateYieldWhere(ctx, "", map[string]interface{}{"x": 1})
-	require.NoError(t, err)
-	assert.True(t, ok)
-
-	ok, err = exec.evaluateYieldWhere(ctx, "n.value > 0", map[string]interface{}{"n": map[string]interface{}{"value": int64(2)}})
-	require.NoError(t, err)
-	assert.True(t, ok)
-
-	ok, err = exec.evaluateYieldWhere(ctx, "x.value > 1", map[string]interface{}{"x": int64(0)})
-	require.NoError(t, err)
-	assert.False(t, ok)
-
-	ok, err = exec.evaluateYieldWhere(ctx, "1 + 1", map[string]interface{}{})
-	require.Error(t, err)
-	assert.False(t, ok)
-}
-
 func TestCypherHelpers_VectorParsingAndQueryBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
@@ -3049,23 +3005,22 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	assert.Equal(t, -1, findKeywordIndexInContext("x = 'ORDER BY' and y = 'LIMIT'", "ORDER"))
 	assert.NotEqual(t, -1, findKeywordIndexInContext(" score > 0.1 ORDER BY score DESC", "ORDER"))
 
-	parsed := parseYieldClause("CALL proc() YIELD node, score RETURN node.id AS id, score ORDER BY score DESC SKIP 1 LIMIT 2")
+	// A RETURN after YIELD starts the tail; the YIELD keeps its own WHERE,
+	// ORDER BY, SKIP and LIMIT, which come before it.
+	parsed := parseYieldClause("CALL proc() YIELD node, score AS s WHERE s > 0 ORDER BY s DESC SKIP 1 LIMIT 2 RETURN node.id AS id")
 	require.NotNil(t, parsed)
 	require.Len(t, parsed.items, 2)
 	assert.Equal(t, "node", parsed.items[0].name)
-	assert.Equal(t, "score", parsed.items[1].name)
-	assert.True(t, parsed.hasReturn)
-	assert.Equal(t, "node.id AS id, score", parsed.returnExpr)
-	assert.Equal(t, "score DESC", parsed.orderBy)
-	assert.Equal(t, 1, parsed.skip)
-	assert.Equal(t, 2, parsed.limit)
-
-	parsedNoReturn := parseYieldClause("CALL proc() YIELD score ORDER BY score DESC SKIP 2 LIMIT 1")
-	require.NotNil(t, parsedNoReturn)
-	assert.False(t, parsedNoReturn.hasReturn)
-	assert.Equal(t, "score DESC", parsedNoReturn.orderBy)
-	assert.Equal(t, 2, parsedNoReturn.skip)
-	assert.Equal(t, 1, parsedNoReturn.limit)
+	assert.Equal(t, "s", parsed.items[1].alias)
+	assert.Equal(t, "s > 0", parsed.where)
+	assert.Equal(t, "s DESC", parsed.orderBy)
+	assert.Equal(t, "1", parsed.skip)
+	assert.Equal(t, "2", parsed.limit)
+	assert.False(t, parsed.misplacedWhere)
+	assert.True(t, parseYieldClause("CALL proc() YIELD s ORDER BY s WHERE s > 0 RETURN s").misplacedWhere)
+	// STARTS WITH and a WHERE inside a subquery are part of the predicate.
+	parsedPredicate := parseYieldClause("CALL proc() YIELD s WHERE s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s } RETURN s")
+	assert.Equal(t, "s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s }", parsedPredicate.where)
 
 	node1 := &storage.Node{ID: "n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "user-1"}}
 	node2 := &storage.Node{ID: "n2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "user-2"}}
@@ -3079,24 +3034,23 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 		},
 	}
 
+	// The WHERE sees the aliases, then ORDER BY / SKIP / LIMIT apply.
 	yield := &yieldClause{
-		yieldAll:   true,
-		hasReturn:  true,
-		returnExpr: "node.id AS id, score AS score",
-		orderBy:    "ORDER BY score DESC",
-		skip:       1,
-		limit:      1,
+		items:   []yieldItem{{name: "node", alias: "n"}, {name: "score", alias: "s"}},
+		where:   "s > 0.3",
+		orderBy: "s DESC",
+		skip:    "1",
+		limit:   "1",
 	}
-
 	ctx := context.Background()
 	filtered, err := exec.applyYieldFilter(ctx, baseResult, yield)
 	require.NoError(t, err)
+	assert.Equal(t, []string{"n", "s"}, filtered.Columns)
 	require.Len(t, filtered.Rows, 1)
-	assert.Equal(t, []string{"id", "score"}, filtered.Columns)
-	assert.Equal(t, "user-3", filtered.Rows[0][0])
+	assert.Equal(t, node3, filtered.Rows[0][0])
 	assert.Equal(t, float64(0.5), filtered.Rows[0][1])
 
-	// WHERE filtering + projected aliases.
+	// A map value's key is read like any other map's.
 	whereResult := &ExecuteResult{
 		Columns: []string{"score"},
 		Rows: [][]interface{}{
@@ -3105,16 +3059,13 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 		},
 	}
 	yieldWhere := &yieldClause{
-		items: []yieldItem{
-			{name: "score", alias: "score"},
-		},
+		items: []yieldItem{{name: "score"}},
 		where: "score.value > 0.5",
 	}
-
 	whereFiltered, err := exec.applyYieldFilter(ctx, whereResult, yieldWhere)
 	require.NoError(t, err)
-	// Current evaluator semantics: map-valued YIELD WHERE does not resolve to true here.
-	require.Empty(t, whereFiltered.Rows)
+	require.Len(t, whereFiltered.Rows, 1)
+	assert.Equal(t, map[string]interface{}{"value": float64(0.9)}, whereFiltered.Rows[0][0])
 
 	// Unknown column should be rejected.
 	_, err = exec.applyYieldFilter(ctx, &ExecuteResult{

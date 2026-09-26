@@ -65,7 +65,7 @@ func TestYieldReturnIntegration(t *testing.T) {
 		result, err := exec.Execute(ctx, `
 			CALL db.index.fulltext.queryNodes('node_search', 'authentication')
 			YIELD node, score
-			RETURN node.id AS id, node.title AS title, score
+			RETURN elementId(node) AS id, node.title AS title, score
 		`, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"id", "title", "score"}, result.Columns)
@@ -96,7 +96,7 @@ func TestYieldReturnIntegration(t *testing.T) {
 		result, err := exec.Execute(ctx, `
 			CALL db.index.fulltext.queryNodes('node_search', 'authentication')
 			YIELD node, score
-			RETURN node.id AS id, node.title AS title, score
+			RETURN elementId(node) AS id, node.title AS title, score
 			ORDER BY score DESC
 			LIMIT 5
 		`, nil)
@@ -163,15 +163,25 @@ func TestYieldReturnIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("YIELD with LIMIT only (no RETURN)", func(t *testing.T) {
-		// LIMIT without explicit RETURN should still work
+	t.Run("YIELD with LIMIT", func(t *testing.T) {
+		// The YIELD's own LIMIT pages the yielded rows before the RETURN.
 		result, err := exec.Execute(ctx, `
 			CALL db.index.fulltext.queryNodes('node_search', 'authentication')
 			YIELD node, score
 			LIMIT 2
+			RETURN node, score
 		`, nil)
 		require.NoError(t, err)
-		assert.Equal(t, 2, len(result.Rows), "LIMIT 2 without RETURN should return 2 rows")
+		assert.Equal(t, 2, len(result.Rows), "YIELD … LIMIT 2 should return 2 rows")
+
+		// A standalone call can't page its rows, as in Neo4j.
+		_, err = exec.Execute(ctx, `
+			CALL db.index.fulltext.queryNodes('node_search', 'authentication')
+			YIELD node, score
+			LIMIT 2
+		`, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Cannot use standalone call")
 	})
 
 	t.Run("single line query format", func(t *testing.T) {
@@ -214,15 +224,15 @@ func TestYieldReturnIntegration(t *testing.T) {
 	})
 
 	t.Run("YIELD * with LIMIT", func(t *testing.T) {
-		// YIELD * should return all procedure columns
-		// Search for 'authentication' which appears in multiple test nodes
-		result, err := exec.Execute(ctx, `
+		// YIELD * is only valid standalone, and a standalone call can't page
+		// its rows, as in Neo4j.
+		_, err := exec.Execute(ctx, `
 			CALL db.index.fulltext.queryNodes('node_search', 'authentication')
 			YIELD *
 			LIMIT 2
 		`, nil)
-		require.NoError(t, err)
-		assert.LessOrEqual(t, len(result.Rows), 2, "LIMIT should cap results at 2")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Cannot use standalone call")
 	})
 
 	t.Run("empty result set with LIMIT", func(t *testing.T) {
@@ -256,7 +266,7 @@ func TestYieldReturnIntegration(t *testing.T) {
 		result, err := exec.Execute(ctx, `
 			CALL db.index.fulltext.queryNodes('node_search', 'database')
 			YIELD node, score
-			RETURN node.id AS id, node.title AS title, score
+			RETURN elementId(node) AS id, node.title AS title, score
 			ORDER BY score DESC
 			LIMIT 5
 		`, nil)

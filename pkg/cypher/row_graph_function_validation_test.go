@@ -103,7 +103,7 @@ func TestStaticGraphFunctionArgumentsCheckedEverywhere(t *testing.T) {
 
 func TestPropertiesAcceptsMapsInSharedRowEvaluator(t *testing.T) {
 	executor, _ := newUnitExecutor(t)
-	value, evaluated := executor.evaluateRowExpression("properties({name: 'Popeye', level: 9001})", pipelineRow{})
+	value, evaluated := rowValue(t, executor, "properties({name: 'Popeye', level: 9001})", pipelineRow{})
 	require.True(t, evaluated)
 	require.Equal(t, map[string]interface{}{"name": "Popeye", "level": int64(9001)}, value)
 }

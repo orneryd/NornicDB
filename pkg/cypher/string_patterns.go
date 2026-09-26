@@ -343,13 +343,7 @@ func ParseAggregation(expr string) *AggregationResult {
 		return result
 	}
 
-	upperContent := strings.ToUpper(content)
-
-	// Check for DISTINCT
-	if strings.HasPrefix(upperContent, "DISTINCT ") {
-		result.Distinct = true
-		content = strings.TrimSpace(content[9:]) // Skip "DISTINCT "
-	}
+	content, result.Distinct = cutDistinct(content)
 
 	// Parse variable.property or just variable
 	dotIdx := strings.Index(content, ".")

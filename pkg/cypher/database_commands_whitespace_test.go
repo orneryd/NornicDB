@@ -181,7 +181,7 @@ func TestDatabaseCommands_ShowDatabases_WhitespacePermutations(t *testing.T) {
 			require.NoError(t, err, "Query must succeed with whitespace permutation: %q", query)
 			require.NotEmpty(t, result.Columns, "Query must return columns: %q", query)
 
-			expectedColumns := []string{"name", "type", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"}
+			expectedColumns := showDatabasesDefaultColumns
 			assert.Equal(t, expectedColumns, result.Columns)
 			assert.GreaterOrEqual(t, len(result.Rows), 3, "Query must return at least 3 databases: %q", query)
 		})
@@ -204,7 +204,7 @@ func TestDatabaseCommands_ShowDatabase_WhitespacePermutations(t *testing.T) {
 			require.NoError(t, err, "Query must succeed with whitespace permutation: %q", query)
 			require.NotEmpty(t, result.Columns, "Query must return columns: %q", query)
 
-			expectedColumns := []string{"name", "type", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"}
+			expectedColumns := showDatabasesDefaultColumns
 			assert.Equal(t, expectedColumns, result.Columns)
 			assert.Len(t, result.Rows, 1, "Query must return one row: %q", query)
 		})

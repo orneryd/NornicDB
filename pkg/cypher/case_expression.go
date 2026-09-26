@@ -36,8 +36,8 @@ type caseExpression struct {
 
 // isCaseExpression checks if an expression is a CASE expression.
 func isCaseExpression(expr string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(expr))
-	return strings.HasPrefix(upper, "CASE") && strings.HasSuffix(upper, "END")
+	trimmed := strings.TrimSpace(expr)
+	return hasPrefixFoldASCII(trimmed, "CASE") && hasSuffixFoldASCII(trimmed, "END")
 }
 
 // leadingCaseExpressionEnd returns the exclusive end of a leading CASE ... END

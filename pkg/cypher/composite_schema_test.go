@@ -106,7 +106,8 @@ func TestDropIndex_RealExecution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify it exists.
-	res, err := exec.Execute(context.Background(), "SHOW INDEXES", nil)
+	// SHOW RANGE INDEXES leaves out the two token lookup indexes.
+	res, err := exec.Execute(context.Background(), "SHOW RANGE INDEXES", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(res.Rows), "expected 1 index after CREATE")
 
@@ -115,7 +116,7 @@ func TestDropIndex_RealExecution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify it's gone.
-	res, err = exec.Execute(context.Background(), "SHOW INDEXES", nil)
+	res, err = exec.Execute(context.Background(), "SHOW RANGE INDEXES", nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(res.Rows), "expected 0 indexes after DROP")
 }
@@ -147,7 +148,7 @@ func TestDropIndex_BacktickQuoted(t *testing.T) {
 		"CREATE INDEX `my-index` FOR (n:Label) ON (n.prop)", nil)
 	require.NoError(t, err)
 
-	res, err := exec.Execute(context.Background(), "SHOW INDEXES", nil)
+	res, err := exec.Execute(context.Background(), "SHOW RANGE INDEXES", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(res.Rows))
 
@@ -161,7 +162,7 @@ func TestDropIndex_BacktickQuoted(t *testing.T) {
 	_, err = exec.Execute(context.Background(), "DROP INDEX `my-index`", nil)
 	require.NoError(t, err, "DROP INDEX `my-index` failed; stored name was %q", storedName)
 
-	res, err = exec.Execute(context.Background(), "SHOW INDEXES", nil)
+	res, err = exec.Execute(context.Background(), "SHOW RANGE INDEXES", nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(res.Rows))
 }

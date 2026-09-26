@@ -244,6 +244,12 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 				if hasMutationBeforeCall {
 					goto skipMatchCallRoute
 				}
+				// The pipeline runs a read-only registered procedure as a clause
+				// over every row, so the YIELD's WHERE sees the row's variables
+				// and later clauses see all rows; it declines other calls.
+				if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+					return result, err
+				}
 				if findKeywordIndex(cypher[:callIdx], "WITH") > 0 {
 					return e.executeMatchWithClause(ctx, cypher)
 				}
@@ -457,6 +463,7 @@ skipMatchCallRoute:
 		findMultiWordKeywordIndex(cypher, "CREATE", "RANGE INDEX") == 0,
 		findMultiWordKeywordIndex(cypher, "CREATE", "FULLTEXT INDEX") == 0,
 		findMultiWordKeywordIndex(cypher, "CREATE", "VECTOR INDEX") == 0,
+		findMultiWordKeywordIndex(cypher, "CREATE", "LOOKUP INDEX") == 0,
 		findKeywordIndex(cypher, "CREATE INDEX") == 0:
 		return e.executeSchemaCommand(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE") == 0:
@@ -473,7 +480,10 @@ skipMatchCallRoute:
 	case hasDelete || hasDetachDelete:
 		return e.executeDelete(ctx, cypher)
 	case findKeywordIndex(cypher, "CALL") == 0:
-		if isCallSubquery(cypher) {
+		// A statement that starts with a CALL { } subquery runs as one; a
+		// procedure call runs as a call, with any CALL { } in its tail
+		// (CALL proc() YIELD node CALL { WITH node … }).
+		if startsWithCallSubquery(cypher) {
 			return e.executeCallSubquery(ctx, cypher)
 		}
 		return e.executeCall(ctx, cypher)
@@ -516,35 +526,56 @@ skipMatchCallRoute:
 		findMultiWordKeywordIndex(cypher, "SHOW", "RANGE INDEXES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "RANGE INDEX") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEXES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEX") == 0:
-		return e.executeShowIndexes(ctx, cypher)
+		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEX") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "LOOKUP INDEXES") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "LOOKUP INDEX") == 0:
+		return e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "INDEXES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "INDEX") == 0:
-		return e.executeShowIndexes(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "DECAY PROFILES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "PROMOTION PROFILES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "PROMOTION POLICIES") == 0:
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeKnowledgePolicyDDL)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "CONSTRAINTS") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "CONSTRAINT") == 0:
-		return e.executeShowConstraints(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowConstraints)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "PROCEDURES") == 0:
-		return e.executeShowProcedures(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowProcedures)
 	case findKeywordIndex(cypher, "SHOW FUNCTIONS") == 0:
-		return e.executeShowFunctions(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowFunctions)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "COMPOSITE DATABASES") == 0:
-		return e.executeShowCompositeDatabases(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowCompositeDatabases)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "CONSTITUENTS") == 0:
-		return e.executeShowConstituents(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowConstituents)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "DEFAULT DATABASE") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "HOME DATABASE") == 0:
+		return e.executeShowWithTail(ctx, cypher, e.executeShowDefaultDatabase)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "USERS") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "CURRENT USER") == 0:
+		return e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "TRANSACTIONS") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "TRANSACTION") == 0:
+		return e.executeShowWithTail(ctx, cypher, e.executeShowTransactions)
+	case findMultiWordKeywordIndex(cypher, "TERMINATE", "TRANSACTIONS") == 0,
+		findMultiWordKeywordIndex(cypher, "TERMINATE", "TRANSACTION") == 0:
+		return e.executeShowWithTail(ctx, cypher, e.executeTerminateTransactions)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "ROLES") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "ROLE") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "PRIVILEGES") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "USER") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "SERVERS") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "SERVER") == 0:
+		return nil, unsupportedAdministrationCommandError(cypher)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "DATABASES") == 0:
-		return e.executeShowDatabases(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowDatabases)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "DATABASE") == 0:
-		return e.executeShowDatabase(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowDatabase)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "ALIASES") == 0:
-		return e.executeShowAliases(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowAliases)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "SETTINGS") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "SETTING") == 0:
-		return e.executeShowSettings(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowSettings)
 	case findMultiWordKeywordIndex(cypher, "ALTER", "COMPOSITE DATABASE") == 0:
 		return e.executeAlterCompositeDatabase(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "ALTER", "DECAY PROFILE") == 0,
@@ -552,7 +583,7 @@ skipMatchCallRoute:
 		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION POLICY") == 0:
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "LIMITS") == 0:
-		return e.executeShowLimits(ctx, cypher)
+		return e.executeShowWithTail(ctx, cypher, e.executeShowLimits)
 	default:
 		// Terminal chokepoint of the converged router: a statement that passed
 		// syntax validation but matches no handler is rejected here — never a
@@ -581,10 +612,10 @@ func (e *StorageExecutor) executeTopLevelUnwind(ctx context.Context, cypher stri
 
 // executeReturn handles simple RETURN statements (e.g., "RETURN 1").
 func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Parameters are row values ($name), not text: a substituted value would
+	// read as a literal (RETURN $a / $b with a = 1.0, b = 0 would fold like
+	// RETURN 1.0 / 0).
 	params := getParamsFromContext(ctx)
-	if params != nil {
-		cypher = e.substituteParams(cypher, params)
-	}
 	row := make(pipelineRow, len(e.fabricRecordBindings)+len(params))
 	for name, value := range e.fabricRecordBindings {
 		row[name] = value
@@ -617,9 +648,6 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	for _, part := range parts {
 		part, alias := parseProjectionExprAlias(part)
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
-			return nil, err
-		}
-		if err := validateStaticMembershipOperand(part); err != nil {
 			return nil, err
 		}
 		if err := e.validateRangeCalls(part, pipelineRow{}); err != nil {
@@ -965,6 +993,8 @@ var literalLeadingKeywords = map[string]struct{}{
 	"SKIP": {}, "LIMIT": {}, "UNWIND": {}, "FROM": {}, "FIELDTERMINATOR": {}, "OF": {},
 	"DISTINCT": {}, "BY": {}, "YIELD": {}, "SHORTEST": {}, "ANY": {}, "ALL": {},
 	"COMMIT": {}, "USE": {}, "OFFSET": {}, "DELETE": {},
+	// trim([LEADING | TRAILING | BOTH] 'x' FROM s)
+	"BOTH": {}, "LEADING": {}, "TRAILING": {},
 }
 
 // bareWordBeforeLiteral reports whether the word cypher[start:end] (not a
@@ -1055,7 +1085,7 @@ func validateLeadingNodePatternTransition(cypher string) error {
 var validSyntaxStarts = [...]string{
 	"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH",
 	"UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN",
-	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK",
+	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK", "TERMINATE",
 }
 
 func hasValidStartKeyword(cypher string) bool {

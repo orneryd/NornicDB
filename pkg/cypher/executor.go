@@ -1342,7 +1342,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	cypher = trimBOM(cypher)
 	cypher = normalizeCypherSyntaxConfusables(cypher)
-	cypher = stripCypherComments(cypher)
+	// Comments and keyword spacing are canonical from here on; what the
+	// client sees (column names, messages, plans) is the text it sent (#740).
+	canonical, rewrite := canonicalizeQueryText(cypher)
+	if rewrite != nil {
+		cypher = canonical
+		defer func() { result, retErr = rewrite.restore(result, retErr) }()
+	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if cypher == "" {
@@ -1472,6 +1478,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return result, err
 	}
 	if result, err := e.parseTransactionStatement(cypher); result != nil || err != nil {
+		if err == nil && e.txContext != nil && e.txContext.active && e.txContext.running == nil {
+			e.txContext.running = runningTransactions.begin(ctx, e.currentDatabaseName())
+		}
 		return result, err
 	}
 	// A statement that fails in an explicit transaction marks it failed, as in
@@ -1487,6 +1496,17 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			e.failTransaction(retErr)
 		}()
 	}
+	// SHOW TRANSACTIONS lists the statement while it runs; TERMINATE
+	// TRANSACTIONS cancels it (#718).
+	statementCtx, running, runErr := e.withRunningStatement(ctx, originalCypher)
+	if runErr != nil {
+		if e.txContext != nil && e.txContext.active {
+			_, _ = e.handleRollback()
+		}
+		return nil, runErr
+	}
+	defer running.done()
+	ctx = statementCtx
 
 	// Validate basic syntax
 	if err := e.validateSyntax(cypher); err != nil {
@@ -1498,7 +1518,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		execSpan.SetAttributes(attribute.String("cypher.op_type", "parse_error"))
 		return nil, err
 	}
-	if err := e.validateSemanticScopes(cypher); err != nil {
+	// WITH EMBEDDING is an execution option, not a WITH projection: the
+	// scopes are those of the statement without it.
+	scopeText, _ := stripWithEmbeddingSuffix(cypher)
+	if err := e.validateSemanticScopes(scopeText); err != nil {
 		return nil, err
 	}
 
@@ -1516,7 +1539,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {
 		return nil, err
 	}
-	if err := validateMembershipParameters(cypher, params); err != nil {
+	if err := validateListOperands(cypher, params); err != nil {
 		return nil, err
 	}
 
@@ -1638,6 +1661,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
 	}
 	result, err = e.executeImplicitAsync(ctx, cypher, upperQuery)
+	// An expression error recorded while the statement ran is its error,
+	// whichever route ran it: no route's result stands in for it.
+	if err == nil {
+		if failure := getExpressionFailure(ctx); failure != nil {
+			return nil, failure
+		}
+	}
 
 	// Apply result limit if set
 	if err == nil && result != nil {
@@ -2299,6 +2329,11 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 
 	// Execute the query
 	result, execErr := txExec.executeWithoutTransaction(txCtx, cypher, upperQuery)
+	// An expression error recorded while the statement ran is its error, so
+	// nothing it wrote is committed.
+	if execErr == nil {
+		execErr = getExpressionFailure(txCtx)
+	}
 
 	// Handle result
 	if execErr != nil {
@@ -2331,6 +2366,16 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 			}
 			return nil, err
 		}
+	}
+
+	// A statement TERMINATE TRANSACTIONS ended doesn't commit (#718).
+	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok && running.terminated.Load() {
+		tx.Rollback()
+		txExec.invalidateNodeLookupCache()
+		if wal != nil && walSeqStart > 0 {
+			_, _ = wal.AppendTxAbort(dbName, txID, "terminated")
+		}
+		return nil, transactionTerminatedError()
 	}
 
 	// Commit successful transaction

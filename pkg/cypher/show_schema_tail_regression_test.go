@@ -28,7 +28,8 @@ func TestShowSchemaYieldWhereReturn(t *testing.T) {
 		{"SHOW INDEXES YIELD name, labelsOrTypes WHERE name = 'alpha' RETURN labelsOrTypes", []string{"labelsOrTypes"}, [][]interface{}{{[]string{"A"}}}},
 		{"SHOW CONSTRAINTS YIELD name RETURN name ORDER BY name DESC", []string{"name"}, [][]interface{}{{"kz"}, {"ka"}}},
 		{"SHOW INDEXES YIELD name AS indexName WHERE name = 'alpha' RETURN indexName AS title", []string{"title"}, [][]interface{}{{"alpha"}}},
-		{"SHOW INDEXES RETURN count(*) AS total", []string{"total"}, [][]interface{}{{int64(4)}}},
+		// The four range indexes and the two token lookup indexes (#530).
+		{"SHOW INDEXES YIELD * RETURN count(*) AS total", []string{"total"}, [][]interface{}{{int64(6)}}},
 		{"SHOW CONSTRAINTS YIELD name ORDER BY name LIMIT 1", []string{"name"}, [][]interface{}{{"ka"}}},
 		{"SHOW CONSTRAINTS YIELD name WHERE name = 'missing' RETURN count(*) AS total", []string{"total"}, [][]interface{}{{int64(0)}}},
 	} {
@@ -47,6 +48,18 @@ func TestShowSchemaYieldWhereReturn(t *testing.T) {
 	}
 	_, err := executor.Execute(ctx, "SHOW INDEXES YIELD nonexistent RETURN nonexistent", nil)
 	require.Error(t, err)
+	// Neo4j's SHOW grammar: RETURN needs YIELD, WITH isn't allowed, YIELD's
+	// WHERE comes after its ORDER BY / SKIP / LIMIT, which take literals.
+	for _, statement := range []string{
+		"SHOW INDEXES RETURN count(*) AS total",
+		"SHOW INDEXES WHERE name = 'alpha' RETURN name",
+		"SHOW INDEXES YIELD name WITH name RETURN name",
+		"SHOW INDEXES YIELD name WHERE name = 'alpha' ORDER BY name",
+		"SHOW INDEXES YIELD name LIMIT 1 + 1 RETURN name",
+	} {
+		_, err := executor.Execute(ctx, statement, nil)
+		require.Error(t, err, statement)
+	}
 	_, err = executor.Execute(ctx, "DROP CONSTRAINT ka", nil)
 	require.NoError(t, err)
 	result, err := executor.Execute(ctx, "SHOW INDEXES YIELD name WHERE name = 'ka' RETURN count(*) AS total", nil)

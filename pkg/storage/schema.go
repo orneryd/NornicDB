@@ -95,11 +95,12 @@ type SchemaManager struct {
 	pendingWrites atomic.Pointer[pendingWriteAttachment]
 
 	// Indexes
-	propertyIndexes  map[string]*PropertyIndex  // key: "Label:property" (single property)
-	compositeIndexes map[string]*CompositeIndex // key: index name
-	fulltextIndexes  map[string]*FulltextIndex  // key: index_name
-	vectorIndexes    map[string]*VectorIndex    // key: index_name
-	rangeIndexes     map[string]*RangeIndex     // key: index_name
+	propertyIndexes  map[string]*PropertyIndex       // key: "Label:property" (single property)
+	compositeIndexes map[string]*CompositeIndex      // key: index name
+	fulltextIndexes  map[string]*FulltextIndex       // key: index_name
+	vectorIndexes    map[string]*VectorIndex         // key: index_name
+	rangeIndexes     map[string]*RangeIndex          // key: index_name
+	lookupIndexes    map[ConstraintEntityType]string // token lookup index name by entity type (schema_lookup_index.go)
 
 	// Persistence hook (optional).
 	// When set (by BadgerEngine), schema changes are persisted transactionally.
@@ -212,6 +213,7 @@ func NewSchemaManager() *SchemaManager {
 		fulltextIndexes:         make(map[string]*FulltextIndex),
 		vectorIndexes:           make(map[string]*VectorIndex),
 		rangeIndexes:            make(map[string]*RangeIndex),
+		lookupIndexes:           defaultLookupIndexes(),
 	}
 }
 
@@ -267,11 +269,10 @@ func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate boo
 		}
 	}
 
+	// An index-backed constraint owns an index of its own name, for nodes and
+	// relationships alike, as in Neo4j.
 	if c.OwnedIndex == "" && (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey || c.Type == ConstraintRelationshipKey) {
 		c.OwnedIndex = c.Name
-		if c.EffectiveEntityType() == ConstraintEntityRelationship {
-			c.OwnedIndex += "_index"
-		}
 	}
 
 	sm.constraints[c.Name] = c
@@ -1654,6 +1655,14 @@ func (sm *SchemaManager) DropIndex(name string) error {
 		d = dropped{kind: "vector", key: name}
 	} else if _, ok := sm.rangeIndexes[name]; ok {
 		d = dropped{kind: "range", key: name}
+	} else if entityType, ok := sm.dropLookupIndexLocked(name); ok {
+		if sm.persist != nil {
+			if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
+				sm.lookupIndexes[entityType] = name
+				return err
+			}
+		}
+		return nil
 	} else {
 		// propertyIndexes are keyed by "label:property[0]", so search by name.
 		for key, idx := range sm.propertyIndexes {
@@ -1872,6 +1881,14 @@ func (sm *SchemaManager) GetIndexes() []interface{} {
 			"dimensions":     idx.Dimensions,
 			"similarityFunc": idx.SimilarityFunc,
 			"entityType":     string(defaultConstraintEntityType(idx.EntityType)),
+		})
+	}
+
+	for entityType, name := range sm.lookupIndexes {
+		indexes = append(indexes, map[string]interface{}{
+			"name":       name,
+			"type":       "LOOKUP",
+			"entityType": string(entityType),
 		})
 	}
 

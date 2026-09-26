@@ -60,6 +60,8 @@ const (
 	MessageStorageSchemaUnsupportedRelationshipPredicate    MessageID = "storageschema.unsupported_relationship_predicate"
 	MessageStorageSchemaUnsupportedConstraintPattern        MessageID = "storageschema.unsupported_constraint_pattern"
 	MessageStorageSchemaUnsupportedConstraintLiteral        MessageID = "storageschema.unsupported_constraint_literal"
+	MessageStorageSchemaLookupIndexAlreadyExists            MessageID = "storageschema.lookup_index_already_exists"
+	MessageStorageSchemaIndexNameAlreadyExists              MessageID = "storageschema.index_name_already_exists"
 )
 
 func storageSchemaMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -289,4 +291,17 @@ func StorageSchemaUnsupportedConstraintPattern(pattern string) Message {
 
 func StorageSchemaUnsupportedConstraintLiteral(literal string) Message {
 	return storageSchemaMessage(MessageStorageSchemaUnsupportedConstraintLiteral, "unsupported literal "+strconv.Quote(literal), map[string]any{"Literal": literal})
+}
+
+// StorageSchemaLookupIndexAlreadyExists is Neo4j's message for a second
+// token lookup index of an entity type; Pattern is "(:<any-labels>)" or
+// "()-[:<any-types>]-()".
+func StorageSchemaLookupIndexAlreadyExists(pattern string) Message {
+	return storageSchemaMessage(MessageStorageSchemaLookupIndexAlreadyExists, "There already exists an index "+pattern+".", map[string]any{"Pattern": pattern})
+}
+
+// StorageSchemaIndexNameAlreadyExists is Neo4j's message for an index name
+// already in use.
+func StorageSchemaIndexNameAlreadyExists(name string) Message {
+	return storageSchemaMessage(MessageStorageSchemaIndexNameAlreadyExists, "There already exists an index called '"+name+"'.", map[string]any{"Name": name})
 }

@@ -246,9 +246,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	}
 
 	// Parse WITH items
-	trimmedWithClause := strings.TrimSpace(withClause)
-	withClause = trimDistinctPrefix(trimmedWithClause)
-	withDistinct := !strings.EqualFold(withClause, trimmedWithClause)
+	withClause, withDistinct := cutDistinct(withClause)
 	withItems := e.splitWithItems(withClause)
 	type withItem struct {
 		expr        string
@@ -344,9 +342,9 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 			for _, ae := range aggregateExprs {
 				inner := extractFuncInner(ae.expr)
 				switch {
-				case isAggregateFuncName(ae.expr, "count") && strings.Contains(strings.ToUpper(inner), "DISTINCT"):
+				case isAggregateFuncName(ae.expr, "count") && startsWithDistinct(inner):
 					// COUNT(DISTINCT ...) - extract after DISTINCT
-					distinctInner := strings.TrimSpace(inner[8:]) // skip "DISTINCT"
+					distinctInner, _ := cutDistinct(inner)
 					seen := make(map[string]bool)
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
@@ -441,9 +439,9 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					}
 					values[ae.alias] = maxVal
 
-				case isAggregateFuncName(ae.expr, "collect") && strings.Contains(strings.ToUpper(inner), "DISTINCT"):
+				case isAggregateFuncName(ae.expr, "collect") && startsWithDistinct(inner):
 					// COLLECT(DISTINCT ...) - extract after DISTINCT
-					distinctInner := strings.TrimSpace(inner[8:]) // skip "DISTINCT"
+					distinctInner, _ := cutDistinct(inner)
 					seen := make(map[string]bool)
 					var collected []interface{}
 					for _, p := range groupPaths {
@@ -532,7 +530,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 				}
 			}
 			evaluatedCall := e.substituteBoundVariablesInCall(callSection, nodeScope, relScope)
-			if _, err := e.executeCall(ctx, evaluatedCall); err != nil {
+			if _, err := e.executeProcedureCall(ctx, evaluatedCall, true); err != nil {
 				return nil, err
 			}
 		}
@@ -582,12 +580,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 
 				if isAggregateFuncName(item.expr, "collect") {
 					// Handle COLLECT (with or without DISTINCT)
-					upperInner := strings.ToUpper(inner)
-					isDistinct := strings.HasPrefix(upperInner, "DISTINCT ")
-					collectExpr := inner
-					if isDistinct {
-						collectExpr = strings.TrimSpace(inner[9:])
-					}
+					collectExpr, isDistinct := cutDistinct(inner)
 
 					seen := make(map[string]bool)
 					var collected []interface{}
@@ -775,6 +768,23 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 // callers can tell "unrecognized" apart from "evaluated to null" and raise the
 // proper statement error (or route to the EXISTS-subquery machinery).
 func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[string]interface{}) interface{} {
+	return e.evaluateExpressionFromValuesContext(context.Background(), expr, values)
+}
+
+// evaluateRowFallback is the row evaluator's fallback to the shared
+// evaluator. err is the error a function raised there (a registry function's
+// argument error), which the shared evaluator records as the statement error
+// rather than returning it; the row evaluator reports the expression as
+// unresolved and evaluateRowExpressionWithContext records err.
+func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
+	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
+	value := e.evaluateExpressionFromValuesContext(ctx, expr, values)
+	return value, getExpressionFailure(ctx)
+}
+
+// evaluateExpressionFromValuesContext is evaluateExpressionFromValues with
+// the evaluation context: expression failures are recorded on ctx.
+func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Context, expr string, values map[string]interface{}) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -814,7 +824,7 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 		return expr
 	}
 
-	ctx := withValueBindings(context.Background(), values)
+	ctx = withValueBindings(ctx, values)
 	nodes, rels := entityScopesFromValues(values)
 	if value, recognized := e.evaluateExpressionWithContextDefined(ctx, expr, nodes, rels); recognized {
 		return value

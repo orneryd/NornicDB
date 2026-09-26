@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
@@ -28,12 +29,6 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW SETTINGS"), nil)
 	}
 	tail := strings.TrimSpace(query[len(prefix):])
-	for _, field := range strings.Fields(strings.ToUpper(tail)) {
-		switch field {
-		case "YIELD", "WHERE", "RETURN", "ORDER", "SKIP", "LIMIT":
-			return nil, localizedError(localization.CypherTransactionsShowInTransactionUnsupported("SHOW SETTINGS "+field), nil)
-		}
-	}
 
 	selected := make(map[string]struct{})
 	if tail != "" {
@@ -84,21 +79,21 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 		}
 		rows = append(rows, []interface{}{
 			definition.Name,
-			definition.Description,
 			value,
 			definition.Dynamic,
 			definition.DefaultValue,
+			definition.Description,
 			startupValue,
-			append([]string(nil), definition.ValidValues...),
 			explicitlySet,
+			append([]string(nil), definition.ValidValues...),
 			definition.Deprecated,
 		})
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "description", "value", "isDynamic", "defaultValue", "startupValue", "validValues", "isExplicitlySet", "isDeprecated"},
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: []string{"name", "value", "isDynamic", "defaultValue", "description", "startupValue", "isExplicitlySet", "validValues", "isDeprecated"},
 		Rows:    rows,
-	}, nil
+	}, showSettingsDefaultColumns), nil
 }
 
 // executeShowIndexes handles SHOW INDEXES command
@@ -117,8 +112,14 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 		indexTypeFilter = "RANGE"
 	case strings.HasPrefix(upper, "SHOW VECTOR INDEX"):
 		indexTypeFilter = "VECTOR"
+	case strings.HasPrefix(upper, "SHOW LOOKUP INDEX"):
+		indexTypeFilter = "LOOKUP"
 	}
 	if schema != nil {
+		constraintStatements := map[string]interface{}{}
+		for _, constraint := range schema.GetAllConstraints() {
+			constraintStatements[constraint.Name] = showConstraintCreateStatement(constraint)
+		}
 		indexes := schema.GetIndexes()
 		rows = make([][]interface{}, 0, len(indexes))
 		for i, idx := range indexes {
@@ -127,61 +128,98 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 				continue
 			}
 
-			name := idxMap["name"]
-			idxType := idxMap["type"]
+			name, _ := idxMap["name"].(string)
+			idxType, _ := idxMap["type"].(string)
 			if idxType == "PROPERTY" || idxType == "COMPOSITE" {
 				idxType = "RANGE"
 			}
-			if indexTypeFilter != "" && !strings.EqualFold(fmt.Sprintf("%v", idxType), indexTypeFilter) {
+			if indexTypeFilter != "" && !strings.EqualFold(idxType, indexTypeFilter) {
 				continue
 			}
 
-			var labelsOrTypes interface{} = []string{}
-			var properties interface{} = []string{}
-			if l, ok := idxMap["label"].(string); ok && l != "" {
-				labelsOrTypes = []string{l}
-			} else if ls, ok := idxMap["labels"]; ok {
-				labelsOrTypes = ls
-			}
-			if p, ok := idxMap["property"].(string); ok && p != "" {
-				properties = []string{p}
-			} else if ps, ok := idxMap["properties"]; ok {
-				properties = ps
-			}
-
-			// Determine entity type (default NODE)
 			entityType := "NODE"
 			if et, ok := idxMap["entityType"].(string); ok && et != "" {
 				entityType = et
 			}
-
-			// Determine owning constraint (nil if standalone)
-			var owningConstraint interface{}
-			if oc, ok := idxMap["owningConstraint"].(string); ok && oc != "" {
-				owningConstraint = oc
+			provider := showIndexProvider(idxType)
+			if idxType == "LOOKUP" {
+				// A lookup index covers every label or type; Neo4j lists
+				// its labelsOrTypes and properties as null.
+				rows = append(rows, []interface{}{
+					int64(i + 1), name, "ONLINE", 100.0, idxType, entityType,
+					nil, nil, provider, nil, nil, nil, nil,
+					showIndexOptions(provider, nil), "",
+					showLookupIndexCreateStatement(name, entityType),
+				})
+				continue
+			}
+			var labelsOrTypes []string
+			if l, ok := idxMap["label"].(string); ok && l != "" {
+				labelsOrTypes = []string{l}
+			} else if labels := showStringList(idxMap["labels"]); len(labels) > 0 {
+				labelsOrTypes = labels
+			} else if types := showStringList(idxMap["relationshipTypes"]); len(types) > 0 {
+				labelsOrTypes = types
+				entityType = string(storage.ConstraintEntityRelationship)
+			}
+			if labelsOrTypes == nil {
+				labelsOrTypes = []string{}
+			}
+			properties := showStringList(idxMap["properties"])
+			if p, ok := idxMap["property"].(string); ok && p != "" && len(properties) == 0 {
+				properties = []string{p}
+			}
+			if properties == nil {
+				properties = []string{}
 			}
 
+			config := map[string]interface{}{}
+			if idxType == "VECTOR" {
+				if dimensions, ok := idxMap["dimensions"].(int); ok && dimensions > 0 {
+					config["vector.dimensions"] = int64(dimensions)
+				}
+				if similarity, ok := idxMap["similarityFunc"].(string); ok && similarity != "" {
+					config["vector.similarity_function"] = strings.ToUpper(similarity)
+				}
+			}
+
+			// An index a constraint owns is recreated by the constraint.
+			var owningConstraint interface{}
+			var createStatement interface{}
+			if oc, ok := idxMap["owningConstraint"].(string); ok && oc != "" {
+				owningConstraint = oc
+				createStatement = constraintStatements[oc]
+			} else {
+				createStatement = showIndexCreateStatement(idxType, name, entityType, labelsOrTypes, properties, config)
+			}
+
+			// NornicDB doesn't track index reads: lastRead, readCount and
+			// trackedSince are null, as Neo4j reports untracked reads.
 			rows = append(rows, []interface{}{
-				int64(i + 1),      // id
-				name,              // name
-				"ONLINE",          // state
-				100.0,             // populationPercent
-				idxType,           // type
-				entityType,        // entityType
-				labelsOrTypes,     // labelsOrTypes
-				properties,        // properties
-				"nornicdb+schema", // indexProvider
-				owningConstraint,  // owningConstraint
-				nil,               // lastRead
-				int64(0),          // readCount
+				int64(i + 1),     // id
+				name,             // name
+				"ONLINE",         // state
+				100.0,            // populationPercent
+				idxType,          // type
+				entityType,       // entityType
+				labelsOrTypes,    // labelsOrTypes
+				properties,       // properties
+				provider,         // indexProvider
+				owningConstraint, // owningConstraint
+				nil,              // lastRead
+				nil,              // readCount
+				nil,              // trackedSince
+				showIndexOptions(provider, config),
+				"", // failureMessage
+				createStatement,
 			})
 		}
 	}
 
-	return e.applyShowSchemaTail(ctx, cypher, &ExecuteResult{
-		Columns: []string{"id", "name", "state", "populationPercent", "type", "entityType", "labelsOrTypes", "properties", "indexProvider", "owningConstraint", "lastRead", "readCount"},
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: append(append([]string(nil), showIndexesDefaultColumns...), "trackedSince", "options", "failureMessage", "createStatement"),
 		Rows:    rows,
-	})
+	}, showIndexesDefaultColumns), nil
 }
 
 // executeShowConstraints handles SHOW CONSTRAINTS command
@@ -218,12 +256,14 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 			rows = append(rows, []interface{}{
 				int64(i + 1),
 				constraint.Name,
-				string(constraint.Type),
+				showConstraintType(constraint.Type, constraint.EffectiveEntityType()),
 				string(constraint.EffectiveEntityType()),
 				[]string{constraint.Label},
 				constraint.Properties,
 				ownedIndex,
 				nil,
+				showConstraintOptions(constraint.Type),
+				showConstraintCreateStatement(constraint),
 				direction,
 				maxCount,
 				sourceLabel,
@@ -237,78 +277,358 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 			rows = append(rows, []interface{}{
 				int64(offset + i + 1),
 				constraint.Name,
-				string(storage.ConstraintPropertyType),
+				showConstraintType(storage.ConstraintPropertyType, constraint.EffectiveEntityType()),
 				string(constraint.EffectiveEntityType()),
 				[]string{constraint.Label},
 				[]string{constraint.Property},
 				nil,
 				string(constraint.ExpectedType),
+				nil, // options
+				showPropertyTypeCreateStatement(constraint.Name, constraint.EffectiveEntityType(), constraint.Label, constraint.Property, string(constraint.ExpectedType)),
 				nil, nil, nil, nil, nil,
 			})
 		}
 	}
 
-	return e.applyShowSchemaTail(ctx, cypher, &ExecuteResult{
-		Columns: []string{"id", "name", "type", "entityType", "labelsOrTypes", "properties", "ownedIndex", "propertyType", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode"},
+	// Neo4j's full set, then NornicDB's cardinality / policy constraint
+	// columns, which only YIELD * or YIELD <column> show.
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: append(append([]string(nil), showConstraintsDefaultColumns...), "options", "createStatement", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode"),
 		Rows:    rows,
-	})
+	}, showConstraintsDefaultColumns), nil
 }
 
-func (e *StorageExecutor) applyShowSchemaTail(ctx context.Context, cypher string, result *ExecuteResult) (*ExecuteResult, error) {
-	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
-	if findKeywordIndexInContext(query, "YIELD") < 0 {
-		firstTail := len(query)
-		for _, keyword := range []string{"WHERE", "RETURN", "ORDER BY", "SKIP", "LIMIT"} {
-			if index := findKeywordIndexInContext(query, keyword); index >= 0 && index < firstTail {
-				firstTail = index
+// showStringList reads a string list from a schema listing value.
+func showStringList(value interface{}) []string {
+	switch v := value.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
 			}
 		}
-		if firstTail == len(query) {
-			return result, nil
+		return out
+	}
+	return nil
+}
+
+// showTailKeywords start the part of a SHOW command after the command itself.
+var showTailKeywords = []string{"YIELD", "WHERE", "RETURN", "ORDER BY", "SKIP", "LIMIT"}
+
+// showCommandHead returns the SHOW command without its YIELD / WHERE /
+// RETURN / ORDER BY / SKIP / LIMIT tail, which applyShowTail handles.
+func showCommandHead(cypher string) string {
+	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
+	end := len(query)
+	for _, keyword := range showTailKeywords {
+		if index := findKeywordIndexInContext(query, keyword); index >= 0 && index < end {
+			end = index
 		}
-		query = query[:firstTail] + "YIELD * " + query[firstTail:]
 	}
-	yield := parseYieldClause(query)
-	if yield == nil {
-		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW schema YIELD"), nil)
-	}
-	if !yield.hasReturn {
-		return e.applyYieldFilter(ctx, result, yield)
-	}
-	projection := *yield
-	projection.hasReturn = false
-	projection.orderBy = ""
-	projection.skip = -1
-	projection.limit = -1
-	filtered, err := e.applyYieldFilter(ctx, result, &projection)
+	return strings.TrimSpace(query[:end])
+}
+
+// executeShowWithTail runs a SHOW command: run lists every row of the command
+// (given the command without its tail), and applyShowTail applies the tail.
+// Every SHOW command goes through it, so YIELD, WHERE, RETURN, aggregation,
+// ORDER BY and SKIP / LIMIT behave the same for all of them.
+func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	result, err := run(ctx, showCommandHead(cypher))
 	if err != nil {
 		return nil, err
 	}
-	rows := make([]pipelineRow, 0, len(filtered.Rows))
-	for _, values := range filtered.Rows {
-		row := make(pipelineRow, len(filtered.Columns))
-		for index, column := range filtered.Columns {
-			if index < len(values) {
-				row[column] = values[index]
+	sortShowRowsByName(result)
+	return e.applyShowTail(ctx, cypher, result, showDefaultColumns(result))
+}
+
+// sortShowRowsByName orders a SHOW listing by its name column, as Neo4j lists
+// every SHOW command (indexes and constraints by name, not creation order).
+// A listing without a string name column keeps its order.
+func sortShowRowsByName(result *ExecuteResult) {
+	column := -1
+	for i, name := range result.Columns {
+		if name == "name" {
+			column = i
+			break
+		}
+	}
+	if column < 0 {
+		return
+	}
+	name := func(row []interface{}) (string, bool) {
+		if column >= len(row) {
+			return "", false
+		}
+		value, ok := row[column].(string)
+		return value, ok
+	}
+	sorted := true
+	for i, row := range result.Rows {
+		current, ok := name(row)
+		if !ok {
+			return
+		}
+		if i > 0 {
+			if previous, _ := name(result.Rows[i-1]); previous > current {
+				sorted = false
 			}
 		}
-		rows = append(rows, row)
 	}
-	clause := "RETURN " + yield.returnExpr
-	if yield.orderBy != "" {
-		clause += " ORDER BY " + yield.orderBy
+	if !sorted {
+		sort.SliceStable(result.Rows, func(i, j int) bool {
+			left, _ := name(result.Rows[i])
+			right, _ := name(result.Rows[j])
+			return left < right
+		})
 	}
-	if yield.skip >= 0 {
-		clause += fmt.Sprintf(" SKIP %d", yield.skip)
+}
+
+// Neo4j's SHOW commands list a default set of columns, and YIELD * or YIELD
+// <column> the full set (#690). The listings build the full set in Neo4j's
+// order (NornicDB-only columns after it); these are the default sets.
+var (
+	showFunctionsDefaultColumns   = []string{"name", "category", "description"}
+	showSettingsDefaultColumns    = []string{"name", "value", "isDynamic", "defaultValue", "description"}
+	showProceduresDefaultColumns  = []string{"name", "description", "mode", "worksOnSystem"}
+	showDatabasesDefaultColumns   = []string{"name", "type", "aliases", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"}
+	showIndexesDefaultColumns     = []string{"id", "name", "state", "populationPercent", "type", "entityType", "labelsOrTypes", "properties", "indexProvider", "owningConstraint", "lastRead", "readCount"}
+	showConstraintsDefaultColumns = []string{"id", "name", "type", "entityType", "labelsOrTypes", "properties", "ownedIndex", "propertyType"}
+)
+
+// showDefaultColumns returns the default columns of a SHOW listing, which the
+// listing records under the "showDefaultColumns" metadata key; nil when every
+// column is a default one.
+func showDefaultColumns(result *ExecuteResult) []string {
+	if result == nil || result.Metadata == nil {
+		return nil
 	}
-	if yield.limit >= 0 {
-		clause += fmt.Sprintf(" LIMIT %d", yield.limit)
+	defaults, _ := result.Metadata["showDefaultColumns"].([]string)
+	return defaults
+}
+
+// withShowDefaultColumns records the default columns of a SHOW listing.
+func withShowDefaultColumns(result *ExecuteResult, defaults []string) *ExecuteResult {
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]interface{}, 1)
 	}
-	projected, ok := e.pipelineApplyReturn(ctx, rows, clause)
-	if !ok {
-		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW schema RETURN"), nil)
+	result.Metadata["showDefaultColumns"] = defaults
+	return result
+}
+
+// projectShowColumns keeps columns of result, in that order.
+func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult {
+	index := make(map[string]int, len(result.Columns))
+	for i, column := range result.Columns {
+		index[column] = i
 	}
-	return projected, nil
+	rows := make([][]interface{}, len(result.Rows))
+	cells := make([]interface{}, len(result.Rows)*len(columns))
+	for r, row := range result.Rows {
+		projected := cells[r*len(columns) : (r+1)*len(columns) : (r+1)*len(columns)]
+		for c, column := range columns {
+			if i, ok := index[column]; ok && i < len(row) {
+				projected[c] = row[i]
+			}
+		}
+		rows[r] = projected
+	}
+	return &ExecuteResult{Columns: append([]string(nil), columns...), Rows: rows}
+}
+
+// applyShowTail applies a SHOW command's tail to its rows with Neo4j's SHOW
+// grammar:
+//
+//	SHOW … WHERE <predicate>
+//	SHOW … YIELD <items> [ORDER BY …] [SKIP n] [LIMIT n] [WHERE …] [RETURN …]
+//
+// Without YIELD, the result has the command's default columns (defaults;
+// nil: all of them), as has SHOW … WHERE; YIELD * and YIELD <column> reach
+// every column.
+//
+// YIELD selects and renames columns; its ORDER BY / SKIP / LIMIT page the
+// rows before its WHERE filters them; RETURN (with aggregation, DISTINCT,
+// ORDER BY and SKIP / LIMIT expressions) runs over all remaining rows. The
+// paging, filter and RETURN run as one pipeline (runPipelineClauses), the
+// same row operators as every other clause. Any other form (RETURN after a
+// WHERE without YIELD, WITH, a WHERE before YIELD's ORDER BY, a non-literal
+// YIELD SKIP / LIMIT) is a SyntaxError, as in Neo4j.
+func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
+	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
+	head := showCommandHead(query)
+	if len(head) == len(query) {
+		if defaults != nil {
+			return projectShowColumns(result, defaults), nil
+		}
+		return result, nil
+	}
+	tail := strings.TrimSpace(query[len(head):])
+	invalid := func() error {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause",
+			"invalid SHOW command: expected WHERE, or YIELD [ORDER BY] [SKIP] [LIMIT] [WHERE] [RETURN]")
+	}
+	if !startsWithKeywordFold(tail, "YIELD") {
+		if !startsWithKeywordFold(tail, "WHERE") {
+			return nil, invalid()
+		}
+		where := strings.TrimSpace(tail[len("WHERE"):])
+		for _, keyword := range []string{"RETURN", "ORDER BY", "SKIP", "LIMIT", "WITH", "YIELD"} {
+			if topLevelKeywordIndex(where, keyword) >= 0 {
+				return nil, invalid()
+			}
+		}
+		tail = "YIELD * WHERE " + where
+		if defaults != nil {
+			result = projectShowColumns(result, defaults)
+		}
+	}
+	body := strings.TrimSpace(tail[len("YIELD"):])
+
+	// Segment boundaries, in the only order Neo4j accepts.
+	segments := []string{"ORDER BY", "SKIP", "LIMIT", "WHERE", "RETURN"}
+	positions := make([]int, len(segments))
+	itemsEnd := len(body)
+	for i, keyword := range segments {
+		positions[i] = topLevelKeywordIndex(body, keyword)
+		if positions[i] >= 0 && positions[i] < itemsEnd {
+			itemsEnd = positions[i]
+		}
+	}
+	returnIndex := positions[4]
+	head4 := body
+	if returnIndex >= 0 {
+		head4 = body[:returnIndex]
+	}
+	for _, keyword := range []string{"WITH", "MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"} {
+		if topLevelKeywordIndex(head4, keyword) >= 0 {
+			return nil, invalid()
+		}
+	}
+	last := -1
+	for i := 0; i < 4; i++ {
+		position := topLevelKeywordIndex(head4, segments[i])
+		if position < 0 {
+			continue
+		}
+		if position < last {
+			return nil, invalid()
+		}
+		last = position
+	}
+	segmentText := func(i int) string {
+		start := topLevelKeywordIndex(head4, segments[i])
+		if start < 0 {
+			return ""
+		}
+		end := len(head4)
+		for j := 0; j < 4; j++ {
+			if position := topLevelKeywordIndex(head4, segments[j]); position > start && position < end {
+				end = position
+			}
+		}
+		return strings.TrimSpace(head4[start+len(segments[i]) : end])
+	}
+	for _, i := range []int{1, 2} {
+		if value := segmentText(i); value != "" && !strings.HasPrefix(value, "$") {
+			if integer, literal := parseLiteralValueFromComputedRow(value); !literal {
+				return nil, invalid()
+			} else if _, isInteger := integer.(int64); !isInteger {
+				return nil, invalid()
+			}
+		}
+	}
+
+	items := strings.TrimSpace(body[:itemsEnd])
+	yield := parseYieldClause("CALL show() YIELD " + items)
+	if yield == nil || items == "" {
+		return nil, invalid()
+	}
+	// The yielded columns keep their original names too: YIELD's ORDER BY and
+	// WHERE may use either (YIELD name AS indexName WHERE name = 'x'), as in
+	// Neo4j. Without RETURN, the YIELD items are the result.
+	outputs := append([]string(nil), result.Columns...)
+	projected := &ExecuteResult{Columns: append([]string(nil), result.Columns...), Rows: result.Rows}
+	if !yield.yieldAll {
+		if err := validateYieldColumnsExist(result.Columns, yield); err != nil {
+			return nil, err
+		}
+		outputs = outputs[:0]
+		index := make(map[string]int, len(result.Columns))
+		for i, column := range result.Columns {
+			index[column] = i
+		}
+		sources := make([]int, 0, len(yield.items))
+		for _, item := range yield.items {
+			name := item.name
+			if item.alias != "" {
+				name = item.alias
+			}
+			outputs = append(outputs, name)
+			if name != item.name {
+				projected.Columns = append(projected.Columns, name)
+				sources = append(sources, index[item.name])
+			}
+		}
+		if len(sources) > 0 {
+			projected.Rows = make([][]interface{}, len(result.Rows))
+			for r, row := range result.Rows {
+				extended := append(append(make([]interface{}, 0, len(row)+len(sources)), row...), make([]interface{}, len(sources))...)
+				for s, source := range sources {
+					if source < len(row) {
+						extended[len(row)+s] = row[source]
+					}
+				}
+				projected.Rows[r] = extended
+			}
+		}
+	}
+
+	var clauses strings.Builder
+	paging := ""
+	for i, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if value := segmentText(i); value != "" {
+			paging += " " + keyword + " " + value
+		}
+	}
+	if paging != "" {
+		clauses.WriteString("WITH *" + paging + " ")
+	}
+	if where := segmentText(3); where != "" {
+		clauses.WriteString("WITH * WHERE " + where + " ")
+	}
+	quoted := make([]string, len(outputs))
+	for i, column := range outputs {
+		quoted[i] = column
+		if name, next, ok := scanIdentifierToken(column, 0); !ok || name != column || next != len(column) {
+			quoted[i] = "`" + strings.ReplaceAll(column, "`", "``") + "` AS `" + strings.ReplaceAll(column, "`", "``") + "`"
+		}
+	}
+	if returnIndex >= 0 {
+		clauses.WriteString(showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", ")))
+	} else {
+		clauses.WriteString("RETURN " + strings.Join(quoted, ", "))
+	}
+	return e.executeCallTail(ctx, projected, clauses.String())
+}
+
+// showReturnStarAsYielded replaces the * of a SHOW command's RETURN (RETURN
+// *, RETURN DISTINCT *, RETURN *, x) with the YIELD's columns in YIELD
+// order. The SHOW's rows also carry the columns it didn't yield, for its
+// WHERE and ORDER BY, but RETURN * means the yielded ones, in the order
+// they were yielded, as in Neo4j.
+func showReturnStarAsYielded(returnClause, yielded string) string {
+	rest := strings.TrimSpace(returnClause[len("RETURN"):])
+	prefix := "RETURN "
+	if startsWithKeywordFold(rest, "DISTINCT") {
+		rest = strings.TrimSpace(rest[len("DISTINCT"):])
+		prefix = "RETURN DISTINCT "
+	}
+	if !strings.HasPrefix(rest, "*") {
+		return returnClause
+	}
+	return prefix + yielded + rest[1:]
 }
 
 func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*ExecuteResult, error) {
@@ -355,111 +675,108 @@ func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher stri
 				description = rendered
 			}
 		}
-		procedures = append(procedures, []interface{}{p.Name, p.Signature, description, string(p.Mode), p.WorksOnSystem})
+		arguments := make([]interface{}, 0, len(p.Params))
+		for _, param := range p.Params {
+			arguments = append(arguments, map[string]interface{}{"name": param.Name, "type": param.Type, "description": "", "isDeprecated": false})
+		}
+		returns := make([]interface{}, 0, len(p.Returns))
+		for _, column := range p.Returns {
+			returns = append(returns, map[string]interface{}{"name": column.Name, "type": column.Type, "description": "", "isDeprecated": false})
+		}
+		// admin, rolesExecution, rolesBoostedExecution, deprecatedBy and
+		// option aren't known.
+		procedures = append(procedures, []interface{}{p.Name, description, string(p.Mode), p.WorksOnSystem, p.Signature, arguments, returns, nil, nil, nil, false, nil, nil})
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "signature", "description", "mode", "worksOnSystem"},
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: []string{"name", "description", "mode", "worksOnSystem", "signature", "argumentDescription", "returnDescription", "admin", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy", "option"},
 		Rows:    procedures,
-	}, nil
+	}, showProceduresDefaultColumns), nil
 }
 
 // executeShowFunctions handles SHOW FUNCTIONS command
-func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Return list of available functions
-	functions := [][]interface{}{
-		// Scalar functions
-		{"id", "id(entity :: ANY) :: INTEGER", "Returns the id of a node or relationship", false, false, false},
-		{"elementId", "elementId(entity :: ANY) :: STRING", "Returns the element id of a node or relationship", false, false, false},
-		{"labels", "labels(node :: NODE) :: LIST<STRING>", "Returns labels of a node", false, false, false},
-		{"type", "type(relationship :: RELATIONSHIP) :: STRING", "Returns the type of a relationship", false, false, false},
-		{"keys", "keys(entity :: ANY) :: LIST<STRING>", "Returns the property keys of a node or relationship", false, false, false},
-		{"properties", "properties(entity :: ANY) :: MAP", "Returns all properties of a node or relationship", false, false, false},
-		{"coalesce", "coalesce(expression :: ANY...) :: ANY", "Returns first non-null value", false, false, false},
-		{"head", "head(list :: LIST<ANY>) :: ANY", "Returns the first element of a list", false, false, false},
-		{"last", "last(list :: LIST<ANY>) :: ANY", "Returns the last element of a list", false, false, false},
-		{"tail", "tail(list :: LIST<ANY>) :: LIST<ANY>", "Returns all but the first element of a list", false, false, false},
-		{"size", "size(list :: LIST<ANY>) :: INTEGER", "Returns the number of elements in a list", false, false, false},
-		{"length", "length(path :: PATH) :: INTEGER", "Returns the length of a path", false, false, false},
-		{"reverse", "reverse(original :: LIST<ANY> | STRING) :: LIST<ANY> | STRING", "Reverses a list or string", false, false, false},
-		{"range", "range(start :: INTEGER, end :: INTEGER, step :: INTEGER = 1) :: LIST<INTEGER>", "Returns a list of integers", false, false, false},
-		{"toString", "toString(expression :: ANY) :: STRING", "Converts expression to string", false, false, false},
-		{"toInteger", "toInteger(expression :: ANY) :: INTEGER", "Converts expression to integer", false, false, false},
-		{"toFloat", "toFloat(expression :: ANY) :: FLOAT", "Converts expression to float", false, false, false},
-		{"toBoolean", "toBoolean(expression :: ANY) :: BOOLEAN", "Converts expression to boolean", false, false, false},
-		{"toLower", "toLower(original :: STRING) :: STRING", "Converts string to lowercase", false, false, false},
-		{"toUpper", "toUpper(original :: STRING) :: STRING", "Converts string to uppercase", false, false, false},
-		{"trim", "trim(original :: STRING) :: STRING", "Trims whitespace from string", false, false, false},
-		{"ltrim", "ltrim(original :: STRING) :: STRING", "Trims leading whitespace", false, false, false},
-		{"rtrim", "rtrim(original :: STRING) :: STRING", "Trims trailing whitespace", false, false, false},
-		{"replace", "replace(original :: STRING, search :: STRING, replace :: STRING) :: STRING", "Replaces all occurrences", false, false, false},
-		{"split", "split(original :: STRING, splitDelimiter :: STRING) :: LIST<STRING>", "Splits string by delimiter", false, false, false},
-		{"substring", "substring(original :: STRING, start :: INTEGER, length :: INTEGER = NULL) :: STRING", "Returns substring", false, false, false},
-		{"left", "left(original :: STRING, length :: INTEGER) :: STRING", "Returns left part of string", false, false, false},
-		{"right", "right(original :: STRING, length :: INTEGER) :: STRING", "Returns right part of string", false, false, false},
-		// Math functions
-		{"abs", "abs(expression :: NUMBER) :: NUMBER", "Returns absolute value", false, false, false},
-		{"ceil", "ceil(expression :: FLOAT) :: INTEGER", "Returns ceiling value", false, false, false},
-		{"floor", "floor(expression :: FLOAT) :: INTEGER", "Returns floor value", false, false, false},
-		{"round", "round(expression :: FLOAT) :: INTEGER", "Rounds to nearest integer", false, false, false},
-		{"sign", "sign(expression :: NUMBER) :: INTEGER", "Returns sign of number", false, false, false},
-		{"sqrt", "sqrt(expression :: FLOAT) :: FLOAT", "Returns square root", false, false, false},
-		{"rand", "rand() :: FLOAT", "Returns random float between 0 and 1", false, false, false},
-		{"randomUUID", "randomUUID() :: STRING", "Returns a random UUID", false, false, false},
-		{"sin", "sin(expression :: FLOAT) :: FLOAT", "Returns sine", false, false, false},
-		{"cos", "cos(expression :: FLOAT) :: FLOAT", "Returns cosine", false, false, false},
-		{"tan", "tan(expression :: FLOAT) :: FLOAT", "Returns tangent", false, false, false},
-		{"log", "log(expression :: FLOAT) :: FLOAT", "Returns natural logarithm", false, false, false},
-		{"log10", "log10(expression :: FLOAT) :: FLOAT", "Returns base-10 logarithm", false, false, false},
-		{"exp", "exp(expression :: FLOAT) :: FLOAT", "Returns e raised to power", false, false, false},
-		{"pi", "pi() :: FLOAT", "Returns pi constant", false, false, false},
-		{"e", "e() :: FLOAT", "Returns Euler's number", false, false, false},
-		// Temporal functions
-		{"timestamp", "timestamp() :: INTEGER", "Returns current timestamp in milliseconds", false, false, false},
-		{"datetime", "datetime(input :: ANY = NULL) :: DATETIME", "Creates a datetime", false, false, false},
-		{"date", "date(input :: ANY = NULL) :: DATE", "Creates a date", false, false, false},
-		{"time", "time(input :: ANY = NULL) :: TIME", "Creates a time", false, false, false},
-		// Aggregation functions
-		{"count", "count(expression :: ANY) :: INTEGER", "Returns count", true, false, false},
-		{"sum", "sum(expression :: NUMBER) :: NUMBER", "Returns sum", true, false, false},
-		{"avg", "avg(expression :: NUMBER) :: FLOAT", "Returns average", true, false, false},
-		{"min", "min(expression :: ANY) :: ANY", "Returns minimum", true, false, false},
-		{"max", "max(expression :: ANY) :: ANY", "Returns maximum", true, false, false},
-		{"collect", "collect(expression :: ANY) :: LIST<ANY>", "Collects values into list", true, false, false},
-		// Predicate functions
-		{"exists", "exists(expression :: ANY) :: BOOLEAN", "Returns true if expression is not null", false, false, false},
-		{"isEmpty", "isEmpty(list :: LIST<ANY> | MAP | STRING) :: BOOLEAN", "Returns true if empty", false, false, false},
-		{"all", "all(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if all match", false, false, false},
-		{"any", "any(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if any match", false, false, false},
-		{"none", "none(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if none match", false, false, false},
-		{"single", "single(variable IN list WHERE predicate) :: BOOLEAN", "Returns true if exactly one matches", false, false, false},
-		// Spatial functions
-		{"point", "point(input :: MAP) :: POINT", "Creates a point", false, false, false},
-		{"distance", "distance(point1 :: POINT, point2 :: POINT) :: FLOAT", "Returns distance between points", false, false, false},
-		{"polygon", "polygon(points :: LIST<POINT>) :: POLYGON", "Creates a polygon from a list of points", false, false, false},
-		{"lineString", "lineString(points :: LIST<POINT>) :: LINESTRING", "Creates a lineString from a list of points", false, false, false},
-		{"point.intersects", "point.intersects(point :: POINT, polygon :: POLYGON) :: BOOLEAN", "Checks if point intersects with polygon", false, false, false},
-		{"point.contains", "point.contains(polygon :: POLYGON, point :: POINT) :: BOOLEAN", "Checks if polygon contains point", false, false, false},
-		// Vector functions
-		{"vector.similarity.cosine", "vector.similarity.cosine(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Cosine similarity", false, false, false},
-		{"vector.similarity.euclidean", "vector.similarity.euclidean(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Euclidean similarity", false, false, false},
-		// Kalman filter functions
-		{"kalman.init", "kalman.init(config? :: MAP) :: STRING", "Create new Kalman filter state (basic scalar filter for noise smoothing)", false, false, false},
-		{"kalman.process", "kalman.process(measurement :: FLOAT, state :: STRING, target? :: FLOAT) :: MAP", "Process measurement, returns {value, state}", false, false, false},
-		{"kalman.predict", "kalman.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict state n steps into the future", false, false, false},
-		{"kalman.state", "kalman.state(state :: STRING) :: FLOAT", "Get current state estimate from state JSON", false, false, false},
-		{"kalman.reset", "kalman.reset(state :: STRING) :: STRING", "Reset filter state to initial values", false, false, false},
-		{"kalman.velocity.init", "kalman.velocity.init(initialPos? :: FLOAT, initialVel? :: FLOAT) :: STRING", "Create 2-state Kalman filter (position + velocity for trend tracking)", false, false, false},
-		{"kalman.velocity.process", "kalman.velocity.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, velocity, state}", false, false, false},
-		{"kalman.velocity.predict", "kalman.velocity.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict position n steps into the future", false, false, false},
-		{"kalman.adaptive.init", "kalman.adaptive.init(config? :: MAP) :: STRING", "Create adaptive Kalman filter (auto-switches between basic and velocity modes)", false, false, false},
-		{"kalman.adaptive.process", "kalman.adaptive.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, mode, state}", false, false, false},
-	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "signature", "description", "aggregating", "isBuiltIn", "argumentDescription"},
-		Rows:    functions,
-	}, nil
+var (
+	showFunctionRowsOnce  sync.Once
+	showFunctionRowsCache [][]interface{}
+)
+
+// showFunctionRows returns SHOW FUNCTIONS' full rows, built once from the
+// listed entries of cypherFunctionCatalog. Callers copy the rows they hand
+// out.
+func showFunctionRows() [][]interface{} {
+	showFunctionRowsOnce.Do(func() {
+		rows := make([][]interface{}, 0, len(cypherFunctionCatalog))
+		for _, function := range cypherFunctionCatalog {
+			if !function.listed {
+				continue
+			}
+			arguments, returns := functionSignatureDescriptions(function.signature)
+			// rolesExecution, rolesBoostedExecution and deprecatedBy aren't known.
+			rows = append(rows, []interface{}{function.name, function.category, function.description, function.signature, true, arguments, returns, function.aggregating, nil, nil, false, nil})
+		}
+		// Listed by name (sortShowRowsByName then finds them in order).
+		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
+		showFunctionRowsCache = rows
+	})
+	return showFunctionRowsCache
+}
+
+func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// The listing is static: its rows (with the argument and return
+	// descriptions parsed from each signature) are built once, and each call
+	// gets its own copy of them.
+	cached := showFunctionRows()
+	rows := make([][]interface{}, len(cached))
+	var cells []interface{}
+	for i, row := range cached {
+		if len(cells) < len(row) {
+			cells = make([]interface{}, len(row)*(len(cached)-i))
+		}
+		rows[i] = cells[:len(row):len(row)]
+		copy(rows[i], row)
+		cells = cells[len(row):]
+	}
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"},
+		Rows:    rows,
+	}, showFunctionsDefaultColumns), nil
+}
+
+// functionSignatureDescriptions derives SHOW FUNCTIONS' argumentDescription
+// (a list of {name, type, description, isDeprecated} maps) and
+// returnDescription from a signature "f(a :: T, b :: U = d) :: R". An argument
+// without a declared type is ANY.
+func functionSignatureDescriptions(signature string) ([]interface{}, string) {
+	open := strings.IndexByte(signature, '(')
+	if open < 0 {
+		return []interface{}{}, ""
+	}
+	closing := findMatchingParen(signature, open)
+	if closing < 0 {
+		return []interface{}{}, ""
+	}
+	returns := ""
+	if rest := strings.TrimSpace(signature[closing+1:]); strings.HasPrefix(rest, "::") {
+		returns = strings.TrimSpace(rest[2:])
+	}
+	arguments := []interface{}{}
+	for _, part := range splitTopLevelComma(signature[open+1 : closing]) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, typeName := part, "ANY"
+		if separator := strings.Index(part, "::"); separator >= 0 {
+			name = strings.TrimSpace(part[:separator])
+			typeName = strings.TrimSpace(part[separator+2:])
+			if defaultValue := strings.Index(typeName, "="); defaultValue >= 0 {
+				typeName = strings.TrimSpace(typeName[:defaultValue])
+			}
+		}
+		arguments = append(arguments, map[string]interface{}{"name": strings.TrimSuffix(name, "?"), "type": typeName, "description": "", "isDeprecated": false})
+	}
+	return arguments, returns
 }
 
 // executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
@@ -486,16 +803,14 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 		// already be set correctly by the server layer.
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "type", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"},
-		Rows: [][]interface{}{
-			{dbName, "standard", "read-write", "localhost:7687", "primary", true, "online", "online", "", true, true, []string{}},
-		},
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: showDatabasesColumns,
+		Rows:    [][]interface{}{showDatabaseRow(e.dbManager, dbName, "standard", "online", true, showDatabaseCreatedAt(e.dbManager, dbName))},
 		Stats: &QueryStats{
 			NodesCreated:         int(nodeCount),
 			RelationshipsCreated: int(edgeCount),
 		},
-	}, nil
+	}, showDatabasesDefaultColumns), nil
 }
 
 // executeShowDatabases handles SHOW DATABASES command (plural - lists all databases).
@@ -538,26 +853,76 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 	rows := make([][]interface{}, 0, len(databases))
 
 	for _, db := range databases {
-		rows = append(rows, []interface{}{
-			db.Name(),
-			db.Type(),
-			"read-write",
-			"localhost:7687",
-			"primary",
-			true,
-			db.Status(),
-			db.Status(),
-			"",
-			db.IsDefault(),
-			db.IsDefault(),
-			[]string{},
-		})
+		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "type", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"},
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: showDatabasesColumns,
 		Rows:    rows,
-	}, nil
+	}, showDatabasesDefaultColumns), nil
+}
+
+// showDatabasesColumns is SHOW DATABASES' full column set, in Neo4j's order.
+var showDatabasesColumns = []string{"name", "type", "aliases", "access", "databaseID", "serverID", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "currentPrimariesCount", "currentSecondariesCount", "requestedPrimariesCount", "requestedSecondariesCount", "creationTime", "lastStartTime", "lastStopTime", "store", "lastCommittedTxn", "replicationLag", "constituents", "options"}
+
+// showDatabaseRow is one SHOW DATABASES row in showDatabasesColumns order.
+// A NornicDB server holds one copy of each database, so it is the single
+// primary (currentPrimariesCount 1, currentSecondariesCount 0, replication
+// lag 0). creationTime is when the database was created, and lastStartTime
+// when this process started serving it: its creation or the process start,
+// whichever is later. NornicDB has no database or server IDs and no Neo4j
+// store format, so databaseID, serverID and store are null, as are
+// lastStopTime and lastCommittedTxn (Neo4j reports null for both on a
+// running standalone server).
+func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool, createdAt time.Time) []interface{} {
+	aliases := []string{}
+	if manager != nil {
+		for alias := range manager.ListAliases(name) {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+	}
+	var creationTime, lastStartTime interface{}
+	if !createdAt.IsZero() {
+		creationTime = createdAt.UTC()
+		started := processStartTime
+		if createdAt.After(started) {
+			started = createdAt
+		}
+		lastStartTime = started.UTC()
+	}
+	return []interface{}{
+		name, databaseType, aliases, "read-write",
+		nil, nil, // databaseID, serverID
+		"localhost:7687", "primary", true,
+		status, status, "",
+		isDefault, isDefault,
+		int64(1), int64(0), // currentPrimariesCount, currentSecondariesCount
+		nil, nil, // requestedPrimariesCount, requestedSecondariesCount
+		creationTime, lastStartTime, nil, // lastStopTime
+		nil, nil, // store, lastCommittedTxn
+		int64(0), // replicationLag
+		[]string{},
+		map[string]interface{}{}, // options
+	}
+}
+
+// processStartTime is when this process started, the start of every
+// database it serves from startup.
+var processStartTime = time.Now()
+
+// showDatabaseCreatedAt is when database name was created, or the zero time
+// when the manager doesn't list it.
+func showDatabaseCreatedAt(manager DatabaseManagerInterface, name string) time.Time {
+	if manager == nil {
+		return time.Time{}
+	}
+	for _, db := range manager.ListDatabases() {
+		if db.Name() == name {
+			return db.CreatedAt()
+		}
+	}
+	return time.Time{}
 }
 
 // executeCreateDatabase handles CREATE DATABASE command.

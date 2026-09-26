@@ -18,9 +18,7 @@ func (e *StorageExecutor) validatePipelineConversionArguments(rows []pipelineRow
 		return nil
 	}
 	body = strings.TrimSpace(body[len(keyword):])
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	end := len(body)
 	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(body, suffix); index >= 0 && index < end {
@@ -56,7 +54,10 @@ func (e *StorageExecutor) validateRowConversionArguments(expression string, row 
 			if err := e.validateRowConversionArguments(listExpression, row); err != nil {
 				return err
 			}
-			listValue, evaluated := e.evaluateRowExpression(listExpression, row)
+			listValue, evaluated, err := e.evaluateRowValue(listExpression, row)
+			if err != nil {
+				return err
+			}
 			if !evaluated || listValue == nil {
 				return nil
 			}
@@ -100,7 +101,10 @@ func (e *StorageExecutor) validateRowConversionArguments(expression string, row 
 		if name != "toboolean" && name != "tointeger" && name != "toint" && name != "tofloat" && name != "tostring" {
 			return nil
 		}
-		value, evaluated := e.evaluateRowExpression(argument, row)
+		value, evaluated, err := e.evaluateRowValue(argument, row)
+		if err != nil {
+			return err
+		}
 		if !evaluated || value == nil || validConversionArgument(name, value) {
 			return nil
 		}

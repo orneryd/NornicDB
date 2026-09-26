@@ -15,10 +15,7 @@ func validateReturnOrderBySemanticScope(clause string) error {
 			orderBody = strings.TrimSpace(orderBody[:index])
 		}
 	}
-	distinct := strings.HasPrefix(strings.ToUpper(projectionBody), "DISTINCT ")
-	if distinct {
-		projectionBody = strings.TrimSpace(projectionBody[len("DISTINCT "):])
-	}
+	projectionBody, distinct := cutDistinct(projectionBody)
 
 	aliases := make(map[string]struct{})
 	directExpressions := make(map[string]struct{})
@@ -173,9 +170,7 @@ func validateReturnAggregationSemantics(body string) error {
 		}
 	}
 	body = strings.TrimSpace(body[:end])
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	directExpressions := make(map[string]struct{})
 	aliases := make(map[string]struct{})
 	expressions := make([]string, 0)
@@ -392,9 +387,7 @@ func pipelineReturnSourceColumns(clause string) []string {
 		}
 	}
 	body = strings.TrimSpace(body[:end])
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	if body == "*" || body == "" {
 		return nil
 	}

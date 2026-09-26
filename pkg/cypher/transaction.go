@@ -28,6 +28,8 @@ type TransactionContext struct {
 	database        string
 	txID            string
 	fabricRemoteExe *fabric.RemoteFragmentExecutor
+	// running is the transaction's SHOW TRANSACTIONS entry (#718).
+	running *runningTransaction
 	// failed is the error of the first statement that failed in the
 	// transaction. A failed transaction stays open so ROLLBACK discards what
 	// it wrote; any other statement is refused and COMMIT rolls it back, as in
@@ -191,6 +193,11 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
+	// A transaction TERMINATE TRANSACTIONS ended doesn't commit (#718).
+	if e.txContext.running != nil && e.txContext.running.terminated.Load() {
+		_, _ = e.handleRollback()
+		return nil, transactionTerminatedError()
+	}
 	// A transaction a statement failed in can't commit: it is rolled back.
 	if cause := e.txContext.failed; cause != nil {
 		if _, err := e.handleRollback(); err != nil {
@@ -243,6 +250,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 			e.txContext.fabricRemoteExe = nil
 		}
 		e.txContext.active = false
+		runningTransactions.end(e.txContext.running)
 		e.txContext = nil
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
@@ -258,6 +266,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 		e.txContext.fabricRemoteExe = nil
 	}
 	e.txContext.active = false
+	runningTransactions.end(e.txContext.running)
 	e.txContext = nil
 
 	result := &ExecuteResult{
@@ -303,6 +312,7 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 	}
 
 	e.txContext.active = false
+	runningTransactions.end(e.txContext.running)
 	e.txContext = nil
 
 	if err != nil {

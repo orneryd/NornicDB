@@ -281,6 +281,11 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 	if kind == "duration" {
 		return buildDurationFromFields(fields), true
 	}
+	// A map Neo4j rejects builds no value (temporalConstructorError reports
+	// why); nothing rolls over into the next month, day or hour.
+	if temporalFieldsError(kind, fields) != nil {
+		return nil, true
+	}
 	dateFields := fields
 	if source, exists := fields["datetime"]; exists {
 		dateFields = cloneTemporalFields(fields)
@@ -419,21 +424,40 @@ func buildDateFromFields(fields map[string]interface{}) (time.Time, bool) {
 		return time.Date(int(year), 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(ordinal)-1), true
 	}
 	if quarter, exists := temporalOptionalInt(fields, "quarter"); exists {
-		day := int64(1)
-		if hasBase {
-			quarterStart := time.Date(base.Year(), time.Month((int(base.Month())-1)/3*3+1), 1, 0, 0, 0, 0, time.UTC)
-			day = int64(base.Sub(quarterStart)/(24*time.Hour)) + 1
+		quarterStart := time.Date(int(year), time.Month((quarter-1)*3+1), 1, 0, 0, 0, 0, time.UTC)
+		if dayOfQuarter, given := temporalOptionalInt(fields, "dayOfQuarter"); given || !hasBase {
+			if !given {
+				dayOfQuarter = 1
+			}
+			return quarterStart.AddDate(0, 0, int(dayOfQuarter)-1), true
 		}
-		day = temporalFieldInt(fields, "dayOfQuarter", day)
-		return time.Date(int(year), time.Month((quarter-1)*3+1), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(day)-1), true
+		// The base date's month of its quarter and day of month, the day
+		// clamped to the new month (Neo4j: 2020-05-31 with quarter 1 is
+		// 2020-02-29).
+		month := quarterStart.Month() + (base.Month()-1)%3
+		return time.Date(int(year), month, clampDay(year, month, base.Day()), 0, 0, 0, 0, time.UTC), true
 	}
 	month, day := int64(1), int64(1)
 	if hasBase {
 		month, day = int64(base.Month()), int64(base.Day())
 	}
 	month = temporalFieldInt(fields, "month", month)
-	day = temporalFieldInt(fields, "day", day)
+	if explicitDay, given := temporalOptionalInt(fields, "day"); given {
+		day = explicitDay
+	} else if hasBase {
+		// A day the base date supplies is clamped to the new month (Neo4j:
+		// 2020-05-31 with month 2 is 2020-02-29), not rolled over.
+		day = int64(clampDay(year, time.Month(month), int(day)))
+	}
 	return time.Date(int(year), time.Month(month), int(day), 0, 0, 0, 0, time.UTC), true
+}
+
+// clampDay is day, or the month's last day when the month is shorter.
+func clampDay(year int64, month time.Month, day int) int {
+	if last := daysInMonth(year, month); day > last {
+		return last
+	}
+	return day
 }
 
 func temporalBaseTime(fields map[string]interface{}) (time.Time, bool, bool) {
@@ -704,4 +728,59 @@ func formatTemporalOffset(offset int) string {
 		return fmt.Sprintf("%c%02d:%02d", sign, hours, minutes)
 	}
 	return fmt.Sprintf("%c%02d:%02d:%02d", sign, hours, minutes, seconds)
+}
+
+// temporalConstructorTypes names the value each temporal constructor builds,
+// as Neo4j's errors name it.
+var temporalConstructorTypes = map[string]string{
+	"date":          "Date",
+	"datetime":      "DateTime",
+	"localdatetime": "LocalDateTime",
+	"time":          "Time",
+	"localtime":     "LocalTime",
+	"duration":      "Duration",
+}
+
+// isTemporalConstructor reports date, datetime, localdatetime, time,
+// localtime and duration.
+func isTemporalConstructor(function string) bool {
+	_, ok := temporalConstructorTypes[strings.ToLower(function)]
+	return ok
+}
+
+// temporalConstructorError is the statement error of a temporal constructor
+// that built no value from a non-null input, as Neo4j 5.26 reports it: a
+// SyntaxError for text it can't parse, ExecutionFailed for a map with
+// invalid fields, and ProcedureCallFailed for a value of another type. It is
+// nil for a null input, which gives null.
+func temporalConstructorError(function string, input interface{}) error {
+	typeName := temporalConstructorTypes[strings.ToLower(function)]
+	switch value := input.(type) {
+	case nil:
+		return nil
+	case string:
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
+			fmt.Sprintf("Text cannot be parsed to a %s\n%q\n ^", typeName, value))
+	case map[string]interface{}:
+		if err := temporalFieldsError(strings.ToLower(function), value); err != nil {
+			return err
+		}
+		return newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",
+			fmt.Sprintf("invalid %s value: %v", typeName, value))
+	case bool:
+		return temporalCallSignatureError(typeName, fmt.Sprintf("Boolean('%t')", value))
+	case float32, float64:
+		return temporalCallSignatureError(typeName, fmt.Sprintf("Double(%v)", value))
+	}
+	if integer, ok := cypherIntegerValue(input); ok {
+		return temporalCallSignatureError(typeName, fmt.Sprintf("Long(%d)", integer))
+	}
+	return temporalCallSignatureError(typeName, fmt.Sprintf("%v", input))
+}
+
+// temporalCallSignatureError is Neo4j's error for a temporal constructor
+// called with a value of a type it doesn't take.
+func temporalCallSignatureError(typeName, provided string) error {
+	return newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument",
+		fmt.Sprintf("Invalid call signature for %sFunction: Provided input was [%s]", typeName, provided))
 }

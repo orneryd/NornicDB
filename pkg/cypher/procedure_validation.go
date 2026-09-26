@@ -8,13 +8,24 @@ import (
 	"strings"
 )
 
-func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
+// validateProcedureCallArguments rejects an aggregate in a procedure call's
+// arguments, as Neo4j does when it compiles the statement: whether the call
+// runs on its own or as a clause of a larger query, and whatever rows reach
+// it.
+func validateProcedureCallArguments(callCypher string) error {
 	if procedureCallContainsAggregation(callCypher) {
-		return nil, newSemanticError(
+		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"InvalidAggregation",
 			"procedure arguments cannot contain aggregate expressions",
 		)
+	}
+	return nil
+}
+
+func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
+	if err := validateProcedureCallArguments(callCypher); err != nil {
+		return nil, err
 	}
 	if strings.Index(callCypher, "(") >= 0 {
 		args, err := extractCallArguments(callCypher)
@@ -61,6 +72,42 @@ func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string,
 		"InvalidArgumentPassingMode",
 		fmt.Sprintf("procedure %s arguments must be passed explicitly inside a query", spec.Name),
 	)
+}
+
+// validateYieldModifiers checks a YIELD's WHERE / ORDER BY / SKIP / LIMIT
+// as Neo4j does when it compiles the statement: a standalone call (nothing
+// after the YIELD) can't have any of them, a WHERE must come before
+// ORDER BY / SKIP / LIMIT, and SKIP / LIMIT follow the same rules as in a
+// WITH or RETURN.
+func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail bool) error {
+	if yield == nil || !yield.hasModifiers() {
+		return nil
+	}
+	if !hasTail {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidSyntax",
+			"Cannot use standalone call with WHERE (instead use: `CALL ... WITH * WHERE ... RETURN *`)",
+		)
+	}
+	if yield.misplacedWhere {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"InvalidSyntax",
+			"Invalid input 'WHERE': a YIELD's WHERE must come before its ORDER BY, SKIP and LIMIT",
+		)
+	}
+	if yield.skip != "" {
+		if err := e.validateStaticPaginationExpression("SKIP", yield.skip); err != nil {
+			return err
+		}
+	}
+	if yield.limit != "" {
+		if err := e.validateStaticPaginationExpression("LIMIT", yield.limit); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {

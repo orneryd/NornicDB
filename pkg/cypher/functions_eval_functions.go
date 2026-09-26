@@ -790,143 +790,9 @@ skipArrayIndexing:
 	// List Conversion Functions
 	// ========================================
 
-	// toIntegerList(list)
-	if matchFuncStartAndSuffix(expr, "tointegerlist") {
-		inner := extractFuncArgs(expr, "tointegerlist")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		list, ok := val.([]interface{})
-		if !ok {
-			return nil
-		}
-		result := make([]interface{}, len(list))
-		for i, item := range list {
-			switch v := item.(type) {
-			case int64:
-				result[i] = v
-			case int:
-				result[i] = int64(v)
-			case float64:
-				result[i] = int64(v)
-			case string:
-				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-					result[i] = n
-				} else {
-					result[i] = nil
-				}
-			default:
-				result[i] = nil
-			}
-		}
-		return result
-	}
-
-	// toFloatList(list)
-	if matchFuncStartAndSuffix(expr, "tofloatlist") {
-		inner := extractFuncArgs(expr, "tofloatlist")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		list, ok := val.([]interface{})
-		if !ok {
-			return nil
-		}
-		result := make([]interface{}, len(list))
-		for i, item := range list {
-			switch v := item.(type) {
-			case float64:
-				result[i] = v
-			case float32:
-				result[i] = float64(v)
-			case int64:
-				result[i] = float64(v)
-			case int:
-				result[i] = float64(v)
-			case string:
-				if f, err := strconv.ParseFloat(v, 64); err == nil {
-					result[i] = f
-				} else {
-					result[i] = nil
-				}
-			default:
-				result[i] = nil
-			}
-		}
-		return result
-	}
-
-	// toBooleanList(list)
-	if matchFuncStartAndSuffix(expr, "tobooleanlist") {
-		inner := extractFuncArgs(expr, "tobooleanlist")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		list, ok := val.([]interface{})
-		if !ok {
-			return nil
-		}
-		result := make([]interface{}, len(list))
-		for i, item := range list {
-			switch v := item.(type) {
-			case bool:
-				result[i] = v
-			case string:
-				lower := strings.ToLower(v)
-				if lower == "true" {
-					result[i] = true
-				} else if lower == "false" {
-					result[i] = false
-				} else {
-					result[i] = nil
-				}
-			default:
-				result[i] = nil
-			}
-		}
-		return result
-	}
-
-	// toStringList(list)
-	if matchFuncStartAndSuffix(expr, "tostringlist") {
-		inner := extractFuncArgs(expr, "tostringlist")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		list, ok := val.([]interface{})
-		if !ok {
-			return nil
-		}
-		result := make([]interface{}, len(list))
-		for i, item := range list {
-			if item == nil {
-				result[i] = nil
-			} else {
-				result[i] = fmt.Sprintf("%v", item)
-			}
-		}
-		return result
-	}
-
 	// ========================================
 	// Additional Utility Functions
 	// ========================================
-
-	// valueType(value) - returns the type of a value as a string
-	if matchFuncStartAndSuffix(expr, "valuetype") {
-		inner := extractFuncArgs(expr, "valuetype")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		switch val.(type) {
-		case nil:
-			return "NULL"
-		case bool:
-			return "BOOLEAN"
-		case int, int64, int32:
-			return "INTEGER"
-		case float64, float32:
-			return "FLOAT"
-		case string:
-			return "STRING"
-		case []interface{}:
-			return "LIST"
-		case map[string]interface{}:
-			return "MAP"
-		default:
-			return "ANY"
-		}
-	}
 
 	// ========================================
 	// Aggregation Functions (in expression context)
@@ -964,52 +830,6 @@ skipArrayIndexing:
 			return []interface{}{}
 		}
 		return []interface{}{val}
-	}
-
-	// lower(string) - alias for toLower
-	if matchFuncStartAndSuffix(expr, "lower") {
-		inner := extractFuncArgs(expr, "lower")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			return strings.ToLower(str)
-		}
-		return nil
-	}
-
-	// upper(string) - alias for toUpper
-	if matchFuncStartAndSuffix(expr, "upper") {
-		inner := extractFuncArgs(expr, "upper")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			return strings.ToUpper(str)
-		}
-		return nil
-	}
-
-	// trim(string) / ltrim(string) / rtrim(string)
-	if matchFuncStartAndSuffix(expr, "trim") {
-		inner := extractFuncArgs(expr, "trim")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			return strings.TrimSpace(str)
-		}
-		return nil
-	}
-	if matchFuncStartAndSuffix(expr, "ltrim") {
-		inner := extractFuncArgs(expr, "ltrim")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			return strings.TrimLeft(str, " \t\n\r")
-		}
-		return nil
-	}
-	if matchFuncStartAndSuffix(expr, "rtrim") {
-		inner := extractFuncArgs(expr, "rtrim")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			return strings.TrimRight(str, " \t\n\r")
-		}
-		return nil
 	}
 
 	// replace(string, search, replacement)
@@ -1172,10 +992,15 @@ skipArrayIndexing:
 		return e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}, expr); handled {
 		if value == nil {
-			if function, argument, ok := parseFunctionCallWS(expr); ok && strings.EqualFold(function, "date") && strings.TrimSpace(argument) != "" {
+			if function, argument, ok := parseFunctionCallWS(expr); ok && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
 				input := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				if input != nil {
-					recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgument", "invalid date value"))
+				// An argument the evaluator can't resolve comes back as its own
+				// text; that is not a value to parse.
+				if text, isText := input.(string); isText && text == strings.TrimSpace(argument) && !isWholeCypherQuotedString(text) {
+					input = nil
+				}
+				if err := temporalConstructorError(function, input); err != nil {
+					recordExpressionFailure(ctx, err)
 				}
 			}
 		}

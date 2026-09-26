@@ -37,15 +37,17 @@ func (e *backupErrorEngine) AllEdges() ([]*storage.Edge, error) {
 }
 
 func TestDB_GetIndexes(t *testing.T) {
-	t.Run("returns empty for new database", func(t *testing.T) {
+	t.Run("a new database has Neo4j's two token lookup indexes", func(t *testing.T) {
 		db, err := Open("", nil)
 		require.NoError(t, err)
 		defer db.Close()
 
 		indexes, err := db.GetIndexes(context.Background())
 		require.NoError(t, err)
-		assert.NotNil(t, indexes)
-		assert.Len(t, indexes, 0)
+		require.Len(t, indexes, 2)
+		for _, index := range indexes {
+			assert.Equal(t, "lookup", index.Type)
+		}
 	})
 
 	t.Run("returns indexes after creation", func(t *testing.T) {
@@ -59,9 +61,10 @@ func TestDB_GetIndexes(t *testing.T) {
 
 		indexes, err := db.GetIndexes(context.Background())
 		require.NoError(t, err)
-		assert.Len(t, indexes, 1)
-		assert.Equal(t, "User", indexes[0].Label)
-		assert.Equal(t, "email", indexes[0].Property)
+		created := userIndexes(indexes)
+		require.Len(t, created, 1)
+		assert.Equal(t, "User", created[0].Label)
+		assert.Equal(t, "email", created[0].Property)
 	})
 
 	t.Run("handles properties arrays nil schema and closed db", func(t *testing.T) {
@@ -72,9 +75,10 @@ func TestDB_GetIndexes(t *testing.T) {
 		require.NoError(t, db.CreateIndex(context.Background(), "Article", "body", "fulltext"))
 		indexes, err := db.GetIndexes(context.Background())
 		require.NoError(t, err)
-		require.Len(t, indexes, 1)
-		require.Equal(t, "body", indexes[0].Property)
-		require.Equal(t, "fulltext", indexes[0].Type)
+		created := userIndexes(indexes)
+		require.Len(t, created, 1)
+		require.Equal(t, "body", created[0].Property)
+		require.Equal(t, "fulltext", created[0].Type)
 
 		baseEngine := storage.NewMemoryEngine()
 		t.Cleanup(func() { _ = baseEngine.Close() })
@@ -90,6 +94,17 @@ func TestDB_GetIndexes(t *testing.T) {
 		require.ErrorIs(t, err, ErrClosed)
 		require.ErrorIs(t, minimal.CreateIndex(context.Background(), "A", "b", "property"), ErrClosed)
 	})
+}
+
+// userIndexes drops the token lookup indexes every database has.
+func userIndexes(indexes []*IndexInfo) []*IndexInfo {
+	var out []*IndexInfo
+	for _, index := range indexes {
+		if index.Type != "lookup" {
+			out = append(out, index)
+		}
+	}
+	return out
 }
 
 func TestDB_CreateIndex(t *testing.T) {

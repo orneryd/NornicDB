@@ -481,12 +481,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 		// Supported hot-path predicates:
 		//   var.prop = $param | 'literal'
 		//   var.prop IN $param
-		eqRE := regexp.MustCompile(`(?i)^\s*` + regexp.QuoteMeta(deleteVar) + `\.(\w+)\s*=\s*(.+?)\s*$`)
-		inRE := regexp.MustCompile(`(?i)^\s*` + regexp.QuoteMeta(deleteVar) + `\.(\w+)\s+IN\s+\$(\w+)\s*$`)
-
-		if m := eqRE.FindStringSubmatch(wherePart); len(m) == 3 {
-			prop := m[1]
-			rhs := strings.TrimSpace(m[2])
+		if m := deleteWherePropertyEquals.FindStringSubmatch(wherePart); len(m) == 4 && strings.EqualFold(m[1], deleteVar) {
+			prop := m[2]
+			rhs := strings.TrimSpace(m[3])
 			var expected interface{}
 			if strings.HasPrefix(rhs, "$") {
 				key := strings.TrimSpace(strings.TrimPrefix(rhs, "$"))
@@ -508,9 +505,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 				}
 			}
 			nodes = filtered
-		} else if m := inRE.FindStringSubmatch(wherePart); len(m) == 3 {
-			prop := m[1]
-			paramName := m[2]
+		} else if m := deleteWherePropertyInParameter.FindStringSubmatch(wherePart); len(m) == 4 && strings.EqualFold(m[1], deleteVar) {
+			prop := m[2]
+			paramName := m[3]
 			raw, ok := params[paramName]
 			if !ok {
 				return []*storage.Node{}, true, nil
@@ -1715,8 +1712,7 @@ func coerceToUnwindItems(listVal interface{}) []interface{} {
 }
 
 func extractWithAliases(querySegment string) []string {
-	re := regexp.MustCompile(`(?i)\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
-	matches := re.FindAllStringSubmatch(querySegment, -1)
+	matches := withAliasPattern.FindAllStringSubmatch(querySegment, -1)
 	aliases := make([]string, 0, len(matches))
 	for _, m := range matches {
 		if len(m) > 1 {
@@ -2819,3 +2815,15 @@ func sliceContains(slice []string, item string) bool {
 	}
 	return false
 }
+
+// Patterns compiled once (#591): these helpers run per statement or per row.
+var (
+	// deleteWherePropertyEquals is the DELETE hot path's
+	// "variable.property = value" predicate (the variable is compared by the
+	// caller).
+	deleteWherePropertyEquals = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s*=\s*(.+?)\s*$`)
+	// deleteWherePropertyInParameter is "variable.property IN $param".
+	deleteWherePropertyInParameter = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s+IN\s+\$(\w+)\s*$`)
+	withAliasPattern               = regexp.MustCompile(`(?i)\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	subqueryWherePattern           = regexp.MustCompile(`(?i)\s+WHERE\s+`)
+)

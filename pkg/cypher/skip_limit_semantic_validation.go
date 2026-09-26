@@ -36,31 +36,44 @@ func extractPaginationExpressions(cypher string) []paginationExpression {
 
 func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) error {
 	for _, pagination := range extractPaginationExpressions(cypher) {
-		expression := pagination.value
-		if expression == "" {
-			return paginationCompileTypeError(pagination.keyword, nil)
+		if err := e.validateStaticPaginationExpression(pagination.keyword, pagination.value); err != nil {
+			return err
 		}
-		if paginationExpressionUsesRowVariable(expression) {
-			return newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"NonConstantExpression",
-				pagination.keyword+" requires an expression independent of row variables",
-			)
-		}
-		if strings.Contains(expression, "$") {
-			continue
-		}
-		value, evaluated := e.evaluateRowExpression(expression, pipelineRow{})
-		if !evaluated {
-			return paginationCompileTypeError(pagination.keyword, value)
-		}
-		integer, valid := cypherIntegerValue(value)
-		if !valid {
-			return paginationCompileTypeError(pagination.keyword, value)
-		}
-		if integer < 0 {
-			return paginationCompileNegativeError(pagination.keyword)
-		}
+	}
+	return nil
+}
+
+// validateStaticPaginationExpression checks one SKIP / LIMIT expression when
+// the statement is compiled: it must not use a row variable, and unless it
+// reads a parameter it must be a non-negative integer. WITH, RETURN and a
+// procedure call's YIELD share it.
+func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression string) error {
+	if expression == "" {
+		return paginationCompileTypeError(keyword, nil)
+	}
+	if paginationExpressionUsesRowVariable(expression) {
+		return newSemanticError(
+			"Neo.ClientError.Statement.SyntaxError",
+			"NonConstantExpression",
+			keyword+" requires an expression independent of row variables",
+		)
+	}
+	if strings.Contains(expression, "$") {
+		return nil
+	}
+	value, evaluated, err := e.evaluateRowValue(expression, pipelineRow{})
+	if err != nil {
+		return err
+	}
+	if !evaluated {
+		return paginationCompileTypeError(keyword, value)
+	}
+	integer, valid := cypherIntegerValue(value)
+	if !valid {
+		return paginationCompileTypeError(keyword, value)
+	}
+	if integer < 0 {
+		return paginationCompileNegativeError(keyword)
 	}
 	return nil
 }
@@ -81,7 +94,10 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 		if !strings.Contains(pagination.value, "$") {
 			continue
 		}
-		value, evaluated := e.evaluateRowExpression(pagination.value, values)
+		value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+		if err != nil {
+			return err
+		}
 		if !evaluated {
 			// Missing parameters retain the existing ParameterMissing path.
 			continue

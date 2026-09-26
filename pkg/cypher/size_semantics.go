@@ -1,11 +1,9 @@
 package cypher
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -83,39 +81,6 @@ func cypherValueTypeName(value interface{}) string {
 		return "List"
 	}
 	return fmt.Sprintf("%T", value)
-}
-
-// recordRowSizeArgumentFailure records the size() type error of an
-// expression the row evaluator could not resolve: the first size(...) call,
-// at any depth, whose argument evaluates to a value size() rejects. The row
-// evaluator has no context to record failures itself, so the context-aware
-// entry point (evaluateRowExpressionWithContext) calls this when it gets an
-// unresolved result, turning "could not parse" into the type error.
-func (e *StorageExecutor) recordRowSizeArgumentFailure(ctx context.Context, expression string, values pipelineRow) bool {
-	if !containsFold(expression, "size") {
-		return false
-	}
-	for offset := 0; offset < len(expression); {
-		index := findKeywordIndexInContext(expression[offset:], "size")
-		if index < 0 {
-			return false
-		}
-		index += offset
-		open := skipSpaces(expression, index+len("size"))
-		if open < len(expression) && expression[open] == '(' {
-			if close := findMatchingDelimiter(expression, open, '(', ')'); close > open {
-				argument := strings.TrimSpace(expression[open+1 : close])
-				if value, resolved := e.evaluateRowExpression(argument, values); resolved {
-					if err := sizeArgumentError(value); err != nil {
-						recordExpressionFailure(ctx, err)
-						return true
-					}
-				}
-			}
-		}
-		offset = index + len("size")
-	}
-	return false
 }
 
 // typeMismatchFromFunctionError converts a registry TypeMismatchError into

@@ -91,9 +91,7 @@ func projectedBindingScope(input *semanticBindingScope, clause string) *semantic
 			body = strings.TrimSpace(body[:index])
 		}
 	}
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	output := newSemanticBindingScope()
 	for _, raw := range splitTopLevelComma(body) {
 		expr, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
@@ -112,14 +110,30 @@ func projectedBindingScope(input *semanticBindingScope, clause string) *semantic
 	return output
 }
 
+// validateUnwindAlias rejects an UNWIND clause whose alias isn't exactly one
+// variable, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x WHERE …"
+// and "UNWIND l AS x y" are SyntaxErrors (Invalid input 'WHERE').
+func validateUnwindAlias(clause string) error {
+	_, alias, ok := splitUnwindBody(pipelineClauseBody(clause, "UNWIND"))
+	if !ok {
+		return nil
+	}
+	_, next, identifier := scanIdentifierToken(alias, 0)
+	if !identifier {
+		return nil
+	}
+	if rest := strings.TrimSpace(alias[next:]); rest != "" {
+		token := strings.Fields(rest)[0]
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			fmt.Sprintf("Invalid input '%s'", token))
+	}
+	return nil
+}
+
+// unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
 func unwindBindingName(clause string) string {
-	if index := findKeywordIndexInContext(clause, "AS"); index >= 0 {
-		start := index + len("AS")
-		for start < len(clause) && isWhitespace(clause[start]) {
-			start++
-		}
-		name, _, ok := scanIdentifierToken(clause, start)
-		if ok {
+	if _, alias, ok := splitUnwindBody(clause); ok {
+		if name, _, identifier := scanIdentifierToken(alias, 0); identifier {
 			return name
 		}
 	}

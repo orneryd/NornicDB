@@ -522,7 +522,7 @@ func (e *StorageExecutor) analyzeReturnClause(query string) *PlanOperator {
 	}
 
 	// Check for DISTINCT
-	if len(returnClause) >= 8 && strings.EqualFold(strings.TrimSpace(returnClause)[:8], "DISTINCT") {
+	if _, distinct := cutDistinct(returnClause); distinct {
 		return &PlanOperator{
 			OperatorType:  "Distinct",
 			Description:   "Remove duplicates",
@@ -763,8 +763,18 @@ func (e *StorageExecutor) attachPlanMetadata(result *ExecuteResult, plan *Execut
 func (e *StorageExecutor) inferExplainColumns(query string) []string {
 	// Neo4j EXPLAIN returns the same columns as the underlying query but no rows.
 	if y := parseYieldClause(query); y != nil {
-		if y.hasReturn && strings.TrimSpace(y.returnExpr) != "" {
-			items := e.parseReturnItems(y.returnExpr)
+		// The statement's own RETURN, without its ORDER BY / SKIP / LIMIT.
+		returnExpr := ""
+		if returnIdx := topLevelKeywordIndex(query, "RETURN"); returnIdx >= 0 {
+			returnExpr = strings.TrimSpace(query[returnIdx+len("RETURN"):])
+			for _, keyword := range []string{"ORDER", "SKIP", "LIMIT"} {
+				if index := topLevelKeywordIndex(returnExpr, keyword); index >= 0 {
+					returnExpr = strings.TrimSpace(returnExpr[:index])
+				}
+			}
+		}
+		if returnExpr != "" {
+			items := e.parseReturnItems(returnExpr)
 			// For RETURN * after explicit YIELD items, project yielded aliases/names.
 			if len(items) == 1 && strings.TrimSpace(items[0].expr) == "*" && len(y.items) > 0 {
 				cols := make([]string, 0, len(y.items))

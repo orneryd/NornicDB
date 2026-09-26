@@ -623,6 +623,13 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 		}
 		return e.executeChainedCallSubquery(ctx, seed, restQuery)
 	}
+	// UNWIND ... CALL <procedure>: every unwound value calls the procedure,
+	// in the pipeline (pipelineApplyProcedureCall).
+	if startsWithKeywordFold(strings.TrimSpace(restQuery), "CALL") {
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
+	}
 
 	// Handle UNWIND ... CREATE/MERGE/MATCH ... mutation patterns.
 	if restQuery != "" {
@@ -1119,12 +1126,13 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 			row := make([]interface{}, len(returnItems))
 			rowValues := map[string]interface{}{variable: item}
 			for i, ri := range returnItems {
-				value, ok := e.evaluateRowExpression(ri.expr, rowValues)
+				value, ok := e.evaluateRowExpressionWithContext(ctx, ri.expr, rowValues)
 				if !ok {
-					// A size() type error is the statement's error; any other
-					// unresolved item is reported like the RETURN route does.
-					if e.recordRowSizeArgumentFailure(ctx, ri.expr, rowValues) {
-						return nil, getExpressionFailure(ctx)
+					// A recorded failure (a function or arithmetic error) is the
+					// statement's error; any other unresolved item is reported
+					// like the RETURN route does.
+					if failure := getExpressionFailure(ctx); failure != nil {
+						return nil, failure
 					}
 					return nil, newSemanticError(
 						"Neo.ClientError.Statement.SyntaxError",
@@ -3269,77 +3277,81 @@ func unwindItemsAreDistinctComparable(items []interface{}) bool {
 	return true
 }
 
-// normalizeMultiMatchWhereClauses rewrites top-level two-MATCH forms that place
-// WHERE between MATCH clauses into a single terminal WHERE:
+// normalizeMultiMatchWhereClauses rewrites a chain of required MATCH
+// clauses whose WHEREs sit between MATCH clauses into one terminal WHERE:
 //  1. MATCH A WHERE wa MATCH B RETURN ...
 //     -> MATCH A MATCH B WHERE wa RETURN ...
-//  2. MATCH A WHERE wa MATCH B WHERE wb RETURN ...
-//     -> MATCH A MATCH B WHERE wa AND wb RETURN ...
+//  2. MATCH A WHERE wa MATCH B WHERE wb MATCH C RETURN ...
+//     -> MATCH A MATCH B MATCH C WHERE wa AND wb RETURN ...
+//
+// For required MATCH clauses the predicates filter the same rows wherever
+// they stand, so conjoining them after the last MATCH is equivalent. A
+// predicate with a top-level OR or XOR is parenthesized so AND doesn't bind
+// into it. Anything but MATCH clauses before RETURN (OPTIONAL MATCH, WITH,
+// UNWIND, writes) leaves the query unchanged.
 func normalizeMultiMatchWhereClauses(query string) string {
 	trimmed := strings.TrimSpace(query)
 	if !strings.HasPrefix(strings.ToUpper(trimmed), "MATCH ") {
 		return query
 	}
-	// Only normalize chained required MATCH clauses. Queries containing
-	// OPTIONAL MATCH have different left-join semantics and must not be
-	// rewritten into multi-MATCH WHERE forms.
+	// OPTIONAL MATCH has left-join semantics: its WHERE can't move.
 	if findKeywordIndex(trimmed, "OPTIONAL MATCH") >= 0 {
 		return query
 	}
-
 	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if returnIdx <= 0 {
 		return query
 	}
 	mainPart := strings.TrimSpace(trimmed[:returnIdx])
 	tailPart := strings.TrimSpace(trimmed[returnIdx:])
-
-	searchFrom := len("MATCH")
-	secondMatchIdx := -1
-	if searchFrom < len(mainPart) {
-		if rel := topLevelKeywordIndex(mainPart[searchFrom:], "MATCH"); rel >= 0 {
-			secondMatchIdx = searchFrom + rel
+	for _, keyword := range []string{"WITH", "UNWIND", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "CALL", "FOREACH"} {
+		if len(findAllTopLevelPipelineKeywordPositions(mainPart, keyword)) > 0 {
+			return query
 		}
 	}
-	if secondMatchIdx <= 0 {
+	starts := findAllTopLevelPipelineKeywordPositions(mainPart, "MATCH")
+	if len(starts) < 2 || starts[0] != 0 {
 		return query
 	}
-	left := strings.TrimSpace(mainPart[:secondMatchIdx])
-	right := strings.TrimSpace(mainPart[secondMatchIdx+len("MATCH"):])
-	if !strings.HasPrefix(strings.ToUpper(left), "MATCH ") {
-		return query
+	patterns := make([]string, 0, len(starts))
+	predicates := make([]string, 0, len(starts))
+	movedWhere := false
+	for index, start := range starts {
+		end := len(mainPart)
+		if index+1 < len(starts) {
+			end = starts[index+1]
+		}
+		clause := strings.TrimSpace(mainPart[start+len("MATCH") : end])
+		pattern := clause
+		if whereIdx := topLevelKeywordIndex(clause, "WHERE"); whereIdx >= 0 {
+			pattern = strings.TrimSpace(clause[:whereIdx])
+			predicate := strings.TrimSpace(clause[whereIdx+len("WHERE"):])
+			if predicate == "" {
+				return query
+			}
+			if topLevelKeywordIndex(predicate, "OR") >= 0 || topLevelKeywordIndex(predicate, "XOR") >= 0 {
+				predicate = "(" + predicate + ")"
+			}
+			predicates = append(predicates, predicate)
+			movedWhere = movedWhere || index+1 < len(starts)
+		}
+		if pattern == "" {
+			return query
+		}
+		patterns = append(patterns, pattern)
 	}
-
-	leftWhereIdx := findKeywordIndex(left, "WHERE")
-	if leftWhereIdx <= 0 {
-		return query
-	}
-	rightWhereIdx := findKeywordIndex(right, "WHERE")
-
-	leftPattern := strings.TrimSpace(left[len("MATCH "):leftWhereIdx])
-	leftWhere := strings.TrimSpace(left[leftWhereIdx+len("WHERE"):])
-	rightPattern := strings.TrimSpace(right)
-	rightWhere := ""
-	if rightWhereIdx > 0 {
-		rightPattern = strings.TrimSpace(right[:rightWhereIdx])
-		rightWhere = strings.TrimSpace(right[rightWhereIdx+len("WHERE"):])
-	}
-
-	if leftPattern == "" || rightPattern == "" || leftWhere == "" {
+	if !movedWhere {
 		return query
 	}
 
 	var b strings.Builder
-	b.WriteString("MATCH ")
-	b.WriteString(leftPattern)
-	b.WriteString(" MATCH ")
-	b.WriteString(rightPattern)
-	b.WriteString(" WHERE ")
-	b.WriteString(leftWhere)
-	if rightWhere != "" {
-		b.WriteString(" AND ")
-		b.WriteString(rightWhere)
+	for _, pattern := range patterns {
+		b.WriteString("MATCH ")
+		b.WriteString(pattern)
+		b.WriteString(" ")
 	}
+	b.WriteString("WHERE ")
+	b.WriteString(strings.Join(predicates, " AND "))
 	b.WriteString(" ")
 	b.WriteString(tailPart)
 	return b.String()
@@ -4200,10 +4212,7 @@ func (e *StorageExecutor) executeJoinedRowsWithOptionalMatch(ctx context.Context
 	}
 
 	distinct := false
-	if strings.HasPrefix(strings.ToUpper(withClause), "DISTINCT ") {
-		distinct = true
-		withClause = strings.TrimSpace(withClause[9:])
-	}
+	withClause, distinct = cutDistinct(withClause)
 
 	withItems := e.splitWithItems(withClause)
 	type computedRow struct {
@@ -4714,9 +4723,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 			// COLLECT(DISTINCT expression) - may have suffix like [..10]
 			inner, suffix, _ := extractFuncArgsWithSuffix(item.expr, "collect")
 			// Skip "DISTINCT " prefix
-			if strings.HasPrefix(strings.ToUpper(inner), "DISTINCT ") {
-				inner = strings.TrimSpace(inner[9:])
-			}
+			inner, _ = cutDistinct(inner)
 			seen := make(map[string]bool) // Use string key for map comparison
 			var collected []interface{}
 
@@ -5260,10 +5267,7 @@ func (e *StorageExecutor) tryBuildJoinedGroupedCollectResult(ctx context.Context
 
 			// COLLECT and COLLECT(DISTINCT) over grouped rows.
 			inner, suffix, _ := extractFuncArgsWithSuffix(expr, "collect")
-			distinct := strings.HasPrefix(strings.ToUpper(strings.TrimSpace(inner)), "DISTINCT ")
-			if distinct {
-				inner = strings.TrimSpace(inner[len("DISTINCT "):])
-			}
+			inner, distinct := cutDistinct(inner)
 			collected := make([]interface{}, 0, len(g.rows))
 			seen := map[string]struct{}{}
 			for _, r := range g.rows {

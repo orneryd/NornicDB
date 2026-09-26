@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -172,6 +173,26 @@ func normalizeStatementForExecution(defaultDB string, statement string) (effecti
 		return "", "", targetErr
 	}
 	return target, query, nil
+}
+
+// withRequestIdentity attaches the signed-in user, the user directory and
+// the request's connection, for SHOW USERS, SHOW CURRENT USER and SHOW
+// TRANSACTIONS (#718).
+func (s *Server) withRequestIdentity(ctx context.Context, r *http.Request, claims *auth.JWTClaims) context.Context {
+	identity := &cypher.RequestIdentity{Connection: cypher.ClientConnection{Protocol: "http"}}
+	if claims != nil && strings.TrimSpace(claims.Username) != "" {
+		identity.User = &cypher.AuthenticatedUser{Name: claims.Username, Roles: claims.Roles}
+	}
+	if authenticator := s.auth; authenticator != nil {
+		identity.Users = func() []cypher.UserListing {
+			return cypher.UserListingsFromAuth(authenticator.ListUsers())
+		}
+	}
+	if r != nil {
+		identity.Connection.ID = "http-" + strconv.FormatUint(s.nextHTTPConnectionID.Add(1), 10)
+		identity.Connection.Address = r.RemoteAddr
+	}
+	return cypher.WithRequestIdentity(ctx, identity)
 }
 
 func transactionOwnerKey(_ *http.Request, claims *auth.JWTClaims) string {
@@ -1344,6 +1365,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 		queryStart := time.Now()
 		execCtx := cypher.WithAuthToken(r.Context(), r.Header.Get("Authorization"))
 		execCtx = cypher.WithAuthenticatedPrincipal(execCtx, transactionOwnerKey(r, claims))
+		execCtx = s.withRequestIdentity(execCtx, r, claims)
 		execCtx = s.withDatabasePermissionChecker(execCtx, claims, effectiveDbName)
 		result, err := executor.Execute(execCtx, queryStatement, stmt.Parameters)
 		queryDuration := time.Since(queryStart)
@@ -1545,6 +1567,7 @@ func (s *Server) handleSingleStatementFastPath(w http.ResponseWriter, r *http.Re
 	queryStart := time.Now()
 	execCtx := cypher.WithAuthToken(r.Context(), r.Header.Get("Authorization"))
 	execCtx = cypher.WithAuthenticatedPrincipal(execCtx, transactionOwnerKey(r, claims))
+	execCtx = s.withRequestIdentity(execCtx, r, claims)
 	execCtx = s.withDatabasePermissionChecker(execCtx, claims, dbName)
 	result, execErr := executor.Execute(execCtx, queryStatement, stmt.Parameters)
 	queryDuration := time.Since(queryStart)
@@ -1949,6 +1972,7 @@ func (s *Server) executeTxStatements(
 ) (failed bool) {
 	ctx = cypher.WithAuthToken(ctx, authToken)
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
+	ctx = s.withRequestIdentity(ctx, nil, claims)
 	for _, stmt := range statements {
 		effectiveDB, queryStatement, resolveErr := normalizeStatementForExecution(dbName, stmt.Statement)
 		if resolveErr != nil {

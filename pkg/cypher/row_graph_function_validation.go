@@ -11,6 +11,67 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// stringFunctionParameters lists, for the string functions, which
+// arguments are STRING parameters (trim's forms are handled apart).
+var stringFunctionParameters = map[string][]int{
+	"ltrim": {0, 1}, "rtrim": {0, 1}, "btrim": {0, 1},
+	"toupper": {0}, "tolower": {0}, "upper": {0}, "lower": {0}, "normalize": {0},
+	"substring": {0}, "left": {0}, "right": {0},
+	"replace": {0, 1, 2}, "split": {0, 1},
+}
+
+// graphBindingTypeNames are the Neo4j type names of the graph-typed
+// variables a statement binds.
+var graphBindingTypeNames = map[matchBindingKind]string{
+	matchBindingNode:             "Node",
+	matchBindingRelationship:     "Relationship",
+	matchBindingPath:             "Path",
+	matchBindingNodeList:         "List<Node>",
+	matchBindingRelationshipList: "List<Relationship>",
+}
+
+// stringArgumentTypeError is Neo4j's compile-time SyntaxError for a string
+// function given a node, relationship, path or list of them for a STRING
+// parameter ("Type mismatch: expected String but was Relationship"), which
+// Neo4j raises whether or not a row reaches the call.
+func stringArgumentTypeError(function, argument string, scope matchSemanticScope) error {
+	var parameters []string
+	if strings.EqualFold(function, "trim") {
+		// trim([[LEADING | TRAILING | BOTH] [character] FROM] original).
+		text := strings.TrimSpace(argument)
+		if from := topLevelKeywordIndex(text, "FROM"); from >= 0 {
+			spec := strings.TrimSpace(text[:from])
+			for _, mode := range []string{"BOTH", "LEADING", "TRAILING"} {
+				if startsWithKeywordFold(spec, mode) {
+					spec = strings.TrimSpace(spec[len(mode):])
+					break
+				}
+			}
+			parameters = []string{spec, text[from+len("FROM"):]}
+		} else {
+			parameters = []string{text}
+		}
+	} else if indexes, ok := stringFunctionParameters[strings.ToLower(function)]; ok {
+		arguments := splitTopLevelComma(argument)
+		for _, index := range indexes {
+			if index < len(arguments) {
+				parameters = append(parameters, arguments[index])
+			}
+		}
+	}
+	for _, parameter := range parameters {
+		variable := simpleSemanticIdentifier(strings.TrimSpace(parameter))
+		if variable == "" {
+			continue
+		}
+		if typeName, graphTyped := graphBindingTypeNames[scope[variable]]; graphTyped {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
+				"Type mismatch: expected String but was "+typeName)
+		}
+	}
+	return nil
+}
+
 func validateGraphFunctionSemanticTypes(expression string, scope matchSemanticScope) error {
 	expression = strings.TrimSpace(expression)
 	// (labels(x)) is checked like labels(x), as the conversion-function
@@ -43,6 +104,9 @@ func validateGraphFunctionSemanticTypes(expression string, scope matchSemanticSc
 		if err := validateGraphFunctionSemanticTypes(item, scope); err != nil {
 			return err
 		}
+	}
+	if err := stringArgumentTypeError(function, argument, scope); err != nil {
+		return err
 	}
 	// Literal arguments are checked for the whole statement by
 	// validateStaticGraphFunctionArguments; this walk checks the static type
@@ -93,9 +157,7 @@ func (e *StorageExecutor) validatePipelineGraphFunctionArguments(rows []pipeline
 		return nil
 	}
 	body = strings.TrimSpace(body[len(keyword):])
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	end := len(body)
 	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(body, suffix); index >= 0 && index < end {
@@ -126,7 +188,10 @@ func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, r
 			if err := e.validateRowGraphFunctionArguments(listExpression, row); err != nil {
 				return err
 			}
-			listValue, evaluated := e.evaluateRowExpression(listExpression, row)
+			listValue, evaluated, err := e.evaluateRowValue(listExpression, row)
+			if err != nil {
+				return err
+			}
 			if !evaluated || listValue == nil {
 				return nil
 			}
@@ -167,7 +232,10 @@ func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, r
 	if !strings.EqualFold(function, "labels") && !strings.EqualFold(function, "type") {
 		return nil
 	}
-	value, evaluated := e.evaluateRowExpression(argument, row)
+	value, evaluated, err := e.evaluateRowValue(argument, row)
+	if err != nil {
+		return err
+	}
 	if !evaluated || value == nil {
 		return nil
 	}
