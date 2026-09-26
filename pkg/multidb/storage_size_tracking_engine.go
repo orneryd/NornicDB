@@ -287,6 +287,12 @@ func (t *sizeTrackingEngine) GetEdgesByTypeVisibleAt(edgeType string, version st
 	return nil, storage.ErrNotImplemented
 }
 
+// MatchEdgesBetween keeps projected edge-between matching on the wrapped
+// engine (storage.EdgesBetweenMatcher).
+func (t *sizeTrackingEngine) MatchEdgesBetween(startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
+	return storage.MatchEdgesBetween(t.Engine, startID, endID, edgeType, properties, match)
+}
+
 func (t *sizeTrackingEngine) GetEdgesBetweenVisibleAt(startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
 		return provider.GetEdgesBetweenVisibleAt(startID, endID, version)

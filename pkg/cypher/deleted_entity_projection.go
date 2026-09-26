@@ -29,9 +29,7 @@ func validateDeletedEntityProjection(rows []pipelineRow, clause string) error {
 			body = strings.TrimSpace(body[:index])
 		}
 	}
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	for _, item := range splitTopLevelComma(body) {
 		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
 		variable := deletedEntityAccessVariable(expression)

@@ -102,18 +102,26 @@ type mergeRelationshipPattern struct {
 	direction        mergeRelationshipDirection
 }
 
-// parseMergeRelationshipPattern converts every supported relationship direction
-// into one execution shape. It deliberately reuses the CREATE relationship
-// parser so delimiter, quoted-string, and nested-list handling cannot diverge.
-func (e *StorageExecutor) parseMergeRelationshipPattern(
-	ctx context.Context,
-	pattern string,
-	nodeContext map[string]*storage.Node,
-	relContext map[string]*storage.Edge,
-) (*mergeRelationshipPattern, error) {
-	parsed := &mergeRelationshipPattern{properties: make(map[string]interface{})}
+// mergeRelationshipShape is a relationship MERGE pattern's text split into
+// its parts; its property maps are still text.
+type mergeRelationshipShape struct {
+	pathVariable string
+	direction    mergeRelationshipDirection
+	startContent string
+	endContent   string
+	relVariable  string
+	relType      string
+	relProps     string
+}
+
+// parseMergeRelationshipShape converts every supported relationship
+// direction into one shape. It deliberately reuses the CREATE relationship
+// parser so delimiter, quoted-string, and nested-list handling cannot
+// diverge.
+func (e *StorageExecutor) parseMergeRelationshipShape(pattern string) (*mergeRelationshipShape, error) {
+	shape := &mergeRelationshipShape{}
 	pattern = strings.TrimSpace(pattern)
-	if parsed.pathVariable = extractPathAssignmentVariable(pattern); parsed.pathVariable != "" {
+	if shape.pathVariable = extractPathAssignmentVariable(pattern); shape.pathVariable != "" {
 		pattern = strings.TrimSpace(pattern[strings.Index(pattern, "=")+1:])
 	}
 
@@ -126,7 +134,7 @@ func (e *StorageExecutor) parseMergeRelationshipPattern(
 	afterRelationship := strings.TrimSpace(pattern[closeBracket+1:])
 	incoming := strings.HasSuffix(strings.TrimSpace(pattern[:openBracket]), "<-")
 	if !incoming && strings.HasPrefix(afterRelationship, "-(") {
-		parsed.direction = mergeRelationshipUndirected
+		shape.direction = mergeRelationshipUndirected
 		normalized = pattern[:closeBracket+1] + "->" + strings.TrimSpace(afterRelationship[1:])
 	}
 
@@ -137,33 +145,64 @@ func (e *StorageExecutor) parseMergeRelationshipPattern(
 	if strings.TrimSpace(remainder) != "" {
 		return nil, localizedError(localization.CypherMutationsRelationshipPropertiesInvalid(), nil)
 	}
-	if parsed.direction != mergeRelationshipUndirected {
+	if shape.direction != mergeRelationshipUndirected {
 		if reverse {
-			parsed.direction = mergeRelationshipIncoming
+			shape.direction = mergeRelationshipIncoming
 		} else {
-			parsed.direction = mergeRelationshipOutgoing
+			shape.direction = mergeRelationshipOutgoing
 		}
 	}
-
-	parsed.startNodePattern = e.parseNodePattern(ctx, "("+startContent+")")
-	parsed.endNodePattern = e.parseNodePattern(ctx, "("+endContent+")")
-	parsed.startVariable = parsed.startNodePattern.variable
-	parsed.endVariable = parsed.endNodePattern.variable
-	parsed.startNodePattern.properties = e.resolveMergePropsWithContext(ctx, parsed.startNodePattern.properties, nodeContext, relContext)
-	parsed.endNodePattern.properties = e.resolveMergePropsWithContext(ctx, parsed.endNodePattern.properties, nodeContext, relContext)
-	parsed.relVariable, parsed.relType, remainder, err = parseCreateRelationshipContent(relationshipContent)
+	shape.startContent, shape.endContent = startContent, endContent
+	shape.relVariable, shape.relType, shape.relProps, err = parseCreateRelationshipContent(relationshipContent)
 	if err != nil {
 		return nil, err
 	}
-	if remainder != "" {
-		parsed.properties = e.parseProperties(ctx, remainder)
+	return shape, nil
+}
+
+// parseMergeRelationshipPattern parses a relationship MERGE pattern's text
+// with its property maps read against the bound nodes and relationships
+// (parseMergeProperties).
+func (e *StorageExecutor) parseMergeRelationshipPattern(
+	ctx context.Context,
+	pattern string,
+	nodeContext map[string]*storage.Node,
+	relContext map[string]*storage.Edge,
+) (*mergeRelationshipPattern, error) {
+	shape, err := e.parseMergeRelationshipShape(pattern)
+	if err != nil {
+		return nil, err
 	}
-	parsed.properties = e.resolveMergePropsWithContext(ctx, parsed.properties, nodeContext, relContext)
+	parsed := &mergeRelationshipPattern{
+		pathVariable:     shape.pathVariable,
+		direction:        shape.direction,
+		startNodePattern: e.parseMergeEndpointPattern(ctx, shape.startContent, nodeContext, relContext),
+		endNodePattern:   e.parseMergeEndpointPattern(ctx, shape.endContent, nodeContext, relContext),
+		relVariable:      shape.relVariable,
+		relType:          shape.relType,
+		properties:       make(map[string]interface{}),
+	}
+	parsed.startVariable = parsed.startNodePattern.variable
+	parsed.endVariable = parsed.endNodePattern.variable
+	if shape.relProps != "" {
+		parsed.properties = e.parseMergeProperties(ctx, shape.relProps, nodeContext, relContext)
+	}
 	return parsed, nil
+}
+
+// parseMergeEndpointPattern parses an endpoint of a relationship MERGE
+// ("a:L {k: v}") with its properties read by parseMergeProperties.
+func (e *StorageExecutor) parseMergeEndpointPattern(ctx context.Context, content string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) nodePatternInfo {
+	head, props := splitNodePatternProperties("(" + content + ")")
+	info := nodePatternInfo{}
+	info.variable, info.labels, info.labelErr = parseNodeHead(head)
+	info.properties = e.parseMergeProperties(ctx, props, nodeContext, relContext)
+	return info
 }
 
 func findParsedMergeRelationships(
 	store storage.Engine,
+	cache *relationshipMergeIdentityCache,
 	pattern *mergeRelationshipPattern,
 	startNode *storage.Node,
 	endNode *storage.Node,
@@ -172,11 +211,11 @@ func findParsedMergeRelationships(
 	if pattern.direction == mergeRelationshipIncoming {
 		lookupStart, lookupEnd = endNode, startNode
 	}
-	matches, err := findRelationshipsForMerge(store, lookupStart.ID, lookupEnd.ID, pattern.relType, pattern.properties)
+	matches, err := cache.relationships(store, lookupStart.ID, lookupEnd.ID, pattern.relType, pattern.properties)
 	if err != nil || pattern.direction != mergeRelationshipUndirected {
 		return matches, err
 	}
-	reverse, err := findRelationshipsForMerge(store, lookupEnd.ID, lookupStart.ID, pattern.relType, pattern.properties)
+	reverse, err := cache.relationships(store, lookupEnd.ID, lookupStart.ID, pattern.relType, pattern.properties)
 	if err != nil {
 		return nil, err
 	}

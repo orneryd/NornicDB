@@ -32,6 +32,28 @@ func (e *relationshipMergeCreateEngine) GetEdgeBetween(
 	return e.getEdgeBetween(startID, endID, relType)
 }
 
+// MatchEdgesBetween matches the fake's pair content (its GetEdgesBetween)
+// by type and pattern, as storage.MatchEdgesBetween does.
+func (e *relationshipMergeCreateEngine) MatchEdgesBetween(
+	startID storage.NodeID,
+	endID storage.NodeID,
+	relType string,
+	_ []string,
+	match func(*storage.Edge) bool,
+) ([]*storage.Edge, error) {
+	edges, err := e.getEdgesBetween(startID, endID)
+	if err != nil {
+		return nil, err
+	}
+	var matched []*storage.Edge
+	for _, edge := range edges {
+		if edge != nil && edge.Type == relType && match(edge) {
+			matched = append(matched, edge)
+		}
+	}
+	return matched, nil
+}
+
 func (e *relationshipMergeCreateEngine) GetEdgesBetween(
 	startID storage.NodeID,
 	endID storage.NodeID,
@@ -52,7 +74,7 @@ func TestCreateRelationshipForMergeBareRetriesIDCollisions(t *testing.T) {
 			return nil
 		},
 		getEdgeBetween:  func(storage.NodeID, storage.NodeID, string) *storage.Edge { return nil },
-		getEdgesBetween: unexpectedRelationshipMergePairScan(t),
+		getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) { return nil, nil },
 		getEdge:         unexpectedRelationshipMergeEdgeRead(t),
 	}
 
@@ -72,8 +94,10 @@ func TestCreateRelationshipForMergeBareReturnsExistingAndErrors(t *testing.T) {
 			getEdgeBetween: func(storage.NodeID, storage.NodeID, string) *storage.Edge {
 				return existing
 			},
-			getEdgesBetween: unexpectedRelationshipMergePairScan(t),
-			getEdge:         unexpectedRelationshipMergeEdgeRead(t),
+			getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
+				return []*storage.Edge{existing}, nil
+			},
+			getEdge: unexpectedRelationshipMergeEdgeRead(t),
 		}
 		got, created, err := createRelationshipForMerge(&StorageExecutor{}, store, relationshipMergeTestEdge("new", nil), nil)
 		require.NoError(t, err)
@@ -86,7 +110,7 @@ func TestCreateRelationshipForMergeBareReturnsExistingAndErrors(t *testing.T) {
 		store := &relationshipMergeCreateEngine{
 			createEdge:      func(*storage.Edge) error { return wantErr },
 			getEdgeBetween:  func(storage.NodeID, storage.NodeID, string) *storage.Edge { return nil },
-			getEdgesBetween: unexpectedRelationshipMergePairScan(t),
+			getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) { return nil, nil },
 			getEdge:         unexpectedRelationshipMergeEdgeRead(t),
 		}
 		got, created, err := createRelationshipForMerge(&StorageExecutor{}, store, relationshipMergeTestEdge("new", nil), nil)
@@ -99,7 +123,7 @@ func TestCreateRelationshipForMergeBareReturnsExistingAndErrors(t *testing.T) {
 		store := &relationshipMergeCreateEngine{
 			createEdge:      func(*storage.Edge) error { return storage.ErrAlreadyExists },
 			getEdgeBetween:  func(storage.NodeID, storage.NodeID, string) *storage.Edge { return nil },
-			getEdgesBetween: unexpectedRelationshipMergePairScan(t),
+			getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) { return nil, nil },
 			getEdge:         unexpectedRelationshipMergeEdgeRead(t),
 		}
 		got, created, err := createRelationshipForMerge(&StorageExecutor{}, store, relationshipMergeTestEdge("new", nil), nil)

@@ -365,6 +365,26 @@ func (w *transactionStorageWrapper) GetEdgesBetween(startID, endID storage.NodeI
 	return w.toUserEdges(edges), nil
 }
 
+// MatchEdgesBetween matches the transaction's edges of one type between two
+// nodes, reading only the listed properties to match
+// (storage.EdgesBetweenMatcher).
+func (w *transactionStorageWrapper) MatchEdgesBetween(startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
+	if w.namespace == "" {
+		return w.tx.MatchEdgesBetween(startID, endID, edgeType, properties, match)
+	}
+	var candidate storage.Edge
+	edges, err := w.tx.MatchEdgesBetween(w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType, properties, func(edge *storage.Edge) bool {
+		candidate = *edge
+		candidate.ID = w.unprefixEdgeID(edge.ID)
+		candidate.StartNode, candidate.EndNode = startID, endID
+		return match(&candidate)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return w.toUserEdges(edges), nil
+}
+
 func (w *transactionStorageWrapper) GetEdgeBetween(startID, endID storage.NodeID, edgeType string) *storage.Edge {
 	if w.namespace == "" {
 		return w.tx.GetEdgeBetween(startID, endID, edgeType)

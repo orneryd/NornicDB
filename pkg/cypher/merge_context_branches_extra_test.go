@@ -105,10 +105,18 @@ func TestMergeTrailingWindowAndApplyContextWindow(t *testing.T) {
 		{"x": n2},
 		{"n": n3},
 	}
-	window := applyContextWindow(contexts, "n", 1, 2)
+	e3 := &storage.Edge{ID: storage.EdgeID("e3")}
+	relationships := []map[string]*storage.Edge{{}, {}, {"r": e3}}
+	window, windowRelationships := applyContextWindow(contexts, relationships, "n", 1, 2)
 	require.Len(t, window, 1)
 	require.Equal(t, n3, window[0]["n"])
+	// The relationship rows stay aligned with the node rows.
+	require.Equal(t, []map[string]*storage.Edge{{"r": e3}}, windowRelationships)
 
-	require.Nil(t, applyContextWindow(contexts, "n", 0, 0))
-	require.Nil(t, applyContextWindow(contexts, "n", 5, 1))
+	empty, emptyRelationships := applyContextWindow(contexts, relationships, "n", 0, 0)
+	require.Nil(t, empty)
+	require.Nil(t, emptyRelationships)
+	past, pastRelationships := applyContextWindow(contexts, relationships, "n", 5, 1)
+	require.Nil(t, past)
+	require.Nil(t, pastRelationships)
 }

@@ -8,7 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveMergePropsWithContext_Branches(t *testing.T) {
+// TestParseMergeProperties: a bound variable's property is evaluated; a
+// string literal stays a string, whatever it reads (#514 section).
+func TestParseMergeProperties(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_resolve_props_cov"))
 	ctx := context.Background()
 
@@ -19,25 +21,15 @@ func TestResolveMergePropsWithContext_Branches(t *testing.T) {
 		"r": {ID: "r1", Type: "REL", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{"weight": int64(7)}},
 	}
 
-	in := map[string]interface{}{
-		"raw_non_string": int64(42),
-		"raw_empty":      "  ",
-		"raw_no_dot":     "name",
-		"raw_unknown":    "x.name",
-		"from_node":      "n.name",
-		"from_rel":       "r.weight",
-	}
-
-	out := exec.resolveMergePropsWithContext(ctx, in, nodeCtx, relCtx)
-	require.EqualValues(t, int64(42), out["raw_non_string"])
-	require.Equal(t, "  ", out["raw_empty"])
-	require.Equal(t, "name", out["raw_no_dot"])
-	require.Equal(t, "x.name", out["raw_unknown"])
+	out := exec.parseMergeProperties(ctx, "{number: 42, text: 'name', literal: 'n.name', from_node: n.name, from_rel: r.weight, gone: null}", nodeCtx, relCtx)
+	require.EqualValues(t, int64(42), out["number"])
+	require.Equal(t, "name", out["text"])
+	require.Equal(t, "n.name", out["literal"])
 	require.Equal(t, "alice", out["from_node"])
 	require.EqualValues(t, int64(7), out["from_rel"])
-
-	empty := exec.resolveMergePropsWithContext(ctx, map[string]interface{}{}, nodeCtx, relCtx)
-	require.Empty(t, empty)
+	require.NotContains(t, out, "gone")
+	require.Empty(t, exec.parseMergeProperties(ctx, "{}", nodeCtx, relCtx))
+	require.Empty(t, exec.parseMergeProperties(ctx, "", nodeCtx, relCtx))
 }
 
 func TestExecuteMergeWithContext_AnonymousNodePatternAndChainedNoSpace(t *testing.T) {
@@ -73,19 +65,21 @@ func TestMergeReturnClauseCountHandling_Branches(t *testing.T) {
 	n := &storage.Node{ID: "n1", Labels: []string{"N"}, Properties: map[string]interface{}{"name": "a"}}
 	r := &storage.Edge{ID: "r1", Type: "R", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{}}
 
-	cols, vals := exec.parseReturnClauseWithContext(ctx, "count(*) AS c_all, count(n) AS c_n, count(r) AS c_r, count(missing) AS c_missing", map[string]*storage.Node{"n": n}, map[string]*storage.Edge{"r": r})
-	require.Equal(t, []string{"c_all", "c_n", "c_r", "c_missing"}, cols)
-	require.EqualValues(t, int64(1), vals[0])
-	require.EqualValues(t, int64(1), vals[1])
-	require.EqualValues(t, int64(1), vals[2])
-	require.EqualValues(t, int64(0), vals[3])
+	// A MERGE's RETURN aggregates over all its rows (#640): two merged rows
+	// count 2; count(x) skips rows where x is null.
+	rows := []pipelineRow{
+		exec.mergeBindingRow(ctx, map[string]*storage.Node{"n": n}, map[string]*storage.Edge{"r": r}),
+		exec.mergeBindingRow(ctx, map[string]*storage.Node{"n": n}, map[string]*storage.Edge{"r": nil}),
+	}
+	result, err := exec.projectMergeReturn(ctx, rows, "RETURN count(*) AS c_all, count(n) AS c_n, count(r) AS c_r")
+	require.NoError(t, err)
+	require.Equal(t, []string{"c_all", "c_n", "c_r"}, result.Columns)
+	require.Equal(t, [][]interface{}{{int64(2), int64(2), int64(1)}}, result.Rows)
 
-	cols2, vals2 := exec.parseReturnClause(ctx, "count(*) AS c_all, count(n) AS c_n, count(missing) AS c_missing", "n", n)
-	require.Equal(t, []string{"c_all", "c_n", "c_missing"}, cols2)
-	require.EqualValues(t, int64(1), vals2[0])
-	require.EqualValues(t, int64(1), vals2[1])
-	require.EqualValues(t, int64(0), vals2[2])
-
-	_, vals3 := exec.parseReturnClause(ctx, "count(n) AS c_n", "n", nil)
-	require.EqualValues(t, int64(0), vals3[0])
+	result, err = exec.projectMergeReturn(ctx, rows, "RETURN n.name AS name ORDER BY name SKIP 1 LIMIT 1")
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"a"}}, result.Rows)
+	result, err = exec.projectMergeReturn(ctx, rows, "RETURN DISTINCT n.name AS name")
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"a"}}, result.Rows)
 }

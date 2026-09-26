@@ -25,15 +25,7 @@ const deleteStreamingBatchSize = 500
 
 // executeMatch handles MATCH queries.
 func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string) (string, []string, map[string]interface{}, error) {
-	pattern = strings.TrimSpace(pattern)
-	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
-		return "", nil, nil, localizedError(localization.CypherResidualMergePatternInvalid(pattern), nil)
-	}
-	info := e.parseNodePattern(ctx, pattern)
-	if info.labelErr != nil {
-		return "", nil, nil, info.labelErr
-	}
-	return info.variable, info.labels, info.properties, nil
+	return e.parseMergeNodePattern(ctx, pattern, nil, nil)
 }
 
 // nodeToMap converts a storage.Node to a map for result output.

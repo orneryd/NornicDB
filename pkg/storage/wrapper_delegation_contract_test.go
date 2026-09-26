@@ -43,6 +43,7 @@ type delegationContractEngine interface {
 	ProjectedPrefixNodeReader
 	NodeProjectionReader
 	NodeIterator
+	EdgesBetweenMatcher
 	EmbeddingCountProvider
 	EmbeddingUpdater
 	NamespaceLister
@@ -250,6 +251,11 @@ func (s *delegationSpyEngine) DeleteByPrefix(prefix string) (int64, int64, error
 }
 
 // --- Optional capabilities ---------------------------------------------------
+
+func (s *delegationSpyEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	s.record("MatchEdgesBetween")
+	return s.MemoryEngine.MatchEdgesBetween(startID, endID, edgeType, properties, match)
+}
 
 func (s *delegationSpyEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
 	s.record("GetNodeProjected")
@@ -592,6 +598,9 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			check("GetIncomingEdges", err)
 			_, err = engine.GetEdgesBetween(id("n1"), id("n2"))
 			check("GetEdgesBetween", err)
+			matched, err := engine.MatchEdgesBetween(id("n1"), id("n2"), "KNOWS", []string{}, func(*Edge) bool { return true })
+			check("MatchEdgesBetween", err)
+			require.Lenf(t, matched, 1, "%s.MatchEdgesBetween must find the seeded edge", stack)
 			edge := engine.GetEdgeBetween(id("n1"), id("n2"), "KNOWS")
 			if stack == "badger" || stack == "wal" {
 				check("GetEdgeBetween", nil)

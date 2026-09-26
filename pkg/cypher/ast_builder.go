@@ -700,10 +700,7 @@ func (b *ASTBuilder) parseReturn(text string) *ASTReturn {
 	itemsText := strings.TrimSpace(text[len("RETURN"):])
 
 	// Check for DISTINCT
-	if strings.HasPrefix(strings.ToUpper(itemsText), "DISTINCT") {
-		ret.Distinct = true
-		itemsText = strings.TrimSpace(itemsText[len("DISTINCT"):])
-	}
+	itemsText, ret.Distinct = cutDistinct(itemsText)
 
 	// Parse items
 	parts := splitOutsideBrackets(itemsText, ',')
@@ -735,10 +732,7 @@ func (b *ASTBuilder) parseWith(text string) *ASTWith {
 	itemsText := strings.TrimSpace(text[len("WITH"):])
 
 	// Check for DISTINCT
-	if strings.HasPrefix(strings.ToUpper(itemsText), "DISTINCT") {
-		with.Distinct = true
-		itemsText = strings.TrimSpace(itemsText[len("DISTINCT"):])
-	}
+	itemsText, with.Distinct = cutDistinct(itemsText)
 
 	// Parse items (same as RETURN)
 	parts := splitOutsideBrackets(itemsText, ',')
@@ -1037,10 +1031,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 			fc := &ASTFunctionCall{Name: funcName}
 
 			// Check for DISTINCT
-			if strings.HasPrefix(strings.ToUpper(argsText), "DISTINCT ") {
-				fc.Distinct = true
-				argsText = strings.TrimSpace(argsText[9:])
-			}
+			argsText, fc.Distinct = cutDistinct(argsText)
 
 			args := splitOutsideBrackets(argsText, ',')
 			for _, arg := range args {

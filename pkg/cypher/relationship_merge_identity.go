@@ -245,6 +245,16 @@ func relationshipMatchesMergePattern(
 func relationshipMergeValuesEqual(got, want interface{}) bool {
 	got = normalizeRelationshipMergeIdentityValue(got)
 	want = normalizeRelationshipMergeIdentityValue(want)
+	if equal, decided := relationshipMergeScalarsEqual(got, want); decided {
+		return equal
+	}
+	return relationshipMergeValuesEqualGeneral(got, want)
+}
+
+// relationshipMergeValuesEqualGeneral compares two normalized identity
+// values of any type: NaN matches nothing, and values that differ only in
+// their Go representation (map and list forms) are equal.
+func relationshipMergeValuesEqualGeneral(got, want interface{}) bool {
 	if relationshipMergeIdentityContainsNaN(got) || relationshipMergeIdentityContainsNaN(want) {
 		return false
 	}
@@ -254,6 +264,37 @@ func relationshipMergeValuesEqual(got, want interface{}) bool {
 	return reflect.DeepEqual(canonicalUnwindMergeValue(got), canonicalUnwindMergeValue(want))
 }
 
+// relationshipMergeScalarsEqual is relationshipMergeValuesEqualGeneral for
+// two normalized values of the same scalar type (string, boolean, INTEGER,
+// FLOAT), without allocating: a MERGE reads every relationship of its type
+// between its endpoints, and most differ. decided is false for any other
+// pair, which takes the general comparison.
+func relationshipMergeScalarsEqual(got, want interface{}) (equal bool, decided bool) {
+	switch g := got.(type) {
+	case string:
+		if w, ok := want.(string); ok {
+			return g == w, true
+		}
+	case bool:
+		if w, ok := want.(bool); ok {
+			return g == w, true
+		}
+	case int64:
+		if w, ok := want.(int64); ok {
+			return g == w, true
+		}
+	case float64:
+		if w, ok := want.(float64); ok {
+			// NaN equals nothing, which == also gives.
+			return g == w, true
+		}
+	}
+	return false, false
+}
+
+// findRelationshipForMerge returns the first relationship
+// findRelationshipsForMerge finds, or nil: for callers that bind one
+// relationship per row.
 func findRelationshipForMerge(
 	store storage.Engine,
 	startID storage.NodeID,
@@ -261,34 +302,18 @@ func findRelationshipForMerge(
 	relType string,
 	matchProps map[string]interface{},
 ) (*storage.Edge, error) {
-	if len(matchProps) == 0 {
-		return store.GetEdgeBetween(startID, endID, relType), nil
-	}
-	if relationshipMergeIdentityContainsNaN(matchProps) {
-		return nil, nil
-	}
-	candidateID := deterministicRelationshipMergeEdgeID(startID, endID, relType, matchProps, 0)
-	candidate, err := store.GetEdge(candidateID)
-	if err == nil && candidate.StartNode == startID && candidate.EndNode == endID &&
-		relationshipMatchesMergePattern(candidate, relType, matchProps) {
-		return candidate, nil
-	}
-	if err != nil && err != storage.ErrNotFound {
+	matches, err := findRelationshipsForMerge(store, startID, endID, relType, matchProps)
+	if err != nil || len(matches) == 0 {
 		return nil, err
 	}
-
-	edges, err := store.GetEdgesBetween(startID, endID)
-	if err != nil {
-		return nil, err
-	}
-	for _, edge := range edges {
-		if relationshipMatchesMergePattern(edge, relType, matchProps) {
-			return edge, nil
-		}
-	}
-	return nil, nil
+	return matches[0], nil
 }
 
+// findRelationshipsForMerge returns every relationship of type relType from
+// startID to endID whose properties match matchProps, as a MERGE with bound
+// endpoints matches them in Neo4j (Expand(Into) and a property filter). It
+// reads only the relationships of that type between the two nodes, and of
+// each only the identity properties; a match is read whole.
 func findRelationshipsForMerge(
 	store storage.Engine,
 	startID storage.NodeID,
@@ -299,15 +324,11 @@ func findRelationshipsForMerge(
 	if relationshipMergeIdentityContainsNaN(matchProps) {
 		return nil, nil
 	}
-	edges, err := store.GetEdgesBetween(startID, endID)
-	if err != nil {
-		return nil, err
+	keys := make([]string, 0, len(matchProps))
+	for key := range matchProps {
+		keys = append(keys, key)
 	}
-	matches := make([]*storage.Edge, 0, len(edges))
-	for _, edge := range edges {
-		if relationshipMatchesMergePattern(edge, relType, matchProps) {
-			matches = append(matches, edge)
-		}
-	}
-	return matches, nil
+	return storage.MatchEdgesBetween(store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
+		return relationshipMatchesMergePattern(edge, relType, matchProps)
+	})
 }

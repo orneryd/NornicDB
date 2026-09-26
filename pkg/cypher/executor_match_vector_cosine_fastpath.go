@@ -282,7 +282,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	withProjectionEnd := returnIdx
 	_ = withProjectionEnd
 	withProjection := strings.TrimSpace(withProjectionRaw)
-	withProjection = trimOptionalDistinctPrefix(withProjection)
+	withProjection, _ = cutDistinct(withProjection)
 	withItems := e.parseReturnItems(withProjection)
 	if len(withItems) < 2 {
 		return nil, false
@@ -669,7 +669,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		}
 	}
 
-	withProjection := trimOptionalDistinctPrefix(strings.TrimSpace(withProjectionRaw))
+	withProjection, _ := cutDistinct(withProjectionRaw)
 	withItems := e.parseReturnItems(withProjection)
 	if len(withItems) < 2 || !withProjectionContainsVariable(withItems, pattern.relVar) {
 		return nil, false
@@ -1620,20 +1620,6 @@ func evaluateExpressionBoolWithContext(e *StorageExecutor, ctx context.Context, 
 		return b
 	}
 	return false
-}
-
-func trimOptionalDistinctPrefix(withClause string) string {
-	trimmed := strings.TrimSpace(withClause)
-	if len(trimmed) < len("DISTINCT ")+1 {
-		return trimmed
-	}
-	if strings.EqualFold(trimmed[:len("DISTINCT")], "DISTINCT") {
-		rest := strings.TrimSpace(trimmed[len("DISTINCT"):])
-		if rest != "" {
-			return rest
-		}
-	}
-	return trimmed
 }
 
 func withProjectionContainsVariable(items []returnItem, variable string) bool {

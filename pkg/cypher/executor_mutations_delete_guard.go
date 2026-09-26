@@ -226,9 +226,7 @@ func pipelineProjectionScope(previous map[string]struct{}, clause string) map[st
 			body = strings.TrimSpace(body[:index])
 		}
 	}
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	next := make(map[string]struct{})
 	for _, item := range splitTopLevelComma(body) {
 		if strings.TrimSpace(item) == "*" {

@@ -18,9 +18,7 @@ func (e *StorageExecutor) validatePipelineProjectionSubscripts(rows []pipelineRo
 		return nil
 	}
 	body = strings.TrimSpace(body[len(keyword):])
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	end := len(body)
 	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(body, suffix); index >= 0 && index < end {

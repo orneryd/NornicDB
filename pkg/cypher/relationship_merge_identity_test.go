@@ -13,6 +13,17 @@ import (
 type relationshipLookupErrorEngine struct {
 	storage.Engine
 	err error
+	// failMatch makes the typed candidate read fail too.
+	failMatch bool
+}
+
+// MatchEdgesBetween keeps the typed candidate read (storage.EdgesBetweenMatcher)
+// while an untyped scan of the pair fails.
+func (e *relationshipLookupErrorEngine) MatchEdgesBetween(startID, endID storage.NodeID, relType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
+	if e.failMatch {
+		return nil, e.err
+	}
+	return storage.MatchEdgesBetween(e.Engine, startID, endID, relType, properties, match)
 }
 
 func (e *relationshipLookupErrorEngine) GetEdgesBetween(
@@ -154,7 +165,7 @@ func TestFindRelationshipForMergeSupportsBareLookupAndPropagatesScanError(t *tes
 	require.Equal(t, storage.EdgeID("edge"), found.ID)
 
 	wantErr := errors.New("relationship scan failed")
-	errorStore := &relationshipLookupErrorEngine{Engine: store, err: wantErr}
+	errorStore := &relationshipLookupErrorEngine{Engine: store, err: wantErr, failMatch: true}
 	found, err = findRelationshipForMerge(
 		errorStore,
 		"source",
@@ -166,7 +177,11 @@ func TestFindRelationshipForMergeSupportsBareLookupAndPropagatesScanError(t *tes
 	require.ErrorIs(t, err, wantErr)
 }
 
-func TestFindRelationshipForMergeUsesDeterministicPointLookupBeforePairScan(t *testing.T) {
+// TestFindRelationshipsForMergeReadsTypedCandidates: the MERGE lookup reads
+// only the relationships of its type between the pair (no untyped scan), and
+// finds every one with the identity, including a duplicate made by CREATE,
+// as Neo4j's MERGE matches them all.
+func TestFindRelationshipsForMergeReadsTypedCandidates(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, err := store.CreateNode(&storage.Node{ID: "source", Labels: []string{"Source"}})
@@ -174,19 +189,24 @@ func TestFindRelationshipForMergeUsesDeterministicPointLookupBeforePairScan(t *t
 	_, err = store.CreateNode(&storage.Node{ID: "target", Labels: []string{"Target"}})
 	require.NoError(t, err)
 	matchProps := map[string]interface{}{"scope_id": "scope-a"}
-	edge := &storage.Edge{
-		ID:         deterministicRelationshipMergeEdgeID("source", "target", "ASSERTS", matchProps, 0),
-		Type:       "ASSERTS",
-		StartNode:  "source",
-		EndNode:    "target",
-		Properties: matchProps,
+	for _, edge := range []*storage.Edge{
+		{ID: deterministicRelationshipMergeEdgeID("source", "target", "ASSERTS", matchProps, 0), Type: "ASSERTS", StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"scope_id": "scope-a"}},
+		{ID: "created-duplicate", Type: "ASSERTS", StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"scope_id": "scope-a", "extra": int64(1)}},
+		{ID: "other-identity", Type: "ASSERTS", StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"scope_id": "scope-b"}},
+		{ID: "other-type", Type: "OTHER", StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"scope_id": "scope-a"}},
+	} {
+		require.NoError(t, store.CreateEdge(edge))
 	}
-	require.NoError(t, store.CreateEdge(edge))
 
-	noScanStore := &relationshipLookupErrorEngine{Engine: store, err: errors.New("pair scan must not run")}
-	found, err := findRelationshipForMerge(noScanStore, "source", "target", "ASSERTS", matchProps)
+	noScanStore := &relationshipLookupErrorEngine{Engine: store, err: errors.New("untyped pair scan must not run")}
+	found, err := findRelationshipsForMerge(noScanStore, "source", "target", "ASSERTS", matchProps)
 	require.NoError(t, err)
-	require.Equal(t, edge.ID, found.ID)
+	ids := make([]storage.EdgeID, 0, len(found))
+	for _, edge := range found {
+		ids = append(ids, edge.ID)
+		require.NotNil(t, edge.Properties, "a match is read whole")
+	}
+	require.ElementsMatch(t, []storage.EdgeID{deterministicRelationshipMergeEdgeID("source", "target", "ASSERTS", matchProps, 0), "created-duplicate"}, ids)
 }
 
 func TestRelationshipMergeIdentityIncludesPatternProperties(t *testing.T) {
