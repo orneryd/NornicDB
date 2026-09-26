@@ -216,6 +216,9 @@ type Server struct {
 	sessions                       map[string]*Session
 	closed                         atomic.Bool
 	rawTransactionExecutorPoisoned atomic.Bool
+	// nextConnectionID numbers connections for SHOW TRANSACTIONS
+	// (connectionId bolt-N).
+	nextConnectionID atomic.Uint64
 
 	executorsMu sync.RWMutex
 	executors   map[string]QueryExecutor
@@ -1221,6 +1224,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	defer connCancel()
 
 	session := &Session{
+		connectionID:   "bolt-" + strconv.FormatUint(s.nextConnectionID.Add(1), 10),
 		conn:           sniffedConn,
 		reader:         br, // load-bearing: holds peeked bytes from peekTransport
 		writer:         bufio.NewWriterSize(sniffedConn, writeBufSize),
@@ -1414,13 +1418,15 @@ func unwrapTLS(conn net.Conn) (net.Conn, bool) {
 
 // Session represents a client session.
 type Session struct {
-	conn     net.Conn
-	reader   *bufio.Reader // Buffered reader for reduced syscalls
-	writer   *bufio.Writer // Buffered writer for reduced syscalls
-	server   *Server
-	baseExec QueryExecutor
-	executor QueryExecutor
-	version  uint32
+	// connectionID identifies the connection in SHOW TRANSACTIONS.
+	connectionID string
+	conn         net.Conn
+	reader       *bufio.Reader // Buffered reader for reduced syscalls
+	writer       *bufio.Writer // Buffered writer for reduced syscalls
+	server       *Server
+	baseExec     QueryExecutor
+	executor     QueryExecutor
+	version      uint32
 
 	// TRC-13: session span context for parenting per-message spans.
 	spanCtx context.Context

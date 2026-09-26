@@ -259,7 +259,14 @@ func (s *Session) handleRun(data []byte) error {
 	s.setActiveRun(runCancel)
 	defer s.clearActiveRun()
 	ctx = cypher.WithAuthToken(ctx, s.forwardedAuthHeader)
+	ctx = cypher.WithClientConnection(ctx, s.clientConnection())
+	if s.server != nil && s.server.config != nil {
+		if lister, ok := s.server.config.Authenticator.(interface{ UserListings() []cypher.UserListing }); ok {
+			ctx = cypher.WithUserDirectory(ctx, lister.UserListings)
+		}
+	}
 	if s.authResult != nil {
+		ctx = cypher.WithAuthenticatedUser(ctx, cypher.AuthenticatedUser{Name: s.authResult.Username, Roles: s.authResult.Roles})
 		principal := s.authResult.PrincipalID
 		if principal == "" {
 			principal = auth.UsernamePrincipalID(s.authResult.Username)
@@ -1656,4 +1663,14 @@ func (s *Session) writeMessageNoFlush(data []byte) error {
 		return err
 	}
 	return s.writer.WriteByte(0x00)
+}
+
+// clientConnection identifies the session's connection for SHOW
+// TRANSACTIONS.
+func (s *Session) clientConnection() cypher.ClientConnection {
+	connection := cypher.ClientConnection{ID: s.connectionID, Protocol: "bolt"}
+	if s.conn != nil && s.conn.RemoteAddr() != nil {
+		connection.Address = s.conn.RemoteAddr().String()
+	}
+	return connection
 }

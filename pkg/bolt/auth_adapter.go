@@ -6,7 +6,16 @@ import (
 	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 )
+
+// UserListings lists the authenticator's users for SHOW USERS.
+func (a *AuthenticatorAdapter) UserListings() []cypher.UserListing {
+	if a == nil || a.auth == nil {
+		return nil
+	}
+	return cypher.UserListingsFromAuth(a.auth.ListUsers())
+}
 
 // AuthenticatorAdapter wraps auth.Authenticator to implement BoltAuthenticator.
 // This allows the Bolt server to use the same authentication system as the HTTP server,

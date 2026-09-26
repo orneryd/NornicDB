@@ -542,6 +542,25 @@ skipMatchCallRoute:
 		return e.executeShowWithTail(ctx, cypher, e.executeShowCompositeDatabases)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "CONSTITUENTS") == 0:
 		return e.executeShowWithTail(ctx, cypher, e.executeShowConstituents)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "DEFAULT DATABASE") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "HOME DATABASE") == 0:
+		return e.executeShowWithTail(ctx, cypher, e.executeShowDefaultDatabase)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "USERS") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "CURRENT USER") == 0:
+		return e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "TRANSACTIONS") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "TRANSACTION") == 0:
+		return e.executeShowWithTail(ctx, cypher, e.executeShowTransactions)
+	case findMultiWordKeywordIndex(cypher, "TERMINATE", "TRANSACTIONS") == 0,
+		findMultiWordKeywordIndex(cypher, "TERMINATE", "TRANSACTION") == 0:
+		return e.executeShowWithTail(ctx, cypher, e.executeTerminateTransactions)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "ROLES") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "ROLE") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "PRIVILEGES") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "USER") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "SERVERS") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "SERVER") == 0:
+		return nil, unsupportedAdministrationCommandError(cypher)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "DATABASES") == 0:
 		return e.executeShowWithTail(ctx, cypher, e.executeShowDatabases)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "DATABASE") == 0:
@@ -1067,7 +1086,7 @@ func validateLeadingNodePatternTransition(cypher string) error {
 var validSyntaxStarts = [...]string{
 	"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH",
 	"UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN",
-	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK",
+	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK", "TERMINATE",
 }
 
 func hasValidStartKeyword(cypher string) bool {

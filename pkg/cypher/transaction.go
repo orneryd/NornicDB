@@ -28,6 +28,8 @@ type TransactionContext struct {
 	database        string
 	txID            string
 	fabricRemoteExe *fabric.RemoteFragmentExecutor
+	// running is the transaction's SHOW TRANSACTIONS entry (#718).
+	running *runningTransaction
 }
 
 // parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
@@ -159,6 +161,11 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
+	// A transaction TERMINATE TRANSACTIONS ended doesn't commit (#718).
+	if e.txContext.running != nil && e.txContext.running.terminated.Load() {
+		_, _ = e.handleRollback()
+		return nil, transactionTerminatedError()
+	}
 	// Commit based on transaction type
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)
 	var (
@@ -203,6 +210,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 			e.txContext.fabricRemoteExe = nil
 		}
 		e.txContext.active = false
+		runningTransactions.end(e.txContext.running)
 		e.txContext = nil
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
@@ -218,6 +226,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 		e.txContext.fabricRemoteExe = nil
 	}
 	e.txContext.active = false
+	runningTransactions.end(e.txContext.running)
 	e.txContext = nil
 
 	result := &ExecuteResult{
@@ -263,6 +272,7 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 	}
 
 	e.txContext.active = false
+	runningTransactions.end(e.txContext.running)
 	e.txContext = nil
 
 	if err != nil {
