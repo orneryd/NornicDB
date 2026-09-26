@@ -202,6 +202,18 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 // evaluator with graph expressions that require storage access. Callers with
 // an execution context use this as the converged expression entry point.
 func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
+	// A row variable, or a plain property chain on one (e.uuid), resolves
+	// without the graph-expression checks below, which can't match it.
+	if value, bound := values[expr]; bound {
+		return value, true
+	}
+	if variable, chain, ok := rowPropertyChainShape(expr); ok {
+		if base, bound := values[variable]; bound {
+			if value, resolved := evaluateRowPropertyChain(base, chain); resolved {
+				return value, true
+			}
+		}
+	}
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
 		return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, values), true
 	}

@@ -899,7 +899,18 @@ func (e *StorageExecutor) executeCallTailSetBased(
 type callTailProjectionPlan struct {
 	withClause   string
 	returnClause string
+	// limitToken / skipToken are the RETURN's LIMIT / SKIP, a literal or a
+	// parameter, checked per execution (the parameter's value can change).
+	limitToken string
+	skipToken  string
 }
+
+// Parsed CALL-tail plans, cached by tail text: a nil plan (a tail the plan
+// doesn't cover) is cached too.
+var (
+	callTailProjectionPlans        = newBoundedCache[string, *callTailProjectionPlan](1024)
+	callTailRelationshipMatchPlans = newBoundedCache[string, *callTailRelationshipMatchPlan](1024)
+)
 
 // callTailRelationshipMatchPlan is a CALL tail MATCH (a)-[r:T {key: y.p}]->(b)
 // [WHERE …] WITH … RETURN … over a yielded relationship y: r is bound to y
@@ -1033,30 +1044,46 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 	return result, true, nil
 }
 
+// parseCallTailRelationshipMatchPlan returns the tail's relationship MATCH
+// plan, parsed once per tail text, when its projection's LIMIT / SKIP resolve
+// for this execution.
 func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context, tail string) (*callTailRelationshipMatchPlan, bool) {
+	plan, cached := callTailRelationshipMatchPlans.get(tail)
+	if !cached {
+		plan = e.planCallTailRelationshipMatch(tail)
+		callTailRelationshipMatchPlans.put(tail, plan)
+	}
+	if plan == nil || !callTailPlanTokensResolve(ctx, plan.projection) {
+		return nil, false
+	}
+	return plan, true
+}
+
+// planCallTailRelationshipMatch parses a relationship MATCH tail, or returns nil.
+func (e *StorageExecutor) planCallTailRelationshipMatch(tail string) *callTailRelationshipMatchPlan {
 	trimmed := strings.TrimSpace(tail)
 	if !hasPrefixFoldASCII(trimmed, "MATCH ") || isPotentialWriteTail(trimmed) {
-		return nil, false
+		return nil
 	}
 	parts, ok := parseCallTailRelationshipPattern(trimmed)
 	if !ok {
-		return nil, false
+		return nil
 	}
 	rest := strings.TrimSpace(parts.rest)
 	withIdx := topLevelKeywordIndex(rest, "WITH")
 	if withIdx < 0 {
-		return nil, false
+		return nil
 	}
 	whereClause := strings.TrimSpace(rest[:withIdx])
 	if whereClause != "" {
 		if !hasPrefixFoldASCII(whereClause, "WHERE ") {
-			return nil, false
+			return nil
 		}
 		whereClause = strings.TrimSpace(whereClause[len("WHERE "):])
 	}
-	projection, ok := e.parseCallTailProjectionPlan(ctx, strings.TrimSpace(rest[withIdx:]))
-	if !ok {
-		return nil, false
+	projection := e.planCallTailProjection(strings.TrimSpace(rest[withIdx:]))
+	if projection == nil {
+		return nil
 	}
 	propertyExpr := strings.TrimSpace(parts.propertyExpr)
 	propertySource := ""
@@ -1064,7 +1091,7 @@ func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context
 		propertySource = strings.TrimSpace(propertyExpr[:dotIdx])
 	}
 	if parts.propertyKey == "" || propertySource == "" {
-		return nil, false
+		return nil
 	}
 	return &callTailRelationshipMatchPlan{
 		startVar:       parts.startVar,
@@ -1078,7 +1105,7 @@ func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context
 		endLabel:       parts.endLabel,
 		whereClause:    whereClause,
 		projection:     projection,
-	}, true
+	}
 }
 
 func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternParts, bool) {
@@ -1302,26 +1329,52 @@ var callTailPlanClauseKeywords = []string{
 	"SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD", "UNION",
 }
 
+// parseCallTailProjectionPlan returns the tail's projection plan, parsed once
+// per tail text, when its LIMIT / SKIP resolve to integers for this execution.
 func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail string) (*callTailProjectionPlan, bool) {
+	plan, cached := callTailProjectionPlans.get(tail)
+	if !cached {
+		plan = e.planCallTailProjection(tail)
+		callTailProjectionPlans.put(tail, plan)
+	}
+	if plan == nil || !callTailPlanTokensResolve(ctx, plan) {
+		return nil, false
+	}
+	return plan, true
+}
+
+// callTailPlanTokensResolve reports whether the plan's LIMIT and SKIP are a
+// literal or a bound integer parameter; other forms are the pipeline's.
+func callTailPlanTokensResolve(ctx context.Context, plan *callTailProjectionPlan) bool {
+	if _, ok := resolveOptionalIntLiteralOrParam(ctx, plan.limitToken); !ok {
+		return false
+	}
+	_, ok := resolveOptionalIntLiteralOrParam(ctx, plan.skipToken)
+	return ok
+}
+
+// planCallTailProjection parses a tail that is exactly WITH … [WHERE …]
+// RETURN …, or returns nil.
+func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectionPlan {
 	trimmed := strings.TrimSpace(tail)
 	if !hasPrefixFoldASCII(trimmed, "WITH ") || isPotentialWriteTail(trimmed) {
-		return nil, false
+		return nil
 	}
 	withIdx := len("WITH ")
 	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if returnIdx < 0 {
-		return nil, false
+		return nil
 	}
 	beforeReturn := strings.TrimSpace(trimmed[withIdx:returnIdx])
 	returnAndModifiers := strings.TrimSpace(trimmed[returnIdx+len("RETURN"):])
 	if beforeReturn == "" || returnAndModifiers == "" {
-		return nil, false
+		return nil
 	}
 	// The plan covers exactly WITH … [WHERE …] RETURN …; a tail with another
 	// clause between them (WITH label MATCH (n) RETURN …) is the pipeline's.
 	for _, keyword := range callTailPlanClauseKeywords {
 		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
-			return nil, false
+			return nil
 		}
 	}
 
@@ -1330,34 +1383,29 @@ func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail 
 		withProjection = strings.TrimSpace(beforeReturn[:whereIdx])
 	}
 	if withProjection == "" {
-		return nil, false
+		return nil
 	}
 	returnProjection, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(returnAndModifiers)
 	if returnProjection == "" {
-		return nil, false
+		return nil
 	}
 	// The plan projects row by row: aggregation, DISTINCT and SKIP / LIMIT
 	// expressions (LIMIT 0 + 1) are the pipeline's (executeCallTailPipeline).
 	if hasPrefixFoldASCII(withProjection, "DISTINCT") || hasPrefixFoldASCII(returnProjection, "DISTINCT") ||
 		containsAggregateFunc(withProjection) || containsAggregateFunc(returnProjection) || containsAggregateFunc(orderBy) {
-		return nil, false
+		return nil
 	}
-	if _, ok := resolveOptionalIntLiteralOrParam(ctx, limitToken); !ok {
-		return nil, false
-	}
-	if _, ok := resolveOptionalIntLiteralOrParam(ctx, skipToken); !ok {
-		return nil, false
-	}
-
 	withItems := e.parseReturnItems(withProjection)
 	returnItems := e.parseReturnItems(returnProjection)
 	if len(withItems) == 0 || len(returnItems) == 0 || hasStarReturnItem(withItems) || hasStarReturnItem(returnItems) {
-		return nil, false
+		return nil
 	}
 	return &callTailProjectionPlan{
 		withClause:   "WITH " + beforeReturn,
 		returnClause: "RETURN " + returnAndModifiers,
-	}, true
+		limitToken:   limitToken,
+		skipToken:    skipToken,
+	}
 }
 
 func cloneStringInterfaceMap(values map[string]interface{}) map[string]interface{} {
