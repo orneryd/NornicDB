@@ -15,7 +15,6 @@ import (
 // row. Unlike the graph-only evaluator, a row may also contain scalar, map,
 // and list bindings introduced by WITH or UNWIND.
 
-
 // containsCASEKeyword reports whether expr contains the CASE keyword outside
 // quoted literals. The row evaluator delegates compound CASE-containing
 // expressions to the shared evaluator, whose operator scanner is CASE-aware.
@@ -1675,6 +1674,13 @@ func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values 
 	if !leftOK || !rightOK {
 		return nil, false
 	}
+	return rowMembershipOfValues(needle, haystack, isRowIdentityExpression(left))
+}
+
+// rowMembershipOfValues is `needle IN haystack` for evaluated operands, with
+// Cypher's three-valued rules. identity is set when the needle is an id() /
+// elementId() expression, compared by its identity payload.
+func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interface{}, bool) {
 	if haystack == nil {
 		return nil, true
 	}
@@ -1689,7 +1695,7 @@ func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values 
 	if needle == nil {
 		return nil, true
 	}
-	identityMembership := isRowIdentityExpression(left)
+	identityMembership := identity
 	if identityMembership {
 		needle = rowIdentityPayload(needle)
 	}
