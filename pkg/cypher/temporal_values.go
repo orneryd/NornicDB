@@ -281,6 +281,11 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 	if kind == "duration" {
 		return buildDurationFromFields(fields), true
 	}
+	// A map Neo4j rejects builds no value (temporalConstructorError reports
+	// why); nothing rolls over into the next month, day or hour.
+	if temporalFieldsError(kind, fields) != nil {
+		return nil, true
+	}
 	dateFields := fields
 	if source, exists := fields["datetime"]; exists {
 		dateFields = cloneTemporalFields(fields)
@@ -419,21 +424,40 @@ func buildDateFromFields(fields map[string]interface{}) (time.Time, bool) {
 		return time.Date(int(year), 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(ordinal)-1), true
 	}
 	if quarter, exists := temporalOptionalInt(fields, "quarter"); exists {
-		day := int64(1)
-		if hasBase {
-			quarterStart := time.Date(base.Year(), time.Month((int(base.Month())-1)/3*3+1), 1, 0, 0, 0, 0, time.UTC)
-			day = int64(base.Sub(quarterStart)/(24*time.Hour)) + 1
+		quarterStart := time.Date(int(year), time.Month((quarter-1)*3+1), 1, 0, 0, 0, 0, time.UTC)
+		if dayOfQuarter, given := temporalOptionalInt(fields, "dayOfQuarter"); given || !hasBase {
+			if !given {
+				dayOfQuarter = 1
+			}
+			return quarterStart.AddDate(0, 0, int(dayOfQuarter)-1), true
 		}
-		day = temporalFieldInt(fields, "dayOfQuarter", day)
-		return time.Date(int(year), time.Month((quarter-1)*3+1), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(day)-1), true
+		// The base date's month of its quarter and day of month, the day
+		// clamped to the new month (Neo4j: 2020-05-31 with quarter 1 is
+		// 2020-02-29).
+		month := quarterStart.Month() + (base.Month()-1)%3
+		return time.Date(int(year), month, clampDay(year, month, base.Day()), 0, 0, 0, 0, time.UTC), true
 	}
 	month, day := int64(1), int64(1)
 	if hasBase {
 		month, day = int64(base.Month()), int64(base.Day())
 	}
 	month = temporalFieldInt(fields, "month", month)
-	day = temporalFieldInt(fields, "day", day)
+	if explicitDay, given := temporalOptionalInt(fields, "day"); given {
+		day = explicitDay
+	} else if hasBase {
+		// A day the base date supplies is clamped to the new month (Neo4j:
+		// 2020-05-31 with month 2 is 2020-02-29), not rolled over.
+		day = int64(clampDay(year, time.Month(month), int(day)))
+	}
 	return time.Date(int(year), time.Month(month), int(day), 0, 0, 0, 0, time.UTC), true
+}
+
+// clampDay is day, or the month's last day when the month is shorter.
+func clampDay(year int64, month time.Month, day int) int {
+	if last := daysInMonth(year, month); day > last {
+		return last
+	}
+	return day
 }
 
 func temporalBaseTime(fields map[string]interface{}) (time.Time, bool, bool) {
@@ -738,6 +762,9 @@ func temporalConstructorError(function string, input interface{}) error {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
 			fmt.Sprintf("Text cannot be parsed to a %s\n%q\n ^", typeName, value))
 	case map[string]interface{}:
+		if err := temporalFieldsError(strings.ToLower(function), value); err != nil {
+			return err
+		}
 		return newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",
 			fmt.Sprintf("invalid %s value: %v", typeName, value))
 	case bool:
