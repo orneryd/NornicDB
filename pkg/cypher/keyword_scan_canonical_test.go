@@ -315,3 +315,26 @@ func TestOwnStatementSyntax(t *testing.T) {
 	got, _ = canonicalizeQueryText(":USE  db\nRETURN   1")
 	require.Equal(t, ":USE  db\nRETURN 1", got)
 }
+
+// TestQueryMayNeedCanonicalRewriteIsExact: the quick check never clears a
+// statement the full scan would rewrite. Random statements mix names,
+// spaces, tabs, line breaks, comments, quotes and Unicode spaces.
+func TestQueryMayNeedCanonicalRewriteIsExact(t *testing.T) {
+	pieces := []string{"MATCH", "(n)", "RETURN", "n.x", " ", " ", " ", "  ", "\t", "\n", "\r\n", "/", "*", "//c\n", "/*c*/", "'a  b'", "'x//y'", "\"q\"", "`n  m`", " ", " ", "é", "\\", "'", ",", "$p", "\f"}
+	rng := rand.New(rand.NewSource(1))
+	for i := 0; i < 20000; i++ {
+		var b strings.Builder
+		for j := rng.Intn(12); j >= 0; j-- {
+			b.WriteString(pieces[rng.Intn(len(pieces))])
+		}
+		query := b.String()
+		canonical, rewrite := scanCanonicalQueryText(query)
+		if !queryMayNeedCanonicalRewrite(query) {
+			require.Nil(t, rewrite, "%q", query)
+			require.Equal(t, query, canonical, "%q", query)
+		}
+		gotCanonical, gotRewrite := canonicalizeQueryText(query)
+		require.Equal(t, canonical, gotCanonical, "%q", query)
+		require.Equal(t, rewrite == nil, gotRewrite == nil, "%q", query)
+	}
+}

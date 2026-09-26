@@ -850,11 +850,45 @@ func classificationText(query string) string {
 	return canonical
 }
 
+// queryMayNeedCanonicalRewrite reports whether query holds anything the
+// canonical pass could rewrite: an ASCII whitespace other than a single
+// space, two spaces in a row, the start of a comment, or a non-ASCII byte (a
+// possible Unicode space). It doesn't read quotes, so it may answer true for
+// text that needs no rewrite (two spaces in a string literal), never false
+// for text that does. Most statements are canonical and leave the pass here,
+// in one pass over their bytes.
+func queryMayNeedCanonicalRewrite(query string) bool {
+	for i := 0; i < len(query); i++ {
+		switch c := query[i]; {
+		case c == ' ':
+			if i+1 < len(query) && query[i+1] == ' ' {
+				return true
+			}
+		case c == '/':
+			if i+1 < len(query) && (query[i+1] == '/' || query[i+1] == '*') {
+				return true
+			}
+		case c < ' ' || c >= utf8.RuneSelf:
+			return true
+		}
+	}
+	return false
+}
+
 // canonicalizeQueryText returns the canonical form of query (see above) and
 // the rewrite that maps it back, or query and nil when it is canonical
 // already; it doesn't allocate then, nor for a formatted statement whose
 // rewrite is memoized (canonicalRewrites).
 func canonicalizeQueryText(query string) (string, *queryRewrite) {
+	if !queryMayNeedCanonicalRewrite(query) {
+		return query, nil
+	}
+	return scanCanonicalQueryText(query)
+}
+
+// scanCanonicalQueryText is canonicalizeQueryText's full scan, for a query
+// the quick check couldn't clear.
+func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 	var (
 		rewrite  *queryRewrite
 		memoized *queryRewrite
@@ -889,6 +923,11 @@ func canonicalizeQueryText(query string) (string, *queryRewrite) {
 		c := query[index]
 		if c == '\'' || c == '"' || c == '`' {
 			index = skipCypherQuotedText(query, index, c)
+			continue
+		}
+		if c > ' ' && c != '/' && c < utf8.RuneSelf {
+			// Can't start a comment or a run of whitespace.
+			index++
 			continue
 		}
 		if index < verbatimEnd {
