@@ -803,19 +803,42 @@ func (tx *BadgerTransaction) pendingCreateNodeOperationIndexLocked(nodeID NodeID
 	return -1
 }
 
+// scanCommittedKeysWithPrefixLocked calls visit with every committed key
+// under prefix, as of the transaction's snapshot. The transaction's own
+// writes are buffered (pendingWrites / pendingDeletes) and reach badgerTx only
+// at commit, so the snapshot view reads the same keys as an iterator over
+// badgerTx; but a badgerTx iterator also merges badgerTx's pending writes
+// (MVCC history archives written during the transaction), which Badger
+// sorts every time an iterator opens. Deleting N nodes in one transaction
+// opened 2-3 iterators per node over up to N such writes: quadratic (#703).
+// The key passed to visit is only valid during the call.
+func (tx *BadgerTransaction) scanCommittedKeysWithPrefixLocked(prefix []byte, visit func(key []byte) error) error {
+	return tx.withSnapshotViewLocked(func(view *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		opts.Prefix = prefix
+		it := view.NewIterator(opts)
+		defer it.Close()
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			if err := visit(it.Item().Key()); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // deleteNodeBuffered deletes a node and all its edges/embeddings, buffering all writes.
 // This is the buffering version of BadgerEngine.deleteNodeInTxn.
 func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (edgesDeleted int64, deletedEdgeIDs []EdgeID, err error) {
 	key := nodeKey(nodeID)
 
 	// Buffer deletion of separately stored embeddings
-	embPrefix := embeddingPrefix(nodeID)
-	opts := badger.DefaultIteratorOptions
-	opts.Prefix = embPrefix
-	it := tx.badgerTx.NewIterator(opts)
-	defer it.Close()
-	for it.Rewind(); it.Valid(); it.Next() {
-		tx.bufferDelete(it.Item().Key())
+	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(nodeID), func(key []byte) error {
+		tx.bufferDelete(key)
+		return nil
+	}); err != nil {
+		return 0, nil, err
 	}
 
 	// Get node for label cleanup (if not already provided)
@@ -898,22 +921,18 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 
 // deleteEdgesWithPrefixBuffered deletes all edges with a given prefix, buffering writes.
 func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, deletedNodeID NodeID, deletedNodeLabels []string) (int64, []EdgeID, error) {
-	opts := badger.DefaultIteratorOptions
-	opts.PrefetchValues = false
-	it := tx.badgerTx.NewIterator(opts)
-	defer it.Close()
-
 	var edgeIDs []EdgeID
-	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
+	if err := tx.scanCommittedKeysWithPrefixLocked(prefix, func(key []byte) error {
+		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(key)
 		if !ok {
-			continue
+			return nil
 		}
-		edgeID, ok := tx.engine.idDict.lookupEdgeIDByNum(edgeNum)
-		if !ok {
-			continue
+		if edgeID, ok := tx.engine.idDict.lookupEdgeIDByNum(edgeNum); ok {
+			edgeIDs = append(edgeIDs, edgeID)
 		}
-		edgeIDs = append(edgeIDs, edgeID)
+		return nil
+	}); err != nil {
+		return 0, nil, err
 	}
 
 	var deletedCount int64

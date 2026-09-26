@@ -688,9 +688,13 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		if !boundedSimpleProjection {
 			return nil, false, nil
 		}
-		candidates, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, hint)
+		var whereApplied bool
+		candidates, whereApplied, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, hint)
 		if err != nil {
 			return nil, true, err
+		}
+		if whereApplied {
+			whereClause = ""
 		}
 	}
 	if boundedSimpleProjection {
@@ -1855,7 +1859,11 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	if basePattern.variable == "" {
 		return nil, false, nil
 	}
-	candidateCache := make(map[string][]*storage.Node)
+	type initialCandidates struct {
+		nodes        []*storage.Node
+		whereApplied bool
+	}
+	candidateCache := make(map[string]initialCandidates)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
 		materializedPattern := e.materializePipelinePropertyExpressions(ctx, pattern, row)
@@ -1872,16 +1880,19 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			continue
 		}
 		cacheKey := materializedPattern + "\x00" + materializedWhere
-		nodes, cached := candidateCache[cacheKey]
+		candidates, cached := candidateCache[cacheKey]
 		if !cached {
 			var err error
-			nodes, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, materializedWhere, hint)
+			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, materializedWhere, hint)
 			if err != nil {
 				return nil, true, err
 			}
-			candidateCache[cacheKey] = nodes
+			candidateCache[cacheKey] = candidates
 		}
-		for _, node := range nodes {
+		if candidates.whereApplied {
+			materializedWhere = ""
+		}
+		for _, node := range candidates.nodes {
 			joined := make(pipelineRow, len(row)+2)
 			for name, value := range row {
 				joined[name] = value
@@ -2007,7 +2018,7 @@ func replaceQualifiedReferenceOutsideQuotes(input, reference, replacement string
 // of the shared property-index operators can safely narrow the MATCH. The
 // complete predicate is still evaluated after the join, so these operators
 // only affect the physical seed source and never the logical result.
-func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) ([]*storage.Node, error) {
+func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
 	params := getParamsFromContext(ctx)
 	streamingWhere := ""
 	if hint.earlyLimit > 0 {
@@ -2025,30 +2036,25 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 		for _, plan := range orderedPlans {
 			nodes, used, err := plan()
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			if used {
 				e.markOuterIndexTopKUsed()
-				return nodes, nil
+				return nodes, false, nil
 			}
 		}
 	}
-	identifierPlans := []func() ([]*storage.Node, bool, error){
-		func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromIDEqualityCompound(ctx, nodePattern, whereClause, params)
-		},
-		func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromIDInParam(nodePattern, whereClause, params)
-		},
+	if nodes, used, err := e.tryCollectNodesFromIDEqualityCompound(ctx, nodePattern, whereClause, params); err != nil || used {
+		return nodes, false, err
 	}
-	for _, plan := range identifierPlans {
-		nodes, used, err := plan()
-		if err != nil {
-			return nil, err
-		}
-		if used {
-			return nodes, nil
-		}
+	// The id IN $list seek only applies when that predicate is the whole
+	// WHERE, and returns exactly the nodes it selects: the caller need not
+	// evaluate the WHERE again on each of them. Evaluating it per row checked
+	// every node against the whole list: CALL { … } IN TRANSACTIONS batches,
+	// which select their rows by id(n) IN $ids, were quadratic in the batch
+	// size (#703).
+	if nodes, used, err := e.tryCollectNodesFromIDInParam(nodePattern, whereClause, params); err != nil || used {
+		return nodes, used, err
 	}
 	indexedPlans := []func() ([]*storage.Node, bool, error){
 		func() ([]*storage.Node, bool, error) {
@@ -2070,16 +2076,17 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 	for _, plan := range indexedPlans {
 		nodes, used, err := plan()
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if used {
 			if len(nodePattern.properties) > 0 {
 				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
 			}
-			return nodes, nil
+			return nodes, false, nil
 		}
 	}
-	return e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, streamingWhere, hint.earlyLimit)
+	nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, streamingWhere, hint.earlyLimit)
+	return nodes, false, err
 }
 
 // pipelineApplyChainedMatch expands a MATCH against graph bindings already in
