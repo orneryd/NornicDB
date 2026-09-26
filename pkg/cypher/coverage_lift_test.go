@@ -60,8 +60,22 @@ func TestCoverageLiftVectorRelationshipHelpers(t *testing.T) {
 	_, ok = exec.resolveCosineQueryVector(ctx, "''")
 	assert.False(t, ok)
 
-	assert.Equal(t, "n.score", trimOptionalDistinctPrefix(" DISTINCT n.score"))
-	assert.Equal(t, "DIST", trimOptionalDistinctPrefix("DIST"))
+	for text, want := range map[string]struct {
+		rest     string
+		distinct bool
+	}{
+		" DISTINCT n.score": {"n.score", true},
+		"DIST":              {"DIST", false},
+		"DISTINCT{a: 1}":    {"{a: 1}", true},
+		"distinct(n.g)":     {"(n.g)", true},
+		"DISTINCT\n x":      {"x", true},
+		"distinctName":      {"distinctName", false},
+		"DISTINCT":          {"DISTINCT", false},
+	} {
+		rest, distinct := cutDistinct(text)
+		assert.Equal(t, want.rest, rest, text)
+		assert.Equal(t, want.distinct, distinct, text)
+	}
 	assert.True(t, withProjectionContainsVariable([]returnItem{{expr: "e"}, {expr: "score"}}, "E"))
 	assert.False(t, withProjectionContainsVariable([]returnItem{{expr: "edge"}}, "e"))
 }
@@ -1248,4 +1262,29 @@ func TestCoverageLiftSchemaDDLExecutionCompatibilityMatrix(t *testing.T) {
 	assert.False(t, hasIndex("rel_embedding_idx"))
 	_, err = exec.Execute(ctx, "DROP INDEX rel_embedding_idx", nil)
 	require.Error(t, err)
+}
+
+// TestDistinctKeywordBeforeParenthesis: DISTINCT(x) is the DISTINCT keyword
+// and a parenthesised expression, in a projection and in an aggregate, as
+// in Neo4j (#713).
+func TestDistinctKeywordBeforeParenthesis(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "distinctparen"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:DP {k: 'a', g: 1})-[:R]->(:DP {k: 'b', g: 2}), (:DP {k: 'c', g: 1})", nil)
+	require.NoError(t, err)
+	for query, want := range map[string][][]interface{}{
+		"MATCH (n:DP) RETURN DISTINCT(n.g) AS g ORDER BY g": {{int64(1)}, {int64(2)}},
+		"MATCH (n:DP) RETURN count(DISTINCT(n.g)) AS c":     {{int64(2)}},
+		"RETURN DISTINCT{a: 1} AS m":                        {{map[string]interface{}{"a": int64(1)}}},
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows, query)
+	}
+	// A subquery in a WITH's ORDER BY stays a SyntaxError here, as on main,
+	// rather than ordering by a value the row evaluator can't compute; the
+	// ORDER BY scope and subquery evaluation change together in #709.
+	_, err = exec.Execute(ctx, "MATCH (n:DP) WITH n ORDER BY COUNT { MATCH (n)-->(m) } DESC RETURN n.k AS k", nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SyntaxError")
 }

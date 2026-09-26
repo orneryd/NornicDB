@@ -57,6 +57,9 @@ func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
 				hasUnexpectedIdentifierAfterNumber(clause.text[whereIndex+len("WHERE"):]) {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unexpected identifier in WHERE")
 			}
+			if clause.kind == pipelineClauseWith && withProjectionHasEmptyItem(clause.text) {
+				return emptyProjectionItemError("WITH")
+			}
 			if clause.kind == pipelineClauseReturn {
 				body := strings.TrimSpace(clause.text[len("RETURN"):])
 				if err := validateReturnAggregationSemantics(body); err != nil {
@@ -70,6 +73,9 @@ func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
 				}
 				if index := topLevelKeywordIndex(body, "UNION"); index >= 0 && index < end {
 					end = index
+				}
+				if projectionHasEmptyItem(body[:end]) {
+					return emptyProjectionItemError("RETURN")
 				}
 				for _, item := range splitTopLevelComma(strings.TrimSpace(body[:end])) {
 					expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
@@ -103,6 +109,44 @@ func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
 	}
 	e.semanticValidationCache.add(cypher)
 	return nil
+}
+
+// emptyProjectionItemError is Neo4j's SyntaxError for a RETURN or WITH item
+// list with an empty item (RETURN 1,,2 / RETURN , 1 / WITH a,, b).
+func emptyProjectionItemError(clause string) error {
+	return newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"InvalidProjection",
+		clause+" projection cannot contain an empty item",
+	)
+}
+
+// withProjectionHasEmptyItem reports whether a WITH clause's item list,
+// before its WHERE / ORDER BY / SKIP / LIMIT, has an empty item.
+func withProjectionHasEmptyItem(clause string) bool {
+	body := strings.TrimSpace(clause[len("WITH"):])
+	end := len(body)
+	for _, keyword := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
+		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
+			end = index
+		}
+	}
+	return projectionHasEmptyItem(body[:end])
+}
+
+// projectionHasEmptyItem reports whether a projection item list has an
+// empty item: a leading, trailing or doubled top-level comma.
+func projectionHasEmptyItem(items string) bool {
+	items = strings.TrimSpace(items)
+	if strings.HasPrefix(items, ",") || strings.HasSuffix(items, ",") {
+		return true
+	}
+	for _, item := range splitTopLevelComma(items) {
+		if strings.TrimSpace(item) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *StorageExecutor) validateDuplicateReturnColumnName(cypher string) error {

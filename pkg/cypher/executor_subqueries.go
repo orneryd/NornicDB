@@ -3334,12 +3334,7 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 
 				if isAggregateFuncName(expr, "collect") {
 					// Handle COLLECT (with or without DISTINCT)
-					upperInner := strings.ToUpper(inner)
-					isDistinct := strings.HasPrefix(upperInner, "DISTINCT ")
-					collectExpr := inner
-					if isDistinct {
-						collectExpr = strings.TrimSpace(inner[9:])
-					}
+					collectExpr, isDistinct := cutDistinct(inner)
 
 					seen := make(map[string]bool)
 					var collected []interface{}

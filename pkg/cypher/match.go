@@ -325,10 +325,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 
 	// Check for DISTINCT
 	distinct := false
-	if strings.HasPrefix(strings.ToUpper(returnClause), "DISTINCT ") {
-		distinct = true
-		returnClause = strings.TrimSpace(returnClause[9:])
-	}
+	returnClause, distinct = cutDistinct(returnClause)
 
 	// Parse RETURN items
 	returnItems := e.parseReturnItems(returnClause)

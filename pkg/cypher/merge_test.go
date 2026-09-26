@@ -622,14 +622,16 @@ func TestMergeHelpers_ParseReturnAndClauseSplitBranches(t *testing.T) {
 	relCtx := map[string]*storage.Edge{"r": {ID: "e-ab", StartNode: a.ID, EndNode: b.ID, Type: "KNOWS"}}
 	ctx := context.Background()
 
-	cols, vals := e.parseReturnClauseWithContext(ctx, "*", nodeCtx, relCtx)
-	require.Len(t, cols, 2)
-	require.Len(t, vals, 2)
+	row := []pipelineRow{e.mergeBindingRow(ctx, nodeCtx, relCtx)}
+	result, err := e.projectMergeReturn(ctx, row, "RETURN *")
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b", "r"}, result.Columns)
+	require.Len(t, result.Rows, 1)
 
-	cols, vals = e.parseReturnClauseWithContext(ctx, "a.name AS name, id(a) AS aid", nodeCtx, relCtx)
-	require.Equal(t, []string{"name", "aid"}, cols)
-	require.Len(t, vals, 2)
-	require.Equal(t, "alice", vals[0])
+	result, err = e.projectMergeReturn(ctx, row, "RETURN a.name AS name, id(a) AS aid")
+	require.NoError(t, err)
+	require.Equal(t, []string{"name", "aid"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"alice", "n-a"}}, result.Rows)
 
 	assert.Nil(t, splitMergeChainClauseBlock(""))
 	parts := splitMergeChainClauseBlock("junk OPTIONAL MATCH (a) FOREACH (x IN [1] | SET a.v = x) RETURN a")

@@ -311,10 +311,13 @@ skipMatchCallRoute:
 	}
 
 	if startsWithMatch && mergeIdx > 0 {
-		if !containsKeywordOutsideStrings(cypher, "SET") || containsKeywordOutsideStrings(cypher, "REMOVE") {
-			if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
-				return result, err
-			}
+		// The pipeline runs MATCH … MERGE row by row, with the clauses
+		// between them (WITH … ORDER BY … SKIP / LIMIT), SET after the MERGE
+		// and the RETURN over all rows. The compound MATCH … MERGE route
+		// runs the shapes it declines (a MERGE with ON CREATE / ON MATCH and
+		// a SET).
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
 		}
 		return e.executeCompoundMatchMerge(ctx, cypher)
 	}
@@ -579,7 +582,11 @@ func (e *StorageExecutor) executeTopLevelUnwind(ctx context.Context, cypher stri
 	return e.executeUnwind(ctx, cypher)
 }
 
-// executeReturn handles simple RETURN statements (e.g., "RETURN 1").
+// executeReturn runs a statement that is only a RETURN (RETURN 1, RETURN
+// DISTINCT $p AS x, RETURN count(*) AS c SKIP 1). The projection is the
+// shared RETURN projection (pipelineApplyReturn) over one row holding the
+// parameters and bound values, so DISTINCT, aggregation, ORDER BY, SKIP and
+// LIMIT behave as after any other clause (#713).
 func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	params := getParamsFromContext(ctx)
 	if params != nil {
@@ -605,23 +612,19 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		return nil, localizedError(localization.CypherTransactionsReturnClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
-	returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-	if cut := firstTopLevelModifierIndex(returnClause); cut >= 0 {
-		returnClause = strings.TrimSpace(returnClause[:cut])
+	body := strings.TrimSpace(cypher[returnIdx+len("RETURN"):])
+	items := body
+	if cut := firstTopLevelModifierIndex(items); cut >= 0 {
+		items = strings.TrimSpace(items[:cut])
 	}
-
-	parts := splitReturnExpressions(returnClause)
-	columns := make([]string, 0, len(parts))
-	values := make([]interface{}, 0, len(parts))
-
-	for _, part := range parts {
+	items, _ = cutDistinct(items)
+	parts := splitTopLevelComma(items)
+	for index, part := range parts {
 		part = strings.TrimSpace(part)
-		alias := part
-		upperPart := strings.ToUpper(part)
-		if asIdx := strings.Index(upperPart, " AS "); asIdx != -1 {
-			alias = strings.TrimSpace(part[asIdx+4:])
+		if asIdx := strings.Index(strings.ToUpper(part), " AS "); asIdx != -1 {
 			part = strings.TrimSpace(part[:asIdx])
 		}
+		parts[index] = part
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
 		}
@@ -637,21 +640,6 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		if err := e.validateRowConversionArguments(part, row); err != nil {
 			return nil, err
 		}
-
-		columns = append(columns, alias)
-
-		if strings.EqualFold(part, "null") {
-			values = append(values, nil)
-			continue
-		}
-
-		if isValidIdentifier(part) {
-			if v, ok := e.fabricRecordBindings[part]; ok {
-				values = append(values, v)
-				continue
-			}
-		}
-
 		if variable := undefinedStandaloneMapValue(part); variable != "" {
 			return nil, newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
@@ -659,32 +647,43 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 				"variable is not defined: "+variable,
 			)
 		}
+	}
 
-		result, defined := e.evaluateRowExpressionWithContext(ctx, part, row)
-		if !defined {
+	if result, ok := e.pipelineApplyReturn(ctx, []pipelineRow{row}, "RETURN "+body); ok {
+		return result, nil
+	}
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, failure
+	}
+	unparsed := body
+	for _, part := range parts {
+		if _, defined := e.evaluateRowExpressionWithContext(ctx, part, row); !defined {
 			if failure := getExpressionFailure(ctx); failure != nil {
 				return nil, failure
 			}
-			err := newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"UnexpectedSyntax",
-				"could not parse RETURN expression: "+part,
-			)
-			recordExpressionFailure(ctx, err)
-			return nil, err
+			unparsed = part
+			break
 		}
-		values = append(values, result)
 	}
-
-	return &ExecuteResult{
-		Columns: columns,
-		Rows:    [][]interface{}{values},
-	}, nil
+	err := newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"UnexpectedSyntax",
+		"could not parse RETURN expression: "+unparsed,
+	)
+	recordExpressionFailure(ctx, err)
+	return nil, err
 }
 
+// firstTopLevelModifierIndex is the position of a projection's first
+// top-level ORDER BY, SKIP or LIMIT, or -1. The shared RETURN projection and
+// standalone RETURN both use it.
 func firstTopLevelModifierIndex(clause string) int {
 	cut := -1
 	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		// The keyword scan is costly; most projections have no modifier.
+		if !containsFold(clause, kw[:4]) {
+			continue
+		}
 		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && (cut == -1 || idx < cut) {
 			cut = idx
 		}

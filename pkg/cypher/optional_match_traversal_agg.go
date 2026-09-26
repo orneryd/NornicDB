@@ -154,10 +154,7 @@ func parseTraversalAggregateCall(expr string) (traversalAggSpec, error) {
 		spec.star = true
 		return spec, nil
 	}
-	if len(inner) > len("DISTINCT") && strings.EqualFold(inner[:len("DISTINCT")], "DISTINCT") && inner[len("DISTINCT")] == ' ' {
-		spec.distinct = true
-		inner = strings.TrimSpace(inner[len("DISTINCT"):])
-	}
+	inner, spec.distinct = cutDistinct(inner)
 	if inner == "" {
 		return spec, localizedError(localization.CypherMatchingFunctionParametersInsufficient(spec.fn), nil)
 	}
