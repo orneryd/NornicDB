@@ -1450,6 +1450,10 @@ type Session struct {
 	// Authentication state
 	authenticated bool            // Whether HELLO auth succeeded
 	authResult    *BoltAuthResult // Auth result with roles/permissions
+	// identity is the cypher request identity built for authResult
+	// (identityAuth); requestIdentity rebuilds it after LOGON / LOGOFF.
+	identity     *cypher.RequestIdentity
+	identityAuth *BoltAuthResult
 	// forwardedAuthHeader carries caller identity for downstream remote constituent
 	// routing (e.g. OIDC credential forwarding over Fabric/USE paths).
 	forwardedAuthHeader string

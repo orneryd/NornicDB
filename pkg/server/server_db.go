@@ -179,20 +179,20 @@ func normalizeStatementForExecution(defaultDB string, statement string) (effecti
 // the request's connection, for SHOW USERS, SHOW CURRENT USER and SHOW
 // TRANSACTIONS (#718).
 func (s *Server) withRequestIdentity(ctx context.Context, r *http.Request, claims *auth.JWTClaims) context.Context {
+	identity := &cypher.RequestIdentity{Connection: cypher.ClientConnection{Protocol: "http"}}
 	if claims != nil && strings.TrimSpace(claims.Username) != "" {
-		ctx = cypher.WithAuthenticatedUser(ctx, cypher.AuthenticatedUser{Name: claims.Username, Roles: claims.Roles})
+		identity.User = &cypher.AuthenticatedUser{Name: claims.Username, Roles: claims.Roles}
 	}
 	if authenticator := s.auth; authenticator != nil {
-		ctx = cypher.WithUserDirectory(ctx, func() []cypher.UserListing {
+		identity.Users = func() []cypher.UserListing {
 			return cypher.UserListingsFromAuth(authenticator.ListUsers())
-		})
+		}
 	}
-	connection := cypher.ClientConnection{Protocol: "http"}
 	if r != nil {
-		connection.ID = "http-" + strconv.FormatUint(s.nextHTTPConnectionID.Add(1), 10)
-		connection.Address = r.RemoteAddr
+		identity.Connection.ID = "http-" + strconv.FormatUint(s.nextHTTPConnectionID.Add(1), 10)
+		identity.Connection.Address = r.RemoteAddr
 	}
-	return cypher.WithClientConnection(ctx, connection)
+	return cypher.WithRequestIdentity(ctx, identity)
 }
 
 func transactionOwnerKey(_ *http.Request, claims *auth.JWTClaims) string {

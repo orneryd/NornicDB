@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -41,14 +42,18 @@ func TestShowDefaultAndHomeDatabase(t *testing.T) {
 // CURRENT USER lists nothing (#718).
 func TestShowUsersAndCurrentUser(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	ctx := WithUserDirectory(context.Background(), func() []UserListing {
+	users := func() []UserListing {
 		return []UserListing{
 			{Name: "zoe", Roles: []string{"viewer"}},
 			{Name: "admin", Roles: []string{"editor", "admin"}, PasswordChangeRequired: true},
 			{Name: "sam", Suspended: true},
 		}
+	}
+	ctx := WithRequestIdentity(context.Background(), &RequestIdentity{Users: users})
+	signedIn := WithRequestIdentity(context.Background(), &RequestIdentity{
+		Users: users,
+		User:  &AuthenticatedUser{Name: "admin", Roles: []string{"admin", "editor"}},
 	})
-	signedIn := WithAuthenticatedUser(ctx, AuthenticatedUser{Name: "admin", Roles: []string{"admin", "editor"}})
 
 	result, err := exec.Execute(signedIn, "SHOW USERS", nil)
 	require.NoError(t, err)
@@ -99,7 +104,10 @@ func TestShowAndTerminateTransactions(t *testing.T) {
 	store := storage.NewNamespacedEngine(engine, "test")
 	session := NewStorageExecutor(store)
 	observer := NewStorageExecutor(store)
-	ctx := WithClientConnection(WithAuthenticatedUser(context.Background(), AuthenticatedUser{Name: "alice"}), ClientConnection{ID: "bolt-7", Address: "10.0.0.1:5000", Protocol: "bolt"})
+	ctx := WithRequestIdentity(context.Background(), &RequestIdentity{
+		Connection: ClientConnection{ID: "bolt-7", Address: "10.0.0.1:5000", Protocol: "bolt"},
+		User:       &AuthenticatedUser{Name: "alice"},
+	})
 
 	// The registry is process-wide; other tests' sessions run on other
 	// connections.
@@ -183,4 +191,29 @@ func TestTerminateTransactionIDsAreChecked(t *testing.T) {
 	result, err = exec.Execute(ctx, "SHOW TRANSACTION 'foo'", nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)
+}
+
+// TestRunningStatementContextCancelsDerivedContexts: a context derived from
+// a running statement's context (a subquery's, a storage call's) is
+// cancelled when the statement is terminated, and still finds the
+// statement's transaction and the request's values.
+func TestRunningStatementContextCancelsDerivedContexts(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	type probeKey struct{}
+	parent := context.WithValue(context.Background(), probeKey{}, "request")
+	statementCtx, running, err := exec.withRunningStatement(parent, "RETURN 1")
+	require.NoError(t, err)
+	defer running.done()
+	derived, cancelDerived := context.WithCancel(statementCtx)
+	defer cancelDerived()
+	require.Equal(t, "request", derived.Value(probeKey{}))
+	require.Same(t, running.tx, derived.Value(ctxKeyRunningTransaction{}))
+
+	_, found := runningTransactions.terminate(running.tx.id())
+	require.True(t, found)
+	select {
+	case <-derived.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a context derived from the statement's was not cancelled by TERMINATE")
+	}
 }

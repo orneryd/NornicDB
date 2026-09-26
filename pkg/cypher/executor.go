@@ -1458,14 +1458,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	// SHOW TRANSACTIONS lists the statement while it runs; TERMINATE
 	// TRANSACTIONS cancels it (#718).
-	statementCtx, doneRunning, runErr := e.withRunningStatement(ctx, originalCypher)
+	statementCtx, running, runErr := e.withRunningStatement(ctx, originalCypher)
 	if runErr != nil {
 		if e.txContext != nil && e.txContext.active {
 			_, _ = e.handleRollback()
 		}
 		return nil, runErr
 	}
-	defer doneRunning()
+	defer running.done()
 	ctx = statementCtx
 
 	// Validate basic syntax
