@@ -89,6 +89,7 @@ const (
 	rowPredicateIsNotNull
 	rowPredicateAnd
 	rowPredicateOr
+	rowPredicateIn
 )
 
 // rowPredicatePart is a node of a planned predicate: an AND or OR of parts, a
@@ -194,10 +195,18 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		return rowPredicatePart{}, false
 	}
 	upper := strings.ToUpper(text)
-	for _, keyword := range []string{" IN ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ", "=~", "EXISTS", "COUNT", "COLLECT"} {
+	for _, keyword := range []string{" NOT IN ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ", "=~", "EXISTS", "COUNT", "COLLECT"} {
 		if strings.Contains(upper, keyword) {
 			return rowPredicatePart{}, false
 		}
+	}
+	if left, right, ok := splitByOperatorWithOptions(text, " IN ", true, true); ok {
+		needle, needleOK := parseRowOperand(left)
+		haystack, haystackOK := parseRowOperand(right)
+		if !needleOK || !haystackOK || needle.kind == rowOperandLiteral || haystack.kind == rowOperandLiteral {
+			return rowPredicatePart{}, false
+		}
+		return rowPredicatePart{kind: rowPredicateIn, text: text, left: needle, right: haystack}, true
 	}
 	for _, test := range []struct {
 		suffix string
@@ -261,6 +270,14 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 		}
 		matched, known := compareCypherPredicateValue(left, right, part.operator).(bool)
 		return known && matched
+	case rowPredicateIn:
+		needle, needleOK := part.left.resolve(values)
+		haystack, haystackOK := part.right.resolve(values)
+		if !needleOK || !haystackOK {
+			return e.evaluateRowPredicateText(ctx, part.text, values)
+		}
+		member, ok := rowMembershipOfValues(needle, haystack, false)
+		return ok && member == true
 	case rowPredicateIsNull, rowPredicateIsNotNull:
 		value, ok := part.left.resolve(values)
 		if !ok {

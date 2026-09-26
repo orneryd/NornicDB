@@ -903,6 +903,13 @@ type callTailProjectionPlan struct {
 	// parameter, checked per execution (the parameter's value can change).
 	limitToken string
 	skipToken  string
+	// passThroughWith is a WITH whose items are all row variables under
+	// their own names, with no ORDER BY / SKIP / LIMIT / DISTINCT: it only
+	// filters (withWhere). The plan then filters the rows with the pipeline's
+	// row filter instead of rebuilding each one; the RETURN (never *) reads
+	// only the variables the WITH keeps.
+	passThroughWith bool
+	withWhere       string
 }
 
 // Parsed CALL-tail plans, cached by tail text: a nil plan (a tail the plan
@@ -972,9 +979,15 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 	rows []pipelineRow,
 	expectedCols []string,
 ) (*ExecuteResult, bool) {
-	projected, ok := e.pipelineApplyWith(ctx, rows, plan.withClause)
-	if !ok {
-		return nil, false
+	var projected []pipelineRow
+	if plan.passThroughWith {
+		projected = e.filterPipelineRows(ctx, rows, plan.withWhere)
+	} else {
+		var ok bool
+		projected, ok = e.pipelineApplyWith(ctx, rows, plan.withClause)
+		if !ok {
+			return nil, false
+		}
 	}
 	result, ok := e.pipelineApplyReturn(ctx, projected, plan.returnClause)
 	if !ok {
@@ -1400,12 +1413,27 @@ func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectio
 	if len(withItems) == 0 || len(returnItems) == 0 || hasStarReturnItem(withItems) || hasStarReturnItem(returnItems) {
 		return nil
 	}
-	return &callTailProjectionPlan{
+	plan := &callTailProjectionPlan{
 		withClause:   "WITH " + beforeReturn,
 		returnClause: "RETURN " + returnAndModifiers,
 		limitToken:   limitToken,
 		skipToken:    skipToken,
 	}
+	plan.passThroughWith = true
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+			plan.passThroughWith = false
+		}
+	}
+	for _, item := range withItems {
+		if !isValidIdentifier(item.expr) || (item.alias != "" && item.alias != item.expr) {
+			plan.passThroughWith = false
+		}
+	}
+	if whereIdx := topLevelKeywordIndex(beforeReturn, "WHERE"); whereIdx >= 0 {
+		plan.withWhere = strings.TrimSpace(beforeReturn[whereIdx+len("WHERE"):])
+	}
+	return plan
 }
 
 func cloneStringInterfaceMap(values map[string]interface{}) map[string]interface{} {
