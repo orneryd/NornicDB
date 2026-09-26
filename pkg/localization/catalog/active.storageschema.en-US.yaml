@@ -160,3 +160,9 @@
 - id: storageschema.unsupported_constraint_literal
   description: Unsupported constraint contract literal. Literal is untranslated source text.
   other: 'unsupported literal "{{.Literal}}"'
+- id: storageschema.lookup_index_already_exists
+  description: Second token lookup index for an entity type. Pattern is untranslated Cypher pattern text.
+  other: "There already exists an index {{.Pattern}}."
+- id: storageschema.index_name_already_exists
+  description: Index name already in use. Name is an untranslated index identifier.
+  other: "There already exists an index called '{{.Name}}'."

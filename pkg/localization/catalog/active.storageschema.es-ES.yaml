@@ -160,3 +160,9 @@
 - id: storageschema.unsupported_constraint_literal
   description: Literal de contrato no compatible. Literal no se traduce.
   other: 'literal no compatible "{{.Literal}}"'
+- id: storageschema.lookup_index_already_exists
+  description: Segundo índice de búsqueda de tokens para un tipo de entidad. Pattern no se traduce.
+  other: "Ya existe un índice {{.Pattern}}."
+- id: storageschema.index_name_already_exists
+  description: Nombre de índice ya en uso. Name no se traduce.
+  other: "Ya existe un índice llamado '{{.Name}}'."

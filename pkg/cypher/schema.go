@@ -42,9 +42,9 @@ func isCompositeAllowedCommand(cypher string) bool {
 		"SHOW ALIASES", "SHOW LIMITS", "SHOW PROCEDURES", "SHOW FUNCTIONS", "SHOW SETTING",
 		// Schema introspection/DDL commands pass through to their own handlers
 		// which return more specific composite-root error messages.
-		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX",
+		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX", "SHOW LOOKUP INDEX",
 		"SHOW CONSTRAINT",
-		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX",
+		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX", "CREATE LOOKUP INDEX",
 		"CREATE CONSTRAINT",
 		"DROP INDEX", "DROP CONSTRAINT",
 		"CREATE DATABASE", "DROP DATABASE",
@@ -83,6 +83,8 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		run = e.executeCreateVectorIndex
 	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
 		run = e.executeCreateRangeIndex
+	} else if findMultiWordKeywordIndex(cypher, "CREATE", "LOOKUP INDEX") == 0 {
+		run = e.executeCreateLookupIndex
 	} else if strings.Contains(upper, "CREATE INDEX") {
 		run = e.executeCreateIndex
 	} else {

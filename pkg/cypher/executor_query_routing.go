@@ -463,6 +463,7 @@ skipMatchCallRoute:
 		findMultiWordKeywordIndex(cypher, "CREATE", "RANGE INDEX") == 0,
 		findMultiWordKeywordIndex(cypher, "CREATE", "FULLTEXT INDEX") == 0,
 		findMultiWordKeywordIndex(cypher, "CREATE", "VECTOR INDEX") == 0,
+		findMultiWordKeywordIndex(cypher, "CREATE", "LOOKUP INDEX") == 0,
 		findKeywordIndex(cypher, "CREATE INDEX") == 0:
 		return e.executeSchemaCommand(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE") == 0:
@@ -525,7 +526,9 @@ skipMatchCallRoute:
 		findMultiWordKeywordIndex(cypher, "SHOW", "RANGE INDEXES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "RANGE INDEX") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEXES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEX") == 0:
+		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEX") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "LOOKUP INDEXES") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "LOOKUP INDEX") == 0:
 		return e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "INDEXES") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "INDEX") == 0:

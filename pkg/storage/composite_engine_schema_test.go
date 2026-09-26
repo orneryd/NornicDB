@@ -52,7 +52,7 @@ func TestCompositeEngine_GetSchema_MergesIndexes(t *testing.T) {
 	require.NotNil(t, mergedSchema)
 
 	// Verify all indexes are merged
-	indexes := mergedSchema.GetIndexes()
+	indexes := nonLookupIndexes(mergedSchema.GetIndexes())
 	require.Len(t, indexes, 7, "composite merge should contain the exact union of constituent index names")
 
 	// Check for specific indexes
@@ -120,7 +120,7 @@ func TestCompositeEngine_GetSchema_DeduplicatesIndexes(t *testing.T) {
 	require.NotNil(t, mergedSchema)
 
 	// Verify index appears only once (deduplicated by name)
-	indexes := mergedSchema.GetIndexes()
+	indexes := nonLookupIndexes(mergedSchema.GetIndexes())
 	idxCount := 0
 	for _, idx := range indexes {
 		if idxMap, ok := idx.(map[string]interface{}); ok {
@@ -211,7 +211,7 @@ func TestCompositeEngine_GetSchema_EmptyComposite(t *testing.T) {
 	require.NotNil(t, mergedSchema)
 
 	// Should have no indexes or constraints
-	indexes := mergedSchema.GetIndexes()
+	indexes := nonLookupIndexes(mergedSchema.GetIndexes())
 	assert.Equal(t, 0, len(indexes))
 
 	constraints := mergedSchema.GetConstraints()
@@ -252,7 +252,7 @@ func TestCompositeEngine_GetSchema_AllIndexTypes(t *testing.T) {
 	require.NotNil(t, mergedSchema)
 
 	// Verify all index types are present
-	indexes := mergedSchema.GetIndexes()
+	indexes := nonLookupIndexes(mergedSchema.GetIndexes())
 	require.Equal(t, 5, len(indexes))
 
 	// Verify each index type

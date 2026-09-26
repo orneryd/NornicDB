@@ -134,7 +134,7 @@ func TestSchemaManager(t *testing.T) {
 			t.Fatalf("Failed to add property index again: %v", err)
 		}
 
-		indexes := sm.GetIndexes()
+		indexes := nonLookupIndexes(sm.GetIndexes())
 		if len(indexes) != 1 {
 			t.Errorf("Expected 1 index, got %d", len(indexes))
 		}
@@ -209,7 +209,7 @@ func TestSchemaManager(t *testing.T) {
 		sm.AddFulltextIndex("ft_idx", []string{"User"}, []string{"bio"})
 		sm.AddVectorIndex("vec_idx", "User", "embedding", 768, "euclidean")
 
-		indexes := sm.GetIndexes()
+		indexes := nonLookupIndexes(sm.GetIndexes())
 		if len(indexes) != 3 {
 			t.Errorf("Expected 3 indexes, got %d", len(indexes))
 		}
@@ -944,7 +944,7 @@ func TestCompositeIndexInGetIndexes(t *testing.T) {
 	sm.AddFulltextIndex("ft_idx", []string{"User"}, []string{"bio"})
 	sm.AddVectorIndex("vec_idx", "User", "embedding", 768, "cosine")
 
-	indexes := sm.GetIndexes()
+	indexes := nonLookupIndexes(sm.GetIndexes())
 	if len(indexes) != 4 {
 		t.Errorf("Expected 4 indexes, got %d", len(indexes))
 	}
@@ -1157,7 +1157,7 @@ func TestSchemaManager_PersistenceErrorRollback(t *testing.T) {
 		require.ErrorIs(t, err, persistErr)
 
 		// Should NOT be registered
-		indexes := sm.GetIndexes()
+		indexes := nonLookupIndexes(sm.GetIndexes())
 		assert.Len(t, indexes, 0)
 	})
 
@@ -1413,7 +1413,7 @@ func TestSchemaManager_AddFulltextIndex_PersistError(t *testing.T) {
 	require.Error(t, err)
 
 	// Should be rolled back
-	indexes := sm.GetIndexes()
+	indexes := nonLookupIndexes(sm.GetIndexes())
 	assert.Len(t, indexes, 0)
 }
 
@@ -1425,7 +1425,7 @@ func TestSchemaManager_AddVectorIndex_PersistError(t *testing.T) {
 	require.Error(t, err)
 
 	// Should be rolled back
-	indexes := sm.GetIndexes()
+	indexes := nonLookupIndexes(sm.GetIndexes())
 	assert.Len(t, indexes, 0)
 }
 
@@ -1437,7 +1437,7 @@ func TestSchemaManager_AddRangeIndex_PersistError(t *testing.T) {
 	require.Error(t, err)
 
 	// Should be rolled back
-	indexes := sm.GetIndexes()
+	indexes := nonLookupIndexes(sm.GetIndexes())
 	assert.Len(t, indexes, 0)
 }
 

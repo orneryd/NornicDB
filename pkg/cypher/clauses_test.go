@@ -3120,10 +3120,10 @@ func TestShowConstraints_WithSchemaConstraintsAndPropertyTypes(t *testing.T) {
 		}
 		name, _ := row[1].(string)
 		typ, _ := row[2].(string)
-		if name == "unique_person_email" && typ == "UNIQUE" {
+		if name == "unique_person_email" && typ == "UNIQUENESS" {
 			foundUniqueRow = true
 		}
-		if name == "person_age_type" && typ == "PROPERTY_TYPE" {
+		if name == "person_age_type" && typ == "NODE_PROPERTY_TYPE" {
 			foundPropertyTypeRow = true
 			if row[7] == nil || row[7] == "" {
 				t.Fatalf("expected propertyType column to be populated, row=%v", row)
