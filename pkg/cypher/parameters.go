@@ -202,9 +202,17 @@ func replaceParameterReferences(query string, replace func(name string, next byt
 	}
 	var result strings.Builder
 	result.Grow(len(query))
+	// Without quote characters there is no quoted text to skip, and the
+	// single-byte search is much faster than IndexAny.
+	quoted := strings.IndexByte(query, '\'') >= 0 || strings.IndexByte(query, '"') >= 0 || strings.IndexByte(query, '`') >= 0
 	i := 0
 	for i < len(query) {
-		next := strings.IndexAny(query[i:], "$'\"`")
+		var next int
+		if quoted {
+			next = strings.IndexAny(query[i:], "$'\"`")
+		} else {
+			next = strings.IndexByte(query[i:], '$')
+		}
 		if next < 0 {
 			result.WriteString(query[i:])
 			break
