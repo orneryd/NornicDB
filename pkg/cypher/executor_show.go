@@ -112,8 +112,14 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 		indexTypeFilter = "RANGE"
 	case strings.HasPrefix(upper, "SHOW VECTOR INDEX"):
 		indexTypeFilter = "VECTOR"
+	case strings.HasPrefix(upper, "SHOW LOOKUP INDEX"):
+		indexTypeFilter = "LOOKUP"
 	}
 	if schema != nil {
+		constraintStatements := map[string]interface{}{}
+		for _, constraint := range schema.GetAllConstraints() {
+			constraintStatements[constraint.Name] = showConstraintCreateStatement(constraint)
+		}
 		indexes := schema.GetIndexes()
 		rows = make([][]interface{}, 0, len(indexes))
 		for i, idx := range indexes {
@@ -122,56 +128,90 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 				continue
 			}
 
-			name := idxMap["name"]
-			idxType := idxMap["type"]
+			name, _ := idxMap["name"].(string)
+			idxType, _ := idxMap["type"].(string)
 			if idxType == "PROPERTY" || idxType == "COMPOSITE" {
 				idxType = "RANGE"
 			}
-			if indexTypeFilter != "" && !strings.EqualFold(fmt.Sprintf("%v", idxType), indexTypeFilter) {
+			if indexTypeFilter != "" && !strings.EqualFold(idxType, indexTypeFilter) {
 				continue
 			}
 
-			var labelsOrTypes interface{} = []string{}
-			var properties interface{} = []string{}
-			if l, ok := idxMap["label"].(string); ok && l != "" {
-				labelsOrTypes = []string{l}
-			} else if ls, ok := idxMap["labels"]; ok {
-				labelsOrTypes = ls
-			}
-			if p, ok := idxMap["property"].(string); ok && p != "" {
-				properties = []string{p}
-			} else if ps, ok := idxMap["properties"]; ok {
-				properties = ps
-			}
-
-			// Determine entity type (default NODE)
 			entityType := "NODE"
 			if et, ok := idxMap["entityType"].(string); ok && et != "" {
 				entityType = et
 			}
-
-			// Determine owning constraint (nil if standalone)
-			var owningConstraint interface{}
-			if oc, ok := idxMap["owningConstraint"].(string); ok && oc != "" {
-				owningConstraint = oc
+			provider := showIndexProvider(idxType)
+			if idxType == "LOOKUP" {
+				// A lookup index covers every label or type; Neo4j lists
+				// its labelsOrTypes and properties as null.
+				rows = append(rows, []interface{}{
+					int64(i + 1), name, "ONLINE", 100.0, idxType, entityType,
+					nil, nil, provider, nil, nil, nil, nil,
+					showIndexOptions(provider, nil), "",
+					showLookupIndexCreateStatement(name, entityType),
+				})
+				continue
+			}
+			var labelsOrTypes []string
+			if l, ok := idxMap["label"].(string); ok && l != "" {
+				labelsOrTypes = []string{l}
+			} else if labels := showStringList(idxMap["labels"]); len(labels) > 0 {
+				labelsOrTypes = labels
+			} else if types := showStringList(idxMap["relationshipTypes"]); len(types) > 0 {
+				labelsOrTypes = types
+				entityType = string(storage.ConstraintEntityRelationship)
+			}
+			if labelsOrTypes == nil {
+				labelsOrTypes = []string{}
+			}
+			properties := showStringList(idxMap["properties"])
+			if p, ok := idxMap["property"].(string); ok && p != "" && len(properties) == 0 {
+				properties = []string{p}
+			}
+			if properties == nil {
+				properties = []string{}
 			}
 
-			// trackedSince, options, failureMessage and createStatement
-			// (the last four columns) aren't known.
+			config := map[string]interface{}{}
+			if idxType == "VECTOR" {
+				if dimensions, ok := idxMap["dimensions"].(int); ok && dimensions > 0 {
+					config["vector.dimensions"] = int64(dimensions)
+				}
+				if similarity, ok := idxMap["similarityFunc"].(string); ok && similarity != "" {
+					config["vector.similarity_function"] = strings.ToUpper(similarity)
+				}
+			}
+
+			// An index a constraint owns is recreated by the constraint.
+			var owningConstraint interface{}
+			var createStatement interface{}
+			if oc, ok := idxMap["owningConstraint"].(string); ok && oc != "" {
+				owningConstraint = oc
+				createStatement = constraintStatements[oc]
+			} else {
+				createStatement = showIndexCreateStatement(idxType, name, entityType, labelsOrTypes, properties, config)
+			}
+
+			// NornicDB doesn't track index reads: lastRead, readCount and
+			// trackedSince are null, as Neo4j reports untracked reads.
 			rows = append(rows, []interface{}{
-				int64(i + 1),      // id
-				name,              // name
-				"ONLINE",          // state
-				100.0,             // populationPercent
-				idxType,           // type
-				entityType,        // entityType
-				labelsOrTypes,     // labelsOrTypes
-				properties,        // properties
-				"nornicdb+schema", // indexProvider
-				owningConstraint,  // owningConstraint
-				nil,               // lastRead
-				int64(0),          // readCount
-				nil, nil, nil, nil,
+				int64(i + 1),     // id
+				name,             // name
+				"ONLINE",         // state
+				100.0,            // populationPercent
+				idxType,          // type
+				entityType,       // entityType
+				labelsOrTypes,    // labelsOrTypes
+				properties,       // properties
+				provider,         // indexProvider
+				owningConstraint, // owningConstraint
+				nil,              // lastRead
+				nil,              // readCount
+				nil,              // trackedSince
+				showIndexOptions(provider, config),
+				"", // failureMessage
+				createStatement,
 			})
 		}
 	}
@@ -216,14 +256,14 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 			rows = append(rows, []interface{}{
 				int64(i + 1),
 				constraint.Name,
-				string(constraint.Type),
+				showConstraintType(constraint.Type, constraint.EffectiveEntityType()),
 				string(constraint.EffectiveEntityType()),
 				[]string{constraint.Label},
 				constraint.Properties,
 				ownedIndex,
 				nil,
-				nil, // options
-				nil, // createStatement
+				showConstraintOptions(constraint.Type),
+				showConstraintCreateStatement(constraint),
 				direction,
 				maxCount,
 				sourceLabel,
@@ -237,13 +277,14 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 			rows = append(rows, []interface{}{
 				int64(offset + i + 1),
 				constraint.Name,
-				string(storage.ConstraintPropertyType),
+				showConstraintType(storage.ConstraintPropertyType, constraint.EffectiveEntityType()),
 				string(constraint.EffectiveEntityType()),
 				[]string{constraint.Label},
 				[]string{constraint.Property},
 				nil,
 				string(constraint.ExpectedType),
-				nil, nil, // options, createStatement
+				nil, // options
+				showPropertyTypeCreateStatement(constraint.Name, constraint.EffectiveEntityType(), constraint.Label, constraint.Property, string(constraint.ExpectedType)),
 				nil, nil, nil, nil, nil,
 			})
 		}
@@ -255,6 +296,23 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 		Columns: append(append([]string(nil), showConstraintsDefaultColumns...), "options", "createStatement", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode"),
 		Rows:    rows,
 	}, showConstraintsDefaultColumns), nil
+}
+
+// showStringList reads a string list from a schema listing value.
+func showStringList(value interface{}) []string {
+	switch v := value.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // showTailKeywords start the part of a SHOW command after the command itself.
@@ -747,7 +805,7 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: showDatabasesColumns,
-		Rows:    [][]interface{}{showDatabaseRow(e.dbManager, dbName, "standard", "online", true)},
+		Rows:    [][]interface{}{showDatabaseRow(e.dbManager, dbName, "standard", "online", true, showDatabaseCreatedAt(e.dbManager, dbName))},
 		Stats: &QueryStats{
 			NodesCreated:         int(nodeCount),
 			RelationshipsCreated: int(edgeCount),
@@ -795,7 +853,7 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 	rows := make([][]interface{}, 0, len(databases))
 
 	for _, db := range databases {
-		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault()))
+		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
 	}
 
 	return withShowDefaultColumns(&ExecuteResult{
@@ -808,8 +866,15 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 var showDatabasesColumns = []string{"name", "type", "aliases", "access", "databaseID", "serverID", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "currentPrimariesCount", "currentSecondariesCount", "requestedPrimariesCount", "requestedSecondariesCount", "creationTime", "lastStartTime", "lastStopTime", "store", "lastCommittedTxn", "replicationLag", "constituents", "options"}
 
 // showDatabaseRow is one SHOW DATABASES row in showDatabasesColumns order.
-// The cluster and store columns NornicDB has no value for are null.
-func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool) []interface{} {
+// A NornicDB server holds one copy of each database, so it is the single
+// primary (currentPrimariesCount 1, currentSecondariesCount 0, replication
+// lag 0). creationTime is when the database was created, and lastStartTime
+// when this process started serving it: its creation or the process start,
+// whichever is later. NornicDB has no database or server IDs and no Neo4j
+// store format, so databaseID, serverID and store are null, as are
+// lastStopTime and lastCommittedTxn (Neo4j reports null for both on a
+// running standalone server).
+func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool, createdAt time.Time) []interface{} {
 	aliases := []string{}
 	if manager != nil {
 		for alias := range manager.ListAliases(name) {
@@ -817,18 +882,47 @@ func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, statu
 		}
 		sort.Strings(aliases)
 	}
+	var creationTime, lastStartTime interface{}
+	if !createdAt.IsZero() {
+		creationTime = createdAt.UTC()
+		started := processStartTime
+		if createdAt.After(started) {
+			started = createdAt
+		}
+		lastStartTime = started.UTC()
+	}
 	return []interface{}{
 		name, databaseType, aliases, "read-write",
 		nil, nil, // databaseID, serverID
 		"localhost:7687", "primary", true,
 		status, status, "",
 		isDefault, isDefault,
-		nil, nil, nil, nil, // primaries / secondaries counts
-		nil, nil, nil, // creationTime, lastStartTime, lastStopTime
-		nil, nil, nil, // store, lastCommittedTxn, replicationLag
+		int64(1), int64(0), // currentPrimariesCount, currentSecondariesCount
+		nil, nil, // requestedPrimariesCount, requestedSecondariesCount
+		creationTime, lastStartTime, nil, // lastStopTime
+		nil, nil, // store, lastCommittedTxn
+		int64(0), // replicationLag
 		[]string{},
-		nil, // options
+		map[string]interface{}{}, // options
 	}
+}
+
+// processStartTime is when this process started, the start of every
+// database it serves from startup.
+var processStartTime = time.Now()
+
+// showDatabaseCreatedAt is when database name was created, or the zero time
+// when the manager doesn't list it.
+func showDatabaseCreatedAt(manager DatabaseManagerInterface, name string) time.Time {
+	if manager == nil {
+		return time.Time{}
+	}
+	for _, db := range manager.ListDatabases() {
+		if db.Name() == name {
+			return db.CreatedAt()
+		}
+	}
+	return time.Time{}
 }
 
 // executeCreateDatabase handles CREATE DATABASE command.

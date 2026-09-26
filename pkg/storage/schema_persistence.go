@@ -28,6 +28,10 @@ type SchemaDefinition struct {
 	FulltextIndexes  []FulltextIndex           `json:"fulltext_indexes,omitempty"`
 	VectorIndexes    []VectorIndex             `json:"vector_indexes,omitempty"`
 	RangeIndexes     []SchemaRangeIndexDef     `json:"range_indexes,omitempty"`
+	// LookupIndexes are the token lookup indexes (schema_lookup_index.go).
+	// Nil in a definition written before they were persisted, which reads
+	// as the default ones.
+	LookupIndexes *[]SchemaLookupIndexDef `json:"lookup_indexes,omitempty"`
 
 	DecayProfileBundles  []knowledgepolicy.DecayProfileBundle  `json:"decay_profile_bundles,omitempty"`
 	DecayProfileBindings []knowledgepolicy.DecayProfileBinding `json:"decay_profile_bindings,omitempty"`
@@ -70,6 +74,7 @@ func (sm *SchemaManager) ExportDefinition() *SchemaDefinition {
 // REQUIRES: caller holds either sm.mu.RLock() or sm.mu.Lock().
 func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	def := &SchemaDefinition{Version: schemaDefinitionVersion}
+	def.LookupIndexes = sm.exportLookupIndexesLocked()
 
 	// Constraints (store as a sorted slice for stable persistence).
 	if len(sm.constraints) > 0 {
@@ -333,6 +338,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	sm.fulltextIndexes = make(map[string]*FulltextIndex)
 	sm.vectorIndexes = make(map[string]*VectorIndex)
 	sm.rangeIndexes = make(map[string]*RangeIndex)
+	sm.lookupIndexes = importLookupIndexes(def.LookupIndexes)
 
 	// Constraints.
 	for _, c := range def.Constraints {

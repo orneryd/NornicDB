@@ -160,3 +160,9 @@
 - id: storageschema.unsupported_constraint_literal
   description: Expanded pseudo-locale unsupported constraint literal.
   other: '[!! unsupported literal "{{.Literal}}" !!]'
+- id: storageschema.lookup_index_already_exists
+  description: Expanded pseudo-locale second token lookup index.
+  other: "[!! There already exists an index {{.Pattern}}. !!]"
+- id: storageschema.index_name_already_exists
+  description: Expanded pseudo-locale index name already in use.
+  other: "[!! There already exists an index called '{{.Name}}'. !!]"

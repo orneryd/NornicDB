@@ -106,6 +106,11 @@ For operational guidance on NornicDB-specific schema features, including `REQUIR
 - ✅ **SHOW FUNCTIONS** - List functions
 - ✅ **SHOW DATABASE** - Database info
 
+SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and values: constraint types such as `UNIQUENESS` / `RELATIONSHIP_UNIQUENESS` and `NODE_PROPERTY_EXISTENCE`, Neo4j's index providers (`range-1.0`, `fulltext-1.0`, `vector-2.0`, …), `options`, and a `createStatement` that recreates each index and constraint. NornicDB's own constraint types (temporal no-overlap, domain, cardinality, endpoint policy) keep their names, and their `createStatement` uses the NornicDB syntax above. Some values have no NornicDB meaning and are `null`:
+
+- SHOW INDEXES `lastRead`, `readCount` and `trackedSince`: NornicDB doesn't track index reads.
+- SHOW DATABASES `databaseID`, `serverID` and `store`: NornicDB has no database or server IDs and no Neo4j store format. A server is the single primary of each database it serves (`currentPrimariesCount` 1, `replicationLag` 0), and `lastStartTime` is the later of the database's creation and the server's start.
+
 ### Aggregation Functions
 
 - ✅ **COUNT()** - Count aggregation

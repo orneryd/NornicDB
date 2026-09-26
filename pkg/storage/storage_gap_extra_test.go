@@ -447,7 +447,7 @@ func TestBadgerSchemaHelpers(t *testing.T) {
 		sm := engine.GetSchemaForNamespace("testns")
 		require.NotNil(t, sm)
 		require.Len(t, sm.GetConstraints(), 1)
-		require.Len(t, sm.GetIndexes(), 1)
+		require.Len(t, nonLookupIndexes(sm.GetIndexes()), 1)
 	})
 
 	t.Run("persist schema validation errors", func(t *testing.T) {

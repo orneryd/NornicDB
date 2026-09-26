@@ -11,16 +11,16 @@ func TestSchemaManager_DropIndex_Property(t *testing.T) {
 		t.Fatalf("AddPropertyIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 1 {
-		t.Fatalf("expected 1 index, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 1 {
+		t.Fatalf("expected 1 index, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 
 	if err := sm.DropIndex("idx_user_email"); err != nil {
 		t.Fatalf("DropIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 0 {
-		t.Fatalf("expected 0 indexes after drop, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 0 {
+		t.Fatalf("expected 0 indexes after drop, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 }
 
@@ -30,16 +30,16 @@ func TestSchemaManager_DropIndex_Fulltext(t *testing.T) {
 		t.Fatalf("AddFulltextIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 1 {
-		t.Fatalf("expected 1 index, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 1 {
+		t.Fatalf("expected 1 index, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 
 	if err := sm.DropIndex("ft_doc_content"); err != nil {
 		t.Fatalf("DropIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 0 {
-		t.Fatalf("expected 0 indexes after drop, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 0 {
+		t.Fatalf("expected 0 indexes after drop, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 }
 
@@ -49,16 +49,16 @@ func TestSchemaManager_DropIndex_Range(t *testing.T) {
 		t.Fatalf("AddRangeIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 1 {
-		t.Fatalf("expected 1 index, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 1 {
+		t.Fatalf("expected 1 index, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 
 	if err := sm.DropIndex("range_age"); err != nil {
 		t.Fatalf("DropIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 0 {
-		t.Fatalf("expected 0 indexes after drop, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 0 {
+		t.Fatalf("expected 0 indexes after drop, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 }
 
@@ -68,16 +68,16 @@ func TestSchemaManager_DropIndex_Vector(t *testing.T) {
 		t.Fatalf("AddVectorIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 1 {
-		t.Fatalf("expected 1 index, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 1 {
+		t.Fatalf("expected 1 index, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 
 	if err := sm.DropIndex("vec_embedding"); err != nil {
 		t.Fatalf("DropIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 0 {
-		t.Fatalf("expected 0 indexes after drop, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 0 {
+		t.Fatalf("expected 0 indexes after drop, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 }
 
@@ -87,16 +87,16 @@ func TestSchemaManager_DropIndex_Composite(t *testing.T) {
 		t.Fatalf("AddCompositeIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 1 {
-		t.Fatalf("expected 1 index, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 1 {
+		t.Fatalf("expected 1 index, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 
 	if err := sm.DropIndex("comp_user_loc"); err != nil {
 		t.Fatalf("DropIndex failed: %v", err)
 	}
 
-	if len(sm.GetIndexes()) != 0 {
-		t.Fatalf("expected 0 indexes after drop, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 0 {
+		t.Fatalf("expected 0 indexes after drop, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 }
 
@@ -128,8 +128,8 @@ func TestSchemaManager_DropIndex_PersistRollback(t *testing.T) {
 	}
 
 	// Index should still exist after rollback.
-	if len(sm.GetIndexes()) != 1 {
-		t.Fatalf("expected index to be rolled back, got %d indexes", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 1 {
+		t.Fatalf("expected index to be rolled back, got %d indexes", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 }
 
@@ -139,8 +139,8 @@ func TestSchemaManager_DropIndex_MultipleTypes(t *testing.T) {
 	_ = sm.AddFulltextIndex("ft_b", []string{"B"}, []string{"y"})
 	_ = sm.AddRangeIndex("range_c", "C", "z")
 
-	if len(sm.GetIndexes()) != 3 {
-		t.Fatalf("expected 3 indexes, got %d", len(sm.GetIndexes()))
+	if len(nonLookupIndexes(sm.GetIndexes())) != 3 {
+		t.Fatalf("expected 3 indexes, got %d", len(nonLookupIndexes(sm.GetIndexes())))
 	}
 
 	// Drop the fulltext one.
@@ -148,7 +148,7 @@ func TestSchemaManager_DropIndex_MultipleTypes(t *testing.T) {
 		t.Fatalf("DropIndex failed: %v", err)
 	}
 
-	remaining := sm.GetIndexes()
+	remaining := nonLookupIndexes(sm.GetIndexes())
 	if len(remaining) != 2 {
 		t.Fatalf("expected 2 indexes after drop, got %d", len(remaining))
 	}

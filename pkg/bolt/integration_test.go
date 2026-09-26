@@ -494,10 +494,10 @@ func TestBoltConstraintIntegration_NewerConstraintTypes(t *testing.T) {
 	}
 
 	wantTypes := map[string]string{
-		"person_name_required": "EXISTS",
+		"person_name_required": "NODE_PROPERTY_EXISTENCE",
 		"user_key":             "NODE_KEY",
 		"fact_temporal":        "TEMPORAL_NO_OVERLAP",
-		"rel_exists":           "EXISTS",
+		"rel_exists":           "RELATIONSHIP_PROPERTY_EXISTENCE",
 		"rel_key":              "RELATIONSHIP_KEY",
 	}
 	for name, want := range wantTypes {
@@ -572,15 +572,15 @@ func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
 	}
 
 	wantTypes := map[string]string{
-		"person_email_unique":  "UNIQUE",
-		"person_name_required": "EXISTS",
+		"person_email_unique":  "UNIQUENESS",
+		"person_name_required": "NODE_PROPERTY_EXISTENCE",
 		"user_key":             "NODE_KEY",
-		"person_age_type":      "PROPERTY_TYPE",
+		"person_age_type":      "NODE_PROPERTY_TYPE",
 		"person_status_domain": "DOMAIN",
 		"fact_temporal":        "TEMPORAL_NO_OVERLAP",
-		"rel_exists":           "EXISTS",
+		"rel_exists":           "RELATIONSHIP_PROPERTY_EXISTENCE",
 		"rel_key":              "RELATIONSHIP_KEY",
-		"rel_order_type":       "PROPERTY_TYPE",
+		"rel_order_type":       "RELATIONSHIP_PROPERTY_TYPE",
 		"rel_role_domain":      "DOMAIN",
 		"max_jobs":             "CARDINALITY",
 		"works_at_allowed":     "RELATIONSHIP_POLICY",
