@@ -64,17 +64,17 @@ func TestExecuteCallTailSetBased_RelationshipRewriteErrorAndConstraintDetection(
 }
 
 func TestCallTailReturnOptionsAndVersionNonDevCommit(t *testing.T) {
-	ret, orderBy, limit, skip := splitCallTailReturnOptions("n ORDER BY n.name ASC LIMIT not_int SKIP 3")
+	ret, orderBy, limit, skip := splitCallTailProjectionModifiers("n ORDER BY n.name ASC LIMIT not_int SKIP 3")
 	require.Equal(t, "n", ret)
-	require.Equal(t, "n.name ASC", orderBy)
-	require.Equal(t, -1, limit)
-	require.Equal(t, 3, skip)
+	require.Equal(t, "ORDER BY n.name ASC", orderBy)
+	require.Equal(t, "not_int", limit)
+	require.Equal(t, "3", skip)
 
-	ret, orderBy, limit, skip = splitCallTailReturnOptions("n SKIP 1 LIMIT 2")
+	ret, orderBy, limit, skip = splitCallTailProjectionModifiers("n SKIP 1 LIMIT 2")
 	require.Equal(t, "n", ret)
 	require.Equal(t, "", orderBy)
-	require.Equal(t, 2, limit)
-	require.Equal(t, 1, skip)
+	require.Equal(t, "2", limit)
+	require.Equal(t, "1", skip)
 
 	originalCommit := buildinfo.Commit
 	defer func() { buildinfo.Commit = originalCommit }()

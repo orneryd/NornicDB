@@ -1555,6 +1555,14 @@ func (e *StorageExecutor) tryExecuteCallTailVariableLengthMaxLengthFastPath(
 	if !ok {
 		return nil, false, nil
 	}
+	limit, ok := resolveOptionalIntLiteralOrParam(ctx, plan.limitToken)
+	if !ok {
+		return nil, false, nil
+	}
+	skip, ok := resolveOptionalIntLiteralOrParam(ctx, plan.skipToken)
+	if !ok {
+		return nil, false, nil
+	}
 
 	result := &ExecuteResult{
 		Columns: make([]string, len(plan.returnItems)),
@@ -1604,17 +1612,15 @@ func (e *StorageExecutor) tryExecuteCallTailVariableLengthMaxLengthFastPath(
 	if plan.orderBy != "" {
 		result = e.applyOrderByToResult(result, plan.orderBy)
 	}
-	if plan.skip > 0 && plan.skip < len(result.Rows) {
-		result.Rows = result.Rows[plan.skip:]
-	} else if plan.skip >= len(result.Rows) {
-		result.Rows = [][]interface{}{}
-	}
-	if plan.limit >= 0 {
-		if plan.limit == 0 {
+	if skip > 0 {
+		if skip >= len(result.Rows) {
 			result.Rows = [][]interface{}{}
-		} else if plan.limit < len(result.Rows) {
-			result.Rows = result.Rows[:plan.limit]
+		} else {
+			result.Rows = result.Rows[skip:]
 		}
+	}
+	if limit >= 0 && limit < len(result.Rows) {
+		result.Rows = result.Rows[:limit]
 	}
 	if len(expectedCols) > 0 && len(expectedCols) == len(result.Columns) {
 		result.Columns = append([]string{}, expectedCols...)
@@ -1773,8 +1779,11 @@ type callTailVariableLengthMaxLengthPlan struct {
 	aggregateAlias string
 	returnItems    []returnItem
 	orderBy        string
-	limit          int
-	skip           int
+	// limitToken / skipToken are the RETURN's whole LIMIT / SKIP values,
+	// resolved when the plan runs; an expression other than a literal or a
+	// parameter makes the plan decline, so the pipeline evaluates it (#572).
+	limitToken string
+	skipToken  string
 }
 
 func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(ctx context.Context, tail string) (*callTailVariableLengthMaxLengthPlan, bool) {
@@ -1798,10 +1807,11 @@ func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(ctx context.C
 	if withClause == "" {
 		return nil, false
 	}
-	returnClause, orderBy, limit, skip := splitCallTailReturnOptions(strings.TrimSpace(trimmed[returnIdx+len("RETURN"):]))
+	returnClause, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(strings.TrimSpace(trimmed[returnIdx+len("RETURN"):]))
 	if returnClause == "" {
 		return nil, false
 	}
+	orderBy = strings.TrimSpace(strings.TrimPrefix(orderBy, "ORDER BY"))
 
 	pattern := matchClause
 	pathVar := ""
@@ -1866,8 +1876,8 @@ func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(ctx context.C
 		aggregateAlias: aggAlias,
 		returnItems:    returnItems,
 		orderBy:        orderBy,
-		limit:          limit,
-		skip:           skip,
+		limitToken:     limitToken,
+		skipToken:      skipToken,
 	}, true
 }
 
@@ -1955,10 +1965,10 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 		return nil, false
 	}
 	secondWith := strings.TrimSpace(afterSecondWith[:returnIdx])
-	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
+	returnClause, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
 	// The traversal fast paths implement RETURN … [LIMIT n] only; ORDER BY
 	// or SKIP goes to the pipeline, which applies them (#547).
-	if returnOptions.orderBy != "" || returnOptions.skipRaw != "" {
+	if orderBy != "" || skipToken != "" {
 		return nil, false
 	}
 	if !strings.HasPrefix(strings.ToUpper(matchSection), "MATCH ") {
@@ -2013,7 +2023,7 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 		return nil, false
 	}
 	pathCapToken := strings.TrimSpace(secondItems[2][strings.Index(secondItems[2], "[0..")+4 : strings.LastIndex(secondItems[2], "]")])
-	returnItems := e.parseReturnItems(returnOptions.returnClause)
+	returnItems := e.parseReturnItems(returnClause)
 	if len(returnItems) != 3 || compactCypherFragment(returnItems[0].expr) != compactCypherFragment("elementId("+match.StartNode.variable+")") || returnItems[1].expr != "score" || compactCypherFragment(returnItems[2].expr) != compactCypherFragment("size("+pathsAlias+")") {
 		return nil, false
 	}
@@ -2023,7 +2033,7 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 		pathsAlias:   pathsAlias,
 		pathCapToken: pathCapToken,
 		returnItems:  returnItems,
-		limitToken:   returnOptions.limitRaw,
+		limitToken:   limitToken,
 	}, true
 }
 
@@ -2046,10 +2056,10 @@ func (e *StorageExecutor) parseCallTailFrontierReachablePlan(ctx context.Context
 		return nil, false
 	}
 	secondWith := strings.TrimSpace(afterSecondWith[:returnIdx])
-	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
+	returnClause, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
 	// The traversal fast paths implement RETURN … [LIMIT n] only; ORDER BY
 	// or SKIP goes to the pipeline, which applies them (#547).
-	if returnOptions.orderBy != "" || returnOptions.skipRaw != "" {
+	if orderBy != "" || skipToken != "" {
 		return nil, false
 	}
 	match := e.parseTraversalPattern(ctx, matchPart)
@@ -2076,11 +2086,11 @@ func (e *StorageExecutor) parseCallTailFrontierReachablePlan(ctx context.Context
 	if !ok1 || !ok2 {
 		return nil, false
 	}
-	returnItems := e.parseReturnItems(returnOptions.returnClause)
+	returnItems := e.parseReturnItems(returnClause)
 	if len(returnItems) != 4 || compactCypherFragment(returnItems[0].expr) != compactCypherFragment("elementId("+match.StartNode.variable+")") || returnItems[1].expr != "score" || returnItems[2].expr != nearestAlias || returnItems[3].expr != reachableAlias {
 		return nil, false
 	}
-	return &callTailFrontierReachablePlan{match: match, nodeVar: match.StartNode.variable, nearestAlias: nearestAlias, reachableAlias: reachableAlias, returnItems: returnItems, limitToken: returnOptions.limitRaw}, true
+	return &callTailFrontierReachablePlan{match: match, nodeVar: match.StartNode.variable, nearestAlias: nearestAlias, reachableAlias: reachableAlias, returnItems: returnItems, limitToken: limitToken}, true
 }
 
 func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Context, tail string) (*callTailConstrainedMaxDepthPlan, bool) {
@@ -2093,10 +2103,10 @@ func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Conte
 		return nil, false
 	}
 	matchWhere := strings.TrimSpace(normalized[len("MATCH"):returnIdx])
-	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(normalized[returnIdx+len("RETURN"):]))
+	returnClause, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(strings.TrimSpace(normalized[returnIdx+len("RETURN"):]))
 	// The traversal fast paths implement RETURN … [LIMIT n] only; ORDER BY
 	// or SKIP goes to the pipeline, which applies them (#547).
-	if returnOptions.orderBy != "" || returnOptions.skipRaw != "" {
+	if orderBy != "" || skipToken != "" {
 		return nil, false
 	}
 	whereIdx := findKeywordIndexInContext(matchWhere, "WHERE")
@@ -2121,7 +2131,7 @@ func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Conte
 	if !ok {
 		return nil, false
 	}
-	returnItems := e.parseReturnItems(returnOptions.returnClause)
+	returnItems := e.parseReturnItems(returnClause)
 	if len(returnItems) != 3 || compactCypherFragment(returnItems[0].expr) != compactCypherFragment("elementId("+match.StartNode.variable+")") || returnItems[1].expr != "score" {
 		return nil, false
 	}
@@ -2129,77 +2139,7 @@ func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Conte
 	if !ok {
 		return nil, false
 	}
-	return &callTailConstrainedMaxDepthPlan{match: match, nodeVar: match.StartNode.variable, aggregateExpr: returnItems[2].expr, aggregateAlias: alias, minWeightToken: minWeightToken, categoriesToken: categoriesToken, returnItems: returnItems, limitToken: returnOptions.limitRaw}, true
-}
-
-type callTailReturnOptionsRaw struct {
-	returnClause string
-	orderBy      string
-	limitRaw     string
-	skipRaw      string
-}
-
-func splitCallTailReturnOptionsRaw(returnAndTail string) callTailReturnOptionsRaw {
-	trimmed := strings.TrimSpace(returnAndTail)
-	if trimmed == "" {
-		return callTailReturnOptionsRaw{}
-	}
-	orderIdx := findKeywordIndexInContext(trimmed, "ORDER")
-	limitIdx := findKeywordIndexInContext(trimmed, "LIMIT")
-	skipIdx := findKeywordIndexInContext(trimmed, "SKIP")
-	end := len(trimmed)
-	for _, idx := range []int{orderIdx, limitIdx, skipIdx} {
-		if idx != -1 && idx < end {
-			end = idx
-		}
-	}
-	out := callTailReturnOptionsRaw{returnClause: strings.TrimSpace(trimmed[:end])}
-	if orderIdx != -1 {
-		orderEnd := len(trimmed)
-		for _, idx := range []int{limitIdx, skipIdx} {
-			if idx != -1 && idx > orderIdx && idx < orderEnd {
-				orderEnd = idx
-			}
-		}
-		orderPart := strings.TrimSpace(trimmed[orderIdx:orderEnd])
-		if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER BY") {
-			out.orderBy = strings.TrimSpace(orderPart[len("ORDER BY"):])
-		}
-	}
-	if limitIdx != -1 {
-		limitEnd := len(trimmed)
-		if skipIdx != -1 && skipIdx > limitIdx {
-			limitEnd = skipIdx
-		}
-		out.limitRaw = strings.TrimSpace(strings.Split(strings.TrimSpace(trimmed[limitIdx+len("LIMIT"):limitEnd]), " ")[0])
-	}
-	if skipIdx != -1 {
-		skipEnd := len(trimmed)
-		if limitIdx != -1 && limitIdx > skipIdx {
-			skipEnd = limitIdx
-		}
-		out.skipRaw = strings.TrimSpace(strings.Split(strings.TrimSpace(trimmed[skipIdx+len("SKIP"):skipEnd]), " ")[0])
-	}
-	return out
-}
-
-func splitCallTailReturnOptions(returnAndTail string) (string, string, int, int) {
-	raw := splitCallTailReturnOptionsRaw(returnAndTail)
-	limit := -1
-	if raw.limitRaw != "" {
-		if n, err := strconv.Atoi(raw.limitRaw); err == nil {
-			limit = n
-		}
-	}
-
-	skip := -1
-	if raw.skipRaw != "" {
-		if n, err := strconv.Atoi(raw.skipRaw); err == nil {
-			skip = n
-		}
-	}
-
-	return raw.returnClause, raw.orderBy, limit, skip
+	return &callTailConstrainedMaxDepthPlan{match: match, nodeVar: match.StartNode.variable, aggregateExpr: returnItems[2].expr, aggregateAlias: alias, minWeightToken: minWeightToken, categoriesToken: categoriesToken, returnItems: returnItems, limitToken: limitToken}, true
 }
 
 func (e *StorageExecutor) maxDepthForTraversalMatch(startNode *storage.Node, match *TraversalMatch) (int, error) {

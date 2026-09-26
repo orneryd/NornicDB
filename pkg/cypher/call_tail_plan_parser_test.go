@@ -25,9 +25,20 @@ LIMIT 5
 	require.Equal(t, "node", plan.nodeVar)
 	require.Equal(t, "maxDepth", plan.aggregateAlias)
 	require.Equal(t, "score DESC", plan.orderBy)
-	require.Equal(t, 5, plan.limit)
-	require.Equal(t, -1, plan.skip)
+	require.Equal(t, "5", plan.limitToken)
+	require.Equal(t, "", plan.skipToken)
 	require.Len(t, plan.returnItems, 3)
+
+	// SKIP / LIMIT expressions stay whole, so the plan can't read them as
+	// their first number; they don't resolve, and the plan declines (#572).
+	plan, ok = exec.parseCallTailVariableLengthMaxLengthPlan(ctx, "MATCH p = (node)-[:BENCH_HOP*1..6]->(:BenchmarkHop) WITH node, score, max(length(p)) AS maxDepth RETURN node.textKey AS textKey, maxDepth, score SKIP 1 + 3 LIMIT 1 + 1")
+	require.True(t, ok)
+	require.Equal(t, "1 + 1", plan.limitToken)
+	require.Equal(t, "1 + 3", plan.skipToken)
+	for _, token := range []string{plan.limitToken, plan.skipToken} {
+		_, resolved := resolveOptionalIntLiteralOrParam(ctx, token)
+		require.False(t, resolved)
+	}
 
 	_, ok = exec.parseCallTailVariableLengthMaxLengthPlan(ctx, "MATCH (node)-[:BENCH_HOP*1..6]->(:BenchmarkHop) RETURN node")
 	require.False(t, ok)
@@ -107,9 +118,9 @@ LIMIT $topK
 	_, ok = exec.parseCallTailConstrainedMaxDepthPlan(ctx, "MATCH p = (node)-[:REL*1..4]->(x) RETURN node")
 	require.False(t, ok)
 
-	opts := splitCallTailReturnOptionsRaw("nodeID ORDER BY score DESC SKIP 2 LIMIT $topK")
-	require.Equal(t, "nodeID", opts.returnClause)
-	require.Equal(t, "score DESC", opts.orderBy)
-	require.Equal(t, "2", opts.skipRaw)
-	require.Equal(t, "$topK", opts.limitRaw)
+	projection, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers("nodeID ORDER BY score DESC SKIP 2 + 1 LIMIT $topK")
+	require.Equal(t, "nodeID", projection)
+	require.Equal(t, "ORDER BY score DESC", orderBy)
+	require.Equal(t, "2 + 1", skipToken)
+	require.Equal(t, "$topK", limitToken)
 }
