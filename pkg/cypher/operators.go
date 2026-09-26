@@ -574,8 +574,11 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 	// Handle / operator
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "/", true, false); ok && binaryOperands(leftExpr, rightExpr) {
 		left, right := operands(leftExpr, rightExpr)
-		if divisor, numeric := toFloat64(right); numeric && divisor == 0 && left != nil {
-			recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero"))
+		if value, folded := foldedDivisionByZero(leftExpr, rightExpr, left, right); folded {
+			return value, true
+		}
+		if divisionByZero('/', left, right) {
+			recordExpressionFailure(ctx, divisionByZeroError())
 		}
 		return result('/', left, right, e.divide(left, right))
 	}
@@ -583,8 +586,8 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 	// Handle % operator
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "%", true, false); ok && binaryOperands(leftExpr, rightExpr) {
 		left, right := operands(leftExpr, rightExpr)
-		if divisor, numeric := toFloat64(right); numeric && divisor == 0 && left != nil {
-			recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero"))
+		if divisionByZero('%', left, right) {
+			recordExpressionFailure(ctx, divisionByZeroError())
 		}
 		return result('%', left, right, e.modulo(left, right))
 	}
@@ -785,7 +788,8 @@ func (e *StorageExecutor) multiply(left, right interface{}) interface{} {
 
 // divide performs numeric division.
 //
-// Note: Division by zero returns nil (NULL in Cypher).
+// Note: INTEGER division by zero returns nil here (the context-aware
+// evaluators report "/ by zero"); a FLOAT operand gives ±Inf or NaN.
 // Returns int64 if both operands are integers and division is exact.
 //
 // # Parameters
@@ -796,7 +800,7 @@ func (e *StorageExecutor) multiply(left, right interface{}) interface{} {
 // # Returns
 //
 //   - int64 if exact integer division, float64 otherwise
-//   - nil if divisor is zero or operands invalid
+//   - nil for an INTEGER division by zero or invalid operands
 //
 // # Example
 //
@@ -818,7 +822,8 @@ func (e *StorageExecutor) divide(left, right interface{}) interface{} {
 
 // modulo performs modulo operation (remainder after division).
 //
-// Note: Operands are converted to integers for the modulo operation.
+// Note: INTEGER modulo by zero returns nil here (the context-aware
+// evaluators report "/ by zero"); a FLOAT operand by zero gives NaN.
 //
 // # Parameters
 //
@@ -828,12 +833,13 @@ func (e *StorageExecutor) divide(left, right interface{}) interface{} {
 // # Returns
 //
 //   - int64 when both operands are integers, float64 otherwise
-//   - nil if divisor is zero or operands invalid
+//   - nil for an INTEGER modulo by zero or invalid operands
 //
 // # Example
 //
 //	modulo(10, 3)  // int64(1)
 //	modulo(10, 0)  // nil (division by zero)
+//	modulo(1.5, 0) // NaN
 func (e *StorageExecutor) modulo(left, right interface{}) interface{} {
 	value, _, _ := numericArithmetic('%', left, right)
 	return value

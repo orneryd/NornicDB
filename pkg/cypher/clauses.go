@@ -1127,12 +1127,13 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 			row := make([]interface{}, len(returnItems))
 			rowValues := map[string]interface{}{variable: item}
 			for i, ri := range returnItems {
-				value, ok := e.evaluateRowExpression(ri.expr, rowValues)
+				value, ok := e.evaluateRowExpressionWithContext(ctx, ri.expr, rowValues)
 				if !ok {
-					// A size() type error is the statement's error; any other
-					// unresolved item is reported like the RETURN route does.
-					if e.recordRowSizeArgumentFailure(ctx, ri.expr, rowValues) {
-						return nil, getExpressionFailure(ctx)
+					// A recorded failure (a function or arithmetic error) is the
+					// statement's error; any other unresolved item is reported
+					// like the RETURN route does.
+					if failure := getExpressionFailure(ctx); failure != nil {
+						return nil, failure
 					}
 					return nil, newSemanticError(
 						"Neo.ClientError.Statement.SyntaxError",

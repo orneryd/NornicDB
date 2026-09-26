@@ -606,10 +606,10 @@ func (e *StorageExecutor) executeTopLevelUnwind(ctx context.Context, cypher stri
 
 // executeReturn handles simple RETURN statements (e.g., "RETURN 1").
 func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Parameters are row values ($name), not text: a substituted value would
+	// read as a literal (RETURN $a / $b with a = 1.0, b = 0 would fold like
+	// RETURN 1.0 / 0).
 	params := getParamsFromContext(ctx)
-	if params != nil {
-		cypher = e.substituteParams(cypher, params)
-	}
 	row := make(pipelineRow, len(e.fabricRecordBindings)+len(params))
 	for name, value := range e.fabricRecordBindings {
 		row[name] = value
@@ -996,6 +996,8 @@ var literalLeadingKeywords = map[string]struct{}{
 	"SKIP": {}, "LIMIT": {}, "UNWIND": {}, "FROM": {}, "FIELDTERMINATOR": {}, "OF": {},
 	"DISTINCT": {}, "BY": {}, "YIELD": {}, "SHORTEST": {}, "ANY": {}, "ALL": {},
 	"COMMIT": {}, "USE": {}, "OFFSET": {}, "DELETE": {},
+	// trim([LEADING | TRAILING | BOTH] 'x' FROM s)
+	"BOTH": {}, "LEADING": {}, "TRAILING": {},
 }
 
 // bareWordBeforeLiteral reports whether the word cypher[start:end] (not a

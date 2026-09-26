@@ -237,37 +237,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		e.recordRowRegexFailure(ctx, expr, values)
 	}
 	if !resolved {
-		if e.recordRowSizeArgumentFailure(ctx, expr, values) {
-			return nil, false
-		}
-		arithmeticExpr := strings.TrimSpace(expr)
-		for {
-			inner, enclosed := stripEnclosingExpressionParentheses(arithmeticExpr)
-			if !enclosed {
-				break
-			}
-			arithmeticExpr = inner
-		}
-		// The row evaluator reports an arithmetic error (division by zero,
-		// INTEGER overflow, a non-arithmetic operand) as "unresolved"; record
-		// the statement error for the top-level operator.
-		for _, tier := range []string{"+-", "*/%"} {
-			left, right, operator, arithmetic := splitRowArithmeticTier(arithmeticExpr, tier)
-			if !arithmetic {
-				continue
-			}
-			leftValue, leftOK := e.evaluateRowExpression(left, values)
-			rightValue, rightOK := e.evaluateRowExpression(right, values)
-			if !leftOK || !rightOK {
-				break
-			}
-			if divisor, numeric := toFloat64(rightValue); (operator == '/' || operator == '%') && leftValue != nil && numeric && divisor == 0 {
-				recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero"))
-			} else if err := arithmeticError(operator, leftValue, rightValue); err != nil {
-				recordExpressionFailure(ctx, err)
-			}
-			break
-		}
+		e.recordRowUnresolvedFailure(ctx, expr, values)
 	}
 	if function, arguments, functionCall := parseFunctionCallWS(strings.TrimSpace(expr)); functionCall && strings.EqualFold(function, "substring") {
 		parts := splitTopLevelComma(arguments)
@@ -282,6 +252,55 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		}
 	}
 	return value, resolved
+}
+
+// recordRowUnresolvedFailure records the statement error of an expression
+// the row evaluator left unresolved: a size() argument type error, an
+// arithmetic error of the top-level operator (division by zero, INTEGER
+// overflow, a non-arithmetic operand), or an error a function raised in the
+// row evaluator's fallback. An expression that is merely unrecognized records
+// nothing. The row evaluator itself has no context, so every context-aware
+// caller that sees an unresolved expression reports it through here.
+func (e *StorageExecutor) recordRowUnresolvedFailure(ctx context.Context, expr string, values pipelineRow) {
+	if e.recordRowSizeArgumentFailure(ctx, expr, values) {
+		return
+	}
+	arithmeticExpr := strings.TrimSpace(expr)
+	for {
+		inner, enclosed := stripEnclosingExpressionParentheses(arithmeticExpr)
+		if !enclosed {
+			break
+		}
+		arithmeticExpr = inner
+	}
+	// The row evaluator reports an arithmetic error (division by zero,
+	// INTEGER overflow, a non-arithmetic operand) as "unresolved"; record
+	// the statement error for the top-level operator.
+	for _, tier := range []string{"+-", "*/%"} {
+		left, right, operator, arithmetic := splitRowArithmeticTier(arithmeticExpr, tier)
+		if !arithmetic {
+			continue
+		}
+		leftValue, leftOK := e.evaluateRowExpression(left, values)
+		rightValue, rightOK := e.evaluateRowExpression(right, values)
+		if !leftOK || !rightOK {
+			break
+		}
+		if divisionByZero(operator, leftValue, rightValue) {
+			recordExpressionFailure(ctx, divisionByZeroError())
+		} else if err := arithmeticError(operator, leftValue, rightValue); err != nil {
+			recordExpressionFailure(ctx, err)
+		}
+		break
+	}
+	// A function error raised in the row evaluator's fallback (a
+	// registry function's argument error) left the expression
+	// unresolved; it is the statement error.
+	if getExpressionFailure(ctx) == nil {
+		if _, err := e.evaluateRowFallback(expr, values); err != nil {
+			recordExpressionFailure(ctx, err)
+		}
+	}
 }
 
 // recordRowRegexFailure records the error of a top-level text =~ pattern

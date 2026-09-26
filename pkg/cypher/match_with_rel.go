@@ -776,6 +776,23 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 // callers can tell "unrecognized" apart from "evaluated to null" and raise the
 // proper statement error (or route to the EXISTS-subquery machinery).
 func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[string]interface{}) interface{} {
+	return e.evaluateExpressionFromValuesContext(context.Background(), expr, values)
+}
+
+// evaluateRowFallback is the row evaluator's fallback to the shared
+// evaluator. err is the error a function raised there (a registry function's
+// argument error), which the shared evaluator records as the statement error
+// rather than returning it; the row evaluator reports the expression as
+// unresolved and evaluateRowExpressionWithContext records err.
+func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
+	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
+	value := e.evaluateExpressionFromValuesContext(ctx, expr, values)
+	return value, getExpressionFailure(ctx)
+}
+
+// evaluateExpressionFromValuesContext is evaluateExpressionFromValues with
+// the evaluation context: expression failures are recorded on ctx.
+func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Context, expr string, values map[string]interface{}) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -815,7 +832,7 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 		return expr
 	}
 
-	ctx := withValueBindings(context.Background(), values)
+	ctx = withValueBindings(ctx, values)
 	nodes, rels := entityScopesFromValues(values)
 	if value, recognized := e.evaluateExpressionWithContextDefined(ctx, expr, nodes, rels); recognized {
 		return value

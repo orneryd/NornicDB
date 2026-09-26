@@ -594,6 +594,9 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			value := e.multiply(leftValue, rightValue)
 			return value, value != nil || leftValue == nil || rightValue == nil
 		case '/':
+			if value, folded := foldedDivisionByZero(left, right, leftValue, rightValue); folded {
+				return value, true
+			}
 			value := e.divide(leftValue, rightValue)
 			return value, value != nil || leftValue == nil || rightValue == nil
 		default:
@@ -645,7 +648,10 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			return evaluateRowPropertyChain(base, strings.TrimSpace(expr[dot+1:]))
 		}
 	}
-	value := e.evaluateExpressionFromValues(expr, values)
+	value, err := e.evaluateRowFallback(expr, values)
+	if err != nil {
+		return nil, false
+	}
 	if text, ok := value.(string); ok && text == expr && !isWholeCypherQuotedString(expr) {
 		return nil, false
 	}
@@ -1522,6 +1528,9 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		if hasSuffixFoldASCII(expression, operator) {
 			left := strings.TrimSpace(expression[:len(expression)-len(operator)])
 			value, ok := e.evaluateRowExpression(left, values)
+			if !ok {
+				e.recordRowUnresolvedFailure(ctx, left, values)
+			}
 			if operator == " IS NULL" {
 				return !ok || value == nil
 			}
@@ -1532,7 +1541,12 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 	comparisonResult, comparison := evaluateComparisonChain(expression, func(operand string) interface{} {
 		value, ok := e.evaluateRowExpression(operand, values)
 		if !ok {
+			// An operand the row evaluator could not resolve may hold a
+			// statement error (a size() type error, a division by zero, a
+			// function's argument error); surface it instead of filtering
+			// the row.
 			resolved = false
+			e.recordRowUnresolvedFailure(ctx, operand, values)
 		}
 		if isRowIdentityExpression(operand) {
 			value = rowIdentityPayload(value)
@@ -1540,17 +1554,12 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		return value
 	}, compareCypherPredicateValue)
 	if comparison {
-		if !resolved {
-			// An operand the row evaluator could not resolve may be a
-			// size() type error; surface it instead of filtering the row.
-			e.recordRowSizeArgumentFailure(ctx, expression, values)
-		}
 		matched, known := comparisonResult.(bool)
 		return resolved && known && matched
 	}
 	value, ok := e.evaluateRowExpression(expression, values)
 	if !ok {
-		e.recordRowSizeArgumentFailure(ctx, expression, values)
+		e.recordRowUnresolvedFailure(ctx, expression, values)
 	}
 	return ok && isTruthy(value)
 }
