@@ -42,8 +42,14 @@ func (e *StorageExecutor) validatePipelineProjectionSubscripts(rows []pipelineRo
 
 func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipelineRow) error {
 	expression = strings.TrimSpace(expression)
-	open := strings.LastIndexByte(expression, '[')
-	if open <= 0 || !strings.HasSuffix(expression, "]") {
+	if !strings.HasSuffix(expression, "]") {
+		return nil
+	}
+	// The subscript is the bracket group that closes the expression; a list
+	// literal or comprehension that is the whole expression ([x IN l | …])
+	// is not one.
+	open := closingBracketGroupStart(expression)
+	if open <= 0 {
 		return nil
 	}
 	receiverStart := rowSubscriptReceiverStart(expression, open)
@@ -112,6 +118,33 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return invalidSubscriptTypeError("list subscript requires an INTEGER index", index)
 	}
 	return nil
+}
+
+// closingBracketGroupStart returns where the [ … ] group that ends
+// expression starts, reading brackets outside string literals and quoted
+// names; -1 when expression doesn't end with a balanced group.
+func closingBracketGroupStart(expression string) int {
+	var opens []int
+	for index := 0; index < len(expression); {
+		switch c := expression[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(expression, index, c)
+			continue
+		case '[':
+			opens = append(opens, index)
+		case ']':
+			if len(opens) == 0 {
+				return -1
+			}
+			start := opens[len(opens)-1]
+			opens = opens[:len(opens)-1]
+			if index == len(expression)-1 {
+				return start
+			}
+		}
+		index++
+	}
+	return -1
 }
 
 // rowSubscriptReceiverStart finds the primary expression immediately to the
