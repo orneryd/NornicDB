@@ -774,16 +774,6 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		if err != nil {
 			return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 		}
-	} else if len(nodes) == 0 && whereIdx > 0 {
-		// Preserve Cypher correctness when index metadata exists but candidate sets are stale/empty.
-		// Fall back to full MATCH evaluation instead of returning a false empty result.
-		usedPropertyIndex = false
-		usedIndexTopK = false
-		e.markOuterScanFallbackUsed()
-		nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, wherePart, streamingLimit)
-		if err != nil {
-			return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
-		}
 	}
 
 	// Apply WHERE filter if present

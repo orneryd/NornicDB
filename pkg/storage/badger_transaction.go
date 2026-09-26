@@ -3152,7 +3152,7 @@ func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() func() {
 			if !has {
 				continue
 			}
-			canonicalValue, ok := uniqueConstraintValueKey(rawValue)
+			canonicalValue, ok := indexValueKey(rawValue)
 			if !ok {
 				// Non-comparable value: skip lock acquisition. Validation
 				// still runs at commit; commit-window serialization is

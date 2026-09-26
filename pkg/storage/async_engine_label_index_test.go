@@ -14,7 +14,7 @@ import (
 func indexedLabelIDs(ae *AsyncEngine, label string) []NodeID {
 	ae.mu.RLock()
 	defer ae.mu.RUnlock()
-	set := ae.labelIndex[strings.ToLower(label)]
+	set := ae.pending.byLabel[strings.ToLower(label)]
 	out := make([]NodeID, 0, len(set))
 	for id := range set {
 		out = append(out, id)

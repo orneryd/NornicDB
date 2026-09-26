@@ -34,9 +34,6 @@ func assertNoScanFallback(t *testing.T, trace cypher.HotPathTrace) {
 	if trace.MergeScanFallbackUsed {
 		t.Errorf("hot path regression: MergeScanFallbackUsed=true — should use schema-indexed MERGE")
 	}
-	if trace.OuterScanFallbackUsed {
-		t.Errorf("hot path regression: OuterScanFallbackUsed=true — should use OuterIndexTopK")
-	}
 }
 
 // seedBaseGraph writes the Category / Supplier / Customer nodes used by the

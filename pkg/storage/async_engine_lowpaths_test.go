@@ -39,12 +39,14 @@ func TestAsyncEngine_LowCoverageHelpers(t *testing.T) {
 	release := nilAE.HoldFlush()
 	release()
 
-	// syncNodeLabelIndexLocked + add/remove label index branches.
+	// The pending view follows the cache: add / remove branches.
 	ae.mu.Lock()
-	ae.syncNodeLabelIndexLocked(nil)
-	ae.syncNodeLabelIndexLocked(&Node{ID: "n1", Labels: []string{"Person", "Human"}})
-	require.NotEmpty(t, ae.labelIndex["person"])
-	ae.removeNodeIDFromLabelIndexLocked("n1")
+	ae.pending.add(nil)
+	ae.pending.remove(nil)
+	ae.setCachedNodeLocked(&Node{ID: "n1", Labels: []string{"Person", "Human"}})
+	require.NotEmpty(t, ae.pending.byLabel["person"])
+	ae.removeCachedNodeLocked("n1")
+	require.Empty(t, ae.pending.byLabel["person"])
 	ae.mu.Unlock()
 
 	// mergeAsyncEdges excludes nil/deleted/overridden edges.

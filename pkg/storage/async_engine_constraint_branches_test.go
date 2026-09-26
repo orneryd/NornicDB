@@ -112,7 +112,7 @@ func TestAsyncEngine_CheckUniqueAndNodeKeyConstraint_Branches(t *testing.T) {
 	require.NoError(t, ae.checkUniqueConstraint(&Node{ID: "test:a", Labels: []string{"User"}}, uniq, "test", true))
 
 	ae.mu.Lock()
-	ae.nodeCache["test:cached"] = &Node{ID: "test:cached", Labels: []string{"User"}, Properties: map[string]any{"email": "dup@x", "tenant": "t", "uid": "1"}}
+	ae.setCachedNodeLocked(&Node{ID: "test:cached", Labels: []string{"User"}, Properties: map[string]any{"email": "dup@x", "tenant": "t", "uid": "1"}})
 	ae.mu.Unlock()
 
 	// cache duplicate branch in unique-check.

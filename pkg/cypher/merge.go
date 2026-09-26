@@ -1307,7 +1307,7 @@ func (e *StorageExecutor) evaluateWhereForNodeMap(ctx context.Context, nodeMap m
 // The function is shape-agnostic: it works for labelled and labelless
 // patterns, single-property and N-property patterns, and any property type
 // the index can key (string / int / float / bool — same set
-// `propertyIndexValueKey` accepts on insert). It deliberately does NOT
+// `indexValueKey` accepts on insert). It deliberately does NOT
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.

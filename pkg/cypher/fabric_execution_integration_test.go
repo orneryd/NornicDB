@@ -926,7 +926,6 @@ ORDER BY sourceId
 	trace := exec.LastHotPathTrace()
 	require.True(t, trace.OuterIndexTopK, "outer MATCH should use index top-k path")
 	require.True(t, trace.FabricBatchedApplyRows, "inner correlated subquery should use batched APPLY row lookup")
-	require.False(t, trace.OuterScanFallbackUsed, "index path should not fall back to full scan")
 }
 
 func TestExecute_FabricCorrelatedSourceTranslationJoin_HotPathShapeMatrix(t *testing.T) {

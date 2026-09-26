@@ -3831,13 +3831,6 @@ func (e *StorageExecutor) collectOptionalMatchInitialNodes(
 			return nil, err
 		}
 	}
-	if usedPropertyIndex && len(nodes) == 0 && whereClause != "" {
-		// Fail-open on possible stale index metadata/candidates.
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-		if err != nil {
-			return nil, err
-		}
-	}
 
 	// Filter by pattern properties if any.
 	if len(nodePattern.properties) > 0 {
