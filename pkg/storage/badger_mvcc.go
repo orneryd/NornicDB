@@ -191,11 +191,20 @@ func (b *BadgerEngine) effectiveMVCCPruneOptions(opts MVCCPruneOptions) MVCCPrun
 }
 
 func (b *BadgerEngine) writeNodeMVCCVersionInTxn(txn *badger.Txn, node *Node, version MVCCVersion) error {
-	encoded, err := encodeMVCCNodeRecord(node, false)
+	return writeMVCCVersionInTxn[*Node, nodeMVCCVersionKeyer](b, txn, string(node.ID), node, false, version, encodeMVCCNodeRecord)
+}
+
+// writeMVCCVersionInTxn encodes and writes one entity kind's versioned record
+// (or tombstone) within txn. The record type parameter and the plain encode
+// function keep the instantiation allocation-free; the marker keyer selects
+// the node or edge keyspace, so the version writers cannot drift apart.
+func writeMVCCVersionInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn *badger.Txn, id string, body R, tombstoned bool, version MVCCVersion, encode func(R, bool) ([]byte, error)) error {
+	var keyer K
+	encoded, err := encode(body, tombstoned)
 	if err != nil {
 		return err
 	}
-	key, err := b.mvccNodeVersionKeyString(txn, node.ID, version)
+	key, err := keyer.versionKey(b, txn, id, version)
 	if err != nil {
 		return err
 	}
@@ -203,39 +212,15 @@ func (b *BadgerEngine) writeNodeMVCCVersionInTxn(txn *badger.Txn, node *Node, ve
 }
 
 func (b *BadgerEngine) writeNodeMVCCTombstoneInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) error {
-	encoded, err := encodeMVCCNodeRecord(nil, true)
-	if err != nil {
-		return err
-	}
-	key, err := b.mvccNodeVersionKeyString(txn, id, version)
-	if err != nil {
-		return err
-	}
-	return txn.Set(key, encoded)
+	return writeMVCCVersionInTxn[*Node, nodeMVCCVersionKeyer](b, txn, string(id), (*Node)(nil), true, version, encodeMVCCNodeRecord)
 }
 
 func (b *BadgerEngine) writeEdgeMVCCVersionInTxn(txn *badger.Txn, edge *Edge, version MVCCVersion) error {
-	encoded, err := encodeMVCCEdgeRecord(edge, false)
-	if err != nil {
-		return err
-	}
-	key, err := b.mvccEdgeVersionKeyString(txn, edge.ID, version)
-	if err != nil {
-		return err
-	}
-	return txn.Set(key, encoded)
+	return writeMVCCVersionInTxn[*Edge, edgeMVCCVersionKeyer](b, txn, string(edge.ID), edge, false, version, encodeMVCCEdgeRecord)
 }
 
 func (b *BadgerEngine) writeEdgeMVCCTombstoneInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) error {
-	encoded, err := encodeMVCCEdgeRecord(nil, true)
-	if err != nil {
-		return err
-	}
-	key, err := b.mvccEdgeVersionKeyString(txn, id, version)
-	if err != nil {
-		return err
-	}
-	return txn.Set(key, encoded)
+	return writeMVCCVersionInTxn[*Edge, edgeMVCCVersionKeyer](b, txn, string(id), (*Edge)(nil), true, version, encodeMVCCEdgeRecord)
 }
 
 func (b *BadgerEngine) writeOutgoingAdjacencyMVCCVersionInTxn(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion, tombstoned bool) error {
@@ -809,6 +794,7 @@ func (b *BadgerEngine) loadNodeMVCCRecordExactInTxn(txn *badger.Txn, id NodeID, 
 type mvccVersionKeyer interface {
 	versionKeyLookup(b *BadgerEngine, id string, version MVCCVersion) []byte
 	versionPrefix(b *BadgerEngine, id string) []byte
+	versionKey(b *BadgerEngine, txn *badger.Txn, id string, version MVCCVersion) ([]byte, error)
 }
 
 type nodeMVCCVersionKeyer struct{}
@@ -821,6 +807,10 @@ func (nodeMVCCVersionKeyer) versionPrefix(b *BadgerEngine, id string) []byte {
 	return b.mvccNodeVersionPrefixString(NodeID(id))
 }
 
+func (nodeMVCCVersionKeyer) versionKey(b *BadgerEngine, txn *badger.Txn, id string, version MVCCVersion) ([]byte, error) {
+	return b.mvccNodeVersionKeyString(txn, NodeID(id), version)
+}
+
 type edgeMVCCVersionKeyer struct{}
 
 func (edgeMVCCVersionKeyer) versionKeyLookup(b *BadgerEngine, id string, version MVCCVersion) []byte {
@@ -829,6 +819,10 @@ func (edgeMVCCVersionKeyer) versionKeyLookup(b *BadgerEngine, id string, version
 
 func (edgeMVCCVersionKeyer) versionPrefix(b *BadgerEngine, id string) []byte {
 	return b.mvccEdgeVersionPrefixString(EdgeID(id))
+}
+
+func (edgeMVCCVersionKeyer) versionKey(b *BadgerEngine, txn *badger.Txn, id string, version MVCCVersion) ([]byte, error) {
+	return b.mvccEdgeVersionKeyString(txn, EdgeID(id), version)
 }
 
 // loadMVCCRecordExactInTxn reads one entity kind's MVCC record at an exact
