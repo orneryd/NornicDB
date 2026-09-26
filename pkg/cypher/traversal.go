@@ -432,8 +432,6 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		if !hasGrouping {
 			row := make([]interface{}, len(returnItems))
 			for i, item := range returnItems {
-				upperExpr := upperExprs[i] // Use pre-computed
-
 				switch {
 				case isAggregateFuncName(item.expr, "count"):
 					row[i] = e.aggregatePathCount(ctx, paths, matches, item.expr)
@@ -450,7 +448,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				case isAggregateFuncName(item.expr, "max"):
 					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), true)
 
-				case isAggregateFuncName(item.expr, "collect") && strings.Contains(upperExpr, "DISTINCT"):
+				case isAggregateFuncName(item.expr, "collect") && startsWithDistinct(extractFuncInner(item.expr)):
 					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
@@ -498,8 +496,6 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			keyIdx := 0
 
 			for i, item := range returnItems {
-				upperExpr := upperExprs[i] // Use pre-computed
-
 				if !isAggFlags[i] { // Use pre-computed flag
 					// Non-aggregated column - use group key value
 					row[i] = groupKeys[key][keyIdx]
@@ -524,7 +520,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				case isAggregateFuncName(item.expr, "max"):
 					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), true)
 
-				case isAggregateFuncName(item.expr, "collect") && strings.Contains(upperExpr, "DISTINCT"):
+				case isAggregateFuncName(item.expr, "collect") && startsWithDistinct(extractFuncInner(item.expr)):
 					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
@@ -1126,11 +1122,7 @@ func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathRe
 	if inner == "*" {
 		return int64(len(paths))
 	}
-	distinct := false
-	if strings.HasPrefix(strings.ToUpper(inner), "DISTINCT ") {
-		distinct = true
-		inner = trimDistinctPrefix(inner)
-	}
+	inner, distinct := cutDistinct(inner)
 	seen := make(map[string]struct{}, len(paths))
 	var count int64
 	for _, path := range paths {
@@ -1154,7 +1146,7 @@ func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathRe
 func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface{} {
 	inner, suffix, _ := extractFuncArgsWithSuffix(expr, "collect")
 	if distinct {
-		inner = trimDistinctPrefix(inner)
+		inner, _ = cutDistinct(inner)
 	}
 
 	collected := make([]interface{}, 0, len(paths))
@@ -1183,17 +1175,6 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 		return collected
 	}
 	return e.applyArraySuffix(collected, suffix)
-}
-
-func trimDistinctPrefix(expr string) string {
-	trimmed := strings.TrimSpace(expr)
-	if len(trimmed) < len("distinct ")+1 {
-		return trimmed
-	}
-	if strings.EqualFold(trimmed[:8], "distinct") {
-		return strings.TrimSpace(trimmed[8:])
-	}
-	return trimmed
 }
 
 // TraversalMatch represents a parsed traversal pattern

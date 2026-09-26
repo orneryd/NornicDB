@@ -96,11 +96,12 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	// clause (splitPipelineClauses) and pipelineApplyMerge applies them. The
 	// MERGE routes (executeMerge*, executeUnwind and its UNWIND batch
 	// operators) run MERGE actions faster for ingestion shapes but have no
-	// REMOVE, so a statement with MERGE actions runs here only when it also
-	// removes something.
+	// REMOVE and no WITH after the MERGE, so a statement with MERGE actions
+	// runs here only when it also removes something or continues with WITH.
 	upper := strings.ToUpper(cypher)
 	if (strings.Contains(upper, "ON CREATE SET") || strings.Contains(upper, "ON MATCH SET")) &&
-		(!strings.Contains(upper, "REMOVE") || !containsRemoveClauseAnywhere(cypher)) {
+		(!strings.Contains(upper, "REMOVE") || !containsRemoveClauseAnywhere(cypher)) &&
+		!pipelineHasWithAfterMerge(clauses) {
 		return nil, false
 	}
 	for _, clause := range clauses {
@@ -122,6 +123,22 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 		}
 	}
 	return clauses, true
+}
+
+// pipelineHasWithAfterMerge reports whether a WITH clause follows a MERGE.
+func pipelineHasWithAfterMerge(clauses []pipelineClause) bool {
+	merged := false
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseMerge:
+			merged = true
+		case pipelineClauseWith:
+			if merged {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // splitPipelineClauses walks the query from left to right and slices it on
@@ -1524,7 +1541,7 @@ func (e *StorageExecutor) pipelineMatchHint(remaining []pipelineClause) pipeline
 		return hint
 	}
 	body := strings.TrimSpace(terminalReturn[len("RETURN"):])
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
+	if _, distinct := cutDistinct(body); distinct {
 		return hint
 	}
 	for _, item := range e.parseReturnItems(body) {
@@ -2696,10 +2713,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		}
 	}
 	withDistinct := false
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		withDistinct = true
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, withDistinct = cutDistinct(body)
 	if strings.TrimSpace(body) == "*" {
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
@@ -3179,10 +3193,7 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 	}
 	name = strings.ToLower(strings.TrimSpace(expr[:open]))
 	inner = strings.TrimSpace(extractFuncInner(expr))
-	if strings.HasPrefix(strings.ToUpper(inner), "DISTINCT ") {
-		distinct = true
-		inner = strings.TrimSpace(inner[len("DISTINCT "):])
-	}
+	inner, distinct = cutDistinct(inner)
 	if inner == "" {
 		return "", "", false, false
 	}
@@ -3423,10 +3434,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 	modifiers := strings.TrimSpace(body[modifierStart:])
 	body = strings.TrimSpace(body[:modifierStart])
 	returnDistinct := false
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		returnDistinct = true
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, returnDistinct = cutDistinct(body)
 	if body == "*" {
 		columns := pipelineWildcardColumns(rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}

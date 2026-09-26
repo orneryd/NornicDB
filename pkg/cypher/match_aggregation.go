@@ -290,7 +290,7 @@ func (e *StorageExecutor) executeAggregationSingleGroup(ctx context.Context, nod
 			row[i] = e.evaluateSumArithmetic(item.expr, nodes, variable)
 
 		// Handle COUNT(DISTINCT n.property)
-		case strings.HasPrefix(upperExpr, "COUNT(") && strings.Contains(upperExpr, "DISTINCT"):
+		case strings.HasPrefix(upperExpr, "COUNT(") && startsWithDistinct(extractFuncInner(item.expr)):
 			if agg := ParseAggregation(item.expr); agg != nil && agg.Function == "COUNT" && agg.Distinct && agg.Property != "" {
 				seen := make(map[interface{}]bool)
 				for _, node := range nodes {
@@ -497,10 +497,8 @@ func (e *StorageExecutor) executeAggregationSingleGroup(ctx context.Context, nod
 			}
 
 		// Handle COLLECT(DISTINCT expression)
-		case strings.HasPrefix(upperExpr, "COLLECT(") && strings.Contains(upperExpr, "DISTINCT"):
-			// Extract the inner expression after "COLLECT(DISTINCT "
-			inner := item.expr[17 : len(item.expr)-1]
-			inner = strings.TrimSpace(inner)
+		case strings.HasPrefix(upperExpr, "COLLECT(") && startsWithDistinct(extractFuncInner(item.expr)):
+			inner, _ := cutDistinct(extractFuncInner(item.expr))
 
 			seen := make(map[string]bool) // Use string key for map comparison
 			collected := make([]interface{}, 0)

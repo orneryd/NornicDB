@@ -184,9 +184,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 			withClause = strings.TrimSpace(withClause[:idx])
 		}
 	}
-	trimmedWithClause := strings.TrimSpace(withClause)
-	withClause = trimDistinctPrefix(trimmedWithClause)
-	withDistinct := !strings.EqualFold(withClause, trimmedWithClause)
+	withClause, withDistinct := cutDistinct(withClause)
 	withItems := e.splitWithItems(withClause)
 
 	// Extract RETURN clause
@@ -307,9 +305,9 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 			for _, ae := range aggregateExprs {
 				inner := extractFuncInner(ae.expr)
 				switch {
-				case isAggregateFuncName(ae.expr, "count") && strings.Contains(strings.ToUpper(inner), "DISTINCT"):
+				case isAggregateFuncName(ae.expr, "count") && startsWithDistinct(inner):
 					// COUNT(DISTINCT ...) - extract after DISTINCT
-					distinctInner := strings.TrimSpace(inner[8:]) // skip "DISTINCT"
+					distinctInner, _ := cutDistinct(inner)
 					seen := make(map[string]bool)
 					for _, n := range groupNodes {
 						nodeMap := map[string]*storage.Node{nodePattern.variable: n}
@@ -387,9 +385,9 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 						values[ae.alias] = sumInt
 					}
 
-				case isAggregateFuncName(ae.expr, "collect") && strings.Contains(strings.ToUpper(inner), "DISTINCT"):
+				case isAggregateFuncName(ae.expr, "collect") && startsWithDistinct(inner):
 					// COLLECT(DISTINCT ...) - extract after DISTINCT
-					distinctInner := strings.TrimSpace(inner[8:]) // skip "DISTINCT"
+					distinctInner, _ := cutDistinct(inner)
 					seen := make(map[string]bool)
 					var collected []interface{}
 					for _, n := range groupNodes {
@@ -639,9 +637,9 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 			inner := extractFuncInner(item.expr)
 
 			switch {
-			case isAggregateFuncName(item.expr, "count") && strings.Contains(strings.ToUpper(inner), "DISTINCT"):
+			case isAggregateFuncName(item.expr, "count") && startsWithDistinct(inner):
 				// COUNT(DISTINCT variable) - extract after DISTINCT
-				distinctInner := strings.TrimSpace(inner[8:]) // skip "DISTINCT"
+				distinctInner, _ := cutDistinct(inner)
 				seen := make(map[interface{}]bool)
 				for _, cr := range computedRows {
 					if val, ok := resolveInnerForRow(cr, distinctInner); ok {

@@ -1,6 +1,31 @@
 package cypher
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
+
+// cutDistinct reports whether text (a projection body, or an aggregate's
+// argument list) starts with the DISTINCT keyword, and returns the text after
+// it, trimmed. The keyword ends at any character that can't continue an
+// identifier, so DISTINCT{a: 1}, DISTINCT(x) and DISTINCT followed by a
+// newline are DISTINCT, and a name that only starts with it (distinctName) is
+// not. Without the keyword, text is returned trimmed.
+func cutDistinct(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	const keyword = "DISTINCT"
+	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || isAlphaNumericByte(text[len(keyword)]) {
+		return text, false
+	}
+	return strings.TrimSpace(text[len(keyword):]), true
+}
+
+// startsWithDistinct reports whether text starts with the DISTINCT keyword
+// (cutDistinct).
+func startsWithDistinct(text string) bool {
+	_, distinct := cutDistinct(text)
+	return distinct
+}
 
 // keywordScan provides high-performance, allocation-free keyword searching with:
 //   - case-insensitive matching

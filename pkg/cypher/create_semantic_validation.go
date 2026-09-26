@@ -91,9 +91,7 @@ func projectedBindingScope(input *semanticBindingScope, clause string) *semantic
 			body = strings.TrimSpace(body[:index])
 		}
 	}
-	if strings.HasPrefix(strings.ToUpper(body), "DISTINCT ") {
-		body = strings.TrimSpace(body[len("DISTINCT "):])
-	}
+	body, _ = cutDistinct(body)
 	output := newSemanticBindingScope()
 	for _, raw := range splitTopLevelComma(body) {
 		expr, alias := parseProjectionExprAlias(strings.TrimSpace(raw))

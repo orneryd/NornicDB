@@ -1063,81 +1063,11 @@ func TestParseReturnClauseBasic(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			cols, vals := exec.parseReturnClause(ctx, tt.returnClause, tt.varName, node)
-			assert.Equal(t, tt.expectedCols, cols)
-			assert.True(t, tt.expectedValFunc(vals), "Value validation failed for %v", vals)
-		})
-	}
-}
-
-func TestSplitReturnExpressions(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	tests := []struct {
-		name     string
-		clause   string
-		expected []string
-	}{
-		{
-			name:     "single expression",
-			clause:   "n.name",
-			expected: []string{"n.name"},
-		},
-		{
-			name:     "multiple simple expressions",
-			clause:   "n.name, n.age, n.city",
-			expected: []string{"n.name", " n.age", " n.city"},
-		},
-		{
-			name:     "expression with function",
-			clause:   "id(n), n.name",
-			expected: []string{"id(n)", " n.name"},
-		},
-		{
-			name:     "nested parentheses",
-			clause:   "count(n), sum(n.age)",
-			expected: []string{"count(n)", " sum(n.age)"},
-		},
-		{
-			name:     "complex function call",
-			clause:   "collect(n.name), count(*)",
-			expected: []string{"collect(n.name)", " count(*)"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := exec.splitReturnExpressions(tt.clause)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestExpressionToAlias(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	tests := []struct {
-		name     string
-		expr     string
-		expected string
-	}{
-		{"property access", "n.name", "n.name"},
-		{"nested property", "n.address.city", "n.address.city"},
-		{"function call", "id(n)", "id(n)"},
-		{"simple variable", "n", "n"},
-		{"literal", "'hello'", "'hello'"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := exec.expressionToAlias(tt.expr)
-			assert.Equal(t, tt.expected, result)
+			result, err := exec.projectMergeReturn(ctx, []pipelineRow{exec.mergeBindingRow(ctx, map[string]*storage.Node{tt.varName: node}, nil)}, "RETURN "+tt.returnClause)
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, tt.expectedCols, result.Columns)
+			assert.True(t, tt.expectedValFunc(result.Rows[0]), "Value validation failed for %v", result.Rows[0])
 		})
 	}
 }

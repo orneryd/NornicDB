@@ -728,12 +728,11 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 
 	// Handle RETURN clause
 	if returnIdx > 0 {
-		returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-		columns, values := e.parseReturnClause(ctx, returnClause, varName, node)
-		result.Columns = columns
-		if len(values) > 0 {
-			result.Rows = append(result.Rows, values)
+		projected, err := e.projectMergeReturn(ctx, []pipelineRow{e.mergeBindingRow(ctx, map[string]*storage.Node{varName: node}, nil)}, cypher[returnIdx:])
+		if err != nil {
+			return nil, err
 		}
+		result.Columns, result.Rows = projected.Columns, projected.Rows
 	}
 
 	return result, nil
@@ -789,24 +788,13 @@ func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher 
 			matchClause = strings.TrimSpace(matchClause[:withIdx])
 		}
 	}
-	returnIdxInMerge := findKeywordIndex(mergeClause, "RETURN")
-	aggregateCountOnly := false
-	aggregateCountAlias := "count(*)"
-	aggregateCountExpr := "*"
-	if returnIdxInMerge > 0 {
-		returnPart := strings.TrimSpace(mergeClause[returnIdxInMerge+len("RETURN"):])
-		items := e.parseReturnItems(returnPart)
-		if len(items) == 1 {
-			name, expression, distinct, aggregate := parsePipelineAggregate(items[0].expr)
-			if aggregate && name == "count" && !distinct {
-				aggregateCountOnly = true
-				aggregateCountExpr = expression
-				aggregateCountAlias = items[0].expr
-				if items[0].alias != "" {
-					aggregateCountAlias = items[0].alias
-				}
-			}
-		}
+	// The MERGE runs once per matched row; the RETURN projects all the
+	// merged rows at once (projectMergeReturn), so its ORDER BY, SKIP,
+	// LIMIT, DISTINCT and aggregation see every row (#640).
+	returnClause := ""
+	if returnIdxInMerge := findKeywordIndex(mergeClause, "RETURN"); returnIdxInMerge > 0 {
+		returnClause = strings.TrimSpace(mergeClause[returnIdxInMerge:])
+		mergeClause = strings.TrimSpace(mergeClause[:returnIdxInMerge])
 	}
 
 	// Execute MATCH to get context
@@ -818,64 +806,46 @@ func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher 
 		matchedNodes = applyContextWindow(matchedNodes, windowVar, windowSkip, windowLimit)
 	}
 
-	// If no matches found and not OPTIONAL MATCH, return empty
-	if len(matchedNodes) == 0 && findKeywordIndex(cypher, "OPTIONAL MATCH") == -1 {
-		if aggregateCountOnly {
-			return &ExecuteResult{
-				Columns: []string{aggregateCountAlias},
-				Rows:    [][]interface{}{{int64(0)}},
-				Stats:   result.Stats,
-			}, nil
-		}
-		return result, nil
-	}
-
-	var aggregateCount int64
-	countMergedBinding := func(nodes map[string]*storage.Node, relationships map[string]*storage.Edge) {
-		if aggregateCountExpr == "*" || e.evaluateExpressionWithContext(ctx, aggregateCountExpr, nodes, relationships) != nil {
-			aggregateCount++
-		}
-	}
-
-	// For each set of matched nodes, execute the MERGE with context
-	for _, nodeContext := range matchedNodes {
-		mergeResult, err := e.executeMergeWithContext(ctx, mergeClause, nodeContext, matchedRels)
+	var rows []pipelineRow
+	mergeRow := func(nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) error {
+		mergeResult, err := e.executeMergeWithContext(ctx, mergeClause, nodeContext, relContext)
 		if err != nil {
-			return nil, err
+			return err
 		}
-
-		// Combine results
 		if mergeResult.Stats != nil {
 			addQueryStats(result.Stats, mergeResult.Stats)
 		}
-
-		// Add rows from merge result
-		if len(mergeResult.Columns) > 0 && len(result.Columns) == 0 {
-			result.Columns = mergeResult.Columns
+		if returnClause != "" {
+			rows = append(rows, e.mergeBindingRow(ctx, nodeContext, relContext))
 		}
-		if !aggregateCountOnly {
-			result.Rows = append(result.Rows, mergeResult.Rows...)
-		} else {
-			countMergedBinding(nodeContext, matchedRels)
-		}
+		return nil
 	}
 
-	// If no matched nodes but had OPTIONAL MATCH, still try to execute MERGE
 	if len(matchedNodes) == 0 {
-		nodeContext := make(map[string]*storage.Node)
-		relContext := make(map[string]*storage.Edge)
-		mergeResult, err := e.executeMergeWithContext(ctx, mergeClause, nodeContext, relContext)
+		// Without matches only an OPTIONAL MATCH still runs the MERGE, once.
+		if findKeywordIndex(cypher, "OPTIONAL MATCH") >= 0 {
+			if err := mergeRow(make(map[string]*storage.Node), make(map[string]*storage.Edge)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, nodeContext := range matchedNodes {
+		// Each row gets its own relationship bindings: a relationship MERGE
+		// adds its variable to them.
+		relContext := make(map[string]*storage.Edge, len(matchedRels))
+		for name, edge := range matchedRels {
+			relContext[name] = edge
+		}
+		if err := mergeRow(nodeContext, relContext); err != nil {
+			return nil, err
+		}
+	}
+	if returnClause != "" {
+		projected, err := e.projectMergeReturn(ctx, rows, returnClause)
 		if err != nil {
 			return nil, err
 		}
-		result = mergeResult
-		if aggregateCountOnly {
-			countMergedBinding(nodeContext, relContext)
-		}
-	}
-	if aggregateCountOnly {
-		result.Columns = []string{aggregateCountAlias}
-		result.Rows = [][]interface{}{{aggregateCount}}
+		result.Columns, result.Rows = projected.Columns, projected.Rows
 	}
 
 	return result, nil
@@ -937,7 +907,7 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: &QueryStats{}}, nil
 	}
 
-	// Parse RETURN clause from merge part if present.
+	// The MERGE runs per row; the RETURN projects all rows at once (#640).
 	returnIdxInMerge := findKeywordIndex(mergeClause, "RETURN")
 	var returnPart string
 	mergeMutationPart := mergeClause
@@ -945,6 +915,7 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 		returnPart = strings.TrimSpace(mergeClause[returnIdxInMerge:])
 		mergeMutationPart = strings.TrimSpace(mergeClause[:returnIdxInMerge])
 	}
+	var rows []pipelineRow
 
 	result := &ExecuteResult{
 		Columns: []string{},
@@ -1004,13 +975,12 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 			}
 
 			// The merge clause runs un-substituted against the bound context.
-			fullMerge := mergeMutationPart
-			if returnPart != "" {
-				fullMerge = mergeMutationPart + " " + returnPart
-			}
-
 			for contextIdx, mergeContext := range nodeContexts {
-				mergeResult, err := e.executeMergeWithContext(childCtx, fullMerge, mergeContext, relContexts[contextIdx])
+				relContext := make(map[string]*storage.Edge, len(relContexts[contextIdx]))
+				for name, edge := range relContexts[contextIdx] {
+					relContext[name] = edge
+				}
+				mergeResult, err := e.executeMergeWithContext(childCtx, mergeMutationPart, mergeContext, relContext)
 				if err != nil {
 					return nil, err
 				}
@@ -1018,13 +988,18 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 				if mergeResult.Stats != nil {
 					addQueryStats(result.Stats, mergeResult.Stats)
 				}
-
-				if len(mergeResult.Columns) > 0 && len(result.Columns) == 0 {
-					result.Columns = mergeResult.Columns
+				if returnPart != "" {
+					rows = append(rows, e.mergeBindingRow(childCtx, mergeContext, relContext))
 				}
-				result.Rows = append(result.Rows, mergeResult.Rows...)
 			}
 		}
+	}
+	if returnPart != "" {
+		projected, err := e.projectMergeReturn(ctx, rows, returnPart)
+		if err != nil {
+			return nil, err
+		}
+		result.Columns, result.Rows = projected.Columns, projected.Rows
 	}
 
 	return result, nil
@@ -2104,12 +2079,11 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 
 	// Handle RETURN clause
 	if returnIdx > 0 {
-		returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-		columns, values := e.parseReturnClauseWithContext(ctx, returnClause, nodeContext, relContext)
-		result.Columns = columns
-		if len(values) > 0 {
-			result.Rows = append(result.Rows, values)
+		projected, err := e.projectMergeReturn(ctx, []pipelineRow{e.mergeBindingRow(ctx, nodeContext, relContext)}, cypher[returnIdx:])
+		if err != nil {
+			return nil, err
 		}
+		result.Columns, result.Rows = projected.Columns, projected.Rows
 	}
 
 	return result, nil
@@ -2342,12 +2316,11 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 
 	// Handle RETURN
 	if returnIdx > 0 {
-		returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-		columns, values := e.parseReturnClauseWithContext(ctx, returnClause, nodeContext, relContext)
-		result.Columns = columns
-		if len(values) > 0 {
-			result.Rows = append(result.Rows, values)
+		projected, err := e.projectMergeReturn(ctx, []pipelineRow{e.mergeBindingRow(ctx, nodeContext, relContext)}, cypher[returnIdx:])
+		if err != nil {
+			return nil, err
 		}
+		result.Columns, result.Rows = projected.Columns, projected.Rows
 	}
 
 	return result, nil
@@ -2682,164 +2655,61 @@ func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, 
 	return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 }
 
-// parseReturnClauseWithContext parses RETURN with context from MATCH.
-func (e *StorageExecutor) parseReturnClauseWithContext(ctx context.Context, returnClause string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) ([]string, []interface{}) {
-	// Handle RETURN *
-	if strings.TrimSpace(returnClause) == "*" {
-		var columns []string
-		var values []interface{}
-		for name, node := range nodes {
-			columns = append(columns, name)
-			values = append(values, node)
-		}
-		return columns, values
+// mergeBindingRow is the row a MERGE's RETURN reads: the values bound in
+// ctx (fabric record and child-context bindings, such as an UNWIND variable)
+// and the MERGE's node and relationship bindings.
+func (e *StorageExecutor) mergeBindingRow(ctx context.Context, nodes map[string]*storage.Node, rels map[string]*storage.Edge) pipelineRow {
+	bindings := valueBindingsFromContext(ctx)
+	row := make(pipelineRow, len(e.fabricRecordBindings)+len(bindings)+len(nodes)+len(rels))
+	for name, value := range e.fabricRecordBindings {
+		row[name] = value
 	}
-
-	var columns []string
-	var values []interface{}
-
-	parts := e.splitReturnExpressions(returnClause)
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
+	for name, value := range bindings {
+		row[name] = value
+	}
+	// An unbound variable (an OPTIONAL MATCH without a match) is null.
+	for name, node := range nodes {
+		if name == "" {
 			continue
 		}
-
-		var expr, alias string
-		asIdx := strings.LastIndex(strings.ToUpper(part), " AS ")
-		if asIdx > 0 {
-			expr = strings.TrimSpace(part[:asIdx])
-			alias = strings.TrimSpace(part[asIdx+4:])
+		if node == nil {
+			row[name] = nil
 		} else {
-			expr = part
-			alias = e.expressionToAlias(expr)
+			row[name] = node
 		}
-
-		upperExpr := strings.ToUpper(strings.TrimSpace(expr))
-		if upperExpr == "COUNT(*)" {
-			columns = append(columns, alias)
-			values = append(values, int64(1))
-			continue
-		}
-		if strings.HasPrefix(upperExpr, "COUNT(") && strings.HasSuffix(upperExpr, ")") {
-			inner := strings.TrimSpace(expr[len("COUNT(") : len(expr)-1])
-			columns = append(columns, alias)
-			if _, ok := nodes[inner]; ok {
-				values = append(values, int64(1))
-				continue
-			}
-			if _, ok := rels[inner]; ok {
-				values = append(values, int64(1))
-				continue
-			}
-			values = append(values, int64(0))
-			continue
-		}
-
-		value := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-		columns = append(columns, alias)
-		values = append(values, value)
 	}
-
-	return columns, values
-}
-
-// parseReturnClause parses RETURN expressions and evaluates them against a node.
-// Supports: n.prop, n.prop AS alias, id(n), *, literal values
-func (e *StorageExecutor) parseReturnClause(ctx context.Context, returnClause string, varName string, node *storage.Node) ([]string, []interface{}) {
-	// Handle RETURN *
-	if strings.TrimSpace(returnClause) == "*" {
-		return []string{varName}, []interface{}{node}
-	}
-
-	var columns []string
-	var values []interface{}
-
-	// Split by comma, but be careful with nested expressions
-	parts := e.splitReturnExpressions(returnClause)
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
+	for name, edge := range rels {
+		if name == "" {
 			continue
 		}
-
-		// Check for AS alias
-		var expr, alias string
-		asIdx := strings.LastIndex(strings.ToUpper(part), " AS ")
-		if asIdx > 0 {
-			expr = strings.TrimSpace(part[:asIdx])
-			alias = strings.TrimSpace(part[asIdx+4:])
+		if edge == nil {
+			row[name] = nil
 		} else {
-			expr = part
-			// Generate alias from expression
-			alias = e.expressionToAlias(expr)
+			row[name] = edge
 		}
-
-		// Evaluate expression
-		upperExpr := strings.ToUpper(strings.TrimSpace(expr))
-		if upperExpr == "COUNT(*)" {
-			columns = append(columns, alias)
-			values = append(values, int64(1))
-			continue
-		}
-		if strings.HasPrefix(upperExpr, "COUNT(") && strings.HasSuffix(upperExpr, ")") {
-			inner := strings.TrimSpace(expr[len("COUNT(") : len(expr)-1])
-			columns = append(columns, alias)
-			if strings.EqualFold(inner, varName) && node != nil {
-				values = append(values, int64(1))
-			} else {
-				values = append(values, int64(0))
-			}
-			continue
-		}
-
-		value := e.evaluateExpression(ctx, expr, varName, node)
-		columns = append(columns, alias)
-		values = append(values, value)
 	}
-
-	return columns, values
+	return row
 }
 
-// splitReturnExpressions splits RETURN clause by commas, respecting parentheses.
-func (e *StorageExecutor) splitReturnExpressions(clause string) []string {
-	var result []string
-	var current strings.Builder
-	depth := 0
-
-	for _, ch := range clause {
-		switch ch {
-		case '(':
-			depth++
-			current.WriteRune(ch)
-		case ')':
-			depth--
-			current.WriteRune(ch)
-		case ',':
-			if depth == 0 {
-				result = append(result, current.String())
-				current.Reset()
-			} else {
-				current.WriteRune(ch)
-			}
-		default:
-			current.WriteRune(ch)
-		}
+// projectMergeReturn projects a MERGE statement's binding rows through the
+// shared RETURN projection (pipelineApplyReturn), so DISTINCT, aggregation,
+// ORDER BY, SKIP and LIMIT apply over all the statement's rows (#640).
+// returnClause starts with RETURN.
+func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelineRow, returnClause string) (*ExecuteResult, error) {
+	returnClause = strings.TrimSpace(returnClause)
+	if result, ok := e.pipelineApplyReturn(ctx, rows, "RETURN "+strings.TrimSpace(returnClause[len("RETURN"):])); ok {
+		return result, nil
 	}
-
-	if current.Len() > 0 {
-		result = append(result, current.String())
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, failure
 	}
-
-	return result
-}
-
-// expressionToAlias returns Cypher's implicit result-column name. Without an
-// explicit AS clause, the source expression itself is the column name.
-func (e *StorageExecutor) expressionToAlias(expr string) string {
-	return strings.TrimSpace(expr)
+	err := newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"UnexpectedSyntax",
+		"could not parse RETURN expression: "+strings.TrimSpace(returnClause[len("RETURN"):]),
+	)
+	recordExpressionFailure(ctx, err)
+	return nil, err
 }
 
 // executeMergeWithChain handles MERGE ... WITH ... MATCH ... MERGE chain patterns.

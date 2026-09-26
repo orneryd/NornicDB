@@ -246,9 +246,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	}
 
 	// Parse WITH items
-	trimmedWithClause := strings.TrimSpace(withClause)
-	withClause = trimDistinctPrefix(trimmedWithClause)
-	withDistinct := !strings.EqualFold(withClause, trimmedWithClause)
+	withClause, withDistinct := cutDistinct(withClause)
 	withItems := e.splitWithItems(withClause)
 	type withItem struct {
 		expr        string
@@ -345,9 +343,9 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 			for _, ae := range aggregateExprs {
 				inner := extractFuncInner(ae.expr)
 				switch {
-				case isAggregateFuncName(ae.expr, "count") && strings.Contains(strings.ToUpper(inner), "DISTINCT"):
+				case isAggregateFuncName(ae.expr, "count") && startsWithDistinct(inner):
 					// COUNT(DISTINCT ...) - extract after DISTINCT
-					distinctInner := strings.TrimSpace(inner[8:]) // skip "DISTINCT"
+					distinctInner, _ := cutDistinct(inner)
 					seen := make(map[string]bool)
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
@@ -442,9 +440,9 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					}
 					values[ae.alias] = maxVal
 
-				case isAggregateFuncName(ae.expr, "collect") && strings.Contains(strings.ToUpper(inner), "DISTINCT"):
+				case isAggregateFuncName(ae.expr, "collect") && startsWithDistinct(inner):
 					// COLLECT(DISTINCT ...) - extract after DISTINCT
-					distinctInner := strings.TrimSpace(inner[8:]) // skip "DISTINCT"
+					distinctInner, _ := cutDistinct(inner)
 					seen := make(map[string]bool)
 					var collected []interface{}
 					for _, p := range groupPaths {
@@ -583,12 +581,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 
 				if isAggregateFuncName(item.expr, "collect") {
 					// Handle COLLECT (with or without DISTINCT)
-					upperInner := strings.ToUpper(inner)
-					isDistinct := strings.HasPrefix(upperInner, "DISTINCT ")
-					collectExpr := inner
-					if isDistinct {
-						collectExpr = strings.TrimSpace(inner[9:])
-					}
+					collectExpr, isDistinct := cutDistinct(inner)
 
 					seen := make(map[string]bool)
 					var collected []interface{}
