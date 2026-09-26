@@ -27,6 +27,7 @@ func TestOrderByReadsOnlyVariablesInScope(t *testing.T) {
 		"MATCH (n:OL) WITH n ORDER BY any(v IN n.l WHERE v > 2) DESC, n.k RETURN n.k AS k":        {{"a"}, {"b"}, {"c"}},
 		"MATCH (n:OL) WITH n ORDER BY n.k IS NULL, n.k STARTS WITH 'a', n.k DESC RETURN n.k AS k": {{"c"}, {"b"}, {"a"}},
 		"MATCH (n:OL) RETURN n.k AS k ORDER BY reduce(s = 0, v IN n.l | s + v) DESC, k":           {{"a"}, {"b"}, {"c"}},
+		"MATCH (n:OL) WITH n ORDER BY n {.k}.k DESC RETURN n.k AS k":                              {{"c"}, {"b"}, {"a"}},
 		"MATCH (n:OL) RETURN n.k AS k ORDER BY CASE WHEN n.k = 'c' THEN 0 ELSE 1 END, k":          {{"c"}, {"a"}, {"b"}},
 	} {
 		result, err := exec.Execute(ctx, query, nil)
