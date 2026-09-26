@@ -1344,7 +1344,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	cypher = normalizeCypherSyntaxConfusables(cypher)
 	// Comments and keyword spacing are canonical from here on; what the
 	// client sees (column names, messages, plans) is the text it sent (#740).
-	canonical, rewrite := canonicalizeQueryText(cypher)
+	// NORNICDB_CYPHER_QUERY_NORMALIZATION=false skips the pass: the
+	// statement runs as sent.
+	canonical, rewrite := cypher, (*queryRewrite)(nil)
+	if config.IsCypherQueryNormalizationEnabled() {
+		canonical, rewrite = canonicalizeQueryText(cypher)
+	}
 	if rewrite != nil {
 		cypher = canonical
 		defer func() { result, retErr = rewrite.restore(result, retErr) }()

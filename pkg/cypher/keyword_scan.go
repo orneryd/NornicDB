@@ -840,6 +840,16 @@ func (m *canonicalRewriteMemo) slot(query string) *atomic.Pointer[queryRewrite] 
 	return &m.slots[maphash.String(m.seed, query)%uint64(len(m.slots))]
 }
 
+// classificationText is the text a statement's permission and routing
+// decisions read (read / write / schema / admin, cacheability, write
+// detection): its canonical form, whatever NORNICDB_CYPHER_QUERY_NORMALIZATION
+// says, so a comment or unusual spacing never changes them. A statement that
+// is canonical already is returned as is, without allocating.
+func classificationText(query string) string {
+	canonical, _ := canonicalizeQueryText(query)
+	return canonical
+}
+
 // canonicalizeQueryText returns the canonical form of query (see above) and
 // the rewrite that maps it back, or query and nil when it is canonical
 // already; it doesn't allocate then, nor for a formatted statement whose

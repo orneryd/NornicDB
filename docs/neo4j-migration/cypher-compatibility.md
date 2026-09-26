@@ -150,6 +150,12 @@ This changes only the announced Bolt server string used during handshake compati
 
 ---
 
+### Comments and Whitespace
+
+Comments (`//`, `/* … */`) and any whitespace between tokens (spaces, tabs, line breaks, the Unicode spaces) are ignored, as in Neo4j: `ORDER  BY`, `ORDER /* c */ BY` and a statement written over several lines run like the single-line form. Column names, error messages and EXPLAIN / PROFILE plans still show the statement as sent.
+
+This normalization is on by default. `NORNICDB_CYPHER_QUERY_NORMALIZATION=false` turns it off for clients that already strip comments and collapse whitespace; with it off, statements with comments or unusual spacing may fail. Permission checks and write detection work the same either way.
+
 ## Recently Verified Features
 
 ### 1. **ORDER BY** Clause

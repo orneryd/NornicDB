@@ -18,6 +18,7 @@ var (
 // functions can vary over time (or be inherently non-deterministic) without any writes.
 // Those queries should not be cached.
 func isCacheableReadQuery(cypher string) bool {
+	cypher = classificationText(cypher)
 	upper := strings.ToUpper(cypher)
 	// SHOW commands list live state — running transactions, users, settings,
 	// schema — that graph-write invalidation doesn't track, and TERMINATE

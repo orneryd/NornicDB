@@ -115,6 +115,16 @@ const (
 	// Environment: NORNICDB_PARSER
 	EnvParserType = "NORNICDB_PARSER"
 
+	// EnvCypherQueryNormalization turns the Cypher query text normalization
+	// off. ENABLED by default: comments and runs of whitespace outside string
+	// literals and quoted names become one space before a statement runs, as
+	// Neo4j ignores them (#740). Disable with "false" or "0" only for clients
+	// that send normalized statements already; with it off, a statement with
+	// comments or unusual spacing may fail. Permission and routing decisions
+	// don't depend on it.
+	// Environment: NORNICDB_CYPHER_QUERY_NORMALIZATION
+	EnvCypherQueryNormalization = "NORNICDB_CYPHER_QUERY_NORMALIZATION"
+
 	// Parser type constants
 	ParserTypeNornic = "nornic"
 	ParserTypeANTLR  = "antlr"
@@ -213,6 +223,11 @@ var (
 
 	// Parser type - "nornic" (default) or "antlr"
 	parserType atomic.Value // string
+
+	// cypherQueryNormalizationDisabled is set when the Cypher query text
+	// normalization is turned off (EnvCypherQueryNormalization); its zero
+	// value is the default, enabled.
+	cypherQueryNormalizationDisabled atomic.Bool
 )
 
 func init() {
@@ -230,6 +245,12 @@ func init() {
 				// Unknown parser type, use default
 				parserType.Store(ParserTypeNornic)
 			}
+		}
+
+		// Cypher query normalization: ENABLED by default, disable with
+		// "false" or "0".
+		if env := strings.ToLower(strings.TrimSpace(os.Getenv(EnvCypherQueryNormalization))); env == "false" || env == "0" {
+			cypherQueryNormalizationDisabled.Store(true)
 		}
 
 		// Experimental features - DISABLED by default, enable with "true" or "1"
@@ -1217,6 +1238,34 @@ func WithAutoTLPLLMAugmentDisabled() func() {
 	autoTLPLLMAugmentEnabled.Store(false)
 	return func() {
 		autoTLPLLMAugmentEnabled.Store(prev)
+	}
+}
+
+// ============================================================================
+// Cypher Query Normalization
+// ============================================================================
+
+// IsCypherQueryNormalizationEnabled reports whether statements are rewritten
+// to their canonical text before they run (comments and runs of whitespace
+// outside quotes become one space). Enabled by default
+// (EnvCypherQueryNormalization).
+func IsCypherQueryNormalizationEnabled() bool {
+	return !cypherQueryNormalizationDisabled.Load()
+}
+
+// SetCypherQueryNormalizationEnabled turns the Cypher query normalization on
+// or off.
+func SetCypherQueryNormalizationEnabled(enabled bool) {
+	cypherQueryNormalizationDisabled.Store(!enabled)
+}
+
+// WithCypherQueryNormalizationDisabled turns the normalization off and
+// returns the function that restores the previous setting (for tests).
+func WithCypherQueryNormalizationDisabled() func() {
+	previous := IsCypherQueryNormalizationEnabled()
+	SetCypherQueryNormalizationEnabled(false)
+	return func() {
+		SetCypherQueryNormalizationEnabled(previous)
 	}
 }
 

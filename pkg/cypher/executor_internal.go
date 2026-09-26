@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -20,7 +21,9 @@ import (
 // on ctx), avoiding nested implicit transactions and misrouting.
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
 	cypher = normalizeCypherSyntaxConfusables(cypher)
-	cypher, _ = canonicalizeQueryText(cypher)
+	if config.IsCypherQueryNormalizationEnabled() {
+		cypher, _ = canonicalizeQueryText(cypher)
+	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if cypher == "" {

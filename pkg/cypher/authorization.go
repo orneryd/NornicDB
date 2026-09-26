@@ -18,6 +18,7 @@ type PermissionRequirements struct {
 // QueryPermissionRequirements returns the permissions required by a query and
 // a registered procedure invoked by that query, when present.
 func QueryPermissionRequirements(query string) PermissionRequirements {
+	query = classificationText(query)
 	keywords := queryKeywords(query)
 	requirements := PermissionRequirements{
 		Read:   true,

@@ -120,8 +120,11 @@ func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
 	}
 	a.cacheMu.RUnlock()
 
-	// Normalize for cache key
-	normalized := normalizeQuery(cypher)
+	// The analysis and its cache key read the canonical text, so comments
+	// and spacing don't change it whatever the normalization setting
+	// (classificationText).
+	text := classificationText(cypher)
+	normalized := normalizeQuery(text)
 
 	// Check cache
 	a.cacheMu.RLock()
@@ -132,7 +135,7 @@ func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
 	a.cacheMu.RUnlock()
 
 	// Analyze query
-	info := analyzeQuery(cypher)
+	info := analyzeQuery(text)
 	info.NormalizedQuery = normalized
 
 	// Cache result

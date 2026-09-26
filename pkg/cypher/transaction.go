@@ -452,7 +452,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 }
 
 func looksLikeWriteQuery(cypher string) bool {
-	upper := strings.ToUpper(cypher)
+	upper := strings.ToUpper(classificationText(cypher))
 	return strings.Contains(upper, "CREATE") ||
 		strings.Contains(upper, "MERGE") ||
 		strings.Contains(upper, "DELETE") ||
