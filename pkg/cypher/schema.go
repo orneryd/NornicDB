@@ -633,10 +633,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 		}
 
-		if err := e.storage.GetSchema().AddPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
-			return nil, err
-		}
-		if err := e.backfillPropertyIndex(parsed.label, parsed.properties); err != nil {
+		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
 			return nil, err
 		}
 
@@ -650,10 +647,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			propsJoined := strings.Join(parsed.properties, "_")
 			indexName = fmt.Sprintf("index_%s_%s", strings.ToLower(parsed.label), strings.ToLower(propsJoined))
 		}
-		if err := e.storage.GetSchema().AddPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
-			return nil, err
-		}
-		if err := e.backfillPropertyIndex(parsed.label, parsed.properties); err != nil {
+		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -2039,6 +2033,27 @@ func (e *StorageExecutor) parseIndexProperties(propertiesStr string) []string {
 	return e.parseIndexPropertiesWithMode(propertiesStr, true)
 }
 
+// addPropertyIndex creates a property index and, when it didn't exist yet,
+// fills it from the label's nodes. An existing index is left as it is: it is
+// already maintained, and filling it again would list its nodes twice. A new
+// index whose fill fails is dropped again: index lookups trust an index to
+// hold every node with the value, so a half-filled one would drop rows.
+func (e *StorageExecutor) addPropertyIndex(name, label string, properties []string) error {
+	schema := e.storage.GetSchema()
+	existed := len(properties) > 0 && schema.HasPropertyIndex(label, properties[0])
+	if err := schema.AddPropertyIndex(name, label, properties); err != nil {
+		return err
+	}
+	if existed {
+		return nil
+	}
+	if err := e.backfillPropertyIndex(label, properties); err != nil {
+		_ = schema.DropIndex(name)
+		return err
+	}
+	return nil
+}
+
 func (e *StorageExecutor) backfillPropertyIndex(label string, properties []string) error {
 	// Current runtime lookup path uses single-property indexes.
 	if len(properties) != 1 {
@@ -2054,6 +2069,7 @@ func (e *StorageExecutor) backfillPropertyIndex(label string, properties []strin
 	if err != nil {
 		return localizedError(localization.CypherSchemaBackfillIndexFailed(label, err), err)
 	}
+	values := make(map[storage.NodeID]interface{}, len(nodes))
 	for _, node := range nodes {
 		if node == nil || node.Properties == nil {
 			continue
@@ -2062,10 +2078,10 @@ func (e *StorageExecutor) backfillPropertyIndex(label string, properties []strin
 		if !ok {
 			continue
 		}
-		nodeID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, node.ID)
-		if err := schema.PropertyIndexInsert(label, property, nodeID, value); err != nil {
-			return localizedError(localization.CypherSchemaBackfillPropertyIndexFailed(label, property, err), err)
-		}
+		values[storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, node.ID)] = value
+	}
+	if err := schema.BackfillPropertyIndex(label, property, values); err != nil {
+		return localizedError(localization.CypherSchemaBackfillPropertyIndexFailed(label, property, err), err)
 	}
 	return nil
 }

@@ -614,10 +614,9 @@ func TestAsyncEngine_DeleteHelpers_CachedInflightAndIdempotent(t *testing.T) {
 		createdID := NodeID("test:delete-created")
 		updatedID := NodeID("test:delete-updated")
 		ae.mu.Lock()
-		ae.nodeCache[createdID] = &Node{ID: createdID, Labels: []string{"Temp"}, Properties: map[string]interface{}{"name": "created"}}
-		ae.nodeCache[updatedID] = &Node{ID: updatedID, Labels: []string{"Temp"}, Properties: map[string]interface{}{"name": "updated"}}
+		ae.setCachedNodeLocked(&Node{ID: createdID, Labels: []string{"Temp"}, Properties: map[string]interface{}{"name": "created"}})
+		ae.setCachedNodeLocked(&Node{ID: updatedID, Labels: []string{"Temp"}, Properties: map[string]interface{}{"name": "updated"}})
 		ae.updateNodes[updatedID] = true
-		ae.labelIndex["temp"] = map[NodeID]bool{createdID: true, updatedID: true}
 		ae.mu.Unlock()
 
 		var deleted []NodeID
@@ -631,8 +630,8 @@ func TestAsyncEngine_DeleteHelpers_CachedInflightAndIdempotent(t *testing.T) {
 		ae.mu.RLock()
 		_, createdInCache := ae.nodeCache[createdID]
 		_, updatedInCache := ae.nodeCache[updatedID]
-		_, createdInIndex := ae.labelIndex["temp"][createdID]
-		_, updatedInIndex := ae.labelIndex["temp"][updatedID]
+		_, createdInIndex := ae.pending.byLabel["temp"][createdID]
+		_, updatedInIndex := ae.pending.byLabel["temp"][updatedID]
 		ae.mu.RUnlock()
 
 		assert.False(t, createdInCache)
@@ -739,7 +738,7 @@ func TestAsyncEngine_CreateAndUpdateNodeHelpers(t *testing.T) {
 		ae.mu.RLock()
 		assert.False(t, ae.deleteNodes[id])
 		assert.True(t, ae.updateNodes[id])
-		assert.True(t, ae.labelIndex["recreated"][id])
+		assert.True(t, ae.pending.byLabel["recreated"][id])
 		ae.mu.RUnlock()
 
 		_, err = ae.CreateNode(&Node{
@@ -1305,8 +1304,7 @@ func TestAsyncEngine_ForEachNodeIDByLabel_MergesCacheAndEngine(t *testing.T) {
 		require.NoError(t, err)
 		ae.mu.Lock()
 		ae.deleteNodes["test:engine-b"] = true
-		ae.nodeCache["test:engine-a"] = &Node{ID: "test:engine-a", Labels: []string{"Merge"}, Properties: map[string]interface{}{"name": "cached-dup"}}
-		ae.labelIndex["merge"]["test:engine-a"] = true
+		ae.setCachedNodeLocked(&Node{ID: "test:engine-a", Labels: []string{"Merge"}, Properties: map[string]interface{}{"name": "cached-dup"}})
 		ae.mu.Unlock()
 
 		var seen []NodeID
@@ -1406,7 +1404,7 @@ func TestAsyncEngine_GetFirstAndGetNodesByLabel_CaseInsensitive(t *testing.T) {
 		t.Cleanup(func() { _ = ae.Close() })
 
 		ae.mu.Lock()
-		ae.labelIndex["stale"] = map[NodeID]bool{
+		ae.pending.byLabel["stale"] = map[NodeID]bool{
 			"test:deleted-stale": true,
 			"test:missing-stale": true,
 		}

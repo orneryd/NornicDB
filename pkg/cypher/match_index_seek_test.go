@@ -332,7 +332,10 @@ func TestMatchUsesPropertyIndexForIsNotNullOrderByLimit_WithConstantAndConjuncts
 	require.Equal(t, "src-002", res.Rows[2][0])
 }
 
-func TestMatchFallsBackWhenPropertyIndexMetadataIsStale(t *testing.T) {
+// TestMatchUsesIndexFilledFromExistingNodes: CREATE INDEX over existing nodes
+// fills the index, so an index-backed ordered scan returns them (the index
+// is trusted; there is no scan fallback for an empty index result, #719).
+func TestMatchUsesIndexFilledFromExistingNodes(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
 
@@ -356,11 +359,9 @@ func TestMatchFallsBackWhenPropertyIndexMetadataIsStale(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Inject index metadata directly without backfilling values to simulate stale/empty index entries.
-	err = base.GetSchema().AddPropertyIndex("idx_source_id_stale", "MongoDocument", []string{"sourceId"})
-	require.NoError(t, err)
-
 	exec := NewStorageExecutor(base)
+	_, err = exec.Execute(context.Background(), "CREATE INDEX idx_source_id_stale FOR (n:MongoDocument) ON (n.sourceId)", nil)
+	require.NoError(t, err)
 	res, err := exec.Execute(context.Background(), "MATCH (n:MongoDocument) WHERE n.sourceId IS NOT NULL RETURN n.sourceId AS sourceId ORDER BY n.sourceId LIMIT 2", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"sourceId"}, res.Columns)

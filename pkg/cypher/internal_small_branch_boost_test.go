@@ -197,7 +197,6 @@ func TestVectorQueryHelpers_AndHotPathTraceMarks(t *testing.T) {
 	exec.resetHotPathTrace()
 	exec.setFabricBatchedApplyRowsUsed(false)
 	exec.markOuterIndexTopKUsed()
-	exec.markOuterScanFallbackUsed()
 	exec.setFabricBatchedApplyRowsUsed(true)
 	exec.markSimpleMatchLimitFastPathUsed()
 	exec.markCompoundQueryFastPathUsed()
@@ -213,7 +212,6 @@ func TestVectorQueryHelpers_AndHotPathTraceMarks(t *testing.T) {
 
 	// Second round exercises non-nil fast path branches.
 	exec.markOuterIndexTopKUsed()
-	exec.markOuterScanFallbackUsed()
 	exec.setFabricBatchedApplyRowsUsed(true)
 	exec.markSimpleMatchLimitFastPathUsed()
 	exec.markCompoundQueryFastPathUsed()
@@ -229,7 +227,6 @@ func TestVectorQueryHelpers_AndHotPathTraceMarks(t *testing.T) {
 
 	trace := exec.LastHotPathTrace()
 	require.True(t, trace.OuterIndexTopK)
-	require.True(t, trace.OuterScanFallbackUsed)
 	require.True(t, trace.FabricBatchedApplyRows)
 	require.True(t, trace.SimpleMatchLimitFastPath)
 	require.True(t, trace.CompoundQueryFastPath)

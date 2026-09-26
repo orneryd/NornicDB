@@ -84,19 +84,13 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	// conjunct on an indexed property (#490): the full label load below
 	// hydrates every node even when the index could narrow it to a handful.
 	// Seeding is over-fetch-only — the pattern-property and WHERE filters
-	// below still apply — and an empty seed falls back to the full load so
-	// stale index metadata can never produce a false empty result (mirrors
-	// the single-clause markOuterScanFallbackUsed path).
+	// below still apply.
 	seeded := false
 	if whereClause != "" {
 		var seedErr error
 		nodes, seeded, seedErr = e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereClause)
 		if seedErr != nil {
 			return nil, localizedError(localization.CypherMatchingStorageFailed(seedErr), seedErr)
-		}
-		if seeded && len(nodes) == 0 {
-			e.markOuterScanFallbackUsed()
-			seeded = false
 		}
 		if seeded {
 			// Mirror loadNodesWithTemporalViewport exactly: the index seed

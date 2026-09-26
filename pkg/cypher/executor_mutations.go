@@ -473,17 +473,6 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 			return nil, true, err
 		}
 	}
-	if usedIndex && len(nodes) == 0 && wherePart != "" {
-		// Fail-open on potential stale index candidates.
-		if len(nodePat.labels) > 0 {
-			nodes, err = e.storage.GetNodesByLabel(nodePat.labels[0])
-		} else {
-			nodes, err = e.storage.AllNodes()
-		}
-		if err != nil {
-			return nil, true, err
-		}
-	}
 	if len(nodePat.properties) > 0 {
 		nodes = e.filterNodesByProperties(nodes, nodePat.properties)
 	}

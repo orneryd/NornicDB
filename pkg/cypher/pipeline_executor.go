@@ -1956,10 +1956,6 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 				return nil, err
 			}
 			if used {
-				if len(nodes) == 0 {
-					e.markOuterScanFallbackUsed()
-					return e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, "", -1)
-				}
 				e.markOuterIndexTopKUsed()
 				return nodes, nil
 			}
@@ -2005,12 +2001,6 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 			return nil, err
 		}
 		if used {
-			// A schema can transiently advertise an index whose entries have not
-			// caught up with existing data. Preserve correctness by streaming the
-			// scan fallback only for an empty property-index seed.
-			if len(nodes) == 0 {
-				return e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, streamingWhere, hint.earlyLimit)
-			}
 			if len(nodePattern.properties) > 0 {
 				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
 			}
