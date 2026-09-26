@@ -688,13 +688,11 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		if !boundedSimpleProjection {
 			return nil, false, nil
 		}
-		var whereApplied bool
-		candidates, whereApplied, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, hint)
+		// boundedSimpleProjection requires an empty WHERE, so no seek can
+		// have applied one here.
+		candidates, _, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, hint)
 		if err != nil {
 			return nil, true, err
-		}
-		if whereApplied {
-			whereClause = ""
 		}
 	}
 	if boundedSimpleProjection {
