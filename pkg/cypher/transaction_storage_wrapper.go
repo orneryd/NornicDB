@@ -506,14 +506,16 @@ func (w *transactionStorageWrapper) BulkCreateNodes(nodes []*storage.Node) error
 }
 
 func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error {
-	if len(edges) == 0 {
-		return nil
-	}
 	if w.namespace == "" {
 		return w.tx.BulkCreateEdges(edges)
 	}
 	namespaced := make([]*storage.Edge, len(edges))
 	for i, edge := range edges {
+		if edge == nil {
+			// The transaction rejects it, as CreateEdge does.
+			namespaced[i] = nil
+			continue
+		}
 		cp := storage.CopyEdge(edge)
 		cp.ID = w.prefixEdgeID(edge.ID)
 		cp.StartNode = w.prefixNodeID(edge.StartNode)
