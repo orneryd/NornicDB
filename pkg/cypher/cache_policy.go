@@ -19,7 +19,10 @@ var (
 // Those queries should not be cached.
 func isCacheableReadQuery(cypher string) bool {
 	upper := strings.ToUpper(cypher)
-	if strings.HasPrefix(strings.TrimSpace(upper), "SHOW PROCEDURES") {
+	// SHOW commands list live state — running transactions, users, settings,
+	// schema — that graph-write invalidation doesn't track, and TERMINATE
+	// acts on it: neither is ever served from the result cache (#718, #531).
+	if startsWithKeywordFold(strings.TrimSpace(cypher), "SHOW") || startsWithKeywordFold(strings.TrimSpace(cypher), "TERMINATE") {
 		return false
 	}
 

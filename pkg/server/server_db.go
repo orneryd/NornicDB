@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -177,6 +178,26 @@ func normalizeStatementForExecution(defaultDB string, statement string) (effecti
 		return "", "", targetErr
 	}
 	return target, query, nil
+}
+
+// withRequestIdentity attaches the signed-in user, the user directory and
+// the request's connection, for SHOW USERS, SHOW CURRENT USER and SHOW
+// TRANSACTIONS (#718).
+func (s *Server) withRequestIdentity(ctx context.Context, r *http.Request, claims *auth.JWTClaims) context.Context {
+	if claims != nil && strings.TrimSpace(claims.Username) != "" {
+		ctx = cypher.WithAuthenticatedUser(ctx, cypher.AuthenticatedUser{Name: claims.Username, Roles: claims.Roles})
+	}
+	if authenticator := s.auth; authenticator != nil {
+		ctx = cypher.WithUserDirectory(ctx, func() []cypher.UserListing {
+			return cypher.UserListingsFromAuth(authenticator.ListUsers())
+		})
+	}
+	connection := cypher.ClientConnection{Protocol: "http"}
+	if r != nil {
+		connection.ID = "http-" + strconv.FormatUint(s.nextHTTPConnectionID.Add(1), 10)
+		connection.Address = r.RemoteAddr
+	}
+	return cypher.WithClientConnection(ctx, connection)
 }
 
 func transactionOwnerKey(_ *http.Request, claims *auth.JWTClaims) string {
@@ -1162,13 +1183,169 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 	}
 
 	claims := getClaims(r)
-	localize := func(message localization.Message) string { return s.localizedText(w, r, message) }
-	if len(req.Statements) > 1 {
-		// Several statements are one transaction, as in Neo4j: a failing
-		// statement rolls back the ones before it.
-		s.runOneShotTransaction(r, claims, dbName, req.Statements, localize, &response)
-	} else {
-		s.runRequestStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, req.Statements, s.autoCommitStatementRunner(r.Header.Get("Authorization")), localize, &response)
+	hasError := false
+
+	// Default to database from URL path
+	// Each statement can override this with its own :USE command
+	defaultDbName := dbName
+
+	for _, stmt := range req.Statements {
+		if hasError {
+			// Skip remaining statements after error (rollback semantics)
+			break
+		}
+
+		effectiveDbName, queryStatement, resolveErr := normalizeStatementForExecution(defaultDbName, stmt.Statement)
+		if resolveErr != nil {
+			response.Errors = append(response.Errors, statementError(resolveErr))
+			hasError = true
+			continue
+		}
+
+		// Per-database access: deny if principal may not access this database (Neo4j-aligned).
+		if !s.getDatabaseAccessMode(claims).CanAccessDatabase(effectiveDbName) {
+			response.Errors = append(response.Errors, QueryError{
+				Code:    "Neo.ClientError.Security.Forbidden",
+				Message: s.localizedText(w, r, localization.DatabaseAccessDenied(effectiveDbName)),
+			})
+			hasError = true
+			continue
+		}
+
+		if missing := s.missingQueryPermission(claims, effectiveDbName, queryStatement); missing != "" {
+			message := localization.DatabaseWriteDenied(effectiveDbName)
+			if missing == auth.PermSchema {
+				message = localization.SchemaPermissionRequired()
+			} else if missing == auth.PermAdmin {
+				message = localization.AdminPermissionRequired()
+			}
+			response.Errors = append(response.Errors, QueryError{
+				Code:    "Neo.ClientError.Security.Forbidden",
+				Message: s.localizedText(w, r, message),
+			})
+			hasError = true
+			continue
+		}
+
+		// Check if database exists before attempting to get executor.
+		// Use ExistsOrIsConstituent to accept dotted composite.alias references.
+		if !s.dbManager.ExistsOrIsConstituent(effectiveDbName) {
+			response.Errors = append(response.Errors, QueryError{
+				Code:    "Neo.ClientError.Database.DatabaseNotFound",
+				Message: s.localizedText(w, r, localization.HTTPDatabaseNotFound(effectiveDbName)),
+			})
+			hasError = true
+			continue
+		}
+
+		// Strip Cypher comments from query before execution
+		// Comments are part of Cypher spec but should be removed before parsing
+		queryStatement = stripCypherComments(queryStatement)
+		queryStatement = strings.TrimSpace(queryStatement)
+		// Remove UTF-8 BOM if present (some clients send it; breaks executor routing e.g. CREATE DATABASE)
+		if strings.HasPrefix(queryStatement, "\xef\xbb\xbf") {
+			queryStatement = strings.TrimPrefix(queryStatement, "\xef\xbb\xbf")
+			queryStatement = strings.TrimSpace(queryStatement)
+		}
+
+		// Skip empty statements (after comment removal)
+		if queryStatement == "" {
+			// Empty statement after comment removal - return empty result
+			response.Results = append(response.Results, QueryResult{
+				Columns: []string{},
+				Data:    []ResultRow{},
+			})
+			continue
+		}
+
+		// Get executor for the specified database (or the one from :USE command).
+		// For composite databases with remote constituents, preserve caller identity by
+		// forwarding the request auth token into remote constituent engine construction.
+		executor, err := s.getExecutorForDatabaseWithAuth(effectiveDbName, r.Header.Get("Authorization"))
+		if err != nil {
+			response.Errors = append(response.Errors, QueryError{
+				Code:    "Neo.ClientError.Database.General",
+				Message: fmt.Sprintf("Failed to access database '%s': %v", effectiveDbName, err),
+			})
+			hasError = true
+			continue
+		}
+
+		// Track query execution time for slow query logging
+		queryStart := time.Now()
+		execCtx := cypher.WithAuthToken(r.Context(), r.Header.Get("Authorization"))
+		execCtx = cypher.WithAuthenticatedPrincipal(execCtx, transactionOwnerKey(r, claims))
+		execCtx = s.withRequestIdentity(execCtx, r, claims)
+		execCtx = s.withDatabasePermissionChecker(execCtx, claims, effectiveDbName)
+		result, err := executor.Execute(execCtx, queryStatement, stmt.Parameters)
+		queryDuration := time.Since(queryStart)
+
+		// Log slow queries
+		s.logSlowQuery(stmt.Statement, stmt.Parameters, queryDuration, err)
+
+		if err != nil {
+			appendStatementFailure(&response, executor, queryStatement, err)
+			hasError = true
+			continue
+		}
+
+		// Auto-grant access when a new database is created: admins and the creating principal get full access.
+		if isCreateDatabaseStatement(queryStatement) {
+			if createdName, ok := parseCreatedDatabaseName(queryStatement); ok && createdName != "" {
+				s.grantAccessToNewDatabase(r.Context(), createdName, claims)
+				// Ensure CREATE DATABASE always returns a proper result (name + row).
+				// Defensive: executor should return this, but if it ever returns empty we still send a valid response.
+				if len(result.Columns) == 0 && len(result.Rows) == 0 {
+					s.logEvent(r.Context(), slog.LevelWarn, localization.ServerCreateDatabaseDefensiveFixEvent(createdName))
+					result.Columns = []string{"name"}
+					result.Rows = [][]interface{}{{createdName}}
+				}
+			}
+		}
+
+		// Per-database RBAC: filter SHOW DATABASES results by CanSeeDatabase so principals only see DBs they may access
+		if isShowDatabasesQuery(queryStatement) && result.Rows != nil {
+			mode := s.getDatabaseAccessMode(claims)
+			filtered := make([][]interface{}, 0, len(result.Rows))
+			for _, row := range result.Rows {
+				if len(row) > 0 {
+					if name, ok := row[0].(string); ok && mode.CanSeeDatabase(name) {
+						filtered = append(filtered, row)
+					}
+				}
+			}
+			result.Rows = filtered
+		}
+
+		// Extract receipt and optimistic metadata from result metadata if present (for mutations)
+		if result.Metadata != nil {
+			if receipt, ok := result.Metadata["receipt"]; ok && receipt != nil {
+				response.Receipt = receipt
+			}
+			if optimistic, ok := result.Metadata["optimistic"]; ok && optimistic != nil {
+				response.Optimistic = optimistic
+			}
+		}
+
+		// Convert result to Neo4j format with metadata
+		qr := QueryResult{
+			Columns: result.Columns,
+			Data:    make([]ResultRow, len(result.Rows)),
+		}
+
+		for i, row := range result.Rows {
+			convertedRow := s.convertRowToNeo4jFormat(row)
+			qr.Data[i] = ResultRow{
+				Row:  convertedRow,
+				Meta: s.generateRowMeta(convertedRow),
+			}
+		}
+
+		if stmt.IncludeStats {
+			qr.Stats = queryStatsFromResult(result)
+		}
+
+		response.Results = append(response.Results, qr)
 	}
 
 	// Determine appropriate HTTP status code
@@ -1206,6 +1383,180 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	s.writeJSON(w, status, response)
+}
+
+// handleSingleStatementFastPath handles the common case of a single-statement
+// /tx/commit request with minimal overhead. It returns (nil, true) when it
+// handled the request (wrote the response), or (nil, false) when the caller
+// should fall through to the generic multi-statement path.
+func (s *Server) handleSingleStatementFastPath(w http.ResponseWriter, r *http.Request, dbName string, stmt StatementRequest) (*TransactionResponse, bool) {
+	// Decline fast path for statements that override the database via :USE.
+	trimmedStmt := strings.TrimSpace(stmt.Statement)
+	upperStmt := strings.ToUpper(trimmedStmt)
+	if strings.HasPrefix(upperStmt, ":USE ") || strings.HasPrefix(upperStmt, "USE ") {
+		return nil, false
+	}
+
+	claims := getClaims(r)
+
+	// Access check.
+	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+		resp := TransactionResponse{
+			Results: []QueryResult{},
+			Errors: []QueryError{{
+				Code:    "Neo.ClientError.Security.Forbidden",
+				Message: s.localizedText(w, r, localization.DatabaseAccessDenied(dbName)),
+			}},
+		}
+		s.writeJSON(w, http.StatusOK, resp)
+		return nil, true
+	}
+
+	if missing := s.missingQueryPermission(claims, dbName, trimmedStmt); missing != "" {
+		message := localization.DatabaseWriteDenied(dbName)
+		if missing == auth.PermSchema {
+			message = localization.SchemaPermissionRequired()
+		} else if missing == auth.PermAdmin {
+			message = localization.AdminPermissionRequired()
+		}
+		resp := TransactionResponse{
+			Results: []QueryResult{},
+			Errors: []QueryError{{
+				Code:    "Neo.ClientError.Security.Forbidden",
+				Message: s.localizedText(w, r, message),
+			}},
+		}
+		s.writeJSON(w, http.StatusOK, resp)
+		return nil, true
+	}
+
+	// Database existence check.
+	if !s.dbManager.ExistsOrIsConstituent(dbName) {
+		resp := TransactionResponse{
+			Results: []QueryResult{},
+			Errors: []QueryError{{
+				Code:    "Neo.ClientError.Database.DatabaseNotFound",
+				Message: s.localizedText(w, r, localization.HTTPDatabaseNotFound(dbName)),
+			}},
+		}
+		s.writeJSON(w, http.StatusNotFound, resp)
+		return nil, true
+	}
+
+	// Prepare query.
+	queryStatement := stripCypherComments(trimmedStmt)
+	queryStatement = strings.TrimSpace(queryStatement)
+	if strings.HasPrefix(queryStatement, "\xef\xbb\xbf") {
+		queryStatement = strings.TrimSpace(strings.TrimPrefix(queryStatement, "\xef\xbb\xbf"))
+	}
+
+	if queryStatement == "" {
+		resp := TransactionResponse{
+			Results:       []QueryResult{{Columns: []string{}, Data: []ResultRow{}}},
+			Errors:        []QueryError{},
+			LastBookmarks: []string{s.generateBookmark()},
+		}
+		s.writeJSON(w, http.StatusOK, resp)
+		return nil, true
+	}
+
+	// Execute.
+	executor, err := s.getExecutorForDatabaseWithAuth(dbName, r.Header.Get("Authorization"))
+	if err != nil {
+		resp := TransactionResponse{
+			Results: []QueryResult{},
+			Errors: []QueryError{{
+				Code:    "Neo.ClientError.Database.General",
+				Message: fmt.Sprintf("Failed to access database '%s': %v", dbName, err),
+			}},
+		}
+		s.writeJSON(w, http.StatusInternalServerError, resp)
+		return nil, true
+	}
+
+	queryStart := time.Now()
+	execCtx := cypher.WithAuthToken(r.Context(), r.Header.Get("Authorization"))
+	execCtx = cypher.WithAuthenticatedPrincipal(execCtx, transactionOwnerKey(r, claims))
+	execCtx = s.withRequestIdentity(execCtx, r, claims)
+	execCtx = s.withDatabasePermissionChecker(execCtx, claims, dbName)
+	result, execErr := executor.Execute(execCtx, queryStatement, stmt.Parameters)
+	queryDuration := time.Since(queryStart)
+
+	s.logSlowQuery(stmt.Statement, stmt.Parameters, queryDuration, execErr)
+
+	if execErr != nil {
+		resp := TransactionResponse{
+			Results:       []QueryResult{},
+			LastBookmarks: []string{s.generateBookmark()},
+		}
+		appendStatementFailure(&resp, executor, queryStatement, execErr)
+		s.writeJSON(w, http.StatusOK, resp)
+		return nil, true
+	}
+
+	if isCreateDatabaseStatement(queryStatement) {
+		if createdName, ok := parseCreatedDatabaseName(queryStatement); ok && createdName != "" {
+			s.grantAccessToNewDatabase(r.Context(), createdName, claims)
+			if len(result.Columns) == 0 && len(result.Rows) == 0 {
+				result.Columns = []string{"name"}
+				result.Rows = [][]interface{}{{createdName}}
+			}
+		}
+	}
+	if isShowDatabasesQuery(queryStatement) && result.Rows != nil {
+		mode := s.getDatabaseAccessMode(claims)
+		filtered := make([][]interface{}, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			if len(row) > 0 {
+				if name, ok := row[0].(string); ok && mode.CanSeeDatabase(name) {
+					filtered = append(filtered, row)
+				}
+			}
+		}
+		result.Rows = filtered
+	}
+
+	// Build response with minimal allocation.
+	qr := QueryResult{
+		Columns: result.Columns,
+		Data:    make([]ResultRow, len(result.Rows)),
+	}
+	for i, row := range result.Rows {
+		convertedRow := s.convertRowToNeo4jFormat(row)
+		qr.Data[i] = ResultRow{
+			Row:  convertedRow,
+			Meta: s.generateRowMeta(convertedRow),
+		}
+	}
+	if stmt.IncludeStats {
+		qr.Stats = queryStatsFromResult(result)
+	}
+
+	resp := TransactionResponse{
+		Results:       []QueryResult{qr},
+		Errors:        []QueryError{},
+		LastBookmarks: []string{s.generateBookmark()},
+	}
+
+	// Attach receipt/optimistic metadata if present.
+	if result.Metadata != nil {
+		if receipt, ok := result.Metadata["receipt"]; ok && receipt != nil {
+			resp.Receipt = receipt
+		}
+		if optimistic, ok := result.Metadata["optimistic"]; ok && optimistic != nil {
+			resp.Optimistic = optimistic
+		}
+	}
+
+	status := http.StatusOK
+	if s.db.IsAsyncWritesEnabled() && isMutationQuery(stmt.Statement) && shouldUseAcceptedStatusForMutation(&resp) {
+		status = http.StatusAccepted
+		w.Header().Set("X-NornicDB-Consistency", "eventual")
+	}
+
+	s.applyMVCCPressureWarnings(w, dbName, &resp)
+	s.writeJSON(w, status, resp)
+	return nil, true
 }
 
 // grantAccessToNewDatabase grants the admin role and the creating principal's roles full access
@@ -1655,6 +2006,7 @@ func (s *Server) runRequestStatements(
 ) (failed bool) {
 	ctx = cypher.WithAuthToken(ctx, authToken)
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
+	ctx = s.withRequestIdentity(ctx, nil, claims)
 	for _, stmt := range statements {
 		if queryErr := s.runRequestStatement(ctx, claims, defaultDB, stmt, run, localize, response); queryErr != nil {
 			response.Errors = append(response.Errors, *queryErr)

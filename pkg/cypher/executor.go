@@ -1488,21 +1488,22 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return result, err
 	}
 	if result, err := e.parseTransactionStatement(cypher); result != nil || err != nil {
+		if err == nil && e.txContext != nil && e.txContext.active && e.txContext.running == nil {
+			e.txContext.running = runningTransactions.begin(ctx, e.currentDatabaseName())
+		}
 		return result, err
 	}
-	// A statement that fails in an explicit transaction marks it failed, as in
-	// Neo4j (#683): later statements are refused, COMMIT rolls it back and
-	// ROLLBACK discards everything it wrote. Only the caller's own statement
-	// counts: executions nested inside a statement (they carry the
-	// transaction's storage wrapper) handle their own errors.
-	if tx := e.txContext; tx != nil && tx.active && ctx.Value(ctxKeyTxStorage) == nil {
-		if tx.failed != nil {
-			return nil, queryOnFailedTransactionError(tx.failed)
+	// SHOW TRANSACTIONS lists the statement while it runs; TERMINATE
+	// TRANSACTIONS cancels it (#718).
+	statementCtx, doneRunning, runErr := e.withRunningStatement(ctx, originalCypher)
+	if runErr != nil {
+		if e.txContext != nil && e.txContext.active {
+			_, _ = e.handleRollback()
 		}
-		defer func() {
-			e.failTransaction(retErr)
-		}()
+		return nil, runErr
 	}
+	defer doneRunning()
+	ctx = statementCtx
 
 	// Validate basic syntax
 	if err := e.validateSyntax(cypher); err != nil {
@@ -2356,6 +2357,16 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 			}
 			return nil, err
 		}
+	}
+
+	// A statement TERMINATE TRANSACTIONS ended doesn't commit (#718).
+	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok && running.terminated.Load() {
+		tx.Rollback()
+		txExec.invalidateNodeLookupCache()
+		if wal != nil && walSeqStart > 0 {
+			_, _ = wal.AppendTxAbort(dbName, txID, "terminated")
+		}
+		return nil, transactionTerminatedError()
 	}
 
 	// Commit successful transaction
