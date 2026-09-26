@@ -3870,8 +3870,11 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 	if !plan.valid {
 		return nil, false
 	}
-	modifiers, returnDistinct := plan.modifiers, plan.distinct
-	if plan.star {
+	modifiers := strings.TrimSpace(body[modifierStart:])
+	body = strings.TrimSpace(body[:modifierStart])
+	returnDistinct := false
+	body, returnDistinct = cutDistinct(body)
+	if body == "*" {
 		columns := pipelineWildcardColumns(rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}
 		for _, row := range rows {

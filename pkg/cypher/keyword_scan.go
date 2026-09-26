@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 // cutDistinct reports whether text (a projection body, or an aggregate's
 // argument list) starts with the DISTINCT keyword, and returns the text after
