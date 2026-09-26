@@ -3373,7 +3373,20 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	require.Len(t, matches, 1)
 	assert.Equal(t, storage.NodeID("pa"), matches[0]["a"].ID)
 	assert.Equal(t, storage.NodeID("pb"), matches[0]["b"].ID)
-	assert.Empty(t, rels)
+	// One relationship row per node row; the anonymous relationship binds nothing.
+	assert.Equal(t, []map[string]*storage.Edge{{}}, rels)
+
+	// A named relationship is bound per row.
+	matches, rels, err = exec.executeMatchForContextWithRelationships(
+		ctx,
+		"MATCH (a:Person)-[k:KNOWS]->(b:Person)",
+		"(a:Person)-[k:KNOWS]->(b:Person)",
+	)
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	require.Len(t, rels, 1)
+	require.NotNil(t, rels[0]["k"])
+	assert.Equal(t, storage.EdgeID("k1"), rels[0]["k"].ID)
 
 	// Malformed pattern should fail fast.
 	_, _, err = exec.executeMatchForContextWithRelationships(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person", "(a:Person)-[:KNOWS]->(b:Person")

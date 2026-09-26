@@ -803,11 +803,13 @@ func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher 
 		return nil, localizedError(localization.CypherMergeMatchExecutionFailed(err), nil)
 	}
 	if hasWindow {
-		matchedNodes = applyContextWindow(matchedNodes, windowVar, windowSkip, windowLimit)
+		matchedNodes, matchedRels = applyContextWindow(matchedNodes, matchedRels, windowVar, windowSkip, windowLimit)
 	}
 
 	var rows []pipelineRow
-	mergeRow := func(nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) error {
+	// mergeRow runs the MERGE for one matched row; nullVariables are the
+	// row's unmatched OPTIONAL MATCH variables, null in the RETURN.
+	mergeRow := func(nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, nullVariables []string) error {
 		mergeResult, err := e.executeMergeWithContext(ctx, mergeClause, nodeContext, relContext)
 		if err != nil {
 			return err
@@ -816,27 +818,35 @@ func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher 
 			addQueryStats(result.Stats, mergeResult.Stats)
 		}
 		if returnClause != "" {
-			rows = append(rows, e.mergeBindingRow(ctx, nodeContext, relContext))
+			row := e.mergeBindingRow(ctx, nodeContext, relContext)
+			for _, variable := range nullVariables {
+				if _, bound := row[variable]; !bound {
+					row[variable] = nil
+				}
+			}
+			rows = append(rows, row)
 		}
 		return nil
 	}
 
 	if len(matchedNodes) == 0 {
-		// Without matches only an OPTIONAL MATCH still runs the MERGE, once.
+		// Without matches only an OPTIONAL MATCH still runs the MERGE, once,
+		// with the OPTIONAL MATCH's variables null.
 		if findKeywordIndex(cypher, "OPTIONAL MATCH") >= 0 {
-			if err := mergeRow(make(map[string]*storage.Node), make(map[string]*storage.Edge)); err != nil {
+			nullVariables := append(extractNodeVariables(matchClause), extractRelationshipVariables(matchClause)...)
+			if err := mergeRow(make(map[string]*storage.Node), make(map[string]*storage.Edge), nullVariables); err != nil {
 				return nil, err
 			}
 		}
 	}
-	for _, nodeContext := range matchedNodes {
-		// Each row gets its own relationship bindings: a relationship MERGE
-		// adds its variable to them.
-		relContext := make(map[string]*storage.Edge, len(matchedRels))
-		for name, edge := range matchedRels {
+	for index, nodeContext := range matchedNodes {
+		// Each row gets its own copy of its relationship bindings: a
+		// relationship MERGE adds its variable to them.
+		relContext := make(map[string]*storage.Edge, len(matchedRels[index]))
+		for name, edge := range matchedRels[index] {
 			relContext[name] = edge
 		}
-		if err := mergeRow(nodeContext, relContext); err != nil {
+		if err := mergeRow(nodeContext, relContext, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -935,17 +945,18 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 	// For each matched node context × each unwind item, execute the MERGE with
 	// the unwind value bound in the value scope (§6.2 bound child contexts —
 	// no query-text substitution).
-	for _, nodeContext := range matchedNodes {
+	for matchIndex, nodeContext := range matchedNodes {
+		matchedRelContext := matchedRels[matchIndex]
 		for _, item := range items {
 			childCtx := withValueBindings(ctx, map[string]interface{}{unwindVar: item})
 			nodeContexts := []map[string]*storage.Node{nodeContext}
-			relContexts := []map[string]*storage.Edge{matchedRels}
+			relContexts := []map[string]*storage.Edge{matchedRelContext}
 			if trailingMatch != "" {
 				var trailingNodes []map[string]*storage.Node
-				var trailingRels map[string]*storage.Edge
+				var trailingRels []map[string]*storage.Edge
 				if preparedTrailingMatch {
 					trailingNodes = e.matchRepeatedSimpleNode(childCtx, trailingMatch, trailingCandidates)
-					trailingRels = map[string]*storage.Edge{}
+					trailingRels = emptyRelationshipContexts(len(trailingNodes))
 				} else {
 					trailingNodes, trailingRels, err = e.executeMatchForContext(childCtx, trailingMatch)
 					if err != nil {
@@ -954,7 +965,7 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 				}
 				nodeContexts = nodeContexts[:0]
 				relContexts = relContexts[:0]
-				for _, trailingContext := range trailingNodes {
+				for trailingIndex, trailingContext := range trailingNodes {
 					combinedNodes := make(map[string]*storage.Node, util.SafePreallocSum(len(nodeContext), len(trailingContext)))
 					for name, node := range nodeContext {
 						combinedNodes[name] = node
@@ -962,11 +973,11 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 					for name, node := range trailingContext {
 						combinedNodes[name] = node
 					}
-					combinedRels := make(map[string]*storage.Edge, util.SafePreallocSum(len(matchedRels), len(trailingRels)))
-					for name, edge := range matchedRels {
+					combinedRels := make(map[string]*storage.Edge, util.SafePreallocSum(len(matchedRelContext), len(trailingRels[trailingIndex])))
+					for name, edge := range matchedRelContext {
 						combinedRels[name] = edge
 					}
-					for name, edge := range trailingRels {
+					for name, edge := range trailingRels[trailingIndex] {
 						combinedRels[name] = edge
 					}
 					nodeContexts = append(nodeContexts, combinedNodes)
@@ -1054,24 +1065,28 @@ func parseTrailingWithWindow(matchClause string) (varName string, skip int, limi
 	return varName, skip, limit, true
 }
 
-func applyContextWindow(contexts []map[string]*storage.Node, variable string, skip int, limit int) []map[string]*storage.Node {
+// applyContextWindow keeps the rows binding variable, then applies SKIP and
+// LIMIT, to the node rows and their index-aligned relationship rows alike.
+func applyContextWindow(contexts []map[string]*storage.Node, relationships []map[string]*storage.Edge, variable string, skip int, limit int) ([]map[string]*storage.Node, []map[string]*storage.Edge) {
 	if len(contexts) == 0 || limit == 0 {
-		return nil
+		return nil, nil
 	}
 	filtered := make([]map[string]*storage.Node, 0, len(contexts))
-	for _, ctx := range contexts {
+	filteredRelationships := make([]map[string]*storage.Edge, 0, len(contexts))
+	for index, ctx := range contexts {
 		if _, ok := ctx[variable]; ok {
 			filtered = append(filtered, ctx)
+			filteredRelationships = append(filteredRelationships, relationships[index])
 		}
 	}
 	if skip >= len(filtered) {
-		return nil
+		return nil, nil
 	}
 	end := skip + limit
 	if end > len(filtered) {
 		end = len(filtered)
 	}
-	return filtered[skip:end]
+	return filtered[skip:end], filteredRelationships[skip:end]
 }
 
 func (e *StorageExecutor) prepareRepeatedSimpleNodeMatch(ctx context.Context, matchClause string) ([]*storage.Node, bool, error) {
@@ -1115,11 +1130,12 @@ func (e *StorageExecutor) matchRepeatedSimpleNode(ctx context.Context, matchClau
 	return matches
 }
 
-// executeMatchForContext executes a MATCH clause and returns matched nodes by variable name.
+// executeMatchForContext executes a MATCH clause and returns its rows: the
+// matched nodes by variable name, and index-aligned with them the matched
+// relationships by variable name (empty maps for node-only patterns).
 // Handles both simple node patterns like (a:Label), (b:Label2) and relationship patterns
-// like (a)<-[:REL]-(b)-[:REL]->(c).
-func (e *StorageExecutor) executeMatchForContext(ctx context.Context, matchClause string) ([]map[string]*storage.Node, map[string]*storage.Edge, error) {
-	relMatches := make(map[string]*storage.Edge)
+// like (a)<-[r:REL]-(b)-[:REL]->(c).
+func (e *StorageExecutor) executeMatchForContext(ctx context.Context, matchClause string) ([]map[string]*storage.Node, []map[string]*storage.Edge, error) {
 	store := e.getStorage(ctx)
 
 	// Find WHERE clause if present (newline/tab tolerant).
@@ -1233,7 +1249,17 @@ func (e *StorageExecutor) executeMatchForContext(ctx context.Context, matchClaus
 		allMatches = filtered
 	}
 
-	return allMatches, relMatches, nil
+	return allMatches, emptyRelationshipContexts(len(allMatches)), nil
+}
+
+// emptyRelationshipContexts is n rows' relationship bindings for a pattern
+// without relationship variables.
+func emptyRelationshipContexts(n int) []map[string]*storage.Edge {
+	contexts := make([]map[string]*storage.Edge, n)
+	for index := range contexts {
+		contexts[index] = map[string]*storage.Edge{}
+	}
+	return contexts
 }
 
 func (e *StorageExecutor) evaluateWhereForNodeMap(ctx context.Context, nodeMap map[string]*storage.Node, wherePart string) bool {
@@ -1650,52 +1676,46 @@ func normalizeWhereList(v interface{}) ([]interface{}, bool) {
 }
 
 // executeMatchForContextWithRelationships handles MATCH patterns that include relationships.
-// It executes the MATCH query and extracts variable bindings from the results.
-func (e *StorageExecutor) executeMatchForContextWithRelationships(ctx context.Context, matchClause, patternPart string) ([]map[string]*storage.Node, map[string]*storage.Edge, error) {
-	relMatches := make(map[string]*storage.Edge)
+// It executes the MATCH query and returns each row's node and relationship
+// bindings (index-aligned), as executeMatchForContext.
+func (e *StorageExecutor) executeMatchForContextWithRelationships(ctx context.Context, matchClause, patternPart string) ([]map[string]*storage.Node, []map[string]*storage.Edge, error) {
 	store := e.getStorage(ctx)
 
 	// Fail fast on malformed relationship patterns instead of returning
 	// an implicit empty context. This keeps behavior strict and predictable.
 	if strings.Count(patternPart, "(") != strings.Count(patternPart, ")") ||
 		strings.Count(patternPart, "[") != strings.Count(patternPart, "]") {
-		return nil, relMatches, localizedError(localization.CypherMergeMalformedRelationshipPattern(patternPart), nil)
+		return nil, nil, localizedError(localization.CypherMergeMalformedRelationshipPattern(patternPart), nil)
 	}
 
-	// Extract all variable names from the pattern
-	varNames := e.extractVariableNamesFromPattern(patternPart)
-	if len(varNames) == 0 {
-		return nil, relMatches, nil
-	}
-
-	// Build a synthetic RETURN clause to get all node variables
-	// Filter to only include node variables (not relationship variables)
-	nodeVarNames := make([]string, 0)
-	for _, v := range varNames {
-		// Skip relationship variables (they appear after [ and before ])
-		// Node variables appear after ( and before )
-		nodeVarNames = append(nodeVarNames, v)
-	}
-
+	// The pattern's node variables, then its relationship variables.
+	nodeVarNames := e.extractVariableNamesFromPattern(patternPart)
 	if len(nodeVarNames) == 0 {
-		return nil, relMatches, nil
+		return nil, nil, nil
+	}
+	relVarNames := extractRelationshipVariables(patternPart)
+	isRelationshipVariable := make(map[string]bool, len(relVarNames))
+	for _, name := range relVarNames {
+		isRelationshipVariable[name] = true
 	}
 
 	// Build RETURN clause with all variables
-	returnClause := "RETURN " + strings.Join(nodeVarNames, ", ")
+	returnClause := "RETURN " + strings.Join(append(append([]string{}, nodeVarNames...), relVarNames...), ", ")
 	fullQuery := matchClause + " " + returnClause
 
 	// Execute the match
 	result, err := e.executeMatch(ctx, fullQuery)
 	if err != nil {
-		return nil, relMatches, err
+		return nil, nil, err
 	}
 
-	// Convert results to node context maps
+	// Convert results to node and relationship context maps
 	var allMatches []map[string]*storage.Node
+	var allRelationships []map[string]*storage.Edge
 
 	for _, row := range result.Rows {
 		nodeMap := make(map[string]*storage.Node)
+		relMap := make(map[string]*storage.Edge)
 		for i, col := range result.Columns {
 			if i >= len(row) {
 				continue
@@ -1704,6 +1724,12 @@ func (e *StorageExecutor) executeMatchForContextWithRelationships(ctx context.Co
 			// Get the node from storage based on the returned value
 			val := row[i]
 			if val == nil {
+				continue
+			}
+			if isRelationshipVariable[col] {
+				if edge, ok := val.(*storage.Edge); ok {
+					relMap[col] = edge
+				}
 				continue
 			}
 
@@ -1741,10 +1767,11 @@ func (e *StorageExecutor) executeMatchForContextWithRelationships(ctx context.Co
 
 		if len(nodeMap) > 0 {
 			allMatches = append(allMatches, nodeMap)
+			allRelationships = append(allRelationships, relMap)
 		}
 	}
 
-	return allMatches, relMatches, nil
+	return allMatches, allRelationships, nil
 }
 
 // extractVariableNamesFromPattern extracts variable names from a Cypher pattern.
