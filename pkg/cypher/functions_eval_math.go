@@ -1127,165 +1127,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// List Predicate Functions
 	// ========================================
 
-	// all(variable IN list WHERE predicate) - check if all elements match
-	if matchFuncStartAndSuffix(expr, "all") {
-		inner := extractFuncArgs(expr, "all")
-		// Parse "variable IN list WHERE predicate"
-		inIdx := strings.Index(strings.ToLower(inner), " in ")
-		if inIdx == -1 {
-			return false
+	// all / any / none / single(variable IN list WHERE predicate)
+	for _, function := range []string{"all", "any", "none", "single"} {
+		if matchFuncStartAndSuffix(expr, function) {
+			return e.evaluateQuantifierWithContext(ctx, function, extractFuncArgs(expr, function), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
-		varName := strings.TrimSpace(inner[:inIdx])
-		rest := inner[inIdx+4:]
-		whereIdx := strings.Index(strings.ToLower(rest), " where ")
-		if whereIdx == -1 {
-			return false
-		}
-		listExpr := strings.TrimSpace(rest[:whereIdx])
-		predicate := strings.TrimSpace(rest[whereIdx+7:])
-
-		list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		listVal, ok := list.([]interface{})
-		if !ok {
-			return false
-		}
-
-		sawNull := false
-		for _, item := range listVal {
-			result, ok := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
-			if !ok || result == nil {
-				sawNull = true
-				continue
-			}
-			if result != true {
-				return false
-			}
-		}
-		if sawNull {
-			return nil
-		}
-		return true
-	}
-
-	// any(variable IN list WHERE predicate) - check if any element matches
-	if matchFuncStartAndSuffix(expr, "any") {
-		inner := extractFuncArgs(expr, "any")
-		inIdx := strings.Index(strings.ToLower(inner), " in ")
-		if inIdx == -1 {
-			return false
-		}
-		varName := strings.TrimSpace(inner[:inIdx])
-		rest := inner[inIdx+4:]
-		whereIdx := strings.Index(strings.ToLower(rest), " where ")
-		if whereIdx == -1 {
-			return false
-		}
-		listExpr := strings.TrimSpace(rest[:whereIdx])
-		predicate := strings.TrimSpace(rest[whereIdx+7:])
-
-		list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		listVal, ok := list.([]interface{})
-		if !ok {
-			return false
-		}
-
-		sawNull := false
-		for _, item := range listVal {
-			result, ok := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
-			if !ok || result == nil {
-				sawNull = true
-				continue
-			}
-			if result == true {
-				return true
-			}
-		}
-		if sawNull {
-			return nil
-		}
-		return false
-	}
-
-	// none(variable IN list WHERE predicate) - check if no element matches
-	if matchFuncStartAndSuffix(expr, "none") {
-		inner := extractFuncArgs(expr, "none")
-		inIdx := strings.Index(strings.ToLower(inner), " in ")
-		if inIdx == -1 {
-			return true
-		}
-		varName := strings.TrimSpace(inner[:inIdx])
-		rest := inner[inIdx+4:]
-		whereIdx := strings.Index(strings.ToLower(rest), " where ")
-		if whereIdx == -1 {
-			return true
-		}
-		listExpr := strings.TrimSpace(rest[:whereIdx])
-		predicate := strings.TrimSpace(rest[whereIdx+7:])
-
-		list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		listVal, ok := list.([]interface{})
-		if !ok {
-			return true
-		}
-
-		sawNull := false
-		for _, item := range listVal {
-			result, ok := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
-			if !ok || result == nil {
-				sawNull = true
-				continue
-			}
-			if result == true {
-				return false
-			}
-		}
-		if sawNull {
-			return nil
-		}
-		return true
-	}
-
-	// single(variable IN list WHERE predicate) - check if exactly one element matches
-	if matchFuncStartAndSuffix(expr, "single") {
-		inner := extractFuncArgs(expr, "single")
-		inIdx := strings.Index(strings.ToLower(inner), " in ")
-		if inIdx == -1 {
-			return false
-		}
-		varName := strings.TrimSpace(inner[:inIdx])
-		rest := inner[inIdx+4:]
-		whereIdx := strings.Index(strings.ToLower(rest), " where ")
-		if whereIdx == -1 {
-			return false
-		}
-		listExpr := strings.TrimSpace(rest[:whereIdx])
-		predicate := strings.TrimSpace(rest[whereIdx+7:])
-
-		list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		listVal, ok := list.([]interface{})
-		if !ok {
-			return false
-		}
-
-		matchCount := 0
-		sawNull := false
-		for _, item := range listVal {
-			result, ok := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
-			if !ok || result == nil {
-				sawNull = true
-				continue
-			}
-			if result == true {
-				matchCount++
-				if matchCount > 1 {
-					return false
-				}
-			}
-		}
-		if sawNull {
-			return nil
-		}
-		return matchCount == 1
 	}
 
 	// ========================================
@@ -1592,6 +1438,45 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// ========================================
 
 	return e.evaluateExpressionWithContextFullOperators(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+}
+
+// evaluateQuantifierWithContext evaluates the list predicate function
+// (all / any / none / single) with arguments inner, "variable IN list WHERE
+// predicate", folding the element results with quantifierFold. A null list
+// is null (#736). Text that doesn't parse as that shape, and a list value
+// that isn't a list, keep their earlier answers: true for none, false for
+// the others.
+func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	unparsed := function == "none"
+	inIdx := strings.Index(strings.ToLower(inner), " in ")
+	if inIdx == -1 {
+		return unparsed
+	}
+	varName := strings.TrimSpace(inner[:inIdx])
+	rest := inner[inIdx+4:]
+	whereIdx := strings.Index(strings.ToLower(rest), " where ")
+	if whereIdx == -1 {
+		return unparsed
+	}
+	listExpr := strings.TrimSpace(rest[:whereIdx])
+	predicate := strings.TrimSpace(rest[whereIdx+7:])
+
+	list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if list == nil {
+		return nil
+	}
+	listVal, ok := list.([]interface{})
+	if !ok {
+		return unparsed
+	}
+	fold := quantifierFold{function: function}
+	for _, item := range listVal {
+		result, _ := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
+		if value, decided := fold.add(result); decided {
+			return value
+		}
+	}
+	return fold.result()
 }
 
 func (e *StorageExecutor) evaluateQuantifierPredicate(

@@ -280,6 +280,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			if !resolved {
 				return nil, false, nil
 			}
+			if value == nil {
+				return nil, true, nil
+			}
 			switch number := value.(type) {
 			case int64:
 				if number < 0 {
@@ -449,6 +452,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			}
 			if !resolved {
 				return nil, false, nil
+			}
+			if value == nil {
+				return nil, true, nil
 			}
 			if object, isMap := toStringAnyMap(value); isMap {
 				value = object
@@ -1340,7 +1346,7 @@ func isBinaryRowSubtraction(left string) bool {
 func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	function, inner, isFunction := parseFunctionCallWS(expr)
 	function = strings.ToLower(function)
-	if !isFunction || (function != "all" && function != "any" && function != "none" && function != "single") {
+	if !isFunction || !isQuantifierFunction(function) {
 		return nil, false, false, nil
 	}
 	lowerInner := strings.ToLower(inner)
@@ -1366,13 +1372,15 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	if !ok {
 		return nil, true, false, nil
 	}
+	if listValue == nil {
+		return nil, true, true, nil
+	}
 	valueType := reflect.TypeOf(listValue)
-	if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
+	if valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array {
 		return nil, true, false, nil
 	}
 	items := toAnySlice(listValue)
-	trueCount := 0
-	sawNull := false
+	fold := quantifierFold{function: function}
 	for _, item := range items {
 		scope := make(map[string]interface{}, len(values)+1)
 		for name, value := range values {
@@ -1383,47 +1391,17 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 		if err != nil {
 			return nil, true, false, err
 		}
-		if !evaluated || result == nil {
-			sawNull = true
-			continue
+		if !evaluated {
+			result = nil
 		}
-		boolean, booleanOK := result.(bool)
-		if !booleanOK {
+		if _, isBool := result.(bool); !isBool && result != nil {
 			return nil, true, false, nil
 		}
-		if boolean {
-			trueCount++
-		}
-		switch function {
-		case "all":
-			if !boolean {
-				return false, true, true, nil
-			}
-		case "any":
-			if boolean {
-				return true, true, true, nil
-			}
-		case "none":
-			if boolean {
-				return false, true, true, nil
-			}
-		case "single":
-			if trueCount > 1 {
-				return false, true, true, nil
-			}
+		if value, decided := fold.add(result); decided {
+			return value, true, true, nil
 		}
 	}
-	if sawNull {
-		return nil, true, true, nil
-	}
-	switch function {
-	case "all", "none":
-		return true, true, true, nil
-	case "any":
-		return false, true, true, nil
-	default:
-		return trueCount == 1, true, true, nil
-	}
+	return fold.result(), true, true, nil
 }
 
 func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, bool) {
