@@ -990,13 +990,15 @@ skipArrayIndexing:
 		return e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}, expr); handled {
 		if value == nil {
-			if function, argument, ok := parseFunctionCallWS(expr); ok && strings.EqualFold(function, "date") && strings.TrimSpace(argument) != "" {
+			if function, argument, ok := parseFunctionCallWS(expr); ok && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
 				input := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				if text, isText := input.(string); isText {
-					// Neo4j's error for a string date() can't parse.
-					recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument", fmt.Sprintf("Text cannot be parsed to a Date\n%q\n ^", text)))
-				} else if input != nil {
-					recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgument", "invalid date value"))
+				// An argument the evaluator can't resolve comes back as its own
+				// text; that is not a value to parse.
+				if text, isText := input.(string); isText && text == strings.TrimSpace(argument) && !isWholeCypherQuotedString(text) {
+					input = nil
+				}
+				if err := temporalConstructorError(function, input); err != nil {
+					recordExpressionFailure(ctx, err)
 				}
 			}
 		}

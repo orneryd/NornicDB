@@ -151,7 +151,7 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 			}
 			return value
 		}, expr); handled {
-			if value == nil && strings.EqualFold(function, "date") && strings.TrimSpace(argument) != "" {
+			if value == nil && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
 				input, resolved := e.evaluateRowExpression(argument, values)
 				if resolved && input != nil {
 					return nil, false
