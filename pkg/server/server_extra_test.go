@@ -3114,7 +3114,9 @@ func TestImplicitTransactionGenericPathAdditionalBranches(t *testing.T) {
 		require.Contains(t, response.Errors[0].Message, "Access to database")
 	})
 
-	t.Run("bom comment becomes empty result", func(t *testing.T) {
+	// A BOM and a comment are an empty statement: Neo4j's SyntaxError,
+	// after the statements before it (#683).
+	t.Run("bom comment is a syntax error", func(t *testing.T) {
 		body := `{"statements":[{"statement":"RETURN 1 AS n"},{"statement":"\ufeff // comment only","includeStats":true}]}`
 		req := httptest.NewRequest(http.MethodPost, "/db/"+dbName+"/tx/commit", strings.NewReader(body)).WithContext(adminCtx)
 		rec := httptest.NewRecorder()
@@ -3122,10 +3124,9 @@ func TestImplicitTransactionGenericPathAdditionalBranches(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 		var response TransactionResponse
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
-		require.Empty(t, response.Errors)
-		require.Len(t, response.Results, 2)
-		require.Empty(t, response.Results[1].Columns)
-		require.Empty(t, response.Results[1].Data)
+		require.Len(t, response.Errors, 1)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", response.Errors[0].Code)
+		require.Len(t, response.Results, 1)
 	})
 }
 

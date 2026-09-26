@@ -79,7 +79,8 @@ func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *test
 		require.Contains(t, resp.Errors[0].Message, "Write on database 'nornic' is not allowed")
 	})
 
-	t.Run("comment only statement produces empty result", func(t *testing.T) {
+	// An empty statement is Neo4j's SyntaxError (#683).
+	t.Run("comment only statement is a syntax error", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/db/nornic/tx/commit", strings.NewReader(`{"statements":[{"statement":"// comment only"}]}`))
 		req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{
 			Username: "admin",
@@ -93,10 +94,9 @@ func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *test
 
 		var resp TransactionResponse
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-		require.Empty(t, resp.Errors)
-		require.Len(t, resp.Results, 1)
-		require.Empty(t, resp.Results[0].Columns)
-		require.Empty(t, resp.Results[0].Data)
+		require.Len(t, resp.Errors, 1)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", resp.Errors[0].Code)
+		require.Empty(t, resp.Results)
 	})
 
 	t.Run("executor access failure maps to 500 infrastructure status", func(t *testing.T) {

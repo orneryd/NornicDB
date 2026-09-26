@@ -2596,7 +2596,8 @@ func TestHandleImplicitTransaction_BranchMatrix(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
 
-	t.Run("comment-only statement yields empty result and includeStats", func(t *testing.T) {
+	// An empty statement is Neo4j's SyntaxError and ends the request (#683).
+	t.Run("comment-only statement is a syntax error", func(t *testing.T) {
 		body := `{"statements":[{"statement":"// comment only","includeStats":true},{"statement":"RETURN 1 AS n","includeStats":true}]}`
 		req := httptest.NewRequest(http.MethodPost, "/db/"+dbName+"/tx/commit", strings.NewReader(body))
 		req = req.WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{
@@ -2607,11 +2608,11 @@ func TestHandleImplicitTransaction_BranchMatrix(t *testing.T) {
 		server.handleImplicitTransaction(rec, req, dbName)
 		require.Equal(t, http.StatusOK, rec.Code)
 
-		var payload map[string]interface{}
+		var payload TransactionResponse
 		require.NoError(t, json.NewDecoder(rec.Body).Decode(&payload))
-		results, ok := payload["results"].([]interface{})
-		require.True(t, ok)
-		require.NotEmpty(t, results)
+		require.Len(t, payload.Errors, 1)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", payload.Errors[0].Code)
+		require.Empty(t, payload.Results)
 	})
 }
 
