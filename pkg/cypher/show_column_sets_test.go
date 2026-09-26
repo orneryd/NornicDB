@@ -44,6 +44,41 @@ func TestShowColumnSetsMatchNeo4j(t *testing.T) {
 	require.Equal(t, "STRING", result.Rows[0][3])
 }
 
+// TestShowListingsAreOrderedByName: Neo4j lists every SHOW command by name,
+// so indexes and constraints come in name order, not creation order.
+func TestShowListingsAreOrderedByName(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	for _, statement := range []string{
+		"CREATE INDEX zz_o FOR (n:OZ) ON (n.a)",
+		"CREATE INDEX mm_o FOR (n:OZ) ON (n.b)",
+		"CREATE INDEX aa_o FOR (n:OZ) ON (n.c)",
+		"CREATE CONSTRAINT zc_o FOR (n:OC) REQUIRE n.a IS UNIQUE",
+		"CREATE CONSTRAINT ac_o FOR (n:OC) REQUIRE n.b IS UNIQUE",
+	} {
+		_, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err, statement)
+	}
+	for _, query := range []string{"SHOW INDEXES", "SHOW CONSTRAINTS YIELD *", "SHOW FUNCTIONS", "SHOW PROCEDURES YIELD name", "SHOW SETTINGS"} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		column := -1
+		for i, name := range result.Columns {
+			if name == "name" {
+				column = i
+			}
+		}
+		require.GreaterOrEqual(t, column, 0, query)
+		require.NotEmpty(t, result.Rows, query)
+		for i := 1; i < len(result.Rows); i++ {
+			require.LessOrEqual(t, result.Rows[i-1][column].(string), result.Rows[i][column].(string), query)
+		}
+	}
+	result, err := exec.Execute(ctx, "SHOW INDEXES YIELD name WHERE name ENDS WITH '_o'", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"aa_o"}, {"ac_o"}, {"mm_o"}, {"zc_o"}, {"zz_o"}}, result.Rows)
+}
+
 // TestFulltextWildcardSkipsRelationshipsWithoutIndexedProperties: as for
 // nodes and in Neo4j, a relationship with none of the index's properties has
 // no document, so the match-all wildcard doesn't return it (#547).

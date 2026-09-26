@@ -79,21 +79,21 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 		}
 		rows = append(rows, []interface{}{
 			definition.Name,
-			definition.Description,
 			value,
 			definition.Dynamic,
 			definition.DefaultValue,
+			definition.Description,
 			startupValue,
-			append([]string(nil), definition.ValidValues...),
 			explicitlySet,
+			append([]string(nil), definition.ValidValues...),
 			definition.Deprecated,
 		})
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"name", "description", "value", "isDynamic", "defaultValue", "startupValue", "validValues", "isExplicitlySet", "isDeprecated"},
+	return withShowDefaultColumns(&ExecuteResult{
+		Columns: []string{"name", "value", "isDynamic", "defaultValue", "description", "startupValue", "isExplicitlySet", "validValues", "isDeprecated"},
 		Rows:    rows,
-	}, nil
+	}, showSettingsDefaultColumns), nil
 }
 
 // executeShowIndexes handles SHOW INDEXES command
@@ -156,6 +156,8 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 				owningConstraint = oc
 			}
 
+			// trackedSince, options, failureMessage and createStatement
+			// (the last four columns) aren't known.
 			rows = append(rows, []interface{}{
 				int64(i + 1),      // id
 				name,              // name
@@ -169,14 +171,11 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 				owningConstraint,  // owningConstraint
 				nil,               // lastRead
 				int64(0),          // readCount
+				nil, nil, nil, nil,
 			})
 		}
 	}
 
-	// trackedSince, options, failureMessage and createStatement aren't known.
-	for i, row := range rows {
-		rows[i] = append(row, nil, nil, nil, nil)
-	}
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: append(append([]string(nil), showIndexesDefaultColumns...), "trackedSince", "options", "failureMessage", "createStatement"),
 		Rows:    rows,
@@ -283,7 +282,50 @@ func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string
 	if err != nil {
 		return nil, err
 	}
+	sortShowRowsByName(result)
 	return e.applyShowTail(ctx, cypher, result, showDefaultColumns(result))
+}
+
+// sortShowRowsByName orders a SHOW listing by its name column, as Neo4j lists
+// every SHOW command (indexes and constraints by name, not creation order).
+// A listing without a string name column keeps its order.
+func sortShowRowsByName(result *ExecuteResult) {
+	column := -1
+	for i, name := range result.Columns {
+		if name == "name" {
+			column = i
+			break
+		}
+	}
+	if column < 0 {
+		return
+	}
+	name := func(row []interface{}) (string, bool) {
+		if column >= len(row) {
+			return "", false
+		}
+		value, ok := row[column].(string)
+		return value, ok
+	}
+	sorted := true
+	for i, row := range result.Rows {
+		current, ok := name(row)
+		if !ok {
+			return
+		}
+		if i > 0 {
+			if previous, _ := name(result.Rows[i-1]); previous > current {
+				sorted = false
+			}
+		}
+	}
+	if !sorted {
+		sort.SliceStable(result.Rows, func(i, j int) bool {
+			left, _ := name(result.Rows[i])
+			right, _ := name(result.Rows[j])
+			return left < right
+		})
+	}
 }
 
 // Neo4j's SHOW commands list a default set of columns, and YIELD * or YIELD
@@ -291,6 +333,7 @@ func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string
 // order (NornicDB-only columns after it); these are the default sets.
 var (
 	showFunctionsDefaultColumns   = []string{"name", "category", "description"}
+	showSettingsDefaultColumns    = []string{"name", "value", "isDynamic", "defaultValue", "description"}
 	showProceduresDefaultColumns  = []string{"name", "description", "mode", "worksOnSystem"}
 	showDatabasesDefaultColumns   = []string{"name", "type", "aliases", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"}
 	showIndexesDefaultColumns     = []string{"id", "name", "state", "populationPercent", "type", "entityType", "labelsOrTypes", "properties", "indexProvider", "owningConstraint", "lastRead", "readCount"}
@@ -324,8 +367,9 @@ func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult 
 		index[column] = i
 	}
 	rows := make([][]interface{}, len(result.Rows))
+	cells := make([]interface{}, len(result.Rows)*len(columns))
 	for r, row := range result.Rows {
-		projected := make([]interface{}, len(columns))
+		projected := cells[r*len(columns) : (r+1)*len(columns) : (r+1)*len(columns)]
 		for c, column := range columns {
 			if i, ok := index[column]; ok && i < len(row) {
 				projected[c] = row[i]
@@ -683,6 +727,8 @@ func showFunctionRows() [][]interface{} {
 			// rolesExecution, rolesBoostedExecution and deprecatedBy aren't known.
 			rows = append(rows, []interface{}{function[0], function[1], function[3], signature, true, arguments, returns, function[4], nil, nil, false, nil})
 		}
+		// Listed by name (sortShowRowsByName then finds them in order).
+		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
 		showFunctionRowsCache = rows
 	})
 	return showFunctionRowsCache
@@ -694,8 +740,14 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 	// gets its own copy of them.
 	cached := showFunctionRows()
 	rows := make([][]interface{}, len(cached))
+	var cells []interface{}
 	for i, row := range cached {
-		rows[i] = append([]interface{}(nil), row...)
+		if len(cells) < len(row) {
+			cells = make([]interface{}, len(row)*(len(cached)-i))
+		}
+		rows[i] = cells[:len(row):len(row)]
+		copy(rows[i], row)
+		cells = cells[len(row):]
 	}
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"},
