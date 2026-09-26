@@ -777,7 +777,9 @@ func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string)
 func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern string, existingBindings []binding, existingRelBindings []relationshipBinding) ([]binding, []relationshipBinding) {
 	var newBindings []binding
 	var newRelBindings []relationshipBinding
-	isRelationshipPattern := strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-")
+	// Bracketed (-[r]->) and bare (-->, <--, --) relationships both make a
+	// traversal; only a lone node pattern is matched as a node.
+	isRelationshipPattern := strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") || containsRelExistencePattern(pattern)
 	var matches *TraversalMatch
 	if isRelationshipPattern {
 		matches = e.parseTraversalPattern(ctx, pattern)

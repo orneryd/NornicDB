@@ -96,7 +96,7 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 				return err
 			}
 		case pipelineClauseUnwind:
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+			if err := validateUnwindAlias(clause.text); err != nil {
 				return err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
@@ -225,7 +225,14 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 		if _, literal := parseLiteralValueFromComputedRow(expression); literal {
 			continue
 		}
-		if variable := simpleSemanticIdentifier(expression); variable != "" {
+		variable := simpleSemanticIdentifier(expression)
+		if variable == "" {
+			// m.val: the property chain's variable must be bound.
+			if base, _, chain := rowPropertyChainShape(expression); chain {
+				variable = base
+			}
+		}
+		if variable != "" {
 			if _, found := scope[variable]; !found {
 				return createUndefinedVariableError(variable)
 			}

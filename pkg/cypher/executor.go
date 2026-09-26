@@ -1515,7 +1515,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		execSpan.SetAttributes(attribute.String("cypher.op_type", "parse_error"))
 		return nil, err
 	}
-	if err := e.validateSemanticScopes(ctx, cypher); err != nil {
+	// WITH EMBEDDING is an execution option, not a WITH projection: the
+	// scopes are those of the statement without it.
+	scopeText, _ := stripWithEmbeddingSuffix(cypher)
+	if err := e.validateSemanticScopes(scopeText); err != nil {
 		return nil, err
 	}
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {

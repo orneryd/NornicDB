@@ -233,11 +233,22 @@ func TestMatchUnwindCombined(t *testing.T) {
 
 	setupMultiLabelNodes(t, store, exec)
 
+	// UNWIND takes no WHERE: Neo4j rejects UNWIND … AS label WHERE … with
+	// "Invalid input 'WHERE'"; the filter goes in a WITH.
 	t.Run("MATCH then UNWIND labels", func(t *testing.T) {
-		result, err := exec.Execute(ctx, `
+		_, err := exec.Execute(ctx, `
 			MATCH (f:File)
 			UNWIND labels(f) as label
 			WHERE label <> 'File'
+			RETURN label, count(*) as count
+		`, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Invalid input 'WHERE'")
+
+		result, err := exec.Execute(ctx, `
+			MATCH (f:File)
+			UNWIND labels(f) as label
+			WITH label WHERE label <> 'File'
 			RETURN label, count(*) as count
 		`, nil)
 		require.NoError(t, err)
@@ -250,7 +261,7 @@ func TestMatchUnwindCombined(t *testing.T) {
 			MATCH (f:File)
 			WITH f, labels(f) as nodeLabels
 			UNWIND nodeLabels as label
-			WHERE label <> 'File'
+			WITH label WHERE label <> 'File'
 			RETURN label, count(*) as count
 			ORDER BY count DESC
 		`, nil)
