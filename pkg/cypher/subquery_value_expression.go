@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -209,15 +208,10 @@ func (c *integerComparison) holds(value int64) bool {
 	}
 }
 
-// Row subquery plans are cached by expression text: an expression is planned
-// once, not once per row. The cache stops growing at
-// rowSubqueryPlanCacheLimit expressions.
-var (
-	rowSubqueryPlansMu sync.RWMutex
-	rowSubqueryPlans   = make(map[string]*rowSubqueryPlan)
-)
-
-const rowSubqueryPlanCacheLimit = 1024
+// rowSubqueryPlans caches row subquery plans by expression text: an
+// expression is planned once, not once per row. A nil plan (no subquery in a
+// larger expression) is cached too.
+var rowSubqueryPlans = newBoundedCache[string, *rowSubqueryPlan](1024)
 
 // planRowSubqueries returns expr's plan when it holds subquery expressions
 // inside a larger expression (nestedSubqueryExpressions), and nil otherwise.
@@ -225,9 +219,7 @@ func planRowSubqueries(expr string) *rowSubqueryPlan {
 	if !mayContainSubqueryExpression(expr) {
 		return nil
 	}
-	rowSubqueryPlansMu.RLock()
-	plan, cached := rowSubqueryPlans[expr]
-	rowSubqueryPlansMu.RUnlock()
+	plan, cached := rowSubqueryPlans.get(expr)
 	if cached {
 		return plan
 	}
@@ -253,11 +245,7 @@ func planRowSubqueries(expr string) *rowSubqueryPlan {
 			plan.integerComparison, _ = parseIntegerComparison(plan.rewritten[len(plan.names[0]):])
 		}
 	}
-	rowSubqueryPlansMu.Lock()
-	if len(rowSubqueryPlans) < rowSubqueryPlanCacheLimit {
-		rowSubqueryPlans[expr] = plan
-	}
-	rowSubqueryPlansMu.Unlock()
+	rowSubqueryPlans.put(expr, plan)
 	return plan
 }
 
@@ -580,28 +568,16 @@ type boundDegreeShape struct {
 }
 
 // boundDegreeShapes caches parsed COUNT bodies; a body is parsed once, not
-// once per row. The cache stops growing at boundDegreeShapeCacheLimit bodies.
-var (
-	boundDegreeShapesMu sync.RWMutex
-	boundDegreeShapes   = make(map[string]boundDegreeShape)
-)
-
-const boundDegreeShapeCacheLimit = 1024
+// once per row.
+var boundDegreeShapes = newBoundedCache[string, boundDegreeShape](1024)
 
 // parseBoundDegreeShape parses body as a boundDegreePattern (cached).
 func parseBoundDegreeShape(body string) boundDegreeShape {
-	boundDegreeShapesMu.RLock()
-	shape, cached := boundDegreeShapes[body]
-	boundDegreeShapesMu.RUnlock()
-	if cached {
+	if shape, cached := boundDegreeShapes.get(body); cached {
 		return shape
 	}
-	shape = parseBoundDegreeShapeText(body)
-	boundDegreeShapesMu.Lock()
-	if len(boundDegreeShapes) < boundDegreeShapeCacheLimit {
-		boundDegreeShapes[body] = shape
-	}
-	boundDegreeShapesMu.Unlock()
+	shape := parseBoundDegreeShapeText(body)
+	boundDegreeShapes.put(body, shape)
 	return shape
 }
 
