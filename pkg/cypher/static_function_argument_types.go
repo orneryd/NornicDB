@@ -169,7 +169,8 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 // forEachStaticFunctionArgument calls check for every argument of every call
 // to a function in staticFunctionArguments in text, outside string literals
 // and quoted names, including nested calls. A DISTINCT before an aggregate's
-// argument is not part of it, and trim(… FROM …) is skipped.
+// argument is not part of it, and trim([LEADING | TRAILING | BOTH]
+// [characters] FROM source) checks its characters and source (trimFromArguments).
 func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string) error) error {
 	for index := 0; index < len(text); {
 		switch text[index] {
@@ -210,7 +211,18 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		if startsWithKeywordFold(inner, "DISTINCT") {
 			inner = strings.TrimSpace(inner[len("DISTINCT"):])
 		}
-		if inner != "" && !(strings.EqualFold(name, "trim") && topLevelKeywordIndex(inner, "FROM") >= 0) {
+		if strings.EqualFold(name, "trim") {
+			if parameters, fromForm := trimFromArguments(inner); fromForm {
+				for _, expression := range parameters {
+					if err := check(arguments[0], expression); err != nil {
+						return err
+					}
+				}
+				index = open + 1
+				continue
+			}
+		}
+		if inner != "" {
 			for position, expression := range splitTopLevelComma(inner) {
 				if position >= len(arguments) {
 					break
@@ -223,6 +235,27 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		index = open + 1
 	}
 	return nil
+}
+
+// trimFromArguments reads trim's FROM form, trim([LEADING | TRAILING |
+// BOTH] [characters] FROM source), and returns its STRING arguments: the
+// characters when given, and the source. fromForm is false for trim(source).
+func trimFromArguments(inner string) (arguments []string, fromForm bool) {
+	from := topLevelKeywordIndex(inner, "FROM")
+	if from < 0 {
+		return nil, false
+	}
+	spec := strings.TrimSpace(inner[:from])
+	for _, mode := range []string{"LEADING", "TRAILING", "BOTH"} {
+		if startsWithKeywordFold(spec, mode) {
+			spec = strings.TrimSpace(spec[len(mode):])
+			break
+		}
+	}
+	if spec != "" {
+		arguments = append(arguments, spec)
+	}
+	return append(arguments, strings.TrimSpace(inner[from+len("FROM"):])), true
 }
 
 // validateStaticFunctionArguments rejects a function called with a literal
