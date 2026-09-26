@@ -7,8 +7,9 @@ import "strings"
 // (showFunctionRows), and the unknown-function check accepts every entry's
 // name (builtInCypherFunctions). listed is false for the path and list syntax
 // the parser accepts in function-call position (shortestPath,
-// allShortestPaths, reduce), which SHOW FUNCTIONS doesn't report. Entries
-// marked "(NornicDB extension)" aren't Neo4j functions.
+// allShortestPaths, reduce), which SHOW FUNCTIONS doesn't report. A function
+// with several signatures has one entry per signature, as SHOW FUNCTIONS
+// lists them. Entries marked "(NornicDB extension)" aren't Neo4j functions.
 type cypherFunctionSpec struct {
 	name        string
 	category    string
@@ -33,25 +34,32 @@ var cypherFunctionCatalog = []cypherFunctionSpec{
 	{name: "size", category: "Scalar", signature: "size(list :: LIST<ANY>) :: INTEGER", description: "Returns the number of elements in a list", aggregating: false, listed: true},
 	{name: "length", category: "Scalar", signature: "length(path :: PATH) :: INTEGER", description: "Returns the length of a path", aggregating: false, listed: true},
 	{name: "reverse", category: "String", signature: "reverse(original :: LIST<ANY> | STRING) :: LIST<ANY> | STRING", description: "Reverses a list or string", aggregating: false, listed: true},
-	{name: "range", category: "List", signature: "range(start :: INTEGER, end :: INTEGER, step :: INTEGER = 1) :: LIST<INTEGER>", description: "Returns a list of integers", aggregating: false, listed: true},
+	{name: "range", category: "List", signature: "range(start :: INTEGER, end :: INTEGER) :: LIST<INTEGER>", description: "Returns a list of integers", aggregating: false, listed: true},
+	{name: "range", category: "List", signature: "range(start :: INTEGER, end :: INTEGER, step :: INTEGER) :: LIST<INTEGER>", description: "Returns a list of integers", aggregating: false, listed: true},
 	{name: "toString", category: "String", signature: "toString(expression :: ANY) :: STRING", description: "Converts expression to string", aggregating: false, listed: true},
 	{name: "toInteger", category: "Scalar", signature: "toInteger(expression :: ANY) :: INTEGER", description: "Converts expression to integer", aggregating: false, listed: true},
 	{name: "toFloat", category: "Scalar", signature: "toFloat(expression :: ANY) :: FLOAT", description: "Converts expression to float", aggregating: false, listed: true},
 	{name: "toBoolean", category: "Scalar", signature: "toBoolean(expression :: ANY) :: BOOLEAN", description: "Converts expression to boolean", aggregating: false, listed: true},
 	{name: "toLower", category: "String", signature: "toLower(original :: STRING) :: STRING", description: "Converts string to lowercase", aggregating: false, listed: true},
 	{name: "toUpper", category: "String", signature: "toUpper(original :: STRING) :: STRING", description: "Converts string to uppercase", aggregating: false, listed: true},
-	{name: "trim", category: "String", signature: "trim(original :: STRING) :: STRING", description: "Trims whitespace from string", aggregating: false, listed: true},
-	{name: "ltrim", category: "String", signature: "ltrim(original :: STRING) :: STRING", description: "Trims leading whitespace", aggregating: false, listed: true},
-	{name: "rtrim", category: "String", signature: "rtrim(original :: STRING) :: STRING", description: "Trims trailing whitespace", aggregating: false, listed: true},
+	{name: "trim", category: "String", signature: "trim(input :: STRING) :: STRING", description: "Trims whitespace from string", aggregating: false, listed: true},
+	{name: "trim", category: "String", signature: "trim([[LEADING | TRAILING | BOTH] [trimCharacterString :: STRING] FROM] input :: STRING) :: STRING", description: "Trims whitespace from string", aggregating: false, listed: true},
+	{name: "ltrim", category: "String", signature: "ltrim(input :: STRING) :: STRING", description: "Trims leading whitespace", aggregating: false, listed: true},
+	{name: "ltrim", category: "String", signature: "ltrim(input :: STRING, trimCharacterString :: STRING) :: STRING", description: "Trims leading whitespace", aggregating: false, listed: true},
+	{name: "rtrim", category: "String", signature: "rtrim(input :: STRING) :: STRING", description: "Trims trailing whitespace", aggregating: false, listed: true},
+	{name: "rtrim", category: "String", signature: "rtrim(input :: STRING, trimCharacterString :: STRING) :: STRING", description: "Trims trailing whitespace", aggregating: false, listed: true},
 	{name: "replace", category: "String", signature: "replace(original :: STRING, search :: STRING, replace :: STRING) :: STRING", description: "Replaces all occurrences", aggregating: false, listed: true},
 	{name: "split", category: "String", signature: "split(original :: STRING, splitDelimiter :: STRING) :: LIST<STRING>", description: "Splits string by delimiter", aggregating: false, listed: true},
-	{name: "substring", category: "String", signature: "substring(original :: STRING, start :: INTEGER, length :: INTEGER = NULL) :: STRING", description: "Returns substring", aggregating: false, listed: true},
+	{name: "substring", category: "String", signature: "substring(original :: STRING, start :: INTEGER) :: STRING", description: "Returns substring", aggregating: false, listed: true},
+	{name: "substring", category: "String", signature: "substring(original :: STRING, start :: INTEGER, length :: INTEGER) :: STRING", description: "Returns substring", aggregating: false, listed: true},
 	{name: "left", category: "String", signature: "left(original :: STRING, length :: INTEGER) :: STRING", description: "Returns left part of string", aggregating: false, listed: true},
 	{name: "right", category: "String", signature: "right(original :: STRING, length :: INTEGER) :: STRING", description: "Returns right part of string", aggregating: false, listed: true},
 	{name: "abs", category: "Numeric", signature: "abs(expression :: NUMBER) :: NUMBER", description: "Returns absolute value", aggregating: false, listed: true},
 	{name: "ceil", category: "Numeric", signature: "ceil(expression :: FLOAT) :: INTEGER", description: "Returns ceiling value", aggregating: false, listed: true},
 	{name: "floor", category: "Numeric", signature: "floor(expression :: FLOAT) :: INTEGER", description: "Returns floor value", aggregating: false, listed: true},
-	{name: "round", category: "Numeric", signature: "round(expression :: FLOAT) :: INTEGER", description: "Rounds to nearest integer", aggregating: false, listed: true},
+	{name: "round", category: "Numeric", signature: "round(value :: FLOAT) :: FLOAT", description: "Rounds to nearest integer", aggregating: false, listed: true},
+	{name: "round", category: "Numeric", signature: "round(value :: FLOAT, precision :: INTEGER | FLOAT) :: FLOAT", description: "Rounds to nearest integer", aggregating: false, listed: true},
+	{name: "round", category: "Numeric", signature: "round(value :: FLOAT, precision :: INTEGER | FLOAT, mode :: STRING) :: FLOAT", description: "Rounds to nearest integer", aggregating: false, listed: true},
 	{name: "sign", category: "Numeric", signature: "sign(expression :: NUMBER) :: INTEGER", description: "Returns sign of number", aggregating: false, listed: true},
 	{name: "sqrt", category: "Logarithmic", signature: "sqrt(expression :: FLOAT) :: FLOAT", description: "Returns square root", aggregating: false, listed: true},
 	{name: "rand", category: "Numeric", signature: "rand() :: FLOAT", description: "Returns random float between 0 and 1", aggregating: false, listed: true},
@@ -98,11 +106,13 @@ var cypherFunctionCatalog = []cypherFunctionSpec{
 	{name: "kalman.velocity.predict", category: "Kalman", signature: "kalman.velocity.predict(state :: STRING, steps :: INTEGER) :: FLOAT", description: "Predict position n steps into the future", aggregating: false, listed: true},
 	{name: "kalman.adaptive.init", category: "Kalman", signature: "kalman.adaptive.init(config? :: MAP) :: STRING", description: "Create adaptive Kalman filter (auto-switches between basic and velocity modes)", aggregating: false, listed: true},
 	{name: "kalman.adaptive.process", category: "Kalman", signature: "kalman.adaptive.process(measurement :: FLOAT, state :: STRING) :: MAP", description: "Process measurement, returns {value, mode, state}", aggregating: false, listed: true},
-	{name: "btrim", category: "String", signature: "btrim(original :: STRING, trimCharacterString :: STRING = ' ') :: STRING", description: "Removes the given characters (default: whitespace) from both ends of a string", aggregating: false, listed: true},
+	{name: "btrim", category: "String", signature: "btrim(input :: STRING) :: STRING", description: "Removes the given characters (default: whitespace) from both ends of a string", aggregating: false, listed: true},
+	{name: "btrim", category: "String", signature: "btrim(input :: STRING, trimCharacterString :: STRING) :: STRING", description: "Removes the given characters (default: whitespace) from both ends of a string", aggregating: false, listed: true},
 	{name: "char_length", category: "String", signature: "char_length(input :: STRING) :: INTEGER", description: "Returns the number of characters in a string", aggregating: false, listed: true},
 	{name: "character_length", category: "String", signature: "character_length(input :: STRING) :: INTEGER", description: "Returns the number of characters in a string", aggregating: false, listed: true},
 	{name: "isNaN", category: "Numeric", signature: "isNaN(input :: INTEGER | FLOAT) :: BOOLEAN", description: "Returns true if the number is NaN", aggregating: false, listed: true},
 	{name: "lower", category: "String", signature: "lower(input :: STRING) :: STRING", description: "Converts a string to lowercase", aggregating: false, listed: true},
+	{name: "normalize", category: "String", signature: "normalize(input :: STRING) :: STRING", description: "Normalizes a string to a Unicode normal form (default NFC)", aggregating: false, listed: true},
 	{name: "normalize", category: "String", signature: "normalize(input :: STRING, normalForm = NFC :: [NFC, NFD, NFKC, NFKD]) :: STRING", description: "Normalizes a string to a Unicode normal form (default NFC)", aggregating: false, listed: true},
 	{name: "nullIf", category: "Scalar", signature: "nullIf(v1 :: ANY, v2 :: ANY) :: ANY", description: "Returns null if the two values are equal, otherwise the first", aggregating: false, listed: true},
 	{name: "radians", category: "Trigonometric", signature: "radians(input :: FLOAT) :: FLOAT", description: "Converts degrees to radians", aggregating: false, listed: true},

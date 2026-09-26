@@ -31,17 +31,22 @@ func TestShowColumnSetsMatchNeo4j(t *testing.T) {
 		require.Equal(t, want, result.Columns, query)
 	}
 
-	result, err := exec.Execute(ctx, "SHOW FUNCTIONS YIELD name, category, isBuiltIn, argumentDescription, returnDescription WHERE name = 'substring' RETURN category, isBuiltIn, argumentDescription, returnDescription", nil)
+	// substring has two signatures, listed as two rows (as Neo4j does).
+	result, err := exec.Execute(ctx, "SHOW FUNCTIONS YIELD name, category, isBuiltIn, argumentDescription, returnDescription WHERE name = 'substring' RETURN category, isBuiltIn, argumentDescription, returnDescription ORDER BY size(argumentDescription)", nil)
 	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	require.Equal(t, "String", result.Rows[0][0])
-	require.Equal(t, true, result.Rows[0][1])
+	require.Len(t, result.Rows, 2)
+	require.Equal(t, "String", result.Rows[1][0])
+	require.Equal(t, true, result.Rows[1][1])
+	require.Equal(t, []interface{}{
+		map[string]interface{}{"name": "original", "type": "STRING", "description": "", "isDeprecated": false},
+		map[string]interface{}{"name": "start", "type": "INTEGER", "description": "", "isDeprecated": false},
+	}, result.Rows[0][2])
 	require.Equal(t, []interface{}{
 		map[string]interface{}{"name": "original", "type": "STRING", "description": "", "isDeprecated": false},
 		map[string]interface{}{"name": "start", "type": "INTEGER", "description": "", "isDeprecated": false},
 		map[string]interface{}{"name": "length", "type": "INTEGER", "description": "", "isDeprecated": false},
-	}, result.Rows[0][2])
-	require.Equal(t, "STRING", result.Rows[0][3])
+	}, result.Rows[1][2])
+	require.Equal(t, "STRING", result.Rows[1][3])
 }
 
 // TestShowListingsAreOrderedByName: Neo4j lists every SHOW command by name,

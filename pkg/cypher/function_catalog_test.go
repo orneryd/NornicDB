@@ -138,7 +138,16 @@ func TestFunctionCatalogIsTheOneTable(t *testing.T) {
 		require.True(t, known, function.name)
 	}
 	require.Len(t, result.Rows, count)
-	require.Len(t, builtInCypherFunctions, len(cypherFunctionCatalog))
+	names := map[string]bool{}
+	for _, function := range cypherFunctionCatalog {
+		names[strings.ToLower(function.name)] = true
+	}
+	require.Len(t, builtInCypherFunctions, len(names))
+
+	// A function with several signatures lists one row per signature.
+	rounds, err := exec.Execute(context.Background(), "SHOW FUNCTIONS YIELD name, signature WHERE name = 'round' RETURN signature", nil)
+	require.NoError(t, err)
+	require.Len(t, rounds.Rows, 3)
 }
 
 // TestTemporalConstructorErrorsMatchNeo4j: a temporal constructor that can't
