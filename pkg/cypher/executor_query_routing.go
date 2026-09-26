@@ -618,7 +618,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		items = strings.TrimSpace(items[:cut])
 	}
 	items, _ = cutDistinct(items)
-	parts := splitReturnExpressions(items)
+	parts := splitTopLevelComma(items)
 	for index, part := range parts {
 		part = strings.TrimSpace(part)
 		if asIdx := strings.Index(strings.ToUpper(part), " AS "); asIdx != -1 {
@@ -674,9 +674,16 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	return nil, err
 }
 
+// firstTopLevelModifierIndex is the position of a projection's first
+// top-level ORDER BY, SKIP or LIMIT, or -1. The shared RETURN projection and
+// standalone RETURN both use it.
 func firstTopLevelModifierIndex(clause string) int {
 	cut := -1
 	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		// The keyword scan is costly; most projections have no modifier.
+		if !containsFold(clause, kw[:4]) {
+			continue
+		}
 		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && (cut == -1 || idx < cut) {
 			cut = idx
 		}

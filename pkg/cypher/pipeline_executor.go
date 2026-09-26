@@ -3184,7 +3184,8 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 // parsePipelineAggregate recognizes the standard Cypher aggregate functions
 // and separates their input expression from an optional DISTINCT modifier.
 func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool) {
-	if !isAggregateFunc(expr) {
+	// An aggregate is a function call: without a parenthesis there is none.
+	if strings.IndexByte(expr, '(') < 0 || !isAggregateFunc(expr) {
 		return "", "", false, false
 	}
 	open := strings.Index(expr, "(")
@@ -3201,6 +3202,9 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 }
 
 func pipelineExpressionContainsAggregate(expr string) bool {
+	if strings.IndexByte(expr, '(') < 0 {
+		return false
+	}
 	return len(findAggregateSpans(strings.TrimSpace(expr))) > 0
 }
 
@@ -3426,10 +3430,8 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "RETURN"))
 	body = strings.TrimPrefix(body, "return")
 	modifierStart := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(body, keyword); idx >= 0 && idx < modifierStart {
-			modifierStart = idx
-		}
+	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
+		modifierStart = cut
 	}
 	modifiers := strings.TrimSpace(body[modifierStart:])
 	body = strings.TrimSpace(body[:modifierStart])
@@ -3572,6 +3574,24 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		}
 		result, err := e.applyResultModifiers(result, modifiers)
 		return result, err == nil
+	}
+
+	// Without DISTINCT, ORDER BY, SKIP or LIMIT the projected values are the
+	// result rows: no per-row map or ORDER BY scope is needed.
+	if modifiers == "" && !returnDistinct {
+		result.Rows = make([][]interface{}, 0, len(rows))
+		for _, row := range rows {
+			outRow := make([]interface{}, len(projs))
+			for index, p := range projs {
+				value, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
+				if !ok {
+					return nil, false
+				}
+				outRow[index] = value
+			}
+			result.Rows = append(result.Rows, outRow)
+		}
+		return result, true
 	}
 
 	projectedRows := make([]pipelineRow, 0, len(rows))
