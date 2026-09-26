@@ -1709,11 +1709,14 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 	var resultColumns []string
 
 	if readOnlyQuery != "" {
-		// Execute read-only version to get row count (doesn't perform writes)
-		readOnlyResult, err := e.executeInternal(ctx, readOnlyQuery, nil)
+		// Execute the read-only count (no writes). An error only means no
+		// estimate: it runs with its own expression-failure record, so it
+		// doesn't become the statement's error. The columns come from the
+		// batches, which run the subquery's own RETURN.
+		probeCtx := context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
+		readOnlyResult, err := e.executeInternal(probeCtx, readOnlyQuery, nil)
 		if err == nil && readOnlyResult != nil {
 			totalRows = len(readOnlyResult.Rows)
-			resultColumns = readOnlyResult.Columns
 		}
 	}
 
@@ -1835,29 +1838,25 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 // makeSubqueryReadOnly converts a subquery with writes to a read-only version for row counting.
 // This is used to determine how many batches we need before executing the actual writes.
 // Returns empty string if conversion is not possible.
+//
+// The count query is the subquery's MATCH with RETURN 1: one row per matched
+// row, the rows the batches page through. The subquery's own RETURN can't
+// be kept, since it reads variables the dropped write clause binds
+// (MATCH (s) CREATE (t) RETURN t.value).
 func (e *StorageExecutor) makeSubqueryReadOnly(subquery string) string {
-	// Simple strategy: Replace write operations with RETURN of matched entities
-	// This works for common patterns like "MATCH ... SET ... RETURN"
-
-	// Check for MATCH ... SET ... RETURN pattern
 	matchIdx := findKeywordIndex(subquery, "MATCH")
 	setIdx := findKeywordIndex(subquery, "SET")
 	returnIdx := findKeywordIndex(subquery, "RETURN")
 
+	// MATCH ... SET ... RETURN
 	if matchIdx >= 0 && setIdx > matchIdx && returnIdx > setIdx {
-		// Extract MATCH and RETURN parts, skip SET
-		matchPart := strings.TrimSpace(subquery[matchIdx:setIdx])
-		returnPart := strings.TrimSpace(subquery[returnIdx:])
-		return matchPart + " " + returnPart
+		return strings.TrimSpace(subquery[matchIdx:setIdx]) + " RETURN 1"
 	}
 
-	// Check for MATCH ... CREATE ... RETURN pattern
+	// MATCH ... CREATE ... RETURN
 	createIdx := findKeywordIndex(subquery, "CREATE")
 	if matchIdx >= 0 && createIdx > matchIdx && returnIdx > createIdx {
-		// Extract MATCH and RETURN parts, skip CREATE
-		matchPart := strings.TrimSpace(subquery[matchIdx:createIdx])
-		returnPart := strings.TrimSpace(subquery[returnIdx:])
-		return matchPart + " " + returnPart
+		return strings.TrimSpace(subquery[matchIdx:createIdx]) + " RETURN 1"
 	}
 
 	// If we can't convert, return empty string (caller will use iterative batching)

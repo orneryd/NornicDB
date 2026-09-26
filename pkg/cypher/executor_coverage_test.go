@@ -952,10 +952,12 @@ func TestResolveReturnItemDifferentVariable(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	// Return expression with different variable name
-	result, err := exec.Execute(ctx, "MATCH (n:DiffVar) RETURN m.val", nil)
-	require.NoError(t, err)
-	assert.Nil(t, result.Rows[0][0]) // m doesn't match n
+	// A property of a variable the statement doesn't bind is Neo4j's
+	// "Variable `m` not defined" SyntaxError, not null.
+	_, err = exec.Execute(ctx, "MATCH (n:DiffVar) RETURN m.val", nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	require.Contains(t, err.Error(), "variable m is not defined")
 }
 
 func TestDbSchemaVisualizationWithRelationships(t *testing.T) {
@@ -1318,8 +1320,16 @@ func TestExecuteCreateRelationshipWithRelReturn(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// CREATE with RETURN that doesn't match source or target
-	result, err := exec.Execute(ctx, "CREATE (a:A)-[:REL]->(b:B) RETURN x.prop", nil)
+	// A RETURN of a variable the CREATE doesn't bind is Neo4j's "Variable
+	// `x` not defined" SyntaxError, and nothing is written.
+	_, err := exec.Execute(ctx, "CREATE (a:A)-[:REL]->(b:B) RETURN x.prop", nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "variable x is not defined")
+	nodes, err := store.AllNodes()
+	require.NoError(t, err)
+	assert.Empty(t, nodes)
+
+	result, err := exec.Execute(ctx, "CREATE (a:A)-[:REL]->(b:B) RETURN b.prop", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Stats.NodesCreated)
 }

@@ -2405,13 +2405,15 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 	assert.Contains(t, s5, "LIMIT 2")
 
 	// convertWriteSubqueryToRead branches
+	// The count query returns one row per matched row; the subquery's
+	// RETURN may read variables only the write clause binds.
 	assert.Equal(t,
-		"MATCH (n) RETURN n",
+		"MATCH (n) RETURN 1",
 		exec.makeSubqueryReadOnly("MATCH (n) SET n.x = 1 RETURN n"),
 	)
 	assert.Equal(t,
-		"MATCH (n) RETURN n",
-		exec.makeSubqueryReadOnly("MATCH (n) CREATE (m) RETURN n"),
+		"MATCH (n) RETURN 1",
+		exec.makeSubqueryReadOnly("MATCH (n) CREATE (m) RETURN m.x"),
 	)
 	assert.Equal(t, "", exec.makeSubqueryReadOnly("CALL db.labels()"))
 

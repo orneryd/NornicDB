@@ -688,12 +688,16 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		if base == nil || indexValue == nil {
 			return nil, true, nil
 		}
-		if object, isObject := toStringAnyMap(base); isObject {
+		_, isNode := base.(*storage.Node)
+		_, isRelationship := base.(*storage.Edge)
+		if _, isObject := toStringAnyMap(base); isObject || isNode || isRelationship {
+			// A dynamic property access: n[key] is n.key.
 			key, isString := indexValue.(string)
 			if !isString {
 				return nil, false, nil
 			}
-			return object[key], true, nil
+			value, ok := rowPropertyValue(base, key)
+			return value, ok, nil
 		}
 		index, ok := rowSubscriptIndex(indexValue)
 		if !ok {
@@ -1429,50 +1433,54 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 		if property == "" {
 			return nil, false
 		}
-		// Cypher property access is null-propagating. OPTIONAL MATCH stores an
-		// unmatched variable as an untyped nil interface, so handle it before
-		// the entity/map type switch just as we handle typed nil entities below.
-		if value == nil {
-			return nil, true
+		next, ok := rowPropertyValue(value, property)
+		if !ok {
+			return nil, false
 		}
-		if propertyValue, temporal, supported := evaluateTemporalProperty(value, property); temporal {
-			if !supported {
-				return nil, false
-			}
-			value = propertyValue
-		} else {
-			switch typed := value.(type) {
-			case *storage.Node:
-				if typed == nil {
-					return nil, true
-				}
-				propertyValue, _ := getNodePropertyValue(typed, property)
-				if _, isStringList := propertyValue.([]string); isStringList {
-					// Parsed node-property literals can remain []string in an in-memory
-					// streaming row while persisted reads expose the same Cypher list
-					// as []interface{}. Keep both physical sources observationally equal.
-					propertyValue = toAnySlice(propertyValue)
-				}
-				value = propertyValue
-			case *storage.Edge:
-				if typed == nil {
-					return nil, true
-				}
-				value = typed.Properties[property]
-			default:
-				object, ok := toStringAnyMap(value)
-				if !ok {
-					return nil, false
-				}
-				value = object[property]
-			}
-		}
+		value = next
 		if end == len(chain) {
 			break
 		}
 		start = end + 1
 	}
 	return value, true
+}
+
+// rowPropertyValue is value's property: a node's or relationship's
+// property, a map's key or a temporal value's component. Property access is
+// null-propagating: a null value (an unmatched OPTIONAL MATCH variable) or a
+// missing property is null. ok is false when value has no properties.
+func rowPropertyValue(value interface{}, property string) (interface{}, bool) {
+	if value == nil {
+		return nil, true
+	}
+	if propertyValue, temporal, supported := evaluateTemporalProperty(value, property); temporal {
+		return propertyValue, supported
+	}
+	switch typed := value.(type) {
+	case *storage.Node:
+		if typed == nil {
+			return nil, true
+		}
+		propertyValue, _ := getNodePropertyValue(typed, property)
+		if _, isStringList := propertyValue.([]string); isStringList {
+			// Parsed node-property literals can remain []string in an in-memory
+			// streaming row while persisted reads expose the same Cypher list
+			// as []interface{}. Keep both physical sources observationally equal.
+			propertyValue = toAnySlice(propertyValue)
+		}
+		return propertyValue, true
+	case *storage.Edge:
+		if typed == nil {
+			return nil, true
+		}
+		return typed.Properties[property], true
+	}
+	object, ok := toStringAnyMap(value)
+	if !ok {
+		return nil, false
+	}
+	return object[property], true
 }
 
 // nextRowPropertySeparator finds the next chain dot outside a backtick-

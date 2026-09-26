@@ -287,9 +287,11 @@ func tailStartsWithMatchClause(tail string) bool {
 	return strings.HasPrefix(trimmed, "MATCH ") || strings.HasPrefix(trimmed, "OPTIONAL MATCH ")
 }
 
+// expectedReturnColumnsFromTail is the column names of the tail's RETURN:
+// the one outside any CALL { } subquery, whose own RETURN is inside braces.
 func expectedReturnColumnsFromTail(tail string) []string {
 	trimmed := strings.TrimSpace(tail)
-	retIdx := findKeywordIndexInContext(trimmed, "RETURN")
+	retIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if retIdx == -1 {
 		return nil
 	}
@@ -299,7 +301,7 @@ func expectedReturnColumnsFromTail(tail string) []string {
 	}
 	end := len(returnPart)
 	for _, kw := range []string{"ORDER", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndexInContext(returnPart, kw); idx != -1 && idx < end {
+		if idx := topLevelKeywordIndex(returnPart, kw); idx != -1 && idx < end {
 			end = idx
 		}
 	}

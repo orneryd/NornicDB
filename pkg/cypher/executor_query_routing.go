@@ -479,7 +479,10 @@ skipMatchCallRoute:
 	case hasDelete || hasDetachDelete:
 		return e.executeDelete(ctx, cypher)
 	case findKeywordIndex(cypher, "CALL") == 0:
-		if isCallSubquery(cypher) {
+		// A statement that starts with a CALL { } subquery runs as one; a
+		// procedure call runs as a call, with any CALL { } in its tail
+		// (CALL proc() YIELD node CALL { WITH node … }).
+		if startsWithCallSubquery(cypher) {
 			return e.executeCallSubquery(ctx, cypher)
 		}
 		return e.executeCall(ctx, cypher)
