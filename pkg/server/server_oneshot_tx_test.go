@@ -46,6 +46,8 @@ func TestOneShotCommitIsOneTransaction(t *testing.T) {
 		"syntax error":             {"CREATE (:OneShot {i: 1})", "RETURN RETURN", "CREATE (:OneShot {i: 3})"},
 		"error in the last":        {"CREATE (:OneShot {i: 1})", "CREATE (:OneShot {i: 2})", "RETURN 1 / 0"},
 		"empty then error":         {"CREATE (:OneShot {i: 1})", "", "RETURN 1 / 0"},
+		"empty statement":          {"CREATE (:OneShot {i: 1})", ""},
+		"comment only":             {"CREATE (:OneShot {i: 1})", "// nothing here"},
 		"error after a MERGE, SET": {"MERGE (n:OneShot {i: 1}) SET n.x = 1", "RETURN 1 / 0"},
 	} {
 		response := post(dbName, statements...)
@@ -54,8 +56,12 @@ func TestOneShotCommitIsOneTransaction(t *testing.T) {
 		require.Nil(t, response.Optimistic, name)
 		require.EqualValues(t, 0, count(), name)
 	}
+	// An empty statement is Neo4j's SyntaxError.
+	response := post(dbName, "   ")
+	require.Len(t, response.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", response.Errors[0].Code)
 
-	response := post(dbName, "CREATE (:OneShot {i: 1})", "CREATE (:OneShot {i: 2})")
+	response = post(dbName, "CREATE (:OneShot {i: 1})", "CREATE (:OneShot {i: 2})")
 	require.Empty(t, response.Errors)
 	require.Len(t, response.Results, 2)
 	require.EqualValues(t, 2, count())
