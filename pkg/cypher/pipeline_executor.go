@@ -611,11 +611,8 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 		}
 		_ = idx
 	}
-	if len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseSet {
-		result.Columns = []string{"matched"}
-		result.Rows = [][]interface{}{{len(rows)}}
-	}
-
+	// A statement ending with a write has no columns and no rows, as in
+	// Neo4j (#676).
 	return result, true, nil
 }
 
@@ -1143,8 +1140,10 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 // and map bindings are attached as typed context values so assignments such as
 // SET target = row retain their original Go/Cypher types.
 func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineRow, clause string) (*QueryStats, bool, error) {
+	// body may chain SET clauses (SET a SET b); the applicators keep their
+	// boundaries, which properties_set depends on (setWrites).
 	body := strings.TrimSpace(clause[len("SET"):])
-	assignments := e.splitSetAssignments(body)
+	assignments := e.splitSetAssignments(collapseChainedSetClauses(body))
 	if body == "" || len(assignments) == 0 {
 		return nil, false, nil
 	}
@@ -1193,14 +1192,17 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 			if node := nodes[variable]; node != nil {
 				beforeProperties := cloneStringAnyMap(node.Properties)
 				beforeLabels := append([]string(nil), node.Labels...)
+				written := 0
 				if simplePropertyAssignment && simpleTarget == variable {
 					value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
 					if err != nil {
 						return nil, true, err
 					}
+					written = simplePropertyWrites(node.Properties, simpleProperty, value)
 					setNodeProperty(node, simpleProperty, value)
 				} else {
-					if err := e.applySetToNodeWithContext(rowCtx, node, variable, body, evalNodes, rels); err != nil {
+					var err error
+					if written, err = e.applySetToNodeWithContext(rowCtx, node, variable, body, evalNodes, rels); err != nil {
 						node.Properties = beforeProperties
 						node.Labels = beforeLabels
 						return nil, true, err
@@ -1219,21 +1221,24 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 					node.Labels = beforeLabels
 					return nil, true, fmt.Errorf("SET %s: %w", pipelineSetOperation(variable, assignments), err)
 				}
-				stats.PropertiesSet += changedPropertyCount(beforeProperties, node.Properties)
+				stats.PropertiesSet += written
 				stats.LabelsAdded += addedLabelCount(beforeLabels, node.Labels)
 				e.notifyNodeMutated(string(node.ID))
 				continue
 			}
 			if relationship := rels[variable]; relationship != nil {
 				beforeProperties := cloneStringAnyMap(relationship.Properties)
+				written := 0
 				if simplePropertyAssignment && simpleTarget == variable {
 					value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
 					if err != nil {
 						return nil, true, err
 					}
+					written = simplePropertyWrites(relationship.Properties, simpleProperty, value)
 					setRelationshipProperty(relationship, simpleProperty, value)
 				} else {
-					if _, err := e.applySetToRelationshipWithContext(rowCtx, relationship, variable, body, evalNodes, rels); err != nil {
+					var err error
+					if written, err = e.applySetToRelationshipWithContext(rowCtx, relationship, variable, body, evalNodes, rels); err != nil {
 						relationship.Properties = beforeProperties
 						return nil, true, err
 					}
@@ -1242,7 +1247,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 					relationship.Properties = beforeProperties
 					return nil, true, fmt.Errorf("SET %s: %w", pipelineSetOperation(variable, assignments), err)
 				}
-				stats.PropertiesSet += changedPropertyCount(beforeProperties, relationship.Properties)
+				stats.PropertiesSet += written
 				e.notifyEdgeMutated(string(relationship.ID))
 				continue
 			}

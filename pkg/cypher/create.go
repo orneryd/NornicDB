@@ -419,8 +419,9 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 // relationships and nodes by variable, and every other item (literals,
 // parameters, arithmetic, expressions over several variables) as an expression.
 // It is the single RETURN projection for the CREATE routes that project their
-// own RETURN - executeCreate, executeCreateWithRefs and the auto-commit
-// node-only fast path tryAsyncCreateNodeBatch - so they return the same values.
+// own RETURN - executeCreate, executeCreateWithRefs, executeMultipleCreates
+// (several CREATE clauses) and the auto-commit node-only fast path
+// tryAsyncCreateNodeBatch - so they return the same values.
 func (e *StorageExecutor) projectCreatedReturnItem(ctx context.Context, item returnItem, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, createdPaths map[string]PathResult) interface{} {
 	if isAggregateFuncName(item.expr, "count") {
 		inner := strings.TrimSpace(extractFuncInner(item.expr))
@@ -1764,7 +1765,6 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 		// Apply SET through the shared per-entity applicator, as MATCH ... SET,
 		// MERGE ... SET and CREATE ... SET do.
 		if setPart != "" {
-			setPart = collapseChainedSetClauses(setPart)
 			row := make(pipelineRow, len(combinedNodeVars)+len(edgeVars))
 			for name, node := range combinedNodeVars {
 				row[name] = node
@@ -1772,7 +1772,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			for name, edge := range edgeVars {
 				row[name] = edge
 			}
-			for _, variable := range pipelineSetTargetVariables(e.splitSetAssignments(setPart)) {
+			for _, variable := range pipelineSetTargetVariables(e.splitSetAssignments(collapseChainedSetClauses(setPart))) {
 				if row[variable] == nil {
 					return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
 				}
@@ -2082,7 +2082,6 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 		setPart = strings.TrimSpace(setTail[:postSetIdx])
 		trailingPart = strings.TrimSpace(setTail[postSetIdx:])
 	}
-	setPart = collapseChainedSetClauses(setPart)
 
 	// Create through the shared CREATE core (validation, property references,
 	// named paths), then apply SET through the shared per-entity applicator
@@ -2106,7 +2105,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 	for name, edge := range createdEdges {
 		row[name] = edge
 	}
-	for _, variable := range pipelineSetTargetVariables(e.splitSetAssignments(setPart)) {
+	for _, variable := range pipelineSetTargetVariables(e.splitSetAssignments(collapseChainedSetClauses(setPart))) {
 		if row[variable] == nil {
 			return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
 		}
@@ -2244,18 +2243,9 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 		}
 
 		result.Rows = [][]interface{}{row}
-	} else {
-		// No RETURN clause - return created entities by default
-		for _, node := range createdNodes {
-			if len(result.Columns) == 0 {
-				result.Columns = append(result.Columns, "node")
-			}
-			if len(result.Rows) == 0 {
-				result.Rows = append(result.Rows, []interface{}{})
-			}
-			result.Rows[0] = append(result.Rows[0], node)
-		}
 	}
+	// Without RETURN the statement has no columns and no rows, as in Neo4j
+	// (#507, #676).
 
 	return result, nil
 }
@@ -2525,6 +2515,8 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 			returnClause := strings.TrimSpace(segment[6:])
 			items := e.parseReturnItems(returnClause)
 
+			// The CREATE routes' one RETURN projection (count(...) over the
+			// created row included, #507).
 			row := make([]interface{}, len(items))
 			for i, item := range items {
 				if item.alias != "" {
@@ -2532,7 +2524,7 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 				} else {
 					result.Columns = append(result.Columns, item.expr)
 				}
-				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeContext, edgeContext)
+				row[i] = e.projectCreatedReturnItem(ctx, item, nodeContext, edgeContext, nil)
 			}
 			result.Rows = append(result.Rows, row)
 		}

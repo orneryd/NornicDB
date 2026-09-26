@@ -829,20 +829,8 @@ func (s *Session) handlePull(data []byte) error {
 
 		// Neo4j Bolt protocol: emit "stats" map when any counter is non-zero.
 		// The Go driver reads this via summary.Counters().
-		if resultStats != nil && (resultStats.NodesCreated > 0 ||
-			resultStats.NodesDeleted > 0 ||
-			resultStats.RelationshipsCreated > 0 ||
-			resultStats.RelationshipsDeleted > 0 ||
-			resultStats.PropertiesSet > 0 ||
-			resultStats.LabelsAdded > 0) {
-			metadata["stats"] = map[string]any{
-				"nodes-created":         int64(resultStats.NodesCreated),
-				"nodes-deleted":         int64(resultStats.NodesDeleted),
-				"relationships-created": int64(resultStats.RelationshipsCreated),
-				"relationships-deleted": int64(resultStats.RelationshipsDeleted),
-				"properties-set":        int64(resultStats.PropertiesSet),
-				"labels-added":          int64(resultStats.LabelsAdded),
-			}
+		if stats := boltStatsMetadata(resultStats); stats != nil {
+			metadata["stats"] = stats
 		}
 
 		// Note: Neo4j does NOT send has_more when it's false
@@ -948,20 +936,8 @@ func (s *Session) handleDiscard(data []byte) error {
 	} else {
 		metadata["db"] = "nornic"
 	}
-	if resultStats != nil && (resultStats.NodesCreated > 0 ||
-		resultStats.NodesDeleted > 0 ||
-		resultStats.RelationshipsCreated > 0 ||
-		resultStats.RelationshipsDeleted > 0 ||
-		resultStats.PropertiesSet > 0 ||
-		resultStats.LabelsAdded > 0) {
-		metadata["stats"] = map[string]any{
-			"nodes-created":         int64(resultStats.NodesCreated),
-			"nodes-deleted":         int64(resultStats.NodesDeleted),
-			"relationships-created": int64(resultStats.RelationshipsCreated),
-			"relationships-deleted": int64(resultStats.RelationshipsDeleted),
-			"properties-set":        int64(resultStats.PropertiesSet),
-			"labels-added":          int64(resultStats.LabelsAdded),
-		}
+	if stats := boltStatsMetadata(resultStats); stats != nil {
+		metadata["stats"] = stats
 	}
 
 	if err := s.sendSuccessNoFlush(metadata); err != nil {

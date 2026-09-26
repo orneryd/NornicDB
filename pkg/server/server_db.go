@@ -1102,6 +1102,11 @@ func queryStatsFromResult(result *cypher.ExecuteResult) *QueryStats {
 		stats.RelationshipsCreated = result.Stats.RelationshipsCreated
 		stats.RelationshipsDeleted = result.Stats.RelationshipsDeleted
 		stats.LabelsAdded = result.Stats.LabelsAdded
+		stats.LabelsRemoved = result.Stats.LabelsRemoved
+		stats.IndexesAdded = result.Stats.IndexesAdded
+		stats.IndexesRemoved = result.Stats.IndexesRemoved
+		stats.ConstraintsAdded = result.Stats.ConstraintsAdded
+		stats.ConstraintsRemoved = result.Stats.ConstraintsRemoved
 	}
 	stats.ContainsUpdates = stats.NodesCreated > 0 || stats.NodesDeleted > 0 ||
 		stats.PropertiesSet > 0 || stats.RelationshipsCreated > 0 ||

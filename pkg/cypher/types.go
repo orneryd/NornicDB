@@ -17,6 +17,13 @@ type QueryStats struct {
 	RelationshipsDeleted int `json:"relationships_deleted"`
 	PropertiesSet        int `json:"properties_set"`
 	LabelsAdded          int `json:"labels_added"`
+	LabelsRemoved        int `json:"labels_removed"`
+	// Schema counters: a schema command reports the indexes and constraints
+	// it created or dropped (countSchemaChanges).
+	IndexesAdded       int `json:"indexes_added"`
+	IndexesRemoved     int `json:"indexes_removed"`
+	ConstraintsAdded   int `json:"constraints_added"`
+	ConstraintsRemoved int `json:"constraints_removed"`
 }
 
 // nodePatternInfo holds parsed node pattern information

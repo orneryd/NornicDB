@@ -133,8 +133,10 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		}
 		edgeKey := relationshipBatchEdgeKeyFromRow(start.ID, end.ID, plan.merge, row)
 
+		// SET r = row writes by the replace-map rule (setWrites); the vector
+		// procedures count nothing, as in Neo4j.
 		if pending := pendingByKey[edgeKey]; pending != nil {
-			result.Stats.PropertiesSet += changedPropertyCount(pending.Properties, props)
+			result.Stats.PropertiesSet += mapWrites(pending.Properties, row, true)
 			pending.Properties = props
 			result.Rows = append(result.Rows, buildRelationshipBatchReturnRow(row, plan.returns))
 			continue
@@ -145,7 +147,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 			return nil, true, err
 		}
 		if existing != nil {
-			result.Stats.PropertiesSet += changedPropertyCount(existing.Properties, props)
+			result.Stats.PropertiesSet += mapWrites(existing.Properties, row, true)
 			updated := &storage.Edge{
 				ID:                   existing.ID,
 				Type:                 existing.Type,
@@ -176,7 +178,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 			return nil, true, localizedError(localization.CypherMergeSelectRelationshipIdentityFailed(err), err)
 		}
 		if selected != nil {
-			result.Stats.PropertiesSet += changedPropertyCount(selected.Properties, props)
+			result.Stats.PropertiesSet += mapWrites(selected.Properties, row, true)
 			updated := &storage.Edge{
 				ID:                   selected.ID,
 				Type:                 selected.Type,
@@ -195,10 +197,10 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 			continue
 		}
 		// A created relationship: its pattern properties, then what SET r = row
-		// changed on top of them.
+		// writes on top of them.
 		result.Stats.RelationshipsCreated++
 		countCreatedEntity(result.Stats, nil, matchProps)
-		result.Stats.PropertiesSet += changedPropertyCount(matchProps, props)
+		result.Stats.PropertiesSet += mapWrites(matchProps, row, true)
 		pendingCreates = append(pendingCreates, edge)
 		pendingByKey[edgeKey] = edge
 		result.Rows = append(result.Rows, buildRelationshipBatchReturnRow(row, plan.returns))

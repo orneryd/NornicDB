@@ -85,12 +85,12 @@ func TestLowCoverageHelpers_SmallFunctions(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "low_helpers"))
 	ctx := context.WithValue(context.Background(), paramsKey, map[string]interface{}{"props": map[string]interface{}{"a": int64(1), "drop": nil}})
 	n := &storage.Node{ID: "n-1", Properties: map[string]interface{}{}}
-	exec.applySetMapMergeToNode(ctx, n, "n", "$props", map[string]*storage.Node{"n": n}, nil)
+	exec.applySetMapMergeToNode(ctx, n, "n", "$props", map[string]*storage.Node{"n": n}, nil, &setWrites{})
 	require.EqualValues(t, int64(1), n.Properties["a"])
 	_, hasDrop := n.Properties["drop"]
 	require.False(t, hasDrop)
 
-	exec.applySetMapMergeToNode(context.Background(), n, "n", "{b: 2}", map[string]*storage.Node{"n": n}, nil)
+	exec.applySetMapMergeToNode(context.Background(), n, "n", "{b: 2}", map[string]*storage.Node{"n": n}, nil, &setWrites{})
 	require.EqualValues(t, int64(2), n.Properties["b"])
 
 	// unwind_multi_match_create

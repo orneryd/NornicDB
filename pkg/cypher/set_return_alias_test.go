@@ -76,9 +76,8 @@ func TestSetWithReturnAlias(t *testing.T) {
 		`, nil)
 
 		require.NoError(t, err)
-		assert.Equal(t, []string{"matched"}, result.Columns, "Without RETURN, should return 'matched' count")
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, 1, result.Rows[0][0])
+		assert.Empty(t, result.Columns, "Without RETURN, no columns (Neo4j, #676)")
+		assert.Empty(t, result.Rows, "Without RETURN, no rows (Neo4j, #676)")
 	})
 
 	t.Run("SET += with RETURN n.property", func(t *testing.T) {

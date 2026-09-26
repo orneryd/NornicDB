@@ -3353,7 +3353,7 @@ func TestOptionalMatch_AdditionalBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("optional malformed should return deterministic result, got err: %v", err)
 	}
-	if len(res.Rows) != 1 || len(res.Rows[0]) != 1 {
+	if len(res.Rows) != 1 {
 		t.Fatalf("unexpected malformed optional result shape: %#v", res.Rows)
 	}
 
@@ -3379,13 +3379,13 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 		t.Fatalf("setup failed: %v", err)
 	}
 
-	// No WITH/RETURN branch should return matched count.
+	// No WITH/RETURN: no columns and no rows, as in Neo4j (#676).
 	res, err := e.executeCompoundMatchOptionalMatch(ctx, "MATCH (a:Person {name:'alice'}) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person)")
 	if err != nil {
 		t.Fatalf("compound optional without WITH/RETURN failed: %v", err)
 	}
-	if len(res.Rows) != 1 || res.Rows[0][0] != int64(1) {
-		t.Fatalf("compound optional matched count unexpected: %#v", res.Rows)
+	if len(res.Columns) != 0 || len(res.Rows) != 0 {
+		t.Fatalf("compound optional without RETURN should have no columns and rows: %#v %#v", res.Columns, res.Rows)
 	}
 
 	// Missing variable in initial MATCH pattern should error.
