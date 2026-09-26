@@ -333,10 +333,10 @@ func TestEvaluateInOpNotAList(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	// IN without proper list syntax (no brackets)
-	result, err := exec.Execute(ctx, "MATCH (n:InNotList) WHERE n.status IN 'active' RETURN n", nil)
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 0) // Should not match since 'active' is not a list
+	// A string literal on the right of IN is Neo4j's compile-time type error.
+	_, err = exec.Execute(ctx, "MATCH (n:InNotList) WHERE n.status IN 'active' RETURN n", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Type mismatch: expected List<T> but was String")
 }
 
 func TestEvaluateWhereNoValidOperator(t *testing.T) {

@@ -4097,6 +4097,8 @@ func referencesVariable(query, name string) bool {
 //  2. Property access: UNWIND row.products AS prodRef
 //  3. Literal list:   UNWIND [{...}, {...}] AS x  (already a literal)
 //
+// A value that isn't a list is one element (traversableList).
+//
 // Returns nil if the expression can't be evaluated.
 func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
 	items, _ := evaluateStaticListForPipeline(expr, row)
@@ -4110,7 +4112,7 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 	expr = strings.TrimSpace(expr)
 	// Bare variable.
 	if val, ok := row[expr]; ok {
-		return coerceToUnwindItems(val), true
+		return traversableList(val), true
 	}
 	// Property access (a.b).
 	if dot := strings.Index(expr, "."); dot > 0 {
@@ -4119,11 +4121,11 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 		if baseVal, ok := row[base]; ok {
 			if asMap, ok := toStringAnyMap(baseVal); ok {
 				if v, ok := asMap[field]; ok {
-					return coerceToUnwindItems(v), true
+					return traversableList(v), true
 				}
 			}
 			if node, ok := baseVal.(*storage.Node); ok && node != nil {
-				return coerceToUnwindItems(node.Properties[field]), true
+				return traversableList(node.Properties[field]), true
 			}
 		}
 	}
@@ -4174,7 +4176,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		return items, true
 	}
 	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-		return toAnySlice(value), true
+		return traversableList(value), true
 	}
 
 	materialized := expr
@@ -4188,7 +4190,22 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	if value == nil && !strings.EqualFold(strings.TrimSpace(materialized), "null") && !looksLikeFunctionCall(materialized) {
 		return nil, false
 	}
-	return coerceToUnwindItems(value), true
+	return traversableList(value), true
+}
+
+// traversableList is a value in a list position (UNWIND, IN, a list
+// comprehension, reduce, all / any / none / single) as Neo4j reads it: a
+// list is its elements, null is nil, and any other value is a list of that
+// one value, so `UNWIND n.s` with n.s = 5 is one row and
+// `5 IN n.s` is true.
+func traversableList(v interface{}) []interface{} {
+	if v == nil {
+		return nil
+	}
+	if kind := reflect.TypeOf(v).Kind(); kind == reflect.Slice || kind == reflect.Array {
+		return toAnySlice(v)
+	}
+	return []interface{}{v}
 }
 
 func toAnySlice(v interface{}) []interface{} {

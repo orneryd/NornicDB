@@ -1,5 +1,28 @@
 package cypher
 
+import "strings"
+
+// parseQuantifierArguments splits the arguments of all / any / none /
+// single, "variable IN list WHERE predicate", for every evaluator.
+func parseQuantifierArguments(inner string) (variable, listExpression, predicate string, ok bool) {
+	inIndex := strings.Index(strings.ToLower(inner), " in ")
+	if inIndex <= 0 {
+		return "", "", "", false
+	}
+	rest := inner[inIndex+len(" in "):]
+	whereIndex := strings.Index(strings.ToLower(rest), " where ")
+	if whereIndex < 0 {
+		return "", "", "", false
+	}
+	variable = strings.TrimSpace(inner[:inIndex])
+	listExpression = strings.TrimSpace(rest[:whereIndex])
+	predicate = strings.TrimSpace(rest[whereIndex+len(" where "):])
+	if !isValidIdentifier(variable) || listExpression == "" || predicate == "" {
+		return "", "", "", false
+	}
+	return variable, listExpression, predicate, true
+}
+
 // isQuantifierFunction reports whether name (lower case) is a list
 // predicate: all, any, none or single.
 func isQuantifierFunction(name string) bool {
