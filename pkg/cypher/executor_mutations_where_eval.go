@@ -930,7 +930,8 @@ func (e *StorageExecutor) resolveReturnItem(ctx context.Context, item returnItem
 	if strings.Contains(expr, ".") {
 		parts := strings.SplitN(expr, ".", 2)
 		varName := strings.TrimSpace(parts[0])
-		propName := strings.TrimSpace(parts[1])
+		// A backtick-quoted key (n.`a b`) names the unquoted property.
+		propName := normalizePropertyKey(parts[1])
 
 		// Check if variable matches
 		if varName != variable {

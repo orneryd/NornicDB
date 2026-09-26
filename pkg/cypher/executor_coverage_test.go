@@ -2299,7 +2299,7 @@ func TestLowLevelHelpers_AdditionalCoverage(t *testing.T) {
 
 	_, err = exec.createPatternsInScope(ctx, "(n:Person {1bad: 1})", nodes, map[string]*storage.Edge{}, created)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid property key")
+	assert.Contains(t, err.Error(), "map literal keys must be valid symbolic names")
 
 	_, err = exec.createPatternsInScope(ctx, "(n:Person)", nodes, map[string]*storage.Edge{}, created)
 	require.NoError(t, err)

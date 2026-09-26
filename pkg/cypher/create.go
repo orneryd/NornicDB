@@ -210,11 +210,10 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 				return nil, localizedError(localization.CypherMutationsInvalidRelationshipType(relType), nil)
 			}
 
-			// SECURITY: Validate relationship property keys
-			for key := range relProps {
-				if !isValidIdentifier(key) {
-					return nil, localizedError(localization.CypherMutationsInvalidRelationshipPropertyKey(key), nil)
-				}
+			// Property keys follow the map-key rule (a symbolic name, or a
+			// backtick-quoted name holding any character).
+			if err := validateStaticMapKeys("[" + relStr + "]"); err != nil {
+				return nil, err
 			}
 
 			if err := validatePropertyValues(relProps); err != nil {
@@ -456,8 +455,7 @@ func (e *StorageExecutor) projectCreatedReturnItem(ctx context.Context, item ret
 			}
 			// Relationship property access: r.someProp
 			if strings.HasPrefix(item.expr, varName+".") {
-				propName := strings.TrimSpace(item.expr[len(varName)+1:])
-				return edge.Properties[propName]
+				return edge.Properties[normalizePropertyKey(item.expr[len(varName)+1:])]
 			}
 			// Functions over relationships (id(r), type(r), properties(r), ...)
 			return e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
@@ -547,11 +545,13 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	if nodePattern.labelErr != nil {
 		return nodePatternInfo{}, nodePattern.labelErr
 	}
-	// SECURITY: Validate property keys and values
+	// SECURITY: Validate property keys and values. Keys follow the map-key
+	// rule (a symbolic name, or a backtick-quoted name holding any
+	// character), checked on the pattern text where the quoting is visible.
+	if err := validateStaticMapKeys(pattern); err != nil {
+		return nodePatternInfo{}, err
+	}
 	for key, val := range nodePattern.properties {
-		if !isValidIdentifier(key) {
-			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidPropertyKey(key), nil)
-		}
 		if _, ok := val.(invalidPropertyValue); ok {
 			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
 		}
