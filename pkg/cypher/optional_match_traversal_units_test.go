@@ -176,6 +176,15 @@ func TestScanOptionalPatternShape_QuoteAware(t *testing.T) {
 	groups, brackets = scanOptionalPatternShape(`(a {s:"x(\"y["})`)
 	require.Equal(t, 1, groups)
 	require.Equal(t, 0, brackets)
+
+	// A bracketless hop is one relationship, so (a)-->(b) takes the seeded
+	// single-hop path like (a)-[]->(b).
+	for _, pattern := range []string{"(a)-->(b)", "(a)<--(b)", "(a)--(b)", "(a)<-->(b)", "(a)-[r:T]->(b)"} {
+		groups, brackets = scanOptionalPatternShape(pattern)
+		require.Equal(t, [2]int{2, 1}, [2]int{groups, brackets}, pattern)
+	}
+	groups, brackets = scanOptionalPatternShape("(a)-->(b)<--(c)")
+	require.Equal(t, [2]int{3, 2}, [2]int{groups, brackets})
 }
 
 func TestFirstParenGroup(t *testing.T) {

@@ -1010,6 +1010,10 @@ func TestHandleDiscover_ChunksLongQueryForEmbedding(t *testing.T) {
 
 	server := NewServer(db, cfg)
 	ctx := context.Background()
+	// A search while the initial index build runs fails (ErrSearchIndexBuilding).
+	if err := db.BuildSearchIndexes(ctx); err != nil {
+		t.Fatalf("BuildSearchIndexes() error = %v", err)
+	}
 
 	longQuery := strings.Repeat("a ", 650) // >512 tokens, should chunk
 	_, err = server.handleDiscover(ctx, map[string]interface{}{

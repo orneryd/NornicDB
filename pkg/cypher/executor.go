@@ -162,12 +162,32 @@ func hasSubqueryPattern(query string, pattern string) bool {
 }
 
 func hasCallSubqueryPattern(query string) bool {
+	return firstTopLevelCallSubquery(query) >= 0
+}
+
+// firstTopLevelCallSubquery returns the offset of the first CALL { } or
+// CALL (vars) { } clause of query itself: outside strings, quoted names and
+// brackets, so a CALL inside an EXISTS / COUNT / COLLECT subquery or another
+// CALL body is not the statement's (#652). -1 when there is none.
+func firstTopLevelCallSubquery(query string) int {
+	depth := 0
 	for i := 0; i < len(query); i++ {
-		if callSubqueryAt(query, i) {
-			return true
+		switch query[i] {
+		case '\'', '"', '`':
+			i = skipQuotedSemanticText(query, i) - 1
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case 'C', 'c':
+			if depth == 0 && callSubqueryAt(query, i) {
+				return i
+			}
 		}
 	}
-	return false
+	return -1
 }
 
 // callSubqueryAt reports whether a CALL { } or scoped CALL (vars) { }
@@ -2064,10 +2084,7 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 			if pat == "" {
 				continue
 			}
-			if containsOutsideStrings(pat, "->") ||
-				containsOutsideStrings(pat, "<-") ||
-				containsOutsideStrings(pat, "]-") ||
-				containsOutsideStrings(pat, "-[") {
+			if patternHasRelationship(pat) {
 				return nil, nil, false
 			}
 			nodePatterns = append(nodePatterns, pat)

@@ -42,7 +42,7 @@ func TestCountSubqueryMatches_NoDirectionCountsBoth(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, nodeA)
 
-	count := exec.countSubqueryMatches(nodeA, "n", "MATCH (n)--(x)")
+	count := subqueryCount(t, exec, nodeA, "n", "MATCH (n)--(x)")
 	require.EqualValues(t, 2, count)
 }
 

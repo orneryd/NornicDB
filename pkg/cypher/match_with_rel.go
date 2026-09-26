@@ -262,13 +262,12 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 			continue
 		}
 
-		upperItem := strings.ToUpper(item)
-		asIdx := strings.Index(upperItem, " AS ")
+		asIdx := projectionAliasIndex(item)
 		var alias string
 		var expr string
 		if asIdx > 0 {
 			expr = strings.TrimSpace(item[:asIdx])
-			alias = strings.TrimSpace(item[asIdx+4:])
+			alias = strings.TrimSpace(item[asIdx+len("AS"):])
 		} else {
 			expr = item
 			alias = item

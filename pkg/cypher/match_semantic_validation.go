@@ -113,7 +113,6 @@ func validateWithOrderBySemanticScope(input matchSemanticScope, clause string) e
 	if err := validateReturnOrderBySemanticScope("RETURN " + body); err != nil {
 		return err
 	}
-	output := projectMatchSemanticScope(input, clause)
 	for _, term := range parseOrderByClause(orderBody) {
 		if containsAggregateFunc(term.column) && !hasProjectionAggregate {
 			return newSemanticError(
@@ -122,7 +121,22 @@ func validateWithOrderBySemanticScope(input matchSemanticScope, clause string) e
 				"ORDER BY cannot introduce an aggregate after a non-aggregating WITH",
 			)
 		}
-		for _, reference := range semanticExpressionReferences(term.column) {
+	}
+	return validateOrderByReferences(input, projectMatchSemanticScope(input, clause), orderBody)
+}
+
+// validateOrderByReferences checks that every variable an ORDER BY of a WITH
+// or RETURN reads is in the clause's incoming scope or one it projects, as
+// Neo4j does ("Variable `y` not defined"). orderBody is the text after ORDER
+// BY; its SKIP / LIMIT are ignored.
+func validateOrderByReferences(input, output matchSemanticScope, orderBody string) error {
+	for _, keyword := range []string{"SKIP", "LIMIT"} {
+		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
+			orderBody = strings.TrimSpace(orderBody[:index])
+		}
+	}
+	for _, term := range parseOrderByClause(orderBody) {
+		for _, reference := range semanticFreeReferences(term.column) {
 			base := strings.SplitN(reference, ".", 2)[0]
 			if _, available := input[base]; available {
 				continue
@@ -143,6 +157,12 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 	body := strings.TrimSpace(clause[len("RETURN"):])
 	if err := validateReturnAggregationSemantics(body); err != nil {
 		return err
+	}
+	if orderIndex := topLevelKeywordIndex(body, "ORDER BY"); orderIndex >= 0 {
+		projection := strings.TrimSpace(body[:orderIndex])
+		if err := validateOrderByReferences(scope, projectMatchSemanticScope(scope, "WITH "+projection), strings.TrimSpace(body[orderIndex+len("ORDER BY"):])); err != nil {
+			return err
+		}
 	}
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
@@ -286,7 +306,7 @@ func (e *StorageExecutor) validateMatchWhereSimpleOperands(scope matchSemanticSc
 		)
 	}
 	for _, operator := range []string{" OR ", " XOR ", " AND "} {
-		if left, right, found := splitByOperatorWithOptions(whereClause, operator, true, true); found {
+		if left, right, found := splitByOperatorOutsideCase(whereClause, operator, true, true); found {
 			if err := e.validateMatchWhereSimpleOperands(scope, left); err != nil {
 				return err
 			}
@@ -324,7 +344,7 @@ func (e *StorageExecutor) validateMatchWhereSimpleOperands(scope matchSemanticSc
 		}
 	}
 	for _, operator := range []string{" STARTS WITH ", " ENDS WITH ", " CONTAINS ", " NOT IN ", " IN ", "=~"} {
-		left, _, found := splitByOperatorWithOptions(whereClause, operator, true, true)
+		left, _, found := splitByOperatorOutsideCase(whereClause, operator, true, true)
 		if !found {
 			continue
 		}

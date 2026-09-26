@@ -4,7 +4,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -14,8 +13,12 @@ type simpleWhereCacheKey struct {
 	clause   string
 }
 
-var compiledSimpleWhereCache sync.Map      // map[simpleWhereCacheKey]func(*storage.Node) bool
-var compiledSimpleWhereTruthCache sync.Map // map[simpleWhereCacheKey]func(*storage.Node) cypherTruth
+// Compiled single-node WHERE filters, cached by variable and clause text
+// (boundedCache).
+var (
+	compiledSimpleWhereCache      = newBoundedCache[simpleWhereCacheKey, func(*storage.Node) bool](4096)
+	compiledSimpleWhereTruthCache = newBoundedCache[simpleWhereCacheKey, func(*storage.Node) cypherTruth](4096)
+)
 
 func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
 	if fastIN, ok := e.buildBoundInFastFilter(variable, whereClause); ok {
@@ -102,14 +105,12 @@ func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, 
 		return e.compileSimpleWhere(ctx, variable, trimmedClause)
 	}
 	key := simpleWhereCacheKey{variable: variable, clause: trimmedClause}
-	if cached, ok := compiledSimpleWhereCache.Load(key); ok {
-		if fn, okFn := cached.(func(*storage.Node) bool); okFn {
-			return fn, true
-		}
+	if fn, ok := compiledSimpleWhereCache.get(key); ok {
+		return fn, true
 	}
 	fn, ok := e.compileSimpleWhere(ctx, variable, trimmedClause)
 	if ok {
-		compiledSimpleWhereCache.Store(key, fn)
+		compiledSimpleWhereCache.put(key, fn)
 	}
 	return fn, ok
 }
@@ -141,14 +142,12 @@ func (e *StorageExecutor) getCompiledSimpleWhereTruth(ctx context.Context, varia
 		return e.compileSimpleWhereTruth(ctx, variable, trimmedClause)
 	}
 	key := simpleWhereCacheKey{variable: variable, clause: trimmedClause}
-	if cached, ok := compiledSimpleWhereTruthCache.Load(key); ok {
-		if fn, okFn := cached.(func(*storage.Node) cypherTruth); okFn {
-			return fn, true
-		}
+	if fn, ok := compiledSimpleWhereTruthCache.get(key); ok {
+		return fn, true
 	}
 	fn, ok := e.compileSimpleWhereTruth(ctx, variable, trimmedClause)
 	if ok {
-		compiledSimpleWhereTruthCache.Store(key, fn)
+		compiledSimpleWhereTruthCache.put(key, fn)
 	}
 	return fn, ok
 }
@@ -486,6 +485,14 @@ func (e *StorageExecutor) evaluateWhereTruth(ctx context.Context, node *storage.
 	if compiled, ok := e.getCompiledSimpleWhereTruth(ctx, variable, whereClause); ok {
 		return compiled(node)
 	}
+	// A clause with an EXISTS / COUNT / COLLECT subquery in it goes whole to
+	// the row predicate evaluator with the node bound, so the subquery runs
+	// through the one subquery evaluator and a comparison or combination
+	// around it (EXISTS { … } = false, 0 = COUNT { … }) is evaluated as an
+	// expression (#652).
+	if mayContainSubqueryExpression(whereClause) {
+		return truthOf(e.evaluateRowPredicate(ctx, whereClause, map[string]interface{}{variable: node}))
+	}
 
 	// Handle parenthesized expressions - strip outer parens and recurse
 	if strings.HasPrefix(whereClause, "(") && strings.HasSuffix(whereClause, ")") {
@@ -534,22 +541,6 @@ func (e *StorageExecutor) evaluateWhereTruth(ctx context.Context, node *storage.
 		return truthOrLazy(e.evaluateWhereTruth(ctx, node, variable, left), func() cypherTruth {
 			return e.evaluateWhereTruth(ctx, node, variable, right)
 		})
-	}
-
-	// Handle NOT EXISTS { } subquery FIRST (before other NOT handling)
-	// Uses regex for whitespace-flexible matching
-	if hasSubqueryPattern(whereClause, notExistsSubqueryRe) {
-		return truthOf(e.evaluateNotExistsSubquery(ctx, node, variable, whereClause))
-	}
-
-	// Handle EXISTS { } subquery (whitespace-flexible)
-	if hasSubqueryPattern(whereClause, existsSubqueryRe) {
-		return truthOf(e.evaluateExistsSubquery(ctx, node, variable, whereClause))
-	}
-
-	// Handle COUNT { } subquery with comparison (whitespace-flexible)
-	if hasSubqueryPattern(whereClause, countSubqueryRe) {
-		return truthOf(e.evaluateCountSubqueryComparison(node, variable, whereClause))
 	}
 
 	// Handle NOT prefix
@@ -606,25 +597,17 @@ func (e *StorageExecutor) evaluateWhereLeaf(ctx context.Context, node *storage.N
 		return e.evaluateRelationshipPatternInWhere(node, variable, pattern)
 	}
 
-	// Determine operator and split accordingly
-	var op string
-	var opIdx int
-
-	// Check operators in order of length (longest first to avoid partial matches)
-	operators := []string{"<>", "!=", ">=", "<=", "=~", ">", "<", "="}
-	for _, testOp := range operators {
-		idx := strings.Index(whereClause, testOp)
-		if idx >= 0 {
-			op = testOp
-			opIdx = idx
-			break
-		}
-	}
-
-	if op == "" {
+	// The comparison is the top-level operator of the leaf: operators inside
+	// strings, brackets and CASE … END blocks belong to their operands (#699).
+	// A chain (a < b < c) is evaluated as a whole.
+	scan, comparison := scanComparisonChain(whereClause)
+	if !comparison || scan.count != 1 {
 		// No comparison operator - may be a boolean expression (e.g. exists(n.prop))
 		return e.evaluateWhereAsBoolean(ctx, whereClause, variable, node)
 	}
+	span := scan.operator(0)
+	op := whereClause[span.offset : span.offset+span.length]
+	opIdx := span.offset
 
 	left := strings.TrimSpace(whereClause[:opIdx])
 	right := strings.TrimSpace(whereClause[opIdx+len(op):])
@@ -676,6 +659,13 @@ func (e *StorageExecutor) evaluateWhereLeaf(ctx context.Context, node *storage.N
 	}
 
 	propName := left[len(variable)+1:]
+	if strings.HasPrefix(propName, "`") {
+		propName = normalizePropertyKey(propName)
+	} else if !isValidIdentifier(propName) {
+		// Left is an expression over the property (n.v + CASE … END, n.v * 2),
+		// not the property itself (#699).
+		return e.evaluateWhereAsBoolean(ctx, whereClause, variable, node)
+	}
 
 	// Get actual value - check EmbedMeta first for embedding metadata
 	var actualVal any
@@ -893,14 +883,11 @@ func (e *StorageExecutor) resolveReturnItem(ctx context.Context, item returnItem
 		return node
 	}
 
-	// Check for COLLECT { } subquery FIRST (before other function checks)
-	// This is a Neo4j 5.0+ feature that executes a subquery and collects results
-	if hasSubqueryPattern(expr, collectSubqueryRe) {
-		// We need context to execute the subquery, but resolveReturnItem doesn't have it
-		// Return a placeholder that will be handled by the caller
-		// This is a limitation - we'll need to handle collect { } at a higher level
-		// For now, return nil and handle it in the calling code
-		return nil // Will be handled by evaluateCollectSubquery in calling code
+	// A whole COLLECT { } item is evaluated by the caller
+	// (evaluateCollectSubquery); a nested one is evaluated with the rest of its
+	// expression below.
+	if isWholeCollectItem(expr) {
+		return nil
 	}
 
 	// Check for CASE expression FIRST (before property access check)

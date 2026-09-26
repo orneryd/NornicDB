@@ -75,8 +75,10 @@ type AsyncEngine struct {
 	// Used to detect stale async updates and rebase onto newer committed state.
 	nodeUpdateBaseline map[NodeID]*Node
 
-	// Label index for fast lookups - maps normalized label to node IDs
-	labelIndex map[string]map[NodeID]bool
+	// pending indexes nodeCache by label and by (label, property, value):
+	// the one view of unflushed nodes that label scans, index lookups and
+	// uniqueness checks merge in (#448, #719).
+	pending *pendingNodeIndex
 
 	// Background flush
 	flushInterval    time.Duration
@@ -209,7 +211,7 @@ func NewAsyncEngine(engine Engine, config *AsyncEngineConfig) *AsyncEngine {
 		updateNodes:        make(map[NodeID]bool),
 		updateEdges:        make(map[EdgeID]bool),
 		nodeUpdateBaseline: make(map[NodeID]*Node),
-		labelIndex:         make(map[string]map[NodeID]bool),
+		pending:            newPendingNodeIndex(),
 		flushInterval:      config.FlushInterval,
 		minFlushInterval:   config.MinFlushInterval,
 		maxFlushInterval:   config.MaxFlushInterval,
@@ -707,12 +709,8 @@ func (ae *AsyncEngine) FlushWithResult() FlushResult {
 			delete(ae.nodeCache, id)
 			delete(ae.updateNodes, id) // Clear update flag
 			delete(ae.nodeUpdateBaseline, id)
-			// Drop labelIndex entries for this node — without this, the
-			// per-label sets grow unbounded across flushes, and entries
-			// reference nodes that are no longer in nodeCache. That makes
-			// every label-scoped read pay an O(flushed_history) cost
-			// dereferencing stale IDs back through nodeCache to find nils.
-			ae.removeNodeIDFromLabelIndexLocked(id)
+			// The engine's indexes have the node now; the pending view drops it.
+			ae.pending.remove(nodesToWrite[id])
 		} else if successfulNodeWrites[id] && ae.nodeCache[id] != nil {
 			// A newer queued object survived this successful write. Even if
 			// the snapshot was a create, its successor now updates storage.
@@ -842,50 +840,57 @@ func rebaseNodeUpdate(base, pending, latest *Node) *Node {
 	return rebased
 }
 
-func (ae *AsyncEngine) addNodeToLabelIndexLocked(node *Node) {
-	if node == nil {
-		return
-	}
-	for _, label := range node.Labels {
-		normalLabel := strings.ToLower(label)
-		if ae.labelIndex[normalLabel] == nil {
-			ae.labelIndex[normalLabel] = make(map[NodeID]bool)
-		}
-		ae.labelIndex[normalLabel][node.ID] = true
-	}
+// setCachedNodeLocked queues node in the write cache and moves its pending
+// view entries from the object it replaces. Every nodeCache write goes
+// through here, so the pending view always matches the cache. Caller holds
+// ae.mu.
+func (ae *AsyncEngine) setCachedNodeLocked(node *Node) {
+	ae.pending.replace(ae.nodeCache[node.ID], node)
+	ae.nodeCache[node.ID] = node
 }
 
-func (ae *AsyncEngine) removeNodeIDFromLabelIndexLocked(id NodeID) {
-	for label, ids := range ae.labelIndex {
-		delete(ids, id)
-		if len(ids) == 0 {
-			delete(ae.labelIndex, label)
-		}
-	}
+// removeCachedNodeLocked drops id from the write cache and the pending view.
+// Caller holds ae.mu.
+func (ae *AsyncEngine) removeCachedNodeLocked(id NodeID) {
+	ae.pending.remove(ae.nodeCache[id])
+	delete(ae.nodeCache, id)
 }
 
-func (ae *AsyncEngine) syncNodeLabelIndexLocked(node *Node) {
-	if node == nil {
-		return
+// nodeSupersededLocked reports a node with a pending create, update or
+// delete: the underlying engine's index entries for it are stale. Caller
+// holds ae.mu.
+func (ae *AsyncEngine) nodeSupersededLocked(id NodeID) bool {
+	if _, cached := ae.nodeCache[id]; cached {
+		return true
 	}
-	ae.removeNodeIDFromLabelIndexLocked(node.ID)
-	ae.addNodeToLabelIndexLocked(node)
+	return ae.deleteNodes[id]
 }
 
-// syncNodeLabelIndexForEmbeddingLocked maintains the cache-side label index
-// for an embedding-only update (GH-448). Write-backs never change labels, so
-// the common case only re-adds the node's current labels (idempotent, no
-// bucket scan); a full re-sync runs only when a caller replaces a cached
-// object whose labels differ.
-func (ae *AsyncEngine) syncNodeLabelIndexForEmbeddingLocked(node, prev *Node) {
-	if node == nil {
-		return
+// lockPendingWrites implements pendingWriteSource for the schemas this
+// engine hands out (#719): it takes ae.mu's read lock, so a flush can't
+// retire a pending node while a lookup merges the view with the engine's
+// index. unlockPendingWrites releases it.
+func (ae *AsyncEngine) lockPendingWrites() pendingWriteView {
+	ae.mu.RLock()
+	if len(ae.nodeCache) == 0 && len(ae.deleteNodes) == 0 {
+		return pendingWriteView{}
 	}
-	if prev != nil && !labelsEqual(prev.Labels, node.Labels) {
-		ae.syncNodeLabelIndexLocked(node)
-		return
+	return pendingWriteView{index: ae.pending, owner: ae}
+}
+
+func (ae *AsyncEngine) unlockPendingWrites() {
+	ae.mu.RUnlock()
+}
+
+// trackPendingValues implements pendingWriteSource: the pending view indexes
+// these pairs by value, the nodes already pending included.
+func (ae *AsyncEngine) trackPendingValues(pairs []pendingPropertyKey) {
+	ae.mu.Lock()
+	defer ae.mu.Unlock()
+	cached := func(id NodeID) *Node { return ae.nodeCache[id] }
+	for _, pair := range pairs {
+		ae.pending.track(pair.label, pair.property, cached)
 	}
-	ae.addNodeToLabelIndexLocked(node)
 }
 
 // CreateNode adds to cache and returns immediately.
@@ -933,9 +938,8 @@ func (ae *AsyncEngine) CreateNode(node *Node) (NodeID, error) {
 		delete(ae.updateNodes, node.ID)
 	}
 
-	ae.nodeCache[node.ID] = node
+	ae.setCachedNodeLocked(node)
 	delete(ae.nodeUpdateBaseline, node.ID)
-	ae.syncNodeLabelIndexLocked(node)
 
 	ae.pendingWrites++
 	ae.graphMutationVersions.changed(namespaceForNodeID(node.ID))
@@ -975,8 +979,7 @@ func (ae *AsyncEngine) UpdateNode(node *Node) error {
 	// Cached creates remain creates while in flight. Flush promotes a newer
 	// queued object only once the outstanding write succeeds.
 
-	ae.nodeCache[node.ID] = node
-	ae.syncNodeLabelIndexLocked(node)
+	ae.setCachedNodeLocked(node)
 	ae.pendingWrites++
 	ae.graphMutationVersions.changed(namespaceForNodeID(node.ID))
 	return nil
@@ -999,14 +1002,13 @@ func (ae *AsyncEngine) UpdateNodeEmbedding(node *Node) (err error) {
 	}
 
 	// Exists in cache (including nodes created/updated but not yet flushed).
-	if prev, ok := ae.nodeCache[node.ID]; ok {
+	if _, ok := ae.nodeCache[node.ID]; ok {
 		// Important: do NOT mark this as an update here. If the node is a pending create
 		// (not yet flushed), it must still count as a create for NodeCount/EdgeCount.
-		ae.nodeCache[node.ID] = node
 		// GH-448: staged nodes shadow engine-side label-index rows in the scan
-		// merge paths, so the cache-side label index must learn about them
-		// here or committed nodes vanish from label scans until flush.
-		ae.syncNodeLabelIndexForEmbeddingLocked(node, prev)
+		// merge paths, so the pending view must learn about them here or
+		// committed nodes vanish from label scans until flush.
+		ae.setCachedNodeLocked(node)
 		ae.pendingWrites++
 		return nil
 	}
@@ -1016,9 +1018,7 @@ func (ae *AsyncEngine) UpdateNodeEmbedding(node *Node) (err error) {
 		// This is an update to an existing node (at minimum, it will exist after the in-flight write).
 		// Mark as update so NodeCount doesn't temporarily treat it as a pending create.
 		ae.updateNodes[node.ID] = true
-		prev := ae.nodeCache[node.ID]
-		ae.nodeCache[node.ID] = node
-		ae.syncNodeLabelIndexForEmbeddingLocked(node, prev)
+		ae.setCachedNodeLocked(node)
 		ae.pendingWrites++
 		return nil
 	}
@@ -1031,9 +1031,7 @@ func (ae *AsyncEngine) UpdateNodeEmbedding(node *Node) (err error) {
 	// Node exists in the underlying engine, so this is an update.
 	// Mark as update so NodeCount doesn't temporarily treat it as a pending create.
 	ae.updateNodes[node.ID] = true
-	prev := ae.nodeCache[node.ID]
-	ae.nodeCache[node.ID] = node
-	ae.syncNodeLabelIndexForEmbeddingLocked(node, prev)
+	ae.setCachedNodeLocked(node)
 	ae.pendingWrites++
 	return nil
 }
@@ -1071,9 +1069,7 @@ func (ae *AsyncEngine) DeleteNode(id NodeID) (err error) {
 			shouldNotify := !ae.updateNodes[id]
 			deleteFromEngine := ae.updateNodes[id] || isInFlight
 
-			ae.removeNodeIDFromLabelIndexLocked(id)
-			// Remove from cache
-			delete(ae.nodeCache, id)
+			ae.removeCachedNodeLocked(id)
 			changed = true
 			delete(ae.updateNodes, id)
 			delete(ae.nodeUpdateBaseline, id)
@@ -1309,25 +1305,12 @@ func (ae *AsyncEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 	for id := range ae.deleteNodes {
 		deletedIDs[id] = true
 	}
-	cachedIDs := make([]NodeID, 0, len(ae.labelIndex[normalLabel]))
-	for id := range ae.labelIndex[normalLabel] {
+	// The pending view lists every cached node under its labels, so it is
+	// the whole cache side of the listing.
+	cachedIDs := make([]NodeID, 0, len(ae.pending.byLabel[normalLabel]))
+	for id := range ae.pending.byLabel[normalLabel] {
 		if !deletedIDs[id] {
 			cachedIDs = append(cachedIDs, id)
-		}
-	}
-	for _, node := range ae.nodeCache {
-		if node == nil || deletedIDs[node.ID] {
-			continue
-		}
-		matched := false
-		for _, l := range node.Labels {
-			if strings.EqualFold(l, label) {
-				matched = true
-				break
-			}
-		}
-		if matched {
-			cachedIDs = append(cachedIDs, node.ID)
 		}
 	}
 	ae.mu.RUnlock()
@@ -1409,7 +1392,7 @@ func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	}
 
 	// Use label index for O(1) lookup instead of scanning entire cache
-	if nodeIDs := ae.labelIndex[normalLabel]; len(nodeIDs) > 0 {
+	if nodeIDs := ae.pending.byLabel[normalLabel]; len(nodeIDs) > 0 {
 		for id := range nodeIDs {
 			if !ae.deleteNodes[id] {
 				if node := ae.nodeCache[id]; node != nil {
@@ -1441,15 +1424,15 @@ func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 }
 
 func (ae *AsyncEngine) GetNodesByLabel(label string) ([]*Node, error) {
-	// Use labelIndex (per-label inverted index over nodeCache) instead of
+	// Use the pending view's label index over nodeCache instead of
 	// scanning every cached node. Before this, every label-scoped read paid
 	// O(len(nodeCache)) — and prior to the FlushWithResult cleanup fix the
-	// labelIndex itself accumulated stale IDs across flushes, so even O(1)
+	// label index itself accumulated stale IDs across flushes, so even O(1)
 	// readers walked through old entries.
 	ae.mu.RLock()
 	normalLabel := strings.ToLower(label)
 	var cachedNodes []*Node
-	if ids := ae.labelIndex[normalLabel]; len(ids) > 0 {
+	if ids := ae.pending.byLabel[normalLabel]; len(ids) > 0 {
 		cachedNodes = make([]*Node, 0, len(ids))
 		for id := range ids {
 			if ae.deleteNodes[id] {
@@ -1515,7 +1498,7 @@ func (ae *AsyncEngine) StreamNodesByLabelProjected(label string, properties []st
 		overridden[id] = struct{}{}
 	}
 	var cached []*Node
-	for id := range ae.labelIndex[strings.ToLower(label)] {
+	for id := range ae.pending.byLabel[strings.ToLower(label)] {
 		if _, deleted := ae.deleteNodes[id]; deleted {
 			continue
 		}
@@ -2010,16 +1993,23 @@ func (ae *AsyncEngine) GetOutDegree(nodeID NodeID) int {
 	return len(edges)
 }
 
+// GetSchema returns the default namespace's schema, with this engine's
+// pending writes attached to its index lookups (#719).
 func (ae *AsyncEngine) GetSchema() *SchemaManager {
-	return ae.engine.GetSchema()
+	schema := ae.engine.GetSchema()
+	schema.attachPendingWrites(ae, "nornic")
+	return schema
 }
 
 // GetSchemaForNamespace implements NamespaceSchemaProvider when the underlying engine supports it.
+// The schema's index lookups merge this engine's pending writes (#719).
 func (ae *AsyncEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 	if p, ok := ae.engine.(NamespaceSchemaProvider); ok {
-		return p.GetSchemaForNamespace(namespace)
+		schema := p.GetSchemaForNamespace(namespace)
+		schema.attachPendingWrites(ae, namespace)
+		return schema
 	}
-	return ae.engine.GetSchema()
+	return ae.GetSchema()
 }
 
 func (ae *AsyncEngine) NodeCount() (int64, error) {
@@ -2405,8 +2395,7 @@ func (ae *AsyncEngine) BulkCreateNodes(nodes []*Node) error {
 		delete(ae.deleteNodes, node.ID)
 		delete(ae.updateNodes, node.ID)
 		delete(ae.nodeUpdateBaseline, node.ID)
-		ae.nodeCache[node.ID] = node
-		ae.syncNodeLabelIndexLocked(node)
+		ae.setCachedNodeLocked(node)
 		ae.graphMutationVersions.changed(namespaceForNodeID(node.ID))
 	}
 	ae.pendingWrites += int64(len(nodes))
@@ -2540,6 +2529,10 @@ func (ae *AsyncEngine) validateNodeConstraintsWithNamespace(node *Node, namespac
 	return nil
 }
 
+// checkUniqueConstraint rejects node when another node, stored or pending,
+// holds its value for a single-property UNIQUE constraint. A stored holder
+// with a pending update or delete doesn't count: a value deleted and
+// re-created before the flush is not a conflict (#719).
 func (ae *AsyncEngine) checkUniqueConstraint(node *Node, c Constraint, namespace string, prefixRequired bool) error {
 	if len(c.Properties) != 1 {
 		return nil
@@ -2552,32 +2545,76 @@ func (ae *AsyncEngine) checkUniqueConstraint(node *Node, c Constraint, namespace
 	if value == nil {
 		return nil
 	}
+	uniqueViolation := func(holder NodeID) error {
+		return &ConstraintViolationError{
+			Type:       ConstraintUnique,
+			Label:      c.Label,
+			Properties: []string{prop},
+			Message:    fmt.Sprintf("Node with %s=%v already exists (nodeID: %s)", prop, value, holder),
+		}
+	}
 
-	nsPrefix := namespace + ":"
+	// The constraint's registered values, merged with the pending writes,
+	// answer directly once they cover every stored node.
+	if schema := ae.GetSchemaForNamespace(namespace); schema != nil {
+		if holders, complete, exists := schema.uniqueValueHolders(c.Label, prop, value); exists && complete {
+			for _, holder := range holders {
+				if holder != node.ID {
+					return uniqueViolation(holder)
+				}
+			}
+			return nil
+		}
+	}
+
+	// Otherwise the pending nodes with the value, then a scan of the stored
+	// label.
+	matches := func(candidate *Node) bool { return compareValues(candidate.Properties[prop], value) }
+	if holder, found := ae.pendingConstraintHolder(node, c.Label, prop, value, matches); found {
+		return uniqueViolation(holder)
+	}
+	if holder, found := ae.storedConstraintHolder(node, c.Label, namespace, prefixRequired, matches); found {
+		return uniqueViolation(holder)
+	}
+	return nil
+}
+
+// pendingConstraintHolder returns a pending node other than node with label,
+// property = value and matches(node) true.
+func (ae *AsyncEngine) pendingConstraintHolder(node *Node, label, property string, value interface{}, matches func(*Node) bool) (NodeID, bool) {
+	valueKey, ok := indexValueKey(value)
+	if !ok {
+		return "", false
+	}
+	namespace, _, _ := ParseDatabasePrefix(string(node.ID))
 	ae.mu.RLock()
-	for id, n := range ae.nodeCache {
+	if _, tracked := ae.pending.tracked[label][property]; !tracked {
+		// A constraint the schema hasn't registered yet: track its pair once.
+		ae.mu.RUnlock()
+		ae.trackPendingValues([]pendingPropertyKey{{label: label, property: property}})
+		ae.mu.RLock()
+	}
+	defer ae.mu.RUnlock()
+	view := pendingWriteView{index: ae.pending, owner: ae, namespace: namespace}
+	for _, id := range view.valueMatches(nil, label, property, valueKey) {
 		if id == node.ID || ae.deleteNodes[id] {
 			continue
 		}
-		if prefixRequired && !strings.HasPrefix(string(id), nsPrefix) {
-			continue
-		}
-		if hasLabel(n.Labels, c.Label) && compareValues(n.Properties[prop], value) {
-			ae.mu.RUnlock()
-			return &ConstraintViolationError{
-				Type:       ConstraintUnique,
-				Label:      c.Label,
-				Properties: []string{prop},
-				Message:    fmt.Sprintf("Node with %s=%v already exists in async cache", prop, value),
-			}
+		if candidate := ae.nodeCache[id]; candidate != nil && matches(candidate) {
+			return id, true
 		}
 	}
-	ae.mu.RUnlock()
+	return "", false
+}
 
-	nodes, err := ae.engine.GetNodesByLabel(c.Label)
+// storedConstraintHolder scans the stored nodes with label for one other
+// than node with matches true and no pending write superseding it.
+func (ae *AsyncEngine) storedConstraintHolder(node *Node, label, namespace string, prefixRequired bool, matches func(*Node) bool) (NodeID, bool) {
+	nodes, err := ae.engine.GetNodesByLabel(label)
 	if err != nil {
-		return nil
+		return "", false
 	}
+	nsPrefix := namespace + ":"
 	for _, existing := range nodes {
 		if existing.ID == node.ID {
 			continue
@@ -2585,19 +2622,23 @@ func (ae *AsyncEngine) checkUniqueConstraint(node *Node, c Constraint, namespace
 		if prefixRequired && !strings.HasPrefix(string(existing.ID), nsPrefix) {
 			continue
 		}
-		if compareValues(existing.Properties[prop], value) {
-			return &ConstraintViolationError{
-				Type:       ConstraintUnique,
-				Label:      c.Label,
-				Properties: []string{prop},
-				Message:    fmt.Sprintf("Node with %s=%v already exists (nodeID: %s)", prop, value, existing.ID),
-			}
+		if !matches(existing) {
+			continue
+		}
+		ae.mu.RLock()
+		superseded := ae.nodeSupersededLocked(existing.ID)
+		ae.mu.RUnlock()
+		if !superseded {
+			return existing.ID, true
 		}
 	}
-
-	return nil
+	return "", false
 }
 
+// checkNodeKeyConstraint rejects node when another node, stored or pending,
+// has the same values for a NODE KEY constraint's properties, which must all
+// be present. As for UNIQUE, a stored node with a pending update or delete
+// doesn't count.
 func (ae *AsyncEngine) checkNodeKeyConstraint(node *Node, c Constraint, namespace string, prefixRequired bool) error {
 	if len(c.Properties) < 1 {
 		return nil
@@ -2624,66 +2665,28 @@ func (ae *AsyncEngine) checkNodeKeyConstraint(node *Node, c Constraint, namespac
 		}
 		values[i] = value
 	}
-
-	nsPrefix := namespace + ":"
-	ae.mu.RLock()
-	for id, n := range ae.nodeCache {
-		if id == node.ID || ae.deleteNodes[id] {
-			continue
-		}
-		if prefixRequired && !strings.HasPrefix(string(id), nsPrefix) {
-			continue
-		}
-		if !hasLabel(n.Labels, c.Label) {
-			continue
-		}
-		match := true
+	matches := func(candidate *Node) bool {
 		for i, prop := range c.Properties {
-			if !compareValues(n.Properties[prop], values[i]) {
-				match = false
-				break
+			if !compareValues(candidate.Properties[prop], values[i]) {
+				return false
 			}
 		}
-		if match {
-			ae.mu.RUnlock()
-			return &ConstraintViolationError{
-				Type:       ConstraintNodeKey,
-				Label:      c.Label,
-				Properties: c.Properties,
-				Message:    fmt.Sprintf("Node with key %v=%v already exists in async cache", c.Properties, values),
-			}
+		return true
+	}
+	keyViolation := func(holder NodeID) error {
+		return &ConstraintViolationError{
+			Type:       ConstraintNodeKey,
+			Label:      c.Label,
+			Properties: c.Properties,
+			Message:    fmt.Sprintf("Node with key %v=%v already exists (nodeID: %s)", c.Properties, values, holder),
 		}
 	}
-	ae.mu.RUnlock()
-
-	nodes, err := ae.engine.GetNodesByLabel(c.Label)
-	if err != nil {
-		return nil
+	if holder, found := ae.pendingConstraintHolder(node, c.Label, c.Properties[0], values[0], matches); found {
+		return keyViolation(holder)
 	}
-	for _, existing := range nodes {
-		if existing.ID == node.ID {
-			continue
-		}
-		if prefixRequired && !strings.HasPrefix(string(existing.ID), nsPrefix) {
-			continue
-		}
-		match := true
-		for i, prop := range c.Properties {
-			if !compareValues(existing.Properties[prop], values[i]) {
-				match = false
-				break
-			}
-		}
-		if match {
-			return &ConstraintViolationError{
-				Type:       ConstraintNodeKey,
-				Label:      c.Label,
-				Properties: c.Properties,
-				Message:    fmt.Sprintf("Node with key %v=%v already exists (nodeID: %s)", c.Properties, values, existing.ID),
-			}
-		}
+	if holder, found := ae.storedConstraintHolder(node, c.Label, namespace, prefixRequired, matches); found {
+		return keyViolation(holder)
 	}
-
 	return nil
 }
 
@@ -2759,8 +2762,7 @@ func (ae *AsyncEngine) BulkDeleteNodes(ids []NodeID) error {
 		if _, ok := ae.nodeCache[id]; ok && !ae.updateNodes[id] {
 			notifyDeletes = append(notifyDeletes, id)
 		}
-		ae.removeNodeIDFromLabelIndexLocked(id)
-		delete(ae.nodeCache, id)
+		ae.removeCachedNodeLocked(id)
 		delete(ae.updateNodes, id)
 		delete(ae.nodeUpdateBaseline, id)
 		ae.deleteNodes[id] = true

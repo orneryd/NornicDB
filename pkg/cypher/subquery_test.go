@@ -2049,7 +2049,7 @@ func TestMultipleSubqueriesInWhere(t *testing.T) {
 }
 
 // TestExistsSubqueryWithWherePropertyComparison tests EXISTS subquery with WHERE property comparison
-// This verifies that evaluateInnerWhere correctly handles property comparisons
+// This verifies that the node WHERE evaluator correctly handles property comparisons
 func TestExistsSubqueryWithWherePropertyComparison(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 
@@ -3610,12 +3610,9 @@ func TestExistsSubqueryHelpers_DirectBranches(t *testing.T) {
 	}
 	require.NotNil(t, alice)
 
-	// Empty/malformed clauses intentionally default to true to avoid false negatives.
-	assert.True(t, exec.evaluateExistsSubquery(ctx, alice, "p", "name = 'x'"))
-	assert.True(t, exec.evaluateNotExistsSubquery(ctx, alice, "p", "name = 'x'"))
-
-	assert.True(t, exec.evaluateExistsSubquery(ctx, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() }"))
-	assert.False(t, exec.evaluateNotExistsSubquery(ctx, alice, "p", "NOT EXISTS { MATCH (p)-[:KNOWS]->() }"))
+	assert.True(t, exec.evaluateWhere(ctx, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() }"))
+	assert.False(t, exec.evaluateWhere(ctx, alice, "p", "NOT EXISTS { MATCH (p)-[:KNOWS]->() }"))
+	assert.False(t, exec.evaluateWhere(ctx, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() } = false"))
 }
 
 func TestExecuteMatchWithCallProcedure_ParseAndExecErrors(t *testing.T) {

@@ -209,6 +209,14 @@ func expressionFreeVariables(expression string) []string {
 		previous := previousSetExpressionByte(expression, index)
 		following := nextSetExpressionByte(expression, next)
 		upper := strings.ToUpper(name)
+		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
+		// variables and sees the outer ones; its body isn't an expression.
+		if following == '{' && (upper == "EXISTS" || upper == "COUNT" || upper == "COLLECT") {
+			if closing := findMatchingDelimiter(expression, skipSpaces(expression, next), '{', '}'); closing > next {
+				index = closing + 1
+				continue
+			}
+		}
 		if previous != '$' && previous != '.' && following != '(' && following != ':' && !setExpressionKeyword(upper) {
 			if _, exists := locals[name]; !exists {
 				names = append(names, name)

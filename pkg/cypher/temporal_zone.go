@@ -16,7 +16,11 @@ var temporalZoneinfoArchive []byte
 var (
 	temporalZoneFilesOnce sync.Once
 	temporalZoneFiles     map[string]*zip.File
-	temporalLocationCache sync.Map
+	// temporalLocationCache holds the zones loaded from the embedded tzdb
+	// archive. Only zones found in the archive are stored, so it holds at most
+	// the archive's zone count, which is below its limit: in practice it never
+	// clears.
+	temporalLocationCache = newBoundedCache[string, *time.Location](4096)
 )
 
 // loadTemporalLocationAt resolves a named zone using Neo4j's Java-time
@@ -31,8 +35,8 @@ func loadPinnedTemporalLocation(zoneID string) (*time.Location, bool) {
 	if zoneID == "UTC" {
 		return time.UTC, true
 	}
-	if cached, ok := temporalLocationCache.Load(zoneID); ok {
-		return cached.(*time.Location), true
+	if cached, ok := temporalLocationCache.get(zoneID); ok {
+		return cached, true
 	}
 	temporalZoneFilesOnce.Do(func() {
 		temporalZoneFiles = make(map[string]*zip.File)
@@ -63,8 +67,8 @@ func loadPinnedTemporalLocation(zoneID string) (*time.Location, bool) {
 	if err != nil {
 		return nil, false
 	}
-	actual, _ := temporalLocationCache.LoadOrStore(zoneID, location)
-	return actual.(*time.Location), true
+	temporalLocationCache.put(zoneID, location)
+	return location, true
 }
 
 // normalizeTemporalNamedZone reapplies named-zone rules after calendar

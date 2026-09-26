@@ -308,6 +308,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 // This does NOT persist anything, and it intentionally discards runtime caches
 // (unique value maps, index maps, etc.). Those must be rebuilt from data.
 func (sm *SchemaManager) ReplaceFromDefinition(def *SchemaDefinition) error {
+	defer sm.trackPendingPairs()
 	if def == nil {
 		return nil
 	}

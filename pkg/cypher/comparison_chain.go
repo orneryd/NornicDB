@@ -119,7 +119,7 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 
 	var scan comparisonChainScan
 	operandStart := 0
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, 0, 0
 	var quote byte
 	inLineComment, inBlockComment := false, false
 
@@ -187,8 +187,22 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 		case '}':
 			braceDepth--
 			continue
+		case 'C', 'c':
+			// CASE … END nests like parentheses: the comparisons of its WHEN
+			// conditions are not the chain's (#699).
+			if (index == 0 || expression[index-1] != '.') && matchKeywordAt(expression, index, "CASE") {
+				caseDepth++
+				index += len("CASE") - 1
+				continue
+			}
+		case 'E', 'e':
+			if caseDepth > 0 && (index == 0 || expression[index-1] != '.') && matchKeywordAt(expression, index, "END") {
+				caseDepth--
+				index += len("END") - 1
+				continue
+			}
 		}
-		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 {
+		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 || caseDepth != 0 {
 			continue
 		}
 
@@ -289,6 +303,13 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 		if strings.TrimSpace(expression[operandStart:index]) == "" {
 			return comparisonChainScan{}, false, false
 		}
+		// A CASE block's WHEN comparisons are not the chain's (#699): a CASE
+		// enclosing this operator starts in the operand before it, which
+		// then goes to the full scan. Checking only there keeps the byte
+		// loop as it was.
+		if index-operandStart >= len("CASE") && operandMayContainCase(expression[operandStart:index]) {
+			return comparisonChainScan{}, false, true
+		}
 		scan.append(comparisonOperatorSpan{offset: index, length: operatorLength})
 		index += operatorLength - 1
 		operandStart = index + 1
@@ -297,4 +318,15 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 		return comparisonChainScan{}, false, false
 	}
 	return scan, true, false
+}
+
+// operandMayContainCase reports whether operand contains the letters "case"
+// in any letter case (a superset of the CASE keywords in it).
+func operandMayContainCase(operand string) bool {
+	for i := 0; i+4 <= len(operand); i++ {
+		if operand[i]|0x20 == 'c' && operand[i+1]|0x20 == 'a' && operand[i+2]|0x20 == 's' && operand[i+3]|0x20 == 'e' {
+			return true
+		}
+	}
+	return false
 }

@@ -7,10 +7,10 @@ import (
 )
 
 func TestSubqueryParserHelpers_MoreBranches(t *testing.T) {
-	parts := splitTopLevelAndCallSubquery("a = 1 AND b = '(x AND y)' AND c = [1, {k: 'A AND B'}] AND `weird` = 1")
+	parts := splitTopLevelAndConjuncts("a = 1 AND b = '(x AND y)' AND c = [1, {k: 'A AND B'}] AND `weird` = 1")
 	require.Equal(t, []string{"a = 1", "b = '(x AND y)'", "c = [1, {k: 'A AND B'}]", "`weird` = 1"}, parts)
 
-	parts = splitTopLevelAndCallSubquery("'x AND y'")
+	parts = splitTopLevelAndConjuncts("'x AND y'")
 	require.Equal(t, []string{"'x AND y'"}, parts)
 
 	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("`a` = " + `"x=y"`)

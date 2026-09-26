@@ -233,27 +233,6 @@ func (e *StorageExecutor) evaluateStringOp(ctx context.Context, node *storage.No
 	return true
 }
 
-// evaluateInOp handles the IN [list] / NOT IN [list] operator for a single node.
-//
-// # Parameters
-//
-//   - node: The node containing the property
-//   - variable: The variable name in the query
-//   - whereClause: The WHERE clause string
-//
-// # Returns
-//
-//   - true only if the membership test is known true (see evaluateInOpTruth;
-//     a null result drops the row like false)
-//
-// # Example
-//
-//	evaluateInOp(node, "n", "n.status IN ['active', 'pending']")
-//	// Returns true if node.Properties["status"] is "active" or "pending"
-func (e *StorageExecutor) evaluateInOp(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
-	return e.evaluateInOpTruth(ctx, node, variable, whereClause) == truthTrue
-}
-
 // evaluateInOpTruth evaluates a single-node `x IN list` / `x NOT IN list`
 // WHERE leaf with the same three-valued membership as the expression
 // evaluator (cypherMembership): null x, a null list, or a list that holds null

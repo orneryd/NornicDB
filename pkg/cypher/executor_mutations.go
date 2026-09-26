@@ -140,7 +140,7 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 		}
 	}
 
-	returnIdx := findKeywordIndex(cypher, "RETURN")
+	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
 	needEdgeStats := returnIdx > 0 || detach // always track for DETACH so stats are correct
 
 	// Streaming batched delete hot path for large DETACH DELETE scans.
@@ -473,17 +473,6 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 			return nil, true, err
 		}
 	}
-	if usedIndex && len(nodes) == 0 && wherePart != "" {
-		// Fail-open on potential stale index candidates.
-		if len(nodePat.labels) > 0 {
-			nodes, err = e.storage.GetNodesByLabel(nodePat.labels[0])
-		} else {
-			nodes, err = e.storage.AllNodes()
-		}
-		if err != nil {
-			return nil, true, err
-		}
-	}
 	if len(nodePat.properties) > 0 {
 		nodes = e.filterNodesByProperties(nodes, nodePat.properties)
 	}
@@ -677,7 +666,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 	if result == nil {
 		return
 	}
-	returnIdx := findKeywordIndex(cypher, "RETURN")
+	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
 	if returnIdx <= 0 {
 		return
 	}
@@ -965,9 +954,9 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
 
 	// Use word boundary detection to avoid matching substrings
-	matchIdx := findKeywordIndex(normalized, "MATCH")
-	setIdx := findKeywordIndex(normalized, "SET")
-	returnIdx := findKeywordIndex(normalized, "RETURN")
+	matchIdx := topLevelKeywordIndex(normalized, "MATCH")
+	setIdx := topLevelKeywordIndex(normalized, "SET")
+	returnIdx := topLevelKeywordIndex(normalized, "RETURN")
 
 	if matchIdx == -1 || setIdx == -1 {
 		return nil, localizedError(localization.CypherMutationsSetMatchRequired(), nil)
@@ -2309,11 +2298,10 @@ func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
 		item := returnItem{expr: part}
 
 		// Check for AS alias
-		upperPart := strings.ToUpper(part)
-		asIdx := strings.Index(upperPart, " AS ")
+		asIdx := projectionAliasIndex(part)
 		if asIdx > 0 {
 			item.expr = strings.TrimSpace(part[:asIdx])
-			item.alias = normalizeProjectionColumnName(part[asIdx+4:])
+			item.alias = normalizeProjectionColumnName(part[asIdx+len("AS"):])
 		} else {
 			// Handle map projection without AS alias: n { .*, key: value } -> column name is "n"
 			// Neo4j infers the column name from the variable before the map projection
@@ -2360,46 +2348,6 @@ func (e *StorageExecutor) idCounter() int64 {
 	return atomic.LoadInt64(&idCounter)
 }
 
-// evaluateExistsSubquery checks if an EXISTS { } subquery returns any matches
-// Syntax: EXISTS { MATCH (node)<-[:TYPE]-(other) }
-func (e *StorageExecutor) evaluateExistsSubquery(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
-	// Extract the subquery from EXISTS { ... }
-	subquery := e.extractSubquery(whereClause, "EXISTS")
-	if subquery == "" {
-		return true // No valid subquery, pass through
-	}
-
-	// Full existential bodies share the converged clause pipeline. Seed the
-	// correlated entity as an input row so MATCH/WITH/aggregation/WHERE/RETURN
-	// retain their normal streaming semantics instead of growing a second
-	// subquery executor.
-	if clauses, ok := splitPipelineClauses(subquery); ok && len(clauses) > 1 {
-		correlated := e.cloneWithStorage(e.getStorage(ctx))
-		correlated.fabricRecordBindings = cloneStringAnyMap(e.fabricRecordBindings)
-		if correlated.fabricRecordBindings == nil {
-			correlated.fabricRecordBindings = make(map[string]interface{})
-		}
-		correlated.fabricRecordBindings[variable] = node
-		result, handled, err := correlated.executePipeline(ctx, subquery)
-		return err == nil && handled && result != nil && len(result.Rows) > 0
-	}
-
-	// Execute compact pattern bodies with the common pattern matcher.
-	return e.checkSubqueryMatch(ctx, node, variable, subquery)
-}
-
-// evaluateNotExistsSubquery checks if a NOT EXISTS { } subquery returns no matches
-func (e *StorageExecutor) evaluateNotExistsSubquery(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
-	// Extract the subquery from NOT EXISTS { ... }
-	subquery := e.extractSubquery(whereClause, "NOT EXISTS")
-	if subquery == "" {
-		return true // No valid subquery, pass through
-	}
-
-	// Return true if no matches found
-	return !e.checkSubqueryMatch(ctx, node, variable, subquery)
-}
-
 // extractSubquery extracts the MATCH pattern from EXISTS { MATCH ... } or NOT EXISTS { MATCH ... }
 func (e *StorageExecutor) extractSubquery(whereClause, prefix string) string {
 	upperClause := strings.ToUpper(whereClause)
@@ -2434,140 +2382,25 @@ func (e *StorageExecutor) extractSubquery(whereClause, prefix string) string {
 	return ""
 }
 
-// extractCollectSubquery extracts the subquery body from COLLECT { ... }
-func (e *StorageExecutor) extractCollectSubquery(expr string) string {
-	// Find "collect" (case-insensitive)
-	upperExpr := strings.ToUpper(expr)
-	collectIdx := strings.Index(upperExpr, "COLLECT")
-	if collectIdx < 0 {
-		return ""
-	}
-
-	// Find the opening brace after COLLECT
-	rest := expr[collectIdx+7:] // Skip "COLLECT"
-	braceStart := strings.Index(rest, "{")
-	if braceStart < 0 {
-		return ""
-	}
-
-	// Find matching closing brace
-	depth := 0
-	for i := braceStart; i < len(rest); i++ {
-		if rest[i] == '{' {
-			depth++
-		} else if rest[i] == '}' {
-			depth--
-			if depth == 0 {
-				return strings.TrimSpace(rest[braceStart+1 : i])
-			}
-		}
-	}
-
-	return ""
-}
-
-// evaluateCollectSubquery executes a COLLECT { } subquery for a given node and returns collected values
+// evaluateCollectSubquery evaluates a COLLECT { … } projection item for one
+// node bound to variable, through the shared subquery evaluator
+// (rowSubqueryValue), so the body's ORDER BY and SKIP / LIMIT apply.
 func (e *StorageExecutor) evaluateCollectSubquery(ctx context.Context, node *storage.Node, variable, subquery string) ([]interface{}, error) {
-	// Extract the subquery body from COLLECT { ... }
-	subqueryBody := e.extractCollectSubquery(subquery)
-	if subqueryBody == "" {
+	collect, ok := standaloneSubqueryExpression(subquery)
+	if !ok || collect.kind != "COLLECT" {
 		return nil, localizedError(localization.CypherResidualCollectSubquerySyntaxInvalid(), nil)
 	}
-
-	// The subquery body should be a complete query like:
-	// MATCH (p)-[:KNOWS]->(friend) RETURN friend.name
-	// We need to execute it with the node bound to the variable.
-	// We'll add a WHERE clause to bind the variable to the node ID.
-	// Format: MATCH (p)-[:KNOWS]->(friend) WHERE id(p) = nodeID RETURN friend.name
-
-	// Find WHERE clause position (if any)
-	whereIdx := findKeywordIndex(subqueryBody, "WHERE")
-	returnIdx := findKeywordIndex(subqueryBody, "RETURN")
-
-	var substitutedQuery string
-	if whereIdx > 0 && whereIdx < returnIdx {
-		// WHERE clause exists - add id() check to it
-		whereClause := strings.TrimSpace(subqueryBody[whereIdx+5 : returnIdx])
-		beforeWhere := strings.TrimSpace(subqueryBody[:whereIdx])
-		afterReturn := subqueryBody[returnIdx:]
-		// Add id() check: WHERE id(variable) = nodeID AND existing_where_clause
-		newWhere := fmt.Sprintf("WHERE id(%s) = %s AND %s", variable, quoteCypherStringLiteral(string(node.ID)), whereClause)
-		substitutedQuery = strings.TrimSpace(beforeWhere + " " + newWhere + " " + afterReturn)
-	} else if returnIdx > 0 {
-		// No WHERE clause - add one before RETURN
-		beforeReturn := subqueryBody[:returnIdx]
-		afterReturn := subqueryBody[returnIdx:]
-		// Add WHERE clause: WHERE id(variable) = nodeID
-		newWhere := fmt.Sprintf(" WHERE id(%s) = %s", variable, quoteCypherStringLiteral(string(node.ID)))
-		substitutedQuery = beforeReturn + newWhere + afterReturn
-	} else {
-		// No RETURN clause - this shouldn't happen, but handle it
+	if topLevelKeywordIndex(collect.body, "RETURN") < 0 {
 		return nil, localizedError(localization.CypherResidualCollectSubqueryReturnRequired(), nil)
 	}
-
-	// Execute the subquery
-	subqueryResult, err := e.executeInternal(ctx, substitutedQuery, nil)
+	// A COLLECT body is always evaluated (rowSubqueryValue); only its error
+	// can stop it.
+	value, _, err := e.rowSubqueryValue(ctx, collect.kind, collect.body, map[string]interface{}{variable: node})
 	if err != nil {
 		return nil, localizedError(localization.CypherResidualCollectSubqueryExecutionFailed(err), err)
 	}
-
-	// Collect all values from the first column of the subquery result
-	collected := make([]interface{}, 0, len(subqueryResult.Rows))
-	for _, row := range subqueryResult.Rows {
-		if len(row) > 0 {
-			collected = append(collected, row[0])
-		}
-	}
-
+	collected, _ := value.([]interface{})
 	return collected, nil
-}
-
-// substituteNodeInSubquery substitutes a node variable in a subquery with its actual ID
-// Example: MATCH (p)-[:KNOWS]->(friend) RETURN friend.name
-//
-//	where p is bound to a node -> MATCH (nodeID)-[:KNOWS]->(friend) RETURN friend.name
-func (e *StorageExecutor) substituteNodeInSubquery(subquery, variable string, node *storage.Node) string {
-	// Replace (variable) or (variable:Label) patterns with the actual node ID
-	// We need to be careful to only replace node patterns, not property accesses
-	result := subquery
-
-	// Pattern 1: (variable) -> (nodeID)
-	result = strings.ReplaceAll(result, "("+variable+")", "("+string(node.ID)+")")
-
-	// Pattern 2: (variable:Label) -> (nodeID:Label), preserving the label.
-	return replaceLabeledNodePatternVariable(result, variable, string(node.ID))
-}
-
-// replaceLabeledNodePatternVariable replaces variable with replacement in
-// each node pattern (variable:Labels) of text whose labels part is not
-// empty and contains no ')'.
-func replaceLabeledNodePatternVariable(text, variable, replacement string) string {
-	prefix := "(" + variable + ":"
-	var out strings.Builder
-	for {
-		start := strings.Index(text, prefix)
-		if start < 0 {
-			break
-		}
-		labelsStart := start + len(prefix)
-		end := strings.IndexByte(text[labelsStart:], ')')
-		if end <= 0 {
-			// No labels or no closing parenthesis: not a (variable:Label)
-			// pattern; keep the text and search after it.
-			out.WriteString(text[:labelsStart])
-			text = text[labelsStart:]
-			continue
-		}
-		out.WriteString(text[:start])
-		out.WriteString("(" + replacement + ":")
-		out.WriteString(text[labelsStart : labelsStart+end+1])
-		text = text[labelsStart+end+1:]
-	}
-	if out.Len() == 0 {
-		return text
-	}
-	out.WriteString(text)
-	return out.String()
 }
 
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
@@ -2626,153 +2459,6 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
 		return len(incoming) > 0 || len(outgoing) > 0
 	}
-	return false
-}
-
-// checkSubqueryMatch checks if the subquery matches for a given node
-func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.Node, variable, subquery string) bool {
-	// Parse the MATCH pattern from the subquery
-	// Format: MATCH (var)<-[:TYPE]-(other) WHERE ...
-	//
-	// EXISTS { ... } and COUNT { ... } also allow an *implicit* MATCH: a
-	// bare pattern body with no "MATCH " keyword (e.g. "EXISTS { (n)--() }").
-	// The previous version required the "MATCH " prefix unconditionally, so
-	// a bare body always returned false here.
-	subquery = strings.TrimSpace(subquery)
-	upperSub := strings.ToUpper(subquery)
-
-	var pattern string
-	switch {
-	case strings.HasPrefix(upperSub, "MATCH "):
-		pattern = strings.TrimSpace(subquery[6:])
-	case strings.HasPrefix(subquery, "("):
-		pattern = subquery
-	default:
-		return false
-	}
-
-	// Split out any WHERE clause from the pattern
-	innerWhere := ""
-
-	// Use regex to find WHERE with any whitespace before it (including newlines)
-	if loc := subqueryWherePattern.FindStringIndex(pattern); loc != nil {
-		innerWhere = strings.TrimSpace(pattern[loc[1]:])
-		pattern = strings.TrimSpace(pattern[:loc[0]])
-	}
-
-	// An uncorrelated node-pattern subquery does not reference the outer
-	// variable, but it still determines EXISTS/NOT EXISTS for every outer row.
-	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
-		if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
-			return false
-		}
-		nodePattern := e.parseNodePattern(ctx, pattern)
-		if len(nodePattern.labels) == 0 && len(nodePattern.properties) == 0 {
-			return false
-		}
-		nodes, err := e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-		if err != nil {
-			return false
-		}
-		if len(nodePattern.properties) > 0 {
-			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
-		}
-		return len(nodes) > 0
-	}
-
-	// Use the shared one-hop pattern parser so target labels, inline property
-	// maps, relationship bindings, and predicates all see the same complete
-	// correlated row. The older edge-only path below predates inline target
-	// properties and can only evaluate the target node in isolation.
-	if strings.Count(pattern, "-[") == 1 &&
-		!hasSubqueryPattern(innerWhere, existsSubqueryRe) &&
-		!hasSubqueryPattern(innerWhere, countSubqueryRe) {
-		relPattern := e.parseOptionalRelPattern(ctx, pattern)
-		if relPattern.sourceVar == variable {
-			for _, related := range e.findRelatedNodes(node, relPattern) {
-				values := map[string]interface{}{variable: node}
-				if relPattern.targetVar != "" {
-					values[relPattern.targetVar] = related.node
-				}
-				if relPattern.relVar != "" {
-					values[relPattern.relVar] = related.edge
-				}
-				if innerWhere == "" || e.evaluateRowPredicate(ctx, innerWhere, values) {
-					return true
-				}
-			}
-			return false
-		}
-	}
-
-	// Check for chained relationship pattern (e.g., (p)-[:KNOWS]->()-[:KNOWS]->())
-	// Count the number of relationship hops by counting relationship brackets [-
-	// Each hop has one -[...]-
-	relationshipCount := strings.Count(pattern, "-[")
-	if relationshipCount > 1 {
-		return e.checkChainedPattern(node, variable, pattern, innerWhere)
-	}
-
-	// Extract the target variable name from pattern (e.g., "report" from "(m)-[:MANAGES]->(report)")
-	targetVar := e.extractTargetVariable(pattern, variable)
-
-	// Parse relationship pattern
-	// Simplified: check for incoming or outgoing relationships
-	var checkIncoming, checkOutgoing bool
-	var relTypes []string
-
-	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
-
-	// Check for matching edges
-	if checkIncoming {
-		edges, _ := e.storage.GetIncomingEdges(node.ID)
-		for _, edge := range edges {
-			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
-				// If there's an inner WHERE, check it against the connected node
-				// Only evaluate WHERE if we have a target variable (otherwise we can't match properties)
-				if innerWhere != "" && targetVar != "" {
-					sourceNode, err := e.storage.GetNode(edge.StartNode)
-					if err != nil || !e.evaluateInnerWhere(ctx, sourceNode, targetVar, innerWhere) {
-						continue
-					}
-				} else if innerWhere != "" && targetVar == "" {
-					// If we have a WHERE clause but no target variable, we can't evaluate it
-					// This means the pattern doesn't have a named target, so skip this edge
-					continue
-				}
-				return true
-			}
-		}
-	}
-
-	if checkOutgoing {
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
-		for _, edge := range edges {
-			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
-				// If there's an inner WHERE, check it against the connected node
-				// Only evaluate WHERE if we have a target variable (otherwise we can't match properties)
-				if innerWhere != "" && targetVar != "" {
-					targetNode, err := e.storage.GetNode(edge.EndNode)
-					if err != nil || !e.evaluateInnerWhere(ctx, targetNode, targetVar, innerWhere) {
-						continue
-					}
-				} else if innerWhere != "" && targetVar == "" {
-					// If we have a WHERE clause but no target variable, we can't evaluate it
-					// This means the pattern doesn't have a named target, so skip this edge
-					continue
-				}
-				return true
-			}
-		}
-	}
-
-	// If no direction specified, check both
-	if !checkIncoming && !checkOutgoing {
-		incoming, _ := e.storage.GetIncomingEdges(node.ID)
-		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
-		return len(incoming) > 0 || len(outgoing) > 0
-	}
-
 	return false
 }
 
@@ -2995,224 +2681,6 @@ func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) strin
 	return ""
 }
 
-// evaluateInnerWhere evaluates an inner WHERE clause against a node
-// Handles nested EXISTS subqueries and property comparisons
-func (e *StorageExecutor) evaluateInnerWhere(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
-	whereClause = strings.TrimSpace(whereClause)
-	upperWhere := strings.ToUpper(whereClause)
-
-	// Handle parenthesized expressions - strip outer parens and recurse
-	if strings.HasPrefix(whereClause, "(") && strings.HasSuffix(whereClause, ")") {
-		// Verify these are matching outer parens, not separate groups
-		depth := 0
-		isOuterParen := true
-		for i, ch := range whereClause {
-			if ch == '(' {
-				depth++
-			} else if ch == ')' {
-				depth--
-			}
-			// If depth goes to 0 before the last char, these aren't outer parens
-			if depth == 0 && i < len(whereClause)-1 {
-				isOuterParen = false
-				break
-			}
-		}
-		if isOuterParen {
-			return e.evaluateInnerWhere(ctx, node, variable, whereClause[1:len(whereClause)-1])
-		}
-	}
-
-	// Handle AND/OR at top level
-	if andIdx := findTopLevelKeyword(whereClause, " AND "); andIdx > 0 {
-		left := strings.TrimSpace(whereClause[:andIdx])
-		right := strings.TrimSpace(whereClause[andIdx+5:])
-		return e.evaluateInnerWhere(ctx, node, variable, left) && e.evaluateInnerWhere(ctx, node, variable, right)
-	}
-
-	if orIdx := findTopLevelKeyword(whereClause, " OR "); orIdx > 0 {
-		left := strings.TrimSpace(whereClause[:orIdx])
-		right := strings.TrimSpace(whereClause[orIdx+4:])
-		return e.evaluateInnerWhere(ctx, node, variable, left) || e.evaluateInnerWhere(ctx, node, variable, right)
-	}
-
-	// Check for nested EXISTS subquery
-	if hasSubqueryPattern(whereClause, existsSubqueryRe) {
-		// Check for NOT EXISTS first
-		if hasSubqueryPattern(whereClause, notExistsSubqueryRe) {
-			return e.evaluateNotExistsSubquery(ctx, node, variable, whereClause)
-		}
-		return e.evaluateExistsSubquery(ctx, node, variable, whereClause)
-	}
-
-	// Check for nested COUNT subquery
-	if hasSubqueryPattern(whereClause, countSubqueryRe) {
-		return e.evaluateCountSubqueryComparison(node, variable, whereClause)
-	}
-
-	// Handle NOT prefix
-	if strings.HasPrefix(upperWhere, "NOT ") {
-		inner := strings.TrimSpace(whereClause[4:])
-		if truth, ok := inPredicateTruth(inner, func(expr string) interface{} {
-			return e.evaluateExpressionWithContext(ctx, expr, map[string]*storage.Node{variable: node}, nil)
-		}); ok {
-			return truth == truthFalse
-		}
-		return !e.evaluateInnerWhere(ctx, node, variable, inner)
-	}
-
-	// Handle string operators
-	if strings.Contains(upperWhere, " CONTAINS ") {
-		return e.evaluateStringOp(ctx, node, variable, whereClause, "CONTAINS")
-	}
-	if strings.Contains(upperWhere, " STARTS WITH ") {
-		return e.evaluateStringOp(ctx, node, variable, whereClause, "STARTS WITH")
-	}
-	if strings.Contains(upperWhere, " ENDS WITH ") {
-		return e.evaluateStringOp(ctx, node, variable, whereClause, "ENDS WITH")
-	}
-	if strings.Contains(upperWhere, " IN ") {
-		return e.evaluateInOp(ctx, node, variable, whereClause)
-	}
-
-	// Handle IS NULL / IS NOT NULL
-	if strings.Contains(upperWhere, " IS NULL") {
-		return e.evaluateIsNull(ctx, node, variable, whereClause, false)
-	}
-	if strings.Contains(upperWhere, " IS NOT NULL") {
-		return e.evaluateIsNull(ctx, node, variable, whereClause, true)
-	}
-
-	// Determine operator and split accordingly
-	var op string
-	var opIdx int
-
-	// Check operators in order of length (longest first to avoid partial matches)
-	operators := []string{"<>", "!=", ">=", "<=", "=~", ">", "<", "="}
-	for _, testOp := range operators {
-		idx := strings.Index(whereClause, testOp)
-		if idx >= 0 {
-			op = testOp
-			opIdx = idx
-			break
-		}
-	}
-
-	if op == "" {
-		// No valid operator found - check if clause is empty/whitespace
-		trimmed := strings.TrimSpace(whereClause)
-		if trimmed == "" {
-			// Empty WHERE clause means no filter - include all
-			return true
-		}
-		// Non-empty clause with no recognized operator - cannot evaluate properly
-		// Return false (exclude) rather than true (include all) for safety
-		// This prevents incorrect results from malformed or unsupported WHERE clauses
-		return false
-	}
-
-	left := strings.TrimSpace(whereClause[:opIdx])
-	right := strings.TrimSpace(whereClause[opIdx+len(op):])
-
-	// Handle id(variable) = value comparisons
-	lowerLeft := strings.ToLower(left)
-	if strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")") {
-		// Extract variable name from id(varName)
-		idVar := strings.TrimSpace(left[3 : len(left)-1])
-		if idVar == variable {
-			// Compare node ID with expected value
-			expectedVal := e.parseValue(ctx, right)
-			actualId := string(node.ID)
-
-			// Support both string and integer comparisons for Bolt protocol compatibility
-			// If expected value is an integer (from Bolt Node structure), hash the string ID and compare
-			if expectedInt, ok := expectedVal.(int64); ok {
-				actualHash := util.HashStringToInt64(actualId)
-				switch op {
-				case "=":
-					return actualHash == expectedInt
-				case "<>", "!=":
-					return actualHash != expectedInt
-				default:
-					return true
-				}
-			}
-
-			// String comparison (original behavior)
-			switch op {
-			case "=":
-				return e.compareEqual(actualId, expectedVal)
-			case "<>", "!=":
-				return !e.compareEqual(actualId, expectedVal)
-			default:
-				return true
-			}
-		}
-		return true // Different variable, not our concern
-	}
-
-	// Handle elementId(variable) = value comparisons
-	if strings.HasPrefix(lowerLeft, "elementid(") && strings.HasSuffix(left, ")") {
-		// Extract variable name from elementId(varName)
-		idVar := strings.TrimSpace(left[10 : len(left)-1])
-		if idVar == variable {
-			// Compare node ID with expected value
-			expectedVal := e.parseValue(ctx, right)
-			actualId := string(node.ID)
-			switch op {
-			case "=":
-				return e.compareEqual(actualId, expectedVal)
-			case "<>", "!=":
-				return !e.compareEqual(actualId, expectedVal)
-			default:
-				return true
-			}
-		}
-		return true // Different variable, not our concern
-	}
-
-	// Extract property from left side (e.g., "n.name")
-	// Use TrimSpace to handle whitespace around the dot
-	varName := strings.TrimSpace(left)
-	if !strings.HasPrefix(varName, variable+".") {
-		// In EXISTS subqueries, if we can't evaluate the condition (variable doesn't match),
-		// we should return false (exclude) rather than true (include all)
-		// This ensures WHERE clauses in subqueries actually filter correctly
-		return false // Not a property comparison we can handle for this variable
-	}
-
-	propName := strings.TrimSpace(varName[len(variable)+1:])
-
-	// Get actual value
-	actualVal, exists := node.Properties[propName]
-	if !exists {
-		return false
-	}
-
-	// Parse the expected value from right side
-	expectedVal := e.parseValue(ctx, right)
-
-	// Perform comparison based on operator
-	switch op {
-	case "=":
-		return e.compareEqual(actualVal, expectedVal)
-	case "<>", "!=":
-		return !e.compareEqual(actualVal, expectedVal)
-	case ">":
-		return e.compareGreater(actualVal, expectedVal)
-	case ">=":
-		return e.compareGreater(actualVal, expectedVal) || e.compareEqual(actualVal, expectedVal)
-	case "<":
-		return e.compareLess(actualVal, expectedVal)
-	case "<=":
-		return e.compareLess(actualVal, expectedVal) || e.compareEqual(actualVal, expectedVal)
-	case "=~":
-		return e.compareRegex(actualVal, expectedVal)
-	default:
-		return true
-	}
-}
-
 // extractRelTypesFromPattern extracts relationship types from a pattern
 func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []string {
 	var types []string
@@ -3310,183 +2778,6 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 		}
 	}
 	return false
-}
-
-// evaluateCountSubqueryComparison evaluates COUNT { } subquery with comparison
-// Syntax: COUNT { MATCH (node)-[:TYPE]->(other) } > 5
-// Returns true if the comparison holds
-func (e *StorageExecutor) evaluateCountSubqueryComparison(node *storage.Node, variable, whereClause string) bool {
-	// Extract the subquery from COUNT { ... }
-	subquery := e.extractSubquery(whereClause, "COUNT")
-	if subquery == "" {
-		return false // Malformed COUNT subquery
-	}
-
-	// Count matching relationships
-	count := e.countSubqueryMatches(node, variable, subquery)
-
-	// Extract and evaluate the comparison operator
-	// Find the closing brace to get what comes after
-	upperClause := strings.ToUpper(whereClause)
-	countIdx := strings.Index(upperClause, "COUNT")
-	if countIdx < 0 {
-		return false
-	}
-
-	remaining := whereClause[countIdx:]
-	braceDepth := 0
-	closeIdx := -1
-	for i := 0; i < len(remaining); i++ {
-		if remaining[i] == '{' {
-			braceDepth++
-		} else if remaining[i] == '}' {
-			braceDepth--
-			if braceDepth == 0 {
-				closeIdx = i
-				break
-			}
-		}
-	}
-
-	if closeIdx == -1 {
-		// No closing brace, invalid
-		return false
-	}
-
-	// Get comparison part after COUNT { }
-	comparison := strings.TrimSpace(remaining[closeIdx+1:])
-	if comparison == "" {
-		// No comparison, return true if count > 0
-		return count > 0
-	}
-
-	// Parse comparison operator and value
-	var op string
-	var valueStr string
-
-	if strings.HasPrefix(comparison, ">=") {
-		op = ">="
-		valueStr = strings.TrimSpace(comparison[2:])
-	} else if strings.HasPrefix(comparison, "<=") {
-		op = "<="
-		valueStr = strings.TrimSpace(comparison[2:])
-	} else if strings.HasPrefix(comparison, ">") {
-		op = ">"
-		valueStr = strings.TrimSpace(comparison[1:])
-	} else if strings.HasPrefix(comparison, "<") {
-		op = "<"
-		valueStr = strings.TrimSpace(comparison[1:])
-	} else if strings.HasPrefix(comparison, "=") {
-		op = "="
-		valueStr = strings.TrimSpace(comparison[1:])
-	} else if strings.HasPrefix(comparison, "!=") || strings.HasPrefix(comparison, "<>") {
-		op = "!="
-		if strings.HasPrefix(comparison, "!=") {
-			valueStr = strings.TrimSpace(comparison[2:])
-		} else {
-			valueStr = strings.TrimSpace(comparison[2:])
-		}
-	} else {
-		// No valid operator, treat as > 0
-		return count > 0
-	}
-
-	// Parse the comparison value
-	var compareValue int64
-	_, err := fmt.Sscanf(valueStr, "%d", &compareValue)
-	if err != nil {
-		// Invalid number, treat as false
-		return false
-	}
-
-	// Perform comparison
-	switch op {
-	case ">":
-		return count > compareValue
-	case ">=":
-		return count >= compareValue
-	case "<":
-		return count < compareValue
-	case "<=":
-		return count <= compareValue
-	case "=":
-		return count == compareValue
-	case "!=":
-		return count != compareValue
-	default:
-		return false
-	}
-}
-
-// countSubqueryMatches counts how many matches a subquery produces
-func (e *StorageExecutor) countSubqueryMatches(node *storage.Node, variable, subquery string) int64 {
-	// Parse the MATCH pattern from the subquery.
-	//
-	// COUNT { ... } allows an *implicit* MATCH: a bare pattern body with no
-	// "MATCH " keyword (e.g. "COUNT { (n)--() }"). The previous version
-	// required the "MATCH " prefix unconditionally, so a bare body always
-	// returned 0 here.
-	subquery = strings.TrimSpace(subquery)
-	upperSub := strings.ToUpper(subquery)
-
-	var pattern string
-	switch {
-	case strings.HasPrefix(upperSub, "MATCH "):
-		pattern = strings.TrimSpace(subquery[6:])
-	case strings.HasPrefix(subquery, "("):
-		pattern = subquery
-	default:
-		return 0
-	}
-
-	// Check if pattern references our variable
-	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
-		return 0
-	}
-
-	// Parse relationship pattern
-	var checkIncoming, checkOutgoing bool
-	var relTypes []string
-
-	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
-
-	if !checkIncoming && !checkOutgoing {
-		// Bracket-less pattern (e.g. "(n)-->()", "(n)--()") -- the checks
-		// above only recognize bracketed arrows.
-		if in, out, ok := bareRelDirection(pattern, variable); ok {
-			checkIncoming, checkOutgoing = in, out
-		}
-	}
-
-	// Count matching edges
-	var count int64
-
-	if checkIncoming {
-		edges, _ := e.storage.GetIncomingEdges(node.ID)
-		for _, edge := range edges {
-			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
-				count++
-			}
-		}
-	}
-
-	if checkOutgoing {
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
-		for _, edge := range edges {
-			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
-				count++
-			}
-		}
-	}
-
-	// If no direction specified, count both
-	if !checkIncoming && !checkOutgoing {
-		incoming, _ := e.storage.GetIncomingEdges(node.ID)
-		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
-		count = int64(len(incoming) + len(outgoing))
-	}
-
-	return count
 }
 
 // validatePolicyOnLabelChange checks RELATIONSHIP_POLICY constraints when a node's labels

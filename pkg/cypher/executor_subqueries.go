@@ -42,8 +42,8 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 		cypher = e.substituteParams(cypher, params)
 	}
 
-	// Find CALL position
-	callIdx := findKeywordIndex(cypher, "CALL")
+	// Find the statement's CALL (not one nested in a subquery expression).
+	callIdx := topLevelKeywordIndex(cypher, "CALL")
 	if callIdx == -1 {
 		return nil, localizedError(localization.CypherSubqueriesCallNotFound(), nil)
 	}
@@ -413,8 +413,9 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 		cypher = e.substituteParams(cypher, params)
 	}
 
-	// Find CALL position
-	callIdx := findKeywordIndex(cypher, "CALL")
+	// Find the statement's CALL subquery (not one nested in a subquery
+	// expression).
+	callIdx := firstTopLevelCallSubquery(cypher)
 	if callIdx == -1 {
 		return nil, localizedError(localization.CypherSubqueriesCallNotFound(), nil)
 	}
@@ -2722,7 +2723,7 @@ func normalizeCallSubqueryLookupString(s string) string {
 }
 
 func extractCallSubqueryCorrelationWhere(whereClause, importCol string) (matchVar, matchProp, otherWhere string, ok bool) {
-	terms := splitTopLevelAndCallSubquery(whereClause)
+	terms := splitTopLevelAndConjuncts(whereClause)
 	if len(terms) == 0 {
 		return "", "", "", false
 	}
@@ -2780,7 +2781,7 @@ func sanitizeCallSubqueryOtherWhere(otherWhere string, importCol string) (string
 	if strings.TrimSpace(otherWhere) == "" {
 		return "", true
 	}
-	terms := splitTopLevelAndCallSubquery(otherWhere)
+	terms := splitTopLevelAndConjuncts(otherWhere)
 	if len(terms) == 0 {
 		return "", true
 	}
@@ -2817,69 +2818,6 @@ func isCallSubqueryImportNotNullGuardTerm(term string, importCol string) bool {
 	return strings.EqualFold(parts[1], "IS") &&
 		strings.EqualFold(parts[2], "NOT") &&
 		strings.EqualFold(parts[3], "NULL")
-}
-
-func splitTopLevelAndCallSubquery(whereClause string) []string {
-	parts := make([]string, 0, 4)
-	start := 0
-	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(whereClause); i++ {
-		ch := whereClause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if findKeywordIndex(whereClause[i:], "AND") == 0 {
-			parts = append(parts, strings.TrimSpace(whereClause[start:i]))
-			i += len("AND") - 1
-			start = i + 1
-		}
-	}
-	parts = append(parts, strings.TrimSpace(whereClause[start:]))
-	return parts
 }
 
 func splitTopLevelEqualityCallSubquery(expr string) (lhs, rhs string, ok bool) {
@@ -3320,9 +3258,8 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 			// Check for alias
 			alias := part
 			expr := part
-			upperPart := strings.ToUpper(part)
-			if asIdx := strings.Index(upperPart, " AS "); asIdx != -1 {
-				alias = strings.TrimSpace(part[asIdx+4:])
+			if asIdx := projectionAliasIndex(part); asIdx != -1 {
+				alias = strings.TrimSpace(part[asIdx+len("AS"):])
 				expr = strings.TrimSpace(part[:asIdx])
 			}
 
@@ -3454,9 +3391,8 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 		// Check for alias
 		alias := part
 		expr := part
-		upperPart := strings.ToUpper(part)
-		if asIdx := strings.Index(upperPart, " AS "); asIdx != -1 {
-			alias = strings.TrimSpace(part[asIdx+4:])
+		if asIdx := projectionAliasIndex(part); asIdx != -1 {
+			alias = strings.TrimSpace(part[asIdx+len("AS"):])
 			expr = strings.TrimSpace(part[:asIdx])
 		}
 
@@ -3625,8 +3561,11 @@ type orderByTerm struct {
 	descending bool
 }
 
+// parseOrderByTerms parses the ORDER BY of a projection's modifiers. Keywords
+// inside braces (COLLECT { … ORDER BY … }, map literals) belong to nested
+// expressions, never to the projection (#652, #547).
 func parseOrderByTerms(modifiers string) []orderByTerm {
-	orderByIndex := findKeywordIndex(modifiers, "ORDER BY")
+	orderByIndex := topLevelKeywordIndex(modifiers, "ORDER BY")
 	if orderByIndex < 0 {
 		return nil
 	}
@@ -3637,7 +3576,7 @@ func parseOrderByClause(clause string) []orderByTerm {
 	clause = strings.TrimSpace(clause)
 	end := len(clause)
 	for _, keyword := range []string{"LIMIT", "SKIP"} {
-		if index := findKeywordIndex(clause, keyword); index >= 0 && index < end {
+		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
 			end = index
 		}
 	}

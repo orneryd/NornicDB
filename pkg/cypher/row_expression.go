@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"reflect"
+	"strconv"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -453,8 +454,17 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			if !resolved {
 				return nil, false, nil
 			}
-			if value == nil {
+			switch entity := value.(type) {
+			case nil:
 				return nil, true, nil
+			case *storage.Node:
+				if entity == nil {
+					return nil, true, nil
+				}
+			case *storage.Edge:
+				if entity == nil {
+					return nil, true, nil
+				}
 			}
 			if object, isMap := toStringAnyMap(value); isMap {
 				value = object
@@ -813,7 +823,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		return e.subtract(int64(0), value), true, nil
 	}
 
-	if dot := strings.Index(expr, "."); dot > 0 {
+	// The property access splits at the first dot outside brackets, braces and
+	// quotes: n {.k}.k reads k from the map projection n {.k} (#712).
+	if dot := topLevelSymbolIndex(expr, "."); dot > 0 {
 		base, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:dot]), values)
 		if err != nil {
 			return nil, false, err
@@ -1589,7 +1601,57 @@ func rowSubscriptIndex(value interface{}) (int, bool) {
 	}
 }
 
+// evaluateRowPredicateWithCASEBound evaluates the CASE ... END blocks of
+// expression (their spans come from caseBlockSpans) against the row, binds each
+// value to a row variable that replaces the block, and evaluates the
+// predicate that remains. The value keeps its type (a list or map stays one),
+// unlike a literal substitution.
+func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context, expression string, spans []caseBlockSpan, values map[string]interface{}) bool {
+	scope := make(map[string]interface{}, len(values)+len(spans))
+	for name, value := range values {
+		scope[name] = value
+	}
+	var builder strings.Builder
+	builder.Grow(len(expression))
+	last := 0
+	for i, span := range spans {
+		value, ok, err := e.evaluateRowCaseExpression(expression[span.start:span.end], values)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return false
+		}
+		if !ok {
+			return false
+		}
+		binding := "__nornic_case_value_" + strconv.Itoa(i)
+		scope[binding] = value
+		builder.WriteString(expression[last:span.start])
+		builder.WriteString(binding)
+		last = span.end
+	}
+	builder.WriteString(expression[last:])
+	return e.evaluateRowPredicateParts(ctx, builder.String(), scope)
+}
+
+// evaluateRowPredicate evaluates a WHERE predicate against a row.
+//
+// The operator scanners of evaluateRowPredicateParts are CASE-unaware (keeping
+// the hot scan cheap), so a CASE block would have the AND / > of its WHEN
+// conditions read as the predicate's own (#699). The blocks' values are bound
+// first, once per predicate, as the context evaluator substitutes them
+// (evaluateExpressionWithCASESubstituted).
 func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
+	if mayContainCaseKeyword(expression) {
+		if spans := caseBlockSpans(expression); len(spans) > 0 {
+			return e.evaluateRowPredicateWithCASEBound(ctx, expression, spans, values)
+		}
+	}
+	return e.evaluateRowPredicateParts(ctx, expression, values)
+}
+
+// evaluateRowPredicateParts is evaluateRowPredicate for a predicate whose CASE
+// blocks are bound; it recurses into its OR / AND / NOT parts.
+func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, expression string, values map[string]interface{}) bool {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return false
@@ -1603,7 +1665,25 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 	// generic comparison/expression evaluators and returning a wrong
 	// (false) result instead of evaluating the subquery.
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		return e.evaluateRowPredicate(ctx, inner, values)
+		return e.evaluateRowPredicateParts(ctx, inner, values)
+	}
+	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
+	// COUNT { … } + 1 > 1, …) are evaluated for the row first, unless AND / OR
+	// / XOR split the predicate: then each side evaluates its own.
+	subqueries := planRowSubqueries(expression)
+	if subqueries != nil && !subqueries.logical {
+		plan := subqueries
+		if plan.integerComparison != nil {
+			// COUNT { … } <op> <integer>: compare the count directly; a null
+			// or non-integer value takes the general comparison.
+			value, _ := e.evaluateRowSubqueryValue(ctx, plan.found[0].kind, plan.found[0].body, values)
+			if count, ok := value.(int64); ok {
+				return plan.integerComparison.holds(count)
+			}
+			return e.evaluateRowPredicate(ctx, plan.rewritten, plan.extendRow(pipelineRow(values), []interface{}{value}))
+		}
+		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
+		return e.evaluateRowPredicate(ctx, rewritten, extended)
 	}
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
 		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
@@ -1621,10 +1701,10 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 // plan can't resolve directly is evaluated here.
 func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expression string, values map[string]interface{}) bool {
 	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, true); ok {
-		return e.evaluateRowPredicate(ctx, left, values) || e.evaluateRowPredicate(ctx, right, values)
+		return e.evaluateRowPredicateParts(ctx, left, values) || e.evaluateRowPredicateParts(ctx, right, values)
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, true); ok {
-		return e.evaluateRowPredicate(ctx, left, values) && e.evaluateRowPredicate(ctx, right, values)
+		return e.evaluateRowPredicateParts(ctx, left, values) && e.evaluateRowPredicateParts(ctx, right, values)
 	}
 	// EXISTS and NOT EXISTS are complete predicates. Resolve both before the
 	// generic NOT operator so a subquery is evaluated against its correlated
@@ -1641,10 +1721,11 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 			boolean, isBoolean := value.(bool)
 			return isBoolean && !boolean
 		}
-		return !e.evaluateRowPredicate(ctx, inner, values)
+		return !e.evaluateRowPredicateParts(ctx, inner, values)
 	}
-	if matched, recognized := e.evaluateRowCountSubqueryPredicate(expression, values); recognized {
-		return matched
+	if plan := planRowSubqueries(expression); plan != nil {
+		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
+		return e.evaluateRowPredicate(ctx, rewritten, extended)
 	}
 	if nodeCtx, _ := withWhereValueContext(values); len(nodeCtx) > 0 && looksLikeRowRelationshipPattern(expression) {
 		if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, expression, nodeCtx); recognized {
@@ -1821,29 +1902,23 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 
 func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
 	trimmed := strings.TrimSpace(expression)
-	negated := hasPrefixFold(trimmed, "NOT EXISTS")
-	if !negated && !hasPrefixFold(trimmed, "EXISTS") {
+	// Only a whole [NOT] EXISTS { } is this predicate: EXISTS { … } = false
+	// is a comparison, evaluated with the subquery as one of its values.
+	negated, whole := wholeExistsPredicate(trimmed)
+	if !whole {
 		return false, false
 	}
-	prefix := "EXISTS"
+	exists := trimmed
 	if negated {
-		prefix = "NOT EXISTS"
+		exists = strings.TrimSpace(trimmed[len("NOT"):])
 	}
-	subquery := e.extractSubquery(trimmed, prefix)
+	subquery := strings.TrimSpace(exists[strings.IndexByte(exists, '{')+1 : len(exists)-1])
 	if subquery == "" {
 		return false, false
 	}
 	if clauses, ok := splitPipelineClauses(subquery); ok && len(clauses) > 1 {
-		correlated := e.cloneWithStorage(e.getStorage(ctx))
-		correlated.fabricRecordBindings = make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
-		for name, value := range e.fabricRecordBindings {
-			correlated.fabricRecordBindings[name] = value
-		}
-		for name, value := range values {
-			correlated.fabricRecordBindings[name] = value
-		}
-		result, handled, err := correlated.executePipeline(ctx, subquery)
-		matched := err == nil && handled && result != nil && len(result.Rows) > 0
+		result, err := e.runCorrelatedSubquery(ctx, subquery, values)
+		matched := err == nil && result != nil && len(result.Rows) > 0
 		if negated {
 			matched = !matched
 		}
@@ -1851,6 +1926,17 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	}
 	if !hasPrefixFold(strings.TrimSpace(subquery), "MATCH ") {
 		subquery = "MATCH " + strings.TrimSpace(subquery)
+	}
+	// A body that reads a row value other than a node or relationship (a
+	// comprehension variable, a WITH value) runs as a correlated pipeline,
+	// which sees every row value; the path matcher sees only entities.
+	if subqueryReadsScalarRowValue(subquery, values) {
+		result, err := e.runCorrelatedSubquery(ctx, subquery+" RETURN 1 AS __exists", values)
+		matched := err == nil && result != nil && len(result.Rows) > 0
+		if negated {
+			matched = !matched
+		}
+		return matched, true
 	}
 	path := PathContext{nodes: make(map[string]*storage.Node), rels: make(map[string]*storage.Edge)}
 	for name, value := range values {
@@ -1870,23 +1956,6 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 		matched = !matched
 	}
 	return matched, true
-}
-
-func (e *StorageExecutor) evaluateRowCountSubqueryPredicate(expression string, values map[string]interface{}) (bool, bool) {
-	if !hasPrefixFold(strings.TrimSpace(expression), "COUNT") || !hasSubqueryPattern(expression, countSubqueryRe) {
-		return false, false
-	}
-	for variable, value := range values {
-		node, ok := value.(*storage.Node)
-		if !ok || node == nil {
-			continue
-		}
-		subquery := e.extractSubquery(expression, "COUNT")
-		if strings.Contains(subquery, "("+variable+")") || strings.Contains(subquery, "("+variable+":") {
-			return e.evaluateCountSubqueryComparison(node, variable, expression), true
-		}
-	}
-	return false, true
 }
 
 func (e *StorageExecutor) evaluateRowStringPredicate(ctx context.Context, left, right string, values map[string]interface{}, predicate func(string, string) bool) bool {

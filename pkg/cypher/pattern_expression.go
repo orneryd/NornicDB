@@ -235,6 +235,13 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 			}
 		}
 	}
+	if plan := planRowSubqueries(strings.TrimSpace(expr)); plan != nil {
+		rewritten, extended := e.materializeRowSubqueries(ctx, plan, values)
+		return e.evaluateRowExpressionWithContext(ctx, rewritten, extended)
+	}
+	if subquery, ok := standaloneSubqueryExpression(expr); ok {
+		return e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, values)
+	}
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
 		return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, values), true
 	}

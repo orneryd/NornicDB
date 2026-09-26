@@ -1,9 +1,6 @@
 package cypher
 
-import (
-	"strings"
-	"sync"
-)
+import "strings"
 
 // cutDistinct reports whether text (a projection body, or an aggregate's
 // argument list) starts with the DISTINCT keyword, and returns the text after
@@ -61,12 +58,9 @@ type keywordIndexCacheKey struct {
 	from    int
 }
 
-var defaultKeywordIndexCache = struct {
-	sync.RWMutex
-	m map[keywordIndexCacheKey]int
-}{m: make(map[keywordIndexCacheKey]int, 1024)}
-
-const defaultKeywordIndexCacheMax = 4096
+// defaultKeywordIndexCache caches keyword positions found with the default
+// scan options.
+var defaultKeywordIndexCache = newBoundedCache[keywordIndexCacheKey, int](4096)
 
 func defaultKeywordScanOpts() keywordScanOpts {
 	return keywordScanOpts{
@@ -373,20 +367,11 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 
 func cachedKeywordIndexFromDefault(s, keyword string, from int) int {
 	key := keywordIndexCacheKey{s: s, keyword: keyword, from: from}
-	defaultKeywordIndexCache.RLock()
-	idx, ok := defaultKeywordIndexCache.m[key]
-	defaultKeywordIndexCache.RUnlock()
-	if ok {
+	if idx, ok := defaultKeywordIndexCache.get(key); ok {
 		return idx
 	}
-
-	idx = keywordIndexFromDefault(s, keyword, from)
-	defaultKeywordIndexCache.Lock()
-	if len(defaultKeywordIndexCache.m) >= defaultKeywordIndexCacheMax {
-		defaultKeywordIndexCache.m = make(map[keywordIndexCacheKey]int, 1024)
-	}
-	defaultKeywordIndexCache.m[key] = idx
-	defaultKeywordIndexCache.Unlock()
+	idx := keywordIndexFromDefault(s, keyword, from)
+	defaultKeywordIndexCache.put(key, idx)
 	return idx
 }
 

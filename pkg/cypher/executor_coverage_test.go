@@ -456,10 +456,14 @@ func TestOrderNodesWithoutVariablePrefix(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// ORDER BY without variable prefix (just property name)
-	result, err := exec.Execute(ctx, "MATCH (n:Item) RETURN n ORDER BY priority", nil)
+	// A bare property name isn't a variable: Neo4j rejects it ("Variable
+	// `priority` not defined"), and n.priority orders the rows.
+	_, err := exec.Execute(ctx, "MATCH (n:Item) RETURN n ORDER BY priority", nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "variable priority is not defined")
+	result, err := exec.Execute(ctx, "MATCH (n:Item) RETURN n.priority AS p ORDER BY n.priority", nil)
 	require.NoError(t, err)
-	assert.Len(t, result.Rows, 3)
+	assert.Equal(t, [][]interface{}{{float64(1)}, {float64(2)}, {float64(3)}}, result.Rows)
 }
 
 func TestSplitNodePatternsWithRemainder(t *testing.T) {

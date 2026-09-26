@@ -123,13 +123,12 @@ func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*Exec
 			continue
 		}
 
-		upperItem := strings.ToUpper(item)
-		asIdx := strings.Index(upperItem, " AS ")
+		asIdx := projectionAliasIndex(item)
 		var alias string
 		var expr string
 		if asIdx > 0 {
 			expr = strings.TrimSpace(item[:asIdx])
-			alias = strings.TrimSpace(item[asIdx+4:])
+			alias = strings.TrimSpace(item[asIdx+len("AS"):])
 		} else {
 			expr = item
 			alias = item
@@ -896,7 +895,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 	// and combining results. This avoids silently returning only unwound values when
 	// a trailing MATCH pipeline is present.
 	if restQuery != "" && strings.HasPrefix(strings.ToUpper(restQuery), "MATCH ") {
-		returnIdx := findKeywordIndex(restQuery, "RETURN")
+		returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
 		mutationPart := restQuery
 		returnPart := ""
 		if returnIdx > 0 {
@@ -928,7 +927,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 		}
 
 		returnItems := []returnItem{}
-		if retIdx := findKeywordIndex(normalizedRestQuery, "RETURN"); retIdx > 0 {
+		if retIdx := topLevelKeywordIndex(normalizedRestQuery, "RETURN"); retIdx > 0 {
 			returnClause := strings.TrimSpace(normalizedRestQuery[retIdx+6:])
 			returnEnd := len(returnClause)
 			for _, keyword := range []string{"ORDER", "SKIP", "LIMIT"} {
@@ -2570,7 +2569,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 }
 
 func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
-	returnIdx := findKeywordIndex(restQuery, "RETURN")
+	returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
 	if returnIdx <= 0 {
 		return nil, false, nil
 	}
@@ -3173,7 +3172,7 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 	if !strings.HasPrefix(strings.ToUpper(trimmed), "MATCH ") {
 		return query
 	}
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if returnIdx <= 0 {
 		return query
 	}
@@ -3280,7 +3279,7 @@ func normalizeMultiMatchWhereClauses(query string) string {
 	if findKeywordIndex(trimmed, "OPTIONAL MATCH") >= 0 {
 		return query
 	}
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if returnIdx <= 0 {
 		return query
 	}
@@ -3591,8 +3590,8 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 
 	// Find WITH or RETURN after OPTIONAL MATCH
 	remainingAfterOptMatch := cypher[optMatchIdx+14:] // Skip "OPTIONAL MATCH"
-	withIdx := findKeywordIndex(remainingAfterOptMatch, "WITH")
-	returnIdx := findKeywordIndex(remainingAfterOptMatch, "RETURN")
+	withIdx := topLevelKeywordIndex(remainingAfterOptMatch, "WITH")
+	returnIdx := topLevelKeywordIndex(remainingAfterOptMatch, "RETURN")
 
 	// Determine where OPTIONAL MATCH pattern ends
 	optMatchEndIdx := len(remainingAfterOptMatch)
@@ -3839,13 +3838,6 @@ func (e *StorageExecutor) collectOptionalMatchInitialNodes(
 	}
 
 	if !usedPropertyIndex {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if usedPropertyIndex && len(nodes) == 0 && whereClause != "" {
-		// Fail-open on possible stale index metadata/candidates.
 		nodes, err = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
 		if err != nil {
 			return nil, err
@@ -4221,12 +4213,11 @@ func (e *StorageExecutor) executeJoinedRowsWithOptionalMatch(ctx context.Context
 			if item == "" {
 				continue
 			}
-			upperItem := strings.ToUpper(item)
 			alias := item
 			expr := item
-			if asIdx := strings.Index(upperItem, " AS "); asIdx > 0 {
+			if asIdx := projectionAliasIndex(item); asIdx > 0 {
 				expr = strings.TrimSpace(item[:asIdx])
-				alias = strings.TrimSpace(item[asIdx+4:])
+				alias = strings.TrimSpace(item[asIdx+len("AS"):])
 			}
 			values[alias] = e.evaluateExpressionWithContext(ctx, expr, nodeCtx, relCtx)
 			if len(computedRows) == 0 {
@@ -4420,11 +4411,10 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 		// Check if any item is a CASE expression
 		for _, item := range withItems {
 			item = strings.TrimSpace(item)
-			upperItem := strings.ToUpper(item)
-			asIdx := strings.Index(upperItem, " AS ")
+			asIdx := projectionAliasIndex(item)
 			if asIdx > 0 {
 				expr := strings.TrimSpace(item[:asIdx])
-				alias := strings.TrimSpace(item[asIdx+4:])
+				alias := strings.TrimSpace(item[asIdx+len("AS"):])
 
 				if isCaseExpression(expr) {
 					// Evaluate CASE for each row

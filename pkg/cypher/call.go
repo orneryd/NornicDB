@@ -316,9 +316,8 @@ func expectedReturnColumnsFromTail(tail string) []string {
 		if expr == "" {
 			continue
 		}
-		upperExpr := strings.ToUpper(expr)
-		if asIdx := strings.Index(upperExpr, " AS "); asIdx >= 0 {
-			alias := normalizeProjectionColumnName(expr[asIdx+4:])
+		if asIdx := projectionAliasIndex(expr); asIdx >= 0 {
+			alias := normalizeProjectionColumnName(expr[asIdx+len("AS"):])
 			if alias != "" {
 				cols = append(cols, alias)
 				continue

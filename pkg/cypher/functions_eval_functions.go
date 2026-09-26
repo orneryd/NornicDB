@@ -206,7 +206,9 @@ skipArrayIndexing:
 	// CASE Expressions (must be checked first)
 	// ========================================
 	if isCaseExpression(expr) {
-		return e.evaluateCaseExpression(ctx, expr, nodes, rels, nil, nil, nil, 0)
+		// The path bindings reach the CASE's WHEN / THEN / ELSE expressions
+		// (CASE WHEN … THEN length(p) … END in a path WHERE, #699).
+		return e.evaluateCaseExpression(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	lowerExpr := strings.ToLower(expr)

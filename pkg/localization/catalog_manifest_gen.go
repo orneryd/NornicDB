@@ -940,6 +940,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "mcp.database_executor_unavailable", Constructor: "MCPDatabaseExecutorUnavailable", Fields: []string{"Database"}, PluralForms: []string{"other"}},
 	{ID: "mcp.delete_task_failed", Constructor: "MCPDeleteTaskFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "mcp.dependency_create_failed", Constructor: "MCPDependencyCreateFailed", Fields: []string{"Cause", "ID"}, PluralForms: []string{"other"}},
+	{ID: "mcp.discover_failed", Constructor: "MCPDiscoverFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "mcp.embedding_dimensions_invalid", Constructor: "MCPEmbeddingDimensionsInvalid", Fields: []string{"Expected", "Got", "Model"}, PluralForms: []string{"other"}},
 	{ID: "mcp.embedding_element_invalid", Constructor: "MCPEmbeddingElementInvalid", Fields: []string{"Index", "Type"}, PluralForms: []string{"other"}},
 	{ID: "mcp.embedding_empty", Constructor: "MCPEmbeddingEmpty", Fields: []string{}, PluralForms: []string{"other"}},

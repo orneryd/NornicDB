@@ -1553,28 +1553,28 @@ func TestCypherHelpers_EvaluateInnerWhereBranches(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "(n.age = 30)"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age = 30 AND n.name = 'alice'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age = 99 OR n.name = 'alice'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "NOT n.age = 99"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.bio CONTAINS 'hello'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name STARTS WITH 'ali'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name ENDS WITH 'ice'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "'a' IN n.tags"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name IS NOT NULL"))
-	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "n.missing IS NOT NULL"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.missing IS NULL"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "id(n) = 'n-123'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "elementId(n) = 'n-123'"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age >= 30"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age <= 30"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age > 29"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age < 31"))
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name =~ 'a.*'"))
-	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age = 99"))
-	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "x.age = 30")) // wrong variable branch
-	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", ""))            // empty where clause includes
-	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "MALFORMED"))  // malformed non-empty clause excludes
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "(n.age = 30)"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age = 30 AND n.name = 'alice'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age = 99 OR n.name = 'alice'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "NOT n.age = 99"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.bio CONTAINS 'hello'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name STARTS WITH 'ali'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name ENDS WITH 'ice'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "'a' IN n.tags"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name IS NOT NULL"))
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", "n.missing IS NOT NULL"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.missing IS NULL"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "id(n) = 'n-123'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "elementId(n) = 'n-123'"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age >= 30"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age <= 30"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age > 29"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age < 31"))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name =~ 'a.*'"))
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", "n.age = 99"))
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", "x.age = 30")) // wrong variable branch
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", ""))            // empty where clause includes
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", "MALFORMED"))  // malformed non-empty clause excludes
 }
 
 func TestCypherHelpers_NormalizePropValueAndMap(t *testing.T) {
@@ -2064,20 +2064,13 @@ func TestCypherHelpers_CompareValuesForSort(t *testing.T) {
 	assert.Equal(t, -1, compareValuesForSort(struct{ X int }{1}, struct{ X int }{2}))
 }
 
-func TestCypherHelpers_SubstituteNodeAndNormalizeProps(t *testing.T) {
+func TestCypherHelpers_NormalizeProps(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(eng)
 
 	node := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}
 	_, err := eng.CreateNode(node)
 	require.NoError(t, err)
-
-	// substituteNodeInSubquery
-	sub := exec.substituteNodeInSubquery("MATCH (n)-[:KNOWS]->(m) RETURN n.name", "n", node)
-	assert.Contains(t, sub, "(n1)-[:KNOWS]->")
-	sub = exec.substituteNodeInSubquery("MATCH (n:Person)-[:KNOWS]->(m) RETURN n.name", "n", node)
-	assert.Contains(t, sub, "(n1:Person)-[:KNOWS]->")
 
 	// normalizePropsMap / normalizePropValue branches
 	props, err := normalizePropsMap(map[interface{}]interface{}{"a": int(1), "b": uint8(2), "c": float32(3.5), "d": []interface{}{int8(1), uint16(2)}}, "var props")
@@ -2758,19 +2751,30 @@ func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
 	a, err := eng.GetNode("a")
 	require.NoError(t, err)
 
-	assert.EqualValues(t, 0, exec.countSubqueryMatches(a, "n", "RETURN 1"))
-	assert.EqualValues(t, 0, exec.countSubqueryMatches(a, "n", "MATCH (x)-[:KNOWS]->()"))
-	assert.EqualValues(t, 1, exec.countSubqueryMatches(a, "n", "MATCH (n)-[:KNOWS]->()"))
-	assert.EqualValues(t, 1, exec.countSubqueryMatches(a, "n", "MATCH ()-[:LIKES]->(n)"))
-	assert.EqualValues(t, 1, exec.countSubqueryMatches(a, "n", "MATCH ()-[r]->(n)"))
+	// COUNT bodies go through the one subquery evaluator (#652): a body that
+	// doesn't use the row counts its own rows, as in Neo4j.
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "RETURN 1"))
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH (x)-[:KNOWS]->()"))
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH (n)-[:KNOWS]->()"))
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH ()-[:LIKES]->(n)"))
+	assert.EqualValues(t, 1, subqueryCount(t, exec, a, "n", "MATCH ()-[r]->(n)"))
 
-	assert.True(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() }"))
-	assert.True(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } = 1"))
-	assert.True(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } != 2"))
-	assert.True(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } <= 1"))
-	assert.False(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } > 1"))
-	assert.False(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() } = nope"))
-	assert.False(t, exec.evaluateCountSubqueryComparison(a, "n", "COUNT { MATCH (n)-[:KNOWS]->() "))
+	// A leading COUNT { } in a WHERE is a value like any other: the row
+	// predicate evaluator compares it (#652).
+	row := map[string]interface{}{"n": a}
+	predicate := func(expression string, values map[string]interface{}) bool {
+		return exec.evaluateRowPredicate(context.Background(), expression, values)
+	}
+	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } = 1", row))
+	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } <> 2", row))
+	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } <= 1", row))
+	assert.False(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } > 1", row))
+	assert.False(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } <> 1", row))
+	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } < x", map[string]interface{}{"n": a, "x": int64(2)}))
+	assert.True(t, predicate("COUNT { (n)-[:KNOWS]->() } + 1 = 2", row))
+	// Uncorrelated, and correlated through a property, as in RETURN.
+	assert.True(t, predicate("COUNT { MATCH (x)-[:KNOWS]->() } = 1", row))
+	assert.True(t, predicate("COUNT { MATCH (o) WHERE o.id = n.id } = 0", row))
 }
 
 func TestCypherHelpers_ExtractionHelpers_Branches(t *testing.T) {
@@ -3671,4 +3675,15 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 	require.Len(t, mapOut.Rows, 1)
 	assert.Equal(t, true, mapOut.Rows[0][0])
 	assert.Equal(t, "map", mapOut.Rows[0][1])
+}
+
+// subqueryCount is COUNT { body } for node bound to variable, through the one
+// subquery evaluator (rowSubqueryValue).
+func subqueryCount(t *testing.T, exec *StorageExecutor, node *storage.Node, variable, body string) int64 {
+	t.Helper()
+	value, ok, err := exec.rowSubqueryValue(context.Background(), "COUNT", body, map[string]interface{}{variable: node})
+	require.NoError(t, err)
+	require.True(t, ok)
+	count, _ := value.(int64)
+	return count
 }

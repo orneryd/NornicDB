@@ -15,8 +15,8 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	upper := strings.ToUpper(cypher)
 
 	// Find clause boundaries
-	withIdx := findKeywordIndex(cypher, "WITH")
-	returnIdx := findKeywordIndex(cypher, "RETURN")
+	withIdx := topLevelKeywordIndex(cypher, "WITH")
+	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
 
 	if withIdx == -1 || returnIdx == -1 {
 		return nil, localizedError(localization.CypherMatchingWithReturnClausesRequired(), nil)
@@ -30,7 +30,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 
 	// Check for OPTIONAL MATCH between WITH and RETURN - delegate to specialized handler
 	// This handles patterns like: MATCH (n) WITH n, x WHERE ... OPTIONAL MATCH (n)-[:REL]-(m) RETURN ...
-	optMatchIdx := findKeywordIndex(cypher[withIdx:], "OPTIONAL MATCH")
+	optMatchIdx := topLevelKeywordIndex(cypher[withIdx:], "OPTIONAL MATCH")
 	if optMatchIdx > 0 {
 		return e.executeMatchWithOptionalMatch(ctx, cypher)
 	}
@@ -39,7 +39,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	// single legacy MATCH/WITH projection. Delegate to the pipeline executor
 	// before parsing the WITH section as if everything until RETURN were still
 	// part of the first WITH clause.
-	if innerMatchIdx := findKeywordIndex(cypher[withIdx+4:returnIdx], "MATCH"); innerMatchIdx > 0 {
+	if innerMatchIdx := topLevelKeywordIndex(cypher[withIdx+4:returnIdx], "MATCH"); innerMatchIdx > 0 {
 		if pipelineResult, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
 			return pipelineResult, err
 		}
@@ -49,7 +49,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	matchPart := strings.TrimSpace(cypher[5:withIdx]) // Skip "MATCH"
 
 	// Check for WHERE clause between MATCH and WITH
-	whereIdx := findKeywordIndex(matchPart, "WHERE")
+	whereIdx := topLevelKeywordIndex(matchPart, "WHERE")
 	var whereClause string
 	var nodePatternPart string
 
@@ -84,19 +84,13 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	// conjunct on an indexed property (#490): the full label load below
 	// hydrates every node even when the index could narrow it to a handful.
 	// Seeding is over-fetch-only — the pattern-property and WHERE filters
-	// below still apply — and an empty seed falls back to the full load so
-	// stale index metadata can never produce a false empty result (mirrors
-	// the single-clause markOuterScanFallbackUsed path).
+	// below still apply.
 	seeded := false
 	if whereClause != "" {
 		var seedErr error
 		nodes, seeded, seedErr = e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereClause)
 		if seedErr != nil {
 			return nil, localizedError(localization.CypherMatchingStorageFailed(seedErr), seedErr)
-		}
-		if seeded && len(nodes) == 0 {
-			e.markOuterScanFallbackUsed()
-			seeded = false
 		}
 		if seeded {
 			// Mirror loadNodesWithTemporalViewport exactly: the index seed
@@ -136,7 +130,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	// Check for WHERE between WITH and RETURN (filters aggregated results, like SQL HAVING)
 	withSection := strings.TrimSpace(cypher[withIdx+4 : returnIdx])
 	callSection := ""
-	if callIdx := findKeywordIndex(withSection, "CALL"); callIdx > 0 {
+	if callIdx := topLevelKeywordIndex(withSection, "CALL"); callIdx > 0 {
 		callSection = strings.TrimSpace(withSection[callIdx:])
 		withSection = strings.TrimSpace(withSection[:callIdx])
 	}
@@ -145,12 +139,12 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 
 	// Check for multiple WITH clauses (chained WITH)
 	// e.g., WITH a AS x WHERE x > 5 WITH x, x * x AS squared
-	secondWithIdx := findKeywordIndex(withSection, "WITH")
+	secondWithIdx := topLevelKeywordIndex(withSection, "WITH")
 	if secondWithIdx > 0 {
 		// Extract first WITH clause (may contain WHERE)
 		firstWithSection := strings.TrimSpace(withSection[:secondWithIdx])
 		// Check for WHERE in the FIRST WITH section (between first WITH and second WITH)
-		firstWhereIdx := findKeywordIndex(firstWithSection, "WHERE")
+		firstWhereIdx := topLevelKeywordIndex(firstWithSection, "WHERE")
 		if firstWhereIdx > 0 {
 			withClause = strings.TrimSpace(firstWithSection[:firstWhereIdx])
 			postWithWhere = strings.TrimSpace(firstWithSection[firstWhereIdx+5:])
@@ -159,15 +153,15 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		}
 		// Get the second WITH clause and check for WHERE there too
 		secondWithSection := strings.TrimSpace(withSection[secondWithIdx+4:])
-		secondWhereIdx := findKeywordIndex(secondWithSection, "WHERE")
+		secondWhereIdx := topLevelKeywordIndex(secondWithSection, "WHERE")
 		if secondWhereIdx > 0 && postWithWhere == "" {
 			// Only use second WHERE if first didn't have one
 			postWithWhere = strings.TrimSpace(secondWithSection[secondWhereIdx+5:])
 		}
 	} else {
 		// Find WHERE in the section between WITH and RETURN
-		// Use findKeywordIndex which handles all whitespace (spaces, tabs, newlines)
-		postWhereIdx := findKeywordIndex(withSection, "WHERE")
+		// topLevelKeywordIndex: whitespace-tolerant; keywords inside braces belong to nested expressions
+		postWhereIdx := topLevelKeywordIndex(withSection, "WHERE")
 		if postWhereIdx > 0 {
 			withClause = strings.TrimSpace(withSection[:postWhereIdx])
 			// Skip "WHERE" (5 chars) + any trailing whitespace
@@ -178,9 +172,9 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	}
 
 	// Remove ORDER BY, SKIP, LIMIT from withClause (these apply after WITH processing)
-	// Use findKeywordIndex which handles all whitespace (spaces, tabs, newlines)
+	// topLevelKeywordIndex: whitespace-tolerant; keywords inside braces belong to nested expressions
 	for _, keyword := range []string{"ORDER", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(withClause, keyword); idx >= 0 {
+		if idx := topLevelKeywordIndex(withClause, keyword); idx >= 0 {
 			withClause = strings.TrimSpace(withClause[:idx])
 		}
 	}
@@ -192,7 +186,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	// Remove ORDER BY, SKIP, LIMIT
 	returnEnd := len(returnClause)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnClause, keyword); idx >= 0 && idx < returnEnd {
+		if idx := topLevelKeywordIndex(returnClause, keyword); idx >= 0 && idx < returnEnd {
 			returnEnd = idx
 		}
 	}
@@ -214,13 +208,12 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 			continue
 		}
 
-		upperItem := strings.ToUpper(item)
-		asIdx := strings.Index(upperItem, " AS ")
+		asIdx := projectionAliasIndex(item)
 		var alias string
 		var expr string
 		if asIdx > 0 {
 			expr = strings.TrimSpace(item[:asIdx])
-			alias = strings.TrimSpace(item[asIdx+4:])
+			alias = strings.TrimSpace(item[asIdx+len("AS"):])
 		} else {
 			expr = item
 			alias = item
@@ -505,7 +498,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	}
 
 	// Apply ORDER BY to computedRows (before building result)
-	if orderByIdx := findKeywordIndex(cypher, "ORDER BY"); orderByIdx > 0 {
+	if orderByIdx := topLevelKeywordIndex(cypher, "ORDER BY"); orderByIdx > 0 {
 		ks, ke := trimKeywordWSBounds("ORDER BY")
 		orderByEnd, ok := keywordMatchAt(cypher, orderByIdx, "ORDER BY", ks, ke)
 		if !ok {
@@ -514,9 +507,9 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 
 		orderPart := cypher[orderByEnd:]
 		endIdx := len(orderPart)
-		// Use findKeywordIndex which handles whitespace/newlines properly
+		// topLevelKeywordIndex: whitespace-tolerant; keywords inside braces belong to nested expressions
 		for _, kw := range []string{"SKIP", "LIMIT", "RETURN"} {
-			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
+			if idx := topLevelKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
 				endIdx = idx
 			}
 		}
@@ -812,10 +805,10 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		}
 	}
 
-	// Apply ORDER BY, SKIP, LIMIT to results (using findKeywordIndex for whitespace tolerance)
+	// Apply ORDER BY, SKIP, LIMIT to results (topLevelKeywordIndex: keywords inside braces belong to nested expressions)
 
 	// Apply ORDER BY
-	orderByIdx := findKeywordIndex(cypher, "ORDER")
+	orderByIdx := topLevelKeywordIndex(cypher, "ORDER")
 	if orderByIdx > 0 {
 		// Find start after "ORDER BY" (skip "ORDER" + whitespace + "BY")
 		orderStart := orderByIdx + 5 // skip "ORDER"
@@ -829,7 +822,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		endIdx := len(orderPart)
 		// Find SKIP or LIMIT
 		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
+			if idx := topLevelKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
 				endIdx = idx
 			}
 		}
@@ -838,7 +831,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	}
 
 	// Apply SKIP
-	skipIdx := findKeywordIndex(cypher, "SKIP")
+	skipIdx := topLevelKeywordIndex(cypher, "SKIP")
 	skip := 0
 	if skipIdx > 0 {
 		skipPart := strings.TrimSpace(cypher[skipIdx+4:])
@@ -849,7 +842,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	}
 
 	// Apply LIMIT
-	limitIdx := findKeywordIndex(cypher, "LIMIT")
+	limitIdx := topLevelKeywordIndex(cypher, "LIMIT")
 	limit := -1
 	if limitIdx > 0 {
 		limitPart := strings.TrimSpace(cypher[limitIdx+5:])
@@ -886,9 +879,9 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	}
 
 	// Find clause boundaries
-	withIdx := findKeywordIndex(cypher, "WITH")
-	optMatchIdx := findKeywordIndex(cypher, "OPTIONAL MATCH")
-	returnIdx := findKeywordIndex(cypher, "RETURN")
+	withIdx := topLevelKeywordIndex(cypher, "WITH")
+	optMatchIdx := topLevelKeywordIndex(cypher, "OPTIONAL MATCH")
+	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
 
 	if withIdx == -1 || optMatchIdx == -1 || returnIdx == -1 {
 		return nil, localizedError(localization.CypherMatchingWithOptionalMatchReturnClausesRequired(), nil)
@@ -898,7 +891,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	matchPart := strings.TrimSpace(cypher[5:withIdx]) // Skip "MATCH"
 
 	// Check for WHERE clause between MATCH and WITH
-	matchWhereIdx := findKeywordIndex(matchPart, "WHERE")
+	matchWhereIdx := topLevelKeywordIndex(matchPart, "WHERE")
 	var matchWhereClause string
 	var nodePatternPart string
 
@@ -909,9 +902,9 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 		nodePatternPart = matchPart
 	}
 	matchPartRaw := ""
-	if rawWithIdx := findKeywordIndex(originalCypher, "WITH"); rawWithIdx > 5 {
+	if rawWithIdx := topLevelKeywordIndex(originalCypher, "WITH"); rawWithIdx > 5 {
 		rawMatchPart := strings.TrimSpace(originalCypher[5:rawWithIdx])
-		if rawMatchWhereIdx := findKeywordIndex(rawMatchPart, "WHERE"); rawMatchWhereIdx > 0 {
+		if rawMatchWhereIdx := topLevelKeywordIndex(rawMatchPart, "WHERE"); rawMatchWhereIdx > 0 {
 			matchPartRaw = strings.TrimSpace(rawMatchPart[rawMatchWhereIdx+5:])
 		}
 	}
@@ -932,7 +925,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	var withClause string
 	var postWithWhere string
 
-	postWhereIdx := findKeywordIndex(withSection, "WHERE")
+	postWhereIdx := topLevelKeywordIndex(withSection, "WHERE")
 	if postWhereIdx > 0 {
 		withClause = strings.TrimSpace(withSection[:postWhereIdx])
 		postWithWhere = strings.TrimSpace(withSection[postWhereIdx+5:])
@@ -960,13 +953,12 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 				continue
 			}
 
-			upperItem := strings.ToUpper(item)
-			asIdx := strings.Index(upperItem, " AS ")
+			asIdx := projectionAliasIndex(item)
 			var alias string
 			var expr string
 			if asIdx > 0 {
 				expr = strings.TrimSpace(item[:asIdx])
-				alias = strings.TrimSpace(item[asIdx+4:])
+				alias = strings.TrimSpace(item[asIdx+len("AS"):])
 			} else {
 				expr = item
 				alias = item
@@ -1002,7 +994,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	optMatchPattern := strings.TrimSpace(cypher[optMatchIdx+14 : returnIdx])
 
 	// Check for WHERE in OPTIONAL MATCH section
-	optMatchWhereIdx := findKeywordIndex(optMatchPattern, "WHERE")
+	optMatchWhereIdx := topLevelKeywordIndex(optMatchPattern, "WHERE")
 	var optMatchWhereClause string
 	if optMatchWhereIdx > 0 {
 		optMatchWhereClause = strings.TrimSpace(optMatchPattern[optMatchWhereIdx+5:])
@@ -1086,7 +1078,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	// Remove ORDER BY, SKIP, LIMIT from return clause
 	returnEnd := len(returnClause)
 	for _, keyword := range []string{"ORDER", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnClause, keyword); idx >= 0 && idx < returnEnd {
+		if idx := topLevelKeywordIndex(returnClause, keyword); idx >= 0 && idx < returnEnd {
 			returnEnd = idx
 		}
 	}
@@ -1190,7 +1182,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	}
 
 	// Apply ORDER BY, SKIP, LIMIT
-	orderByIdx := findKeywordIndex(cypher, "ORDER")
+	orderByIdx := topLevelKeywordIndex(cypher, "ORDER")
 	if orderByIdx > 0 {
 		orderStart := orderByIdx + 5
 		for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
@@ -1202,7 +1194,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 		orderPart := cypher[orderStart:]
 		endIdx := len(orderPart)
 		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
+			if idx := topLevelKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
 				endIdx = idx
 			}
 		}
@@ -1210,7 +1202,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderExpr)
 	}
 
-	skipIdx := findKeywordIndex(cypher, "SKIP")
+	skipIdx := topLevelKeywordIndex(cypher, "SKIP")
 	skip := 0
 	if skipIdx > 0 {
 		skipPart := strings.TrimSpace(cypher[skipIdx+4:])
@@ -1220,7 +1212,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 		}
 	}
 
-	limitIdx := findKeywordIndex(cypher, "LIMIT")
+	limitIdx := topLevelKeywordIndex(cypher, "LIMIT")
 	limit := -1
 	if limitIdx > 0 {
 		limitPart := strings.TrimSpace(cypher[limitIdx+5:])

@@ -196,12 +196,13 @@ func splitPipelineClausesWithProcedureCalls(cypher string, allowProcedureCalls b
 		{"FOREACH", pipelineClauseForeach},
 		{"RETURN", pipelineClauseReturn},
 	}
-	// Clauses we don't yet model as their own kind force a fallback. Anything
+	// Clauses we don't yet model as their own kind force a fallback: a CALL
+	// clause of the statement itself. A CALL inside a subquery expression's
+	// body belongs to that body, which the subquery evaluator runs. Anything
 	// else — including $param references and arbitrary WHERE on bindings —
 	// is handled by the per-clause appliers below, which substitute params
 	// from context and respect node bindings supplied by the caller.
-	upper := strings.ToUpper(cypher)
-	if findKeywordIndex(upper, "CALL") >= 0 {
+	if topLevelKeywordIndex(cypher, "CALL") >= 0 {
 		if !allowProcedureCalls || !pipelineProcedureCallsAreClauses(cypher) {
 			return nil, false
 		}
@@ -946,7 +947,7 @@ func (e *StorageExecutor) tryExecutePipelineOptionalMatchPlan(ctx context.Contex
 	}
 
 	optionalIndex := findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH")
-	returnIndex := findKeywordIndexInContext(cypher, "RETURN")
+	returnIndex := topLevelKeywordIndex(cypher, "RETURN")
 	if optionalIndex <= len("MATCH") || returnIndex <= optionalIndex {
 		return nil, false, nil
 	}
@@ -2054,10 +2055,6 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 				return nil, err
 			}
 			if used {
-				if len(nodes) == 0 {
-					e.markOuterScanFallbackUsed()
-					return e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, "", -1)
-				}
 				e.markOuterIndexTopKUsed()
 				return nodes, nil
 			}
@@ -2103,12 +2100,6 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 			return nil, err
 		}
 		if used {
-			// A schema can transiently advertise an index whose entries have not
-			// caught up with existing data. Preserve correctness by streaming the
-			// scan fallback only for an empty property-index seed.
-			if len(nodes) == 0 {
-				return e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, streamingWhere, hint.earlyLimit)
-			}
 			if len(nodePattern.properties) > 0 {
 				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
 			}
@@ -3081,6 +3072,8 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 	for index, row := range rows {
 		values := make([]interface{}, len(terms))
 		for termIndex, term := range terms {
+			// The projections' evaluator: subquery values (COUNT { … }) and
+			// recorded failures behave as in a RETURN item.
 			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
 			if !ok {
 				return false
@@ -3501,9 +3494,11 @@ func pipelineAggregateNumber(value interface{}) (float64, bool, bool) {
 // back to the established RETURN projection.
 func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
 	body := pipelineClauseBody(clause, "RETURN")
+	// Keywords inside braces (COLLECT { … ORDER BY … }) belong to nested
+	// expressions, as for WITH (#547).
 	modifierStart := len(body)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(body, keyword); idx >= 0 && idx < modifierStart {
+		if idx := topLevelKeywordIndex(body, keyword); idx >= 0 && idx < modifierStart {
 			modifierStart = idx
 		}
 	}
@@ -3547,14 +3542,8 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		if item == "" {
 			continue
 		}
-		upper := strings.ToUpper(item)
-		asIdx := strings.Index(upper, " AS ")
-		expr := item
-		alias := item
-		if asIdx > 0 {
-			expr = strings.TrimSpace(item[:asIdx])
-			alias = normalizeProjectionColumnName(item[asIdx+4:])
-		}
+		// Same alias parsing as WITH (parseProjectionExprAlias, #547).
+		expr, alias := parseProjectionExprAlias(item)
 		aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
 		if !isAggr && pipelineExpressionContainsAggregate(expr) {
 			isAggr = true
@@ -3879,6 +3868,11 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
 	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
 		expr = inner
+	}
+	if mayContainSubqueryExpression(expr) {
+		if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
+			return toAnySlice(value), true
+		}
 	}
 	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
 		return items, true

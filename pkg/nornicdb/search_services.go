@@ -640,24 +640,7 @@ func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context)
 	}
 	entry.buildOnce.Do(func() {
 		if !db.startBackgroundTask(func() {
-			err := entry.svc.BuildIndexes(ctx)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("search index build failed for database %s: %v", entry.dbName, err)
-			}
-			entry.buildErrMu.Lock()
-			entry.buildErr = err
-			if err == nil {
-				// Mark clustering as current so runClusteringOnceAllDatabases skips this db
-				// (we either restored IVF-HNSW from disk or ran k-means in warmup).
-				entry.clusterMu.Lock()
-				entry.lastClusteredEmbedCount = entry.svc.EmbeddingCount()
-				entry.clusterMu.Unlock()
-			}
-			entry.buildErrMu.Unlock()
-			entry.closeBuildDone()
-			if err == nil {
-				db.ensurePendingFlushAfterSuccessfulBuild(entry)
-			}
+			_ = db.runInitialSearchIndexBuild(entry, ctx)
 		}) {
 			entry.buildErrMu.Lock()
 			entry.buildErr = ErrClosed
@@ -665,6 +648,33 @@ func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context)
 			entry.closeBuildDone()
 		}
 	})
+}
+
+// runInitialSearchIndexBuild runs a database's initial search-index build and
+// records its outcome: the build error, clustering state, the buildDone
+// signal, and the flush of writes queued while it ran. It must run inside
+// entry.buildOnce, in the background (startSearchIndexBuild) or synchronously
+// (DB.BuildSearchIndexes).
+func (db *DB) runInitialSearchIndexBuild(entry *dbSearchService, ctx context.Context) error {
+	err := entry.svc.BuildIndexes(ctx)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		log.Printf("search index build failed for database %s: %v", entry.dbName, err)
+	}
+	entry.buildErrMu.Lock()
+	entry.buildErr = err
+	if err == nil {
+		// Mark clustering as current so runClusteringOnceAllDatabases skips this db
+		// (we either restored IVF-HNSW from disk or ran k-means in warmup).
+		entry.clusterMu.Lock()
+		entry.lastClusteredEmbedCount = entry.svc.EmbeddingCount()
+		entry.clusterMu.Unlock()
+	}
+	entry.buildErrMu.Unlock()
+	entry.closeBuildDone()
+	if err == nil {
+		db.ensurePendingFlushAfterSuccessfulBuild(entry)
+	}
+	return err
 }
 
 func (db *DB) ensurePendingFlush(entry *dbSearchService) {

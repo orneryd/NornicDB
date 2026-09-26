@@ -934,7 +934,10 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 			return nil, err
 		}
 		svc, err := s.db.GetOrCreateSearchService(dbName, engine)
-		if err == nil && svc != nil {
+		if err != nil {
+			return nil, localizedError(localization.MCPDiscoverFailed(err), err)
+		}
+		if svc != nil {
 			opts := search.GetAdaptiveRRFConfig(query)
 			opts.Limit = limit
 			if len(nodeTypes) > 0 {
@@ -954,7 +957,12 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 				ctx, query, opts, chunkQuery, embedQuery, svc.Search,
 				search.ChunkedSearchErrorPolicy{Transport: "mcp"},
 			)
-			if err == nil && resp != nil {
+			if err != nil {
+				// A failed search is not "no matches": the client gets the
+				// error (e.g. the index is still being built) and can retry.
+				return nil, localizedError(localization.MCPDiscoverFailed(err), err)
+			}
+			if resp != nil {
 				if resp.SearchMethod == "chunked_rrf_hybrid" {
 					method = "vector"
 				}

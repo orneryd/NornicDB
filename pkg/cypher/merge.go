@@ -585,7 +585,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 
 	// Extract MERGE pattern (e.g., "(n:Label {prop: value})")
 	mergePattern := strings.TrimSpace(cypher[mergeIdx+5 : patternEnd])
-	if containsOutsideStrings(mergePattern, "->") || containsOutsideStrings(mergePattern, "<-") || containsOutsideStrings(mergePattern, "-[") {
+	if patternHasRelationship(mergePattern) {
 		return e.executeMergeWithContext(ctx, cypher, make(map[string]*storage.Node), make(map[string]*storage.Edge))
 	}
 
@@ -1307,7 +1307,7 @@ func (e *StorageExecutor) evaluateWhereForNodeMap(ctx context.Context, nodeMap m
 // The function is shape-agnostic: it works for labelled and labelless
 // patterns, single-property and N-property patterns, and any property type
 // the index can key (string / int / float / bool — same set
-// `propertyIndexValueKey` accepts on insert). It deliberately does NOT
+// `indexValueKey` accepts on insert). It deliberately does NOT
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
@@ -1472,7 +1472,7 @@ func (e *StorageExecutor) extractIndexedEqualityFromWhereTerm(variable, term str
 		return prop, lit, true
 	}
 
-	parts := splitTopLevelAndCartesian(term)
+	parts := splitTopLevelAndConjuncts(term)
 	if len(parts) < 2 {
 		return "", nil, false
 	}

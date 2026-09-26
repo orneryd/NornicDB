@@ -77,14 +77,22 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	if expr == "" {
 		return nil
 	}
+	if plan := planRowSubqueries(expr); plan != nil {
+		// Subquery expressions nested in a larger expression are evaluated
+		// for this row and the rest runs on the row evaluator.
+		rewritten, extended := e.materializeRowSubqueries(ctx, plan, entityRow(nodes, rels))
+		value, _ := e.evaluateRowExpressionWithContext(ctx, rewritten, extended)
+		return value
+	}
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
 		return e.evaluatePatternComprehension(ctx, pattern, projection, nodes, rels)
 	}
-	if subquery, ok := standaloneCountSubquery(expr); ok {
-		return int64(len(e.evaluateBoundPatternRows(ctx, subquery, nodes, rels)))
-	}
 	if isStandaloneExistsSubquery(expr) {
 		return e.evaluateExistsSubqueryValue(ctx, expr, nodes, rels)
+	}
+	if subquery, ok := standaloneSubqueryExpression(expr); ok {
+		value, _ := e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, entityRow(nodes, rels))
+		return value
 	}
 	// Direct $param resolution preserves declared types end-to-end.
 	// substituteParams's type-preserving short-circuit leaves "$name" as

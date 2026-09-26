@@ -82,12 +82,11 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 				continue
 			}
 
-			upperItem := strings.ToUpper(item)
-			asIdx := strings.Index(upperItem, " AS ")
+			asIdx := projectionAliasIndex(item)
 			var alias, expr string
 			if asIdx > 0 {
 				expr = strings.TrimSpace(item[:asIdx])
-				alias = strings.TrimSpace(item[asIdx+4:])
+				alias = strings.TrimSpace(item[asIdx+len("AS"):])
 			} else {
 				expr = item
 				alias = item
@@ -1661,7 +1660,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 	inConstraints := map[string]cartesianInConstraint{}
 	nullConstraints := map[string]cartesianNullConstraint{}
 	eqConstraints := make([]cartesianEqConstraint, 0, 2)
-	for _, term := range splitTopLevelAndCartesian(whereClause) {
+	for _, term := range splitTopLevelAndConjuncts(whereClause) {
 		term = strings.TrimSpace(term)
 		if term == "" {
 			continue
@@ -1787,69 +1786,6 @@ func parseCartesianNullTerm(term string) (string, string, bool, bool) {
 		return v, p, false, true
 	}
 	return "", "", false, false
-}
-
-func splitTopLevelAndCartesian(whereClause string) []string {
-	parts := make([]string, 0, 4)
-	start := 0
-	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(whereClause); i++ {
-		ch := whereClause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if i+5 <= len(whereClause) && strings.EqualFold(whereClause[i:i+5], " AND ") {
-			parts = append(parts, strings.TrimSpace(whereClause[start:i]))
-			start = i + 5
-			i += 4
-		}
-	}
-	parts = append(parts, strings.TrimSpace(whereClause[start:]))
-	return parts
 }
 
 func parseCartesianVarProp(expr string) (string, string, bool) {
