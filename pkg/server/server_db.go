@@ -1650,11 +1650,20 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 	}
 }
 
-// sessionStatementRunner runs a statement in an open transaction.
+// sessionStatementRunner runs a statement in an open transaction. A
+// statement whose :USE names a constituent of the transaction's composite
+// database reaches it through a USE clause, the one way a composite
+// transaction targets a constituent (as in Neo4j); a statement with its own
+// USE clause keeps it.
 func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
 		if queryErr := s.otherDatabaseInTransactionError(session.Database, dbName, query); queryErr != nil {
 			return nil, &requestStatementError{QueryError: *queryErr}
+		}
+		if s.isConstituentOf(session.Database, dbName) {
+			if target, err := statementTargetDatabase(session.Database, query); err == nil && target == session.Database {
+				query = "USE " + dbName + " " + query
+			}
 		}
 		return s.txSessions.ExecuteInSession(ctx, session, query, params)
 	}
@@ -1678,7 +1687,7 @@ func (s *Server) otherDatabaseInTransactionError(txDB, target, query string) *Qu
 	if s.sameDatabase(txDB, target) {
 		return nil
 	}
-	if s.dbManager != nil && s.dbManager.IsCompositeDatabase(txDB) && strings.HasPrefix(target, txDB+".") {
+	if s.isConstituentOf(txDB, target) {
 		return nil
 	}
 	requirements := cypher.QueryPermissionRequirements(query)
@@ -1692,6 +1701,12 @@ func (s *Server) otherDatabaseInTransactionError(txDB, target, query string) *Qu
 		Code:    "Neo.ClientError.Statement.AccessMode",
 		Message: fmt.Sprintf("Accessing more than one database per transaction is not allowed. Attempted access to %s, currently using %s", target, txDB),
 	}
+}
+
+// isConstituentOf reports whether target names a constituent of composite
+// database composite (composite.alias).
+func (s *Server) isConstituentOf(composite, target string) bool {
+	return s.dbManager != nil && s.dbManager.IsCompositeDatabase(composite) && strings.HasPrefix(target, composite+".")
 }
 
 // sameDatabase reports whether two database names or aliases name the same

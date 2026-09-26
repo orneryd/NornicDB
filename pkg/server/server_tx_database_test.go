@@ -107,6 +107,20 @@ func TestRequestTransactionStaysOnItsDatabase(t *testing.T) {
 	require.EqualValues(t, 3, count(dbName))
 	clean()
 
+	// A composite database's transaction reaches its constituents, with
+	// :USE or a USE clause, and sees its own writes.
+	require.Empty(t, post("system", "CREATE COMPOSITE DATABASE txdbcomp ALIAS other FOR DATABASE txdbother").Errors)
+	response = post("txdbcomp",
+		":USE txdbcomp.other\nCREATE (:TxDb {i: 1})",
+		":USE txdbcomp.other\nMATCH (n:TxDb) RETURN count(n) AS c",
+		"USE txdbcomp.other MATCH (n:TxDb) RETURN count(n) AS c")
+	require.Empty(t, response.Errors)
+	require.Len(t, response.Results, 3)
+	require.EqualValues(t, 1, response.Results[1].Data[0].Row[0])
+	require.EqualValues(t, 1, response.Results[2].Data[0].Row[0])
+	require.EqualValues(t, 1, count("txdbother"))
+	clean()
+
 	// A single statement runs, auto-committed, on the database it names.
 	response = post(dbName, ":USE txdbother\nCREATE (:TxDb {i: 1})")
 	require.Empty(t, response.Errors)
