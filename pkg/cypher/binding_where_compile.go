@@ -107,19 +107,20 @@ func orTruth(left, right bindingWhereTruth) bindingWhereTruth {
 	}
 }
 
-var compiledBindingWhereCache sync.Map               // map[string]bindingWherePredicate
-var compiledSupportedBindingWhereCache sync.Map      // map[string]bindingWherePredicate
-var compiledSupportedBindingWhereTruthCache sync.Map // map[string]bindingWhereTruth
+// Compiled binding WHERE predicates, cached by clause text (boundedCache).
+var (
+	compiledBindingWhereCache               = newBoundedCache[string, bindingWherePredicate](4096)
+	compiledSupportedBindingWhereCache      = newBoundedCache[string, bindingWherePredicate](4096)
+	compiledSupportedBindingWhereTruthCache = newBoundedCache[string, bindingWhereTruth](4096)
+)
 
 func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {
 	key := normalizeBindingWhereClause(whereClause)
-	if cached, ok := compiledBindingWhereCache.Load(key); ok {
-		if predicate, ok := cached.(bindingWherePredicate); ok {
-			return predicate
-		}
+	if predicate, ok := compiledBindingWhereCache.get(key); ok {
+		return predicate
 	}
 	if predicate, ok := e.tryCompileBindingWhere(ctx, key); ok {
-		compiledBindingWhereCache.Store(key, predicate)
+		compiledBindingWhereCache.put(key, predicate)
 		return predicate
 	}
 	// Generic predicates may consult this executor's graph (for example, a
@@ -206,28 +207,24 @@ func (e *StorageExecutor) compileExecutorBindingWhereBranch(ctx context.Context,
 
 func (e *StorageExecutor) getCompiledBindingWhereIfSupported(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
 	key := normalizeBindingWhereClause(whereClause)
-	if cached, ok := compiledSupportedBindingWhereCache.Load(key); ok {
-		if predicate, ok := cached.(bindingWherePredicate); ok {
-			return predicate, true
-		}
+	if predicate, ok := compiledSupportedBindingWhereCache.get(key); ok {
+		return predicate, true
 	}
 	predicate, ok := e.tryCompileBindingWhere(ctx, key)
 	if ok {
-		compiledSupportedBindingWhereCache.Store(key, predicate)
+		compiledSupportedBindingWhereCache.put(key, predicate)
 	}
 	return predicate, ok
 }
 
 func (e *StorageExecutor) getCompiledBindingWhereTruthIfSupported(ctx context.Context, whereClause string) (bindingWhereTruth, bool) {
 	key := normalizeBindingWhereClause(whereClause)
-	if cached, ok := compiledSupportedBindingWhereTruthCache.Load(key); ok {
-		if truth, ok := cached.(bindingWhereTruth); ok {
-			return truth, true
-		}
+	if truth, ok := compiledSupportedBindingWhereTruthCache.get(key); ok {
+		return truth, true
 	}
 	truth, ok := e.tryCompileBindingWhereTruth(ctx, key)
 	if ok {
-		compiledSupportedBindingWhereTruthCache.Store(key, truth)
+		compiledSupportedBindingWhereTruthCache.put(key, truth)
 	}
 	return truth, ok
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -14,8 +13,12 @@ type simpleWhereCacheKey struct {
 	clause   string
 }
 
-var compiledSimpleWhereCache sync.Map      // map[simpleWhereCacheKey]func(*storage.Node) bool
-var compiledSimpleWhereTruthCache sync.Map // map[simpleWhereCacheKey]func(*storage.Node) cypherTruth
+// Compiled single-node WHERE filters, cached by variable and clause text
+// (boundedCache).
+var (
+	compiledSimpleWhereCache      = newBoundedCache[simpleWhereCacheKey, func(*storage.Node) bool](4096)
+	compiledSimpleWhereTruthCache = newBoundedCache[simpleWhereCacheKey, func(*storage.Node) cypherTruth](4096)
+)
 
 func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
 	if fastIN, ok := e.buildBoundInFastFilter(variable, whereClause); ok {
@@ -102,14 +105,12 @@ func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, 
 		return e.compileSimpleWhere(ctx, variable, trimmedClause)
 	}
 	key := simpleWhereCacheKey{variable: variable, clause: trimmedClause}
-	if cached, ok := compiledSimpleWhereCache.Load(key); ok {
-		if fn, okFn := cached.(func(*storage.Node) bool); okFn {
-			return fn, true
-		}
+	if fn, ok := compiledSimpleWhereCache.get(key); ok {
+		return fn, true
 	}
 	fn, ok := e.compileSimpleWhere(ctx, variable, trimmedClause)
 	if ok {
-		compiledSimpleWhereCache.Store(key, fn)
+		compiledSimpleWhereCache.put(key, fn)
 	}
 	return fn, ok
 }
@@ -141,14 +142,12 @@ func (e *StorageExecutor) getCompiledSimpleWhereTruth(ctx context.Context, varia
 		return e.compileSimpleWhereTruth(ctx, variable, trimmedClause)
 	}
 	key := simpleWhereCacheKey{variable: variable, clause: trimmedClause}
-	if cached, ok := compiledSimpleWhereTruthCache.Load(key); ok {
-		if fn, okFn := cached.(func(*storage.Node) cypherTruth); okFn {
-			return fn, true
-		}
+	if fn, ok := compiledSimpleWhereTruthCache.get(key); ok {
+		return fn, true
 	}
 	fn, ok := e.compileSimpleWhereTruth(ctx, variable, trimmedClause)
 	if ok {
-		compiledSimpleWhereTruthCache.Store(key, fn)
+		compiledSimpleWhereTruthCache.put(key, fn)
 	}
 	return fn, ok
 }

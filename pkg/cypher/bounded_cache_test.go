@@ -33,3 +33,22 @@ func TestBoundedCacheKeepsCachingWhenFull(t *testing.T) {
 		require.True(t, ok, key)
 	}
 }
+
+// TestQueryTextCachesStayBounded pins #716: caches keyed by text that comes
+// from queries (=~ patterns here) hold at most their limit, however many
+// distinct texts a long-running server sees.
+func TestQueryTextCachesStayBounded(t *testing.T) {
+	for i := 0; i < 5000; i++ {
+		_, err := GetCachedRegex("^pattern-" + strconv.Itoa(i) + "$")
+		require.NoError(t, err)
+	}
+	regexCache.mu.RLock()
+	size := len(regexCache.m)
+	regexCache.mu.RUnlock()
+	require.LessOrEqual(t, size, regexCache.limit)
+
+	// A pattern seen after the cache cleared is compiled and cached again.
+	re, err := GetCachedRegex("^pattern-1$")
+	require.NoError(t, err)
+	require.True(t, re.MatchString("pattern-1"))
+}
