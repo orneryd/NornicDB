@@ -465,6 +465,13 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidTransactionID",
 			"TERMINATE TRANSACTIONS requires a transaction id or a list of transaction ids")
 	}
+	for index, id := range ids {
+		normalized, err := terminateTransactionID(id)
+		if err != nil {
+			return nil, err
+		}
+		ids[index] = normalized
+	}
 	rows := make([][]interface{}, 0, len(ids))
 	for _, id := range ids {
 		tx, found := runningTransactions.terminate(id)
@@ -475,6 +482,30 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 		rows = append(rows, []interface{}{id, tx.username, "Transaction terminated."})
 	}
 	return &ExecuteResult{Columns: []string{"transactionId", "username", "message"}, Rows: rows}, nil
+}
+
+// terminateTransactionID checks a TERMINATE TRANSACTIONS id as Neo4j does:
+// it must read <databasename>-transaction-<number>, with a database name of
+// 3 to 63 characters, and the name is compared lower-cased. SHOW
+// TRANSACTIONS doesn't check its ids.
+func terminateTransactionID(id string) (string, error) {
+	separator := strings.LastIndex(id, "-transaction-")
+	if separator < 0 {
+		return "", invalidTransactionIDError("Could not parse id (expected format: <databasename>-transaction-<id>)")
+	}
+	database, number := id[:separator], id[separator+len("-transaction-"):]
+	if _, err := strconv.ParseUint(number, 10, 64); err != nil {
+		return "", invalidTransactionIDError("Could not parse id (expected format: <databasename>-transaction-<id>)")
+	}
+	if length := len(database); length < 3 || length > 63 {
+		return "", invalidTransactionIDError("The provided database name must have a length between 3 and 63 characters.")
+	}
+	return strings.ToLower(database) + "-transaction-" + number, nil
+}
+
+// invalidTransactionIDError is Neo4j's error for a malformed transaction id.
+func invalidTransactionIDError(message string) error {
+	return newSemanticError("Neo.ClientError.General.InvalidArguments", "InvalidTransactionID", message)
 }
 
 // durationFromGo is a Cypher duration of d.

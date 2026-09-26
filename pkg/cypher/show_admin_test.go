@@ -159,3 +159,28 @@ func TestShowAndTerminateTransactions(t *testing.T) {
 	_, err = observer.Execute(ctx, "TERMINATE TRANSACTIONS", nil)
 	require.Error(t, err)
 }
+
+// TestTerminateTransactionIDsAreChecked: TERMINATE TRANSACTIONS reads each id
+// as <databasename>-transaction-<number>, as Neo4j 5.26.30 does; SHOW
+// TRANSACTIONS doesn't check its ids.
+func TestTerminateTransactionIDsAreChecked(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
+	ctx := context.Background()
+	for id, message := range map[string]string{
+		"foo":                 "Could not parse id (expected format: <databasename>-transaction-<id>)",
+		"neo4j-transaction-x": "Could not parse id (expected format: <databasename>-transaction-<id>)",
+		"":                    "Could not parse id (expected format: <databasename>-transaction-<id>)",
+		"ab-transaction-1":    "The provided database name must have a length between 3 and 63 characters.",
+	} {
+		_, err := exec.Execute(ctx, "TERMINATE TRANSACTION $id", map[string]interface{}{"id": id})
+		require.Error(t, err, id)
+		require.Contains(t, err.Error(), "Neo.ClientError.General.InvalidArguments", id)
+		require.Contains(t, err.Error(), message, id)
+	}
+	result, err := exec.Execute(ctx, "TERMINATE TRANSACTION 'Abc-transaction-1'", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"abc-transaction-1", nil, "Transaction not found."}}, result.Rows)
+	result, err = exec.Execute(ctx, "SHOW TRANSACTION 'foo'", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+}
