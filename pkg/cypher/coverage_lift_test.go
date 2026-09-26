@@ -603,44 +603,28 @@ func TestCoverageLiftCallTailParsersAndMaps(t *testing.T) {
 
 	assert.Equal(t, 7, findTopLevelByte("a(b, c), d", ','))
 	assert.Equal(t, -1, findTopLevelByte("a('b,c')", ','))
-
-	edge := &storage.Edge{ID: "e1", Type: "REL", StartNode: "s", EndNode: "t", Properties: map[string]interface{}{"name": "edge"}}
-	m, ok := callTailRelationshipMap(edge)
-	require.True(t, ok)
-	assert.Equal(t, "REL", m["_type"])
-	m, ok = callTailRelationshipMap(map[interface{}]interface{}{"id": "x", "type": "T"})
-	require.True(t, ok)
-	assert.Equal(t, "T", m["type"])
-	_, ok = callTailRelationshipMap((*storage.Edge)(nil))
-	assert.False(t, ok)
-	_, ok = callTailRelationshipMap("not a relationship")
-	assert.False(t, ok)
-
-	value, ok := callTailMapString(map[string]interface{}{"edgeId": storage.EdgeID("e1")}, "missing", "edgeId")
-	require.True(t, ok)
-	assert.Equal(t, "e1", value)
-	value, ok = callTailMapString(map[string]interface{}{"count": 42}, "count")
-	require.True(t, ok)
-	assert.Equal(t, "42", value)
-	_, ok = callTailMapString(map[string]interface{}{"nil": nil}, "nil")
-	assert.False(t, ok)
 }
 
 func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	ctx := withParams(context.Background(), map[string]interface{}{"wantedAge": 41, "names": []interface{}{"Ada", "Cy"}})
 
+	// The plan runs the tail's WITH (and WHERE) and RETURN with the pipeline's
+	// appliers.
 	plan, ok := exec.parseCallTailProjectionPlan(ctx, "WITH name, age WHERE (name STARTS WITH 'A' OR age = $wantedAge) AND name IN $names RETURN name AS n, age AS years ORDER BY years DESC SKIP 0 LIMIT 10")
 	require.True(t, ok)
-	assert.Equal(t, []string{"n", "years"}, plan.columns)
-	result, err := exec.executeCallTailProjectionPlan(ctx, plan, []map[string]interface{}{
-		{"name": "Ada", "age": 37},
-		{"name": "Bob", "age": 41},
-		{"name": "Cy", "age": 41},
-	}, []string{"name", "age"})
-	require.NoError(t, err)
+	seed := &ExecuteResult{
+		Columns: []string{"name", "age"},
+		Rows:    [][]interface{}{{"Ada", int64(37)}, {"Bob", int64(41)}, {"Cy", int64(41)}},
+	}
+	rows := make([]pipelineRow, 0, len(seed.Rows))
+	for _, row := range seed.Rows {
+		rows = append(rows, callTailRow(ctx, seed, row))
+	}
+	result, ok := exec.executeCallTailProjectionPlan(ctx, plan, rows, []string{"name", "age"})
+	require.True(t, ok)
 	assert.Equal(t, []string{"name", "age"}, result.Columns)
-	assert.Equal(t, [][]interface{}{{"Cy", 41}, {"Ada", 37}}, result.Rows)
+	assert.Equal(t, [][]interface{}{{"Cy", int64(41)}, {"Ada", int64(37)}}, result.Rows)
 
 	// SKIP / LIMIT that aren't a literal or a bound parameter, aggregation
 	// and DISTINCT are left to the pipeline, which evaluates or rejects them.
@@ -651,90 +635,14 @@ func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {
 		"WITH name RETURN count(name) AS c",
 		"WITH name RETURN DISTINCT name",
 		"WITH DISTINCT name RETURN name",
+		"RETURN name",
+		"WITH * RETURN name",
+		"WITH name RETURN *",
+		"WITH name MATCH (n) RETURN name",
 	} {
 		_, ok = exec.parseCallTailProjectionPlan(ctx, tail)
 		assert.False(t, ok, tail)
 	}
-
-	_, ok = exec.parseCallTailProjectionPlan(ctx, "RETURN name")
-	assert.False(t, ok)
-	_, ok = exec.parseCallTailProjectionPlan(ctx, "WITH * RETURN name")
-	assert.False(t, ok)
-	_, ok = exec.parseCallTailProjectionPlan(ctx, "WITH name RETURN *")
-	assert.False(t, ok)
-	_, ok = exec.parseCallTailProjectionPlan(ctx, "WITH names[0] AS name RETURN name")
-	assert.False(t, ok)
-	_, ok = exec.parseCallTailProjectionPlan(ctx, "WITH name WHERE name =~ 'A.*' RETURN name")
-	assert.False(t, ok)
-
-	values := map[string]interface{}{
-		"name": "Ada Lovelace",
-		"age":  37,
-		"tags": []interface{}{"math", "code"},
-		"node": &storage.Node{ID: "node-1", Labels: []string{"Person", "Scientist"}, Properties: map[string]interface{}{"name": "Ada", "score": 9}},
-		"edge": &storage.Edge{ID: "edge-1", Type: "KNOWS", Properties: map[string]interface{}{"since": 1843}},
-		"rel":  map[string]interface{}{"_id": "rel-1", "_type": "LIKES", "_start": storage.NodeID("a"), "_end": storage.NodeID("b"), "properties": map[string]interface{}{"weight": 0.9}},
-	}
-	params := map[string]interface{}{"needle": "Ada", "tagSet": []interface{}{"code"}}
-	for _, tc := range []struct {
-		clause string
-		want   bool
-	}{
-		{clause: "name IS NOT NULL", want: true},
-		{clause: "missing IS NULL", want: true},
-		{clause: "name STARTS WITH $needle", want: true},
-		{clause: "name ENDS WITH 'lace'", want: true},
-		{clause: "name CONTAINS 'love'", want: false},
-		{clause: "'code' IN tags", want: true},
-		{clause: "name NOT IN ['Bob', 'Cy']", want: true},
-		{clause: "'code' IN $tagSet", want: true},
-		{clause: "age >= 37", want: true},
-		{clause: "NOT age < 37", want: true},
-		{clause: "age = 37 AND name STARTS WITH 'Ada'", want: true},
-		{clause: "age = 0 OR name STARTS WITH 'Ada'", want: true},
-	} {
-		t.Run(tc.clause, func(t *testing.T) {
-			predicate, ok := exec.tryCompileCallTailValueWhere(ctx, tc.clause)
-			require.True(t, ok)
-			assert.Equal(t, tc.want, predicate(values, params))
-		})
-	}
-
-	_, ok = exec.tryCompileCallTailValueWhere(ctx, "age BETWEEN 1 AND 2")
-	assert.False(t, ok)
-	projector, ok := exec.compileCallTailValueProjector("node.name")
-	require.True(t, ok)
-	assert.Equal(t, "Ada", projector(values))
-	_, ok = exec.compileCallTailValueProjector("tags[0]")
-	assert.False(t, ok)
-
-	for _, tc := range []struct {
-		expr string
-		want interface{}
-	}{
-		{expr: "name", want: "Ada Lovelace"},
-		{expr: "node.score", want: 9},
-		{expr: "properties(node)", want: map[string]interface{}{"name": "Ada", "score": 9}},
-		{expr: "type(edge)", want: "KNOWS"},
-		{expr: "id(edge)", want: "edge-1"},
-		{expr: "elementId(node)", want: "4:nornic:node-1"},
-		{expr: "labels(node)", want: []interface{}{"Person", "Scientist"}},
-	} {
-		t.Run(tc.expr, func(t *testing.T) {
-			resolver, ok := exec.compileCallTailDirectValueResolver(tc.expr)
-			require.True(t, ok)
-			got, ok := resolver(values)
-			require.True(t, ok)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-
-	_, ok = exec.compileCallTailDirectValueResolver("properties(node, extra)")
-	assert.False(t, ok)
-	_, ok = exec.compileCallTailDirectValueResolver("bad-name")
-	assert.False(t, ok)
-	_, _, ok = splitCallTailPropertyAccess("node.name.extra")
-	assert.False(t, ok)
 
 	inside, rest, ok := parseCallTailDelimited("{score: vector.similarity.cosine(r.embedding, [1,2])} tail", '{', '}')
 	require.True(t, ok)
@@ -750,16 +658,6 @@ func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {
 	assert.Equal(t, " trailing", rest)
 	_, _, _, ok = parseCallTailSinglePropertyMap("{a: 1, b: 2}")
 	assert.False(t, ok)
-
-	relMap, ok := callTailRelationshipMap(map[interface{}]interface{}{"_type": "KNOWS", "weight": 1})
-	require.True(t, ok)
-	assert.Equal(t, "KNOWS", relMap["_type"])
-	assert.Equal(t, 1, relMap["weight"])
-	_, ok = callTailRelationshipMap((*storage.Edge)(nil))
-	assert.False(t, ok)
-	stringValue, ok := callTailMapString(map[string]interface{}{"id": storage.EdgeID("edge-9")}, "id")
-	require.True(t, ok)
-	assert.Equal(t, "edge-9", stringValue)
 }
 
 func TestCoverageLiftBindingWherePredicates(t *testing.T) {
