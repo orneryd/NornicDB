@@ -4,6 +4,15 @@ import "strings"
 
 // stripCypherComments removes line and block comments outside quoted text.
 // Queries without comments are returned directly without allocating.
+// StripComments returns query without its Cypher comments: // to the end of
+// the line, and /* … */ (replaced by a space, keeping its line breaks). // and
+// /* inside string literals and quoted names are text. A query without
+// comments is returned as is, without allocating. It is the comment rule the
+// HTTP server's statement checks use (#683).
+func StripComments(query string) string {
+	return stripCypherComments(query)
+}
+
 func stripCypherComments(query string) string {
 	comment := firstCypherComment(query)
 	if comment < 0 {

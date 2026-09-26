@@ -1013,77 +1013,25 @@ func TestNewAdditionalInitializationCoverage(t *testing.T) {
 	})
 }
 
-// TestStripCypherComments tests the stripCypherComments function.
-func TestStripCypherComments(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "no comments",
-			input:    "MATCH (n) RETURN n",
-			expected: "MATCH (n) RETURN n",
-		},
-		{
-			name:     "single-line comment at end",
-			input:    "MATCH (n) RETURN n // comment",
-			expected: "MATCH (n) RETURN n ",
-		},
-		{
-			name:     "single-line comment on own line",
-			input:    "MATCH (n)\n// comment\nRETURN n",
-			expected: "MATCH (n)\n\nRETURN n",
-		},
-		{
-			name:     "multi-line comment inline",
-			input:    "MATCH (n) /* comment */ RETURN n",
-			expected: "MATCH (n)  RETURN n",
-		},
-		{
-			name:     "multi-line comment spanning lines",
-			input:    "MATCH (n)\n/* comment\n   more comment */\nRETURN n",
-			expected: "MATCH (n)\n\nRETURN n",
-		},
-		{
-			name:     "multiple single-line comments",
-			input:    "MATCH (n) // first\nWHERE n.age > 25 // second\nRETURN n // third",
-			expected: "MATCH (n) \nWHERE n.age > 25 \nRETURN n ",
-		},
-		{
-			name:     "comment only line",
-			input:    "// comment only\nMATCH (n) RETURN n",
-			expected: "\nMATCH (n) RETURN n",
-		},
-		{
-			name:     "mixed comments",
-			input:    "MATCH (n) /* multi */ // single\nRETURN n",
-			expected: "MATCH (n)  \nRETURN n",
-		},
-		{
-			name:     "empty query",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "only comments",
-			input:    "// comment\n/* another */",
-			expected: "\n",
-		},
-		{
-			name:     "comment with :USE command",
-			input:    ":USE test_db\n// comment\nMATCH (n) RETURN n",
-			expected: ":USE test_db\n\nMATCH (n) RETURN n",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := stripCypherComments(tt.input)
-			if result != tt.expected {
-				t.Errorf("stripCypherComments(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
+// TestRequestStatementCommentsKeepQuotedText: a statement's comments are
+// removed and its quoted text is kept, as in Neo4j: // and /* in a string
+// literal are text (a URL). Before, the server's own comment rule cut the
+// literal at "//" (SyntaxError "unclosed quote") (#683).
+func TestRequestStatementCommentsKeepQuotedText(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := getAuthToken(t, authenticator, "admin")
+	statement := "RETURN 'http://x.test/a' AS u, // the URL\n 'a/*b*/c' AS v /* two */"
+	body := map[string]interface{}{"statements": []map[string]interface{}{{"statement": statement}, {"statement": statement}}}
+	for _, path := range []string{"/db/nornic/tx/commit", "/db/nornic/tx"} {
+		rec := makeRequest(t, server, "POST", path, body, "Bearer "+token)
+		var response TransactionResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response), rec.Body.String())
+		require.Empty(t, response.Errors, path)
+		require.Len(t, response.Results, 2, path)
+		for _, result := range response.Results {
+			require.Equal(t, []string{"u", "v"}, result.Columns, path)
+			require.Equal(t, []interface{}{"http://x.test/a", "a/*b*/c"}, result.Data[0].Row, path)
+		}
 	}
 }
 

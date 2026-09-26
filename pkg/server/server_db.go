@@ -67,6 +67,11 @@ func (s *Server) handleDatabaseEndpoint(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// hasPrefixFold reports whether s starts with prefix, ignoring ASCII case.
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
 func statementTargetDatabase(defaultDB string, statement string) (string, error) {
 	db := strings.TrimSpace(defaultDB)
 	trimmed := strings.TrimSpace(statement)
@@ -74,7 +79,7 @@ func statementTargetDatabase(defaultDB string, statement string) (string, error)
 		return db, nil
 	}
 
-	if strings.HasPrefix(strings.ToUpper(trimmed), ":USE ") {
+	if hasPrefixFold(trimmed, ":USE ") {
 		parts := strings.Fields(trimmed)
 		if len(parts) < 2 {
 			return "", fmt.Errorf(":USE requires a database name")
@@ -86,7 +91,7 @@ func statementTargetDatabase(defaultDB string, statement string) (string, error)
 		return target, nil
 	}
 
-	if !strings.HasPrefix(strings.ToUpper(trimmed), "USE ") {
+	if !hasPrefixFold(trimmed, "USE ") {
 		return db, nil
 	}
 
@@ -95,7 +100,7 @@ func statementTargetDatabase(defaultDB string, statement string) (string, error)
 		return "", fmt.Errorf("USE requires a database name")
 	}
 
-	if strings.HasPrefix(strings.ToLower(rest), "graph.byname(") || strings.HasPrefix(strings.ToLower(rest), "graph.byelementid(") {
+	if hasPrefixFold(rest, "graph.byname(") || hasPrefixFold(rest, "graph.byelementid(") {
 		open := strings.Index(rest, "(")
 		close := strings.LastIndex(rest, ")")
 		if open >= 0 && close > open {
@@ -1141,102 +1146,6 @@ type NotificationPos struct {
 	Column int `json:"column"`
 }
 
-// stripCypherComments removes Cypher comments from a query string.
-// Supports both single-line comments (//) and multi-line comments (/* */).
-// This follows the Cypher specification for comments.
-//
-// Examples:
-//
-//	"MATCH (n) RETURN n // comment" -> "MATCH (n) RETURN n "
-//	"MATCH (n) /* comment */ RETURN n" -> "MATCH (n)  RETURN n"
-//	"MATCH (n)\n// line comment\nRETURN n" -> "MATCH (n)\n\nRETURN n"
-func stripCypherComments(query string) string {
-	if query == "" {
-		return query
-	}
-
-	var result strings.Builder
-	result.Grow(len(query))
-
-	lines := strings.Split(query, "\n")
-	inMultiLineComment := false
-	outputLines := []string{}
-
-	for _, line := range lines {
-		processed := line
-
-		// Handle multi-line comments that span lines
-		if inMultiLineComment {
-			// Check if this line closes the multi-line comment
-			if idx := strings.Index(processed, "*/"); idx >= 0 {
-				// Multi-line comment ends on this line
-				processed = processed[idx+2:]
-				inMultiLineComment = false
-				// Continue processing the rest of this line
-			} else {
-				// Still inside multi-line comment, skip entire line
-				// Don't add anything for skipped comment-only lines
-				continue
-			}
-		}
-
-		// Process remaining line for comments
-		var lineResult strings.Builder
-		i := 0
-		lineStartedMultiLineComment := false
-		for i < len(processed) {
-			// Check for start of multi-line comment
-			if i+1 < len(processed) && processed[i:i+2] == "/*" {
-				// Find end of multi-line comment
-				endIdx := strings.Index(processed[i+2:], "*/")
-				if endIdx >= 0 {
-					// Multi-line comment ends on same line
-					i = i + 2 + endIdx + 2
-					continue
-				} else {
-					// Multi-line comment spans to next line
-					inMultiLineComment = true
-					lineStartedMultiLineComment = true
-					break
-				}
-			}
-
-			// Check for single-line comment
-			if i+1 < len(processed) && processed[i:i+2] == "//" {
-				// Rest of line is comment, stop processing
-				break
-			}
-
-			// Regular character, keep it
-			lineResult.WriteByte(processed[i])
-			i++
-		}
-
-		// Add processed line to output
-		// Don't add empty lines that started a multi-line comment (they're entirely comment)
-		lineStr := lineResult.String()
-		// Only trim if entire line is whitespace (preserve trailing spaces after comments)
-		trimmed := strings.TrimSpace(lineStr)
-		if trimmed == "" && lineStr != "" {
-			// Entire line is whitespace, use empty string
-			lineStr = ""
-		}
-		if !lineStartedMultiLineComment || lineStr != "" {
-			outputLines = append(outputLines, lineStr)
-		}
-	}
-
-	// Join lines, preserving original line structure
-	resultStr := strings.Join(outputLines, "\n")
-
-	// Preserve trailing newline if original had one
-	if strings.HasSuffix(query, "\n") {
-		resultStr += "\n"
-	}
-
-	return resultStr
-}
-
 // handleImplicitTransaction executes statements in an implicit transaction.
 // This is the main query endpoint: POST /db/{dbName}/tx/commit
 func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Request, dbName string) {
@@ -1795,9 +1704,11 @@ func (s *Server) runRequestStatement(
 		}
 	}
 
-	// Cypher comments are removed before execution, and a UTF-8 BOM (some
-	// clients send one; it breaks executor routing, e.g. CREATE DATABASE).
-	queryStatement = strings.TrimSpace(stripCypherComments(queryStatement))
+	// Cypher comments are removed before the statement checks and execution
+	// (the executor's quote-aware rule: // in a string literal is text), and a
+	// UTF-8 BOM (some clients send one; it breaks executor routing, e.g.
+	// CREATE DATABASE).
+	queryStatement = strings.TrimSpace(cypher.StripComments(queryStatement))
 	if strings.HasPrefix(queryStatement, "\xef\xbb\xbf") {
 		queryStatement = strings.TrimSpace(strings.TrimPrefix(queryStatement, "\xef\xbb\xbf"))
 	}
