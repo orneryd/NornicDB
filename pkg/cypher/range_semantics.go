@@ -102,7 +102,10 @@ func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow)
 		parts := e.splitFunctionArgs(argumentText)
 		arguments := make([]interface{}, len(parts))
 		for index, part := range parts {
-			value, resolved := e.evaluateRowExpression(strings.TrimSpace(part), row)
+			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(part), row)
+			if err != nil {
+				return err
+			}
 			if !resolved {
 				arguments = nil
 				break

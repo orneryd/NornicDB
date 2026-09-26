@@ -94,7 +94,10 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 						bound[i] = argument
 						continue
 					}
-					value, evaluated := e.evaluateRowExpression(argument, row)
+					value, evaluated, err := e.evaluateRowValue(argument, row)
+					if err != nil {
+						return nil, nil, true, err
+					}
 					if !evaluated || !procedureArgumentLiteralSafe(value) {
 						return nil, nil, false, nil
 					}

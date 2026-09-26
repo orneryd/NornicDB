@@ -61,7 +61,10 @@ func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression
 	if strings.Contains(expression, "$") {
 		return nil
 	}
-	value, evaluated := e.evaluateRowExpression(expression, pipelineRow{})
+	value, evaluated, err := e.evaluateRowValue(expression, pipelineRow{})
+	if err != nil {
+		return err
+	}
 	if !evaluated {
 		return paginationCompileTypeError(keyword, value)
 	}
@@ -91,7 +94,10 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 		if !strings.Contains(pagination.value, "$") {
 			continue
 		}
-		value, evaluated := e.evaluateRowExpression(pagination.value, values)
+		value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+		if err != nil {
+			return err
+		}
 		if !evaluated {
 			// Missing parameters retain the existing ParameterMissing path.
 			continue

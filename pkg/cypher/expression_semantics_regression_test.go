@@ -83,7 +83,7 @@ func TestRowPredicateCombinesEqualityWithParenthesizedAlternative(t *testing.T) 
 		}},
 	}
 	require.False(t, exec.evaluateRowPredicate(context.Background(), `o.textKey128 = "needle"`, row))
-	value, ok := exec.evaluateRowExpression(`"unique-key" IS NOT NULL AND o.textKey = "unique-key"`, row)
+	value, ok := rowValue(t, exec, `"unique-key" IS NOT NULL AND o.textKey = "unique-key"`, row)
 	require.True(t, ok)
 	require.Equal(t, false, value)
 	require.False(t, exec.evaluateRowPredicate(context.Background(),
@@ -103,7 +103,7 @@ func TestRowPredicateCombinesNumericBounds(t *testing.T) {
 
 func TestRowPredicateNegatesParenthesizedConjunctionWithoutWhitespace(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewMemoryEngine())
-	value, ok := exec.evaluateRowExpression("NOT(n.name = 'apa' AND false)", map[string]interface{}{
+	value, ok := rowValue(t, exec, "NOT(n.name = 'apa' AND false)", map[string]interface{}{
 		"n": &storage.Node{Properties: map[string]interface{}{"name": "a"}},
 	})
 	require.True(t, ok)

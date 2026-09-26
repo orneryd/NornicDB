@@ -1619,6 +1619,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
 	}
 	result, err = e.executeImplicitAsync(ctx, cypher, upperQuery)
+	// An expression error recorded while the statement ran is its error,
+	// whichever route ran it: no route's result stands in for it.
+	if err == nil {
+		if failure := getExpressionFailure(ctx); failure != nil {
+			return nil, failure
+		}
+	}
 
 	// Apply result limit if set
 	if err == nil && result != nil {
@@ -2283,6 +2290,11 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 
 	// Execute the query
 	result, execErr := txExec.executeWithoutTransaction(txCtx, cypher, upperQuery)
+	// An expression error recorded while the statement ran is its error, so
+	// nothing it wrote is committed.
+	if execErr == nil {
+		execErr = getExpressionFailure(txCtx)
+	}
 
 	// Handle result
 	if execErr != nil {

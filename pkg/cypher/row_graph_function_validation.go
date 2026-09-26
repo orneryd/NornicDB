@@ -208,7 +208,10 @@ func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, r
 			if err := e.validateRowGraphFunctionArguments(listExpression, row); err != nil {
 				return err
 			}
-			listValue, evaluated := e.evaluateRowExpression(listExpression, row)
+			listValue, evaluated, err := e.evaluateRowValue(listExpression, row)
+			if err != nil {
+				return err
+			}
 			if !evaluated || listValue == nil {
 				return nil
 			}
@@ -249,7 +252,10 @@ func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, r
 	if !strings.EqualFold(function, "labels") && !strings.EqualFold(function, "type") {
 		return nil
 	}
-	value, evaluated := e.evaluateRowExpression(argument, row)
+	value, evaluated, err := e.evaluateRowValue(argument, row)
+	if err != nil {
+		return err
+	}
 	if !evaluated || value == nil {
 		return nil
 	}

@@ -8,69 +8,78 @@ import (
 // evaluateRowMathFunction evaluates scalar math functions for the converged
 // row-expression operator. The boolean results are (matched, resolved), which
 // lets the caller distinguish a non-math function from an invalid argument.
-func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, values map[string]interface{}) (interface{}, bool, bool) {
+func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	name := strings.ToLower(function)
 	if name == "pi" || name == "e" {
 		if strings.TrimSpace(argument) != "" {
-			return nil, true, false
+			return nil, true, false, nil
 		}
 		if name == "pi" {
-			return math.Pi, true, true
+			return math.Pi, true, true, nil
 		}
-		return math.E, true, true
+		return math.E, true, true, nil
 	}
 	if name == "round" {
 		parts := e.splitFunctionArgs(argument)
 		if len(parts) < 1 || len(parts) > 3 {
-			return nil, true, false
+			return nil, true, false, nil
 		}
-		value, resolved := e.evaluateRowExpression(strings.TrimSpace(parts[0]), values)
+		value, resolved, err := e.evaluateRowValue(strings.TrimSpace(parts[0]), values)
+		if err != nil {
+			return nil, true, false, err
+		}
 		if !resolved {
-			return nil, true, false
+			return nil, true, false, nil
 		}
 		if value == nil {
-			return nil, true, true
+			return nil, true, true, nil
 		}
 		number, numeric := toFloat64(value)
 		if !numeric {
-			return nil, true, false
+			return nil, true, false, nil
 		}
 		precision := 0
 		if len(parts) >= 2 {
-			precisionValue, ok := e.evaluateRowExpression(strings.TrimSpace(parts[1]), values)
+			precisionValue, ok, err := e.evaluateRowValue(strings.TrimSpace(parts[1]), values)
+			if err != nil {
+				return nil, true, false, err
+			}
 			if !ok {
-				return nil, true, false
+				return nil, true, false, nil
 			}
 			var precisionOK bool
 			precision, precisionOK = toInt(precisionValue)
 			if !precisionOK || precision < 0 {
-				return nil, true, false
+				return nil, true, false, nil
 			}
 		}
 		mode := "HALF_UP"
 		if len(parts) == 3 {
-			modeValue, ok := e.evaluateRowExpression(strings.TrimSpace(parts[2]), values)
+			modeValue, ok, err := e.evaluateRowValue(strings.TrimSpace(parts[2]), values)
+			if err != nil {
+				return nil, true, false, err
+			}
 			if !ok {
-				return nil, true, false
+				return nil, true, false, nil
 			}
 			if modeValue == nil {
-				return nil, true, true
+				return nil, true, true, nil
 			}
 			var modeOK bool
 			mode, modeOK = modeValue.(string)
 			if !modeOK {
-				return nil, true, false
+				return nil, true, false, nil
 			}
 		}
 		if len(parts) == 1 || (len(parts) == 2 && precision == 0) {
-			return float64(math.Floor(number + 0.5)), true, true
+			return float64(math.Floor(number + 0.5)), true, true, nil
 		}
 		factor := math.Pow10(precision)
 		rounded, ok := roundRowNumber(number*factor, mode)
 		if !ok {
-			return nil, true, false
+			return nil, true, false, nil
 		}
-		return rounded / factor, true, true
+		return rounded / factor, true, true, nil
 	}
 
 	var unary func(float64) float64
@@ -115,44 +124,53 @@ func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, val
 		unary = rowMathCoth
 	}
 	if unary != nil {
-		value, resolved := e.evaluateRowExpression(strings.TrimSpace(argument), values)
+		value, resolved, err := e.evaluateRowValue(strings.TrimSpace(argument), values)
+		if err != nil {
+			return nil, true, false, err
+		}
 		if !resolved {
-			return nil, true, false
+			return nil, true, false, nil
 		}
 		if value == nil {
-			return nil, true, true
+			return nil, true, true, nil
 		}
 		number, numeric := toFloat64(value)
 		if !numeric {
-			return nil, true, false
+			return nil, true, false, nil
 		}
-		return unary(number), true, true
+		return unary(number), true, true, nil
 	}
 
 	if name != "atan2" && name != "power" {
-		return nil, false, false
+		return nil, false, false, nil
 	}
 	parts := e.splitFunctionArgs(argument)
 	if len(parts) != 2 {
-		return nil, true, false
+		return nil, true, false, nil
 	}
-	left, leftResolved := e.evaluateRowExpression(strings.TrimSpace(parts[0]), values)
-	right, rightResolved := e.evaluateRowExpression(strings.TrimSpace(parts[1]), values)
+	left, leftResolved, err := e.evaluateRowValue(strings.TrimSpace(parts[0]), values)
+	if err != nil {
+		return nil, true, false, err
+	}
+	right, rightResolved, err := e.evaluateRowValue(strings.TrimSpace(parts[1]), values)
+	if err != nil {
+		return nil, true, false, err
+	}
 	if !leftResolved || !rightResolved {
-		return nil, true, false
+		return nil, true, false, nil
 	}
 	if left == nil || right == nil {
-		return nil, true, true
+		return nil, true, true, nil
 	}
 	leftNumber, leftNumeric := toFloat64(left)
 	rightNumber, rightNumeric := toFloat64(right)
 	if !leftNumeric || !rightNumeric {
-		return nil, true, false
+		return nil, true, false, nil
 	}
 	if name == "atan2" {
-		return math.Atan2(leftNumber, rightNumber), true, true
+		return math.Atan2(leftNumber, rightNumber), true, true, nil
 	}
-	return math.Pow(leftNumber, rightNumber), true, true
+	return math.Pow(leftNumber, rightNumber), true, true, nil
 }
 
 func roundRowNumber(value float64, mode string) (float64, bool) {

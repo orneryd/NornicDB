@@ -677,7 +677,7 @@ func TestOptionalMatchAggregateCaseTreatsNullBindingAsNull(t *testing.T) {
 	parsed, err := parseCaseExpression(caseExpression)
 	require.NoError(t, err)
 	require.Equal(t, "n IS NULL", parsed.whenClauses[0].condition)
-	direct, evaluated := exec.evaluateRowExpression(caseExpression, pipelineRow{"n": nil})
+	direct, evaluated := rowValue(t, exec, caseExpression, pipelineRow{"n": nil})
 	require.True(t, evaluated)
 	require.Nil(t, direct)
 	project := exec.compileTraversalProjection(ctx, caseExpression)

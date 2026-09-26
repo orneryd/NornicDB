@@ -431,7 +431,7 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 				return nil, true, err
 			}
 			if !ok {
-				return pipelineDecline(wrote, clause.text)
+				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			rows = newRows
 			addPipelinePatternBindings(e, scope, clause.text, "MATCH")
@@ -448,7 +448,7 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 				return nil, true, err
 			}
 			if !ok {
-				return pipelineDecline(wrote, clause.text)
+				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			rows = newRows
 			addPipelinePatternBindings(e, scope, clause.text, "CREATE")
@@ -473,7 +473,7 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 				return nil, true, err
 			}
 			if !ok {
-				return pipelineDecline(wrote, clause.text)
+				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			addQueryStats(result.Stats, stats)
 			wrote = true
@@ -483,7 +483,7 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 				return nil, true, err
 			}
 			if !ok {
-				return pipelineDecline(wrote, clause.text)
+				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			addQueryStats(result.Stats, stats)
 			wrote = true
@@ -513,7 +513,7 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 			}
 			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text)
 			if !ok {
-				return pipelineDecline(wrote, clause.text)
+				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			rows = newRows
 			scope = pipelineProjectionScope(scope, clause.text)
@@ -523,7 +523,7 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 			}
 			newRows, ok := e.pipelineApplyUnwind(ctx, rows, clause.text)
 			if !ok {
-				return pipelineDecline(wrote, clause.text)
+				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			rows = newRows
 			if alias := pipelineUnwindAlias(clause.text); alias != "" {
@@ -535,7 +535,7 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 				return nil, true, err
 			}
 			if !ok {
-				return pipelineDecline(wrote, clause.text)
+				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			rows = newRows
 			for _, name := range yielded {
@@ -572,7 +572,7 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 			}
 			final, ok := e.pipelineApplyReturn(ctx, rows, clause.text)
 			if !ok {
-				return pipelineDecline(wrote, clause.text)
+				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			if len(final.Columns) == 0 && strings.TrimSpace(strings.TrimPrefix(clause.text, "RETURN")) == "*" {
 				final.Columns = pipelineScopeColumns(scope)
@@ -602,7 +602,25 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 // clause has written (CREATE, MERGE, DELETE, SET, REMOVE, FOREACH) the
 // statement cannot be run again by another route - that would repeat the
 // writes - so it is an error instead.
-func pipelineDecline(wrote bool, clause string) (*ExecuteResult, bool, error) {
+// pipelineItemUnevaluable records that a RETURN, WITH or UNWIND item can't
+// be evaluated (neither the row evaluator nor the shared evaluator handles
+// it), unless an expression error is already recorded. The statement fails:
+// another route would not evaluate the item either, and the older UNWIND and
+// WITH routes run only part of a statement the pipeline started.
+func pipelineItemUnevaluable(ctx context.Context, expr string) {
+	if getExpressionFailure(ctx) != nil {
+		return
+	}
+	recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+		"could not evaluate expression: "+strings.TrimSpace(expr)))
+}
+
+func pipelineDecline(ctx context.Context, wrote bool, clause string) (*ExecuteResult, bool, error) {
+	// A clause that stopped on an expression error doesn't decline: the error
+	// is the statement's, and no other route runs the statement instead.
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, true, failure
+	}
 	if wrote {
 		return nil, true, localizedError(localization.CypherInvariantsPipelineDeclinedAfterWrite(clause), nil)
 	}
@@ -1003,7 +1021,9 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			if _, bound := scope[root]; !bound {
 				return nil, true, deleteUndefinedVariableError(expression)
 			}
-		} else if value, evaluated := e.evaluateRowExpression(strings.TrimSpace(expression), pipelineRow{}); evaluated && !isDeleteTargetValue(value) {
+		} else if value, evaluated, err := e.evaluateRowValue(strings.TrimSpace(expression), pipelineRow{}); err != nil {
+			return nil, true, err
+		} else if evaluated && !isDeleteTargetValue(value) {
 			return nil, true, newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
 				"InvalidArgumentType",
@@ -1015,7 +1035,10 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	for _, row := range rows {
 		values := make([]interface{}, 0, len(targets))
 		for _, expression := range targets {
-			value, ok := e.evaluateRowExpression(strings.TrimSpace(expression), row)
+			value, ok, err := e.evaluateRowValue(strings.TrimSpace(expression), row)
+			if err != nil {
+				return nil, true, err
+			}
 			if !ok {
 				return nil, true, deleteUndefinedVariableError(expression)
 			}
@@ -1461,7 +1484,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		if hasNullPatternBinding {
 			continue
 		}
-		substituted := e.materializePipelinePropertyExpressions(clause, row)
+		substituted := e.materializePipelinePropertyExpressions(ctx, clause, row)
 		var matchPieces []string
 		for name, val := range row {
 			if node, isNode := val.(*storage.Node); isNode {
@@ -1651,7 +1674,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		materializedPattern := e.materializePipelinePropertyExpressions(pattern, row)
+		materializedPattern := e.materializePipelinePropertyExpressions(ctx, pattern, row)
 		materializedWhere := e.materializePipelinePredicateExpressions(whereClause, row)
 		physicalWhere := pipelineTraversalPushdownPredicate(materializedWhere, row, variables)
 		rowHint := hint
@@ -1834,7 +1857,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	candidateCache := make(map[string][]*storage.Node)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		materializedPattern := e.materializePipelinePropertyExpressions(pattern, row)
+		materializedPattern := e.materializePipelinePropertyExpressions(ctx, pattern, row)
 		materializedWhere := e.materializePipelinePredicateExpressions(whereClause, row)
 		nodePattern := e.parseNodePattern(ctx, materializedPattern)
 		if bound, exists := row[nodePattern.variable]; exists {
@@ -2390,7 +2413,7 @@ func (e *StorageExecutor) pipelineApplyCreate(ctx context.Context, rows []pipeli
 	for _, row := range rows {
 		// Substitute scalar bindings (e.g. prodRef.productID → literal) up
 		// front so the CREATE pattern parser sees a concrete value.
-		substituted := e.materializePipelinePropertyExpressions(clause, row)
+		substituted := e.materializePipelinePropertyExpressions(ctx, clause, row)
 		for name, val := range row {
 			if node, isNode := val.(*storage.Node); isNode {
 				if node != nil {
@@ -2489,7 +2512,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	stats := &QueryStats{}
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		substituted := e.materializePipelinePropertyExpressions(clause, row)
+		substituted := e.materializePipelinePropertyExpressions(ctx, clause, row)
 		nodeContext := make(map[string]*storage.Node)
 		relContext := make(map[string]*storage.Edge)
 		for name, value := range row {
@@ -2665,7 +2688,7 @@ func splitMergeClauseActions(mergeBody string) (pattern, onCreateSet, onMatchSet
 // the current row before the CREATE/MERGE parsers consume them. Substituting a
 // variable token alone is insufficient for expressions such as row.parts[0]
 // or row.value + '!': it can turn valid expressions into quoted source text.
-func (e *StorageExecutor) materializePipelinePropertyExpressions(clause string, row pipelineRow) string {
+func (e *StorageExecutor) materializePipelinePropertyExpressions(ctx context.Context, clause string, row pipelineRow) string {
 	var output strings.Builder
 	output.Grow(len(clause))
 	for cursor := 0; cursor < len(clause); {
@@ -2690,7 +2713,7 @@ func (e *StorageExecutor) materializePipelinePropertyExpressions(clause string, 
 			}
 			key := strings.TrimSpace(pair[:colon])
 			expression := strings.TrimSpace(pair[colon+1:])
-			if value, ok := e.evaluateRowExpression(expression, row); ok {
+			if value, ok := e.evaluateRowExpressionWithContext(ctx, expression, row); ok {
 				expression = e.valueToLiteral(value)
 			}
 			materialized = append(materialized, key+": "+expression)
@@ -2755,7 +2778,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			out = append(out, projected)
 		}
 		out = e.filterPipelineRows(ctx, out, postWithWhere)
-		if !e.orderPipelineRows(out, orderTerms) {
+		if !e.orderPipelineRows(ctx, out, orderTerms) {
 			return nil, false
 		}
 		return applyPipelineWindow(out, withSkip, withLimit), true
@@ -2821,6 +2844,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 				}
 				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
 				if !ok {
+					pipelineItemUnevaluable(ctx, projection.expr)
 					return nil, false
 				}
 				keyParts = append(keyParts, pipelineValueKey(value))
@@ -2860,6 +2884,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 				if !projection.aggregate {
 					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, group.first)
 					if !ok {
+						pipelineItemUnevaluable(ctx, projection.expr)
 						return nil, false
 					}
 					newRow[projection.alias] = value
@@ -2898,7 +2923,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		if withDistinct {
 			out, orderScopes = deduplicatePipelineRowsWithScopes(out, orderScopes, projectionAliases)
 		}
-		if !e.orderPipelineRowsWithScopes(out, orderScopes, orderTerms) {
+		if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 			return nil, false
 		}
 		return applyPipelineWindow(out, withSkip, withLimit), true
@@ -2938,7 +2963,8 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 				continue
 			}
 
-			// Anything else — fall back.
+			// Anything else: the item can't be evaluated.
+			pipelineItemUnevaluable(ctx, projection.expr)
 			ok = false
 			break
 		}
@@ -2969,7 +2995,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	if withDistinct {
 		out, orderScopes = deduplicatePipelineRowsWithScopes(out, orderScopes, projectionAliases)
 	}
-	if !e.orderPipelineRowsWithScopes(out, orderScopes, orderTerms) {
+	if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 		return nil, false
 	}
 	return applyPipelineWindow(out, withSkip, withLimit), true
@@ -3009,11 +3035,11 @@ func (e *StorageExecutor) evaluatePipelinePagination(ctx context.Context, expres
 // orderPipelineRows applies every ORDER BY term lexicographically. WITH has
 // already materialized its projection at this point, so aliases and retained
 // entity properties resolve from the same scope exposed to the next clause.
-func (e *StorageExecutor) orderPipelineRows(rows []pipelineRow, terms []orderByTerm) bool {
-	return e.orderPipelineRowsWithScopes(rows, rows, terms)
+func (e *StorageExecutor) orderPipelineRows(ctx context.Context, rows []pipelineRow, terms []orderByTerm) bool {
+	return e.orderPipelineRowsWithScopes(ctx, rows, rows, terms)
 }
 
-func (e *StorageExecutor) orderPipelineRowsWithScopes(rows, scopes []pipelineRow, terms []orderByTerm) bool {
+func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, terms []orderByTerm) bool {
 	if len(terms) == 0 || len(rows) < 2 {
 		return true
 	}
@@ -3028,7 +3054,7 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(rows, scopes []pipelineRow
 	for index, row := range rows {
 		values := make([]interface{}, len(terms))
 		for termIndex, term := range terms {
-			value, ok := e.evaluateRowExpression(term.column, scopes[index])
+			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
 			if !ok {
 				return false
 			}
@@ -3124,7 +3150,7 @@ func (e *StorageExecutor) pipelineApplyUnwind(ctx context.Context, rows []pipeli
 	for _, row := range rows {
 		items, ok := e.evaluateListForPipelineWithContext(ctx, listExpr, row)
 		if !ok {
-			// Couldn't evaluate — fall back.
+			pipelineItemUnevaluable(ctx, listExpr)
 			return nil, false
 		}
 		for _, item := range items {
@@ -3307,12 +3333,12 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 			last = span.end
 		}
 		rewritten.WriteString(expr[last:])
-		return e.evaluateRowExpression(rewritten.String(), values)
+		return e.evaluateRowExpressionWithContext(ctx, rewritten.String(), values)
 	}
 	if len(rows) == 0 {
-		return e.evaluateRowExpression(expr, pipelineRow{})
+		return e.evaluateRowExpressionWithContext(ctx, expr, pipelineRow{})
 	}
-	return e.evaluateRowExpression(expr, rows[0])
+	return e.evaluateRowExpressionWithContext(ctx, expr, rows[0])
 }
 
 // evaluatePipelineAggregate applies an aggregate to one logical group. Null
@@ -3326,7 +3352,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Conte
 		return int64(len(rows)), true
 	}
 	if name == "percentilecont" || name == "percentiledisc" {
-		return e.evaluatePipelinePercentile(rows, name, expr, distinct)
+		return e.evaluatePipelinePercentile(ctx, rows, name, expr, distinct)
 	}
 	values := make([]interface{}, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
@@ -3546,6 +3572,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 				}
 				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, inputRow)
 				if !ok {
+					pipelineItemUnevaluable(ctx, projection.expr)
 					return nil, false
 				}
 				keyParts = append(keyParts, pipelineValueKey(value))
@@ -3577,6 +3604,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 				if !projection.isAggr {
 					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, group.first)
 					if !ok {
+						pipelineItemUnevaluable(ctx, projection.expr)
 						return nil, false
 					}
 					outRow = append(outRow, value)
@@ -3617,6 +3645,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		for _, p := range projs {
 			val, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
 			if !ok {
+				pipelineItemUnevaluable(ctx, p.expr)
 				return nil, false
 			}
 			projected[p.alias] = val
@@ -3637,7 +3666,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 	if returnDistinct {
 		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(projectedRows, orderScopes, result.Columns)
 	}
-	if !e.orderPipelineRowsWithScopes(projectedRows, orderScopes, orderTerms) {
+	if !e.orderPipelineRowsWithScopes(ctx, projectedRows, orderScopes, orderTerms) {
 		return nil, false
 	}
 	skip := 0
@@ -3838,16 +3867,20 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		}
 		arguments := make([]interface{}, len(args))
 		for index, argument := range args {
-			value, resolved := e.evaluateRowExpression(strings.TrimSpace(argument), row)
+			value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(argument), row)
 			if !resolved {
 				return nil, false
 			}
 			arguments[index] = value
 		}
 		items, err := evaluateCypherRange(arguments)
-		return items, err == nil
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil, false
+		}
+		return items, true
 	}
-	if value, ok := e.evaluateRowExpression(expr, row); ok {
+	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
 		return toAnySlice(value), true
 	}
 

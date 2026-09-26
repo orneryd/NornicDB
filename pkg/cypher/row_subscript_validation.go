@@ -55,7 +55,10 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 	if err := e.validateRowSubscriptTypes(baseExpression, row); err != nil {
 		return err
 	}
-	base, baseOK := e.evaluateRowExpression(baseExpression, row)
+	base, baseOK, err := e.evaluateRowValue(baseExpression, row)
+	if err != nil {
+		return err
+	}
 	if rangeIndex := strings.Index(indexExpression, ".."); rangeIndex >= 0 {
 		if !baseOK || base == nil {
 			return nil
@@ -68,14 +71,20 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 			if boundExpression == "" {
 				continue
 			}
-			bound, ok := e.evaluateRowExpression(boundExpression, row)
+			bound, ok, err := e.evaluateRowValue(boundExpression, row)
+			if err != nil {
+				return err
+			}
 			if ok && bound != nil && !isCypherInteger(bound) {
 				return invalidSubscriptTypeError("list slice bound requires an INTEGER", bound)
 			}
 		}
 		return nil
 	}
-	index, indexOK := e.evaluateRowExpression(indexExpression, row)
+	index, indexOK, err := e.evaluateRowValue(indexExpression, row)
+	if err != nil {
+		return err
+	}
 	if !baseOK || !indexOK || base == nil || index == nil {
 		return nil
 	}
@@ -219,7 +228,10 @@ func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clau
 			)
 		}
 		for _, row := range rows {
-			value, ok := e.evaluateRowExpression(argument, row)
+			value, ok, err := e.evaluateRowValue(argument, row)
+			if err != nil {
+				return err
+			}
 			if !ok || value == nil {
 				continue
 			}

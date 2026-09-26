@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -125,7 +126,7 @@ func TestPipelineOrderByEvaluatesCompleteBooleanExpressions(t *testing.T) {
 	require.Len(t, terms, 1)
 	require.Equal(t, "NOT (first AND second)", terms[0].column)
 	require.True(t, terms[0].descending)
-	require.True(t, exec.orderPipelineRows(rows, terms))
+	require.True(t, exec.orderPipelineRows(context.Background(), rows, terms))
 	require.Equal(t, []string{"B", "C", "E", "A", "D"}, []string{
 		rows[0]["name"].(string),
 		rows[1]["name"].(string),
@@ -146,7 +147,7 @@ func TestPipelineOrderByUsesIncomingAndProjectedScopeWithoutLeakingBindings(t *t
 		{"a": map[string]interface{}{"name": "C"}, "name": "C"},
 	}
 
-	require.True(t, exec.orderPipelineRowsWithScopes(rows, scopes, parseOrderByTerms("ORDER BY a.name + 'C' DESC")))
+	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms("ORDER BY a.name + 'C' DESC")))
 	require.Equal(t, []pipelineRow{{"name": "C"}, {"name": "C"}, {"name": "B"}, {"name": "A"}, {"name": "A"}}, rows)
 	for _, row := range rows {
 		require.NotContains(t, row, "a")
@@ -162,7 +163,7 @@ func TestPipelineOrderByUsesGroupingKeyFromIncomingScope(t *testing.T) {
 		{"a": map[string]interface{}{"name": "C"}, "name": "C", "count": int64(2)},
 	}
 
-	require.True(t, exec.orderPipelineRowsWithScopes(rows, scopes, parseOrderByTerms("ORDER BY a.name DESC")))
+	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms("ORDER BY a.name DESC")))
 	require.Equal(t, "C", rows[0]["name"])
 	require.NotContains(t, rows[0], "a")
 }
@@ -175,19 +176,19 @@ func TestRowQuantifiersEvaluateTypedRelationshipPropertiesAndNulls(t *testing.T)
 	}
 	values := pipelineRow{"relationships": relationships, "withNull": []interface{}{int64(1), nil}}
 
-	value, ok := exec.evaluateRowExpression("none(x IN relationships WHERE x.name = 'a')", values)
+	value, ok := rowValue(t, exec, "none(x IN relationships WHERE x.name = 'a')", values)
 	require.True(t, ok)
 	require.Equal(t, false, value)
-	value, ok = exec.evaluateRowExpression("any(x IN relationships WHERE x.name = 'a')", values)
+	value, ok = rowValue(t, exec, "any(x IN relationships WHERE x.name = 'a')", values)
 	require.True(t, ok)
 	require.Equal(t, true, value)
-	value, ok = exec.evaluateRowExpression("single(x IN relationships WHERE x.name = 'a')", values)
+	value, ok = rowValue(t, exec, "single(x IN relationships WHERE x.name = 'a')", values)
 	require.True(t, ok)
 	require.Equal(t, true, value)
-	value, ok = exec.evaluateRowExpression("all(x IN relationships WHERE x.name IS NOT NULL)", values)
+	value, ok = rowValue(t, exec, "all(x IN relationships WHERE x.name IS NOT NULL)", values)
 	require.True(t, ok)
 	require.Equal(t, true, value)
-	value, ok = exec.evaluateRowExpression("any(x IN withNull WHERE x = 2)", values)
+	value, ok = rowValue(t, exec, "any(x IN withNull WHERE x = 2)", values)
 	require.True(t, ok)
 	require.Nil(t, value)
 }
@@ -198,7 +199,7 @@ func TestRowQuantifiersComposeWithNestedQuantifiersAndArithmetic(t *testing.T) {
 		"list": []interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6), int64(7), int64(8), int64(9)},
 	}
 
-	result, ok := exec.evaluateRowExpression(
+	result, ok := rowValue(t, exec,
 		"none(x IN list WHERE single(y IN list WHERE abs(x - y) < 3))",
 		values,
 	)
@@ -222,12 +223,12 @@ func TestRowExpressionEvaluatesNestedArithmeticForOrdering(t *testing.T) {
 		"(a.num2 + (a.num * 2))":      int64(23),
 		"(a.num2 + (a.num * 2)) * -1": int64(-23),
 	} {
-		result, ok := exec.evaluateRowExpression(expression, values)
+		result, ok := rowValue(t, exec, expression, values)
 		require.True(t, ok, expression)
 		require.Equal(t, expected, result, expression)
 	}
 
-	result, ok := exec.evaluateRowExpression("(a.num2 + (a.num * 2)) * -1", values)
+	result, ok := rowValue(t, exec, "(a.num2 + (a.num * 2)) * -1", values)
 	require.True(t, ok)
 	require.Equal(t, int64(-23), result)
 }
