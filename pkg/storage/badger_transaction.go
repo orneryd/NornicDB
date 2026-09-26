@@ -1027,36 +1027,102 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
+	if err := tx.validateNewEdgeLocked(edge, tx.nodeExists, nil); err != nil {
+		return err
+	}
+	return tx.bufferNewEdgeLocked(edge)
+}
 
-	if edge == nil || edge.ID == "" {
+// BulkCreateEdges buffers many edges in one pass, amortizing the lock, the
+// lifecycle check, and — most importantly — the committed-node existence
+// probes. A batch of N edges that share K distinct endpoint nodes (K ≪ 2N in
+// practice for graph fan-in/fan-out) now costs K Badger point-reads instead
+// of up to 2N.
+//
+// Every edge is checked as CreateEdge checks one (validateNewEdgeLocked)
+// before any is buffered, so a rejected edge leaves the batch unwritten
+// instead of the edges before it buffered, and each edge is then buffered as
+// CreateEdge buffers one (bufferNewEdgeLocked).
+func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+
+	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return err
+	}
+	if len(edges) == 0 {
+		return nil
+	}
+
+	// Shared existence cache for this batch. Populated lazily from
+	// pendingNodes / deletedNodes / committed-storage state. A value of
+	// true means "exists and is visible to this tx", false means "not
+	// visible" (deleted or absent).
+	existence := make(map[NodeID]bool, util.SafePreallocProduct(len(edges), 2))
+	nodeVisible := func(id NodeID) bool {
+		if cached, ok := existence[id]; ok {
+			return cached
+		}
+		visible := tx.nodeExists(id)
+		existence[id] = visible
+		return visible
+	}
+	batch := make(map[EdgeID]struct{}, len(edges))
+	for _, edge := range edges {
+		if err := tx.validateNewEdgeLocked(edge, nodeVisible, batch); err != nil {
+			return err
+		}
+		batch[edge.ID] = struct{}{}
+	}
+	for _, edge := range edges {
+		if err := tx.bufferNewEdgeLocked(edge); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNewEdgeLocked checks that edge can be created in the transaction:
+// it is not nil and has an ID, its namespace pins, both endpoints are visible (nodeVisible),
+// and no pending edge — or edge earlier in the same batch — has its ID.
+func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, nodeVisible func(NodeID) bool, batch map[EdgeID]struct{}) error {
+	// A nil edge is invalid data and an empty ID an invalid ID, as in the
+	// engines' CreateEdge.
+	if edge == nil {
+		return ErrInvalidData
+	}
+	if edge.ID == "" {
 		return ErrInvalidID
 	}
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
 		return err
 	}
-
-	// Check nodes exist
-	if !tx.nodeExists(edge.StartNode) {
+	if !nodeVisible(edge.StartNode) {
 		return localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), nil)
 	}
-	if !tx.nodeExists(edge.EndNode) {
+	if !nodeVisible(edge.EndNode) {
 		return localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), nil)
 	}
-
-	// Check for duplicate
 	if _, exists := tx.pendingEdges[edge.ID]; exists {
 		return ErrAlreadyExists
 	}
+	if _, exists := batch[edge.ID]; exists {
+		return ErrAlreadyExists
+	}
+	return nil
+}
 
+// bufferNewEdgeLocked buffers a validated new edge: its record, its
+// outgoing, incoming, type and edge-between index entries, the read-your-
+// writes copy and the create operation.
+func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge) error {
 	// Serialize and buffer write. Compact form allocates endpoint
 	// numIDs via the id dictionary — keeps bodies tight.
 	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.badgerTx, namespaceForEdgeID(edge.ID), edge)
 	if err != nil {
 		return fmt.Errorf("serializing edge: %w", err)
 	}
-
-	key := edgeKey(edge.ID)
-	tx.bufferSet(key, edgeBytes)
+	tx.bufferSet(edgeKey(edge.ID), edgeBytes)
 
 	// Buffer edge indexes. Keys use 8-byte num IDs from the engine dict.
 	outKey, err := tx.engine.outgoingIndexKeyString(tx.badgerTx, edge.StartNode, edge.ID)
@@ -1064,7 +1130,6 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 		return fmt.Errorf("outgoing index: %w", err)
 	}
 	tx.bufferSet(outKey, []byte{})
-
 	inKey, err := tx.engine.incomingIndexKeyString(tx.badgerTx, edge.EndNode, edge.ID)
 	if err != nil {
 		return fmt.Errorf("incoming index: %w", err)
@@ -1086,7 +1151,6 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 	// Track for read-your-writes
 	edgeCopy := copyEdge(edge)
 	tx.pendingEdges[edge.ID] = edgeCopy
-
 	tx.operations = append(tx.operations, Operation{
 		Type:      OpCreateEdge,
 		Timestamp: time.Now(),
@@ -1094,115 +1158,6 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 		Edge:      edgeCopy,
 		FreshID:   hasUUIDShape(string(edge.ID)),
 	})
-
-	return nil
-}
-
-// BulkCreateEdges buffers many edges in one pass, amortizing the lock, the
-// lifecycle check, and — most importantly — the committed-node existence
-// probes. A batch of N edges that share K distinct endpoint nodes (K ≪ 2N in
-// practice for graph fan-in/fan-out) now costs K Badger point-reads instead
-// of up to 2N.
-func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
-	if len(edges) == 0 {
-		return nil
-	}
-
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return err
-	}
-
-	// Shared existence cache for this batch. Populated lazily from
-	// pendingNodes / deletedNodes / committed-storage state. A value of
-	// true means "exists and is visible to this tx", false means "not
-	// visible" (deleted or absent).
-	existence := make(map[NodeID]bool, util.SafePreallocProduct(len(edges), 2))
-
-	nodeVisible := func(id NodeID) bool {
-		if cached, ok := existence[id]; ok {
-			return cached
-		}
-		if _, deleted := tx.deletedNodes[id]; deleted {
-			existence[id] = false
-			return false
-		}
-		if _, pending := tx.pendingNodes[id]; pending {
-			existence[id] = true
-			return true
-		}
-		_, err := tx.getCommittedNodeLocked(id)
-		ok := err == nil
-		existence[id] = ok
-		return ok
-	}
-
-	for _, edge := range edges {
-		if edge == nil {
-			return ErrInvalidData
-		}
-		if edge.ID == "" {
-			return ErrInvalidID
-		}
-		if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
-			return err
-		}
-
-		if !nodeVisible(edge.StartNode) {
-			return localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), nil)
-		}
-		if !nodeVisible(edge.EndNode) {
-			return localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), nil)
-		}
-
-		if _, exists := tx.pendingEdges[edge.ID]; exists {
-			return ErrAlreadyExists
-		}
-
-		edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.badgerTx, namespaceForEdgeID(edge.ID), edge)
-		if err != nil {
-			return fmt.Errorf("serializing edge: %w", err)
-		}
-
-		tx.bufferSet(edgeKey(edge.ID), edgeBytes)
-		outKey, err := tx.engine.outgoingIndexKeyString(tx.badgerTx, edge.StartNode, edge.ID)
-		if err != nil {
-			return fmt.Errorf("outgoing index: %w", err)
-		}
-		tx.bufferSet(outKey, []byte{})
-		inKey, err := tx.engine.incomingIndexKeyString(tx.badgerTx, edge.EndNode, edge.ID)
-		if err != nil {
-			return fmt.Errorf("incoming index: %w", err)
-		}
-		tx.bufferSet(inKey, []byte{})
-		typeKey, err := tx.engine.edgeTypeIndexKeyString(tx.badgerTx, edge.Type, edge.ID)
-		if err != nil {
-			return fmt.Errorf("edge type index: %w", err)
-		}
-		tx.bufferSet(typeKey, []byte{})
-		if err := tx.bufferSetEdgeBetweenIndexes(edge); err != nil {
-			return fmt.Errorf("edge-between index: %w", err)
-		}
-
-		edgeCopy := copyEdge(edge)
-		tx.pendingEdges[edge.ID] = edgeCopy
-		// Newly created edge — existence cache should reflect that
-		// subsequent batches referencing this edge's endpoints still
-		// see them.
-		existence[edge.StartNode] = true
-		existence[edge.EndNode] = true
-
-		tx.operations = append(tx.operations, Operation{
-			Type:      OpCreateEdge,
-			Timestamp: time.Now(),
-			EdgeID:    edge.ID,
-			Edge:      edgeCopy,
-			FreshID:   hasUUIDShape(string(edge.ID)),
-		})
-	}
-
 	return nil
 }
 
