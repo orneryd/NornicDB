@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -1751,4 +1752,45 @@ func TestTransaction_CreateThenUpdateNodeCollapsesToSingleCreateOperation(t *tes
 	require.NoError(t, err)
 	require.Equal(t, "bulk-1", stored.Properties["mongo_id"])
 	require.Equal(t, "entry-1", stored.Properties["description"])
+}
+
+// TestTransaction_ScanCommittedKeysWithPrefix covers the committed-key scan the
+// buffered deletes use (#703): a visit error stops the scan and is returned,
+// and a key under an adjacency prefix that isn't an edge key is skipped.
+func TestTransaction_ScanCommittedKeysWithPrefix(t *testing.T) {
+	engine := createTestBadgerEngine(t)
+	start := NodeID(prefixTestID("scan-node-1"))
+	end := NodeID(prefixTestID("scan-node-2"))
+	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Person"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Person"}})
+	require.NoError(t, err)
+	edge := &Edge{ID: EdgeID(prefixTestID("scan-edge-1")), StartNode: start, EndNode: end, Type: "KNOWS"}
+	require.NoError(t, engine.CreateEdge(edge))
+	outPrefix := engine.outgoingIndexPrefixString(start)
+	require.NotNil(t, outPrefix)
+
+	t.Run("visit error is returned", func(t *testing.T) {
+		tx, err := engine.BeginTransaction()
+		require.NoError(t, err)
+		defer tx.Rollback()
+		stop := errors.New("stop scan")
+		tx.mu.Lock()
+		err = tx.scanCommittedKeysWithPrefixLocked(outPrefix, func([]byte) error { return stop })
+		tx.mu.Unlock()
+		require.ErrorIs(t, err, stop)
+	})
+
+	t.Run("non-edge key under the adjacency prefix is skipped", func(t *testing.T) {
+		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			return txn.Set(append(append([]byte{}, outPrefix...), 'x'), []byte{})
+		}))
+		tx, err := engine.BeginTransaction()
+		require.NoError(t, err)
+		defer tx.Rollback()
+		count, ids, err := tx.deleteEdgesWithPrefixBuffered(outPrefix, start, []string{"Person"})
+		require.NoError(t, err)
+		require.EqualValues(t, 1, count)
+		require.Equal(t, []EdgeID{edge.ID}, ids)
+	})
 }
