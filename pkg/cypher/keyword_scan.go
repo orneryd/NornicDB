@@ -1,8 +1,10 @@
 package cypher
 
 import (
+	"hash/maphash"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 )
@@ -819,17 +821,44 @@ func leadingShellCommandsEnd(query string) int {
 	}
 }
 
+// canonicalRewrites memoizes the rewrites of formatted statements, which
+// are immutable: a statement sent again with the same text gets the same
+// rewrite without building it again (no allocation). Each slot holds the
+// last statement whose text hashed to it, so a collision only replaces an
+// entry; statements longer than canonicalRewriteMemoMaxLen (one-off batches
+// with inline data) are not kept.
+var canonicalRewrites = &canonicalRewriteMemo{seed: maphash.MakeSeed()}
+
+const canonicalRewriteMemoMaxLen = 64 << 10
+
+type canonicalRewriteMemo struct {
+	seed  maphash.Seed
+	slots [256]atomic.Pointer[queryRewrite]
+}
+
+func (m *canonicalRewriteMemo) slot(query string) *atomic.Pointer[queryRewrite] {
+	return &m.slots[maphash.String(m.seed, query)%uint64(len(m.slots))]
+}
+
 // canonicalizeQueryText returns the canonical form of query (see above) and
 // the rewrite that maps it back, or query and nil when it is canonical
-// already; it doesn't allocate then.
+// already; it doesn't allocate then, nor for a formatted statement whose
+// rewrite is memoized (canonicalRewrites).
 func canonicalizeQueryText(query string) (string, *queryRewrite) {
 	var (
-		rewrite *queryRewrite
-		out     strings.Builder
-		last    int
+		rewrite  *queryRewrite
+		memoized *queryRewrite
+		out      strings.Builder
+		last     int
 	)
 	replace := func(start, end int, replacement string) {
 		if rewrite == nil {
+			if len(query) <= canonicalRewriteMemoMaxLen {
+				if cached := canonicalRewrites.slot(query).Load(); cached != nil && cached.original == query {
+					memoized = cached
+					return
+				}
+			}
 			rewrite = &queryRewrite{original: query}
 			out.Grow(len(query))
 		}
@@ -855,6 +884,9 @@ func canonicalizeQueryText(query string) (string, *queryRewrite) {
 		if index < verbatimEnd {
 			if end := queryCommentEnd(query, index); end >= 0 {
 				replace(index, end, commentReplacement(query[index:end]))
+				if memoized != nil {
+					return memoized.canonical, memoized
+				}
 				index = end
 				continue
 			}
@@ -864,6 +896,9 @@ func canonicalizeQueryText(query string) (string, *queryRewrite) {
 		if end := queryGapEnd(query, index); end > index {
 			if end != index+1 || c != ' ' {
 				replace(index, end, " ")
+				if memoized != nil {
+					return memoized.canonical, memoized
+				}
 			}
 			index = end
 			continue
@@ -875,6 +910,9 @@ func canonicalizeQueryText(query string) (string, *queryRewrite) {
 	}
 	out.WriteString(query[last:])
 	rewrite.canonical = out.String()
+	if len(query) <= canonicalRewriteMemoMaxLen {
+		canonicalRewrites.slot(query).Store(rewrite)
+	}
 	return rewrite.canonical, rewrite
 }
 

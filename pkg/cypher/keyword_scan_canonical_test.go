@@ -54,6 +54,35 @@ func TestCanonicalizeQueryTextAllocationFree(t *testing.T) {
 	}
 }
 
+// TestCanonicalizeQueryTextMemoizesRewrites: a formatted statement sent again
+// gets the same (immutable) rewrite without allocating; statements with other
+// text never share it, and statements longer than the memo's limit are
+// rewritten every time.
+func TestCanonicalizeQueryTextMemoizesRewrites(t *testing.T) {
+	query := "MATCH (p:Product)\n\tOPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)\n\tRETURN p.productName, count(o) AS c // total\n"
+	canonical, first := canonicalizeQueryText(query)
+	require.NotNil(t, first)
+	require.Equal(t, "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS c ", canonical)
+	again, second := canonicalizeQueryText(query)
+	require.Same(t, first, second)
+	require.Equal(t, canonical, again)
+	require.Zero(t, testing.AllocsPerRun(100, func() { _, _ = canonicalizeQueryText(query) }))
+
+	// Other text: its own rewrite, whatever slot it hashes to.
+	for i := 0; i < 600; i++ {
+		other := fmt.Sprintf("RETURN  %d AS n", i)
+		got, rewrite := canonicalizeQueryText(other)
+		require.Equal(t, fmt.Sprintf("RETURN %d AS n", i), got)
+		require.Equal(t, other, rewrite.original)
+	}
+
+	long := "RETURN  '" + strings.Repeat("x", canonicalRewriteMemoMaxLen) + "' AS s"
+	_, longFirst := canonicalizeQueryText(long)
+	_, longSecond := canonicalizeQueryText(long)
+	require.NotSame(t, longFirst, longSecond)
+	require.Equal(t, longFirst.canonical, longSecond.canonical)
+}
+
 // TestCanonicalQueryKeepsClientText: unaliased column names and messages show
 // the statement as sent, as Neo4j 5.26 does, while it runs in canonical form.
 func TestCanonicalQueryKeepsClientText(t *testing.T) {
