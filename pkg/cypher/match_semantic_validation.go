@@ -36,6 +36,9 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 		return nil
 	}
 
+	if isSchemaCommandStatement(cypher) {
+		return nil
+	}
 	clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher)
 	if !ok {
 		return nil
@@ -111,6 +114,9 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			}
 		case pipelineClauseUnwind:
 			if err := validateUnwindAlias(clause.text); err != nil {
+				return err
+			}
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
 				return err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {

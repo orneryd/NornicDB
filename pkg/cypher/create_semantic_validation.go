@@ -133,8 +133,8 @@ func validateUnwindAlias(clause string) error {
 // unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
 func unwindBindingName(clause string) string {
 	if _, alias, ok := splitUnwindBody(clause); ok {
-		if name, _, identifier := scanIdentifierToken(alias, 0); identifier {
-			return name
+		if name, _, symbolic := scanSymbolicName(alias, 0); symbolic {
+			return normalizeProjectionColumnName(name)
 		}
 	}
 	return ""

@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -195,146 +194,6 @@ func subscriptReceiverError(base, index interface{}) error {
 	return runtimeTypeError(fmt.Sprintf("`%s` is not a collection or a map. Element access is only possible by performing a collection lookup using an integer index, or by performing a map lookup using a string key (found: %s[%s])", repr, repr, neo4jValueRepr(index)))
 }
 
-// recordRowOperatorFailure records the error of an expression the row
-// evaluator could not resolve because an operator got an operand it can't
-// take: a division by zero or an arithmetic TypeError, a unary minus of a
-// non-number, or a property access on a value without properties. It looks
-// through parentheses, operands, function arguments and list comprehensions
-// for the failing operator and reports whether it recorded one.
-func (e *StorageExecutor) recordRowOperatorFailure(ctx context.Context, expr string, values pipelineRow) bool {
-	expression := strings.TrimSpace(expr)
-	for {
-		inner, enclosed := stripEnclosingExpressionParentheses(expression)
-		if !enclosed {
-			break
-		}
-		expression = strings.TrimSpace(inner)
-	}
-	if len(expression) >= 2 && expression[0] == '[' && expression[len(expression)-1] == ']' {
-		if variable, list, predicate, projection, comprehension := parseListComprehension(expression[1 : len(expression)-1]); comprehension {
-			return e.recordComprehensionOperatorFailure(ctx, variable, list, predicate, projection, values)
-		}
-	}
-	for _, keyword := range [...]string{"OR", "XOR", "AND"} {
-		if index := topLevelKeywordIndex(expression, keyword); index > 0 {
-			return e.recordUnresolvedOperandFailure(ctx, values, expression[:index], expression[index+len(keyword):])
-		}
-	}
-	if startsWithKeywordFold(expression, "NOT") {
-		return e.recordUnresolvedOperandFailure(ctx, values, expression[len("NOT"):])
-	}
-	if operands, _, comparison := splitComparisonChain(expression); comparison {
-		return e.recordUnresolvedOperandFailure(ctx, values, operands...)
-	}
-	if expression == "" || !isOperatorExpressionText(expression) {
-		return false
-	}
-	for _, tier := range []string{"+-", "*/%", "^"} {
-		left, right, operator, arithmetic := splitRowArithmeticTier(expression, tier)
-		if !arithmetic {
-			continue
-		}
-		if !isOperandExpressionText(left) || !isOperandExpressionText(right) {
-			return false
-		}
-		leftValue, leftOK := e.evaluateRowExpression(left, values)
-		if !leftOK {
-			return e.recordRowOperatorFailure(ctx, left, values)
-		}
-		rightValue, rightOK := e.evaluateRowExpression(right, values)
-		if !rightOK {
-			return e.recordRowOperatorFailure(ctx, right, values)
-		}
-		if divisor, numeric := toFloat64(rightValue); (operator == '/' || operator == '%') && isRuntimeNumber(leftValue) && isRuntimeNumber(rightValue) && numeric && divisor == 0 {
-			recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero"))
-			return true
-		}
-		if err := arithmeticError(operator, leftValue, rightValue); err != nil {
-			recordExpressionFailure(ctx, err)
-			return true
-		}
-		return false
-	}
-	if expression[0] == '-' && len(expression) > 1 {
-		operand := strings.TrimSpace(expression[1:])
-		value, ok := e.evaluateRowExpression(operand, values)
-		if !ok {
-			return e.recordRowOperatorFailure(ctx, operand, values)
-		}
-		if err := unaryMinusTypeError(value); err != nil {
-			recordExpressionFailure(ctx, err)
-			return true
-		}
-		return false
-	}
-	if function, arguments, call := parseFunctionCallWS(expression); call && function != "" {
-		for _, argument := range splitTopLevelComma(arguments) {
-			if _, ok := e.evaluateRowExpression(argument, values); !ok {
-				if e.recordRowOperatorFailure(ctx, argument, values) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	if dot := strings.LastIndex(expression, "."); dot > 0 && isSimplePropertyAccess(expression) {
-		base, ok := e.evaluateRowExpression(strings.TrimSpace(expression[:dot]), values)
-		if !ok {
-			return e.recordRowOperatorFailure(ctx, expression[:dot], values)
-		}
-		if err := propertyAccessTypeError(base); err != nil {
-			recordExpressionFailure(ctx, err)
-			return true
-		}
-	}
-	return false
-}
-
-// recordUnresolvedOperandFailure is recordRowOperatorFailure for the operands
-// of a boolean or comparison operator: it looks into each operand the row
-// evaluator can't resolve.
-func (e *StorageExecutor) recordUnresolvedOperandFailure(ctx context.Context, values pipelineRow, operands ...string) bool {
-	for _, operand := range operands {
-		if _, ok := e.evaluateRowExpression(operand, values); !ok && e.recordRowOperatorFailure(ctx, operand, values) {
-			return true
-		}
-	}
-	return false
-}
-
-// recordComprehensionOperatorFailure is recordRowOperatorFailure for
-// [variable IN list WHERE predicate | projection]: it looks for the failing
-// operator in the list, then in the predicate and projection of each element,
-// as evaluateRowListComprehension evaluates them.
-func (e *StorageExecutor) recordComprehensionOperatorFailure(ctx context.Context, variable, list, predicate, projection string, values pipelineRow) bool {
-	listValue, ok := e.evaluateRowExpression(list, values)
-	if !ok {
-		return e.recordRowOperatorFailure(ctx, list, values)
-	}
-	for _, item := range toAnySlice(listValue) {
-		scope := make(pipelineRow, len(values)+1)
-		for name, value := range values {
-			scope[name] = value
-		}
-		scope[variable] = item
-		if predicate != "" {
-			condition, evaluated := e.evaluateRowExpression(predicate, scope)
-			if !evaluated {
-				return e.recordRowOperatorFailure(ctx, predicate, scope)
-			}
-			if matches, isBoolean := condition.(bool); condition == nil || (isBoolean && !matches) {
-				continue
-			}
-		}
-		if projection != "" {
-			if _, evaluated := e.evaluateRowExpression(projection, scope); !evaluated {
-				return e.recordRowOperatorFailure(ctx, projection, scope)
-			}
-		}
-	}
-	return false
-}
-
 // isOperatorExpressionText reports whether text can be an expression whose
 // operators recordRowOperatorFailure may report: not a relationship pattern
 // ((a)-[:R]->(b)) or a map projection (n {.*, …}), whose - and * aren't
@@ -395,7 +254,7 @@ func isOperandExpressionText(text string) bool {
 	if text[0] == '$' {
 		return simpleSemanticIdentifier(text[1:]) != ""
 	}
-	if simpleSemanticIdentifier(text) != "" || isSimplePropertyAccess(text) {
+	if _, _, chain := rowPropertyChainShape(text); simpleSemanticIdentifier(text) != "" || chain {
 		return true
 	}
 	if _, enclosed := stripEnclosingExpressionParentheses(text); enclosed {
@@ -412,18 +271,3 @@ func isOperandExpressionText(text string) bool {
 	return false
 }
 
-// isSimplePropertyAccess reports whether expression is a chain of names
-// (a.b.c) and nothing else.
-func isSimplePropertyAccess(expression string) bool {
-	parts := strings.Split(expression, ".")
-	if len(parts) < 2 {
-		return false
-	}
-	for _, part := range parts {
-		name := strings.TrimSpace(part)
-		if simpleSemanticIdentifier(name) == "" {
-			return false
-		}
-	}
-	return true
-}

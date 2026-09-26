@@ -3,8 +3,6 @@ package cypher
 import (
 	"math"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Value-level Cypher arithmetic shared by every evaluator (add, subtract,

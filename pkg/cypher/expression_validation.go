@@ -167,7 +167,7 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 		if name == "" || !bound || value == nil || isCypherListParameter(value) {
 			return end, "", ""
 		}
-		typeName = cypherValueTypeName(value)
+		typeName = cypherTypeName(value)
 		if typeName == "Map" {
 			// A map parameter can stand for a node or relationship.
 			typeName = "Map, Node or Relationship"
@@ -202,7 +202,7 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 		if !literal || value == nil {
 			return end, "", ""
 		}
-		return end, cypherValueTypeName(value), ""
+		return end, cypherTypeName(value), ""
 	}
 }
 

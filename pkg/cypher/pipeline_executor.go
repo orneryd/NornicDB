@@ -208,8 +208,7 @@ func splitPipelineClausesWithProcedureCalls(cypher string, allowProcedureCalls b
 	// else — including $param references and arbitrary WHERE on bindings —
 	// is handled by the per-clause appliers below, which substitute params
 	// from context and respect node bindings supplied by the caller.
-	upper := strings.ToUpper(cypher)
-	if findKeywordIndex(upper, "CALL") >= 0 {
+	if topLevelKeywordIndex(cypher, "CALL") >= 0 {
 		if !allowProcedureCalls || !pipelineProcedureCallsAreClauses(cypher) {
 			return nil, false
 		}
@@ -3203,6 +3202,14 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		}
 		out = append(out, newRow)
 		if needsOrderScopes {
+			// ORDER BY may name a projected expression by its text; its value
+			// is the projection's (orderedProjectionExpressions). A projected
+			// name keeps its own value.
+			for _, ordered := range orderedExpressions {
+				if _, projected := newRow[ordered.expression]; !projected {
+					scope[ordered.expression] = newRow[ordered.alias]
+				}
+			}
 			orderScopes = append(orderScopes, scope)
 		}
 	}
@@ -3280,6 +3287,38 @@ func (e *StorageExecutor) orderPipelineRows(ctx context.Context, rows []pipeline
 	return e.orderPipelineRowsWithScopes(ctx, rows, rows, terms)
 }
 
+// orderedProjection is a projection expression an ORDER BY term repeats, with
+// the alias of the projected column.
+type orderedProjection struct {
+	expression string
+	alias      string
+}
+
+// orderedProjectionExpressions returns the projection items (count of them,
+// read by item) whose expression an ORDER BY term repeats, as in
+// RETURN size(n.s) AS n ORDER BY size(n.s). Neo4j orders such a term by the
+// projected column even when an alias shadows a variable of the expression,
+// so the order scope maps the expression text to the projected value, as the
+// aggregating WITH does. Nil when no term repeats one.
+func orderedProjectionExpressions(terms []orderByTerm, count int, item func(index int) (expression, alias string)) []orderedProjection {
+	var ordered []orderedProjection
+	for _, term := range terms {
+		column := strings.TrimSpace(term.column)
+		for index := 0; index < count; index++ {
+			expression, alias := item(index)
+			if expression != alias && strings.TrimSpace(expression) == column {
+				ordered = append(ordered, orderedProjection{expression: column, alias: alias})
+				break
+			}
+		}
+	}
+	return ordered
+}
+
+// orderPipelineRowsWithScopes is orderPipelineRows with each row's terms
+// evaluated in scopes[i]. A term the row evaluator can't resolve returns
+// false; when an operator of it failed (1/0, a runtime TypeError) that failure
+// is recorded as the statement's error, as for a projection item.
 func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, terms []orderByTerm) bool {
 	if len(terms) == 0 || len(rows) < 2 {
 		return true
@@ -3295,9 +3334,10 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 	for index, row := range rows {
 		values := make([]interface{}, len(terms))
 		for termIndex, term := range terms {
+			// The projections' evaluator: subquery values (COUNT { … }) and
+			// recorded failures behave as in a RETURN item.
 			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
 			if !ok {
-				e.recordRowOperatorFailure(ctx, term.column, scopes[index])
 				return false
 			}
 			values[termIndex] = value
@@ -3806,6 +3846,8 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 // back to the established RETURN projection.
 func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
 	body := pipelineClauseBody(clause, "RETURN")
+	// Keywords inside braces (COLLECT { … ORDER BY … }) belong to nested
+	// expressions, as for WITH (#547).
 	modifierStart := len(body)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
 		if idx := topLevelKeywordIndex(body, keyword); idx >= 0 && idx < modifierStart {
@@ -3912,6 +3954,9 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 	// ORDER BY and DISTINCT see the incoming row with the projection over
 	// it; the merged scope is built only when one of them needs it.
 	orderTerms := parseOrderByTerms(modifiers)
+	orderedExpressions := orderedProjectionExpressions(orderTerms, len(projs), func(index int) (string, string) {
+		return projs[index].expr, projs[index].alias
+	})
 	needsOrderScopes := len(orderTerms) > 0 || returnDistinct
 	projectedRows := make([]pipelineRow, 0, len(rows))
 	var orderScopes []pipelineRow
@@ -3932,7 +3977,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		if !needsOrderScopes {
 			continue
 		}
-		scope := make(pipelineRow, len(row)+len(projected))
+		scope := make(pipelineRow, len(row)+len(projected)+len(orderedExpressions))
 		for name, value := range row {
 			scope[name] = value
 		}

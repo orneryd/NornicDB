@@ -289,14 +289,14 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		return result, true, err == nil, nil
 	case "apoc.meta.type":
 		value, ok := one()
-		return getCypherType(value), true, ok, nil
+		return apocValueTypeName(value), true, ok, nil
 	case "apoc.meta.istype":
 		values, ok := args()
 		if !ok || len(values) != 2 {
 			return nil, true, false, nil
 		}
 		typeName, typeOK := values[1].(string)
-		return strings.EqualFold(getCypherType(values[0]), typeName), true, typeOK, nil
+		return strings.EqualFold(apocValueTypeName(values[0]), typeName), true, typeOK, nil
 	case "apoc.map.merge", "apoc.map.fromlists":
 		values, ok := args()
 		if !ok || len(values) != 2 {

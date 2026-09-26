@@ -50,45 +50,6 @@ func sizeArgumentError(value interface{}) error {
 	return typeMismatchError(sizeArgumentTypes, value)
 }
 
-// pathTypeMarker names a path value (paths are carried as maps holding a
-// _pathResult) for cypherValueTypeName.
-type pathTypeMarker struct{}
-
-// cypherValueTypeName is the Cypher type name Neo4j uses in type errors.
-func cypherValueTypeName(value interface{}) string {
-	switch v := value.(type) {
-	case pathTypeMarker, *PathResult, PathResult:
-		return "Path"
-	case *storage.Node:
-		return "Node"
-	case *storage.Edge:
-		return "Relationship"
-	case bool:
-		return "Boolean"
-	case string:
-		return "String"
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return "Integer"
-	case float32, float64:
-		return "Float"
-	case map[string]interface{}:
-		if _, isPath := v["_pathResult"]; isPath {
-			return "Path"
-		}
-		return "Map"
-	}
-	if value == nil {
-		return "Null"
-	}
-	switch reflect.TypeOf(value).Kind() {
-	case reflect.Map:
-		return "Map"
-	case reflect.Slice, reflect.Array:
-		return "List"
-	}
-	return fmt.Sprintf("%T", value)
-}
-
 // typeMismatchFromFunctionError converts a registry TypeMismatchError into
 // the statement error; other errors are returned unchanged.
 func typeMismatchFromFunctionError(err error) error {

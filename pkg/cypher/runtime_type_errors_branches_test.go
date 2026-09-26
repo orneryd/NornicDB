@@ -87,11 +87,11 @@ func TestRuntimeTypeErrorNilBranches(t *testing.T) {
 	require.True(t, isRuntimeList([]int64{1}))
 }
 
-// TestRecordRowOperatorFailureBranches covers how the row evaluator finds the
-// failing operator of an expression it couldn't resolve: inside the right
+// TestRowOperatorFailureBranches: the row evaluator reports the error of the
+// failing operator as the statement's error, wherever it is: inside the right
 // operand, under a unary minus, in a function argument and in the list,
 // predicate or projection of a comprehension (#657).
-func TestRecordRowOperatorFailureBranches(t *testing.T) {
+func TestRowOperatorFailureBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "rowfail"))
 	row := pipelineRow{"z": int64(0), "one": int64(1), "s": "a", "l": []interface{}{int64(1)}}
 	for _, tc := range []struct {
@@ -114,7 +114,8 @@ func TestRecordRowOperatorFailureBranches(t *testing.T) {
 		{"(a)-[:R]->(b)", false, ""},
 	} {
 		ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
-		recorded := exec.recordRowOperatorFailure(ctx, tc.expr, row)
+		_, _ = exec.evaluateRowExpressionWithContext(ctx, tc.expr, row)
+		recorded := getExpressionFailure(ctx) != nil
 		require.Equal(t, tc.recorded, recorded, tc.expr)
 		if tc.recorded {
 			err := getExpressionFailure(ctx)

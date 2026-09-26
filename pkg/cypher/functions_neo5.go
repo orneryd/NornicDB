@@ -433,60 +433,25 @@ func namedValueType(name string) valueType {
 	return valueType{order: valueTypeOrder[name], name: name}
 }
 
+// valueTypeOf names a value's type from the one classifier and table of
+// type names (cypherValueKindOf, valueTypeNames, #657); a LIST also holds
+// its element types.
 func valueTypeOf(value interface{}) valueType {
-	switch typed := value.(type) {
-	case bool:
-		return namedValueType("BOOLEAN")
-	case string:
-		return namedValueType("STRING")
-	case float32, float64:
-		return namedValueType("FLOAT")
-	case *storage.Node:
-		return namedValueType("NODE")
-	case *storage.Edge:
-		return namedValueType("RELATIONSHIP")
-	case PathResult, *PathResult:
-		return namedValueType("PATH")
-	case map[string]interface{}:
-		if _, isPath := typed["_pathResult"]; isPath {
-			return namedValueType("PATH")
+	kind := cypherValueKindOf(value)
+	if kind != valueKindList {
+		return namedValueType(valueTypeNames[kind].typeSystem)
+	}
+	list := namedValueType("LIST")
+	items, _ := cypherListValue(value)
+	for _, item := range items {
+		if item == nil {
+			list.elemNull = true
+			continue
 		}
-		return namedValueType("MAP")
-	case interface{ TemporalPropertyKind() string }:
-		switch typed.TemporalPropertyKind() {
-		case "date":
-			return namedValueType("DATE")
-		case "local-time":
-			return namedValueType("LOCAL TIME")
-		case "time":
-			return namedValueType("ZONED TIME")
-		case "local-date-time":
-			return namedValueType("LOCAL DATETIME")
-		case "zoned-date-time":
-			return namedValueType("ZONED DATETIME")
-		case "duration":
-			return namedValueType("DURATION")
-		}
+		list.elements = mergeValueType(list.elements, valueTypeOf(item))
 	}
-	if _, ok := cypherIntegerValue(value); ok {
-		return namedValueType("INTEGER")
-	}
-	if items, isList := cypherListValue(value); isList {
-		list := namedValueType("LIST")
-		for _, item := range items {
-			if item == nil {
-				list.elemNull = true
-				continue
-			}
-			list.elements = mergeValueType(list.elements, valueTypeOf(item))
-		}
-		sortValueTypes(list.elements)
-		return list
-	}
-	if _, isMap := toStringAnyMap(value); isMap {
-		return namedValueType("MAP")
-	}
-	return namedValueType("ANY")
+	sortValueTypes(list.elements)
+	return list
 }
 
 // mergeValueType adds t to a union: a type already there absorbs it; two

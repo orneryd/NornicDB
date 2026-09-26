@@ -454,8 +454,17 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			if !resolved {
 				return nil, false, nil
 			}
-			if value == nil {
+			switch entity := value.(type) {
+			case nil:
 				return nil, true, nil
+			case *storage.Node:
+				if entity == nil {
+					return nil, true, nil
+				}
+			case *storage.Edge:
+				if entity == nil {
+					return nil, true, nil
+				}
 			}
 			if object, isMap := toStringAnyMap(value); isMap {
 				value = object
@@ -814,7 +823,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		return e.subtract(int64(0), value), true, nil
 	}
 
-	if dot := strings.Index(expr, "."); dot > 0 {
+	// The property access splits at the first dot outside brackets, braces and
+	// quotes: n {.k}.k reads k from the map projection n {.k} (#712).
+	if dot := topLevelSymbolIndex(expr, "."); dot > 0 {
 		base, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:dot]), values)
 		if err != nil {
 			return nil, false, err
@@ -1604,7 +1615,11 @@ func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context,
 	builder.Grow(len(expression))
 	last := 0
 	for i, span := range spans {
-		value, ok := e.evaluateRowCaseExpression(expression[span.start:span.end], values)
+		value, ok, err := e.evaluateRowCaseExpression(expression[span.start:span.end], values)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return false
+		}
 		if !ok {
 			return false
 		}
@@ -1655,8 +1670,9 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
 	// COUNT { … } + 1 > 1, …) are evaluated for the row first, unless AND / OR
 	// / XOR split the predicate: then each side evaluates its own.
-	plan := planRowSubqueries(expression)
-	if plan != nil && !plan.logical {
+	subqueries := planRowSubqueries(expression)
+	if subqueries != nil && !subqueries.logical {
+		plan := subqueries
 		if plan.integerComparison != nil {
 			// COUNT { … } <op> <integer>: compare the count directly; a null
 			// or non-integer value takes the general comparison.
@@ -1707,7 +1723,7 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		}
 		return !e.evaluateRowPredicateParts(ctx, inner, values)
 	}
-	if plan != nil {
+	if plan := planRowSubqueries(expression); plan != nil {
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
 		return e.evaluateRowPredicate(ctx, rewritten, extended)
 	}
@@ -1940,23 +1956,6 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 		matched = !matched
 	}
 	return matched, true
-}
-
-func (e *StorageExecutor) evaluateRowCountSubqueryPredicate(expression string, values map[string]interface{}) (bool, bool) {
-	if !hasPrefixFold(strings.TrimSpace(expression), "COUNT") || !hasSubqueryPattern(expression, countSubqueryRe) {
-		return false, false
-	}
-	for variable, value := range values {
-		node, ok := value.(*storage.Node)
-		if !ok || node == nil {
-			continue
-		}
-		subquery := e.extractSubquery(expression, "COUNT")
-		if strings.Contains(subquery, "("+variable+")") || strings.Contains(subquery, "("+variable+":") {
-			return e.evaluateCountSubqueryComparison(node, variable, expression), true
-		}
-	}
-	return false, true
 }
 
 func (e *StorageExecutor) evaluateRowStringPredicate(ctx context.Context, left, right string, values map[string]interface{}, predicate func(string, string) bool) bool {
