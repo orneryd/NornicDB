@@ -63,7 +63,7 @@ func validateStaticMapKeys(query string) error {
 		}
 		for _, part := range parts {
 			trimmedPart := strings.TrimSpace(part)
-			if trimmedPart == ".*" || (strings.HasPrefix(trimmedPart, ".") && isValidIdentifier(strings.TrimPrefix(trimmedPart, "."))) {
+			if _, selector := mapProjectionPropertySelector(trimmedPart); trimmedPart == ".*" || (strings.HasPrefix(trimmedPart, ".") && selector) {
 				continue
 			}
 			separator := findTopLevelMapKeyValueSeparator(part)

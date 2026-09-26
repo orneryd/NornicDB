@@ -143,4 +143,24 @@ func TestBacktickQuotedNames(t *testing.T) {
 	// Unquoted map keys are still checked.
 	_, err = exec.Execute(ctx, "CREATE (n:BT {a b: 1})", nil)
 	require.Error(t, err)
+
+	// Map projections select backtick-quoted keys and variables.
+	_, err = exec.Execute(ctx, "CREATE (:BTP {`a b`: 2, k: 7})", nil)
+	require.NoError(t, err)
+	for query, want := range map[string]interface{}{
+		"MATCH (n:BTP) RETURN n {.`a b`} AS v":                   map[string]interface{}{"a b": int64(2)},
+		"MATCH (n:BTP) RETURN n {.`a b`}.`a b` AS v":             int64(2),
+		"MATCH (n:BTP) RETURN (n {.`a b`}).`a b` AS v":           int64(2),
+		"MATCH (n:BTP) WITH n {.`a b`} AS m RETURN m.`a b` AS v": int64(2),
+		"MATCH (n:BTP) RETURN n {.k, .`a b`} AS v":               map[string]interface{}{"a b": int64(2), "k": int64(7)},
+		"MATCH (n:BTP) WITH n AS `my n` RETURN `my n` {.k} AS v": map[string]interface{}{"k": int64(7)},
+		"MATCH (n:BTP) WITH 1 AS `x y`, n RETURN n {`x y`} AS v": map[string]interface{}{"x y": int64(1)},
+		"MATCH (n:BTP) RETURN n {.k}.k AS v":                     int64(7),
+		"MATCH (n:BTP) WITH n {.k} AS m RETURN m.k AS v":         int64(7),
+		"MATCH (n:BTP) RETURN (n {.k}).k AS v":                   int64(7),
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
 }
