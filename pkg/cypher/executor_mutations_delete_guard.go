@@ -195,7 +195,7 @@ func extractPathAssignmentVariable(pattern string) string {
 	if equals := strings.Index(pattern, "="); equals > 0 {
 		candidate := strings.TrimSpace(pattern[:equals])
 		right := strings.TrimSpace(pattern[equals+1:])
-		if isValidIdentifier(candidate) && (strings.HasPrefix(right, "(") ||
+		if isPatternVariableName(candidate) && (strings.HasPrefix(right, "(") ||
 			matchFuncStartAndSuffix(right, "shortestpath") ||
 			matchFuncStartAndSuffix(right, "allshortestpaths")) {
 			return candidate

@@ -56,3 +56,33 @@ func TestClauseParsingMatchesNeo4j(t *testing.T) {
 		})
 	}
 }
+
+// TestBacktickQuotedPatternVariablesAreBound: a backtick-quoted node,
+// relationship or path variable bound by MATCH is in scope for later
+// clauses, as a plain one is (Neo4j's results).
+func TestBacktickQuotedPatternVariablesAreBound(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:BQ {name: 'a', v: 5})-[:R {w: 1}]->(:BQ {name: 'b', v: 7})", nil)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		query   string
+		columns []string
+		rows    [][]interface{}
+	}{
+		{"MATCH (`n n`:BQ) RETURN `n n`.name AS v ORDER BY v", []string{"v"}, [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (`n n`:BQ) WHERE `n n`.v = 5 RETURN count(*) AS c", []string{"c"}, [][]interface{}{{int64(1)}}},
+		{"MATCH (`n n`:BQ)-[`r r`:R]->(`m m`) RETURN `r r`.w AS w, `m m`.name AS b", []string{"w", "b"}, [][]interface{}{{int64(1), "b"}}},
+		{"MATCH `p p` = (:BQ)-[:R]->(:BQ) RETURN length(`p p`) AS l", []string{"l"}, [][]interface{}{{int64(1)}}},
+		{"MATCH (`n n`:BQ) WITH `n n` WHERE `n n`.v > 6 RETURN `n n`.name AS v", []string{"v"}, [][]interface{}{{"b"}}},
+	} {
+		result, err := exec.Execute(ctx, tc.query, nil)
+		require.NoError(t, err, tc.query)
+		require.Equal(t, tc.columns, result.Columns, tc.query)
+		require.Equal(t, tc.rows, result.Rows, tc.query)
+	}
+	result, err := exec.Execute(ctx, "MATCH (`n n`:BQ {name: 'a'}) RETURN `n n`", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"n n"}, result.Columns)
+	require.Len(t, result.Rows, 1)
+}

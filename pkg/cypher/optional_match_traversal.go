@@ -115,7 +115,8 @@ func splitOptionalMatchClauses(section string) []optionalMatchClause {
 
 // extractRelationshipVariables extracts relationship variable names from a
 // MATCH pattern, e.g. "rel" from "(a)-[rel:INHERITS]->(b)". Anonymous
-// relationships ("[:TYPE]", "[*1..2]") contribute nothing.
+// relationships ("[:TYPE]", "[*1..2]") contribute nothing. A backtick-quoted
+// variable (`r r`) is returned as written.
 func extractRelationshipVariables(matchClause string) []string {
 	var vars []string
 	for i, end := nextRelationshipBracket(matchClause, 0); i >= 0; i, end = nextRelationshipBracket(matchClause, end+1) {
@@ -123,7 +124,7 @@ func extractRelationshipVariables(matchClause string) []string {
 		for j < len(matchClause) && isWhitespace(matchClause[j]) {
 			j++
 		}
-		name, next, ok := scanIdentifierToken(matchClause, j)
+		name, next, ok := scanSymbolicName(matchClause, j)
 		if !ok {
 			continue
 		}
