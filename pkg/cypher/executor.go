@@ -1342,7 +1342,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	cypher = trimBOM(cypher)
 	cypher = normalizeCypherSyntaxConfusables(cypher)
-	cypher = stripCypherComments(cypher)
+	// Comments and keyword spacing are canonical from here on; what the
+	// client sees (column names, messages, plans) is the text it sent (#740).
+	canonical, rewrite := canonicalizeQueryText(cypher)
+	if rewrite != nil {
+		cypher = canonical
+		defer func() { result, retErr = rewrite.restore(result, retErr) }()
+	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if cypher == "" {
