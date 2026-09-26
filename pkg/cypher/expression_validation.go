@@ -16,38 +16,137 @@ import (
 // whole parameter bound to a non-null value that is not a list ("Type
 // mismatch for parameter 'p': …"); `$p.list`, `$p[0]`, `'a' + x` and
 // variables are expressions whose type is only known per row, where a value
-// that isn't a list is a list of that one value (traversableList).
+// that isn't a list is a list of that one value (traversableList). Variables
+// bound to a node, relationship or path are checked with their scope
+// (graphListOperandTypeError).
 func validateListOperands(cypher string, params map[string]interface{}) error {
-	for i := 0; i < len(cypher); i++ {
-		switch cypher[i] {
-		case '\'', '"', '`':
-			quote := cypher[i]
-			i++
-			for i < len(cypher) && (cypher[i] != quote || (quote != '`' && isBackslashEscaped(cypher, i))) {
-				i++
-			}
-			continue
-		}
-		if (cypher[i] != 'I' && cypher[i] != 'i') || i+1 >= len(cypher) || (cypher[i+1] != 'N' && cypher[i+1] != 'n') || (i > 0 && (isIdentByte(cypher[i-1]) || cypher[i-1] == ':' || cypher[i-1] == '.')) ||
-			i+2 >= len(cypher) || isIdentByte(cypher[i+2]) {
-			continue
-		}
-		start := skipSpaces(cypher, i+2)
+	return forEachListOperand(cypher, func(start, _ int) error {
 		end, typeName, parameter := staticListOperand(cypher, start, params)
-		if typeName == "" {
-			continue
-		}
-		if next := skipSpaces(cypher, end); next < len(cypher) && strings.IndexByte(")],}|", cypher[next]) < 0 && !isIdentByte(cypher[next]) {
-			// The operand is the start of a longer expression.
-			continue
+		if typeName == "" || !wholeListOperand(cypher, end) {
+			return nil
 		}
 		message := "Type mismatch: expected List<T> but was " + typeName
 		if parameter != "" {
 			message = fmt.Sprintf("Type mismatch for parameter '%s': expected List<T> but was %s", parameter, typeName)
 		}
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", message)
+	})
+}
+
+// forEachListOperand calls visit with the offset of each list-position
+// operand in text (the operand after an IN keyword outside quotes) and the
+// offset of that IN, stopping at the first error.
+func forEachListOperand(text string, visit func(start, in int) error) error {
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '\'', '"', '`':
+			quote := text[i]
+			i++
+			for i < len(text) && (text[i] != quote || (quote != '`' && isBackslashEscaped(text, i))) {
+				i++
+			}
+			continue
+		}
+		if (text[i] != 'I' && text[i] != 'i') || i+1 >= len(text) || (text[i+1] != 'N' && text[i+1] != 'n') || (i > 0 && (isIdentByte(text[i-1]) || text[i-1] == ':' || text[i-1] == '.')) ||
+			i+2 >= len(text) || isIdentByte(text[i+2]) {
+			continue
+		}
+		if err := visit(skipSpaces(text, i+2), i); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// wholeListOperand reports whether the operand ending at end is the whole
+// list-position operand, not the start of a longer expression (n.list,
+// n[0], x + y).
+func wholeListOperand(text string, end int) bool {
+	next := skipSpaces(text, end)
+	return next >= len(text) || strings.IndexByte(")],}|", text[next]) >= 0 || isIdentByte(text[next])
+}
+
+// graphListOperandTypeError is Neo4j's compile-time SyntaxError for a list
+// position given a variable bound to a node, relationship or path ("Type
+// mismatch: expected List<T> but was Node"), whatever the data: `1 IN n`,
+// `[x IN p | …]`, `any(x IN r WHERE …)`, in projections, WHERE, SET values
+// and subquery bodies. FOREACH (x IN n | …) is not a type error in Neo4j (it
+// runs once), and a name the text itself declares as a list element
+// (`[n IN list | …]`) names the element, so neither is checked.
+func graphListOperandTypeError(text string, scope matchSemanticScope) error {
+	if len(scope) == 0 {
+		return nil
+	}
+	return forEachListOperand(text, func(start, in int) error {
+		end := start
+		for end < len(text) && isIdentByte(text[end]) {
+			end++
+		}
+		if end == start || !wholeListOperand(text, end) {
+			return nil
+		}
+		name := text[start:end]
+		var typeName string
+		switch scope[name] {
+		case matchBindingNode:
+			typeName = "Node"
+		case matchBindingRelationship:
+			typeName = "Relationship"
+		case matchBindingPath:
+			typeName = "Path"
+		default:
+			return nil
+		}
+		if foreachDeclaration(text, in) || declaresListElement(text, name) {
+			return nil
+		}
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", "Type mismatch: expected List<T> but was "+typeName)
+	})
+}
+
+// foreachDeclaration reports whether the IN at offset in is FOREACH's own
+// (`FOREACH (x IN …`).
+func foreachDeclaration(text string, in int) bool {
+	i := in - 1
+	for i >= 0 && isSpaceByte(text[i]) {
+		i--
+	}
+	for i >= 0 && isIdentByte(text[i]) {
+		i--
+	}
+	for i >= 0 && isSpaceByte(text[i]) {
+		i--
+	}
+	if i < 0 || text[i] != '(' {
+		return false
+	}
+	i--
+	for i >= 0 && isSpaceByte(text[i]) {
+		i--
+	}
+	return i+1 >= len("FOREACH") && strings.EqualFold(text[i+1-len("FOREACH"):i+1], "FOREACH") &&
+		(i+1 == len("FOREACH") || !isIdentByte(text[i-len("FOREACH")]))
+}
+
+// declaresListElement reports whether text has `name IN`: name is then (also)
+// a list element variable of a comprehension or quantifier there.
+func declaresListElement(text, name string) bool {
+	for from := 0; ; {
+		index := strings.Index(text[from:], name)
+		if index < 0 {
+			return false
+		}
+		index += from
+		end := index + len(name)
+		from = end
+		if (index > 0 && (isIdentByte(text[index-1]) || text[index-1] == '.' || text[index-1] == '$')) || (end < len(text) && isIdentByte(text[end])) {
+			continue
+		}
+		next := skipSpaces(text, end)
+		if next+2 <= len(text) && strings.EqualFold(text[next:next+2], "IN") && (next+2 == len(text) || !isIdentByte(text[next+2])) {
+			return true
+		}
+	}
 }
 
 // staticListOperand reads the operand of a list position starting at start

@@ -45,6 +45,20 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 	// WITH … AS or UNWIND, for the function argument checks.
 	var valueTypes map[string]string
 	for _, clause := range clauses {
+		if clause.kind == pipelineClauseWith {
+			// The projection reads the incoming variables; WITH … WHERE
+			// reads the projected ones.
+			projection := clause.text
+			if where := topLevelKeywordIndex(clause.text, "WHERE"); where >= 0 {
+				projection = clause.text[:where]
+				if err := graphListOperandTypeError(clause.text[where:], projectMatchSemanticScope(scope, clause.text)); err != nil {
+					return err
+				}
+			}
+			if err := graphListOperandTypeError(projection, scope); err != nil {
+				return err
+			}
+		}
 		switch clause.kind {
 		case pipelineClauseCall:
 			// CALL proc() YIELD x: a yielded name must be new (Neo4j:
@@ -123,6 +137,12 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			}
 		default:
 			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+				return err
+			}
+		}
+		if clause.kind != pipelineClauseWith {
+			// Every other clause reads its own and the incoming bindings.
+			if err := graphListOperandTypeError(clause.text, scope); err != nil {
 				return err
 			}
 		}
