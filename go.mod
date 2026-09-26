@@ -20,6 +20,7 @@ require (
 	github.com/hybridgroup/yzma v1.27.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
+	github.com/yuin/goldmark v1.4.13
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
 	github.com/qdrant/go-client v1.18.3

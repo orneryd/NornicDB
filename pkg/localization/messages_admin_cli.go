@@ -12,6 +12,8 @@ const (
 	MessageAdminCLIImportShort                 MessageID = "admincli.import_short"
 	MessageAdminCLIFullImportShort             MessageID = "admincli.full_import_short"
 	MessageAdminCLIIncrementalImportShort      MessageID = "admincli.incremental_import_short"
+	MessageAdminCLIOKFImportShort              MessageID = "admincli.okf_import_short"
+	MessageAdminCLIOKFExportShort              MessageID = "admincli.okf_export_short"
 	MessageAdminCLIExportShort                 MessageID = "admincli.export_short"
 	MessageAdminCLINeo4jCSVExportShort         MessageID = "admincli.neo4j_csv_export_short"
 	MessageAdminCLIServerShort                 MessageID = "admincli.server_short"
@@ -21,6 +23,9 @@ const (
 	MessageAdminCLINodesFlag                   MessageID = "admincli.flag.nodes"
 	MessageAdminCLIRelationshipsFlag           MessageID = "admincli.flag.relationships"
 	MessageAdminCLIFromPathFlag                MessageID = "admincli.flag.from_path"
+	MessageAdminCLIOKFProfileFlag              MessageID = "admincli.flag.okf_profile"
+	MessageAdminCLIOKFModeFlag                 MessageID = "admincli.flag.okf_mode"
+	MessageAdminCLIPropertyMapFlag             MessageID = "admincli.flag.property_map"
 	MessageAdminCLISchemaFlag                  MessageID = "admincli.flag.schema"
 	MessageAdminCLIBuildIndexesFlag            MessageID = "admincli.flag.build_indexes"
 	MessageAdminCLISkipBadRelationshipsFlag    MessageID = "admincli.flag.skip_bad_relationships"
@@ -43,6 +48,7 @@ const (
 	MessageAdminCLIDatabaseInfoNotImplemented  MessageID = "admincli.database_info_not_implemented"
 	MessageAdminCLIServerStatusNotImplemented  MessageID = "admincli.server_status_not_implemented"
 	MessageAdminCLIToPathRequired              MessageID = "admincli.to_path_required"
+	MessageAdminCLIFromPathRequired            MessageID = "admincli.from_path_required"
 	MessageAdminCLIExactArgs                   MessageID = "admincli.exact_args"
 	MessageAdminCLIUnknownCommand              MessageID = "admincli.unknown_command"
 	MessageAdminCLIUsageHeading                MessageID = "admincli.help.usage_heading"
@@ -79,6 +85,12 @@ func AdminCLIFullImportShort() Message {
 func AdminCLIIncrementalImportShort() Message {
 	return Message{ID: MessageAdminCLIIncrementalImportShort, Fallback: "Reserved incremental import command"}
 }
+func AdminCLIOKFImportShort() Message {
+	return Message{ID: MessageAdminCLIOKFImportShort, Fallback: "Import an Open Knowledge Format bundle"}
+}
+func AdminCLIOKFExportShort() Message {
+	return Message{ID: MessageAdminCLIOKFExportShort, Fallback: "Export an imported Open Knowledge Format bundle"}
+}
 func AdminCLIExportShort() Message {
 	return Message{ID: MessageAdminCLIExportShort, Fallback: "Export database data for offline migration"}
 }
@@ -104,7 +116,16 @@ func AdminCLIRelationshipsFlag() Message {
 	return Message{ID: MessageAdminCLIRelationshipsFlag, Fallback: "Relationship CSV source (repeatable)"}
 }
 func AdminCLIFromPathFlag() Message {
-	return Message{ID: MessageAdminCLIFromPathFlag, Fallback: "Directory containing Neo4j-compatible CSV files"}
+	return Message{ID: MessageAdminCLIFromPathFlag, Fallback: "Source directory"}
+}
+func AdminCLIOKFProfileFlag() Message {
+	return Message{ID: MessageAdminCLIOKFProfileFlag, Fallback: "Semantic profile: okf or pgm-0.4-draft"}
+}
+func AdminCLIOKFModeFlag() Message {
+	return Message{ID: MessageAdminCLIOKFModeFlag, Fallback: "Import mode: fail-if-exists"}
+}
+func AdminCLIPropertyMapFlag() Message {
+	return Message{ID: MessageAdminCLIPropertyMapFlag, Fallback: "Environment-style source-to-property map file"}
 }
 func AdminCLISchemaFlag() Message {
 	return Message{ID: MessageAdminCLISchemaFlag, Fallback: "Cypher schema file to apply after load"}
@@ -137,7 +158,7 @@ func AdminCLIBadToleranceFlag() Message {
 	return Message{ID: MessageAdminCLIBadToleranceFlag, Fallback: "Number of bad rows tolerated before abort"}
 }
 func AdminCLIChunkSizeFlag() Message {
-	return Message{ID: MessageAdminCLIChunkSizeFlag, Fallback: "Rows per bulk write chunk"}
+	return Message{ID: MessageAdminCLIChunkSizeFlag, Fallback: "Records per bulk write chunk"}
 }
 func AdminCLIDelimiterFlag() Message {
 	return Message{ID: MessageAdminCLIDelimiterFlag, Fallback: "Field delimiter"}
@@ -158,7 +179,7 @@ func AdminCLIVerboseFlag() Message {
 	return Message{ID: MessageAdminCLIVerboseFlag, Fallback: "Verbose logging"}
 }
 func AdminCLIToPathFlag() Message {
-	return Message{ID: MessageAdminCLIToPathFlag, Fallback: "Output directory for Neo4j-compatible CSV files"}
+	return Message{ID: MessageAdminCLIToPathFlag, Fallback: "Output directory"}
 }
 func AdminCLIIncrementalNotImplemented() Message {
 	return Message{ID: MessageAdminCLIIncrementalNotImplemented, Fallback: "database import incremental is not implemented yet"}
@@ -171,6 +192,9 @@ func AdminCLIServerStatusNotImplemented() Message {
 }
 func AdminCLIToPathRequired() Message {
 	return Message{ID: MessageAdminCLIToPathRequired, Fallback: "--to-path is required"}
+}
+func AdminCLIFromPathRequired() Message {
+	return Message{ID: MessageAdminCLIFromPathRequired, Fallback: "--from-path is required"}
 }
 func AdminCLIExactArgs(expected, received int) Message {
 	return Message{ID: MessageAdminCLIExactArgs, Fallback: fmt.Sprintf("accepts %d arg(s), received %d", expected, received), Data: map[string]any{"Expected": expected, "Received": received}}
