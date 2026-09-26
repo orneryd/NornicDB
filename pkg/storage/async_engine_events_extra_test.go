@@ -138,6 +138,18 @@ func (e *asyncBaseEngine) EdgeCount() (int64, error) {
 	return e.inner.EdgeCount()
 }
 
+func (e *asyncBaseEngine) EdgeCountByType(edgeType string) (int64, error) {
+	return e.inner.EdgeCountByType(edgeType)
+}
+
+func (e *asyncBaseEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	return e.inner.EdgeCountByStartLabel(label, edgeType)
+}
+
+func (e *asyncBaseEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	return e.inner.EdgeCountByEndLabel(label, edgeType)
+}
+
 func (e *asyncBaseEngine) DeleteByPrefix(prefix string) (int64, int64, error) {
 	return e.inner.DeleteByPrefix(prefix)
 }

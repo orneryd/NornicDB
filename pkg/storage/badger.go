@@ -93,6 +93,23 @@ const (
 	// Startup consumes it before accepting work, so a crash always leaves the
 	// next process on the conservative derived-index rebuild path.
 	prefixMVCCMetaCleanShutdown = byte(0x08)
+	// prefixMVCCMetaEdgeTypeCountReady marks completion of the edge-type-count
+	// verification/rebuild pass at engine open. Same shape as the label-count
+	// ready marker.
+	prefixMVCCMetaEdgeTypeCountReady = byte(0x09)
+	// prefixMVCCMetaEdgeTypeCount stores one namespace-scoped relationship-type
+	// count as:
+	//   [prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace bytes..., 0x00, lower(type)] -> uint64 count
+	prefixMVCCMetaEdgeTypeCount = byte(0x0A)
+	// prefixMVCCMetaEdgeTypeStartLabelCount / ...EndLabelCount store the
+	// positional namespace-scoped (label, relationship-type) counts Neo4j
+	// answers one-labeled-endpoint shapes from its counts store, e.g.
+	// (s:Label)-[:T]->() and ()-[:T]->(e:Label):
+	//   [prefixMVCCMeta, sub, namespace bytes..., 0x00, lower(label), 0x00, lower(type)] -> uint64 count
+	// The start tier counts edges whose physical START endpoint carries the
+	// label; the end tier counts edges whose physical END endpoint does.
+	prefixMVCCMetaEdgeTypeStartLabelCount = byte(0x0B)
+	prefixMVCCMetaEdgeTypeEndLabelCount   = byte(0x0C)
 )
 
 // maxNodeSize is the maximum size for a node to be stored inline (50KB to leave room for BadgerDB overhead)
@@ -314,6 +331,12 @@ type BadgerEngine struct {
 	// User transactions accumulate deltas locally; the shared count keys never
 	// participate in their optimistic conflict sets.
 	labelCountWriteMu sync.RWMutex
+
+	// edgeTypeCountWriteMu is the edge-type analogue of labelCountWriteMu:
+	// it orders edge commits with their derived per-type count updates
+	// (issue #638) and keeps typed-count readers from observing the
+	// publication gap.
+	edgeTypeCountWriteMu sync.RWMutex
 
 	// embeddingsEnabled gates the pending-embed index write on node creates.
 	// When false, new nodes skip the pendingEmbed marker since no embed worker
@@ -913,6 +936,13 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	if err := engine.ensureLabelCounts(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize label counts: %w", err)
+	}
+
+	// Per-type edge counts (issue #638): marker-gated verify/rebuild pass
+	// over the edge-type index, same shape as the label counts above.
+	if err := engine.ensureEdgeTypeCounts(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize edge-type counts: %w", err)
 	}
 
 	// Edge-between index backfill runs only after migrations have

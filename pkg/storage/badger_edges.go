@@ -123,6 +123,23 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		if err := txn.Set(typeKey, []byte{}); err != nil {
 			return err
 		}
+		// Per-type derived counter (issue #638): same commit as the edge
+		// write, so the count can never diverge from the index entry.
+		if err := b.adjustEdgeTypeCountInTxn(txn, dbName, edge.Type, 1); err != nil {
+			return err
+		}
+		// Positional (label, type) counters (issue #638, one-labeled shapes).
+		startLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
+		if err != nil {
+			return err
+		}
+		endLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edge.EndNode)
+		if err != nil {
+			return err
+		}
+		if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, dbName, edge.Type, startLabels, endLabels, 1); err != nil {
+			return err
+		}
 		if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 			return err
 		}
@@ -330,6 +347,10 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 						return err
 					}
 				}
+				// Per-type derived counter follows the index entry.
+				if err := b.adjustEdgeTypeCountInTxn(txn, dbName, existing.Type, -1); err != nil {
+					return err
+				}
 			}
 			if existing.StartNode == edge.StartNode && existing.EndNode == edge.EndNode {
 				if err := b.deleteEdgeBetweenIndexesInTxn(txn, existing); err != nil {
@@ -344,6 +365,9 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 				if err := txn.Set(newTypeKey, []byte{}); err != nil {
 					return err
 				}
+				if err := b.adjustEdgeTypeCountInTxn(txn, dbName, edge.Type, 1); err != nil {
+					return err
+				}
 			}
 			if existing.StartNode == edge.StartNode && existing.EndNode == edge.EndNode {
 				if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
@@ -356,6 +380,38 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		data, err := b.encodeEdgeInTxn(txn, dbName, edge)
 		if err != nil {
 			return fmt.Errorf("failed to encode edge: %w", err)
+		}
+
+		// Positional (label, type) counters move with type or endpoint changes.
+		if existing.Type != edge.Type || existing.StartNode != edge.StartNode || existing.EndNode != edge.EndNode {
+			oldStartLabels, err := b.readNodeLabelsIfPresentInTxn(txn, existing.StartNode)
+			if err != nil {
+				return err
+			}
+			oldEndLabels, err := b.readNodeLabelsIfPresentInTxn(txn, existing.EndNode)
+			if err != nil {
+				return err
+			}
+			if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, dbName, existing.Type, oldStartLabels, oldEndLabels, -1); err != nil {
+				return err
+			}
+			newStartLabels := oldStartLabels
+			newEndLabels := oldEndLabels
+			if existing.StartNode != edge.StartNode {
+				newStartLabels, err = b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
+				if err != nil {
+					return err
+				}
+			}
+			if existing.EndNode != edge.EndNode {
+				newEndLabels, err = b.readNodeLabelsIfPresentInTxn(txn, edge.EndNode)
+				if err != nil {
+					return err
+				}
+			}
+			if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, dbName, edge.Type, newStartLabels, newEndLabels, 1); err != nil {
+				return err
+			}
 		}
 
 		if err := txn.Set(key, data); err != nil {
@@ -419,6 +475,27 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		// the primary key.
 		if err := b.deleteEdgeInTxn(txn, id); err != nil {
 			return err
+		}
+		// Per-type derived counter (issue #638) follows the index entry
+		// removal in the same commit. The edge body read inside this txn
+		// supplies the type, so the decrement matches the deleted row.
+		if edgeForAdjacency != nil && edgeForAdjacency.Type != "" {
+			if err := b.adjustEdgeTypeCountInTxn(txn, namespaceForEdgeID(id), edgeForAdjacency.Type, -1); err != nil {
+				return err
+			}
+			// Positional (label, type) counters follow the endpoints' labels
+			// read before the edge body is removed.
+			startLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edgeForAdjacency.StartNode)
+			if err != nil {
+				return err
+			}
+			endLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edgeForAdjacency.EndNode)
+			if err != nil {
+				return err
+			}
+			if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, namespaceForEdgeID(id), edgeForAdjacency.Type, startLabels, endLabels, -1); err != nil {
+				return err
+			}
 		}
 		if err := b.writeEdgeAdjacencyDeltaInTxn(txn, edgeForAdjacency, nil, version); err != nil {
 			return err
@@ -773,6 +850,24 @@ func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 				deletedCount++                      // Successfully deleted
 				deletedIDs = append(deletedIDs, id) // Track for callbacks
 				deletedEdges = append(deletedEdges, edgeForAdjacency)
+				// Per-type derived counter follows the index entry removal.
+				if edgeForAdjacency != nil && edgeForAdjacency.Type != "" {
+					if err := b.adjustEdgeTypeCountInTxn(txn, namespaceForEdgeID(id), edgeForAdjacency.Type, -1); err != nil {
+						return err
+					}
+					// Positional (label, type) counters follow the endpoint labels.
+					startLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edgeForAdjacency.StartNode)
+					if err != nil {
+						return err
+					}
+					endLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edgeForAdjacency.EndNode)
+					if err != nil {
+						return err
+					}
+					if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, namespaceForEdgeID(id), edgeForAdjacency.Type, startLabels, endLabels, -1); err != nil {
+						return err
+					}
+				}
 			} else if err != ErrNotFound {
 				return err // Actual error, abort transaction
 			}

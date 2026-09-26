@@ -109,6 +109,13 @@ type BadgerTransaction struct {
 	// label, but they must not conflict merely because their derived counters
 	// target the same metadata key.
 	pendingLabelCountDeltas map[namespaceLabel]int64
+	// pendingEdgeTypeCountDeltas is the edge-type analogue: per-type derived
+	// count metadata (issue #638) kept out of the user transaction's conflict
+	// set and applied right after commit.
+	pendingEdgeTypeCountDeltas map[namespaceEdgeType]int64
+	// pendingEdgeTypeLabelCountDeltas is the positional (label, type) tier of
+	// the same counters, backing the one-labeled-endpoint count shapes.
+	pendingEdgeTypeLabelCountDeltas map[edgeTypeLabelDelta]int64
 	// When true, skip per-operation constraint checks and validate at commit only.
 	deferConstraintValidation bool
 	// When true, skip read-before-write existence checks for CREATE operations.
@@ -199,8 +206,12 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 		pendingWrites:           make(map[string][]byte),
 		pendingDeletes:          make(map[string]bool),
 		pendingLabelCountDeltas: make(map[namespaceLabel]int64),
-		Metadata:                make(map[string]interface{}),
-		snapshotReaderInfo:      SnapshotReaderInfo{ReaderID: txID, SnapshotVersion: readTS, StartTime: startTime},
+		// Derived edge-type counts stay out of Badger's optimistic
+		// conflict set, same as label counts (issue #638).
+		pendingEdgeTypeCountDeltas:      make(map[namespaceEdgeType]int64),
+		pendingEdgeTypeLabelCountDeltas: make(map[edgeTypeLabelDelta]int64),
+		Metadata:                        make(map[string]interface{}),
+		snapshotReaderInfo:              SnapshotReaderInfo{ReaderID: txID, SnapshotVersion: readTS, StartTime: startTime},
 	}, nil
 }
 
@@ -285,6 +296,8 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	tx.pendingWrites = make(map[string][]byte)
 	tx.pendingDeletes = make(map[string]bool)
 	tx.pendingLabelCountDeltas = make(map[namespaceLabel]int64)
+	tx.pendingEdgeTypeCountDeltas = make(map[namespaceEdgeType]int64)
+	tx.pendingEdgeTypeLabelCountDeltas = make(map[edgeTypeLabelDelta]int64)
 	tx.Status = status
 	tx.closedErr = closedErr
 	if tx.snapshotDeregister != nil {
@@ -739,6 +752,13 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	}
 	tx.bufferAdjustNodeLabelCounts(tx.namespace, oldNode.Labels, node.Labels)
 
+	// Positional (label, type) counters follow the node's relabel: its
+	// tx-visible incident edges move between label buckets (issue #638).
+	added, removed := nodeLabelChangeDeltas(oldNode.Labels, node.Labels)
+	if err := tx.bufferNodeLabelChangeEdgeTypeDeltasLocked(node.ID, added, removed); err != nil {
+		return err
+	}
+
 	// Track for read-your-writes
 	nodeCopy := copyNode(node)
 	tx.pendingNodes[node.ID] = nodeCopy
@@ -848,7 +868,7 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 	// Delete outgoing edges (and track count). Lookup-only prefix — a
 	// missing numID means no outgoing edges were ever indexed.
 	if outPrefix := tx.engine.outgoingIndexPrefixString(nodeID); outPrefix != nil {
-		outCount, outIDs, err := tx.deleteEdgesWithPrefixBuffered(outPrefix)
+		outCount, outIDs, err := tx.deleteEdgesWithPrefixBuffered(outPrefix, nodeID, deletedNode.Labels)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -858,7 +878,7 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 
 	// Delete incoming edges (and track count).
 	if inPrefix := tx.engine.incomingIndexPrefixString(nodeID); inPrefix != nil {
-		inCount, inIDs, err := tx.deleteEdgesWithPrefixBuffered(inPrefix)
+		inCount, inIDs, err := tx.deleteEdgesWithPrefixBuffered(inPrefix, nodeID, deletedNode.Labels)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -877,7 +897,7 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 }
 
 // deleteEdgesWithPrefixBuffered deletes all edges with a given prefix, buffering writes.
-func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte) (int64, []EdgeID, error) {
+func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, deletedNodeID NodeID, deletedNodeLabels []string) (int64, []EdgeID, error) {
 	opts := badger.DefaultIteratorOptions
 	opts.PrefetchValues = false
 	it := tx.badgerTx.NewIterator(opts)
@@ -960,6 +980,29 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte) (int64
 		deletedIDs = append(deletedIDs, edgeID)
 		tx.deletedEdges[edgeID] = struct{}{}
 		delete(tx.pendingEdges, edgeID)
+
+		// Derived per-type counter follows the index entry removal (issue #638).
+		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edgeID), edge.Type, -1)
+
+		// Positional (label, type) counters: the deleted node's labels are
+		// supplied by the caller; the peer endpoint's labels are read
+		// tx-visible while its body is still live.
+		startLabels := deletedNodeLabels
+		endLabels := deletedNodeLabels
+		if edge.StartNode == deletedNodeID && edge.EndNode != deletedNodeID {
+			peer, err := tx.nodeLabelsTxVisibleLocked(edge.EndNode)
+			if err != nil {
+				return 0, nil, err
+			}
+			endLabels = peer
+		} else if edge.EndNode == deletedNodeID && edge.StartNode != deletedNodeID {
+			peer, err := tx.nodeLabelsTxVisibleLocked(edge.StartNode)
+			if err != nil {
+				return 0, nil, err
+			}
+			startLabels = peer
+		}
+		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edgeID), edge.Type, startLabels, endLabels, -1)
 	}
 
 	return deletedCount, deletedIDs, nil
@@ -1144,6 +1187,18 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge) error {
 		return fmt.Errorf("edge type index: %w", err)
 	}
 	tx.bufferSet(typeKey, []byte{})
+	// Derived per-type counter follows the index entry (issue #638).
+	tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
+	// Positional (label, type) counters follow the endpoints' tx-visible labels.
+	startLabels, err := tx.nodeLabelsTxVisibleLocked(edge.StartNode)
+	if err != nil {
+		return fmt.Errorf("start labels: %w", err)
+	}
+	endLabels, err := tx.nodeLabelsTxVisibleLocked(edge.EndNode)
+	if err != nil {
+		return fmt.Errorf("end labels: %w", err)
+	}
+	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, startLabels, endLabels, 1)
 	if err := tx.bufferSetEdgeBetweenIndexes(edge); err != nil {
 		return fmt.Errorf("edge-between index: %w", err)
 	}
@@ -1259,6 +1314,8 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 			if oldTypeKey := tx.engine.edgeTypeIndexKeyStringLookup(oldEdge.Type, edge.ID); oldTypeKey != nil {
 				tx.bufferDelete(oldTypeKey)
 			}
+			// Derived per-type counters follow the index entries (issue #638).
+			tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), oldEdge.Type, -1)
 		}
 		if oldEdge.StartNode == edge.StartNode && oldEdge.EndNode == edge.EndNode {
 			tx.bufferDeleteEdgeBetweenIndexes(oldEdge)
@@ -1269,6 +1326,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 				return fmt.Errorf("edge type index: %w", err)
 			}
 			tx.bufferSet(newTypeKey, []byte{})
+			tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
 		}
 		if oldEdge.StartNode == edge.StartNode && oldEdge.EndNode == edge.EndNode {
 			if err := tx.bufferSetEdgeBetweenIndexes(edge); err != nil {
@@ -1287,6 +1345,34 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	// Track for read-your-writes.
 	edgeCopy := copyEdge(edge)
 	tx.pendingEdges[edge.ID] = edgeCopy
+
+	// Positional (label, type) counters move with type or endpoint changes.
+	if oldEdge.Type != edge.Type || oldEdge.StartNode != edge.StartNode || oldEdge.EndNode != edge.EndNode {
+		oldStartLabels, err := tx.nodeLabelsTxVisibleLocked(oldEdge.StartNode)
+		if err != nil {
+			return fmt.Errorf("old start labels: %w", err)
+		}
+		oldEndLabels, err := tx.nodeLabelsTxVisibleLocked(oldEdge.EndNode)
+		if err != nil {
+			return fmt.Errorf("old end labels: %w", err)
+		}
+		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), oldEdge.Type, oldStartLabels, oldEndLabels, -1)
+		newStartLabels := oldStartLabels
+		newEndLabels := oldEndLabels
+		if oldEdge.StartNode != edge.StartNode {
+			newStartLabels, err = tx.nodeLabelsTxVisibleLocked(edge.StartNode)
+			if err != nil {
+				return fmt.Errorf("new start labels: %w", err)
+			}
+		}
+		if oldEdge.EndNode != edge.EndNode {
+			newEndLabels, err = tx.nodeLabelsTxVisibleLocked(edge.EndNode)
+			if err != nil {
+				return fmt.Errorf("new end labels: %w", err)
+			}
+		}
+		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, newStartLabels, newEndLabels, 1)
+	}
 
 	tx.operations = append(tx.operations, Operation{
 		Type:      OpUpdateEdge,
@@ -1350,6 +1436,21 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 	// Track deletion
 	delete(tx.pendingEdges, edgeID)
 	tx.deletedEdges[edgeID] = struct{}{}
+
+	// Derived per-type counter follows the index entry removal (issue #638).
+	tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edgeID), edge.Type, -1)
+
+	// Positional (label, type) counters follow the endpoints' tx-visible
+	// labels read before the edge is removed.
+	startLabels, err := tx.nodeLabelsTxVisibleLocked(edge.StartNode)
+	if err != nil {
+		return fmt.Errorf("start labels: %w", err)
+	}
+	endLabels, err := tx.nodeLabelsTxVisibleLocked(edge.EndNode)
+	if err != nil {
+		return fmt.Errorf("end labels: %w", err)
+	}
+	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edgeID), edge.Type, startLabels, endLabels, -1)
 
 	tx.operations = append(tx.operations, Operation{
 		Type:      OpDeleteEdge,
@@ -1769,6 +1870,16 @@ func (tx *BadgerTransaction) HasPendingNodeMutations() bool {
 	return len(tx.pendingNodes) > 0 || len(tx.deletedNodes) > 0
 }
 
+// HasPendingEdgeMutations reports whether the transaction has staged any edge
+// creates, updates, or deletes. Typed-count fast paths use it to decide
+// whether the underlying per-type counters still describe the
+// transaction-visible state (issue #638).
+func (tx *BadgerTransaction) HasPendingEdgeMutations() bool {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	return len(tx.pendingEdges) > 0 || len(tx.deletedEdges) > 0
+}
+
 // mergePendingLocked merges committed records with the transaction's pending
 // overlay. It is the shared kernel behind the node and edge twins: a pending
 // record shadows a committed record with the same ID, a deleted ID drops its
@@ -1971,11 +2082,18 @@ func (tx *BadgerTransaction) Commit() error {
 	if labelCountsLocked {
 		tx.engine.labelCountWriteMu.Lock()
 	}
+	edgeTypeCountsLocked := len(tx.pendingEdgeTypeCountDeltas) > 0 || len(tx.pendingEdgeTypeLabelCountDeltas) > 0
+	if edgeTypeCountsLocked {
+		tx.engine.edgeTypeCountWriteMu.Lock()
+	}
 
 	// Commit Badger transaction (atomic!)
 	if err := tx.badgerTx.Commit(); err != nil {
 		if labelCountsLocked {
 			tx.engine.labelCountWriteMu.Unlock()
+		}
+		if edgeTypeCountsLocked {
+			tx.engine.edgeTypeCountWriteMu.Unlock()
 		}
 		tx.closeLocked(TxStatusRolledBack, false, nil)
 		return normalizeTransactionCommitError(err)
@@ -2007,6 +2125,49 @@ func (tx *BadgerTransaction) Commit() error {
 	}
 	if labelCountsLocked {
 		tx.engine.labelCountWriteMu.Unlock()
+	}
+
+	// Edge-type counts are derived metadata too (issue #638). Apply the
+	// accumulated deltas only after the entity and index writes commit,
+	// serialized under edgeTypeCountWriteMu so typed-count readers never
+	// observe the publication gap. A metadata failure must not turn a
+	// successful user commit into an apparent rollback — rebuild from the
+	// committed edge-type index immediately; startup verification remains
+	// the final recovery boundary.
+	if err := tx.engine.applyEdgeTypeCountDeltasLocked(tx.pendingEdgeTypeCountDeltas); err != nil {
+		if repairErr := tx.engine.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil {
+			tx.engine.log.Error("failed to repair derived edge-type counts after transaction commit",
+				"subsystem", "transaction",
+				"transaction_id", tx.ID,
+				slog.Any("update_error", err),
+				slog.Any("repair_error", repairErr),
+			)
+		} else {
+			tx.engine.log.Warn("repaired derived edge-type counts after delta update failed",
+				"subsystem", "transaction",
+				"transaction_id", tx.ID,
+				slog.Any("error", err),
+			)
+		}
+	}
+	if err := tx.engine.applyEdgeTypeLabelCountDeltasLocked(tx.pendingEdgeTypeLabelCountDeltas); err != nil {
+		if repairErr := tx.engine.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil {
+			tx.engine.log.Error("failed to repair derived (label, type) counts after transaction commit",
+				"subsystem", "transaction",
+				"transaction_id", tx.ID,
+				slog.Any("update_error", err),
+				slog.Any("repair_error", repairErr),
+			)
+		} else {
+			tx.engine.log.Warn("repaired derived (label, type) counts after delta update failed",
+				"subsystem", "transaction",
+				"transaction_id", tx.ID,
+				slog.Any("error", err),
+			)
+		}
+	}
+	if edgeTypeCountsLocked {
+		tx.engine.edgeTypeCountWriteMu.Unlock()
 	}
 
 	// Persist the namespace's MVCC sequence and the staged ID

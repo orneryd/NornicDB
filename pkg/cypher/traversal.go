@@ -965,6 +965,60 @@ func (e *StorageExecutor) tryFastRelationshipCount(matches *TraversalMatch, item
 	if argUpper != "*" && !strings.EqualFold(strings.TrimSpace(arg), matches.Relationship.Variable) {
 		return 0, false, nil
 	}
+
+	// A repeated endpoint variable requires self-loops only; the counters can't
+	// express that filter, so the general path handles it.
+	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
+		return 0, false, nil
+	}
+
+	// Inline endpoint property maps are value-level filters the counters can't
+	// express (e.g. MATCH ({id:'x'})-[r:T]->() RETURN count(r)); the general
+	// path handles them.
+	if len(matches.StartNode.properties) > 0 || len(matches.EndNode.properties) > 0 {
+		return 0, false, nil
+	}
+
+	// One-labeled-endpoint shapes: answered from the positional (label, type)
+	// counters, matching Neo4j's RelationshipCountFromCountStore planning rule
+	// (at most one endpoint labeled, no other predicates).
+	if len(matches.StartNode.labels) > 0 || len(matches.EndNode.labels) > 0 {
+		if len(matches.StartNode.labels) > 1 || len(matches.EndNode.labels) > 1 ||
+			len(matches.StartNode.properties) > 0 || len(matches.EndNode.properties) > 0 ||
+			matches.Relationship.Direction == "both" || len(matches.Relationship.Types) == 0 {
+			return 0, false, nil
+		}
+		var label string
+		startTier := false
+		switch {
+		case matches.Relationship.Direction == "outgoing" && len(matches.StartNode.labels) == 1:
+			label, startTier = matches.StartNode.labels[0], true
+		case matches.Relationship.Direction == "outgoing" && len(matches.EndNode.labels) == 1:
+			label = matches.EndNode.labels[0]
+		case matches.Relationship.Direction == "incoming" && len(matches.StartNode.labels) == 1:
+			label = matches.StartNode.labels[0]
+		case matches.Relationship.Direction == "incoming" && len(matches.EndNode.labels) == 1:
+			label, startTier = matches.EndNode.labels[0], true
+		default:
+			return 0, false, nil
+		}
+		var total int64
+		for _, t := range matches.Relationship.Types {
+			var n int64
+			var err error
+			if startTier {
+				n, err = e.storage.EdgeCountByStartLabel(label, t)
+			} else {
+				n, err = e.storage.EdgeCountByEndLabel(label, t)
+			}
+			if err != nil {
+				return 0, true, err
+			}
+			total += n
+		}
+		return total, true, nil
+	}
+
 	if matches.Relationship.Direction == "both" {
 		return e.countUndirectedRelationshipMatches(matches.Relationship.Types)
 	}
@@ -975,15 +1029,16 @@ func (e *StorageExecutor) tryFastRelationshipCount(matches *TraversalMatch, item
 		return n, true, err
 	}
 
-	// Type filter(s): use GetEdgesByType() and count. This is backed by the edge-type
-	// index (and cached in BadgerEngine), avoiding full edge scans.
+	// Type filter(s): every engine maintains a per-type counter (issue #638),
+	// so typed counts are answered by O(1) point reads — no engine falls back
+	// to edge materialization.
 	var total int64
 	for _, t := range matches.Relationship.Types {
-		edges, err := e.storage.GetEdgesByType(t)
+		n, err := e.storage.EdgeCountByType(t)
 		if err != nil {
 			return 0, true, err
 		}
-		total += int64(len(edges))
+		total += n
 	}
 	return total, true, nil
 }

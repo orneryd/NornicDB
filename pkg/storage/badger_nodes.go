@@ -441,6 +441,12 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		if err := b.adjustNodeLabelCountsInTxn(txn, dbName, existingNode.Labels, node.Labels); err != nil {
 			return err
 		}
+		// Positional (label, type) counters follow the node's relabel: its
+		// incident edges move between label buckets (issue #638).
+		added, removed := nodeLabelChangeDeltas(existingNode.Labels, node.Labels)
+		if err := b.adjustEdgeTypeLabelCountsForNodeLabelChangeInTxn(txn, dbName, string(node.ID), added, removed); err != nil {
+			return err
+		}
 		if err := putIndexEntryCatalogInTxn(txn, string(node.ID), &IndexEntryCatalog{
 			TargetID:    string(node.ID),
 			TargetScope: "NODE",
@@ -819,6 +825,33 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 			}
 			if err := b.writeEdgeMVCCHeadInTxn(txn, edgeID, version, true); err != nil {
 				return err
+			}
+			// Per-type derived counters follow the cascaded index removal.
+			if deletedEdges[i] != nil && deletedEdges[i].Type != "" {
+				if err := b.adjustEdgeTypeCountInTxn(txn, namespaceForEdgeID(edgeID), deletedEdges[i].Type, -1); err != nil {
+					return err
+				}
+				// Positional (label, type) counters: the deleted node's labels
+				// are known; the peer endpoint's labels are read while its body
+				// is still live.
+				startLabels := deletedNode.Labels
+				endLabels := deletedNode.Labels
+				if deletedEdges[i].StartNode == deletedNode.ID && deletedEdges[i].EndNode != deletedNode.ID {
+					peer, err := b.readNodeLabelsIfPresentInTxn(txn, deletedEdges[i].EndNode)
+					if err != nil {
+						return err
+					}
+					endLabels = peer
+				} else if deletedEdges[i].EndNode == deletedNode.ID && deletedEdges[i].StartNode != deletedNode.ID {
+					peer, err := b.readNodeLabelsIfPresentInTxn(txn, deletedEdges[i].StartNode)
+					if err != nil {
+						return err
+					}
+					startLabels = peer
+				}
+				if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, namespaceForEdgeID(edgeID), deletedEdges[i].Type, startLabels, endLabels, -1); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

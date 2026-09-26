@@ -188,6 +188,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	edgeKeyPrefix := append([]byte{prefixEdge}, prefixBytes...)
 
 	var deletedLabelCounts map[namespaceLabel]int64
+	var deletedEdgeTypeCounts map[namespaceEdgeType]int64
+	var deletedStartLabelCounts map[namespaceEdgeTypeLabel]int64
+	var deletedEndLabelCounts map[namespaceEdgeTypeLabel]int64
 	if wholeNamespace {
 		nodesDeleted, err = countKeys(nodeKeyPrefix)
 	} else {
@@ -195,6 +198,12 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	}
 	if err != nil {
 		return 0, 0, err
+	}
+	if !wholeNamespace {
+		deletedEdgeTypeCounts, deletedStartLabelCounts, deletedEndLabelCounts, err = b.collectEdgeTypeCountsByPrefixSnapshot(edgeKeyPrefix)
+		if err != nil {
+			return 0, 0, err
+		}
 	}
 	edgesDeleted, err = countKeys(edgeKeyPrefix)
 	if err != nil {
@@ -214,6 +223,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	}
 	if wholeNamespace {
 		dropPrefixes = append(dropPrefixes, labelCountNamespacePrefix(namespace))
+		dropPrefixes = append(dropPrefixes, edgeTypeCountNamespacePrefix(namespace))
+		dropPrefixes = append(dropPrefixes, edgeTypeLabelCountNamespacePrefix(prefixMVCCMetaEdgeTypeStartLabelCount, namespace))
+		dropPrefixes = append(dropPrefixes, edgeTypeLabelCountNamespacePrefix(prefixMVCCMetaEdgeTypeEndLabelCount, namespace))
 	}
 	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
@@ -282,6 +294,21 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	}
 	if len(deletedLabelCounts) > 0 {
 		if err := b.decrementLabelCounts(deletedLabelCounts); err != nil {
+			return 0, 0, err
+		}
+	}
+	if len(deletedEdgeTypeCounts) > 0 {
+		if err := b.decrementEdgeTypeCounts(deletedEdgeTypeCounts); err != nil {
+			return 0, 0, err
+		}
+	}
+	if len(deletedStartLabelCounts) > 0 {
+		if err := b.decrementEdgeTypeLabelCounts(prefixMVCCMetaEdgeTypeStartLabelCount, deletedStartLabelCounts); err != nil {
+			return 0, 0, err
+		}
+	}
+	if len(deletedEndLabelCounts) > 0 {
+		if err := b.decrementEdgeTypeLabelCounts(prefixMVCCMetaEdgeTypeEndLabelCount, deletedEndLabelCounts); err != nil {
 			return 0, 0, err
 		}
 	}

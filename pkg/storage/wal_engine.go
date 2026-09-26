@@ -998,6 +998,20 @@ func (w *WALEngine) NodeCountByLabel(label string) (int64, error) {
 	return int64(len(nodes)), nil
 }
 
+// EdgeCountByType delegates to the inner engine's per-type counter
+// (issue #638). No edge materialization on this path.
+func (w *WALEngine) EdgeCountByType(edgeType string) (int64, error) {
+	return w.engine.EdgeCountByType(edgeType)
+}
+
+func (w *WALEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	return w.engine.EdgeCountByStartLabel(label, edgeType)
+}
+
+func (w *WALEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	return w.engine.EdgeCountByEndLabel(label, edgeType)
+}
+
 func (w *WALEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
 	if stats, ok := w.engine.(NamespaceLabelStatsProvider); ok {
 		return stats.NodeCountByLabelInNamespace(namespace, label)

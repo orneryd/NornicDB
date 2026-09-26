@@ -2212,6 +2212,128 @@ func (ae *AsyncEngine) NodeCountByLabel(label string) (int64, error) {
 	return int64(len(nodes)), nil
 }
 
+// EdgeCountByType answers the typed count from the inner engine's per-type
+// counter merged with the async pending overlay (issue #638). No edge
+// materialization on this path: the overlay delta is computed from the
+// pending create/update/delete maps plus O(overlay) point reads.
+func (ae *AsyncEngine) EdgeCountByType(edgeType string) (int64, error) {
+	base, err := ae.engine.EdgeCountByType(edgeType)
+	if err != nil {
+		return 0, err
+	}
+	typeDelta, _, _, err := ae.edgeCountOverlayDelta(edgeType)
+	if err != nil {
+		return 0, err
+	}
+	return base + typeDelta, nil
+}
+
+func (ae *AsyncEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	base, err := ae.engine.EdgeCountByStartLabel(label, edgeType)
+	if err != nil {
+		return 0, err
+	}
+	_, startDeltas, _, err := ae.edgeCountOverlayDelta(edgeType)
+	if err != nil {
+		return 0, err
+	}
+	return base + startDeltas[strings.ToLower(label)], nil
+}
+
+func (ae *AsyncEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	base, err := ae.engine.EdgeCountByEndLabel(label, edgeType)
+	if err != nil {
+		return 0, err
+	}
+	_, _, endDeltas, err := ae.edgeCountOverlayDelta(edgeType)
+	if err != nil {
+		return 0, err
+	}
+	return base + endDeltas[strings.ToLower(label)], nil
+}
+
+// edgeCountOverlayDelta computes the signed deltas between the committed
+// engine counters and the async pending overlay for one edge type: the type
+// tier plus the positional start/end label tiers (issue #638).
+func (ae *AsyncEngine) edgeCountOverlayDelta(edgeType string) (int64, map[string]int64, map[string]int64, error) {
+	normalized := strings.ToLower(edgeType)
+	startDeltas := make(map[string]int64)
+	endDeltas := make(map[string]int64)
+
+	ae.mu.RLock()
+	deleted := make(map[EdgeID]bool, len(ae.deleteEdges))
+	for id := range ae.deleteEdges {
+		deleted[id] = true
+	}
+	pending := make(map[EdgeID]*Edge, len(ae.edgeCache))
+	for id, edge := range ae.edgeCache {
+		pending[id] = edge
+	}
+	ae.mu.RUnlock()
+
+	endpointLabels := func(id NodeID) []string {
+		ae.mu.RLock()
+		node, ok := ae.nodeCache[id]
+		ae.mu.RUnlock()
+		if ok {
+			return node.Labels
+		}
+		node, err := ae.engine.GetNode(id)
+		if err != nil || node == nil {
+			return nil
+		}
+		return node.Labels
+	}
+
+	var typeDelta int64
+	seen := make(map[EdgeID]struct{})
+	for id, edge := range pending {
+		if deleted[id] {
+			continue
+		}
+		seen[id] = struct{}{}
+		if old, oldErr := ae.engine.GetEdge(id); oldErr == nil && old != nil {
+			if strings.ToLower(old.Type) == normalized {
+				typeDelta--
+			}
+			for _, l := range uniqueNormalizedLabels(endpointLabels(old.StartNode)) {
+				startDeltas[l]--
+			}
+			for _, l := range uniqueNormalizedLabels(endpointLabels(old.EndNode)) {
+				endDeltas[l]--
+			}
+		}
+		if strings.ToLower(edge.Type) == normalized {
+			typeDelta++
+		}
+		for _, l := range uniqueNormalizedLabels(endpointLabels(edge.StartNode)) {
+			startDeltas[l]++
+		}
+		for _, l := range uniqueNormalizedLabels(endpointLabels(edge.EndNode)) {
+			endDeltas[l]++
+		}
+	}
+	for id := range deleted {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		old, oldErr := ae.engine.GetEdge(id)
+		if oldErr != nil || old == nil {
+			continue
+		}
+		if strings.ToLower(old.Type) == normalized {
+			typeDelta--
+		}
+		for _, l := range uniqueNormalizedLabels(endpointLabels(old.StartNode)) {
+			startDeltas[l]--
+		}
+		for _, l := range uniqueNormalizedLabels(endpointLabels(old.EndNode)) {
+			endDeltas[l]--
+		}
+	}
+	return typeDelta, startDeltas, endDeltas, nil
+}
+
 func (ae *AsyncEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
 	nodes, err := ae.GetNodesByLabel(label)
 	if err != nil {

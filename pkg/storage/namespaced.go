@@ -1138,6 +1138,36 @@ func (n *NamespacedEngine) EdgeCount() (int64, error) {
 	return int64(len(edges)), nil
 }
 
+// EdgeCountByType returns the namespace-scoped count of edges of the given
+// type. It is answered by the inner engine's persisted per-type counters
+// (issue #638) — namespace-scoped when the inner engine keeps per-namespace
+// counters, otherwise the inner engine's own typed count. No edge
+// materialization on this path.
+func (n *NamespacedEngine) EdgeCountByType(edgeType string) (int64, error) {
+	if stats, ok := n.inner.(NamespaceEdgeTypeStatsProvider); ok {
+		return stats.EdgeCountByTypeInNamespace(n.namespace, edgeType)
+	}
+	return n.inner.EdgeCountByType(edgeType)
+}
+
+// EdgeCountByStartLabel returns the namespace-scoped count of edges of the
+// given type whose physical start endpoint carries the label (issue #638).
+func (n *NamespacedEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	if stats, ok := n.inner.(NamespaceEdgeTypeStatsProvider); ok {
+		return stats.EdgeCountByStartLabelInNamespace(n.namespace, label, edgeType)
+	}
+	return n.inner.EdgeCountByStartLabel(label, edgeType)
+}
+
+// EdgeCountByEndLabel returns the namespace-scoped count of edges of the
+// given type whose physical end endpoint carries the label (issue #638).
+func (n *NamespacedEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	if stats, ok := n.inner.(NamespaceEdgeTypeStatsProvider); ok {
+		return stats.EdgeCountByEndLabelInNamespace(n.namespace, label, edgeType)
+	}
+	return n.inner.EdgeCountByEndLabel(label, edgeType)
+}
+
 // ============================================================================
 // Streaming Support (if underlying engine supports it)
 // ============================================================================

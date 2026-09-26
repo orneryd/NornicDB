@@ -994,7 +994,7 @@ func TestTransaction_DeleteEdgesWithPrefixBuffered(t *testing.T) {
 		if outPrefix == nil {
 			t.Fatal("outgoing prefix missing for seeded edge")
 		}
-		count, ids, err := tx.deleteEdgesWithPrefixBuffered(outPrefix)
+		count, ids, err := tx.deleteEdgesWithPrefixBuffered(outPrefix, edge.StartNode, nil)
 		if err != nil {
 			t.Fatalf("deleteEdgesWithPrefixBuffered failed: %v", err)
 		}
@@ -1063,7 +1063,7 @@ func TestTransaction_DeleteEdgesWithPrefixBuffered(t *testing.T) {
 		if outPrefix == nil {
 			t.Fatal("outgoing prefix missing for seeded node")
 		}
-		_, _, err = tx.deleteEdgesWithPrefixBuffered(outPrefix)
+		_, _, err = tx.deleteEdgesWithPrefixBuffered(outPrefix, nodeID, nil)
 		if err == nil {
 			t.Fatal("expected corrupt edge payload error")
 		}

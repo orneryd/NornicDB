@@ -433,6 +433,20 @@ type Engine interface {
 	NodeCount() (int64, error)
 	EdgeCount() (int64, error)
 
+	// EdgeCountByType returns the number of edges of the given relationship
+	// type. Every engine maintains this per type so typed relationship counts
+	// are answered from counters (O(1) point reads), never by materializing
+	// edges (issue #638).
+	EdgeCountByType(edgeType string) (int64, error)
+
+	// EdgeCountByStartLabel / EdgeCountByEndLabel return the number of edges
+	// of the given type whose physical start / end endpoint carries the label.
+	// These are the positional (label, type) counters behind the
+	// one-labeled-endpoint count shapes (issue #638), e.g.
+	// MATCH (s:Label)-[:T]->() and MATCH ()-[:T]->(e:Label).
+	EdgeCountByStartLabel(label, edgeType string) (int64, error)
+	EdgeCountByEndLabel(label, edgeType string) (int64, error)
+
 	// DeleteByPrefix deletes all nodes and edges with IDs starting with the given prefix.
 	// Used for DROP DATABASE operations to delete all data in a namespace.
 	// Returns the number of nodes and edges deleted.
@@ -459,6 +473,16 @@ type PrefixStatsEngine interface {
 // lookups without materializing rows.
 type LabelStatsEngine interface {
 	NodeCountByLabel(label string) (int64, error)
+}
+
+// NamespaceEdgeTypeStatsProvider is an optional extension interface for
+// namespace-scoped relationship-type counts (issue #638). Engines that keep
+// per-(namespace, type) counters implement it; NamespacedEngine uses it to
+// stay exact in multi-database deployments.
+type NamespaceEdgeTypeStatsProvider interface {
+	EdgeCountByTypeInNamespace(namespace, edgeType string) (int64, error)
+	EdgeCountByStartLabelInNamespace(namespace, label, edgeType string) (int64, error)
+	EdgeCountByEndLabelInNamespace(namespace, label, edgeType string) (int64, error)
 }
 
 // NamespaceLabelStatsProvider is an optional extension interface for fast

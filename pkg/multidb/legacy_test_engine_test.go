@@ -473,6 +473,53 @@ func (e *legacyTestEngine) EdgeCount() (int64, error) {
 	return int64(len(e.edges)), nil
 }
 
+// EdgeCountByType answers from the in-memory edge-type index (issue #638
+// Engine contract): a typed count is a map length, never edge materialization.
+func (e *legacyTestEngine) EdgeCountByType(edgeType string) (int64, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return int64(len(e.edgeTypeIndex[edgeType])), nil
+}
+
+// edgeCountByEndpointLabel counts typed edges whose physical start (or end)
+// endpoint node carries the label, over the in-memory maps.
+func (e *legacyTestEngine) edgeCountByEndpointLabel(label, edgeType string, start bool) int64 {
+	var count int64
+	for id := range e.edgeTypeIndex[edgeType] {
+		edge := e.edges[id]
+		if edge == nil {
+			continue
+		}
+		nodeID := edge.EndNode
+		if start {
+			nodeID = edge.StartNode
+		}
+		node := e.nodes[nodeID]
+		if node == nil {
+			continue
+		}
+		for _, nodeLabel := range node.Labels {
+			if strings.EqualFold(nodeLabel, label) {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
+func (e *legacyTestEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.edgeCountByEndpointLabel(label, edgeType, true), nil
+}
+
+func (e *legacyTestEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.edgeCountByEndpointLabel(label, edgeType, false), nil
+}
+
 func (e *legacyTestEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

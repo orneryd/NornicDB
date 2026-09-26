@@ -11,8 +11,10 @@ import (
 
 type countErrEngine struct {
 	storage.Engine
-	edgeCountErr      error
-	getEdgesByTypeErr error
+	edgeCountErr        error
+	edgeCountByTypeErr  error
+	edgeCountByLabelErr error
+	getEdgesByTypeErr   error
 }
 
 func (e *countErrEngine) EdgeCount() (int64, error) {
@@ -20,6 +22,27 @@ func (e *countErrEngine) EdgeCount() (int64, error) {
 		return 0, e.edgeCountErr
 	}
 	return e.Engine.EdgeCount()
+}
+
+func (e *countErrEngine) EdgeCountByType(edgeType string) (int64, error) {
+	if e.edgeCountByTypeErr != nil {
+		return 0, e.edgeCountByTypeErr
+	}
+	return e.Engine.EdgeCountByType(edgeType)
+}
+
+func (e *countErrEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	if e.edgeCountByLabelErr != nil {
+		return 0, e.edgeCountByLabelErr
+	}
+	return e.Engine.EdgeCountByStartLabel(label, edgeType)
+}
+
+func (e *countErrEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	if e.edgeCountByLabelErr != nil {
+		return 0, e.edgeCountByLabelErr
+	}
+	return e.Engine.EdgeCountByEndLabel(label, edgeType)
 }
 
 func (e *countErrEngine) GetEdgesByType(edgeType string) ([]*storage.Edge, error) {
@@ -112,7 +135,7 @@ func TestTryFastRelationshipCount_Branches(t *testing.T) {
 	require.True(t, ok)
 	require.EqualError(t, err, "edge count failed")
 
-	getEdgesErrExec := NewStorageExecutor(&countErrEngine{Engine: store, getEdgesByTypeErr: errors.New("type count failed")})
+	getEdgesErrExec := NewStorageExecutor(&countErrEngine{Engine: store, edgeCountByTypeErr: errors.New("type count failed")})
 	_, ok, err = getEdgesErrExec.tryFastRelationshipCount(matches, returnItem{expr: "COUNT(r)"})
 	require.True(t, ok)
 	require.EqualError(t, err, "type count failed")

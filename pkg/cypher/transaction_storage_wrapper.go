@@ -690,6 +690,68 @@ func (w *transactionStorageWrapper) EdgeCount() (int64, error) {
 	return w.underlying.EdgeCount()
 }
 
+// EdgeCountByType keeps the typed relationship count inside an explicit
+// transaction. A mutation-free snapshot uses the storage per-type counter
+// directly (issue #638); once the transaction stages edge changes, it counts
+// the transaction-visible typed edges so uncommitted creates and deletes
+// retain Neo4j-compatible visibility (same shape as NodeCountByLabel).
+func (w *transactionStorageWrapper) EdgeCountByType(edgeType string) (int64, error) {
+	if (w.namespace == "" || w.underlyingIsNamespaced()) && !w.tx.HasPendingEdgeMutations() {
+		return w.underlying.EdgeCountByType(edgeType)
+	}
+	edges, err := w.GetEdgesByType(edgeType)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(edges)), nil
+}
+
+// EdgeCountByStartLabel / EdgeCountByEndLabel keep the one-labeled-endpoint
+// count shapes available inside an explicit transaction. A mutation-free
+// snapshot uses the storage positional counters; a transaction with staged
+// edge changes counts its transaction-visible typed edges by endpoint label.
+func (w *transactionStorageWrapper) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	return w.edgeCountByEndpointLabel(label, edgeType, true)
+}
+
+func (w *transactionStorageWrapper) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	return w.edgeCountByEndpointLabel(label, edgeType, false)
+}
+
+func (w *transactionStorageWrapper) edgeCountByEndpointLabel(label, edgeType string, start bool) (int64, error) {
+	if (w.namespace == "" || w.underlyingIsNamespaced()) && !w.tx.HasPendingEdgeMutations() {
+		if start {
+			return w.underlying.EdgeCountByStartLabel(label, edgeType)
+		}
+		return w.underlying.EdgeCountByEndLabel(label, edgeType)
+	}
+	edges, err := w.GetEdgesByType(edgeType)
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	for _, edge := range edges {
+		if edge == nil {
+			continue
+		}
+		nodeID := edge.EndNode
+		if start {
+			nodeID = edge.StartNode
+		}
+		node, err := w.GetNode(nodeID)
+		if err != nil || node == nil {
+			continue
+		}
+		for _, nodeLabel := range node.Labels {
+			if strings.EqualFold(nodeLabel, label) {
+				count++
+				break
+			}
+		}
+	}
+	return count, nil
+}
+
 func (w *transactionStorageWrapper) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	// DeleteByPrefix is not supported within a transaction context.
 	// This operation should be performed outside of a transaction.

@@ -121,15 +121,17 @@ func (b *BadgerEngine) decrementLabelCounts(counts map[namespaceLabel]int64) err
 	})
 }
 
-func encodeLabelCount(count int64) []byte {
+// encodeDerivedCount / decodeDerivedCount are the shared 8-byte big-endian
+// codec for persisted derived counts (label counts and edge-type counts).
+func encodeDerivedCount(count int64) []byte {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, uint64(count))
 	return buf
 }
 
-func decodeLabelCount(val []byte) (int64, error) {
+func decodeDerivedCount(val []byte) (int64, error) {
 	if len(val) != 8 {
-		return 0, fmt.Errorf("decode label count: expected 8 bytes, got %d", len(val))
+		return 0, fmt.Errorf("decode derived count: expected 8 bytes, got %d", len(val))
 	}
 	return int64(binary.BigEndian.Uint64(val)), nil
 }
@@ -172,7 +174,7 @@ func (b *BadgerEngine) readLabelCountInTxn(txn *badger.Txn, namespace, label str
 	}
 	var count int64
 	if err := item.Value(func(val []byte) error {
-		decoded, decodeErr := decodeLabelCount(val)
+		decoded, decodeErr := decodeDerivedCount(val)
 		if decodeErr != nil {
 			return decodeErr
 		}
@@ -203,7 +205,7 @@ func (b *BadgerEngine) adjustLabelCountInTxn(txn *badger.Txn, namespace, label s
 		}
 		return nil
 	}
-	return txn.Set(key, encodeLabelCount(next))
+	return txn.Set(key, encodeDerivedCount(next))
 }
 
 func (b *BadgerEngine) adjustNodeLabelCountsInTxn(txn *badger.Txn, namespace string, oldLabels, newLabels []string) error {
@@ -295,7 +297,7 @@ func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
 				continue
 			}
 			if err := it.Item().Value(func(val []byte) error {
-				count, decodeErr := decodeLabelCount(val)
+				count, decodeErr := decodeDerivedCount(val)
 				if decodeErr != nil {
 					return decodeErr
 				}
@@ -340,7 +342,7 @@ func (b *BadgerEngine) loadPersistedLabelCounts() (map[string]int64, error) {
 			namespace := string(key[2 : 2+sep])
 			label := string(key[2+sep+1:])
 			if err := it.Item().Value(func(val []byte) error {
-				count, decodeErr := decodeLabelCount(val)
+				count, decodeErr := decodeDerivedCount(val)
 				if decodeErr != nil {
 					return decodeErr
 				}
@@ -417,7 +419,7 @@ func (b *BadgerEngine) rebuildLabelCounts(counts map[string]int64) error {
 			if len(parts) != 2 {
 				continue
 			}
-			if err := txn.Set(labelCountKey(parts[0], parts[1]), encodeLabelCount(count)); err != nil {
+			if err := txn.Set(labelCountKey(parts[0], parts[1]), encodeDerivedCount(count)); err != nil {
 				return err
 			}
 		}

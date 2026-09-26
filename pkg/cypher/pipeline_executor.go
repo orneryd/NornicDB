@@ -351,6 +351,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 	if result, handled, err := e.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, params); handled || err != nil {
 		return result, true, err
 	}
+	if result, handled, err := e.tryExecutePipelineSimpleRelationshipCountPlan(ctx, clauses, params); handled || err != nil {
+		return result, true, err
+	}
 	if params != nil {
 		cypher = e.substituteParams(cypher, params)
 		clauses, ok = canExecuteAsPipeline(cypher)
@@ -555,6 +558,71 @@ func pipelineDecline(wrote bool, clause string) (*ExecuteResult, bool, error) {
 		return nil, true, localizedError(localization.CypherInvariantsPipelineDeclinedAfterWrite(clause), nil)
 	}
 	return nil, false, nil
+}
+
+// tryExecutePipelineSimpleRelationshipCountPlan is the fused physical form of
+// the pipeline's MATCH -> count reduction for relationship patterns (issue
+// #638). Without it, the row pipeline binds the relationship variable for
+// every match and counts the materialized rows — so
+//
+//	MATCH ()-[r:T]->() RETURN count(r)
+//
+// costs O(store size) instead of an O(1) counter read, even though the
+// traversal-layer fast path exists. It delegates to tryFastRelationshipCount,
+// the single implementation of the typed/untyped count semantics, so no
+// second count algorithm exists in the codebase.
+func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx context.Context, clauses []pipelineClause, params map[string]interface{}) (*ExecuteResult, bool, error) {
+	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
+		return nil, false, nil
+	}
+	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
+	if topLevelKeywordIndex(matchBody, "WHERE") >= 0 {
+		return nil, false, nil
+	}
+	if len(splitTopLevelComma(matchBody)) != 1 {
+		return nil, false, nil
+	}
+	matches := e.parseTraversalPattern(ctx, matchBody)
+	if matches == nil || matches.IsChained {
+		return nil, false, nil
+	}
+	if matches.Relationship.MinHops != 1 || matches.Relationship.MaxHops != 1 {
+		return nil, false, nil
+	}
+	// Endpoint shapes the O(1) counters can answer: anonymous endpoints
+	// (per-type tier) or at most one endpoint with a single label
+	// (positional (label, type) tier, like Neo4j's count store).
+	// tryFastRelationshipCount declines anything else (properties, both
+	// labeled, direction both), and the general path handles it.
+	if len(matches.StartNode.labels) > 1 || len(matches.EndNode.labels) > 1 ||
+		len(matches.Relationship.Properties) > 0 {
+		return nil, false, nil
+	}
+	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	if len(items) != 1 {
+		return nil, false, nil
+	}
+	// Counters can't reflect decay filtering or temporal viewports; those
+	// stores keep the materializing general path (same guard as the node
+	// label-count fast path).
+	if storageHasDecayFiltering(e.getStorage(ctx)) {
+		return nil, false, nil
+	}
+	if viewport, ok := TemporalViewportFromContext(ctx); ok && viewport.Enabled() {
+		return nil, false, nil
+	}
+	count, ok, err := e.tryFastRelationshipCount(matches, items[0])
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	column := items[0].expr
+	if items[0].alias != "" {
+		column = items[0].alias
+	}
+	return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 }
 
 // tryExecutePipelineSimpleNodeReadPlan applies cardinality and property-index

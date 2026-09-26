@@ -335,6 +335,22 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 			if err := txn.Set(typeKey, []byte{}); err != nil {
 				return err
 			}
+			// Per-type derived counter (issue #638) commits with the index entry.
+			if err := b.adjustEdgeTypeCountInTxn(txn, edgeNS, edge.Type, 1); err != nil {
+				return err
+			}
+			// Positional (label, type) counters (issue #638, one-labeled shapes).
+			startLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
+			if err != nil {
+				return err
+			}
+			endLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edge.EndNode)
+			if err != nil {
+				return err
+			}
+			if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, edgeNS, edge.Type, startLabels, endLabels, 1); err != nil {
+				return err
+			}
 			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 				return err
 			}

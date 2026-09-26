@@ -1374,6 +1374,62 @@ func (c *CompositeEngine) EdgeCount() (int64, error) {
 	return total, nil
 }
 
+// EdgeCountByType returns the typed edge count summed across all
+// constituents' per-type counters (issue #638).
+func (c *CompositeEngine) EdgeCountByType(edgeType string) (int64, error) {
+	readConstituents := c.getConstituentsForRead()
+	var total int64
+
+	for _, alias := range readConstituents {
+		engine, err := c.getConstituent(alias)
+		if err != nil {
+			continue
+		}
+
+		count, err := engine.EdgeCountByType(edgeType)
+		if err != nil {
+			return 0, localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
+		}
+
+		total += count
+	}
+
+	return total, nil
+}
+
+// EdgeCountByStartLabel returns the positional (label, type) count summed
+// across all constituents' counters (issue #638).
+func (c *CompositeEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	return c.sumConstituentPositionalCounts(func(engine Engine) (int64, error) {
+		return engine.EdgeCountByStartLabel(label, edgeType)
+	})
+}
+
+// EdgeCountByEndLabel returns the positional (label, type) count summed
+// across all constituents' counters (issue #638).
+func (c *CompositeEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	return c.sumConstituentPositionalCounts(func(engine Engine) (int64, error) {
+		return engine.EdgeCountByEndLabel(label, edgeType)
+	})
+}
+
+func (c *CompositeEngine) sumConstituentPositionalCounts(count func(Engine) (int64, error)) (int64, error) {
+	readConstituents := c.getConstituentsForRead()
+	var total int64
+	for _, alias := range readConstituents {
+		engine, err := c.getConstituent(alias)
+		if err != nil {
+			continue
+		}
+		value, err := count(engine)
+		if err != nil {
+			return 0, localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
+		}
+		total += value
+	}
+	return total, nil
+}
+
 // ============================================================================
 // DeleteByPrefix
 // ============================================================================

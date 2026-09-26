@@ -350,6 +350,52 @@ func (e *apocAdapterTestEngine) NodeCount() (int64, error) {
 func (e *apocAdapterTestEngine) EdgeCount() (int64, error) {
 	return int64(len(e.edges)), nil
 }
+
+// EdgeCountByType answers from the in-memory edge map (issue #638 Engine
+// contract): a typed count never materializes edges on the read path.
+func (e *apocAdapterTestEngine) EdgeCountByType(edgeType string) (int64, error) {
+	var count int64
+	for _, edge := range e.edges {
+		if edge != nil && strings.EqualFold(edge.Type, edgeType) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// edgeCountByEndpointLabel counts typed edges whose physical start (or end)
+// endpoint node carries the label, over the in-memory maps.
+func (e *apocAdapterTestEngine) edgeCountByEndpointLabel(label, edgeType string, start bool) int64 {
+	var count int64
+	for _, edge := range e.edges {
+		if edge == nil || !strings.EqualFold(edge.Type, edgeType) {
+			continue
+		}
+		nodeID := edge.EndNode
+		if start {
+			nodeID = edge.StartNode
+		}
+		node := e.nodes[nodeID]
+		if node == nil {
+			continue
+		}
+		for _, nodeLabel := range node.Labels {
+			if strings.EqualFold(nodeLabel, label) {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
+func (e *apocAdapterTestEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	return e.edgeCountByEndpointLabel(label, edgeType, true), nil
+}
+
+func (e *apocAdapterTestEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	return e.edgeCountByEndpointLabel(label, edgeType, false), nil
+}
 func (e *apocAdapterTestEngine) DeleteByPrefix(prefix string) (int64, int64, error) {
 	var nodesDeleted, edgesDeleted int64
 	for id := range e.nodes {

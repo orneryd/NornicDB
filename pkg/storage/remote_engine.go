@@ -1266,6 +1266,48 @@ func (r *RemoteEngine) EdgeCount() (int64, error) {
 	return remoteToInt64(rows[0][0]), nil
 }
 
+// EdgeCountByType answers the typed count from the remote instance's own
+// per-type counter fast path (issue #638): the remote server serves this
+// shape O(1) from its counters, so no client-side edge materialization exists
+// on this path.
+func (r *RemoteEngine) EdgeCountByType(edgeType string) (int64, error) {
+	return r.remotePositionalCount("", edgeType, false)
+}
+
+// EdgeCountByStartLabel answers the positional (label, type) count from the
+// remote instance's own counters: the remote server serves
+// MATCH (s:L)-[r:T]->() O(1).
+func (r *RemoteEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
+	return r.remotePositionalCount(label, edgeType, false)
+}
+
+// EdgeCountByEndLabel answers the positional (label, type) count from the
+// remote instance's own counters: the remote server serves
+// MATCH ()-[r:T]->(e:L) O(1).
+func (r *RemoteEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
+	return r.remotePositionalCount(label, edgeType, true)
+}
+
+func (r *RemoteEngine) remotePositionalCount(label, edgeType string, end bool) (int64, error) {
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	quotedType := "`" + strings.ReplaceAll(edgeType, "`", "``") + "`"
+	statement := "MATCH ()-[r:" + quotedType + "]->() RETURN count(r)"
+	if label != "" {
+		quotedLabel := "`" + strings.ReplaceAll(label, "`", "``") + "`"
+		if end {
+			statement = "MATCH ()-[r:" + quotedType + "]->(e:" + quotedLabel + ") RETURN count(r)"
+		} else {
+			statement = "MATCH (s:" + quotedLabel + ")-[r:" + quotedType + "]->() RETURN count(r)"
+		}
+	}
+	rows, err := r.transport.query(ctx, statement, nil)
+	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
+		return 0, err
+	}
+	return remoteToInt64(rows[0][0]), nil
+}
+
 func (r *RemoteEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	return 0, 0, localizedError(localization.StorageRemoteDeletePrefixUnsupported(prefix), nil)
 }
