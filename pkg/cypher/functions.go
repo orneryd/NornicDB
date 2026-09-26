@@ -164,12 +164,20 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 
 func splitPostfixPropertyAccess(expr string) (string, string, bool) {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
-	inSingle, inDouble := false, false
+	inSingle, inDouble, inBacktick := false, false, false
 	lastDot := -1
 	for index := 0; index < len(expr); index++ {
 		ch := expr[index]
 		if ch == '\\' && (inSingle || inDouble) {
 			index++
+			continue
+		}
+		// A backtick-quoted name may hold any character, dots included.
+		if ch == '`' && !inSingle && !inDouble {
+			inBacktick = !inBacktick
+			continue
+		}
+		if inBacktick {
 			continue
 		}
 		switch ch {
@@ -215,7 +223,9 @@ func splitPostfixPropertyAccess(expr string) (string, string, bool) {
 		return "", "", false
 	}
 	property := strings.TrimSpace(expr[lastDot+1:])
-	if !isValidIdentifier(property) {
+	if isBacktickQuotedName(property) {
+		property = normalizePropertyKey(property)
+	} else if !isValidIdentifier(property) {
 		return "", "", false
 	}
 	base := strings.TrimSpace(expr[:lastDot])
@@ -226,6 +236,16 @@ func splitPostfixPropertyAccess(expr string) (string, string, bool) {
 		return "", "", false
 	}
 	return base, property, true
+}
+
+// isBacktickQuotedName reports whether name is one backtick-quoted name
+// (`a b`, with “ for a backtick inside).
+func isBacktickQuotedName(name string) bool {
+	if len(name) < 3 || name[0] != '`' || name[len(name)-1] != '`' {
+		return false
+	}
+	inner := name[1 : len(name)-1]
+	return !strings.Contains(strings.ReplaceAll(inner, "``", ""), "`")
 }
 
 func isSimpleIdentifierOrProperty(expr string) bool {

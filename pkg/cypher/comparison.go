@@ -52,7 +52,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"unicode"
 
@@ -303,23 +302,7 @@ func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.N
 }
 
 func toInterfaceSlice(v interface{}) ([]interface{}, bool) {
-	if v == nil {
-		return nil, false
-	}
-	if list, ok := v.([]interface{}); ok {
-		return list, true
-	}
-
-	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Slice {
-		return nil, false
-	}
-
-	out := make([]interface{}, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		out[i] = rv.Index(i).Interface()
-	}
-	return out, true
+	return cypherListValue(v)
 }
 
 // containsIdentifierToken returns true if expr contains ident as a standalone

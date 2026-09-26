@@ -52,7 +52,7 @@ func validateStaticMapKeys(query string) error {
 			}
 		}
 		if !mapLiteral {
-			if strings.TrimSpace(query[index+1:close]) != "" && insidePatternDelimiter(query, index) {
+			if strings.TrimSpace(query[index+1:close]) != "" && insidePatternDelimiter(query, index) && !inProjectionClause(query, index) {
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
 					"UnexpectedSyntax",
@@ -63,7 +63,7 @@ func validateStaticMapKeys(query string) error {
 		}
 		for _, part := range parts {
 			trimmedPart := strings.TrimSpace(part)
-			if trimmedPart == ".*" || (strings.HasPrefix(trimmedPart, ".") && isValidIdentifier(strings.TrimPrefix(trimmedPart, "."))) {
+			if _, selector := mapProjectionPropertySelector(trimmedPart); trimmedPart == ".*" || (strings.HasPrefix(trimmedPart, ".") && selector) {
 				continue
 			}
 			separator := findTopLevelMapKeyValueSeparator(part)
@@ -204,6 +204,24 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 
 func isCypherWhitespace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+// inProjectionClause reports whether position lies in a RETURN, WITH, UNWIND
+// or SET clause, where parentheses group an expression, such as a map
+// projection (n {.k}).k, rather than delimit a node pattern.
+func inProjectionClause(query string, position int) bool {
+	clause, last := "", -1
+	for _, keyword := range []string{"MATCH", "CREATE", "MERGE", "WHERE", "RETURN", "WITH", "UNWIND", "SET"} {
+		positions := findAllTopLevelPipelineKeywordPositions(query[:position], keyword)
+		if len(positions) > 0 && positions[len(positions)-1] > last {
+			clause, last = keyword, positions[len(positions)-1]
+		}
+	}
+	switch clause {
+	case "RETURN", "WITH", "UNWIND", "SET":
+		return true
+	}
+	return false
 }
 
 func insidePatternDelimiter(query string, end int) bool {
