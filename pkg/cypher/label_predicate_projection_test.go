@@ -9,7 +9,7 @@ import (
 
 func TestRowExpressionProjectsLabelPredicate(t *testing.T) {
 	executor := &StorageExecutor{}
-	value, ok := executor.evaluateRowExpression("(node:Expected)", pipelineRow{
+	value, ok := rowValue(t, executor, "(node:Expected)", pipelineRow{
 		"node": &storage.Node{Labels: []string{"Expected"}},
 	})
 	require.True(t, ok)

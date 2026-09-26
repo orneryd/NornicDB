@@ -163,14 +163,14 @@ func TestTemporalWeekConstructionInheritsBaseDateWeekday(t *testing.T) {
 
 func TestTemporalProjectionUsesTypedIntermediateValues(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_projection"))
-	initial, evaluated := executor.evaluateRowExpression("date({year: 1984, month: 11, day: 11})", pipelineRow{})
+	initial, evaluated := rowValue(t, executor, "date({year: 1984, month: 11, day: 11})", pipelineRow{})
 	if !evaluated {
 		t.Fatal("initial date expression was not evaluated")
 	}
 	if _, ok := initial.(CypherDate); !ok {
 		t.Fatalf("initial value type = %T, want CypherDate (value %#v)", initial, initial)
 	}
-	projectedValue, evaluated := executor.evaluateRowExpression("date({date: other, day: 28})", pipelineRow{"other": initial})
+	projectedValue, evaluated := rowValue(t, executor, "date({date: other, day: 28})", pipelineRow{"other": initial})
 	if !evaluated {
 		t.Fatal("projected date expression was not evaluated")
 	}
@@ -268,7 +268,7 @@ func TestTemporalValuesRoundTripThroughStringInComputedRows(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, ok := executor.evaluateRowExpression(test.expression, values)
+			got, ok := rowValue(t, executor, test.expression, values)
 			if !ok {
 				t.Fatalf("expression %q was not evaluated", test.expression)
 			}
@@ -299,7 +299,7 @@ func TestTemporalComparisonUsesNeo4jValueOrdering(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, ok := executor.evaluateRowExpression(test.expression, pipelineRow{})
+			got, ok := rowValue(t, executor, test.expression, pipelineRow{})
 			if !ok {
 				t.Fatalf("expression %q was not evaluated", test.expression)
 			}
@@ -344,7 +344,7 @@ func TestTemporalArithmeticPreservesTypedValueSemantics(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.expression, func(t *testing.T) {
-			got, ok := executor.evaluateRowExpression(test.expression, values)
+			got, ok := rowValue(t, executor, test.expression, values)
 			if !ok {
 				t.Fatalf("expression %q was not evaluated", test.expression)
 			}
@@ -369,7 +369,7 @@ func TestTemporalTruncationUsesOneTypedImplementation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.expression, func(t *testing.T) {
-			got, ok := executor.evaluateRowExpression(test.expression, pipelineRow{})
+			got, ok := rowValue(t, executor, test.expression, pipelineRow{})
 			if !ok {
 				t.Fatalf("expression %q was not evaluated", test.expression)
 			}
@@ -395,7 +395,7 @@ func TestDurationBetweenFunctionsAlignTemporalTypes(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.expression, func(t *testing.T) {
-			got, ok := executor.evaluateRowExpression(test.expression, pipelineRow{})
+			got, ok := rowValue(t, executor, test.expression, pipelineRow{})
 			if !ok {
 				t.Fatalf("expression %q was not evaluated", test.expression)
 			}

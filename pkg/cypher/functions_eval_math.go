@@ -1152,7 +1152,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 		sawNull := false
 		for _, item := range listVal {
-			result, ok := e.evaluateQuantifierPredicate(predicate, varName, item, nodes, rels)
+			result, ok := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
 			if !ok || result == nil {
 				sawNull = true
 				continue
@@ -1191,7 +1191,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 		sawNull := false
 		for _, item := range listVal {
-			result, ok := e.evaluateQuantifierPredicate(predicate, varName, item, nodes, rels)
+			result, ok := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
 			if !ok || result == nil {
 				sawNull = true
 				continue
@@ -1230,7 +1230,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 		sawNull := false
 		for _, item := range listVal {
-			result, ok := e.evaluateQuantifierPredicate(predicate, varName, item, nodes, rels)
+			result, ok := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
 			if !ok || result == nil {
 				sawNull = true
 				continue
@@ -1270,7 +1270,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		matchCount := 0
 		sawNull := false
 		for _, item := range listVal {
-			result, ok := e.evaluateQuantifierPredicate(predicate, varName, item, nodes, rels)
+			result, ok := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
 			if !ok || result == nil {
 				sawNull = true
 				continue
@@ -1595,6 +1595,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 }
 
 func (e *StorageExecutor) evaluateQuantifierPredicate(
+	ctx context.Context,
 	predicate string,
 	variable string,
 	item interface{},
@@ -1609,7 +1610,7 @@ func (e *StorageExecutor) evaluateQuantifierPredicate(
 		values[name] = relationship
 	}
 	values[variable] = item
-	value, ok := e.evaluateRowExpression(predicate, values)
+	value, ok := e.evaluateRowExpressionWithContext(ctx, predicate, values)
 	if !ok {
 		return nil, false
 	}

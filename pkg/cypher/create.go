@@ -2481,7 +2481,10 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 				if item.alias != "" {
 					alias = item.alias
 				}
-				val, ok := e.evaluateRowExpression(item.expr, row)
+				val, ok, err := e.evaluateRowValue(item.expr, row)
+				if err != nil {
+					return nil, err
+				}
 				if !ok {
 					return nil, localizedError(localization.CypherResidualCreateWithExpressionInvalid(item.expr), nil)
 				}

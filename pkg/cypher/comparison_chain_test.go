@@ -86,7 +86,7 @@ func TestRowPipelineComparisonChainsUseEveryAdjacentPair(t *testing.T) {
 		"'a' <= text <= 'c'":  true,
 		"'a' < text < 'b'":    false,
 	} {
-		got, ok := exec.evaluateRowExpression(expression, values)
+		got, ok := rowValue(t, exec, expression, values)
 		if !ok || got != want {
 			t.Fatalf("%s: got %#v, %v; want %#v, true", expression, got, ok, want)
 		}

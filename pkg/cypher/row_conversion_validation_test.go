@@ -34,14 +34,14 @@ func TestConversionRetainsNullForUnparseableStrings(t *testing.T) {
 		"[value IN values | toBoolean(value)]",
 		row,
 	))
-	result, ok := executor.evaluateRowExpression("[value IN values | toBoolean(value)]", row)
+	result, ok := rowValue(t, executor, "[value IN values | toBoolean(value)]", row)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{true, nil}, result)
 }
 
 func TestIntegerConversionTruncatesNumericStrings(t *testing.T) {
 	executor := &StorageExecutor{}
-	result, ok := executor.evaluateRowExpression("toInteger('2.9')", pipelineRow{})
+	result, ok := rowValue(t, executor, "toInteger('2.9')", pipelineRow{})
 	require.True(t, ok)
 	require.Equal(t, int64(2), result)
 }

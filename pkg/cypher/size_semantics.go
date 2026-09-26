@@ -1,11 +1,9 @@
 package cypher
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
@@ -52,37 +50,43 @@ func sizeArgumentError(value interface{}) error {
 	return typeMismatchError(sizeArgumentTypes, value)
 }
 
-// recordRowSizeArgumentFailure records the size() type error of an
-// expression the row evaluator could not resolve: the first size(...) call,
-// at any depth, whose argument evaluates to a value size() rejects. The row
-// evaluator has no context to record failures itself, so the context-aware
-// entry point (evaluateRowExpressionWithContext) calls this when it gets an
-// unresolved result, turning "could not parse" into the type error.
-func (e *StorageExecutor) recordRowSizeArgumentFailure(ctx context.Context, expression string, values pipelineRow) bool {
-	if !containsFold(expression, "size") {
-		return false
-	}
-	for offset := 0; offset < len(expression); {
-		index := findKeywordIndexInContext(expression[offset:], "size")
-		if index < 0 {
-			return false
+// pathTypeMarker names a path value (paths are carried as maps holding a
+// _pathResult) for cypherValueTypeName.
+type pathTypeMarker struct{}
+
+// cypherValueTypeName is the Cypher type name Neo4j uses in type errors.
+func cypherValueTypeName(value interface{}) string {
+	switch v := value.(type) {
+	case pathTypeMarker, *PathResult, PathResult:
+		return "Path"
+	case *storage.Node:
+		return "Node"
+	case *storage.Edge:
+		return "Relationship"
+	case bool:
+		return "Boolean"
+	case string:
+		return "String"
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return "Integer"
+	case float32, float64:
+		return "Float"
+	case map[string]interface{}:
+		if _, isPath := v["_pathResult"]; isPath {
+			return "Path"
 		}
-		index += offset
-		open := skipSpaces(expression, index+len("size"))
-		if open < len(expression) && expression[open] == '(' {
-			if close := findMatchingDelimiter(expression, open, '(', ')'); close > open {
-				argument := strings.TrimSpace(expression[open+1 : close])
-				if value, resolved := e.evaluateRowExpression(argument, values); resolved {
-					if err := sizeArgumentError(value); err != nil {
-						recordExpressionFailure(ctx, err)
-						return true
-					}
-				}
-			}
-		}
-		offset = index + len("size")
+		return "Map"
 	}
-	return false
+	if value == nil {
+		return "Null"
+	}
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.Map:
+		return "Map"
+	case reflect.Slice, reflect.Array:
+		return "List"
+	}
+	return fmt.Sprintf("%T", value)
 }
 
 // typeMismatchFromFunctionError converts a registry TypeMismatchError into

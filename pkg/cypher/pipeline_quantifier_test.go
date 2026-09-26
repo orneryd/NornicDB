@@ -13,13 +13,13 @@ func TestPipelineQuantifierAcrossRepeatedHorizons(t *testing.T) {
 		"list":      []interface{}{int64(1), int64(2)},
 		"x":         int64(3),
 	}
-	_, evaluated := exec.evaluateRowExpression("rand()", expressionRow)
+	_, evaluated := rowValue(t, exec, "rand()", expressionRow)
 	require.True(t, evaluated)
-	_, evaluated = exec.evaluateRowExpression("rand() < 0.5", expressionRow)
+	_, evaluated = rowValue(t, exec, "rand() < 0.5", expressionRow)
 	require.True(t, evaluated)
-	_, evaluated = exec.evaluateRowExpression("CASE WHEN rand() < 0.5 THEN reverse(list) ELSE list END", expressionRow)
+	_, evaluated = rowValue(t, exec, "CASE WHEN rand() < 0.5 THEN reverse(list) ELSE list END", expressionRow)
 	require.True(t, evaluated)
-	value, evaluated := exec.evaluateRowExpression("CASE WHEN rand() < 0.5 THEN reverse(list) ELSE list END + x", expressionRow)
+	value, evaluated := rowValue(t, exec, "CASE WHEN rand() < 0.5 THEN reverse(list) ELSE list END + x", expressionRow)
 	require.True(t, evaluated)
 	require.Len(t, value, 3)
 	query := `

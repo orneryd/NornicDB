@@ -1,13 +1,14 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 )
 
-func (e *StorageExecutor) evaluatePipelinePercentile(rows []pipelineRow, name, expression string, distinct bool) (interface{}, bool) {
+func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows []pipelineRow, name, expression string, distinct bool) (interface{}, bool) {
 	arguments := e.splitFunctionArgs(expression)
 	if len(arguments) != 2 {
 		return nil, false
@@ -15,7 +16,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(rows []pipelineRow, name, e
 
 	percentile := float64(0)
 	if len(rows) > 0 {
-		value, resolved := e.evaluateRowExpression(strings.TrimSpace(arguments[1]), rows[0])
+		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[1]), rows[0])
 		if !resolved {
 			return nil, false
 		}
@@ -33,7 +34,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(rows []pipelineRow, name, e
 	values := make([]percentileValue, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		value, resolved := e.evaluateRowExpression(strings.TrimSpace(arguments[0]), row)
+		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[0]), row)
 		if !resolved {
 			return nil, false
 		}
@@ -82,7 +83,10 @@ func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelin
 			if len(arguments) != 2 {
 				continue
 			}
-			value, resolved := e.evaluateRowExpression(strings.TrimSpace(arguments[1]), row)
+			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(arguments[1]), row)
+			if err != nil {
+				return err
+			}
 			if !resolved {
 				continue
 			}
