@@ -391,7 +391,8 @@ func TestCompositeExplicitTx_RemoteParticipantRollbackLifecycle(t *testing.T) {
 // TestCompositeExplicitTx_StatementsShareShardTransaction: the statements of
 // an explicit transaction on a composite database run in one transaction per
 // constituent. A statement sees what earlier ones wrote, and COMMIT keeps
-// every statement's writes, as in Neo4j.
+// every statement's writes, as in Neo4j; the relationship counters (count by
+// type and by label and type) stay equal to a scan.
 func TestCompositeExplicitTx_StatementsShareShardTransaction(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, nil)
@@ -411,16 +412,29 @@ func TestCompositeExplicitTx_StatementsShareShardTransaction(t *testing.T) {
 		require.Len(t, res.Rows, 1)
 		return res.Rows[0][0]
 	}
+	// requireRelationshipCounts compares the counter-served relationship
+	// counts with a scan that must read every relationship.
+	requireRelationshipCounts := func(exec *StorageExecutor, want int64) {
+		for _, query := range []string{
+			"USE cmp_sh.sh MATCH ()-[r:TS]->() RETURN count(r) AS c",
+			"USE cmp_sh.sh MATCH (:TxShare)-[r:TS]->() RETURN count(r) AS c",
+			"USE cmp_sh.sh MATCH ()-[r:TS]->() WHERE r.missing IS NULL RETURN count(r) AS c",
+		} {
+			res, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, want, res.Rows[0][0], query)
+		}
+	}
 
 	for _, end := range []string{"COMMIT", "ROLLBACK"} {
 		exec := NewStorageExecutor(cmpStore)
 		exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
 		_, err = exec.Execute(ctx, "BEGIN", nil)
 		require.NoError(t, err)
-		_, err = exec.Execute(ctx, "USE cmp_sh.sh CREATE (:TxShare {id: 1})", nil)
+		_, err = exec.Execute(ctx, "USE cmp_sh.sh CREATE (:TxShare {id: 1})-[:TS]->(:TxEnd)", nil)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), count(exec), end)
-		_, err = exec.Execute(ctx, "USE cmp_sh.sh CREATE (:TxShare {id: 2})", nil)
+		_, err = exec.Execute(ctx, "USE cmp_sh.sh CREATE (:TxShare {id: 2})-[:TS]->(:TxEnd)", nil)
 		require.NoError(t, err)
 		require.Equal(t, int64(2), count(exec), end)
 		_, err = exec.Execute(ctx, end, nil)
@@ -430,10 +444,12 @@ func TestCompositeExplicitTx_StatementsShareShardTransaction(t *testing.T) {
 		verify.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
 		if end == "COMMIT" {
 			require.Equal(t, int64(2), count(verify))
-			_, err = verify.Execute(ctx, "USE cmp_sh.sh MATCH (n:TxShare) DETACH DELETE n", nil)
+			requireRelationshipCounts(verify, 2)
+			_, err = verify.Execute(ctx, "USE cmp_sh.sh MATCH (n) DETACH DELETE n", nil)
 			require.NoError(t, err)
 		} else {
 			require.Equal(t, int64(0), count(verify))
 		}
+		requireRelationshipCounts(verify, 0)
 	}
 }
