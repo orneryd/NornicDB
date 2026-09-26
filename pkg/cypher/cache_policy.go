@@ -41,7 +41,9 @@ func isCacheableReadQuery(cypher string) bool {
 	// db.retrieve can start, pull, or discard durable continuation cursors. Its
 	// stateful lifecycle and owner checks must always reach the continuation
 	// registry, including when qid/discard fields are hidden in parameters.
-	if retrieveCallRe.MatchString(cypher) {
+	// (The pattern needs the text DB.RETRIEVE, so any other statement skips
+	// the regular expression.)
+	if strings.Contains(upper, "DB.RETRIEVE") && retrieveCallRe.MatchString(cypher) {
 		return false
 	}
 
