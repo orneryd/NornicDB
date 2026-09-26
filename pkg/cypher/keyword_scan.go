@@ -904,14 +904,21 @@ func commentReplacement(comment string) string {
 func (r *queryRewrite) originalOffset(offset int, start bool) int {
 	shift := 0
 	for _, edit := range r.edits {
-		if offset < edit.canonStart || (offset == edit.canonStart && start) {
-			break
-		}
-		if offset < edit.canonEnd || (offset == edit.canonEnd && !start) {
-			if start {
+		if start {
+			if offset < edit.canonStart {
+				break
+			}
+			if offset < edit.canonEnd {
 				return edit.origStart
 			}
-			return edit.origEnd
+		} else {
+			// A span that ends where a replacement starts ends before it.
+			if offset <= edit.canonStart {
+				break
+			}
+			if offset <= edit.canonEnd {
+				return edit.origEnd
+			}
 		}
 		shift = edit.origEnd - edit.canonEnd
 	}

@@ -215,3 +215,74 @@ func TestCanonicalQueryRestoresParserPosition(t *testing.T) {
 	require.Equal(t, "Invalid input: line 3:2 mismatched input 'RETURN'", rewrite.restoreMessage(message))
 	require.Equal(t, "Invalid input: line 9:0 x", rewrite.restoreMessage("Invalid input: line 9:0 x"))
 }
+
+// TestQueryRewriteRestoresPlansAndMessages: EXPLAIN / PROFILE text and
+// metadata, quoted message fragments and every own-syntax form keep the
+// client's text.
+func TestQueryRewriteRestoresPlansAndMessages(t *testing.T) {
+	original := "EXPLAIN MATCH (n)\n  WHERE n.x IS  NULL\nRETURN n"
+	canonical, rewrite := canonicalizeQueryText(original)
+	require.Equal(t, "EXPLAIN MATCH (n) WHERE n.x IS NULL RETURN n", canonical)
+
+	result := &ExecuteResult{
+		Columns: []string{"plan"},
+		Rows:    [][]interface{}{{"n.x IS NULL"}, {[]interface{}{"n.x IS NULL", int64(1)}}},
+		Metadata: map[string]interface{}{
+			"query": canonical,
+			"plan":  map[string]interface{}{"details": []interface{}{"n.x IS NULL", 2.5}, "rows": int64(1)},
+		},
+	}
+	restored, err := rewrite.restore(result, fmt.Errorf("Invalid input 'n.x IS NULL' near \"RETURN n\""))
+	require.Equal(t, "n.x IS  NULL", restored.Rows[0][0])
+	require.Equal(t, []interface{}{"n.x IS  NULL", int64(1)}, restored.Rows[1][0])
+	require.Equal(t, original, restored.Metadata["query"])
+	require.Equal(t, []interface{}{"n.x IS  NULL", 2.5}, restored.Metadata["plan"].(map[string]interface{})["details"])
+	require.Equal(t, "n.x IS NULL", result.Rows[0][0], "the cached result stays canonical")
+	require.EqualError(t, err, "Invalid input 'n.x IS  NULL' near \"RETURN n\"")
+	require.Equal(t, "whole: "+original, rewrite.restoreMessage("whole: "+canonical))
+	require.Equal(t, "nothing to map", rewrite.restoreMessage("nothing to map"))
+
+	// A plain statement's rows are data: never rewritten.
+	_, plain := canonicalizeQueryText("RETURN  'n.x IS NULL' AS s")
+	data := &ExecuteResult{Columns: []string{"s"}, Rows: [][]interface{}{{"RETURN 'n.x IS NULL' AS s"}}}
+	kept, err := plain.restore(data, nil)
+	require.NoError(t, err)
+	require.Same(t, data, kept)
+
+	var nilRewrite *queryRewrite
+	same, sameErr := nilRewrite.restore(data, nil)
+	require.Same(t, data, same)
+	require.NoError(t, sameErr)
+}
+
+// TestOwnStatementSyntax: NornicDB's line-based statements keep their lines
+// and lose only their comments; leading shell command lines stay as sent.
+func TestOwnStatementSyntax(t *testing.T) {
+	for _, query := range []string{
+		"CREATE OR REPLACE PROCEDURE p() AS { RETURN 1 }",
+		"create procedure p() AS { RETURN 1 }",
+		"ALTER DECAY PROFILE x SET DECAY FLOOR 0.1",
+		"DROP PROMOTION POLICY p",
+		"SHOW RETENTION BINDINGS",
+		"CREATE CONSTRAINT c FOR (n:L) REQUIRE {\n n.a IS UNIQUE\n}",
+	} {
+		require.True(t, hasOwnStatementSyntax(query), query)
+	}
+	for _, query := range []string{
+		"CREATE CONSTRAINT c FOR (n:L) REQUIRE n.a IS UNIQUE",
+		"CREATE INDEX i FOR (n:L) ON (n.a)",
+		"MATCH (n) RETURN n",
+		"123",
+	} {
+		require.False(t, hasOwnStatementSyntax(query), query)
+	}
+	got, _ := canonicalizeQueryText("CREATE DECAY PROFILE d FOR (n:L) {\n  HALF LIFE 10 /* a\n b */\n  FLOOR 0.1 // note\n}")
+	require.Equal(t, "CREATE DECAY PROFILE d FOR (n:L) {\n  HALF LIFE 10  \n\n  FLOOR 0.1 \n}", got)
+
+	require.Equal(t, 0, leadingShellCommandsEnd("MATCH (n) RETURN n"))
+	require.Equal(t, len(":USE db\n"), leadingShellCommandsEnd(":USE db\nRETURN 1"))
+	require.Equal(t, len(":use a\n  :param x => 1\n"), leadingShellCommandsEnd(":use a\n  :param x => 1\nRETURN  1"))
+	require.Equal(t, len(":USE db"), leadingShellCommandsEnd(":USE db"))
+	got, _ = canonicalizeQueryText(":USE  db\nRETURN   1")
+	require.Equal(t, ":USE  db\nRETURN 1", got)
+}
