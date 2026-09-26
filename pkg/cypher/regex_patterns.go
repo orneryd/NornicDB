@@ -12,7 +12,6 @@ package cypher
 
 import (
 	"regexp"
-	"sync"
 )
 
 // =============================================================================
@@ -36,15 +35,17 @@ var (
 // =============================================================================
 
 // regexCache provides thread-safe caching of compiled regex patterns.
-// Used for dynamic patterns like Cypher's =~ regex comparison operator.
-var regexCache sync.Map // map[string]*regexp.Regexp
+// Used for dynamic patterns like Cypher's =~ regex comparison operator. The
+// patterns come from queries and parameters, so the cache is bounded
+// (boundedCache): 1024 compiled patterns, cleared and refilled when full.
+var regexCache = newBoundedCache[string, *regexp.Regexp](1024)
 
 // GetCachedRegex returns a compiled regex for the pattern, using cache if available.
 // This avoids re-compiling the same pattern on every =~ comparison.
 func GetCachedRegex(pattern string) (*regexp.Regexp, error) {
 	// Check cache first
-	if cached, ok := regexCache.Load(pattern); ok {
-		return cached.(*regexp.Regexp), nil
+	if cached, ok := regexCache.get(pattern); ok {
+		return cached, nil
 	}
 
 	// Compile and cache
@@ -54,6 +55,6 @@ func GetCachedRegex(pattern string) (*regexp.Regexp, error) {
 	}
 
 	// Store in cache (another goroutine might have stored it already, that's fine)
-	regexCache.Store(pattern, re)
+	regexCache.put(pattern, re)
 	return re, nil
 }

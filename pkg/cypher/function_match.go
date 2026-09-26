@@ -6,7 +6,6 @@ package cypher
 
 import (
 	"strings"
-	"sync"
 )
 
 type funcMatcher struct {
@@ -27,18 +26,20 @@ func (m *funcMatcher) String() string {
 	return "func:" + strings.ToLower(strings.TrimSpace(m.funcName))
 }
 
-var funcMatcherCache sync.Map
+// funcMatcherCache caches function-name matchers by lower-cased name
+// (boundedCache).
+var funcMatcherCache = newBoundedCache[string, *funcMatcher](1024)
 
 func getFuncMatcher(funcName string) *funcMatcher {
 	key := strings.ToLower(strings.TrimSpace(funcName))
 	if key == "" {
 		return &funcMatcher{funcName: funcName}
 	}
-	if cached, ok := funcMatcherCache.Load(key); ok {
-		return cached.(*funcMatcher)
+	if cached, ok := funcMatcherCache.get(key); ok {
+		return cached
 	}
 	m := &funcMatcher{funcName: key}
-	funcMatcherCache.Store(key, m)
+	funcMatcherCache.put(key, m)
 	return m
 }
 
