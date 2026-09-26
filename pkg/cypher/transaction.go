@@ -30,6 +30,11 @@ type TransactionContext struct {
 	database        string
 	txID            string
 	fabricRemoteExe *fabric.RemoteFragmentExecutor
+	// fabricLocalTxExec holds, per local constituent (shard name), the
+	// executor of this transaction's sub-transaction on it. Every statement
+	// of the transaction runs there, so it sees earlier statements' writes
+	// and COMMIT / ROLLBACK ends all of them.
+	fabricLocalTxExec map[string]*StorageExecutor
 	// failed is the error of the first statement that failed in the
 	// transaction. A failed transaction stays open so ROLLBACK discards what
 	// it wrote; any other statement is refused and COMMIT rolls it back, as in

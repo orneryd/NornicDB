@@ -387,3 +387,53 @@ func TestCompositeExplicitTx_RemoteParticipantRollbackLifecycle(t *testing.T) {
 	require.Equal(t, 0, commitCount)
 	require.Equal(t, 1, rollbackCount)
 }
+
+// TestCompositeExplicitTx_StatementsShareShardTransaction: the statements of
+// an explicit transaction on a composite database run in one transaction per
+// constituent. A statement sees what earlier ones wrote, and COMMIT keeps
+// every statement's writes, as in Neo4j.
+func TestCompositeExplicitTx_StatementsShareShardTransaction(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	mgr, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	defer mgr.Close()
+
+	require.NoError(t, mgr.CreateDatabase("share_shard"))
+	require.NoError(t, mgr.CreateCompositeDatabase("cmp_sh", []multidb.ConstituentRef{
+		{Alias: "sh", DatabaseName: "share_shard", Type: "local", AccessMode: "read_write"},
+	}))
+	cmpStore, err := mgr.GetStorage("cmp_sh")
+	require.NoError(t, err)
+	ctx := context.Background()
+	count := func(exec *StorageExecutor) interface{} {
+		res, err := exec.Execute(ctx, "USE cmp_sh.sh MATCH (n:TxShare) RETURN count(n) AS c", nil)
+		require.NoError(t, err)
+		require.Len(t, res.Rows, 1)
+		return res.Rows[0][0]
+	}
+
+	for _, end := range []string{"COMMIT", "ROLLBACK"} {
+		exec := NewStorageExecutor(cmpStore)
+		exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+		_, err = exec.Execute(ctx, "BEGIN", nil)
+		require.NoError(t, err)
+		_, err = exec.Execute(ctx, "USE cmp_sh.sh CREATE (:TxShare {id: 1})", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), count(exec), end)
+		_, err = exec.Execute(ctx, "USE cmp_sh.sh CREATE (:TxShare {id: 2})", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), count(exec), end)
+		_, err = exec.Execute(ctx, end, nil)
+		require.NoError(t, err)
+
+		verify := NewStorageExecutor(cmpStore)
+		verify.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+		if end == "COMMIT" {
+			require.Equal(t, int64(2), count(verify))
+			_, err = verify.Execute(ctx, "USE cmp_sh.sh MATCH (n:TxShare) DETACH DELETE n", nil)
+			require.NoError(t, err)
+		} else {
+			require.Equal(t, int64(0), count(verify))
+		}
+	}
+}

@@ -595,8 +595,27 @@ type cypherFabricExecutor struct {
 	authToken  string
 	autoCommit bool
 
-	mu               sync.Mutex
+	mu sync.Mutex
+	// localTxExecBySub holds the sub-transaction executors of a statement
+	// run outside an explicit transaction; an explicit transaction keeps
+	// them in its TransactionContext (localShardTxExecutors).
 	localTxExecBySub map[string]*StorageExecutor
+}
+
+// localShardTxExecutors is the map of sub-transaction executors by shard
+// name: the explicit transaction's, so its statements share one
+// sub-transaction per constituent, or else this statement's own.
+func (c *cypherFabricExecutor) localShardTxExecutors() map[string]*StorageExecutor {
+	if c.base != nil && c.base.txContext != nil && c.base.txContext.active {
+		if c.base.txContext.fabricLocalTxExec == nil {
+			c.base.txContext.fabricLocalTxExec = make(map[string]*StorageExecutor)
+		}
+		return c.base.txContext.fabricLocalTxExec
+	}
+	if c.localTxExecBySub == nil {
+		c.localTxExecBySub = make(map[string]*StorageExecutor)
+	}
+	return c.localTxExecBySub
 }
 
 func (c *cypherFabricExecutor) ExecuteQuery(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
@@ -819,10 +838,8 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.localTxExecBySub == nil {
-		c.localTxExecBySub = make(map[string]*StorageExecutor)
-	}
-	if existing := c.localTxExecBySub[sub.ShardName]; existing != nil {
+	executors := c.localShardTxExecutors()
+	if existing := executors[sub.ShardName]; existing != nil {
 		return existing, nil
 	}
 
@@ -854,7 +871,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 		return nil, err
 	}
 
-	c.localTxExecBySub[sub.ShardName] = txExec
+	executors[sub.ShardName] = txExec
 	return txExec, nil
 }
 
