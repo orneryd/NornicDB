@@ -223,20 +223,20 @@ var runningTransactions = &runningTransactionRegistry{byNumber: make(map[uint64]
 
 func (r *runningTransactionRegistry) begin(ctx context.Context, database string) *runningTransaction {
 	tx := &runningTransaction{}
-	r.register(ctx, tx, database)
+	r.register(ctx, tx, database, time.Now())
 	return tx
 }
 
 // register fills in tx - a new transaction on database, run by ctx's
 // connection and user - and lists it.
-func (r *runningTransactionRegistry) register(ctx context.Context, tx *runningTransaction, database string) {
+func (r *runningTransactionRegistry) register(ctx context.Context, tx *runningTransaction, database string, started time.Time) {
 	if database == "" {
 		database = "nornic"
 	}
 	tx.number = r.nextTx.Add(1)
 	tx.database = database
 	tx.connection = clientConnectionFromContext(ctx)
-	tx.started = time.Now()
+	tx.started = started
 	if user, ok := authenticatedUserFromContext(ctx); ok {
 		tx.username = user.Name
 	}
@@ -254,12 +254,13 @@ func (r *runningTransactionRegistry) end(tx *runningTransaction) {
 	r.mu.Unlock()
 }
 
-// startQuery records the statement tx runs; TERMINATE cancels it.
-func (tx *runningTransaction) startQuery(query string, statement *statementContext) {
+// startQuery records the statement tx runs, started at started; TERMINATE
+// cancels it.
+func (tx *runningTransaction) startQuery(query string, statement *statementContext, started time.Time) {
 	tx.mu.Lock()
 	tx.query = query
 	tx.queryNumber = runningTransactions.nextQry.Add(1)
-	tx.queryStarted = time.Now()
+	tx.queryStarted = started
 	tx.statement = statement
 	tx.mu.Unlock()
 	if tx.terminated.Load() {
@@ -435,14 +436,17 @@ func (e *StorageExecutor) withRunningStatement(ctx context.Context, query string
 			return ctx, runningStatement{}, transactionTerminatedError()
 		}
 		statement := &statementContext{parent: ctx, tx: tx}
-		tx.startQuery(query, statement)
+		tx.startQuery(query, statement, time.Now())
 		return statement, runningStatement{tx: tx, statement: statement}, nil
 	}
 	statement := &autoCommitStatementContext{statementContext: statementContext{parent: ctx}}
 	tx := &statement.transaction
 	statement.tx = tx
-	runningTransactions.register(ctx, tx, e.currentDatabaseName())
-	tx.startQuery(query, &statement.statementContext)
+	// An auto-commit transaction and its statement start together: one
+	// clock reading for both.
+	started := time.Now()
+	runningTransactions.register(ctx, tx, e.currentDatabaseName(), started)
+	tx.startQuery(query, &statement.statementContext, started)
 	return &statement.statementContext, runningStatement{tx: tx, statement: &statement.statementContext, autoCommit: true}, nil
 }
 
