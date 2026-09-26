@@ -666,19 +666,39 @@ func (w *transactionStorageWrapper) NodeCount() (int64, error) {
 	return w.underlying.NodeCount()
 }
 
-// NodeCountByLabel keeps the count-only MATCH fast path available inside an
-// explicit transaction. A mutation-free snapshot can use the storage label
-// counter directly; once the transaction stages node changes, count its
-// transaction-visible label result so uncommitted creates and deletes retain
-// Neo4j-compatible visibility.
+// The derived counters (node label counts; relationship type and positional
+// (label, type) counts, issue #638) keep the count-only fast paths available
+// inside an explicit transaction. What the transaction sees is the committed
+// counter plus the delta its own staged writes will apply at commit
+// (storage.BadgerTransaction.Pending*CountDelta), Neo4j's read-committed
+// view, so a count stays O(1) after the transaction writes (#683). When the
+// counters don't describe the transaction's namespace, a transaction with
+// staged changes counts by scanning its visible nodes or relationships
+// (the *Scan methods, which the fast paths are tested against).
+
+// countersDescribeTransaction reports whether the underlying counters count
+// the transaction's namespace.
+func (w *transactionStorageWrapper) countersDescribeTransaction() bool {
+	return w.namespace == "" || w.underlyingIsNamespaced()
+}
+
+// NodeCountByLabel is the transaction-visible count of nodes with label.
 func (w *transactionStorageWrapper) NodeCountByLabel(label string) (int64, error) {
-	if (w.namespace == "" || w.underlyingIsNamespaced()) && !w.tx.HasPendingNodeMutations() {
+	if w.countersDescribeTransaction() {
 		if counter, ok := w.underlying.(interface {
 			NodeCountByLabel(string) (int64, error)
 		}); ok {
-			return counter.NodeCountByLabel(label)
+			delta, tracked := w.tx.PendingNodeLabelCountDelta(w.namespace, label)
+			if tracked || !w.tx.HasPendingNodeMutations() {
+				count, err := counter.NodeCountByLabel(label)
+				return count + delta, err
+			}
 		}
 	}
+	return w.nodeCountByLabelScan(label)
+}
+
+func (w *transactionStorageWrapper) nodeCountByLabelScan(label string) (int64, error) {
 	nodes, err := w.GetNodesByLabel(label)
 	if err != nil {
 		return 0, err
@@ -690,15 +710,20 @@ func (w *transactionStorageWrapper) EdgeCount() (int64, error) {
 	return w.underlying.EdgeCount()
 }
 
-// EdgeCountByType keeps the typed relationship count inside an explicit
-// transaction. A mutation-free snapshot uses the storage per-type counter
-// directly (issue #638); once the transaction stages edge changes, it counts
-// the transaction-visible typed edges so uncommitted creates and deletes
-// retain Neo4j-compatible visibility (same shape as NodeCountByLabel).
+// EdgeCountByType is the transaction-visible count of relationships of
+// edgeType.
 func (w *transactionStorageWrapper) EdgeCountByType(edgeType string) (int64, error) {
-	if (w.namespace == "" || w.underlyingIsNamespaced()) && !w.tx.HasPendingEdgeMutations() {
-		return w.underlying.EdgeCountByType(edgeType)
+	if w.countersDescribeTransaction() {
+		delta, tracked := w.tx.PendingEdgeTypeCountDelta(w.namespace, edgeType)
+		if tracked || !w.tx.HasPendingEdgeMutations() {
+			count, err := w.underlying.EdgeCountByType(edgeType)
+			return count + delta, err
+		}
 	}
+	return w.edgeCountByTypeScan(edgeType)
+}
+
+func (w *transactionStorageWrapper) edgeCountByTypeScan(edgeType string) (int64, error) {
 	edges, err := w.GetEdgesByType(edgeType)
 	if err != nil {
 		return 0, err
@@ -706,10 +731,11 @@ func (w *transactionStorageWrapper) EdgeCountByType(edgeType string) (int64, err
 	return int64(len(edges)), nil
 }
 
-// EdgeCountByStartLabel / EdgeCountByEndLabel keep the one-labeled-endpoint
-// count shapes available inside an explicit transaction. A mutation-free
-// snapshot uses the storage positional counters; a transaction with staged
-// edge changes counts its transaction-visible typed edges by endpoint label.
+// EdgeCountByStartLabel / EdgeCountByEndLabel are the transaction-visible
+// counts of relationships of edgeType whose start / end node has label (the
+// one-labeled-endpoint count shapes). Relabelling a node changes them too,
+// so without the staged deltas they need a transaction with no staged node
+// or relationship changes.
 func (w *transactionStorageWrapper) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
 	return w.edgeCountByEndpointLabel(label, edgeType, true)
 }
@@ -719,12 +745,18 @@ func (w *transactionStorageWrapper) EdgeCountByEndLabel(label, edgeType string) 
 }
 
 func (w *transactionStorageWrapper) edgeCountByEndpointLabel(label, edgeType string, start bool) (int64, error) {
-	if (w.namespace == "" || w.underlyingIsNamespaced()) && !w.tx.HasPendingEdgeMutations() {
+	// The staged positional deltas are not used: DETACH DELETE of a node whose
+	// relationship the same transaction created stages them wrong (#741).
+	if w.countersDescribeTransaction() && !w.tx.HasPendingEdgeMutations() && !w.tx.HasPendingNodeMutations() {
 		if start {
 			return w.underlying.EdgeCountByStartLabel(label, edgeType)
 		}
 		return w.underlying.EdgeCountByEndLabel(label, edgeType)
 	}
+	return w.edgeCountByEndpointLabelScan(label, edgeType, start)
+}
+
+func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(label, edgeType string, start bool) (int64, error) {
 	edges, err := w.GetEdgesByType(edgeType)
 	if err != nil {
 		return 0, err
