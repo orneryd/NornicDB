@@ -203,22 +203,6 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	return values
 }
 
-// rowExpressionHasSubquery reports whether expr contains an EXISTS /
-// COUNT / COLLECT subquery.
-func rowExpressionHasSubquery(expr string) bool {
-	for index := strings.IndexByte(expr, '{'); index >= 0; {
-		if precedingSubqueryExpressionKeyword(expr, index) {
-			return true
-		}
-		next := strings.IndexByte(expr[index+1:], '{')
-		if next < 0 {
-			break
-		}
-		index += next + 1
-	}
-	return false
-}
-
 // evaluateRowExpressionWithContext extends the allocation-conscious row
 // evaluator with graph expressions that require storage access. Callers with
 // an execution context use this as the converged expression entry point.
@@ -265,7 +249,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		recordExpressionFailure(ctx, err)
 		return nil, false
 	}
-	if !resolved && containsRelExistencePattern(expr) && !rowExpressionHasSubquery(expr) {
+	if !resolved && containsRelExistencePattern(expr) {
 		// The row evaluator doesn't read the graph: an expression with a
 		// relationship pattern inside an operator or comprehension
 		// (size([(n)--() | 1]) > 0, [x IN l | size([(x)-->() | 1])]) is
@@ -274,7 +258,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		// comes back unchanged: unresolved. Other expressions the row
 		// evaluator leaves unresolved stay unresolved (a malformed literal
 		// such as [, ] is a syntax error, not a value). Subquery expressions
-		// are #709's (pipelineItemUnevaluable).
+		// were evaluated above.
 		trimmed := strings.TrimSpace(expr)
 		nodes, rels := entityScopesFromValues(values)
 		value, resolved = e.evaluateExpressionWithContextDefined(withValueBindings(ctx, values), trimmed, nodes, rels)

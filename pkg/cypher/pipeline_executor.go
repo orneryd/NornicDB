@@ -620,15 +620,11 @@ func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelin
 // be evaluated (neither the row evaluator nor the shared evaluator handles
 // it), unless an expression error is already recorded. The statement fails:
 // another route would not evaluate the item either, and the older UNWIND and
-// WITH routes run only part of a statement the pipeline started.
-//
-// Remaining fallback (#709): an item containing an EXISTS / COUNT / COLLECT
-// subquery isn't recorded, so the pipeline declines and the statement runs
-// on the older routes, which evaluate subquery values. #709 makes subquery
-// expressions pipeline values; whichever of #709 / #720 merges second
-// removes this case in its rebase.
+// WITH routes run only part of a statement the pipeline started. Subquery
+// expressions (EXISTS / COUNT / COLLECT { … }) are row values like any other
+// (evaluateRowExpressionWithContext), so they have no route of their own.
 func pipelineItemUnevaluable(ctx context.Context, expr string) {
-	if getExpressionFailure(ctx) != nil || rowExpressionHasSubquery(expr) {
+	if getExpressionFailure(ctx) != nil {
 		return
 	}
 	recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
