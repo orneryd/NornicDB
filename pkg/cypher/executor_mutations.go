@@ -1693,33 +1693,17 @@ func hasOuterParens(s string) bool {
 	return depth == 0 && !inSingle && !inDouble
 }
 
-func coerceToUnwindItems(listVal interface{}) []interface{} {
-	switch v := listVal.(type) {
-	case nil:
+// coerceToUnwindItems is the one UNWIND coercion, as in Neo4j (#693): null
+// unwinds to no rows, a list to its elements (cypherListValue), and any other
+// value to one row holding it.
+func coerceToUnwindItems(value interface{}) []interface{} {
+	if value == nil {
 		return nil
-	case []interface{}:
-		return v
-	case []string:
-		out := make([]interface{}, len(v))
-		for i, s := range v {
-			out[i] = s
-		}
-		return out
-	case []int:
-		out := make([]interface{}, len(v))
-		for i, n := range v {
-			out[i] = n
-		}
-		return out
-	case []int64:
-		out := make([]interface{}, len(v))
-		for i, n := range v {
-			out[i] = n
-		}
-		return out
-	default:
-		return []interface{}{listVal}
 	}
+	if items, isList := cypherListValue(value); isList {
+		return items
+	}
+	return []interface{}{value}
 }
 
 func extractWithAliases(querySegment string) []string {

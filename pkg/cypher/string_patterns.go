@@ -462,48 +462,7 @@ func ExtractParameters(query string) []string {
 //	    return fmt.Sprintf("'%s'", params[param])
 //	})
 func ReplaceParameters(query string, replacer func(paramName string) string) string {
-	var result strings.Builder
-	result.Grow(len(query))
-
-	i := 0
-	for i < len(query) {
-		// Find next $
-		dollarIdx := strings.IndexByte(query[i:], '$')
-		if dollarIdx < 0 {
-			result.WriteString(query[i:])
-			break
-		}
-		dollarIdx += i
-
-		// Write everything before the $
-		result.WriteString(query[i:dollarIdx])
-
-		// Check if there's a valid identifier after $
-		start := dollarIdx + 1
-		if start >= len(query) {
-			result.WriteByte('$')
-			break
-		}
-
-		// First character must be letter or underscore
-		first := query[start]
-		if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
-			result.WriteByte('$')
-			i = start
-			continue
-		}
-
-		// Find end of identifier
-		end := start + 1
-		for end < len(query) && isWordChar(query[end]) {
-			end++
-		}
-
-		// Call replacer with the parameter name
-		paramName := query[start:end]
-		result.WriteString(replacer(paramName))
-		i = end
-	}
-
-	return result.String()
+	return replaceParameterReferences(query, func(name string, _ byte) (string, bool) {
+		return replacer(name), true
+	})
 }

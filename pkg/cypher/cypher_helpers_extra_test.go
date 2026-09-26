@@ -651,7 +651,8 @@ func TestCypherHelpers_ParserMarkersAndUnwindHelpers(t *testing.T) {
 
 	assert.Nil(t, coerceToUnwindItems(nil))
 	assert.Equal(t, []interface{}{"a", "b"}, coerceToUnwindItems([]string{"a", "b"}))
-	assert.Equal(t, []interface{}{1, 2}, coerceToUnwindItems([]int{1, 2}))
+	// A Go []int unwinds to Cypher integers (int64), as on every route.
+	assert.Equal(t, []interface{}{int64(1), int64(2)}, coerceToUnwindItems([]int{1, 2}))
 	assert.Equal(t, []interface{}{int64(1), int64(2)}, coerceToUnwindItems([]int64{1, 2}))
 	assert.Equal(t, []interface{}{"x"}, coerceToUnwindItems("x"))
 }

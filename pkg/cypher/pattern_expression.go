@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"reflect"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -228,6 +229,9 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		if e.recordRowSizeArgumentFailure(ctx, expr, values) {
 			return nil, false
 		}
+		if recordPropertyAccessTypeFailure(ctx, strings.TrimSpace(expr), values) {
+			return nil, false
+		}
 		arithmeticExpr := strings.TrimSpace(expr)
 		for {
 			inner, enclosed := stripEnclosingExpressionParentheses(arithmeticExpr)
@@ -295,4 +299,37 @@ func (e *StorageExecutor) recordRowRegexFailure(ctx context.Context, expr string
 	if _, err := cypherRegexMatch(leftValue, rightValue); err != nil {
 		recordExpressionFailure(ctx, err)
 	}
+}
+
+// recordPropertyAccessTypeFailure records the type error of a property access
+// on a value that has no properties (a string, number, boolean or list), as
+// Neo4j reports it (#712): Neo.ClientError.Statement.SyntaxError, "Type
+// mismatch: expected Map, Node, Relationship, … but was List". A null base
+// isn't an error: the access is null.
+func recordPropertyAccessTypeFailure(ctx context.Context, expr string, values pipelineRow) bool {
+	variable, _, ok := rowPropertyChainShape(expr)
+	if !ok {
+		return false
+	}
+	base, bound := values[variable]
+	if !bound || base == nil || !valueHasNoProperties(base) {
+		return false
+	}
+	recordExpressionFailure(ctx, newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"TypeMismatch",
+		"Type mismatch: expected Map, Node, Relationship, Point, Duration, Date, Time, LocalTime, LocalDateTime or DateTime but was "+cypherValueTypeName(base),
+	))
+	return true
+}
+
+// valueHasNoProperties reports whether a value is a string, number, boolean or
+// list: a Cypher value without properties.
+func valueHasNoProperties(value interface{}) bool {
+	switch value.(type) {
+	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return true
+	}
+	kind := reflect.TypeOf(value).Kind()
+	return kind == reflect.Slice || kind == reflect.Array
 }

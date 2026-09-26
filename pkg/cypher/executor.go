@@ -1329,6 +1329,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
 
+	// Typed Go maps and slices become Cypher maps and lists here, once, for
+	// every route (#712).
+	params = normalizeQueryParameters(params)
+
 	// Handle Neo4j shell/browser commands like :USE and :param before validation.
 	processedQuery, processedCtx, shellResult, err := e.preprocessShellCommands(ctx, cypher, params)
 	if err != nil {

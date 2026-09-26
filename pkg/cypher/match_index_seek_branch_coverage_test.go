@@ -11,7 +11,7 @@ import (
 func TestMatchIndexSeekHelperFunctions(t *testing.T) {
 	list := coerceInterfaceList([]string{"a", "b"})
 	require.Equal(t, []interface{}{"a", "b"}, list)
-	require.Equal(t, []interface{}{1, 2}, coerceInterfaceList([]int{1, 2}))
+	require.Equal(t, []interface{}{int64(1), int64(2)}, coerceInterfaceList([]int{1, 2}))
 	require.Equal(t, []interface{}{int64(1), int64(2)}, coerceInterfaceList([]int64{1, 2}))
 	require.Equal(t, []interface{}{1.5, 2.5}, coerceInterfaceList([]float64{1.5, 2.5}))
 	require.Nil(t, coerceInterfaceList("bad"))

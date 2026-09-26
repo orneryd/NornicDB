@@ -3742,11 +3742,14 @@ func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
 	return items
 }
 
+// evaluateStaticListForPipeline evaluates an UNWIND list that is a row
+// variable, a property of one, or a literal list, without the row evaluator.
+// Its value is coerced as UNWIND coerces any value (coerceToUnwindItems).
 func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{}, bool) {
 	expr = strings.TrimSpace(expr)
 	// Bare variable.
 	if val, ok := row[expr]; ok {
-		return toAnySlice(val), true
+		return coerceToUnwindItems(val), true
 	}
 	// Property access (a.b).
 	if dot := strings.Index(expr, "."); dot > 0 {
@@ -3755,11 +3758,11 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 		if baseVal, ok := row[base]; ok {
 			if asMap, ok := toStringAnyMap(baseVal); ok {
 				if v, ok := asMap[field]; ok {
-					return toAnySlice(v), true
+					return coerceToUnwindItems(v), true
 				}
 			}
 			if node, ok := baseVal.(*storage.Node); ok && node != nil {
-				return toAnySlice(node.Properties[field]), true
+				return coerceToUnwindItems(node.Properties[field]), true
 			}
 		}
 	}
@@ -3772,7 +3775,7 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 		if !ok {
 			return nil, false
 		}
-		return toAnySlice(parsed), true
+		return coerceToUnwindItems(parsed), true
 	}
 	return nil, false
 }
@@ -3801,7 +3804,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		return items, err == nil
 	}
 	if value, ok := e.evaluateRowExpression(expr, row); ok {
-		return toAnySlice(value), true
+		return coerceToUnwindItems(value), true
 	}
 
 	materialized := expr
@@ -3815,7 +3818,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	if value == nil && !strings.EqualFold(strings.TrimSpace(materialized), "null") && !looksLikeFunctionCall(materialized) {
 		return nil, false
 	}
-	return toAnySlice(value), true
+	return coerceToUnwindItems(value), true
 }
 
 func toAnySlice(v interface{}) []interface{} {
