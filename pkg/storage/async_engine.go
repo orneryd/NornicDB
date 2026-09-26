@@ -866,18 +866,31 @@ func (ae *AsyncEngine) nodeSupersededLocked(id NodeID) bool {
 	return ae.deleteNodes[id]
 }
 
-// readPendingWrites implements pendingWriteSource for the schemas this
-// engine hands out (#719): read runs under ae.mu's read lock, so a flush
-// can't retire a pending node while a lookup merges the view with the
-// engine's index.
-func (ae *AsyncEngine) readPendingWrites(read func(view pendingWriteView)) {
+// lockPendingWrites implements pendingWriteSource for the schemas this
+// engine hands out (#719): it takes ae.mu's read lock, so a flush can't
+// retire a pending node while a lookup merges the view with the engine's
+// index. unlockPendingWrites releases it.
+func (ae *AsyncEngine) lockPendingWrites() pendingWriteView {
 	ae.mu.RLock()
-	defer ae.mu.RUnlock()
 	if len(ae.nodeCache) == 0 && len(ae.deleteNodes) == 0 {
-		read(pendingWriteView{})
-		return
+		return pendingWriteView{}
 	}
-	read(pendingWriteView{index: ae.pending, superseded: ae.nodeSupersededLocked})
+	return pendingWriteView{index: ae.pending, owner: ae}
+}
+
+func (ae *AsyncEngine) unlockPendingWrites() {
+	ae.mu.RUnlock()
+}
+
+// trackPendingValues implements pendingWriteSource: the pending view indexes
+// these pairs by value, the nodes already pending included.
+func (ae *AsyncEngine) trackPendingValues(pairs []pendingPropertyKey) {
+	ae.mu.Lock()
+	defer ae.mu.Unlock()
+	cached := func(id NodeID) *Node { return ae.nodeCache[id] }
+	for _, pair := range pairs {
+		ae.pending.track(pair.label, pair.property, cached)
+	}
 }
 
 // CreateNode adds to cache and returns immediately.
@@ -1292,25 +1305,12 @@ func (ae *AsyncEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 	for id := range ae.deleteNodes {
 		deletedIDs[id] = true
 	}
+	// The pending view lists every cached node under its labels, so it is
+	// the whole cache side of the listing.
 	cachedIDs := make([]NodeID, 0, len(ae.pending.byLabel[normalLabel]))
 	for id := range ae.pending.byLabel[normalLabel] {
 		if !deletedIDs[id] {
 			cachedIDs = append(cachedIDs, id)
-		}
-	}
-	for _, node := range ae.nodeCache {
-		if node == nil || deletedIDs[node.ID] {
-			continue
-		}
-		matched := false
-		for _, l := range node.Labels {
-			if strings.EqualFold(l, label) {
-				matched = true
-				break
-			}
-		}
-		if matched {
-			cachedIDs = append(cachedIDs, node.ID)
 		}
 	}
 	ae.mu.RUnlock()
@@ -2587,9 +2587,15 @@ func (ae *AsyncEngine) pendingConstraintHolder(node *Node, label, property strin
 		return "", false
 	}
 	namespace, _, _ := ParseDatabasePrefix(string(node.ID))
-	view := pendingWriteView{index: ae.pending, namespace: namespace}
 	ae.mu.RLock()
+	if _, tracked := ae.pending.tracked[label][property]; !tracked {
+		// A constraint the schema hasn't registered yet: track its pair once.
+		ae.mu.RUnlock()
+		ae.trackPendingValues([]pendingPropertyKey{{label: label, property: property}})
+		ae.mu.RLock()
+	}
 	defer ae.mu.RUnlock()
+	view := pendingWriteView{index: ae.pending, owner: ae, namespace: namespace}
 	for _, id := range view.valueMatches(nil, label, property, valueKey) {
 		if id == node.ID || ae.deleteNodes[id] {
 			continue

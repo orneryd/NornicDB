@@ -525,6 +525,7 @@ type RangeIndex struct {
 // Stores in both uniqueConstraints (for value tracking) and constraints (for lookup by label).
 // Pass ifNotExists=true for IF NOT EXISTS semantics (duplicate is no-op).
 func (sm *SchemaManager) AddUniqueConstraint(name, label, property string, ifNotExists ...bool) error {
+	defer sm.trackPendingPairs()
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -718,16 +719,16 @@ func (sm *SchemaManager) uniqueValueHolders(label, property string, value interf
 	if !ok {
 		return nil, false, true
 	}
-	sm.withPendingWrites(func(view pendingWriteView) {
-		constraint.mu.RLock()
-		holder, found := constraint.values[valueKey]
-		cacheComplete = constraint.valuesCacheComplete
-		constraint.mu.RUnlock()
-		if found && view.keep(holder) {
-			holders = append(holders, holder)
-		}
-		holders = view.valueMatches(holders, label, property, valueKey)
-	})
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
+	constraint.mu.RLock()
+	holder, found := constraint.values[valueKey]
+	cacheComplete = constraint.valuesCacheComplete
+	constraint.mu.RUnlock()
+	if found && view.keep(holder) {
+		holders = append(holders, holder)
+	}
+	holders = view.valueMatches(holders, label, property, valueKey)
 	return holders, cacheComplete, true
 }
 
@@ -735,19 +736,19 @@ func (sm *SchemaManager) uniqueValueHolders(label, property string, value interf
 // merged with the pending writes: a registered holder with a pending update
 // or delete no longer counts, and a pending node with the value does.
 func (sm *SchemaManager) lookupUniqueValue(constraint *UniqueConstraint, label, property string, valueKey interface{}) (nodeID NodeID, found bool, cacheComplete bool) {
-	sm.withPendingWrites(func(view pendingWriteView) {
-		constraint.mu.RLock()
-		nodeID, found = constraint.values[valueKey]
-		cacheComplete = constraint.valuesCacheComplete
-		constraint.mu.RUnlock()
-		if found && !view.keep(nodeID) {
-			nodeID, found = "", false
-		}
-		if pending := view.valueMatches(nil, label, property, valueKey); len(pending) > 0 {
-			sort.Slice(pending, func(i, j int) bool { return string(pending[i]) < string(pending[j]) })
-			nodeID, found = pending[0], true
-		}
-	})
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
+	constraint.mu.RLock()
+	nodeID, found = constraint.values[valueKey]
+	cacheComplete = constraint.valuesCacheComplete
+	constraint.mu.RUnlock()
+	if found && !view.keep(nodeID) {
+		nodeID, found = "", false
+	}
+	if pending := view.valueMatches(nil, label, property, valueKey); len(pending) > 0 {
+		sort.Slice(pending, func(i, j int) bool { return string(pending[i]) < string(pending[j]) })
+		nodeID, found = pending[0], true
+	}
 	return nodeID, found, cacheComplete
 }
 
@@ -946,6 +947,7 @@ func (sm *SchemaManager) UnregisterUniqueValue(label, property string, value int
 
 // AddPropertyIndex adds a property index.
 func (sm *SchemaManager) AddPropertyIndex(name, label string, properties []string) error {
+	defer sm.trackPendingPairs()
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -1609,6 +1611,7 @@ func allowedValuesEqual(a, b []interface{}) bool {
 //
 // Pass ifNotExists=true when the DDL includes IF NOT EXISTS; duplicate-schema is then a no-op.
 func (sm *SchemaManager) AddConstraint(c Constraint, ifNotExists ...bool) error {
+	defer sm.trackPendingPairs()
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -1959,18 +1962,17 @@ func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID Node
 // AsyncEngine are skipped: the engine indexes them when they are flushed,
 // and lookups see them through the pending view until then (#719).
 func (sm *SchemaManager) BackfillPropertyIndex(label, property string, values map[NodeID]interface{}) error {
-	var err error
-	sm.withPendingWrites(func(view pendingWriteView) {
-		for nodeID, value := range values {
-			if !view.keep(nodeID) {
-				continue
-			}
-			if err = sm.PropertyIndexInsert(label, property, nodeID, value); err != nil {
-				return
-			}
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
+	for nodeID, value := range values {
+		if !view.keep(nodeID) {
+			continue
 		}
-	})
-	return err
+		if err := sm.PropertyIndexInsert(label, property, nodeID, value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PropertyIndexDelete removes a node from a property index.
@@ -2070,26 +2072,35 @@ func (sm *SchemaManager) PropertyIndexLookupAnyLabel(property string, value inte
 	}
 	sm.mu.RUnlock()
 
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
 	var ids []NodeID
-	sm.withPendingWrites(func(view pendingWriteView) {
-		for _, idx := range indexes {
-			ids = idx.lookupLocked(view, ids, property, valueKey)
-		}
-	})
+	for _, idx := range indexes {
+		ids = idx.lookupLocked(view, ids, property, valueKey)
+	}
 	return ids
 }
 
 // lookupLocked appends the index's node IDs for valueKey to out, merged with
 // the pending view. It takes idx.mu.
 func (idx *PropertyIndex) lookupLocked(view pendingWriteView, out []NodeID, property string, valueKey interface{}) []NodeID {
+	pending := view.valueMatchSet(idx.Label, property, valueKey)
 	idx.mu.RLock()
-	for _, id := range idx.values[valueKey] {
+	stored := idx.values[valueKey]
+	if len(stored)+len(pending) == 0 {
+		idx.mu.RUnlock()
+		return out
+	}
+	if out == nil {
+		out = make([]NodeID, 0, len(stored)+len(pending))
+	}
+	for _, id := range stored {
 		if view.keep(id) {
 			out = append(out, id)
 		}
 	}
 	idx.mu.RUnlock()
-	return view.valueMatches(out, idx.Label, property, valueKey)
+	return view.appendInNamespace(out, pending)
 }
 
 // endsWith is a tiny ASCII suffix helper. We keep it local to the schema
@@ -2116,11 +2127,9 @@ func (sm *SchemaManager) PropertyIndexLookup(label, property string, value inter
 	if !ok {
 		return nil
 	}
-	var ids []NodeID
-	sm.withPendingWrites(func(view pendingWriteView) {
-		ids = idx.lookupLocked(view, nil, property, valueKey)
-	})
-	return ids
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
+	return idx.lookupLocked(view, nil, property, valueKey)
 }
 
 // PropertyIndexTopK returns up to limit node IDs from a property index ordered by
@@ -2147,13 +2156,11 @@ func (sm *SchemaManager) orderedPropertyIndexIDs(label, property string, descend
 	if !exists || idx == nil {
 		return nil
 	}
-	var ids []NodeID
-	sm.withPendingWrites(func(view pendingWriteView) {
-		idx.mu.RLock()
-		defer idx.mu.RUnlock()
-		ids = idx.orderedIDsLocked(view, property, descending, limit)
-	})
-	return ids
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return idx.orderedIDsLocked(view, property, descending, limit)
 }
 
 // sortedKeysLocked returns non-nil index keys in ascending order.
