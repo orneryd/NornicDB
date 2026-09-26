@@ -94,7 +94,10 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
 			value, ok := evaluateRowPropertyChain(base, chain)
-			return value, ok, nil
+			if !ok {
+				return nil, false, rowPropertyChainTypeError(base, chain)
+			}
+			return value, true, nil
 		}
 	}
 	// A backtick-quoted variable (`my x`) names the same binding as its
@@ -795,6 +798,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		base, baseOK := toFloat64(leftValue)
 		exponent, exponentOK := toFloat64(rightValue)
 		if !baseOK || !exponentOK {
+			if err := arithmeticError('^', leftValue, rightValue); err != nil {
+				return nil, false, err
+			}
 			return nil, false, nil
 		}
 		return math.Pow(base, exponent), true, nil
@@ -818,6 +824,10 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			return nil, true, nil
 		}
 		if _, numeric := toFloat64(value); !numeric {
+			// -'a' is Neo4j's TypeError; a duration is negated elsewhere.
+			if err := unaryMinusTypeError(value); err != nil {
+				return nil, false, err
+			}
 			return nil, false, nil
 		}
 		return e.subtract(int64(0), value), true, nil
@@ -831,7 +841,13 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			return nil, false, err
 		}
 		if ok {
-			value, ok := evaluateRowPropertyChain(base, strings.TrimSpace(expr[dot+1:]))
+			chain := strings.TrimSpace(expr[dot+1:])
+			value, ok := evaluateRowPropertyChain(base, chain)
+			if !ok {
+				if err := rowPropertyChainTypeError(base, chain); err != nil {
+					return nil, false, err
+				}
+			}
 			return value, ok, nil
 		}
 	}
@@ -1414,6 +1430,27 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 		start = end + 1
 	}
 	return value, true
+}
+
+// rowPropertyChainTypeError is the TypeError of a property chain that
+// reached a value with no properties: a number, string, boolean, list or path
+// ("Type mismatch: expected a map but was Long(1)", propertyAccessTypeError),
+// as Neo4j reports it at run time. It is nil when every step has properties.
+func rowPropertyChainTypeError(value interface{}, chain string) error {
+	for start := 0; start < len(chain); {
+		end := nextRowPropertySeparator(chain, start)
+		property := normalizePropertyKey(strings.TrimSpace(chain[start:end]))
+		next, ok := rowPropertyValue(value, property)
+		if !ok {
+			return propertyAccessTypeError(value)
+		}
+		value = next
+		if end == len(chain) {
+			break
+		}
+		start = end + 1
+	}
+	return nil
 }
 
 // rowPropertyValue is value's property: a node's or relationship's
