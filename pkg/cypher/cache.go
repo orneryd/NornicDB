@@ -4,10 +4,6 @@ package cypher
 import (
 	"container/list"
 	"fmt"
-	"hash"
-	"hash/fnv"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -411,20 +407,10 @@ func (qc *QueryCache) Stats() (hits, misses int64, size int) {
 	return qc.hits, qc.misses, len(qc.cache)
 }
 
-// cacheKey generates a unique key for the query and parameters using FNV-1a.
-// FNV-1a is a fast non-cryptographic hash suitable for cache keys.
+// cacheKey is the query and its parameters encoded in full
+// (statementCacheKey): entries are keyed by the whole key, never a hash.
 func (qc *QueryCache) cacheKey(cypher string, params map[string]interface{}) string {
-	h := fnv.New64a()
-	h.Write([]byte(cypher))
-
-	// Add params in sorted key order for deterministic hashing.
-	// Go map iteration order is non-deterministic, so fmt.Sprintf("%v", map)
-	// can produce different strings for identical maps.
-	if len(params) > 0 {
-		hashSortedParams(h, params)
-	}
-
-	return strconv.FormatUint(h.Sum64(), 36)
+	return statementCacheKey(cypher, params)
 }
 
 // moveToFront moves key to front of LRU list.
@@ -559,7 +545,7 @@ func (sc *SmartQueryCache) observeEviction(reason string) {
 
 // Get retrieves a cached result (same as QueryCache).
 func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
-	return sc.get(cacheKeyFNV(cypher, params))
+	return sc.get(resultCacheEntryKey(cypher, params))
 }
 
 func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
@@ -610,7 +596,7 @@ func (sc *SmartQueryCache) getWithTrace(key string) (*ExecuteResult, HotPathTrac
 
 // PutWithLabels stores a result with associated labels for smart invalidation.
 func (sc *SmartQueryCache) PutWithLabels(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration, labels []string) {
-	sc.putWithLabels(cacheKeyFNV(cypher, params), result, ttl, labels)
+	sc.putWithLabels(resultCacheEntryKey(cypher, params), result, ttl, labels)
 }
 
 func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl time.Duration, labels []string) {
@@ -852,33 +838,13 @@ func extractLabelsFromQuery(cypher string) []string {
 	return labels
 }
 
-// cacheKeyFNV generates a cache key using FNV-1a hash.
-func cacheKeyFNV(cypher string, params map[string]interface{}) string {
-	h := fnv.New64a()
-	// Normalize query text so formatting/whitespace/trailing-semicolon differences
-	// do not defeat result cache hits for the same logical query.
-	normalized := normalizeQuery(trimTrailingStatementDelimiters(cypher))
-	h.Write([]byte(normalized))
-	if len(params) > 0 {
-		hashSortedParams(h, params)
-	}
-	return strconv.FormatUint(h.Sum64(), 36)
-}
-
-// hashSortedParams writes parameter keys and values into the hash in sorted
-// key order, ensuring deterministic cache keys regardless of Go map iteration order.
-func hashSortedParams(h hash.Hash64, params map[string]interface{}) {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		h.Write([]byte(k))
-		h.Write([]byte{0}) // separator
-		h.Write([]byte(fmt.Sprintf("%v", params[k])))
-		h.Write([]byte{0})
-	}
+// resultCacheEntryKey is the result cache's key for cypher run with params: the
+// normalized statement text and the parameters, encoded in full
+// (statementCacheKey), so an entry is served only for the same statement
+// text and the same parameter values (#729). Normalizing the text keeps
+// formatting, whitespace and a trailing semicolon from defeating a hit.
+func resultCacheEntryKey(cypher string, params map[string]interface{}) string {
+	return statementCacheKey(normalizeQuery(trimTrailingStatementDelimiters(cypher)), params)
 }
 
 // =============================================================================
@@ -1063,21 +1029,41 @@ func (pc *QueryPlanCache) Clear() {
 // Collapses whitespace and lowercases keywords for consistent matching.
 func normalizeQuery(cypher string) string {
 	// Collapse consecutive whitespace to a single ASCII space without allocating
-	// the intermediate []string created by strings.Fields.
+	// the intermediate []string created by strings.Fields. Text inside a
+	// string literal or a backtick-quoted name is kept as it is: 'a  b' and
+	// 'a b' are different statements (#729).
 	if cypher == "" {
 		return ""
 	}
 	var b strings.Builder
 	b.Grow(len(cypher))
 	prevSpace := true
+	quote := byte(0)
 	for i := 0; i < len(cypher); i++ {
 		c := cypher[i]
+		if quote != 0 {
+			b.WriteByte(c)
+			switch {
+			case c == '\\' && quote != '`' && i+1 < len(cypher):
+				// A backslash escape in a string literal: the next byte (an
+				// escaped quote, too) is part of the literal.
+				i++
+				b.WriteByte(cypher[i])
+			case c == quote:
+				quote = 0
+			}
+			continue
+		}
 		switch c {
 		case ' ', '\t', '\n', '\r', '\f', '\v':
 			if !prevSpace {
 				b.WriteByte(' ')
 				prevSpace = true
 			}
+		case '\'', '"', '`':
+			quote = c
+			b.WriteByte(c)
+			prevSpace = false
 		default:
 			b.WriteByte(c)
 			prevSpace = false

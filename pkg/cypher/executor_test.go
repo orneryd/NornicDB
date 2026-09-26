@@ -50,7 +50,7 @@ func TestStorageExecutorCachesResultsWithDatabaseTTL(t *testing.T) {
 
 	version, supported := exec.storage.(storage.GraphMutationVersionProvider).GraphMutationVersion()
 	require.True(t, supported)
-	key := cacheKeyFNV(query, nil) + ":graph:" + strconv.FormatUint(version, 10)
+	key := resultCacheEntryKey(query, nil) + ":graph:" + strconv.FormatUint(version, 10)
 	exec.cache.mu.RLock()
 	entry := exec.cache.cache[key]
 	exec.cache.mu.RUnlock()
