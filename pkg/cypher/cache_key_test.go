@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ func TestCacheKeysSeparateParameterTypes(t *testing.T) {
 	}
 	seen := make(map[string]interface{}, len(different))
 	for _, value := range different {
-		key := cacheKeyFNV(query, map[string]interface{}{"v": value})
+		key := resultCacheEntryKey(query, map[string]interface{}{"v": value})
 		if previous, collides := seen[key]; collides {
 			t.Fatalf("%#v and %#v share the cache key %s", previous, value, key)
 		}
@@ -43,8 +44,8 @@ func TestCacheKeysSeparateParameterTypes(t *testing.T) {
 	// Parameter names are part of the key, and a value can't run into the
 	// next name.
 	require.NotEqual(t,
-		cacheKeyFNV(query, map[string]interface{}{"a": "b", "c": "d"}),
-		cacheKeyFNV(query, map[string]interface{}{"a": "b\x00c", "": "d"}))
+		resultCacheEntryKey(query, map[string]interface{}{"a": "b", "c": "d"}),
+		resultCacheEntryKey(query, map[string]interface{}{"a": "b\x00c", "": "d"}))
 
 	same := [][2]interface{}{
 		{int64(1), int32(1)},
@@ -57,8 +58,8 @@ func TestCacheKeysSeparateParameterTypes(t *testing.T) {
 	}
 	for _, pair := range same {
 		require.Equal(t,
-			cacheKeyFNV(query, map[string]interface{}{"v": pair[0]}),
-			cacheKeyFNV(query, map[string]interface{}{"v": pair[1]}), "%#v and %#v", pair[0], pair[1])
+			resultCacheEntryKey(query, map[string]interface{}{"v": pair[0]}),
+			resultCacheEntryKey(query, map[string]interface{}{"v": pair[1]}), "%#v and %#v", pair[0], pair[1])
 	}
 }
 
@@ -74,8 +75,8 @@ func TestNormalizeQueryKeepsQuotedText(t *testing.T) {
 	} {
 		require.Equal(t, want, normalizeQuery(input), input)
 	}
-	require.NotEqual(t, cacheKeyFNV("RETURN 'a  b' AS s", nil), cacheKeyFNV("RETURN 'a b' AS s", nil))
-	require.Equal(t, cacheKeyFNV("RETURN  'a b'  AS s", nil), cacheKeyFNV("RETURN 'a b' AS s", nil))
+	require.NotEqual(t, resultCacheEntryKey("RETURN 'a  b' AS s", nil), resultCacheEntryKey("RETURN 'a b' AS s", nil))
+	require.Equal(t, resultCacheEntryKey("RETURN  'a b'  AS s", nil), resultCacheEntryKey("RETURN 'a b' AS s", nil))
 }
 
 // TestResultCacheServesEachParameterValueItsOwnResult: the statements that
@@ -112,4 +113,47 @@ func TestResultCacheServesEachParameterValueItsOwnResult(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{text}}, result.Rows)
 	}
+}
+
+// TestFabricResultCacheServesOnlyAuthorizedCallers: a composite read's
+// cached result isn't served to a caller the statement isn't authorized
+// for; the caller gets the permission error it gets uncached (#729).
+func TestFabricResultCacheServesOnlyAuthorizedCallers(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	mgr, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	defer mgr.Close()
+	require.NoError(t, mgr.CreateDatabase("nornic_tr"))
+	require.NoError(t, mgr.CreateCompositeDatabase("nornic_cmp_a", []multidb.ConstituentRef{
+		{Alias: "tr", DatabaseName: "nornic_tr", Type: "local", AccessMode: "read_write"},
+	}))
+	trStore, err := mgr.GetStorage("nornic_tr")
+	require.NoError(t, err)
+	_, err = trStore.CreateNode(&storage.Node{ID: "t-1", Labels: []string{"Translation"}, Properties: map[string]interface{}{"id": "t-1"}})
+	require.NoError(t, err)
+	defaultStore, err := mgr.GetStorage(mgr.DefaultDatabaseName())
+	require.NoError(t, err)
+	exec := NewStorageExecutor(defaultStore)
+	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+
+	query := "USE nornic_cmp_a CALL { USE nornic_cmp_a.tr MATCH (t:Translation) RETURN t.id AS id } RETURN id"
+	authorized := WithPermissionChecker(context.Background(), func(string) bool { return true })
+	result, err := exec.Execute(authorized, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"t-1"}}, result.Rows)
+
+	denied := WithPermissionChecker(context.Background(), func(string) bool { return false })
+	_, err = exec.Execute(denied, query, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read permission")
+
+	deniedOnDatabase := WithDatabasePermissionResolver(context.Background(), mgr.DefaultDatabaseName(),
+		func(database, permission string) bool { return database != "nornic_tr" })
+	_, err = exec.Execute(deniedOnDatabase, query, nil)
+	require.Error(t, err)
+
+	// The authorized caller still gets the cached result.
+	result, err = exec.Execute(authorized, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"t-1"}}, result.Rows)
 }

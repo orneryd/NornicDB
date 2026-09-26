@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -196,12 +198,43 @@ type fabricPreparedExec struct {
 	hasRemote bool
 }
 
-func (e *StorageExecutor) fabricGraphMutationVersion(ctx context.Context, prepared *fabricPreparedExec, authToken string) (uint64, bool) {
-	if prepared == nil || prepared.catalog == nil || prepared.fragment == nil || e.dbManager == nil {
-		return 0, false
+// fabricResultCacheKey is the result-cache key of a Fabric read, and
+// whether its result may be served from and stored in the cache: only for a
+// caller the statement is authorized for on every local database it reads,
+// the same permission its execution needs (#729). A caller it isn't
+// authorized for gets no key, so the statement runs and fails as it does
+// uncached. The key carries the databases' combined graph version when
+// they report one.
+func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fabricPreparedExec, cypher string, params map[string]interface{}) (string, bool) {
+	databases, local := fabricLocalDatabases(prepared)
+	if !local {
+		return "", false
 	}
+	if len(databases) == 0 {
+		if AuthorizeQuery(ctx, cypher) != nil {
+			return "", false
+		}
+	}
+	for _, database := range databases {
+		if AuthorizeQuery(withExecutionDatabase(ctx, database), cypher) != nil {
+			return "", false
+		}
+	}
+	key := resultCacheEntryKey(cypher, params)
+	if version, supported := e.fabricGraphMutationVersion(databases, GetAuthTokenFromContext(ctx)); supported {
+		key += ":graph:" + strconv.FormatUint(version, 10)
+	}
+	return key, true
+}
 
-	databases := make(map[string]struct{})
+// fabricLocalDatabases lists the local databases a prepared Fabric
+// statement reads, sorted; local is false when a fragment isn't a local
+// read the catalog resolves.
+func fabricLocalDatabases(prepared *fabricPreparedExec) (databases []string, local bool) {
+	if prepared == nil || prepared.catalog == nil || prepared.fragment == nil {
+		return nil, false
+	}
+	seen := make(map[string]struct{})
 	var collect func(fabric.Fragment) bool
 	collect = func(fragment fabric.Fragment) bool {
 		switch current := fragment.(type) {
@@ -214,7 +247,10 @@ func (e *StorageExecutor) fabricGraphMutationVersion(ctx context.Context, prepar
 			if !ok {
 				return false
 			}
-			databases[local.DBName] = struct{}{}
+			if _, listed := seen[local.DBName]; !listed {
+				seen[local.DBName] = struct{}{}
+				databases = append(databases, local.DBName)
+			}
 			return collect(current.Input)
 		case *fabric.FragmentApply:
 			return collect(current.Input) && collect(current.Inner)
@@ -228,15 +264,21 @@ func (e *StorageExecutor) fabricGraphMutationVersion(ctx context.Context, prepar
 			return false
 		}
 	}
-	if !collect(prepared.fragment) || len(databases) == 0 {
+	if !collect(prepared.fragment) {
+		return nil, false
+	}
+	sort.Strings(databases)
+	return databases, true
+}
+
+// fabricGraphMutationVersion is the combined graph version of databases, or
+// false when one doesn't report one.
+func (e *StorageExecutor) fabricGraphMutationVersion(databases []string, authToken string) (uint64, bool) {
+	if e.dbManager == nil || len(databases) == 0 {
 		return 0, false
 	}
-
 	var combined uint64
-	for database := range databases {
-		if err := authorizeDatabaseSelection(ctx, database); err != nil {
-			return 0, false
-		}
+	for _, database := range databases {
 		engine, err := e.dbManager.GetStorageForUse(database, authToken)
 		if err != nil {
 			return 0, false
