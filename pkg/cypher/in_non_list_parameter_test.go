@@ -45,7 +45,7 @@ func TestInNonListParameterIsTypeError(t *testing.T) {
 	}
 }
 
-func TestValidateMembershipParameters(t *testing.T) {
+func TestValidateListOperandParameters(t *testing.T) {
 	params := map[string]interface{}{"p": int64(5), "l": []interface{}{int64(1)}, "m": map[string]interface{}{"list": []interface{}{1}}, "n": nil}
 	for _, q := range []string{
 		"MATCH (n) WHERE n.id IN $p RETURN n",
@@ -54,7 +54,10 @@ func TestValidateMembershipParameters(t *testing.T) {
 		"RETURN [x IN $p | x] AS l",
 		"FOREACH (x IN $p | CREATE (:N))",
 	} {
-		assert.Error(t, validateMembershipParameters(q, params), q)
+		err := validateListOperands(q, params)
+		if assert.Error(t, err, q) {
+			assert.Contains(t, err.Error(), "Type mismatch for parameter 'p': expected List<T> but was Integer", q)
+		}
 	}
 	for _, q := range []string{
 		"MATCH (n) WHERE n.id IN $l RETURN n",
@@ -66,6 +69,6 @@ func TestValidateMembershipParameters(t *testing.T) {
 		"MATCH (n) WHERE n.id = $p RETURN n",
 		"MATCH (n:INx) WHERE n.MIN > $p RETURN n",
 	} {
-		assert.NoError(t, validateMembershipParameters(q, params), q)
+		assert.NoError(t, validateListOperands(q, params), q)
 	}
 }

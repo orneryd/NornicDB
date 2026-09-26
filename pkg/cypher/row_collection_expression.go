@@ -51,10 +51,7 @@ func (e *StorageExecutor) evaluateRowReduce(argument string, values map[string]i
 	if listValue == nil {
 		return nil, true, nil
 	}
-	items := toAnySlice(listValue)
-	if items == nil {
-		return nil, false, nil
-	}
+	items := traversableList(listValue)
 	reduction := strings.TrimSpace(remainder[pipeIndex+1:])
 	scope := make(map[string]interface{}, len(values)+2)
 	for name, value := range values {

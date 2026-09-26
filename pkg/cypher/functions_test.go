@@ -2677,17 +2677,14 @@ func TestFunctionFullMath_AdditionalInvalidInputBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "isNaN('bad')", nodes, nil); got != nil {
 		t.Fatalf("isNaN('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "all(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
-		t.Fatalf("all invalid input should be false, got %#v", got)
-	}
-	if got := e.evaluateExpressionWithContext(ctx, "any(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
-		t.Fatalf("any invalid input should be false, got %#v", got)
-	}
-	if got := e.evaluateExpressionWithContext(ctx, "none(x IN 'bad' WHERE x > 0)", nodes, nil); got != true {
-		t.Fatalf("none invalid input should be true, got %#v", got)
-	}
-	if got := e.evaluateExpressionWithContext(ctx, "single(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
-		t.Fatalf("single invalid input should be false, got %#v", got)
+	// A string literal in a list position is rejected before evaluation
+	// (validateListOperands); evaluated anyway, it is the one-element list
+	// ['bad'], and 'bad' > 0 is null.
+	for _, function := range []string{"all", "any", "none", "single"} {
+		expression := function + "(x IN 'bad' WHERE x > 0)"
+		if got := e.evaluateExpressionWithContext(ctx, expression, nodes, nil); got != nil {
+			t.Fatalf("%s should be nil, got %#v", expression, got)
+		}
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "filter(x IN 'bad' WHERE x > 0)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
 		t.Fatalf("filter invalid input should return empty list, got %#v", got)

@@ -1499,7 +1499,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {
 		return nil, err
 	}
-	if err := validateMembershipParameters(cypher, params); err != nil {
+	if err := validateListOperands(cypher, params); err != nil {
 		return nil, err
 	}
 

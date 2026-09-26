@@ -1442,35 +1442,27 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 // evaluateQuantifierWithContext evaluates the list predicate function
 // (all / any / none / single) with arguments inner, "variable IN list WHERE
-// predicate", folding the element results with quantifierFold. A null list
-// is null (#736). Text that doesn't parse as that shape, and a list value
-// that isn't a list, keep their earlier answers: true for none, false for
-// the others.
+// predicate" (parseQuantifierArguments), folding the element results with
+// quantifierFold. A null list is null (#736), and a value that isn't a list
+// is a list of that one value (traversableList). Semantic validation rejects
+// arguments of any other shape before evaluation; here they, and a list
+// expression this evaluator can't evaluate, are null.
 func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
-	unparsed := function == "none"
-	inIdx := strings.Index(strings.ToLower(inner), " in ")
-	if inIdx == -1 {
-		return unparsed
+	varName, listExpr, predicate, parsed := parseQuantifierArguments(inner)
+	if !parsed {
+		return nil
 	}
-	varName := strings.TrimSpace(inner[:inIdx])
-	rest := inner[inIdx+4:]
-	whereIdx := strings.Index(strings.ToLower(rest), " where ")
-	if whereIdx == -1 {
-		return unparsed
-	}
-	listExpr := strings.TrimSpace(rest[:whereIdx])
-	predicate := strings.TrimSpace(rest[whereIdx+7:])
-
 	list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	if list == nil {
 		return nil
 	}
-	listVal, ok := list.([]interface{})
-	if !ok {
-		return unparsed
+	if text, isText := list.(string); isText && text == listExpr {
+		// This evaluator returns an expression it can't evaluate as its
+		// own text; that is no list value, so the result is unknown.
+		return nil
 	}
 	fold := quantifierFold{function: function}
-	for _, item := range listVal {
+	for _, item := range traversableList(list) {
 		result, _ := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
 		if value, decided := fold.add(result); decided {
 			return value

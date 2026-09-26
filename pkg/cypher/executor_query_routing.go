@@ -653,9 +653,6 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
 		}
-		if err := validateStaticMembershipOperand(part); err != nil {
-			return nil, err
-		}
 		if err := e.validateRangeCalls(part, pipelineRow{}); err != nil {
 			return nil, err
 		}

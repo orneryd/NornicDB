@@ -7,36 +7,18 @@ import (
 	"strings"
 )
 
-func validateStaticMembershipOperand(expression string) error {
-	_, right, matched := splitByOperatorWithOptions(expression, " IN ", true, true)
-	if !matched {
-		return nil
-	}
-	right = strings.TrimSpace(right)
-	if strings.EqualFold(right, "null") || strings.HasPrefix(right, "[") {
-		return nil
-	}
-	_, scalarLiteral := parseLiteralValueFromComputedRow(right)
-	mapLiteral := strings.HasPrefix(right, "{") && strings.HasSuffix(right, "}")
-	if !scalarLiteral && !mapLiteral {
-		return nil
-	}
-	return newSemanticError(
-		"Neo.ClientError.Statement.SyntaxError",
-		"InvalidArgumentType",
-		fmt.Sprintf("IN requires a LIST on the right-hand side, got %s", right),
-	)
-}
-
-// validateMembershipParameters rejects `x IN $p` when the parameter $p is bound
-// to a non-null value that is not a list, before any route executes the
-// statement. Without it the outcome depended on the route: the RETURN evaluator
-// raised a type error while every WHERE evaluator (compiled binding predicate,
-// index seek, generic fallback) silently treated the value as "no match".
-// Only a parameter that is the whole right-hand operand is checked; `$p.list`,
-// `$p[0]` or `$p + [1]` are expressions whose type is not the parameter's.
-func validateMembershipParameters(cypher string, params map[string]interface{}) error {
-	if len(params) == 0 || !strings.Contains(cypher, "$") {
+// validateListOperands rejects, before any route executes the statement, a
+// list position whose operand has a static type that is not a list, as
+// Neo4j's compile-time type check does ("Type mismatch: expected List<T> but
+// was Integer"). A list position is the operand after IN: the IN operator,
+// all / any / none / single, list comprehensions, reduce and FOREACH. The
+// operands checked are a whole literal (number, string, boolean, map) and a
+// whole parameter bound to a non-null value that is not a list ("Type
+// mismatch for parameter 'p': …"); `$p.list`, `$p[0]`, `'a' + x` and
+// variables are expressions whose type is only known per row, where a value
+// that isn't a list is a list of that one value (traversableList).
+func validateListOperands(cypher string, params map[string]interface{}) error {
+	if !containsFold(cypher, "IN") {
 		return nil
 	}
 	upper := strings.ToUpper(cypher)
@@ -50,38 +32,76 @@ func validateMembershipParameters(cypher string, params map[string]interface{}) 
 			}
 			continue
 		}
-		if !strings.HasPrefix(upper[i:], "IN") || (i > 0 && isIdentByte(cypher[i-1])) ||
+		if !strings.HasPrefix(upper[i:], "IN") || (i > 0 && (isIdentByte(cypher[i-1]) || cypher[i-1] == ':' || cypher[i-1] == '.')) ||
 			i+2 >= len(cypher) || isIdentByte(cypher[i+2]) {
 			continue
 		}
-		j := skipSpaces(cypher, i+2)
-		if j >= len(cypher) || cypher[j] != '$' {
+		start := skipSpaces(cypher, i+2)
+		end, typeName, parameter := staticListOperand(cypher, start, params)
+		if typeName == "" {
 			continue
 		}
-		start := j + 1
-		end := start
+		if next := skipSpaces(cypher, end); next < len(cypher) && strings.IndexByte(")],}|", cypher[next]) < 0 && !isIdentByte(cypher[next]) {
+			// The operand is the start of a longer expression.
+			continue
+		}
+		message := "Type mismatch: expected List<T> but was " + typeName
+		if parameter != "" {
+			message = fmt.Sprintf("Type mismatch for parameter '%s': expected List<T> but was %s", parameter, typeName)
+		}
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", message)
+	}
+	return nil
+}
+
+// staticListOperand reads the operand of a list position starting at start
+// and returns where it ends and, when its type is static and not a list, that
+// type's Neo4j name (with the parameter's name for a parameter).
+func staticListOperand(cypher string, start int, params map[string]interface{}) (end int, typeName, parameter string) {
+	if start >= len(cypher) {
+		return start, "", ""
+	}
+	switch c := cypher[start]; {
+	case c == '$':
+		end = start + 1
 		for end < len(cypher) && isIdentByte(cypher[end]) {
 			end++
 		}
-		if end == start {
-			continue
-		}
-		next := skipSpaces(cypher, end)
-		if next < len(cypher) && strings.IndexByte(")],}|", cypher[next]) < 0 && !isIdentByte(cypher[next]) {
-			continue
-		}
-		name := cypher[start:end]
+		name := cypher[start+1 : end]
 		value, bound := params[name]
-		if !bound || value == nil || isCypherListParameter(value) {
-			continue
+		if name == "" || !bound || value == nil || isCypherListParameter(value) {
+			return end, "", ""
 		}
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidArgumentType",
-			fmt.Sprintf("IN requires a LIST on the right-hand side, got $%s = %v", name, value),
-		)
+		typeName = cypherValueTypeName(value)
+		if typeName == "Map" {
+			// A map parameter can stand for a node or relationship.
+			typeName = "Map, Node or Relationship"
+		}
+		return end, typeName, name
+	case c == '\'' || c == '"':
+		end = start + 1
+		for end < len(cypher) && (cypher[end] != c || isBackslashEscaped(cypher, end)) {
+			end++
+		}
+		return end + 1, "String", ""
+	case c == '{':
+		close := findMatchingDelimiter(cypher, start, '{', '}')
+		if close < 0 {
+			return start, "", ""
+		}
+		return close + 1, "Map", ""
+	default:
+		end = start
+		for end < len(cypher) && (isIdentByte(cypher[end]) || cypher[end] == '.' || cypher[end] == '-' && end == start) {
+			end++
+		}
+		switch value, literal := parseLiteralValueFromComputedRow(cypher[start:end]); {
+		case !literal || value == nil:
+			return end, "", ""
+		default:
+			return end, cypherValueTypeName(value), ""
+		}
 	}
-	return nil
 }
 
 func isCypherListParameter(value interface{}) bool {

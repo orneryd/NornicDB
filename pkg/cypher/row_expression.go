@@ -1205,11 +1205,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	if listValue == nil {
 		return nil, true, true, nil
 	}
-	valueType := reflect.TypeOf(listValue)
-	if valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array {
-		return nil, true, false, nil
-	}
-	items := toAnySlice(listValue)
+	items := traversableList(listValue)
 	result := make([]interface{}, 0, len(items))
 	for _, item := range items {
 		scope := make(map[string]interface{}, len(values)+1)
@@ -1349,20 +1345,8 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	if !isFunction || !isQuantifierFunction(function) {
 		return nil, false, false, nil
 	}
-	lowerInner := strings.ToLower(inner)
-	inIndex := strings.Index(lowerInner, " in ")
-	if inIndex <= 0 {
-		return nil, true, false, nil
-	}
-	rest := inner[inIndex+len(" in "):]
-	whereIndex := strings.Index(strings.ToLower(rest), " where ")
-	if whereIndex < 0 {
-		return nil, true, false, nil
-	}
-	variable := strings.TrimSpace(inner[:inIndex])
-	listExpression := strings.TrimSpace(rest[:whereIndex])
-	predicate := strings.TrimSpace(rest[whereIndex+len(" where "):])
-	if !isValidIdentifier(variable) || listExpression == "" || predicate == "" {
+	variable, listExpression, predicate, parsed := parseQuantifierArguments(inner)
+	if !parsed {
 		return nil, true, false, nil
 	}
 	listValue, ok, err := e.evaluateRowValue(listExpression, values)
@@ -1375,11 +1359,7 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	if listValue == nil {
 		return nil, true, true, nil
 	}
-	valueType := reflect.TypeOf(listValue)
-	if valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array {
-		return nil, true, false, nil
-	}
-	items := toAnySlice(listValue)
+	items := traversableList(listValue)
 	fold := quantifierFold{function: function}
 	for _, item := range items {
 		scope := make(map[string]interface{}, len(values)+1)
@@ -1808,11 +1788,7 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	if haystack == nil {
 		return nil, true
 	}
-	haystackType := reflect.TypeOf(haystack)
-	if haystackType == nil || (haystackType.Kind() != reflect.Slice && haystackType.Kind() != reflect.Array) {
-		return nil, false
-	}
-	items := toAnySlice(haystack)
+	items := traversableList(haystack)
 	if len(items) == 0 {
 		return false, true
 	}
