@@ -1466,18 +1466,38 @@ func (ae *AsyncEngine) GetNodesByLabel(label string) ([]*Node, error) {
 
 	// Filter engine results by the (small) live cache state by ID — keeps
 	// per-engine-edge work O(1) without materializing two N-sized sets.
+	// The cache can change between the two locks: a node written after the
+	// first read (an embedding update, #683) is in the cache now but not in
+	// cachedNodes. Its cached version is the newer one, so it is used when it
+	// still has the label; skipping it instead dropped the node from the
+	// result (a label count one batch short while embeddings were written).
 	ae.mu.RLock()
 	for _, node := range engineNodes {
 		if seenIDs[node.ID] || ae.deleteNodes[node.ID] {
 			continue
 		}
-		if _, overridden := ae.nodeCache[node.ID]; overridden {
+		if cached, overridden := ae.nodeCache[node.ID]; overridden {
+			if cached != nil && nodeHasLabelFold(cached, label) {
+				result = append(result, cached)
+				seenIDs[node.ID] = true
+			}
 			continue
 		}
 		result = append(result, node)
 	}
 	ae.mu.RUnlock()
 	return result, nil
+}
+
+// nodeHasLabelFold reports whether node has label, ignoring case as the
+// pending label index does.
+func nodeHasLabelFold(node *Node, label string) bool {
+	for _, nodeLabel := range node.Labels {
+		if strings.EqualFold(nodeLabel, label) {
+			return true
+		}
+	}
+	return false
 }
 
 // StreamNodesByLabelProjected merges projected pending writes with the underlying label scan.
@@ -1750,32 +1770,7 @@ func (ae *AsyncEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	if err != nil {
 		return cached, nil
 	}
-	if len(engineEdges) == 0 {
-		return cached, nil
-	}
-
-	result := make([]*Edge, 0, len(cached)+len(engineEdges))
-	seenIDs := make(map[EdgeID]bool, len(cached))
-	for _, e := range cached {
-		result = append(result, e)
-		seenIDs[e.ID] = true
-	}
-
-	// Filter engine results by the (small) live cache state. Re-acquiring
-	// the RLock briefly is cheap; checking each engine edge against the
-	// cache by ID stays O(1) per edge, so total cost is O(engineEdges).
-	ae.mu.RLock()
-	for _, e := range engineEdges {
-		if seenIDs[e.ID] || ae.deleteEdges[e.ID] {
-			continue
-		}
-		if _, overridden := ae.edgeCache[e.ID]; overridden {
-			continue
-		}
-		result = append(result, e)
-	}
-	ae.mu.RUnlock()
-	return result, nil
+	return mergeAsyncEdges(ae, cached, engineEdges, nodeID, true), nil
 }
 
 func (ae *AsyncEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
@@ -1800,29 +1795,7 @@ func (ae *AsyncEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	if err != nil {
 		return cached, nil
 	}
-	if len(engineEdges) == 0 {
-		return cached, nil
-	}
-
-	result := make([]*Edge, 0, len(cached)+len(engineEdges))
-	seenIDs := make(map[EdgeID]bool, len(cached))
-	for _, e := range cached {
-		result = append(result, e)
-		seenIDs[e.ID] = true
-	}
-
-	ae.mu.RLock()
-	for _, e := range engineEdges {
-		if seenIDs[e.ID] || ae.deleteEdges[e.ID] {
-			continue
-		}
-		if _, overridden := ae.edgeCache[e.ID]; overridden {
-			continue
-		}
-		result = append(result, e)
-	}
-	ae.mu.RUnlock()
-	return result, nil
+	return mergeAsyncEdges(ae, cached, engineEdges, nodeID, false), nil
 }
 
 // GetAdjacentEdges fetches outgoing+incoming edges for nodeID, folding the
@@ -1878,20 +1851,26 @@ func (ae *AsyncEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error)
 		engineIn, err = ae.engine.GetIncomingEdges(nodeID)
 		if err != nil {
 			// Cache + outgoing-only fallback.
-			merged := mergeAsyncEdges(ae, cachedOut, engineOut)
+			merged := mergeAsyncEdges(ae, cachedOut, engineOut, nodeID, true)
 			return merged, cachedIn, nil
 		}
 	}
 
-	outgoing := mergeAsyncEdges(ae, cachedOut, engineOut)
-	incoming := mergeAsyncEdges(ae, cachedIn, engineIn)
+	outgoing := mergeAsyncEdges(ae, cachedOut, engineOut, nodeID, true)
+	incoming := mergeAsyncEdges(ae, cachedIn, engineIn, nodeID, false)
 	return outgoing, incoming, nil
 }
 
 // mergeAsyncEdges merges async-cache edges with engine-returned edges,
-// honoring the cache's override and delete sets. Caller-supplied cached
-// already excludes pending deletes for that direction.
-func mergeAsyncEdges(ae *AsyncEngine, cached, engineEdges []*Edge) []*Edge {
+// honoring the cache's override and delete sets; it is the one merge of the
+// edge reads (outgoing, incoming, adjacent). Caller-supplied cached already
+// excludes pending deletes for that direction. The cache can change between
+// the caller's cache read and this merge: an edge written in between (a
+// property update) is in the cache now but not in cached. Its cached
+// version is the newer one, so it is used when it still belongs to the read
+// (it still starts at nodeID for outgoing, ends at it otherwise); skipping it
+// dropped the edge from the result.
+func mergeAsyncEdges(ae *AsyncEngine, cached, engineEdges []*Edge, nodeID NodeID, outgoing bool) []*Edge {
 	if len(engineEdges) == 0 {
 		return cached
 	}
@@ -1909,7 +1888,11 @@ func mergeAsyncEdges(ae *AsyncEngine, cached, engineEdges []*Edge) []*Edge {
 		if seen[e.ID] || ae.deleteEdges[e.ID] {
 			continue
 		}
-		if _, overridden := ae.edgeCache[e.ID]; overridden {
+		if cachedEdge, overridden := ae.edgeCache[e.ID]; overridden {
+			if cachedEdge != nil && ((outgoing && cachedEdge.StartNode == nodeID) || (!outgoing && cachedEdge.EndNode == nodeID)) {
+				result = append(result, cachedEdge)
+				seen[e.ID] = true
+			}
 			continue
 		}
 		result = append(result, e)

@@ -57,6 +57,7 @@ func TestAsyncEngine_LowCoverageHelpers(t *testing.T) {
 	merged := mergeAsyncEdges(ae,
 		[]*Edge{{ID: "e-cached"}},
 		[]*Edge{nil, {ID: "e-del"}, {ID: "e-over"}, {ID: "e-ok"}},
+		"test:a", true,
 	)
 	require.Len(t, merged, 2)
 	ae.mu.Lock()
