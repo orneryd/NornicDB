@@ -450,17 +450,31 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 		return nil, localizedError(localization.CypherSubqueriesNodePatternInvalid(nodePatternStr), nil)
 	}
 
-	seedNodes, err := e.seedNodesFromOuterMatch(ctx, outerPart, nodePattern.variable)
-	if err != nil {
-		return nil, localizedError(localization.CypherSubqueriesOuterMatchSeedsFailed(err), err)
-	}
-
 	// Parse the CALL {} subquery and what comes after
 	callPart := strings.TrimSpace(cypher[callIdx:])
 	callImportVars := parseCallSubqueryImportVariables(callPart)
 	subqueryBody, afterCall, inTransactions, batchSize := e.parseCallSubquery(callPart)
 	if subqueryBody == "" {
 		return nil, localizedError(localization.CypherSubqueriesCallBodyEmpty(), nil)
+	}
+
+	// The rest of this handler runs the subquery for the nodes of the MATCH's
+	// first node pattern, with that node as the only outer variable. When the
+	// MATCH binds more (a relationship pattern, several patterns) or the
+	// subquery imports another variable, the clauses before the CALL produce
+	// the seed rows, so every variable they bind reaches the subquery and the
+	// clauses after it (#648).
+	if !inTransactions && !callSeedIsFirstNode(nodePatternStr, nodePattern.variable, callImportVars, subqueryBody) {
+		seed, err := e.executeInternal(ctx, outerPart+" RETURN *", nil)
+		if err != nil {
+			return nil, localizedError(localization.CypherSubqueriesOuterMatchSeedsFailed(err), err)
+		}
+		return e.executeChainedCallSubquery(ctx, seed, callPart)
+	}
+
+	seedNodes, err := e.seedNodesFromOuterMatch(ctx, outerPart, nodePattern.variable)
+	if err != nil {
+		return nil, localizedError(localization.CypherSubqueriesOuterMatchSeedsFailed(err), err)
 	}
 
 	if len(seedNodes) == 0 {
@@ -1575,6 +1589,45 @@ func parseCallSubqueryImportVariables(cypher string) []string {
 	return vars
 }
 
+// prefixUnionBranches puts prefix before body, or before each branch of a
+// UNION / UNION ALL body: every branch of a CALL subquery imports the same
+// outer variables.
+func prefixUnionBranches(prefix, body string) string {
+	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(body)
+	if !ok || mixed || len(branches) < 2 {
+		return prefix + " " + body
+	}
+	separator := " UNION "
+	if unionAll {
+		separator = " UNION ALL "
+	}
+	for i, branch := range branches {
+		branches[i] = prefix + " " + branch
+	}
+	return strings.Join(branches, separator)
+}
+
+// callSeedIsFirstNode reports whether a MATCH … CALL { … } needs only the
+// MATCH's first node from the outer row: the pattern is that one node pattern,
+// and every variable the subquery imports (CALL (x, …) or a leading WITH x, …)
+// is that node's variable.
+func callSeedIsFirstNode(pattern, variable string, callImportVars []string, subqueryBody string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || pattern[0] != '(' || findMatchingDelimiter(pattern, 0, '(', ')') != len(pattern)-1 {
+		return false
+	}
+	imports := callImportVars
+	if withVars, _, hasWith, err := parseLeadingWithImports(subqueryBody); err == nil && hasWith {
+		imports = append(append([]string(nil), imports...), withVars...)
+	}
+	for _, imported := range imports {
+		if !strings.EqualFold(strings.TrimSpace(imported), variable) && strings.TrimSpace(imported) != "*" {
+			return false
+		}
+	}
+	return true
+}
+
 func importsVariable(vars []string, variable string) bool {
 	for _, v := range vars {
 		if strings.EqualFold(strings.TrimSpace(v), strings.TrimSpace(variable)) {
@@ -2412,6 +2465,7 @@ func (e *StorageExecutor) executeCorrelatedCallWithSeedRows(ctx context.Context,
 		correlatedBody := innerBody
 		nodeBindClauses := make([]string, 0, len(importVars))
 		nodeBindVars := make([]string, 0, len(importVars))
+		var valueBindings []string
 		for _, varName := range importVars {
 			idx, ok := colMap[varName]
 			if !ok {
@@ -2421,49 +2475,31 @@ func (e *StorageExecutor) executeCorrelatedCallWithSeedRows(ctx context.Context,
 				return nil, localizedError(localization.CypherSubqueriesSeedRowMissingVariable(varName), nil)
 			}
 			seedVal := seedRow[idx]
-			seedNode := (*storage.Node)(nil)
-			switch v := seedVal.(type) {
-			case *storage.Node:
-				if v != nil {
-					seedNode = v
-				}
-			case map[string]interface{}:
-				seedNode = e.seedNodeFromMap(v)
-			case string:
-				seedNode = e.seedNodeFromIDString(v)
-			case []interface{}:
-				if len(v) == 1 {
-					switch wrapped := v[0].(type) {
-					case *storage.Node:
-						if wrapped != nil {
-							seedNode = wrapped
-						}
-					case map[string]interface{}:
-						seedNode = e.seedNodeFromMap(wrapped)
-					case string:
-						seedNode = e.seedNodeFromIDString(wrapped)
-					}
-				}
-			}
-			if seedNode != nil {
+			// Only a node is bound as a node: a string, map or list import is
+			// that value, even when it names a node's id (#648).
+			if seedNode, isNode := seedVal.(*storage.Node); isNode && seedNode != nil {
 				pname := "__seed_id_" + varName
 				params[pname] = string(seedNode.ID)
 				nodeBindClauses = append(nodeBindClauses, fmt.Sprintf("MATCH (%s) WHERE id(%s) = $%s", varName, varName, pname))
 				nodeBindVars = append(nodeBindVars, varName)
 				continue
 			}
-			params[varName] = seedVal
-			correlatedBody = replaceIdentifierOutsideQuotes(correlatedBody, varName, "$"+varName)
+			// Any other value is a variable of the subquery too: bound by a
+			// leading WITH, so it is the imported value wherever the body uses
+			// it (SET t.p = …, t IS NULL, a map, a list), as in Neo4j (#648).
+			pname := "__seed_value_" + varName
+			params[pname] = seedVal
+			valueBindings = append(valueBindings, "$"+pname+" AS "+varName)
 		}
-		if len(nodeBindClauses) > 0 {
+		if len(nodeBindClauses) > 0 || len(valueBindings) > 0 {
+			// Imported nodes are bound by MATCH; a WITH carries them next to
+			// the imported values only when there are values, so a body such
+			// as MATCH … WITH p MERGE … keeps its shape otherwise.
 			prefix := strings.Join(nodeBindClauses, " ")
-			// Keep imported node variables in scope directly from MATCH bindings.
-			// Inserting an extra WITH here breaks valid MERGE tails such as:
-			//   MATCH ... WITH p MERGE ...
-			// under the current compound MATCH/MERGE execution path.
-			// The MATCH bindings already provide the imported variables.
-			_ = nodeBindVars
-			correlatedBody = prefix + " " + correlatedBody
+			if len(valueBindings) > 0 {
+				prefix = strings.TrimSpace(prefix + " WITH " + strings.Join(append(nodeBindVars, valueBindings...), ", "))
+			}
+			correlatedBody = prefixUnionBranches(prefix, correlatedBody)
 		}
 
 		innerRes, err := e.executeInternal(ctx, correlatedBody, params)
