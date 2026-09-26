@@ -27,6 +27,13 @@ func scanSymbolicName(s string, start int) (string, int, bool) {
 	return scanIdentifierToken(s, start)
 }
 
+// isPatternVariableName reports whether name is exactly one symbolic name,
+// plain or backtick-quoted (`p p`): a pattern or path variable as written.
+func isPatternVariableName(name string) bool {
+	_, end, ok := scanSymbolicName(name, 0)
+	return ok && end == len(name)
+}
+
 // unquoteBacktickIdentifier removes surrounding backticks from a Cypher identifier.
 //
 // Neo4j/Cypher uses backticks for escaping identifiers. For system commands like

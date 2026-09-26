@@ -513,7 +513,8 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 	return true
 }
 
-// extractNodeVariables extracts node variable names from a MATCH pattern
+// extractNodeVariables extracts node variable names from a MATCH pattern,
+// plain or backtick-quoted (`n n`, as written).
 func extractNodeVariables(matchClause string) []string {
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
@@ -524,7 +525,7 @@ func extractNodeVariables(matchClause string) []string {
 		for j < len(matchClause) && isWhitespace(matchClause[j]) {
 			j++
 		}
-		name, next, ok := scanIdentifierToken(matchClause, j)
+		name, next, ok := scanSymbolicName(matchClause, j)
 		if !ok {
 			continue
 		}
