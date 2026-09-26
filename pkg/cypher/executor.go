@@ -1483,6 +1483,19 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 		return result, err
 	}
+	// A statement that fails in an explicit transaction marks it failed, as in
+	// Neo4j (#683): later statements are refused, COMMIT rolls it back and
+	// ROLLBACK discards everything it wrote. Only the caller's own statement
+	// counts: executions nested inside a statement (they carry the
+	// transaction's storage wrapper) handle their own errors.
+	if tx := e.txContext; tx != nil && tx.active && ctx.Value(ctxKeyTxStorage) == nil {
+		if tx.failed != nil {
+			return nil, queryOnFailedTransactionError(tx.failed)
+		}
+		defer func() {
+			e.failTransaction(retErr)
+		}()
+	}
 	// SHOW TRANSACTIONS lists the statement while it runs; TERMINATE
 	// TRANSACTIONS cancels it (#718).
 	statementCtx, running, runErr := e.withRunningStatement(ctx, originalCypher)
@@ -1624,7 +1637,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 		result, err := e.executeInTransaction(ctx, cypher, upperQuery)
 		if failure := getExpressionFailure(ctx); failure != nil {
-			_, _ = e.handleRollback()
 			return nil, failure
 		}
 		return result, err

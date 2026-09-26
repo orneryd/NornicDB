@@ -30,6 +30,38 @@ type TransactionContext struct {
 	fabricRemoteExe *fabric.RemoteFragmentExecutor
 	// running is the transaction's SHOW TRANSACTIONS entry (#718).
 	running *runningTransaction
+	// failed is the error of the first statement that failed in the
+	// transaction. A failed transaction stays open so ROLLBACK discards what
+	// it wrote; any other statement is refused and COMMIT rolls it back, as in
+	// Neo4j (#683).
+	failed error
+}
+
+// failTransaction records err as the active explicit transaction's failure
+// and returns err. The first failure wins: it is the cause COMMIT reports. It
+// is the one rule for a statement that fails inside a transaction, whether it
+// ran through Execute or an inline transaction script (#683).
+func (e *StorageExecutor) failTransaction(err error) error {
+	if tx := e.txContext; err != nil && tx != nil && tx.active && tx.failed == nil {
+		tx.failed = err
+	}
+	return err
+}
+
+// abortTransaction fails the active transaction with err and ends it: what an
+// inline transaction script (BEGIN … COMMIT in one request) does when its
+// statement fails, since no later ROLLBACK can reach it. It returns err.
+func (e *StorageExecutor) abortTransaction(err error) error {
+	e.failTransaction(err)
+	_, _ = e.handleRollback()
+	return err
+}
+
+// queryOnFailedTransactionError is the error of a statement sent to a
+// transaction a previous statement failed in.
+func queryOnFailedTransactionError(cause error) error {
+	return newSemanticError("Neo.TransientError.Transaction.QueryExecutionFailedOnTransaction", "QueryExecutionFailedOnTransaction",
+		"The transaction was marked as failed because a query failed: "+cause.Error())
 }
 
 // parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
@@ -165,6 +197,14 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	if e.txContext.running != nil && e.txContext.running.terminated.Load() {
 		_, _ = e.handleRollback()
 		return nil, transactionTerminatedError()
+	}
+	// A transaction a statement failed in can't commit: it is rolled back.
+	if cause := e.txContext.failed; cause != nil {
+		if _, err := e.handleRollback(); err != nil {
+			return nil, err
+		}
+		return nil, newSemanticError("Neo.ClientError.Transaction.TransactionMarkedAsFailed", "TransactionMarkedAsFailed",
+			"The transaction was rolled back because a statement in it failed: "+cause.Error())
 	}
 	// Commit based on transaction type
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)

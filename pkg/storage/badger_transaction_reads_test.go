@@ -878,3 +878,32 @@ func TestTxReads_SetImplicit(t *testing.T) {
 	err = tx.SetImplicit(true)
 	require.Error(t, err, "SetImplicit on closed tx must fail")
 }
+
+// TestTxReads_CreateEdgeSingleAndBulkAgree pins that a transaction creates
+// edges one at a time and in bulk with the same checks (#683, #547): the same
+// error for a nil edge and an empty ID, the lifecycle check even for an empty
+// batch, and a rejected edge leaves the batch's earlier edges unbuffered.
+func TestTxReads_CreateEdgeSingleAndBulkAgree(t *testing.T) {
+	engine := txReadFixture(t)
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	require.ErrorIs(t, tx.CreateEdge(nil), ErrInvalidData)
+	require.ErrorIs(t, tx.BulkCreateEdges([]*Edge{nil}), ErrInvalidData)
+	require.ErrorIs(t, tx.CreateEdge(&Edge{StartNode: "test:alice", EndNode: "test:bob", Type: "X"}), ErrInvalidID)
+
+	// The second edge's missing endpoint rejects the batch: the first edge
+	// is not buffered.
+	err = tx.BulkCreateEdges([]*Edge{
+		{ID: "test:e-ok", StartNode: "test:alice", EndNode: "test:bob", Type: "OK"},
+		{ID: "test:e-bad", StartNode: "test:alice", EndNode: "test:nobody", Type: "BAD"},
+	})
+	require.Error(t, err)
+	_, err = tx.GetEdge("test:e-ok")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	// After the transaction ends, an empty batch reports it like any other.
+	require.NoError(t, tx.Rollback())
+	require.Error(t, tx.BulkCreateEdges(nil))
+}

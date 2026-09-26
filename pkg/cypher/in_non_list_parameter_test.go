@@ -17,9 +17,15 @@ func TestInNonListParameterIsTypeError(t *testing.T) {
 			ctx := context.Background()
 			_, err := exec.Execute(ctx, "CREATE (:T {id: 5})", nil)
 			require.NoError(t, err)
-			if mode == "explicit transaction" {
-				_, err = exec.Execute(ctx, "BEGIN", nil)
-				require.NoError(t, err)
+			// In an explicit transaction each statement runs in its own: a
+			// failing statement fails its transaction (#683).
+			run := func(query string, params map[string]interface{}) (*ExecuteResult, error) {
+				if mode == "explicit transaction" {
+					_, beginErr := exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, beginErr)
+					defer func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) }()
+				}
+				return exec.Execute(ctx, query, params)
 			}
 			for _, tc := range []struct {
 				q string
@@ -31,14 +37,14 @@ func TestInNonListParameterIsTypeError(t *testing.T) {
 				{"MATCH (n:T) WHERE n.id IN $p RETURN n.id AS id", map[string]interface{}{"a": 1}},
 				{"RETURN 5 IN $p AS x", int64(5)},
 			} {
-				_, err := exec.Execute(ctx, tc.q, map[string]interface{}{"p": tc.p})
+				_, err := run(tc.q, map[string]interface{}{"p": tc.p})
 				assert.Error(t, err, "%s with $p=%v", tc.q, tc.p)
 			}
 			// Lists and null keep working.
-			res, err := exec.Execute(ctx, "MATCH (n:T) WHERE n.id IN $p RETURN count(n) AS c", map[string]interface{}{"p": []interface{}{int64(5)}})
+			res, err := run("MATCH (n:T) WHERE n.id IN $p RETURN count(n) AS c", map[string]interface{}{"p": []interface{}{int64(5)}})
 			require.NoError(t, err)
 			assert.Equal(t, int64(1), res.Rows[0][0])
-			res, err = exec.Execute(ctx, "MATCH (n:T) WHERE n.id IN $p RETURN count(n) AS c", map[string]interface{}{"p": nil})
+			res, err = run("MATCH (n:T) WHERE n.id IN $p RETURN count(n) AS c", map[string]interface{}{"p": nil})
 			require.NoError(t, err)
 			assert.Equal(t, int64(0), res.Rows[0][0])
 		})
