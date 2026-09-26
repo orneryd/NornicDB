@@ -142,11 +142,48 @@ func pipelineHasWithAfterMerge(clauses []pipelineClause) bool {
 	return false
 }
 
-// splitPipelineClauses walks the query from left to right and slices it on
+// pipelineClauseSplits caches splitPipelineClauses by statement text; it is
+// cleared when it reaches pipelineClauseSplitLimit entries, which bounds it
+// for workloads with unbounded distinct texts.
+var pipelineClauseSplits = struct {
+	sync.RWMutex
+	splits map[string]pipelineClauseSplit
+}{splits: make(map[string]pipelineClauseSplit)}
+
+type pipelineClauseSplit struct {
+	clauses []pipelineClause
+	ok      bool
+}
+
+const pipelineClauseSplitLimit = 4096
+
+// splitPipelineClauses cuts a statement into its pipeline clauses (see
+// parsePipelineClauses). The split of a text is computed once; callers get
+// their own copy of the clause list.
+func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
+	pipelineClauseSplits.RLock()
+	split, cached := pipelineClauseSplits.splits[cypher]
+	pipelineClauseSplits.RUnlock()
+	if !cached {
+		split.clauses, split.ok = parsePipelineClauses(cypher)
+		pipelineClauseSplits.Lock()
+		if len(pipelineClauseSplits.splits) >= pipelineClauseSplitLimit {
+			pipelineClauseSplits.splits = make(map[string]pipelineClauseSplit)
+		}
+		pipelineClauseSplits.splits[cypher] = split
+		pipelineClauseSplits.Unlock()
+	}
+	if split.clauses == nil {
+		return nil, split.ok
+	}
+	return append([]pipelineClause(nil), split.clauses...), split.ok
+}
+
+// parsePipelineClauses walks the query from left to right and slices it on
 // top-level MATCH/CREATE/WITH/UNWIND/RETURN keywords. Returns (clauses, true)
 // on success. On anything unsupported (e.g. nested MERGE or CALL subquery)
 // returns (nil, false) so the caller falls back.
-func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
+func parsePipelineClauses(cypher string) ([]pipelineClause, bool) {
 	type kw struct {
 		name string
 		kind pipelineClauseKind
