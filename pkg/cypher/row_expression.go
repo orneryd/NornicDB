@@ -631,7 +631,9 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 		return e.subtract(int64(0), value), true
 	}
 
-	if dot := strings.Index(expr, "."); dot > 0 {
+	// The property access splits at the first dot outside brackets, braces and
+	// quotes: n {.k}.k reads k from the map projection n {.k} (#712).
+	if dot := topLevelSymbolIndex(expr, "."); dot > 0 {
 		base, ok := e.evaluateRowExpression(strings.TrimSpace(expr[:dot]), values)
 		if ok {
 			return evaluateRowPropertyChain(base, strings.TrimSpace(expr[dot+1:]))

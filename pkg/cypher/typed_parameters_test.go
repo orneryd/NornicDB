@@ -81,3 +81,28 @@ func TestParameterReferencesOutsideStringLiterals(t *testing.T) {
 	require.Equal(t, int64(1), result.Rows[0][0])
 	require.Equal(t, "WHERE n.name = 'N' AND n.v = '$name'", ReplaceParameters("WHERE n.name = $name AND n.v = '$name'", func(string) string { return "'N'" }))
 }
+
+// TestPropertyAccessOnMapProjection: a property read straight off a map
+// projection is the projected value, as in Neo4j (#712 section).
+func TestPropertyAccessOnMapProjection(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "mapprojaccess"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:MP {k: 'a'})", nil)
+	require.NoError(t, err)
+	for query, want := range map[string]interface{}{
+		"MATCH (n:MP) RETURN n {.k}.k AS x":        "a",
+		"MATCH (n:MP) RETURN n {.k, z: 1}.z AS x":  int64(1),
+		"MATCH (n:MP) RETURN n {.*}.k AS x":        "a",
+		"WITH {a: 1} AS m RETURN m {.a}.a AS x":    int64(1),
+		"MATCH (n:MP) RETURN (n {.k}).k AS x":      "a",
+		"MATCH (n:MP) WITH n {.k} AS m RETURN m.k": "a",
+		"RETURN {a: {b: 1}}.a.b AS x":              int64(1),
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
+	// In a pattern, a property map still needs key-value entries.
+	_, err = exec.Execute(ctx, "MATCH (n {.k}) RETURN n", nil)
+	require.Error(t, err)
+}
