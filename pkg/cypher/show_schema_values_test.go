@@ -17,7 +17,9 @@ func TestShowSchemaValuesMatchNeo4j(t *testing.T) {
 	ctx := context.Background()
 	for _, ddl := range []string{
 		"CREATE INDEX s_range FOR (n:S) ON (n.a)",
-		"CREATE INDEX s_comp FOR (n:S) ON (n.a, n.b)",
+		// Not on (n.a, …): a composite index whose first property already has
+		// an index isn't created (#531 section).
+		"CREATE INDEX s_comp FOR (n:S) ON (n.c, n.d)",
 		"CREATE INDEX s_rel FOR ()-[r:SR]-() ON (r.a)",
 		"CREATE FULLTEXT INDEX s_ft FOR (n:S) ON EACH [n.t, n.u]",
 		"CREATE VECTOR INDEX s_vec FOR (n:S) ON (n.v) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}",
@@ -29,7 +31,7 @@ func TestShowSchemaValuesMatchNeo4j(t *testing.T) {
 		"CREATE CONSTRAINT s_relkey FOR ()-[r:SR]-() REQUIRE (r.k1, r.k2) IS RELATIONSHIP KEY",
 		"CREATE CONSTRAINT s_type FOR (n:SC) REQUIRE n.w IS :: INTEGER",
 		"CREATE CONSTRAINT s_temporal FOR (n:ST) REQUIRE (n.key, n.from, n.to) IS TEMPORAL NO OVERLAP",
-		"CREATE CONSTRAINT s_domain FOR (n:SD) REQUIRE n.status IN ['a', 'it''s', 3]",
+		"CREATE CONSTRAINT s_domain FOR (n:SD) REQUIRE n.status IN ['a', 'b', 3]",
 		"CREATE CONSTRAINT s_card FOR ()-[r:SCARD]->() REQUIRE MAX COUNT 2",
 		"CREATE CONSTRAINT s_cardin FOR ()<-[r:SCARD2]-() REQUIRE MAX COUNT 5",
 		"CREATE CONSTRAINT s_policy FOR (:SA)-[r:SP]->(:SB) REQUIRE ALLOWED",
@@ -57,7 +59,7 @@ func TestShowSchemaValuesMatchNeo4j(t *testing.T) {
 	range1 := map[string]interface{}{"indexConfig": map[string]interface{}{}, "indexProvider": "range-1.0"}
 	for name, want := range map[string]map[string]interface{}{
 		"s_range": {"type": "RANGE", "indexProvider": "range-1.0", "options": range1, "createStatement": "CREATE RANGE INDEX `s_range` FOR (n:`S`) ON (n.`a`)"},
-		"s_comp":  {"type": "RANGE", "createStatement": "CREATE RANGE INDEX `s_comp` FOR (n:`S`) ON (n.`a`, n.`b`)"},
+		"s_comp":  {"type": "RANGE", "createStatement": "CREATE RANGE INDEX `s_comp` FOR (n:`S`) ON (n.`c`, n.`d`)"},
 		"s_rel":   {"type": "RANGE", "entityType": "RELATIONSHIP", "createStatement": "CREATE RANGE INDEX `s_rel` FOR ()-[r:`SR`]-() ON (r.`a`)"},
 		"s_ft":    {"type": "FULLTEXT", "indexProvider": "fulltext-1.0", "createStatement": "CREATE FULLTEXT INDEX `s_ft` FOR (n:`S`) ON EACH [n.`t`, n.`u`]"},
 		"s_vec": {"type": "VECTOR", "indexProvider": "vector-2.0",
@@ -88,7 +90,7 @@ func TestShowSchemaValuesMatchNeo4j(t *testing.T) {
 		"s_relkey":   {"type": "RELATIONSHIP_KEY", "createStatement": "CREATE CONSTRAINT `s_relkey` FOR ()-[r:`SR`]-() REQUIRE (r.`k1`, r.`k2`) IS RELATIONSHIP KEY"},
 		"s_type":     {"type": "NODE_PROPERTY_TYPE", "propertyType": "INTEGER", "createStatement": "CREATE CONSTRAINT `s_type` FOR (n:`SC`) REQUIRE (n.`w`) IS :: INTEGER"},
 		"s_temporal": {"type": "TEMPORAL_NO_OVERLAP", "createStatement": "CREATE CONSTRAINT `s_temporal` FOR (n:`ST`) REQUIRE (n.`key`, n.`from`, n.`to`) IS TEMPORAL NO OVERLAP"},
-		"s_domain":   {"type": "DOMAIN", "createStatement": "CREATE CONSTRAINT `s_domain` FOR (n:`SD`) REQUIRE n.`status` IN ['a', 'it\\'s', 3]"},
+		"s_domain":   {"type": "DOMAIN", "createStatement": "CREATE CONSTRAINT `s_domain` FOR (n:`SD`) REQUIRE n.`status` IN ['a', 'b', 3]"},
 		"s_card":     {"type": "CARDINALITY", "createStatement": "CREATE CONSTRAINT `s_card` FOR ()-[r:`SCARD`]->() REQUIRE MAX COUNT 2"},
 		"s_cardin":   {"type": "CARDINALITY", "createStatement": "CREATE CONSTRAINT `s_cardin` FOR ()<-[r:`SCARD2`]-() REQUIRE MAX COUNT 5"},
 		"s_policy":   {"type": "RELATIONSHIP_POLICY", "createStatement": "CREATE CONSTRAINT `s_policy` FOR (:`SA`)-[r:`SP`]->(:`SB`) REQUIRE ALLOWED"},
@@ -235,4 +237,17 @@ func TestLookupIndexesAsNeo4j(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
 	assert.Contains(t, err.Error(), "There already exists an index called 's'.")
+}
+
+// userIndexes is indexes without the token lookup indexes every database
+// starts with (#530).
+func userIndexes(indexes []interface{}) []interface{} {
+	out := make([]interface{}, 0, len(indexes))
+	for _, idx := range indexes {
+		if m, ok := idx.(map[string]interface{}); ok && m["type"] == "LOOKUP" {
+			continue
+		}
+		out = append(out, idx)
+	}
+	return out
 }

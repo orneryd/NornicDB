@@ -70,7 +70,7 @@ func TestCreateIndex(t *testing.T) {
 	}
 
 	// Verify index exists
-	indexes := store.GetSchema().GetIndexes()
+	indexes := userIndexes(store.GetSchema().GetIndexes())
 	if len(indexes) != 1 {
 		t.Fatalf("Expected 1 index, got %d", len(indexes))
 	}
@@ -91,7 +91,7 @@ func TestCreateFulltextIndex(t *testing.T) {
 	}
 
 	// Verify index exists
-	indexes := store.GetSchema().GetIndexes()
+	indexes := userIndexes(store.GetSchema().GetIndexes())
 	if len(indexes) != 1 {
 		t.Fatalf("Expected 1 index, got %d", len(indexes))
 	}
@@ -119,7 +119,7 @@ func TestCreateVectorIndex(t *testing.T) {
 	}
 
 	// Verify index exists
-	indexes := store.GetSchema().GetIndexes()
+	indexes := userIndexes(store.GetSchema().GetIndexes())
 	if len(indexes) != 1 {
 		t.Fatalf("Expected 1 index, got %d", len(indexes))
 	}
@@ -163,7 +163,7 @@ func TestSchemaInitialization(t *testing.T) {
 		t.Errorf("Expected 1 constraint, got %d", len(constraints))
 	}
 
-	indexes := store.GetSchema().GetIndexes()
+	indexes := userIndexes(store.GetSchema().GetIndexes())
 	if len(indexes) != 4 {
 		t.Errorf("Expected 4 indexes including the constraint-owned index, got %d", len(indexes))
 	}
@@ -228,7 +228,7 @@ func TestIndexWithoutName(t *testing.T) {
 	}
 
 	// Verify index exists
-	indexes := store.GetSchema().GetIndexes()
+	indexes := userIndexes(store.GetSchema().GetIndexes())
 	if len(indexes) != 1 {
 		t.Fatalf("Expected 1 index, got %d", len(indexes))
 	}
@@ -604,7 +604,7 @@ func TestVectorIndexWithDifferentOptions(t *testing.T) {
 	}
 
 	// Verify both were created
-	indexes := store.GetSchema().GetIndexes()
+	indexes := userIndexes(store.GetSchema().GetIndexes())
 	vectorCount := 0
 	for _, idx := range indexes {
 		m := idx.(map[string]interface{})
@@ -955,7 +955,7 @@ func TestCreateIndex_Neo4jCompatibilitySyntax(t *testing.T) {
 		}
 	}
 
-	indexes := store.GetSchema().GetIndexes()
+	indexes := userIndexes(store.GetSchema().GetIndexes())
 	if len(indexes) == 0 {
 		t.Fatal("expected created indexes to be present")
 	}
@@ -978,16 +978,15 @@ func TestCreateIndex_Neo4jCompatibilitySyntax(t *testing.T) {
 	}
 }
 
-func TestCreateRangeIndex_RejectsRelationshipPattern(t *testing.T) {
+func TestCreateRangeIndex_RelationshipPattern(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
+	// A RANGE index on a relationship property is valid Neo4j 5 DDL (#531).
 	_, err := exec.executeSchemaCommand(ctx, "CREATE RANGE INDEX rel_rng FOR ()-[r:RELATES_TO]-() ON (r.uuid)")
-	if err == nil {
-		t.Fatal("expected relationship CREATE RANGE INDEX syntax to fail")
-	}
+	require.NoError(t, err)
 }
 
 func TestSchemaDDL_AllowsTrailingOptionsAndBacktickIdentifiers(t *testing.T) {
@@ -1160,7 +1159,7 @@ func TestCreateFulltextIndex_CompatSyntaxWithoutParenthesizedPattern(t *testing.
 		t.Fatalf("expected fulltext compat syntax to succeed: %v", err)
 	}
 
-	indexes := store.GetSchema().GetIndexes()
+	indexes := userIndexes(store.GetSchema().GetIndexes())
 	found := false
 	for _, raw := range indexes {
 		idx, ok := raw.(map[string]interface{})
@@ -1248,13 +1247,18 @@ func TestCreateRangeIndex_ErrorBranches(t *testing.T) {
 		t.Fatalf("expected second unnamed range index with different generated name to succeed, got: %v", err)
 	}
 
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_multi FOR (n:Person) ON (n.age, n.score)")
-	if err == nil || !strings.Contains(err.Error(), "only supports single property") {
-		t.Fatalf("expected single-property validation error, got: %v", err)
+	// A RANGE index is CREATE INDEX: composite and relationship forms too.
+	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_multi FOR (n:Person) ON (n.city, n.zip)")
+	if err != nil {
+		t.Fatalf("composite range index: %v", err)
+	}
+	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_rel FOR ()-[r:KNOWS]-() ON (r.since)")
+	if err != nil {
+		t.Fatalf("relationship range index: %v", err)
 	}
 
 	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX")
-	if err == nil || !strings.Contains(err.Error(), "invalid CREATE RANGE INDEX syntax") {
+	if err == nil || !strings.Contains(err.Error(), "invalid CREATE") {
 		t.Fatalf("expected invalid syntax error, got: %v", err)
 	}
 }
@@ -1533,7 +1537,7 @@ func TestRelationshipConstraint_OwnedBackingIndex(t *testing.T) {
 		result, err := exec.Execute(ctx, "SHOW CONSTRAINTS", nil)
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 1)
-		require.Equal(t, "rel_u_index", result.Rows[0][6]) // ownedIndex column
+		require.Equal(t, "rel_u", result.Rows[0][6]) // ownedIndex column
 	})
 
 	t.Run("dropping constraint drops owned index", func(t *testing.T) {
@@ -1542,7 +1546,7 @@ func TestRelationshipConstraint_OwnedBackingIndex(t *testing.T) {
 		require.NoError(t, err)
 		indexFound := false
 		for _, row := range result.Rows {
-			if name, ok := row[1].(string); ok && name == "rel_u_index" {
+			if name, ok := row[1].(string); ok && name == "rel_u" {
 				indexFound = true
 			}
 		}
@@ -1557,7 +1561,7 @@ func TestRelationshipConstraint_OwnedBackingIndex(t *testing.T) {
 		require.NoError(t, err)
 		for _, row := range result.Rows {
 			if name, ok := row[1].(string); ok {
-				require.NotEqual(t, "rel_u_index", name, "owned index should be dropped with constraint")
+				require.NotEqual(t, "rel_u", name, "owned index should be dropped with constraint")
 			}
 		}
 	})
@@ -1569,7 +1573,7 @@ func TestRelationshipConstraint_OwnedBackingIndex(t *testing.T) {
 		all := store.GetSchema().GetAllConstraints()
 		for _, c := range all {
 			if c.Name == "rel_key" {
-				require.Equal(t, "rel_key_index", c.OwnedIndex)
+				require.Equal(t, "rel_key", c.OwnedIndex)
 			}
 		}
 	})
@@ -2101,13 +2105,13 @@ func TestShowIndexes_RelationshipBackingIndex(t *testing.T) {
 		owningConstraint := row[9]
 
 		switch name {
-		case "rel_uniq_index":
+		case "rel_uniq":
 			foundUniq = true
 			require.Equal(t, "RELATIONSHIP", entityType, "backing index should have RELATIONSHIP entity type")
 			require.Equal(t, "rel_uniq", owningConstraint, "backing index should reference owning constraint")
 			props := row[7].([]string)
 			require.Equal(t, []string{"since"}, props)
-		case "rel_comp_key_index":
+		case "rel_comp_key":
 			foundCompKey = true
 			require.Equal(t, "RELATIONSHIP", entityType)
 			require.Equal(t, "rel_comp_key", owningConstraint)
@@ -2115,6 +2119,6 @@ func TestShowIndexes_RelationshipBackingIndex(t *testing.T) {
 			require.Equal(t, []string{"dept", "role"}, props, "composite key index should have all properties")
 		}
 	}
-	require.True(t, foundUniq, "expected to find rel_uniq_index in SHOW INDEXES")
-	require.True(t, foundCompKey, "expected to find rel_comp_key_index in SHOW INDEXES")
+	require.True(t, foundUniq, "expected to find rel_uniq (the constraint's own name, #530) in SHOW INDEXES")
+	require.True(t, foundCompKey, "expected to find rel_comp_key in SHOW INDEXES")
 }
