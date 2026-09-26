@@ -318,8 +318,7 @@ func parseDuration(s string) *CypherDuration {
 	}
 
 	// Parse date components
-	re := regexp.MustCompile(`(\d+)([YMD])`)
-	matches := re.FindAllStringSubmatch(datePart, -1)
+	matches := durationDatePartPattern.FindAllStringSubmatch(datePart, -1)
 	for _, match := range matches {
 		val, _ := strconv.ParseInt(match[1], 10, 64)
 		switch match[2] {
@@ -334,8 +333,7 @@ func parseDuration(s string) *CypherDuration {
 
 	// Parse time components
 	if timePart != "" {
-		re = regexp.MustCompile(`(\d+\.?\d*)([HMS])`)
-		matches = re.FindAllStringSubmatch(timePart, -1)
+		matches = durationTimePartPattern.FindAllStringSubmatch(timePart, -1)
 		for _, match := range matches {
 			switch match[2] {
 			case "H":
@@ -575,3 +573,10 @@ func subtractDurationFromDate(dateVal interface{}, dur *CypherDuration) string {
 
 	return t.Format(time.RFC3339)
 }
+
+// The ISO 8601 duration parts, compiled once (#591): duration() parses
+// every call's text with them.
+var (
+	durationDatePartPattern = regexp.MustCompile(`(\d+)([YMD])`)
+	durationTimePartPattern = regexp.MustCompile(`(\d+\.?\d*)([HMS])`)
+)

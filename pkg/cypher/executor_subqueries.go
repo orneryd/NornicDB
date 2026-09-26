@@ -266,8 +266,7 @@ func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeCo
 	// Find all variable.property patterns in the CALL
 	// Pattern: varName.propertyName (but not inside strings)
 	// We need to be careful not to match patterns inside quoted strings
-	varPattern := regexp.MustCompile(`(\w+)\.(\w+)`)
-	matches := varPattern.FindAllStringSubmatchIndex(callPart, -1)
+	matches := callPropertyAccessPattern.FindAllStringSubmatchIndex(callPart, -1)
 
 	// Process matches in reverse order to maintain indices
 	for i := len(matches) - 1; i >= 0; i-- {
@@ -2258,8 +2257,7 @@ func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass boo
 	// Examples:
 	//   t IS NULL
 	//   t IS NOT NULL
-	re := regexp.MustCompile(`(?i)^([A-Za-z_][A-Za-z0-9_]*)\s+IS\s+(NOT\s+)?NULL$`)
-	m := re.FindStringSubmatch(expr)
+	m := variableNullCheckPattern.FindStringSubmatch(expr)
 	if len(m) != 3 {
 		return false, false
 	}
@@ -3983,3 +3981,11 @@ func selectTopKRowsForOrder(rows [][]interface{}, colIdx int, descending bool, k
 	}
 	return out
 }
+
+// Patterns compiled once (#591).
+var (
+	// callPropertyAccessPattern is a variable.property reference in a CALL.
+	callPropertyAccessPattern = regexp.MustCompile(`(\w+)\.(\w+)`)
+	// variableNullCheckPattern is "variable IS [NOT] NULL".
+	variableNullCheckPattern = regexp.MustCompile(`(?i)^([A-Za-z_][A-Za-z0-9_]*)\s+IS\s+(NOT\s+)?NULL$`)
+)

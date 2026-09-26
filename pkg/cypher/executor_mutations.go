@@ -492,12 +492,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 		// Supported hot-path predicates:
 		//   var.prop = $param | 'literal'
 		//   var.prop IN $param
-		eqRE := regexp.MustCompile(`(?i)^\s*` + regexp.QuoteMeta(deleteVar) + `\.(\w+)\s*=\s*(.+?)\s*$`)
-		inRE := regexp.MustCompile(`(?i)^\s*` + regexp.QuoteMeta(deleteVar) + `\.(\w+)\s+IN\s+\$(\w+)\s*$`)
-
-		if m := eqRE.FindStringSubmatch(wherePart); len(m) == 3 {
-			prop := m[1]
-			rhs := strings.TrimSpace(m[2])
+		if m := deleteWherePropertyEquals.FindStringSubmatch(wherePart); len(m) == 4 && strings.EqualFold(m[1], deleteVar) {
+			prop := m[2]
+			rhs := strings.TrimSpace(m[3])
 			var expected interface{}
 			if strings.HasPrefix(rhs, "$") {
 				key := strings.TrimSpace(strings.TrimPrefix(rhs, "$"))
@@ -519,9 +516,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 				}
 			}
 			nodes = filtered
-		} else if m := inRE.FindStringSubmatch(wherePart); len(m) == 3 {
-			prop := m[1]
-			paramName := m[2]
+		} else if m := deleteWherePropertyInParameter.FindStringSubmatch(wherePart); len(m) == 4 && strings.EqualFold(m[1], deleteVar) {
+			prop := m[2]
+			paramName := m[3]
 			raw, ok := params[paramName]
 			if !ok {
 				return []*storage.Node{}, true, nil
@@ -1723,8 +1720,7 @@ func coerceToUnwindItems(listVal interface{}) []interface{} {
 }
 
 func extractWithAliases(querySegment string) []string {
-	re := regexp.MustCompile(`(?i)\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
-	matches := re.FindAllStringSubmatch(querySegment, -1)
+	matches := withAliasPattern.FindAllStringSubmatch(querySegment, -1)
 	aliases := make([]string, 0, len(matches))
 	for _, m := range matches {
 		if len(m) > 1 {
@@ -2536,24 +2532,42 @@ func (e *StorageExecutor) substituteNodeInSubquery(subquery, variable string, no
 	result := subquery
 
 	// Pattern 1: (variable) -> (nodeID)
-	// Use word boundaries to avoid matching variable names that are substrings
-	pattern1 := regexp.MustCompile(`\(` + regexp.QuoteMeta(variable) + `\)`)
-	replacement1 := "(" + string(node.ID) + ")"
-	result = pattern1.ReplaceAllString(result, replacement1)
+	result = strings.ReplaceAll(result, "("+variable+")", "("+string(node.ID)+")")
 
-	// Pattern 2: (variable:Label) -> (nodeID:Label)
-	// This preserves the label
-	labelPattern := regexp.MustCompile(`\(` + regexp.QuoteMeta(variable) + `:([^)]+)\)`)
-	result = labelPattern.ReplaceAllStringFunc(result, func(match string) string {
-		// Extract the label part
-		labelMatch := regexp.MustCompile(`:` + `([^)]+)`).FindStringSubmatch(match)
-		if len(labelMatch) > 1 {
-			return "(" + string(node.ID) + ":" + labelMatch[1] + ")"
+	// Pattern 2: (variable:Label) -> (nodeID:Label), preserving the label.
+	return replaceLabeledNodePatternVariable(result, variable, string(node.ID))
+}
+
+// replaceLabeledNodePatternVariable replaces variable with replacement in
+// each node pattern (variable:Labels) of text whose labels part is not
+// empty and contains no ')'.
+func replaceLabeledNodePatternVariable(text, variable, replacement string) string {
+	prefix := "(" + variable + ":"
+	var out strings.Builder
+	for {
+		start := strings.Index(text, prefix)
+		if start < 0 {
+			break
 		}
-		return "(" + string(node.ID) + ")"
-	})
-
-	return result
+		labelsStart := start + len(prefix)
+		end := strings.IndexByte(text[labelsStart:], ')')
+		if end <= 0 {
+			// No labels or no closing parenthesis: not a (variable:Label)
+			// pattern; keep the text and search after it.
+			out.WriteString(text[:labelsStart])
+			text = text[labelsStart:]
+			continue
+		}
+		out.WriteString(text[:start])
+		out.WriteString("(" + replacement + ":")
+		out.WriteString(text[labelsStart : labelsStart+end+1])
+		text = text[labelsStart+end+1:]
+	}
+	if out.Len() == 0 {
+		return text
+	}
+	out.WriteString(text)
+	return out.String()
 }
 
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
@@ -2641,8 +2655,7 @@ func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.
 	innerWhere := ""
 
 	// Use regex to find WHERE with any whitespace before it (including newlines)
-	whereRe := regexp.MustCompile(`(?i)\s+WHERE\s+`)
-	if loc := whereRe.FindStringIndex(pattern); loc != nil {
+	if loc := subqueryWherePattern.FindStringIndex(pattern); loc != nil {
 		innerWhere = strings.TrimSpace(pattern[loc[1]:])
 		pattern = strings.TrimSpace(pattern[:loc[0]])
 	}
@@ -3568,3 +3581,15 @@ func sliceContains(slice []string, item string) bool {
 	}
 	return false
 }
+
+// Patterns compiled once (#591): these helpers run per statement or per row.
+var (
+	// deleteWherePropertyEquals is the DELETE hot path's
+	// "variable.property = value" predicate (the variable is compared by the
+	// caller).
+	deleteWherePropertyEquals = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s*=\s*(.+?)\s*$`)
+	// deleteWherePropertyInParameter is "variable.property IN $param".
+	deleteWherePropertyInParameter = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s+IN\s+\$(\w+)\s*$`)
+	withAliasPattern               = regexp.MustCompile(`(?i)\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	subqueryWherePattern           = regexp.MustCompile(`(?i)\s+WHERE\s+`)
+)
