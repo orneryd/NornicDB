@@ -311,13 +311,13 @@ skipMatchCallRoute:
 	}
 
 	if startsWithMatch && mergeIdx > 0 {
-		// The compound MATCH … MERGE route runs a MERGE with SET per row and
-		// projects one RETURN; a WITH after the MERGE runs on the pipeline.
-		if !containsKeywordOutsideStrings(cypher, "SET") || containsKeywordOutsideStrings(cypher, "REMOVE") ||
-			findKeywordIndexInContext(cypher[mergeIdx:], "WITH") > 0 {
-			if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
-				return result, err
-			}
+		// The pipeline runs MATCH … MERGE row by row, with the clauses
+		// between them (WITH … ORDER BY … SKIP / LIMIT), SET after the MERGE
+		// and the RETURN over all rows. The compound MATCH … MERGE route
+		// runs the shapes it declines (a MERGE with ON CREATE / ON MATCH and
+		// a SET).
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
 		}
 		return e.executeCompoundMatchMerge(ctx, cypher)
 	}
