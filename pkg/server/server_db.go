@@ -1839,8 +1839,59 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 // sessionStatementRunner runs a statement in an open transaction.
 func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
+		if queryErr := s.otherDatabaseInTransactionError(session.Database, dbName, query); queryErr != nil {
+			return nil, &requestStatementError{QueryError: *queryErr}
+		}
 		return s.txSessions.ExecuteInSession(ctx, session, query, params)
 	}
+}
+
+// otherDatabaseInTransactionError is the error for a statement of a
+// transaction on txDB that targets database target (with USE or :USE), or
+// nil when target is txDB (by name or alias) or one of composite txDB's
+// constituents. A transaction cannot span databases (Neo4j Operations
+// Manual: "a transaction cannot span across multiple databases"), and a
+// request that switches database with :USE partway through fails as a
+// whole (#683). The statement fails, so the request's transaction is rolled
+// back and nothing it wrote is kept.
+//
+// A write gets Neo4j's error, Neo.ClientError.Statement.AccessMode "Writing
+// to more than one database per transaction is not allowed" (verified
+// against Neo4j 5.26). Neo4j Community has one user database, so its error
+// for a read of a second one could not be observed; a read gets the same
+// code with the message worded for a read.
+func (s *Server) otherDatabaseInTransactionError(txDB, target, query string) *QueryError {
+	if s.sameDatabase(txDB, target) {
+		return nil
+	}
+	if s.dbManager != nil && s.dbManager.IsCompositeDatabase(txDB) && strings.HasPrefix(target, txDB+".") {
+		return nil
+	}
+	requirements := cypher.QueryPermissionRequirements(query)
+	if requirements.Write || requirements.Schema {
+		return &QueryError{
+			Code:    "Neo.ClientError.Statement.AccessMode",
+			Message: fmt.Sprintf("Writing to more than one database per transaction is not allowed. Attempted write to %s, currently writing to %s", target, txDB),
+		}
+	}
+	return &QueryError{
+		Code:    "Neo.ClientError.Statement.AccessMode",
+		Message: fmt.Sprintf("Accessing more than one database per transaction is not allowed. Attempted access to %s, currently using %s", target, txDB),
+	}
+}
+
+// sameDatabase reports whether two database names or aliases name the same
+// database.
+func (s *Server) sameDatabase(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if s.dbManager == nil {
+		return false
+	}
+	resolvedA, errA := s.dbManager.ResolveDatabase(a)
+	resolvedB, errB := s.dbManager.ResolveDatabase(b)
+	return errA == nil && errB == nil && resolvedA == resolvedB
 }
 
 // runRequestStatements runs an HTTP /tx request's statements in order with
