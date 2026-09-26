@@ -1266,168 +1266,13 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 	}
 
 	claims := getClaims(r)
-	hasError := false
-
-	// Default to database from URL path
-	// Each statement can override this with its own :USE command
-	defaultDbName := dbName
-
-	for _, stmt := range req.Statements {
-		if hasError {
-			// Skip remaining statements after error (rollback semantics)
-			break
-		}
-
-		effectiveDbName, queryStatement, resolveErr := normalizeStatementForExecution(defaultDbName, stmt.Statement)
-		if resolveErr != nil {
-			response.Errors = append(response.Errors, statementError(resolveErr))
-			hasError = true
-			continue
-		}
-
-		// Per-database access: deny if principal may not access this database (Neo4j-aligned).
-		if !s.getDatabaseAccessMode(claims).CanAccessDatabase(effectiveDbName) {
-			response.Errors = append(response.Errors, QueryError{
-				Code:    "Neo.ClientError.Security.Forbidden",
-				Message: s.localizedText(w, r, localization.DatabaseAccessDenied(effectiveDbName)),
-			})
-			hasError = true
-			continue
-		}
-
-		if missing := s.missingQueryPermission(claims, effectiveDbName, queryStatement); missing != "" {
-			message := localization.DatabaseWriteDenied(effectiveDbName)
-			if missing == auth.PermSchema {
-				message = localization.SchemaPermissionRequired()
-			} else if missing == auth.PermAdmin {
-				message = localization.AdminPermissionRequired()
-			}
-			response.Errors = append(response.Errors, QueryError{
-				Code:    "Neo.ClientError.Security.Forbidden",
-				Message: s.localizedText(w, r, message),
-			})
-			hasError = true
-			continue
-		}
-
-		// Check if database exists before attempting to get executor.
-		// Use ExistsOrIsConstituent to accept dotted composite.alias references.
-		if !s.dbManager.ExistsOrIsConstituent(effectiveDbName) {
-			response.Errors = append(response.Errors, QueryError{
-				Code:    "Neo.ClientError.Database.DatabaseNotFound",
-				Message: s.localizedText(w, r, localization.HTTPDatabaseNotFound(effectiveDbName)),
-			})
-			hasError = true
-			continue
-		}
-
-		// Strip Cypher comments from query before execution
-		// Comments are part of Cypher spec but should be removed before parsing
-		queryStatement = stripCypherComments(queryStatement)
-		queryStatement = strings.TrimSpace(queryStatement)
-		// Remove UTF-8 BOM if present (some clients send it; breaks executor routing e.g. CREATE DATABASE)
-		if strings.HasPrefix(queryStatement, "\xef\xbb\xbf") {
-			queryStatement = strings.TrimPrefix(queryStatement, "\xef\xbb\xbf")
-			queryStatement = strings.TrimSpace(queryStatement)
-		}
-
-		// Skip empty statements (after comment removal)
-		if queryStatement == "" {
-			// Empty statement after comment removal - return empty result
-			response.Results = append(response.Results, QueryResult{
-				Columns: []string{},
-				Data:    []ResultRow{},
-			})
-			continue
-		}
-
-		// Get executor for the specified database (or the one from :USE command).
-		// For composite databases with remote constituents, preserve caller identity by
-		// forwarding the request auth token into remote constituent engine construction.
-		executor, err := s.getExecutorForDatabaseWithAuth(effectiveDbName, r.Header.Get("Authorization"))
-		if err != nil {
-			response.Errors = append(response.Errors, QueryError{
-				Code:    "Neo.ClientError.Database.General",
-				Message: fmt.Sprintf("Failed to access database '%s': %v", effectiveDbName, err),
-			})
-			hasError = true
-			continue
-		}
-
-		// Track query execution time for slow query logging
-		queryStart := time.Now()
-		execCtx := cypher.WithAuthToken(r.Context(), r.Header.Get("Authorization"))
-		execCtx = cypher.WithAuthenticatedPrincipal(execCtx, transactionOwnerKey(r, claims))
-		execCtx = s.withDatabasePermissionChecker(execCtx, claims, effectiveDbName)
-		result, err := executor.Execute(execCtx, queryStatement, stmt.Parameters)
-		queryDuration := time.Since(queryStart)
-
-		// Log slow queries
-		s.logSlowQuery(stmt.Statement, stmt.Parameters, queryDuration, err)
-
-		if err != nil {
-			appendStatementFailure(&response, executor, queryStatement, err)
-			hasError = true
-			continue
-		}
-
-		// Auto-grant access when a new database is created: admins and the creating principal get full access.
-		if isCreateDatabaseStatement(queryStatement) {
-			if createdName, ok := parseCreatedDatabaseName(queryStatement); ok && createdName != "" {
-				s.grantAccessToNewDatabase(r.Context(), createdName, claims)
-				// Ensure CREATE DATABASE always returns a proper result (name + row).
-				// Defensive: executor should return this, but if it ever returns empty we still send a valid response.
-				if len(result.Columns) == 0 && len(result.Rows) == 0 {
-					s.logEvent(r.Context(), slog.LevelWarn, localization.ServerCreateDatabaseDefensiveFixEvent(createdName))
-					result.Columns = []string{"name"}
-					result.Rows = [][]interface{}{{createdName}}
-				}
-			}
-		}
-
-		// Per-database RBAC: filter SHOW DATABASES results by CanSeeDatabase so principals only see DBs they may access
-		if isShowDatabasesQuery(queryStatement) && result.Rows != nil {
-			mode := s.getDatabaseAccessMode(claims)
-			filtered := make([][]interface{}, 0, len(result.Rows))
-			for _, row := range result.Rows {
-				if len(row) > 0 {
-					if name, ok := row[0].(string); ok && mode.CanSeeDatabase(name) {
-						filtered = append(filtered, row)
-					}
-				}
-			}
-			result.Rows = filtered
-		}
-
-		// Extract receipt and optimistic metadata from result metadata if present (for mutations)
-		if result.Metadata != nil {
-			if receipt, ok := result.Metadata["receipt"]; ok && receipt != nil {
-				response.Receipt = receipt
-			}
-			if optimistic, ok := result.Metadata["optimistic"]; ok && optimistic != nil {
-				response.Optimistic = optimistic
-			}
-		}
-
-		// Convert result to Neo4j format with metadata
-		qr := QueryResult{
-			Columns: result.Columns,
-			Data:    make([]ResultRow, len(result.Rows)),
-		}
-
-		for i, row := range result.Rows {
-			convertedRow := s.convertRowToNeo4jFormat(row)
-			qr.Data[i] = ResultRow{
-				Row:  convertedRow,
-				Meta: s.generateRowMeta(convertedRow),
-			}
-		}
-
-		if stmt.IncludeStats {
-			qr.Stats = queryStatsFromResult(result)
-		}
-
-		response.Results = append(response.Results, qr)
+	localize := func(message localization.Message) string { return s.localizedText(w, r, message) }
+	if len(req.Statements) > 1 {
+		// Several statements are one transaction, as in Neo4j: a failing
+		// statement rolls back the ones before it.
+		s.runOneShotTransaction(r, claims, dbName, req.Statements, localize, &response)
+	} else {
+		s.runRequestStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, req.Statements, s.autoCommitStatementRunner(r.Header.Get("Authorization")), localize, &response)
 	}
 
 	// Determine appropriate HTTP status code
@@ -1928,14 +1773,7 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		qr.Stats = queryStatsFromResult(result)
 	}
 	response.Results = append(response.Results, qr)
-	if result.Metadata != nil {
-		if receipt, ok := result.Metadata["receipt"]; ok && receipt != nil {
-			response.Receipt = receipt
-		}
-		if optimistic, ok := result.Metadata["optimistic"]; ok && optimistic != nil {
-			response.Optimistic = optimistic
-		}
-	}
+	applyResultMetadata(response, result.Metadata)
 }
 
 func shouldUseAcceptedStatusForMutation(resp *TransactionResponse) bool {
@@ -1961,53 +1799,278 @@ func (s *Server) executeTxStatements(
 	statements []StatementRequest,
 	response *TransactionResponse,
 ) (failed bool) {
+	localize := func(message localization.Message) string {
+		text, _ := s.renderMessage(ctx, message)
+		return text
+	}
+	return s.runRequestStatements(ctx, authToken, claims, dbName, statements, s.sessionStatementRunner(session), localize, response)
+}
+
+// statementRunner executes one statement of an HTTP /tx request on a
+// database: auto-committed (autoCommitStatementRunner) or in the request's
+// transaction (sessionStatementRunner).
+type statementRunner func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, error)
+
+// requestStatementError is a statement failure with its own Neo4j error, not
+// derived from the error text (statementError).
+type requestStatementError struct {
+	QueryError
+}
+
+func (e *requestStatementError) Error() string { return e.Code + ": " + e.Message }
+
+// autoCommitStatementRunner runs a statement on its database's executor,
+// committed on its own.
+func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
+	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
+		// For composite databases with remote constituents, the request's
+		// auth token is forwarded to the remote constituent engines.
+		executor, err := s.getExecutorForDatabaseWithAuth(dbName, authToken)
+		if err != nil {
+			return nil, &requestStatementError{QueryError{
+				Code:    "Neo.ClientError.Database.General",
+				Message: fmt.Sprintf("Failed to access database '%s': %v", dbName, err),
+			}}
+		}
+		return executor.Execute(ctx, query, params)
+	}
+}
+
+// sessionStatementRunner runs a statement in an open transaction.
+func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
+	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
+		return s.txSessions.ExecuteInSession(ctx, session, query, params)
+	}
+}
+
+// runRequestStatements runs an HTTP /tx request's statements in order with
+// run, and stops at the first one that fails, as Neo4j does: the statements
+// after it are not run. It reports whether a statement failed. Every /tx
+// endpoint (one-shot commit, open, execute-in, commit) uses it, so each
+// statement gets the same handling: :USE, database access and permission
+// checks, comment and BOM removal, the empty-statement result, slow-query
+// logging, CREATE DATABASE access grants, SHOW DATABASES filtering by
+// visibility, and the result conversion.
+func (s *Server) runRequestStatements(
+	ctx context.Context,
+	authToken string,
+	claims *auth.JWTClaims,
+	defaultDB string,
+	statements []StatementRequest,
+	run statementRunner,
+	localize func(localization.Message) string,
+	response *TransactionResponse,
+) (failed bool) {
 	ctx = cypher.WithAuthToken(ctx, authToken)
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
 	for _, stmt := range statements {
-		effectiveDB, queryStatement, resolveErr := normalizeStatementForExecution(dbName, stmt.Statement)
-		if resolveErr != nil {
-			response.Errors = append(response.Errors, statementError(resolveErr))
+		if queryErr := s.runRequestStatement(ctx, claims, defaultDB, stmt, run, localize, response); queryErr != nil {
+			response.Errors = append(response.Errors, *queryErr)
 			return true
 		}
-		if !s.getDatabaseAccessMode(claims).CanAccessDatabase(effectiveDB) {
-			response.Errors = append(response.Errors, QueryError{
-				Code:    "Neo.ClientError.Security.Forbidden",
-				Message: fmt.Sprintf("Access to database '%s' is not allowed.", effectiveDB),
-			})
-			return true
-		}
-
-		if missing := s.missingQueryPermission(claims, effectiveDB, queryStatement); missing != "" {
-			message := fmt.Sprintf("Write on database '%s' is not allowed.", effectiveDB)
-			if missing == auth.PermSchema {
-				message = localization.SchemaPermissionRequired().Fallback
-			} else if missing == auth.PermAdmin {
-				message = localization.AdminPermissionRequired().Fallback
-			}
-			response.Errors = append(response.Errors, QueryError{
-				Code:    "Neo.ClientError.Security.Forbidden",
-				Message: message,
-			})
-			return true
-		}
-
-		execCtx := s.withDatabasePermissionChecker(ctx, claims, effectiveDB)
-		result, err := s.txSessions.ExecuteInSession(execCtx, session, queryStatement, stmt.Parameters)
-		if err != nil {
-			appendStatementFailure(response, session.Executor, queryStatement, err)
-			return true
-		}
-		s.appendStatementResult(response, result, stmt.IncludeStats)
 	}
 	return false
 }
 
-// rollbackFailedTransaction ends an explicit transaction after a statement in
-// it failed, as Neo4j's HTTP API does: the transaction is rolled back and
-// forgotten, so nothing it wrote is kept, and a later request to it (a
-// statement, commit or rollback) gets Neo.ClientError.Transaction.TransactionNotFound.
-func (s *Server) rollbackFailedTransaction(ctx context.Context, session *txsession.Session) {
+// runRequestStatement runs one statement of an HTTP /tx request and appends
+// its result; it returns the statement's error.
+func (s *Server) runRequestStatement(
+	ctx context.Context,
+	claims *auth.JWTClaims,
+	defaultDB string,
+	stmt StatementRequest,
+	run statementRunner,
+	localize func(localization.Message) string,
+	response *TransactionResponse,
+) *QueryError {
+	// Each statement can override the URL's database with its own :USE.
+	effectiveDB, queryStatement, resolveErr := normalizeStatementForExecution(defaultDB, stmt.Statement)
+	if resolveErr != nil {
+		queryErr := statementError(resolveErr)
+		return &queryErr
+	}
+
+	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
+	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(effectiveDB) {
+		return &QueryError{
+			Code:    "Neo.ClientError.Security.Forbidden",
+			Message: localize(localization.DatabaseAccessDenied(effectiveDB)),
+		}
+	}
+	if missing := s.missingQueryPermission(claims, effectiveDB, queryStatement); missing != "" {
+		message := localization.DatabaseWriteDenied(effectiveDB)
+		if missing == auth.PermSchema {
+			message = localization.SchemaPermissionRequired()
+		} else if missing == auth.PermAdmin {
+			message = localization.AdminPermissionRequired()
+		}
+		return &QueryError{Code: "Neo.ClientError.Security.Forbidden", Message: localize(message)}
+	}
+
+	// Use ExistsOrIsConstituent to accept dotted composite.alias references.
+	if !s.dbManager.ExistsOrIsConstituent(effectiveDB) {
+		return &QueryError{
+			Code:    "Neo.ClientError.Database.DatabaseNotFound",
+			Message: localize(localization.HTTPDatabaseNotFound(effectiveDB)),
+		}
+	}
+
+	// Cypher comments are removed before execution, and a UTF-8 BOM (some
+	// clients send one; it breaks executor routing, e.g. CREATE DATABASE).
+	queryStatement = strings.TrimSpace(stripCypherComments(queryStatement))
+	if strings.HasPrefix(queryStatement, "\xef\xbb\xbf") {
+		queryStatement = strings.TrimSpace(strings.TrimPrefix(queryStatement, "\xef\xbb\xbf"))
+	}
+	if queryStatement == "" {
+		response.Results = append(response.Results, QueryResult{Columns: []string{}, Data: []ResultRow{}})
+		return nil
+	}
+
+	queryStart := time.Now()
+	result, err := run(s.withDatabasePermissionChecker(ctx, claims, effectiveDB), effectiveDB, queryStatement, stmt.Parameters)
+	s.logSlowQuery(stmt.Statement, stmt.Parameters, time.Since(queryStart), err)
+	if err != nil {
+		var own *requestStatementError
+		if errors.As(err, &own) {
+			return &own.QueryError
+		}
+		queryErr := statementError(err)
+		return &queryErr
+	}
+
+	// Auto-grant access when a new database is created: admins and the creating principal get full access.
+	if isCreateDatabaseStatement(queryStatement) {
+		if createdName, ok := parseCreatedDatabaseName(queryStatement); ok && createdName != "" {
+			s.grantAccessToNewDatabase(ctx, createdName, claims)
+			// Ensure CREATE DATABASE always returns a proper result (name + row).
+			if len(result.Columns) == 0 && len(result.Rows) == 0 {
+				s.logEvent(ctx, slog.LevelWarn, localization.ServerCreateDatabaseDefensiveFixEvent(createdName))
+				result.Columns = []string{"name"}
+				result.Rows = [][]interface{}{{createdName}}
+			}
+		}
+	}
+
+	// Per-database RBAC: SHOW DATABASES lists only the databases the principal may see.
+	if isShowDatabasesQuery(queryStatement) && result.Rows != nil {
+		mode := s.getDatabaseAccessMode(claims)
+		filtered := make([][]interface{}, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			if len(row) > 0 {
+				if name, ok := row[0].(string); ok && mode.CanSeeDatabase(name) {
+					filtered = append(filtered, row)
+				}
+			}
+		}
+		result.Rows = filtered
+	}
+
+	s.appendStatementResult(response, result, stmt.IncludeStats)
+	return nil
+}
+
+// runOneShotTransaction runs a one-shot /tx/commit request of several
+// statements as one transaction on dbName, as Neo4j does: it commits when
+// every statement succeeds, and a failing statement rolls back the ones
+// before it, so nothing the request wrote is kept.
+func (s *Server) runOneShotTransaction(
+	r *http.Request,
+	claims *auth.JWTClaims,
+	dbName string,
+	statements []StatementRequest,
+	localize func(localization.Message) string,
+	response *TransactionResponse,
+) {
+	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+		response.Errors = append(response.Errors, QueryError{
+			Code:    "Neo.ClientError.Security.Forbidden",
+			Message: localize(localization.DatabaseAccessDenied(dbName)),
+		})
+		return
+	}
+	session, openErr := s.openRequestTransaction(r, claims, dbName, localize)
+	if openErr != nil {
+		response.Errors = append(response.Errors, *openErr)
+		return
+	}
+	if s.runRequestStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, statements, s.sessionStatementRunner(session), localize, response) {
+		s.rollbackFailedTransaction(r.Context(), session, response)
+		return
+	}
+	s.commitRequestTransaction(r.Context(), session, response)
+}
+
+// openRequestTransaction opens a transaction on dbName for an HTTP request.
+// A database with remote constituents gets an executor built with the
+// request's auth token, which it forwards to the remote engines.
+func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims, dbName string, localize func(localization.Message) string) (*txsession.Session, *QueryError) {
+	var session *txsession.Session
+	var err error
+	authToken := r.Header.Get("Authorization")
+	ownerKey := transactionOwnerKey(r, claims)
+	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
+		executor, execErr := s.getExecutorForDatabaseWithAuth(dbName, authToken)
+		if execErr != nil {
+			return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: execErr.Error()}
+		}
+		session, err = s.txSessions.OpenWithExecutorForOwner(r.Context(), dbName, executor, ownerKey)
+	} else {
+		session, err = s.txSessions.OpenForOwner(r.Context(), dbName, ownerKey)
+	}
+	if err != nil {
+		if errors.Is(err, multidb.ErrDatabaseNotFound) {
+			return nil, &QueryError{
+				Code:    "Neo.ClientError.Database.DatabaseNotFound",
+				Message: localize(localization.HTTPDatabaseNotFound(dbName)),
+			}
+		}
+		return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: err.Error()}
+	}
+	return session, nil
+}
+
+// commitRequestTransaction commits an HTTP request's transaction and records
+// the commit's error, or its receipt and optimistic metadata, on response.
+func (s *Server) commitRequestTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) {
+	commitResult, err := s.txSessions.CommitAndDelete(ctx, session)
+	if err != nil {
+		code := "Neo.ClientError.Transaction.TransactionCommitFailed"
+		if transientCode, ok := mapTransientTransactionError(err); ok {
+			code = transientCode
+		}
+		response.Errors = append(response.Errors, QueryError{Code: code, Message: err.Error()})
+		return
+	}
+	if commitResult != nil {
+		applyResultMetadata(response, commitResult.Metadata)
+	}
+}
+
+// applyResultMetadata copies a result's receipt and optimistic metadata to
+// the response.
+func applyResultMetadata(response *TransactionResponse, metadata map[string]interface{}) {
+	if metadata == nil {
+		return
+	}
+	if receipt, ok := metadata["receipt"]; ok && receipt != nil {
+		response.Receipt = receipt
+	}
+	if optimistic, ok := metadata["optimistic"]; ok && optimistic != nil {
+		response.Optimistic = optimistic
+	}
+}
+
+// rollbackFailedTransaction ends an HTTP request's transaction after a
+// statement in it failed, as Neo4j's HTTP API does: the transaction is rolled
+// back and forgotten, so nothing it wrote is kept, and a later request to it
+// (a statement, commit or rollback) gets
+// Neo.ClientError.Transaction.TransactionNotFound. The response's receipt and
+// optimistic metadata described writes that are now discarded, so they are
+// dropped.
+func (s *Server) rollbackFailedTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) {
 	_ = s.txSessions.RollbackAndDelete(ctx, session)
+	response.Receipt = nil
+	response.Optimistic = nil
 }
 
 // transactionExpires formats an explicit transaction's expiry as an HTTP
@@ -2032,47 +2095,13 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	var req TransactionRequest
 	_ = s.readTransactionRequest(r, &req) // Optional body
 
-	var txSession *txsession.Session
-	var err error
-	authToken := r.Header.Get("Authorization")
-	ownerKey := transactionOwnerKey(r, claims)
-	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
-		executor, execErr := s.getExecutorForDatabaseWithAuth(dbName, authToken)
-		if execErr != nil {
-			response := TransactionResponse{
-				Results: make([]QueryResult, 0),
-				Errors: []QueryError{{
-					Code:    "Neo.ClientError.Transaction.TransactionStartFailed",
-					Message: execErr.Error(),
-				}},
-			}
-			s.writeJSON(w, http.StatusInternalServerError, response)
-			return
+	txSession, openErr := s.openRequestTransaction(r, claims, dbName, func(message localization.Message) string { return s.localizedText(w, r, message) })
+	if openErr != nil {
+		status := http.StatusInternalServerError
+		if openErr.Code == "Neo.ClientError.Database.DatabaseNotFound" {
+			status = http.StatusNotFound
 		}
-		txSession, err = s.txSessions.OpenWithExecutorForOwner(r.Context(), dbName, executor, ownerKey)
-	} else {
-		txSession, err = s.txSessions.OpenForOwner(r.Context(), dbName, ownerKey)
-	}
-	if err != nil {
-		if errors.Is(err, multidb.ErrDatabaseNotFound) {
-			response := TransactionResponse{
-				Results: make([]QueryResult, 0),
-				Errors: []QueryError{{
-					Code:    "Neo.ClientError.Database.DatabaseNotFound",
-					Message: s.localizedText(w, r, localization.HTTPDatabaseNotFound(dbName)),
-				}},
-			}
-			s.writeJSON(w, http.StatusNotFound, response)
-			return
-		}
-		response := TransactionResponse{
-			Results: make([]QueryResult, 0),
-			Errors: []QueryError{{
-				Code:    "Neo.ClientError.Transaction.TransactionStartFailed",
-				Message: err.Error(),
-			}},
-		}
-		s.writeJSON(w, http.StatusInternalServerError, response)
+		s.writeJSON(w, status, TransactionResponse{Results: make([]QueryResult, 0), Errors: []QueryError{*openErr}})
 		return
 	}
 
@@ -2087,7 +2116,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 
 	if len(req.Statements) > 0 {
 		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, txSession, req.Statements, &response) {
-			s.rollbackFailedTransaction(r.Context(), txSession)
+			s.rollbackFailedTransaction(r.Context(), txSession, &response)
 		}
 		response.Transaction.Expires = transactionExpires(txSession.Expires)
 	}
@@ -2123,7 +2152,7 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 	}
 
 	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
-		s.rollbackFailedTransaction(r.Context(), tx)
+		s.rollbackFailedTransaction(r.Context(), tx, &response)
 	}
 	response.Transaction.Expires = transactionExpires(tx.Expires)
 
@@ -2157,34 +2186,13 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 
 	// Execute optional final statements in transaction context first.
 	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
-		s.rollbackFailedTransaction(r.Context(), tx)
+		s.rollbackFailedTransaction(r.Context(), tx, &response)
 		s.applyMVCCPressureWarnings(w, dbName, &response)
 		s.writeJSON(w, http.StatusOK, response)
 		return
 	}
 
-	commitResult, err := s.txSessions.CommitAndDelete(r.Context(), tx)
-	if err != nil {
-		code, message := nornicerrors.Neo4jCommitStatus(err)
-		response.Errors = append(response.Errors, QueryError{
-			Code:    code,
-			Message: message,
-		})
-		s.applyMVCCPressureWarnings(w, dbName, &response)
-		s.writeJSON(w, http.StatusOK, response)
-		return
-	}
-	if commitResult != nil {
-		if commitResult.Metadata != nil {
-			if receipt, ok := commitResult.Metadata["receipt"]; ok && receipt != nil {
-				response.Receipt = receipt
-			}
-			if optimistic, ok := commitResult.Metadata["optimistic"]; ok && optimistic != nil {
-				response.Optimistic = optimistic
-			}
-		}
-	}
-
+	s.commitRequestTransaction(r.Context(), tx, &response)
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	s.writeJSON(w, http.StatusOK, response)
 }
