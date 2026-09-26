@@ -531,14 +531,17 @@ func (e *StorageExecutor) parseApocPathExpandParams(ctx context.Context, cypher 
 func (e *StorageExecutor) findNodeByVariableInMatch(ctx context.Context, cypher, varName string) *storage.Node {
 	// Look for MATCH clause with this variable
 	// Pattern: MATCH (varName:Label {id: 'value'}) or MATCH (varName:Label {prop: 'value'})
-	matchPattern := regexp.MustCompile(`(?i)MATCH\s*\(` + regexp.QuoteMeta(varName) + `[^)]*\)`)
-	matches := matchPattern.FindStringSubmatch(cypher)
-	if len(matches) == 0 {
+	// The first MATCH node pattern that starts with varName.
+	nodePattern := ""
+	for _, match := range matchNodePatternPattern.FindAllStringSubmatch(cypher, -1) {
+		if len(match[1]) >= len(varName) && strings.EqualFold(match[1][:len(varName)], varName) {
+			nodePattern = match[0]
+			break
+		}
+	}
+	if nodePattern == "" {
 		return nil
 	}
-
-	// Extract the node pattern
-	nodePattern := matches[0]
 
 	// Try to extract ID from {id: 'value'} pattern
 	if idMatch := apocNodeIdBracePattern.FindStringSubmatch(nodePattern); len(idMatch) > 1 {
@@ -889,3 +892,6 @@ func (e *StorageExecutor) bfsSpanningTree(startNode *storage.Node, config apocPa
 func (e *StorageExecutor) dfsSpanningTree(startNode *storage.Node, config apocPathConfig) []*storage.Edge {
 	return e.spanningTreeFrom(startNode, config, true)
 }
+
+// matchNodePatternPattern is "MATCH (…)", compiled once (#591).
+var matchNodePatternPattern = regexp.MustCompile(`(?i)MATCH\s*\(([^)]*)\)`)

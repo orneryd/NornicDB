@@ -473,12 +473,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 		// Supported hot-path predicates:
 		//   var.prop = $param | 'literal'
 		//   var.prop IN $param
-		eqRE := regexp.MustCompile(`(?i)^\s*` + regexp.QuoteMeta(deleteVar) + `\.(\w+)\s*=\s*(.+?)\s*$`)
-		inRE := regexp.MustCompile(`(?i)^\s*` + regexp.QuoteMeta(deleteVar) + `\.(\w+)\s+IN\s+\$(\w+)\s*$`)
-
-		if m := eqRE.FindStringSubmatch(wherePart); len(m) == 3 {
-			prop := m[1]
-			rhs := strings.TrimSpace(m[2])
+		if m := deleteWherePropertyEquals.FindStringSubmatch(wherePart); len(m) == 4 && strings.EqualFold(m[1], deleteVar) {
+			prop := m[2]
+			rhs := strings.TrimSpace(m[3])
 			var expected interface{}
 			if strings.HasPrefix(rhs, "$") {
 				key := strings.TrimSpace(strings.TrimPrefix(rhs, "$"))
@@ -500,9 +497,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 				}
 			}
 			nodes = filtered
-		} else if m := inRE.FindStringSubmatch(wherePart); len(m) == 3 {
-			prop := m[1]
-			paramName := m[2]
+		} else if m := deleteWherePropertyInParameter.FindStringSubmatch(wherePart); len(m) == 4 && strings.EqualFold(m[1], deleteVar) {
+			prop := m[2]
+			paramName := m[3]
 			raw, ok := params[paramName]
 			if !ok {
 				return []*storage.Node{}, true, nil
@@ -1691,8 +1688,7 @@ func coerceToUnwindItems(value interface{}) []interface{} {
 }
 
 func extractWithAliases(querySegment string) []string {
-	re := regexp.MustCompile(`(?i)\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
-	matches := re.FindAllStringSubmatch(querySegment, -1)
+	matches := withAliasPattern.FindAllStringSubmatch(querySegment, -1)
 	aliases := make([]string, 0, len(matches))
 	for _, m := range matches {
 		if len(m) > 1 {
@@ -2322,6 +2318,54 @@ func (e *StorageExecutor) evaluateCollectSubquery(ctx context.Context, node *sto
 	return collected, nil
 }
 
+// substituteNodeInSubquery substitutes a node variable in a subquery with its actual ID
+// Example: MATCH (p)-[:KNOWS]->(friend) RETURN friend.name
+//
+//	where p is bound to a node -> MATCH (nodeID)-[:KNOWS]->(friend) RETURN friend.name
+func (e *StorageExecutor) substituteNodeInSubquery(subquery, variable string, node *storage.Node) string {
+	// Replace (variable) or (variable:Label) patterns with the actual node ID
+	// We need to be careful to only replace node patterns, not property accesses
+	result := subquery
+
+	// Pattern 1: (variable) -> (nodeID)
+	result = strings.ReplaceAll(result, "("+variable+")", "("+string(node.ID)+")")
+
+	// Pattern 2: (variable:Label) -> (nodeID:Label), preserving the label.
+	return replaceLabeledNodePatternVariable(result, variable, string(node.ID))
+}
+
+// replaceLabeledNodePatternVariable replaces variable with replacement in
+// each node pattern (variable:Labels) of text whose labels part is not
+// empty and contains no ')'.
+func replaceLabeledNodePatternVariable(text, variable, replacement string) string {
+	prefix := "(" + variable + ":"
+	var out strings.Builder
+	for {
+		start := strings.Index(text, prefix)
+		if start < 0 {
+			break
+		}
+		labelsStart := start + len(prefix)
+		end := strings.IndexByte(text[labelsStart:], ')')
+		if end <= 0 {
+			// No labels or no closing parenthesis: not a (variable:Label)
+			// pattern; keep the text and search after it.
+			out.WriteString(text[:labelsStart])
+			text = text[labelsStart:]
+			continue
+		}
+		out.WriteString(text[:start])
+		out.WriteString("(" + replacement + ":")
+		out.WriteString(text[labelsStart : labelsStart+end+1])
+		text = text[labelsStart+end+1:]
+	}
+	if out.Len() == 0 {
+		return text
+	}
+	out.WriteString(text)
+	return out.String()
+}
+
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
 // like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
 // Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
@@ -2378,6 +2422,153 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
 		return len(incoming) > 0 || len(outgoing) > 0
 	}
+	return false
+}
+
+// checkSubqueryMatch checks if the subquery matches for a given node
+func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.Node, variable, subquery string) bool {
+	// Parse the MATCH pattern from the subquery
+	// Format: MATCH (var)<-[:TYPE]-(other) WHERE ...
+	//
+	// EXISTS { ... } and COUNT { ... } also allow an *implicit* MATCH: a
+	// bare pattern body with no "MATCH " keyword (e.g. "EXISTS { (n)--() }").
+	// The previous version required the "MATCH " prefix unconditionally, so
+	// a bare body always returned false here.
+	subquery = strings.TrimSpace(subquery)
+	upperSub := strings.ToUpper(subquery)
+
+	var pattern string
+	switch {
+	case strings.HasPrefix(upperSub, "MATCH "):
+		pattern = strings.TrimSpace(subquery[6:])
+	case strings.HasPrefix(subquery, "("):
+		pattern = subquery
+	default:
+		return false
+	}
+
+	// Split out any WHERE clause from the pattern
+	innerWhere := ""
+
+	// Use regex to find WHERE with any whitespace before it (including newlines)
+	if loc := subqueryWherePattern.FindStringIndex(pattern); loc != nil {
+		innerWhere = strings.TrimSpace(pattern[loc[1]:])
+		pattern = strings.TrimSpace(pattern[:loc[0]])
+	}
+
+	// An uncorrelated node-pattern subquery does not reference the outer
+	// variable, but it still determines EXISTS/NOT EXISTS for every outer row.
+	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
+		if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
+			return false
+		}
+		nodePattern := e.parseNodePattern(ctx, pattern)
+		if len(nodePattern.labels) == 0 && len(nodePattern.properties) == 0 {
+			return false
+		}
+		nodes, err := e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
+		if err != nil {
+			return false
+		}
+		if len(nodePattern.properties) > 0 {
+			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+		}
+		return len(nodes) > 0
+	}
+
+	// Use the shared one-hop pattern parser so target labels, inline property
+	// maps, relationship bindings, and predicates all see the same complete
+	// correlated row. The older edge-only path below predates inline target
+	// properties and can only evaluate the target node in isolation.
+	if strings.Count(pattern, "-[") == 1 &&
+		!hasSubqueryPattern(innerWhere, existsSubqueryRe) &&
+		!hasSubqueryPattern(innerWhere, countSubqueryRe) {
+		relPattern := e.parseOptionalRelPattern(ctx, pattern)
+		if relPattern.sourceVar == variable {
+			for _, related := range e.findRelatedNodes(node, relPattern) {
+				values := map[string]interface{}{variable: node}
+				if relPattern.targetVar != "" {
+					values[relPattern.targetVar] = related.node
+				}
+				if relPattern.relVar != "" {
+					values[relPattern.relVar] = related.edge
+				}
+				if innerWhere == "" || e.evaluateRowPredicate(ctx, innerWhere, values) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+
+	// Check for chained relationship pattern (e.g., (p)-[:KNOWS]->()-[:KNOWS]->())
+	// Count the number of relationship hops by counting relationship brackets [-
+	// Each hop has one -[...]-
+	relationshipCount := strings.Count(pattern, "-[")
+	if relationshipCount > 1 {
+		return e.checkChainedPattern(node, variable, pattern, innerWhere)
+	}
+
+	// Extract the target variable name from pattern (e.g., "report" from "(m)-[:MANAGES]->(report)")
+	targetVar := e.extractTargetVariable(pattern, variable)
+
+	// Parse relationship pattern
+	// Simplified: check for incoming or outgoing relationships
+	var checkIncoming, checkOutgoing bool
+	var relTypes []string
+
+	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
+
+	// Check for matching edges
+	if checkIncoming {
+		edges, _ := e.storage.GetIncomingEdges(node.ID)
+		for _, edge := range edges {
+			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
+				// If there's an inner WHERE, check it against the connected node
+				// Only evaluate WHERE if we have a target variable (otherwise we can't match properties)
+				if innerWhere != "" && targetVar != "" {
+					sourceNode, err := e.storage.GetNode(edge.StartNode)
+					if err != nil || !e.evaluateInnerWhere(ctx, sourceNode, targetVar, innerWhere) {
+						continue
+					}
+				} else if innerWhere != "" && targetVar == "" {
+					// If we have a WHERE clause but no target variable, we can't evaluate it
+					// This means the pattern doesn't have a named target, so skip this edge
+					continue
+				}
+				return true
+			}
+		}
+	}
+
+	if checkOutgoing {
+		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		for _, edge := range edges {
+			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
+				// If there's an inner WHERE, check it against the connected node
+				// Only evaluate WHERE if we have a target variable (otherwise we can't match properties)
+				if innerWhere != "" && targetVar != "" {
+					targetNode, err := e.storage.GetNode(edge.EndNode)
+					if err != nil || !e.evaluateInnerWhere(ctx, targetNode, targetVar, innerWhere) {
+						continue
+					}
+				} else if innerWhere != "" && targetVar == "" {
+					// If we have a WHERE clause but no target variable, we can't evaluate it
+					// This means the pattern doesn't have a named target, so skip this edge
+					continue
+				}
+				return true
+			}
+		}
+	}
+
+	// If no direction specified, check both
+	if !checkIncoming && !checkOutgoing {
+		incoming, _ := e.storage.GetIncomingEdges(node.ID)
+		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
+		return len(incoming) > 0 || len(outgoing) > 0
+	}
+
 	return false
 }
 
@@ -2791,3 +2982,15 @@ func sliceContains(slice []string, item string) bool {
 	}
 	return false
 }
+
+// Patterns compiled once (#591): these helpers run per statement or per row.
+var (
+	// deleteWherePropertyEquals is the DELETE hot path's
+	// "variable.property = value" predicate (the variable is compared by the
+	// caller).
+	deleteWherePropertyEquals = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s*=\s*(.+?)\s*$`)
+	// deleteWherePropertyInParameter is "variable.property IN $param".
+	deleteWherePropertyInParameter = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s+IN\s+\$(\w+)\s*$`)
+	withAliasPattern               = regexp.MustCompile(`(?i)\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	subqueryWherePattern           = regexp.MustCompile(`(?i)\s+WHERE\s+`)
+)
