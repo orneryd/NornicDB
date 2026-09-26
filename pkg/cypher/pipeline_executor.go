@@ -99,10 +99,14 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	// operators) run MERGE actions faster for ingestion shapes but have no
 	// REMOVE and no WITH after the MERGE, so a statement with MERGE actions
 	// runs here only when it also removes something or continues with WITH.
+	// A relationship MERGE after MATCH also runs here: its endpoints are
+	// bound, and every relationship matching the pattern is a row that ON
+	// MATCH SET applies to, as in Neo4j. The compound MATCH … MERGE route
+	// takes only the first match (#640).
 	upper := strings.ToUpper(cypher)
 	if (strings.Contains(upper, "ON CREATE SET") || strings.Contains(upper, "ON MATCH SET")) &&
 		(!strings.Contains(upper, "REMOVE") || !containsRemoveClauseAnywhere(cypher)) &&
-		!pipelineHasWithAfterMerge(clauses) {
+		!pipelineHasWithAfterMerge(clauses) && !pipelineHasRelationshipMergeAfterMatch(clauses) {
 		return nil, false
 	}
 	for _, clause := range clauses {
@@ -127,6 +131,24 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 }
 
 // pipelineHasWithAfterMerge reports whether a WITH clause follows a MERGE.
+// pipelineHasRelationshipMergeAfterMatch reports whether a MERGE of a
+// relationship pattern follows a MATCH clause, so that its endpoints are bound
+// and the pipeline's all-matches relationship MERGE applies (#640).
+func pipelineHasRelationshipMergeAfterMatch(clauses []pipelineClause) bool {
+	matched := false
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseMatch:
+			matched = true
+		case pipelineClauseMerge:
+			if matched && (strings.Contains(clause.text, "]-") || strings.Contains(clause.text, "-[")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func pipelineHasWithAfterMerge(clauses []pipelineClause) bool {
 	merged := false
 	for _, clause := range clauses {

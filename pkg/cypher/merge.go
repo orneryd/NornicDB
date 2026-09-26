@@ -402,8 +402,20 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 // existing matches, every match must continue through the remaining clauses.
 // Callers that only need existence may continue to use findMergeNode.
 func (e *StorageExecutor) findMergeNodes(store storage.Engine, labels []string, props map[string]interface{}) ([]*storage.Node, error) {
+	if ids, indexed := e.mergeNodeIndexedCandidateIDs(store, labels, props); indexed {
+		matches := make([]*storage.Node, 0, len(ids))
+		for _, n := range e.loadMergeCandidateNodes(store, ids) {
+			if mergeNodeMatches(n, labels, props) {
+				matches = append(matches, n)
+			}
+		}
+		return matches, nil
+	}
 	var candidates []*storage.Node
 	var err error
+	if len(labels) > 0 && len(props) > 0 {
+		e.markMergeScanFallbackUsed()
+	}
 	if len(labels) > 0 {
 		candidates, err = store.GetNodesByLabel(labels[0])
 	} else {
@@ -420,6 +432,59 @@ func (e *StorageExecutor) findMergeNodes(store storage.Engine, labels []string, 
 		}
 	}
 	return matches, nil
+}
+
+// mergeNodeIndexedCandidateIDs returns the candidate node IDs for a MERGE node
+// pattern from the schema, and whether the schema answered: a unique
+// constraint on one of the pattern's properties (at most one node holds a
+// value), a composite index covering every pattern property, or the smallest
+// single-property index result. When it answers, every node matching the
+// pattern is among the candidates, so findMergeNodes needs no label scan
+// (#640, #694). It answers nothing for a pattern without labels or properties.
+func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(store storage.Engine, labels []string, props map[string]interface{}) ([]storage.NodeID, bool) {
+	if len(labels) == 0 || len(props) == 0 {
+		return nil, false
+	}
+	schema := store.GetSchema()
+	if schema == nil {
+		return nil, false
+	}
+	label := labels[0]
+	for _, prop := range mergePropertyNamesSorted(props) {
+		nodeID, valueFound, constraintExists, cacheComplete := schema.LookupUniqueConstraintValueForPlanning(label, prop, props[prop])
+		if !constraintExists {
+			continue
+		}
+		if valueFound {
+			e.markMergeSchemaLookupUsed()
+			return []storage.NodeID{nodeID}, true
+		}
+		if cacheComplete {
+			e.markMergeSchemaLookupUsed()
+			return nil, true
+		}
+	}
+	for _, idx := range schema.GetCompositeIndexesForLabel(label) {
+		if mergeIndexMatchesAllProperties(idx, props) {
+			e.markMergeSchemaLookupUsed()
+			return idx.LookupFull(compositeLookupValues(idx, props)...), true
+		}
+	}
+	var best []storage.NodeID
+	found := false
+	for _, prop := range mergePropertyNamesSorted(props) {
+		if _, ok := schema.GetPropertyIndex(label, prop); !ok {
+			continue
+		}
+		ids := schema.PropertyIndexLookup(label, prop, props[prop])
+		if !found || len(ids) < len(best) {
+			best, found = ids, true
+		}
+	}
+	if found {
+		e.markMergeSchemaLookupUsed()
+	}
+	return best, found
 }
 
 func (e *StorageExecutor) findMergeNodeAnyLabel(store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {

@@ -68,3 +68,28 @@ func TestLargeDetachDeleteInOneStatementAndInTransactions(t *testing.T) {
 		require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows, statement)
 	}
 }
+
+// TestRelationshipMergeActionsMatchEveryDuplicate: after MATCH, a relationship
+// MERGE with ON MATCH SET matches every relationship with the pattern's
+// identity and applies the action to each, as in Neo4j (#640).
+func TestRelationshipMergeActionsMatchEveryDuplicate(t *testing.T) {
+	for _, query := range []string{
+		"MATCH (a:MA), (b:MB) MERGE (a)-[r:R {k: 1}]->(b) ON MATCH SET r.seen = true RETURN count(*) AS c",
+		"MATCH (a:MA) MATCH (b:MB) MERGE (a)-[r:R {k: 1}]->(b) ON MATCH SET r.seen = true RETURN count(*) AS c",
+		"MATCH (a:MA), (b:MB) MERGE (a)-[r:R {k: 1}]->(b) ON CREATE SET r.created = true ON MATCH SET r.seen = true RETURN count(*) AS c",
+	} {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "mergedup"))
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (a:MA {id: 1}), (b:MB {id: 2}) CREATE (a)-[:R {k: 1}]->(b), (a)-[:R {k: 1}]->(b), (a)-[:R {k: 2}]->(b)", nil)
+		require.NoError(t, err)
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows, query)
+		result, err = exec.Execute(ctx, "MATCH ()-[r:R {k: 1}]->() RETURN count(r) AS all, sum(CASE WHEN r.seen THEN 1 ELSE 0 END) AS seen", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(2), int64(2)}}, result.Rows, query)
+		result, err = exec.Execute(ctx, "MATCH (a:MA), (b:MB) MERGE (a)-[r:R {k: 7}]->(b) ON CREATE SET r.created = true ON MATCH SET r.seen = true RETURN r.created AS created", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{true}}, result.Rows)
+	}
+}
