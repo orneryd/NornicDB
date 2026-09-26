@@ -52,7 +52,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			return nil, true, false
 		}
 		return e.generateUUID(), true, true
-	case "toupper", "tolower", "trim", "ltrim", "rtrim":
+	case "toupper", "tolower":
 		value, ok := one()
 		text, textOK := value.(string)
 		if !ok || !textOK {
@@ -61,14 +61,8 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		switch name {
 		case "toupper":
 			return strings.ToUpper(text), true, true
-		case "tolower":
-			return strings.ToLower(text), true, true
-		case "ltrim":
-			return strings.TrimLeft(text, " \t\r\n"), true, true
-		case "rtrim":
-			return strings.TrimRight(text, " \t\r\n"), true, true
 		default:
-			return strings.TrimSpace(text), true, true
+			return strings.ToLower(text), true, true
 		}
 	case "tointeger", "toint":
 		value, ok := one()

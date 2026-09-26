@@ -101,8 +101,6 @@ func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, val
 		unary = math.Ceil
 	case "floor":
 		unary = math.Floor
-	case "radians":
-		unary = rowMathRadians
 	case "degrees":
 		unary = rowMathDegrees
 	case "haversin":

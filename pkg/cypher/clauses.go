@@ -1128,7 +1128,17 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 			for i, ri := range returnItems {
 				value, ok := e.evaluateRowExpressionWithContext(ctx, ri.expr, rowValues)
 				if !ok {
-					return nil, unresolvedReturnItemError(ctx, ri.expr)
+					// A recorded failure (a function or arithmetic error) is the
+					// statement's error; any other unresolved item is reported
+					// like the RETURN route does.
+					if failure := getExpressionFailure(ctx); failure != nil {
+						return nil, failure
+					}
+					return nil, newSemanticError(
+						"Neo.ClientError.Statement.SyntaxError",
+						"UnexpectedSyntax",
+						"could not parse RETURN expression: "+ri.expr,
+					)
 				}
 				row[i] = value
 			}

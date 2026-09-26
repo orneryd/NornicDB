@@ -157,16 +157,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// Angle Conversion Functions
 	// ========================================
 
-	// radians(degrees) - convert degrees to radians
-	if matchFuncStartAndSuffix(expr, "radians") {
-		inner := extractFuncArgs(expr, "radians")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if f, ok := toFloat64(val); ok {
-			return f * math.Pi / 180.0
-		}
-		return nil
-	}
-
 	// degrees(radians) - convert radians to degrees
 	if matchFuncStartAndSuffix(expr, "degrees") {
 		inner := extractFuncArgs(expr, "degrees")
@@ -380,80 +370,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		return false
 	}
 
-	// isNaN(number) - check if not a number
-	if matchFuncStartAndSuffix(expr, "isnan") {
-		inner := extractFuncArgs(expr, "isnan")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if f, ok := toFloat64(val); ok {
-			return math.IsNaN(f)
-		}
-		return false
-	}
-
-	// nullIf(val1, val2) - return null if val1 = val2
-	if matchFuncStartAndSuffix(expr, "nullif") {
-		inner := extractFuncArgs(expr, "nullif")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			val1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			val2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if fmt.Sprintf("%v", val1) == fmt.Sprintf("%v", val2) {
-				return nil
-			}
-			return val1
-		}
-		return nil
-	}
-
 	// ========================================
 	// String Functions (additional)
 	// ========================================
-
-	// btrim(string) / btrim(string, chars) - trim both sides
-	if matchFuncStartAndSuffix(expr, "btrim") {
-		inner := extractFuncArgs(expr, "btrim")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 1 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			if len(args) >= 2 {
-				chars := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-				return strings.Trim(str, chars)
-			}
-			return strings.TrimSpace(str)
-		}
-		return nil
-	}
-
-	// char_length(string)
-	if matchFuncStartAndSuffix(expr, "char_length") {
-		inner := extractFuncArgs(expr, "char_length")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			return int64(len([]rune(str))) // Character count, not byte count
-		}
-		return nil
-	}
-
-	// character_length(string) - alias for char_length
-	if matchFuncStartAndSuffix(expr, "character_length") {
-		inner := extractFuncArgs(expr, "character_length")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			return int64(len([]rune(str))) // Character count, not byte count
-		}
-		return nil
-	}
-
-	// normalize(string) - Unicode normalization
-	if matchFuncStartAndSuffix(expr, "normalize") {
-		inner := extractFuncArgs(expr, "normalize")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			// Simple normalization - just return the string (full Unicode normalization would require unicode package)
-			return str
-		}
-		return nil
-	}
 
 	// ========================================
 	// Aggregation Functions (in expression context)

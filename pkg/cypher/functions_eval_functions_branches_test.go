@@ -29,12 +29,12 @@ func TestEvaluateExpression_FunctionUtilityBranches(t *testing.T) {
 
 	// valueType
 	assert.Equal(t, "NULL", exec.evaluateExpressionWithContext(ctx, "valueType(null)", nodes, nil))
-	assert.Equal(t, "BOOLEAN", exec.evaluateExpressionWithContext(ctx, "valueType(true)", nodes, nil))
-	assert.Equal(t, "INTEGER", exec.evaluateExpressionWithContext(ctx, "valueType(1)", nodes, nil))
-	assert.Equal(t, "FLOAT", exec.evaluateExpressionWithContext(ctx, "valueType(1.5)", nodes, nil))
-	assert.Equal(t, "STRING", exec.evaluateExpressionWithContext(ctx, "valueType('x')", nodes, nil))
-	assert.Equal(t, "LIST", exec.evaluateExpressionWithContext(ctx, "valueType([1,2])", nodes, nil))
-	assert.Equal(t, "MAP", exec.evaluateExpressionWithContext(ctx, "valueType({a:1})", nodes, nil))
+	assert.Equal(t, "BOOLEAN NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType(true)", nodes, nil))
+	assert.Equal(t, "INTEGER NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType(1)", nodes, nil))
+	assert.Equal(t, "FLOAT NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType(1.5)", nodes, nil))
+	assert.Equal(t, "STRING NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType('x')", nodes, nil))
+	assert.Equal(t, "LIST<INTEGER NOT NULL> NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType([1,2])", nodes, nil))
+	assert.Equal(t, "MAP NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType({a:1})", nodes, nil))
 
 	// aggregation passthrough in expression context
 	assert.EqualValues(t, 7, exec.evaluateExpressionWithContext(ctx, "sum(7)", nodes, nil))

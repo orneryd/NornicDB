@@ -5,28 +5,6 @@ import (
 	"strings"
 )
 
-var builtInCypherFunctions = map[string]struct{}{
-	"abs": {}, "acos": {}, "all": {}, "allshortestpaths": {}, "any": {}, "asin": {}, "atan": {}, "atan2": {}, "avg": {},
-	"ceil": {}, "coalesce": {}, "collect": {}, "cos": {}, "cosh": {}, "cot": {}, "count": {}, "coth": {},
-	"date": {}, "datetime": {}, "day": {}, "dayofweek": {}, "dayofyear": {}, "degrees": {}, "distance": {}, "duration": {},
-	"e": {}, "elementid": {}, "endnode": {}, "exists": {}, "exp": {},
-	"floor": {}, "format": {},
-	"haversin": {}, "head": {}, "hour": {},
-	"id": {}, "isempty": {},
-	"keys":   {},
-	"labels": {}, "last": {}, "left": {}, "length": {}, "linestring": {}, "localdatetime": {}, "localtime": {}, "log": {}, "log10": {}, "lower": {}, "lpad": {}, "ltrim": {},
-	"max": {}, "min": {}, "minute": {}, "month": {},
-	"nodes": {}, "none": {},
-	"ordinalday":     {},
-	"percentilecont": {}, "percentiledisc": {}, "pi": {}, "point": {}, "polygon": {}, "power": {}, "properties": {},
-	"quarter": {},
-	"rand":    {}, "randomuuid": {}, "range": {}, "reduce": {}, "relationships": {}, "replace": {}, "reverse": {}, "right": {}, "round": {}, "rpad": {}, "rtrim": {},
-	"second": {}, "shortestpath": {}, "sign": {}, "sin": {}, "sinh": {}, "single": {}, "size": {}, "split": {}, "sqrt": {}, "startnode": {}, "stdev": {}, "stdevp": {}, "substring": {}, "sum": {},
-	"tail": {}, "tan": {}, "tanh": {}, "time": {}, "timestamp": {}, "toboolean": {}, "tobooleanornull": {}, "tofloat": {}, "tofloatornull": {}, "toint": {}, "tointeger": {}, "tointegerornull": {}, "tolower": {}, "tostring": {}, "tostringornull": {}, "toupper": {}, "trim": {}, "type": {},
-	"week": {}, "weekyear": {},
-	"year": {},
-}
-
 func validateKnownFunctionsInExpression(expression string) error {
 	for index := 0; index < len(expression); {
 		if expression[index] == '\'' || expression[index] == '"' {
