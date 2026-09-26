@@ -14,6 +14,39 @@ import (
 // row. Unlike the graph-only evaluator, a row may also contain scalar, map,
 // and list bindings introduced by WITH or UNWIND.
 
+// rowPropertyChainShape reports whether expr is exactly identifiers joined by
+// dots (e.uuid, n.a.b), and returns the first identifier and the chain after
+// it. Anything else (literals, backticks, calls, operators, spaces) is not.
+func rowPropertyChainShape(expr string) (variable, chain string, ok bool) {
+	dot := -1
+	start := true
+	for i := 0; i < len(expr); i++ {
+		c := expr[i]
+		switch {
+		case c == '.':
+			if start || i == len(expr)-1 {
+				return "", "", false
+			}
+			if dot < 0 {
+				dot = i
+			}
+			start = true
+		case c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+			start = false
+		case c >= '0' && c <= '9':
+			if start {
+				return "", "", false
+			}
+		default:
+			return "", "", false
+		}
+	}
+	if dot < 0 {
+		return "", "", false
+	}
+	return expr[:dot], expr[dot+1:], true
+}
+
 // containsCASEKeyword reports whether expr contains the CASE keyword outside
 // quoted literals. The row evaluator delegates compound CASE-containing
 // expressions to the shared evaluator, whose operator scanner is CASE-aware.
@@ -60,6 +93,14 @@ func (e *StorageExecutor) evaluateRowExpression(expr string, values map[string]i
 	}
 	if value, ok := values[expr]; ok {
 		return value, true
+	}
+	// A plain property chain on a row variable (e.uuid, n.a.b) can't match
+	// any branch below but the property access at the end: resolve it there
+	// directly instead of scanning for literals, operators and subscripts.
+	if variable, chain, ok := rowPropertyChainShape(expr); ok {
+		if base, bound := values[variable]; bound {
+			return evaluateRowPropertyChain(base, chain)
+		}
 	}
 	// A backtick-quoted variable (`my x`) names the same binding as its
 	// unquoted form, which is how projection aliases are keyed.
@@ -1435,6 +1476,18 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
 		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
 	}
+	// AND parts that compare or null-test simple operands are parsed once per
+	// predicate text (planRowPredicate), not once per row.
+	if plan := planRowPredicate(expression); plan != nil {
+		return e.evaluateRowPredicatePlan(ctx, plan, values)
+	}
+	return e.evaluateRowPredicateText(ctx, expression, values)
+}
+
+// evaluateRowPredicateText is evaluateRowPredicate without the predicate plan:
+// the predicate is evaluated from its text. A planned part whose operand the
+// plan can't resolve directly is evaluated here.
+func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expression string, values map[string]interface{}) bool {
 	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, true); ok {
 		return e.evaluateRowPredicate(ctx, left, values) || e.evaluateRowPredicate(ctx, right, values)
 	}
@@ -1499,7 +1552,7 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 		return e.evaluateRowMembership(left, right, values)
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
-		if hasSuffixFoldASCII(expression, strings.ToLower(operator)) {
+		if hasSuffixFoldASCII(expression, operator) {
 			left := strings.TrimSpace(expression[:len(expression)-len(operator)])
 			value, ok := e.evaluateRowExpression(left, values)
 			if operator == " IS NULL" {

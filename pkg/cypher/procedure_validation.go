@@ -8,13 +8,24 @@ import (
 	"strings"
 )
 
-func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
+// validateProcedureCallArguments rejects an aggregate in a procedure call's
+// arguments, as Neo4j does when it compiles the statement: whether the call
+// runs on its own or as a clause of a larger query, and whatever rows reach
+// it.
+func validateProcedureCallArguments(callCypher string) error {
 	if procedureCallContainsAggregation(callCypher) {
-		return nil, newSemanticError(
+		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"InvalidAggregation",
 			"procedure arguments cannot contain aggregate expressions",
 		)
+	}
+	return nil
+}
+
+func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
+	if err := validateProcedureCallArguments(callCypher); err != nil {
+		return nil, err
 	}
 	if strings.Index(callCypher, "(") >= 0 {
 		args, err := extractCallArguments(callCypher)
