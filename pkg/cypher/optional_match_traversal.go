@@ -511,7 +511,7 @@ func (e *StorageExecutor) projectTraversalOptionalRows(ctx context.Context, rows
 		projectedRows = append(projectedRows, projected)
 		orderScopes = append(orderScopes, scope)
 	}
-	if !e.orderPipelineRowsWithScopes(projectedRows, orderScopes, orderTerms) {
+	if !e.orderPipelineRowsWithScopes(ctx, projectedRows, orderScopes, orderTerms) {
 		return nil, localizedError(localization.CypherMatchingOrderByParseFailed(), nil)
 	}
 	skip := 0

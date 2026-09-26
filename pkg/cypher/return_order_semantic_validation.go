@@ -41,7 +41,7 @@ func validateReturnOrderBySemanticScope(clause string) error {
 			directExpressions[reference] = struct{}{}
 			continue
 		}
-		for _, reference := range semanticExpressionReferences(expression) {
+		for _, reference := range semanticFreeReferences(expression) {
 			complexReferences[reference] = struct{}{}
 		}
 	}
@@ -64,7 +64,7 @@ func validateReturnOrderBySemanticScope(clause string) error {
 				if _, projected := projectedAggregates[canonicalSemanticExpression(call)]; projected {
 					continue
 				}
-				references := semanticExpressionReferences(call)
+				references := semanticFreeReferences(call)
 				if len(references) > 0 {
 					return createUndefinedVariableError(strings.SplitN(references[0], ".", 2)[0])
 				}
@@ -79,7 +79,7 @@ func validateReturnOrderBySemanticScope(clause string) error {
 		if hasOrderAggregate {
 			scalarExpression = removeAggregateCalls(expression)
 		}
-		for _, reference := range semanticExpressionReferences(scalarExpression) {
+		for _, reference := range semanticFreeReferences(scalarExpression) {
 			if _, projectedAlias := aliases[reference]; projectedAlias {
 				continue
 			}
@@ -211,8 +211,10 @@ func validateReturnAggregationSemantics(body string) error {
 				"non-deterministic expressions cannot be arguments to aggregate functions",
 			)
 		}
+		// The comprehension / quantifier variables come from the whole
+		// expression: removing the aggregate calls can remove their list.
 		localBindings := quantifiedExpressionBindings(expression)
-		for _, reference := range semanticExpressionReferences(removeAggregateCalls(expression)) {
+		for _, reference := range semanticFreeReferences(removeAggregateCalls(expression)) {
 			if _, local := localBindings[strings.SplitN(reference, ".", 2)[0]]; local {
 				continue
 			}
@@ -234,6 +236,37 @@ func validateReturnAggregationSemantics(body string) error {
 
 func quantifiedExpressionBindings(expression string) map[string]struct{} {
 	bindings := make(map[string]struct{})
+	// reduce(accumulator = initial, variable IN list | expression)
+	for from := 0; from < len(expression); {
+		index := keywordIndexFrom(expression, "reduce", from, defaultKeywordScanOpts())
+		if index < 0 {
+			break
+		}
+		from = index + len("reduce")
+		open := skipSpaces(expression, from)
+		if open >= len(expression) || expression[open] != '(' {
+			continue
+		}
+		close := findMatchingParen(expression, open)
+		if close < 0 {
+			continue
+		}
+		parts := splitTopLevelComma(expression[open+1 : close])
+		if len(parts) < 2 {
+			continue
+		}
+		if equals := strings.IndexByte(parts[0], '='); equals > 0 {
+			if accumulator := simpleSemanticIdentifier(parts[0][:equals]); accumulator != "" {
+				bindings[accumulator] = struct{}{}
+			}
+		}
+		rest := strings.Join(parts[1:], ",")
+		if inIndex := findKeywordIndexInContext(rest, "IN"); inIndex > 0 {
+			if variable := simpleSemanticIdentifier(rest[:inIndex]); variable != "" {
+				bindings[variable] = struct{}{}
+			}
+		}
+	}
 	for _, function := range []string{"all", "any", "none", "single", "filter"} {
 		for from := 0; from < len(expression); {
 			index := keywordIndexFrom(expression, function, from, defaultKeywordScanOpts())
@@ -433,10 +466,75 @@ func semanticExpressionReferences(expression string) []string {
 	return references
 }
 
+// semanticFreeReferences returns the variables and variable.property
+// references an expression reads from its scope: the names
+// semanticExpressionReferences finds, without the expression's own bindings
+// (list comprehension, quantifier and reduce variables) and without anything
+// inside braces (a COUNT / EXISTS / COLLECT subquery binds its own pattern
+// variables; a map projection's keys aren't variables). The base of a map
+// projection (n in n {.k}) is a reference.
+func semanticFreeReferences(expression string) []string {
+	locals := quantifiedExpressionBindings(expression)
+	references := semanticExpressionReferences(maskSemanticBraceBodies(expression))
+	free := references[:0]
+	for _, reference := range references {
+		if _, local := locals[strings.SplitN(reference, ".", 2)[0]]; local {
+			continue
+		}
+		free = append(free, reference)
+	}
+	return free
+}
+
+// maskSemanticBraceBodies blanks every top-level {...} of expression, and the
+// COUNT / EXISTS / COLLECT keyword of a subquery before one.
+func maskSemanticBraceBodies(expression string) string {
+	if strings.IndexByte(expression, '{') < 0 {
+		return expression
+	}
+	masked := []byte(expression)
+	for index := 0; index < len(expression); index++ {
+		switch expression[index] {
+		case '\'', '"':
+			index = skipQuotedSemanticText(expression, index) - 1
+			continue
+		case '{':
+		default:
+			continue
+		}
+		close := findMatchingDelimiter(expression, index, '{', '}')
+		if close < 0 {
+			break
+		}
+		for blank := index; blank <= close; blank++ {
+			masked[blank] = ' '
+		}
+		end := index
+		for end > 0 && isASCIIWhitespace(expression[end-1]) {
+			end--
+		}
+		start := end
+		for start > 0 && isAlphaNumericByte(expression[start-1]) {
+			start--
+		}
+		switch strings.ToUpper(expression[start:end]) {
+		case "COUNT", "EXISTS", "COLLECT":
+			for blank := start; blank < end; blank++ {
+				masked[blank] = ' '
+			}
+		}
+		index = close
+	}
+	return string(masked)
+}
+
+// isSemanticLiteralWord reports whether an identifier-shaped word is a
+// literal or an operator / expression keyword, not a variable.
 func isSemanticLiteralWord(value string) bool {
 	switch strings.ToUpper(value) {
 	case "TRUE", "FALSE", "NULL", "NAN", "ASC", "ASCENDING", "DESC", "DESCENDING",
-		"AND", "IN", "NOT", "OR", "WHERE", "XOR":
+		"AND", "IN", "NOT", "OR", "WHERE", "XOR", "IS", "STARTS", "ENDS", "WITH", "CONTAINS",
+		"CASE", "WHEN", "THEN", "ELSE", "END", "DISTINCT":
 		return true
 	default:
 		return false
