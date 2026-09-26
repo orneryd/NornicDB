@@ -1110,18 +1110,18 @@ func statementError(err error) QueryError {
 	return QueryError{Code: code, Message: message}
 }
 
-// appendStatementFailure records a failed statement in response: its error
-// and, when it compiled and failed while running, its result with its
-// columns and no rows, as Neo4j's HTTP API reports it (#668). A statement
-// failing at compile time has no result.
-func appendStatementFailure(response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error) {
+// statementFailure is a failed statement's error. When the statement
+// compiled and failed while running, its result with its columns and no rows
+// is recorded in response first, as Neo4j's HTTP API reports it (#668); a
+// statement failing at compile time has no result.
+func statementFailure(response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error) QueryError {
 	failure := statementError(err)
 	if executor != nil && !nornicerrors.IsCompileTimeStatus(failure.Code) {
 		if columns := executor.StatementColumns(query); len(columns) > 0 {
 			response.Results = append(response.Results, QueryResult{Columns: columns, Data: []ResultRow{}})
 		}
 	}
-	response.Errors = append(response.Errors, failure)
+	return failure
 }
 
 // QueryError is an error from a query (Neo4j format).
@@ -1531,8 +1531,9 @@ func (s *Server) executeTxStatements(
 
 // statementRunner executes one statement of an HTTP /tx request on a
 // database: auto-committed (autoCommitStatementRunner) or in the request's
-// transaction (sessionStatementRunner).
-type statementRunner func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, error)
+// transaction (sessionStatementRunner). It returns the executor that ran it,
+// which describes a failed statement's result (statementFailure).
+type statementRunner func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error)
 
 // requestStatementError is a statement failure with its own Neo4j error, not
 // derived from the error text (statementError).
@@ -1545,17 +1546,18 @@ func (e *requestStatementError) Error() string { return e.Code + ": " + e.Messag
 // autoCommitStatementRunner runs a statement on its database's executor,
 // committed on its own.
 func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
-	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
+	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
 		// For composite databases with remote constituents, the request's
 		// auth token is forwarded to the remote constituent engines.
 		executor, err := s.getExecutorForDatabaseWithAuth(dbName, authToken)
 		if err != nil {
-			return nil, &requestStatementError{QueryError{
+			return nil, nil, &requestStatementError{QueryError{
 				Code:    "Neo.ClientError.Database.General",
 				Message: fmt.Sprintf("Failed to access database '%s': %v", dbName, err),
 			}}
 		}
-		return executor.Execute(ctx, query, params)
+		result, err := executor.Execute(ctx, query, params)
+		return result, executor, err
 	}
 }
 
@@ -1565,16 +1567,17 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 // transaction targets a constituent (as in Neo4j); a statement with its own
 // USE clause keeps it.
 func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
-	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
+	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
 		if queryErr := s.otherDatabaseInTransactionError(session.Database, dbName, query); queryErr != nil {
-			return nil, &requestStatementError{QueryError: *queryErr}
+			return nil, nil, &requestStatementError{QueryError: *queryErr}
 		}
 		if s.isConstituentOf(session.Database, dbName) {
 			if target, err := statementTargetDatabase(session.Database, query); err == nil && target == session.Database {
 				query = "USE " + dbName + " " + query
 			}
 		}
-		return s.txSessions.ExecuteInSession(ctx, session, query, params)
+		result, err := s.txSessions.ExecuteInSession(ctx, session, query, params)
+		return result, session.Executor, err
 	}
 }
 
@@ -1722,14 +1725,14 @@ func (s *Server) runRequestStatement(
 	}
 
 	queryStart := time.Now()
-	result, err := run(s.withDatabasePermissionChecker(ctx, claims, effectiveDB), effectiveDB, queryStatement, stmt.Parameters)
+	result, executor, err := run(s.withDatabasePermissionChecker(ctx, claims, effectiveDB), effectiveDB, queryStatement, stmt.Parameters)
 	s.logSlowQuery(stmt.Statement, stmt.Parameters, time.Since(queryStart), err)
 	if err != nil {
 		var own *requestStatementError
 		if errors.As(err, &own) {
 			return &own.QueryError
 		}
-		queryErr := statementError(err)
+		queryErr := statementFailure(response, executor, queryStatement, err)
 		return &queryErr
 	}
 
@@ -1829,11 +1832,8 @@ func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims,
 func (s *Server) commitRequestTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) {
 	commitResult, err := s.txSessions.CommitAndDelete(ctx, session)
 	if err != nil {
-		code := "Neo.ClientError.Transaction.TransactionCommitFailed"
-		if transientCode, ok := mapTransientTransactionError(err); ok {
-			code = transientCode
-		}
-		response.Errors = append(response.Errors, QueryError{Code: code, Message: err.Error()})
+		code, message := nornicerrors.Neo4jCommitStatus(err)
+		response.Errors = append(response.Errors, QueryError{Code: code, Message: message})
 		return
 	}
 	if commitResult != nil {
