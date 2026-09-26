@@ -18,10 +18,6 @@ import (
 // variables are expressions whose type is only known per row, where a value
 // that isn't a list is a list of that one value (traversableList).
 func validateListOperands(cypher string, params map[string]interface{}) error {
-	if !containsFold(cypher, "IN") {
-		return nil
-	}
-	upper := strings.ToUpper(cypher)
 	for i := 0; i < len(cypher); i++ {
 		switch cypher[i] {
 		case '\'', '"', '`':
@@ -32,7 +28,7 @@ func validateListOperands(cypher string, params map[string]interface{}) error {
 			}
 			continue
 		}
-		if !strings.HasPrefix(upper[i:], "IN") || (i > 0 && (isIdentByte(cypher[i-1]) || cypher[i-1] == ':' || cypher[i-1] == '.')) ||
+		if (cypher[i] != 'I' && cypher[i] != 'i') || i+1 >= len(cypher) || (cypher[i+1] != 'N' && cypher[i+1] != 'n') || (i > 0 && (isIdentByte(cypher[i-1]) || cypher[i-1] == ':' || cypher[i-1] == '.')) ||
 			i+2 >= len(cypher) || isIdentByte(cypher[i+2]) {
 			continue
 		}
@@ -95,12 +91,19 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 		for end < len(cypher) && (isIdentByte(cypher[end]) || cypher[end] == '.' || cypher[end] == '-' && end == start) {
 			end++
 		}
-		switch value, literal := parseLiteralValueFromComputedRow(cypher[start:end]); {
-		case !literal || value == nil:
+		word := cypher[start:end]
+		switch {
+		case strings.EqualFold(word, "true"), strings.EqualFold(word, "false"):
+			return end, "Boolean", ""
+		case c != '-' && c != '.' && (c < '0' || c > '9'):
+			// A variable, property or function: its type is known per row.
 			return end, "", ""
-		default:
-			return end, cypherValueTypeName(value), ""
 		}
+		value, literal := parseLiteralValueFromComputedRow(word)
+		if !literal || value == nil {
+			return end, "", ""
+		}
+		return end, cypherValueTypeName(value), ""
 	}
 }
 
