@@ -617,6 +617,31 @@ func (t *sizeTrackingEngine) checkWrite(operation string, node *storage.Node, ed
 	return t.checker.CheckStorageLimits(operation, node, edge)
 }
 
+// NodeCountByLabel preserves the label counter across this wrapper, so the
+// count-only MATCH fast path (and its transaction-visible form, #683) reads
+// it instead of scanning the label. An engine without one counts its label's
+// nodes.
+func (t *sizeTrackingEngine) NodeCountByLabel(label string) (int64, error) {
+	if counter, ok := t.Engine.(interface{ NodeCountByLabel(string) (int64, error) }); ok {
+		return counter.NodeCountByLabel(label)
+	}
+	nodes, err := t.Engine.GetNodesByLabel(label)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(nodes)), nil
+}
+
+// Namespace preserves the wrapped engine's namespace (its database name), so
+// what a caller reads through this wrapper is the database it tracks; it is
+// "" when the wrapped engine has none, which every caller treats as unknown.
+func (t *sizeTrackingEngine) Namespace() string {
+	if scoped, ok := t.Engine.(interface{ Namespace() string }); ok {
+		return scoped.Namespace()
+	}
+	return ""
+}
+
 // GraphMutationVersion preserves query-cache invalidation through this wrapper.
 func (t *sizeTrackingEngine) GraphMutationVersion() (uint64, bool) {
 	provider, ok := t.Engine.(storage.GraphMutationVersionProvider)
