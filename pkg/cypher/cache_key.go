@@ -3,7 +3,6 @@ package cypher
 import (
 	"encoding/binary"
 	"fmt"
-	"hash"
 	"math"
 	"reflect"
 	"sort"
@@ -29,25 +28,48 @@ const (
 	cacheKeyOther   byte = 'o'
 )
 
-// hashSortedParams writes the parameters into h in sorted name order, each
-// name length-prefixed and each value type-tagged (writeCacheKeyValue): 1,
-// 1.0, "1" and true / "true" are different keys, as are a list and its
-// text.
-func hashSortedParams(h hash.Hash64, params map[string]interface{}) {
+// cacheKeyBuilder builds a cache key: the statement text and its
+// parameters in an unambiguous encoding. The whole key is the cache's map
+// key, so two statements share an entry only when their keys are equal,
+// never on a hash collision.
+type cacheKeyBuilder struct {
+	buf []byte
+}
+
+func (k *cacheKeyBuilder) Write(p []byte) (int, error) {
+	k.buf = append(k.buf, p...)
+	return len(p), nil
+}
+
+// statementCacheKey is the key of text run with params: the text
+// length-prefixed, then the parameters (writeCacheKeyParams).
+func statementCacheKey(text string, params map[string]interface{}) string {
+	key := cacheKeyBuilder{buf: make([]byte, 0, len(text)+16+16*len(params))}
+	var scratch [binary.MaxVarintLen64 + 1]byte
+	writeCacheKeyString(&key, &scratch, text)
+	if len(params) > 0 {
+		writeCacheKeyParams(&key, &scratch, params)
+	}
+	return string(key.buf)
+}
+
+// writeCacheKeyParams writes the parameters in sorted name order, each name
+// length-prefixed and each value type-tagged (writeCacheKeyValue): 1, 1.0,
+// "1" and true / "true" are different keys, as are a list and its text.
+func writeCacheKeyParams(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, params map[string]interface{}) {
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var scratch [binary.MaxVarintLen64 + 1]byte
 	for _, k := range keys {
-		writeCacheKeyString(h, &scratch, k)
-		writeCacheKeyValue(h, &scratch, params[k])
+		writeCacheKeyString(h, scratch, k)
+		writeCacheKeyValue(h, scratch, params[k])
 	}
 }
 
 // writeCacheKeyValue writes value's tag and payload.
-func writeCacheKeyValue(h hash.Hash64, scratch *[binary.MaxVarintLen64 + 1]byte, value interface{}) {
+func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, value interface{}) {
 	switch typed := value.(type) {
 	case nil:
 		h.Write([]byte{cacheKeyNull})
@@ -170,7 +192,7 @@ func writeCacheKeyValue(h hash.Hash64, scratch *[binary.MaxVarintLen64 + 1]byte,
 	writeCacheKeyString(h, scratch, fmt.Sprintf("%v", value))
 }
 
-func writeCacheKeyInteger(h hash.Hash64, value int64) {
+func writeCacheKeyInteger(h *cacheKeyBuilder, value int64) {
 	var payload [9]byte
 	payload[0] = cacheKeyInteger
 	binary.BigEndian.PutUint64(payload[1:], uint64(value))
@@ -179,7 +201,7 @@ func writeCacheKeyInteger(h hash.Hash64, value int64) {
 
 // writeCacheKeyUnsigned writes a uint / uint64: an INTEGER when it fits
 // int64, else a tag of its own.
-func writeCacheKeyUnsigned(h hash.Hash64, value uint64) {
+func writeCacheKeyUnsigned(h *cacheKeyBuilder, value uint64) {
 	if value <= math.MaxInt64 {
 		writeCacheKeyInteger(h, int64(value))
 		return
@@ -190,19 +212,19 @@ func writeCacheKeyUnsigned(h hash.Hash64, value uint64) {
 	h.Write(payload[:])
 }
 
-func writeCacheKeyFloat(h hash.Hash64, value float64) {
+func writeCacheKeyFloat(h *cacheKeyBuilder, value float64) {
 	var payload [9]byte
 	payload[0] = cacheKeyFloat
 	binary.BigEndian.PutUint64(payload[1:], math.Float64bits(value))
 	h.Write(payload[:])
 }
 
-func writeCacheKeyString(h hash.Hash64, scratch *[binary.MaxVarintLen64 + 1]byte, value string) {
+func writeCacheKeyString(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, value string) {
 	writeCacheKeyLength(h, scratch, len(value))
 	h.Write([]byte(value))
 }
 
-func writeCacheKeyLength(h hash.Hash64, scratch *[binary.MaxVarintLen64 + 1]byte, length int) {
+func writeCacheKeyLength(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, length int) {
 	n := binary.PutUvarint(scratch[:], uint64(length))
 	h.Write(scratch[:n])
 }

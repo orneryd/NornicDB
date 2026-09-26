@@ -1383,13 +1383,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		fabricResultCacheKey := ""
 
 		// Mirror normal query-cache policy for Fabric reads (autocommit only).
+		// A cached result is served only to a caller the statement is
+		// authorized for (fabricResultCacheKey).
 		if allowResultCache && !inExplicitTx && info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) {
-			fabricResultCacheKey = cacheKeyFNV(cypher, mergedParams)
-			if version, supported := e.fabricGraphMutationVersion(ctx, preparedFabric, GetAuthTokenFromContext(ctx)); supported {
-				fabricResultCacheKey += ":graph:" + strconv.FormatUint(version, 10)
-			}
-			if cached, found := e.cache.get(fabricResultCacheKey); found {
-				return cached, nil
+			if key, cacheable := e.fabricResultCacheKey(ctx, preparedFabric, cypher, mergedParams); cacheable {
+				fabricResultCacheKey = key
+				if cached, found := e.cache.get(fabricResultCacheKey); found {
+					return cached, nil
+				}
 			}
 		}
 
@@ -1571,7 +1572,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// outside this executor cannot leave a stale cached result behind.
 	resultCacheKey := ""
 	if info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) {
-		resultCacheKey = cacheKeyFNV(cypher, params)
+		resultCacheKey = resultCacheEntryKey(cypher, params)
 		if provider, ok := e.storage.(storage.GraphMutationVersionProvider); ok {
 			if version, supported := provider.GraphMutationVersion(); supported {
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)
