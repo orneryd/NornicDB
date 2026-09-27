@@ -59,7 +59,7 @@ func TestCompoundQueryShapeMatcher_MoreRejectBranches(t *testing.T) {
 		query  string
 		reason string
 	}{
-		{"missing_with_var", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH   DELETE r RETURN count(r)", "missing WITH"},
+		{"missing_with_var", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH   DELETE r RETURN count(r)", "shape not found"}, // DELETE after WITH is a name (#740); the shape is rejected either way
 		{"missing_delete_var", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH r DELETE   RETURN count(r)", "missing DELETE"},
 		{"bad_return_count", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH r DELETE r RETURN r", "not COUNT"},
 		{"missing_count_var", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH r DELETE r RETURN count()", "missing COUNT"},
