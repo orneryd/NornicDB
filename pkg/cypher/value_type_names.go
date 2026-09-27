@@ -3,6 +3,7 @@ package cypher
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -153,6 +154,21 @@ func neo4jValueTypeName(value interface{}) string {
 // LIST, ZONED DATETIME, …), without nullability.
 func cypherTypeSystemName(value interface{}) string {
 	return valueTypeNames[cypherValueKindOf(value)].typeSystem
+}
+
+// cypherTypeSystemNameWithArticle is a value's type-system name as Neo4j
+// writes it after "but it was": with its article ("an INTEGER", "a LIST"),
+// and NULL without one.
+func cypherTypeSystemNameWithArticle(value interface{}) string {
+	name := cypherTypeSystemName(value)
+	switch {
+	case name == "NULL":
+		return name
+	case strings.ContainsRune("AEIOU", rune(name[0])):
+		return "an " + name
+	default:
+		return "a " + name
+	}
 }
 
 // apocValueTypeName is apoc.meta.type's name for a value's type.

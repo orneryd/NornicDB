@@ -367,8 +367,8 @@ func (s *Server) missingQueryPermission(claims *auth.JWTClaims, dbName, query st
 	if requirements.Admin && !hasPermission(s, roles, auth.PermAdmin) {
 		return auth.PermAdmin
 	}
-	databases := s.graphDatabases(dbName)
-	if requirements.Write && !s.getResolvedAccess(claims, databases[len(databases)-1]).Write {
+	target, _ := s.graphAccess(nil, dbName)
+	if requirements.Write && !s.getResolvedAccess(claims, target).Write {
 		return auth.PermWrite
 	}
 	return ""
@@ -396,29 +396,25 @@ func (s *Server) withDatabasePermissionChecker(ctx context.Context, claims *auth
 
 // canAccessGraph reports whether the principal may use graph, a request's
 // database: a database, an alias, or a composite constituent, which needs
-// access to its composite and its database (graphDatabases), as the
-// executor checks a USE of the same name.
+// access to its composite and its database (graphAccess), as the executor
+// checks a USE of the same name.
 func (s *Server) canAccessGraph(claims *auth.JWTClaims, graph string) bool {
-	access := s.getDatabaseAccessMode(claims)
-	for _, database := range s.graphDatabases(graph) {
-		if !access.CanAccessDatabase(database) {
-			return false
-		}
-	}
-	return true
+	_, allowed := s.graphAccess(s.getDatabaseAccessMode(claims), graph)
+	return allowed
 }
 
-// graphDatabases returns the databases access to graph needs
-// (cypher.AccessDatabases), the last one being the database its data is in.
-func (s *Server) graphDatabases(graph string) []string {
-	if s.dbManager == nil {
-		return []string{graph}
+// graphAccess reports whether mode allows graph and the database its data
+// is in (cypher.GraphAccess). A nil mode allows every database.
+func (s *Server) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDatabase string, allowed bool) {
+	var manager cypher.DatabaseManagerInterface
+	if s.dbManager != nil {
+		manager = &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}
 	}
-	databases, err := cypher.AccessDatabases(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, graph)
-	if err != nil || len(databases) == 0 {
-		return []string{graph}
+	var canAccess func(string) bool
+	if mode != nil {
+		canAccess = mode.CanAccessDatabase
 	}
-	return databases
+	return cypher.GraphAccess(manager, graph, canAccess)
 }
 
 // isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).

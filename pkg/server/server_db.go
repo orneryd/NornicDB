@@ -1641,20 +1641,17 @@ func (s *Server) runRequestStatements(
 	ctx = cypher.WithAuthToken(ctx, authToken)
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
 	mode := s.getDatabaseAccessMode(claims)
-	// A name is checked like the request's database (canAccessGraph: a
+	// A name is checked like the request's database (graphAccess: a
 	// composite constituent needs its composite and its database), and
 	// read / write are the privileges of the database its data is in.
 	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, func(database, permission string) bool {
-		databases := s.graphDatabases(database)
-		for _, selected := range databases {
-			if !mode.CanAccessDatabase(selected) {
-				return false
-			}
+		target, allowed := s.graphAccess(mode, database)
+		if !allowed {
+			return false
 		}
 		if !s.isRBACEnforced() {
 			return true
 		}
-		target := databases[len(databases)-1]
 		switch permission {
 		case "read":
 			return s.getResolvedAccess(claims, target).Read

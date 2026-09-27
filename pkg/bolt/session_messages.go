@@ -198,8 +198,10 @@ func (s *Session) handleRun(data []byte) error {
 	if mode == nil && s.server != nil && s.server.config.RequireAuth {
 		mode = auth.DenyAllDatabaseAccessMode
 	}
-	if mode != nil && !s.canAccessGraph(mode, dbName) {
-		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
+	if mode != nil {
+		if _, allowed := s.graphAccess(mode, dbName); !allowed {
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
+		}
 	}
 
 	// Per-DB write: for mutations, require ResolvedAccess.Write for this (principal, db).
@@ -208,8 +210,8 @@ func (s *Session) handleRun(data []byte) error {
 		if s.authResult != nil {
 			roles = s.authResult.Roles
 		}
-		targets := s.graphDatabases(dbName)
-		ra := s.server.resolvedAccessResolver(roles, targets[len(targets)-1])
+		target, _ := s.graphAccess(nil, dbName)
+		ra := s.server.resolvedAccessResolver(roles, target)
 		if !ra.Write {
 			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseWriteDenied(dbName))
 		}
@@ -262,12 +264,12 @@ func (s *Session) handleRun(data []byte) error {
 	ctx = s.withSessionIdentity(ctx)
 	ctx = cypher.WithClientStatement(ctx)
 	if mode != nil {
-		// A name is checked like the session's database (canAccessGraph:
-		// a composite constituent needs its composite and its database),
-		// and read / write are the privileges of the database its data
-		// is in.
+		// A name is checked like the session's database (graphAccess: a
+		// composite constituent needs its composite and its database), and
+		// read / write are the privileges of the database its data is in.
 		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
-			if !s.canAccessGraph(mode, database) {
+			target, allowed := s.graphAccess(mode, database)
+			if !allowed {
 				return false
 			}
 			if s.server != nil && s.server.resolvedAccessResolver != nil {
@@ -275,8 +277,7 @@ func (s *Session) handleRun(data []byte) error {
 				if s.authResult != nil {
 					roles = s.authResult.Roles
 				}
-				databases := s.graphDatabases(database)
-				access := s.server.resolvedAccessResolver(roles, databases[len(databases)-1])
+				access := s.server.resolvedAccessResolver(roles, target)
 				switch permission {
 				case "read":
 					return access.Read
@@ -1657,33 +1658,23 @@ func (s *Session) writeMessageNoFlush(data []byte) error {
 	return s.writer.WriteByte(0x00)
 }
 
-// canAccessGraph reports whether mode allows graph, a RUN's or BEGIN's
-// database: every database cypher.AccessDatabases lists for it (a
-// composite constituent needs its composite and its database), as the
-// executor checks a USE of the same name.
-func (s *Session) canAccessGraph(mode auth.DatabaseAccessMode, graph string) bool {
-	for _, database := range s.graphDatabases(graph) {
-		if !mode.CanAccessDatabase(database) {
-			return false
-		}
-	}
-	return true
-}
-
-// graphDatabases returns the databases access to graph needs
-// (cypher.AccessDatabases), the last one being the database its data is in.
-func (s *Session) graphDatabases(graph string) []string {
+// graphAccess reports whether mode allows graph, a RUN's or BEGIN's
+// database, and the database its data is in (cypher.GraphAccess: a
+// composite constituent needs its composite and its database, as the
+// executor checks a USE of the same name). A nil mode allows every
+// database.
+func (s *Session) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDatabase string, allowed bool) {
 	var manager cypher.DatabaseManagerInterface
 	if s.server != nil {
 		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
 			manager = &boltDatabaseManagerAdapter{manager: mgr}
 		}
 	}
-	databases, err := cypher.AccessDatabases(manager, graph)
-	if err != nil || len(databases) == 0 {
-		return []string{graph}
+	var canAccess func(string) bool
+	if mode != nil {
+		canAccess = mode.CanAccessDatabase
 	}
-	return databases
+	return cypher.GraphAccess(manager, graph, canAccess)
 }
 
 // withSessionIdentity adds what the executor knows about the session to a

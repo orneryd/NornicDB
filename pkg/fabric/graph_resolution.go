@@ -11,8 +11,11 @@ import (
 
 // GraphArgumentEvaluator evaluates the argument expressions of a dynamic
 // graph reference (USE graph.byName(g)) with the statement's parameters and
-// the current row's variables (params holds both).
-type GraphArgumentEvaluator func(ctx context.Context, expressions []string, params map[string]interface{}) ([]interface{}, error)
+// the current row's variables (params holds both). graph.byName and
+// graph.byElementId take a STRING: the evaluator returns one string per
+// expression, or Neo4j's error for an argument that isn't one (the Cypher
+// executor owns value types and their names).
+type GraphArgumentEvaluator func(ctx context.Context, expressions []string, params map[string]interface{}) ([]string, error)
 
 // GraphNotFoundError is Neo4j's Neo.ClientError.Database.DatabaseNotFound
 // "Graph not found: <name>" for a graph reference that names no graph.
@@ -84,11 +87,10 @@ func (e *FabricExecutor) resolveDynamicGraph(ctx context.Context, f *FragmentExe
 	if err != nil {
 		return "", err
 	}
-	value, ok := values[0].(string)
-	if !ok {
-		return "", &GraphReferenceError{Code: "Neo.ClientError.Statement.TypeError",
-			Message: localization.CypherCommandRoutingGraphFunctionArgumentType(f.Graph.Args[0], cypherTypeName(values[0]))}
+	if len(values) != len(f.Graph.Args) {
+		return "", fmt.Errorf("dynamic graph reference %s: %d arguments evaluated to %d values", f.Graph.Text(), len(f.Graph.Args), len(values))
 	}
+	value := values[0]
 	if function == "graph.byname" {
 		if !inScope(value, f.Scope) {
 			return "", &GraphNotFoundError{Name: value}
@@ -125,25 +127,4 @@ func (e *FabricExecutor) constituentForElementID(elementID, scope string) (strin
 // inScope reports whether graph is a constituent of the composite scope.
 func inScope(graph, scope string) bool {
 	return scope != "" && len(graph) > len(scope)+1 && strings.EqualFold(graph[:len(scope)+1], scope+".")
-}
-
-// cypherTypeName names a value's Cypher type for messages, with its
-// article ("an INTEGER").
-func cypherTypeName(v interface{}) string {
-	switch v.(type) {
-	case nil:
-		return "NULL"
-	case bool:
-		return "a BOOLEAN"
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return "an INTEGER"
-	case float32, float64:
-		return "a FLOAT"
-	case []interface{}:
-		return "a LIST"
-	case map[string]interface{}:
-		return "a MAP"
-	default:
-		return fmt.Sprintf("a %T", v)
-	}
 }

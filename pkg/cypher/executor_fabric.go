@@ -896,16 +896,22 @@ func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, com
 // evaluateGraphArguments evaluates a dynamic graph reference's arguments
 // (USE graph.byName(g)) for Fabric: values holds the statement's
 // parameters and the current row's variables.
-func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]interface{}, error) {
+func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
 	ctx = context.WithValue(ctx, paramsKey, values)
-	out := make([]interface{}, len(expressions))
+	out := make([]string, len(expressions))
 	for i, expression := range expressions {
 		value, ok := e.evaluateRowExpressionWithContext(ctx, e.substituteParams(expression, values), pipelineRow(values))
 		if !ok {
 			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
 		}
-		out[i] = value
+		text, isString := value.(string)
+		if !isString {
+			// Neo4j: "Expected <argument> to be a STRING, but it was an INTEGER".
+			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "TypeError",
+				localization.CypherCommandRoutingGraphFunctionArgumentType(expression, cypherTypeSystemNameWithArticle(value)))
+		}
+		out[i] = text
 	}
 	return out, nil
 }

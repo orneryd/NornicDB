@@ -306,6 +306,27 @@ func AccessDatabases(manager DatabaseManagerInterface, database string) ([]strin
 	return []string{database}, nil
 }
 
+// GraphAccess decides a request's or session's graph the way the executor
+// decides a graph a statement selects: allowed is whether canAccess allows
+// every database AccessDatabases lists for graph (a nil canAccess allows
+// all), and dataDatabase is the last one, the database graph's data is in,
+// whose privileges apply. When the databases can't be read (a composite's
+// constituents), access is refused. Bolt and HTTP use it for the database a
+// request names.
+func GraphAccess(manager DatabaseManagerInterface, graph string, canAccess func(database string) bool) (dataDatabase string, allowed bool) {
+	databases, err := AccessDatabases(manager, graph)
+	if err != nil {
+		return graph, false
+	}
+	dataDatabase = databases[len(databases)-1]
+	for _, database := range databases {
+		if canAccess != nil && !canAccess(database) {
+			return dataDatabase, false
+		}
+	}
+	return dataDatabase, true
+}
+
 // authorizeSelectedDatabase checks that the principal may use database,
 // a graph the statement selects: each database AccessDatabases lists.
 func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database string) error {
