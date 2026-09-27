@@ -1103,6 +1103,34 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 	return rewrite.canonical, rewrite
 }
 
+// StripComments returns query without its Cypher comments: // to the end of
+// the line, and /* … */ (replaced by a space, keeping its line breaks), as
+// commentReplacement. // and /* inside string literals and quoted names are
+// text. A query without comments is returned as is, without allocating. It
+// is the comment rule the HTTP server's statement checks use (#683).
+func StripComments(query string) string {
+	var out strings.Builder
+	last := 0
+	for index := 0; index < len(query); index++ {
+		switch c := query[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(query, index, c) - 1
+		case '/':
+			if end := queryCommentEnd(query, index); end >= 0 {
+				out.WriteString(query[last:index])
+				out.WriteString(commentReplacement(query[index:end]))
+				last = end
+				index = end - 1
+			}
+		}
+	}
+	if last == 0 {
+		return query
+	}
+	out.WriteString(query[last:])
+	return out.String()
+}
+
 // commentReplacement is what a comment in a statement with its own syntax
 // becomes: nothing for a line comment (its line break stays), one space plus
 // its line breaks for a block comment.

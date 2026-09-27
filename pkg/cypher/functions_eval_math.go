@@ -1444,7 +1444,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 // (all / any / none / single) with arguments inner, "variable IN list WHERE
 // predicate" (parseQuantifierArguments), folding the element results with
 // quantifierFold. A null list is null (#736), and a value that isn't a list
-// is a list of that one value (traversableList). Semantic validation rejects
+// is a list of that one value (coerceToUnwindItems). Semantic validation rejects
 // arguments of any other shape before evaluation; here they, and a list
 // expression this evaluator can't evaluate, are null.
 func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
@@ -1462,7 +1462,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 		return nil
 	}
 	fold := quantifierFold{function: function}
-	for _, item := range traversableList(list) {
+	for _, item := range coerceToUnwindItems(list) {
 		result, _ := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
 		if value, decided := fold.add(result); decided {
 			return value

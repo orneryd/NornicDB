@@ -1233,7 +1233,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	if listValue == nil {
 		return nil, true, true, nil
 	}
-	items := traversableList(listValue)
+	items := coerceToUnwindItems(listValue)
 	result := make([]interface{}, 0, len(items))
 	for _, item := range items {
 		scope := make(map[string]interface{}, len(values)+1)
@@ -1387,7 +1387,7 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	if listValue == nil {
 		return nil, true, true, nil
 	}
-	items := traversableList(listValue)
+	items := coerceToUnwindItems(listValue)
 	fold := quantifierFold{function: function}
 	for _, item := range items {
 		scope := make(map[string]interface{}, len(values)+1)
@@ -1906,7 +1906,7 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	if haystack == nil {
 		return nil, true
 	}
-	items := traversableList(haystack)
+	items := coerceToUnwindItems(haystack)
 	if len(items) == 0 {
 		return false, true
 	}

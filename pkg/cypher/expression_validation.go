@@ -16,7 +16,7 @@ import (
 // whole parameter bound to a non-null value that is not a list ("Type
 // mismatch for parameter 'p': …"); `$p.list`, `$p[0]`, `'a' + x` and
 // variables are expressions whose type is only known per row, where a value
-// that isn't a list is a list of that one value (traversableList). Variables
+// that isn't a list is a list of that one value (coerceToUnwindItems). Variables
 // bound to a node, relationship or path are checked with their scope
 // (graphListOperandTypeError).
 func validateListOperands(cypher string, params map[string]interface{}) error {

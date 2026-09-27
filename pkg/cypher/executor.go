@@ -1542,7 +1542,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
 	// scopes are those of the statement without it.
 	scopeText, _ := stripWithEmbeddingSuffix(cypher)
-	if err := e.validateSemanticScopes(scopeText); err != nil {
+	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
 		return nil, err
 	}
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {

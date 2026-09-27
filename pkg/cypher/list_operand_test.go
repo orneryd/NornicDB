@@ -59,11 +59,11 @@ func TestListPositionReadsAValueAsAOneElementList(t *testing.T) {
 }
 
 func TestTraversableList(t *testing.T) {
-	assert.Nil(t, traversableList(nil))
-	assert.Equal(t, []interface{}{int64(5)}, traversableList(int64(5)))
-	assert.Equal(t, []interface{}{"ab"}, traversableList("ab"))
-	assert.Equal(t, []interface{}{int64(1), int64(2)}, traversableList([]int64{1, 2}))
-	assert.Equal(t, []interface{}{}, traversableList([]interface{}{}))
+	assert.Nil(t, coerceToUnwindItems(nil))
+	assert.Equal(t, []interface{}{int64(5)}, coerceToUnwindItems(int64(5)))
+	assert.Equal(t, []interface{}{"ab"}, coerceToUnwindItems("ab"))
+	assert.Equal(t, []interface{}{int64(1), int64(2)}, coerceToUnwindItems([]int64{1, 2}))
+	assert.Equal(t, []interface{}{}, coerceToUnwindItems([]interface{}{}))
 }
 
 // The shared evaluator's all / any / none / single use the same argument

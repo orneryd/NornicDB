@@ -16,7 +16,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 	// `node {.name}`). Requiring that grammar here prevents nested map
 	// literals and map comparisons from being mistaken for projections merely
 	// because they contain a space followed by an opening brace.
-	if !isValidIdentifier(baseExpression) {
+	if !isValidIdentifier(baseExpression) && !isBacktickQuotedName(baseExpression) {
 		return nil, false, false, nil
 	}
 	trimmed := strings.TrimSpace(expression)
@@ -51,7 +51,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 		case strings.HasPrefix(item, "."):
 			name, selector := mapProjectionPropertySelector(item)
 			if !selector {
-				return nil, true, false
+				return nil, true, false, nil
 			}
 			result[name] = properties[name]
 		default:
@@ -68,7 +68,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 				result[name] = value
 				continue
 			}
-			if !isValidIdentifier(item) {
+			if !isValidIdentifier(item) && !isBacktickQuotedName(item) {
 				return nil, true, false, nil
 			}
 			value, ok, err := e.evaluateRowValue(item, values)

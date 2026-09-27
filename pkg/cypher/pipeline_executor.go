@@ -165,12 +165,65 @@ func pipelineClauseBody(text, keyword string) string {
 	return strings.TrimSpace(text)
 }
 
-// splitPipelineClauses walks the query from left to right and slices it on
-// top-level MATCH/CREATE/WITH/UNWIND/RETURN keywords. Returns (clauses, true)
-// on success. On anything unsupported (e.g. nested MERGE or CALL subquery)
-// returns (nil, false) so the caller falls back.
+// pipelineHasWithAfterMerge reports whether a WITH clause follows a MERGE.
+// pipelineHasRelationshipMergeAfterMatch reports whether a MERGE of a
+// relationship pattern follows a MATCH clause, so that its endpoints are bound
+// and the pipeline's all-matches relationship MERGE applies (#640).
+func pipelineHasRelationshipMergeAfterMatch(clauses []pipelineClause) bool {
+	matched := false
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseMatch:
+			matched = true
+		case pipelineClauseMerge:
+			if matched && (strings.Contains(clause.text, "]-") || strings.Contains(clause.text, "-[")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pipelineHasWithAfterMerge(clauses []pipelineClause) bool {
+	merged := false
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseMerge:
+			merged = true
+		case pipelineClauseWith:
+			if merged {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pipelineClauseSplits caches parsePipelineClauses by statement text and
+// whether procedure calls are clauses; it is cleared when it reaches
+// pipelineClauseSplitLimit entries, which bounds it for workloads with
+// unbounded distinct texts.
+var pipelineClauseSplits = struct {
+	sync.RWMutex
+	splits map[pipelineClauseSplitKey]pipelineClauseSplit
+}{splits: make(map[pipelineClauseSplitKey]pipelineClauseSplit)}
+
+type pipelineClauseSplitKey struct {
+	text           string
+	procedureCalls bool
+}
+
+type pipelineClauseSplit struct {
+	clauses []pipelineClause
+	ok      bool
+}
+
+const pipelineClauseSplitLimit = 4096
+
+// splitPipelineClauses cuts a statement into its pipeline clauses (see
+// parsePipelineClauses); a CALL makes it unsupported.
 func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
-	return splitPipelineClausesWithProcedureCalls(cypher, false)
+	return cachedPipelineClauses(cypher, false)
 }
 
 // splitPipelineClausesAllowingProcedureCalls is splitPipelineClauses that also
@@ -178,10 +231,36 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 // kind pipelineClauseCall, for the pipeline executor. The semantic
 // validators keep using splitPipelineClauses, which rejects any CALL.
 func splitPipelineClausesAllowingProcedureCalls(cypher string) ([]pipelineClause, bool) {
-	return splitPipelineClausesWithProcedureCalls(cypher, true)
+	return cachedPipelineClauses(cypher, true)
 }
 
-func splitPipelineClausesWithProcedureCalls(cypher string, allowProcedureCalls bool) ([]pipelineClause, bool) {
+// cachedPipelineClauses computes the split of a text once; callers get
+// their own copy of the clause list.
+func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause, bool) {
+	key := pipelineClauseSplitKey{text: cypher, procedureCalls: procedureCalls}
+	pipelineClauseSplits.RLock()
+	split, cached := pipelineClauseSplits.splits[key]
+	pipelineClauseSplits.RUnlock()
+	if !cached {
+		split.clauses, split.ok = parsePipelineClauses(cypher, procedureCalls)
+		pipelineClauseSplits.Lock()
+		if len(pipelineClauseSplits.splits) >= pipelineClauseSplitLimit {
+			pipelineClauseSplits.splits = make(map[pipelineClauseSplitKey]pipelineClauseSplit)
+		}
+		pipelineClauseSplits.splits[key] = split
+		pipelineClauseSplits.Unlock()
+	}
+	if split.clauses == nil {
+		return nil, split.ok
+	}
+	return append([]pipelineClause(nil), split.clauses...), split.ok
+}
+
+// parsePipelineClauses walks the query from left to right and slices it on
+// top-level MATCH/CREATE/WITH/UNWIND/RETURN keywords. Returns (clauses, true)
+// on success. On anything unsupported (e.g. nested MERGE or CALL subquery)
+// returns (nil, false) so the caller falls back.
+func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineClause, bool) {
 	type kw struct {
 		name string
 		kind pipelineClauseKind
@@ -3804,8 +3883,7 @@ func returnProjectionPlanFor(clause string) *returnProjectionPlan {
 }
 
 func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
-	body := strings.TrimSpace(strings.TrimPrefix(clause, "RETURN"))
-	body = strings.TrimPrefix(body, "return")
+	body := pipelineClauseBody(clause, "RETURN")
 	modifierStart := len(body)
 	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
 		modifierStart = cut
@@ -3845,20 +3923,12 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 // Returns (nil, false) if any item can't be projected, so the caller falls
 // back to the established RETURN projection.
 func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
-	body := pipelineClauseBody(clause, "RETURN")
-	// Keywords inside braces (COLLECT { … ORDER BY … }) belong to nested
-	// expressions, as for WITH (#547).
-	modifierStart := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(body, keyword); idx >= 0 && idx < modifierStart {
-			modifierStart = idx
-		}
+	plan := returnProjectionPlanFor(clause)
+	if !plan.valid {
+		return nil, false
 	}
-	modifiers := strings.TrimSpace(body[modifierStart:])
-	body = strings.TrimSpace(body[:modifierStart])
-	returnDistinct := false
-	body, returnDistinct = cutDistinct(body)
-	if body == "*" {
+	modifiers, returnDistinct := plan.modifiers, plan.distinct
+	if plan.star {
 		columns := pipelineWildcardColumns(rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}
 		for _, row := range rows {
@@ -3949,6 +4019,24 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		}
 		result, err := e.applyResultModifiers(result, modifiers)
 		return result, err == nil
+	}
+
+	// Without DISTINCT, ORDER BY, SKIP or LIMIT the projected values are the
+	// result rows: no per-row map or ORDER BY scope is needed.
+	if modifiers == "" && !returnDistinct {
+		result.Rows = make([][]interface{}, 0, len(rows))
+		for _, row := range rows {
+			outRow := make([]interface{}, len(projs))
+			for index, p := range projs {
+				value, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
+				if !ok {
+					return nil, false
+				}
+				outRow[index] = value
+			}
+			result.Rows = append(result.Rows, outRow)
+		}
+		return result, true
 	}
 
 	// ORDER BY and DISTINCT see the incoming row with the projection over
@@ -4138,7 +4226,7 @@ func referencesVariable(query, name string) bool {
 //  2. Property access: UNWIND row.products AS prodRef
 //  3. Literal list:   UNWIND [{...}, {...}] AS x  (already a literal)
 //
-// A value that isn't a list is one element (traversableList).
+// A value that isn't a list is one element (coerceToUnwindItems).
 //
 // Returns nil if the expression can't be evaluated.
 func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
@@ -4153,7 +4241,7 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 	expr = strings.TrimSpace(expr)
 	// Bare variable.
 	if val, ok := row[expr]; ok {
-		return traversableList(val), true
+		return coerceToUnwindItems(val), true
 	}
 	// Property access (a.b).
 	if dot := strings.Index(expr, "."); dot > 0 {
@@ -4162,11 +4250,11 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 		if baseVal, ok := row[base]; ok {
 			if asMap, ok := toStringAnyMap(baseVal); ok {
 				if v, ok := asMap[field]; ok {
-					return traversableList(v), true
+					return coerceToUnwindItems(v), true
 				}
 			}
 			if node, ok := baseVal.(*storage.Node); ok && node != nil {
-				return traversableList(node.Properties[field]), true
+				return coerceToUnwindItems(node.Properties[field]), true
 			}
 		}
 	}
@@ -4217,7 +4305,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		return items, true
 	}
 	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-		return traversableList(value), true
+		return coerceToUnwindItems(value), true
 	}
 
 	materialized := expr
@@ -4231,22 +4319,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	if value == nil && !strings.EqualFold(strings.TrimSpace(materialized), "null") && !looksLikeFunctionCall(materialized) {
 		return nil, false
 	}
-	return traversableList(value), true
-}
-
-// traversableList is a value in a list position (UNWIND, IN, a list
-// comprehension, reduce, all / any / none / single) as Neo4j reads it: a
-// list is its elements, null is nil, and any other value is a list of that
-// one value, so `UNWIND n.s` with n.s = 5 is one row and
-// `5 IN n.s` is true.
-func traversableList(v interface{}) []interface{} {
-	if v == nil {
-		return nil
-	}
-	if kind := reflect.TypeOf(v).Kind(); kind == reflect.Slice || kind == reflect.Array {
-		return toAnySlice(v)
-	}
-	return []interface{}{v}
+	return coerceToUnwindItems(value), true
 }
 
 func toAnySlice(v interface{}) []interface{} {
