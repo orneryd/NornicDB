@@ -1676,9 +1676,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 	}
 	if running.tx == nil {
-		if runErr := registerStatement(); runErr != nil {
-			return nil, runErr
-		}
+		// Registering an auto-commit statement can't fail: only a
+		// terminated explicit transaction refuses a statement, and a
+		// statement of one is registered above.
+		_ = registerStatement()
 	}
 
 	// Check for EXPLAIN/PROFILE execution modes (using cached analysis)

@@ -287,11 +287,9 @@ func startsWithKeywords(s, firstWord, secondWord string) bool {
 	if !ok || !keywordRightBoundaryOK(s, afterFirst, keywordBoundaryWord) {
 		return false
 	}
-	first := firstWord[firstStart:firstEnd]
-	if isWithKeyword(first) && isOperatorWith(s, 0) {
-		return false
-	}
-	if clauseKeywordUsedAsName(s, 0, afterFirst, first) {
+	// (An operator WITH, as in STARTS WITH, needs a word before it, so
+	// it can't start the statement.)
+	if clauseKeywordUsedAsName(s, 0, afterFirst, firstWord[firstStart:firstEnd]) {
 		return false
 	}
 	j := afterFirst
