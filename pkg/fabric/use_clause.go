@@ -109,8 +109,15 @@ func ParseUseClause(query string, inSubquery bool) (clause UseClause, remaining 
 	}
 
 	next := skipSpacesAndComments(trimmed, end)
-	for next < len(trimmed) && trimmed[next] == ';' {
-		next = skipSpacesAndComments(trimmed, next+1)
+	if next < len(trimmed) && trimmed[next] == ';' {
+		// A ';' ends the statement: after it only whitespace and comments
+		// may follow (USE db; is then a USE with no clause); another
+		// statement is Neo4j's "Expected exactly one statement per query
+		// but got: <n>".
+		if more := statementsAfter(trimmed[next:]); more > 0 {
+			return UseClause{}, "", true, useSyntaxError(localization.CypherCommandRoutingMultipleStatements(1 + more))
+		}
+		next = len(trimmed)
 	}
 	if next >= len(trimmed) {
 		if inSubquery {
@@ -323,6 +330,38 @@ func isNameStart(b byte) bool {
 
 func isNameByte(b byte) bool {
 	return isNameStart(b) || (b >= '0' && b <= '9')
+}
+
+// statementsAfter counts the statements in rest, text that starts at a
+// statement-ending ';': each ';' outside quoted text and comments ends one,
+// and a statement is counted when it holds anything but whitespace and
+// comments.
+func statementsAfter(rest string) int {
+	count := 0
+	content := false
+	for i := 1; i < len(rest); {
+		i = skipSpacesAndComments(rest, i)
+		if i >= len(rest) {
+			break
+		}
+		switch rest[i] {
+		case ';':
+			if content {
+				count++
+			}
+			content = false
+			i++
+			continue
+		case '\'', '"', '`':
+			i = skipQuoted(rest, i)
+		}
+		content = true
+		i++
+	}
+	if content {
+		count++
+	}
+	return count
 }
 
 // skipSpacesAndComments returns the index of the first byte at or after i

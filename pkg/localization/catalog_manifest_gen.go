@@ -210,6 +210,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercommandrouting.graph_function_only_in_use", Constructor: "CypherCommandRoutingGraphFunctionOnlyInUse", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.graph_function_unknown", Constructor: "CypherCommandRoutingGraphFunctionUnknown", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.graph_not_found", Constructor: "CypherCommandRoutingGraphNotFound", Fields: []string{"Graph"}, PluralForms: []string{"other"}},
+	{ID: "cyphercommandrouting.multiple_statements", Constructor: "CypherCommandRoutingMultipleStatements", Fields: []string{"Count"}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.parameter_argument_required", Constructor: "CypherCommandRoutingParameterArgumentRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.parameter_evaluation_failed", Constructor: "CypherCommandRoutingParameterEvaluationFailed", Fields: []string{"Cause", "Parameter"}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.parameter_expression_unresolved", Constructor: "CypherCommandRoutingParameterExpressionUnresolved", Fields: []string{"Parameter"}, PluralForms: []string{"other"}},

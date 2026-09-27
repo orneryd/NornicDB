@@ -91,6 +91,11 @@ func TestCypherCommandRoutingUseGraphMessagesRender(t *testing.T) {
 			"Demasiados parámetros para la función 'graph.byName'",
 		},
 		{
+			CypherCommandRoutingMultipleStatements(2), MessageCypherCommandRoutingMultipleStatements, map[string]any{"Count": 2},
+			"Expected exactly one statement per query but got: 2",
+			"Se esperaba exactamente una sentencia por consulta, pero se recibieron: 2",
+		},
+		{
 			CypherCommandRoutingFunctionInsufficientParameters("graph.propertiesByName"), MessageCypherCommandRoutingFunctionInsufficientParameters, map[string]any{"Function": "graph.propertiesByName"},
 			"Insufficient parameters for function 'graph.propertiesByName'",
 			"Parámetros insuficientes para la función 'graph.propertiesByName'",
@@ -126,7 +131,7 @@ func TestCypherCommandRoutingUseGraphMessagesRender(t *testing.T) {
 			"`graph.byName` solo está permitido en la primera posición de una cláusula USE.",
 		},
 	}
-	require.Len(t, testCases, 20)
+	require.Len(t, testCases, 21)
 
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)

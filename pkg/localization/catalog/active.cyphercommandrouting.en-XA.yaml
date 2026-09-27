@@ -88,6 +88,8 @@
   other: "[!! Graph not found: {{.Graph}} !!]"
 - id: cyphercommandrouting.graph_function_unknown
   other: "[!! Unknown function '{{.Function}}' !!]"
+- id: cyphercommandrouting.multiple_statements
+  other: "[!! Expected exactly one statement per query but got: {{.Count}} !!]"
 - id: cyphercommandrouting.function_too_many_parameters
   other: "[!! Too many parameters for function '{{.Function}}' !!]"
 - id: cyphercommandrouting.function_insufficient_parameters

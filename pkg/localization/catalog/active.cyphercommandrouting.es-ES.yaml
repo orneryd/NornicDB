@@ -88,6 +88,8 @@
   other: "Grafo no encontrado: {{.Graph}}"
 - id: cyphercommandrouting.graph_function_unknown
   other: "Función desconocida '{{.Function}}'"
+- id: cyphercommandrouting.multiple_statements
+  other: "Se esperaba exactamente una sentencia por consulta, pero se recibieron: {{.Count}}"
 - id: cyphercommandrouting.function_too_many_parameters
   other: "Demasiados parámetros para la función '{{.Function}}'"
 - id: cyphercommandrouting.function_insufficient_parameters

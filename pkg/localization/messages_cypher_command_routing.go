@@ -51,6 +51,7 @@ const (
 	MessageCypherCommandRoutingGraphNotFound                      MessageID = "cyphercommandrouting.graph_not_found"
 	MessageCypherCommandRoutingGraphFunctionUnknown               MessageID = "cyphercommandrouting.graph_function_unknown"
 	MessageCypherCommandRoutingFunctionTooManyParameters          MessageID = "cyphercommandrouting.function_too_many_parameters"
+	MessageCypherCommandRoutingMultipleStatements                 MessageID = "cyphercommandrouting.multiple_statements"
 	MessageCypherCommandRoutingFunctionInsufficientParameters     MessageID = "cyphercommandrouting.function_insufficient_parameters"
 	MessageCypherCommandRoutingGraphFunctionArgumentType          MessageID = "cyphercommandrouting.graph_function_argument_type"
 	MessageCypherCommandRoutingGraphFunctionArgumentInvalid       MessageID = "cyphercommandrouting.graph_function_argument_invalid"
@@ -245,6 +246,12 @@ func CypherCommandRoutingGraphNotFound(graph string) Message {
 
 func CypherCommandRoutingGraphFunctionUnknown(function string) Message {
 	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphFunctionUnknown, "Unknown function '"+function+"'", map[string]any{"Function": function})
+}
+
+// CypherCommandRoutingMultipleStatements is Neo4j's SyntaxError for a query
+// with more than one statement.
+func CypherCommandRoutingMultipleStatements(count int) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingMultipleStatements, fmt.Sprintf("Expected exactly one statement per query but got: %d", count), map[string]any{"Count": count})
 }
 
 func CypherCommandRoutingFunctionTooManyParameters(function string) Message {
