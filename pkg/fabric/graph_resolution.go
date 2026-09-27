@@ -78,7 +78,7 @@ func (e *FabricExecutor) resolveDynamicGraph(ctx context.Context, f *FragmentExe
 	}
 	if len(f.Graph.Args) != 1 {
 		return "", &GraphReferenceError{Code: "Neo.ClientError.Statement.SyntaxError",
-			Message: localization.CypherCommandRoutingGraphFunctionArgumentCount(f.Graph.Function, len(f.Graph.Args))}
+			Message: graphFunctionParameterCount(f.Graph.Function, len(f.Graph.Args))}
 	}
 	if e.evaluateGraphArguments == nil {
 		return "", fmt.Errorf("dynamic graph reference %s can't be evaluated", f.Graph.Text())
@@ -127,4 +127,13 @@ func (e *FabricExecutor) constituentForElementID(elementID, scope string) (strin
 // inScope reports whether graph is a constituent of the composite scope.
 func inScope(graph, scope string) bool {
 	return scope != "" && len(graph) > len(scope)+1 && strings.EqualFold(graph[:len(scope)+1], scope+".")
+}
+
+// graphFunctionParameterCount is Neo4j's message for a graph function called
+// with other than one argument.
+func graphFunctionParameterCount(function string, count int) localization.Message {
+	if count > 1 {
+		return localization.CypherCommandRoutingFunctionTooManyParameters(function)
+	}
+	return localization.CypherCommandRoutingFunctionInsufficientParameters(function)
 }

@@ -69,9 +69,9 @@
 - id: cyphercommandrouting.use_subquery_must_conclude
   other: "La consulta debe terminar con una cláusula RETURN, una cláusula FINISH, una cláusula de actualización, una llamada a subconsulta unitaria o una llamada a procedimiento sin YIELD."
 - id: cyphercommandrouting.use_invalid_clause_after_graph
-  other: "Entrada no válida '{{.Input}}': se esperaba a database name, '(', 'FOREACH', '.', 'ALTER', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'START DATABASE', 'STOP DATABASE', 'DEALLOCATE', 'DELETE', 'DENY', 'DETACH', 'DROP', 'DRYRUN', 'FINISH', 'GRANT', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REALLOCATE', 'REMOVE', 'RENAME', 'RETURN', 'REVOKE', 'ENABLE SERVER', 'SET', 'SHOW', 'SKIP', 'TERMINATE', 'UNION', 'UNWIND', 'USE', 'WITH' o <EOF>"
+  other: "Entrada no válida '{{.Input}}': se esperaba un nombre de base de datos, '(', 'FOREACH', '.', 'ALTER', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'START DATABASE', 'STOP DATABASE', 'DEALLOCATE', 'DELETE', 'DENY', 'DETACH', 'DROP', 'DRYRUN', 'FINISH', 'GRANT', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REALLOCATE', 'REMOVE', 'RENAME', 'RETURN', 'REVOKE', 'ENABLE SERVER', 'SET', 'SHOW', 'SKIP', 'TERMINATE', 'UNION', 'UNWIND', 'USE', 'WITH' o <EOF>"
 - id: cyphercommandrouting.use_invalid_subquery_clause_after_graph
-  other: "Entrada no válida '{{.Input}}': se esperaba a database name, '(', 'FOREACH', '.', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' o '}'"
+  other: "Entrada no válida '{{.Input}}': se esperaba un nombre de base de datos, '(', 'FOREACH', '.', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' o '}'"
 - id: cyphercommandrouting.use_invalid_graph_reference
   other: "Entrada no válida '{{.Input}}': se esperaba un identificador, '(' o 'GRAPH'"
 - id: cyphercommandrouting.use_invalid_graph_name_part
@@ -88,8 +88,10 @@
   other: "Grafo no encontrado: {{.Graph}}"
 - id: cyphercommandrouting.graph_function_unknown
   other: "Función desconocida '{{.Function}}'"
-- id: cyphercommandrouting.graph_function_argument_count
-  other: "{{.Function}} acepta 1 argumento, se recibieron {{.Count}}"
+- id: cyphercommandrouting.function_too_many_parameters
+  other: "Demasiados parámetros para la función '{{.Function}}'"
+- id: cyphercommandrouting.function_insufficient_parameters
+  other: "Parámetros insuficientes para la función '{{.Function}}'"
 - id: cyphercommandrouting.graph_function_argument_type
   other: "Se esperaba que {{.Argument}} fuera un STRING, pero era {{.Type}}"
 - id: cyphercommandrouting.graph_function_argument_invalid

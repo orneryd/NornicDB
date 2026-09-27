@@ -15,8 +15,8 @@ import (
 func TestCypherCommandRoutingUseGraphMessagesRender(t *testing.T) {
 	const clauseAfterGraph = "expected a database name, '(', 'FOREACH', '.', 'ALTER', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'START DATABASE', 'STOP DATABASE', 'DEALLOCATE', 'DELETE', 'DENY', 'DETACH', 'DROP', 'DRYRUN', 'FINISH', 'GRANT', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REALLOCATE', 'REMOVE', 'RENAME', 'RETURN', 'REVOKE', 'ENABLE SERVER', 'SET', 'SHOW', 'SKIP', 'TERMINATE', 'UNION', 'UNWIND', 'USE', 'WITH' or <EOF>"
 	const subqueryClauseAfterGraph = "expected a database name, '(', 'FOREACH', '.', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' or '}'"
-	const spanishClauseAfterGraph = "se esperaba a database name, '(', 'FOREACH', '.', 'ALTER', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'START DATABASE', 'STOP DATABASE', 'DEALLOCATE', 'DELETE', 'DENY', 'DETACH', 'DROP', 'DRYRUN', 'FINISH', 'GRANT', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REALLOCATE', 'REMOVE', 'RENAME', 'RETURN', 'REVOKE', 'ENABLE SERVER', 'SET', 'SHOW', 'SKIP', 'TERMINATE', 'UNION', 'UNWIND', 'USE', 'WITH' o <EOF>"
-	const spanishSubqueryClauseAfterGraph = "se esperaba a database name, '(', 'FOREACH', '.', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' o '}'"
+	const spanishClauseAfterGraph = "se esperaba un nombre de base de datos, '(', 'FOREACH', '.', 'ALTER', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'START DATABASE', 'STOP DATABASE', 'DEALLOCATE', 'DELETE', 'DENY', 'DETACH', 'DROP', 'DRYRUN', 'FINISH', 'GRANT', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REALLOCATE', 'REMOVE', 'RENAME', 'RETURN', 'REVOKE', 'ENABLE SERVER', 'SET', 'SHOW', 'SKIP', 'TERMINATE', 'UNION', 'UNWIND', 'USE', 'WITH' o <EOF>"
+	const spanishSubqueryClauseAfterGraph = "se esperaba un nombre de base de datos, '(', 'FOREACH', '.', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' o '}'"
 
 	testCases := []struct {
 		message Message
@@ -86,9 +86,14 @@ func TestCypherCommandRoutingUseGraphMessagesRender(t *testing.T) {
 			"Función desconocida 'graph.nope'",
 		},
 		{
-			CypherCommandRoutingGraphFunctionArgumentCount("graph.byName", 2), MessageCypherCommandRoutingGraphFunctionArgumentCount, map[string]any{"Function": "graph.byName", "Count": 2},
-			"graph.byName takes 1 argument, got 2",
-			"graph.byName acepta 1 argumento, se recibieron 2",
+			CypherCommandRoutingFunctionTooManyParameters("graph.byName"), MessageCypherCommandRoutingFunctionTooManyParameters, map[string]any{"Function": "graph.byName"},
+			"Too many parameters for function 'graph.byName'",
+			"Demasiados parámetros para la función 'graph.byName'",
+		},
+		{
+			CypherCommandRoutingFunctionInsufficientParameters("graph.propertiesByName"), MessageCypherCommandRoutingFunctionInsufficientParameters, map[string]any{"Function": "graph.propertiesByName"},
+			"Insufficient parameters for function 'graph.propertiesByName'",
+			"Parámetros insuficientes para la función 'graph.propertiesByName'",
 		},
 		{
 			CypherCommandRoutingGraphFunctionArgumentType("name", "INTEGER"), MessageCypherCommandRoutingGraphFunctionArgumentType, map[string]any{"Argument": "name", "Type": "INTEGER"},
@@ -121,7 +126,7 @@ func TestCypherCommandRoutingUseGraphMessagesRender(t *testing.T) {
 			"`graph.byName` solo está permitido en la primera posición de una cláusula USE.",
 		},
 	}
-	require.Len(t, testCases, 19)
+	require.Len(t, testCases, 20)
 
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)

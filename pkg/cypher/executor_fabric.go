@@ -902,6 +902,9 @@ func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expression
 	for i, expression := range expressions {
 		value, ok := e.evaluateRowExpressionWithContext(ctx, e.substituteParams(expression, values), pipelineRow(values))
 		if !ok {
+			if err, undefined := undefinedVariableError(expression); undefined {
+				return nil, err
+			}
 			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
 		}

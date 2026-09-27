@@ -236,6 +236,12 @@ func staticArithmeticTypeName(expression string) string {
 // as the expression failure of ctx, so it fails the statement instead of
 // evaluating to null.
 func functionEvaluationFailure(ctx context.Context, err error) {
+	recordExpressionFailure(ctx, functionEvaluationError(err))
+}
+
+// functionEvaluationError is the statement error for an error a registry
+// function returned, with Neo4j's status and message, for either evaluator.
+func functionEvaluationError(err error) error {
 	var argumentError *cypherfn.ArgumentTypeError
 	if errors.As(err, &argumentError) {
 		err = invalidFunctionArgument(argumentError.Function, argumentError.Value)
@@ -248,8 +254,45 @@ func functionEvaluationFailure(ctx context.Context, err error) {
 	if errors.As(err, &notFound) {
 		err = graphNotFoundError(notFound.Name)
 	}
-	err = typeMismatchFromFunctionError(err)
-	recordExpressionFailure(ctx, err)
+	var count *cypherfn.ParameterCountError
+	if errors.As(err, &count) {
+		err = functionParameterCountError(count.Function, count.TooMany)
+	}
+	return typeMismatchFromFunctionError(err)
+}
+
+// errRowArgumentUnresolved stops a registry function whose argument the row
+// evaluator can't resolve; the call is then unresolved, not an error.
+var errRowArgumentUnresolved = errors.New("row argument unresolved")
+
+// evaluateRowGraphFunction evaluates graph.names() / graph.propertiesByName()
+// in the row evaluator with their one implementation, the function registry
+// (pkg/cypher/fn), and its errors as the other evaluator reports them.
+func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, values map[string]interface{}) (interface{}, bool, error) {
+	var args []string
+	if strings.TrimSpace(argument) != "" {
+		args = splitTopLevelComma(argument)
+	}
+	value, _, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{
+		Eval: func(expression string) (interface{}, error) {
+			value, resolved, err := e.evaluateRowValue(expression, values)
+			if err != nil {
+				return nil, err
+			}
+			if !resolved {
+				return nil, errRowArgumentUnresolved
+			}
+			return value, nil
+		},
+		Graphs: e.compositeGraphs,
+	})
+	if errors.Is(err, errRowArgumentUnresolved) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, functionEvaluationError(err)
+	}
+	return value, true, nil
 }
 
 // graphFunctionUnknownError is Neo4j's SyntaxError for a composite graph
@@ -258,6 +301,17 @@ func functionEvaluationFailure(ctx context.Context, err error) {
 func graphFunctionUnknownError(function string) error {
 	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnknownFunction",
 		localization.CypherCommandRoutingGraphFunctionUnknown(function))
+}
+
+// functionParameterCountError is Neo4j's SyntaxError for a call with too
+// many or too few arguments: "Too many parameters for function '<name>'",
+// "Insufficient parameters for function '<name>'".
+func functionParameterCountError(function string, tooMany bool) error {
+	message := localization.CypherCommandRoutingFunctionInsufficientParameters(function)
+	if tooMany {
+		message = localization.CypherCommandRoutingFunctionTooManyParameters(function)
+	}
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "FunctionParameterCount", message)
 }
 
 // graphNotFoundError is Neo4j's DatabaseNotFound "Graph not found: <name>"

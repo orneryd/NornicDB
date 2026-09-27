@@ -91,9 +91,15 @@ func TestGraphPropertiesByName(t *testing.T) {
 
 	t.Run("wrong argument count", func(t *testing.T) {
 		_, _, err := EvaluateFunction("graph.propertiesByName", nil, ctx)
-		require.EqualError(t, err, "graph.propertiesByName takes 1 argument, got 0")
+		require.EqualError(t, err, "Insufficient parameters for function 'graph.propertiesByName'")
 		_, _, err = EvaluateFunction("graph.propertiesByName", []string{"a", "a"}, ctx)
-		require.EqualError(t, err, "graph.propertiesByName takes 1 argument, got 2")
+		require.EqualError(t, err, "Too many parameters for function 'graph.propertiesByName'")
+		_, _, err = EvaluateFunction("graph.names", []string{"1"}, ctx)
+		require.EqualError(t, err, "Too many parameters for function 'graph.names'")
+		var count *ParameterCountError
+		require.ErrorAs(t, err, &count)
+		require.Equal(t, "graph.names", count.Function)
+		require.True(t, count.TooMany)
 	})
 
 	t.Run("an argument that fails to evaluate fails the call", func(t *testing.T) {

@@ -2,7 +2,6 @@ package localization
 
 import (
 	"fmt"
-	"strconv"
 )
 
 const (
@@ -51,7 +50,8 @@ const (
 	MessageCypherCommandRoutingUseDynamicLookupNotAllowed         MessageID = "cyphercommandrouting.use_dynamic_lookup_not_allowed"
 	MessageCypherCommandRoutingGraphNotFound                      MessageID = "cyphercommandrouting.graph_not_found"
 	MessageCypherCommandRoutingGraphFunctionUnknown               MessageID = "cyphercommandrouting.graph_function_unknown"
-	MessageCypherCommandRoutingGraphFunctionArgumentCount         MessageID = "cyphercommandrouting.graph_function_argument_count"
+	MessageCypherCommandRoutingFunctionTooManyParameters          MessageID = "cyphercommandrouting.function_too_many_parameters"
+	MessageCypherCommandRoutingFunctionInsufficientParameters     MessageID = "cyphercommandrouting.function_insufficient_parameters"
 	MessageCypherCommandRoutingGraphFunctionArgumentType          MessageID = "cyphercommandrouting.graph_function_argument_type"
 	MessageCypherCommandRoutingGraphFunctionArgumentInvalid       MessageID = "cyphercommandrouting.graph_function_argument_invalid"
 	MessageCypherCommandRoutingGraphElementIDInvalid              MessageID = "cyphercommandrouting.graph_element_id_invalid"
@@ -247,8 +247,12 @@ func CypherCommandRoutingGraphFunctionUnknown(function string) Message {
 	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphFunctionUnknown, "Unknown function '"+function+"'", map[string]any{"Function": function})
 }
 
-func CypherCommandRoutingGraphFunctionArgumentCount(function string, count int) Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphFunctionArgumentCount, function+" takes 1 argument, got "+strconv.Itoa(count), map[string]any{"Function": function, "Count": count})
+func CypherCommandRoutingFunctionTooManyParameters(function string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingFunctionTooManyParameters, "Too many parameters for function '"+function+"'", map[string]any{"Function": function})
+}
+
+func CypherCommandRoutingFunctionInsufficientParameters(function string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingFunctionInsufficientParameters, "Insufficient parameters for function '"+function+"'", map[string]any{"Function": function})
 }
 
 func CypherCommandRoutingGraphFunctionArgumentType(argument string, valueType string) Message {

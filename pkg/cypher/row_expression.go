@@ -216,44 +216,8 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			return value, resolved, err
 		}
 		switch lowerASCII(function) {
-		case "graph.names":
-			// The graphs of the composite database the statement runs on
-			// (fn graph.names); outside a composite database the function
-			// is unknown, as in Neo4j.
-			graphs, composite := e.compositeGraphs()
-			if !composite {
-				return nil, false, graphFunctionUnknownError("graph.names")
-			}
-			if strings.TrimSpace(argument) != "" {
-				return nil, false, nil
-			}
-			out := make([]interface{}, len(graphs))
-			for i, graph := range graphs {
-				out[i] = graph
-			}
-			return out, true, nil
-		case "graph.propertiesbyname":
-			// A graph's properties: an empty map, since NornicDB aliases
-			// have none; a name that isn't one of the composite's graphs
-			// is "Graph not found".
-			graphs, composite := e.compositeGraphs()
-			if !composite {
-				return nil, false, graphFunctionUnknownError("graph.propertiesByName")
-			}
-			name, resolved, err := e.evaluateRowValue(argument, values)
-			if err != nil || !resolved {
-				return nil, false, err
-			}
-			text, isString := name.(string)
-			if !isString {
-				return nil, false, nil
-			}
-			for _, graph := range graphs {
-				if strings.EqualFold(graph, text) {
-					return map[string]interface{}{}, true, nil
-				}
-			}
-			return nil, false, graphNotFoundError(text)
+		case "graph.names", "graph.propertiesbyname":
+			return e.evaluateRowGraphFunction(function, argument, values)
 		case "reduce":
 			return e.evaluateRowReduce(argument, values)
 		case "coalesce":

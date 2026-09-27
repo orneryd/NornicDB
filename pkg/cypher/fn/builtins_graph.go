@@ -25,6 +25,31 @@ type GraphNotFoundError struct {
 
 func (e *GraphNotFoundError) Error() string { return "Graph not found: " + e.Name }
 
+// ParameterCountError is a call with more arguments than the function takes
+// (TooMany) or fewer. Callers turn it into Neo4j's SyntaxError "Too many
+// parameters for function '<name>'" / "Insufficient parameters for function
+// '<name>'".
+type ParameterCountError struct {
+	Function string
+	TooMany  bool
+}
+
+func (e *ParameterCountError) Error() string {
+	if e.TooMany {
+		return fmt.Sprintf("Too many parameters for function '%s'", e.Function)
+	}
+	return fmt.Sprintf("Insufficient parameters for function '%s'", e.Function)
+}
+
+// argumentCount is the number of arguments in a call's argument list, where
+// an empty list may reach a function as one empty argument.
+func argumentCount(args []string) int {
+	if len(args) == 1 && strings.TrimSpace(args[0]) == "" {
+		return 0
+	}
+	return len(args)
+}
+
 func init() {
 	// graph.names() lists the graphs of the composite database the query
 	// runs on, as their qualified names (composite.alias), the names
@@ -34,6 +59,9 @@ func init() {
 		graphs, composite := compositeGraphs(ctx)
 		if !composite {
 			return nil, &UnknownFunctionError{Function: "graph.names"}
+		}
+		if argumentCount(args) > 0 {
+			return nil, &ParameterCountError{Function: "graph.names", TooMany: true}
 		}
 		out := make([]interface{}, len(graphs))
 		for i, graph := range graphs {
@@ -50,8 +78,8 @@ func init() {
 		if !composite {
 			return nil, &UnknownFunctionError{Function: "graph.propertiesByName"}
 		}
-		if len(args) != 1 {
-			return nil, fmt.Errorf("graph.propertiesByName takes 1 argument, got %d", len(args))
+		if count := argumentCount(args); count != 1 {
+			return nil, &ParameterCountError{Function: "graph.propertiesByName", TooMany: count > 1}
 		}
 		value, err := ctx.Eval(args[0])
 		if err != nil {

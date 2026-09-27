@@ -248,8 +248,14 @@ func TestCompositeGraphFunctionEdgeCases(t *testing.T) {
 	exec := newCompositeFixture(t)
 	ctx := context.Background()
 
+	// An undefined variable is reported as Neo4j reports it anywhere.
 	_, err := exec.Execute(ctx, "USE graph.byName(nosuch) MATCH (n:EI) RETURN n.v AS v", nil)
-	require.EqualError(t, err, "Invalid graph reference argument: nosuch")
+	require.EqualError(t, err, "Variable `nosuch` not defined")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+
+	// An argument that is no expression is the invalid argument.
+	_, err = exec.Execute(ctx, "USE graph.byName(1 +) MATCH (n:EI) RETURN n.v AS v", nil)
+	require.Error(t, err)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	// A name that isn't one of the composite's graphs, through the
@@ -278,4 +284,24 @@ func TestCompositeGraphFunctionEdgeCases(t *testing.T) {
 	_, err = exec.Execute(ctx, "WITH 1 AS x RETURN graph.propertiesByName(1/0) AS g", nil)
 	require.EqualError(t, err, "/ by zero")
 	requireStatusCode(t, err, "Neo.ClientError.Statement.ArithmeticError")
+}
+
+// TestCompositeGraphFunctionParameterCounts: on a composite database a
+// graph function called with the wrong number of arguments is Neo4j's
+// SyntaxError "Too many parameters for function '<name>'" / "Insufficient
+// parameters for function '<name>'", the same through either evaluator
+// (a literal statement, and rows from WITH / UNWIND).
+func TestCompositeGraphFunctionParameterCounts(t *testing.T) {
+	exec := newCompositeFixture(t)
+	for query, message := range map[string]string{
+		"RETURN graph.names(1) AS g":                   "Too many parameters for function 'graph.names'",
+		"WITH 1 AS x RETURN graph.names(x) AS g":       "Too many parameters for function 'graph.names'",
+		"UNWIND [1] AS x RETURN graph.names(x) AS g":   "Too many parameters for function 'graph.names'",
+		"RETURN graph.propertiesByName() AS p":         "Insufficient parameters for function 'graph.propertiesByName'",
+		"RETURN graph.propertiesByName('a', 'b') AS p": "Too many parameters for function 'graph.propertiesByName'",
+	} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		require.EqualError(t, err, message, query)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	}
 }

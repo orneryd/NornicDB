@@ -88,8 +88,10 @@
   other: "Graph not found: {{.Graph}}"
 - id: cyphercommandrouting.graph_function_unknown
   other: "Unknown function '{{.Function}}'"
-- id: cyphercommandrouting.graph_function_argument_count
-  other: "{{.Function}} takes 1 argument, got {{.Count}}"
+- id: cyphercommandrouting.function_too_many_parameters
+  other: "Too many parameters for function '{{.Function}}'"
+- id: cyphercommandrouting.function_insufficient_parameters
+  other: "Insufficient parameters for function '{{.Function}}'"
 - id: cyphercommandrouting.graph_function_argument_type
   other: "Expected {{.Argument}} to be a STRING, but it was {{.Type}}"
 - id: cyphercommandrouting.graph_function_argument_invalid

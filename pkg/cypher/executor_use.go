@@ -29,7 +29,7 @@ func parseUseClause(cypher string, inSubquery bool) (fabric.UseClause, string, b
 	}
 	var syntaxErr *fabric.UseSyntaxError
 	if errors.As(err, &syntaxErr) {
-		return clause, remaining, hasUse, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntaxErr.Message)
+		err = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntaxErr.Message)
 	}
 	return clause, remaining, hasUse, err
 }
