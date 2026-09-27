@@ -48,6 +48,10 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 	if err != nil {
 		return err
 	}
+	// The constraint keys' commit locks cover the check, the write and the
+	// publication to the constraint cache, as for a transaction's commit.
+	releaseUniqueLocks := b.GetSchemaForNamespace(ns).lockConstraintKeysOf(nodes...)
+	defer releaseUniqueLocks()
 	b.labelCountWriteMu.Lock()
 	err = b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, ns, time.Now())

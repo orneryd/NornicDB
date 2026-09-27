@@ -155,27 +155,6 @@ func TestAsyncEngine_MergeFallbackAndCachePaths(t *testing.T) {
 	require.GreaterOrEqual(t, len(edges), 2)
 }
 
-func TestAsyncEngine_CheckNodeKeyConstraint_CacheMismatchBranch(t *testing.T) {
-	inner := NewMemoryEngine()
-	ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: 1_000_000})
-	defer ae.Close()
-
-	ae.mu.Lock()
-	ae.nodeCache["other:1"] = &Node{
-		ID:         "other:1",
-		Labels:     []string{"User"},
-		Properties: map[string]any{"tenant": "t1", "email": "other@example.com"},
-	}
-	ae.mu.Unlock()
-
-	err := ae.checkNodeKeyConstraint(&Node{
-		ID:         "test:self",
-		Labels:     []string{"User"},
-		Properties: map[string]any{"tenant": "t1", "email": "self@example.com"},
-	}, Constraint{Type: ConstraintNodeKey, Label: "User", Properties: []string{"tenant", "email"}}, "test", false)
-	require.NoError(t, err)
-}
-
 func TestAsyncEngine_StreamFallbackBranches(t *testing.T) {
 	base := NewMemoryEngine()
 	inner := &asyncNonStreamingEngine{Engine: base}

@@ -51,6 +51,9 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	schema := b.GetSchemaForNamespace(dbName)
 
+	// The constraint keys' commit locks cover the check, the write and the
+	// publication to the constraint cache, as for a transaction's commit.
+	releaseUniqueLocks := schema.lockConstraintKeysOf(node)
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
 	b.labelCountWriteMu.Lock()
@@ -113,18 +116,20 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	})
 	b.labelCountWriteMu.Unlock()
 	if err != nil {
+		releaseUniqueLocks()
 		return "", err
 	}
-	if persistSeparateEmbeddings {
-		if err := b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist); err != nil {
-			return "", err
-		}
-	}
 
-	// On successful create, update cache and register unique constraint values
+	// On successful create, register unique constraint values
 	for _, label := range node.Labels {
 		for propName, propValue := range node.Properties {
 			schema.RegisterUniqueValue(label, propName, propValue, node.ID)
+		}
+	}
+	releaseUniqueLocks()
+	if persistSeparateEmbeddings {
+		if err := b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist); err != nil {
+			return "", err
 		}
 	}
 
@@ -297,6 +302,11 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		return localizedError(localization.StorageClientNodeIDNamespaceRequired(string(node.ID)), nil)
 	}
 	schema := b.GetSchemaForNamespace(dbName)
+
+	// The constraint keys' commit locks cover the check, the write and the
+	// publication to the constraint cache, as for a transaction's commit.
+	releaseUniqueLocks := schema.lockConstraintKeysOf(node)
+	defer releaseUniqueLocks()
 
 	// Track if this is an insert (new node) or update (existing node)
 	wasInsert := false

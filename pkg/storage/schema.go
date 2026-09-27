@@ -817,6 +817,75 @@ type uniqueConstraintLockRequest struct {
 	lock *uniqueConstraintCommitLock
 }
 
+// lockConstraintKeysOf acquires the commit locks of the constraint keys the
+// nodes' values fall under, and returns their release function: the exact
+// value of each single-property UNIQUE constraint, the composite value of each
+// NODE KEY, and the key value of each TEMPORAL (no-overlap) constraint. Every
+// writer of a constrained node holds them across its constraint check, its
+// write and the publication of the value to the constraint cache: a
+// transaction at commit, and the engine's own CreateNode / UpdateNode /
+// BulkCreateNodes. So two writers of the same key (two transactions, or a
+// transaction and a direct engine write such as the AsyncEngine's
+// write-through of a constrained node) serialize, and the second one's check
+// sees the first one's write (#700).
+//
+// A key that can't be a map key (a list or map value) takes no lock; the
+// constraint check still runs, and serialization is best-effort for such
+// values, which constrained workloads don't use in practice. A NODE KEY with a
+// missing property takes no lock: the check rejects the node anyway.
+func (sm *SchemaManager) lockConstraintKeysOf(nodes ...*Node) func() {
+	if sm == nil || len(nodes) == 0 {
+		return func() {}
+	}
+	var keys []uniqueConstraintLockKey
+	for _, node := range nodes {
+		if node == nil || len(node.Properties) == 0 {
+			continue
+		}
+		for _, c := range sm.GetConstraintsForLabels(node.Labels) {
+			if c.EffectiveEntityType() != ConstraintEntityNode {
+				continue
+			}
+			var properties []string
+			switch {
+			case c.Type == ConstraintUnique && len(c.Properties) == 1:
+				properties = c.Properties
+			case c.Type == ConstraintNodeKey:
+				properties = c.Properties
+			case c.Type == ConstraintTemporal && len(c.Properties) == 3:
+				properties = c.Properties[:1]
+			default:
+				continue
+			}
+			values := make([]interface{}, len(properties))
+			complete := true
+			for i, prop := range properties {
+				rawValue, has := node.Properties[prop]
+				if !has || rawValue == nil {
+					complete = false
+					break
+				}
+				canonicalValue, ok := indexValueKey(rawValue)
+				if !ok {
+					complete = false
+					break
+				}
+				values[i] = canonicalValue
+			}
+			if !complete {
+				continue
+			}
+			key := uniqueConstraintLockKey{label: c.Label, property: properties[0], value: values[0]}
+			if len(properties) > 1 {
+				key.property = string(c.Type) + ":" + strings.Join(properties, ",")
+				key.value = constraintCompositeKey(values)
+			}
+			keys = append(keys, key)
+		}
+	}
+	return sm.acquireUniqueConstraintCommitLocks(keys)
+}
+
 // acquireUniqueConstraintCommitLocks acquires exact UNIQUE value mutexes in a
 // deterministic order and returns a release function.
 // Deterministic ordering eliminates the AB-BA deadlock risk when two

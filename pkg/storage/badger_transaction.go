@@ -2544,6 +2544,35 @@ func (tx *BadgerTransaction) getNodesByLabelLocked(label string) ([]*Node, error
 	return tx.engine.getNodesByLabelVisibleAtSnapshotWithView(label, tx.readTS, tx.withSnapshotViewLocked)
 }
 
+// committedConstraintNodesLocked returns the committed nodes with label that
+// a constraint check compares a written node with. It reads the latest
+// committed state, not the transaction's snapshot: a value another
+// transaction committed after this one began still conflicts, as in Neo4j
+// (#700), and the constraint keys' commit locks (lockConstraintKeysOf) keep that
+// state from changing under the check. Nodes this transaction deletes or
+// rewrites are left out; the checks compare their pending versions
+// separately.
+func (tx *BadgerTransaction) committedConstraintNodesLocked(label string) ([]*Node, error) {
+	nodes, err := tx.engine.GetNodesByLabel(label)
+	if err != nil {
+		return nil, err
+	}
+	kept := nodes[:0]
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		if _, deleted := tx.deletedNodes[node.ID]; deleted {
+			continue
+		}
+		if _, rewritten := tx.pendingNodes[node.ID]; rewritten {
+			continue
+		}
+		kept = append(kept, node)
+	}
+	return kept, nil
+}
+
 // nodeExists checks if a node exists (pending or storage).
 func (tx *BadgerTransaction) nodeExists(nodeID NodeID) bool {
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
@@ -3029,7 +3058,7 @@ func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property s
 		hook()
 	}
 
-	nodes, err := tx.getNodesByLabelLocked(label)
+	nodes, err := tx.committedConstraintNodesLocked(label)
 	if err != nil {
 		return err
 	}
@@ -3100,7 +3129,7 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 // scanForNodeKeyViolation performs a full database scan to check for NODE KEY violations
 // within a single namespace (database).
 func (tx *BadgerTransaction) scanForNodeKeyViolation(namespace, label string, properties []string, values []interface{}, excludeNodeID NodeID) error {
-	nodes, err := tx.getNodesByLabelLocked(label)
+	nodes, err := tx.committedConstraintNodesLocked(label)
 	if err != nil {
 		return err
 	}
@@ -3208,7 +3237,7 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 	}
 
 	// Check overlaps against committed storage using the label index scan.
-	visibleNodes, err := tx.getNodesByLabelLocked(c.Label)
+	visibleNodes, err := tx.committedConstraintNodesLocked(c.Label)
 	if err != nil {
 		return err
 	}
@@ -3240,11 +3269,12 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 	return nil
 }
 
-// acquireUniqueConstraintCommitLocks collects the unique constraints touched
-// by this transaction's pending nodes and acquires exact
-// per-(label, property, value) mutexes on the transaction's pinned namespace's
-// schema. Returns a release function that unlocks in reverse order; safe to
-// defer.
+// acquireUniqueConstraintCommitLocks acquires the commit locks of the
+// constraint keys (UNIQUE values, NODE KEY composite values, TEMPORAL keys)
+// touched by this transaction's pending nodes, on the transaction's pinned
+// namespace's schema (SchemaManager.lockConstraintKeysOf, shared with the
+// engine's direct writes). Returns a release function that unlocks in reverse
+// order; safe to defer.
 //
 // Locks are keyed by value, not only by constraint: a transaction adding
 // nodes with uids "X" and "Y" acquires those exact values; a peer transaction
@@ -3272,43 +3302,11 @@ func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() func() {
 	if schema == nil {
 		return func() {}
 	}
-	seen := make(map[uniqueConstraintLockKey]struct{}, len(tx.pendingNodes))
+	nodes := make([]*Node, 0, len(tx.pendingNodes))
 	for _, node := range tx.pendingNodes {
-		if node == nil {
-			continue
-		}
-		constraints := schema.GetConstraintsForLabels(node.Labels)
-		for _, c := range constraints {
-			if c.Type != ConstraintUnique || len(c.Properties) != 1 {
-				continue
-			}
-			prop := c.Properties[0]
-			rawValue, has := node.Properties[prop]
-			if !has {
-				continue
-			}
-			canonicalValue, ok := indexValueKey(rawValue)
-			if !ok {
-				// Non-comparable value: skip lock acquisition. Validation
-				// still runs at commit; commit-window serialization is
-				// best-effort for these (no constraint cache anyway).
-				continue
-			}
-			seen[uniqueConstraintLockKey{
-				label:    c.Label,
-				property: prop,
-				value:    canonicalValue,
-			}] = struct{}{}
-		}
+		nodes = append(nodes, node)
 	}
-	if len(seen) == 0 {
-		return func() {}
-	}
-	keys := make([]uniqueConstraintLockKey, 0, len(seen))
-	for k := range seen {
-		keys = append(keys, k)
-	}
-	return schema.acquireUniqueConstraintCommitLocks(keys)
+	return schema.lockConstraintKeysOf(nodes...)
 }
 
 func (tx *BadgerTransaction) validateAllConstraints() error {
