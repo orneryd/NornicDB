@@ -78,12 +78,12 @@ func (e *StorageExecutor) validateCreateSemanticScopes(cypher string) error {
 
 func isCreateSchemaOrAdministrationCommand(cypher string) bool {
 	return isSystemCommandNoGraph(cypher) || isCreateProcedureCommand(cypher) ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "CONSTRAINT") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "INDEX") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "RANGE INDEX") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "FULLTEXT INDEX") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "VECTOR INDEX") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "LOOKUP INDEX") == 0
+		startsWithKeywords(cypher, "CREATE", "CONSTRAINT") ||
+		startsWithKeywords(cypher, "CREATE", "INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "RANGE INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX")
 }
 
 func projectedBindingScope(input *semanticBindingScope, clause string) *semanticBindingScope {

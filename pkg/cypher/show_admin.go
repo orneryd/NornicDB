@@ -151,7 +151,7 @@ var showUsersColumns = []string{"user", "roles", "passwordChangeRequired", "susp
 // (SHOW CURRENT USER). home is null: NornicDB has no per-user home database.
 func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	current, signedIn := authenticatedUserFromContext(ctx)
-	currentOnly := findMultiWordKeywordIndex(cypher, "SHOW", "CURRENT USER") == 0
+	currentOnly := startsWithKeywords(cypher, "SHOW", "CURRENT USER")
 	var users []UserListing
 	if identity := requestIdentityFromContext(ctx); identity != nil && identity.Users != nil {
 		users = identity.Users()
@@ -176,7 +176,7 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 // SHOW USER … PRIVILEGES); SHOW SERVERS is NotSystemDatabaseError.
 func unsupportedAdministrationCommandError(cypher string) error {
 	code := "Neo.ClientError.Statement.UnsupportedAdministrationCommand"
-	if findMultiWordKeywordIndex(cypher, "SHOW", "SERVERS") == 0 || findMultiWordKeywordIndex(cypher, "SHOW", "SERVER") == 0 {
+	if startsWithKeywords(cypher, "SHOW", "SERVERS") || startsWithKeywords(cypher, "SHOW", "SERVER") {
 		code = "Neo.ClientError.Statement.NotSystemDatabaseError"
 	}
 	return localizedStatusError(code, "UnsupportedAdministrationCommand",

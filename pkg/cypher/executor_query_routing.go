@@ -180,18 +180,18 @@ func (e *StorageExecutor) findNodeByLabelAndProperty(label, prop string, val any
 // (CREATE/DROP DATABASE, SHOW DATABASES, etc.) and must not use the async engine or
 // implicit transactions. These are routed to executeWithoutTransaction directly.
 func isSystemCommandNoGraph(cypher string) bool {
-	return findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "DATABASE") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "ALIAS") == 0 ||
-		findMultiWordKeywordIndex(cypher, "DROP", "COMPOSITE DATABASE") == 0 ||
-		findMultiWordKeywordIndex(cypher, "DROP", "DATABASE") == 0 ||
-		findMultiWordKeywordIndex(cypher, "DROP", "ALIAS") == 0 ||
-		findMultiWordKeywordIndex(cypher, "SHOW", "DATABASES") == 0 ||
-		findMultiWordKeywordIndex(cypher, "ALTER", "DATABASE") == 0
+	return startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "CREATE", "DATABASE") ||
+		startsWithKeywords(cypher, "CREATE", "ALIAS") ||
+		startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "DROP", "DATABASE") ||
+		startsWithKeywords(cypher, "DROP", "ALIAS") ||
+		startsWithKeywords(cypher, "SHOW", "DATABASES") ||
+		startsWithKeywords(cypher, "ALTER", "DATABASE")
 }
 
 func isShowConstraintContractsCommand(cypher string) bool {
-	return findMultiWordKeywordIndex(cypher, "SHOW", "CONSTRAINT CONTRACTS") == 0
+	return startsWithKeywords(cypher, "SHOW", "CONSTRAINT CONTRACTS")
 }
 
 // executeWithoutTransaction executes query without transaction wrapping (original path).
@@ -379,23 +379,23 @@ skipMatchCallRoute:
 		}
 	}
 	if startsWithCreate && !isCreateProcedureCommand(cypher) && hasSet && !hasOnCreateSet && !hasOnMatchSet &&
-		findMultiWordKeywordIndex(cypher, "CREATE", "DECAY PROFILE") != 0 &&
-		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION PROFILE") != 0 &&
-		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION POLICY") != 0 {
+		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
+		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
+		!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
 		return e.executeCreateSet(ctx, cypher)
 	}
 
-	if findMultiWordKeywordIndex(cypher, "ALTER", "DATABASE") == 0 {
+	if startsWithKeywords(cypher, "ALTER", "DATABASE") {
 		return e.executeAlterDatabase(ctx, cypher)
 	}
 
 	if hasSet && !isCreateProcedureCommand(cypher) && !hasOnCreateSet && !hasOnMatchSet &&
-		findMultiWordKeywordIndex(cypher, "CREATE", "DECAY PROFILE") != 0 &&
-		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION PROFILE") != 0 &&
-		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION POLICY") != 0 &&
-		findMultiWordKeywordIndex(cypher, "ALTER", "DECAY PROFILE") != 0 &&
-		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION PROFILE") != 0 &&
-		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION POLICY") != 0 {
+		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
+		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
+		!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") &&
+		!startsWithKeywords(cypher, "ALTER", "DECAY PROFILE") &&
+		!startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE") &&
+		!startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY") {
 		if startsWithMatch || findKeywordIndex(cypher, "SET") == 0 {
 			if startsWithMatch {
 				if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
@@ -427,11 +427,11 @@ skipMatchCallRoute:
 	switch {
 	case isCreateProcedureCommand(cypher):
 		return e.executeCreateProcedure(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "CREATE", "DECAY PROFILE") == 0,
-		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION PROFILE") == 0,
-		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION POLICY") == 0:
+	case startsWithKeywords(cypher, "CREATE", "DECAY PROFILE"),
+		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE"),
+		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH") == 0:
+	case startsWithKeywords(cypher, "OPTIONAL", "MATCH"):
 		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
 			return outcome.result, outcome.err
 		}
@@ -467,18 +467,18 @@ skipMatchCallRoute:
 			}
 		}
 		return e.executeMatch(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "CREATE", "CONSTRAINT") == 0,
-		findMultiWordKeywordIndex(cypher, "CREATE", "RANGE INDEX") == 0,
-		findMultiWordKeywordIndex(cypher, "CREATE", "FULLTEXT INDEX") == 0,
-		findMultiWordKeywordIndex(cypher, "CREATE", "VECTOR INDEX") == 0,
-		findMultiWordKeywordIndex(cypher, "CREATE", "LOOKUP INDEX") == 0,
+	case startsWithKeywords(cypher, "CREATE", "CONSTRAINT"),
+		startsWithKeywords(cypher, "CREATE", "RANGE INDEX"),
+		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX"),
+		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX"),
+		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX"),
 		findKeywordIndex(cypher, "CREATE INDEX") == 0:
 		return e.executeSchemaCommand(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE") == 0:
+	case startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE"):
 		return e.executeCreateCompositeDatabase(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "CREATE", "DATABASE") == 0:
+	case startsWithKeywords(cypher, "CREATE", "DATABASE"):
 		return e.executeCreateDatabase(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "CREATE", "ALIAS") == 0:
+	case startsWithKeywords(cypher, "CREATE", "ALIAS"):
 		return e.executeCreateAlias(ctx, cypher)
 	case startsWithCreate:
 		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
@@ -497,21 +497,21 @@ skipMatchCallRoute:
 		return e.executeCall(ctx, cypher)
 	case findKeywordIndex(cypher, "RETURN") == 0:
 		return e.executeReturn(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "DROP", "COMPOSITE DATABASE") == 0:
+	case startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE"):
 		return e.executeDropCompositeDatabase(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "DROP", "DATABASE") == 0:
+	case startsWithKeywords(cypher, "DROP", "DATABASE"):
 		return e.executeDropDatabase(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "DROP", "ALIAS") == 0:
+	case startsWithKeywords(cypher, "DROP", "ALIAS"):
 		return e.executeDropAlias(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "DROP", "CONSTRAINT") == 0:
+	case startsWithKeywords(cypher, "DROP", "CONSTRAINT"):
 		return e.executeSchemaCommand(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "DROP", "DECAY PROFILE") == 0,
-		findMultiWordKeywordIndex(cypher, "DROP", "PROMOTION PROFILE") == 0,
-		findMultiWordKeywordIndex(cypher, "DROP", "PROMOTION POLICY") == 0:
+	case startsWithKeywords(cypher, "DROP", "DECAY PROFILE"),
+		startsWithKeywords(cypher, "DROP", "PROMOTION PROFILE"),
+		startsWithKeywords(cypher, "DROP", "PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case isDropProcedureCommand(cypher):
 		return e.executeDropProcedure(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "DROP", "INDEX") == 0:
+	case startsWithKeywords(cypher, "DROP", "INDEX"):
 		return e.countSchemaChanges(ctx, cypher, e.executeDropIndex)
 	case findKeywordIndex(cypher, "DROP") == 0:
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
@@ -529,68 +529,68 @@ skipMatchCallRoute:
 		return e.executeForeach(ctx, cypher)
 	case findKeywordIndex(cypher, "LOAD CSV") == 0:
 		return e.executeLoadCSV(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "FULLTEXT INDEXES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "FULLTEXT INDEX") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "RANGE INDEXES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "RANGE INDEX") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEXES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "VECTOR INDEX") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "LOOKUP INDEXES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "LOOKUP INDEX") == 0:
+	case startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEX"),
+		startsWithKeywords(cypher, "SHOW", "RANGE INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "RANGE INDEX"),
+		startsWithKeywords(cypher, "SHOW", "VECTOR INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "VECTOR INDEX"),
+		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEX"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "INDEXES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "INDEX") == 0:
+	case startsWithKeywords(cypher, "SHOW", "INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "INDEX"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "DECAY PROFILES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "PROMOTION PROFILES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "PROMOTION POLICIES") == 0:
+	case startsWithKeywords(cypher, "SHOW", "DECAY PROFILES"),
+		startsWithKeywords(cypher, "SHOW", "PROMOTION PROFILES"),
+		startsWithKeywords(cypher, "SHOW", "PROMOTION POLICIES"):
 		return e.executeShowWithTail(ctx, cypher, e.executeKnowledgePolicyDDL)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "CONSTRAINTS") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "CONSTRAINT") == 0:
+	case startsWithKeywords(cypher, "SHOW", "CONSTRAINTS"),
+		startsWithKeywords(cypher, "SHOW", "CONSTRAINT"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowConstraints)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "PROCEDURES") == 0:
+	case startsWithKeywords(cypher, "SHOW", "PROCEDURES"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowProcedures)
 	case findKeywordIndex(cypher, "SHOW FUNCTIONS") == 0:
 		return e.executeShowWithTail(ctx, cypher, e.executeShowFunctions)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "COMPOSITE DATABASES") == 0:
+	case startsWithKeywords(cypher, "SHOW", "COMPOSITE DATABASES"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowCompositeDatabases)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "CONSTITUENTS") == 0:
+	case startsWithKeywords(cypher, "SHOW", "CONSTITUENTS"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowConstituents)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "DEFAULT DATABASE") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "HOME DATABASE") == 0:
+	case startsWithKeywords(cypher, "SHOW", "DEFAULT DATABASE"),
+		startsWithKeywords(cypher, "SHOW", "HOME DATABASE"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowDefaultDatabase)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "USERS") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "CURRENT USER") == 0:
+	case startsWithKeywords(cypher, "SHOW", "USERS"),
+		startsWithKeywords(cypher, "SHOW", "CURRENT USER"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "TRANSACTIONS") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "TRANSACTION") == 0:
+	case startsWithKeywords(cypher, "SHOW", "TRANSACTIONS"),
+		startsWithKeywords(cypher, "SHOW", "TRANSACTION"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowTransactions)
-	case findMultiWordKeywordIndex(cypher, "TERMINATE", "TRANSACTIONS") == 0,
-		findMultiWordKeywordIndex(cypher, "TERMINATE", "TRANSACTION") == 0:
+	case startsWithKeywords(cypher, "TERMINATE", "TRANSACTIONS"),
+		startsWithKeywords(cypher, "TERMINATE", "TRANSACTION"):
 		return e.executeShowWithTail(ctx, cypher, e.executeTerminateTransactions)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "ROLES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "ROLE") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "PRIVILEGES") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "USER") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "SERVERS") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "SERVER") == 0:
+	case startsWithKeywords(cypher, "SHOW", "ROLES"),
+		startsWithKeywords(cypher, "SHOW", "ROLE"),
+		startsWithKeywords(cypher, "SHOW", "PRIVILEGES"),
+		startsWithKeywords(cypher, "SHOW", "USER"),
+		startsWithKeywords(cypher, "SHOW", "SERVERS"),
+		startsWithKeywords(cypher, "SHOW", "SERVER"):
 		return nil, unsupportedAdministrationCommandError(cypher)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "DATABASES") == 0:
+	case startsWithKeywords(cypher, "SHOW", "DATABASES"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowDatabases)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "DATABASE") == 0:
+	case startsWithKeywords(cypher, "SHOW", "DATABASE"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowDatabase)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "ALIASES") == 0:
+	case startsWithKeywords(cypher, "SHOW", "ALIASES"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowAliases)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "SETTINGS") == 0,
-		findMultiWordKeywordIndex(cypher, "SHOW", "SETTING") == 0:
+	case startsWithKeywords(cypher, "SHOW", "SETTINGS"),
+		startsWithKeywords(cypher, "SHOW", "SETTING"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowSettings)
-	case findMultiWordKeywordIndex(cypher, "ALTER", "COMPOSITE DATABASE") == 0:
+	case startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE"):
 		return e.executeAlterCompositeDatabase(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "ALTER", "DECAY PROFILE") == 0,
-		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION PROFILE") == 0,
-		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION POLICY") == 0:
+	case startsWithKeywords(cypher, "ALTER", "DECAY PROFILE"),
+		startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE"),
+		startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	case findMultiWordKeywordIndex(cypher, "SHOW", "LIMITS") == 0:
+	case startsWithKeywords(cypher, "SHOW", "LIMITS"):
 		return e.executeShowWithTail(ctx, cypher, e.executeShowLimits)
 	default:
 		// Terminal chokepoint of the converged router: a statement that passed

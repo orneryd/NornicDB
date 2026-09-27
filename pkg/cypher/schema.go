@@ -85,7 +85,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		run = e.executeCreateVectorIndex
 	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
 		run = e.executeCreateRangeIndex
-	} else if findMultiWordKeywordIndex(cypher, "CREATE", "LOOKUP INDEX") == 0 {
+	} else if startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX") {
 		run = e.executeCreateLookupIndex
 	} else if strings.Contains(upper, "CREATE INDEX") {
 		run = e.executeCreateIndex

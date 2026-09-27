@@ -2091,14 +2091,14 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 		return nil, nil, false
 	}
 	// System commands and schema commands must not be handled here — route to executeSchemaCommand instead
-	if findMultiWordKeywordIndex(cypher, "CREATE", "DATABASE") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "ALIAS") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "CONSTRAINT") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "INDEX") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "FULLTEXT") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "VECTOR") == 0 ||
-		findMultiWordKeywordIndex(cypher, "CREATE", "RANGE") == 0 {
+	if startsWithKeywords(cypher, "CREATE", "DATABASE") ||
+		startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "CREATE", "ALIAS") ||
+		startsWithKeywords(cypher, "CREATE", "CONSTRAINT") ||
+		startsWithKeywords(cypher, "CREATE", "INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "FULLTEXT") ||
+		startsWithKeywords(cypher, "CREATE", "VECTOR") ||
+		startsWithKeywords(cypher, "CREATE", "RANGE") {
 		return nil, nil, false
 	}
 	for _, keyword := range []string{

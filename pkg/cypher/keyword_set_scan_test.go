@@ -89,3 +89,33 @@ func TestFindKeywordIndexInContextNonASCII(t *testing.T) {
 	require.Equal(t, "x", alias)
 	require.Equal(t, 2, findKeywordIndexInContext("n as m", "AS"))
 }
+
+// TestStartsWithKeywordsMatchesScan: startsWithKeywords answers what
+// findMultiWordKeywordIndex(...) == 0 answers, for statements that start
+// with the words, with them later, as names, or after whitespace, comments
+// or strings.
+func TestStartsWithKeywordsMatchesScan(t *testing.T) {
+	pairs := [][2]string{
+		{"CREATE", "DATABASE"}, {"CREATE", "COMPOSITE DATABASE"}, {"DROP", "ALIAS"},
+		{"SHOW", "DATABASES"}, {"SHOW", "CURRENT USER"}, {"ALTER", "DATABASE"},
+		{"OPTIONAL", "MATCH"}, {"WITH", "x"}, {"SET", "n"}, {"DETACH", "DELETE"},
+	}
+	statements := []string{
+		"CREATE DATABASE foo", "create   database foo", "CREATE\n\tDATABASE foo", "CREATE DATABASEX",
+		"CREATE COMPOSITE DATABASE c", "CREATE COMPOSITE  DATABASE c", " CREATE DATABASE foo",
+		"/* c */ CREATE DATABASE foo", "MATCH (n) CREATE DATABASE", "CREATE (n) RETURN n",
+		"DROP ALIAS a FOR DATABASE b", "DROP ALIASES", "SHOW DATABASES", "SHOW DATABASES YIELD name",
+		"SHOW CURRENT USER", "SHOW CURRENT  USER", "SHOW CURRENTUSER", "ALTER DATABASE d SET ACCESS READ ONLY",
+		"OPTIONAL MATCH (n) RETURN n", "OPTIONAL  MATCH (n)", "optional match (n)", "OPTIONALMATCH",
+		"WITH x RETURN x", "WITH x+1 AS y RETURN y", "SET n.a = 1", "SET n", "SET + n",
+		"DETACH DELETE n", "detach  delete n", "'CREATE DATABASE x'", "`CREATE` DATABASE",
+		"CREATE", "CREATE ", "", "CREATE DATABASE", "SHOW", "SHOW DATABASES,", "CREATE: DATABASE",
+		"CREATE.DATABASE", "SET.n", "WITH\nx", "SHOW DATABASES//c", "ıı CREATE DATABASE x",
+	}
+	for _, statement := range statements {
+		for _, pair := range pairs {
+			want := findMultiWordKeywordIndex(statement, pair[0], pair[1]) == 0
+			require.Equal(t, want, startsWithKeywords(statement, pair[0], pair[1]), "%q %v", statement, pair)
+		}
+	}
+}

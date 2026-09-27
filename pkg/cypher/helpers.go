@@ -272,6 +272,39 @@ func extractPolygonPoints(geom map[string]interface{}) []interface{} {
 	return nil
 }
 
+// startsWithKeywords reports whether s starts, at its first byte, with
+// firstWord followed by secondWord: findMultiWordKeywordIndex(s, firstWord,
+// secondWord) == 0, checked at the start of s instead of by scanning all of
+// it (whitespace between the words; word boundaries; the first word not
+// used as a name, clauseKeywordUsedAsName).
+func startsWithKeywords(s, firstWord, secondWord string) bool {
+	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
+	secondStart, secondEnd := trimKeywordWSBounds(secondWord)
+	if firstStart >= firstEnd || secondStart >= secondEnd {
+		return false
+	}
+	afterFirst, ok := keywordMatchAt(s, 0, firstWord, firstStart, firstEnd)
+	if !ok || !keywordRightBoundaryOK(s, afterFirst, keywordBoundaryWord) {
+		return false
+	}
+	first := firstWord[firstStart:firstEnd]
+	if isWithKeyword(first) && isOperatorWith(s, 0) {
+		return false
+	}
+	if clauseKeywordUsedAsName(s, 0, afterFirst, first) {
+		return false
+	}
+	j := afterFirst
+	if j >= len(s) || !isASCIISpace(s[j]) {
+		return false
+	}
+	for j < len(s) && isASCIISpace(s[j]) {
+		j++
+	}
+	afterSecond, ok := keywordMatchAt(s, j, secondWord, secondStart, secondEnd)
+	return ok && keywordRightBoundaryOK(s, afterSecond, keywordBoundaryWord)
+}
+
 // findMultiWordKeywordIndex finds a multi-word keyword with flexible whitespace.
 // For example, "SHOW DATABASES" will match "SHOW DATABASES", "SHOW\tDATABASES", "SHOW\nDATABASES", etc.
 // This is used for keywords like "SHOW DATABASES", "CREATE DATABASE", "DROP DATABASE", "OPTIONAL MATCH".
