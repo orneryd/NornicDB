@@ -163,9 +163,9 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 			columns = e.inferTopLevelReturnColumns(callParts.tail)
 		} else {
 			// Default columns for vector queries
-			if strings.Contains(strings.ToUpper(callPart), "QUERYNODES") {
+			if strings.Contains(upperASCII(callPart), "QUERYNODES") {
 				columns = []string{"node", "score"}
-			} else if strings.Contains(strings.ToUpper(callPart), "QUERYRELATIONSHIPS") {
+			} else if strings.Contains(upperASCII(callPart), "QUERYRELATIONSHIPS") {
 				columns = []string{"relationship", "score"}
 			} else {
 				columns = []string{} // Empty if unknown
@@ -224,9 +224,9 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 				}
 			}
 		} else {
-			if strings.Contains(strings.ToUpper(callPart), "QUERYNODES") {
+			if strings.Contains(upperASCII(callPart), "QUERYNODES") {
 				columns = []string{"node", "score"}
-			} else if strings.Contains(strings.ToUpper(callPart), "QUERYRELATIONSHIPS") {
+			} else if strings.Contains(upperASCII(callPart), "QUERYRELATIONSHIPS") {
 				columns = []string{"relationship", "score"}
 			} else {
 				columns = []string{} // Empty if unknown
@@ -323,7 +323,7 @@ func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeCo
 	// Example:
 	//   CALL db.create.setNodeVectorProperty(n, 'emb', [..])
 	// -> CALL db.create.setNodeVectorProperty('node-id', 'emb', [..])
-	upper := strings.ToUpper(result)
+	upper := upperASCII(result)
 	procIdx := strings.Index(upper, "DB.CREATE.SETNODEVECTORPROPERTY")
 	if procIdx >= 0 {
 		openParen := strings.Index(result[procIdx:], "(")
@@ -506,10 +506,10 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 		ctx = withExecutionDatabase(ctx, resolvedDB)
 	}
 	// Check if subquery starts with "WITH <variable>" - this imports outer context
-	upperBody := strings.ToUpper(strings.TrimSpace(subqueryBody))
+	upperBody := upperASCII(strings.TrimSpace(subqueryBody))
 	if len(callImportVars) > 0 && !strings.HasPrefix(upperBody, "WITH ") {
 		subqueryBody = "WITH " + strings.Join(callImportVars, ", ") + " " + subqueryBody
-		upperBody = strings.ToUpper(strings.TrimSpace(subqueryBody))
+		upperBody = upperASCII(strings.TrimSpace(subqueryBody))
 	}
 	if inTransactions && importsVariable(callImportVars, nodePattern.variable) {
 		return subqueryExecutor.executeVariableScopeCallInTransactions(ctx, seedNodes, nodePattern.variable, subqueryBody, afterCall, batchSize)
@@ -818,7 +818,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 
 		// If the rest starts with MATCH, we need to handle the path pattern
 		// Replace "MATCH path = (seed)" with "MATCH path = (seed) WHERE id(seed) = $param"
-		if strings.HasPrefix(strings.ToUpper(restOfSubquery), "MATCH") {
+		if strings.HasPrefix(upperASCII(restOfSubquery), "MATCH") {
 			// Find the existing WHERE or RETURN to know where to inject our filter
 			matchPart := restOfSubquery[5:] // Skip "MATCH"
 			returnIdx := findKeywordIndex(matchPart, "RETURN")
@@ -828,7 +828,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 				returnPart := matchPart[returnIdx:]
 
 				// Check if there's already a WHERE clause in patternPart
-				whereIdx := findKeywordNotInBrackets(strings.ToUpper(patternPart), " WHERE ")
+				whereIdx := findKeywordNotInBrackets(upperASCII(patternPart), " WHERE ")
 				var substitutedBody string
 				seedFilter := "id(" + nodePattern.variable + ") = $" + seedIDParamName
 
@@ -869,7 +869,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 		// MATCH and write clauses: current compound MATCH/MERGE handling expects
 		// `MATCH ... MERGE ...`, while `MATCH ... WITH ... MERGE ...` can skip writes.
 		substitutedBody := ""
-		upperRest := strings.ToUpper(strings.TrimSpace(restOfSubquery))
+		upperRest := upperASCII(strings.TrimSpace(restOfSubquery))
 		if strings.HasPrefix(upperRest, "MERGE ") ||
 			strings.HasPrefix(upperRest, "CREATE ") ||
 			strings.HasPrefix(upperRest, "SET ") ||
@@ -904,9 +904,9 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 
 			// Find columns that match the seed variable and inject the seed node
 			// The variable name from outer MATCH should match a column in the inner RETURN
-			seedVarLower := strings.ToLower(nodePattern.variable)
+			seedVarLower := lowerASCII(nodePattern.variable)
 			for colIdx, colName := range innerResult.Columns {
-				colNameLower := strings.ToLower(strings.TrimSpace(colName))
+				colNameLower := lowerASCII(strings.TrimSpace(colName))
 				if colNameLower == seedVarLower && newRow[colIdx] == nil {
 					// Inject the seed node as a map representation
 					newRow[colIdx] = seedNode
@@ -1026,7 +1026,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 				}
 			}
 			optionalPart = strings.TrimSpace(optionalPart[:end])
-			if strings.HasPrefix(strings.ToUpper(optionalPart), "OPTIONAL MATCH") {
+			if strings.HasPrefix(upperASCII(optionalPart), "OPTIONAL MATCH") {
 				requiredPart := optionalPart
 				if len(requiredPart) >= len("OPTIONAL MATCH") {
 					requiredPart = "MATCH" + requiredPart[len("OPTIONAL MATCH"):]
@@ -1531,18 +1531,18 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 	afterCall = strings.TrimSpace(trimmed[braceEnd+1:])
 
 	// Check for IN TRANSACTIONS
-	upperAfter := strings.ToUpper(afterCall)
+	upperAfter := upperASCII(afterCall)
 	if strings.HasPrefix(upperAfter, "IN TRANSACTIONS") {
 		inTransactions = true
 		afterTx := strings.TrimSpace(afterCall[15:])
-		upperAfterTx := strings.ToUpper(afterTx)
+		upperAfterTx := upperASCII(afterTx)
 
 		// Check for OF n ROWS
 		if strings.HasPrefix(upperAfterTx, "OF ") {
 			// Parse batch size
 			ofPart := afterTx[3:]
 			// Find ROWS keyword
-			rowsIdx := strings.Index(strings.ToUpper(ofPart), " ROWS")
+			rowsIdx := strings.Index(upperASCII(ofPart), " ROWS")
 			if rowsIdx > 0 {
 				sizeStr := strings.TrimSpace(ofPart[:rowsIdx])
 				if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
@@ -1689,7 +1689,7 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 			batchParams["__call_in_tx_ids"] = ids
 		}
 		batchCtx := context.WithValue(ctx, paramsKey, batchParams)
-		batchResult, err := e.executeWithImplicitTransaction(batchCtx, batchQuery, strings.ToUpper(batchQuery))
+		batchResult, err := e.executeWithImplicitTransaction(batchCtx, batchQuery, upperASCII(batchQuery))
 		if err != nil {
 			return nil, localizedError(localization.CypherSubqueriesTransactionBatchFailed(seedVar, start/batchSize+1, err), err)
 		}
@@ -1739,7 +1739,7 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 	}
 
 	// Check if the subquery contains write operations (CREATE, SET, DELETE, MERGE)
-	upperSubquery := strings.ToUpper(subquery)
+	upperSubquery := upperASCII(subquery)
 	hasWrites := strings.Contains(upperSubquery, "CREATE") ||
 		strings.Contains(upperSubquery, "SET") ||
 		strings.Contains(upperSubquery, "DELETE") ||
@@ -1787,7 +1787,7 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 	if useIterativeBatching {
 		hasBatchableSource := strings.Contains(upperSubquery, "MATCH ")
 		if !hasBatchableSource {
-			singleResult, err := e.executeWithImplicitTransaction(ctx, subquery, strings.ToUpper(subquery))
+			singleResult, err := e.executeWithImplicitTransaction(ctx, subquery, upperASCII(subquery))
 			if err != nil {
 				return nil, localizedError(localization.CypherSubqueriesFirstBatchFailed(err), err)
 			}
@@ -1820,7 +1820,7 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 			}
 
 			// Execute this batch in its own transaction
-			batchResult, err := e.executeWithImplicitTransaction(ctx, modifiedSubquery, strings.ToUpper(modifiedSubquery))
+			batchResult, err := e.executeWithImplicitTransaction(ctx, modifiedSubquery, upperASCII(modifiedSubquery))
 			if err != nil {
 				// On error, stop processing and return error
 				return nil, localizedError(localization.CypherSubqueriesBatchFailed(batchNum+1, err), err)
@@ -1868,7 +1868,7 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 			modifiedSubquery := e.addLimitSkipToSubquery(subquery, limit, skip)
 
 			// Execute this batch in its own transaction
-			batchResult, err := e.executeWithImplicitTransaction(ctx, modifiedSubquery, strings.ToUpper(modifiedSubquery))
+			batchResult, err := e.executeWithImplicitTransaction(ctx, modifiedSubquery, upperASCII(modifiedSubquery))
 			if err != nil {
 				// On error, stop processing and return error
 				return nil, localizedError(localization.CypherSubqueriesBatchProgressFailed(batchNum+1, numBatches, err), err)
@@ -2013,7 +2013,7 @@ func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip in
 	returnPart := subquery[returnIdx:]
 
 	// Check if LIMIT or SKIP already exists
-	if strings.Contains(strings.ToUpper(returnPart), "LIMIT") || strings.Contains(strings.ToUpper(returnPart), "SKIP") {
+	if strings.Contains(upperASCII(returnPart), "LIMIT") || strings.Contains(upperASCII(returnPart), "SKIP") {
 		// LIMIT/SKIP already present - append (may cause issues but handles common cases)
 		if skip > 0 {
 			return subquery + fmt.Sprintf(" SKIP %d LIMIT %d", skip, limit)
@@ -2033,7 +2033,7 @@ func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip in
 
 // processAfterCallSubquery handles clauses after CALL { } like RETURN
 func (e *StorageExecutor) processAfterCallSubquery(ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
-	upperAfter := strings.ToUpper(afterCall)
+	upperAfter := upperASCII(afterCall)
 
 	// Handle chained CALL { } subqueries.
 	if strings.HasPrefix(upperAfter, "CALL") && isCallSubquery(afterCall) {
@@ -2160,7 +2160,7 @@ func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subquery
 
 func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody string, hasWith bool, err error) {
 	trimmed := strings.TrimSpace(subqueryBody)
-	if !strings.HasPrefix(strings.ToUpper(trimmed), "WITH ") {
+	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
 		return nil, trimmed, false, nil
 	}
 
@@ -2213,7 +2213,7 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 			continue
 		}
 
-		upperExpr := strings.ToUpper(expr)
+		upperExpr := upperASCII(expr)
 		if asIdx := strings.Index(upperExpr, " AS "); asIdx >= 0 {
 			alias := strings.TrimSpace(expr[asIdx+4:])
 			if alias == "" {
@@ -2243,14 +2243,14 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 func splitLeadingWhereNullGuard(query string) (whereExpr string, rest string, ok bool) {
 	trimmed := strings.TrimSpace(query)
 	var afterWhere string
-	if strings.HasPrefix(strings.ToUpper(trimmed), "WITH ") {
+	if strings.HasPrefix(upperASCII(trimmed), "WITH ") {
 		afterWith := strings.TrimSpace(trimmed[len("WITH "):])
 		whereIdx := findKeywordIndex(afterWith, "WHERE")
 		if whereIdx <= 0 {
 			return "", "", false
 		}
 		afterWhere = strings.TrimSpace(afterWith[whereIdx+len("WHERE"):])
-	} else if strings.HasPrefix(strings.ToUpper(trimmed), "WHERE ") {
+	} else if strings.HasPrefix(upperASCII(trimmed), "WHERE ") {
 		afterWhere = strings.TrimSpace(trimmed[len("WHERE "):])
 	} else {
 		return "", "", false
@@ -2321,7 +2321,7 @@ func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass boo
 	varName := m[1]
 	_, exists := vars[varName]
 	isNull := !exists || vars[varName] == nil
-	isNot := strings.TrimSpace(strings.ToUpper(m[2])) == "NOT"
+	isNot := strings.TrimSpace(upperASCII(m[2])) == "NOT"
 	if isNot {
 		return !isNull, true
 	}
@@ -3637,7 +3637,7 @@ func parseOrderByClause(clause string) []orderByTerm {
 		}
 		term := orderByTerm{column: expression}
 		if len(fields) > 1 {
-			direction := strings.ToUpper(fields[len(fields)-1])
+			direction := upperASCII(fields[len(fields)-1])
 			switch direction {
 			case "DESC", "DESCENDING":
 				term.descending = true

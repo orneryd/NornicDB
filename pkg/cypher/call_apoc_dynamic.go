@@ -17,7 +17,7 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, cypher string) 
 	// Parse the CALL statement to extract the inner query and parameters
 	// Format: CALL apoc.cypher.run('MATCH (n) RETURN n', {})
 
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	callIdx := strings.Index(upper, "APOC.CYPHER.RUN")
 	if callIdx == -1 {
 		return nil, fmt.Errorf("invalid apoc.cypher.run call")
@@ -76,7 +76,7 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, cypher string) 
 // callApocCypherRunMany executes multiple Cypher statements separated by semicolons.
 // CALL apoc.cypher.runMany(statements, params) YIELD row, result
 func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	callIdx := strings.Index(upper, "APOC.CYPHER.RUNMANY")
 	if callIdx == -1 {
 		return nil, fmt.Errorf("invalid apoc.cypher.runMany call")

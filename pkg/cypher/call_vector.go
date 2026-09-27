@@ -249,7 +249,7 @@ func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, cypher str
 		return nil, localizedError(localization.CypherSpecializedCallsEmbedderNotConfigured(), nil)
 	}
 
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	procIdx := strings.Index(upper, "DB.INDEX.VECTOR.EMBED")
 	if procIdx == -1 {
 		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedInvalidSyntax(), nil)
@@ -328,7 +328,7 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 	input = &vectorQueryInput{}
 
 	// Find the procedure call (supports both queryNodes and queryRelationships)
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	callIdx := strings.Index(upper, "DB.INDEX.VECTOR.QUERYNODES")
 	if callIdx == -1 {
 		callIdx = strings.Index(upper, "DB.INDEX.VECTOR.QUERYRELATIONSHIPS")

@@ -815,7 +815,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	}
 
 	// Handle booleans
-	upper := strings.ToUpper(s)
+	upper := upperASCII(s)
 	if upper == "TRUE" {
 		return true
 	}
@@ -903,7 +903,7 @@ func (e *StorageExecutor) resolveReturnItem(ctx context.Context, item returnItem
 	}
 
 	// Check for IS NULL / IS NOT NULL - these need full evaluation
-	upperExpr := strings.ToUpper(expr)
+	upperExpr := upperASCII(expr)
 	if strings.Contains(upperExpr, " IS NULL") || strings.Contains(upperExpr, " IS NOT NULL") {
 		return e.evaluateExpression(ctx, expr, variable, node)
 	}

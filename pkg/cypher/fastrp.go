@@ -101,7 +101,7 @@ func (e *StorageExecutor) callGdsVersion() (*ExecuteResult, error) {
 // callGdsGraphProject implements CALL gds.graph.project(...)
 // Supports multiple syntax variants from Neo4j GDS
 func (e *StorageExecutor) callGdsGraphProject(cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 
 	// Extract graph name from the call
 	graphName := extractStringArg(cypher, "gds.graph.project")
@@ -669,8 +669,8 @@ func normalizeEmbeddings(embeddings [][]float64, dim int) {
 
 // extractStringArg extracts the first string argument from a procedure call
 func extractStringArg(cypher string, procName string) string {
-	lower := strings.ToLower(cypher)
-	idx := strings.Index(lower, strings.ToLower(procName))
+	lower := lowerASCII(cypher)
+	idx := strings.Index(lower, lowerASCII(procName))
 	if idx == -1 {
 		return ""
 	}
@@ -699,7 +699,7 @@ func extractStringArg(cypher string, procName string) string {
 
 // extractGraphNameFromReturn extracts graph name from RETURN gds.graph.project(...) syntax
 func extractGraphNameFromReturn(cypher string) string {
-	lower := strings.ToLower(cypher)
+	lower := lowerASCII(cypher)
 	idx := strings.Index(lower, "gds.graph.project")
 	if idx == -1 {
 		return ""
@@ -727,8 +727,8 @@ func extractGraphNameFromReturn(cypher string) string {
 
 // extractIntArg extracts an integer config value
 func extractIntArg(cypher string, key string) int {
-	lower := strings.ToLower(cypher)
-	keyLower := strings.ToLower(key)
+	lower := lowerASCII(cypher)
+	keyLower := lowerASCII(key)
 	idx := strings.Index(lower, keyLower)
 	if idx == -1 {
 		return 0
@@ -761,8 +761,8 @@ func extractIntArg(cypher string, key string) int {
 
 // extractFloatArg extracts a float config value
 func extractFloatArg(cypher string, key string) float64 {
-	lower := strings.ToLower(cypher)
-	keyLower := strings.ToLower(key)
+	lower := lowerASCII(cypher)
+	keyLower := lowerASCII(key)
 	idx := strings.Index(lower, keyLower)
 	if idx == -1 {
 		return 0
@@ -792,8 +792,8 @@ func extractFloatArg(cypher string, key string) float64 {
 
 // extractStringConfigArg extracts a string config value
 func extractStringConfigArg(cypher string, key string) string {
-	lower := strings.ToLower(cypher)
-	keyLower := strings.ToLower(key)
+	lower := lowerASCII(cypher)
+	keyLower := lowerASCII(key)
 	idx := strings.Index(lower, keyLower)
 	if idx == -1 {
 		return ""

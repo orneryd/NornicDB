@@ -322,7 +322,7 @@ type clauseInfo struct {
 // splitIntoClauses splits a query into individual clauses.
 func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 	var clauses []clauseInfo
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 
 	// Keywords that start clauses
 	// Order matters: longer phrases must come before shorter ones
@@ -520,9 +520,9 @@ func (b *ASTBuilder) parseMatch(text string, optional bool) *ASTMatch {
 	// Remove MATCH or OPTIONAL MATCH prefix
 	patternText := text
 	if optional {
-		patternText = strings.TrimPrefix(strings.ToUpper(text), "OPTIONAL MATCH")
+		patternText = strings.TrimPrefix(upperASCII(text), "OPTIONAL MATCH")
 	} else {
-		patternText = strings.TrimPrefix(strings.ToUpper(text), "MATCH")
+		patternText = strings.TrimPrefix(upperASCII(text), "MATCH")
 	}
 	patternText = strings.TrimSpace(text[len(text)-len(patternText):])
 
@@ -534,7 +534,7 @@ func (b *ASTBuilder) parseMatch(text string, optional bool) *ASTMatch {
 // parseCreate parses a CREATE clause.
 func (b *ASTBuilder) parseCreate(text string) *ASTCreate {
 	create := &ASTCreate{}
-	patternText := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(text), "CREATE"))
+	patternText := strings.TrimSpace(strings.TrimPrefix(upperASCII(text), "CREATE"))
 	patternText = strings.TrimSpace(text[len("CREATE"):])
 	create.Patterns = b.parsePatterns(patternText)
 	return create
@@ -545,7 +545,7 @@ func (b *ASTBuilder) parseMerge(text string) *ASTMerge {
 	merge := &ASTMerge{}
 
 	// Find ON CREATE SET and ON MATCH SET
-	upper := strings.ToUpper(text)
+	upper := upperASCII(text)
 	onCreateIdx := strings.Index(upper, "ON CREATE SET")
 	onMatchIdx := strings.Index(upper, "ON MATCH SET")
 
@@ -590,9 +590,9 @@ func (b *ASTBuilder) parseDelete(text string, detach bool) *ASTDelete {
 	// Remove prefix
 	varText := text
 	if detach {
-		varText = strings.TrimPrefix(strings.ToUpper(text), "DETACH DELETE")
+		varText = strings.TrimPrefix(upperASCII(text), "DETACH DELETE")
 	} else {
-		varText = strings.TrimPrefix(strings.ToUpper(text), "DELETE")
+		varText = strings.TrimPrefix(upperASCII(text), "DELETE")
 	}
 	varText = strings.TrimSpace(text[len(text)-len(varText):])
 
@@ -611,7 +611,7 @@ func (b *ASTBuilder) parseDelete(text string, detach bool) *ASTDelete {
 // parseSet parses a SET clause.
 func (b *ASTBuilder) parseSet(text string) *ASTSet {
 	set := &ASTSet{}
-	itemsText := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(text), "SET"))
+	itemsText := strings.TrimSpace(strings.TrimPrefix(upperASCII(text), "SET"))
 	itemsText = strings.TrimSpace(text[len("SET"):])
 	set.Items = b.parseSetItems(itemsText)
 	return set
@@ -772,7 +772,7 @@ func (b *ASTBuilder) parseUnwind(text string) *ASTUnwind {
 	content := strings.TrimSpace(text[len("UNWIND"):])
 
 	// Find AS
-	upper := strings.ToUpper(content)
+	upper := upperASCII(content)
 	if asIdx := strings.Index(upper, " AS "); asIdx > 0 {
 		unwind.RawExpr = strings.TrimSpace(content[:asIdx])
 		unwind.Variable = strings.TrimSpace(content[asIdx+4:])
@@ -797,7 +797,7 @@ func (b *ASTBuilder) parseOrderBy(text string) *ASTOrderBy {
 		item := ASTOrderItem{RawText: part}
 
 		// Check for DESC/ASC
-		upper := strings.ToUpper(part)
+		upper := upperASCII(part)
 		if strings.HasSuffix(upper, " DESC") {
 			item.Descending = true
 			part = strings.TrimSpace(part[:len(part)-5])
@@ -846,7 +846,7 @@ func (b *ASTBuilder) parseCall(text string) *ASTCall {
 
 			// Parse YIELD if present
 			rest := strings.TrimSpace(content[closeIdx+1:])
-			if strings.HasPrefix(strings.ToUpper(rest), "YIELD") {
+			if strings.HasPrefix(upperASCII(rest), "YIELD") {
 				yieldContent := strings.TrimSpace(rest[5:])
 				yields := strings.Split(yieldContent, ",")
 				for _, y := range yields {
@@ -956,7 +956,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	}
 
 	// Boolean/null
-	upper := strings.ToUpper(text)
+	upper := upperASCII(text)
 	if upper == "TRUE" {
 		expr.Type = ASTExprLiteral
 		expr.Literal = true

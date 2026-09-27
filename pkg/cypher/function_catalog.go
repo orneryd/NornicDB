@@ -1,7 +1,5 @@
 package cypher
 
-import "strings"
-
 // cypherFunctionSpec is one built-in function. The catalog is the one table
 // of built-in functions (#698): SHOW FUNCTIONS lists the listed entries
 // (showFunctionRows), and the unknown-function check accepts every entry's
@@ -164,7 +162,7 @@ var cypherFunctionCatalog = []cypherFunctionSpec{
 var builtInCypherFunctions = func() map[string]struct{} {
 	names := make(map[string]struct{}, len(cypherFunctionCatalog))
 	for _, function := range cypherFunctionCatalog {
-		names[strings.ToLower(function.name)] = struct{}{}
+		names[lowerASCII(function.name)] = struct{}{}
 	}
 	return names
 }()

@@ -81,7 +81,7 @@ func leadingCaseExpressionEnd(expr string) int {
 // Supports both searched and simple CASE expressions.
 func parseCaseExpression(expr string) (*caseExpression, error) {
 	expr = strings.TrimSpace(expr)
-	upper := strings.ToUpper(expr)
+	upper := upperASCII(expr)
 
 	// Remove CASE and END keywords
 	if !strings.HasPrefix(upper, "CASE") || !strings.HasSuffix(upper, "END") {
@@ -324,7 +324,7 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 // evaluateCondition evaluates a boolean condition expression.
 func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
 	condition = strings.TrimSpace(condition)
-	upper := strings.ToUpper(condition)
+	upper := upperASCII(condition)
 
 	// Handle AND - split and evaluate both sides
 	// Need to find AND at top level (not inside parentheses)

@@ -320,7 +320,7 @@ func evaluateTemporalProperty(value interface{}, property string) (interface{}, 
 		return nil, false, false
 	}
 
-	field := strings.ToLower(property)
+	field := lowerASCII(property)
 	if hasDate {
 		isoYear, isoWeek := temporal.ISOWeek()
 		quarter := (int(temporal.Month())-1)/3 + 1
@@ -400,7 +400,7 @@ func evaluateTemporalProperty(value interface{}, property string) (interface{}, 
 func evaluateDurationProperty(duration *CypherDuration, property string) (interface{}, bool, bool) {
 	months := duration.Years*12 + duration.Months
 	seconds := duration.Hours*3_600 + duration.Minutes*60 + duration.Seconds
-	switch strings.ToLower(property) {
+	switch lowerASCII(property) {
 	case "years":
 		return months / 12, true, true
 	case "quarters":

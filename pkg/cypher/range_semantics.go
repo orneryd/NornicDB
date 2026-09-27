@@ -159,8 +159,8 @@ func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, cla
 }
 
 func namedFunctionArguments(expression, function string) []string {
-	lower := strings.ToLower(expression)
-	function = strings.ToLower(function)
+	lower := lowerASCII(expression)
+	function = lowerASCII(function)
 	arguments := make([]string, 0)
 	for index := 0; index < len(lower); {
 		quote := lower[index]

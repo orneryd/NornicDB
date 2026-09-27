@@ -46,7 +46,7 @@ func splitPatternComprehension(expr string) (string, string, bool) {
 			if parenDepth == 0 && bracketDepth == 1 && braceDepth == 0 {
 				pattern := strings.TrimSpace(expr[1:i])
 				projection := strings.TrimSpace(expr[i+1 : len(expr)-1])
-				if !strings.Contains(strings.ToUpper(pattern), " IN ") &&
+				if !strings.Contains(upperASCII(pattern), " IN ") &&
 					strings.Contains(pattern, "(") && strings.Contains(pattern, ")") && projection != "" {
 					return pattern, projection, true
 				}
@@ -107,7 +107,7 @@ func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr 
 
 func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) []traversalOptRow {
 	pattern = strings.TrimSpace(pattern)
-	if strings.HasPrefix(strings.ToUpper(pattern), "MATCH ") {
+	if strings.HasPrefix(upperASCII(pattern), "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH "):])
 	}
 	clauses := splitOptionalMatchClauses(pattern)

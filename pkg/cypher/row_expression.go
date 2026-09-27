@@ -215,7 +215,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		if value, matched, resolved, err := e.evaluateRowExtensionFunction(function, argument, values); matched {
 			return value, resolved, err
 		}
-		switch strings.ToLower(function) {
+		switch lowerASCII(function) {
 		case "reduce":
 			return e.evaluateRowReduce(argument, values)
 		case "coalesce":
@@ -355,7 +355,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 				return nil, true, nil
 			}
 			if text, isString := value.(string); isString {
-				switch strings.ToLower(function) {
+				switch lowerASCII(function) {
 				case "size":
 					return int64(len([]rune(text))), true, nil
 				case "reverse":
@@ -378,7 +378,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 				return nil, false, nil
 			}
 			items := toAnySlice(value)
-			switch strings.ToLower(function) {
+			switch lowerASCII(function) {
 			case "head":
 				if len(items) == 0 {
 					return nil, true, nil
@@ -625,7 +625,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		{suffix: " IS NOT NULL", notNull: true},
 		{suffix: " IS NULL"},
 	} {
-		if hasSuffixFoldASCII(expr, strings.ToLower(predicate.suffix)) {
+		if hasSuffixFoldASCII(expr, lowerASCII(predicate.suffix)) {
 			value, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:len(expr)-len(predicate.suffix)]), values)
 			if err != nil {
 				return nil, false, err
@@ -1369,7 +1369,7 @@ func isBinaryRowSubtraction(left string) bool {
 
 func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	function, inner, isFunction := parseFunctionCallWS(expr)
-	function = strings.ToLower(function)
+	function = lowerASCII(function)
 	if !isFunction || !isQuantifierFunction(function) {
 		return nil, false, false, nil
 	}

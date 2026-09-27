@@ -17,7 +17,7 @@ var txCaseRollbackPattern = regexp.MustCompile(`(?is)^CASE\s+WHEN\s+(.+?)\s+THEN
 // - BEGIN TRANSACTION ... CASE WHEN ... THEN ROLLBACK ELSE RETURN ... COMMIT
 func (e *StorageExecutor) executeTransactionScript(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	trimmed := strings.TrimSpace(cypher)
-	upper := strings.ToUpper(trimmed)
+	upper := upperASCII(trimmed)
 	if !strings.HasPrefix(upper, "BEGIN") {
 		return nil, nil
 	}
@@ -32,7 +32,7 @@ func (e *StorageExecutor) executeTransactionScript(ctx context.Context, cypher s
 	}
 
 	// CASE rollback script form.
-	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(bodyAfterBegin)), "CALL") && strings.Contains(strings.ToUpper(bodyAfterBegin), "CASE") {
+	if strings.HasPrefix(upperASCII(strings.TrimSpace(bodyAfterBegin)), "CALL") && strings.Contains(upperASCII(bodyAfterBegin), "CASE") {
 		return e.executeCaseRollbackTransactionScript(ctx, bodyAfterBegin)
 	}
 
@@ -46,7 +46,7 @@ func (e *StorageExecutor) executeTransactionScript(ctx context.Context, cypher s
 
 func stripBeginTransactionPrefix(query string) (string, bool) {
 	trimmed := strings.TrimSpace(query)
-	upper := strings.ToUpper(trimmed)
+	upper := upperASCII(trimmed)
 	if strings.HasPrefix(upper, "BEGIN TRANSACTION") {
 		return strings.TrimSpace(trimmed[len("BEGIN TRANSACTION"):]), true
 	}
@@ -58,7 +58,7 @@ func stripBeginTransactionPrefix(query string) (string, bool) {
 
 func splitTransactionScriptTailAction(script string) (string, string, bool) {
 	trimmed := strings.TrimSpace(script)
-	upper := strings.ToUpper(trimmed)
+	upper := upperASCII(trimmed)
 	if strings.HasSuffix(upper, "COMMIT") {
 		body := strings.TrimSpace(trimmed[:len(trimmed)-len("COMMIT")])
 		if body == "" {
@@ -81,7 +81,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 		return nil, err
 	}
 
-	queryUpper := strings.ToUpper(strings.TrimSpace(queryBody))
+	queryUpper := upperASCII(strings.TrimSpace(queryBody))
 	result, err := e.executeInTransaction(ctx, queryBody, queryUpper)
 	if err != nil {
 		return nil, e.abortTransaction(err)
@@ -101,7 +101,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 }
 
 func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Context, scriptBody string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(scriptBody)
+	upper := upperASCII(scriptBody)
 	caseIdx := strings.Index(upper, "CASE")
 	if caseIdx <= 0 {
 		return nil, localizedError(localization.CypherTransactionsCaseBlockMissing(), nil)
@@ -120,7 +120,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		return nil, err
 	}
 
-	callUpper := strings.ToUpper(strings.TrimSpace(callQuery))
+	callUpper := upperASCII(strings.TrimSpace(callQuery))
 	callResult, err := e.executeInTransaction(ctx, callQuery, callUpper)
 	if err != nil {
 		return nil, e.abortTransaction(err)

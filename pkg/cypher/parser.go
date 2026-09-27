@@ -206,7 +206,7 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 	// Simple top-down parser
 	pos := 0
 	for pos < len(tokens) {
-		token := strings.ToUpper(tokens[pos])
+		token := upperASCII(tokens[pos])
 
 		switch token {
 		case "MATCH":

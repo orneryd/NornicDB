@@ -193,7 +193,7 @@ func (e *StorageExecutor) compareRegex(actual, expected interface{}) bool {
 //	evaluateStringOp(ctx, node, "n", "n.name CONTAINS 'Smith'", "CONTAINS")
 //	// Returns true if node.Properties["name"] contains "Smith"
 func (e *StorageExecutor) evaluateStringOp(ctx context.Context, node *storage.Node, variable, whereClause, op string) bool {
-	upperClause := strings.ToUpper(whereClause)
+	upperClause := upperASCII(whereClause)
 	opIdx := strings.Index(upperClause, " "+op+" ")
 	if opIdx < 0 {
 		return true
@@ -237,7 +237,7 @@ func (e *StorageExecutor) evaluateStringOp(ctx context.Context, node *storage.No
 // evaluator (cypherMembership): null x, a null list, or a list that holds null
 // without a match give unknown, and NOT IN of unknown stays unknown.
 func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.Node, variable, whereClause string) cypherTruth {
-	upperClause := strings.ToUpper(whereClause)
+	upperClause := upperASCII(whereClause)
 
 	// Cypher: `<expr> NOT IN <list>` must split on " NOT IN ", not on
 	// the substring " IN " (which would leave the trailing "NOT" on the
@@ -356,7 +356,7 @@ func isIdentRune(r rune) bool {
 //	evaluateIsNull(ctx, node, "n", "n.email IS NOT NULL", true)
 //	// Returns true if node.Properties["email"] exists and is not nil
 func (e *StorageExecutor) evaluateIsNull(ctx context.Context, node *storage.Node, variable, whereClause string, expectNotNull bool) bool {
-	upperClause := strings.ToUpper(whereClause)
+	upperClause := upperASCII(whereClause)
 	var propExpr string
 
 	if expectNotNull {

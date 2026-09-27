@@ -12,7 +12,7 @@ import (
 )
 
 func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 
 	// Find clause boundaries
 	withIdx := topLevelKeywordIndex(cypher, "WITH")
@@ -514,8 +514,8 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 			}
 		}
 		orderExpr := strings.TrimSpace(orderPart[:endIdx])
-		isDesc := strings.HasSuffix(strings.ToUpper(orderExpr), " DESC")
-		isAsc := strings.HasSuffix(strings.ToUpper(orderExpr), " ASC")
+		isDesc := strings.HasSuffix(upperASCII(orderExpr), " DESC")
+		isAsc := strings.HasSuffix(upperASCII(orderExpr), " ASC")
 		if isDesc {
 			orderExpr = strings.TrimSuffix(strings.TrimSuffix(orderExpr, " DESC"), " desc")
 			orderExpr = strings.TrimSpace(orderExpr)
@@ -569,7 +569,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	// Check for aggregation functions
 	hasAggregation := false
 	for _, item := range returnItems {
-		upperExpr := strings.ToUpper(item.expr)
+		upperExpr := upperASCII(item.expr)
 		if strings.HasPrefix(upperExpr, "COUNT(") ||
 			strings.HasPrefix(upperExpr, "SUM(") ||
 			strings.HasPrefix(upperExpr, "AVG(") ||
@@ -1136,7 +1136,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 			}
 
 			// Handle COALESCE
-			if strings.HasPrefix(strings.ToUpper(expr), "COALESCE(") {
+			if strings.HasPrefix(upperASCII(expr), "COALESCE(") {
 				row[i] = e.evaluateCoalesceInContext(expr, nodeMap, edgeMap, jr.computedValues)
 				continue
 			}

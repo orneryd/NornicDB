@@ -717,7 +717,7 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b bin
 	clause = strings.ReplaceAll(clause, "\n", " ")
 	clause = strings.ReplaceAll(clause, "\r", " ")
 	clause = strings.ReplaceAll(clause, "\t", " ")
-	upper := strings.ToUpper(clause)
+	upper := upperASCII(clause)
 
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
 		left := strings.TrimSpace(clause[:orIdx])
@@ -752,7 +752,7 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b bin
 					actual, _ := node.Properties[propName].(string)
 					expectedRaw := e.resolveBindingFallbackValue(ctx, right, b, params)
 					expected, _ := expectedRaw.(string)
-					switch strings.TrimSpace(strings.ToUpper(pred)) {
+					switch strings.TrimSpace(upperASCII(pred)) {
 					case "STARTS WITH":
 						return strings.HasPrefix(actual, expected)
 					case "ENDS WITH":

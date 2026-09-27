@@ -21,7 +21,7 @@ func inPredicateTruth(clause string, eval func(string) interface{}) (cypherTruth
 		}
 		clause = strings.TrimSpace(inner)
 	}
-	upper := strings.ToUpper(clause)
+	upper := upperASCII(clause)
 	if strings.HasPrefix(upper, "EXISTS") || strings.HasPrefix(upper, "COUNT") || strings.HasPrefix(upper, "NOT ") {
 		return truthUnknown, false
 	}

@@ -18,7 +18,7 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 	}
 
 	// Extract function name from expression (e.g., "myplugin.func([1,2,3])" -> "myplugin.func")
-	lowerExpr := strings.ToLower(expr)
+	lowerExpr := lowerASCII(expr)
 	parenIdx := strings.Index(lowerExpr, "(")
 	if parenIdx == -1 {
 		return nil, false

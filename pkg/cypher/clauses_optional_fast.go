@@ -22,7 +22,7 @@ func (e *StorageExecutor) tryFastCompoundOptionalMatchCount(initialNodes []*stor
 		return nil, false, nil
 	}
 
-	upperRest := strings.ToUpper(strings.TrimSpace(restOfQuery))
+	upperRest := upperASCII(strings.TrimSpace(restOfQuery))
 	if !strings.HasPrefix(upperRest, "RETURN") {
 		return nil, false, nil
 	}
@@ -50,7 +50,7 @@ func (e *StorageExecutor) tryFastCompoundOptionalMatchCount(initialNodes []*stor
 	}
 
 	// Ensure the relType matches the query's semantic shape; keep this narrow.
-	if strings.ToUpper(rel.relType) != "ORDERS" {
+	if upperASCII(rel.relType) != "ORDERS" {
 		return nil, false, nil
 	}
 
@@ -90,7 +90,7 @@ func (e *StorageExecutor) tryFastCompoundOptionalMatchCount(initialNodes []*stor
 		for orderStart < len(restOfQuery) && isWhitespace(restOfQuery[orderStart]) {
 			orderStart++
 		}
-		if orderStart+2 <= len(restOfQuery) && strings.ToUpper(restOfQuery[orderStart:orderStart+2]) == "BY" {
+		if orderStart+2 <= len(restOfQuery) && upperASCII(restOfQuery[orderStart:orderStart+2]) == "BY" {
 			orderStart += 2
 			for orderStart < len(restOfQuery) && isWhitespace(restOfQuery[orderStart]) {
 				orderStart++

@@ -395,11 +395,11 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	}
 
 	// Pre-compute upper-case expressions and aggregation flags ONCE for all items
-	// This avoids repeated strings.ToUpper() calls in loops (major performance win)
+	// This avoids repeated upperASCII() calls in loops (major performance win)
 	upperExprs := make([]string, len(returnItems))
 	isAggFlags := make([]bool, len(returnItems))
 	for i, item := range returnItems {
-		upperExprs[i] = strings.ToUpper(item.expr)
+		upperExprs[i] = upperASCII(item.expr)
 		isAggFlags[i] = strings.HasPrefix(upperExprs[i], "COUNT(") ||
 			strings.HasPrefix(upperExprs[i], "SUM(") ||
 			strings.HasPrefix(upperExprs[i], "AVG(") ||
@@ -721,7 +721,7 @@ func referencesTraversalVariable(expr string, variable string) bool {
 		return false
 	}
 	trimmed := strings.TrimSpace(expr)
-	if strings.Contains(trimmed, variable+".") || strings.Contains(strings.ToLower(trimmed), "id("+strings.ToLower(variable)+")") || strings.Contains(strings.ToLower(trimmed), "elementid("+strings.ToLower(variable)+")") {
+	if strings.Contains(trimmed, variable+".") || strings.Contains(lowerASCII(trimmed), "id("+lowerASCII(variable)+")") || strings.Contains(lowerASCII(trimmed), "elementid("+lowerASCII(variable)+")") {
 		return true
 	}
 	return false
@@ -949,13 +949,13 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 }
 
 func (e *StorageExecutor) tryFastRelationshipCount(matches *TraversalMatch, item returnItem) (count int64, ok bool, err error) {
-	upper := strings.ToUpper(strings.TrimSpace(item.expr))
+	upper := upperASCII(strings.TrimSpace(item.expr))
 	if !strings.HasPrefix(upper, "COUNT(") || !strings.HasSuffix(upper, ")") {
 		return 0, false, nil
 	}
 
 	arg := strings.TrimSpace(item.expr[len("COUNT(") : len(item.expr)-1])
-	argUpper := strings.ToUpper(strings.TrimSpace(arg))
+	argUpper := upperASCII(strings.TrimSpace(arg))
 
 	// Only handle COUNT(*) or COUNT(<relationship var>).
 	if argUpper != "*" && !strings.EqualFold(strings.TrimSpace(arg), matches.Relationship.Variable) {
@@ -1085,7 +1085,7 @@ func (e *StorageExecutor) countUndirectedRelationshipMatches(types []string) (in
 
 // isLengthPathExpr checks if an expression is length(path) for some path variable
 func isLengthPathExpr(expr string) bool {
-	return matchFuncStartAndSuffix(expr, "length") && strings.Contains(strings.ToLower(expr), "path")
+	return matchFuncStartAndSuffix(expr, "length") && strings.Contains(lowerASCII(expr), "path")
 }
 
 func (e *StorageExecutor) aggregatePathSum(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
@@ -2644,7 +2644,7 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 // Handles conditions like: i.name = 'value', e.score < 90, etc.
 func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause string, pathCtx PathContext) bool {
 	whereClause = strings.TrimSpace(whereClause)
-	upperClause := strings.ToUpper(whereClause)
+	upperClause := upperASCII(whereClause)
 
 	// Handle parenthesized expressions - strip outer parens and recurse
 	if strings.HasPrefix(whereClause, "(") && strings.HasSuffix(whereClause, ")") {

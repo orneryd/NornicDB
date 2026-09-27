@@ -65,7 +65,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Conte
 			return nil, true
 		}
 	}
-	upper := strings.ToUpper(expr)
+	upper := upperASCII(expr)
 	if strings.HasPrefix(upper, "NOT ") || strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") {
 		return nil, true
 	}

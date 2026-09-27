@@ -284,7 +284,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 			return true, true
 		}
 	}
-	upper := strings.ToUpper(expression)
+	upper := upperASCII(expression)
 	if strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") || strings.HasPrefix(upper, "NOT ") {
 		return true, true
 	}

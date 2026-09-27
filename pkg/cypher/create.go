@@ -1306,9 +1306,9 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 
 		// Check if WITH is non-trivial (has AS, collect, UNWIND, or multiple WITH) — then run pipeline
 		createVars := extractCreateVariableRefs(createPart)
-		hasNonTrivialWith := strings.Contains(strings.ToUpper(withPart), " AS ") ||
-			strings.Contains(strings.ToUpper(withPart), "COLLECT(") ||
-			strings.Contains(strings.ToUpper(withPart), "UNWIND ") ||
+		hasNonTrivialWith := strings.Contains(upperASCII(withPart), " AS ") ||
+			strings.Contains(upperASCII(withPart), "COLLECT(") ||
+			strings.Contains(upperASCII(withPart), "UNWIND ") ||
 			findKeywordIndex(withPart, "WITH") > 0
 		if hasNonTrivialWith && len(createVars) > 0 {
 			// Run MATCH+WITH pipeline and use its rows to drive CREATE (so WITH bindings like "pharmacy" are available)
@@ -1850,7 +1850,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			}
 
 			// Handle count() after DELETE
-			upperExpr := strings.ToUpper(item.expr)
+			upperExpr := upperASCII(item.expr)
 			if strings.HasPrefix(upperExpr, "COUNT(") && deleteTarget != "" {
 				row[i] = int64(1) // count of deleted items
 				continue
@@ -2035,7 +2035,7 @@ func (e *StorageExecutor) executeCompoundCreateWithDelete(ctx context.Context, c
 		returnPart := strings.TrimSpace(cypher[returnIdx+6:])
 
 		// Parse return expression
-		if strings.Contains(strings.ToLower(returnPart), "count(") {
+		if strings.Contains(lowerASCII(returnPart), "count(") {
 			// count() after delete should return 1 (counted before delete conceptually)
 			// But actually in Neo4j, count(t) after DELETE t returns 1 (the count of deleted items)
 			result.Columns = []string{"count(" + deleteTarget + ")"}
@@ -2124,7 +2124,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 	//   CREATE (...) SET ... WITH x CREATE (...) RETURN ...
 	remainingTrailing := strings.TrimSpace(trailingPart)
 	for remainingTrailing != "" {
-		upperTrailing := strings.ToUpper(remainingTrailing)
+		upperTrailing := upperASCII(remainingTrailing)
 
 		if strings.HasPrefix(upperTrailing, "RETURN ") {
 			break
@@ -2228,7 +2228,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 	}
 
 	// Handle RETURN clause
-	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(remainingTrailing)), "RETURN ") {
+	if strings.HasPrefix(upperASCII(strings.TrimSpace(remainingTrailing)), "RETURN ") {
 		returnPart := strings.TrimSpace(strings.TrimSpace(remainingTrailing)[len("RETURN "):])
 		returnItems := e.parseReturnItems(returnPart)
 		row := make([]interface{}, len(returnItems))
@@ -2438,7 +2438,7 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 		if segment == "" {
 			continue
 		}
-		upperSeg := strings.ToUpper(segment)
+		upperSeg := upperASCII(segment)
 
 		if strings.HasPrefix(upperSeg, "CREATE") {
 			createContent := strings.TrimSpace(segment[6:])
@@ -2971,7 +2971,7 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 	// LHS must be id(var) or elementId(var).
 	kind := ""
 	varName := ""
-	lowerLeft := strings.ToLower(left)
+	lowerLeft := lowerASCII(left)
 	switch {
 	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
 		kind = "id"

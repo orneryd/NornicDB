@@ -186,7 +186,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	qid := stringOr(req["qid"], "")
 	discard, _ := toBool(req["discard"])
 	n, nPresent := toInt(req["n"])
-	mode := search.SearchContinuationMode(strings.ToLower(strings.TrimSpace(stringOr(req["mode"], ""))))
+	mode := search.SearchContinuationMode(lowerASCII(strings.TrimSpace(stringOr(req["mode"], ""))))
 	groupBy := stringOr(firstPresent(req, "groupBy", "group_by"), "")
 	rankedLimit, rankedLimitPresent := toInt(firstPresent(req, "rankedLimit", "ranked_limit"))
 	continuationRequested := qid != "" || discard || nPresent || mode != "" || groupBy != "" || rankedLimitPresent
@@ -704,19 +704,19 @@ func applyAdaptiveCandidateOptions(opts *search.SearchOptions, req map[string]in
 }
 
 func (e *StorageExecutor) parseRagProcedureRequest(ctx context.Context, cypher, procName string) (map[string]interface{}, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, procName)
 	if idx == -1 {
-		return nil, localizedError(localization.CypherSubqueriesRAGSyntaxInvalid(strings.ToLower(procName)), nil)
+		return nil, localizedError(localization.CypherSubqueriesRAGSyntaxInvalid(lowerASCII(procName)), nil)
 	}
 	parenStart := strings.Index(cypher[idx:], "(")
 	if parenStart == -1 {
-		return nil, localizedError(localization.CypherSubqueriesRAGRequestArgumentRequired(strings.ToLower(procName)), nil)
+		return nil, localizedError(localization.CypherSubqueriesRAGRequestArgumentRequired(lowerASCII(procName)), nil)
 	}
 	parenStart += idx
 	parenEnd := e.findMatchingParen(cypher, parenStart)
 	if parenEnd == -1 {
-		return nil, localizedError(localization.CypherSubqueriesRAGParenthesisUnmatched(strings.ToLower(procName)), nil)
+		return nil, localizedError(localization.CypherSubqueriesRAGParenthesisUnmatched(lowerASCII(procName)), nil)
 	}
 	rawArg := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
 	if rawArg == "" {
@@ -733,13 +733,13 @@ func (e *StorageExecutor) parseRagProcedureRequest(ctx context.Context, cypher, 
 				return req, nil
 			}
 		}
-		return nil, localizedError(localization.CypherSubqueriesRAGParameterMustBeMap(strings.ToLower(procName), rawArg), nil)
+		return nil, localizedError(localization.CypherSubqueriesRAGParameterMustBeMap(lowerASCII(procName), rawArg), nil)
 	}
 	if (strings.HasPrefix(rawArg, "'") && strings.HasSuffix(rawArg, "'")) ||
 		(strings.HasPrefix(rawArg, "\"") && strings.HasSuffix(rawArg, "\"")) {
 		return map[string]interface{}{"query": strings.Trim(rawArg, "\"'")}, nil
 	}
-	return nil, localizedError(localization.CypherSubqueriesRAGRequestMustBeMapLiteral(strings.ToLower(procName)), nil)
+	return nil, localizedError(localization.CypherSubqueriesRAGRequestMustBeMapLiteral(lowerASCII(procName)), nil)
 }
 
 func toChatMessages(v interface{}) []heimdall.ChatMessage {

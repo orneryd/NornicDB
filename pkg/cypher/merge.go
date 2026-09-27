@@ -81,7 +81,7 @@ func mergeCreateConflict(err error) bool {
 	if errors.Is(err, storage.ErrAlreadyExists) {
 		return true
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "already exists")
+	return strings.Contains(lowerASCII(err.Error()), "already exists")
 }
 
 func mergePropsContainUnresolvedParamLiteral(props map[string]interface{}) bool {
@@ -603,7 +603,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 
 	// Helper function to find SET with any whitespace before it
 	findStandaloneSet := func(s string, start int) int {
-		upperS := strings.ToUpper(s)
+		upperS := upperASCII(s)
 		for i := start; i <= len(upperS)-3; i++ {
 			if strings.HasPrefix(upperS[i:], "SET") {
 				// Check for whitespace before SET
@@ -942,7 +942,7 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 	unwindPart := strings.TrimSpace(matchClause[unwindIdxInMatch+len("UNWIND"):])
 
 	// Parse "listExpr AS variable" from the UNWIND part.
-	upperUnwind := strings.ToUpper(unwindPart)
+	upperUnwind := upperASCII(unwindPart)
 	asIdx := strings.Index(upperUnwind, " AS ")
 	if asIdx <= 0 {
 		return nil, localizedError(localization.CypherMergeUnwindASRequired(), nil)
@@ -1103,7 +1103,7 @@ func parseTrailingWithWindow(matchClause string) (varName string, skip int, limi
 	skip = 0
 	limit = -1
 	for i := 1; i < len(tokens); {
-		switch strings.ToUpper(tokens[i]) {
+		switch upperASCII(tokens[i]) {
 		case "SKIP":
 			if i+1 >= len(tokens) {
 				return "", 0, 0, false
@@ -1349,7 +1349,7 @@ func (e *StorageExecutor) evaluateWhereForNodeMap(ctx context.Context, nodeMap m
 			continue
 		}
 		if !e.evaluateWhere(ctx, node, varName, wherePart) {
-			lowerWhere := strings.ToLower(wherePart)
+			lowerWhere := lowerASCII(wherePart)
 			refsVar := strings.Contains(wherePart, varName+".") ||
 				strings.Contains(wherePart, varName+" ") ||
 				strings.Contains(lowerWhere, "id("+varName+")") ||
@@ -1600,7 +1600,7 @@ func (e *StorageExecutor) parseVarPropEqualsLiteral(variable, expr string) (stri
 
 func (e *StorageExecutor) isLiteralIsNotNullExpr(expr string) bool {
 	expr = strings.TrimSpace(expr)
-	up := strings.ToUpper(expr)
+	up := upperASCII(expr)
 	needle := " IS NOT NULL"
 	idx := strings.Index(up, needle)
 	if idx <= 0 {
@@ -1648,7 +1648,7 @@ func (e *StorageExecutor) evaluateSimpleWhereClauseForNodeMap(ctx context.Contex
 	if clause == "" {
 		return true, true
 	}
-	upper := strings.ToUpper(clause)
+	upper := upperASCII(clause)
 	if inIdx := strings.Index(upper, " IN "); inIdx > 0 {
 		left := strings.TrimSpace(clause[:inIdx])
 		right := strings.TrimSpace(clause[inIdx+4:])
@@ -2023,7 +2023,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		}
 		if secondMergeIdx > 0 {
 			secondMergePart := strings.TrimSpace(cypher[mergeIdx+5+secondMergeIdx:])
-			if !strings.HasPrefix(strings.ToUpper(secondMergePart), "MERGE ") {
+			if !strings.HasPrefix(upperASCII(secondMergePart), "MERGE ") {
 				trimmed := strings.TrimSpace(secondMergePart)
 				if strings.HasPrefix(trimmed, "(") {
 					secondMergePart = "MERGE " + trimmed
@@ -2164,7 +2164,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	// Handle second MERGE (usually relationship creation)
 	if secondMergeIdx > 0 {
 		secondMergePart := strings.TrimSpace(cypher[mergeIdx+5+secondMergeIdx:])
-		if !strings.HasPrefix(strings.ToUpper(secondMergePart), "MERGE ") {
+		if !strings.HasPrefix(upperASCII(secondMergePart), "MERGE ") {
 			trimmed := strings.TrimSpace(secondMergePart)
 			if strings.HasPrefix(trimmed, "(") {
 				secondMergePart = "MERGE " + trimmed
@@ -2918,7 +2918,7 @@ func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher stri
 			continue
 		}
 
-		upperSeg := strings.ToUpper(segment)
+		upperSeg := upperASCII(segment)
 
 		if i == 0 {
 			// First segment may contain multiple setup MERGEs before the first WITH.
@@ -2928,7 +2928,7 @@ func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher stri
 				if initialClause == "" {
 					continue
 				}
-				upperInitial := strings.ToUpper(initialClause)
+				upperInitial := upperASCII(initialClause)
 				if strings.HasPrefix(upperInitial, "MERGE") {
 					mergeContent := strings.TrimSpace(initialClause[5:])
 					if strings.Contains(mergeContent, "-[") || strings.Contains(mergeContent, "]-") {
@@ -3008,7 +3008,7 @@ func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher stri
 				if strings.TrimSpace(clause) == "" {
 					continue
 				}
-				upperClause := strings.ToUpper(strings.TrimSpace(clause))
+				upperClause := upperASCII(strings.TrimSpace(clause))
 
 				// If chain is broken, we must still allow the final RETURN segment to produce 0 rows
 				// (handled above), but all intermediate updates/clauses are skipped.
@@ -3091,7 +3091,7 @@ func collapseConsecutiveDuplicateWithClauses(cypher string) string {
 	var prevTrim string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		upperTrim := strings.ToUpper(trimmed)
+		upperTrim := upperASCII(trimmed)
 		if strings.HasPrefix(upperTrim, "WITH ") && prevTrim == trimmed {
 			continue
 		}
@@ -3262,7 +3262,7 @@ func (e *StorageExecutor) splitMergeChainSegments(cypher string) []string {
 		// Check it's not "STARTS WITH" or "ENDS WITH"
 		actualPos := searchPos + idx
 		if actualPos > 6 {
-			before := strings.ToUpper(cypher[actualPos-6 : actualPos])
+			before := upperASCII(cypher[actualPos-6 : actualPos])
 			if strings.HasSuffix(strings.TrimSpace(before), "STARTS") || strings.HasSuffix(strings.TrimSpace(before), "ENDS") {
 				searchPos = actualPos + 4
 				continue
@@ -3498,7 +3498,7 @@ func findStandaloneSetInMergeSegmentFrom(segment string, start int) int {
 			searchFrom = idx + 3
 			continue
 		}
-		prefix := strings.ToUpper(strings.TrimSpace(segment[:idx]))
+		prefix := upperASCII(strings.TrimSpace(segment[:idx]))
 		if strings.HasSuffix(prefix, "ON CREATE") || strings.HasSuffix(prefix, "ON MATCH") {
 			searchFrom = idx + 3
 			continue
@@ -3721,7 +3721,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 		if segment == "" {
 			continue
 		}
-		upperSeg := strings.ToUpper(segment)
+		upperSeg := upperASCII(segment)
 
 		if strings.HasPrefix(upperSeg, "MERGE") {
 			if chainBroken {
@@ -3893,7 +3893,7 @@ func collectTopLevelMergeClauseBoundaries(cypher string, keywords []string) []me
 	// Prefer longer keywords first so OPTIONAL MATCH wins over MATCH.
 	sort.SliceStable(keywords, func(i, j int) bool { return len(keywords[i]) > len(keywords[j]) })
 
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	inSingle := false
 	inDouble := false
 	inBacktick := false
@@ -3992,12 +3992,12 @@ func isCreatePatternClause(cypher string, afterCreate int) bool {
 
 func isOnMatchModifier(cypher string, matchPos int) bool {
 	prefix := strings.TrimSpace(cypher[:matchPos])
-	return strings.HasSuffix(strings.ToUpper(prefix), "ON")
+	return strings.HasSuffix(upperASCII(prefix), "ON")
 }
 
 func isOptionalMatchModifier(cypher string, matchPos int) bool {
 	prefix := strings.TrimSpace(cypher[:matchPos])
-	return strings.HasSuffix(strings.ToUpper(prefix), "OPTIONAL")
+	return strings.HasSuffix(upperASCII(prefix), "OPTIONAL")
 }
 
 func (e *StorageExecutor) projectWithContext(ctx context.Context, withClause string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge, scalarCtx map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, map[string]interface{}) {

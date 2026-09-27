@@ -16,7 +16,7 @@ func canonicalizeVectorQueryText(text string) string {
 	}
 	// Normalize to improve cache hit-rate for semantically equivalent queries
 	// that only differ in casing/spacing.
-	return strings.Join(strings.Fields(strings.ToLower(trimmed)), " ")
+	return strings.Join(strings.Fields(lowerASCII(trimmed)), " ")
 }
 
 func cloneFloat32Slice(src []float32) []float32 {

@@ -60,7 +60,7 @@ type aggregateSpan struct {
 // not reported separately.
 func findAggregateSpans(expr string) []aggregateSpan {
 	var spans []aggregateSpan
-	lower := strings.ToLower(expr)
+	lower := lowerASCII(expr)
 	i := 0
 	for i < len(lower) {
 		c := lower[i]
@@ -139,7 +139,7 @@ func parseTraversalAggregateCall(expr string) (traversalAggSpec, error) {
 	if open <= 0 || !strings.HasSuffix(trimmed, ")") {
 		return spec, localizedError(localization.CypherMatchingAggregateCallExpected(trimmed), nil)
 	}
-	name := strings.ToLower(strings.TrimSpace(trimmed[:open]))
+	name := lowerASCII(strings.TrimSpace(trimmed[:open]))
 	for _, fn := range traversalAggFnNames {
 		if name == fn {
 			spec.fn = fn

@@ -270,13 +270,13 @@ func buildFulltextDocFromProperties(properties map[string]interface{}, content s
 		if raw == "" {
 			continue
 		}
-		props[strings.ToLower(k)] = strings.ToLower(raw)
-		rawProps[strings.ToLower(k)] = raw
+		props[lowerASCII(k)] = lowerASCII(raw)
+		rawProps[lowerASCII(k)] = raw
 	}
 	if content == "" {
 		return nil
 	}
-	contentLower := strings.ToLower(content)
+	contentLower := lowerASCII(content)
 	return &ftDoc{
 		properties:    props,
 		rawProperties: rawProps,
@@ -290,7 +290,7 @@ func (e *StorageExecutor) extractFulltextParams(cypher string) (indexName, query
 	indexName = "default"
 
 	// Find the procedure call
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	callIdx := strings.Index(upper, "DB.INDEX.FULLTEXT.QUERYNODES")
 	if callIdx == -1 {
 		callIdx = strings.Index(upper, "DB.INDEX.FULLTEXT.QUERYRELATIONSHIPS")
@@ -393,7 +393,7 @@ type fulltextQueryOptions struct {
 func (e *StorageExecutor) extractFulltextQueryOptions(cypher string) (fulltextQueryOptions, error) {
 	opts := fulltextQueryOptions{skip: 0, limit: -1}
 
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	callIdx := strings.Index(upper, "DB.INDEX.FULLTEXT.QUERYNODES")
 	if callIdx == -1 {
 		callIdx = strings.Index(upper, "DB.INDEX.FULLTEXT.QUERYRELATIONSHIPS")
@@ -514,7 +514,7 @@ func appendFulltextOptionedRow(result *ExecuteResult, opts fulltextQueryOptions,
 
 // parseFulltextQuery parses a fulltext query into regular terms, exclude terms, and must-have terms
 func parseFulltextQuery(query string) (terms, excludeTerms, mustHaveTerms []string) {
-	query = strings.ToLower(query)
+	query = lowerASCII(query)
 
 	// Handle quoted phrases.
 	var phrases []string
@@ -597,7 +597,7 @@ func extractQuotedPhrasesAndStrip(s string) (stripped string, phrases []string) 
 // no rows). Trimming + lowercasing keeps `" * "`, `*:*`, and `*` all
 // canonical.
 func isFulltextWildcard(query string) bool {
-	q := strings.ToLower(strings.TrimSpace(query))
+	q := lowerASCII(strings.TrimSpace(query))
 	return q == "*" || q == "*:*"
 }
 

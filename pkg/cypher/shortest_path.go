@@ -111,9 +111,9 @@ func (e *StorageExecutor) resolveShortestPathVariables(ctx context.Context, quer
 }
 
 func extractShortestPathCall(cypher string) (string, string, int, bool) {
-	upperCypher := strings.ToUpper(cypher)
+	upperCypher := upperASCII(cypher)
 	for _, funcName := range []string{"allShortestPaths", "shortestPath"} {
-		upperFunc := strings.ToUpper(funcName)
+		upperFunc := upperASCII(funcName)
 		searchStart := 0
 		for searchStart < len(cypher) {
 			idx := strings.Index(upperCypher[searchStart:], upperFunc)
@@ -458,6 +458,6 @@ func pathValueParts(path map[string]interface{}) (nodes, relationships []interfa
 
 // isShortestPathQuery checks if a query uses shortestPath or allShortestPaths
 func isShortestPathQuery(cypher string) bool {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	return strings.Contains(upper, "SHORTESTPATH") || strings.Contains(upper, "ALLSHORTESTPATHS")
 }

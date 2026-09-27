@@ -48,7 +48,7 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	store := e.getStorage(ctx)
 
 	// Parse: MATCH (n) WHERE ... DELETE n or DETACH DELETE n
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	detach := strings.Contains(upper, "DETACH")
 
 	// Get MATCH part - use word boundary detection
@@ -73,7 +73,7 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 		// scope (§6.2 bound child contexts, e.g. FOREACH over an entity list).
 		if matchIdx == -1 && deleteIdx >= 0 {
 			target := strings.TrimSpace(cypher[deleteIdx:])
-			upperTarget := strings.ToUpper(target)
+			upperTarget := upperASCII(target)
 			switch {
 			case strings.HasPrefix(upperTarget, "DETACH DELETE "):
 				target = target[14:] // len("DETACH DELETE ")
@@ -93,7 +93,7 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	// Parse the delete target variable(s) - e.g., "DELETE n" or "DETACH DELETE n"
 	// Preserve original case of variable names
 	deleteClause := strings.TrimSpace(cypher[deleteIdx:])
-	upperDeleteClause := strings.ToUpper(deleteClause)
+	upperDeleteClause := upperASCII(deleteClause)
 
 	// Handle DETACH DELETE - must check for "DETACH DELETE " first (longer string)
 	if detach {
@@ -108,7 +108,7 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	}
 
 	// After handling DETACH, check for remaining "DELETE " prefix
-	upperDeleteClause = strings.ToUpper(deleteClause)
+	upperDeleteClause = upperASCII(deleteClause)
 	if strings.HasPrefix(upperDeleteClause, "DELETE ") {
 		deleteClause = deleteClause[7:] // len("DELETE ")
 	}
@@ -126,7 +126,7 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 
 	// For DETACH DELETE, ensure deleteIdx points to "DETACH DELETE", not bare "DETACH".
 	if detach && deleteIdx > 0 {
-		checkSubstring := strings.ToUpper(strings.TrimSpace(cypher[deleteIdx:]))
+		checkSubstring := upperASCII(strings.TrimSpace(cypher[deleteIdx:]))
 		if strings.HasPrefix(checkSubstring, "DETACH ") && !strings.HasPrefix(checkSubstring, "DETACH DELETE ") {
 			return nil, localizedError(localization.CypherMutationsDetachDeleteKeywordsRequired(), nil)
 		}
@@ -679,7 +679,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 		} else {
 			result.Columns[i] = item.expr
 		}
-		upperExpr := strings.ToUpper(item.expr)
+		upperExpr := upperASCII(item.expr)
 
 		// COUNT() aggregation over deleted nodes/relationships.
 		if strings.HasPrefix(upperExpr, "COUNT(") {
@@ -1059,8 +1059,8 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 
 	// If SET is followed by additional pipeline clauses (e.g. UNWIND/WITH), rerun
 	// the post-mutation read pipeline as MATCH ... <trailing clauses>.
-	if trailingPart != "" && !strings.HasPrefix(strings.ToUpper(trailingPart), "RETURN ") {
-		if strings.HasPrefix(strings.ToUpper(trailingPart), "REMOVE ") {
+	if trailingPart != "" && !strings.HasPrefix(upperASCII(trailingPart), "RETURN ") {
+		if strings.HasPrefix(upperASCII(trailingPart), "REMOVE ") {
 			removeTail := strings.TrimSpace(trailingPart[len("REMOVE "):])
 			removePart := removeTail
 			nextTrailing := ""
@@ -1074,9 +1074,9 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			trailingPart = nextTrailing
 		}
 
-		if trailingPart == "" || strings.HasPrefix(strings.ToUpper(trailingPart), "RETURN ") {
+		if trailingPart == "" || strings.HasPrefix(upperASCII(trailingPart), "RETURN ") {
 			// Defer to common RETURN/default handling below.
-		} else if strings.HasPrefix(strings.ToUpper(trailingPart), "UNWIND ") {
+		} else if strings.HasPrefix(upperASCII(trailingPart), "UNWIND ") {
 			return e.executeSetTrailingUnwind(ctx, trailingPart, matchResult, result)
 		} else if withResult, handled, err := e.executeSetTrailingWithReturn(ctx, trailingPart, matchResult, result); handled {
 			if err != nil {
@@ -1096,7 +1096,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	}
 
 	// Handle RETURN
-	if returnIdx > 0 || strings.HasPrefix(strings.ToUpper(trailingPart), "RETURN ") {
+	if returnIdx > 0 || strings.HasPrefix(upperASCII(trailingPart), "RETURN ") {
 		returnPart := trailingPart
 		if returnPart == "" {
 			returnPart = strings.TrimSpace(cypher[returnIdx+6:])
@@ -1125,11 +1125,11 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 		if hasAggregation {
 			aggRow := make([]interface{}, len(returnItems))
 			for j, item := range returnItems {
-				exprUpper := strings.ToUpper(strings.TrimSpace(item.expr))
+				exprUpper := upperASCII(strings.TrimSpace(item.expr))
 				switch {
 				case strings.HasPrefix(exprUpper, "COUNT(") && strings.HasSuffix(exprUpper, ")"):
 					inner := strings.TrimSpace(item.expr[len("COUNT(") : len(item.expr)-1])
-					innerUpper := strings.ToUpper(inner)
+					innerUpper := upperASCII(inner)
 					if innerUpper == "*" || inner == "" {
 						aggRow[j] = int64(len(matchResult.Rows))
 						continue
@@ -1390,7 +1390,7 @@ func firstPostSetClauseIndex(setTail string) int {
 // visible within the same query.
 func (e *StorageExecutor) executeSetTrailingUnwind(ctx context.Context, trailingPart string, matchResult *ExecuteResult, result *ExecuteResult) (*ExecuteResult, error) {
 	unwindPart := strings.TrimSpace(trailingPart)
-	if !strings.HasPrefix(strings.ToUpper(unwindPart), "UNWIND ") {
+	if !strings.HasPrefix(upperASCII(unwindPart), "UNWIND ") {
 		return nil, localizedError(localization.CypherMutationsUnwindClauseExpected(), nil)
 	}
 	unwindPart = strings.TrimSpace(unwindPart[len("UNWIND "):])
@@ -1500,7 +1500,7 @@ func (e *StorageExecutor) resolveUnwindValueFromExpr(ctx context.Context, unwind
 // executeSetTrailingWithReturn handles MATCH ... SET ... WITH ... RETURN by
 // evaluating WITH/RETURN directly over the mutated MATCH rows.
 func (e *StorageExecutor) executeSetTrailingWithReturn(ctx context.Context, trailingPart string, matchResult *ExecuteResult, result *ExecuteResult) (*ExecuteResult, bool, error) {
-	upper := strings.ToUpper(strings.TrimSpace(trailingPart))
+	upper := upperASCII(strings.TrimSpace(trailingPart))
 	if !strings.HasPrefix(upper, "WITH ") {
 		return nil, false, nil
 	}
@@ -2082,7 +2082,7 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 	}
 	runeToByteIndex[runeLen] = byteIdx
 
-	upper := strings.ToUpper(returnPart)
+	upper := upperASCII(returnPart)
 
 	for ri := 0; ri < runeLen; ri++ {
 		ch := runes[ri]
@@ -2265,8 +2265,8 @@ func (e *StorageExecutor) idCounter() int64 {
 
 // extractSubquery extracts the MATCH pattern from EXISTS { MATCH ... } or NOT EXISTS { MATCH ... }
 func (e *StorageExecutor) extractSubquery(whereClause, prefix string) string {
-	upperClause := strings.ToUpper(whereClause)
-	prefixUpper := strings.ToUpper(prefix)
+	upperClause := upperASCII(whereClause)
+	prefixUpper := upperASCII(prefix)
 
 	// Find the prefix position
 	prefixIdx := strings.Index(upperClause, prefixUpper)

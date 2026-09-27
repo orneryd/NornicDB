@@ -20,7 +20,7 @@ import (
 
 func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) (*ExecuteResult, error) {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
-	upper := strings.ToUpper(query)
+	upper := upperASCII(query)
 	prefix := "SHOW SETTINGS"
 	if !strings.HasPrefix(upper, prefix) {
 		prefix = "SHOW SETTING"
@@ -103,7 +103,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 	}
 	schema := e.storage.GetSchema()
 	rows := [][]interface{}{}
-	upper := strings.ToUpper(strings.TrimSpace(cypher))
+	upper := upperASCII(strings.TrimSpace(cypher))
 	indexTypeFilter := ""
 	switch {
 	case strings.HasPrefix(upper, "SHOW FULLTEXT INDEX"):
@@ -179,7 +179,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 					config["vector.dimensions"] = int64(dimensions)
 				}
 				if similarity, ok := idxMap["similarityFunc"].(string); ok && similarity != "" {
-					config["vector.similarity_function"] = strings.ToUpper(similarity)
+					config["vector.similarity_function"] = upperASCII(similarity)
 				}
 			}
 
@@ -1619,7 +1619,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 			return nil, localizedError(localization.CypherAdminInvalidLimitAssignment(assignment), nil)
 		}
 
-		limitName := strings.TrimSpace(strings.ToLower(parts[0]))
+		limitName := strings.TrimSpace(lowerASCII(parts[0]))
 		limitValue := strings.TrimSpace(parts[1])
 
 		// Parse and set the limit based on name

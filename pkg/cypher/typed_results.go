@@ -107,7 +107,7 @@ func decodeStruct(columns []string, values []interface{}, destElem reflect.Value
 			}
 		}
 		if name == "" || name == "-" {
-			name = strings.ToLower(field.Name)
+			name = lowerASCII(field.Name)
 		}
 
 		fieldMap[name] = i
@@ -124,7 +124,7 @@ func decodeStruct(columns []string, values []interface{}, destElem reflect.Value
 		if idx := strings.LastIndex(col, "."); idx != -1 {
 			colName = col[idx+1:]
 		}
-		colName = strings.ToLower(colName)
+		colName = lowerASCII(colName)
 
 		fieldIdx, ok := fieldMap[colName]
 		if !ok {
@@ -167,13 +167,13 @@ func decodeMap(m map[string]interface{}, destElem reflect.Value) error {
 			}
 		}
 		if name == "" || name == "-" {
-			name = strings.ToLower(field.Name)
+			name = lowerASCII(field.Name)
 		}
 
 		// Try exact match first, then lowercase
 		val, ok := m[name]
 		if !ok {
-			val, ok = m[strings.ToLower(name)]
+			val, ok = m[lowerASCII(name)]
 		}
 		if !ok {
 			val, ok = m[field.Name]

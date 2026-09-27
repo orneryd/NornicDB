@@ -56,7 +56,7 @@ func isCreateProcedureCommand(cypher string) bool {
 }
 
 func isDropProcedureCommand(cypher string) bool {
-	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(cypher)), "DROP PROCEDURE")
+	return strings.HasPrefix(upperASCII(strings.TrimSpace(cypher)), "DROP PROCEDURE")
 }
 
 func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher string) (*ExecuteResult, error) {
@@ -77,7 +77,7 @@ func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher str
 	if err != nil {
 		return nil, err
 	}
-	mode := strings.ToUpper(strings.TrimSpace(m[4]))
+	mode := upperASCII(strings.TrimSpace(m[4]))
 	body := strings.TrimSpace(m[5])
 	if body == "" {
 		return nil, localizedError(localization.CypherProceduresBodyRequired(), nil)
@@ -195,7 +195,7 @@ func parseProcedureArgNames(raw string) ([]string, error) {
 }
 
 func (e *StorageExecutor) compilePersistedProcedure(record persistedProcedureRecord) (ProcedureSpec, ProcedureHandler, persistedProcedureRecord, error) {
-	mode := ProcedureMode(strings.ToUpper(record.Mode))
+	mode := ProcedureMode(upperASCII(record.Mode))
 	switch mode {
 	case ProcedureModeRead, ProcedureModeWrite, ProcedureModeSchema, ProcedureModeAdmin, ProcedureModeDBMS:
 	default:
@@ -246,7 +246,7 @@ func buildProcedureSignature(name string, args []string) string {
 }
 
 func procedureCatalogNodeID(name string) storage.NodeID {
-	return storage.NodeID(procedureCatalogPrefix + strings.ToLower(strings.TrimSpace(name)))
+	return storage.NodeID(procedureCatalogPrefix + lowerASCII(strings.TrimSpace(name)))
 }
 
 func ensureLabel(labels []string, label string) []string {

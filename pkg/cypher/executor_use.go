@@ -66,7 +66,7 @@ func parseLeadingUseClause(cypher string) (database, remaining string, hasUse bo
 
 func parseDynamicGraphReference(rest string) (database, remaining string, ok bool, err error) {
 	trimmed := strings.TrimSpace(rest)
-	lower := strings.ToLower(trimmed)
+	lower := lowerASCII(trimmed)
 
 	for _, prefix := range []string{"graph.byname(", "graph.byelementid("} {
 		if !strings.HasPrefix(lower, prefix) {

@@ -510,7 +510,7 @@ func maskSemanticBraceBodies(expression string) string {
 		for start > 0 && isAlphaNumericByte(expression[start-1]) {
 			start--
 		}
-		switch strings.ToUpper(expression[start:end]) {
+		switch upperASCII(expression[start:end]) {
 		case "COUNT", "EXISTS", "COLLECT":
 			for blank := start; blank < end; blank++ {
 				masked[blank] = ' '
@@ -524,7 +524,7 @@ func maskSemanticBraceBodies(expression string) string {
 // isSemanticLiteralWord reports whether an identifier-shaped word is a
 // literal or an operator / expression keyword, not a variable.
 func isSemanticLiteralWord(value string) bool {
-	switch strings.ToUpper(value) {
+	switch upperASCII(value) {
 	case "TRUE", "FALSE", "NULL", "NAN", "ASC", "ASCENDING", "DESC", "DESCENDING",
 		"AND", "IN", "NOT", "OR", "WHERE", "XOR", "IS", "STARTS", "ENDS", "WITH", "CONTAINS",
 		"CASE", "WHEN", "THEN", "ELSE", "END", "DISTINCT":
@@ -563,7 +563,7 @@ func removeAggregateCalls(expression string) string {
 }
 
 func isAggregateFunctionName(name string) bool {
-	switch strings.ToUpper(normalizeProjectionColumnName(name)) {
+	switch upperASCII(normalizeProjectionColumnName(name)) {
 	case "COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT", "STDEV", "STDEVP", "PERCENTILECONT", "PERCENTILEDISC":
 		return true
 	default:

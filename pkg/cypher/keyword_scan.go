@@ -766,6 +766,45 @@ func asciiUpper(b byte) byte {
 	return b
 }
 
+// upperASCII upper-cases the ASCII letters of statement text and leaves every
+// other byte as it is, so the result has the same length as the text and a
+// position found in it (a keyword's offset) indexes the text itself. Cypher
+// keywords are ASCII, so it is the upper-casing for finding them.
+// strings.ToUpper is not: a non-ASCII letter can change length ('ı' is two
+// bytes, its 'I' one), which shifted every later position and cut the text
+// in the wrong place (#748). Cypher's toUpper() on data keeps
+// strings.ToUpper.
+func upperASCII(text string) string {
+	for i := 0; i < len(text); i++ {
+		if c := text[i]; c >= 'a' && c <= 'z' {
+			out := []byte(text)
+			for j := i; j < len(out); j++ {
+				out[j] = asciiUpper(out[j])
+			}
+			return string(out)
+		}
+	}
+	return text
+}
+
+// lowerASCII is upperASCII's lower-case counterpart: ASCII letters only, same
+// length and positions as the text ('İ' lower-cases to three bytes with
+// strings.ToLower). Cypher's toLower() on data keeps strings.ToLower.
+func lowerASCII(text string) string {
+	for i := 0; i < len(text); i++ {
+		if c := text[i]; c >= 'A' && c <= 'Z' {
+			out := []byte(text)
+			for j := i; j < len(out); j++ {
+				if c := out[j]; c >= 'A' && c <= 'Z' {
+					out[j] = c + ('a' - 'A')
+				}
+			}
+			return string(out)
+		}
+	}
+	return text
+}
+
 func isIdentByte(b byte) bool {
 	if b >= 0x80 {
 		return true

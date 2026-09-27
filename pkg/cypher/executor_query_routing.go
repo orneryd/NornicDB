@@ -1016,7 +1016,7 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 	if c := cypher[start]; c >= '0' && c <= '9' {
 		return false
 	}
-	_, keyword := literalLeadingKeywords[strings.ToUpper(cypher[start:end])]
+	_, keyword := literalLeadingKeywords[upperASCII(cypher[start:end])]
 	return !keyword
 }
 

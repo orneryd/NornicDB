@@ -427,7 +427,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		// Parse: acc = initial, x IN list | expr
 		eqIdx := strings.Index(inner, "=")
 		commaIdx := strings.Index(inner, ",")
-		inIdx := strings.Index(strings.ToUpper(inner), " IN ")
+		inIdx := strings.Index(upperASCII(inner), " IN ")
 		pipeIdx := strings.Index(inner, "|")
 
 		if eqIdx > 0 && commaIdx > eqIdx && inIdx > commaIdx && pipeIdx > inIdx {
@@ -1141,13 +1141,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// filter(variable IN list WHERE predicate) - filter list elements
 	if matchFuncStartAndSuffix(expr, "filter") {
 		inner := extractFuncArgs(expr, "filter")
-		inIdx := strings.Index(strings.ToLower(inner), " in ")
+		inIdx := strings.Index(lowerASCII(inner), " in ")
 		if inIdx == -1 {
 			return []interface{}{}
 		}
 		varName := strings.TrimSpace(inner[:inIdx])
 		rest := inner[inIdx+4:]
-		whereIdx := strings.Index(strings.ToLower(rest), " where ")
+		whereIdx := strings.Index(lowerASCII(rest), " where ")
 		if whereIdx == -1 {
 			return []interface{}{}
 		}
@@ -1174,7 +1174,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// extract(variable IN list | expression) - transform list elements
 	if matchFuncStartAndSuffix(expr, "extract") {
 		inner := extractFuncArgs(expr, "extract")
-		inIdx := strings.Index(strings.ToLower(inner), " in ")
+		inIdx := strings.Index(lowerASCII(inner), " in ")
 		if inIdx == -1 {
 			return []interface{}{}
 		}
@@ -1203,9 +1203,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	}
 
 	// [x IN list WHERE condition | expression] - filter before projection.
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(strings.ToUpper(expr), " WHERE ") && strings.Contains(expr, " | ") {
+	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(upperASCII(expr), " WHERE ") && strings.Contains(expr, " | ") {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
-		upperInner := strings.ToUpper(inner)
+		upperInner := upperASCII(inner)
 		inIdx := strings.Index(upperInner, " IN ")
 		whereIdx := strings.Index(upperInner, " WHERE ")
 		pipeIdx := strings.LastIndex(inner, " | ")
@@ -1241,9 +1241,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	}
 
 	// [x IN list WHERE condition] - list comprehension with filter
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(strings.ToUpper(expr), " WHERE ") {
+	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(upperASCII(expr), " WHERE ") {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
-		upperInner := strings.ToUpper(inner)
+		upperInner := upperASCII(inner)
 		inIdx := strings.Index(upperInner, " IN ")
 		whereIdx := strings.Index(upperInner, " WHERE ")
 
@@ -1333,7 +1333,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// [x IN list | expression] - list comprehension with transformation
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(expr, " | ") {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
-		inIdx := strings.Index(strings.ToUpper(inner), " IN ")
+		inIdx := strings.Index(upperASCII(inner), " IN ")
 		if inIdx > 0 {
 			varName := strings.TrimSpace(inner[:inIdx])
 			rest := inner[inIdx+4:]
@@ -1406,7 +1406,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// [x IN list] - simple list comprehension (identity)
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
-		upperInner := strings.ToUpper(inner)
+		upperInner := upperASCII(inner)
 		inIdx := strings.Index(upperInner, " IN ")
 		// Only if no WHERE or | (those are handled above)
 		if inIdx > 0 && !strings.Contains(upperInner, " WHERE ") && !strings.Contains(inner, " | ") {

@@ -406,7 +406,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	}
 
 	// Handle booleans
-	lowerVal := strings.ToLower(valueStr)
+	lowerVal := lowerASCII(valueStr)
 	if lowerVal == "true" {
 		return true
 	}

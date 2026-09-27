@@ -31,8 +31,8 @@ func SplitByKeyword(s, keyword string) []string {
 		return []string{s}
 	}
 
-	upper := strings.ToUpper(s)
-	keywordUpper := strings.ToUpper(keyword)
+	upper := upperASCII(s)
+	keywordUpper := upperASCII(keyword)
 	keywordLen := len(keyword)
 
 	var result []string
@@ -149,8 +149,8 @@ func ExtractSkipString(query string) string {
 
 // extractIntAfterKeyword finds a keyword and extracts the integer that follows.
 func extractIntAfterKeyword(s, keyword string) (int, bool) {
-	upper := strings.ToUpper(s)
-	keywordUpper := strings.ToUpper(keyword)
+	upper := upperASCII(s)
+	keywordUpper := upperASCII(keyword)
 
 	idx := strings.Index(upper, keywordUpper)
 	if idx < 0 {
@@ -190,8 +190,8 @@ func extractIntAfterKeyword(s, keyword string) (int, bool) {
 
 // extractStringAfterKeyword finds a keyword and extracts the number string that follows.
 func extractStringAfterKeyword(s, keyword string) string {
-	upper := strings.ToUpper(s)
-	keywordUpper := strings.ToUpper(keyword)
+	upper := upperASCII(s)
+	keywordUpper := upperASCII(keyword)
 
 	idx := strings.Index(upper, keywordUpper)
 	if idx < 0 {
@@ -235,8 +235,8 @@ func FindKeywordIndex(s, keyword string) int {
 		return -1
 	}
 
-	upper := strings.ToUpper(s)
-	keywordUpper := strings.ToUpper(keyword)
+	upper := upperASCII(s)
+	keywordUpper := upperASCII(keyword)
 	keywordLen := len(keyword)
 
 	for i := 0; i <= len(upper)-keywordLen; i++ {
@@ -296,7 +296,7 @@ func ParseAggregation(expr string) *AggregationResult {
 		return nil
 	}
 
-	upper := strings.ToUpper(expr)
+	upper := upperASCII(expr)
 
 	// Find the function name
 	var funcName string

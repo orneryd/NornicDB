@@ -60,7 +60,7 @@ func nextShellCommand(input string) (string, string, bool) {
 		return "", input, false
 	}
 
-	commandName := strings.ToLower(fields[0])
+	commandName := lowerASCII(fields[0])
 	if (commandName == ":param" || commandName == ":params") && isMapStyleShellParam(trimmed) {
 		command, consumed, ok := consumeShellMapCommand(trimmed)
 		if !ok {
@@ -80,7 +80,7 @@ func isMapStyleShellParam(command string) bool {
 	if len(fields) == 0 {
 		return false
 	}
-	name := strings.ToLower(fields[0])
+	name := lowerASCII(fields[0])
 	if name != ":param" && name != ":params" {
 		return false
 	}
@@ -179,7 +179,7 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command strin
 		return nil, ctx, localizedError(localization.CypherCommandRoutingEmptyCommand(), nil)
 	}
 
-	name := strings.ToLower(parts[0])
+	name := lowerASCII(parts[0])
 	args := ""
 	if len(trimmed) > len(parts[0]) {
 		args = strings.TrimSpace(trimmed[len(parts[0]):])

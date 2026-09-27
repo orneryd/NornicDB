@@ -169,7 +169,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctxEval func(string) inter
 	if !ok {
 		return nil, false
 	}
-	kind := strings.ToLower(name)
+	kind := lowerASCII(name)
 	if kind == "duration.between" || kind == "duration.inmonths" || kind == "duration.indays" || kind == "duration.inseconds" {
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) != 2 {
@@ -746,7 +746,7 @@ var temporalConstructorTypes = map[string]string{
 // isTemporalConstructor reports date, datetime, localdatetime, time,
 // localtime and duration.
 func isTemporalConstructor(function string) bool {
-	_, ok := temporalConstructorTypes[strings.ToLower(function)]
+	_, ok := temporalConstructorTypes[lowerASCII(function)]
 	return ok
 }
 
@@ -756,7 +756,7 @@ func isTemporalConstructor(function string) bool {
 // invalid fields, and ProcedureCallFailed for a value of another type. It is
 // nil for a null input, which gives null.
 func temporalConstructorError(function string, input interface{}) error {
-	typeName := temporalConstructorTypes[strings.ToLower(function)]
+	typeName := temporalConstructorTypes[lowerASCII(function)]
 	switch value := input.(type) {
 	case nil:
 		return nil
@@ -764,7 +764,7 @@ func temporalConstructorError(function string, input interface{}) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
 			localization.CypherCoreTemporalTextUnparseable(typeName, strconv.Quote(value)))
 	case map[string]interface{}:
-		if err := temporalFieldsError(strings.ToLower(function), value); err != nil {
+		if err := temporalFieldsError(lowerASCII(function), value); err != nil {
 			return err
 		}
 		return localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",

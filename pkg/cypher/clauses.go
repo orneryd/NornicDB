@@ -157,7 +157,7 @@ func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*Exec
 		// (so a bare aggregating RETURN like collect() still produces
 		// exactly one row holding an empty list, never zero rows).
 		whereFiltered := false
-		if strings.HasPrefix(strings.ToUpper(remainder), "WHERE ") {
+		if strings.HasPrefix(upperASCII(remainder), "WHERE ") {
 			afterWhereStart := len("WHERE ")
 			endIdx := len(remainder)
 			for _, kw := range []string{"RETURN", "WITH", "ORDER", "SKIP", "LIMIT"} {
@@ -185,7 +185,7 @@ func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*Exec
 		}
 
 		// If it's a RETURN clause, evaluate it with the bound variables
-		if strings.HasPrefix(strings.ToUpper(remainder), "RETURN") {
+		if strings.HasPrefix(upperASCII(remainder), "RETURN") {
 			returnExpr := strings.TrimSpace(remainder[6:])
 
 			// Parse return items
@@ -283,7 +283,7 @@ func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*Exec
 
 		// Substitute bound variables into remainder before delegating
 		// e.g., WITH [[1,2],[3,4]] AS matrix UNWIND matrix ... -> UNWIND [[1,2],[3,4]] ...
-		if strings.HasPrefix(strings.ToUpper(remainder), "CALL ") {
+		if strings.HasPrefix(upperASCII(remainder), "CALL ") {
 			if yield := parseYieldClause(remainder); yield != nil {
 				for _, item := range yield.items {
 					name := item.name
@@ -415,7 +415,7 @@ var aggregateFnNames = []string{"collect", "count", "sum", "avg", "min", "max", 
 // expression at the top level. Recognizes the canonical forms
 // `collect(...)`, `count(...)`, etc., case-insensitively.
 func isAggregateExpression(expr string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(expr))
+	trimmed := lowerASCII(strings.TrimSpace(expr))
 	for _, fn := range aggregateFnNames {
 		if strings.HasPrefix(trimmed, fn+"(") || strings.HasPrefix(trimmed, fn+" (") {
 			return true
@@ -436,7 +436,7 @@ func isAggregateExpression(expr string) bool {
 //
 // stdev / stdevp follow the avg convention (null on empty input).
 func aggregateIdentity(expr string) interface{} {
-	trimmed := strings.ToLower(strings.TrimSpace(expr))
+	trimmed := lowerASCII(strings.TrimSpace(expr))
 	switch {
 	case strings.HasPrefix(trimmed, "collect("), strings.HasPrefix(trimmed, "collect ("):
 		return []interface{}{}
@@ -566,7 +566,7 @@ func (e *StorageExecutor) executeUnwindCallInTransactions(ctx context.Context, v
 		}
 		batchQuery += " RETURN " + projection
 	}
-	upperBatchQuery := strings.ToUpper(batchQuery)
+	upperBatchQuery := upperASCII(batchQuery)
 	inherited := getParamsFromContext(ctx)
 	combined := &ExecuteResult{Columns: []string{variable}, Rows: make([][]interface{}, 0, len(items)), Stats: &QueryStats{}}
 	for start := 0; start < len(items); start += batchSize {
@@ -634,7 +634,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 	// Handle UNWIND ... CREATE/MERGE/MATCH ... mutation patterns.
 	if restQuery != "" {
 		trimmedRest := strings.TrimSpace(restQuery)
-		upperRest := strings.ToUpper(trimmedRest)
+		upperRest := upperASCII(trimmedRest)
 		matchStartedMutation := (strings.HasPrefix(upperRest, "MATCH") || strings.HasPrefix(upperRest, "OPTIONAL MATCH")) &&
 			(findKeywordIndexInContext(trimmedRest, "MERGE") >= 0 ||
 				findKeywordIndexInContext(trimmedRest, "CREATE") >= 0 ||
@@ -802,7 +802,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 				// with a map literal breaks the parser, and substituting it with
 				// `{}` loses the property list the inner UNWIND needs.
 				trimmedMutation := strings.TrimSpace(mutationPart)
-				upperMutation := strings.ToUpper(trimmedMutation)
+				upperMutation := upperASCII(trimmedMutation)
 				hasCallClause := findKeywordIndexInContext(mutationPart, "CALL") >= 0
 				matchStartedClause := strings.HasPrefix(upperMutation, "MATCH") || strings.HasPrefix(upperMutation, "OPTIONAL MATCH")
 				useParamExecution := strings.Contains(mutationPart, "+=") ||
@@ -823,7 +823,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 				callParams[variable] = item
 				childCtx := withValueBindings(ctx, map[string]interface{}{variable: item})
 				if useParamExecution {
-					if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(mutationPart)), "OPTIONAL MATCH") &&
+					if strings.HasPrefix(upperASCII(strings.TrimSpace(mutationPart)), "OPTIONAL MATCH") &&
 						findKeywordIndexInContext(mutationPart, "MERGE") > 0 &&
 						findKeywordIndexInContext(mutationPart, "CALL") < 0 {
 						compoundFull := mutationPart
@@ -841,7 +841,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 					// Route MERGE-heavy mutation chains through context-aware MERGE execution.
 					// This avoids brittle top-level MERGE parsing for shapes like:
 					// MERGE (...) MERGE (...) SET ... MERGE (...) ...
-					if strings.HasPrefix(strings.ToUpper(trimmed), "MERGE ") {
+					if strings.HasPrefix(upperASCII(trimmed), "MERGE ") {
 						complexMergeChain := findKeywordIndexInContext(trimmed, "FOREACH") > 0 || findKeywordIndexInContext(trimmed, "WITH") > 0
 						// Queries containing MATCH after MERGE (e.g. MERGE ... MATCH ... MERGE rel)
 						// are better handled by the regular executor route so MATCH bindings are
@@ -888,7 +888,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 
 	// Handle UNWIND ... WITH collect(DISTINCT var.prop) AS alias RETURN alias
 	// for batched key extraction pipelines used by Fabric APPLY execution.
-	if restQuery != "" && strings.HasPrefix(strings.ToUpper(restQuery), "WITH ") {
+	if restQuery != "" && strings.HasPrefix(upperASCII(restQuery), "WITH ") {
 		if res, ok := e.executeUnwindWithCollectProjection(variable, items, restQuery); ok {
 			return res, nil
 		}
@@ -897,7 +897,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 	// Handle UNWIND ... MATCH ... RETURN ... by evaluating MATCH per unwound value
 	// and combining results. This avoids silently returning only unwound values when
 	// a trailing MATCH pipeline is present.
-	if restQuery != "" && strings.HasPrefix(strings.ToUpper(restQuery), "MATCH ") {
+	if restQuery != "" && strings.HasPrefix(upperASCII(restQuery), "MATCH ") {
 		returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
 		mutationPart := restQuery
 		returnPart := ""
@@ -1002,14 +1002,14 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 		return result, nil
 	}
 
-	if restQuery != "" && strings.HasPrefix(strings.ToUpper(restQuery), "RETURN") {
+	if restQuery != "" && strings.HasPrefix(upperASCII(restQuery), "RETURN") {
 		returnClause := strings.TrimSpace(restQuery[6:])
 		returnItems := e.parseReturnItems(returnClause)
 
 		// Check if any return items are aggregation functions
 		hasAggregation := false
 		for _, item := range returnItems {
-			upperExpr := strings.ToUpper(item.expr)
+			upperExpr := upperASCII(item.expr)
 			if strings.HasPrefix(upperExpr, "SUM(") || strings.HasPrefix(upperExpr, "COUNT(") ||
 				strings.HasPrefix(upperExpr, "AVG(") || strings.HasPrefix(upperExpr, "MIN(") ||
 				strings.HasPrefix(upperExpr, "MAX(") || strings.HasPrefix(upperExpr, "COLLECT(") {
@@ -1032,7 +1032,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 					result.Columns[i] = item.expr
 				}
 
-				upperExpr := strings.ToUpper(item.expr)
+				upperExpr := upperASCII(item.expr)
 				switch {
 				case strings.HasPrefix(upperExpr, "SUM("):
 					inner := item.expr[4 : len(item.expr)-1]
@@ -1555,7 +1555,7 @@ func parseUnwindBatchCountReturn(returnPart string) (alias string, ok bool) {
 	if alias == "" {
 		return "", false
 	}
-	upperExpr := strings.ToUpper(strings.ReplaceAll(expr, " ", ""))
+	upperExpr := upperASCII(strings.ReplaceAll(expr, " ", ""))
 	if !strings.HasPrefix(upperExpr, "COUNT(") || !strings.HasSuffix(upperExpr, ")") {
 		return "", false
 	}
@@ -2266,7 +2266,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 				return resolved
 			}
 		}
-		if strings.HasPrefix(strings.ToUpper(trimmed), "COALESCE(") && strings.HasSuffix(trimmed, ")") {
+		if strings.HasPrefix(upperASCII(trimmed), "COALESCE(") && strings.HasSuffix(trimmed, ")") {
 			nodeMap := make(map[string]*storage.Node)
 			for key, raw := range values {
 				if node, ok := raw.(*storage.Node); ok && node != nil {
@@ -2705,7 +2705,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	}
 	parseMergeClause := func(clause string) (string, string, string, bool) {
 		trimmed := strings.TrimSpace(clause)
-		if !strings.HasPrefix(strings.ToUpper(trimmed), "MERGE ") {
+		if !strings.HasPrefix(upperASCII(trimmed), "MERGE ") {
 			return "", "", "", false
 		}
 		body := strings.TrimSpace(trimmed[len("MERGE "):])
@@ -2747,7 +2747,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		if !isSimpleIdentifier(relType) || !isSimpleIdentifier(toVar) {
 			return "", "", "", false
 		}
-		return strings.ToLower(fromVar), relType, strings.ToLower(toVar), true
+		return lowerASCII(fromVar), relType, lowerASCII(toVar), true
 	}
 	splitMutationClauses := func(input string) ([]string, bool) {
 		trimmed := strings.TrimSpace(input)
@@ -2756,7 +2756,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		var clauses []string
 		for trimmed != "" {
-			upper := strings.ToUpper(trimmed)
+			upper := upperASCII(trimmed)
 			var keyword string
 			switch {
 			case strings.HasPrefix(upper, "MATCH "):
@@ -2786,7 +2786,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	}
 	parseRootSpec := func(clause string) (rootSpec, bool) {
 		trimmed := strings.TrimSpace(clause)
-		if !strings.HasPrefix(strings.ToUpper(trimmed), "MATCH ") {
+		if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 			return rootSpec{}, false
 		}
 		body := strings.TrimSpace(trimmed[len("MATCH "):])
@@ -2803,7 +2803,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		rest := strings.TrimSpace(body[closeIdx+1:])
 		var out rootSpec
-		out.varName = strings.ToLower(varName)
+		out.varName = lowerASCII(varName)
 		out.label = label
 		if propName != "" {
 			rowVar, rowField, ok := parseRowFieldRef(propExpr)
@@ -2814,7 +2814,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			out.rowField = rowField
 			return out, rest == ""
 		}
-		if rest == "" || !strings.HasPrefix(strings.ToUpper(rest), "WHERE ") {
+		if rest == "" || !strings.HasPrefix(upperASCII(rest), "WHERE ") {
 			return rootSpec{}, false
 		}
 		whereExpr := strings.TrimSpace(rest[len("WHERE "):])
@@ -2824,7 +2824,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		left := strings.TrimSpace(parts[0])
 		right := strings.TrimSpace(parts[1])
-		lowerLeft := strings.ToLower(left)
+		lowerLeft := lowerASCII(left)
 		if !strings.HasPrefix(lowerLeft, "elementid(") || !strings.HasSuffix(left, ")") {
 			return rootSpec{}, false
 		}
@@ -2847,11 +2847,11 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		seenDepth := make(map[int]bool)
 		for _, clause := range clauses {
 			trimmed := strings.TrimSpace(clause)
-			if !strings.HasPrefix(strings.ToUpper(trimmed), "MATCH ") {
+			if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 				return hopSpec{}, false
 			}
 			body := strings.TrimSpace(trimmed[len("MATCH "):])
-			if strings.Contains(strings.ToUpper(body), " WHERE ") {
+			if strings.Contains(upperASCII(body), " WHERE ") {
 				return hopSpec{}, false
 			}
 			varName, label, propName, propExpr, ok := parseIdentifierNodePattern(body)
@@ -2870,7 +2870,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			if !strings.EqualFold(out.label, label) || !strings.EqualFold(out.propName, propName) || !strings.EqualFold(out.rowField, rowField) {
 				return hopSpec{}, false
 			}
-			lowerVar := strings.ToLower(varName)
+			lowerVar := lowerASCII(varName)
 			if prev, exists := out.depthByVar[lowerVar]; exists && prev != depth {
 				return hopSpec{}, false
 			}
@@ -2889,7 +2889,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	}
 	firstMergeIdx := -1
 	for idx, clause := range mutationClauses {
-		if strings.HasPrefix(strings.ToUpper(clause), "MERGE ") {
+		if strings.HasPrefix(upperASCII(clause), "MERGE ") {
 			firstMergeIdx = idx
 			break
 		}
@@ -3194,7 +3194,7 @@ func isSimplePropertyReference(expr string) bool {
 
 func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 	trimmed := strings.TrimSpace(query)
-	if !strings.HasPrefix(strings.ToUpper(trimmed), "MATCH ") {
+	if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 		return query
 	}
 	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
@@ -3221,7 +3221,7 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 		return query
 	}
 
-	upperPatterns := strings.ToUpper(patterns)
+	upperPatterns := upperASCII(patterns)
 	if strings.Count(upperPatterns, "MATCH ") != 2 {
 		return query
 	}
@@ -3242,7 +3242,7 @@ func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
 	if strings.TrimSpace(query) == "" || len(items) == 0 {
 		return false
 	}
-	upper := strings.ToUpper(query)
+	upper := upperASCII(query)
 	// Keep rewrite on read-only MATCH ... RETURN count(...) pipelines.
 	// Mutation clauses with correlated values (SET += row.props, MERGE/CREATE/DELETE/REMOVE)
 	// must execute per-row to preserve semantics.
@@ -3297,7 +3297,7 @@ func unwindItemsAreDistinctComparable(items []interface{}) bool {
 // UNWIND, writes) leaves the query unchanged.
 func normalizeMultiMatchWhereClauses(query string) string {
 	trimmed := strings.TrimSpace(query)
-	if !strings.HasPrefix(strings.ToUpper(trimmed), "MATCH ") {
+	if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 		return query
 	}
 	// OPTIONAL MATCH has left-join semantics: its WHERE can't move.
@@ -3539,7 +3539,7 @@ func (e *StorageExecutor) executeOptionalMatch(ctx context.Context, cypher strin
 		cypher = e.substituteParams(cypher, params)
 	}
 
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	optMatchIdx := strings.Index(upper, "OPTIONAL MATCH")
 	if optMatchIdx == -1 {
 		return nil, localizedError(localization.CypherResidualOptionalMatchNotFound(truncateQuery(cypher, 80)), nil)
@@ -3772,7 +3772,7 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 	}
 
 	// Now process WITH and RETURN clauses
-	if strings.HasPrefix(strings.ToUpper(restOfQuery), "WITH") {
+	if strings.HasPrefix(upperASCII(restOfQuery), "WITH") {
 		optMatchAfterWith := findKeywordIndex(restOfQuery, "OPTIONAL MATCH")
 		returnAfterWith := findKeywordIndex(restOfQuery, "RETURN")
 		if optMatchAfterWith > 0 && (returnAfterWith == -1 || optMatchAfterWith < returnAfterWith) {
@@ -3781,7 +3781,7 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 		return e.processWithAggregation(ctx, joinedRows, nodePattern.variable, relPattern.targetVar, relPattern.relVar, restOfQuery)
 	}
 
-	if strings.HasPrefix(strings.ToUpper(restOfQuery), "RETURN") {
+	if strings.HasPrefix(upperASCII(restOfQuery), "RETURN") {
 		return e.buildJoinedResult(ctx, joinedRows, nodePattern.variable, relPattern.targetVar, relPattern.relVar, restOfQuery)
 	}
 
@@ -4474,7 +4474,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 			nextClauseEnd = absWithIdx + 4 + followingWithIdx
 		}
 		withContent := queryBeforeReturn[absWithIdx:nextClauseEnd]
-		upperWithContent := strings.ToUpper(withContent)
+		upperWithContent := upperASCII(withContent)
 		if strings.Contains(upperWithContent, "COUNT(") ||
 			strings.Contains(upperWithContent, "SUM(") ||
 			strings.Contains(upperWithContent, "COLLECT(") {
@@ -4533,14 +4533,14 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 	row := make([]interface{}, len(returnItems))
 
 	for i, item := range returnItems {
-		upperExpr := strings.ToUpper(item.expr)
+		upperExpr := upperASCII(item.expr)
 
 		switch {
 		case strings.HasPrefix(upperExpr, "COUNT(DISTINCT "):
 			inner := item.expr[15 : len(item.expr)-1]
 			inner = strings.TrimSpace(inner)
 
-			if strings.HasPrefix(strings.ToUpper(inner), strings.ToUpper(sourceVar)) {
+			if strings.HasPrefix(upperASCII(inner), upperASCII(sourceVar)) {
 				seen := make(map[storage.NodeID]bool)
 				for _, r := range rows {
 					if r.initialNode != nil {
@@ -4548,7 +4548,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 					}
 				}
 				row[i] = int64(len(seen))
-			} else if strings.HasPrefix(strings.ToUpper(inner), strings.ToUpper(targetVar)) {
+			} else if strings.HasPrefix(upperASCII(inner), upperASCII(targetVar)) {
 				seen := make(map[storage.NodeID]bool)
 				for _, r := range rows {
 					if r.relatedNode != nil {
@@ -4578,7 +4578,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 					}
 				}
 				row[i] = count
-			} else if strings.HasPrefix(strings.ToUpper(inner), strings.ToUpper(sourceVar)) {
+			} else if strings.HasPrefix(upperASCII(inner), upperASCII(sourceVar)) {
 				count := int64(0)
 				for _, r := range rows {
 					if r.initialNode != nil {
@@ -4586,7 +4586,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 					}
 				}
 				row[i] = count
-			} else if strings.HasPrefix(strings.ToUpper(inner), strings.ToUpper(targetVar)) {
+			} else if strings.HasPrefix(upperASCII(inner), upperASCII(targetVar)) {
 				count := int64(0)
 				for _, r := range rows {
 					if r.relatedNode != nil {
@@ -5086,7 +5086,7 @@ func (e *StorageExecutor) buildJoinedResult(ctx context.Context, rows []joinedRo
 	// Check if any return item is an aggregation function
 	hasAggregation := false
 	for _, item := range returnItems {
-		upperExpr := strings.ToUpper(item.expr)
+		upperExpr := upperASCII(item.expr)
 		if strings.HasPrefix(upperExpr, "COUNT(") ||
 			strings.HasPrefix(upperExpr, "SUM(") ||
 			strings.HasPrefix(upperExpr, "AVG(") ||
@@ -5279,7 +5279,7 @@ func (e *StorageExecutor) tryBuildJoinedGroupedCollectResult(ctx context.Context
 			for _, r := range g.rows {
 				nodeCtx, relCtx := buildJoinedEvaluationContext(r, sourceVar, targetVar, relVar)
 				normalizedInner := strings.TrimSpace(inner)
-				if strings.HasPrefix(strings.ToUpper(normalizedInner), "CASE ") && !strings.HasSuffix(strings.ToUpper(normalizedInner), " END") {
+				if strings.HasPrefix(upperASCII(normalizedInner), "CASE ") && !strings.HasSuffix(upperASCII(normalizedInner), " END") {
 					normalizedInner = normalizedInner + " END"
 				}
 				var val interface{}
@@ -5355,7 +5355,7 @@ func (e *StorageExecutor) executeForeachWithContext(ctx context.Context, cypher 
 
 	inner := strings.TrimSpace(cypher[parenStart+1 : parenEnd-1])
 
-	inIdx := strings.Index(strings.ToUpper(inner), " IN ")
+	inIdx := strings.Index(upperASCII(inner), " IN ")
 	if inIdx == -1 {
 		return nil, localizedError(localization.CypherMutationsForeachInRequired(), nil)
 	}
@@ -5398,7 +5398,7 @@ func (e *StorageExecutor) executeForeachWithContext(ctx context.Context, cypher 
 		// maps) and expression evaluation resolve it through the value scope.
 		childCtx := withValueBindings(ctx, map[string]interface{}{variable: item})
 
-		upper := strings.ToUpper(updateClause)
+		upper := upperASCII(updateClause)
 		var updateResult *ExecuteResult
 		var err error
 

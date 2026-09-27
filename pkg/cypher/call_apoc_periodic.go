@@ -14,7 +14,7 @@ import (
 // CALL apoc.periodic.iterate(cypherIterate, cypherAction, {batchSize:1000, parallel:false})
 // This is used for large-scale data processing to avoid memory issues.
 func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	callIdx := strings.Index(upper, "APOC.PERIODIC.ITERATE")
 	if callIdx == -1 {
 		// Try rock_n_roll alias
@@ -141,7 +141,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, cypher st
 // CALL apoc.periodic.commit(statement, params) YIELD updates, executions, runtime, batches
 // This commits every N operations to avoid large transactions.
 func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	callIdx := strings.Index(upper, "APOC.PERIODIC.COMMIT")
 	if callIdx == -1 {
 		return nil, fmt.Errorf("invalid apoc.periodic.commit call")
@@ -180,7 +180,7 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, cypher str
 
 	for {
 		// Add LIMIT to statement if not present
-		stmtUpper := strings.ToUpper(statement)
+		stmtUpper := upperASCII(statement)
 		if !strings.Contains(stmtUpper, "LIMIT") {
 			statement = statement + fmt.Sprintf(" LIMIT %d", limit)
 		}

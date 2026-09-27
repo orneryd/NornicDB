@@ -186,7 +186,7 @@ func queryKeywords(query string) map[string]bool {
 		if isQualifiedOrMapKey(query, start, index) {
 			continue
 		}
-		keywords[strings.ToUpper(query[start:index])] = true
+		keywords[upperASCII(query[start:index])] = true
 	}
 	return keywords
 }

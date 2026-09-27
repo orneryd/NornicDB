@@ -233,7 +233,7 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info := &QueryInfo{
 		rawQuery: cypher, // Store for lazy AST building
 	}
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 
 	// Detect clause types using keyword search
 	// This is O(n) per keyword but very fast for typical query lengths
@@ -297,7 +297,7 @@ func analyzeQuery(cypher string) *QueryInfo {
 		info.HasSet || info.HasRemove
 	// For CALL, only "CALL db." procedures are read-only (schema introspection).
 	// Other procedures like gds.graph.drop() may be writes.
-	isDbCall := info.HasCall && strings.Contains(strings.ToUpper(cypher), "CALL DB.")
+	isDbCall := info.HasCall && strings.Contains(upperASCII(cypher), "CALL DB.")
 	info.IsReadOnly = !info.IsWriteQuery && !info.HasSchema &&
 		(info.HasMatch || info.HasReturn || isDbCall || info.HasShow)
 	info.IsSchemaQuery = info.HasSchema || info.HasShow
@@ -500,7 +500,7 @@ func staticCommitValue(expression string, params map[string]interface{}) (interf
 	if float, err := strconv.ParseFloat(expression, 64); err == nil {
 		return float, true
 	}
-	switch strings.ToLower(expression) {
+	switch lowerASCII(expression) {
 	case "true":
 		return true, true
 	case "false":

@@ -36,7 +36,7 @@ func isCompositeRoot(engine storage.Engine) bool {
 // isCompositeAllowedCommand returns true for system/admin commands that are
 // valid at composite root level without requiring a constituent target.
 func isCompositeAllowedCommand(cypher string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(cypher))
+	upper := upperASCII(strings.TrimSpace(cypher))
 	prefixes := []string{
 		"SHOW DATABASE", "SHOW COMPOSITE", "SHOW CONSTITUENTS",
 		"SHOW ALIASES", "SHOW LIMITS", "SHOW PROCEDURES", "SHOW FUNCTIONS", "SHOW SETTING",
@@ -71,7 +71,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		return nil, err
 	}
 
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 
 	// Order matters: check more specific patterns first
 	var run func(context.Context, string) (*ExecuteResult, error)
@@ -189,7 +189,7 @@ func pauseAsyncWritesForSchemaDDL(engine storage.Engine) (func(), error) {
 //	CREATE CONSTRAINT IF NOT EXISTS ON (n:Label) ASSERT n.property IS UNIQUE
 func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
-	ifNotExists := strings.Contains(strings.ToUpper(cypher), "IF NOT EXISTS")
+	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
 	if result, handled, err := e.executeCreateConstraintContract(ctx, cypher, ifNotExists); handled {
 		return result, err
 	}
@@ -200,7 +200,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_node_key", strings.ToLower(parsed.label), strings.ToLower(strings.Join(parsed.properties, "_")))
+			constraintName = fmt.Sprintf("constraint_%s_%s_node_key", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
 		}
 
 		constraint := storage.Constraint{
@@ -226,7 +226,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			}
 			constraintName := parsed.name
 			if constraintName == "" {
-				constraintName = fmt.Sprintf("constraint_%s_%s_temporal", strings.ToLower(parsed.label), strings.ToLower(strings.Join(parsed.properties, "_")))
+				constraintName = fmt.Sprintf("constraint_%s_%s_temporal", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
 			}
 			constraint := storage.Constraint{
 				Name:       constraintName,
@@ -249,7 +249,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_temporal", strings.ToLower(parsed.label), strings.ToLower(strings.Join(parsed.properties, "_")))
+			constraintName = fmt.Sprintf("constraint_%s_%s_temporal", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
 		}
 		constraint := storage.Constraint{
 			Name:       constraintName,
@@ -276,7 +276,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_domain", strings.ToLower(parsed.label), strings.ToLower(parsed.property))
+			constraintName = fmt.Sprintf("constraint_%s_%s_domain", lowerASCII(parsed.label), lowerASCII(parsed.property))
 		}
 		constraint := storage.Constraint{
 			Name:          constraintName,
@@ -302,7 +302,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if parsed.isRelationship {
 				constraintName := parsed.name
 				if constraintName == "" {
-					constraintName = fmt.Sprintf("constraint_%s_%s_unique", strings.ToLower(parsed.label), strings.ToLower(parsed.property))
+					constraintName = fmt.Sprintf("constraint_%s_%s_unique", lowerASCII(parsed.label), lowerASCII(parsed.property))
 				}
 				constraint := storage.Constraint{
 					Name:       constraintName,
@@ -322,7 +322,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 
 			constraintName := parsed.name
 			if constraintName == "" {
-				constraintName = fmt.Sprintf("constraint_%s_%s", strings.ToLower(parsed.label), strings.ToLower(parsed.property))
+				constraintName = fmt.Sprintf("constraint_%s_%s", lowerASCII(parsed.label), lowerASCII(parsed.property))
 			}
 			constraint := storage.Constraint{
 				Name:       constraintName,
@@ -348,9 +348,9 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if constraintName == "" {
 				suffix := "exists"
 				if parsed.isRelationship {
-					constraintName = fmt.Sprintf("constraint_%s_%s_%s", strings.ToLower(parsed.label), strings.ToLower(parsed.property), suffix)
+					constraintName = fmt.Sprintf("constraint_%s_%s_%s", lowerASCII(parsed.label), lowerASCII(parsed.property), suffix)
 				} else {
-					constraintName = fmt.Sprintf("constraint_%s_%s_%s", strings.ToLower(parsed.label), strings.ToLower(parsed.property), suffix)
+					constraintName = fmt.Sprintf("constraint_%s_%s_%s", lowerASCII(parsed.label), lowerASCII(parsed.property), suffix)
 				}
 			}
 			constraint := storage.Constraint{
@@ -375,7 +375,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	if parsed, err := e.parseCreateConstraintTypeDDL(cypher); err == nil {
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_type", strings.ToLower(parsed.label), strings.ToLower(parsed.property))
+			constraintName = fmt.Sprintf("constraint_%s_%s_type", lowerASCII(parsed.label), lowerASCII(parsed.property))
 		}
 		ptc := storage.PropertyTypeConstraint{
 			Name:         constraintName,
@@ -396,8 +396,8 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		(strings.Contains(strings.ToUpper(cypher), " IS ::") || strings.Contains(strings.ToUpper(cypher), " IS TYPED")) &&
-		strings.Contains(strings.ToUpper(err.Error()), "UNSUPPORTED PROPERTY TYPE") {
+		(strings.Contains(upperASCII(cypher), " IS ::") || strings.Contains(upperASCII(cypher), " IS TYPED")) &&
+		strings.Contains(upperASCII(err.Error()), "UNSUPPORTED PROPERTY TYPE") {
 		return nil, err
 	}
 
@@ -414,7 +414,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if parsed.direction == "INCOMING" {
 				directionSuffix = "incoming"
 			}
-			constraintName = fmt.Sprintf("constraint_%s_max_%s_%d", strings.ToLower(parsed.relType), directionSuffix, parsed.maxCount)
+			constraintName = fmt.Sprintf("constraint_%s_max_%s_%d", lowerASCII(parsed.relType), directionSuffix, parsed.maxCount)
 		}
 		constraint := storage.Constraint{
 			Name:       constraintName,
@@ -432,14 +432,14 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		strings.Contains(strings.ToUpper(cypher), "REQUIRE MAX COUNT") {
+		strings.Contains(upperASCII(cypher), "REQUIRE MAX COUNT") {
 		return nil, err
 	}
 
 	if parsed, err := e.parseCreateConstraintPolicyDDL(cypher); err == nil {
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_%s_%s", strings.ToLower(parsed.sourceLabel), strings.ToLower(parsed.relType), strings.ToLower(parsed.targetLabel), strings.ToLower(parsed.policyMode))
+			constraintName = fmt.Sprintf("constraint_%s_%s_%s_%s", lowerASCII(parsed.sourceLabel), lowerASCII(parsed.relType), lowerASCII(parsed.targetLabel), lowerASCII(parsed.policyMode))
 		}
 		constraint := storage.Constraint{
 			Name:        constraintName,
@@ -458,7 +458,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		(strings.Contains(strings.ToUpper(cypher), "REQUIRE ALLOWED") || strings.Contains(strings.ToUpper(cypher), "REQUIRE DISALLOWED")) {
+		(strings.Contains(upperASCII(cypher), "REQUIRE ALLOWED") || strings.Contains(upperASCII(cypher), "REQUIRE DISALLOWED")) {
 		return nil, err
 	}
 
@@ -481,13 +481,13 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			constraint.Type = storage.ConstraintRelationshipKey
 			constraint.Name = parsed.name
 			if constraint.Name == "" {
-				constraint.Name = fmt.Sprintf("constraint_%s_%s_rel_key", strings.ToLower(parsed.label), strings.ToLower(strings.Join(parsed.properties, "_")))
+				constraint.Name = fmt.Sprintf("constraint_%s_%s_rel_key", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
 			}
 		} else {
 			constraint.Type = storage.ConstraintUnique
 			constraint.Name = parsed.name
 			if constraint.Name == "" {
-				constraint.Name = fmt.Sprintf("constraint_%s_%s_unique", strings.ToLower(parsed.label), strings.ToLower(strings.Join(parsed.properties, "_")))
+				constraint.Name = fmt.Sprintf("constraint_%s_%s_unique", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
 			}
 		}
 
@@ -519,7 +519,7 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 	}
 
 	trimmed := strings.TrimSpace(cypher)
-	upper := strings.ToUpper(trimmed)
+	upper := upperASCII(trimmed)
 
 	// Strip "DROP INDEX" prefix.
 	rest := strings.TrimSpace(trimmed[len("DROP INDEX"):])
@@ -528,7 +528,7 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 	}
 
 	ifExists := false
-	upperRest := strings.ToUpper(rest)
+	upperRest := upperASCII(rest)
 	// Check for trailing IF EXISTS.
 	if idx := strings.Index(upperRest, "IF EXISTS"); idx >= 0 {
 		ifExists = true
@@ -600,7 +600,7 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 // executeDropConstraint handles DROP CONSTRAINT commands.
 func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	trimmed := strings.TrimSpace(cypher)
-	upper := strings.ToUpper(trimmed)
+	upper := upperASCII(trimmed)
 	if !strings.HasPrefix(upper, "DROP CONSTRAINT") {
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
 	}
@@ -611,11 +611,11 @@ func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher stri
 	}
 
 	ifExists := false
-	upperRest := strings.ToUpper(rest)
+	upperRest := upperASCII(rest)
 	if strings.HasPrefix(upperRest, "IF EXISTS") {
 		ifExists = true
 		rest = strings.TrimSpace(rest[len("IF EXISTS"):])
-		upperRest = strings.ToUpper(rest)
+		upperRest = upperASCII(rest)
 	}
 	if strings.HasSuffix(upperRest, " IF EXISTS") {
 		ifExists = true
@@ -669,7 +669,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			if parsed.isRelationship {
 				entity = parsed.relationshipType
 			}
-			indexName = fmt.Sprintf("index_%s_%s", strings.ToLower(entity), strings.ToLower(propsJoined))
+			indexName = fmt.Sprintf("index_%s_%s", lowerASCII(entity), lowerASCII(propsJoined))
 		}
 
 		if parsed.isRelationship {
@@ -698,7 +698,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 		indexName := parsed.indexName
 		if indexName == "" {
 			propsJoined := strings.Join(parsed.properties, "_")
-			indexName = fmt.Sprintf("index_%s_%s", strings.ToLower(parsed.label), strings.ToLower(propsJoined))
+			indexName = fmt.Sprintf("index_%s_%s", lowerASCII(parsed.label), lowerASCII(propsJoined))
 		}
 		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
 			return nil, err
@@ -1023,8 +1023,8 @@ func extractVectorOptionValue(optionsClause, key string) (string, bool) {
 	sanitized := strings.ReplaceAll(optionsClause, "`", "")
 	sanitized = strings.ReplaceAll(sanitized, "\"", "")
 	sanitized = strings.ReplaceAll(sanitized, "'", "")
-	lower := strings.ToLower(sanitized)
-	keyLower := strings.ToLower(key)
+	lower := lowerASCII(sanitized)
+	keyLower := lowerASCII(key)
 
 	start := 0
 	for start < len(lower) {
@@ -1344,7 +1344,7 @@ func parseConstraintPredicate(predicateRaw string) (kind string, property string
 		return "", "", false
 	}
 
-	upper := strings.ToUpper(predicateRaw)
+	upper := upperASCII(predicateRaw)
 	if strings.HasPrefix(upper, "EXISTS") {
 		rest := strings.TrimSpace(predicateRaw[len("EXISTS"):])
 		inside, trailing, ok := extractParenSection(rest)
@@ -1399,7 +1399,7 @@ func parseConstraintTypePredicate(predicateRaw string) (property string, typeNam
 	}
 
 	rhs := strings.TrimSpace(predicateRaw[isEnd:])
-	rhsUpper := strings.ToUpper(rhs)
+	rhsUpper := upperASCII(rhs)
 	if strings.HasPrefix(rhsUpper, "::") {
 		typeName = strings.TrimSpace(rhs[2:])
 	} else if strings.HasPrefix(rhsUpper, "TYPED") {
@@ -2196,7 +2196,7 @@ func (e *StorageExecutor) parseConstraintProperties(propertiesStr string) []stri
 }
 
 func parsePropertyType(typeName string) (storage.PropertyType, error) {
-	switch strings.ToUpper(strings.TrimSpace(typeName)) {
+	switch upperASCII(strings.TrimSpace(typeName)) {
 	case "STRING":
 		return storage.PropertyTypeString, nil
 	case "INTEGER", "INT":

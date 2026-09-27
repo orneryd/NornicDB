@@ -130,7 +130,7 @@ func pipelineClausesFor(cypher string) ([]pipelineClause, bool) {
 	// bound, and every relationship matching the pattern is a row that ON
 	// MATCH SET applies to, as in Neo4j. The compound MATCH … MERGE route
 	// takes only the first match (#640).
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	if (strings.Contains(upper, "ON CREATE SET") || strings.Contains(upper, "ON MATCH SET")) &&
 		(!strings.Contains(upper, "REMOVE") || !containsRemoveClauseAnywhere(cypher)) &&
 		!pipelineHasWithAfterMerge(clauses) && !pipelineHasRelationshipMergeAfterMatch(clauses) {
@@ -299,7 +299,7 @@ func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineCl
 	for _, k := range keywords {
 		for _, p := range findAllTopLevelPipelineKeywordPositions(cypher, k.name) {
 			if k.kind == pipelineClauseMatch {
-				preceding := strings.TrimSpace(strings.ToUpper(cypher[:p]))
+				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
 				if strings.HasSuffix(preceding, "OPTIONAL") {
 					continue
 				}
@@ -308,7 +308,7 @@ func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineCl
 				}
 			}
 			if k.kind == pipelineClauseSet {
-				preceding := strings.TrimSpace(strings.ToUpper(cypher[:p]))
+				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
 				if strings.HasSuffix(preceding, "ON CREATE") || strings.HasSuffix(preceding, "ON MATCH") {
 					continue
 				}
@@ -320,13 +320,13 @@ func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineCl
 				}
 			}
 			if k.name == "DELETE" {
-				preceding := strings.TrimSpace(strings.ToUpper(cypher[:p]))
+				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
 				if strings.HasSuffix(preceding, "DETACH") {
 					continue
 				}
 			}
 			if k.kind == pipelineClauseCreate {
-				preceding := strings.TrimSpace(strings.ToUpper(cypher[:p]))
+				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
 				if strings.HasSuffix(preceding, "ON") {
 					continue
 				}
@@ -3099,7 +3099,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		}
 		projection := withProjection{expr: expr, alias: alias}
 		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregate(expr); aggregate {
-			if !strings.Contains(strings.ToUpper(item), " AS ") {
+			if !strings.Contains(upperASCII(item), " AS ") {
 				return nil, false
 			}
 			projection.aggregate = true
@@ -3108,7 +3108,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			projection.distinct = distinct
 			hasAggregate = true
 		} else if pipelineExpressionContainsAggregate(expr) {
-			if !strings.Contains(strings.ToUpper(item), " AS ") {
+			if !strings.Contains(upperASCII(item), " AS ") {
 				return nil, false
 			}
 			projection.aggregate = true
@@ -3607,7 +3607,7 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 	if open < 0 {
 		return "", "", false, false
 	}
-	name = strings.ToLower(strings.TrimSpace(expr[:open]))
+	name = lowerASCII(strings.TrimSpace(expr[:open]))
 	inner = strings.TrimSpace(extractFuncInner(expr))
 	inner, distinct = cutDistinct(inner)
 	if inner == "" {
@@ -4166,7 +4166,7 @@ func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 	if val, ok := row[expr]; ok {
 		return val, true
 	}
-	upperExpr := strings.ToUpper(expr)
+	upperExpr := upperASCII(expr)
 	if strings.HasPrefix(upperExpr, "SIZE(") && strings.HasSuffix(expr, ")") {
 		value, ok := projectFromRow(row, strings.TrimSpace(expr[len("size("):len(expr)-1]))
 		if !ok {
@@ -4460,7 +4460,7 @@ func parseLiteralScalarForPipeline(s string) (interface{}, bool) {
 		return decodeCypherQuotedString(s)
 	}
 	// Bool.
-	switch strings.ToLower(s) {
+	switch lowerASCII(s) {
 	case "true":
 		return true, true
 	case "false":

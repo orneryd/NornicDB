@@ -1208,7 +1208,7 @@ func (e *StorageExecutor) SetDeferFlush(enabled bool) {
 // Returns false for relationship-only deletes (CREATE rel...DELETE rel pattern).
 func queryDeletesNodes(query string) bool {
 	// DETACH DELETE always deletes nodes
-	if strings.Contains(strings.ToUpper(query), "DETACH DELETE") {
+	if strings.Contains(upperASCII(query), "DETACH DELETE") {
 		return true
 	}
 	// Relationship pattern (has -[...]-> or <-[...]-) with CREATE+DELETE = relationship delete only
@@ -1947,7 +1947,7 @@ func (e *StorageExecutor) cachedUpperQuery(query string) string {
 	}
 	c.mu.RUnlock()
 
-	upper := strings.ToUpper(trimmed)
+	upper := upperASCII(trimmed)
 	c.mu.Lock()
 	if len(c.cache) >= c.max {
 		for k := range c.cache {
@@ -2070,7 +2070,7 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 }
 
 func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher string) (*ExecuteResult, error, bool) {
-	upper := strings.ToUpper(strings.TrimSpace(cypher))
+	upper := upperASCII(strings.TrimSpace(cypher))
 	if !strings.HasPrefix(upper, "CREATE") {
 		return nil, nil, false
 	}
@@ -2282,7 +2282,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
-		upperQuery = strings.ToUpper(cypher)
+		upperQuery = upperASCII(cypher)
 	}
 
 	// Try to get a transaction-capable engine and async wrapper (if present)

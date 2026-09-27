@@ -98,7 +98,7 @@ func (e *StorageExecutor) executeChainedMatchWithAggregations(ctx context.Contex
 
 func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 	query := strings.TrimSpace(cypher)
-	upper := strings.ToUpper(query)
+	upper := upperASCII(query)
 	if !strings.HasPrefix(upper, "MATCH ") {
 		return nil, "", false
 	}

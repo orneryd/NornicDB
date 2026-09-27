@@ -154,10 +154,10 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 
 	// Build count map: EndNode → count of incoming edges of this type
 	incomingCount := make(map[storage.NodeID]int64)
-	normalizedType := strings.ToLower(info.RelType)
+	normalizedType := lowerASCII(info.RelType)
 
 	for _, edge := range allEdges {
-		if normalizedType == "" || strings.ToLower(edge.Type) == normalizedType {
+		if normalizedType == "" || lowerASCII(edge.Type) == normalizedType {
 			incomingCount[edge.EndNode]++
 		}
 	}
@@ -222,10 +222,10 @@ func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, que
 
 	// Build count map: StartNode → count of outgoing edges of this type
 	outgoingCount := make(map[storage.NodeID]int64)
-	normalizedType := strings.ToLower(info.RelType)
+	normalizedType := lowerASCII(info.RelType)
 
 	for _, edge := range allEdges {
-		if normalizedType == "" || strings.ToLower(edge.Type) == normalizedType {
+		if normalizedType == "" || lowerASCII(edge.Type) == normalizedType {
 			outgoingCount[edge.StartNode]++
 		}
 	}

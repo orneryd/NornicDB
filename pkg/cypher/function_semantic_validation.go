@@ -32,7 +32,7 @@ func validateKnownFunctionsInExpression(expression string) error {
 			index = next
 			continue
 		}
-		normalized := strings.ToLower(normalizeProjectionColumnName(name))
+		normalized := lowerASCII(normalizeProjectionColumnName(name))
 		// Clause and predicate keywords can legally be followed by a parenthesized
 		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
 		// function invocations, and must stay in the converged expression scanner.

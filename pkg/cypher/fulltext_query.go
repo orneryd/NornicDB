@@ -518,7 +518,7 @@ func (p patRange) matchField(ctx *ftEvalCtx, doc *ftDoc, field string) (bool, fl
 	if !ok {
 		return false, 0
 	}
-	s := strings.ToLower(v)
+	s := lowerASCII(v)
 	if p.lo != "" && p.lo != "*" {
 		if p.loIncl {
 			if s < p.lo {
@@ -891,7 +891,7 @@ func (p *ftParser) parseRange(field string) (ftNode, error) {
 	hiIncl := closeTok.kind == tkRBrack
 	return &ftLeafNode{
 		field:   field,
-		pattern: patRange{lo: strings.ToLower(lo), hi: strings.ToLower(hi), loIncl: loIncl, hiIncl: hiIncl},
+		pattern: patRange{lo: lowerASCII(lo), hi: lowerASCII(hi), loIncl: loIncl, hiIncl: hiIncl},
 	}, nil
 }
 
@@ -926,7 +926,7 @@ func (p *ftParser) parseAtom(field string) (ftNode, error) {
 				}
 			}
 		}
-		return &ftLeafNode{field: field, pattern: patPhrase{phrase: strings.ToLower(tk.text)}}, nil
+		return &ftLeafNode{field: field, pattern: patPhrase{phrase: lowerASCII(tk.text)}}, nil
 	case tkRegex:
 		p.advance()
 		re, err := regexp.Compile("(?i)" + tk.text)
@@ -954,9 +954,9 @@ func (p *ftParser) parseAtom(field string) (ftNode, error) {
 					p.advance()
 				}
 			}
-			return &ftLeafNode{field: field, pattern: patFuzzy{term: strings.ToLower(text), maxEdit: maxEdit}}, nil
+			return &ftLeafNode{field: field, pattern: patFuzzy{term: lowerASCII(text), maxEdit: maxEdit}}, nil
 		}
-		return &ftLeafNode{field: field, pattern: patTerm{term: strings.ToLower(text)}}, nil
+		return &ftLeafNode{field: field, pattern: patTerm{term: lowerASCII(text)}}, nil
 	}
 	return nil, localizedError(localization.CypherCoreFulltextUnexpectedToken(tk.text), nil)
 }
@@ -973,7 +973,7 @@ func followsWildcardChar(p *ftParser) bool {
 
 func (p *ftParser) parseWildcard(field, prefix string) (ftNode, error) {
 	var b strings.Builder
-	b.WriteString(regexp.QuoteMeta(strings.ToLower(prefix)))
+	b.WriteString(regexp.QuoteMeta(lowerASCII(prefix)))
 	for {
 		tk := p.peek()
 		if tk.kind == tkStar {
@@ -988,7 +988,7 @@ func (p *ftParser) parseWildcard(field, prefix string) (ftNode, error) {
 		}
 		if tk.kind == tkTerm && !tk.hadPrecedingSpace {
 			p.advance()
-			b.WriteString(regexp.QuoteMeta(strings.ToLower(tk.text)))
+			b.WriteString(regexp.QuoteMeta(lowerASCII(tk.text)))
 			continue
 		}
 		break
@@ -1058,13 +1058,13 @@ func (d *ftDoc) fieldLower(field string) string {
 	if field == "*" {
 		return d.contentLower
 	}
-	return d.properties[strings.ToLower(field)]
+	return d.properties[lowerASCII(field)]
 }
 func (d *ftDoc) fieldRaw(field string) (string, bool) {
 	if d == nil {
 		return "", false
 	}
-	v, ok := d.rawProperties[strings.ToLower(field)]
+	v, ok := d.rawProperties[lowerASCII(field)]
 	return v, ok
 }
 func (d *ftDoc) fieldPresent(field string) bool {
@@ -1074,7 +1074,7 @@ func (d *ftDoc) fieldPresent(field string) bool {
 	if d.presenceLookup != nil {
 		return d.presenceLookup(field)
 	}
-	v, ok := d.rawProperties[strings.ToLower(field)]
+	v, ok := d.rawProperties[lowerASCII(field)]
 	return ok && v != ""
 }
 

@@ -13,7 +13,7 @@ import (
 // the shared compile boundary prevents individual executors from interpreting
 // malformed or overflowing tokens differently.
 func validateNumericLiterals(cypher string) error {
-	upper := strings.ToUpper(strings.TrimSpace(cypher))
+	upper := upperASCII(strings.TrimSpace(cypher))
 	if strings.HasPrefix(upper, "ALTER DATABASE ") && strings.Contains(upper, " SET LIMIT ") {
 		return nil
 	}

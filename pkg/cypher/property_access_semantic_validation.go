@@ -446,7 +446,7 @@ func isSubqueryBrace(text string, index int) bool {
 	for start >= 0 && isIdentifierPart(text[start]) {
 		start--
 	}
-	switch strings.ToUpper(text[start+1 : before+1]) {
+	switch upperASCII(text[start+1 : before+1]) {
 	case "EXISTS", "COUNT", "COLLECT", "CALL":
 		return true
 	}

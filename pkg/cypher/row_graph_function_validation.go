@@ -116,7 +116,7 @@ func invalidFunctionArgument(function string, value interface{}) error {
 	return newSemanticError(
 		"Neo.ClientError.Statement.TypeError",
 		"InvalidArgumentValue",
-		fmt.Sprintf("%s() received an invalid %s argument", strings.ToLower(function), cypherTypeName(value)),
+		fmt.Sprintf("%s() received an invalid %s argument", lowerASCII(function), cypherTypeName(value)),
 	)
 }
 

@@ -160,7 +160,7 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 				return nil, localizedError(localization.CypherCompositeConstituentTypeInvalid(err), err)
 			}
 			*idx = *idx + 1
-			typeVal = strings.ToLower(strings.TrimSpace(typeVal))
+			typeVal = lowerASCII(strings.TrimSpace(typeVal))
 			if typeVal != "local" && typeVal != "remote" {
 				return nil, localizedError(localization.CypherCompositeConstituentTypeUnsupported(), nil)
 			}
@@ -180,7 +180,7 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 				return nil, localizedError(localization.CypherCompositeConstituentAccessModeInvalid(err), err)
 			}
 			*idx = *idx + 1
-			accessVal = strings.ToLower(strings.TrimSpace(accessVal))
+			accessVal = lowerASCII(strings.TrimSpace(accessVal))
 			switch accessVal {
 			case "read", "write", "read_write":
 				ref["access_mode"] = accessVal
@@ -289,7 +289,7 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 	// Check for IF NOT EXISTS after database name.
 	ifNotExists := false
 	remaining := strings.TrimSpace(cypher[dbNameEnd:])
-	upperRemaining := strings.ToUpper(remaining)
+	upperRemaining := upperASCII(remaining)
 	if strings.HasPrefix(upperRemaining, "IF NOT EXISTS") {
 		ifNotExists = true
 		remaining = strings.TrimSpace(remaining[len("IF NOT EXISTS"):])
@@ -616,7 +616,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 
 	// Check for ADD or DROP
 	remaining := strings.TrimSpace(cypher[dbNameEnd:])
-	upperRemaining := strings.ToUpper(remaining)
+	upperRemaining := upperASCII(remaining)
 
 	if strings.HasPrefix(upperRemaining, "ADD ALIAS") {
 		tokens, err := tokenize(remaining)

@@ -34,7 +34,7 @@ func truncateTemporalValue(kind, unit string, value interface{}, fields map[stri
 		}
 	}
 	base = time.Date(base.Year(), base.Month(), base.Day(), base.Hour(), base.Minute(), base.Second(), base.Nanosecond(), location)
-	truncated, valid := truncateTimeAtUnit(base, strings.ToLower(unit))
+	truncated, valid := truncateTimeAtUnit(base, lowerASCII(unit))
 	if !valid {
 		return nil, true
 	}

@@ -652,7 +652,7 @@ func terminateTransactionID(id string) (string, error) {
 	if length := len(database); length < 3 || length > 63 {
 		return "", invalidTransactionIDError(localization.CypherAdminTransactionIDDatabaseNameLength())
 	}
-	return strings.ToLower(database) + "-transaction-" + number, nil
+	return lowerASCII(database) + "-transaction-" + number, nil
 }
 
 // invalidTransactionIDError is Neo4j's error for a malformed transaction id.

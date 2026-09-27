@@ -57,7 +57,7 @@ func deletedEntityAccessVariable(expression string) string {
 	if !functionCall {
 		return ""
 	}
-	switch strings.ToLower(function) {
+	switch lowerASCII(function) {
 	case "labels", "properties", "keys":
 		return simpleSemanticIdentifier(argument)
 	default:

@@ -81,7 +81,7 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 		Pattern: PatternGeneric,
 	}
 
-	upperQuery := strings.ToUpper(query)
+	upperQuery := upperASCII(query)
 
 	// Don't optimize queries with WITH clause - they have complex aggregation
 	// semantics that the optimized executors don't handle (aliases, collect, etc.)
@@ -200,7 +200,7 @@ func detectMutualRelationship(ctx context.Context, query string, info *PatternIn
 	if matchClause == "" {
 		return false
 	}
-	if strings.HasPrefix(strings.ToUpper(matchClause), "MATCH") {
+	if strings.HasPrefix(upperASCII(matchClause), "MATCH") {
 		matchClause = strings.TrimSpace(matchClause[len("MATCH"):])
 	}
 
@@ -246,8 +246,8 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 	// Check if count() is on the end variable (the one doing the incoming), and
 	// only optimize the narrow "RETURN x.name, count(y)" shape that the optimized executor implements.
-	upperQuery := strings.ToUpper(query)
-	countPattern := "COUNT(" + strings.ToUpper(endVar)
+	upperQuery := upperASCII(query)
+	countPattern := "COUNT(" + upperASCII(endVar)
 	countStarPattern := "COUNT(*)"
 
 	if (strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern)) &&
@@ -273,8 +273,8 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 	// Check if count() is on the end variable, and only optimize the narrow
 	// "RETURN x.name, count(y)" shape that the optimized executor implements.
-	upperQuery := strings.ToUpper(query)
-	countPattern := "COUNT(" + strings.ToUpper(endVar)
+	upperQuery := upperASCII(query)
+	countPattern := "COUNT(" + upperASCII(endVar)
 
 	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(query, startVar, endVar) {
 		info.Pattern = PatternOutgoingCountAgg
@@ -318,10 +318,10 @@ func isReturnNameCountShape(query string, startVar string, endVar string) bool {
 	right := strings.TrimSpace(parts[1])
 
 	// Handle "AS" aliases.
-	if asIdx := strings.Index(strings.ToUpper(left), " AS "); asIdx > 0 {
+	if asIdx := strings.Index(upperASCII(left), " AS "); asIdx > 0 {
 		left = strings.TrimSpace(left[:asIdx])
 	}
-	if asIdx := strings.Index(strings.ToUpper(right), " AS "); asIdx > 0 {
+	if asIdx := strings.Index(upperASCII(right), " AS "); asIdx > 0 {
 		right = strings.TrimSpace(right[:asIdx])
 	}
 
@@ -331,8 +331,8 @@ func isReturnNameCountShape(query string, startVar string, endVar string) bool {
 	}
 
 	// Require COUNT(endVar) or COUNT(*).
-	rightUpper := strings.ToUpper(strings.ReplaceAll(right, " ", ""))
-	wantCountVar := "COUNT(" + strings.ToUpper(endVar) + ")"
+	rightUpper := upperASCII(strings.ReplaceAll(right, " ", ""))
+	wantCountVar := "COUNT(" + upperASCII(endVar) + ")"
 	return rightUpper == wantCountVar || rightUpper == "COUNT(*)"
 }
 
@@ -341,7 +341,7 @@ func parseDirectionalCountPattern(ctx context.Context, matchClause string, incom
 	if matchClause == "" {
 		return "", "", "", "", false
 	}
-	if strings.HasPrefix(strings.ToUpper(matchClause), "MATCH") {
+	if strings.HasPrefix(upperASCII(matchClause), "MATCH") {
 		matchClause = strings.TrimSpace(matchClause[len("MATCH"):])
 	}
 	if matchClause == "" {
@@ -391,17 +391,17 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 
 	for _, item := range returnItems[1:] {
 		expr, _ := parseProjectionExprAlias(item.expr)
-		u := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
+		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
 		open := strings.IndexByte(u, '(')
 		close := strings.LastIndexByte(u, ')')
 		if open <= 0 || close <= open {
 			continue
 		}
-		aggFunc := strings.ToLower(u[:open])
+		aggFunc := lowerASCII(u[:open])
 		inner := u[open+1 : close]
 
 		if aggFunc == "count" {
-			if inner == "*" || strings.EqualFold(inner, strings.ToUpper(relVar)) {
+			if inner == "*" || strings.EqualFold(inner, upperASCII(relVar)) {
 				continue
 			}
 			return false
@@ -409,7 +409,7 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 		if aggFunc != "sum" && aggFunc != "avg" && aggFunc != "min" && aggFunc != "max" {
 			return false
 		}
-		wantPrefix := strings.ToUpper(relVar) + "."
+		wantPrefix := upperASCII(relVar) + "."
 		if !strings.HasPrefix(inner, wantPrefix) {
 			return false
 		}
@@ -418,7 +418,7 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 			return false
 		}
 		if info.AggProperty == "" {
-			info.AggProperty = strings.ToLower(propName)
+			info.AggProperty = lowerASCII(propName)
 		} else if !strings.EqualFold(info.AggProperty, propName) {
 			return false
 		}
@@ -462,7 +462,7 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 	}
 
 	first := strings.TrimSpace(items[0])
-	if asIdx := strings.Index(strings.ToUpper(first), " AS "); asIdx > 0 {
+	if asIdx := strings.Index(upperASCII(first), " AS "); asIdx > 0 {
 		first = strings.TrimSpace(first[:asIdx])
 	}
 	// Require "<var>.name" in first return position.
@@ -471,17 +471,17 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 		return false
 	}
 
-	wantAggPrefix := strings.ToUpper(relVar) + "."
-	wantAggProp := strings.ToUpper(propName)
+	wantAggPrefix := upperASCII(relVar) + "."
+	wantAggProp := upperASCII(propName)
 
 	// Remaining items must be aggregations over relVar.prop (optionally plus count(r)).
 	for i := 1; i < len(items); i++ {
 		item := strings.TrimSpace(items[i])
-		if asIdx := strings.Index(strings.ToUpper(item), " AS "); asIdx > 0 {
+		if asIdx := strings.Index(upperASCII(item), " AS "); asIdx > 0 {
 			item = strings.TrimSpace(item[:asIdx])
 		}
 
-		u := strings.ToUpper(strings.ReplaceAll(item, " ", ""))
+		u := upperASCII(strings.ReplaceAll(item, " ", ""))
 		switch {
 		case strings.HasPrefix(u, "COUNT(") && strings.HasSuffix(u, ")"):
 			// Allow COUNT(r) and COUNT(*).

@@ -9,7 +9,7 @@ import (
 // row-expression operator. The boolean results are (matched, resolved), which
 // lets the caller distinguish a non-math function from an invalid argument.
 func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
-	name := strings.ToLower(function)
+	name := lowerASCII(function)
 	if name == "pi" || name == "e" {
 		if strings.TrimSpace(argument) != "" {
 			return nil, true, false, nil

@@ -86,7 +86,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 			// Skip if this is an IN expression (e.g., "1 IN [1, 2, 3]")
 			// The base would be "1 IN " which ends with " IN "
-			baseUpper := strings.ToUpper(strings.TrimSpace(baseExpr))
+			baseUpper := upperASCII(strings.TrimSpace(baseExpr))
 			if strings.HasSuffix(baseUpper, " IN") || strings.HasSuffix(baseUpper, " NOT IN") {
 				// This is an IN expression, not array indexing - skip this section
 				goto skipArrayIndexing
@@ -211,7 +211,7 @@ skipArrayIndexing:
 		return e.evaluateCaseExpression(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
-	lowerExpr := strings.ToLower(expr)
+	lowerExpr := lowerASCII(expr)
 
 	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)

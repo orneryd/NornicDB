@@ -192,16 +192,16 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, cypher string)
 }
 
 func parseTemporalCallArgs(ctx context.Context, cypher, callName string) ([]interface{}, error) {
-	upper := strings.ToUpper(cypher)
-	needle := strings.ToUpper(callName) + "("
+	upper := upperASCII(cypher)
+	needle := upperASCII(callName) + "("
 	start := strings.Index(upper, needle)
 	if start == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTemporalInvalidSyntax(strings.ToLower(callName)), nil)
+		return nil, localizedError(localization.CypherSpecializedCallsTemporalInvalidSyntax(lowerASCII(callName)), nil)
 	}
 	start += len(needle)
 	endRel := strings.Index(cypher[start:], ")")
 	if endRel == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTemporalClosingParenthesis(strings.ToLower(callName)), nil)
+		return nil, localizedError(localization.CypherSpecializedCallsTemporalClosingParenthesis(lowerASCII(callName)), nil)
 	}
 	rawArgs := strings.TrimSpace(cypher[start : start+endRel])
 	parts := splitTopLevelComma(rawArgs)
@@ -218,7 +218,7 @@ func resolveTemporalArg(ctx context.Context, raw string) interface{} {
 	if raw == "" {
 		return nil
 	}
-	upper := strings.ToUpper(raw)
+	upper := upperASCII(raw)
 	if upper == "NULL" {
 		return nil
 	}

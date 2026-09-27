@@ -297,8 +297,8 @@ func scanQuotedTokens(query string) []quotedToken {
 func classifyQuotedToken(query string, token *quotedToken, inner byte) {
 	prev, prevIndex := previousSignificant(query, token.start)
 	next, nextIndex := nextSignificant(query, token.end)
-	prevWord := strings.ToUpper(previousWord(query, token.start))
-	nextWord := strings.ToUpper(nextWordAt(query, nextIndex))
+	prevWord := upperASCII(previousWord(query, token.start))
+	nextWord := upperASCII(nextWordAt(query, nextIndex))
 	switch {
 	case prev == '.' && !(prevIndex > 0 && query[prevIndex-1] == '.'):
 		return // property key (n.`p q`) or map projection property selector
@@ -531,7 +531,7 @@ func isNonVariableKeyword(word string) bool {
 // isCypherKeyword reports whether name is a Cypher keyword, which a plain
 // variable can't be.
 func isCypherKeyword(name string) bool {
-	switch strings.ToUpper(name) {
+	switch upperASCII(name) {
 	case "ALL", "AND", "ANY", "AS", "ASC", "ASCENDING", "BY", "CALL", "CASE", "CONTAINS", "CREATE", "DELETE", "DESC", "DESCENDING",
 		"DETACH", "DISTINCT", "ELSE", "END", "ENDS", "EXISTS", "FALSE", "FOREACH", "IN", "IS", "LIMIT", "MATCH", "MERGE", "NONE",
 		"NOT", "NULL", "ON", "OPTIONAL", "OR", "ORDER", "REMOVE", "RETURN", "SET", "SINGLE", "SKIP", "STARTS", "THEN", "TRUE",

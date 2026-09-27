@@ -17,7 +17,7 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 	if matches.Relationship.MinHops != 1 || matches.Relationship.MaxHops != 1 {
 		return nil, false, nil
 	}
-	if len(matches.Relationship.Types) != 1 || strings.ToUpper(matches.Relationship.Types[0]) != "ORDERS" {
+	if len(matches.Relationship.Types) != 1 || upperASCII(matches.Relationship.Types[0]) != "ORDERS" {
 		return nil, false, nil
 	}
 	if matches.Relationship.Direction != "incoming" {

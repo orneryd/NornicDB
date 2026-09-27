@@ -335,7 +335,7 @@ func edgePropertiesContain(edge *storage.Edge, targetProperties []string, lowerQ
 				continue
 			}
 			if str, ok := val.(string); ok {
-				if strings.Contains(strings.ToLower(str), lowerQuery) {
+				if strings.Contains(lowerASCII(str), lowerQuery) {
 					return true
 				}
 			}
@@ -344,7 +344,7 @@ func edgePropertiesContain(edge *storage.Edge, targetProperties []string, lowerQ
 	}
 	for _, val := range edge.Properties {
 		if str, ok := val.(string); ok {
-			if strings.Contains(strings.ToLower(str), lowerQuery) {
+			if strings.Contains(lowerASCII(str), lowerQuery) {
 				return true
 			}
 		}
@@ -631,7 +631,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 // Syntax: CALL db.index.vector.createNodeIndex(indexName, label, property, dimension, similarityFunction)
 func (e *StorageExecutor) callDbIndexVectorCreateNodeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	// Parse: CALL db.index.vector.createNodeIndex('indexName', 'Label', 'propertyKey', dimension, 'similarity')
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, "CREATENODEINDEX")
 	if idx < 0 {
 		return nil, localizedError(localization.CypherProceduresVectorCreateNodeInvalidSyntax(false), nil)
@@ -680,7 +680,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateNodeIndex(ctx context.Context, 
 // callDbIndexVectorCreateRelationshipIndex creates a vector index on relationships - Neo4j db.index.vector.createRelationshipIndex()
 // Syntax: CALL db.index.vector.createRelationshipIndex(indexName, relationshipType, property, dimension, similarityFunction)
 func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, "CREATERELATIONSHIPINDEX")
 	if idx < 0 {
 		return nil, localizedError(localization.CypherProceduresVectorCreateRelationshipInvalidSyntax(false), nil)
@@ -731,7 +731,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.C
 // callDbIndexFulltextCreateNodeIndex creates a fulltext index on nodes - Neo4j db.index.fulltext.createNodeIndex()
 // Syntax: CALL db.index.fulltext.createNodeIndex(indexName, labels, properties, config)
 func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, "CREATENODEINDEX")
 	if idx < 0 {
 		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeInvalidSyntax(false), nil)
@@ -773,7 +773,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 // callDbIndexFulltextCreateRelationshipIndex creates a fulltext index on relationships - Neo4j db.index.fulltext.createRelationshipIndex()
 // Syntax: CALL db.index.fulltext.createRelationshipIndex(indexName, relationshipTypes, properties, config)
 func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, "CREATERELATIONSHIPINDEX")
 	if idx < 0 {
 		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipInvalid(false), nil)
@@ -974,7 +974,7 @@ func (e *StorageExecutor) parseStringArray(s string) []string {
 func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
 	// Parse: CALL db.create.setNodeVectorProperty(nodeId, 'propertyKey', [vector])
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, "SETNODEVECTORPROPERTY")
 	if idx < 0 {
 		return nil, localizedError(localization.CypherProceduresSetNodeVectorInvalidSyntax(), nil)
@@ -1042,7 +1042,7 @@ func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context,
 func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
 	// Parse: CALL db.create.setRelationshipVectorProperty(relId, 'propertyKey', [vector])
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, "SETRELATIONSHIPVECTORPROPERTY")
 	if idx < 0 {
 		return nil, localizedError(localization.CypherProceduresSetRelationshipVectorInvalidSyntax(), nil)
@@ -1120,7 +1120,7 @@ func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) 
 	}
 
 	// Extract metadata object from Cypher: CALL tx.setMetaData({key: value})
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, "SETMETADATA")
 	if idx < 0 {
 		return nil, localizedError(localization.CypherProceduresMetadataInvalidSyntax(false), nil)

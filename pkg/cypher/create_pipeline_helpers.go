@@ -74,7 +74,7 @@ func (e *StorageExecutor) validateSetAssignments(assignments []string) error {
 		if strings.Contains(rightSide, "(") && strings.HasSuffix(strings.TrimSpace(rightSide), ")") {
 			// Extract function name (before first parenthesis)
 			parenIdx := strings.Index(rightSide, "(")
-			funcName := strings.ToUpper(strings.TrimSpace(rightSide[:parenIdx]))
+			funcName := upperASCII(strings.TrimSpace(rightSide[:parenIdx]))
 			if !knownFunctions[funcName] {
 				return localizedError(localization.CypherMergeUnknownFunction(funcName), nil)
 			}

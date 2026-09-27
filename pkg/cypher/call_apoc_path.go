@@ -437,7 +437,7 @@ func (e *StorageExecutor) parseApocPathExpandParams(ctx context.Context, cypher 
 	}
 
 	// Find the procedure call and extract parameters
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	callIdx := strings.Index(upper, "APOC.PATH.EXPAND")
 	if callIdx == -1 {
 		return params

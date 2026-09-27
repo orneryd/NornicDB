@@ -153,7 +153,7 @@ func parseYieldClause(cypher string) *yieldClause {
 					continue
 				}
 				yi := yieldItem{}
-				upperItem := strings.ToUpper(item)
+				upperItem := upperASCII(item)
 				if asIdx := strings.Index(upperItem, " AS "); asIdx != -1 {
 					yi.name = strings.TrimSpace(item[:asIdx])
 					yi.alias = strings.TrimSpace(item[asIdx+4:])
@@ -200,7 +200,7 @@ func splitCallAndTail(cypher string) callSplit {
 	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
 	yieldIdx := findKeywordIndexInContext(normalized, "YIELD")
 	if yieldIdx == -1 {
-		if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(normalized)), "CALL ") {
+		if !strings.HasPrefix(upperASCII(strings.TrimSpace(normalized)), "CALL ") {
 			return callSplit{callOnly: strings.TrimSpace(cypher)}
 		}
 		open := strings.Index(normalized, "(")
@@ -283,7 +283,7 @@ func buildCallTailPredicateInjection(tail string, predicates []string) string {
 }
 
 func tailStartsWithMatchClause(tail string) bool {
-	trimmed := strings.ToUpper(strings.TrimSpace(tail))
+	trimmed := upperASCII(strings.TrimSpace(tail))
 	return strings.HasPrefix(trimmed, "MATCH ") || strings.HasPrefix(trimmed, "OPTIONAL MATCH ")
 }
 
@@ -699,7 +699,7 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 }
 
 func isPotentialWriteTail(tail string) bool {
-	t := strings.ToUpper(strings.TrimSpace(tail))
+	t := upperASCII(strings.TrimSpace(tail))
 	return findKeywordIndexInContext(t, "CREATE") >= 0 ||
 		findKeywordIndexInContext(t, "MERGE") >= 0 ||
 		findKeywordIndexInContext(t, "DELETE") >= 0 ||
@@ -750,7 +750,7 @@ func (e *StorageExecutor) executeCallTailSetBased(
 		return nil, false
 	}
 	relationshipTail := strings.Contains(tail, "-[") || strings.Contains(tail, "]-")
-	upperTail := strings.ToUpper(tail)
+	upperTail := upperASCII(tail)
 	// Relationship tails that aggregate over path length still benefit from a
 	// single batched query, but the MATCH ... WITH aggregate executor preserves
 	// scalar seed bindings more reliably when they stay in normal query scope via
@@ -1800,7 +1800,7 @@ type callTailVariableLengthMaxLengthPlan struct {
 
 func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(ctx context.Context, tail string) (*callTailVariableLengthMaxLengthPlan, bool) {
 	trimmed := strings.TrimSpace(tail)
-	upper := strings.ToUpper(trimmed)
+	upper := upperASCII(trimmed)
 	if !strings.HasPrefix(upper, "MATCH ") {
 		return nil, false
 	}
@@ -1983,7 +1983,7 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 	if orderBy != "" || skipToken != "" {
 		return nil, false
 	}
-	if !strings.HasPrefix(strings.ToUpper(matchSection), "MATCH ") {
+	if !strings.HasPrefix(upperASCII(matchSection), "MATCH ") {
 		return nil, false
 	}
 	matchBody := strings.TrimSpace(matchSection[len("MATCH"):])
@@ -2014,7 +2014,7 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 	if !strings.HasPrefix(lengthCompact, compactCypherFragment("length("+pathVar+") as ")) {
 		return nil, false
 	}
-	dAlias := strings.TrimSpace(firstWithItems[3][strings.LastIndex(strings.ToUpper(firstWithItems[3]), " AS ")+4:])
+	dAlias := strings.TrimSpace(firstWithItems[3][strings.LastIndex(upperASCII(firstWithItems[3]), " AS ")+4:])
 	if !strings.EqualFold(strings.TrimSpace(extractOrderByClause(firstWith)), dAlias+" ASC") {
 		return nil, false
 	}
@@ -2024,10 +2024,10 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 	}
 	collectCompact := compactCypherFragment(secondItems[2])
 	prefix := compactCypherFragment("collect(" + pathVar + ")[0..")
-	if !strings.HasPrefix(collectCompact, prefix) || !strings.Contains(strings.ToUpper(secondItems[2]), " AS ") {
+	if !strings.HasPrefix(collectCompact, prefix) || !strings.Contains(upperASCII(secondItems[2]), " AS ") {
 		return nil, false
 	}
-	asIdx := strings.LastIndex(strings.ToUpper(secondItems[2]), " AS ")
+	asIdx := strings.LastIndex(upperASCII(secondItems[2]), " AS ")
 	pathsAlias := strings.TrimSpace(secondItems[2][asIdx+4:])
 	sliceStart := strings.Index(collectCompact, "[0..")
 	sliceEnd := strings.Index(collectCompact[sliceStart:], "]AS")
@@ -2052,7 +2052,7 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Contex
 func (e *StorageExecutor) parseCallTailFrontierReachablePlan(ctx context.Context, tail string) (*callTailFrontierReachablePlan, bool) {
 	normalized := normalizeCallTailShape(tail)
 	firstWithIdx := findKeywordIndexInContext(normalized, "WITH")
-	if firstWithIdx == -1 || !strings.HasPrefix(strings.ToUpper(normalized), "MATCH ") {
+	if firstWithIdx == -1 || !strings.HasPrefix(upperASCII(normalized), "MATCH ") {
 		return nil, false
 	}
 	matchPart := strings.TrimSpace(normalized[len("MATCH"):firstWithIdx])
@@ -2079,10 +2079,10 @@ func (e *StorageExecutor) parseCallTailFrontierReachablePlan(ctx context.Context
 		return nil, false
 	}
 	firstItems := splitReturnExpressions(firstWith)
-	if len(firstItems) != 3 || strings.TrimSpace(firstItems[0]) != match.StartNode.variable || strings.TrimSpace(firstItems[1]) != "score" || !strings.Contains(strings.ToUpper(firstItems[2]), " AS ") {
+	if len(firstItems) != 3 || strings.TrimSpace(firstItems[0]) != match.StartNode.variable || strings.TrimSpace(firstItems[1]) != "score" || !strings.Contains(upperASCII(firstItems[2]), " AS ") {
 		return nil, false
 	}
-	asIdx := strings.LastIndex(strings.ToUpper(firstItems[2]), " AS ")
+	asIdx := strings.LastIndex(upperASCII(firstItems[2]), " AS ")
 	dAlias := strings.TrimSpace(firstItems[2][asIdx+4:])
 	expectedShortest := compactCypherFragment("length(shortestPath((" + match.StartNode.variable + ")-[:" + strings.Join(match.Relationship.Types, "|") + "*1.." + strconv.Itoa(match.Relationship.MaxHops) + "]->(" + match.EndNode.variable + ")))")
 	if compactCypherFragment(strings.TrimSpace(firstItems[2][:asIdx])) != expectedShortest {
@@ -2107,7 +2107,7 @@ func (e *StorageExecutor) parseCallTailFrontierReachablePlan(ctx context.Context
 
 func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Context, tail string) (*callTailConstrainedMaxDepthPlan, bool) {
 	normalized := normalizeCallTailShape(tail)
-	if !strings.HasPrefix(strings.ToUpper(normalized), "MATCH ") {
+	if !strings.HasPrefix(upperASCII(normalized), "MATCH ") {
 		return nil, false
 	}
 	returnIdx := findKeywordIndexInContext(normalized, "RETURN")
@@ -2216,7 +2216,7 @@ func normalizeCallTailShape(tail string) string {
 }
 
 func compactCypherFragment(value string) string {
-	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(value), " ", ""))
+	return upperASCII(strings.ReplaceAll(strings.TrimSpace(value), " ", ""))
 }
 
 func stripOrderByFromClause(clause string) string {
@@ -2233,7 +2233,7 @@ func extractOrderByClause(clause string) string {
 		return ""
 	}
 	part := strings.TrimSpace(clause[idx:])
-	if strings.HasPrefix(strings.ToUpper(part), "ORDER BY") {
+	if strings.HasPrefix(upperASCII(part), "ORDER BY") {
 		return strings.TrimSpace(part[len("ORDER BY"):])
 	}
 	return ""
@@ -2263,7 +2263,7 @@ func parseAggregateExprAlias(expr, alias, funcName, inner string) (string, bool)
 }
 
 func parseCountStarAlias(item string) (string, bool) {
-	upper := strings.ToUpper(item)
+	upper := upperASCII(item)
 	asIdx := strings.LastIndex(upper, " AS ")
 	if asIdx == -1 || compactCypherFragment(item[:asIdx]) != "COUNT(*)" {
 		return "", false
@@ -2274,7 +2274,7 @@ func parseCountStarAlias(item string) (string, bool) {
 func splitConjunction(whereClause string) []string {
 	parts := strings.Split(whereClause, " AND ")
 	if len(parts) != 2 {
-		parts = strings.Split(strings.ToUpper(whereClause), " AND ")
+		parts = strings.Split(upperASCII(whereClause), " AND ")
 	}
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -2292,14 +2292,14 @@ func parseConstrainedTraversalPredicates(parts []string, pathVar string) (string
 		prefixNode := compactCypherFragment("any(n IN nodes(" + pathVar + ") WHERE n.category IN")
 		switch {
 		case strings.HasPrefix(compact, prefixRel) && strings.HasSuffix(compact, ")"):
-			start := strings.Index(strings.ToUpper(part), ">=")
+			start := strings.Index(upperASCII(part), ">=")
 			if start == -1 {
 				return "", "", false
 			}
 			minWeightToken = strings.TrimSpace(strings.TrimSuffix(part[start+2:], ")"))
 		case strings.HasPrefix(compact, prefixNode) && strings.HasSuffix(compact, ")"):
 			needle := "CATEGORY IN "
-			upperPart := strings.ToUpper(part)
+			upperPart := upperASCII(part)
 			inIdx := strings.Index(upperPart, needle)
 			if inIdx == -1 {
 				return "", "", false
@@ -2839,8 +2839,8 @@ func isIdentChar(b byte) bool {
 
 // findKeywordIndexInContext finds a keyword in context, avoiding matches inside quotes
 func findKeywordIndexInContext(s, keyword string) int {
-	upper := strings.ToUpper(s)
-	keyword = strings.ToUpper(keyword)
+	upper := upperASCII(s)
+	keyword = upperASCII(keyword)
 
 	inQuote := false
 	quoteChar := rune(0)
@@ -2993,7 +2993,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	callCypher := parts.callOnly
 	tailCypher := parts.tail
 
-	upper := strings.ToUpper(callCypher)
+	upper := upperASCII(callCypher)
 
 	// Parse YIELD clause for post-processing
 	yield := parseYieldClause(callCypher)

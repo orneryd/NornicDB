@@ -337,7 +337,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 				}
 			}
 		}
-		return knownOperand(staticFunctionResultTypes[strings.ToLower(function)]), nil
+		return knownOperand(staticFunctionResultTypes[lowerASCII(function)]), nil
 	}
 	if typeName := staticLiteralTypeName(expression); typeName != "" {
 		return knownOperand(typeName), nil
@@ -360,7 +360,7 @@ func staticLiteralTypeNameOr(expression, fallback string) string {
 }
 
 func isQuantifierOrReduceFunction(name string) bool {
-	switch strings.ToLower(name) {
+	switch lowerASCII(name) {
 	case "all", "any", "none", "single", "reduce", "exists":
 		return true
 	}

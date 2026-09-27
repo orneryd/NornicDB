@@ -11,7 +11,7 @@ import (
 )
 
 func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string, values map[string]interface{}) (value interface{}, matched bool, resolved bool, err error) {
-	name := strings.ToLower(function)
+	name := lowerASCII(function)
 	// An argument's error is the function's: eval keeps the first one, and it
 	// replaces whatever the function would return.
 	var argumentErr error

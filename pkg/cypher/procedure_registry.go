@@ -84,7 +84,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	if handler == nil {
 		return fmt.Errorf("procedure %q: nil handler", spec.Name)
 	}
-	key := strings.ToLower(spec.Name)
+	key := lowerASCII(spec.Name)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
@@ -98,7 +98,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	if handler == nil {
 		return fmt.Errorf("procedure %q: nil handler", spec.Name)
 	}
-	key := strings.ToLower(spec.Name)
+	key := lowerASCII(spec.Name)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
@@ -106,7 +106,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 }
 
 func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
-	key := strings.ToLower(name)
+	key := lowerASCII(name)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if p, ok := r.user[key]; ok {

@@ -6,7 +6,7 @@ import "strings"
 // parser frontend or executor can normalize them. Braces without a top-level
 // key/value separator are ignored because they may delimit a subquery.
 func validateStaticMapKeys(query string) error {
-	upper := strings.ToUpper(strings.TrimSpace(query))
+	upper := upperASCII(strings.TrimSpace(query))
 	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(query, "OPTIONS") >= 0 {
 		return nil
 	}
@@ -141,7 +141,7 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 	if start >= end {
 		return false
 	}
-	switch strings.ToUpper(query[start:end]) {
+	switch upperASCII(query[start:end]) {
 	case "EXISTS", "COUNT", "COLLECT", "CALL":
 	default:
 		return false
@@ -194,7 +194,7 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	if index == start {
 		return false
 	}
-	switch strings.ToUpper(query[start:index]) {
+	switch upperASCII(query[start:index]) {
 	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN":
 		return true
 	default:

@@ -82,7 +82,7 @@ type ExecutionPlan struct {
 // parseExecutionMode extracts EXPLAIN or PROFILE prefix from a query
 func parseExecutionMode(query string) (ExecutionMode, string) {
 	trimmed := strings.TrimSpace(query)
-	upper := strings.ToUpper(trimmed)
+	upper := upperASCII(trimmed)
 
 	if strings.HasPrefix(upper, "EXPLAIN ") {
 		return ModeExplain, strings.TrimSpace(trimmed[8:])
@@ -275,7 +275,7 @@ func (e *StorageExecutor) analyzeQuery(query string) (*PlanOperator, error) {
 
 // analyzeMatchClause analyzes a MATCH clause and returns appropriate operators
 func (e *StorageExecutor) analyzeMatchClause(query string) *PlanOperator {
-	upper := strings.ToUpper(query)
+	upper := upperASCII(query)
 
 	// Check for shortestPath
 	if strings.Contains(upper, "SHORTESTPATH") {
@@ -405,7 +405,7 @@ func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, 
 	args["availableIndexes"] = labelIndexes
 
 	// Check WHERE clause for predicate shapes that prevent index use.
-	upper := strings.ToUpper(query)
+	upper := upperASCII(query)
 	if strings.Contains(upper, "COALESCE(") {
 		args["indexRejectionRisk"] = "function_wrapping (coalesce)"
 	}
@@ -472,7 +472,7 @@ func (e *StorageExecutor) analyzeDeleteClause(query string, detach bool) *PlanOp
 
 	deleteClause := strings.TrimSpace(query[deleteIdx:endIdx])
 	strip := startKeyword + " "
-	if strings.HasPrefix(strings.ToUpper(deleteClause), strip) {
+	if strings.HasPrefix(upperASCII(deleteClause), strip) {
 		deleteClause = strings.TrimSpace(deleteClause[len(strip):])
 	}
 	desc := "Delete matched entities"
@@ -620,7 +620,7 @@ func isAllDigits(s string) bool {
 
 // analyzeLimitSkip analyzes LIMIT and SKIP clauses
 func (e *StorageExecutor) analyzeLimitSkip(query string) *PlanOperator {
-	upper := strings.ToUpper(query)
+	upper := upperASCII(query)
 
 	op := &PlanOperator{
 		OperatorType: "Limit",

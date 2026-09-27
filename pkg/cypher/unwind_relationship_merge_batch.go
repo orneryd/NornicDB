@@ -445,7 +445,7 @@ func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationsh
 	callPart := strings.TrimSpace(afterWith[callIdx+len("CALL"):])
 	setters := make([]relationshipVectorSetterSpec, 0, 1)
 	for callPart != "" {
-		if !strings.HasPrefix(strings.ToLower(callPart), "db.create.setrelationshipvectorproperty") {
+		if !strings.HasPrefix(lowerASCII(callPart), "db.create.setrelationshipvectorproperty") {
 			return nil, false
 		}
 		openParen := strings.Index(callPart, "(")

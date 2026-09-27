@@ -125,7 +125,7 @@ func bareTransactionCommand(cypher string) string {
 
 // parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
 func (e *StorageExecutor) parseTransactionStatement(cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(strings.TrimSpace(cypher))
+	upper := upperASCII(strings.TrimSpace(cypher))
 
 	switch {
 	case upper == "BEGIN" || upper == "BEGIN TRANSACTION":
@@ -420,7 +420,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
-		upperQuery = strings.ToUpper(cypher)
+		upperQuery = upperASCII(cypher)
 	}
 
 	if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
@@ -514,7 +514,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 }
 
 func looksLikeWriteQuery(cypher string) bool {
-	upper := strings.ToUpper(classificationText(cypher))
+	upper := upperASCII(classificationText(cypher))
 	return strings.Contains(upper, "CREATE") ||
 		strings.Contains(upper, "MERGE") ||
 		strings.Contains(upper, "DELETE") ||

@@ -14,9 +14,9 @@ func (e *StorageExecutor) executeAggregation(ctx context.Context, nodes []*stora
 	// Pre-compute upper-case expressions ONCE for all subsequent use
 	upperExprs := make([]string, len(items))
 	for i, item := range items {
-		upperExprs[i] = strings.ToUpper(item.expr)
+		upperExprs[i] = upperASCII(item.expr)
 	}
-	upperVariable := strings.ToUpper(variable)
+	upperVariable := upperASCII(variable)
 
 	// Identify which columns are aggregations and which are grouping keys
 	type colInfo struct {
@@ -276,7 +276,7 @@ func (e *StorageExecutor) executeAggregationSingleGroup(ctx context.Context, nod
 	// Pre-compute upper-case expressions ONCE to avoid repeated ToUpper calls in loop
 	upperExprs := make([]string, len(items))
 	for i, item := range items {
-		upperExprs[i] = strings.ToUpper(item.expr)
+		upperExprs[i] = upperASCII(item.expr)
 	}
 
 	// Use pre-compiled regex patterns from regex_patterns.go

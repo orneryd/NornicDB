@@ -662,7 +662,7 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 		return query
 	}
 	trimmed := strings.TrimSpace(query)
-	if !strings.HasPrefix(strings.ToUpper(trimmed), "WITH ") {
+	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
 		return query
 	}
 	withEnd := findLeadingWithEndLocal(trimmed)

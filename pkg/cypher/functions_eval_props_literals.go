@@ -192,7 +192,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	}
 
 	// Check if this is an aggregation function - they should not be evaluated in expression context
-	exprLower := strings.ToLower(expr)
+	exprLower := lowerASCII(expr)
 	if strings.HasPrefix(exprLower, "count(") ||
 		strings.HasPrefix(exprLower, "sum(") ||
 		strings.HasPrefix(exprLower, "avg(") ||

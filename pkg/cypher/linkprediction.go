@@ -446,7 +446,7 @@ func (e *StorageExecutor) parseLinkPredictionConfig(ctx context.Context, cypher 
 		// Remove quotes from value
 		value = strings.Trim(value, "'\"")
 
-		switch strings.ToLower(key) {
+		switch lowerASCII(key) {
 		case "sourcenode":
 			// Could be id(n) or numeric
 			if strings.Contains(value, "id(") {

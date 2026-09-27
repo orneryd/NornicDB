@@ -176,7 +176,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// ========================================
 
 	if lowerExpr == "" {
-		lowerExpr = strings.ToLower(expr)
+		lowerExpr = lowerASCII(expr)
 	}
 	return e.evaluateExpressionWithContextFullPropsLiterals(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }

@@ -222,7 +222,7 @@ func matchCompoundPropCreateDeleteReturnCountRelShape(query string) (ShapeMatch,
 	}
 	countPart := strings.TrimSpace(query[returnIdx+len("RETURN"):])
 	countPart = strings.ReplaceAll(strings.ReplaceAll(countPart, " ", ""), "\t", "")
-	if !strings.HasPrefix(strings.ToUpper(countPart), "COUNT(") || !strings.HasSuffix(countPart, ")") {
+	if !strings.HasPrefix(upperASCII(countPart), "COUNT(") || !strings.HasSuffix(countPart, ")") {
 		match.Probe.RejectReason = "RETURN clause is not COUNT(var)"
 		return match, false
 	}
@@ -393,7 +393,7 @@ func parseSinglePropertyAssignment(s string) (string, string, bool) {
 
 func parseCreateRelationshipClause(s string) (parsedCreatePattern, bool) {
 	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(strings.ToUpper(s), "CREATE") {
+	if !strings.HasPrefix(upperASCII(s), "CREATE") {
 		return parsedCreatePattern{}, false
 	}
 	body := strings.TrimSpace(s[len("CREATE"):])

@@ -171,7 +171,7 @@ func hasStandaloneWithClause(cypher string) bool {
 			return false
 		}
 		absIdx := searchStart + idx
-		preceding := strings.ToUpper(strings.TrimSpace(cypher[:absIdx]))
+		preceding := upperASCII(strings.TrimSpace(cypher[:absIdx]))
 		if !strings.HasSuffix(preceding, "STARTS") && !strings.HasSuffix(preceding, "ENDS") {
 			return true
 		}
@@ -192,7 +192,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 
 	// Validate MATCH syntax
 	trimmed := strings.TrimSpace(cypher)
-	upper := strings.ToUpper(trimmed)
+	upper := upperASCII(trimmed)
 
 	// Check for empty MATCH pattern
 	if strings.TrimSpace(strings.TrimPrefix(upper, "MATCH")) == "" ||
@@ -285,7 +285,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	isStandaloneWith := false
 	if withIdx > 0 && returnIdx > withIdx {
 		// Check what precedes WITH - if it's "STARTS" or "ENDS", it's not a standalone WITH
-		precedingText := strings.ToUpper(cypher[:withIdx])
+		precedingText := upperASCII(cypher[:withIdx])
 		isStandaloneWith = !strings.HasSuffix(strings.TrimSpace(precedingText), "STARTS") &&
 			!strings.HasSuffix(strings.TrimSpace(precedingText), "ENDS")
 	}
@@ -354,7 +354,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	whereIdx := findKeywordNotInBrackets(upper, " WHERE ")
 	rawWherePart := ""
 	if params := getParamsFromContext(ctx); params != nil {
-		originalUpper := strings.ToUpper(originalCypher)
+		originalUpper := upperASCII(originalCypher)
 		rawWhereIdx := findKeywordNotInBrackets(originalUpper, " WHERE ")
 		rawReturnIdx := topLevelKeywordIndex(originalCypher, "RETURN")
 		if rawWhereIdx > 0 && rawReturnIdx > rawWhereIdx {
@@ -548,7 +548,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	// IMPORTANT: Do NOT use this fast path when pattern properties are present, since
 	// property predicates require value-level filtering (not just label cardinality).
 	if hasAggregation && whereIdx == -1 && len(returnItems) == 1 && len(nodePattern.properties) == 0 {
-		upperExpr := strings.ToUpper(strings.TrimSpace(returnItems[0].expr))
+		upperExpr := upperASCII(strings.TrimSpace(returnItems[0].expr))
 		// Check for COUNT(*) or COUNT(variable) - not COUNT(n.property)
 		if strings.HasPrefix(upperExpr, "COUNT(") && strings.HasSuffix(upperExpr, ")") {
 			inner := strings.TrimSpace(upperExpr[6 : len(upperExpr)-1])
@@ -955,7 +955,7 @@ func extractMatchOrderByClause(cypher string, returnIdx int) string {
 		return ""
 	}
 	orderPart := strings.TrimSpace(returnScope[orderIdx:])
-	if !strings.HasPrefix(strings.ToUpper(orderPart), "ORDER BY") {
+	if !strings.HasPrefix(upperASCII(orderPart), "ORDER BY") {
 		return ""
 	}
 	orderExpr := strings.TrimSpace(orderPart[len("ORDER BY"):])

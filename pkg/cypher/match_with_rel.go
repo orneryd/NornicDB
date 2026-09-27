@@ -63,7 +63,7 @@ func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) []node
 		}
 
 		expr := tokens[0]
-		descending := len(tokens) > 1 && strings.ToUpper(tokens[1]) == "DESC"
+		descending := len(tokens) > 1 && upperASCII(tokens[1]) == "DESC"
 
 		// Node sorting is safe only for direct properties of the matched
 		// variable. Aliases and computed expressions must be sorted after
@@ -133,22 +133,22 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 
 	// Extract LIMIT/SKIP from WITH section (e.g., "WITH path, connected LIMIT 10")
 	var withLimitVal, withSkipVal int
-	upperWithSection := strings.ToUpper(withSection)
+	upperWithSection := upperASCII(withSection)
 	if idx := findKeywordNotInBrackets(upperWithSection, "LIMIT"); idx >= 0 {
 		limitPart := strings.TrimSpace(withSection[idx+len("LIMIT"):])
 		// Find end of LIMIT value (at SKIP or end)
 		endIdx := len(limitPart)
-		if skipIdx := findKeywordNotInBrackets(strings.ToUpper(limitPart), " SKIP "); skipIdx >= 0 && skipIdx < endIdx {
+		if skipIdx := findKeywordNotInBrackets(upperASCII(limitPart), " SKIP "); skipIdx >= 0 && skipIdx < endIdx {
 			endIdx = skipIdx
 		}
 		withLimitVal, _ = strconv.Atoi(strings.TrimSpace(limitPart[:endIdx]))
 		withSection = strings.TrimSpace(withSection[:idx])
-		upperWithSection = strings.ToUpper(withSection)
+		upperWithSection = upperASCII(withSection)
 	}
 	if idx := findKeywordNotInBrackets(upperWithSection, "SKIP"); idx >= 0 {
 		skipPart := strings.TrimSpace(withSection[idx+len("SKIP"):])
 		endIdx := len(skipPart)
-		if limIdx := findKeywordNotInBrackets(strings.ToUpper(skipPart), " LIMIT "); limIdx >= 0 && limIdx < endIdx {
+		if limIdx := findKeywordNotInBrackets(upperASCII(skipPart), " LIMIT "); limIdx >= 0 && limIdx < endIdx {
 			endIdx = limIdx
 		}
 		withSkipVal, _ = strconv.Atoi(strings.TrimSpace(skipPart[:endIdx]))
@@ -707,17 +707,17 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 // evaluateWhereOnComputedRow evaluates a WHERE condition on computed values
 func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereClause string, values map[string]interface{}) bool {
 	whereClause = strings.TrimSpace(whereClause)
-	upperClause := strings.ToUpper(whereClause)
+	upperClause := upperASCII(whereClause)
 
 	// Handle AND
-	if idx := strings.Index(strings.ToUpper(whereClause), " AND "); idx > 0 {
+	if idx := strings.Index(upperASCII(whereClause), " AND "); idx > 0 {
 		left := whereClause[:idx]
 		right := whereClause[idx+5:]
 		return e.evaluateWhereOnComputedRow(ctx, left, values) && e.evaluateWhereOnComputedRow(ctx, right, values)
 	}
 
 	// Handle OR
-	if idx := strings.Index(strings.ToUpper(whereClause), " OR "); idx > 0 {
+	if idx := strings.Index(upperASCII(whereClause), " OR "); idx > 0 {
 		left := whereClause[:idx]
 		right := whereClause[idx+4:]
 		return e.evaluateWhereOnComputedRow(ctx, left, values) || e.evaluateWhereOnComputedRow(ctx, right, values)

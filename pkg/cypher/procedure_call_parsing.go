@@ -142,7 +142,7 @@ func parseProcedureArgLiteral(s string) (interface{}, error) {
 	if s == "" {
 		return "", nil
 	}
-	lower := strings.ToLower(s)
+	lower := lowerASCII(s)
 	switch lower {
 	case "null":
 		return nil, nil

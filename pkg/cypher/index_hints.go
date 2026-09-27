@@ -400,7 +400,7 @@ func ValidateIndexHints(schema *storage.SchemaManager, hints []IndexHint) error 
 			label, _ := m["label"].(string)
 			props, _ := m["properties"].([]string)
 			if len(props) > 0 {
-				key := fmt.Sprintf("%s:%s", strings.ToLower(label), strings.ToLower(props[0]))
+				key := fmt.Sprintf("%s:%s", lowerASCII(label), lowerASCII(props[0]))
 				indexMap[key] = true
 			}
 		}
@@ -408,7 +408,7 @@ func ValidateIndexHints(schema *storage.SchemaManager, hints []IndexHint) error 
 
 	for _, hint := range hints {
 		if hint.Type == HintIndex {
-			key := fmt.Sprintf("%s:%s", strings.ToLower(hint.Label), strings.ToLower(hint.Property))
+			key := fmt.Sprintf("%s:%s", lowerASCII(hint.Label), lowerASCII(hint.Property))
 			if !indexMap[key] {
 				// Neo4j returns a specific error for missing indexes
 				return localizedError(localization.CypherCoreIndexHintNotFound(hint.String(), hint.Label, hint.Property), nil)

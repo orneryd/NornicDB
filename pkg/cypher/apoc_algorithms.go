@@ -550,7 +550,7 @@ func (e *StorageExecutor) getNeighborsByhop(startID storage.NodeID, relType stri
 
 // Helper functions
 func (e *StorageExecutor) parsePathAlgoParams(cypher, algoName string) (storage.NodeID, storage.NodeID, string, string, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, algoName)
 	if idx < 0 {
 		return "", "", "", "", fmt.Errorf("could not find %s", algoName)
@@ -580,7 +580,7 @@ func (e *StorageExecutor) parsePathAlgoParams(cypher, algoName string) (storage.
 }
 
 func (e *StorageExecutor) parseNeighborParams(cypher, variant string) (storage.NodeID, string, int, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, variant)
 	if idx < 0 {
 		return "", "", 0, fmt.Errorf("could not find %s", variant)
@@ -609,7 +609,7 @@ func (e *StorageExecutor) parseNeighborParams(cypher, variant string) (storage.N
 }
 
 func (e *StorageExecutor) extractLabelFromAlgoCall(cypher, algoName string) string {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, algoName)
 	if idx < 0 {
 		return ""

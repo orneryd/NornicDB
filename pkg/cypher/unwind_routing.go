@@ -81,7 +81,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	if plan.remainder == "" {
 		return nil, false, nil
 	}
-	upperRest := strings.ToUpper(strings.TrimSpace(plan.remainder))
+	upperRest := upperASCII(strings.TrimSpace(plan.remainder))
 	matchMutation := (strings.HasPrefix(upperRest, "MATCH") || strings.HasPrefix(upperRest, "OPTIONAL MATCH")) &&
 		(findKeywordIndexInContext(plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(plan.remainder, "SET") >= 0)
 	if matchMutation {

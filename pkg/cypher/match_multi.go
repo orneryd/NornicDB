@@ -12,7 +12,7 @@ import (
 )
 
 func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 
 	// Find all clause boundaries
 	matchIdx := findKeywordIndex(cypher, "MATCH")
@@ -28,7 +28,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 	matchPart := strings.TrimSpace(cypher[matchIdx+5 : withIdx])
 
 	// Check for WHERE clause in MATCH part
-	matchWhereIdx := findKeywordNotInBrackets(strings.ToUpper(matchPart), " WHERE ")
+	matchWhereIdx := findKeywordNotInBrackets(upperASCII(matchPart), " WHERE ")
 	var matchWhere string
 	var nodePatternPart string
 
@@ -107,7 +107,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 
 	// Step 3: Parse UNWIND clause
 	unwindSection := strings.TrimSpace(cypher[unwindIdx+7:]) // Skip " UNWIND "
-	asIdx := strings.Index(strings.ToUpper(unwindSection), " AS ")
+	asIdx := strings.Index(upperASCII(unwindSection), " AS ")
 	if asIdx == -1 {
 		return nil, localizedError(localization.CypherTransactionsUnwindASRequired(), nil)
 	}
@@ -216,7 +216,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 			row := make([]interface{}, len(returnItems))
 
 			for i, item := range returnItems {
-				upperExpr := strings.ToUpper(item.expr)
+				upperExpr := upperASCII(item.expr)
 
 				switch {
 				case strings.HasPrefix(upperExpr, "COUNT("):
@@ -228,7 +228,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 					// Check if it matches a second WITH alias
 					for _, swi := range secondWithItems {
 						swi = strings.TrimSpace(swi)
-						swiUpper := strings.ToUpper(swi)
+						swiUpper := upperASCII(swi)
 						swiAsIdx := strings.Index(swiUpper, " AS ")
 						if swiAsIdx > 0 {
 							swiAlias := strings.TrimSpace(swi[swiAsIdx+4:])
@@ -236,7 +236,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 								swiExpr := strings.TrimSpace(swi[:swiAsIdx])
 								if swiExpr == unwindVar {
 									row[i] = key
-								} else if strings.HasPrefix(strings.ToUpper(swiExpr), "COUNT(") {
+								} else if strings.HasPrefix(upperASCII(swiExpr), "COUNT(") {
 									row[i] = int64(len(groupRows))
 								}
 							}
@@ -667,7 +667,7 @@ func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
 	matchPart := cypher[5:endIdx] // Skip first "MATCH"
 
 	// Split by subsequent MATCH keywords
-	parts := strings.Split(strings.ToUpper(matchPart), "MATCH")
+	parts := strings.Split(upperASCII(matchPart), "MATCH")
 	offset := 5 // Start after first MATCH
 
 	for i, p := range parts {
@@ -1111,7 +1111,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	}
 
 	// elementId(var) — check node bindings first, then relationship bindings.
-	if strings.HasPrefix(strings.ToLower(expr), "elementid(") && strings.HasSuffix(expr, ")") {
+	if strings.HasPrefix(lowerASCII(expr), "elementid(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[len("elementId(") : len(expr)-1])
 		if node := b[inner]; node != nil {
 			return storage.NodeElementID(e.databaseName(), node.ID)
@@ -1123,7 +1123,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	}
 
 	// Reuse shared COALESCE evaluator used in MATCH row projection paths.
-	if strings.HasPrefix(strings.ToUpper(expr), "COALESCE(") && strings.HasSuffix(expr, ")") {
+	if strings.HasPrefix(upperASCII(expr), "COALESCE(") && strings.HasSuffix(expr, ")") {
 		return e.evaluateCoalesceInContext(expr, b, edgeRelationshipBindings(rels), nil)
 	}
 
@@ -1572,7 +1572,7 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 		for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
 			orderStart++
 		}
-		if orderStart+2 <= len(cypher) && strings.ToUpper(cypher[orderStart:orderStart+2]) == "BY" {
+		if orderStart+2 <= len(cypher) && upperASCII(cypher[orderStart:orderStart+2]) == "BY" {
 			orderStart += 2
 			for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
 				orderStart++
@@ -1768,7 +1768,7 @@ func applyCartesianNullConstraints(
 }
 
 func parseCartesianNullTerm(term string) (string, string, bool, bool) {
-	upper := strings.ToUpper(strings.TrimSpace(term))
+	upper := upperASCII(strings.TrimSpace(term))
 	if strings.HasSuffix(upper, " IS NOT NULL") {
 		expr := strings.TrimSpace(term[:len(term)-len(" IS NOT NULL")])
 		v, p, ok := parseCartesianVarProp(expr)
@@ -1803,7 +1803,7 @@ func parseCartesianVarProp(expr string) (string, string, bool) {
 }
 
 func parseCartesianInListTerm(term string) (string, string, []interface{}, bool) {
-	upper := strings.ToUpper(term)
+	upper := upperASCII(term)
 	idx := strings.Index(upper, " IN ")
 	if idx <= 0 || idx+4 >= len(term) {
 		return "", "", nil, false

@@ -78,7 +78,7 @@ func (e *StorageExecutor) databaseName() string {
 }
 
 func toDistanceMetric(similarity string) (vectorspace.DistanceMetric, error) {
-	switch strings.ToLower(strings.TrimSpace(similarity)) {
+	switch lowerASCII(strings.TrimSpace(similarity)) {
 	case "", "cosine":
 		return vectorspace.DistanceCosine, nil
 	case "dot":

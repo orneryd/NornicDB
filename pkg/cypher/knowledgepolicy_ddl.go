@@ -392,7 +392,7 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 	}
 
 	if err := parseOptionsMap(body, func(key, rawVal string) error {
-		switch strings.ToLower(key) {
+		switch lowerASCII(key) {
 		case "halflifeseconds":
 			n, err := strconv.ParseInt(rawVal, 10, 64)
 			if err != nil {
@@ -418,7 +418,7 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 			}
 			bundle.Function = fn
 		case "scope":
-			sc := knowledgepolicy.ScopeType(strings.ToUpper(strings.Trim(rawVal, "'\"")))
+			sc := knowledgepolicy.ScopeType(upperASCII(strings.Trim(rawVal, "'\"")))
 			if !knowledgepolicy.ValidScopeTypes[sc] {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scope", rawVal, true), nil)
 			}
@@ -430,7 +430,7 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 			}
 			bundle.DecayEnabled = b
 		case "scorefrom":
-			mode := knowledgepolicy.ScoreFromMode(strings.ToUpper(strings.Trim(rawVal, "'\"")))
+			mode := knowledgepolicy.ScoreFromMode(upperASCII(strings.Trim(rawVal, "'\"")))
 			if !knowledgepolicy.ValidScoreFromModes[mode] {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scoreFrom", rawVal, true), nil)
 			}
@@ -884,9 +884,9 @@ func parseCreatePromotionProfile(s string, i int) (interface{}, bool, error) {
 	}
 
 	if err := parseOptionsMap(body, func(key, rawVal string) error {
-		switch strings.ToLower(key) {
+		switch lowerASCII(key) {
 		case "scope":
-			sc := knowledgepolicy.ScopeType(strings.ToUpper(strings.Trim(rawVal, "'\"")))
+			sc := knowledgepolicy.ScopeType(upperASCII(strings.Trim(rawVal, "'\"")))
 			if !knowledgepolicy.ValidScopeTypes[sc] {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scope", rawVal, true), nil)
 			}
@@ -1135,7 +1135,7 @@ func parseOnAccessBlock(body string) (*knowledgepolicy.PromotionPolicyOnAccess, 
 func parseKalmanConfigBlock(body string, cfg *knowledgepolicy.KalmanConfig) error {
 	hasR := false
 	if err := parseOptionsMap(body, func(key, rawVal string) error {
-		switch strings.ToLower(key) {
+		switch lowerASCII(key) {
 		case "q":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {

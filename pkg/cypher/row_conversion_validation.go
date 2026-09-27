@@ -97,7 +97,7 @@ func (e *StorageExecutor) validateRowConversionArguments(expression string, row 
 				return err
 			}
 		}
-		name := strings.ToLower(function)
+		name := lowerASCII(function)
 		if name != "toboolean" && name != "tointeger" && name != "toint" && name != "tofloat" && name != "tostring" {
 			return nil
 		}

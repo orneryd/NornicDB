@@ -185,7 +185,7 @@ func isStaticallyTypedProcedureArgument(text string) bool {
 	if text == "" {
 		return false
 	}
-	lower := strings.ToLower(text)
+	lower := lowerASCII(text)
 	if lower == "null" || lower == "true" || lower == "false" {
 		return true
 	}
@@ -207,7 +207,7 @@ func coerceProcedureArgument(parameter ProcedureParam, value interface{}) (inter
 		return nil, parameter.Optional || strings.EqualFold(parameter.Type, "ANY") || parameter.Type == ""
 	}
 
-	switch strings.ToUpper(strings.TrimSpace(parameter.Type)) {
+	switch upperASCII(strings.TrimSpace(parameter.Type)) {
 	case "", "ANY":
 		return value, true
 	case "STRING":
@@ -290,7 +290,7 @@ func procedureCallContainsAggregation(callCypher string) bool {
 	}
 	body := callCypher[open+1 : close]
 	for _, name := range []string{"count", "sum", "avg", "min", "max", "collect", "stdev", "stdevp", "percentilecont", "percentiledisc"} {
-		if findKeywordIndexInContext(body, name) >= 0 && strings.Contains(strings.ToLower(body), name+"(") {
+		if findKeywordIndexInContext(body, name) >= 0 && strings.Contains(lowerASCII(body), name+"(") {
 			return true
 		}
 	}

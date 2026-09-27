@@ -375,7 +375,7 @@ func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
 	}
 
 	// Handle function calls and expressions
-	lowerExpr := strings.ToLower(expr)
+	lowerExpr := lowerASCII(expr)
 
 	// timestamp() - returns current timestamp in milliseconds
 	if lowerExpr == "timestamp()" {

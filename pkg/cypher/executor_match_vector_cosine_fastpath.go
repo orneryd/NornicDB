@@ -964,8 +964,8 @@ func collectNodePropertyRefsForProjection(varName string, expr string, props map
 	if expr == "*" || expr == varName {
 		return false
 	}
-	compact := strings.ToLower(strings.ReplaceAll(expr, " ", ""))
-	lowerVar := strings.ToLower(varName)
+	compact := lowerASCII(strings.ReplaceAll(expr, " ", ""))
+	lowerVar := lowerASCII(varName)
 	if strings.Contains(compact, "properties("+lowerVar+")") ||
 		strings.Contains(compact, "keys("+lowerVar+")") ||
 		strings.Contains(compact, lowerVar+"{") ||
@@ -1180,7 +1180,7 @@ func scoreVectorForFastPath(queryVector []float32, embedding []float32, similari
 	if len(embedding) == 0 || len(embedding) != len(queryVector) {
 		return 0, false
 	}
-	switch strings.ToLower(strings.TrimSpace(similarity)) {
+	switch lowerASCII(strings.TrimSpace(similarity)) {
 	case "euclidean":
 		return vector.EuclideanSimilarity(queryVector, embedding), true
 	case "dot":

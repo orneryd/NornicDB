@@ -23,7 +23,7 @@ func (m *funcMatcher) String() string {
 	if m == nil {
 		return ""
 	}
-	return "func:" + strings.ToLower(strings.TrimSpace(m.funcName))
+	return "func:" + lowerASCII(strings.TrimSpace(m.funcName))
 }
 
 // funcMatcherCache caches function-name matchers by lower-cased name
@@ -31,7 +31,7 @@ func (m *funcMatcher) String() string {
 var funcMatcherCache = newBoundedCache[string, *funcMatcher](1024)
 
 func getFuncMatcher(funcName string) *funcMatcher {
-	key := strings.ToLower(strings.TrimSpace(funcName))
+	key := lowerASCII(strings.TrimSpace(funcName))
 	if key == "" {
 		return &funcMatcher{funcName: funcName}
 	}

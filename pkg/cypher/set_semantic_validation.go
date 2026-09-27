@@ -208,7 +208,7 @@ func expressionFreeVariables(expression string) []string {
 		}
 		previous := previousSetExpressionByte(expression, index)
 		following := nextSetExpressionByte(expression, next)
-		upper := strings.ToUpper(name)
+		upper := upperASCII(name)
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
 		// variables and sees the outer ones; its body isn't an expression.
 		if following == '{' && (upper == "EXISTS" || upper == "COUNT" || upper == "COLLECT") {
@@ -228,7 +228,7 @@ func expressionFreeVariables(expression string) []string {
 }
 
 func collectFunctionExpressionBindings(expression string, bindings map[string]struct{}) {
-	lower := strings.ToLower(expression)
+	lower := lowerASCII(expression)
 	for _, functionName := range []string{"reduce", "all", "any", "none", "single", "filter"} {
 		searchFrom := 0
 		for searchFrom < len(expression) {

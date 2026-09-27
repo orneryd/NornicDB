@@ -22,7 +22,7 @@ import (
 //   - toSeq: Ending sequence number (optional, 0 = no limit)
 func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	// Parse: CALL db.txlog.entries(fromSeq, toSeq)
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	startIdx := strings.Index(upper, "DB.TXLOG.ENTRIES(")
 	if startIdx == -1 {
 		return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSyntax("db.txlog.entries"), nil)
@@ -122,7 +122,7 @@ func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, cypher string)
 //   - maxEntries: Maximum number of entries to return (optional, 0 = all)
 func (e *StorageExecutor) callDbTxlogByTxID(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	// Parse: CALL db.txlog.byTxId('txId', maxEntries)
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	startIdx := strings.Index(upper, "DB.TXLOG.BYTXID(")
 	if startIdx == -1 {
 		return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSyntax("db.txlog.byTxId"), nil)

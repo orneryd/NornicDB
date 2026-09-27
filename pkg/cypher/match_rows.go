@@ -104,7 +104,7 @@ func (e *StorageExecutor) evaluateSumArithmetic(expr string, nodes []*storage.No
 
 		// Evaluate this part
 		var value float64
-		upperPart := strings.ToUpper(part)
+		upperPart := upperASCII(part)
 
 		if strings.HasPrefix(upperPart, "SUM(") {
 			if agg := ParseAggregation(part); agg != nil && agg.Function == "SUM" && agg.Property != "" {
@@ -184,7 +184,7 @@ func withWhereNeedsFullEvaluator(whereClause string) bool {
 	if strings.ContainsAny(whereClause, "(") {
 		return true
 	}
-	upper := strings.ToUpper(whereClause)
+	upper := upperASCII(whereClause)
 	for _, tok := range []string{" AND ", " OR ", " XOR ", "NOT "} {
 		if strings.Contains(upper, tok) {
 			return true
@@ -485,7 +485,7 @@ func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, column
 		}
 
 		colName := tokens[0]
-		descending := len(tokens) > 1 && strings.ToUpper(tokens[1]) == "DESC"
+		descending := len(tokens) > 1 && upperASCII(tokens[1]) == "DESC"
 
 		colIdx := findOrderByColumnIndex(columns, colName)
 
@@ -753,7 +753,7 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 	var unwindExpr, unwindVar string
 
 	// Find AS keyword
-	asIdx := strings.Index(strings.ToUpper(unwindPart), " AS ")
+	asIdx := strings.Index(upperASCII(unwindPart), " AS ")
 	if asIdx == -1 {
 		return nil, localizedError(localization.CypherMatchingUnwindASRequired(), nil)
 	}
@@ -771,7 +771,7 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 
 	// Find WHERE clause after UNWIND (if any)
 	postUnwindWhere := ""
-	unwindUpperRemainder := strings.ToUpper(unwindPart[asIdx+4:])
+	unwindUpperRemainder := upperASCII(unwindPart[asIdx+4:])
 	postWhereIdx := strings.Index(unwindUpperRemainder, " WHERE ")
 	if postWhereIdx > 0 {
 		// Find WHERE and RETURN boundaries
@@ -860,7 +860,7 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 	// Check for aggregation in RETURN
 	hasAggregation := false
 	for _, item := range returnItems {
-		upperExpr := strings.ToUpper(item.expr)
+		upperExpr := upperASCII(item.expr)
 		if strings.HasPrefix(upperExpr, "COUNT(") ||
 			strings.HasPrefix(upperExpr, "SUM(") ||
 			strings.HasPrefix(upperExpr, "AVG(") ||

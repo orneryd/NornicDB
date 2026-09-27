@@ -89,7 +89,7 @@ func normalizeAPOCRemoteURLAllowlist(hosts []string) []string {
 	out := make([]string, 0, len(hosts))
 	seen := make(map[string]struct{}, len(hosts))
 	for _, host := range hosts {
-		normalized := strings.ToLower(strings.TrimSpace(host))
+		normalized := lowerASCII(strings.TrimSpace(host))
 		if normalized == "" {
 			continue
 		}
@@ -106,7 +106,7 @@ func normalizeAPOCRemoteURLAllowlist(hosts []string) []string {
 }
 
 func apocRemoteHostAllowed(hostname string, allowlist []string) bool {
-	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	hostname = lowerASCII(strings.TrimSpace(hostname))
 	if hostname == "" || len(allowlist) == 0 {
 		return false
 	}
@@ -139,7 +139,7 @@ func (e *StorageExecutor) resolveAPOCLocalFilePath(source string, ensureAllowed 
 
 	parsed, err := url.Parse(source)
 	if err == nil && parsed.Scheme != "" {
-		switch strings.ToLower(parsed.Scheme) {
+		switch lowerASCII(parsed.Scheme) {
 		case "file":
 			if err := validateAPOCFileURL(parsed); err != nil {
 				return "", err
@@ -364,9 +364,9 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, cypher string) (*
 	separator := ','
 
 	// Check for header option
-	if strings.Contains(strings.ToUpper(cypher), "HEADER:") {
-		if strings.Contains(strings.ToUpper(cypher), "HEADER: FALSE") ||
-			strings.Contains(strings.ToUpper(cypher), "HEADER:FALSE") {
+	if strings.Contains(upperASCII(cypher), "HEADER:") {
+		if strings.Contains(upperASCII(cypher), "HEADER: FALSE") ||
+			strings.Contains(upperASCII(cypher), "HEADER:FALSE") {
 			hasHeader = false
 		}
 	}
@@ -716,7 +716,7 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, cypher str
 // =============================================================================
 
 func (e *StorageExecutor) extractApocLoadArg(cypher, loadType string) string {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	marker := "APOC.LOAD." + loadType
 	idx := strings.Index(upper, marker)
 	if idx < 0 {
@@ -754,7 +754,7 @@ func (e *StorageExecutor) extractApocLoadArg(cypher, loadType string) string {
 
 func (e *StorageExecutor) extractApocExportArg(cypher, exportType string) string {
 	// Similar to load but for export procedures
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	markers := []string{"APOC.EXPORT." + exportType + ".ALL", "APOC.EXPORT." + exportType + ".QUERY"}
 
 	for _, marker := range markers {
@@ -790,7 +790,7 @@ func (e *StorageExecutor) extractApocExportArg(cypher, exportType string) string
 }
 
 func (e *StorageExecutor) extractApocExportQuery(cypher string) string {
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	idx := strings.Index(upper, ".QUERY")
 	if idx < 0 {
 		return ""
@@ -944,7 +944,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, cypher string)
 	urlOrFile := e.extractApocLoadArg(cypher, "JSON")
 	if urlOrFile == "" {
 		// Try IMPORT marker
-		upper := strings.ToUpper(cypher)
+		upper := upperASCII(cypher)
 		idx := strings.Index(upper, "APOC.IMPORT.JSON")
 		if idx >= 0 {
 			remainder := cypher[idx+16:]

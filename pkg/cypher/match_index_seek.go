@@ -23,7 +23,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nod
 		return nil, false, nil
 	}
 
-	upper := strings.ToUpper(clause)
+	upper := upperASCII(clause)
 	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") || strings.Contains(upper, " IN ") {
 		return nil, false, nil
 	}
@@ -54,7 +54,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nod
 
 	kind := ""
 	varName := ""
-	lowerLeft := strings.ToLower(left)
+	lowerLeft := lowerASCII(left)
 	switch {
 	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
 		kind = "id"
@@ -132,7 +132,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 	}
 	clause := strings.TrimSpace(whereClause)
 
-	upper := strings.ToUpper(clause)
+	upper := upperASCII(clause)
 	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") || strings.Contains(upper, " IN ") {
 		return nil, false, nil
 	}
@@ -171,7 +171,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 
 	kind := ""
 	varName := ""
-	lowerLeft := strings.ToLower(left)
+	lowerLeft := lowerASCII(left)
 	switch {
 	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
 		kind = "id"
@@ -790,7 +790,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDInParam(
 		return nil, false, nil
 	}
 	clause := strings.TrimSpace(whereClause)
-	upper := strings.ToUpper(clause)
+	upper := upperASCII(clause)
 	inIdx := strings.Index(upper, " IN ")
 	if inIdx <= 0 {
 		return nil, false, nil
@@ -812,7 +812,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDInParam(
 
 	kind := ""
 	varName := ""
-	lowerLeft := strings.ToLower(left)
+	lowerLeft := lowerASCII(left)
 	switch {
 	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
 		kind = "id"
@@ -1293,7 +1293,7 @@ func (e *StorageExecutor) parseSimpleIndexedIsNotNull(variable, whereClause stri
 }
 
 func parseSimpleSingleIndexedIsNotNull(variable, clause string) (property string, ok bool) {
-	upper := strings.ToUpper(strings.TrimSpace(clause))
+	upper := upperASCII(strings.TrimSpace(clause))
 	sfx := " IS NOT NULL"
 	if !strings.HasSuffix(upper, sfx) {
 		return "", false
@@ -1673,13 +1673,13 @@ func tryRewriteNullNormalizedPredicate(whereClause string) string {
 	// Only rewrite simple top-level predicates (no AND/OR at the top level).
 	// Nested coalesce inside AND/OR conjuncts would need recursive rewrite
 	// which risks semantic drift — keep it strict.
-	upper := strings.ToUpper(clause)
+	upper := upperASCII(clause)
 	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") {
 		return clause
 	}
 
 	// Look for coalesce( at the start.
-	lowerClause := strings.ToLower(clause)
+	lowerClause := lowerASCII(clause)
 	if !strings.HasPrefix(lowerClause, "coalesce(") {
 		return clause
 	}

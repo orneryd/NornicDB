@@ -19,7 +19,7 @@ var (
 // Those queries should not be cached.
 func isCacheableReadQuery(cypher string) bool {
 	cypher = classificationText(cypher)
-	upper := strings.ToUpper(cypher)
+	upper := upperASCII(cypher)
 	// SHOW commands list live state — running transactions, users, settings,
 	// schema — that graph-write invalidation doesn't track, and TERMINATE
 	// acts on it: neither is ever served from the result cache (#718, #531).
