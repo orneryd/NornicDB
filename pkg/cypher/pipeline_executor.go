@@ -368,7 +368,8 @@ func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineCl
 // EXISTS { MATCH ... } belongs to the predicate and must never become a new
 // outer pipeline clause.
 func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
-	positions := make([]int, 0, 4)
+	// Allocated on the first match: most scans find nothing.
+	var positions []int
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	inSingle, inDouble := false, false
 	withSearch := isWithKeyword(keyword)
@@ -402,6 +403,9 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 			(i == 0 || !isAlphaNumericByte(query[i-1])) &&
 			(i+len(keyword) == len(query) || !isAlphaNumericByte(query[i+len(keyword)])) {
 			if (!withSearch || !isOperatorWith(query, i)) && !clauseKeywordUsedAsName(query, i, i+len(keyword), keyword) {
+				if positions == nil {
+					positions = make([]int, 0, 4)
+				}
 				positions = append(positions, i)
 			}
 			i += len(keyword) - 1

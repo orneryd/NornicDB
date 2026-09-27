@@ -8,20 +8,21 @@ import (
 )
 
 // splitTopLevelComma splits a comma-separated string while respecting nested
-// (), [], {} groups and quoted strings.
+// (), [], {} groups and quoted strings. The parts are trimmed substrings of
+// input, so splitting copies no text.
 func splitTopLevelComma(input string) []string {
 	if strings.TrimSpace(input) == "" {
 		return nil
 	}
 
 	var parts []string
-	var current strings.Builder
+	start := 0
 	inSingle := false
 	inDouble := false
 	depth := 0
 
-	for i, r := range input {
-		switch r {
+	for i := 0; i < len(input); i++ {
+		switch input[i] {
 		case '\'':
 			if !inDouble && !isBackslashEscaped(input, i) {
 				inSingle = !inSingle
@@ -40,15 +41,13 @@ func splitTopLevelComma(input string) []string {
 			}
 		case ',':
 			if !inSingle && !inDouble && depth == 0 {
-				parts = append(parts, strings.TrimSpace(current.String()))
-				current.Reset()
-				continue
+				parts = append(parts, strings.TrimSpace(input[start:i]))
+				start = i + 1
 			}
 		}
-		current.WriteRune(r)
 	}
 
-	if s := strings.TrimSpace(current.String()); s != "" {
+	if s := strings.TrimSpace(input[start:]); s != "" {
 		parts = append(parts, s)
 	}
 	return parts

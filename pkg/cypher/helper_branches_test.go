@@ -22,6 +22,10 @@ func TestCallSharedUtils_Branches(t *testing.T) {
 		assert.Equal(t, "z", parts[5])
 	})
 
+	t.Run("splitTopLevelComma keeps multi-byte text and leaves empty middle parts", func(t *testing.T) {
+		assert.Equal(t, []string{"'é,ü'", "ß", "", "[日,本]"}, splitTopLevelComma(`'é,ü', ß, , [日,本], `))
+	})
+
 	t.Run("toBool covers bool, good string, bad string and default", func(t *testing.T) {
 		v, ok := toBool(true)
 		assert.True(t, ok)

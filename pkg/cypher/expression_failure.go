@@ -9,6 +9,21 @@ import (
 
 type expressionFailureKey struct{}
 
+// withExpressionFailureSlot gives ctx a slot that collects the first
+// expression error of the statement (recordExpressionFailure), unless it
+// has one: the running statement's own slot when there is one (no
+// allocation), else a new one.
+func withExpressionFailureSlot(ctx context.Context) context.Context {
+	if ctx.Value(expressionFailureKey{}) != nil {
+		return ctx
+	}
+	if statement, ok := ctx.Value(statementContextKey{}).(*statementContext); ok {
+		statement.failureActive.Store(true)
+		return ctx
+	}
+	return context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
+}
+
 type expressionFailure struct {
 	mu              sync.Mutex
 	err             error

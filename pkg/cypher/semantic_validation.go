@@ -182,7 +182,7 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(cypher string, names
 // therefore rejected before any route runs the subquery. CALL (*) and a body
 // starting with WITH * import the whole outer scope and are not checked here.
 func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
-	if !strings.Contains(upperASCII(cypher), "CALL") {
+	if !containsFold(cypher, "CALL") {
 		return nil
 	}
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {

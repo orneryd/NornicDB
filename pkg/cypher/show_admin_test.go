@@ -217,3 +217,109 @@ func TestRunningStatementContextCancelsDerivedContexts(t *testing.T) {
 		t.Fatal("a context derived from the statement's was not cancelled by TERMINATE")
 	}
 }
+
+// TestShowAndTerminateRunningAutoCommitStatement: an auto-commit statement is
+// listed by SHOW TRANSACTIONS while it runs, TERMINATE TRANSACTIONS stops it
+// (Neo4j's Terminated error, nothing written), and a statement answered from
+// the result cache returns the same rows and leaves nothing listed. An
+// auto-commit statement is registered after the result-cache lookup; a
+// statement of an explicit transaction before it, so a terminated
+// transaction refuses even a statement whose result is cached.
+func TestShowAndTerminateRunningAutoCommitStatement(t *testing.T) {
+	ClearUserProcedures()
+	t.Cleanup(ClearUserProcedures)
+	started := make(chan struct{}, 1)
+	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
+		Name:      "test.waitForTermination",
+		Signature: "test.waitForTermination() :: (done :: BOOLEAN)",
+		Mode:      ProcedureModeRead,
+		Returns:   []ProcedureColumn{{Name: "done", Type: "BOOLEAN"}},
+	}, func(ctx context.Context, exec *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+		started <- struct{}{}
+		select {
+		case <-ctx.Done():
+		case <-time.After(10 * time.Second):
+		}
+		return &ExecuteResult{Columns: []string{"done"}, Rows: [][]interface{}{{true}}}, nil
+	}))
+
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	session := NewStorageExecutor(store)
+	observer := NewStorageExecutor(store)
+	ctx := WithRequestIdentity(context.Background(), &RequestIdentity{
+		Connection: ClientConnection{ID: "bolt-autocommit", Address: "10.0.0.2:5000", Protocol: "bolt"},
+		User:       &AuthenticatedUser{Name: "alice"},
+	})
+	listed := "SHOW TRANSACTIONS YIELD transactionId, currentQuery, connectionId, status WHERE connectionId = 'bolt-autocommit' AND NOT currentQuery STARTS WITH 'SHOW' RETURN transactionId, currentQuery, status"
+
+	const statement = "CALL test.waitForTermination() YIELD done CREATE (:AutoCommitTerminated) RETURN done"
+	finished := make(chan error, 1)
+	go func() {
+		_, err := session.Execute(ctx, statement, nil)
+		finished <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the auto-commit statement did not start")
+	}
+
+	result, err := observer.Execute(ctx, listed, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, statement, result.Rows[0][1])
+	require.Equal(t, "Running", result.Rows[0][2])
+	id := result.Rows[0][0].(string)
+
+	result, err = observer.Execute(ctx, "TERMINATE TRANSACTION $id", map[string]interface{}{"id": id})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{id, "alice", "Transaction terminated."}}, result.Rows)
+	select {
+	case err = <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("TERMINATE did not stop the auto-commit statement")
+	}
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Transaction.Terminated")
+
+	result, err = observer.Execute(ctx, "MATCH (n:AutoCommitTerminated) RETURN count(n) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+	result, err = observer.Execute(ctx, listed, nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+
+	// A statement answered from the result cache: the same rows, nothing
+	// left listed.
+	_, err = session.Execute(ctx, "CREATE (:Cached {v: 1})", nil)
+	require.NoError(t, err)
+	const cachedQuery = "MATCH (n:Cached) RETURN n.v AS v"
+	first, err := session.Execute(ctx, cachedQuery, nil)
+	require.NoError(t, err)
+	hitsBefore, _, _, _, _ := session.cache.Stats()
+	second, err := session.Execute(ctx, cachedQuery, nil)
+	require.NoError(t, err)
+	hitsAfter, _, _, _, _ := session.cache.Stats()
+	require.Equal(t, hitsBefore+1, hitsAfter, "the second run is answered from the result cache")
+	require.Equal(t, [][]interface{}{{int64(1)}}, first.Rows)
+	require.Equal(t, first.Rows, second.Rows)
+	result, err = observer.Execute(ctx, listed, nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+
+	// A terminated explicit transaction refuses a statement whose result
+	// is cached.
+	_, err = session.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = session.Execute(ctx, cachedQuery, nil)
+	require.NoError(t, err)
+	result, err = observer.Execute(ctx, "SHOW TRANSACTIONS YIELD transactionId, currentQuery, connectionId WHERE currentQuery = '' AND connectionId = 'bolt-autocommit' RETURN transactionId", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	_, err = observer.Execute(ctx, "TERMINATE TRANSACTION $id", map[string]interface{}{"id": result.Rows[0][0]})
+	require.NoError(t, err)
+	_, err = session.Execute(ctx, cachedQuery, nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Transaction.Terminated")
+	_, _ = session.Execute(ctx, "ROLLBACK", nil)
+}

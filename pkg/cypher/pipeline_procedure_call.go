@@ -14,7 +14,7 @@ import (
 // and a statement with write clauses keep their own routes (the vector and
 // fulltext search tails, UNWIND batch writers with vector setters, …).
 func pipelineProcedureCallsAreClauses(cypher string) bool {
-	if hasCallSubqueryPattern(cypher) {
+	if !containsFold(cypher, "CALL") || hasCallSubqueryPattern(cypher) {
 		return false
 	}
 	for _, keyword := range []string{"CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH"} {

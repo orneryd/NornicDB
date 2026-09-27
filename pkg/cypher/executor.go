@@ -1527,16 +1527,27 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}()
 	}
 	// SHOW TRANSACTIONS lists the statement while it runs; TERMINATE
-	// TRANSACTIONS cancels it (#718).
-	statementCtx, running, runErr := e.withRunningStatement(ctx, originalCypher)
-	if runErr != nil {
-		if e.txContext != nil && e.txContext.active {
-			_, _ = e.handleRollback()
+	// TRANSACTIONS cancels it (#718). A statement of an explicit
+	// transaction is registered here, so a terminated transaction refuses
+	// it before anything else; an auto-commit statement after the result
+	// cache, since a statement served from the cache runs nothing that
+	// could be listed or terminated.
+	var running runningStatement
+	defer func() { running.done() }()
+	registerStatement := func() error {
+		statementCtx, statement, err := e.withRunningStatement(ctx, originalCypher)
+		if err != nil {
+			return err
 		}
-		return nil, runErr
+		running, ctx = statement, statementCtx
+		return nil
 	}
-	defer running.done()
-	ctx = statementCtx
+	if e.txContext != nil && e.txContext.active {
+		if runErr := registerStatement(); runErr != nil {
+			_, _ = e.handleRollback()
+			return nil, runErr
+		}
+	}
 
 	// Validate basic syntax
 	if err := e.validateSyntax(cypher); err != nil {
@@ -1649,6 +1660,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return cached, nil
 		}
 	}
+	if running.tx == nil {
+		if runErr := registerStatement(); runErr != nil {
+			return nil, runErr
+		}
+	}
 
 	// Check for EXPLAIN/PROFILE execution modes (using cached analysis)
 	if info.HasExplain {
@@ -1662,9 +1678,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// If in explicit transaction, execute within it
 	if e.txContext != nil && e.txContext.active {
-		if ctx.Value(expressionFailureKey{}) == nil {
-			ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
-		}
+		ctx = withExpressionFailureSlot(ctx)
 		result, err := e.executeInTransaction(ctx, cypher, upperQuery)
 		if failure := getExpressionFailure(ctx); failure != nil {
 			return nil, failure
@@ -1687,9 +1701,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Auto-commit single query - use async path for performance
 	// This uses AsyncEngine's write-behind cache instead of synchronous disk I/O
 	// For strict ACID, users should use explicit BEGIN/COMMIT transactions
-	if ctx.Value(expressionFailureKey{}) == nil {
-		ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
-	}
+	ctx = withExpressionFailureSlot(ctx)
 	result, err = e.executeImplicitAsync(ctx, cypher, upperQuery)
 	// An expression error recorded while the statement ran is its error,
 	// whichever route ran it: no route's result stands in for it.

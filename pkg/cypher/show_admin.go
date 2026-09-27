@@ -353,6 +353,13 @@ type statementContext struct {
 	parent context.Context
 	tx     *runningTransaction
 
+	// failure is the statement's expression-failure slot, visible to
+	// Value once withExpressionFailureSlot activates it (the point where
+	// Execute starts collecting expression errors), so a statement needs
+	// no allocation of its own for it.
+	failure       expressionFailure
+	failureActive atomic.Bool
+
 	mu   sync.Mutex
 	done chan struct{} // made by Done
 	err  error         // set by cancel
@@ -362,11 +369,21 @@ type statementContext struct {
 func (c *statementContext) Deadline() (time.Time, bool) { return c.parent.Deadline() }
 
 func (c *statementContext) Value(key any) any {
-	if _, ok := key.(ctxKeyRunningTransaction); ok {
+	switch key.(type) {
+	case ctxKeyRunningTransaction:
 		return c.tx
+	case statementContextKey:
+		return c
+	case expressionFailureKey:
+		if c.failureActive.Load() {
+			return &c.failure
+		}
 	}
 	return c.parent.Value(key)
 }
+
+// statementContextKey finds the running statement's statementContext.
+type statementContextKey struct{}
 
 // Err is the statement's cancellation, or the parent's (which then cancels
 // the statement, so Done is closed whenever Err is not nil).
