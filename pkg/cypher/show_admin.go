@@ -199,6 +199,10 @@ type runningTransaction struct {
 	connection ClientConnection
 	started    time.Time
 	terminated atomic.Bool
+	// committed is set when an auto-commit statement's transaction has
+	// committed: a TERMINATE that arrives after that doesn't fail the
+	// statement, whose writes are stored (Execute).
+	committed atomic.Bool
 
 	mu           sync.Mutex
 	query        string

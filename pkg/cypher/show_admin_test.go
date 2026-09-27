@@ -323,3 +323,90 @@ func TestShowAndTerminateRunningAutoCommitStatement(t *testing.T) {
 	require.Contains(t, statusText(err), "Neo.ClientError.Transaction.Terminated")
 	_, _ = session.Execute(ctx, "ROLLBACK", nil)
 }
+
+// TestTerminatedStatementFailsWhateverNoticedIt: a statement whose
+// transaction TERMINATE TRANSACTIONS terminated while it ran fails with
+// Neo4j's Neo.ClientError.Transaction.Terminated and stores nothing: an
+// auto-commit read (which returned its rows), an auto-commit write (whose
+// checked write path returned the bare cancellation), and a statement of
+// an explicit transaction, whose COMMIT then fails too (#751).
+func TestTerminatedStatementFailsWhateverNoticedIt(t *testing.T) {
+	ClearUserProcedures()
+	t.Cleanup(ClearUserProcedures)
+	started := make(chan struct{}, 1)
+	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
+		Name:      "test.waitUntilTerminated",
+		Signature: "test.waitUntilTerminated() :: (done :: BOOLEAN)",
+		Mode:      ProcedureModeRead,
+		Returns:   []ProcedureColumn{{Name: "done", Type: "BOOLEAN"}},
+	}, func(ctx context.Context, exec *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+		started <- struct{}{}
+		select {
+		case <-ctx.Done():
+		case <-time.After(10 * time.Second):
+		}
+		return &ExecuteResult{Columns: []string{"done"}, Rows: [][]interface{}{{true}}}, nil
+	}))
+
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	observer := NewStorageExecutor(store)
+	ctx := WithRequestIdentity(context.Background(), &RequestIdentity{
+		Connection: ClientConnection{ID: "bolt-terminated", Address: "10.0.0.3:5000", Protocol: "bolt"},
+	})
+	terminateRunning := func(t *testing.T) {
+		t.Helper()
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the statement did not start")
+		}
+		result, err := observer.Execute(ctx, "SHOW TRANSACTIONS YIELD transactionId, currentQuery, connectionId WHERE connectionId = 'bolt-terminated' AND currentQuery STARTS WITH 'CALL test.' RETURN transactionId", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		_, err = observer.Execute(ctx, "TERMINATE TRANSACTION $id", map[string]interface{}{"id": result.Rows[0][0]})
+		require.NoError(t, err)
+	}
+	run := func(exec *StorageExecutor, statement string) <-chan error {
+		finished := make(chan error, 1)
+		go func() {
+			_, err := exec.Execute(ctx, statement, nil)
+			finished <- err
+		}()
+		return finished
+	}
+	requireTerminated := func(t *testing.T, finished <-chan error) {
+		t.Helper()
+		select {
+		case err := <-finished:
+			require.Error(t, err)
+			require.Contains(t, statusText(err), "Neo.ClientError.Transaction.Terminated")
+		case <-time.After(10 * time.Second):
+			t.Fatal("TERMINATE did not stop the statement")
+		}
+	}
+
+	for _, statement := range []string{
+		"CALL test.waitUntilTerminated() YIELD done RETURN done",
+		"CALL test.waitUntilTerminated() YIELD done CREATE (:TerminatedWrite) RETURN done",
+	} {
+		finished := run(NewStorageExecutor(store), statement)
+		terminateRunning(t)
+		requireTerminated(t, finished)
+	}
+
+	session := NewStorageExecutor(store)
+	_, err := session.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = session.Execute(ctx, "CREATE (:TerminatedWrite)", nil)
+	require.NoError(t, err)
+	finished := run(session, "CALL test.waitUntilTerminated() YIELD done RETURN done")
+	terminateRunning(t)
+	requireTerminated(t, finished)
+	_, err = session.Execute(ctx, "COMMIT", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Transaction.Terminated")
+
+	result, err := observer.Execute(ctx, "MATCH (n:TerminatedWrite) RETURN count(n) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+}

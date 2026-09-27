@@ -1535,8 +1535,19 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// it before anything else; an auto-commit statement after the result
 	// cache, since a statement served from the cache runs nothing that
 	// could be listed or terminated.
+	// A statement whose transaction TERMINATE TRANSACTIONS terminated while
+	// it ran fails with Neo4j's Neo.ClientError.Transaction.Terminated,
+	// whichever layer noticed the cancellation (a storage call, the
+	// checked write path, the row loop) and whether it read or wrote;
+	// only an auto-commit statement that had already committed keeps its
+	// result (#751).
 	var running runningStatement
-	defer func() { running.done() }()
+	defer func() {
+		if running.tx != nil && running.tx.terminated.Load() && !running.tx.committed.Load() {
+			result, retErr = nil, transactionTerminatedError()
+		}
+		running.done()
+	}()
 	registerStatement := func() error {
 		statementCtx, statement, err := e.withRunningStatement(ctx, originalCypher)
 		if err != nil {
@@ -2472,6 +2483,10 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 		// with pkg/cypher/transaction.go:181 so the explicit and implicit paths produce the
 		// same wire shape.
 		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err)
+	}
+	// Committed: a TERMINATE from now on doesn't fail this statement (#751).
+	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok {
+		running.committed.Store(true)
 	}
 
 	// Attach receipt metadata if WAL markers were recorded.
