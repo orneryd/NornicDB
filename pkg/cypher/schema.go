@@ -65,7 +65,9 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
-	if err := flushPendingAsyncWritesBeforeSchemaDDL(e.storage); err != nil {
+	resumeWrites, err := pauseAsyncWritesForSchemaDDL(e.storage)
+	defer resumeWrites()
+	if err != nil {
 		return nil, err
 	}
 
@@ -130,18 +132,38 @@ func (e *StorageExecutor) countSchemaChanges(ctx context.Context, cypher string,
 	return result, nil
 }
 
-func flushPendingAsyncWritesBeforeSchemaDDL(engine storage.Engine) error {
+// pauseAsyncWritesForSchemaDDL flushes every async write cache in the engine
+// stack and holds its writes (AsyncEngine.PauseWritesForSchemaChange) until
+// the returned function is called: a schema command checks the stored data
+// against its new rule and registers the rule with no write cached in
+// between, so no cached write is flushed under a rule it was never checked
+// against (#700). The returned function is always safe to call.
+func pauseAsyncWritesForSchemaDDL(engine storage.Engine) (func(), error) {
+	var resumes []func()
+	resume := func() {
+		for i := len(resumes) - 1; i >= 0; i-- {
+			resumes[i]()
+		}
+	}
 	visited := make(map[storage.Engine]bool)
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
 
 		if async, ok := engine.(interface {
+			PauseWritesForSchemaChange() (func(), error)
+		}); ok {
+			resumeAsync, err := async.PauseWritesForSchemaChange()
+			resumes = append(resumes, resumeAsync)
+			if err != nil {
+				return resume, localizedError(localization.CypherSchemaFlushPendingWritesFailed(err), err)
+			}
+		} else if async, ok := engine.(interface {
 			HasPendingWrites() bool
 			Flush() error
 		}); ok {
 			if async.HasPendingWrites() {
 				if err := async.Flush(); err != nil {
-					return localizedError(localization.CypherSchemaFlushPendingWritesFailed(err), err)
+					return resume, localizedError(localization.CypherSchemaFlushPendingWritesFailed(err), err)
 				}
 			}
 		}
@@ -153,7 +175,7 @@ func flushPendingAsyncWritesBeforeSchemaDDL(engine storage.Engine) error {
 			engine = nil
 		}
 	}
-	return nil
+	return resume, nil
 }
 
 // executeCreateConstraint handles CREATE CONSTRAINT commands.

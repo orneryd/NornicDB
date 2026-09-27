@@ -94,3 +94,6 @@
 - id: cyphertransactions.multiple_match_expected
   description: La ruta multi-MATCH recibió menos de dos cláusulas MATCH.
   other: se esperaban varias cláusulas MATCH
+- id: cyphertransactions.command_not_statement
+  description: Comando de transacción enviado como sentencia del cliente. Word es una palabra clave de Cypher y no se traduce.
+  other: "Entrada no válida '{{.Word}}': se esperaba una sentencia Cypher (el controlador o la API de transacciones HTTP inician, confirman y revierten una transacción, no una sentencia)"

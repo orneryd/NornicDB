@@ -43,9 +43,10 @@ func TestCypherSchemaParserErrorsHaveTypedIdentity(t *testing.T) {
 
 func TestCypherSchemaWrappedErrorsPreserveCause(t *testing.T) {
 	cause := errors.New("forced schema failure")
-	err := flushPendingAsyncWritesBeforeSchemaDDL(&schemaFlushFailureEngine{cause: cause})
+	resume, err := pauseAsyncWritesForSchemaDDL(&schemaFlushFailureEngine{cause: cause})
 
 	localizedErr := requireCypherSchemaLocalizedError(t, err, localization.MessageCypherSchemaFlushPendingWritesFailed, "flush pending async writes before schema DDL: forced schema failure")
+	resume()
 	require.ErrorIs(t, err, cause)
 	require.Equal(t, "forced schema failure", localizedErr.Message.Data["Cause"])
 }

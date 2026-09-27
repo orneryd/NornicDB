@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -29,14 +30,20 @@ func WithTransactionControl(ctx context.Context) context.Context {
 	return context.WithValue(ctx, transactionStatementOriginKey{}, false)
 }
 
+// clientTransactionCommand is Neo4j's SyntaxError for a client statement that
+// is a bare BEGIN, COMMIT or ROLLBACK (optionally followed by TRANSACTION):
+// Cypher has no transaction statements, and a client statement runs on an
+// executor the client doesn't own for longer than the statement, so it must
+// not leave that executor inside a transaction. The one-statement script form
+// (BEGIN … COMMIT in one text) and embedded callers without a client mark keep
+// working.
 func clientTransactionCommand(ctx context.Context, query string) error {
 	if ctx.Value(transactionStatementOriginKey{}) != true {
 		return nil
 	}
-	for _, command := range []string{"BEGIN", "COMMIT", "ROLLBACK"} {
-		if strings.EqualFold(query, command) || strings.EqualFold(query, command+" TRANSACTION") {
-			return &SemanticError{Code: "Neo.ClientError.Statement.SyntaxError", Detail: "UnexpectedSyntax", Message: "Invalid input '" + command + "': expected a Cypher statement"}
-		}
+	if word := bareTransactionCommand(query); word != "" {
+		message := localization.CypherTransactionsCommandNotStatement(word)
+		return localizedError(message, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message.Fallback))
 	}
 	return nil
 }
@@ -94,6 +101,26 @@ func (e *StorageExecutor) abortTransaction(err error) error {
 func queryOnFailedTransactionError(cause error) error {
 	return newSemanticError("Neo.TransientError.Transaction.QueryExecutionFailedOnTransaction", "QueryExecutionFailedOnTransaction",
 		"The transaction was marked as failed because a query failed: "+cause.Error())
+}
+
+// bareTransactionCommand returns the command word, as typed, when cypher is exactly a
+// bare transaction command (BEGIN, COMMIT or ROLLBACK, optionally followed by
+// TRANSACTION), else "".
+func bareTransactionCommand(cypher string) string {
+	// Allocation-free: it runs for every client statement.
+	text := strings.TrimSpace(cypher)
+	word, rest := text, ""
+	if i := strings.IndexFunc(text, unicode.IsSpace); i >= 0 {
+		word, rest = text[:i], strings.TrimSpace(text[i:])
+	}
+	if rest != "" && !strings.EqualFold(rest, "TRANSACTION") {
+		return ""
+	}
+	if strings.EqualFold(word, "BEGIN") || strings.EqualFold(word, "COMMIT") || strings.EqualFold(word, "ROLLBACK") {
+		// As typed: Neo4j's SyntaxError quotes the input ('begin').
+		return word
+	}
+	return ""
 }
 
 // parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
@@ -192,7 +219,12 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 			return nil, localizedError(localization.CypherTransactionsPinNamespaceFailed(err), err)
 		}
 	}
-	if err := tx.SetDeferredConstraintValidation(true); err != nil {
+	// An explicit transaction checks each write against the constraints
+	// when its statement runs, as Neo4j does: the statement that breaks a
+	// constraint fails with ConstraintValidationFailed (and fails the
+	// transaction), not the COMMIT (#700). COMMIT checks again under the
+	// constraint keys' locks, against what other writers committed since.
+	if err := tx.SetDeferredConstraintValidation(false); err != nil {
 		_ = tx.Rollback()
 		return nil, localizedError(localization.CypherTransactionsConfigureFailed(err), err)
 	}

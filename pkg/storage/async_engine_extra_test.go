@@ -1980,4 +1980,3 @@ func TestAsyncEngine_LastWriteTime_NilAndFallback(t *testing.T) {
 
 	assert.True(t, ae.LastWriteTime().IsZero())
 }
-

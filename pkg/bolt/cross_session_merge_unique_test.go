@@ -565,3 +565,60 @@ func TestBoltCrossSessionMergeUniqueConflict_Concurrent_UnwindExplicitTx(t *test
 		t.Errorf("expected exactly %d TerraformResource nodes, got %d", batchSize, count)
 	}
 }
+
+// TestBoltExplicitTxStatementUniqueViolationCode: an explicit transaction
+// checks UNIQUE when the statement runs (#700). A MERGE of a value a peer
+// committed after BEGIN fails that statement with the retryable
+// Neo.TransientError.Transaction.Outdated, as the same race does at COMMIT,
+// and the retry matches the peer's node. A write that breaks the constraint on
+// every attempt (a CREATE, or a MERGE whose SET writes another node's value)
+// fails the statement with ConstraintValidationFailed and stores nothing.
+func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
+	baseStore := storage.NewMemoryEngine()
+	t.Cleanup(func() {
+		_ = baseStore.Close()
+	})
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+
+	setup := openBoltTestConn(t, port)
+	runBoltQueryAndCollectRecords(t, setup,
+		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE")
+	runBoltQueryAndCollectRecords(t, setup, "CREATE (:TerraformResource {uid: 'stored'})")
+
+	begin := func() net.Conn {
+		conn := openBoltTestConn(t, port)
+		requireNoError(t, SendBegin(t, conn, nil))
+		requireNoError(t, ReadSuccess(t, conn))
+		runBoltQueryAndCollectRecords(t, conn, "MATCH (r:TerraformResource) RETURN count(r)")
+		return conn
+	}
+	const merge = "MERGE (r:TerraformResource {uid: 'peer'}) SET r.name = 'second'"
+
+	conn := begin()
+	runBoltQueryAndCollectRecords(t, setup, "CREATE (:TerraformResource {uid: 'peer'})")
+	if code, _ := runBoltQueryExpectFailure(t, conn, merge); code != "Neo.TransientError.Transaction.Outdated" {
+		t.Errorf("MERGE losing a race: got %s, want Neo.TransientError.Transaction.Outdated", code)
+	}
+	retry := begin()
+	runBoltQueryAndCollectRecords(t, retry, merge)
+	requireNoError(t, SendCommit(t, retry))
+	requireNoError(t, ReadSuccess(t, retry))
+
+	for _, query := range []string{
+		"CREATE (:TerraformResource {uid: 'stored'})",
+		"MERGE (r:TerraformResource {uid: 'fresh'}) SET r.uid = 'stored'",
+		"MERGE (r:TerraformResource {uid: 'fresh'}) ON CREATE SET r.uid = 'stored'",
+	} {
+		code, _ := runBoltQueryExpectFailure(t, begin(), query)
+		if code != "Neo.ClientError.Schema.ConstraintValidationFailed" {
+			t.Errorf("%s: got %s, want Neo.ClientError.Schema.ConstraintValidationFailed", query, code)
+		}
+	}
+
+	records := runBoltQueryAndCollectRecords(t, setup,
+		"MATCH (r:TerraformResource) RETURN r.uid AS uid, r.name AS name ORDER BY uid")
+	if got := fmt.Sprint(records); got != "[[peer second] [stored <nil>]]" {
+		t.Errorf("stored nodes: got %s, want [[peer second] [stored <nil>]]", got)
+	}
+}

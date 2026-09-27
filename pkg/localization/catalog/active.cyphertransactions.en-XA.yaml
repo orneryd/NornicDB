@@ -94,3 +94,6 @@
 - id: cyphertransactions.multiple_match_expected
   description: Expanded pseudo-locale expected multiple MATCH clauses.
   other: "[!! expected multiple MATCH clauses !!]"
+- id: cyphertransactions.command_not_statement
+  description: Expanded pseudo-locale bare transaction command.
+  other: "[!! Invalid input '{{.Word}}': expected a Cypher statement (a transaction is begun, committed and rolled back by the driver or the HTTP transaction API, not by a statement) !!]"

@@ -717,7 +717,9 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 			if _, err := e.applyCountedNodeSet(ctx, node, varName, setClause, nil, nil, result.Stats); err != nil {
 				return nil, err
 			}
-			store.UpdateNode(node)
+			if err := store.UpdateNode(node); err != nil {
+				return nil, localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+			}
 			e.notifyNodeMutated(string(node.ID))
 		}
 	} else {
@@ -786,7 +788,9 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 
 	// Persist updates
 	if existingNode != nil || setIdx > 0 || onCreateIdx > 0 {
-		store.UpdateNode(node)
+		if err := store.UpdateNode(node); err != nil {
+			return nil, localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+		}
 		e.notifyNodeMutated(string(node.ID))
 	}
 	e.cacheMergeNode(labels, matchProps, node)
@@ -2072,7 +2076,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			if _, err := e.applyCountedNodeSet(ctx, node, varName, setClause, nodeContext, relContext, result.Stats); err != nil {
 				return nil, err
 			}
-			store.UpdateNode(node)
+			if err := store.UpdateNode(node); err != nil {
+				return nil, localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+			}
 			e.notifyNodeMutated(string(node.ID))
 		}
 	} else {
@@ -2144,7 +2150,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	}
 
 	// Save updates
-	store.UpdateNode(node)
+	if err := store.UpdateNode(node); err != nil {
+		return nil, localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+	}
 	e.notifyNodeMutated(string(node.ID))
 	e.cacheMergeNode(labels, matchProps, node)
 
@@ -3371,7 +3379,9 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 				return nil, "", err
 			}
 			if changed {
-				store.UpdateNode(node)
+				if err := store.UpdateNode(node); err != nil {
+					return nil, "", localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+				}
 				e.notifyNodeMutated(string(node.ID))
 			}
 		}
@@ -3427,7 +3437,9 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 					return nil, "", err
 				}
 				if changed {
-					store.UpdateNode(node)
+					if err := store.UpdateNode(node); err != nil {
+						return nil, "", localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+					}
 					e.notifyNodeMutated(string(node.ID))
 				}
 			}
@@ -3449,7 +3461,9 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 			return nil, "", err
 		}
 		if changed {
-			store.UpdateNode(node)
+			if err := store.UpdateNode(node); err != nil {
+				return nil, "", localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+			}
 			e.notifyNodeMutated(string(node.ID))
 			e.cacheMergeNode(labels, props, node)
 		}

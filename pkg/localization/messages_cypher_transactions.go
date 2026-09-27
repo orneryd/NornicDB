@@ -38,6 +38,7 @@ const (
 	MessageCypherTransactionsOrderByParseFailed             MessageID = "cyphertransactions.order_by_parse_failed"
 	MessageCypherTransactionsMultiMatchReturnRequired       MessageID = "cyphertransactions.multi_match_return_required"
 	MessageCypherTransactionsMultipleMatchExpected          MessageID = "cyphertransactions.multiple_match_expected"
+	MessageCypherTransactionsCommandNotStatement            MessageID = "cyphertransactions.command_not_statement"
 )
 
 const (
@@ -184,4 +185,11 @@ func CypherTransactionsMultiMatchReturnRequired() Message {
 
 func CypherTransactionsMultipleMatchExpected() Message {
 	return cypherTransactionsMessage(MessageCypherTransactionsMultipleMatchExpected, "expected multiple MATCH clauses", nil)
+}
+
+// CypherTransactionsCommandNotStatement is the SyntaxError of a client
+// statement that is a bare BEGIN, COMMIT or ROLLBACK: Cypher has no
+// transaction statements (Neo4j rejects them the same way).
+func CypherTransactionsCommandNotStatement(word string) Message {
+	return cypherTransactionsMessage(MessageCypherTransactionsCommandNotStatement, "Invalid input '"+word+"': expected a Cypher statement (a transaction is begun, committed and rolled back by the driver or the HTTP transaction API, not by a statement)", map[string]any{"Word": word})
 }

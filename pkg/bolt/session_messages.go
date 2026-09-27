@@ -306,6 +306,17 @@ func (s *Session) handleRun(data []byte) error {
 		if s.server != nil && s.server.config.LogQueries {
 			s.server.logEvent(context.Background(), slog.LevelWarn, localization.BoltQueryErrorEvent())
 		}
+		if s.inTransaction {
+			// An explicit transaction checks constraints when the statement
+			// runs (#700), so a MERGE race can fail here rather than at
+			// COMMIT. The failed statement is one of the transaction's writes,
+			// and the same rule as for COMMIT decides whether its UNIQUE
+			// violation is a retryable race.
+			s.recordExplicitTransactionWrite(query, params, isWrite)
+			if s.canRetryMergeCommitConflict(err) {
+				err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+			}
+		}
 		code, msg := mapBoltQueryErrorForQuery(err, query)
 		return s.sendRunFailureWithDetail(code, msg, boltErrorDetail(err))
 	}
@@ -496,10 +507,10 @@ func (s *Session) recordExplicitTransactionWrite(query string, params map[string
 	}
 }
 
-// canRetryMergeCommitConflict reports whether a commit-time UNIQUE violation
-// err of the explicit transaction is a retry-safe MERGE race: every write was
-// MERGE-shaped and no SET in them wrote a violated property
-// (cypher.MergeUniqueConflictIsRetrySafe).
+// canRetryMergeCommitConflict reports whether a UNIQUE violation err of the
+// explicit transaction, at COMMIT or at the statement that broke the
+// constraint, is a retry-safe MERGE race: every write was MERGE-shaped and no
+// SET in them wrote a violated property (cypher.MergeUniqueConflictIsRetrySafe).
 func (s *Session) canRetryMergeCommitConflict(err error) bool {
 	return s.txHasMerge && !s.txHasNonMergeWrite && cypher.MergeUniqueConflictIsRetrySafe(s.txMergeStatements, err)
 }

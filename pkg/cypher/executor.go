@@ -2172,6 +2172,14 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 		}
 	}
 
+	labels := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		labels = append(labels, node.Labels...)
+	}
+	if e.writesAreChecked(labels, nil) {
+		return nil, nil, false
+	}
+
 	if err := e.applyCreatePlan(ctx, &createPlan{nodes: nodes}, result); err != nil {
 		return nil, err, true
 	}
@@ -2214,6 +2222,29 @@ func (e *StorageExecutor) isEventualAsyncEligible(info *QueryInfo, cypher string
 	return true
 }
 
+// writesAreChecked reports whether a constraint, property type, contract or
+// relationship policy applies to writing nodes with these labels or
+// relationships of these types. A CREATE that writes such an entity runs in
+// an implicit transaction, checked and committed as one statement, instead of
+// on the async write routes (tryAsyncCreateNodeBatch, the eventual CREATE
+// route): a violation fails the statement and nothing it wrote is kept, as in
+// Neo4j (#700). Other CREATEs keep the async routes.
+func (e *StorageExecutor) writesAreChecked(labels []string, relTypes []string) bool {
+	schema := e.storage.GetSchema()
+	if !schema.HasWriteRules() {
+		return false
+	}
+	if schema.NodeWriteChecked(labels) {
+		return true
+	}
+	for _, relType := range relTypes {
+		if schema.EdgeWriteChecked(relType) {
+			return true
+		}
+	}
+	return false
+}
+
 // executeImplicitAsync executes a single query using implicit transactions for writes.
 // For write operations, wraps execution in an implicit transaction that can be
 // rolled back on error, preventing partial data corruption from failed queries.
@@ -2234,7 +2265,8 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 			if result, err, handled := e.tryAsyncCreateNodeBatch(ctx, cypher); handled {
 				return result, err
 			}
-			if e.isEventualAsyncEligible(info, cypher) {
+			if e.isEventualAsyncEligible(info, cypher) && !e.writesAreChecked(info.Labels, info.RelationshipTypes) &&
+				!(strings.Contains(cypher, "$(") && e.storage.GetSchema().HasWriteRules()) {
 				return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 			}
 		}

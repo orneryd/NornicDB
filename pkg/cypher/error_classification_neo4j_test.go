@@ -172,9 +172,23 @@ func TestConstraintViolationStatusAndRolledBackCommit(t *testing.T) {
 		require.False(t, nornicerrors.IsMergeCommitTimeUniqueConflict(err), query)
 	}
 
+	// In an explicit transaction the duplicate fails its statement (#700).
 	_, err = exec.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE (:U {k: 5})", nil)
+	require.Error(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, nornicerrors.ConstraintValidationFailed, code)
+	_, err = exec.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+
+	// A value another client commits between the statement and COMMIT fails
+	// the COMMIT, which is marked as rolled back.
+	_, err = exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:U {k: 6})", nil)
+	require.NoError(t, err)
+	_, err = NewStorageExecutor(engine).Execute(ctx, "CREATE (:U {k: 6})", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "COMMIT", nil)
 	require.Error(t, err)
@@ -185,7 +199,7 @@ func TestConstraintViolationStatusAndRolledBackCommit(t *testing.T) {
 
 	result, err := exec.Execute(ctx, "MATCH (u:U) RETURN count(u) AS c", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), result.Rows[0][0])
+	require.Equal(t, int64(2), result.Rows[0][0])
 }
 
 // TestMergeUniqueConflictIsRetrySafe covers #657: a UNIQUE violation of MERGE

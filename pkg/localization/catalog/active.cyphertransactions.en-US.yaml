@@ -94,3 +94,6 @@
 - id: cyphertransactions.multiple_match_expected
   description: Multi-MATCH route received fewer than two MATCH clauses. MATCH is untranslated Cypher syntax.
   other: expected multiple MATCH clauses
+- id: cyphertransactions.command_not_statement
+  description: Bare transaction command sent as a client statement. Word is an untranslated Cypher keyword (BEGIN, COMMIT or ROLLBACK).
+  other: "Invalid input '{{.Word}}': expected a Cypher statement (a transaction is begun, committed and rolled back by the driver or the HTTP transaction API, not by a statement)"

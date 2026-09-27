@@ -44,23 +44,25 @@ func TestSchemaPrechecks_HelperBranches(t *testing.T) {
 		require.False(t, isCompositeAllowedCommand("MATCH (n) RETURN n"))
 	})
 
-	t.Run("flushPendingAsyncWritesBeforeSchemaDDL flushes nested wrappers", func(t *testing.T) {
+	t.Run("pauseAsyncWritesForSchemaDDL flushes nested wrappers", func(t *testing.T) {
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "schema_flush")
 		async := &asyncEngineWrapper{Engine: base, pending: true}
 		inner := &innerEngineWrapper{Engine: async}
 
-		err := flushPendingAsyncWritesBeforeSchemaDDL(inner)
+		resume, err := pauseAsyncWritesForSchemaDDL(inner)
 		require.NoError(t, err)
+		resume()
 		require.Equal(t, 1, async.flushRuns)
 	})
 
-	t.Run("flushPendingAsyncWritesBeforeSchemaDDL returns flush error", func(t *testing.T) {
+	t.Run("pauseAsyncWritesForSchemaDDL returns flush error", func(t *testing.T) {
 		flushErr := errors.New("flush boom")
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "schema_flush_err")
 		async := &asyncEngineWrapper{Engine: base, pending: true, flushErr: flushErr}
 
-		err := flushPendingAsyncWritesBeforeSchemaDDL(async)
+		resume, err := pauseAsyncWritesForSchemaDDL(async)
 		require.Error(t, err)
+		resume()
 		require.ErrorContains(t, err, "flush pending async writes before schema DDL")
 		require.ErrorContains(t, err, "flush boom")
 	})

@@ -901,6 +901,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphertransactions.already_active", Constructor: "CypherTransactionsAlreadyActive", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.case_block_missing", Constructor: "CypherTransactionsCaseBlockMissing", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.case_syntax_invalid", Constructor: "CypherTransactionsCaseSyntaxInvalid", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphertransactions.command_not_statement", Constructor: "CypherTransactionsCommandNotStatement", Fields: []string{"Word"}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.commit_failed", Constructor: "CypherTransactionsCommitFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.condition_not_boolean", Constructor: "CypherTransactionsConditionNotBoolean", Fields: []string{"Value"}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.configure_failed", Constructor: "CypherTransactionsConfigureFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
