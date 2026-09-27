@@ -3,33 +3,38 @@ package localization
 import "strconv"
 
 const (
-	MessageCypherAdminDatabaseManagerUnavailable MessageID = "cypheradmin.database_manager_unavailable"
-	MessageCypherAdminInvalidSyntax              MessageID = "cypheradmin.invalid_syntax"
-	MessageCypherAdminDatabaseNameExpected       MessageID = "cypheradmin.database_name_expected"
-	MessageCypherAdminDatabaseNameEmpty          MessageID = "cypheradmin.database_name_empty"
-	MessageCypherAdminInvalidDatabaseName        MessageID = "cypheradmin.invalid_database_name"
-	MessageCypherAdminDatabaseAlreadyExists      MessageID = "cypheradmin.database_already_exists"
-	MessageCypherAdminCreateDatabaseFailed       MessageID = "cypheradmin.create_database_failed"
-	MessageCypherAdminInvalidIdentifier          MessageID = "cypheradmin.invalid_identifier"
-	MessageCypherAdminDatabaseDoesNotExist       MessageID = "cypheradmin.database_does_not_exist"
-	MessageCypherAdminDropDatabaseFailed         MessageID = "cypheradmin.drop_database_failed"
-	MessageCypherAdminAliasNameExpected          MessageID = "cypheradmin.alias_name_expected"
-	MessageCypherAdminTermExpected               MessageID = "cypheradmin.term_expected"
-	MessageCypherAdminClauseExpected             MessageID = "cypheradmin.clause_expected"
-	MessageCypherAdminAliasNameEmpty             MessageID = "cypheradmin.alias_name_empty"
-	MessageCypherAdminInvalidAliasName           MessageID = "cypheradmin.invalid_alias_name"
-	MessageCypherAdminCreateAliasFailed          MessageID = "cypheradmin.create_alias_failed"
-	MessageCypherAdminAliasDoesNotExist          MessageID = "cypheradmin.alias_does_not_exist"
-	MessageCypherAdminDropAliasFailed            MessageID = "cypheradmin.drop_alias_failed"
-	MessageCypherAdminKeywordExpected            MessageID = "cypheradmin.keyword_expected"
-	MessageCypherAdminDatabaseNotFound           MessageID = "cypheradmin.database_not_found"
-	MessageCypherAdminInvalidLimitsType          MessageID = "cypheradmin.invalid_limits_type"
-	MessageCypherAdminLimitAssignmentExpected    MessageID = "cypheradmin.limit_assignment_expected"
-	MessageCypherAdminInvalidLimitAssignment     MessageID = "cypheradmin.invalid_limit_assignment"
-	MessageCypherAdminInvalidLimitValue          MessageID = "cypheradmin.invalid_limit_value"
-	MessageCypherAdminInvalidDurationLimitValue  MessageID = "cypheradmin.invalid_duration_limit_value"
-	MessageCypherAdminUnknownLimitName           MessageID = "cypheradmin.unknown_limit_name"
-	MessageCypherAdminSetDatabaseLimitsFailed    MessageID = "cypheradmin.set_database_limits_failed"
+	MessageCypherAdminDatabaseManagerUnavailable        MessageID = "cypheradmin.database_manager_unavailable"
+	MessageCypherAdminInvalidSyntax                     MessageID = "cypheradmin.invalid_syntax"
+	MessageCypherAdminDatabaseNameExpected              MessageID = "cypheradmin.database_name_expected"
+	MessageCypherAdminDatabaseNameEmpty                 MessageID = "cypheradmin.database_name_empty"
+	MessageCypherAdminInvalidDatabaseName               MessageID = "cypheradmin.invalid_database_name"
+	MessageCypherAdminDatabaseAlreadyExists             MessageID = "cypheradmin.database_already_exists"
+	MessageCypherAdminCreateDatabaseFailed              MessageID = "cypheradmin.create_database_failed"
+	MessageCypherAdminInvalidIdentifier                 MessageID = "cypheradmin.invalid_identifier"
+	MessageCypherAdminDatabaseDoesNotExist              MessageID = "cypheradmin.database_does_not_exist"
+	MessageCypherAdminDropDatabaseFailed                MessageID = "cypheradmin.drop_database_failed"
+	MessageCypherAdminAliasNameExpected                 MessageID = "cypheradmin.alias_name_expected"
+	MessageCypherAdminTermExpected                      MessageID = "cypheradmin.term_expected"
+	MessageCypherAdminClauseExpected                    MessageID = "cypheradmin.clause_expected"
+	MessageCypherAdminAliasNameEmpty                    MessageID = "cypheradmin.alias_name_empty"
+	MessageCypherAdminInvalidAliasName                  MessageID = "cypheradmin.invalid_alias_name"
+	MessageCypherAdminCreateAliasFailed                 MessageID = "cypheradmin.create_alias_failed"
+	MessageCypherAdminAliasDoesNotExist                 MessageID = "cypheradmin.alias_does_not_exist"
+	MessageCypherAdminDropAliasFailed                   MessageID = "cypheradmin.drop_alias_failed"
+	MessageCypherAdminKeywordExpected                   MessageID = "cypheradmin.keyword_expected"
+	MessageCypherAdminDatabaseNotFound                  MessageID = "cypheradmin.database_not_found"
+	MessageCypherAdminInvalidLimitsType                 MessageID = "cypheradmin.invalid_limits_type"
+	MessageCypherAdminLimitAssignmentExpected           MessageID = "cypheradmin.limit_assignment_expected"
+	MessageCypherAdminInvalidLimitAssignment            MessageID = "cypheradmin.invalid_limit_assignment"
+	MessageCypherAdminInvalidLimitValue                 MessageID = "cypheradmin.invalid_limit_value"
+	MessageCypherAdminInvalidDurationLimitValue         MessageID = "cypheradmin.invalid_duration_limit_value"
+	MessageCypherAdminUnknownLimitName                  MessageID = "cypheradmin.unknown_limit_name"
+	MessageCypherAdminSetDatabaseLimitsFailed           MessageID = "cypheradmin.set_database_limits_failed"
+	MessageCypherAdminTransactionIDsType                MessageID = "cypheradmin.transaction_ids_type"
+	MessageCypherAdminTransactionIDType                 MessageID = "cypheradmin.transaction_id_type"
+	MessageCypherAdminVariableNotDefined                MessageID = "cypheradmin.variable_not_defined"
+	MessageCypherAdminShowTransactionsInvalidInput      MessageID = "cypheradmin.show_transactions_invalid_input"
+	MessageCypherAdminTerminateTransactionsInvalidInput MessageID = "cypheradmin.terminate_transactions_invalid_input"
 )
 
 // CypherAdminDatabaseManagerUnavailable identifies an admin command that requires multi-database support.
@@ -167,4 +172,24 @@ func CypherAdminUnknownLimitName(limit string) Message {
 // CypherAdminSetDatabaseLimitsFailed identifies a wrapped database limit update failure.
 func CypherAdminSetDatabaseLimitsFailed(database string, cause error) Message {
 	return Message{ID: MessageCypherAdminSetDatabaseLimitsFailed, Fallback: "failed to set limits for database '" + database + "': " + cause.Error(), Data: map[string]any{"Database": database, "Cause": cause.Error()}}
+}
+
+func CypherAdminTransactionIDsType(value string) Message {
+	return Message{ID: MessageCypherAdminTransactionIDsType, Fallback: "Expected a string or a list of strings, but got: " + value, Data: map[string]any{"Value": value}}
+}
+
+func CypherAdminTransactionIDType(value string) Message {
+	return Message{ID: MessageCypherAdminTransactionIDType, Fallback: "Expected a string, but got: " + value, Data: map[string]any{"Value": value}}
+}
+
+func CypherAdminVariableNotDefined(variable string) Message {
+	return Message{ID: MessageCypherAdminVariableNotDefined, Fallback: "Variable `" + variable + "` not defined", Data: map[string]any{"Variable": variable}}
+}
+
+func CypherAdminShowTransactionsInvalidInput(input string) Message {
+	return Message{ID: MessageCypherAdminShowTransactionsInvalidInput, Fallback: "Invalid input '" + input + "': expected a string, an expression, 'SHOW', 'TERMINATE', 'WHERE' or 'YIELD'", Data: map[string]any{"Input": input}}
+}
+
+func CypherAdminTerminateTransactionsInvalidInput(input string) Message {
+	return Message{ID: MessageCypherAdminTerminateTransactionsInvalidInput, Fallback: "Invalid input '" + input + "': expected a string or an expression", Data: map[string]any{"Input": input}}
 }

@@ -3,13 +3,14 @@ package cypher
 import (
 	"context"
 	"sort"
-
-	"github.com/orneryd/nornicdb/pkg/auth"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Administration SHOW commands (#718): SHOW DEFAULT / HOME DATABASE,
@@ -476,27 +477,41 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 	}
 	value, ok := e.evaluateRowExpressionWithContext(ctx, rest, e.parameterRow(ctx))
 	if !ok {
-		return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidTransactionID",
-			"expected a transaction id or a list of transaction ids, got: "+rest)
-	}
-	switch typed := value.(type) {
-	case string:
-		return []string{typed}, true, nil
-	case nil:
-		return []string{}, true, nil
-	}
-	if items, isList := cypherListValue(value); isList {
-		ids := make([]string, 0, len(items))
-		for _, item := range items {
-			id, isString := item.(string)
-			if !isString {
-				return nil, true, typeMismatchError("String or List<String>", value)
-			}
-			ids = append(ids, id)
+		// Neo4j names the undefined variable an expression starts with, or
+		// the input that isn't an expression.
+		if name, _, isName := scanIdentifierToken(rest, 0); isName {
+			return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable",
+				localization.CypherAdminVariableNotDefined(name))
 		}
-		return ids, true, nil
+		message := localization.CypherAdminShowTransactionsInvalidInput(rest[:1])
+		if command == "TERMINATE" {
+			message = localization.CypherAdminTerminateTransactionsInvalidInput(rest[:1])
+		}
+		return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message)
 	}
-	return nil, true, typeMismatchError("String or List<String>", value)
+	// Neo4j 5.26: a string or a list of strings; an empty list is no filter;
+	// anything else, null included, is a TypeError naming the value.
+	if id, isString := value.(string); isString {
+		return []string{id}, true, nil
+	}
+	items, isList := cypherListValue(value)
+	if !isList {
+		return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+			localization.CypherAdminTransactionIDsType(neo4jValueRepr(value)))
+	}
+	if len(items) == 0 {
+		return nil, false, nil
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		id, isString := item.(string)
+		if !isString {
+			return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+				localization.CypherAdminTransactionIDType(neo4jValueRepr(item)))
+		}
+		ids = append(ids, id)
+	}
+	return ids, true, nil
 }
 
 // parameterRow is a row holding the statement's parameters as $name.

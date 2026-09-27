@@ -80,15 +80,27 @@ func TestRunningTransactionRegistryEdges(t *testing.T) {
 func TestShowTransactionsIDsAndStatus(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
-	for _, query := range []string{
-		"SHOW TRANSACTIONS 1",
-		"SHOW TRANSACTIONS ['test-transaction-1', 2]",
-		"TERMINATE TRANSACTIONS 1",
+	// Neo4j 5.26's TypeErrors, verified against it.
+	for query, message := range map[string]string{
+		"SHOW TRANSACTIONS 1":                         "Expected a string or a list of strings, but got: Long(1)",
+		"SHOW TRANSACTIONS null":                      "Expected a string or a list of strings, but got: NO_VALUE",
+		"SHOW TRANSACTIONS 1.5":                       "Expected a string or a list of strings, but got: Double(1.500000e+00)",
+		"SHOW TRANSACTIONS {a: 1}":                    "Expected a string or a list of strings, but got: Map{a -> Long(1)}",
+		"SHOW TRANSACTIONS ['test-transaction-1', 2]": "Expected a string, but got: Long(2)",
+		"SHOW TRANSACTIONS [null]":                    "Expected a string, but got: NO_VALUE",
+		"TERMINATE TRANSACTIONS 1":                    "Expected a string or a list of strings, but got: Long(1)",
+		"TERMINATE TRANSACTIONS null":                 "Expected a string or a list of strings, but got: NO_VALUE",
 	} {
 		_, err := exec.Execute(ctx, query, nil)
-		require.Error(t, err, query)
-		require.Contains(t, err.Error(), "String or List<String>", query)
+		require.EqualError(t, err, message, query)
+		var classified interface{ BoltErrorCode() string }
+		require.ErrorAs(t, err, &classified, query)
+		require.Equal(t, "Neo.ClientError.Statement.TypeError", classified.BoltErrorCode(), query)
 	}
+	// An empty list is no filter.
+	_, filtered, err := exec.transactionIDFilter(ctx, "SHOW TRANSACTIONS []", "SHOW")
+	require.NoError(t, err)
+	require.False(t, filtered)
 
 	tx := runningTransactions.begin(ctx, "covtx")
 	defer runningTransactions.end(tx)
@@ -102,14 +114,24 @@ func TestShowTransactionsIDsAndStatus(t *testing.T) {
 	require.True(t, strings.HasPrefix(result.Rows[0][2].(string), "Terminated with reason:"), result.Rows[0][2])
 }
 
-// TestTransactionIDFilterRejectsNonExpression: a SHOW TRANSACTIONS id that
-// isn't an expression is a SyntaxError.
+// TestTransactionIDFilterRejectsNonExpression: a transaction id that isn't
+// an expression, or names an undefined variable, is Neo4j's SyntaxError.
 func TestTransactionIDFilterRejectsNonExpression(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	_, filtered, err := exec.transactionIDFilter(context.Background(), "SHOW TRANSACTIONS )(", "SHOW")
-	require.True(t, filtered)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	for head, message := range map[string]string{
+		"SHOW TRANSACTIONS )(":        "Invalid input ')': expected a string, an expression, 'SHOW', 'TERMINATE', 'WHERE' or 'YIELD'",
+		"TERMINATE TRANSACTIONS )(":   "Invalid input ')': expected a string or an expression",
+		"SHOW TRANSACTIONS nope + 1":  "Variable `nope` not defined",
+		"TERMINATE TRANSACTIONS nope": "Variable `nope` not defined",
+	} {
+		command := strings.Fields(head)[0]
+		_, filtered, err := exec.transactionIDFilter(context.Background(), head, command)
+		require.True(t, filtered, head)
+		require.EqualError(t, err, message, head)
+		var classified interface{ BoltErrorCode() string }
+		require.ErrorAs(t, err, &classified, head)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode(), head)
+	}
 }
 
 // aliasDatabaseManager is the mock database manager with aliases.

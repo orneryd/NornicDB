@@ -79,3 +79,13 @@
 - id: cypheradmin.set_database_limits_failed
   description: Error al actualizar límites. Database y Cause no se traducen.
   other: "no se pudieron establecer los límites de la base de datos '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.transaction_ids_type
+  other: "Se esperaba una cadena o una lista de cadenas, pero se obtuvo: {{.Value}}"
+- id: cypheradmin.transaction_id_type
+  other: "Se esperaba una cadena, pero se obtuvo: {{.Value}}"
+- id: cypheradmin.variable_not_defined
+  other: "Variable `{{.Variable}}` no definida"
+- id: cypheradmin.show_transactions_invalid_input
+  other: "Entrada no válida '{{.Input}}': se esperaba una cadena, una expresión, 'SHOW', 'TERMINATE', 'WHERE' o 'YIELD'"
+- id: cypheradmin.terminate_transactions_invalid_input
+  other: "Entrada no válida '{{.Input}}': se esperaba una cadena o una expresión"

@@ -3,6 +3,7 @@ package cypher
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -49,6 +50,18 @@ func neo4jValueRepr(value interface{}) string {
 	}
 	if value == nil {
 		return "NO_VALUE"
+	}
+	if m, isMap := value.(map[string]interface{}); isMap {
+		keys := make([]string, 0, len(m))
+		for key := range m {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for index, key := range keys {
+			parts[index] = key + " -> " + neo4jValueRepr(m[key])
+		}
+		return "Map{" + strings.Join(parts, ", ") + "}"
 	}
 	if kind := reflect.TypeOf(value).Kind(); kind == reflect.Slice || kind == reflect.Array {
 		items := toAnySlice(value)
@@ -270,4 +283,3 @@ func isOperandExpressionText(text string) bool {
 	}
 	return false
 }
-

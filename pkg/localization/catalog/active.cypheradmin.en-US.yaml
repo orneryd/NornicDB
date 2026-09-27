@@ -79,3 +79,13 @@
 - id: cypheradmin.set_database_limits_failed
   description: Database limit update wrapper. Database and Cause are untranslated diagnostic values.
   other: "failed to set limits for database '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.transaction_ids_type
+  other: "Expected a string or a list of strings, but got: {{.Value}}"
+- id: cypheradmin.transaction_id_type
+  other: "Expected a string, but got: {{.Value}}"
+- id: cypheradmin.variable_not_defined
+  other: "Variable `{{.Variable}}` not defined"
+- id: cypheradmin.show_transactions_invalid_input
+  other: "Invalid input '{{.Input}}': expected a string, an expression, 'SHOW', 'TERMINATE', 'WHERE' or 'YIELD'"
+- id: cypheradmin.terminate_transactions_invalid_input
+  other: "Invalid input '{{.Input}}': expected a string or an expression"
