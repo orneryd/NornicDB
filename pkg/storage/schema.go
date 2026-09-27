@@ -837,6 +837,7 @@ func (sm *SchemaManager) lockConstraintKeysOf(nodes ...*Node) func() {
 	if sm == nil || len(nodes) == 0 {
 		return func() {}
 	}
+	// Allocated on the first key: an unconstrained write allocates nothing.
 	var keys []uniqueConstraintLockKey
 	for _, node := range nodes {
 		if node == nil || len(node.Properties) == 0 {
@@ -857,33 +858,49 @@ func (sm *SchemaManager) lockConstraintKeysOf(nodes ...*Node) func() {
 			default:
 				continue
 			}
+			if len(properties) == 1 {
+				// One key property (UNIQUE, a one-property NODE KEY, the
+				// temporal key): no intermediate slice.
+				value, ok := constraintLockValue(node, properties[0])
+				if ok {
+					if keys == nil {
+						keys = make([]uniqueConstraintLockKey, 0, len(nodes))
+					}
+					keys = append(keys, uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value})
+				}
+				continue
+			}
 			values := make([]interface{}, len(properties))
 			complete := true
 			for i, prop := range properties {
-				rawValue, has := node.Properties[prop]
-				if !has || rawValue == nil {
-					complete = false
-					break
-				}
-				canonicalValue, ok := indexValueKey(rawValue)
+				value, ok := constraintLockValue(node, prop)
 				if !ok {
 					complete = false
 					break
 				}
-				values[i] = canonicalValue
+				values[i] = value
 			}
-			if !complete {
-				continue
+			if complete {
+				keys = append(keys, uniqueConstraintLockKey{
+					label:    c.Label,
+					property: string(c.Type) + ":" + strings.Join(properties, ","),
+					value:    constraintCompositeKey(values),
+				})
 			}
-			key := uniqueConstraintLockKey{label: c.Label, property: properties[0], value: values[0]}
-			if len(properties) > 1 {
-				key.property = string(c.Type) + ":" + strings.Join(properties, ",")
-				key.value = constraintCompositeKey(values)
-			}
-			keys = append(keys, key)
 		}
 	}
 	return sm.acquireUniqueConstraintCommitLocks(keys)
+}
+
+// constraintLockValue is node's canonical value of prop for a constraint key
+// lock; ok is false when the property is missing, null or not comparable (no
+// key to lock).
+func constraintLockValue(node *Node, prop string) (interface{}, bool) {
+	rawValue, has := node.Properties[prop]
+	if !has || rawValue == nil {
+		return nil, false
+	}
+	return indexValueKey(rawValue)
 }
 
 // acquireUniqueConstraintCommitLocks acquires exact UNIQUE value mutexes in a
