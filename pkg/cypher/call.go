@@ -2872,6 +2872,9 @@ func findKeywordIndexInContext(s, keyword string) int {
 			if isWithKeyword(keyword) && isOperatorWith(s, i) {
 				continue
 			}
+			if clauseKeywordUsedAsName(s, i, end, keyword) {
+				continue
+			}
 			return i
 		}
 	}

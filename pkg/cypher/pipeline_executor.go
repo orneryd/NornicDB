@@ -322,7 +322,7 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 			i+len(keyword) <= len(query) && strings.EqualFold(query[i:i+len(keyword)], keyword) &&
 			(i == 0 || !isAlphaNumericByte(query[i-1])) &&
 			(i+len(keyword) == len(query) || !isAlphaNumericByte(query[i+len(keyword)])) {
-			if !withSearch || !isOperatorWith(query, i) {
+			if (!withSearch || !isOperatorWith(query, i)) && !clauseKeywordUsedAsName(query, i, i+len(keyword), keyword) {
 				positions = append(positions, i)
 			}
 			i += len(keyword) - 1

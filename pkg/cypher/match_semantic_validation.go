@@ -100,6 +100,16 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			// The projection sees the incoming variables; WHERE / ORDER BY
 			// after it see the projected ones.
 			projection, rest := splitWithProjection(clause.text)
+			projectionBody, _ := cutDistinct(strings.TrimSpace(projection[len("WITH"):]))
+			for _, raw := range splitTopLevelComma(projectionBody) {
+				expression, _ := parseProjectionExprAlias(strings.TrimSpace(raw))
+				if err := projectionItemTermError(expression); err != nil {
+					return err
+				}
+				if err := projectionAliasError(raw); err != nil {
+					return err
+				}
+			}
 			input := staticTypeScope{kinds: scope, values: valueTypes}
 			if err := validateStaticFunctionVariables(projection, input); err != nil {
 				return err
@@ -235,6 +245,9 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 	body, _ = cutDistinct(body)
 	for _, raw := range splitTopLevelComma(body) {
 		expression, _ := parseProjectionExprAlias(strings.TrimSpace(raw))
+		if err := projectionItemTermError(expression); err != nil {
+			return err
+		}
 		if err := validateKnownFunctionsInExpression(expression); err != nil {
 			return err
 		}
@@ -596,6 +609,76 @@ func projectionAliasScope(input staticTypeScope, clause string) staticTypeScope 
 		values[name] = typeName
 	}
 	return staticTypeScope{kinds: kinds, values: values}
+}
+
+// projectionItemTermError is Neo4j's SyntaxError for a projection item that
+// is a clause-keyword name followed by another term with no operator between
+// them (WITH RETURN n: return is a variable, as Neo4j reads it (#740), and n
+// is "Invalid input"). Before, the keyword was taken for a clause.
+func projectionItemTermError(expression string) error {
+	expression = strings.TrimSpace(expression)
+	name, next, ok := scanIdentifierToken(expression, 0)
+	if !ok || !isNameableClauseKeyword(name) {
+		return nil
+	}
+	rest := strings.TrimSpace(expression[next:])
+	if rest == "" || rest == expression[next:] {
+		return nil // the name alone, or followed directly by an operator
+	}
+	if c := rest[0]; isIdentByte(c) || c == '\'' || c == '"' || c == '`' || c == '$' {
+		token, _, _ := scanIdentifierToken(rest, 0)
+		if token == "" {
+			token = rest[:1]
+		}
+		if !isExpressionContinuationWord(token) {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				fmt.Sprintf("Invalid input '%s': expected an expression", token))
+		}
+	}
+	return nil
+}
+
+// projectionAliasError is Neo4j's SyntaxError for a projection item whose
+// alias, as written, is not one name (WITH n AS return n: the n after the
+// alias is "Invalid input"). A backtick-quoted alias is one name.
+func projectionAliasError(item string) error {
+	as := -1
+	for from := 0; ; {
+		index := keywordIndexFrom(item, "AS", from, defaultKeywordScanOpts())
+		if index < 0 {
+			break
+		}
+		as, from = index, index+len("AS")
+	}
+	if as < 0 {
+		return nil
+	}
+	alias := strings.TrimSpace(item[as+len("AS"):])
+	if alias == "" {
+		return nil
+	}
+	_, next, ok := scanSymbolicName(alias, 0)
+	if !ok || next == len(alias) {
+		return nil
+	}
+	rest := strings.TrimSpace(alias[next:])
+	token, _, _ := scanIdentifierToken(rest, 0)
+	if token == "" {
+		token = rest[:1]
+	}
+	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+		fmt.Sprintf("Invalid input '%s': expected an expression", token))
+}
+
+// isExpressionContinuationWord reports whether word, after an operand,
+// continues the expression (an operator word: AND, IS NULL, STARTS WITH, …).
+func isExpressionContinuationWord(word string) bool {
+	for _, operator := range [...]string{"AND", "OR", "XOR", "IS", "IN", "STARTS", "ENDS", "CONTAINS", "NOT"} {
+		if strings.EqualFold(word, operator) {
+			return true
+		}
+	}
+	return false
 }
 
 // splitWithProjection splits a WITH clause into its projection and the WHERE /

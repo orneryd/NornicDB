@@ -159,6 +159,138 @@ func isOperatorWith(s string, pos int) bool {
 	}
 }
 
+// clauseKeywordUsedAsName reports whether the clause keyword matched at
+// s[pos:end] is a name there, as Cypher's grammar reads it (#740). Only
+// clause keywords are checked (keywords such as DISTINCT, NOT and CASE follow
+// the words below in valid Cypher). Every keyword scanner applies it next to
+// isOperatorWith. The keyword is a name when what precedes it is
+//   - '.', ':' or '$' (a property key, label or map key, parameter);
+//   - an operator or separator: + - / % ^ = < > , ( [ (a clause can't start
+//     in an operand position; after | one does: FOREACH (x IN l | SET …),
+//     and * reads alike as RETURN * and multiplication);
+//   - a word that must be followed by a name or an expression (AS set,
+//     RETURN set + 1, WHERE limit > 1, ORDER BY skip), unless that word is
+//     itself a name (WITH 1 AS set RETURN …);
+//
+// or, when it starts the scanned text (a projection body such as
+// "skip + 1 AS v"), when what follows it is an operator, a separator, AS or
+// nothing. SKIP and LIMIT, which take an expression, are names before
+// another clause keyword (RETURN skip ORDER BY skip).
+func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
+	if !isNameableClauseKeyword(keyword) {
+		return false
+	}
+	i := pos - 1
+	for i >= 0 && isASCIISpace(s[i]) {
+		i--
+	}
+	if i >= 0 {
+		switch s[i] {
+		case '.', ':', '$':
+			return true
+		case '/':
+			if i > 0 && s[i-1] == '*' {
+				break // the end of a /* comment */
+			}
+			return true
+		case '+', '-', '%', '^', '=', '<', '>', ',', '(', '[':
+			return true
+		}
+	}
+	j := end
+	for j < len(s) && isASCIISpace(s[j]) {
+		j++
+	}
+	if j < len(s) && s[j] == ':' {
+		return true // a map key: {set: 1}
+	}
+	if strings.EqualFold(keyword, "SKIP") || strings.EqualFold(keyword, "LIMIT") {
+		wordEnd := j
+		for wordEnd < len(s) && isIdentByte(s[wordEnd]) {
+			wordEnd++
+		}
+		for _, next := range [...]string{"ORDER", "SKIP", "LIMIT", "WHERE", "UNION", "RETURN", "WITH"} {
+			if strings.EqualFold(s[j:wordEnd], next) {
+				return true
+			}
+		}
+	}
+	if i < 0 {
+		// The keyword starts the text: read what follows.
+		if j >= len(s) {
+			return true
+		}
+		switch s[j] {
+		case ',', '+', '/', '%', '^', '=', '<', '>', ')':
+			return true
+		case '.':
+			return j+1 < len(s) && !isDigitByte(s[j+1]) // RETURN .5 is a number
+		}
+		return j+2 <= len(s) && strings.EqualFold(s[j:j+2], "AS") && (j+2 == len(s) || !isIdentByte(s[j+2]))
+	}
+	if !isIdentByte(s[i]) {
+		return false
+	}
+	wordEnd := i + 1
+	for i >= 0 && isIdentByte(s[i]) {
+		i--
+	}
+	if i >= 0 && s[i] == '.' {
+		return false // n.as SET …: the word is a property key
+	}
+	if !isExpressionBoundaryWord(s[i+1 : wordEnd]) {
+		return false
+	}
+	// The word before is a keyword only when it isn't itself a name
+	// (WITH 1 AS set RETURN …: set is an alias, so RETURN is a clause).
+	return !wordIsName(s, i+1)
+}
+
+// isDigitByte reports whether b is an ASCII digit.
+func isDigitByte(b byte) bool { return b >= '0' && b <= '9' }
+
+// wordIsName reports whether the word starting at wordStart is in a name
+// position: after AS, or after '.', ':' or '$'.
+func wordIsName(s string, wordStart int) bool {
+	i := wordStart - 1
+	for i >= 0 && isASCIISpace(s[i]) {
+		i--
+	}
+	if i < 0 {
+		return false
+	}
+	switch s[i] {
+	case '.', ':', '$':
+		return true
+	}
+	end := i + 1
+	for i >= 0 && isIdentByte(s[i]) {
+		i--
+	}
+	return strings.EqualFold(s[i+1:end], "AS")
+}
+
+// isNameableClauseKeyword reports whether keyword (its first word) starts a
+// clause that a name spelled the same can be mistaken for.
+func isNameableClauseKeyword(keyword string) bool {
+	start, end := trimKeywordWSBounds(keyword)
+	word := keyword[start:end]
+	if space := strings.IndexAny(word, " \t"); space >= 0 {
+		word = word[:space]
+	}
+	switch len(word) {
+	case 3, 4, 5, 6, 7:
+	default:
+		return false
+	}
+	for _, clause := range [...]string{"SET", "MATCH", "RETURN", "WITH", "DELETE", "CREATE", "MERGE", "REMOVE", "UNWIND", "UNION", "LIMIT", "SKIP", "FOREACH", "ORDER"} {
+		if strings.EqualFold(word, clause) {
+			return true
+		}
+	}
+	return false
+}
+
 // prevWordStart returns the start of the word that precedes pos (after
 // skipping whitespace), for a pos where prevWordEqualsIgnoreCase matched.
 func prevWordStart(s string, pos int) int {
@@ -366,6 +498,9 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
 			continue
 		}
+		if clauseKeywordUsedAsName(s, i, endPos, keyword) {
+			continue
+		}
 		return i
 	}
 
@@ -528,6 +663,9 @@ func keywordIndexFromDefault(s, keyword string, from int) int {
 			continue
 		}
 		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
+			continue
+		}
+		if clauseKeywordUsedAsName(s, i, endPos, keyword) {
 			continue
 		}
 		return i

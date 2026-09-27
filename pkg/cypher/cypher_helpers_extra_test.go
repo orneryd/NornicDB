@@ -3643,15 +3643,23 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 	assert.False(t, handled)
 	assert.Nil(t, out)
 
-	// executeSetTrailingWithReturn: empty WITH body => handled=true with error.
+	// executeSetTrailingWithReturn: in WITH RETURN n, return is a variable
+	// the WITH projects (as Neo4j reads it, #740), so there is no RETURN
+	// clause; the statement is Neo4j's SyntaxError (Invalid input 'n').
 	_, handled, err = exec.executeSetTrailingWithReturn(ctx, "WITH   RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
+	require.NoError(t, err)
+	assert.False(t, handled)
+	_, err = exec.Execute(ctx, "MATCH (n) SET n.x = 1 WITH RETURN n", nil)
 	require.Error(t, err)
-	assert.True(t, handled)
 
-	// executeSetTrailingWithReturn: malformed WITH item => handled=true with error.
+	// executeSetTrailingWithReturn: WITH n AS RETURN n aliases n as return
+	// (#740), so there is no RETURN clause; the statement is a SyntaxError
+	// for the n after the alias, as in Neo4j.
 	_, handled, err = exec.executeSetTrailingWithReturn(ctx, "WITH n AS RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
+	require.NoError(t, err)
+	assert.False(t, handled)
+	_, err = exec.Execute(ctx, "MATCH (n) SET n.x = 1 WITH n AS RETURN n", nil)
 	require.Error(t, err)
-	assert.True(t, handled)
 
 	// executeSetTrailingWithReturn: unsupported additional clause in WITH => falls back (handled=false).
 	out, handled, err = exec.executeSetTrailingWithReturn(ctx, "WITH n MATCH (m) RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
