@@ -30,8 +30,8 @@ var (
 func (e *StorageExecutor) executeCreateLookupIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	name, ifNotExists, entityType, ok := parseCreateLookupIndex(cypher)
 	if !ok {
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			"Invalid CREATE LOOKUP INDEX: expected FOR (n) ON EACH labels(n) or FOR ()-[r]-() ON EACH type(r)")
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherSchemaLookupIndexInvalid())
 	}
 	if err := e.storage.GetSchema().AddLookupIndex(name, entityType); err != nil {
 		var localized *localization.LocalizedError
@@ -41,12 +41,12 @@ func (e *StorageExecutor) executeCreateLookupIndex(ctx context.Context, cypher s
 				if ifNotExists {
 					return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 				}
-				return nil, newSemanticError("Neo.ClientError.Schema.IndexAlreadyExists", "IndexAlreadyExists", err.Error())
+				return nil, localizedStatusError("Neo.ClientError.Schema.IndexAlreadyExists", "IndexAlreadyExists", localized.Message)
 			case localization.MessageStorageSchemaIndexNameAlreadyExists:
 				if ifNotExists {
 					return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 				}
-				return nil, newSemanticError("Neo.ClientError.Schema.IndexWithNameAlreadyExists", "IndexWithNameAlreadyExists", err.Error())
+				return nil, localizedStatusError("Neo.ClientError.Schema.IndexWithNameAlreadyExists", "IndexWithNameAlreadyExists", localized.Message)
 			}
 		}
 		return nil, err

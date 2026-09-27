@@ -1,9 +1,10 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // temporalDateForm is one of the ways a map names a date: calendar (month,
@@ -120,8 +121,8 @@ func temporalDateFormError(fields map[string]interface{}) error {
 		}
 		for _, field := range form.fields {
 			if _, exists := fields[field]; exists {
-				return newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgument",
-					fmt.Sprintf("Cannot assign %s to %s date.", field, temporalDateForms[primary].name))
+				return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgument",
+					localization.CypherCoreTemporalDateFormConflict(field, temporalDateForms[primary].name))
 			}
 		}
 	}
@@ -130,13 +131,13 @@ func temporalDateFormError(fields map[string]interface{}) error {
 
 func temporalDatePresenceError(kind string, fields map[string]interface{}, timeFields bool) error {
 	if _, exists := fields["year"]; !exists {
-		return temporalArgumentError("year must be specified")
+		return temporalArgumentError(localization.CypherCoreTemporalFieldRequired("year"))
 	}
 	for _, requirement := range [][2]string{{"day", "month"}, {"dayOfWeek", "week"}, {"dayOfQuarter", "quarter"}} {
 		_, finer := fields[requirement[0]]
 		_, coarser := fields[requirement[1]]
 		if finer && !coarser {
-			return temporalArgumentError(requirement[0] + " cannot be specified without " + requirement[1])
+			return temporalArgumentError(localization.CypherCoreTemporalFieldRequiresField(requirement[0], requirement[1]))
 		}
 	}
 	if kind == "date" || !timeFields {
@@ -146,19 +147,19 @@ func temporalDatePresenceError(kind string, fields map[string]interface{}, timeF
 	switch {
 	case hasAnyTemporalField(fields, "week"):
 		if _, exists := fields["dayOfWeek"]; !exists {
-			return temporalArgumentError("dayOfWeek must be specified")
+			return temporalArgumentError(localization.CypherCoreTemporalFieldRequired("dayOfWeek"))
 		}
 	case hasAnyTemporalField(fields, "quarter"):
 		if _, exists := fields["dayOfQuarter"]; !exists {
-			return temporalArgumentError("dayOfQuarter must be specified")
+			return temporalArgumentError(localization.CypherCoreTemporalFieldRequired("dayOfQuarter"))
 		}
 	case hasAnyTemporalField(fields, "ordinalDay"):
 	default:
 		if _, exists := fields["month"]; !exists {
-			return temporalArgumentError("month must be specified")
+			return temporalArgumentError(localization.CypherCoreTemporalFieldRequired("month"))
 		}
 		if _, exists := fields["day"]; !exists {
-			return temporalArgumentError("day must be specified")
+			return temporalArgumentError(localization.CypherCoreTemporalFieldRequired("day"))
 		}
 	}
 	return nil
@@ -171,13 +172,13 @@ func temporalTimePresenceError(fields map[string]interface{}) error {
 	subsecond := hasAnyTemporalField(fields, "millisecond", "microsecond", "nanosecond")
 	switch {
 	case !hour:
-		return temporalArgumentError("hour must be specified")
+		return temporalArgumentError(localization.CypherCoreTemporalFieldRequired("hour"))
 	case second && !minute:
-		return temporalArgumentError("second cannot be specified without minute")
+		return temporalArgumentError(localization.CypherCoreTemporalFieldRequiresField("second", "minute"))
 	case subsecond && !minute:
-		return temporalArgumentError("subsecond cannot be specified without minute")
+		return temporalArgumentError(localization.CypherCoreTemporalFieldRequiresField("subsecond", "minute"))
 	case subsecond && !second:
-		return temporalArgumentError("subsecond cannot be specified without second")
+		return temporalArgumentError(localization.CypherCoreTemporalFieldRequiresField("subsecond", "second"))
 	}
 	return nil
 }
@@ -186,7 +187,7 @@ func temporalRangeError(fields map[string]interface{}, ranges []temporalFieldRan
 	for _, fieldRange := range ranges {
 		value, exists := temporalOptionalInt(fields, fieldRange.field)
 		if exists && (value < fieldRange.min || value > fieldRange.max) {
-			return temporalArgumentError(fmt.Sprintf("Invalid value for %s (valid values %s): %d", fieldRange.name, fieldRange.valid, value))
+			return temporalArgumentError(localization.CypherCoreTemporalFieldOutOfRange(fieldRange.name, fieldRange.valid, value))
 		}
 	}
 	return nil
@@ -205,7 +206,7 @@ func temporalDateValidityError(fields map[string]interface{}) error {
 	}
 	leap := isLeapYear(year)
 	if ordinal, exists := temporalOptionalInt(fields, "ordinalDay"); exists && ordinal == 366 && !leap {
-		return temporalArgumentError(fmt.Sprintf("Invalid date 'DayOfYear 366' as '%d' is not a leap year", year))
+		return temporalArgumentError(localization.CypherCoreTemporalDayOfYearNotLeapYear(year))
 	}
 	day, hasDay := temporalOptionalInt(fields, "day")
 	month, hasMonth := temporalOptionalInt(fields, "month")
@@ -216,9 +217,9 @@ func temporalDateValidityError(fields map[string]interface{}) error {
 		return nil
 	}
 	if month == 2 && day == 29 {
-		return temporalArgumentError(fmt.Sprintf("Invalid date 'February 29' as '%d' is not a leap year", year))
+		return temporalArgumentError(localization.CypherCoreTemporalFebruary29NotLeapYear(year))
 	}
-	return temporalArgumentError(fmt.Sprintf("Invalid date '%s %d'", strings.ToUpper(time.Month(month).String()), day))
+	return temporalArgumentError(localization.CypherCoreTemporalInvalidDate(strings.ToUpper(time.Month(month).String()), day))
 }
 
 // temporalSubsecondError checks millisecond, microsecond and nanosecond:
@@ -243,14 +244,14 @@ func temporalSubsecondError(fields map[string]interface{}) error {
 	}
 	for _, limit := range limits {
 		if value, exists := temporalOptionalInt(fields, limit.field); exists && (value < 0 || value > limit.max) {
-			return temporalArgumentError(fmt.Sprintf("Invalid value for %s: %d", limit.name, value))
+			return temporalArgumentError(localization.CypherCoreTemporalFieldInvalidValue(limit.name, value))
 		}
 	}
 	return nil
 }
 
-func temporalArgumentError(message string) error {
-	return newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", message)
+func temporalArgumentError(message localization.Message) error {
+	return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", message)
 }
 
 func isLeapYear(year int64) bool {

@@ -124,3 +124,51 @@
 - id: cyphercore.embedding_no_output
   description: La incrustación de consulta no produjo vectores.
   other: no se pudo generar la incrustación de la consulta (no se produjeron incrustaciones)
+- id: cyphercore.division_by_zero
+  other: "/ por cero"
+- id: cyphercore.yield_pagination_invalid
+  other: "SKIP y LIMIT requieren un INTEGER no negativo"
+- id: cyphercore.invalid_input
+  other: "Entrada no válida '{{.Token}}'"
+- id: cyphercore.invalid_input_expected_expression
+  other: "Entrada no válida '{{.Token}}': se esperaba una expresión"
+- id: cyphercore.list_operand_type_mismatch
+  other: "Tipo no coincidente: se esperaba List<T> pero era {{.Type}}"
+- id: cyphercore.list_parameter_type_mismatch
+  other: "Tipo no coincidente para el parámetro '{{.Parameter}}': se esperaba List<T> pero era {{.Type}}"
+- id: cyphercore.function_argument_count
+  other: "{{.Function}}() espera {{.Expected}} argumento(s), recibió {{.Got}}"
+- id: cyphercore.trim_character_length
+  other: "El argumento `trimCharacterString` de la función `trim()` debe tener longitud 1."
+- id: cyphercore.normalize_form_invalid
+  other: "la forma normal de normalize() debe ser NFC, NFD, NFKC o NFKD; se recibió: {{.Form}}"
+- id: cyphercore.procedure_output_shadows_variable
+  other: "la salida del procedimiento {{.Variable}} oculta una variable existente"
+- id: cyphercore.expression_unevaluable
+  other: "no se pudo evaluar la expresión: {{.Expression}}"
+- id: cyphercore.standalone_call_modifiers
+  other: "No se puede usar una llamada independiente con WHERE (en su lugar use: `CALL ... WITH * WHERE ... RETURN *`)"
+- id: cyphercore.yield_where_misplaced
+  other: "Entrada no válida 'WHERE': el WHERE de un YIELD debe ir antes de su ORDER BY, SKIP y LIMIT"
+- id: cyphercore.temporal_date_form_conflict
+  other: "No se puede asignar {{.Field}} a una fecha {{.Form}}."
+- id: cyphercore.temporal_field_required
+  other: "se debe especificar {{.Field}}"
+- id: cyphercore.temporal_field_requires_field
+  other: "{{.Field}} no se puede especificar sin {{.Required}}"
+- id: cyphercore.temporal_field_out_of_range
+  other: "Valor no válido para {{.Field}} (valores válidos {{.Valid}}): {{.Value}}"
+- id: cyphercore.temporal_field_invalid_value
+  other: "Valor no válido para {{.Field}}: {{.Value}}"
+- id: cyphercore.temporal_day_of_year_not_leap_year
+  other: "Fecha no válida 'DayOfYear 366' porque '{{.Year}}' no es un año bisiesto"
+- id: cyphercore.temporal_february_29_not_leap_year
+  other: "Fecha no válida 'February 29' porque '{{.Year}}' no es un año bisiesto"
+- id: cyphercore.temporal_invalid_date
+  other: "Fecha no válida '{{.Month}} {{.Day}}'"
+- id: cyphercore.temporal_text_unparseable
+  other: "El texto no se puede convertir en un {{.Type}}\n{{.Text}}\n ^"
+- id: cyphercore.temporal_map_invalid
+  other: "valor de {{.Type}} no válido: {{.Value}}"
+- id: cyphercore.temporal_call_signature
+  other: "Firma de llamada no válida para {{.Type}}Function: la entrada proporcionada fue [{{.Provided}}]"

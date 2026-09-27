@@ -90,7 +90,7 @@ func TestUnsupportedAdministrationCommands(t *testing.T) {
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
-		require.Contains(t, err.Error(), code, query)
+		require.Contains(t, statusText(err), code, query)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestShowAndTerminateTransactions(t *testing.T) {
 
 	_, err = session.Execute(ctx, "RETURN 1", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Transaction.Terminated")
+	require.Contains(t, statusText(err), "Neo.ClientError.Transaction.Terminated")
 	_, err = session.Execute(ctx, "COMMIT", nil)
 	require.Error(t, err)
 
@@ -160,7 +160,7 @@ func TestShowAndTerminateTransactions(t *testing.T) {
 	require.NoError(t, err)
 	_, err = session.Execute(ctx, "COMMIT", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Transaction.Terminated")
+	require.Contains(t, statusText(err), "Neo.ClientError.Transaction.Terminated")
 	_, err = session.Execute(ctx, "RETURN 1 AS x", nil)
 	require.NoError(t, err)
 
@@ -182,7 +182,7 @@ func TestTerminateTransactionIDsAreChecked(t *testing.T) {
 	} {
 		_, err := exec.Execute(ctx, "TERMINATE TRANSACTION $id", map[string]interface{}{"id": id})
 		require.Error(t, err, id)
-		require.Contains(t, err.Error(), "Neo.ClientError.General.InvalidArguments", id)
+		require.Contains(t, statusText(err), "Neo.ClientError.General.InvalidArguments", id)
 		require.Contains(t, err.Error(), message, id)
 	}
 	result, err := exec.Execute(ctx, "TERMINATE TRANSACTION 'Abc-transaction-1'", nil)

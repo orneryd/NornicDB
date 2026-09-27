@@ -66,7 +66,7 @@ func TestTemporalMapFieldsMatchNeo4j(t *testing.T) {
 	for _, tc := range failures {
 		_, err := exec.Execute(ctx, tc.query, nil)
 		require.Error(t, err, tc.query)
-		require.Contains(t, err.Error(), tc.code, tc.query)
+		require.Contains(t, statusText(err), tc.code, tc.query)
 		require.Contains(t, err.Error(), tc.message, tc.query)
 	}
 
@@ -112,7 +112,7 @@ func TestStringFunctionGraphArgumentsAreTypeErrors(t *testing.T) {
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
-		require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError", query)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError", query)
 		require.Contains(t, err.Error(), "Type mismatch: expected String but was "+typeName, query)
 	}
 	result, err := exec.Execute(ctx, "MATCH (n:NoSuch) RETURN trim(n.name FROM 'a') AS t", nil)

@@ -182,7 +182,7 @@ func TestShowTailSyntaxErrors(t *testing.T) {
 	} {
 		_, err := exec.Execute(context.Background(), query, nil)
 		require.Error(t, err, query)
-		require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError", query)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError", query)
 	}
 }
 

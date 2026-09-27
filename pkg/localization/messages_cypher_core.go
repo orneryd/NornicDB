@@ -48,6 +48,30 @@ const (
 	MessageCypherCoreTypedAssignmentFailed               MessageID = "cyphercore.typed_assignment_failed"
 	MessageCypherCoreEmbedderNotConfigured               MessageID = "cyphercore.embedder_not_configured"
 	MessageCypherCoreEmbeddingNoOutput                   MessageID = "cyphercore.embedding_no_output"
+	MessageCypherCoreDivisionByZero                      MessageID = "cyphercore.division_by_zero"
+	MessageCypherCoreYieldPaginationInvalid              MessageID = "cyphercore.yield_pagination_invalid"
+	MessageCypherCoreInvalidInput                        MessageID = "cyphercore.invalid_input"
+	MessageCypherCoreInvalidInputExpectedExpression      MessageID = "cyphercore.invalid_input_expected_expression"
+	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
+	MessageCypherCoreListParameterTypeMismatch           MessageID = "cyphercore.list_parameter_type_mismatch"
+	MessageCypherCoreFunctionArgumentCount               MessageID = "cyphercore.function_argument_count"
+	MessageCypherCoreTrimCharacterLength                 MessageID = "cyphercore.trim_character_length"
+	MessageCypherCoreNormalizeFormInvalid                MessageID = "cyphercore.normalize_form_invalid"
+	MessageCypherCoreProcedureOutputShadowsVariable      MessageID = "cyphercore.procedure_output_shadows_variable"
+	MessageCypherCoreExpressionUnevaluable               MessageID = "cyphercore.expression_unevaluable"
+	MessageCypherCoreStandaloneCallModifiers             MessageID = "cyphercore.standalone_call_modifiers"
+	MessageCypherCoreYieldWhereMisplaced                 MessageID = "cyphercore.yield_where_misplaced"
+	MessageCypherCoreTemporalDateFormConflict            MessageID = "cyphercore.temporal_date_form_conflict"
+	MessageCypherCoreTemporalFieldRequired               MessageID = "cyphercore.temporal_field_required"
+	MessageCypherCoreTemporalFieldRequiresField          MessageID = "cyphercore.temporal_field_requires_field"
+	MessageCypherCoreTemporalFieldOutOfRange             MessageID = "cyphercore.temporal_field_out_of_range"
+	MessageCypherCoreTemporalFieldInvalidValue           MessageID = "cyphercore.temporal_field_invalid_value"
+	MessageCypherCoreTemporalDayOfYearNotLeapYear        MessageID = "cyphercore.temporal_day_of_year_not_leap_year"
+	MessageCypherCoreTemporalFebruary29NotLeapYear       MessageID = "cyphercore.temporal_february_29_not_leap_year"
+	MessageCypherCoreTemporalInvalidDate                 MessageID = "cyphercore.temporal_invalid_date"
+	MessageCypherCoreTemporalTextUnparseable             MessageID = "cyphercore.temporal_text_unparseable"
+	MessageCypherCoreTemporalMapInvalid                  MessageID = "cyphercore.temporal_map_invalid"
+	MessageCypherCoreTemporalCallSignature               MessageID = "cyphercore.temporal_call_signature"
 )
 
 func cypherCoreMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -237,4 +261,100 @@ func CypherCoreEmbedderNotConfigured() Message {
 
 func CypherCoreEmbeddingNoOutput() Message {
 	return cypherCoreMessage(MessageCypherCoreEmbeddingNoOutput, "failed to embed query (no embeddings produced)", nil)
+}
+
+func CypherCoreDivisionByZero() Message {
+	return cypherCoreMessage(MessageCypherCoreDivisionByZero, "/ by zero", nil)
+}
+
+func CypherCoreYieldPaginationInvalid() Message {
+	return cypherCoreMessage(MessageCypherCoreYieldPaginationInvalid, "SKIP and LIMIT require a non-negative INTEGER", nil)
+}
+
+func CypherCoreInvalidInput(token string) Message {
+	return cypherCoreMessage(MessageCypherCoreInvalidInput, "Invalid input '"+token+"'", map[string]any{"Token": token})
+}
+
+func CypherCoreInvalidInputExpectedExpression(token string) Message {
+	return cypherCoreMessage(MessageCypherCoreInvalidInputExpectedExpression, "Invalid input '"+token+"': expected an expression", map[string]any{"Token": token})
+}
+
+func CypherCoreListOperandTypeMismatch(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreListOperandTypeMismatch, "Type mismatch: expected List<T> but was "+typeName, map[string]any{"Type": typeName})
+}
+
+func CypherCoreListParameterTypeMismatch(parameter string, typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreListParameterTypeMismatch, "Type mismatch for parameter '"+parameter+"': expected List<T> but was "+typeName, map[string]any{"Parameter": parameter, "Type": typeName})
+}
+
+func CypherCoreFunctionArgumentCount(function string, want string, got int) Message {
+	return cypherCoreMessage(MessageCypherCoreFunctionArgumentCount, function+"() expects "+want+" argument(s), got "+strconv.Itoa(got), map[string]any{"Function": function, "Expected": want, "Got": got})
+}
+
+func CypherCoreTrimCharacterLength() Message {
+	return cypherCoreMessage(MessageCypherCoreTrimCharacterLength, "The argument `trimCharacterString` in the `trim()` function must be of length 1.", nil)
+}
+
+func CypherCoreNormalizeFormInvalid(form string) Message {
+	return cypherCoreMessage(MessageCypherCoreNormalizeFormInvalid, "normalize() normal form must be one of NFC, NFD, NFKC or NFKD, got: "+form, map[string]any{"Form": form})
+}
+
+func CypherCoreProcedureOutputShadowsVariable(variable string) Message {
+	return cypherCoreMessage(MessageCypherCoreProcedureOutputShadowsVariable, "procedure output "+variable+" shadows an existing variable", map[string]any{"Variable": variable})
+}
+
+func CypherCoreExpressionUnevaluable(expression string) Message {
+	return cypherCoreMessage(MessageCypherCoreExpressionUnevaluable, "could not evaluate expression: "+expression, map[string]any{"Expression": expression})
+}
+
+func CypherCoreStandaloneCallModifiers() Message {
+	return cypherCoreMessage(MessageCypherCoreStandaloneCallModifiers, "Cannot use standalone call with WHERE (instead use: `CALL ... WITH * WHERE ... RETURN *`)", nil)
+}
+
+func CypherCoreYieldWhereMisplaced() Message {
+	return cypherCoreMessage(MessageCypherCoreYieldWhereMisplaced, "Invalid input 'WHERE': a YIELD's WHERE must come before its ORDER BY, SKIP and LIMIT", nil)
+}
+
+func CypherCoreTemporalDateFormConflict(field string, form string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalDateFormConflict, "Cannot assign "+field+" to "+form+" date.", map[string]any{"Field": field, "Form": form})
+}
+
+func CypherCoreTemporalFieldRequired(field string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalFieldRequired, field+" must be specified", map[string]any{"Field": field})
+}
+
+func CypherCoreTemporalFieldRequiresField(field string, required string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalFieldRequiresField, field+" cannot be specified without "+required, map[string]any{"Field": field, "Required": required})
+}
+
+func CypherCoreTemporalFieldOutOfRange(field string, valid string, value int64) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalFieldOutOfRange, "Invalid value for "+field+" (valid values "+valid+"): "+strconv.FormatInt(value, 10), map[string]any{"Field": field, "Valid": valid, "Value": value})
+}
+
+func CypherCoreTemporalFieldInvalidValue(field string, value int64) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalFieldInvalidValue, "Invalid value for "+field+": "+strconv.FormatInt(value, 10), map[string]any{"Field": field, "Value": value})
+}
+
+func CypherCoreTemporalDayOfYearNotLeapYear(year int64) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalDayOfYearNotLeapYear, "Invalid date 'DayOfYear 366' as '"+strconv.FormatInt(year, 10)+"' is not a leap year", map[string]any{"Year": year})
+}
+
+func CypherCoreTemporalFebruary29NotLeapYear(year int64) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalFebruary29NotLeapYear, "Invalid date 'February 29' as '"+strconv.FormatInt(year, 10)+"' is not a leap year", map[string]any{"Year": year})
+}
+
+func CypherCoreTemporalInvalidDate(month string, day int64) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalInvalidDate, "Invalid date '"+month+" "+strconv.FormatInt(day, 10)+"'", map[string]any{"Month": month, "Day": day})
+}
+
+func CypherCoreTemporalTextUnparseable(typeName string, quoted string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalTextUnparseable, "Text cannot be parsed to a "+typeName+"\n"+quoted+"\n ^", map[string]any{"Type": typeName, "Text": quoted})
+}
+
+func CypherCoreTemporalMapInvalid(typeName string, value string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalMapInvalid, "invalid "+typeName+" value: "+value, map[string]any{"Type": typeName, "Value": value})
+}
+
+func CypherCoreTemporalCallSignature(typeName string, provided string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalCallSignature, "Invalid call signature for "+typeName+"Function: Provided input was ["+provided+"]", map[string]any{"Type": typeName, "Provided": provided})
 }

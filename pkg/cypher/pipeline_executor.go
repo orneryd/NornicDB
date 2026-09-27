@@ -715,8 +715,8 @@ func pipelineItemUnevaluable(ctx context.Context, expr string) {
 	if getExpressionFailure(ctx) != nil {
 		return
 	}
-	recordExpressionFailure(ctx, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-		"could not evaluate expression: "+strings.TrimSpace(expr)))
+	recordExpressionFailure(ctx, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+		localization.CypherCoreExpressionUnevaluable(strings.TrimSpace(expr))))
 }
 
 // pipelineDecline is the pipeline's "shape unsupported" answer. Before any

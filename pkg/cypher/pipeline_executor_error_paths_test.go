@@ -115,7 +115,7 @@ RETURN n
 	// Neo4j: SyntaxError (Invalid input 'CREAT'). The statement fails as a
 	// SyntaxError after its CREATE ran, and nothing is written.
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	res, err := exec.Execute(ctx, "MATCH (n:ImplicitRollback) RETURN count(n) AS cnt", nil)
 	require.NoError(t, err)

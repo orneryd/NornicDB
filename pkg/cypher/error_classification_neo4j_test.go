@@ -21,6 +21,13 @@ func requireStatus(t *testing.T, exec *StorageExecutor, query string, params map
 	require.Equal(t, wantMessage, message, query)
 }
 
+// statusText is err as a client sees it, "<code>: <message>"
+// (errors.Neo4jStatus), whether err carries its code in its text or not.
+func statusText(err error) string {
+	code, message := nornicerrors.Neo4jStatus(err)
+	return code + ": " + message
+}
+
 func newClassificationExecutor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))

@@ -89,3 +89,15 @@
   other: "Entrada no válida '{{.Input}}': se esperaba una cadena, una expresión, 'SHOW', 'TERMINATE', 'WHERE' o 'YIELD'"
 - id: cypheradmin.terminate_transactions_invalid_input
   other: "Entrada no válida '{{.Input}}': se esperaba una cadena o una expresión"
+- id: cypheradmin.show_clause_invalid
+  other: "comando SHOW no válido: se esperaba WHERE, o YIELD [ORDER BY] [SKIP] [LIMIT] [WHERE] [RETURN]"
+- id: cypheradmin.unsupported_administration_command
+  other: "Comando de administración no admitido: {{.Command}}"
+- id: cypheradmin.transaction_terminated
+  other: "La transacción ha sido terminada. Reintente la operación en una nueva transacción y debería obtener un resultado correcto."
+- id: cypheradmin.terminate_transactions_id_required
+  other: "TERMINATE TRANSACTIONS requiere un id de transacción o una lista de ids de transacción"
+- id: cypheradmin.transaction_id_unparseable
+  other: "No se pudo analizar el id (formato esperado: <databasename>-transaction-<id>)"
+- id: cypheradmin.transaction_id_database_name_length
+  other: "El nombre de base de datos proporcionado debe tener una longitud de entre 3 y 63 caracteres."

@@ -72,3 +72,5 @@
   other: "[!! malformed REQUIRE block !!]"
 - id: cypherschema.nested_contract_entry_unsupported
   other: "[!! nested FOR ... REQUIRE entries are not supported inside REQUIRE blocks; create a separate targeted block constraint such as {{.Entry}} !!]"
+- id: cypherschema.lookup_index_invalid
+  other: "[!! Invalid CREATE LOOKUP INDEX: expected FOR (n) ON EACH labels(n) or FOR ()-[r]-() ON EACH type(r) !!]"

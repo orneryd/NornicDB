@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"golang.org/x/text/unicode/norm"
 )
@@ -52,8 +53,12 @@ func evalArgs(ctx cypherfn.Context, args []string) ([]interface{}, error) {
 	return values, nil
 }
 
+// argumentCountError is the error of a function called with the wrong number
+// of arguments. It carries no status code of its own, so clients get
+// Statement.SyntaxError (errors.Neo4jStatus's default), as before it was
+// localized.
 func argumentCountError(function string, want string, got int) error {
-	return fmt.Errorf("%s() expects %s argument(s), got %d", function, want, got)
+	return localizedError(localization.CypherCoreFunctionArgumentCount(function, want, got), nil)
 }
 
 func fnRadians(ctx cypherfn.Context, args []string) (interface{}, error) {
@@ -221,8 +226,8 @@ func fnTrim(ctx cypherfn.Context, args []string) (interface{}, error) {
 			return nil, &cypherfn.TypeMismatchError{Function: "trim", Expected: "String", Value: character}
 		}
 		if utf8.RuneCountInString(value) != 1 {
-			return nil, newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
-				"The argument `trimCharacterString` in the `trim()` function must be of length 1.")
+			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+				localization.CypherCoreTrimCharacterLength())
 		}
 		cutset = value
 	}
@@ -253,8 +258,8 @@ func fnNormalize(ctx cypherfn.Context, args []string) (interface{}, error) {
 		case "NFKD":
 			form = norm.NFKD
 		default:
-			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
-				"normalize() normal form must be one of NFC, NFD, NFKC or NFKD, got: "+strings.TrimSpace(args[1]))
+			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
+				localization.CypherCoreNormalizeFormInvalid(strings.TrimSpace(args[1])))
 		}
 	}
 	values, err := evalArgs(ctx, args[:1])

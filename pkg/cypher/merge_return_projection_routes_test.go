@@ -68,7 +68,7 @@ func TestCompoundMatchMergeReturnSeesMatchedBindings(t *testing.T) {
 	// The RETURN's error is the statement's.
 	_, err = exec.executeCompoundMatchMerge(withExpressionFailures(ctx), "MATCH (a:A) MERGE (m:M {id: 1}) RETURN 1 / 0 AS x")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.ArithmeticError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 }
 
 // TestCompoundMatchUnwindMergeReturnProjectsAllRows: MATCH … UNWIND … MERGE
@@ -89,7 +89,7 @@ func TestCompoundMatchUnwindMergeReturnProjectsAllRows(t *testing.T) {
 	require.Error(t, err)
 	_, err = exec.executeCompoundMatchMerge(withExpressionFailures(ctx), "MATCH (a:A) UNWIND [1] AS i MERGE (m:U3 {id: i}) RETURN 1 / 0 AS x")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.ArithmeticError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 }
 
 // TestMergeReturnProjectionErrors: every MERGE route's RETURN goes through
@@ -101,11 +101,11 @@ func TestMergeReturnProjectionErrors(t *testing.T) {
 
 	_, err := exec.executeMerge(withExpressionFailures(ctx), "MERGE (n:M {id: 1}) RETURN 1 / 0 AS x")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.ArithmeticError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 
 	_, err = exec.executeMerge(ctx, "MERGE (n:M {id: 1}) RETURN n.id +")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	a1, err := exec.executeMatch(ctx, "MATCH (a:A {name: 'a1'}) RETURN a")
 	require.NoError(t, err)
@@ -115,11 +115,11 @@ func TestMergeReturnProjectionErrors(t *testing.T) {
 
 	_, err = exec.executeMergeWithContext(withExpressionFailures(ctx), "MERGE (m:N {id: 1}) RETURN 1 / 0 AS x", nodes, map[string]*storage.Edge{})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.ArithmeticError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 
 	_, err = exec.executeMergeWithContext(withExpressionFailures(ctx), "MERGE (a)-[s:S2]->(b) RETURN 1 / 0 AS x", nodes, map[string]*storage.Edge{})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.ArithmeticError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 }
 
 // TestMergeReturnSeesFabricRecordBindings: a MERGE run for a fabric record

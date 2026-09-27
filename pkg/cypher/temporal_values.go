@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
+
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -759,14 +761,14 @@ func temporalConstructorError(function string, input interface{}) error {
 	case nil:
 		return nil
 	case string:
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
-			fmt.Sprintf("Text cannot be parsed to a %s\n%q\n ^", typeName, value))
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
+			localization.CypherCoreTemporalTextUnparseable(typeName, strconv.Quote(value)))
 	case map[string]interface{}:
 		if err := temporalFieldsError(strings.ToLower(function), value); err != nil {
 			return err
 		}
-		return newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",
-			fmt.Sprintf("invalid %s value: %v", typeName, value))
+		return localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",
+			localization.CypherCoreTemporalMapInvalid(typeName, fmt.Sprintf("%v", value)))
 	case bool:
 		return temporalCallSignatureError(typeName, fmt.Sprintf("Boolean('%t')", value))
 	case float32, float64:
@@ -781,6 +783,6 @@ func temporalConstructorError(function string, input interface{}) error {
 // temporalCallSignatureError is Neo4j's error for a temporal constructor
 // called with a value of a type it doesn't take.
 func temporalCallSignatureError(typeName, provided string) error {
-	return newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument",
-		fmt.Sprintf("Invalid call signature for %sFunction: Provided input was [%s]", typeName, provided))
+	return localizedStatusError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument",
+		localization.CypherCoreTemporalCallSignature(typeName, provided))
 }

@@ -174,7 +174,7 @@ func TestTemporalConstructorErrorsMatchNeo4j(t *testing.T) {
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
-		require.Contains(t, err.Error(), want, query)
+		require.Contains(t, statusText(err), want, query)
 	}
 	result, err := exec.Execute(ctx, "MATCH (n:TemporalErr) WHERE n.d IS NOT NULL RETURN count(n)", nil)
 	require.NoError(t, err)

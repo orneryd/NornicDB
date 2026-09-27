@@ -3,6 +3,8 @@ package cypher
 import (
 	"math"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Value-level Cypher arithmetic shared by every evaluator (add, subtract,
@@ -142,7 +144,7 @@ func numericArithmetic(op byte, left, right interface{}) (value interface{}, han
 
 // divisionByZeroError is Neo4j's error for an INTEGER / or % by zero.
 func divisionByZeroError() error {
-	return newSemanticError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", "/ by zero")
+	return localizedStatusError("Neo.ClientError.Statement.ArithmeticError", "DivisionByZero", localization.CypherCoreDivisionByZero())
 }
 
 // divisionByZero reports Neo4j's "/ by zero" ArithmeticError for numeric

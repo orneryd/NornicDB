@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // bindingScope is the shared compile-time name set used while validating
@@ -124,8 +126,8 @@ func validateUnwindAlias(clause string) error {
 	}
 	if rest := strings.TrimSpace(alias[next:]); rest != "" {
 		token := strings.Fields(rest)[0]
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			fmt.Sprintf("Invalid input '%s'", token))
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherCoreInvalidInput(token))
 	}
 	return nil
 }

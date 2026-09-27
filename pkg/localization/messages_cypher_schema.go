@@ -43,6 +43,7 @@ const (
 	MessageCypherSchemaContractEntryRequired              MessageID = "cypherschema.contract_entry_required"
 	MessageCypherSchemaMalformedRequireBlock              MessageID = "cypherschema.malformed_require_block"
 	MessageCypherSchemaNestedContractEntryUnsupported     MessageID = "cypherschema.nested_contract_entry_unsupported"
+	MessageCypherSchemaLookupIndexInvalid                 MessageID = "cypherschema.lookup_index_invalid"
 )
 
 func cypherSchemaMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -197,4 +198,8 @@ func CypherSchemaMalformedRequireBlock() Message {
 
 func CypherSchemaNestedContractEntryUnsupported(entry string) Message {
 	return cypherSchemaMessage(MessageCypherSchemaNestedContractEntryUnsupported, "nested FOR ... REQUIRE entries are not supported inside REQUIRE blocks; create a separate targeted block constraint such as "+entry, map[string]any{"Entry": entry})
+}
+
+func CypherSchemaLookupIndexInvalid() Message {
+	return cypherSchemaMessage(MessageCypherSchemaLookupIndexInvalid, "Invalid CREATE LOOKUP INDEX: expected FOR (n) ON EACH labels(n) or FOR ()-[r]-() ON EACH type(r)", nil)
 }

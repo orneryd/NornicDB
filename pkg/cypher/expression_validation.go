@@ -2,9 +2,10 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // validateListOperands rejects, before any route executes the statement, a
@@ -25,11 +26,11 @@ func validateListOperands(cypher string, params map[string]interface{}) error {
 		if typeName == "" || !wholeListOperand(cypher, end) {
 			return nil
 		}
-		message := "Type mismatch: expected List<T> but was " + typeName
+		message := localization.CypherCoreListOperandTypeMismatch(typeName)
 		if parameter != "" {
-			message = fmt.Sprintf("Type mismatch for parameter '%s': expected List<T> but was %s", parameter, typeName)
+			message = localization.CypherCoreListParameterTypeMismatch(parameter, typeName)
 		}
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", message)
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", message)
 	})
 }
 
@@ -100,7 +101,7 @@ func graphListOperandTypeError(text string, scope matchSemanticScope) error {
 		if foreachDeclaration(text, in) || declaresListElement(text, name) {
 			return nil
 		}
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", "Type mismatch: expected List<T> but was "+typeName)
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListOperandTypeMismatch(typeName))
 	})
 }
 

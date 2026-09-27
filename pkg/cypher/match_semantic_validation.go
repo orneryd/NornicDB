@@ -3,6 +3,8 @@ package cypher
 import (
 	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 type matchBindingKind uint8
@@ -78,8 +80,8 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 					name = item.alias
 				}
 				if _, bound := scope[name]; bound {
-					return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-						fmt.Sprintf("procedure output %s shadows an existing variable", name))
+					return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+						localization.CypherCoreProcedureOutputShadowsVariable(name))
 				}
 				scope[name] = matchBindingUnknown
 			}
@@ -631,8 +633,8 @@ func projectionItemTermError(expression string) error {
 			token = rest[:1]
 		}
 		if !isExpressionContinuationWord(token) {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				fmt.Sprintf("Invalid input '%s': expected an expression", token))
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				localization.CypherCoreInvalidInputExpectedExpression(token))
 		}
 	}
 	return nil
@@ -666,8 +668,8 @@ func projectionAliasError(item string) error {
 	if token == "" {
 		token = rest[:1]
 	}
-	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-		fmt.Sprintf("Invalid input '%s': expected an expression", token))
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+		localization.CypherCoreInvalidInputExpectedExpression(token))
 }
 
 // isExpressionContinuationWord reports whether word, after an operand,

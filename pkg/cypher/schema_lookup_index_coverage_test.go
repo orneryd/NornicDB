@@ -32,7 +32,7 @@ func TestCreateLookupIndexNamesAndConflicts(t *testing.T) {
 	require.NoError(t, err)
 	_, err = run("CREATE LOOKUP INDEX taken FOR ()-[r]-() ON EACH type(r)")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "IndexWithNameAlreadyExists")
+	require.Contains(t, statusText(err), "IndexWithNameAlreadyExists")
 	_, err = run("CREATE LOOKUP INDEX taken IF NOT EXISTS FOR ()-[r]-() ON EACH type(r)")
 	require.NoError(t, err)
 	result, err = run("SHOW LOOKUP INDEXES YIELD name")

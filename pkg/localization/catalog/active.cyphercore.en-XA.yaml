@@ -124,3 +124,51 @@
 - id: cyphercore.embedding_no_output
   description: Expanded pseudo-locale empty embedding output.
   other: "[!! failed to embed query (no embeddings produced) !!]"
+- id: cyphercore.division_by_zero
+  other: "[!! / by zero !!]"
+- id: cyphercore.yield_pagination_invalid
+  other: "[!! SKIP and LIMIT require a non-negative INTEGER !!]"
+- id: cyphercore.invalid_input
+  other: "[!! Invalid input '{{.Token}}' !!]"
+- id: cyphercore.invalid_input_expected_expression
+  other: "[!! Invalid input '{{.Token}}': expected an expression !!]"
+- id: cyphercore.list_operand_type_mismatch
+  other: "[!! Type mismatch: expected List<T> but was {{.Type}} !!]"
+- id: cyphercore.list_parameter_type_mismatch
+  other: "[!! Type mismatch for parameter '{{.Parameter}}': expected List<T> but was {{.Type}} !!]"
+- id: cyphercore.function_argument_count
+  other: "[!! {{.Function}}() expects {{.Expected}} argument(s), got {{.Got}} !!]"
+- id: cyphercore.trim_character_length
+  other: "[!! The argument `trimCharacterString` in the `trim()` function must be of length 1. !!]"
+- id: cyphercore.normalize_form_invalid
+  other: "[!! normalize() normal form must be one of NFC, NFD, NFKC or NFKD, got: {{.Form}} !!]"
+- id: cyphercore.procedure_output_shadows_variable
+  other: "[!! procedure output {{.Variable}} shadows an existing variable !!]"
+- id: cyphercore.expression_unevaluable
+  other: "[!! could not evaluate expression: {{.Expression}} !!]"
+- id: cyphercore.standalone_call_modifiers
+  other: "[!! Cannot use standalone call with WHERE (instead use: `CALL ... WITH * WHERE ... RETURN *`) !!]"
+- id: cyphercore.yield_where_misplaced
+  other: "[!! Invalid input 'WHERE': a YIELD's WHERE must come before its ORDER BY, SKIP and LIMIT !!]"
+- id: cyphercore.temporal_date_form_conflict
+  other: "[!! Cannot assign {{.Field}} to {{.Form}} date. !!]"
+- id: cyphercore.temporal_field_required
+  other: "[!! {{.Field}} must be specified !!]"
+- id: cyphercore.temporal_field_requires_field
+  other: "[!! {{.Field}} cannot be specified without {{.Required}} !!]"
+- id: cyphercore.temporal_field_out_of_range
+  other: "[!! Invalid value for {{.Field}} (valid values {{.Valid}}): {{.Value}} !!]"
+- id: cyphercore.temporal_field_invalid_value
+  other: "[!! Invalid value for {{.Field}}: {{.Value}} !!]"
+- id: cyphercore.temporal_day_of_year_not_leap_year
+  other: "[!! Invalid date 'DayOfYear 366' as '{{.Year}}' is not a leap year !!]"
+- id: cyphercore.temporal_february_29_not_leap_year
+  other: "[!! Invalid date 'February 29' as '{{.Year}}' is not a leap year !!]"
+- id: cyphercore.temporal_invalid_date
+  other: "[!! Invalid date '{{.Month}} {{.Day}}' !!]"
+- id: cyphercore.temporal_text_unparseable
+  other: "[!! Text cannot be parsed to a {{.Type}}\n{{.Text}}\n ^ !!]"
+- id: cyphercore.temporal_map_invalid
+  other: "[!! invalid {{.Type}} value: {{.Value}} !!]"
+- id: cyphercore.temporal_call_signature
+  other: "[!! Invalid call signature for {{.Type}}Function: Provided input was [{{.Provided}}] !!]"

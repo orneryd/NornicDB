@@ -466,8 +466,8 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	}
 	tail := strings.TrimSpace(query[len(head):])
 	invalid := func() error {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause",
-			"invalid SHOW command: expected WHERE, or YIELD [ORDER BY] [SKIP] [LIMIT] [WHERE] [RETURN]")
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause",
+			localization.CypherAdminShowClauseInvalid())
 	}
 	if !startsWithKeywordFold(tail, "YIELD") {
 		if !startsWithKeywordFold(tail, "WHERE") {

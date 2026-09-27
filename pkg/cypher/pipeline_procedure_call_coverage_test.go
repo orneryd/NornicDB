@@ -116,13 +116,13 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 	require.True(t, found)
 	_, err := extractProcedureInvocationArguments(ctx, spec.Spec, "CALL cov.echo(count(1))")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	yield := parseYieldClause("CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1")
 	require.NotNil(t, yield)
 	err = exec.validateYieldModifiers(yield, true)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	for _, call := range []string{
 		"CALL cov.echo(1) YIELD echoed SKIP -1",

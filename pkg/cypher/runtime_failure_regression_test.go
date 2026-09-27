@@ -44,9 +44,9 @@ func TestReturnRuntimeFailureClassification(t *testing.T) {
 		t.Run(testCase.query, func(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 			_, err := exec.Execute(context.Background(), testCase.query, nil)
-			var semantic *SemanticError
-			require.True(t, errors.As(err, &semantic), "error: %v", err)
-			require.Equal(t, testCase.code, semantic.Code)
+			var classified interface{ BoltErrorCode() string }
+			require.True(t, errors.As(err, &classified), "error: %v", err)
+			require.Equal(t, testCase.code, classified.BoltErrorCode())
 			require.ErrorContains(t, err, testCase.text)
 		})
 	}

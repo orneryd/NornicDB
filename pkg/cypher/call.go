@@ -2946,11 +2946,8 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		if !ok {
 			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
 			// so only a parameter can make them invalid here.
-			return nil, newSemanticError(
-				"Neo.ClientError.Statement.ArgumentError",
-				"InvalidArgumentType",
-				"SKIP and LIMIT require a non-negative INTEGER",
-			)
+			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentType",
+				localization.CypherCoreYieldPaginationInvalid())
 		}
 		rows = ordered
 	}

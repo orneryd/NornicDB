@@ -35,6 +35,12 @@ const (
 	MessageCypherAdminVariableNotDefined                MessageID = "cypheradmin.variable_not_defined"
 	MessageCypherAdminShowTransactionsInvalidInput      MessageID = "cypheradmin.show_transactions_invalid_input"
 	MessageCypherAdminTerminateTransactionsInvalidInput MessageID = "cypheradmin.terminate_transactions_invalid_input"
+	MessageCypherAdminShowClauseInvalid                 MessageID = "cypheradmin.show_clause_invalid"
+	MessageCypherAdminUnsupportedAdministrationCommand  MessageID = "cypheradmin.unsupported_administration_command"
+	MessageCypherAdminTransactionTerminated             MessageID = "cypheradmin.transaction_terminated"
+	MessageCypherAdminTerminateTransactionsIDRequired   MessageID = "cypheradmin.terminate_transactions_id_required"
+	MessageCypherAdminTransactionIDUnparseable          MessageID = "cypheradmin.transaction_id_unparseable"
+	MessageCypherAdminTransactionIDDatabaseNameLength   MessageID = "cypheradmin.transaction_id_database_name_length"
 )
 
 // CypherAdminDatabaseManagerUnavailable identifies an admin command that requires multi-database support.
@@ -192,4 +198,28 @@ func CypherAdminShowTransactionsInvalidInput(input string) Message {
 
 func CypherAdminTerminateTransactionsInvalidInput(input string) Message {
 	return Message{ID: MessageCypherAdminTerminateTransactionsInvalidInput, Fallback: "Invalid input '" + input + "': expected a string or an expression", Data: map[string]any{"Input": input}}
+}
+
+func CypherAdminShowClauseInvalid() Message {
+	return Message{ID: MessageCypherAdminShowClauseInvalid, Fallback: "invalid SHOW command: expected WHERE, or YIELD [ORDER BY] [SKIP] [LIMIT] [WHERE] [RETURN]"}
+}
+
+func CypherAdminUnsupportedAdministrationCommand(command string) Message {
+	return Message{ID: MessageCypherAdminUnsupportedAdministrationCommand, Fallback: "Unsupported administration command: " + command, Data: map[string]any{"Command": command}}
+}
+
+func CypherAdminTransactionTerminated() Message {
+	return Message{ID: MessageCypherAdminTransactionTerminated, Fallback: "The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result."}
+}
+
+func CypherAdminTerminateTransactionsIDRequired() Message {
+	return Message{ID: MessageCypherAdminTerminateTransactionsIDRequired, Fallback: "TERMINATE TRANSACTIONS requires a transaction id or a list of transaction ids"}
+}
+
+func CypherAdminTransactionIDUnparseable() Message {
+	return Message{ID: MessageCypherAdminTransactionIDUnparseable, Fallback: "Could not parse id (expected format: <databasename>-transaction-<id>)"}
+}
+
+func CypherAdminTransactionIDDatabaseNameLength() Message {
+	return Message{ID: MessageCypherAdminTransactionIDDatabaseNameLength, Fallback: "The provided database name must have a length between 3 and 63 characters."}
 }

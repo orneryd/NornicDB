@@ -76,7 +76,7 @@ func TestReturnOfUndefinedVariableProperty(t *testing.T) {
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "MATCH (n:N) RETURN m.val", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 	require.Contains(t, err.Error(), "variable m is not defined")
 }
 
@@ -120,7 +120,7 @@ func TestUnwindAliasIsOneVariable(t *testing.T) {
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
-		require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError", query)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError", query)
 		require.Contains(t, err.Error(), "Invalid input '"+token+"'", query)
 	}
 }

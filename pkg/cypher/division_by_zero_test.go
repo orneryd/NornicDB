@@ -64,7 +64,7 @@ func TestDivisionByZeroMatchesNeo4j(t *testing.T) {
 			if want == failure {
 				require.Error(t, err, query)
 				require.Contains(t, err.Error(), "/ by zero", query)
-				require.Contains(t, err.Error(), "ArithmeticError", query)
+				require.Contains(t, statusText(err), "ArithmeticError", query)
 				continue
 			}
 			require.NoError(t, err, query)

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // validateProcedureCallArguments rejects an aggregate in a procedure call's
@@ -83,18 +85,12 @@ func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail boo
 		return nil
 	}
 	if !hasTail {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidSyntax",
-			"Cannot use standalone call with WHERE (instead use: `CALL ... WITH * WHERE ... RETURN *`)",
-		)
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
+			localization.CypherCoreStandaloneCallModifiers())
 	}
 	if yield.misplacedWhere {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidSyntax",
-			"Invalid input 'WHERE': a YIELD's WHERE must come before its ORDER BY, SKIP and LIMIT",
-		)
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
+			localization.CypherCoreYieldWhereMisplaced())
 	}
 	if yield.skip != "" {
 		if err := e.validateStaticPaginationExpression("SKIP", yield.skip); err != nil {

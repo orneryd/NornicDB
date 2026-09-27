@@ -89,3 +89,15 @@
   other: "[!! Invalid input '{{.Input}}': expected a string, an expression, 'SHOW', 'TERMINATE', 'WHERE' or 'YIELD' !!]"
 - id: cypheradmin.terminate_transactions_invalid_input
   other: "[!! Invalid input '{{.Input}}': expected a string or an expression !!]"
+- id: cypheradmin.show_clause_invalid
+  other: "[!! invalid SHOW command: expected WHERE, or YIELD [ORDER BY] [SKIP] [LIMIT] [WHERE] [RETURN] !!]"
+- id: cypheradmin.unsupported_administration_command
+  other: "[!! Unsupported administration command: {{.Command}} !!]"
+- id: cypheradmin.transaction_terminated
+  other: "[!! The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. !!]"
+- id: cypheradmin.terminate_transactions_id_required
+  other: "[!! TERMINATE TRANSACTIONS requires a transaction id or a list of transaction ids !!]"
+- id: cypheradmin.transaction_id_unparseable
+  other: "[!! Could not parse id (expected format: <databasename>-transaction-<id>) !!]"
+- id: cypheradmin.transaction_id_database_name_length
+  other: "[!! The provided database name must have a length between 3 and 63 characters. !!]"

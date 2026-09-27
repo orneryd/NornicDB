@@ -201,7 +201,7 @@ func TestLookupIndexesAsNeo4j(t *testing.T) {
 	} {
 		_, err := exec.Execute(ctx, statement, nil)
 		require.Error(t, err, statement)
-		assert.Contains(t, err.Error(), code, statement)
+		assert.Contains(t, statusText(err), code, statement)
 	}
 	_, err := exec.Execute(ctx, "CREATE LOOKUP INDEX other_rel IF NOT EXISTS FOR ()-[r]-() ON EACH type(r)", nil)
 	require.NoError(t, err)
@@ -235,7 +235,7 @@ func TestLookupIndexesAsNeo4j(t *testing.T) {
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE LOOKUP INDEX s FOR ()-[r]-() ON EACH type(r)", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
 	assert.Contains(t, err.Error(), "There already exists an index called 's'.")
 }
 

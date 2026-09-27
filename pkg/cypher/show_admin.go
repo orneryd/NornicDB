@@ -179,7 +179,8 @@ func unsupportedAdministrationCommandError(cypher string) error {
 	if findMultiWordKeywordIndex(cypher, "SHOW", "SERVERS") == 0 || findMultiWordKeywordIndex(cypher, "SHOW", "SERVER") == 0 {
 		code = "Neo.ClientError.Statement.NotSystemDatabaseError"
 	}
-	return newSemanticError(code, "UnsupportedAdministrationCommand", "Unsupported administration command: "+strings.TrimSpace(showCommandHead(cypher)))
+	return localizedStatusError(code, "UnsupportedAdministrationCommand",
+		localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(showCommandHead(cypher))))
 }
 
 // runningTransaction is one SHOW TRANSACTIONS row: an explicit transaction
@@ -315,8 +316,8 @@ func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, 
 // transactionTerminatedError is Neo4j's error for a statement of a
 // terminated transaction.
 func transactionTerminatedError() error {
-	return newSemanticError("Neo.ClientError.Transaction.Terminated", "Terminated",
-		"The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result.")
+	return localizedStatusError("Neo.ClientError.Transaction.Terminated", "Terminated",
+		localization.CypherAdminTransactionTerminated())
 }
 
 // runningStatement is a registered statement: done ends it (and the
@@ -613,8 +614,8 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 		return nil, err
 	}
 	if !filtered {
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidTransactionID",
-			"TERMINATE TRANSACTIONS requires a transaction id or a list of transaction ids")
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidTransactionID",
+			localization.CypherAdminTerminateTransactionsIDRequired())
 	}
 	for index, id := range ids {
 		normalized, err := terminateTransactionID(id)
@@ -642,21 +643,21 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 func terminateTransactionID(id string) (string, error) {
 	separator := strings.LastIndex(id, "-transaction-")
 	if separator < 0 {
-		return "", invalidTransactionIDError("Could not parse id (expected format: <databasename>-transaction-<id>)")
+		return "", invalidTransactionIDError(localization.CypherAdminTransactionIDUnparseable())
 	}
 	database, number := id[:separator], id[separator+len("-transaction-"):]
 	if _, err := strconv.ParseUint(number, 10, 64); err != nil {
-		return "", invalidTransactionIDError("Could not parse id (expected format: <databasename>-transaction-<id>)")
+		return "", invalidTransactionIDError(localization.CypherAdminTransactionIDUnparseable())
 	}
 	if length := len(database); length < 3 || length > 63 {
-		return "", invalidTransactionIDError("The provided database name must have a length between 3 and 63 characters.")
+		return "", invalidTransactionIDError(localization.CypherAdminTransactionIDDatabaseNameLength())
 	}
 	return strings.ToLower(database) + "-transaction-" + number, nil
 }
 
 // invalidTransactionIDError is Neo4j's error for a malformed transaction id.
-func invalidTransactionIDError(message string) error {
-	return newSemanticError("Neo.ClientError.General.InvalidArguments", "InvalidTransactionID", message)
+func invalidTransactionIDError(message localization.Message) error {
+	return localizedStatusError("Neo.ClientError.General.InvalidArguments", "InvalidTransactionID", message)
 }
 
 // durationFromGo is a Cypher duration of d.
