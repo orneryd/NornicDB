@@ -278,18 +278,39 @@ func isNameableClauseKeyword(keyword string) bool {
 	if space := strings.IndexAny(word, " \t"); space >= 0 {
 		word = word[:space]
 	}
+	var candidates []string
 	switch len(word) {
-	case 3, 4, 5, 6, 7:
+	case 3:
+		candidates = nameableClauseKeywords3[:]
+	case 4:
+		candidates = nameableClauseKeywords4[:]
+	case 5:
+		candidates = nameableClauseKeywords5[:]
+	case 6:
+		candidates = nameableClauseKeywords6[:]
+	case 7:
+		candidates = nameableClauseKeywords7[:]
 	default:
 		return false
 	}
-	for _, clause := range [...]string{"SET", "MATCH", "RETURN", "WITH", "DELETE", "CREATE", "MERGE", "REMOVE", "UNWIND", "UNION", "LIMIT", "SKIP", "FOREACH", "ORDER"} {
-		if strings.EqualFold(word, clause) {
+	first := asciiUpper(word[0])
+	for _, clause := range candidates {
+		if clause[0] == first && equalFoldASCII(word, clause) {
 			return true
 		}
 	}
 	return false
 }
+
+// The clause keywords a name can be spelled as (isNameableClauseKeyword),
+// by length.
+var (
+	nameableClauseKeywords3 = [...]string{"SET"}
+	nameableClauseKeywords4 = [...]string{"WITH", "SKIP"}
+	nameableClauseKeywords5 = [...]string{"MATCH", "MERGE", "UNION", "LIMIT", "ORDER"}
+	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND"}
+	nameableClauseKeywords7 = [...]string{"FOREACH"}
+)
 
 // prevWordStart returns the start of the word that precedes pos (after
 // skipping whitespace), for a pos where prevWordEqualsIgnoreCase matched.
@@ -518,9 +539,31 @@ func cachedKeywordIndexFromDefault(s, keyword string, from int) int {
 }
 
 func keywordIndexFromDefault(s, keyword string, from int) int {
-	ks, ke := trimKeywordWSBounds(keyword)
-	if ks >= ke {
-		return -1
+	return firstKeywordIndexFromDefault(s, from, keyword)
+}
+
+// maxKeywordSet is the most keywords firstKeywordIndexFromDefault takes.
+const maxKeywordSet = 16
+
+// firstKeywordIndexFromDefault is the position of the earliest of keywords
+// in s at or after from, with the default scan options (keywordIndex: the
+// same strings, comments, nesting and name rules), or -1. A set of clause
+// keywords is found in one scan rather than one scan per keyword. It takes
+// at most maxKeywordSet keywords.
+func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
+	if len(keywords) > maxKeywordSet {
+		panic("firstKeywordIndexFromDefault: more than maxKeywordSet keywords")
+	}
+	type keywordBounds struct {
+		ks, ke int
+		first  byte
+	}
+	var bounds [maxKeywordSet]keywordBounds
+	for k, keyword := range keywords {
+		ks, ke := trimKeywordWSBounds(keyword)
+		if ks < ke {
+			bounds[k] = keywordBounds{ks: ks, ke: ke, first: asciiUpper(keyword[ks])}
+		}
 	}
 	if from < 0 {
 		from = 0
@@ -528,8 +571,6 @@ func keywordIndexFromDefault(s, keyword string, from int) int {
 	if from >= len(s) {
 		return -1
 	}
-
-	first := asciiUpper(keyword[ks])
 
 	var (
 		parenDepth   int
@@ -647,28 +688,34 @@ func keywordIndexFromDefault(s, keyword string, from int) int {
 			continue
 		}
 
-		if asciiUpper(c) != first {
-			continue
+		upper := asciiUpper(c)
+		leftChecked := false
+		for k, keyword := range keywords {
+			b := bounds[k]
+			if b.first != upper || b.ks >= b.ke {
+				continue
+			}
+			if !leftChecked {
+				if !keywordLeftBoundaryOK(s, i, keywordBoundaryWord) {
+					break
+				}
+				leftChecked = true
+			}
+			endPos, ok := keywordMatchAt(s, i, keyword, b.ks, b.ke)
+			if !ok {
+				continue
+			}
+			if !keywordRightBoundaryOK(s, endPos, keywordBoundaryWord) {
+				continue
+			}
+			if b.ke-b.ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
+				continue
+			}
+			if clauseKeywordUsedAsName(s, i, endPos, keyword) {
+				continue
+			}
+			return i
 		}
-
-		if !keywordLeftBoundaryOK(s, i, keywordBoundaryWord) {
-			continue
-		}
-
-		endPos, ok := keywordMatchAt(s, i, keyword, ks, ke)
-		if !ok {
-			continue
-		}
-		if !keywordRightBoundaryOK(s, endPos, keywordBoundaryWord) {
-			continue
-		}
-		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
-			continue
-		}
-		if clauseKeywordUsedAsName(s, i, endPos, keyword) {
-			continue
-		}
-		return i
 	}
 
 	return -1

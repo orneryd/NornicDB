@@ -2839,9 +2839,6 @@ func isIdentChar(b byte) bool {
 
 // findKeywordIndexInContext finds a keyword in context, avoiding matches inside quotes
 func findKeywordIndexInContext(s, keyword string) int {
-	upper := upperASCII(s)
-	keyword = upperASCII(keyword)
-
 	inQuote := false
 	quoteChar := rune(0)
 
@@ -2864,7 +2861,7 @@ func findKeywordIndexInContext(s, keyword string) int {
 		}
 
 		// Check for keyword match with word boundary
-		if strings.HasPrefix(upper[i:], keyword) {
+		if hasPrefixFoldASCII(s[i:], keyword) {
 			// Check left boundary (must be start or non-alphanumeric)
 			if i > 0 {
 				prev := s[i-1]

@@ -199,23 +199,22 @@ func pipelineHasWithAfterMerge(clauses []pipelineClause) bool {
 	return false
 }
 
-// pipelineClauseSplits caches parsePipelineClauses by statement text and
-// whether procedure calls are clauses; it is cleared when it reaches
-// pipelineClauseSplitLimit entries, which bounds it for workloads with
-// unbounded distinct texts.
+// pipelineClauseSplits caches parsePipelineClauses by statement text: one
+// parse serves both splits (with and without procedure calls as clauses). It
+// is cleared when it reaches pipelineClauseSplitLimit entries, which bounds
+// it for workloads with unbounded distinct texts.
 var pipelineClauseSplits = struct {
 	sync.RWMutex
-	splits map[pipelineClauseSplitKey]pipelineClauseSplit
-}{splits: make(map[pipelineClauseSplitKey]pipelineClauseSplit)}
+	splits map[string]pipelineClauseSplit
+}{splits: make(map[string]pipelineClauseSplit)}
 
-type pipelineClauseSplitKey struct {
-	text           string
-	procedureCalls bool
-}
-
+// pipelineClauseSplit is a text's split with procedure calls as clauses;
+// topLevelCall records whether the text has a CALL of its own, which makes
+// the split without procedure calls unsupported.
 type pipelineClauseSplit struct {
-	clauses []pipelineClause
-	ok      bool
+	clauses      []pipelineClause
+	ok           bool
+	topLevelCall bool
 }
 
 const pipelineClauseSplitLimit = 4096
@@ -234,21 +233,25 @@ func splitPipelineClausesAllowingProcedureCalls(cypher string) ([]pipelineClause
 	return cachedPipelineClauses(cypher, true)
 }
 
-// cachedPipelineClauses computes the split of a text once; callers get
-// their own copy of the clause list.
+// cachedPipelineClauses computes the split of a text once, for both
+// callers: without procedure calls as clauses, a text with a CALL of its own
+// is unsupported, and any other text splits the same way. Callers get their
+// own copy of the clause list.
 func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause, bool) {
-	key := pipelineClauseSplitKey{text: cypher, procedureCalls: procedureCalls}
 	pipelineClauseSplits.RLock()
-	split, cached := pipelineClauseSplits.splits[key]
+	split, cached := pipelineClauseSplits.splits[cypher]
 	pipelineClauseSplits.RUnlock()
 	if !cached {
-		split.clauses, split.ok = parsePipelineClauses(cypher, procedureCalls)
+		split.clauses, split.ok, split.topLevelCall = parsePipelineClauses(cypher)
 		pipelineClauseSplits.Lock()
 		if len(pipelineClauseSplits.splits) >= pipelineClauseSplitLimit {
-			pipelineClauseSplits.splits = make(map[pipelineClauseSplitKey]pipelineClauseSplit)
+			pipelineClauseSplits.splits = make(map[string]pipelineClauseSplit)
 		}
-		pipelineClauseSplits.splits[key] = split
+		pipelineClauseSplits.splits[cypher] = split
 		pipelineClauseSplits.Unlock()
+	}
+	if split.topLevelCall && !procedureCalls {
+		return nil, false
 	}
 	if split.clauses == nil {
 		return nil, split.ok
@@ -257,10 +260,12 @@ func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause
 }
 
 // parsePipelineClauses walks the query from left to right and slices it on
-// top-level MATCH/CREATE/WITH/UNWIND/RETURN keywords. Returns (clauses, true)
-// on success. On anything unsupported (e.g. nested MERGE or CALL subquery)
-// returns (nil, false) so the caller falls back.
-func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineClause, bool) {
+// top-level MATCH/CREATE/WITH/UNWIND/RETURN keywords, with top-level
+// procedure calls (CALL proc(args) YIELD …) as clauses. Returns (clauses,
+// true) on success. On anything unsupported (e.g. nested MERGE or CALL
+// subquery) returns (nil, false) so the caller falls back. topLevelCall
+// reports whether the query has a CALL of its own (cachedPipelineClauses).
+func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, topLevelCall bool) {
 	type kw struct {
 		name string
 		kind pipelineClauseKind
@@ -288,8 +293,9 @@ func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineCl
 	// is handled by the per-clause appliers below, which substitute params
 	// from context and respect node bindings supplied by the caller.
 	if topLevelKeywordIndex(cypher, "CALL") >= 0 {
-		if !allowProcedureCalls || !pipelineProcedureCallsAreClauses(cypher) {
-			return nil, false
+		topLevelCall = true
+		if !pipelineProcedureCallsAreClauses(cypher) {
+			return nil, false, true
 		}
 		keywords = append(keywords, kw{"CALL", pipelineClauseCall})
 	}
@@ -335,7 +341,7 @@ func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineCl
 		}
 	}
 	if len(boundaries) == 0 {
-		return nil, false
+		return nil, false, topLevelCall
 	}
 	// Sort ascending by pos.
 	sortBoundariesByPos(boundaries)
@@ -345,7 +351,7 @@ func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineCl
 	// after trimming).
 	trimmedLeft := len(cypher) - len(strings.TrimLeft(cypher, " \t\n\r"))
 	if boundaries[0].pos != trimmedLeft {
-		return nil, false
+		return nil, false, topLevelCall
 	}
 
 	var out []pipelineClause
@@ -360,7 +366,7 @@ func parsePipelineClauses(cypher string, allowProcedureCalls bool) ([]pipelineCl
 		}
 		out = append(out, pipelineClause{kind: b.kind, text: text})
 	}
-	return out, true
+	return out, true, topLevelCall
 }
 
 // findAllTopLevelPipelineKeywordPositions returns clause boundaries outside

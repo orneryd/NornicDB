@@ -2158,33 +2158,25 @@ func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subquery
 	return referenced
 }
 
+// withImportClauseKeywords are the clauses that can follow a subquery's
+// importing WITH list (parseLeadingWithImports).
+var withImportClauseKeywords = []string{"WHERE", "OPTIONAL MATCH", "MATCH", "UNWIND", "MERGE", "CREATE", "SET", "DETACH DELETE", "DELETE", "REMOVE", "CALL", "RETURN", "WITH"}
+
 func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody string, hasWith bool, err error) {
 	trimmed := strings.TrimSpace(subqueryBody)
-	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
+	if !hasPrefixFoldASCII(trimmed, "WITH ") {
 		return nil, trimmed, false, nil
 	}
 
 	afterWith := strings.TrimSpace(trimmed[len("WITH "):])
-	nextIdx := len(afterWith)
-	clauseStarts := []int{
-		findKeywordIndex(afterWith, "WHERE"),
-		findMultiWordKeywordIndex(afterWith, "OPTIONAL", "MATCH"),
-		findKeywordIndex(afterWith, "MATCH"),
-		findKeywordIndex(afterWith, "UNWIND"),
-		findKeywordIndex(afterWith, "MERGE"),
-		findKeywordIndex(afterWith, "CREATE"),
-		findKeywordIndex(afterWith, "SET"),
-		findKeywordIndex(afterWith, "DETACH DELETE"),
-		findKeywordIndex(afterWith, "DELETE"),
-		findKeywordIndex(afterWith, "REMOVE"),
-		findKeywordIndex(afterWith, "CALL"),
-		findKeywordIndex(afterWith, "RETURN"),
-		findKeywordIndex(afterWith, "WITH"),
+	// The import list ends at the first clause keyword after it (one scan
+	// for all of them); a keyword at the very start is part of the list.
+	nextIdx := firstKeywordIndexFromDefault(afterWith, 0, withImportClauseKeywords...)
+	if nextIdx == 0 {
+		nextIdx = firstKeywordIndexFromDefault(afterWith, 1, withImportClauseKeywords...)
 	}
-	for _, idx := range clauseStarts {
-		if idx > 0 && idx < nextIdx {
-			nextIdx = idx
-		}
+	if nextIdx < 0 {
+		nextIdx = len(afterWith)
 	}
 
 	if nextIdx == len(afterWith) {
