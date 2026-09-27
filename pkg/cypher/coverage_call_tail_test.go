@@ -17,6 +17,37 @@ func TestCloneStringInterfaceMap_IsIndependentCopy(t *testing.T) {
 	require.Equal(t, 1, original["a"], "mutating the clone must not affect the original")
 }
 
+type countingCallTailNodes struct {
+	storage.Engine
+	reads int
+}
+
+func (engine *countingCallTailNodes) GetNode(id storage.NodeID) (*storage.Node, error) {
+	engine.reads++
+	return engine.Engine.GetNode(id)
+}
+
+func TestCallTailRelationshipReusesEndpointsWithinExecution(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "calltailreuse")
+	_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Alice"}})
+	require.NoError(t, err)
+	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Bob"}})
+	require.NoError(t, err)
+	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "edge", StartNode: "a", EndNode: "b", Type: "CTR", Properties: map[string]interface{}{"name": "shared"}}))
+	edge, err := store.GetEdge("edge")
+	require.NoError(t, err)
+
+	counted := &countingCallTailNodes{Engine: store}
+	exec := NewStorageExecutor(counted)
+	seed := &ExecuteResult{Columns: []string{"relationship"}, Rows: [][]interface{}{{edge}, {edge}}}
+	result, handled, err := exec.tryExecuteCallTailRelationshipMatchProjection(context.Background(), seed,
+		"MATCH (a:CT)-[r:CTR {name: relationship.name}]->(b:CT) WITH a, r, b RETURN a.name AS name", nil)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, [][]interface{}{{"Alice"}, {"Alice"}}, result.Rows)
+	require.Equal(t, 2, counted.reads)
+}
+
 // TestCallTailPlansEvaluateLikeThePipeline pins CALL tails the compiled
 // CALL-tail plans run (WITH … WHERE … RETURN, and MATCH over a yielded
 // relationship): their WHERE, projections and ORDER BY / LIMIT evaluate with

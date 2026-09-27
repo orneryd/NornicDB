@@ -16,21 +16,25 @@ func TestQueryPermissionRequirementsRecognizesCypherKeywords(t *testing.T) {
 		schema bool
 		admin  bool
 	}{
-		"read":                  {query: "MATCH (n) RETURN n"},
-		"set after match":       {query: "MATCH (n) SET n.value = 1", write: true},
-		"set before newline":    {query: "MATCH (n) SET\nn.value = 1", write: true},
-		"remove before tab":     {query: "MATCH (n) REMOVE\tn.value", write: true},
-		"create after unwind":   {query: "UNWIND [1] AS value CREATE ({value: value})", write: true},
-		"schema":                {query: "CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true},
-		"commented schema":      {query: "/* migration */ CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true},
-		"admin database DDL":    {query: "DROP DATABASE restricted", admin: true},
-		"commented admin DDL":   {query: "// maintenance\nDROP DATABASE restricted", admin: true},
-		"write procedure":       {query: "CALL db.create.setNodeVectorProperty('id', 'embedding', [1.0])", write: true},
-		"keyword in string":     {query: "RETURN 'SET value' AS text"},
-		"keyword in identifier": {query: "MATCH (n:`CREATE`) RETURN n"},
-		"keyword property":      {query: "MATCH (n) RETURN n.set"},
-		"keyword map key":       {query: "RETURN {create: true} AS value"},
-		"keyword in comment":    {query: "// DELETE n\nMATCH (n) RETURN n"},
+		"read":                   {query: "MATCH (n) RETURN n"},
+		"set after match":        {query: "MATCH (n) SET n.value = 1", write: true},
+		"set before newline":     {query: "MATCH (n) SET\nn.value = 1", write: true},
+		"remove before tab":      {query: "MATCH (n) REMOVE\tn.value", write: true},
+		"create after unwind":    {query: "UNWIND [1] AS value CREATE ({value: value})", write: true},
+		"schema":                 {query: "CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true},
+		"commented schema":       {query: "/* migration */ CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true},
+		"admin database DDL":     {query: "DROP DATABASE restricted", admin: true},
+		"commented admin DDL":    {query: "// maintenance\nDROP DATABASE restricted", admin: true},
+		"show users":             {query: "SHOW USERS", admin: true},
+		"show transactions":      {query: "SHOW TRANSACTIONS", admin: true},
+		"terminate transactions": {query: "/* audit */ TERMINATE TRANSACTIONS 'db-transaction-1'", admin: true},
+		"show current user":      {query: "SHOW CURRENT USER"},
+		"write procedure":        {query: "CALL db.create.setNodeVectorProperty('id', 'embedding', [1.0])", write: true},
+		"keyword in string":      {query: "RETURN 'SET value' AS text"},
+		"keyword in identifier":  {query: "MATCH (n:`CREATE`) RETURN n"},
+		"keyword property":       {query: "MATCH (n) RETURN n.set"},
+		"keyword map key":        {query: "RETURN {create: true} AS value"},
+		"keyword in comment":     {query: "// DELETE n\nMATCH (n) RETURN n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			requirements := QueryPermissionRequirements(testCase.query)
@@ -81,6 +85,15 @@ func TestStorageExecutorEnforcesQueryPermissions(t *testing.T) {
 		require.True(t, errors.As(err, &denied))
 		require.Equal(t, "admin", denied.Permission)
 	})
+
+	for _, query := range []string{"SHOW USERS", "SHOW TRANSACTIONS", "TERMINATE TRANSACTIONS 'authorization-transaction-1'"} {
+		t.Run(query, func(t *testing.T) {
+			_, err := executor.Execute(readOnlyCtx, query, nil)
+			var denied *PermissionDeniedError
+			require.ErrorAs(t, err, &denied)
+			require.Equal(t, "admin", denied.Permission)
+		})
+	}
 
 	t.Run("dynamic procedure statement", func(t *testing.T) {
 		_, err := executor.Execute(readOnlyCtx, "CALL apoc.cypher.run('CREATE (:DeniedDynamic)', {})", nil)

@@ -1011,6 +1011,17 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		return nil, false, nil
 	}
 	rows := make([]pipelineRow, 0, len(seed.Rows))
+	nodes := make(map[storage.NodeID]*storage.Node)
+	getNode := func(id storage.NodeID) (*storage.Node, error) {
+		if node := nodes[id]; node != nil {
+			return node, nil
+		}
+		node, err := e.storage.GetNode(id)
+		if err == nil && node != nil {
+			nodes[id] = node
+		}
+		return node, err
+	}
 	for _, seedRow := range seed.Rows {
 		values := callTailRow(ctx, seed, seedRow)
 		relationship, ok := values[plan.propertySource].(*storage.Edge)
@@ -1024,11 +1035,11 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		if expected == nil || !e.compareEqual(relationship.Properties[plan.propertyKey], expected) {
 			continue
 		}
-		startNode, err := e.storage.GetNode(relationship.StartNode)
+		startNode, err := getNode(relationship.StartNode)
 		if err != nil || startNode == nil {
 			continue
 		}
-		endNode, err := e.storage.GetNode(relationship.EndNode)
+		endNode, err := getNode(relationship.EndNode)
 		if err != nil || endNode == nil {
 			continue
 		}

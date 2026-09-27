@@ -64,6 +64,17 @@ func isSchemaPermissionQuery(query string) bool {
 func isAdminPermissionQuery(query string) bool {
 	commandOffset := firstExecutableCypherOffset(query)
 	for _, command := range [][2]string{
+		{"SHOW", "USERS"},
+		{"SHOW", "TRANSACTIONS"},
+		{"SHOW", "TRANSACTION"},
+		{"TERMINATE", "TRANSACTIONS"},
+		{"TERMINATE", "TRANSACTION"},
+	} {
+		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
+			return true
+		}
+	}
+	for _, command := range [][2]string{
 		{"CREATE", "DATABASE"},
 		{"DROP", "DATABASE"},
 		{"ALTER", "DATABASE"},
