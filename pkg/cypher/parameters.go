@@ -51,6 +51,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -174,65 +175,117 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 		return cypher
 	}
 
-	var result strings.Builder
-	result.Grow(len(cypher))
-
-	for i := 0; i < len(cypher); {
-		dollarIdx := strings.IndexByte(cypher[i:], '$')
-		if dollarIdx < 0 {
-			result.WriteString(cypher[i:])
-			break
+	return replaceParameterReferences(cypher, func(name string, next byte) (string, bool) {
+		// Preserve parameter path expressions like $node.url and
+		// $node['url'] so downstream evaluators can resolve them from params.
+		if next == '.' || next == '[' {
+			return "", false
 		}
-		dollarIdx += i
-		result.WriteString(cypher[i:dollarIdx])
-
-		start := dollarIdx + 1
-		if start >= len(cypher) {
-			result.WriteByte('$')
-			break
+		value, exists := params[name]
+		if !exists || isCompositeParamValue(value) {
+			return "", false
 		}
+		return e.valueToLiteral(value), true
+	})
+}
 
-		first := cypher[start]
+// scanParameterReferences is the one scanner for $name parameter references
+// in query text: it calls visit with the offsets of each reference's '$' and
+// of its name. Text inside string literals ('…' and "…", with backslash and
+// doubled-quote escapes) and backtick-quoted names is not a parameter
+// reference (#701). A quoted parameter name ($`a b`) is made plain by
+// canonicalizeQuotedVariables before any scan.
+func scanParameterReferences(query string, visit func(dollar, start, end int)) {
+	if strings.IndexByte(query, '$') < 0 {
+		return
+	}
+	// Without quote characters there is no quoted text to skip, and the
+	// single-byte search is much faster than IndexAny.
+	quoted := strings.IndexByte(query, '\'') >= 0 || strings.IndexByte(query, '"') >= 0 || strings.IndexByte(query, '`') >= 0
+	for i := 0; i < len(query); {
+		var next int
+		if quoted {
+			next = strings.IndexAny(query[i:], "$'\"`")
+		} else {
+			next = strings.IndexByte(query[i:], '$')
+		}
+		if next < 0 {
+			return
+		}
+		next += i
+		if query[next] != '$' {
+			i = skipQuotedText(query, next)
+			continue
+		}
+		start := next + 1
+		if start >= len(query) {
+			return
+		}
+		first := query[start]
 		if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
-			result.WriteByte('$')
 			i = start
 			continue
 		}
-
 		end := start + 1
-		for end < len(cypher) && isWordChar(cypher[end]) {
+		for end < len(query) && isWordChar(query[end]) {
 			end++
 		}
-
-		match := cypher[dollarIdx:end]
-		paramName := cypher[start:end]
-
-		// Preserve parameter path expressions like $node.url and
-		// $node['url'] so downstream evaluators can resolve them from params.
-		if end < len(cypher) && (cypher[end] == '.' || cypher[end] == '[') {
-			result.WriteString(match)
-			i = end
-			continue
-		}
-
-		value, exists := params[paramName]
-		if !exists {
-			result.WriteString(match)
-			i = end
-			continue
-		}
-
-		if isCompositeParamValue(value) {
-			result.WriteString(match)
-			i = end
-			continue
-		}
-
-		result.WriteString(e.valueToLiteral(value))
+		visit(next, start, end)
 		i = end
 	}
+}
 
+// replaceParameterReferences calls replace for each parameter reference
+// (scanParameterReferences) with its name and the byte after it (0 at the
+// end), and writes the returned text in its place when ok is true, or keeps
+// the reference.
+func replaceParameterReferences(query string, replace func(name string, next byte) (string, bool)) string {
+	var result strings.Builder
+	last := 0
+	scanParameterReferences(query, func(dollar, start, end int) {
+		var following byte
+		if end < len(query) {
+			following = query[end]
+		}
+		replacement, ok := replace(query[start:end], following)
+		if !ok {
+			return
+		}
+		if last == 0 {
+			result.Grow(len(query))
+		}
+		result.WriteString(query[last:dollar])
+		result.WriteString(replacement)
+		last = end
+	})
+	if last == 0 {
+		return query
+	}
+	result.WriteString(query[last:])
 	return result.String()
+}
+
+// skipQuotedText returns the index just past the quoted text that starts at
+// start (a ', " or ` character), or len(query) when it isn't closed. A
+// backslash escapes the next character in a string literal; a doubled quote
+// continues the quoted text.
+func skipQuotedText(query string, start int) int {
+	quote := query[start]
+	for i := start + 1; i < len(query); i++ {
+		switch query[i] {
+		case '\\':
+			if quote != '`' {
+				i++
+			}
+		case quote:
+			if i+1 < len(query) && query[i+1] == quote {
+				i++
+				continue
+			}
+			return i + 1
+		}
+	}
+	return len(query)
 }
 
 // validateStatementParameters is Neo4j's ParameterMissing check: every
@@ -246,6 +299,22 @@ func validateStatementParameters(cypher string, params map[string]interface{}) e
 	if strings.IndexByte(cypher, '$') < 0 || startsWithKeywordFold(strings.TrimSpace(cypher), "EXPLAIN") || isCreateProcedureCommand(cypher) {
 		return nil
 	}
+	missing := statementMissingParameters(cypher, func(name string) bool {
+		_, supplied := params[name]
+		return supplied
+	})
+	if len(missing) == 0 {
+		return nil
+	}
+	return parameterMissingError(missing)
+}
+
+// statementMissingParameters lists, in order of first appearance, the
+// parameters the statement references ($name, $0, $`quoted name`) outside
+// string literals and comments that bound doesn't have. It is the one
+// ParameterMissing scan (#657, #712): Execute calls it with the statement's,
+// the shell's and the enclosing query's parameters.
+func statementMissingParameters(cypher string, bound func(name string) bool) []string {
 	var missing []string
 	for index := 0; index < len(cypher); index++ {
 		switch cypher[index] {
@@ -283,7 +352,7 @@ func validateStatementParameters(cypher string, params map[string]interface{}) e
 			if name == "" {
 				continue
 			}
-			if _, supplied := params[name]; supplied {
+			if bound(name) {
 				continue
 			}
 			known := false
@@ -295,10 +364,13 @@ func validateStatementParameters(cypher string, params map[string]interface{}) e
 			}
 		}
 	}
-	if len(missing) == 0 {
-		return nil
-	}
-	return newSemanticError("Neo.ClientError.Statement.ParameterMissing", "MissingParameter", "Expected parameter(s): "+strings.Join(missing, ", "))
+	return missing
+}
+
+// parameterMissingError is Neo4j's error for the parameters a statement
+// references but wasn't given.
+func parameterMissingError(names []string) error {
+	return newSemanticError("Neo.ClientError.Statement.ParameterMissing", "MissingParameter", "Expected parameter(s): "+strings.Join(names, ", "))
 }
 
 // resolveDirectParamRef returns the typed parameter value for a literal
@@ -369,6 +441,101 @@ func resolveContextPathRef(ctx context.Context, expr string) (interface{}, bool)
 		return nil, false
 	}
 	return resolveSetMergeSourceFromParams(params, expr)
+}
+
+// normalizeQueryParameters converts parameter values whose Go types aren't the
+// executor's value shapes into those shapes, once, where parameters enter the
+// executor (#712): a typed map (map[string]string, map[string]int64, …) is a
+// Cypher map (map[string]interface{}), and a slice or array of maps or lists
+// is a Cypher list ([]interface{}), recursively. Typed lists of scalars
+// ([]string, []int64, []float64, …) stay typed: storage keeps their element
+// type (isCompositeParamValue). The map is copied only when a value changes.
+func normalizeQueryParameters(params map[string]interface{}) map[string]interface{} {
+	var normalized map[string]interface{}
+	for name, value := range params {
+		converted, changed := normalizeParameterValue(value)
+		if !changed {
+			continue
+		}
+		if normalized == nil {
+			normalized = make(map[string]interface{}, len(params))
+			for key, original := range params {
+				normalized[key] = original
+			}
+		}
+		normalized[name] = converted
+	}
+	if normalized == nil {
+		return params
+	}
+	return normalized
+}
+
+// normalizeParameterValue converts one parameter value (normalizeQueryParameters).
+func normalizeParameterValue(value interface{}) (interface{}, bool) {
+	switch typed := value.(type) {
+	case nil, string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64,
+		float32, float64, []byte, time.Time, *time.Time,
+		[]string, []int, []int64, []float32, []float64, []bool:
+		return value, false
+	case map[string]interface{}:
+		var converted map[string]interface{}
+		for key, element := range typed {
+			normalized, changed := normalizeParameterValue(element)
+			if !changed {
+				continue
+			}
+			if converted == nil {
+				converted = make(map[string]interface{}, len(typed))
+				for k, v := range typed {
+					converted[k] = v
+				}
+			}
+			converted[key] = normalized
+		}
+		if converted == nil {
+			return value, false
+		}
+		return converted, true
+	case []interface{}:
+		var converted []interface{}
+		for index, element := range typed {
+			normalized, changed := normalizeParameterValue(element)
+			if !changed {
+				continue
+			}
+			if converted == nil {
+				converted = append([]interface{}(nil), typed...)
+			}
+			converted[index] = normalized
+		}
+		if converted == nil {
+			return value, false
+		}
+		return converted, true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Map:
+		if reflected.Type().Key().Kind() != reflect.String {
+			return value, false
+		}
+		converted := make(map[string]interface{}, reflected.Len())
+		iterator := reflected.MapRange()
+		for iterator.Next() {
+			element, _ := normalizeParameterValue(iterator.Value().Interface())
+			converted[iterator.Key().String()] = element
+		}
+		return converted, true
+	case reflect.Slice, reflect.Array:
+		converted := make([]interface{}, reflected.Len())
+		for index := range converted {
+			element, _ := normalizeParameterValue(reflected.Index(index).Interface())
+			converted[index] = element
+		}
+		return converted, true
+	}
+	return value, false
 }
 
 // isCompositeParamValue reports whether a parameter value is a typed list

@@ -1349,6 +1349,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
 
+	// Typed Go maps and slices become Cypher maps and lists here, once, for
+	// every route (#712).
+	params = normalizeQueryParameters(params)
+
 	// Handle Neo4j shell/browser commands like :USE and :param before validation.
 	processedQuery, processedCtx, shellResult, err := e.preprocessShellCommands(ctx, cypher, params)
 	if err != nil {
@@ -1360,9 +1364,21 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return shellResult, nil
 	}
 
+	// Backtick-quoted variables become plain identifiers here, once, for
+	// every route; the result's columns and errors are mapped back (#734).
+	if canonical, names := canonicalizeQuotedVariables(cypher); names != nil {
+		cypher = canonical
+		params = names.parameterValues(params)
+		ctx = withQuotedVariableNames(ctx, names)
+		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
+	}
+
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if e.shouldUseFabricPlanner(cypher) {
+		if err := e.statementParametersError(ctx, cypher, params); err != nil {
+			return nil, err
+		}
 		mergedParams := e.mergeShellParams(params)
 		ctx = context.WithValue(ctx, paramsKey, mergedParams)
 		info := e.analyzer.Analyze(cypher)
@@ -1498,13 +1514,16 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		execSpan.SetAttributes(attribute.String("cypher.op_type", "parse_error"))
 		return nil, err
 	}
-	if err := e.validateSemanticScopes(cypher); err != nil {
+	if err := e.validateSemanticScopes(ctx, cypher); err != nil {
 		return nil, err
 	}
-	if err := validateStatementParameters(cypher, params); err != nil {
+	if err := e.statementParametersError(ctx, cypher, params); err != nil {
 		return nil, err
 	}
 	if err := e.validateStaticOperatorParameters(cypher, params); err != nil {
+		return nil, err
+	}
+	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {
 		return nil, err
 	}
 
@@ -2568,4 +2587,35 @@ func (e *StorageExecutor) resolveWALAndDatabase() (*storage.WAL, string) {
 	}
 
 	return nil, dbName
+}
+
+// statementParametersError is Neo4j's ParameterMissing for a statement that
+// references a parameter it wasn't given ("Expected parameter(s): p"), or nil.
+// Neo4j reports it after the statement compiles, so a statement that is also
+// a syntax or semantic error reports that error (Execute calls this after
+// validateSyntax and validateSemanticScopes; the Fabric route, which has no
+// such validation, calls it first). EXPLAIN runs nothing and needs no
+// values; in a procedure definition, $name is the procedure's argument.
+// Parameter names are reported as the statement wrote them (#734).
+func (e *StorageExecutor) statementParametersError(ctx context.Context, cypher string, params map[string]interface{}) error {
+	if strings.IndexByte(cypher, '$') < 0 || (isExplainOrProfile(cypher) && !startsWithKeywordFold(strings.TrimSpace(cypher), "PROFILE")) || isCreateProcedureCommand(cypher) {
+		return nil
+	}
+	shellParams := e.mergeShellParams(params)
+	inherited := getParamsFromContext(ctx)
+	missing := statementMissingParameters(cypher, func(name string) bool {
+		if _, ok := shellParams[name]; ok {
+			return true
+		}
+		_, ok := inherited[name]
+		return ok
+	})
+	if len(missing) == 0 {
+		return nil
+	}
+	names := quotedVariableNamesFor(ctx, cypher)
+	for i, name := range missing {
+		missing[i] = names.parameterName(name)
+	}
+	return parameterMissingError(missing)
 }

@@ -731,6 +731,11 @@ func invalidRelationshipPattern(pattern string) bool {
 // plain or backtick-quoted (`x y`), unquoted; "" for any other expression.
 func simpleSemanticIdentifier(expression string) string {
 	expression = strings.TrimSpace(expression)
+	// A backtick-quoted variable (`my x`, `$p`) is a variable whatever its
+	// characters: it isn't a parameter, and scope checks must see it.
+	if isBacktickQuotedName(expression) {
+		return normalizeProjectionColumnName(expression)
+	}
 	name, next, ok := scanSymbolicName(expression, 0)
 	if !ok || strings.TrimSpace(expression[next:]) != "" {
 		return ""

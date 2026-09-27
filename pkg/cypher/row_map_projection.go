@@ -16,7 +16,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 	// `node {.name}`). Requiring that grammar here prevents nested map
 	// literals and map comparisons from being mistaken for projections merely
 	// because they contain a space followed by an opening brace.
-	if !isValidIdentifier(baseExpression) {
+	if !isValidIdentifier(baseExpression) && !isBacktickQuotedName(baseExpression) {
 		return nil, false, false
 	}
 	trimmed := strings.TrimSpace(expression)
@@ -45,8 +45,11 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			for name, value := range properties {
 				result[name] = value
 			}
-		case strings.HasPrefix(item, ".") && isValidIdentifier(strings.TrimSpace(item[1:])):
-			name := strings.TrimSpace(item[1:])
+		case strings.HasPrefix(item, "."):
+			name, selector := mapProjectionPropertySelector(item)
+			if !selector {
+				return nil, true, false
+			}
 			result[name] = properties[name]
 		default:
 			separator := findTopLevelMapKeyValueSeparator(item)
@@ -59,17 +62,30 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 				result[name] = value
 				continue
 			}
-			if !isValidIdentifier(item) {
+			if !isValidIdentifier(item) && !isBacktickQuotedName(item) {
 				return nil, true, false
 			}
 			value, ok := e.evaluateRowExpression(item, values)
 			if !ok {
 				return nil, true, false
 			}
-			result[item] = value
+			result[normalizePropertyKey(item)] = value
 		}
 	}
 	return result, true, true
+}
+
+// mapProjectionPropertySelector reads a map projection's property selector,
+// .name or .`quoted name`, and returns the property key (unquoted).
+func mapProjectionPropertySelector(item string) (string, bool) {
+	name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "."))
+	switch {
+	case isValidIdentifier(name):
+		return name, true
+	case isBacktickQuotedName(name):
+		return normalizePropertyKey(name), true
+	}
+	return "", false
 }
 
 func rowProjectionProperties(value interface{}) (map[string]interface{}, bool) {

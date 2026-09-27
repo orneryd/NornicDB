@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"reflect"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -66,41 +65,11 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 		list = e.evaluateExpressionWithContext(ctx, listExpr, map[string]*storage.Node{}, map[string]*storage.Edge{})
 	}
 
-	switch value := list.(type) {
-	case nil:
+	// The one UNWIND coercion (#693): null is no rows, a list its elements,
+	// any other value one row.
+	plan.items = coerceToUnwindItems(list)
+	if plan.items == nil {
 		plan.items = []interface{}{}
-	case []interface{}:
-		plan.items = value
-	case []string:
-		plan.items = make([]interface{}, len(value))
-		for index := range value {
-			plan.items[index] = value[index]
-		}
-	case []int64:
-		plan.items = make([]interface{}, len(value))
-		for index := range value {
-			plan.items[index] = value[index]
-		}
-	case []float64:
-		plan.items = make([]interface{}, len(value))
-		for index := range value {
-			plan.items[index] = value[index]
-		}
-	case []map[string]interface{}:
-		plan.items = make([]interface{}, len(value))
-		for index := range value {
-			plan.items[index] = value[index]
-		}
-	default:
-		reflected := reflect.ValueOf(list)
-		if reflected.IsValid() && (reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
-			plan.items = make([]interface{}, reflected.Len())
-			for index := 0; index < reflected.Len(); index++ {
-				plan.items[index] = reflected.Index(index).Interface()
-			}
-		} else {
-			plan.items = []interface{}{list}
-		}
 	}
 	return plan, nil
 }

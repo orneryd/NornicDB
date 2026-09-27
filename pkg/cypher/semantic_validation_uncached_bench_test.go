@@ -1,6 +1,9 @@
 package cypher
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // BenchmarkSemanticValidationUncached measures the compile-time semantic
 // validation of statements seen for the first time (no validation cache).
@@ -18,7 +21,7 @@ func BenchmarkSemanticValidationUncached(b *testing.B) {
 				exec.semanticValidationCache = newSemanticValidationCache(1)
 				exec.matchSemanticValidationCache = newSemanticValidationCache(1)
 				exec.mergeSemanticValidationCache = newSemanticValidationCache(1)
-				if err := exec.validateSemanticScopes(statement); err != nil {
+				if err := exec.validateSemanticScopes(context.Background(), statement); err != nil {
 					b.Fatal(err)
 				}
 			}

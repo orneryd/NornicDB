@@ -1,11 +1,24 @@
 package cypher
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // validateSemanticScopes is the shared compile-time semantic chokepoint used
 // by top-level statements and internally executed query branches.
-func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
-	if e.semanticValidationCache.contains(cypher) {
+//
+// A statement whose backtick-quoted variables were canonicalized is cached
+// under the text the client wrote: statements that differ only in quoting
+// canonicalize alike but can validate differently (their column names
+// differ).
+func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string) error {
+	names := quotedVariableNamesFor(ctx, cypher)
+	cacheKey := cypher
+	if names != nil {
+		cacheKey = names.original
+	}
+	if e.semanticValidationCache.contains(cacheKey) {
 		return nil
 	}
 	if err := e.validateCallSubqueryScopes(cypher); err != nil {
@@ -47,7 +60,7 @@ func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
 			"aggregate expressions are not allowed inside list-comprehension predicates or projections",
 		)
 	}
-	if err := e.validateDuplicateReturnColumnName(cypher); err != nil {
+	if err := e.validateDuplicateReturnColumnName(cypher, names); err != nil {
 		return err
 	}
 	if clauses, ok := splitPipelineClauses(cypher); ok {
@@ -104,7 +117,7 @@ func (e *StorageExecutor) validateSemanticScopes(cypher string) error {
 	if err := e.validateSetSemanticScopes(cypher); err != nil {
 		return err
 	}
-	e.semanticValidationCache.add(cypher)
+	e.semanticValidationCache.add(cacheKey)
 	return nil
 }
 
@@ -146,8 +159,11 @@ func projectionHasEmptyItem(items string) bool {
 	return false
 }
 
-func (e *StorageExecutor) validateDuplicateReturnColumnName(cypher string) error {
-	if duplicate := e.duplicateReturnColumnName(cypher); duplicate != "" {
+// validateDuplicateReturnColumnName rejects a RETURN with two items of the
+// same column name. names, when the statement was canonicalized, gives the
+// items as the client wrote them, which name the columns.
+func (e *StorageExecutor) validateDuplicateReturnColumnName(cypher string, names *quotedVariableNames) error {
+	if duplicate := e.duplicateReturnColumnName(cypher, names); duplicate != "" {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"ColumnNameConflict",
@@ -410,7 +426,7 @@ func validateExistsSubqueryClauseComposition(cypher string) error {
 	return nil
 }
 
-func (e *StorageExecutor) duplicateReturnColumnName(cypher string) string {
+func (e *StorageExecutor) duplicateReturnColumnName(cypher string, names *quotedVariableNames) string {
 	returnPositions := findAllTopLevelPipelineKeywordPositions(cypher, "RETURN")
 	unionPositions := append(
 		findAllTopLevelPipelineKeywordPositions(cypher, "UNION"),
@@ -427,6 +443,9 @@ func (e *StorageExecutor) duplicateReturnColumnName(cypher string) string {
 			}
 		}
 		body := strings.TrimSpace(cypher[position+len("RETURN") : end])
+		if names != nil {
+			body = strings.TrimSpace(names.originalText(position+len("RETURN"), end))
+		}
 		seen := make(map[string]struct{})
 		for _, item := range e.parseReturnItems(body) {
 			name := item.alias

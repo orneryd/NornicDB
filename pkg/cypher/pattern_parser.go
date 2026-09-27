@@ -184,7 +184,7 @@ func normalizePropertyKey(key string) string {
 	key = strings.TrimSpace(key)
 	if len(key) >= 2 {
 		if strings.HasPrefix(key, "`") && strings.HasSuffix(key, "`") {
-			return strings.ReplaceAll(key[1:len(key)-1], "``", "`")
+			return symbolicNameValue(key)
 		}
 		if (strings.HasPrefix(key, "'") && strings.HasSuffix(key, "'")) ||
 			(strings.HasPrefix(key, "\"") && strings.HasSuffix(key, "\"")) {

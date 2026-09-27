@@ -50,8 +50,9 @@ func unquoteBacktickIdentifier(raw string) (string, error) {
 	if len(s) < 2 || s[0] != '`' || s[len(s)-1] != '`' {
 		return s, nil
 	}
-	inner := s[1 : len(s)-1]
-	if strings.Contains(inner, "`") {
+	written, end, ok := scanSymbolicName(s, 0)
+	inner := symbolicNameValue(written)
+	if !ok || end != len(s) || strings.Contains(inner, "`") {
 		// Internal parser detail: every caller wraps this cause in an admin or
 		// composite localized error before returning it from query execution.
 		return "", fmt.Errorf("invalid identifier %q: nested backticks are not supported", raw)

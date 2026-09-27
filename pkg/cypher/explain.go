@@ -753,7 +753,7 @@ func (e *StorageExecutor) attachPlanMetadata(result *ExecuteResult, plan *Execut
 	if result.Metadata == nil {
 		result.Metadata = make(map[string]interface{})
 	}
-	result.Metadata["planString"] = e.formatPlan(plan)
+	result.Metadata["planString"] = formatPlan(plan)
 	result.Metadata["plan"] = plan
 	result.Metadata["planType"] = string(plan.Mode)
 
@@ -814,7 +814,7 @@ func (e *StorageExecutor) inferExplainColumns(query string) []string {
 }
 
 // formatPlan formats the execution plan as a string (tree visualization)
-func (e *StorageExecutor) formatPlan(plan *ExecutionPlan) string {
+func formatPlan(plan *ExecutionPlan) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
@@ -828,7 +828,7 @@ func (e *StorageExecutor) formatPlan(plan *ExecutionPlan) string {
 		sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
 	}
 
-	e.formatOperator(&sb, plan.Root, 0, plan.Mode == ModeProfile)
+	formatOperator(&sb, plan.Root, 0, plan.Mode == ModeProfile)
 
 	sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
 
@@ -836,7 +836,7 @@ func (e *StorageExecutor) formatPlan(plan *ExecutionPlan) string {
 }
 
 // formatOperator formats a single operator in the plan tree
-func (e *StorageExecutor) formatOperator(sb *strings.Builder, op *PlanOperator, depth int, showStats bool) {
+func formatOperator(sb *strings.Builder, op *PlanOperator, depth int, showStats bool) {
 	if op == nil {
 		return
 	}
@@ -868,7 +868,7 @@ func (e *StorageExecutor) formatOperator(sb *strings.Builder, op *PlanOperator, 
 
 	// Format children
 	for _, child := range op.Children {
-		e.formatOperator(sb, child, depth+1, showStats)
+		formatOperator(sb, child, depth+1, showStats)
 	}
 }
 

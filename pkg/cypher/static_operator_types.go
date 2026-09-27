@@ -368,8 +368,8 @@ func isQuantifierOrReduceFunction(name string) bool {
 }
 
 // staticParameterOperand is a parameter value's static type, as Neo4j names
-// it when it type-checks a statement with its parameters: a list parameter is
-// List<T>, a map parameter "Map, Node or Relationship".
+// it when it type-checks a statement with its parameters: a list of strings is
+// List<String>, any other list List<T>, a map "Map, Node or Relationship".
 func staticParameterOperand(value interface{}) staticOperand {
 	switch value.(type) {
 	case nil:
@@ -382,6 +382,9 @@ func staticParameterOperand(value interface{}) staticOperand {
 		return knownOperand("String")
 	case bool:
 		return knownOperand("Boolean")
+	}
+	if isAllStringList(value) {
+		return knownOperand("List<String>")
 	}
 	if isRuntimeList(value) {
 		return knownOperand("List<T>")

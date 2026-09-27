@@ -1250,37 +1250,12 @@ func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, varia
 	return parsedProp, out, true
 }
 
+// coerceInterfaceList returns a parameter list's elements as Cypher values
+// (cypherListValue), or nil when the value isn't a list; a non-list IN
+// parameter is rejected before execution (validateMembershipParameters).
 func coerceInterfaceList(v interface{}) []interface{} {
-	switch x := v.(type) {
-	case []interface{}:
-		return x
-	case []string:
-		out := make([]interface{}, len(x))
-		for i := range x {
-			out[i] = x[i]
-		}
-		return out
-	case []int:
-		out := make([]interface{}, len(x))
-		for i := range x {
-			out[i] = x[i]
-		}
-		return out
-	case []int64:
-		out := make([]interface{}, len(x))
-		for i := range x {
-			out[i] = x[i]
-		}
-		return out
-	case []float64:
-		out := make([]interface{}, len(x))
-		for i := range x {
-			out[i] = x[i]
-		}
-		return out
-	default:
-		return nil
-	}
+	items, _ := cypherListValue(v)
+	return items
 }
 
 func (e *StorageExecutor) parseSimpleIndexedIsNotNull(variable, whereClause string) (property string, ok bool) {
