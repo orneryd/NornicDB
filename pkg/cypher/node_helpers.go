@@ -48,6 +48,8 @@ type materializedAccessRecorder interface {
 	RecordMaterializedAccess(entityID string)
 }
 
+// recordMaterializedResultAccess records an access (ON ACCESS policies) for
+// every node and relationship a result returns.
 func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult) {
 	if result == nil {
 		return
@@ -56,44 +58,102 @@ func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult) 
 	if !ok || recorder == nil {
 		return
 	}
-	for _, row := range result.Rows {
-		for _, value := range row {
-			e.recordMaterializedValue(recorder, value)
-		}
-	}
+	materializedRows(recorder, result.Rows)
 }
 
-func (e *StorageExecutor) recordMaterializedValue(recorder materializedAccessRecorder, value interface{}) {
-	switch v := value.(type) {
-	case *storage.Node:
-		if v != nil {
-			recorder.RecordMaterializedAccess(string(v.ID))
-		}
-	case *storage.Edge:
-		if v != nil {
-			recorder.RecordMaterializedAccess(string(v.ID))
-		}
-	case map[string]interface{}:
-		if nodeID, ok := v["_nodeId"].(string); ok && nodeID != "" {
-			recorder.RecordMaterializedAccess(nodeID)
-			return
-		}
-		if edgeID, ok := v["_edgeId"].(string); ok && edgeID != "" {
-			recorder.RecordMaterializedAccess(edgeID)
-			return
-		}
-		for _, nested := range v {
-			e.recordMaterializedValue(recorder, nested)
-		}
-	case []interface{}:
-		for _, nested := range v {
-			e.recordMaterializedValue(recorder, nested)
-		}
-	case []map[string]interface{}:
-		for _, nested := range v {
-			e.recordMaterializedValue(recorder, nested)
+// resultHasMaterializedEntities reports whether result returns a node or a
+// relationship whose access recordMaterializedResultAccess records. The
+// result cache asks once per stored result, so a cached result with none is
+// not walked on every hit.
+func resultHasMaterializedEntities(result *ExecuteResult) bool {
+	return result != nil && materializedRows(nil, result.Rows)
+}
+
+// materializedRows walks rows for the nodes and relationships they return:
+// with a recorder it records an access for each one and reports whether
+// there was any; with a nil recorder it only reports whether there is one,
+// stopping at the first.
+func materializedRows(recorder materializedAccessRecorder, rows [][]interface{}) bool {
+	found := false
+	for _, row := range rows {
+		if materializedValues(recorder, row) {
+			if recorder == nil {
+				return true
+			}
+			found = true
 		}
 	}
+	return found
+}
+
+// materializedValues is materializedRows for a list of values.
+func materializedValues(recorder materializedAccessRecorder, values []interface{}) bool {
+	found := false
+	for _, value := range values {
+		if materializedValue(recorder, value) {
+			if recorder == nil {
+				return true
+			}
+			found = true
+		}
+	}
+	return found
+}
+
+// materializedValue is materializedRows for one value, including the nodes
+// and relationships inside maps and lists.
+func materializedValue(recorder materializedAccessRecorder, value interface{}) bool {
+	id := ""
+	switch v := value.(type) {
+	case *storage.Node:
+		if v == nil {
+			return false
+		}
+		id = string(v.ID)
+	case *storage.Edge:
+		if v == nil {
+			return false
+		}
+		id = string(v.ID)
+	case map[string]interface{}:
+		if nodeID, ok := v["_nodeId"].(string); ok && nodeID != "" {
+			id = nodeID
+			break
+		}
+		if edgeID, ok := v["_edgeId"].(string); ok && edgeID != "" {
+			id = edgeID
+			break
+		}
+		found := false
+		for _, nested := range v {
+			if materializedValue(recorder, nested) {
+				if recorder == nil {
+					return true
+				}
+				found = true
+			}
+		}
+		return found
+	case []interface{}:
+		return materializedValues(recorder, v)
+	case []map[string]interface{}:
+		found := false
+		for _, nested := range v {
+			if materializedValue(recorder, nested) {
+				if recorder == nil {
+					return true
+				}
+				found = true
+			}
+		}
+		return found
+	default:
+		return false
+	}
+	if recorder != nil {
+		recorder.RecordMaterializedAccess(id)
+	}
+	return true
 }
 
 // nodeToMap converts a storage.Node to a map for result output.

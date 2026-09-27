@@ -1302,8 +1302,11 @@ func queryDeletesNodes(query string) bool {
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
 	e.resetHotPathTrace()
+	// A result served from the result cache that returns no node or
+	// relationship has no access to record (resultHasMaterializedEntities).
+	recordAccess := true
 	defer func() {
-		if retErr == nil && result != nil {
+		if recordAccess && retErr == nil && result != nil {
 			e.recordMaterializedResultAccess(result)
 		}
 	}()
@@ -1655,8 +1658,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)
 			}
 		}
-		if cached, trace, found := e.cache.getWithTrace(resultCacheKey); found {
+		if cached, trace, entities, found := e.cache.getWithTrace(resultCacheKey); found {
 			e.restoreHotPathTrace(trace)
+			recordAccess = entities
 			return cached, nil
 		}
 	}

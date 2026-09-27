@@ -486,7 +486,10 @@ type SmartQueryCache struct {
 
 // smartCachedResult extends cachedResult with label tracking.
 type smartCachedResult struct {
-	result    *ExecuteResult
+	result *ExecuteResult
+	// entities is whether result returns a node or relationship, whose
+	// access Execute records on every hit (resultHasMaterializedEntities).
+	entities  bool
 	trace     HotPathTrace
 	timestamp time.Time
 	ttl       time.Duration
@@ -549,11 +552,13 @@ func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*E
 }
 
 func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
-	result, _, found := sc.getWithTrace(key)
+	result, _, _, found := sc.getWithTrace(key)
 	return result, found
 }
 
-func (sc *SmartQueryCache) getWithTrace(key string) (*ExecuteResult, HotPathTrace, bool) {
+// getWithTrace returns a cached result, its hot-path trace, and whether it
+// returns nodes or relationships (entities).
+func (sc *SmartQueryCache) getWithTrace(key string) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
 	sc.mu.RLock()
 	cached, exists := sc.cache[key]
 	sc.mu.RUnlock()
@@ -564,7 +569,7 @@ func (sc *SmartQueryCache) getWithTrace(key string) (*ExecuteResult, HotPathTrac
 		sc.mu.Unlock()
 		// Plan 04-03 D-12a: cross-cutting cache_misses_total{cache="query_result"}.
 		sc.observeMiss()
-		return nil, HotPathTrace{}, false
+		return nil, HotPathTrace{}, false, false
 	}
 
 	// Check TTL
@@ -578,7 +583,7 @@ func (sc *SmartQueryCache) getWithTrace(key string) (*ExecuteResult, HotPathTrac
 		// both observations so dashboards see the cause-and-effect.
 		sc.observeMiss()
 		sc.observeEviction("ttl")
-		return nil, HotPathTrace{}, false
+		return nil, HotPathTrace{}, false, false
 	}
 
 	// Update LRU
@@ -591,7 +596,7 @@ func (sc *SmartQueryCache) getWithTrace(key string) (*ExecuteResult, HotPathTrac
 
 	// Plan 04-03 D-12a: cross-cutting cache_hits_total{cache="query_result"}.
 	sc.observeHit()
-	return cached.result, cached.trace, true
+	return cached.result, cached.trace, cached.entities, true
 }
 
 // PutWithLabels stores a result with associated labels for smart invalidation.
@@ -604,6 +609,7 @@ func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl 
 }
 
 func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace) {
+	entities := resultHasMaterializedEntities(result)
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
@@ -620,6 +626,7 @@ func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResu
 	// Add new entry
 	entry := &smartCachedResult{
 		result:    result,
+		entities:  entities,
 		trace:     trace,
 		timestamp: time.Now(),
 		ttl:       ttl,
