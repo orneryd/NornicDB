@@ -628,7 +628,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		row[name] = value
 	}
 	for name, value := range params {
-		row["$"+name] = value
+		row["$"+name] = parameterRowValue(value)
 	}
 	// Bound child contexts (§6.2): UNION/CALL branches may reference values
 	// that travel in the value scope; the innermost bindings shadow params.

@@ -520,7 +520,7 @@ func (e *StorageExecutor) parameterRow(ctx context.Context) pipelineRow {
 	params := getParamsFromContext(ctx)
 	row := make(pipelineRow, len(params))
 	for name, value := range params {
-		row["$"+name] = value
+		row["$"+name] = parameterRowValue(value)
 	}
 	return row
 }

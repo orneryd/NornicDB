@@ -21,7 +21,11 @@ import (
 // bound to a node, relationship or path are checked with their scope
 // (graphListOperandTypeError).
 func validateListOperands(cypher string, params map[string]interface{}) error {
-	return forEachListOperand(cypher, func(start, _ int) error {
+	return forEachListOperand(cypher, func(start, in int) error {
+		// FOREACH (x IN 5 | …) runs once with x = 5 in Neo4j, not a type error.
+		if foreachDeclaration(cypher, in) {
+			return nil
+		}
 		end, typeName, parameter := staticListOperand(cypher, start, params)
 		if typeName == "" || !wholeListOperand(cypher, end) {
 			return nil

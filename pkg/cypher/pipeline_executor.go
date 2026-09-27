@@ -508,7 +508,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 		initialRow[name] = value
 	}
 	for name, value := range params {
-		initialRow["$"+name] = value
+		initialRow["$"+name] = parameterRowValue(value)
 	}
 	rows := []pipelineRow{initialRow}
 	scope := make(map[string]struct{})

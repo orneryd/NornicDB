@@ -58,7 +58,6 @@ func TestValidateListOperandParameters(t *testing.T) {
 		"MATCH (n) WHERE (n.id IN $p) RETURN n",
 		"MATCH (n) WHERE n.id in $p AND n.x = 1 RETURN n",
 		"RETURN [x IN $p | x] AS l",
-		"FOREACH (x IN $p | CREATE (:N))",
 	} {
 		err := validateListOperands(q, params)
 		if assert.Error(t, err, q) {
@@ -66,6 +65,9 @@ func TestValidateListOperandParameters(t *testing.T) {
 		}
 	}
 	for _, q := range []string{
+		// FOREACH over a value that isn't a list runs once (Neo4j 5.26).
+		"FOREACH (x IN $p | CREATE (:N))",
+		"FOREACH (x IN 5 | CREATE (:N))",
 		"MATCH (n) WHERE n.id IN $l RETURN n",
 		"MATCH (n) WHERE n.id IN $n RETURN n",
 		"MATCH (n) WHERE n.id IN $m.list RETURN n",

@@ -260,7 +260,7 @@ func TestEmptyProjectionItemIsSyntaxError(t *testing.T) {
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
-		require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError", query)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError", query)
 	}
 	result, err := exec.Execute(ctx, "WITH [1, 2] AS l, {a: 1, b: 2} AS m RETURN l, m.a AS a", nil)
 	require.NoError(t, err)

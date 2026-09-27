@@ -471,6 +471,68 @@ func normalizeQueryParameters(params map[string]interface{}) map[string]interfac
 	return normalized
 }
 
+// parameterRowValue is a parameter's value as a row holds it ($name): a map's
+// or list's typed lists (map[string][]string) are Cypher lists, as when the
+// value is read through a WITH, while a typed list parameter itself keeps
+// its type (normalizeParameterValue).
+func parameterRowValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		var converted map[string]interface{}
+		for key, element := range typed {
+			if nested := nestedParameterValue(element); !sameParameterValue(nested, element) {
+				if converted == nil {
+					converted = make(map[string]interface{}, len(typed))
+					for k, v := range typed {
+						converted[k] = v
+					}
+				}
+				converted[key] = nested
+			}
+		}
+		if converted != nil {
+			return converted
+		}
+	case []interface{}:
+		var converted []interface{}
+		for index, element := range typed {
+			if nested := nestedParameterValue(element); !sameParameterValue(nested, element) {
+				if converted == nil {
+					converted = append([]interface{}(nil), typed...)
+				}
+				converted[index] = nested
+			}
+		}
+		if converted != nil {
+			return converted
+		}
+	}
+	return value
+}
+
+// nestedParameterValue is a value inside a parameter's map or list: a
+// typed list is a Cypher list of its elements.
+func nestedParameterValue(value interface{}) interface{} {
+	switch value.(type) {
+	case []string, []int, []int64, []float32, []float64, []bool:
+		return toAnySlice(value)
+	case map[string]interface{}, []interface{}:
+		return parameterRowValue(value)
+	}
+	return value
+}
+
+// sameParameterValue reports whether nestedParameterValue left v unchanged.
+func sameParameterValue(converted, original interface{}) bool {
+	switch original.(type) {
+	case []string, []int, []int64, []float32, []float64, []bool:
+		return false
+	case map[string]interface{}, []interface{}:
+		return reflect.ValueOf(converted).Pointer() == reflect.ValueOf(original).Pointer()
+	}
+	return true
+}
+
 // normalizeParameterValue converts one parameter value (normalizeQueryParameters).
 func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	switch typed := value.(type) {
