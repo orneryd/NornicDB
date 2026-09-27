@@ -124,7 +124,7 @@ For remote constituents the HTTP `/db/{db}/tx/commit` endpoint is used as the wi
 
 ### Distributed transactions
 
-Composite write transactions follow the **many-read / one-write rule per transaction**: a single explicit transaction can read from any number of constituents but may only write to one. Attempting writes on a second constituent within the same transaction returns `Neo.ClientError.Transaction.ForbiddenDueToTransactionType`.
+Composite write transactions follow the **many-read / one-write rule per transaction**: a single explicit transaction can read from any number of constituents but may only write to one. Attempting writes on a second constituent within the same transaction returns `Neo.ClientError.Statement.AccessMode` ("Writing to more than one database per transaction is not allowed"), as in Neo4j. A standard database is its own transaction domain: in an explicit transaction, a statement that targets another database with `USE` or `:USE` fails with the same code, and the transaction commits nothing from it.
 
 For local constituents, explicit transactions run as real per-constituent subtransactions with full commit/rollback durability. For remote constituents they bind to the remote server's `/db/{db}/tx` lifecycle (open, statement execution, commit/rollback) under the distributed-transaction coordinator.
 

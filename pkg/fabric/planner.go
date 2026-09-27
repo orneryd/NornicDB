@@ -14,127 +14,6 @@ type FabricPlanner struct {
 	catalog *Catalog
 }
 
-func extractGraphReference(s string) (string, string, bool, error) {
-	trimmed := strings.TrimSpace(s)
-	lower := strings.ToLower(trimmed)
-
-	for _, prefix := range graphReferencePrefixes {
-		if !strings.HasPrefix(lower, prefix) {
-			continue
-		}
-		openIdx := strings.Index(trimmed, "(")
-		if openIdx < 0 {
-			return "", "", true, fmt.Errorf("invalid graph reference")
-		}
-		closeIdx, err := findMatchingParen(trimmed, openIdx)
-		if err != nil {
-			return "", "", true, err
-		}
-		args := strings.TrimSpace(trimmed[openIdx+1 : closeIdx])
-		if args == "" {
-			return "", "", true, fmt.Errorf("graph reference requires an argument")
-		}
-		arg, err := extractFirstGraphRefArg(args)
-		if err != nil {
-			return "", "", true, err
-		}
-		return arg, trimmed[closeIdx+1:], true, nil
-	}
-
-	return "", "", false, nil
-}
-
-var graphReferencePrefixes = [...]string{
-	"graph.byname(",
-	"graph.byelementid(",
-}
-
-func findMatchingParen(s string, pos int) (int, error) {
-	if pos >= len(s) || s[pos] != '(' {
-		return -1, fmt.Errorf("expected '(' at position %d", pos)
-	}
-
-	depth := 1
-	inSingleQuote := false
-	inDoubleQuote := false
-
-	for i := pos + 1; i < len(s); i++ {
-		ch := s[i]
-		if ch == '\'' && !inDoubleQuote {
-			if inSingleQuote {
-				if i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			} else {
-				inSingleQuote = true
-			}
-			continue
-		}
-		if ch == '"' && !inSingleQuote {
-			if inDoubleQuote {
-				if i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			} else {
-				inDoubleQuote = true
-			}
-			continue
-		}
-		if inSingleQuote || inDoubleQuote {
-			continue
-		}
-		if ch == '(' {
-			depth++
-		} else if ch == ')' {
-			depth--
-			if depth == 0 {
-				return i, nil
-			}
-		}
-	}
-
-	return -1, fmt.Errorf("unmatched parenthesis")
-}
-
-func extractFirstGraphRefArg(args string) (string, error) {
-	args = strings.TrimSpace(args)
-	if args == "" {
-		return "", fmt.Errorf("empty graph reference argument")
-	}
-
-	if args[0] == '\'' || args[0] == '"' {
-		quote := args[0]
-		for i := 1; i < len(args); i++ {
-			if args[i] == quote {
-				if i+1 < len(args) && args[i+1] == quote {
-					i++
-					continue
-				}
-				return args[1:i], nil
-			}
-		}
-		return "", fmt.Errorf("unterminated graph reference string")
-	}
-
-	if args[0] == '`' {
-		id, _, err := extractIdentifier(args)
-		if err != nil {
-			return "", err
-		}
-		return id, nil
-	}
-
-	id, _, err := extractIdentifier(args)
-	if err != nil {
-		return "", err
-	}
-	return id, nil
-}
-
 func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 	parts := make([]string, 0, 2)
 	ops := make([]bool, 0, 1)
@@ -261,6 +140,8 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 	if trimmed == "" {
 		return nil, fmt.Errorf("empty query")
 	}
+	session := planTarget{name: sessionDB}
+	scope := compositeScopeRoot(sessionDB)
 
 	// Handle top-level UNION / UNION ALL by planning each branch independently.
 	parts, ops, hasUnion, err := splitTopLevelUnion(trimmed)
@@ -268,13 +149,13 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 		return nil, err
 	}
 	if hasUnion {
-		lhs, err := p.planSingleQuery(parts[0], sessionDB)
+		lhs, err := p.planSingleQuery(parts[0], session, scope, false)
 		if err != nil {
 			return nil, err
 		}
 		root := lhs
 		for i := 1; i < len(parts); i++ {
-			rhs, err := p.planSingleQuery(parts[i], sessionDB)
+			rhs, err := p.planSingleQuery(parts[i], session, scope, false)
 			if err != nil {
 				return nil, err
 			}
@@ -289,22 +170,29 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 		return root, nil
 	}
 
-	return p.planSingleQuery(trimmed, sessionDB)
+	return p.planSingleQuery(trimmed, session, scope, false)
 }
 
-func (p *FabricPlanner) planSingleQuery(trimmed string, sessionDB string) (Fragment, error) {
-
+// planSingleQuery plans one query (no top-level UNION) that runs on
+// current unless it starts with its own USE clause. scope is the session's
+// composite database; inSubquery is true for a CALL { } body.
+func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scope string, inSubquery bool) (Fragment, error) {
 	// Extract leading USE clause if present.
-	topDB, remaining, hasTopUse, err := parseLeadingUse(trimmed)
+	top := current
+	remaining := trimmed
+	use, rest, hasTopUse, err := parseLeadingUse(trimmed, inSubquery)
 	if err != nil {
 		return nil, err
 	}
-	if !hasTopUse {
-		topDB = sessionDB
-		remaining = trimmed
-	} else {
-		if err := p.validateUseTarget(sessionDB, topDB); err != nil {
+	if hasTopUse {
+		top = useTarget(use)
+		remaining = rest
+		if err := p.validatePlanTarget(scope, top); err != nil {
 			return nil, err
+		}
+		// Subqueries are in the scope of the graph a static USE selects.
+		if top.dynamic == nil {
+			scope = compositeScopeRoot(top.name)
 		}
 	}
 
@@ -328,17 +216,18 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, sessionDB string) (Fragm
 		// Support top-level mid-query USE routing (e.g. "WITH ... USE db MATCH ...").
 		// This keeps prefixes in the current graph and routes the remainder to the USE target.
 		if prefix, rest, ok := splitAtTopLevelUse(remaining); ok {
-			subDB, subRest, hasUse, err := parseLeadingUse(rest)
+			subUse, subRest, hasUse, err := parseLeadingUse(rest, true)
 			if err != nil {
 				return nil, err
 			}
 			if !hasUse {
 				return nil, fmt.Errorf("invalid USE clause")
 			}
-			if err := p.validateUseTarget(topDB, subDB); err != nil {
+			sub := useTarget(subUse)
+			if err := p.validatePlanTarget(scope, sub); err != nil {
 				return nil, err
 			}
-			inner, err := p.planSingleQuery(subRest, subDB)
+			inner, err := p.planSingleQuery(subRest, sub, scope, true)
 			if err != nil {
 				return nil, err
 			}
@@ -346,14 +235,7 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, sessionDB string) (Fragm
 			if prefix == "" {
 				return inner, nil
 			}
-			prefix = ensureRowProducingPrefix(prefix)
-			prefixExec := &FragmentExec{
-				Input:     &FragmentInit{Columns: nil},
-				Query:     prefix,
-				GraphName: topDB,
-				Columns:   nil,
-				IsWrite:   queryIsWrite(prefix),
-			}
+			prefixExec := newExec(ensureRowProducingPrefix(prefix), top, scope)
 			return &FragmentApply{
 				Input: &FragmentApply{
 					Input:   &FragmentInit{Columns: nil},
@@ -366,20 +248,22 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, sessionDB string) (Fragm
 		}
 
 		// Simple case: single-graph query, no CALL {} blocks at this scope.
-		isWrite := queryIsWrite(remaining)
-		return &FragmentExec{
-			Input:     &FragmentInit{Columns: nil},
-			Query:     remaining,
-			GraphName: topDB,
-			Columns:   nil, // columns determined at execution time
-			IsWrite:   isWrite,
-		}, nil
+		return newExec(remaining, top, scope), nil
 	}
 
 	// Multi-graph case: decompose into Apply chain.
 	// The top-level USE sets the default graph; each CALL { USE ... } block
 	// targets a different constituent.
-	return p.planMultiGraph(topDB, remaining, fabricBlocks)
+	return p.planMultiGraph(top, scope, remaining, fabricBlocks)
+}
+
+// validatePlanTarget checks a static USE target at plan time; a dynamic
+// reference is checked when it resolves (FabricExecutor.resolveExecGraph).
+func (p *FabricPlanner) validatePlanTarget(scope string, target planTarget) error {
+	if target.dynamic != nil {
+		return nil
+	}
+	return p.validateUseTarget(scope, target.name)
 }
 
 func splitAtTopLevelUse(query string) (string, string, bool) {
@@ -696,7 +580,7 @@ func isValidIdentifier(s string) bool {
 
 // planMultiGraph builds a Fragment tree for queries with top-level CALL {} subqueries.
 // Each CALL block is planned recursively so nested USE variants are decomposed correctly.
-func (p *FabricPlanner) planMultiGraph(topDB string, fullQuery string, blocks []callSubqueryBlock) (Fragment, error) {
+func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery string, blocks []callSubqueryBlock) (Fragment, error) {
 	init := &FragmentInit{Columns: nil}
 	var currentInput Fragment = init
 	lastPos := 0
@@ -705,21 +589,12 @@ func (p *FabricPlanner) planMultiGraph(topDB string, fullQuery string, blocks []
 		// Preserve outer query segments before each CALL block.
 		prefix := strings.TrimSpace(fullQuery[lastPos:block.startPos])
 		if prefix != "" {
-			prefixExec := &FragmentExec{
-				Input:     &FragmentInit{Columns: nil},
-				Query:     prefix,
-				GraphName: topDB,
-				Columns:   nil,
-				IsWrite:   queryIsWrite(prefix),
-			}
-			currentInput = &FragmentApply{Input: currentInput, Inner: prefixExec, Columns: nil}
+			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(prefix, top, scope), Columns: nil}
 		}
 
-		subDB, subBody, hasUse, err := parseLeadingUse(block.body)
+		subUse, subBody, hasUse, err := parseLeadingUse(block.body, true)
 		if err == nil && !hasUse {
-			var ok bool
-			subDB, subBody, ok, err = parseLeadingWithUse(block.body)
-			hasUse = ok
+			subUse, subBody, hasUse, err = parseLeadingWithUse(block.body)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("invalid USE in CALL subquery: %w", err)
@@ -730,16 +605,17 @@ func (p *FabricPlanner) planMultiGraph(topDB string, fullQuery string, blocks []
 			importCols       []string
 		)
 		if hasUse {
-			if err := p.validateUseTarget(topDB, subDB); err != nil {
+			sub := useTarget(subUse)
+			if err := p.validatePlanTarget(scope, sub); err != nil {
 				return nil, err
 			}
-			subqueryFragment, err = p.planSingleQuery(subBody, subDB)
+			subqueryFragment, err = p.planSingleQuery(subBody, sub, scope, true)
 			if err != nil {
 				return nil, err
 			}
 			importCols = extractWithImports(subBody)
 		} else {
-			subqueryFragment, err = p.planSingleQuery(block.body, topDB)
+			subqueryFragment, err = p.planSingleQuery(block.body, top, scope, true)
 			if err != nil {
 				return nil, err
 			}
@@ -757,17 +633,10 @@ func (p *FabricPlanner) planMultiGraph(topDB string, fullQuery string, blocks []
 
 	// Preserve trailing outer query clauses after the final CALL block.
 	trailingQuery := strings.TrimSpace(fullQuery[lastPos:])
-	if strings.TrimSpace(trailingQuery) != "" {
-		trailingExec := &FragmentExec{
-			Input:     &FragmentInit{Columns: nil},
-			Query:     trailingQuery,
-			GraphName: topDB,
-			Columns:   nil,
-			IsWrite:   queryIsWrite(trailingQuery),
-		}
+	if trailingQuery != "" {
 		currentInput = &FragmentApply{
 			Input:   currentInput,
-			Inner:   trailingExec,
+			Inner:   newExec(trailingQuery, top, scope),
 			Columns: nil,
 		}
 	}
@@ -778,37 +647,31 @@ func (p *FabricPlanner) planMultiGraph(topDB string, fullQuery string, blocks []
 // parseLeadingWithUse extracts a leading WITH ... USE <graph> pattern from a CALL body.
 // It returns the USE target graph and a rewritten body where USE is removed but the WITH
 // import clause is preserved (e.g. "WITH x USE db MATCH ..." -> "WITH x MATCH ...").
-func parseLeadingWithUse(body string) (graph string, rewritten string, ok bool, err error) {
+func parseLeadingWithUse(body string) (use UseClause, rewritten string, ok bool, err error) {
 	trimmed := strings.TrimSpace(body)
 	if !startsWithFold(trimmed, "WITH") {
-		return "", body, false, nil
+		return UseClause{}, body, false, nil
 	}
 
 	withEnd, found := findLeadingWithClauseEnd(trimmed)
 	if !found || withEnd <= 0 || withEnd >= len(trimmed) {
-		return "", body, false, nil
+		return UseClause{}, body, false, nil
 	}
 
 	withClause := strings.TrimSpace(trimmed[:withEnd])
 	rest := strings.TrimSpace(trimmed[withEnd:])
 	if !startsWithFold(rest, "USE") {
-		return "", body, false, nil
+		return UseClause{}, body, false, nil
 	}
 
-	db, remaining, hasUse, parseErr := parseLeadingUse(rest)
+	use, remaining, hasUse, parseErr := parseLeadingUse(rest, true)
 	if parseErr != nil {
-		return "", "", false, parseErr
+		return UseClause{}, "", false, parseErr
 	}
 	if !hasUse {
-		return "", body, false, nil
+		return UseClause{}, body, false, nil
 	}
-
-	remaining = strings.TrimSpace(remaining)
-	if remaining == "" {
-		return "", "", false, fmt.Errorf("USE clause requires a following query")
-	}
-
-	return db, strings.TrimSpace(withClause + " " + remaining), true, nil
+	return use, strings.TrimSpace(withClause + " " + remaining), true, nil
 }
 
 // callSubqueryBlock represents a top-level CALL { ... } block for a single scope.
@@ -892,74 +755,43 @@ func bindLeadingImportColumns(fragment Fragment, importCols []string) Fragment {
 	}
 }
 
-// parseLeadingUse extracts a leading USE clause from a query.
-// Returns (database, remaining, hasUse, error).
-func parseLeadingUse(query string) (string, string, bool, error) {
-	trimmed := strings.TrimSpace(query)
-	if !startsWithFold(trimmed, "USE") {
-		return "", query, false, nil
-	}
-
-	// Must be followed by whitespace (not "USER" or "USING").
-	if len(trimmed) > 3 && !isWhitespace(trimmed[3]) {
-		return "", query, false, nil
-	}
-
-	rest := strings.TrimSpace(trimmed[3:])
-	if rest == "" {
-		return "", "", true, fmt.Errorf("USE clause requires a database name")
-	}
-
-	if graphRef, rem, ok, err := extractGraphReference(rest); ok {
-		if err != nil {
-			return "", "", true, fmt.Errorf("invalid USE clause: %w", err)
-		}
-		return graphRef, strings.TrimSpace(rem), true, nil
-	}
-
-	// Extract the database name (simple identifier or backtick-quoted).
-	dbName, remaining, err := extractIdentifier(rest)
-	if err != nil {
-		return "", "", true, fmt.Errorf("invalid USE clause: %w", err)
-	}
-
-	return dbName, strings.TrimSpace(remaining), true, nil
+// parseLeadingUse reads a leading USE clause with the one USE grammar
+// (ParseUseClause). inSubquery is true for a CALL { } body.
+func parseLeadingUse(query string, inSubquery bool) (UseClause, string, bool, error) {
+	return ParseUseClause(query, inSubquery)
 }
 
-// extractIdentifier extracts a simple or backtick-quoted identifier from the start of s.
-// Returns (identifier, remaining, error).
-func extractIdentifier(s string) (string, string, error) {
-	if s == "" {
-		return "", "", fmt.Errorf("expected identifier")
-	}
+// planTarget is the graph a planned fragment runs on: a static graph name,
+// or a dynamic reference resolved each time the fragment runs.
+type planTarget struct {
+	name    string
+	dynamic *UseClause
+}
 
-	if s[0] == '`' {
-		// Backtick-quoted identifier.
-		var b strings.Builder
-		for i := 1; i < len(s); i++ {
-			if s[i] == '`' {
-				if i+1 < len(s) && s[i+1] == '`' {
-					b.WriteByte('`')
-					i++
-					continue
-				}
-				return b.String(), s[i+1:], nil
-			}
-			b.WriteByte(s[i])
-		}
-		return "", "", fmt.Errorf("unterminated backtick identifier")
+// useTarget is the plan target a USE clause selects.
+func useTarget(clause UseClause) planTarget {
+	if clause.IsDynamic() {
+		c := clause
+		return planTarget{dynamic: &c}
 	}
+	return planTarget{name: clause.Name}
+}
 
-	// Simple identifier: letters, digits, underscores, dots (for composite.alias).
-	end := 0
-	for end < len(s) && (isIdentChar(s[end]) || s[end] == '.') {
-		end++
+// newExec is an executable fragment running query on target; a dynamic
+// target may name the constituents of the composite scope.
+func newExec(query string, target planTarget, scope string) *FragmentExec {
+	exec := &FragmentExec{
+		Input:     &FragmentInit{Columns: nil},
+		Query:     query,
+		GraphName: target.name,
+		Columns:   nil, // determined at execution time
+		IsWrite:   queryIsWrite(query),
 	}
-	if end == 0 {
-		return "", "", fmt.Errorf("expected identifier, got '%c'", s[0])
+	if target.dynamic != nil {
+		exec.Graph = target.dynamic
+		exec.Scope = scope
 	}
-
-	return s[:end], s[end:], nil
+	return exec
 }
 
 // extractTopLevelCallBlocks finds CALL { ... } blocks in the current query scope.
@@ -1064,7 +896,7 @@ func extractTopLevelCallBlocks(query string) ([]callSubqueryBlock, error) {
 }
 
 func callBlockContainsFabricUse(body string) (bool, error) {
-	_, _, hasUse, err := parseLeadingUse(body)
+	_, _, hasUse, err := parseLeadingUse(body, true)
 	if err != nil {
 		return false, fmt.Errorf("invalid USE in CALL subquery: %w", err)
 	}

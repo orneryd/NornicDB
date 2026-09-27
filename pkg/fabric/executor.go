@@ -23,6 +23,8 @@ type FabricExecutor struct {
 	catalog *Catalog
 	local   *LocalFragmentExecutor
 	remote  *RemoteFragmentExecutor
+
+	evaluateGraphArguments GraphArgumentEvaluator
 }
 
 const (
@@ -80,34 +82,11 @@ func (e *FabricExecutor) executeInit(f *FragmentInit) (*ResultStream, error) {
 
 // executeExec dispatches a bound executable fragment to local or remote.
 func (e *FabricExecutor) executeExec(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}, authToken string) (*ResultStream, error) {
-	// Resolve graph location from catalog.
-	loc, err := e.catalog.Resolve(f.GraphName)
+	loc, execParams, ctx, err := e.prepareExecDispatch(ctx, tx, f, params)
 	if err != nil {
-		return nil, fmt.Errorf("cannot route query: %w", err)
+		return nil, err
 	}
-
-	// Register with the distributed transaction if present.
-	if tx != nil {
-		participant := participantKeyFromLocation(loc)
-		sub, err := tx.GetOrOpen(participant, f.IsWrite)
-		if err != nil {
-			return nil, err
-		}
-		ctx = WithFabricTransaction(ctx, tx)
-		ctx = WithSubTransaction(ctx, sub)
-	}
-
 	recordBindings, _ := RecordBindingsFromContext(ctx)
-	execParams := params
-	if len(recordBindings) > 0 {
-		execParams = make(map[string]interface{}, util.SafePreallocSum(len(params), len(recordBindings)))
-		for k, v := range params {
-			execParams[k] = v
-		}
-		for k, v := range recordBindings {
-			execParams[k] = v
-		}
-	}
 
 	switch l := loc.(type) {
 	case *LocationLocal:
@@ -210,20 +189,10 @@ func wrapPipelineIterator(ctx context.Context, it RowIterator, prefetch int) Row
 	return NewPrefetchRowIterator(ctx, it, prefetch)
 }
 
+// prepareExecDispatch resolves the graph a fragment runs on
+// (resolveExecGraph, which authorizes it), joins the distributed
+// transaction, and merges the row's variables into the parameters.
 func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}) (Location, map[string]interface{}, context.Context, error) {
-	loc, err := e.catalog.Resolve(f.GraphName)
-	if err != nil {
-		return nil, nil, ctx, fmt.Errorf("cannot route query: %w", err)
-	}
-	if tx != nil {
-		participant := participantKeyFromLocation(loc)
-		sub, err := tx.GetOrOpen(participant, f.IsWrite)
-		if err != nil {
-			return nil, nil, ctx, err
-		}
-		ctx = WithFabricTransaction(ctx, tx)
-		ctx = WithSubTransaction(ctx, sub)
-	}
 	recordBindings, _ := RecordBindingsFromContext(ctx)
 	execParams := params
 	if len(recordBindings) > 0 {
@@ -234,6 +203,19 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 		for k, v := range recordBindings {
 			execParams[k] = v
 		}
+	}
+	_, loc, err := e.resolveExecGraph(ctx, f, execParams)
+	if err != nil {
+		return nil, nil, ctx, err
+	}
+	if tx != nil {
+		participant := participantKeyFromLocation(loc)
+		sub, err := tx.GetOrOpen(participant, f.IsWrite)
+		if err != nil {
+			return nil, nil, ctx, err
+		}
+		ctx = WithFabricTransaction(ctx, tx)
+		ctx = WithSubTransaction(ctx, sub)
 	}
 	return loc, execParams, ctx, nil
 }
@@ -457,7 +439,8 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 
 	// For non-simple leading WITH pipelines (e.g. trailing WITH collect(...) after
 	// CALL blocks), execute once over the full input row stream instead of per-row.
-	if execFrag, ok := f.Inner.(*FragmentExec); ok {
+	// A dynamic graph reference resolves per row, so it takes the per-row path.
+	if execFrag, ok := f.Inner.(*FragmentExec); ok && execFrag.Graph == nil {
 		// Streaming fast path: avoid full outer materialization when correlated
 		// batched row lookup rewrite can consume the iterator directly.
 		if streamed, handled, err := e.tryExecuteApplyBatchedLookupRowsIter(ctx, tx, inputCols, inputIter, execFrag, params, authToken); handled {
@@ -518,7 +501,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		mergedBind := bindingsFromParentAndRow(parentBindings, inputCols, inputRow)
 		innerCtx := WithRecordBindings(ctx, mergedBind)
 
-		if execFrag, ok := innerFragment.(*FragmentExec); ok {
+		if execFrag, ok := innerFragment.(*FragmentExec); ok && execFrag.Graph == nil {
 			if cols, projected, ok := projectSimpleReturnFromRow(execFrag.Query, inputCols, inputRow); ok {
 				if len(result.Columns) == 0 {
 					result.Columns = cols

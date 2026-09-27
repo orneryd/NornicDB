@@ -268,37 +268,61 @@ func authorizeDatabaseSelection(ctx context.Context, database string) error {
 	return AuthorizeQuery(withExecutionDatabase(ctx, database), "RETURN 1")
 }
 
+// AccessDatabases returns the databases a principal must be allowed to use
+// for a statement on database, the graph name it selects (a request or
+// session database, a USE, :USE or subquery USE, a composite constituent):
+//   - a composite constituent "composite.alias": the composite and the
+//     constituent's database (the full name when the composite has no such
+//     alias);
+//   - any other name: the name and, when it is an alias, the database it
+//     names.
+//
+// The executor checks each one (authorizeSelectedDatabase), and Bolt and
+// HTTP check a request's or session's database with the same list, so a
+// graph is allowed or refused the same way however a statement selects it.
+// manager may be nil (no database manager): the name alone. When the
+// composite's constituents can't be read, the list is the composite and the
+// error is returned with it.
+func AccessDatabases(manager DatabaseManagerInterface, database string) ([]string, error) {
+	if manager == nil {
+		return []string{database}, nil
+	}
+	if dot := strings.IndexByte(database, '.'); dot > 0 && manager.IsCompositeDatabase(database[:dot]) {
+		composite := database[:dot]
+		constituents, err := manager.GetCompositeConstituents(composite)
+		if err != nil {
+			return []string{composite}, err
+		}
+		for _, item := range constituents {
+			if ref, ok := toConstituentRef(item); ok && strings.EqualFold(ref.Alias, database[dot+1:]) {
+				return []string{composite, ref.DatabaseName}, nil
+			}
+		}
+		return []string{composite, database}, nil
+	}
+	if resolved, err := manager.ResolveDatabase(database); err == nil && resolved != database {
+		return []string{database, resolved}, nil
+	}
+	return []string{database}, nil
+}
+
+// authorizeSelectedDatabase checks that the principal may use database,
+// a graph the statement selects: each database AccessDatabases lists.
 func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database string) error {
 	if _, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); !ok {
 		return nil
 	}
+	var manager DatabaseManagerInterface
 	if e.dbManager != nil {
-		if dot := strings.IndexByte(database, '.'); dot > 0 && e.dbManager.IsCompositeDatabase(database[:dot]) {
-			composite := database[:dot]
-			if err := authorizeDatabaseSelection(ctx, composite); err != nil {
-				return err
-			}
-			constituents, err := e.dbManager.GetCompositeConstituents(composite)
-			if err != nil {
-				return err
-			}
-			for _, item := range constituents {
-				if ref, ok := toConstituentRef(item); ok && strings.EqualFold(ref.Alias, database[dot+1:]) {
-					return authorizeDatabaseSelection(ctx, ref.DatabaseName)
-				}
-			}
-			return authorizeDatabaseSelection(ctx, database)
+		manager = e.dbManager
+	}
+	databases, listErr := AccessDatabases(manager, database)
+	for _, selected := range databases {
+		if err := authorizeDatabaseSelection(ctx, selected); err != nil {
+			return err
 		}
 	}
-	if err := authorizeDatabaseSelection(ctx, database); err != nil {
-		return err
-	}
-	if e.dbManager != nil {
-		if resolved, err := e.dbManager.ResolveDatabase(database); err == nil && resolved != database {
-			return authorizeDatabaseSelection(ctx, resolved)
-		}
-	}
-	return nil
+	return listErr
 }
 
 // PermissionDeniedError identifies the entitlement needed for a query.

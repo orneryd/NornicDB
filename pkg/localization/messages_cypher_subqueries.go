@@ -14,7 +14,6 @@ const (
 	MessageCypherSubqueriesCallForNodeFailed                 MessageID = "cyphersubqueries.call_for_node_failed"
 	MessageCypherSubqueriesOuterMatchSeedsFailed             MessageID = "cyphersubqueries.outer_match_seeds_failed"
 	MessageCypherSubqueriesCallBodyEmpty                     MessageID = "cyphersubqueries.call_body_empty"
-	MessageCypherSubqueriesUseClauseFailed                   MessageID = "cyphersubqueries.use_clause_failed"
 	MessageCypherSubqueriesUseDatabaseFailed                 MessageID = "cyphersubqueries.use_database_failed"
 	MessageCypherSubqueriesCorrelatedUnionParseFailed        MessageID = "cyphersubqueries.correlated_union_parse_failed"
 	MessageCypherSubqueriesUnionWithImportsFailed            MessageID = "cyphersubqueries.union_with_imports_failed"
@@ -97,10 +96,6 @@ func CypherSubqueriesOuterMatchSeedsFailed(cause error) Message {
 
 func CypherSubqueriesCallBodyEmpty() Message {
 	return cypherSubqueriesMessage(MessageCypherSubqueriesCallBodyEmpty, "invalid CALL {} subquery: empty body", nil)
-}
-
-func CypherSubqueriesUseClauseFailed(cause error) Message {
-	return cypherSubqueriesCauseMessage(MessageCypherSubqueriesUseClauseFailed, "CALL subquery USE clause error: ", cause)
 }
 
 func CypherSubqueriesUseDatabaseFailed(database string, cause error) Message {

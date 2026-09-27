@@ -20,6 +20,9 @@ import (
 // This enables composite databases (similar to Neo4j Fabric) where a single database
 // view spans multiple physical databases.
 type CompositeEngine struct {
+	// name is the composite database's name (SetCompositeName).
+	name string
+
 	// Constituents maps alias names to their storage engines
 	constituents map[string]Engine
 
@@ -1587,6 +1590,14 @@ func (c *CompositeEngine) flushAsyncEngine(engine Engine) {
 //	type compositeChecker interface { IsComposite() bool }
 //	if cc, ok := engine.(compositeChecker); ok && cc.IsComposite() { ... }
 func (c *CompositeEngine) IsComposite() bool { return true }
+
+// SetCompositeName records the composite database's name, the name its
+// queries run under (a USE target is in its scope; graph.names() lists its
+// constituents).
+func (c *CompositeEngine) SetCompositeName(name string) { c.name = name }
+
+// CompositeName is the composite database's name, or "" if not recorded.
+func (c *CompositeEngine) CompositeName() string { return c.name }
 
 // Ensure CompositeEngine implements Engine interface
 var _ Engine = (*CompositeEngine)(nil)

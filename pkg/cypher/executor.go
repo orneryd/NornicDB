@@ -1374,6 +1374,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	params = normalizeQueryParameters(params)
 
 	// Handle Neo4j shell/browser commands like :USE and :param before validation.
+	useBefore := GetUseDatabaseFromContext(ctx)
 	processedQuery, processedCtx, shellResult, err := e.preprocessShellCommands(ctx, cypher, params)
 	if err != nil {
 		return nil, err
@@ -1385,6 +1386,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if err := clientTransactionCommand(ctx, cypher); err != nil {
 		return nil, err
+	}
+	// A query after :USE <db> runs on that database, like one after a USE
+	// clause (#738).
+	if useDB := GetUseDatabaseFromContext(ctx); useDB != "" && useDB != useBefore {
+		return e.executeOnDatabase(ctx, useDB, cypher, params)
 	}
 
 	// Backtick-quoted variables become plain identifiers here, once, for
@@ -1467,28 +1473,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
-	if useDB, remaining, hasUse, err := parseLeadingUseClause(cypher); hasUse || err != nil {
+	if use, remaining, hasUse, err := parseUseClause(cypher, false); hasUse || err != nil {
 		if err != nil {
 			return nil, err
 		}
-		if err := e.authorizeSelectedDatabase(ctx, useDB); err != nil {
+		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		scopedExec, resolvedDB, err := e.scopedExecutorForUse(useDB, GetAuthTokenFromContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		ctx = withExecutionDatabase(ctx, resolvedDB)
-		if strings.TrimSpace(remaining) == "" {
-			if err := AuthorizeQuery(ctx, "RETURN 1"); err != nil {
-				return nil, err
-			}
-			return &ExecuteResult{
-				Columns: []string{"database"},
-				Rows:    [][]interface{}{{resolvedDB}},
-			}, nil
-		}
-		return scopedExec.Execute(ctx, remaining, params)
+		return e.executeOnDatabase(ctx, use.Name, remaining, params)
 	}
 	if err := AuthorizeQuery(ctx, cypher); err != nil {
 		return nil, err
@@ -1496,8 +1488,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Reject data queries on composite root — callers must USE a constituent.
 	// System/admin commands (SHOW DATABASES, CREATE/DROP DATABASE, ALTER, SHOW COMPOSITE,
-	// SHOW CONSTITUENTS, SHOW ALIASES, SHOW LIMITS, BEGIN, COMMIT, ROLLBACK) are allowed.
-	if isCompositeRoot(e.storage) && !isCompositeAllowedCommand(cypher) {
+	// SHOW CONSTITUENTS, SHOW ALIASES, SHOW LIMITS, BEGIN, COMMIT, ROLLBACK) are allowed,
+	// and so is a statement that reads or writes no graph (RETURN 1,
+	// UNWIND graph.names() AS g RETURN g), which runs on the composite
+	// itself, as in Neo4j.
+	if isCompositeRoot(e.storage) && !isCompositeAllowedCommand(cypher) && statementAccessesGraph(e.analyzer.Analyze(cypher)) {
 		return nil, localizedError(localization.CypherCoreCompositeTargetRequired(), nil)
 	}
 
@@ -2701,6 +2696,17 @@ func (e *StorageExecutor) resolveWALAndDatabase() (*storage.WAL, string) {
 	}
 
 	return nil, dbName
+}
+
+// statementAccessesGraph reports whether a statement reads or writes graph
+// data: a pattern clause (MATCH, CREATE, MERGE, …), a write clause, a
+// procedure call or LOAD CSV. A statement of only UNWIND / WITH / RETURN
+// over values doesn't.
+func statementAccessesGraph(info *QueryInfo) bool {
+	return info.HasMatch || info.HasOptionalMatch || info.HasCreate || info.HasMerge ||
+		info.HasDelete || info.HasDetachDelete || info.HasSet || info.HasRemove ||
+		info.HasForeach || info.HasLoadCSV || info.HasShortestPath || info.HasCall ||
+		info.HasShow || info.HasSchema
 }
 
 // statementParametersError is Neo4j's ParameterMissing for a statement that

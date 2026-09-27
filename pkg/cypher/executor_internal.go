@@ -33,24 +33,21 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
 
-	if useDB, remaining, hasUse, err := parseLeadingUseClause(cypher); hasUse || err != nil {
+	if use, remaining, hasUse, err := parseUseClause(cypher, false); hasUse || err != nil {
 		if err != nil {
 			return nil, err
 		}
-		if err := e.authorizeSelectedDatabase(ctx, useDB); err != nil {
+		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		scopedExec, resolvedDB, err := e.scopedExecutorForUse(useDB, GetAuthTokenFromContext(ctx))
+		if err := e.authorizeSelectedDatabase(ctx, use.Name); err != nil {
+			return nil, err
+		}
+		scopedExec, resolvedDB, err := e.scopedExecutorForUse(use.Name, GetAuthTokenFromContext(ctx))
 		if err != nil {
 			return nil, err
 		}
 		ctx = withExecutionDatabase(ctx, resolvedDB)
-		if strings.TrimSpace(remaining) == "" {
-			if err := AuthorizeQuery(ctx, "RETURN 1"); err != nil {
-				return nil, err
-			}
-			return &ExecuteResult{Columns: []string{"database"}, Rows: [][]interface{}{{resolvedDB}}}, nil
-		}
 		return scopedExec.executeInternal(ctx, remaining, params)
 	}
 	if err := AuthorizeQuery(ctx, cypher); err != nil {

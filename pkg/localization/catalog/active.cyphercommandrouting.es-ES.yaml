@@ -46,24 +46,6 @@
   other: "no se pudo abrir la transacción del fragmento local para '{{.Database}}': {{.Cause}}"
 - id: cyphercommandrouting.use_database_required
   other: "la cláusula USE requiere un nombre de base de datos"
-- id: cyphercommandrouting.use_invalid
-  other: "cláusula USE no válida: {{.Cause}}"
-- id: cyphercommandrouting.use_backtick_unterminated
-  other: "cláusula USE no válida: identificador entre acentos graves sin terminar"
-- id: cyphercommandrouting.graph_reference_invalid
-  other: "referencia de grafo no válida"
-- id: cyphercommandrouting.graph_reference_argument_required
-  other: "la referencia de grafo requiere un argumento"
-- id: cyphercommandrouting.graph_reference_open_paren_expected
-  other: "se esperaba '(' en la posición {{.Position}}"
-- id: cyphercommandrouting.graph_reference_unterminated
-  other: "referencia de grafo sin terminar"
-- id: cyphercommandrouting.graph_reference_argument_empty
-  other: "argumento de referencia de grafo vacío"
-- id: cyphercommandrouting.graph_reference_string_unterminated
-  other: "cadena de referencia de grafo sin terminar"
-- id: cyphercommandrouting.backtick_identifier_unterminated
-  other: "identificador entre acentos graves sin terminar"
 - id: cyphercommandrouting.use_constituent_outside_composite
   other: "USE {{.Target}} falló: el componente '{{.Constituent}}' no forma parte de la base de datos compuesta actual '{{.Composite}}'"
 - id: cyphercommandrouting.use_failed
@@ -82,3 +64,41 @@
   other: "el procedimiento {{.Procedure}} requiere al menos {{.Minimum}} argumentos; se recibieron {{.Actual}}"
 - id: cyphercommandrouting.procedure_max_arguments
   other: "el procedimiento {{.Procedure}} acepta como máximo {{.Maximum}} argumentos; se recibieron {{.Actual}}"
+- id: cyphercommandrouting.use_query_cannot_conclude
+  other: "La consulta no puede terminar con USE GRAPH (debe ser una cláusula RETURN, una cláusula FINISH, una cláusula de actualización, una llamada a subconsulta unitaria o una llamada a procedimiento sin YIELD)."
+- id: cyphercommandrouting.use_subquery_must_conclude
+  other: "La consulta debe terminar con una cláusula RETURN, una cláusula FINISH, una cláusula de actualización, una llamada a subconsulta unitaria o una llamada a procedimiento sin YIELD."
+- id: cyphercommandrouting.use_invalid_clause_after_graph
+  other: "Entrada no válida '{{.Input}}': se esperaba a database name, '(', 'FOREACH', '.', 'ALTER', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'START DATABASE', 'STOP DATABASE', 'DEALLOCATE', 'DELETE', 'DENY', 'DETACH', 'DROP', 'DRYRUN', 'FINISH', 'GRANT', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REALLOCATE', 'REMOVE', 'RENAME', 'RETURN', 'REVOKE', 'ENABLE SERVER', 'SET', 'SHOW', 'SKIP', 'TERMINATE', 'UNION', 'UNWIND', 'USE', 'WITH' o <EOF>"
+- id: cyphercommandrouting.use_invalid_subquery_clause_after_graph
+  other: "Entrada no válida '{{.Input}}': se esperaba a database name, '(', 'FOREACH', '.', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' o '}'"
+- id: cyphercommandrouting.use_invalid_graph_reference
+  other: "Entrada no válida '{{.Input}}': se esperaba un identificador, '(' o 'GRAPH'"
+- id: cyphercommandrouting.use_invalid_graph_name_part
+  other: "Entrada no válida '{{.Input}}': se esperaba un nombre de base de datos o un identificador"
+- id: cyphercommandrouting.use_invalid_graph_function_argument
+  other: "Entrada no válida '{{.Input}}': se esperaba una expresión, ')' o ','"
+- id: cyphercommandrouting.use_not_first_clause
+  other: "La cláusula USE debe ser la primera cláusula de una (sub)consulta o ir precedida de una cláusula WITH de importación en una subconsulta."
+- id: cyphercommandrouting.use_administration_command
+  other: "La cláusula `USE` no es necesaria para los comandos de administración. Vuelva a intentar la consulta sin la cláusula `USE` y se enrutará automáticamente."
+- id: cyphercommandrouting.use_dynamic_lookup_not_allowed
+  other: "La búsqueda dinámica de grafos no está permitida aquí. Esta función solo está disponible en bases de datos compuestas.\nSe intentó acceder al grafo {{.Graph}}"
+- id: cyphercommandrouting.graph_not_found
+  other: "Grafo no encontrado: {{.Graph}}"
+- id: cyphercommandrouting.graph_function_unknown
+  other: "Función desconocida '{{.Function}}'"
+- id: cyphercommandrouting.graph_function_argument_count
+  other: "{{.Function}} acepta 1 argumento, se recibieron {{.Count}}"
+- id: cyphercommandrouting.graph_function_argument_type
+  other: "Se esperaba que {{.Argument}} fuera un STRING, pero era {{.Type}}"
+- id: cyphercommandrouting.graph_function_argument_invalid
+  other: "Argumento de referencia de grafo no válido: {{.Argument}}"
+- id: cyphercommandrouting.graph_element_id_invalid
+  other: "El ID de elemento {{.ElementID}} tiene un formato inesperado."
+- id: cyphercommandrouting.transaction_second_database_write
+  other: "No se permite escribir en más de una base de datos por transacción. Se intentó escribir en {{.Target}}, actualmente se escribe en {{.Current}}"
+- id: cyphercommandrouting.transaction_second_database_access
+  other: "No se permite acceder a más de una base de datos por transacción. Se intentó acceder a {{.Target}}, actualmente se usa {{.Current}}"
+- id: cyphercommandrouting.graph_function_only_in_use
+  other: "`{{.Function}}` solo está permitido en la primera posición de una cláusula USE."

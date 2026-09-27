@@ -46,24 +46,6 @@
   other: "[!! failed to open local shard transaction for '{{.Database}}': {{.Cause}} !!]"
 - id: cyphercommandrouting.use_database_required
   other: "[!! USE clause requires a database name !!]"
-- id: cyphercommandrouting.use_invalid
-  other: "[!! invalid USE clause: {{.Cause}} !!]"
-- id: cyphercommandrouting.use_backtick_unterminated
-  other: "[!! invalid USE clause: unterminated backtick identifier !!]"
-- id: cyphercommandrouting.graph_reference_invalid
-  other: "[!! invalid graph reference !!]"
-- id: cyphercommandrouting.graph_reference_argument_required
-  other: "[!! graph reference requires an argument !!]"
-- id: cyphercommandrouting.graph_reference_open_paren_expected
-  other: "[!! expected '(' at position {{.Position}} !!]"
-- id: cyphercommandrouting.graph_reference_unterminated
-  other: "[!! unterminated graph reference !!]"
-- id: cyphercommandrouting.graph_reference_argument_empty
-  other: "[!! empty graph reference argument !!]"
-- id: cyphercommandrouting.graph_reference_string_unterminated
-  other: "[!! unterminated graph reference string !!]"
-- id: cyphercommandrouting.backtick_identifier_unterminated
-  other: "[!! unterminated backtick identifier !!]"
 - id: cyphercommandrouting.use_constituent_outside_composite
   other: "[!! USE {{.Target}} failed: constituent '{{.Constituent}}' is not part of current composite '{{.Composite}}' !!]"
 - id: cyphercommandrouting.use_failed
@@ -82,3 +64,41 @@
   other: "[!! procedure {{.Procedure}} requires at least {{.Minimum}} arguments, got {{.Actual}} !!]"
 - id: cyphercommandrouting.procedure_max_arguments
   other: "[!! procedure {{.Procedure}} accepts at most {{.Maximum}} arguments, got {{.Actual}} !!]"
+- id: cyphercommandrouting.use_query_cannot_conclude
+  other: "[!! Query cannot conclude with USE GRAPH (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD). !!]"
+- id: cyphercommandrouting.use_subquery_must_conclude
+  other: "[!! Query must conclude with a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD. !!]"
+- id: cyphercommandrouting.use_invalid_clause_after_graph
+  other: "[!! Invalid input '{{.Input}}': expected a database name, '(', 'FOREACH', '.', 'ALTER', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'START DATABASE', 'STOP DATABASE', 'DEALLOCATE', 'DELETE', 'DENY', 'DETACH', 'DROP', 'DRYRUN', 'FINISH', 'GRANT', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REALLOCATE', 'REMOVE', 'RENAME', 'RETURN', 'REVOKE', 'ENABLE SERVER', 'SET', 'SHOW', 'SKIP', 'TERMINATE', 'UNION', 'UNWIND', 'USE', 'WITH' or <EOF> !!]"
+- id: cyphercommandrouting.use_invalid_subquery_clause_after_graph
+  other: "[!! Invalid input '{{.Input}}': expected a database name, '(', 'FOREACH', '.', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' or '}' !!]"
+- id: cyphercommandrouting.use_invalid_graph_reference
+  other: "[!! Invalid input '{{.Input}}': expected an identifier, '(' or 'GRAPH' !!]"
+- id: cyphercommandrouting.use_invalid_graph_name_part
+  other: "[!! Invalid input '{{.Input}}': expected a database name or an identifier !!]"
+- id: cyphercommandrouting.use_invalid_graph_function_argument
+  other: "[!! Invalid input '{{.Input}}': expected an expression, ')' or ',' !!]"
+- id: cyphercommandrouting.use_not_first_clause
+  other: "[!! USE clause must be either the first clause in a (sub-)query or preceded by an importing WITH clause in a sub-query. !!]"
+- id: cyphercommandrouting.use_administration_command
+  other: "[!! The `USE` clause is not required for Administration Commands. Retry your query omitting the `USE` clause and it will be routed automatically. !!]"
+- id: cyphercommandrouting.use_dynamic_lookup_not_allowed
+  other: "[!! Dynamic graph lookup not allowed here. This feature is only available on composite databases.\nAttempted to access graph {{.Graph}} !!]"
+- id: cyphercommandrouting.graph_not_found
+  other: "[!! Graph not found: {{.Graph}} !!]"
+- id: cyphercommandrouting.graph_function_unknown
+  other: "[!! Unknown function '{{.Function}}' !!]"
+- id: cyphercommandrouting.graph_function_argument_count
+  other: "[!! {{.Function}} takes 1 argument, got {{.Count}} !!]"
+- id: cyphercommandrouting.graph_function_argument_type
+  other: "[!! Expected {{.Argument}} to be a STRING, but it was {{.Type}} !!]"
+- id: cyphercommandrouting.graph_function_argument_invalid
+  other: "[!! Invalid graph reference argument: {{.Argument}} !!]"
+- id: cyphercommandrouting.graph_element_id_invalid
+  other: "[!! Element ID {{.ElementID}} has an unexpected format. !!]"
+- id: cyphercommandrouting.transaction_second_database_write
+  other: "[!! Writing to more than one database per transaction is not allowed. Attempted write to {{.Target}}, currently writing to {{.Current}} !!]"
+- id: cyphercommandrouting.transaction_second_database_access
+  other: "[!! Accessing more than one database per transaction is not allowed. Attempted access to {{.Target}}, currently using {{.Current}} !!]"
+- id: cyphercommandrouting.graph_function_only_in_use
+  other: "[!! `{{.Function}}` is only allowed at the first position of a USE clause. !!]"

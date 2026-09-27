@@ -1,50 +1,63 @@
 package localization
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 const (
-	MessageCypherCommandRoutingUnknownCommand                   MessageID = "cyphercommandrouting.unknown_command"
-	MessageCypherCommandRoutingEmptyCommand                     MessageID = "cyphercommandrouting.empty_command"
-	MessageCypherCommandRoutingShellUseDatabaseRequired         MessageID = "cyphercommandrouting.shell_use_database_required"
-	MessageCypherCommandRoutingParameterMapRequired             MessageID = "cyphercommandrouting.parameter_map_required"
-	MessageCypherCommandRoutingParameterArgumentRequired        MessageID = "cyphercommandrouting.parameter_argument_required"
-	MessageCypherCommandRoutingParameterValueRequired           MessageID = "cyphercommandrouting.parameter_value_required"
-	MessageCypherCommandRoutingParameterUsage                   MessageID = "cyphercommandrouting.parameter_usage"
-	MessageCypherCommandRoutingParameterMapKeysStrings          MessageID = "cyphercommandrouting.parameter_map_keys_strings"
-	MessageCypherCommandRoutingParameterMapEntryEmpty           MessageID = "cyphercommandrouting.parameter_map_entry_empty"
-	MessageCypherCommandRoutingParameterMapEntryInvalid         MessageID = "cyphercommandrouting.parameter_map_entry_invalid"
-	MessageCypherCommandRoutingParameterEvaluationFailed        MessageID = "cyphercommandrouting.parameter_evaluation_failed"
-	MessageCypherCommandRoutingParameterProducedNoValue         MessageID = "cyphercommandrouting.parameter_produced_no_value"
-	MessageCypherCommandRoutingParameterExpressionUnresolved    MessageID = "cyphercommandrouting.parameter_expression_unresolved"
-	MessageCypherCommandRoutingCallTailSeedRequired             MessageID = "cyphercommandrouting.call_tail_seed_required"
-	MessageCypherCommandRoutingCallTailLimitInvalid             MessageID = "cyphercommandrouting.call_tail_limit_invalid"
-	MessageCypherCommandRoutingCallTailSkipInvalid              MessageID = "cyphercommandrouting.call_tail_skip_invalid"
-	MessageCypherCommandRoutingWhereBooleanRequired             MessageID = "cyphercommandrouting.where_boolean_required"
-	MessageCypherCommandRoutingUnknownProcedure                 MessageID = "cyphercommandrouting.unknown_procedure"
-	MessageCypherCommandRoutingFabricNotPrepared                MessageID = "cyphercommandrouting.fabric_not_prepared"
-	MessageCypherCommandRoutingFabricStorageTypeInvalid         MessageID = "cyphercommandrouting.fabric_storage_type_invalid"
-	MessageCypherCommandRoutingFabricPreparedContextInvalid     MessageID = "cyphercommandrouting.fabric_prepared_context_invalid"
-	MessageCypherCommandRoutingFabricConstituentsFailed         MessageID = "cyphercommandrouting.fabric_constituents_failed"
-	MessageCypherCommandRoutingFabricShardTransactionFailed     MessageID = "cyphercommandrouting.fabric_shard_transaction_failed"
-	MessageCypherCommandRoutingUseDatabaseRequired              MessageID = "cyphercommandrouting.use_database_required"
-	MessageCypherCommandRoutingUseInvalid                       MessageID = "cyphercommandrouting.use_invalid"
-	MessageCypherCommandRoutingUseBacktickUnterminated          MessageID = "cyphercommandrouting.use_backtick_unterminated"
-	MessageCypherCommandRoutingGraphReferenceInvalid            MessageID = "cyphercommandrouting.graph_reference_invalid"
-	MessageCypherCommandRoutingGraphReferenceArgumentRequired   MessageID = "cyphercommandrouting.graph_reference_argument_required"
-	MessageCypherCommandRoutingGraphReferenceOpenParenExpected  MessageID = "cyphercommandrouting.graph_reference_open_paren_expected"
-	MessageCypherCommandRoutingGraphReferenceUnterminated       MessageID = "cyphercommandrouting.graph_reference_unterminated"
-	MessageCypherCommandRoutingGraphReferenceArgumentEmpty      MessageID = "cyphercommandrouting.graph_reference_argument_empty"
-	MessageCypherCommandRoutingGraphReferenceStringUnterminated MessageID = "cyphercommandrouting.graph_reference_string_unterminated"
-	MessageCypherCommandRoutingBacktickIdentifierUnterminated   MessageID = "cyphercommandrouting.backtick_identifier_unterminated"
-	MessageCypherCommandRoutingUseConstituentOutsideComposite   MessageID = "cyphercommandrouting.use_constituent_outside_composite"
-	MessageCypherCommandRoutingUseFailed                        MessageID = "cyphercommandrouting.use_failed"
-	MessageCypherCommandRoutingUseBackendUnsupported            MessageID = "cyphercommandrouting.use_backend_unsupported"
-	MessageCypherCommandRoutingUseDatabaseManagerUnavailable    MessageID = "cyphercommandrouting.use_database_manager_unavailable"
-	MessageCypherCommandRoutingUseStorageTypeInvalid            MessageID = "cyphercommandrouting.use_storage_type_invalid"
-	MessageCypherCommandRoutingUseDatabaseNotComposite          MessageID = "cyphercommandrouting.use_database_not_composite"
-	MessageCypherCommandRoutingUnknownYieldColumn               MessageID = "cyphercommandrouting.unknown_yield_column"
-	MessageCypherCommandRoutingProcedureMinArguments            MessageID = "cyphercommandrouting.procedure_min_arguments"
-	MessageCypherCommandRoutingProcedureMaxArguments            MessageID = "cyphercommandrouting.procedure_max_arguments"
+	MessageCypherCommandRoutingUnknownCommand                     MessageID = "cyphercommandrouting.unknown_command"
+	MessageCypherCommandRoutingEmptyCommand                       MessageID = "cyphercommandrouting.empty_command"
+	MessageCypherCommandRoutingShellUseDatabaseRequired           MessageID = "cyphercommandrouting.shell_use_database_required"
+	MessageCypherCommandRoutingParameterMapRequired               MessageID = "cyphercommandrouting.parameter_map_required"
+	MessageCypherCommandRoutingParameterArgumentRequired          MessageID = "cyphercommandrouting.parameter_argument_required"
+	MessageCypherCommandRoutingParameterValueRequired             MessageID = "cyphercommandrouting.parameter_value_required"
+	MessageCypherCommandRoutingParameterUsage                     MessageID = "cyphercommandrouting.parameter_usage"
+	MessageCypherCommandRoutingParameterMapKeysStrings            MessageID = "cyphercommandrouting.parameter_map_keys_strings"
+	MessageCypherCommandRoutingParameterMapEntryEmpty             MessageID = "cyphercommandrouting.parameter_map_entry_empty"
+	MessageCypherCommandRoutingParameterMapEntryInvalid           MessageID = "cyphercommandrouting.parameter_map_entry_invalid"
+	MessageCypherCommandRoutingParameterEvaluationFailed          MessageID = "cyphercommandrouting.parameter_evaluation_failed"
+	MessageCypherCommandRoutingParameterProducedNoValue           MessageID = "cyphercommandrouting.parameter_produced_no_value"
+	MessageCypherCommandRoutingParameterExpressionUnresolved      MessageID = "cyphercommandrouting.parameter_expression_unresolved"
+	MessageCypherCommandRoutingCallTailSeedRequired               MessageID = "cyphercommandrouting.call_tail_seed_required"
+	MessageCypherCommandRoutingCallTailLimitInvalid               MessageID = "cyphercommandrouting.call_tail_limit_invalid"
+	MessageCypherCommandRoutingCallTailSkipInvalid                MessageID = "cyphercommandrouting.call_tail_skip_invalid"
+	MessageCypherCommandRoutingWhereBooleanRequired               MessageID = "cyphercommandrouting.where_boolean_required"
+	MessageCypherCommandRoutingUnknownProcedure                   MessageID = "cyphercommandrouting.unknown_procedure"
+	MessageCypherCommandRoutingFabricNotPrepared                  MessageID = "cyphercommandrouting.fabric_not_prepared"
+	MessageCypherCommandRoutingFabricStorageTypeInvalid           MessageID = "cyphercommandrouting.fabric_storage_type_invalid"
+	MessageCypherCommandRoutingFabricPreparedContextInvalid       MessageID = "cyphercommandrouting.fabric_prepared_context_invalid"
+	MessageCypherCommandRoutingFabricConstituentsFailed           MessageID = "cyphercommandrouting.fabric_constituents_failed"
+	MessageCypherCommandRoutingFabricShardTransactionFailed       MessageID = "cyphercommandrouting.fabric_shard_transaction_failed"
+	MessageCypherCommandRoutingUseDatabaseRequired                MessageID = "cyphercommandrouting.use_database_required"
+	MessageCypherCommandRoutingUseConstituentOutsideComposite     MessageID = "cyphercommandrouting.use_constituent_outside_composite"
+	MessageCypherCommandRoutingUseFailed                          MessageID = "cyphercommandrouting.use_failed"
+	MessageCypherCommandRoutingUseBackendUnsupported              MessageID = "cyphercommandrouting.use_backend_unsupported"
+	MessageCypherCommandRoutingUseDatabaseManagerUnavailable      MessageID = "cyphercommandrouting.use_database_manager_unavailable"
+	MessageCypherCommandRoutingUseStorageTypeInvalid              MessageID = "cyphercommandrouting.use_storage_type_invalid"
+	MessageCypherCommandRoutingUseDatabaseNotComposite            MessageID = "cyphercommandrouting.use_database_not_composite"
+	MessageCypherCommandRoutingUnknownYieldColumn                 MessageID = "cyphercommandrouting.unknown_yield_column"
+	MessageCypherCommandRoutingProcedureMinArguments              MessageID = "cyphercommandrouting.procedure_min_arguments"
+	MessageCypherCommandRoutingProcedureMaxArguments              MessageID = "cyphercommandrouting.procedure_max_arguments"
+	MessageCypherCommandRoutingUseQueryCannotConclude             MessageID = "cyphercommandrouting.use_query_cannot_conclude"
+	MessageCypherCommandRoutingUseSubqueryMustConclude            MessageID = "cyphercommandrouting.use_subquery_must_conclude"
+	MessageCypherCommandRoutingUseInvalidClauseAfterGraph         MessageID = "cyphercommandrouting.use_invalid_clause_after_graph"
+	MessageCypherCommandRoutingUseInvalidSubqueryClauseAfterGraph MessageID = "cyphercommandrouting.use_invalid_subquery_clause_after_graph"
+	MessageCypherCommandRoutingUseInvalidGraphReference           MessageID = "cyphercommandrouting.use_invalid_graph_reference"
+	MessageCypherCommandRoutingUseInvalidGraphNamePart            MessageID = "cyphercommandrouting.use_invalid_graph_name_part"
+	MessageCypherCommandRoutingUseInvalidGraphFunctionArgument    MessageID = "cyphercommandrouting.use_invalid_graph_function_argument"
+	MessageCypherCommandRoutingUseNotFirstClause                  MessageID = "cyphercommandrouting.use_not_first_clause"
+	MessageCypherCommandRoutingUseAdministrationCommand           MessageID = "cyphercommandrouting.use_administration_command"
+	MessageCypherCommandRoutingUseDynamicLookupNotAllowed         MessageID = "cyphercommandrouting.use_dynamic_lookup_not_allowed"
+	MessageCypherCommandRoutingGraphNotFound                      MessageID = "cyphercommandrouting.graph_not_found"
+	MessageCypherCommandRoutingGraphFunctionUnknown               MessageID = "cyphercommandrouting.graph_function_unknown"
+	MessageCypherCommandRoutingGraphFunctionArgumentCount         MessageID = "cyphercommandrouting.graph_function_argument_count"
+	MessageCypherCommandRoutingGraphFunctionArgumentType          MessageID = "cyphercommandrouting.graph_function_argument_type"
+	MessageCypherCommandRoutingGraphFunctionArgumentInvalid       MessageID = "cyphercommandrouting.graph_function_argument_invalid"
+	MessageCypherCommandRoutingGraphElementIDInvalid              MessageID = "cyphercommandrouting.graph_element_id_invalid"
+	MessageCypherCommandRoutingTransactionSecondDatabaseWrite     MessageID = "cyphercommandrouting.transaction_second_database_write"
+	MessageCypherCommandRoutingTransactionSecondDatabaseAccess    MessageID = "cyphercommandrouting.transaction_second_database_access"
+	MessageCypherCommandRoutingGraphFunctionOnlyInUse             MessageID = "cyphercommandrouting.graph_function_only_in_use"
 )
 
 func cypherCommandRoutingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -147,42 +160,6 @@ func CypherCommandRoutingUseDatabaseRequired() Message {
 	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseDatabaseRequired, "USE clause requires a database name", nil)
 }
 
-func CypherCommandRoutingUseInvalid(cause error) Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseInvalid, "invalid USE clause: "+cause.Error(), map[string]any{"Cause": cause.Error()})
-}
-
-func CypherCommandRoutingUseBacktickUnterminated() Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseBacktickUnterminated, "invalid USE clause: unterminated backtick identifier", nil)
-}
-
-func CypherCommandRoutingGraphReferenceInvalid() Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphReferenceInvalid, "invalid graph reference", nil)
-}
-
-func CypherCommandRoutingGraphReferenceArgumentRequired() Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphReferenceArgumentRequired, "graph reference requires an argument", nil)
-}
-
-func CypherCommandRoutingGraphReferenceOpenParenExpected(position int) Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphReferenceOpenParenExpected, fmt.Sprintf("expected '(' at position %d", position), map[string]any{"Position": position})
-}
-
-func CypherCommandRoutingGraphReferenceUnterminated() Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphReferenceUnterminated, "unterminated graph reference", nil)
-}
-
-func CypherCommandRoutingGraphReferenceArgumentEmpty() Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphReferenceArgumentEmpty, "empty graph reference argument", nil)
-}
-
-func CypherCommandRoutingGraphReferenceStringUnterminated() Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphReferenceStringUnterminated, "unterminated graph reference string", nil)
-}
-
-func CypherCommandRoutingBacktickIdentifierUnterminated() Message {
-	return cypherCommandRoutingMessage(MessageCypherCommandRoutingBacktickIdentifierUnterminated, "unterminated backtick identifier", nil)
-}
-
 func CypherCommandRoutingUseConstituentOutsideComposite(target, constituent, composite string) Message {
 	fallback := fmt.Sprintf("USE %s failed: constituent '%s' is not part of current composite '%s'", target, constituent, composite)
 	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseConstituentOutsideComposite, fallback, map[string]any{"Target": target, "Constituent": constituent, "Composite": composite})
@@ -220,4 +197,80 @@ func CypherCommandRoutingProcedureMinArguments(procedure string, minimum, actual
 func CypherCommandRoutingProcedureMaxArguments(procedure string, maximum, actual int) Message {
 	fallback := fmt.Sprintf("procedure %s accepts at most %d arguments, got %d", procedure, maximum, actual)
 	return cypherCommandRoutingMessage(MessageCypherCommandRoutingProcedureMaxArguments, fallback, map[string]any{"Procedure": procedure, "Maximum": maximum, "Actual": actual})
+}
+
+func CypherCommandRoutingUseQueryCannotConclude() Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseQueryCannotConclude, "Query cannot conclude with USE GRAPH (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD).", nil)
+}
+
+func CypherCommandRoutingUseSubqueryMustConclude() Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseSubqueryMustConclude, "Query must conclude with a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD.", nil)
+}
+
+func CypherCommandRoutingUseInvalidClauseAfterGraph(input string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseInvalidClauseAfterGraph, "Invalid input '"+input+"': expected a database name, '(', 'FOREACH', '.', 'ALTER', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'START DATABASE', 'STOP DATABASE', 'DEALLOCATE', 'DELETE', 'DENY', 'DETACH', 'DROP', 'DRYRUN', 'FINISH', 'GRANT', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REALLOCATE', 'REMOVE', 'RENAME', 'RETURN', 'REVOKE', 'ENABLE SERVER', 'SET', 'SHOW', 'SKIP', 'TERMINATE', 'UNION', 'UNWIND', 'USE', 'WITH' or <EOF>", map[string]any{"Input": input})
+}
+
+func CypherCommandRoutingUseInvalidSubqueryClauseAfterGraph(input string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseInvalidSubqueryClauseAfterGraph, "Invalid input '"+input+"': expected a database name, '(', 'FOREACH', '.', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' or '}'", map[string]any{"Input": input})
+}
+
+func CypherCommandRoutingUseInvalidGraphReference(input string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseInvalidGraphReference, "Invalid input '"+input+"': expected an identifier, '(' or 'GRAPH'", map[string]any{"Input": input})
+}
+
+func CypherCommandRoutingUseInvalidGraphNamePart(input string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseInvalidGraphNamePart, "Invalid input '"+input+"': expected a database name or an identifier", map[string]any{"Input": input})
+}
+
+func CypherCommandRoutingUseInvalidGraphFunctionArgument(input string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseInvalidGraphFunctionArgument, "Invalid input '"+input+"': expected an expression, ')' or ','", map[string]any{"Input": input})
+}
+
+func CypherCommandRoutingUseNotFirstClause() Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseNotFirstClause, "USE clause must be either the first clause in a (sub-)query or preceded by an importing WITH clause in a sub-query.", nil)
+}
+
+func CypherCommandRoutingUseAdministrationCommand() Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseAdministrationCommand, "The `USE` clause is not required for Administration Commands. Retry your query omitting the `USE` clause and it will be routed automatically.", nil)
+}
+
+func CypherCommandRoutingUseDynamicLookupNotAllowed(graph string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingUseDynamicLookupNotAllowed, "Dynamic graph lookup not allowed here. This feature is only available on composite databases.\nAttempted to access graph "+graph, map[string]any{"Graph": graph})
+}
+
+func CypherCommandRoutingGraphNotFound(graph string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphNotFound, "Graph not found: "+graph, map[string]any{"Graph": graph})
+}
+
+func CypherCommandRoutingGraphFunctionUnknown(function string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphFunctionUnknown, "Unknown function '"+function+"'", map[string]any{"Function": function})
+}
+
+func CypherCommandRoutingGraphFunctionArgumentCount(function string, count int) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphFunctionArgumentCount, function+" takes 1 argument, got "+strconv.Itoa(count), map[string]any{"Function": function, "Count": count})
+}
+
+func CypherCommandRoutingGraphFunctionArgumentType(argument string, valueType string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphFunctionArgumentType, "Expected "+argument+" to be a STRING, but it was "+valueType, map[string]any{"Argument": argument, "Type": valueType})
+}
+
+func CypherCommandRoutingGraphFunctionArgumentInvalid(argument string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphFunctionArgumentInvalid, "Invalid graph reference argument: "+argument, map[string]any{"Argument": argument})
+}
+
+func CypherCommandRoutingGraphElementIDInvalid(elementID string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphElementIDInvalid, "Element ID "+elementID+" has an unexpected format.", map[string]any{"ElementID": elementID})
+}
+
+func CypherCommandRoutingTransactionSecondDatabaseWrite(target string, current string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingTransactionSecondDatabaseWrite, "Writing to more than one database per transaction is not allowed. Attempted write to "+target+", currently writing to "+current, map[string]any{"Target": target, "Current": current})
+}
+
+func CypherCommandRoutingTransactionSecondDatabaseAccess(target string, current string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingTransactionSecondDatabaseAccess, "Accessing more than one database per transaction is not allowed. Attempted access to "+target+", currently using "+current, map[string]any{"Target": target, "Current": current})
+}
+
+func CypherCommandRoutingGraphFunctionOnlyInUse(function string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingGraphFunctionOnlyInUse, "`"+function+"` is only allowed at the first position of a USE clause.", map[string]any{"Function": function})
 }

@@ -528,6 +528,7 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		// Create composite engine with intelligent default routing
 		// Routing will be auto-configured based on constituent aliases and access modes
 		compositeEngine := storage.NewCompositeEngine(constituents, constituentNames, accessModes)
+		compositeEngine.SetCompositeName(name)
 		// Note: We don't cache composite engines the same way as they're lightweight wrappers
 		return compositeEngine, nil
 	}

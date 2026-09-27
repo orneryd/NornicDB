@@ -70,12 +70,11 @@ func TestServerExtraStatementTargetDatabaseBranches(t *testing.T) {
 		{name: "colon use", defaultDB: "neo4j", statement: ":USE tenant MATCH (n)", want: "tenant"},
 		{name: "bare colon use falls through", defaultDB: "neo4j", statement: ":USE", want: "neo4j"},
 		{name: "bare use falls through", defaultDB: "neo4j", statement: "USE", want: "neo4j"},
-		{name: "graph by name quoted", defaultDB: "neo4j", statement: "USE graph.byName('tenant-db')", want: "tenant-db"},
-		{name: "graph by element id unquoted", defaultDB: "neo4j", statement: "USE graph.byElementId(tenantGraph)", want: "tenantGraph"},
-		{name: "graph reference invalid", defaultDB: "neo4j", statement: "USE graph.byName(", wantErr: "requires a valid graph reference argument"},
-		{name: "quoted escaped database", defaultDB: "neo4j", statement: "USE `tenant``one` MATCH (n)", want: "tenant`one"},
-		{name: "quoted database unterminated", defaultDB: "neo4j", statement: "USE `tenant", wantErr: "unterminated quoted database name"},
-		{name: "plain use", defaultDB: "neo4j", statement: "USE tenant RETURN 1", want: "tenant"},
+		// A USE clause is routed by the request database's executor (#738).
+		{name: "graph by name", defaultDB: "neo4j", statement: "USE graph.byName('tenant-db')", want: "neo4j"},
+		{name: "graph reference invalid", defaultDB: "neo4j", statement: "USE graph.byName(", want: "neo4j"},
+		{name: "quoted database", defaultDB: "neo4j", statement: "USE `tenant``one` MATCH (n)", want: "neo4j"},
+		{name: "plain use", defaultDB: "neo4j", statement: "USE tenant RETURN 1", want: "neo4j"},
 	}
 
 	for _, tc := range cases {

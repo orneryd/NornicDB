@@ -17,6 +17,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -92,48 +93,11 @@ func statementTargetDatabase(defaultDB string, statement string) (string, error)
 		return target, nil
 	}
 
-	if !hasPrefixFold(trimmed, "USE ") {
-		return db, nil
-	}
-
-	rest := strings.TrimSpace(trimmed[len("USE"):])
-	if rest == "" {
-		return "", fmt.Errorf("USE requires a database name")
-	}
-
-	if hasPrefixFold(rest, "graph.byname(") || hasPrefixFold(rest, "graph.byelementid(") {
-		open := strings.Index(rest, "(")
-		close := strings.LastIndex(rest, ")")
-		if open >= 0 && close > open {
-			arg := strings.TrimSpace(rest[open+1 : close])
-			if len(arg) >= 2 && ((arg[0] == '\'' && arg[len(arg)-1] == '\'') || (arg[0] == '"' && arg[len(arg)-1] == '"')) {
-				return arg[1 : len(arg)-1], nil
-			}
-			if arg != "" {
-				return strings.Fields(arg)[0], nil
-			}
-		}
-		return "", fmt.Errorf("USE %s requires a valid graph reference argument", rest)
-	}
-
-	if rest[0] == '`' {
-		for i := 1; i < len(rest); i++ {
-			if rest[i] == '`' {
-				if i+1 < len(rest) && rest[i+1] == '`' {
-					i++
-					continue
-				}
-				return strings.ReplaceAll(rest[1:i], "``", "`"), nil
-			}
-		}
-		return "", fmt.Errorf("USE has unterminated quoted database name")
-	}
-
-	parts := strings.Fields(rest)
-	if len(parts) == 0 {
-		return "", fmt.Errorf("USE requires a database name")
-	}
-	return strings.TrimSpace(parts[0]), nil
+	// A USE clause runs on the request's database's executor, which routes
+	// it (resolving aliases, composite constituents and dynamic references),
+	// checks the principal's access to its target and keeps a transaction on
+	// its database: one USE rule for every route (#738).
+	return db, nil
 }
 
 func normalizeStatementForExecution(defaultDB string, statement string) (effectiveDB string, query string, err error) {
@@ -669,7 +633,7 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 	}
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
+	if !s.canAccessGraph(getClaims(r), dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -889,7 +853,7 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 // handleClusterStatus returns cluster status (standalone mode)
 func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbName string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
+	if !s.canAccessGraph(getClaims(r), dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1593,7 +1557,7 @@ func (s *Server) sessionStatementRunner(session *txsession.Session) statementRun
 			return nil, nil, &requestStatementError{QueryError: *queryErr}
 		}
 		if s.isConstituentOf(session.Database, dbName) {
-			if target, err := statementTargetDatabase(session.Database, query); err == nil && target == session.Database {
+			if _, _, hasUse, _ := fabric.ParseUseClause(query, false); !hasUse {
 				query = "USE " + dbName + " " + query
 			}
 		}
@@ -1677,18 +1641,25 @@ func (s *Server) runRequestStatements(
 	ctx = cypher.WithAuthToken(ctx, authToken)
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
 	mode := s.getDatabaseAccessMode(claims)
+	// A name is checked like the request's database (canAccessGraph: a
+	// composite constituent needs its composite and its database), and
+	// read / write are the privileges of the database its data is in.
 	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, func(database, permission string) bool {
-		if !mode.CanAccessDatabase(database) {
-			return false
+		databases := s.graphDatabases(database)
+		for _, selected := range databases {
+			if !mode.CanAccessDatabase(selected) {
+				return false
+			}
 		}
 		if !s.isRBACEnforced() {
 			return true
 		}
+		target := databases[len(databases)-1]
 		switch permission {
 		case "read":
-			return s.getResolvedAccess(claims, database).Read
+			return s.getResolvedAccess(claims, target).Read
 		case "write":
-			return s.getResolvedAccess(claims, database).Write
+			return s.getResolvedAccess(claims, target).Write
 		case "schema", "admin":
 			return claims != nil && hasPermission(s, claims.Roles, auth.Permission(permission))
 		}
@@ -1721,15 +1692,24 @@ func (s *Server) runRequestStatement(
 		return &queryErr
 	}
 
-	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(effectiveDB) {
+	// Per-database access: deny if principal may not access this database
+	// (Neo4j-aligned). A statement's leading USE clause names the database
+	// it runs on: its access and permissions are checked here with the
+	// same messages as the request's database, before the executor routes
+	// the statement there (the executor checks every database a statement
+	// selects again, including subquery USE and composite constituents).
+	checkedDB := effectiveDB
+	if use, _, hasUse, err := fabric.ParseUseClause(queryStatement, false); err == nil && hasUse && !use.IsDynamic() {
+		checkedDB = use.Name
+	}
+	if !s.canAccessGraph(claims, checkedDB) {
 		return &QueryError{
 			Code:    "Neo.ClientError.Security.Forbidden",
-			Message: localize(localization.DatabaseAccessDenied(effectiveDB)),
+			Message: localize(localization.DatabaseAccessDenied(checkedDB)),
 		}
 	}
-	if missing := s.missingQueryPermission(claims, effectiveDB, queryStatement); missing != "" {
-		message := localization.DatabaseWriteDenied(effectiveDB)
+	if missing := s.missingQueryPermission(claims, checkedDB, queryStatement); missing != "" {
+		message := localization.DatabaseWriteDenied(checkedDB)
 		if missing == auth.PermSchema {
 			message = localization.SchemaPermissionRequired()
 		} else if missing == auth.PermAdmin {
@@ -1818,7 +1798,7 @@ func (s *Server) runOneShotTransaction(
 	localize func(localization.Message) string,
 	response *TransactionResponse,
 ) {
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+	if !s.canAccessGraph(claims, dbName) {
 		response.Errors = append(response.Errors, QueryError{
 			Code:    "Neo.ClientError.Security.Forbidden",
 			Message: localize(localization.DatabaseAccessDenied(dbName)),
@@ -1921,7 +1901,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	claims := getClaims(r)
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+	if !s.canAccessGraph(claims, dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1962,7 +1942,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 
 func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	claims := getClaims(r)
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+	if !s.canAccessGraph(claims, dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1998,7 +1978,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 	claims := getClaims(r)
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+	if !s.canAccessGraph(claims, dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -2033,7 +2013,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 
 func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
+	if !s.canAccessGraph(getClaims(r), dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}

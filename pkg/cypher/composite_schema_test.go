@@ -289,13 +289,15 @@ func TestCompositeRoot_PlainCreate_Rejected(t *testing.T) {
 	require.Contains(t, err.Error(), "Neo.ClientError.Statement.NotAllowed")
 }
 
-func TestCompositeRoot_PlainReturn_Rejected(t *testing.T) {
+// TestCompositeRoot_PlainReturn_Runs: a statement that reads or writes no
+// graph runs on the composite itself, as in Neo4j (#738).
+func TestCompositeRoot_PlainReturn_Runs(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
 	exec := compositeRootExecutor(t, mgr)
 
-	_, err := exec.Execute(context.Background(), "RETURN 1 AS one", nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.NotAllowed")
+	result, err := exec.Execute(context.Background(), "RETURN 1 AS one", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 }
 
 func TestCompositeRoot_UseConstituent_Match_Succeeds(t *testing.T) {

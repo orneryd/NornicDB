@@ -2027,17 +2027,20 @@ RETURN alice, bob, company`
 		require.NotNil(t, result)
 		require.Len(t, result.Rows, 1, "should return one row with alice, bob, company")
 
-		// Verify nodes were created
-		countResult, err := exec.Execute(ctx, "MATCH (n) RETURN count(n) as count", nil)
+		// The statement ran on test_db_a, the database :USE names (#738).
+		countResult, err := exec.Execute(ctx, "USE test_db_a MATCH (n) RETURN count(n) as count", nil)
 		require.NoError(t, err)
 		require.Len(t, countResult.Rows, 1)
 		assert.Equal(t, int64(3), countResult.Rows[0][0], "should have 3 nodes (alice, bob, company)")
 
-		// Verify relationships were created
-		relResult, err := exec.Execute(ctx, "MATCH ()-[r:WORKS_FOR]->() RETURN count(r) as count", nil)
+		relResult, err := exec.Execute(ctx, "USE test_db_a MATCH ()-[r:WORKS_FOR]->() RETURN count(r) as count", nil)
 		require.NoError(t, err)
 		require.Len(t, relResult.Rows, 1)
 		assert.Equal(t, int64(2), relResult.Rows[0][0], "should have 2 WORKS_FOR relationships")
+
+		homeCount, err := exec.Execute(ctx, "MATCH (n) RETURN count(n) as count", nil)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), homeCount.Rows[0][0], "nothing is written to the executor's own database")
 	})
 
 	t.Run(":USE command alone returns success", func(t *testing.T) {

@@ -22,9 +22,6 @@
 - id: cyphersubqueries.call_body_empty
   description: Cuerpo vacío de subconsulta CALL. La sintaxis no se traduce.
   other: "subconsulta CALL {} no válida: cuerpo vacío"
-- id: cyphersubqueries.use_clause_failed
-  description: Error de cláusula USE de CALL. Cause no se traduce.
-  other: "error en la cláusula USE de la subconsulta CALL: {{.Cause}}"
 - id: cyphersubqueries.use_database_failed
   description: Error de base de datos USE de CALL. Database y Cause no se traducen.
   other: "error de CALL subquery USE {{.Database}}: {{.Cause}}"

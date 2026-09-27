@@ -22,9 +22,6 @@
 - id: cyphersubqueries.call_body_empty
   description: Empty CALL subquery body. CALL syntax is untranslated.
   other: "invalid CALL {} subquery: empty body"
-- id: cyphersubqueries.use_clause_failed
-  description: CALL USE clause failure. Cause is untranslated diagnostic text.
-  other: "CALL subquery USE clause error: {{.Cause}}"
 - id: cyphersubqueries.use_database_failed
   description: CALL USE database failure. Database and Cause are untranslated diagnostic values.
   other: "CALL subquery USE {{.Database}} failed: {{.Cause}}"

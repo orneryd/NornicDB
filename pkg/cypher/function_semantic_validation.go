@@ -3,6 +3,8 @@ package cypher
 import (
 	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 func validateKnownFunctionsInExpression(expression string) error {
@@ -41,6 +43,17 @@ func validateKnownFunctionsInExpression(expression string) error {
 			continue
 		}
 		if _, known := builtInCypherFunctions[normalized]; known {
+			index = cursor + 1
+			continue
+		}
+		switch normalized {
+		case "graph.byname", "graph.byelementid":
+			// A graph reference, not a value (Neo4j 5.26).
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				localization.CypherCommandRoutingGraphFunctionOnlyInUse(name))
+		case "graph.names", "graph.propertiesbyname":
+			// Known on a composite database; elsewhere the call reports
+			// Neo4j's "Unknown function" (fn.UnknownFunctionError).
 			index = cursor + 1
 			continue
 		}

@@ -57,15 +57,12 @@ func TestLowCoverageHelpers_SmallFunctions(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, hasUse)
 
+	// A dynamic reference has no static name; it resolves when it runs.
 	db, rem, hasUse, err = parseLeadingUseClause("USE graph.byName('dbx') RETURN 1")
 	require.NoError(t, err)
 	require.True(t, hasUse)
-	require.Equal(t, "dbx", db)
+	require.Equal(t, "", db)
 	require.Equal(t, "RETURN 1", rem)
-
-	_, _, hasUse, err = parseLeadingUseClause("USE graph.byName() RETURN 1")
-	require.Error(t, err)
-	require.True(t, hasUse)
 
 	_, _, hasUse, err = parseLeadingUseClause("USE `broken RETURN 1")
 	require.Error(t, err)

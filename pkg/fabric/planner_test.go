@@ -270,32 +270,6 @@ func TestPlannerHelpers_ReturnClauseAndWithAliases(t *testing.T) {
 	}
 }
 
-func TestPlannerHelpers_ParseAndSplit(t *testing.T) {
-	paren, err := findMatchingParen("graph.byName('translations.tr')", strings.Index("graph.byName('translations.tr')", "("))
-	if err != nil {
-		t.Fatalf("unexpected paren matching error: %v", err)
-	}
-	if paren <= 0 {
-		t.Fatalf("expected positive matching paren index, got %d", paren)
-	}
-
-	graph, err := extractFirstGraphRefArg("'translations.tr', 'ignored'")
-	if err != nil {
-		t.Fatalf("unexpected graph ref arg parse error: %v", err)
-	}
-	if graph != "translations.tr" {
-		t.Fatalf("expected translations.tr, got %q", graph)
-	}
-
-	prefix, suffix, ok := splitAtTopLevelUse("MATCH (n) WITH n USE translations.tr RETURN n")
-	if !ok {
-		t.Fatalf("expected top-level USE split")
-	}
-	if strings.TrimSpace(prefix) == "" || !strings.Contains(strings.ToUpper(suffix), "USE") {
-		t.Fatalf("unexpected split parts: prefix=%q suffix=%q", prefix, suffix)
-	}
-}
-
 func TestPlan_CallWithThenUseSubquery(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("translations", &LocationLocal{DBName: "translations"})
@@ -640,7 +614,7 @@ RETURN x`
 }
 
 func TestParseLeadingUse_NoUse(t *testing.T) {
-	db, remaining, hasUse, err := parseLeadingUse("MATCH (n) RETURN n")
+	db, remaining, hasUse, err := parseLeadingUseName("MATCH (n) RETURN n")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -656,7 +630,7 @@ func TestParseLeadingUse_NoUse(t *testing.T) {
 }
 
 func TestParseLeadingUse_SimpleUse(t *testing.T) {
-	db, remaining, hasUse, err := parseLeadingUse("USE mydb MATCH (n) RETURN n")
+	db, remaining, hasUse, err := parseLeadingUseName("USE mydb MATCH (n) RETURN n")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -672,7 +646,7 @@ func TestParseLeadingUse_SimpleUse(t *testing.T) {
 }
 
 func TestParseLeadingUse_DottedName(t *testing.T) {
-	db, remaining, hasUse, err := parseLeadingUse("USE comp.shard MATCH (n)")
+	db, remaining, hasUse, err := parseLeadingUseName("USE comp.shard MATCH (n)")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -688,31 +662,42 @@ func TestParseLeadingUse_DottedName(t *testing.T) {
 }
 
 func TestParseLeadingUse_DynamicGraphReference(t *testing.T) {
-	db, remaining, hasUse, err := parseLeadingUse("USE graph.byName('tenant_a') MATCH (n) RETURN n")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	use, remaining, hasUse, err := parseLeadingUse("USE graph.byName('tenant_a') MATCH (n) RETURN n", false)
+	if err != nil || !hasUse {
+		t.Fatalf("unexpected result: hasUse=%v err=%v", hasUse, err)
 	}
-	if !hasUse {
-		t.Fatal("expected hasUse=true")
-	}
-	if db != "tenant_a" {
-		t.Fatalf("expected tenant_a, got %q", db)
+	if !use.IsDynamic() || use.Function != "graph.byName" || len(use.Args) != 1 || use.Args[0] != "'tenant_a'" {
+		t.Fatalf("unexpected dynamic reference: %+v", use)
 	}
 	if remaining != "MATCH (n) RETURN n" {
 		t.Fatalf("unexpected remaining query: %q", remaining)
 	}
 
-	db, _, hasUse, err = parseLeadingUse("USE graph.byElementId('tenant_b') RETURN 1")
-	if err != nil {
-		t.Fatalf("unexpected byElementId error: %v", err)
-	}
-	if !hasUse || db != "tenant_b" {
-		t.Fatalf("expected tenant_b from byElementId, got hasUse=%v db=%q", hasUse, db)
+	use, _, hasUse, err = parseLeadingUse("USE graph.byElementId($id) RETURN 1", false)
+	if err != nil || !hasUse || use.Text() != "graph.byElementId($id)" {
+		t.Fatalf("unexpected byElementId result: %+v hasUse=%v err=%v", use, hasUse, err)
 	}
 }
 
+func TestPlannerHelpers_SplitAtTopLevelUse(t *testing.T) {
+	prefix, suffix, ok := splitAtTopLevelUse("MATCH (n) WITH n USE translations.tr RETURN n")
+	if !ok {
+		t.Fatalf("expected top-level USE split")
+	}
+	if strings.TrimSpace(prefix) == "" || !strings.Contains(strings.ToUpper(suffix), "USE") {
+		t.Fatalf("unexpected split parts: prefix=%q suffix=%q", prefix, suffix)
+	}
+}
+
+// parseLeadingUseName is parseLeadingUse for a top-level query, returning
+// the static graph name.
+func parseLeadingUseName(query string) (string, string, bool, error) {
+	use, remaining, hasUse, err := parseLeadingUse(query, false)
+	return use.Name, remaining, hasUse, err
+}
+
 func TestParseLeadingUse_BacktickQuoted(t *testing.T) {
-	db, _, hasUse, err := parseLeadingUse("USE `my db` MATCH (n)")
+	db, _, hasUse, err := parseLeadingUseName("USE `my db` MATCH (n)")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -726,12 +711,12 @@ func TestParseLeadingUse_BacktickQuoted(t *testing.T) {
 
 func TestParseLeadingUse_NotUseKeyword(t *testing.T) {
 	// "USER" starts with "USE" but is not USE.
-	_, _, hasUse, _ := parseLeadingUse("USER foo")
+	_, _, hasUse, _ := parseLeadingUseName("USER foo")
 	if hasUse {
 		t.Error("expected hasUse=false for USER keyword")
 	}
 
-	_, _, hasUse, _ = parseLeadingUse("USING PERIODIC COMMIT")
+	_, _, hasUse, _ = parseLeadingUseName("USING PERIODIC COMMIT")
 	if hasUse {
 		t.Error("expected hasUse=false for USING keyword")
 	}
@@ -820,169 +805,6 @@ func TestQueryIsWrite(t *testing.T) {
 }
 
 // --- Additional coverage tests ---
-
-func TestExtractGraphReference_NoMatch(t *testing.T) {
-	_, _, isRef, err := extractGraphReference("normalIdentifier")
-	if isRef || err != nil {
-		t.Fatalf("expected no match for normal identifier, got isRef=%v err=%v", isRef, err)
-	}
-}
-
-func TestExtractGraphReference_NoParenNoMatch(t *testing.T) {
-	// The prefixes include "(", so "graph.byName" without "(" doesn't match.
-	_, _, isRef, _ := extractGraphReference("graph.byName")
-	if isRef {
-		t.Fatal("expected no match for graph.byName without paren")
-	}
-}
-
-func TestExtractGraphReference_MissingOpenParen(t *testing.T) {
-	// Force match by including prefix with "(": "graph.byname( " but without actual "(" in trimmed.
-	// Actually the prefix includes "(", so to hit the openIdx < 0 branch, we'd need
-	// HasPrefix to match but Index("(") to fail, which is impossible since prefix contains "(".
-	// Let's just test the unmatched paren path instead.
-	_, _, isRef, err := extractGraphReference("graph.byName('unmatched")
-	if !isRef || err == nil {
-		t.Fatal("expected error for unmatched paren in graph reference")
-	}
-}
-
-func TestExtractGraphReference_EmptyArgs(t *testing.T) {
-	_, _, isRef, err := extractGraphReference("graph.byName()")
-	if !isRef || err == nil {
-		t.Fatal("expected error for empty args")
-	}
-}
-
-func TestExtractGraphReference_UnmatchedParen(t *testing.T) {
-	_, _, isRef, err := extractGraphReference("graph.byName('abc")
-	if !isRef || err == nil {
-		t.Fatal("expected error for unmatched paren")
-	}
-}
-
-func TestExtractGraphReference_WithRemainder(t *testing.T) {
-	graph, rem, isRef, err := extractGraphReference("graph.byName('db') MATCH (n)")
-	if err != nil || !isRef {
-		t.Fatalf("unexpected: isRef=%v err=%v", isRef, err)
-	}
-	if graph != "db" {
-		t.Fatalf("expected db, got %q", graph)
-	}
-	if strings.TrimSpace(rem) != "MATCH (n)" {
-		t.Fatalf("expected MATCH (n) remainder, got %q", rem)
-	}
-}
-
-func TestExtractGraphReference_ByElementId(t *testing.T) {
-	graph, _, isRef, err := extractGraphReference("graph.byElementId('elem1')")
-	if err != nil || !isRef {
-		t.Fatalf("unexpected: isRef=%v err=%v", isRef, err)
-	}
-	if graph != "elem1" {
-		t.Fatalf("expected elem1, got %q", graph)
-	}
-}
-
-func TestFindMatchingParen_EscapedQuotes(t *testing.T) {
-	// Single-quoted with escaped single quote inside.
-	pos, err := findMatchingParen("('it''s ok')", 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pos != 11 {
-		t.Fatalf("expected pos=11, got %d", pos)
-	}
-	// Double-quoted with escaped double quote inside.
-	pos, err = findMatchingParen(`("say ""hello""")`, 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pos != 16 {
-		t.Fatalf("expected pos=16, got %d", pos)
-	}
-}
-
-func TestFindMatchingParen_NotAtParen(t *testing.T) {
-	_, err := findMatchingParen("abc", 0)
-	if err == nil {
-		t.Fatal("expected error when pos is not at (")
-	}
-}
-
-func TestFindMatchingParen_PosOutOfBounds(t *testing.T) {
-	_, err := findMatchingParen("()", 5)
-	if err == nil {
-		t.Fatal("expected error for out-of-bounds pos")
-	}
-}
-
-func TestFindMatchingParen_Nested(t *testing.T) {
-	pos, err := findMatchingParen("(a(b)c)", 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pos != 6 {
-		t.Fatalf("expected pos=6, got %d", pos)
-	}
-}
-
-func TestExtractFirstGraphRefArg_DoubleQuoted(t *testing.T) {
-	got, err := extractFirstGraphRefArg(`"mydb"`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "mydb" {
-		t.Fatalf("expected mydb, got %q", got)
-	}
-}
-
-func TestExtractFirstGraphRefArg_UnterminatedString(t *testing.T) {
-	_, err := extractFirstGraphRefArg("'unterminated")
-	if err == nil {
-		t.Fatal("expected error for unterminated string")
-	}
-}
-
-func TestExtractFirstGraphRefArg_EscapedQuotes(t *testing.T) {
-	got, err := extractFirstGraphRefArg("'it''s'")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "it" {
-		// Escaped quote logic: first ' at index 3, but index 4 is also '.
-		// So i increments past the pair. Then i=5 is ', which closes.
-		// Result: args[1:5] = "it''"... Let me just verify:
-		t.Logf("escaped quote result: %q (this is code behavior)", got)
-	}
-}
-
-func TestExtractFirstGraphRefArg_BacktickQuoted(t *testing.T) {
-	got, err := extractFirstGraphRefArg("`my db`")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "my db" {
-		t.Fatalf("expected 'my db', got %q", got)
-	}
-}
-
-func TestExtractFirstGraphRefArg_Empty(t *testing.T) {
-	_, err := extractFirstGraphRefArg("")
-	if err == nil {
-		t.Fatal("expected error for empty arg")
-	}
-}
-
-func TestExtractFirstGraphRefArg_SimpleIdentifier(t *testing.T) {
-	got, err := extractFirstGraphRefArg("mydb")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "mydb" {
-		t.Fatalf("expected mydb, got %q", got)
-	}
-}
 
 func TestSplitTopLevelUnion_NoUnion(t *testing.T) {
 	parts, ops, hasUnion, err := splitTopLevelUnion("MATCH (n) RETURN n")
@@ -1226,65 +1048,6 @@ func TestIsValidIdentifier(t *testing.T) {
 	}
 }
 
-func TestExtractIdentifier_BacktickEscaped(t *testing.T) {
-	id, rem, err := extractIdentifier("`escaped``backtick` rest")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if id != "escaped`backtick" {
-		t.Fatalf("expected escaped`backtick, got %q", id)
-	}
-	if strings.TrimSpace(rem) != "rest" {
-		t.Fatalf("expected 'rest', got %q", rem)
-	}
-}
-
-func TestExtractIdentifier_UnterminatedBacktick(t *testing.T) {
-	_, _, err := extractIdentifier("`unterminated")
-	if err == nil {
-		t.Fatal("expected error for unterminated backtick")
-	}
-}
-
-func TestExtractIdentifier_EmptyString(t *testing.T) {
-	_, _, err := extractIdentifier("")
-	if err == nil {
-		t.Fatal("expected error for empty string")
-	}
-}
-
-func TestExtractIdentifier_InvalidStart(t *testing.T) {
-	// Characters that are not ident chars and not backtick trigger the error.
-	_, _, err := extractIdentifier("@abc")
-	if err == nil {
-		t.Fatal("expected error for invalid start char")
-	}
-}
-
-func TestExtractIdentifier_DigitStart(t *testing.T) {
-	// Digits are ident chars, so extractIdentifier accepts "123abc" as a valid identifier.
-	id, _, err := extractIdentifier("123abc rest")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if id != "123abc" {
-		t.Fatalf("expected 123abc, got %q", id)
-	}
-}
-
-func TestExtractIdentifier_DottedName(t *testing.T) {
-	id, rem, err := extractIdentifier("comp.shard MATCH")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if id != "comp.shard" {
-		t.Fatalf("expected comp.shard, got %q", id)
-	}
-	if strings.TrimSpace(rem) != "MATCH" {
-		t.Fatalf("expected 'MATCH', got %q", rem)
-	}
-}
-
 func TestExtractTopLevelCallBlocks_WithComments(t *testing.T) {
 	// Line comment.
 	query := "// comment\nCALL { RETURN 1 }\nRETURN x"
@@ -1511,14 +1274,14 @@ func TestParseLeadingWithUse_EmptyRemainder(t *testing.T) {
 }
 
 func TestParseLeadingUse_UseOnly(t *testing.T) {
-	_, _, _, err := parseLeadingUse("USE")
+	_, _, _, err := parseLeadingUseName("USE")
 	if err == nil {
 		t.Fatal("expected error for USE without database name")
 	}
 }
 
 func TestParseLeadingUse_InvalidGraphRef(t *testing.T) {
-	_, _, _, err := parseLeadingUse("USE graph.byName(")
+	_, _, _, err := parseLeadingUseName("USE graph.byName(")
 	if err == nil {
 		t.Fatal("expected error for invalid graph reference")
 	}
@@ -1745,16 +1508,9 @@ func TestParseLeadingWithUse_WithEndAtStart(t *testing.T) {
 }
 
 func TestParseLeadingUse_GraphRefError(t *testing.T) {
-	_, _, _, err := parseLeadingUse("USE graph.byName()")
+	_, _, _, err := parseLeadingUseName("USE graph.byName()")
 	if err == nil {
 		t.Fatal("expected error for empty graph reference")
-	}
-}
-
-func TestExtractFirstGraphRefArg_BacktickError(t *testing.T) {
-	_, err := extractFirstGraphRefArg("`unterminated")
-	if err == nil {
-		t.Fatal("expected error for unterminated backtick")
 	}
 }
 
@@ -2043,7 +1799,7 @@ RETURN x`
 }
 
 func TestParseLeadingUse_InvalidIdentifier(t *testing.T) {
-	_, _, _, err := parseLeadingUse("USE @invalid")
+	_, _, _, err := parseLeadingUseName("USE @invalid")
 	if err == nil {
 		t.Fatal("expected error for invalid identifier after USE")
 	}
@@ -2065,17 +1821,6 @@ func TestExtractGraphReference_OpenParenPresent(t *testing.T) {
 	// Test the openIdx < 0 branch — but since the prefix includes "(",
 	// HasPrefix only matches when "(" is present. So openIdx will always be >= 0
 	// when the prefix matches. This branch is unreachable by design.
-}
-
-func TestExtractFirstGraphRefArg_SimpleIdentifierWithRemainder(t *testing.T) {
-	got, err := extractFirstGraphRefArg("mydb, ignored")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// extractIdentifier stops at comma.
-	if got != "mydb" {
-		t.Fatalf("expected mydb, got %q", got)
-	}
 }
 
 func TestCallBlockContainsFabricUse_NestedCallWithoutUse(t *testing.T) {

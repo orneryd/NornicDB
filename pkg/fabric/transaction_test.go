@@ -98,7 +98,7 @@ func TestFabricTransaction_SecondWriteShardRejected(t *testing.T) {
 		t.Errorf("expected ErrSecondWriteShard, got: %v", err)
 	}
 	// Verify the error message matches Neo4j's contract.
-	if !strings.Contains(err.Error(), "Neo.ClientError.Transaction.ForbiddenDueToTransactionType") {
+	if !strings.Contains(err.Error(), "Neo.ClientError.Statement.AccessMode") {
 		t.Errorf("expected Neo4j-compatible error code, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "Writing to more than one database") {

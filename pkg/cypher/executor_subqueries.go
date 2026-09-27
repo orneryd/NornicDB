@@ -490,10 +490,14 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	// Handle USE clause inside CALL subquery body — resolve the target database
 	// and switch the executor before processing WITH/MATCH.
 	subqueryExecutor := e
-	if useDB, useRemaining, hasUse, useErr := parseLeadingUseClause(subqueryBody); hasUse || useErr != nil {
+	if use, useRemaining, hasUse, useErr := parseUseClause(subqueryBody, true); hasUse || useErr != nil {
 		if useErr != nil {
-			return nil, localizedError(localization.CypherSubqueriesUseClauseFailed(useErr), useErr)
+			return nil, useErr
 		}
+		if dynErr := e.dynamicUseError(use); dynErr != nil {
+			return nil, dynErr
+		}
+		useDB := use.Name
 		if authErr := e.authorizeSelectedDatabase(ctx, useDB); authErr != nil {
 			return nil, authErr
 		}
@@ -1444,10 +1448,14 @@ func (e *StorageExecutor) executeCallSubquery(ctx context.Context, cypher string
 	// cross-database subquery (e.g. CALL { USE nornic.tr MATCH ... }).
 	// Resolve the target database and execute against that engine.
 	subqueryExecutor := e
-	if useDB, useRemaining, hasUse, useErr := parseLeadingUseClause(subqueryBody); hasUse || useErr != nil {
+	if use, useRemaining, hasUse, useErr := parseUseClause(subqueryBody, true); hasUse || useErr != nil {
 		if useErr != nil {
-			return nil, localizedError(localization.CypherSubqueriesUseClauseFailed(useErr), useErr)
+			return nil, useErr
 		}
+		if dynErr := e.dynamicUseError(use); dynErr != nil {
+			return nil, dynErr
+		}
+		useDB := use.Name
 		if authErr := e.authorizeSelectedDatabase(ctx, useDB); authErr != nil {
 			return nil, authErr
 		}
@@ -2074,10 +2082,14 @@ func (e *StorageExecutor) executeChainedCallSubquery(ctx context.Context, seedRe
 		return nil, localizedError(localization.CypherSubqueriesChainedTransactionsUnsupported(batchSize), nil)
 	}
 
-	useDB, bodyWithoutUse, hasUse, err := parseLeadingUseClause(subqueryBody)
+	use, bodyWithoutUse, hasUse, err := parseUseClause(subqueryBody, true)
 	if err != nil {
 		return nil, err
 	}
+	if err := e.dynamicUseError(use); err != nil {
+		return nil, err
+	}
+	useDB := use.Name
 
 	targetExec := e
 	if hasUse {

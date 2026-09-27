@@ -104,50 +104,38 @@ func TestUseClause_RejectsUnauthorizedTargetBeforeRouting(t *testing.T) {
 		return database == "nornic" && permission == "read"
 	})
 
-	for _, query := range []string{"USE cmp RETURN 1 AS value", "USE cmp"} {
-		manager.lastAuthToken = ""
-		_, err := exec.Execute(WithAuthToken(ctx, "Bearer should-not-route"), query, nil)
-		var denied *PermissionDeniedError
-		require.True(t, errors.As(err, &denied))
-		require.Equal(t, "read", denied.Permission)
-		require.Empty(t, manager.lastAuthToken)
-	}
+	manager.lastAuthToken = ""
+	_, err := exec.Execute(WithAuthToken(ctx, "Bearer should-not-route"), "USE cmp RETURN 1 AS value", nil)
+	var denied *PermissionDeniedError
+	require.True(t, errors.As(err, &denied))
+	require.Equal(t, "read", denied.Permission)
+	require.Empty(t, manager.lastAuthToken)
+
+	// USE alone is a SyntaxError, reported before the target is looked up.
+	_, err = exec.Execute(WithAuthToken(ctx, "Bearer should-not-route"), "USE cmp", nil)
+	require.ErrorContains(t, err, "Query cannot conclude with USE GRAPH")
+	require.Empty(t, manager.lastAuthToken)
 }
 
-func TestParseLeadingUseClauseAndDynamicGraphRefs(t *testing.T) {
-	db, rem, hasUse, err := parseLeadingUseClause("USE graph.byName('translations.tr') RETURN 1 AS one")
+func TestParseUseClauseDynamicGraphRefs(t *testing.T) {
+	use, rem, hasUse, err := parseUseClause("USE graph.byName('translations.tr') RETURN 1 AS one", false)
 	require.NoError(t, err)
 	require.True(t, hasUse)
-	require.Equal(t, "translations.tr", db)
+	require.True(t, use.IsDynamic())
+	require.Equal(t, "graph.byName", use.Function)
+	require.Equal(t, []string{"'translations.tr'"}, use.Args)
+	require.Equal(t, `graph.byName("translations.tr")`, use.Text())
 	require.Equal(t, "RETURN 1 AS one", rem)
 
-	db, rem, hasUse, err = parseLeadingUseClause("USE graph.byElementId(`translations.txr`) MATCH (n) RETURN n")
+	use, rem, hasUse, err = parseUseClause("USE graph . byElementId($id) MATCH (n) RETURN n", false)
 	require.NoError(t, err)
 	require.True(t, hasUse)
-	require.Equal(t, "translations.txr", db)
+	require.Equal(t, "graph.byElementId($id)", use.Text())
 	require.Equal(t, "MATCH (n) RETURN n", rem)
 
-	_, _, hasUse, err = parseLeadingUseClause("USE graph.byName('unterminated RETURN 1")
+	_, _, hasUse, err = parseUseClause("USE graph.byName('unterminated RETURN 1", false)
 	require.True(t, hasUse)
-	require.Error(t, err)
-	require.Contains(t, strings.ToLower(err.Error()), "invalid use clause")
-}
-
-func TestParseGraphRefHelpers_EdgeBranches(t *testing.T) {
-	idx, err := findMatchingParenInUse("graph.byName('a)')", strings.Index("graph.byName('a)')", "("))
-	require.NoError(t, err)
-	require.Greater(t, idx, 0)
-
-	_, err = findMatchingParenInUse("graph.byName('a'", strings.Index("graph.byName('a'", "("))
-	require.Error(t, err)
-
-	db, err := parseFirstGraphRefArg("'translations.tr', 'ignored'")
-	require.NoError(t, err)
-	require.Equal(t, "translations.tr", db)
-
-	db, err = parseFirstGraphRefArg("translations.txr")
-	require.NoError(t, err)
-	require.Equal(t, "translations.txr", db)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 }
 
 func TestResolveCompositeStorageAndConstituent(t *testing.T) {

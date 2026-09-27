@@ -225,7 +225,8 @@ skipArrayIndexing:
 			Eval: func(argExpr string) (interface{}, error) {
 				return e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), nil
 			},
-			Now: time.Now,
+			Now:    time.Now,
+			Graphs: e.compositeGraphs,
 		}
 
 		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {

@@ -367,7 +367,8 @@ func (s *Server) missingQueryPermission(claims *auth.JWTClaims, dbName, query st
 	if requirements.Admin && !hasPermission(s, roles, auth.PermAdmin) {
 		return auth.PermAdmin
 	}
-	if requirements.Write && !s.getResolvedAccess(claims, dbName).Write {
+	databases := s.graphDatabases(dbName)
+	if requirements.Write && !s.getResolvedAccess(claims, databases[len(databases)-1]).Write {
 		return auth.PermWrite
 	}
 	return ""
@@ -391,6 +392,33 @@ func (s *Server) withDatabasePermissionChecker(ctx context.Context, claims *auth
 			return false
 		}
 	})
+}
+
+// canAccessGraph reports whether the principal may use graph, a request's
+// database: a database, an alias, or a composite constituent, which needs
+// access to its composite and its database (graphDatabases), as the
+// executor checks a USE of the same name.
+func (s *Server) canAccessGraph(claims *auth.JWTClaims, graph string) bool {
+	access := s.getDatabaseAccessMode(claims)
+	for _, database := range s.graphDatabases(graph) {
+		if !access.CanAccessDatabase(database) {
+			return false
+		}
+	}
+	return true
+}
+
+// graphDatabases returns the databases access to graph needs
+// (cypher.AccessDatabases), the last one being the database its data is in.
+func (s *Server) graphDatabases(graph string) []string {
+	if s.dbManager == nil {
+		return []string{graph}
+	}
+	databases, err := cypher.AccessDatabases(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, graph)
+	if err != nil || len(databases) == 0 {
+		return []string{graph}
+	}
+	return databases
 }
 
 // isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).

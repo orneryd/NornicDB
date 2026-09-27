@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -66,8 +67,8 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 		if useIdx < 0 {
 			break
 		}
-		target, _, hasUse, err := parseLeadingUseClause(cypher[useIdx:])
-		if hasUse && err == nil && e.useTargetRequiresFabric(target) {
+		use, _, hasUse, err := fabric.ParseUseClause(cypher[useIdx:], true)
+		if hasUse && err == nil && (e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())) {
 			return true
 		}
 		searchFrom = useIdx + len("USE")
@@ -159,6 +160,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
+	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	stream, err := fabricExecutor.Execute(ctx, tx, prepared.fragment, params, authToken)
 	if err != nil {
 		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
@@ -166,7 +168,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		if autoCommit {
 			_ = tx.Rollback(nil)
 		}
-		return nil, err
+		return nil, fabricGraphReferenceError(err)
 	}
 	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows)
 	if autoCommit {
@@ -307,7 +309,7 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 	}
 	fragment, err := e.planFabricQuery(catalog, cypher, sessionDB)
 	if err != nil {
-		return nil, err
+		return nil, fabricGraphReferenceError(err)
 	}
 	return &fabricPreparedExec{
 		catalog:   catalog,
@@ -462,6 +464,11 @@ func sameSourceID(a interface{}, b interface{}) bool {
 }
 
 func (e *StorageExecutor) currentDatabaseName() string {
+	if composite, ok := e.storage.(interface{ CompositeName() string }); ok {
+		if name := strings.TrimSpace(composite.CompositeName()); name != "" {
+			return name
+		}
+	}
 	if ns, ok := e.storage.(interface{ Namespace() string }); ok {
 		if name := strings.TrimSpace(ns.Namespace()); name != "" {
 			return name
@@ -884,4 +891,40 @@ func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, com
 		return nil
 	}
 	return tx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn)
+}
+
+// evaluateGraphArguments evaluates a dynamic graph reference's arguments
+// (USE graph.byName(g)) for Fabric: values holds the statement's
+// parameters and the current row's variables.
+func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]interface{}, error) {
+	ctx = context.WithValue(ctx, paramsKey, values)
+	out := make([]interface{}, len(expressions))
+	for i, expression := range expressions {
+		value, ok := e.evaluateRowExpressionWithContext(ctx, e.substituteParams(expression, values), pipelineRow(values))
+		if !ok {
+			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
+		}
+		out[i] = value
+	}
+	return out, nil
+}
+
+// fabricGraphReferenceError reports a dynamic graph reference Fabric could
+// not resolve with its Neo4j status: a graph that doesn't exist is
+// DatabaseNotFound "Graph not found: <name>".
+func fabricGraphReferenceError(err error) error {
+	var notFound *fabric.GraphNotFoundError
+	if errors.As(err, &notFound) {
+		return localizedStatusError("Neo.ClientError.Database.DatabaseNotFound", "DatabaseNotFound", localization.CypherCommandRoutingGraphNotFound(notFound.Name))
+	}
+	var reference *fabric.GraphReferenceError
+	if errors.As(err, &reference) {
+		return localizedStatusError(reference.Code, "GraphReference", reference.Message)
+	}
+	var syntax *fabric.UseSyntaxError
+	if errors.As(err, &syntax) {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntax.Message)
+	}
+	return err
 }

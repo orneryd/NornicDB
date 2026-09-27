@@ -1,192 +1,75 @@
 package cypher
 
 import (
+	"context"
+	"errors"
+	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// parseLeadingUseClause extracts a leading `USE <database>` clause from a query fragment.
-// It returns the selected database, remaining query, and whether a USE clause was found.
+// parseLeadingUseClause extracts a leading `USE <database>` clause from a
+// top-level query: the graph's name (empty for a dynamic reference), the
+// remaining query, and whether a USE clause was found. See parseUseClause.
 func parseLeadingUseClause(cypher string) (database, remaining string, hasUse bool, err error) {
-	trimmed := strings.TrimSpace(cypher)
-	if !startsWithKeywordFold(trimmed, "USE") {
-		return "", cypher, false, nil
-	}
-
-	rest := strings.TrimSpace(trimmed[len("USE"):])
-	if rest == "" {
-		return "", "", true, localizedError(localization.CypherCommandRoutingUseDatabaseRequired(), nil)
-	}
-
-	if graphRef, rem, ok, err := parseDynamicGraphReference(rest); ok {
-		if err != nil {
-			return "", "", true, localizedError(localization.CypherCommandRoutingUseInvalid(err), err)
-		}
-		return graphRef, strings.TrimSpace(rem), true, nil
-	}
-
-	if strings.HasPrefix(rest, "`") {
-		// Backtick-quoted identifier. Support escaped backticks using ``.
-		var b strings.Builder
-		escaped := false
-		for i := 1; i < len(rest); i++ {
-			ch := rest[i]
-			if ch == '`' {
-				if i+1 < len(rest) && rest[i+1] == '`' {
-					b.WriteByte('`')
-					i++
-					continue
-				}
-				database = b.String()
-				remaining = strings.TrimSpace(rest[i+1:])
-				return database, remaining, true, nil
-			}
-			if escaped {
-				escaped = false
-			}
-			b.WriteByte(ch)
-		}
-		return "", "", true, localizedError(localization.CypherCommandRoutingUseBacktickUnterminated(), nil)
-	}
-
-	parts := strings.Fields(rest)
-	if len(parts) == 0 {
-		return "", "", true, localizedError(localization.CypherCommandRoutingUseDatabaseRequired(), nil)
-	}
-
-	database = parts[0]
-	if len(parts) > 1 {
-		remaining = strings.TrimSpace(strings.TrimPrefix(rest, database))
-	}
-
-	return database, remaining, true, nil
+	clause, remaining, hasUse, err := parseUseClause(cypher, false)
+	return clause.Name, remaining, hasUse, err
 }
 
-func parseDynamicGraphReference(rest string) (database, remaining string, ok bool, err error) {
-	trimmed := strings.TrimSpace(rest)
-	lower := lowerASCII(trimmed)
-
-	for _, prefix := range []string{"graph.byname(", "graph.byelementid("} {
-		if !strings.HasPrefix(lower, prefix) {
-			continue
-		}
-
-		openIdx := strings.Index(trimmed, "(")
-		if openIdx < 0 {
-			return "", "", true, localizedError(localization.CypherCommandRoutingGraphReferenceInvalid(), nil)
-		}
-		closeIdx, err := findMatchingParenInUse(trimmed, openIdx)
-		if err != nil {
-			return "", "", true, err
-		}
-
-		arg := strings.TrimSpace(trimmed[openIdx+1 : closeIdx])
-		if arg == "" {
-			return "", "", true, localizedError(localization.CypherCommandRoutingGraphReferenceArgumentRequired(), nil)
-		}
-
-		db, err := parseFirstGraphRefArg(arg)
-		if err != nil {
-			return "", "", true, err
-		}
-
-		return db, trimmed[closeIdx+1:], true, nil
+// parseUseClause reads a leading USE clause with the one USE grammar
+// (fabric.ParseUseClause, Neo4j 5.26's) and reports a rejected clause as
+// Neo4j's SyntaxError. inSubquery is true for a CALL { } body.
+func parseUseClause(cypher string, inSubquery bool) (fabric.UseClause, string, bool, error) {
+	clause, remaining, hasUse, err := fabric.ParseUseClause(cypher, inSubquery)
+	if err == nil {
+		return clause, remaining, hasUse, nil
 	}
-
-	return "", "", false, nil
+	var syntaxErr *fabric.UseSyntaxError
+	if errors.As(err, &syntaxErr) {
+		return clause, remaining, hasUse, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntaxErr.Message)
+	}
+	return clause, remaining, hasUse, err
 }
 
-func findMatchingParenInUse(s string, pos int) (int, error) {
-	if pos >= len(s) || s[pos] != '(' {
-		return -1, localizedError(localization.CypherCommandRoutingGraphReferenceOpenParenExpected(pos), nil)
+// dynamicUseError is Neo4j's SyntaxError for a dynamic graph reference
+// (graph.byName(…), graph.byElementId(…)) outside a composite database:
+// only a composite database's queries look graphs up dynamically.
+func (e *StorageExecutor) dynamicUseError(clause fabric.UseClause) error {
+	if !clause.IsDynamic() || e.sessionIsComposite() {
+		return nil
 	}
-
-	depth := 1
-	inSingle := false
-	inDouble := false
-	for i := pos + 1; i < len(s); i++ {
-		ch := s[i]
-		if ch == '\'' && !inDouble {
-			if inSingle {
-				if i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingle = false
-			} else {
-				inSingle = true
-			}
-			continue
-		}
-		if ch == '"' && !inSingle {
-			if inDouble {
-				if i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDouble = false
-			} else {
-				inDouble = true
-			}
-			continue
-		}
-		if inSingle || inDouble {
-			continue
-		}
-
-		if ch == '(' {
-			depth++
-		} else if ch == ')' {
-			depth--
-			if depth == 0 {
-				return i, nil
-			}
-		}
-	}
-
-	return -1, localizedError(localization.CypherCommandRoutingGraphReferenceUnterminated(), nil)
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+		localization.CypherCommandRoutingUseDynamicLookupNotAllowed(clause.Text()))
 }
 
-func parseFirstGraphRefArg(arg string) (string, error) {
-	arg = strings.TrimSpace(arg)
-	if arg == "" {
-		return "", localizedError(localization.CypherCommandRoutingGraphReferenceArgumentEmpty(), nil)
+// compositeGraphs lists the graphs of the composite database this executor
+// runs on, as qualified names (composite.alias, sorted), for graph.names();
+// composite is false for any other database.
+func (e *StorageExecutor) compositeGraphs() (graphs []string, composite bool) {
+	if !e.sessionIsComposite() {
+		return nil, false
 	}
-
-	if arg[0] == '\'' || arg[0] == '"' {
-		quote := arg[0]
-		for i := 1; i < len(arg); i++ {
-			if arg[i] == quote {
-				if i+1 < len(arg) && arg[i+1] == quote {
-					i++
-					continue
+	name := e.currentDatabaseName()
+	if e.dbManager != nil {
+		if constituents, err := e.dbManager.GetCompositeConstituents(name); err == nil {
+			for _, raw := range constituents {
+				if ref, ok := toConstituentRef(raw); ok && strings.TrimSpace(ref.Alias) != "" {
+					graphs = append(graphs, name+"."+ref.Alias)
 				}
-				return arg[1:i], nil
 			}
 		}
-		return "", localizedError(localization.CypherCommandRoutingGraphReferenceStringUnterminated(), nil)
 	}
+	sort.Strings(graphs)
+	return graphs, true
+}
 
-	if arg[0] == '`' {
-		for i := 1; i < len(arg); i++ {
-			if arg[i] == '`' {
-				if i+1 < len(arg) && arg[i+1] == '`' {
-					i++
-					continue
-				}
-				return strings.ReplaceAll(arg[1:i], "``", "`"), nil
-			}
-		}
-		return "", localizedError(localization.CypherCommandRoutingBacktickIdentifierUnterminated(), nil)
-	}
-
-	fields := strings.Fields(arg)
-	if len(fields) == 0 {
-		return "", localizedError(localization.CypherCommandRoutingGraphReferenceArgumentRequired(), nil)
-	}
-	return fields[0], nil
+// sessionIsComposite reports whether this executor's database is a
+// composite database.
+func (e *StorageExecutor) sessionIsComposite() bool {
+	return isCompositeRoot(e.storage)
 }
 
 func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor {
@@ -258,25 +141,86 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 			return e.resolveCompositeStorage(targetDB, authToken)
 		}
 
-		// Standard database: resolve alias and switch namespace.
+		// Standard database: resolve alias.
 		resolved, err := e.dbManager.ResolveDatabase(targetDB)
 		if err != nil {
-			return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(targetDB, err), err)
+			return nil, "", localizedStatusError("Neo.ClientError.Database.DatabaseNotFound", "DatabaseNotFound", localization.CypherCommandRoutingGraphNotFound(targetDB))
 		}
 		targetDB = resolved
 	}
 
+	// The executor's own database runs here.
+	if strings.EqualFold(e.currentDatabaseName(), targetDB) {
+		return e, targetDB, nil
+	}
+	if e.dbManager != nil {
+		engine, err := e.dbManager.GetStorageForUse(targetDB, authToken)
+		if err != nil {
+			return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(targetDB, err), err)
+		}
+		store, ok := engine.(storage.Engine)
+		if !ok {
+			return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(targetDB), nil)
+		}
+		return e.cloneForStorage(store), targetDB, nil
+	}
+
+	// Without a database manager (embedded), a namespaced store switches
+	// namespace on its inner engine.
 	ns, ok := e.storage.(*storage.NamespacedEngine)
 	if !ok {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseBackendUnsupported(targetDB), nil)
 	}
+	return e.cloneForStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB)), targetDB, nil
+}
 
-	if strings.EqualFold(ns.Namespace(), targetDB) {
-		return e, targetDB, nil
+// otherDatabaseInTransactionError is the error for a statement of an
+// explicit transaction that targets database target (with USE or :USE)
+// other than the transaction's own, or nil. A transaction cannot span
+// databases (Neo4j Operations Manual: "a transaction cannot span across
+// multiple databases"); composite databases read several constituents
+// through Fabric instead. A write gets Neo4j's
+// Neo.ClientError.Statement.AccessMode "Writing to more than one database
+// per transaction is not allowed" (verified against Neo4j 5.26). Neo4j
+// Community has one user database, so its error for a read of a second one
+// could not be observed; a read gets the same code with the message worded
+// for a read.
+func (e *StorageExecutor) otherDatabaseInTransactionError(target, query string) error {
+	if e.txContext == nil || !e.txContext.active {
+		return nil
 	}
+	current := e.currentDatabaseName()
+	if strings.EqualFold(current, target) {
+		return nil
+	}
+	requirements := QueryPermissionRequirements(query)
+	if requirements.Write || requirements.Schema {
+		return localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
+			localization.CypherCommandRoutingTransactionSecondDatabaseWrite(target, current))
+	}
+	return localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
+		localization.CypherCommandRoutingTransactionSecondDatabaseAccess(target, current))
+}
 
-	scopedStore := storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB)
-	return e.cloneForStorage(scopedStore), targetDB, nil
+// executeOnDatabase runs query on database db, the target a leading USE
+// clause or :USE command names: on this executor for its own database,
+// else on db's executor. In an explicit transaction the target must be the
+// transaction's database.
+func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}) (*ExecuteResult, error) {
+	if err := e.authorizeSelectedDatabase(ctx, db); err != nil {
+		return nil, err
+	}
+	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	if scopedExec != e {
+		if err := e.otherDatabaseInTransactionError(resolvedDB, query); err != nil {
+			return nil, err
+		}
+	}
+	ctx = withExecutionDatabase(ctx, resolvedDB)
+	return scopedExec.Execute(ctx, query, params)
 }
 
 // resolveCompositeStorage resolves USE <composite> to a CompositeEngine-backed executor.

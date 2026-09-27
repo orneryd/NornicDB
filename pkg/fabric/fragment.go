@@ -74,6 +74,15 @@ type FragmentExec struct {
 	// and the part after the dot is the constituent alias.
 	GraphName string
 
+	// Graph is a dynamic graph reference (USE graph.byName(…) or
+	// graph.byElementId(…)), resolved each time the fragment runs from the
+	// statement's parameters and the input row; GraphName is then empty.
+	Graph *UseClause
+
+	// Scope is the composite database whose constituents a dynamic graph
+	// reference may name.
+	Scope string
+
 	// Columns lists the output column names produced by this execution.
 	Columns []string
 

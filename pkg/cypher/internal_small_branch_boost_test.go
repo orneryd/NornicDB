@@ -67,7 +67,8 @@ func TestExecuteInternal_UseClauseBranches(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := exec.executeInternal(ctx, "USE", nil)
-	require.EqualError(t, err, "USE clause requires a database name")
+	require.EqualError(t, err, "Invalid input '': expected an identifier, '(' or 'GRAPH'")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	res, err := exec.executeInternal(ctx, "USE foo RETURN 1 AS x", nil)
 	require.NoError(t, err)
@@ -75,11 +76,9 @@ func TestExecuteInternal_UseClauseBranches(t *testing.T) {
 	require.Len(t, res.Rows, 1)
 	require.EqualValues(t, int64(1), res.Rows[0][0])
 
-	// Remaining query empty after USE returns database info.
-	res, err = exec.executeInternal(ctx, "USE foo", nil)
-	require.NoError(t, err)
-	require.Equal(t, []string{"database"}, res.Columns)
-	require.Equal(t, "foo", res.Rows[0][0])
+	// USE alone is Neo4j's SyntaxError: a query must follow it.
+	_, err = exec.executeInternal(ctx, "USE foo", nil)
+	require.ErrorContains(t, err, "Query cannot conclude with USE GRAPH")
 
 	// Non-namespaced storage should reject USE.
 	nonNamespaced := NewStorageExecutor(newTestMemoryEngine(t))

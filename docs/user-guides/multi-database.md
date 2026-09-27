@@ -825,7 +825,7 @@ RETURN c
 
 Expected error:
 
-`Neo.ClientError.Transaction.ForbiddenDueToTransactionType: Writing to more than one database per transaction is not allowed`
+`Neo.ClientError.Statement.AccessMode: Writing to more than one database per transaction is not allowed`
 
 #### Troubleshooting
 

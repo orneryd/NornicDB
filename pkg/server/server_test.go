@@ -987,7 +987,8 @@ func TestCompositeExplicitTx_SecondWriteShardErrorCode(t *testing.T) {
 	}, "Bearer "+token)
 	require.Equal(t, http.StatusOK, firstResp.Code, firstResp.Body.String())
 
-	// Second write on shard b in same tx must fail with Neo4j tx type code.
+	// Second write on shard b in same tx fails with Neo4j's AccessMode
+	// "Writing to more than one database per transaction is not allowed".
 	secondResp := makeRequest(t, server, "POST", txPath, map[string]interface{}{
 		"statements": []map[string]interface{}{
 			{"statement": "CALL { USE cmp_tx_code.b CREATE (n:W {id:'2'}) RETURN count(n) AS c } RETURN c"},
@@ -1002,7 +1003,7 @@ func TestCompositeExplicitTx_SecondWriteShardErrorCode(t *testing.T) {
 	require.NotEmpty(t, errs)
 	firstErr, ok := errs[0].(map[string]interface{})
 	require.True(t, ok)
-	require.Equal(t, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType", firstErr["code"])
+	require.Equal(t, "Neo.ClientError.Statement.AccessMode", firstErr["code"])
 }
 
 func TestServerNew_ConfiguresDefaultRemoteEngineFactory(t *testing.T) {

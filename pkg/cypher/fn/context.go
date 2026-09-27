@@ -20,4 +20,9 @@ type Context struct {
 
 	Eval func(expr string) (interface{}, error)
 	Now  func() time.Time
+
+	// Graphs returns the graphs of the composite database the query runs
+	// on (qualified names, composite.alias) and whether it is a composite
+	// database. Nil means not a composite database.
+	Graphs func() ([]string, bool)
 }

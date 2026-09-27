@@ -182,7 +182,8 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 				}
 				return e.evaluateExpressionWithContext(ctx, argExpr, row.nodes, row.rels), nil
 			},
-			Now: time.Now,
+			Now:    time.Now,
+			Graphs: e.compositeGraphs,
 		}
 		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
 			if err != nil {

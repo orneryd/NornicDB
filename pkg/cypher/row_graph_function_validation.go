@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -239,6 +240,29 @@ func functionEvaluationFailure(ctx context.Context, err error) {
 	if errors.As(err, &argumentError) {
 		err = invalidFunctionArgument(argumentError.Function, argumentError.Value)
 	}
+	var unknown *cypherfn.UnknownFunctionError
+	if errors.As(err, &unknown) {
+		err = graphFunctionUnknownError(unknown.Function)
+	}
+	var notFound *cypherfn.GraphNotFoundError
+	if errors.As(err, &notFound) {
+		err = graphNotFoundError(notFound.Name)
+	}
 	err = typeMismatchFromFunctionError(err)
 	recordExpressionFailure(ctx, err)
+}
+
+// graphFunctionUnknownError is Neo4j's SyntaxError for a composite graph
+// function (graph.names, graph.propertiesByName) outside a composite
+// database: "Unknown function '<name>'".
+func graphFunctionUnknownError(function string) error {
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnknownFunction",
+		localization.CypherCommandRoutingGraphFunctionUnknown(function))
+}
+
+// graphNotFoundError is Neo4j's DatabaseNotFound "Graph not found: <name>"
+// for a graph name that isn't one of the composite database's graphs.
+func graphNotFoundError(name string) error {
+	return localizedStatusError("Neo.ClientError.Database.DatabaseNotFound", "DatabaseNotFound",
+		localization.CypherCommandRoutingGraphNotFound(name))
 }

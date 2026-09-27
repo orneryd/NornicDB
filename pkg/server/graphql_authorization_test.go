@@ -58,17 +58,17 @@ func TestGraphQLCypherEnforcesViewerPermissions(t *testing.T) {
 		statement  string
 		permission string
 	}{
-		"direct create":         {statement: "CREATE (:DeniedDirect)", permission: "write"},
-		"match delete":          {statement: "MATCH (n:GraphQLAuthorizationProtected) DETACH DELETE n", permission: "write"},
-		"optional match":        {statement: "OPTIONAL MATCH (n:GraphQLAuthorizationProtected) SET n.denied = true", permission: "write"},
-		"unwind create":         {statement: "UNWIND [1] AS value CREATE (:DeniedUnwind {value: value})", permission: "write"},
-		"with create":           {statement: "WITH 1 AS value CREATE (:DeniedWith {value: value})", permission: "write"},
-		"call dynamic":          {statement: "CALL apoc.cypher.run('CREATE (:DeniedDynamic)', {})", permission: "write"},
-		"schema":                {statement: "DROP INDEX denied_index IF EXISTS", permission: "schema"},
-		"admin":                 {statement: "CALL dbms.info()", permission: "admin"},
-		"admin DDL":             {statement: "DROP DATABASE nornic", permission: "admin"},
-		"out of scope USE":      {statement: "USE forbidden RETURN 1", permission: "read"},
-		"out of scope bare USE": {statement: "USE forbidden", permission: "read"},
+		"direct create":               {statement: "CREATE (:DeniedDirect)", permission: "write"},
+		"match delete":                {statement: "MATCH (n:GraphQLAuthorizationProtected) DETACH DELETE n", permission: "write"},
+		"optional match":              {statement: "OPTIONAL MATCH (n:GraphQLAuthorizationProtected) SET n.denied = true", permission: "write"},
+		"unwind create":               {statement: "UNWIND [1] AS value CREATE (:DeniedUnwind {value: value})", permission: "write"},
+		"with create":                 {statement: "WITH 1 AS value CREATE (:DeniedWith {value: value})", permission: "write"},
+		"call dynamic":                {statement: "CALL apoc.cypher.run('CREATE (:DeniedDynamic)', {})", permission: "write"},
+		"schema":                      {statement: "DROP INDEX denied_index IF EXISTS", permission: "schema"},
+		"admin":                       {statement: "CALL dbms.info()", permission: "admin"},
+		"admin DDL":                   {statement: "DROP DATABASE nornic", permission: "admin"},
+		"out of scope USE":            {statement: "USE forbidden RETURN 1", permission: "read"},
+		"out of scope lower-case USE": {statement: "use forbidden return 1", permission: "read"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := executeGraphQLAuthorizationRequest(t, server, viewerToken, query, testCase.statement)

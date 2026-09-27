@@ -40,7 +40,7 @@ func TestCypherCommandRoutingErrorsHaveTypedIdentity(t *testing.T) {
 	})
 
 	t.Run("USE", func(t *testing.T) {
-		_, _, _, err := parseLeadingUseClause("USE")
+		_, _, err := exec.scopedExecutorForUse("", "")
 		requireCypherCommandRoutingLocalizedError(t, err, localization.MessageCypherCommandRoutingUseDatabaseRequired, "USE clause requires a database name")
 	})
 

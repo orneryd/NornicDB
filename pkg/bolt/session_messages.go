@@ -14,6 +14,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"golang.org/x/text/language"
@@ -197,7 +198,7 @@ func (s *Session) handleRun(data []byte) error {
 	if mode == nil && s.server != nil && s.server.config.RequireAuth {
 		mode = auth.DenyAllDatabaseAccessMode
 	}
-	if mode != nil && !mode.CanAccessDatabase(dbName) {
+	if mode != nil && !s.canAccessGraph(mode, dbName) {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
 	}
 
@@ -207,7 +208,8 @@ func (s *Session) handleRun(data []byte) error {
 		if s.authResult != nil {
 			roles = s.authResult.Roles
 		}
-		ra := s.server.resolvedAccessResolver(roles, dbName)
+		targets := s.graphDatabases(dbName)
+		ra := s.server.resolvedAccessResolver(roles, targets[len(targets)-1])
 		if !ra.Write {
 			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseWriteDenied(dbName))
 		}
@@ -260,8 +262,12 @@ func (s *Session) handleRun(data []byte) error {
 	ctx = s.withSessionIdentity(ctx)
 	ctx = cypher.WithClientStatement(ctx)
 	if mode != nil {
+		// A name is checked like the session's database (canAccessGraph:
+		// a composite constituent needs its composite and its database),
+		// and read / write are the privileges of the database its data
+		// is in.
 		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
-			if !mode.CanAccessDatabase(database) {
+			if !s.canAccessGraph(mode, database) {
 				return false
 			}
 			if s.server != nil && s.server.resolvedAccessResolver != nil {
@@ -269,7 +275,8 @@ func (s *Session) handleRun(data []byte) error {
 				if s.authResult != nil {
 					roles = s.authResult.Roles
 				}
-				access := s.server.resolvedAccessResolver(roles, database)
+				databases := s.graphDatabases(database)
+				access := s.server.resolvedAccessResolver(roles, databases[len(databases)-1])
 				switch permission {
 				case "read":
 					return access.Read
@@ -1648,6 +1655,35 @@ func (s *Session) writeMessageNoFlush(data []byte) error {
 		return err
 	}
 	return s.writer.WriteByte(0x00)
+}
+
+// canAccessGraph reports whether mode allows graph, a RUN's or BEGIN's
+// database: every database cypher.AccessDatabases lists for it (a
+// composite constituent needs its composite and its database), as the
+// executor checks a USE of the same name.
+func (s *Session) canAccessGraph(mode auth.DatabaseAccessMode, graph string) bool {
+	for _, database := range s.graphDatabases(graph) {
+		if !mode.CanAccessDatabase(database) {
+			return false
+		}
+	}
+	return true
+}
+
+// graphDatabases returns the databases access to graph needs
+// (cypher.AccessDatabases), the last one being the database its data is in.
+func (s *Session) graphDatabases(graph string) []string {
+	var manager cypher.DatabaseManagerInterface
+	if s.server != nil {
+		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
+			manager = &boltDatabaseManagerAdapter{manager: mgr}
+		}
+	}
+	databases, err := cypher.AccessDatabases(manager, graph)
+	if err != nil || len(databases) == 0 {
+		return []string{graph}
+	}
+	return databases
 }
 
 // withSessionIdentity adds what the executor knows about the session to a

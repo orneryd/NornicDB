@@ -8,8 +8,9 @@ import (
 
 // ErrSecondWriteShard is returned when a distributed transaction attempts to write
 // to a second shard. Neo4j Fabric enforces a many-read/one-write constraint per
-// transaction — this error matches that contract with a stable code and message.
-var ErrSecondWriteShard = fmt.Errorf("Neo.ClientError.Transaction.ForbiddenDueToTransactionType: " +
+// transaction — this error matches that contract with Neo4j's code,
+// Neo.ClientError.Statement.AccessMode, and message (#738).
+var ErrSecondWriteShard = fmt.Errorf("Neo.ClientError.Statement.AccessMode: " +
 	"Writing to more than one database per transaction is not allowed")
 
 // SubTransaction represents an open sub-transaction on a single shard.

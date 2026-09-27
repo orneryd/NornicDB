@@ -12,12 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestStatementTargetDatabase_ErrorCoverage(t *testing.T) {
-	_, err := statementTargetDatabase("nornic", "USE graph.byName(")
-	require.EqualError(t, err, "USE graph.byName( requires a valid graph reference argument")
-
-	_, err = statementTargetDatabase("nornic", "USE `unterminated")
-	require.EqualError(t, err, "USE has unterminated quoted database name")
+// TestStatementTargetDatabase_UseClauseStaysOnRequestDatabase: a USE
+// clause, well-formed or not, runs on the request's database, whose
+// executor routes it and reports its errors (#738).
+func TestStatementTargetDatabase_UseClauseStaysOnRequestDatabase(t *testing.T) {
+	for _, statement := range []string{"USE graph.byName(", "USE `unterminated", "USE tenant RETURN 1"} {
+		db, err := statementTargetDatabase("nornic", statement)
+		require.NoError(t, err, statement)
+		require.Equal(t, "nornic", db, statement)
+	}
 }
 
 func TestNormalizeStatementForExecution_ErrorCoverage(t *testing.T) {
@@ -33,9 +36,11 @@ func TestNormalizeStatementForExecution_ErrorCoverage(t *testing.T) {
 		require.EqualError(t, err, ":USE requires a database name")
 	})
 
-	t.Run("propagates statement target parse error", func(t *testing.T) {
-		_, _, err := normalizeStatementForExecution("nornic", "USE `unterminated")
-		require.EqualError(t, err, "USE has unterminated quoted database name")
+	t.Run("a USE clause stays on the request database", func(t *testing.T) {
+		dbName, query, err := normalizeStatementForExecution("nornic", "USE `unterminated")
+		require.NoError(t, err)
+		require.Equal(t, "nornic", dbName)
+		require.Equal(t, "USE `unterminated", query)
 	})
 }
 
