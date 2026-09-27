@@ -2611,7 +2611,7 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 	_, err = exec.processAfterCallSubquery(ctx, inner, "SET x = 1")
 	require.Error(t, err)
 
-	modified, err := exec.applyResultModifiers(inner, "ORDER BY age DESC SKIP 1 LIMIT 1")
+	modified, err := exec.applyResultModifiers(context.Background(), inner, "ORDER BY age DESC SKIP 1 LIMIT 1")
 	require.NoError(t, err)
 	require.Len(t, modified.Rows, 1)
 	assert.Equal(t, "b", modified.Rows[0][0])
@@ -2635,7 +2635,7 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		return out
 	}
 
-	gotTopK, err := exec.applyResultModifiers(&ExecuteResult{
+	gotTopK, err := exec.applyResultModifiers(context.Background(), &ExecuteResult{
 		Columns: append([]string(nil), topKInner.Columns...),
 		Rows:    cloneRows(topKInner.Rows),
 		Stats:   &QueryStats{},
@@ -2648,7 +2648,7 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		require.GreaterOrEqual(t, prev, cur)
 	}
 
-	gotWindow, err := exec.applyResultModifiers(&ExecuteResult{
+	gotWindow, err := exec.applyResultModifiers(context.Background(), &ExecuteResult{
 		Columns: append([]string(nil), topKInner.Columns...),
 		Rows:    cloneRows(topKInner.Rows),
 		Stats:   &QueryStats{},

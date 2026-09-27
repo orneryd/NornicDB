@@ -2049,7 +2049,7 @@ func (e *StorageExecutor) processAfterCallSubquery(ctx context.Context, innerRes
 	if strings.HasPrefix(upperAfter, "ORDER BY ") {
 		result := e.applyOrderByToResult(innerResult, afterCall)
 		// Check for LIMIT/SKIP after ORDER BY
-		return e.applyResultModifiers(result, afterCall)
+		return e.applyResultModifiers(ctx, result, afterCall)
 	}
 
 	// Unsupported clause after CALL {}
@@ -3411,7 +3411,7 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 
 		// Apply modifiers (ORDER BY, LIMIT, SKIP)
 		if modifierClause != "" {
-			return e.applyResultModifiers(result, modifierClause)
+			return e.applyResultModifiers(ctx, result, modifierClause)
 		}
 		return result, nil
 	}
@@ -3480,18 +3480,18 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 
 	// Apply modifiers (ORDER BY, LIMIT, SKIP)
 	if modifierClause != "" {
-		return e.applyResultModifiers(result, modifierClause)
+		return e.applyResultModifiers(ctx, result, modifierClause)
 	}
 
 	return result, nil
 }
 
 // applyResultModifiers applies ORDER BY, LIMIT, SKIP to a result
-func (e *StorageExecutor) applyResultModifiers(result *ExecuteResult, modifiers string) (*ExecuteResult, error) {
+func (e *StorageExecutor) applyResultModifiers(ctx context.Context, result *ExecuteResult, modifiers string) (*ExecuteResult, error) {
 	orderByCol, orderByDesc, hasOrderBy := parseOrderByModifier(modifiers)
 	orderTerms := parseOrderByTerms(modifiers)
-	skip, hasSkip := e.parseIntModifier(modifiers, "SKIP")
-	limit, hasLimit := e.parseIntModifier(modifiers, "LIMIT")
+	skip, hasSkip := e.parseIntModifier(ctx, modifiers, "SKIP")
+	limit, hasLimit := e.parseIntModifier(ctx, modifiers, "LIMIT")
 
 	if hasOrderBy && len(orderTerms) == 1 && hasLimit && limit >= 0 {
 		if colIdx := findColumnIndexByName(result.Columns, orderByCol); colIdx >= 0 {
@@ -3829,7 +3829,7 @@ func parseOrderByModifier(modifiers string) (column string, descending bool, ok 
 // so every route applies SKIP/LIMIT expressions instead of ignoring them.
 // ok is false when the keyword is absent or the value is not a non-negative
 // integer.
-func (e *StorageExecutor) parseIntModifier(modifiers, keyword string) (value int, ok bool) {
+func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keyword string) (value int, ok bool) {
 	idx := findKeywordIndex(modifiers, keyword)
 	if idx == -1 {
 		return 0, false
@@ -3851,7 +3851,7 @@ func (e *StorageExecutor) parseIntModifier(modifiers, keyword string) (value int
 	if vs == "" {
 		return 0, false
 	}
-	return e.evaluatePipelinePagination(context.Background(), vs, nil)
+	return e.evaluatePipelinePagination(ctx, vs, nil)
 }
 
 func findColumnIndexByName(cols []string, name string) int {

@@ -62,7 +62,7 @@ func TestApplyResultModifiers_KZeroAndUnknownOrderColumn(t *testing.T) {
 	}
 
 	// k=0 branch: LIMIT 0 with ORDER BY should return no rows.
-	out, err := exec.applyResultModifiers(in, "ORDER BY age ASC LIMIT 0")
+	out, err := exec.applyResultModifiers(context.Background(), in, "ORDER BY age ASC LIMIT 0")
 	require.NoError(t, err)
 	require.Empty(t, out.Rows)
 
@@ -77,7 +77,7 @@ func TestApplyResultModifiers_KZeroAndUnknownOrderColumn(t *testing.T) {
 
 	// Unknown ORDER BY column with LIMIT should preserve previous behavior
 	// and still apply LIMIT after no-op ORDER BY.
-	out2, err := exec.applyResultModifiers(in2, "ORDER BY missing DESC LIMIT 2")
+	out2, err := exec.applyResultModifiers(context.Background(), in2, "ORDER BY missing DESC LIMIT 2")
 	require.NoError(t, err)
 	require.Len(t, out2.Rows, 2)
 	require.Equal(t, "c", out2.Rows[0][0])
@@ -95,7 +95,7 @@ func TestApplyResultModifiersOrdersByEveryTermBeforeMultilineWindow(t *testing.T
 		},
 	}
 
-	result, err := exec.applyResultModifiers(input, "ORDER BY group ASC, rank DESC, name ASC\nSKIP 1\nLIMIT 1")
+	result, err := exec.applyResultModifiers(context.Background(), input, "ORDER BY group ASC, rank DESC, name ASC\nSKIP 1\nLIMIT 1")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a", int64(1), "third"}}, result.Rows)
 }
@@ -107,7 +107,7 @@ func TestApplyResultModifiersSelectsAscendingNumericTopK(t *testing.T) {
 		Rows:    [][]interface{}{{0.56}, {0.52}, {0.44}, {0.41}, {0.38}, {0.32}},
 	}
 
-	result, err := exec.applyResultModifiers(input, "ORDER BY score ASC\nLIMIT 5")
+	result, err := exec.applyResultModifiers(context.Background(), input, "ORDER BY score ASC\nLIMIT 5")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{0.32}, {0.38}, {0.41}, {0.44}, {0.52}}, result.Rows)
 }

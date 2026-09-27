@@ -516,11 +516,11 @@ func (e *StorageExecutor) projectTraversalOptionalRows(ctx context.Context, rows
 		return nil, localizedError(localization.CypherMatchingOrderByParseFailed(), nil)
 	}
 	skip := 0
-	if value, ok := e.parseIntModifier(returnClause, "SKIP"); ok {
+	if value, ok := e.parseIntModifier(ctx, returnClause, "SKIP"); ok {
 		skip = value
 	}
 	limit := -1
-	if value, ok := e.parseIntModifier(returnClause, "LIMIT"); ok {
+	if value, ok := e.parseIntModifier(ctx, returnClause, "LIMIT"); ok {
 		limit = value
 	}
 	projectedRows = applyPipelineWindow(projectedRows, skip, limit)

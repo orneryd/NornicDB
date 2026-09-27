@@ -451,7 +451,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		if modifiers == "" {
 			return result, nil
 		}
-		return e.applyResultModifiers(result, modifiers)
+		return e.applyResultModifiers(ctx, result, modifiers)
 	}
 
 	if hasAggregation {

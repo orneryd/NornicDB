@@ -1787,11 +1787,11 @@ func (e *StorageExecutor) pipelineMatchHint(remaining []pipelineClause) pipeline
 			return hint
 		}
 	}
-	skip, hasSkip := e.parseIntModifier(body, "SKIP")
+	skip, hasSkip := e.parseIntModifier(context.Background(), body, "SKIP")
 	if hasSkip && skip != 0 {
 		return hint
 	}
-	limit, hasLimit := e.parseIntModifier(body, "LIMIT")
+	limit, hasLimit := e.parseIntModifier(context.Background(), body, "LIMIT")
 	if !hasLimit || limit < 0 {
 		return hint
 	}
@@ -3344,9 +3344,13 @@ func pipelinePaginationExpression(body, keyword string) string {
 }
 
 func (e *StorageExecutor) evaluatePipelinePagination(ctx context.Context, expression string, rows []pipelineRow) (int, bool) {
-	values := make(pipelineRow)
+	// SKIP / LIMIT see the statement's parameters ($l) whatever the
+	// projection kept in the row.
+	values := e.parameterRow(ctx)
 	if len(rows) > 0 {
-		values = rows[0]
+		for name, value := range rows[0] {
+			values[name] = value
+		}
 	}
 	value, evaluated := e.evaluateRowExpressionWithContext(ctx, expression, values)
 	if !evaluated {
@@ -3941,7 +3945,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		if returnDistinct {
 			result.Rows = deduplicatePipelineResultRows(result.Rows)
 		}
-		result, err := e.applyResultModifiers(result, modifiers)
+		result, err := e.applyResultModifiers(ctx, result, modifiers)
 		return result, err == nil
 	}
 	projs, hasAggregate := plan.projections, plan.hasAggregate
@@ -4017,7 +4021,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		if returnDistinct {
 			result.Rows = deduplicatePipelineResultRows(result.Rows)
 		}
-		result, err := e.applyResultModifiers(result, modifiers)
+		result, err := e.applyResultModifiers(ctx, result, modifiers)
 		return result, err == nil
 	}
 
@@ -4084,11 +4088,11 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 		return nil, false
 	}
 	skip := 0
-	if value, ok := e.parseIntModifier(modifiers, "SKIP"); ok {
+	if value, ok := e.parseIntModifier(ctx, modifiers, "SKIP"); ok {
 		skip = value
 	}
 	limit := -1
-	if value, ok := e.parseIntModifier(modifiers, "LIMIT"); ok {
+	if value, ok := e.parseIntModifier(ctx, modifiers, "LIMIT"); ok {
 		limit = value
 	}
 	projectedRows = applyPipelineWindow(projectedRows, skip, limit)

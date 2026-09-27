@@ -551,7 +551,7 @@ func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail str
 	if modifiers == "" {
 		return result, true, nil
 	}
-	result, err := e.applyResultModifiers(result, modifiers)
+	result, err := e.applyResultModifiers(context.Background(), result, modifiers)
 	return result, true, err
 }
 

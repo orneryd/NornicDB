@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -162,21 +163,21 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	require.True(t, desc)
 
 	e, _ := newTestExecutor(t)
-	value, ok := e.parseIntModifier("ORDER BY n.age DESC SKIP 1 LIMIT 2", "SKIP")
+	value, ok := e.parseIntModifier(context.Background(), "ORDER BY n.age DESC SKIP 1 LIMIT 2", "SKIP")
 	require.True(t, ok)
 	require.Equal(t, 1, value)
-	value, ok = e.parseIntModifier("ORDER BY n.age DESC SKIP 1 LIMIT 2", "LIMIT")
+	value, ok = e.parseIntModifier(context.Background(), "ORDER BY n.age DESC SKIP 1 LIMIT 2", "LIMIT")
 	require.True(t, ok)
 	require.Equal(t, 2, value)
-	_, ok = e.parseIntModifier("LIMIT nope", "LIMIT")
+	_, ok = e.parseIntModifier(context.Background(), "LIMIT nope", "LIMIT")
 	require.False(t, ok)
-	value, ok = e.parseIntModifier("ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "SKIP")
+	value, ok = e.parseIntModifier(context.Background(), "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "SKIP")
 	require.True(t, ok)
 	require.Equal(t, 2, value)
-	value, ok = e.parseIntModifier("ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "LIMIT")
+	value, ok = e.parseIntModifier(context.Background(), "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "LIMIT")
 	require.True(t, ok)
 	require.Equal(t, 3, value)
-	_, ok = e.parseIntModifier("LIMIT 1 - 2", "LIMIT")
+	_, ok = e.parseIntModifier(context.Background(), "LIMIT 1 - 2", "LIMIT")
 	require.False(t, ok)
 
 	require.Equal(t, "<empty>", callSubqueryRowDedupKey(nil))
