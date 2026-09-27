@@ -2848,7 +2848,7 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
 				if !ok {
 					continue
 				}
-				head, physicalVersion, err := tx.engine.loadEdgeMVCCHeadByNumWithPhysicalVersionInTxn(viewTx, edgeNum)
+				head, physicalVersion, err := tx.engine.loadEdgeMVCCHeadByNumRawWithPhysicalVersionInTxn(viewTx, edgeNum)
 				if err == ErrNotFound {
 					continue
 				}

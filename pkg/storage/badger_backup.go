@@ -4,6 +4,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"os"
 	"strings"
 
@@ -209,6 +210,32 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	if err != nil {
 		return 0, 0, err
 	}
+	nodeNums := make(map[uint64]struct{})
+	edgeNums := make(map[uint64]struct{})
+	for _, entry := range []struct {
+		kind byte
+		ids  map[uint64]struct{}
+	}{
+		{prefixIDDictNodeForward, nodeNums}, {prefixIDDictEdgeForward, edgeNums},
+	} {
+		if err := b.db.View(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badgerIterOptsKeyOnly(append([]byte{entry.kind}, prefixBytes...)))
+			defer it.Close()
+			for it.Rewind(); it.ValidForPrefix(append([]byte{entry.kind}, prefixBytes...)); it.Next() {
+				if err := it.Item().Value(func(value []byte) error {
+					if len(value) == 8 {
+						entry.ids[binary.BigEndian.Uint64(value)] = struct{}{}
+					}
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return 0, 0, err
+		}
+	}
 
 	// Drop db-scoped keyspaces (these key formats all begin with nodeID/edgeID).
 	dropPrefixes := [][]byte{
@@ -229,6 +256,31 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	}
 	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
+	}
+	if err := b.deleteNamespaceKeyFamilies(prefixBytes, namespace, wholeNamespace, nodeNums, edgeNums); err != nil {
+		return 0, 0, err
+	}
+	b.idDict.mu.Lock()
+	for id, num := range b.idDict.nodeForward {
+		if strings.HasPrefix(string(id), prefix) {
+			delete(b.idDict.nodeForward, id)
+			delete(b.idDict.nodeReverse, num)
+		}
+	}
+	for id, num := range b.idDict.edgeForward {
+		if strings.HasPrefix(string(id), prefix) {
+			delete(b.idDict.edgeForward, id)
+			delete(b.idDict.edgeReverse, num)
+		}
+	}
+	b.idDict.mu.Unlock()
+	if wholeNamespace {
+		b.propKeyDict.mu.Lock()
+		delete(b.propKeyDict.forward, namespace)
+		delete(b.propKeyDict.reverse, namespace)
+		delete(b.propKeyDict.persisted, namespace)
+		delete(b.propKeyDict.nextID, namespace)
+		b.propKeyDict.mu.Unlock()
 	}
 	if nodesDeleted > 0 || edgesDeleted > 0 {
 		defer b.graphMutationVersions.changedPrefix(prefix)
@@ -339,6 +391,42 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	b.namespaceCountsMu.Unlock()
 
 	return nodesDeleted, edgesDeleted, nil
+}
+
+func (b *BadgerEngine) deleteNamespaceKeyFamilies(prefix []byte, namespace string, wholeNamespace bool, nodes, edges map[uint64]struct{}) error {
+	batch := b.db.NewWriteBatch()
+	defer batch.Cancel()
+	pending := 0
+	for _, family := range badgerKeyFamilies {
+		err := b.db.View(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badgerIterOptsKeyOnly([]byte{family.prefix}))
+			defer it.Close()
+			for it.Rewind(); it.ValidForPrefix([]byte{family.prefix}); it.Next() {
+				key := it.Item().Key()
+				if !namespaceOwnsBadgerKey(key, prefix, namespace, wholeNamespace, nodes, edges) {
+					continue
+				}
+				if err := batch.Delete(it.Item().KeyCopy(nil)); err != nil {
+					return err
+				}
+				pending++
+				if pending >= 50_000 {
+					if err := batch.Flush(); err != nil {
+						return err
+					}
+					pending = 0
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	if pending > 0 {
+		return batch.Flush()
+	}
+	return nil
 }
 
 // Verify BadgerEngine implements Engine interface

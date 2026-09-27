@@ -559,6 +559,63 @@ func TestBadgerEngine_PruneMVCCVersions_TombstoneCompactionHonorsActiveReaders(t
 	require.True(t, remainingHead.Tombstoned)
 }
 
+func TestBadgerEngine_PruneMVCCVersions_NoDeletionPreservesFloor(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+
+	nodeID := NodeID(prefixTestID("mvcc-head-only-no-op-prune"))
+	_, err = engine.CreateNode(&Node{ID: nodeID, Properties: map[string]any{"version": 1}})
+	require.NoError(t, err)
+	oldHead, err := engine.GetNodeCurrentHead(nodeID)
+	require.NoError(t, err)
+	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Properties: map[string]any{"version": 2}}))
+	require.NoError(t, engine.DeleteNode(nodeID))
+	_, err = engine.CreateNode(&Node{ID: nodeID, Properties: map[string]any{"version": 5}})
+	require.NoError(t, err)
+	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Properties: map[string]any{"version": 6}}))
+
+	before, err := engine.GetNodeCurrentHead(nodeID)
+	require.NoError(t, err)
+	_, err = engine.GetNodeVisibleAt(nodeID, oldHead.Version)
+	require.ErrorIs(t, err, ErrNotFound)
+	deleted, err := engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
+	require.NoError(t, err)
+	require.Zero(t, deleted)
+	after, err := engine.GetNodeCurrentHead(nodeID)
+	require.NoError(t, err)
+	require.Equal(t, before.FloorVersion, after.FloorVersion)
+	_, err = engine.GetNodeVisibleAt(nodeID, oldHead.Version)
+	require.ErrorIs(t, err, ErrNotFound)
+	deleted, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
+	require.NoError(t, err)
+	require.Zero(t, deleted)
+	after, err = engine.GetNodeCurrentHead(nodeID)
+	require.NoError(t, err)
+	require.Equal(t, before.FloorVersion, after.FloorVersion)
+}
+
+func TestBadgerEngine_PruneMVCCVersions_PreservesActiveSnapshot(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+	nodeID := NodeID(prefixTestID("mvcc-reader-prune"))
+	_, err := engine.CreateNode(&Node{ID: nodeID, Properties: map[string]any{"v": 0}})
+	require.NoError(t, err)
+	head, err := engine.GetNodeCurrentHead(nodeID)
+	require.NoError(t, err)
+	for version := 1; version <= 12; version++ {
+		require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Properties: map[string]any{"v": version}}))
+	}
+	release, err := engine.beginMVCCSnapshotRead(head.Version)
+	require.NoError(t, err)
+	defer release()
+	deleted, err := engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 2})
+	require.NoError(t, err)
+	require.Zero(t, deleted)
+	node, err := engine.GetNodeVisibleAt(nodeID, head.Version)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, node.Properties["v"])
+}
+
 func TestBadgerEngine_MVCCStress_ChurnPruneBoundsRetainedChain(t *testing.T) {
 	dir := t.TempDir()
 	// Exercises multi-version retention specifically; opt into

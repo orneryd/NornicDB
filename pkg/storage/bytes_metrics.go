@@ -134,24 +134,14 @@ func (s *BytesMetricsSweeper) sweep() {
 		}
 	}()
 
-	// nodes
-	if k, v := s.db.EstimateSize([]byte{prefixNode}); true {
-		s.metrics.Bytes.WithLabelValues("nodes").Set(float64(k + v))
+	bytesByKind := map[string]uint64{"nodes": 0, "edges": 0, "index": 0, "mvcc": 0, "metadata": 0}
+	for _, family := range badgerKeyFamilies {
+		keys, values := s.db.EstimateSize([]byte{family.prefix})
+		bytesByKind[family.kind] += keys + values
 	}
-	// edges
-	if k, v := s.db.EstimateSize([]byte{prefixEdge}); true {
-		s.metrics.Bytes.WithLabelValues("edges").Set(float64(k + v))
+	for kind, size := range bytesByKind {
+		s.metrics.Bytes.WithLabelValues(kind).Set(float64(size))
 	}
-	// index = label + edge_between + temporal (D-13c — user_created index
-	// names live under the same Badger prefixes, so byte accounting
-	// captures them transparently without leaking the user names).
-	var ik, iv uint64
-	for _, p := range []byte{prefixLabelIndex, prefixEdgeBetweenIndex, prefixTemporalIndex} {
-		k, v := s.db.EstimateSize([]byte{p})
-		ik += k
-		iv += v
-	}
-	s.metrics.Bytes.WithLabelValues("index").Set(float64(ik + iv))
 
 	// wal: best-effort heuristic (vlog - lsm) — RISK-6.
 	lsm, vlog := s.db.Size()

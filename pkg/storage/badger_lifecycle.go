@@ -28,6 +28,8 @@ func (b *BadgerEngine) StartLifecycleManager(ctx context.Context) {
 
 // RegisterSnapshotReader delegates reader registration when lifecycle is enabled.
 func (b *BadgerEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
+	b.mvccPruneMu.Lock()
+	defer b.mvccPruneMu.Unlock()
 	b.mu.RLock()
 	controller := b.lifecycleController
 	b.mu.RUnlock()
@@ -104,6 +106,8 @@ func (b *BadgerEngine) TopLifecycleDebtKeys(limit int) []MVCCLifecycleDebtKey {
 }
 
 func (b *BadgerEngine) acquireSnapshotReader(info SnapshotReaderInfo) (func(), error) {
+	b.mvccPruneMu.Lock()
+	defer b.mvccPruneMu.Unlock()
 	b.mu.RLock()
 	controller := b.lifecycleController
 	b.mu.RUnlock()
@@ -147,6 +151,10 @@ func (b *BadgerEngine) IterateMVCCHeads(ctx context.Context, yield func(logicalK
 					head, decodeErr = decodeMVCCHead(val)
 					return decodeErr
 				}); err != nil {
+					it.Close()
+					return err
+				}
+				if err := applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
 					it.Close()
 					return err
 				}
@@ -241,7 +249,10 @@ func (b *BadgerEngine) ReadMVCCHead(ctx context.Context, logicalKey []byte) (MVC
 	err := b.withView(func(txn *badger.Txn) error {
 		var innerErr error
 		head, innerErr = b.loadMVCCHeadForLogicalKeyInTxn(txn, logicalKey)
-		return innerErr
+		if innerErr != nil {
+			return innerErr
+		}
+		return applyMVCCPruneFloorInTxn(txn, logicalKey, &head)
 	})
 	return head, err
 }

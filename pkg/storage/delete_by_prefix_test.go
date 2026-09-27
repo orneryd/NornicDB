@@ -1,8 +1,11 @@
 package storage
 
 import (
+	"context"
+	"encoding/binary"
 	"testing"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,6 +56,110 @@ func TestBadgerEngine_DeleteByPrefix_DropsOnlyMatchingNamespace(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, EdgeID("db2:e2"), edges[0].ID)
+}
+
+func TestBadgerEngine_DeleteByPrefix_RemovesNumericHistoryAndDictionary(t *testing.T) {
+	engine, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, EngineOptions: EngineOptions{
+		RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
+	}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	_, err = engine.CreateNode(&Node{ID: "drop:n", Labels: []string{"Person"}, Properties: map[string]any{"v": 1}})
+	require.NoError(t, err)
+	oldHead, err := engine.GetNodeCurrentHead("drop:n")
+	require.NoError(t, err)
+	require.NoError(t, engine.UpdateNode(&Node{ID: "drop:n", Labels: []string{"Person"}, Properties: map[string]any{"v": 2}}))
+	require.NoError(t, engine.UpdateNode(&Node{ID: "drop:n", Labels: []string{"Person"}, Properties: map[string]any{"v": 3}}))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "drop:e", StartNode: "drop:n", EndNode: "drop:n", Type: "KNOWS"}))
+	oldEdgeHead, err := engine.GetEdgeCurrentHead("drop:e")
+	require.NoError(t, err)
+	require.NoError(t, engine.UpdateEdge(&Edge{ID: "drop:e", StartNode: "drop:n", EndNode: "drop:n", Type: "KNOWS", Properties: map[string]any{"v": 2}}))
+	require.NoError(t, engine.UpdateEdge(&Edge{ID: "drop:e", StartNode: "drop:n", EndNode: "drop:n", Type: "KNOWS", Properties: map[string]any{"v": 3}}))
+	_, err = engine.CreateNode(&Node{ID: "keep:n", Labels: []string{"Person"}})
+	require.NoError(t, err)
+	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(append([]byte{prefixTemporalHead}, []byte("drop\x00Person\x00")...), []byte("drop:n"))
+	}))
+	var nodeNum, edgeNum uint64
+	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
+		for _, entry := range []struct {
+			key []byte
+			id  *uint64
+		}{{nodeIDForwardKey("drop:n"), &nodeNum}, {edgeIDForwardKey("drop:e"), &edgeNum}} {
+			item, err := txn.Get(entry.key)
+			if err != nil {
+				return err
+			}
+			if err := item.Value(func(value []byte) error { *entry.id = binary.BigEndian.Uint64(value); return nil }); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	pruned, err := engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, pruned, int64(2))
+	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
+		for _, logical := range [][]byte{
+			append([]byte{prefixMVCCNode}, encodeNumID(nodeNum)...),
+			append([]byte{prefixMVCCEdge}, encodeNumID(edgeNum)...),
+		} {
+			_, err := txn.Get(mvccPruneFloorKey(logical))
+			require.NoError(t, err)
+		}
+		return nil
+	}))
+	nodes, edges, err := engine.DeleteByPrefix("drop:")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), nodes)
+	require.Equal(t, int64(1), edges)
+	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(nodeIDForwardKey("drop:n"))
+		require.ErrorIs(t, err, badger.ErrKeyNotFound)
+		_, err = txn.Get(edgeIDForwardKey("drop:e"))
+		require.ErrorIs(t, err, badger.ErrKeyNotFound)
+		_, err = txn.Get(append([]byte{prefixTemporalHead}, []byte("drop\x00Person\x00")...))
+		require.ErrorIs(t, err, badger.ErrKeyNotFound)
+		for _, kind := range []byte{prefixMVCCNode, prefixMVCCNodeHead, prefixMVCCOutgoingAdj, prefixMVCCIncomingAdj} {
+			prefix := append([]byte{kind}, encodeNumID(nodeNum)...)
+			it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+			it.Rewind()
+			require.False(t, it.ValidForPrefix(prefix))
+			it.Close()
+		}
+		for _, logical := range [][]byte{
+			append([]byte{prefixMVCCNode}, encodeNumID(nodeNum)...),
+			append([]byte{prefixMVCCEdge}, encodeNumID(edgeNum)...),
+		} {
+			_, err := txn.Get(mvccPruneFloorKey(logical))
+			require.ErrorIs(t, err, badger.ErrKeyNotFound)
+		}
+		for _, kind := range []byte{prefixMVCCEdge, prefixMVCCEdgeHead} {
+			prefix := append([]byte{kind}, encodeNumID(edgeNum)...)
+			it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+			it.Rewind()
+			require.False(t, it.ValidForPrefix(prefix))
+			it.Close()
+		}
+		for _, family := range badgerKeyFamilies {
+			it := txn.NewIterator(badgerIterOptsKeyOnly([]byte{family.prefix}))
+			for it.Rewind(); it.ValidForPrefix([]byte{family.prefix}); it.Next() {
+				require.False(t, namespaceOwnsBadgerKey(it.Item().Key(), []byte("drop:"), "drop", true,
+					map[uint64]struct{}{nodeNum: {}}, map[uint64]struct{}{edgeNum: {}}))
+			}
+			it.Close()
+		}
+		return nil
+	}))
+	_, err = engine.CreateNode(&Node{ID: "drop:n", Properties: map[string]any{"v": 100}})
+	require.NoError(t, err)
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "drop:e", StartNode: "drop:n", EndNode: "drop:n", Type: "KNOWS"}))
+	_, err = engine.GetNodeVisibleAt("drop:n", oldHead.Version)
+	require.ErrorIs(t, err, ErrNotVisibleAtSnapshot)
+	_, err = engine.GetEdgeVisibleAt("drop:e", oldEdgeHead.Version)
+	require.ErrorIs(t, err, ErrNotVisibleAtSnapshot)
+	_, err = engine.GetNode("keep:n")
+	require.NoError(t, err)
 }
 
 func TestBadgerEngine_DeleteByPrefix_UpdatesLabelCounts(t *testing.T) {

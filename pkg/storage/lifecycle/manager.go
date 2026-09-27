@@ -259,6 +259,16 @@ func (m *MVCCLifecycleManager) loop(ctx context.Context, interval time.Duration)
 }
 
 func (m *MVCCLifecycleManager) runCycle(ctx context.Context, opts storage.MVCCPruneOptions) (ApplyResult, error) {
+	if engine, ok := m.engine.(storage.MVCCMaintenanceEngine); ok {
+		if opts.MaxVersionsPerKey <= 0 {
+			opts.MaxVersionsPerKey = m.config.MaxVersionsPerKey
+		}
+		if opts.MinRetentionAge <= 0 {
+			opts.MinRetentionAge = m.config.TTL
+		}
+		deleted, err := engine.PruneMVCCVersions(ctx, opts)
+		return ApplyResult{VersionsDeleted: deleted}, err
+	}
 	band := m.pressure.Update()
 	m.emergency.SetCritical(band == storage.PressureCritical)
 	// Per-namespace MVCC counters mean a reader's CommitSequence in

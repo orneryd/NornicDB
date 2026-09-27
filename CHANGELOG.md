@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Unify scheduled and explicit MVCC pruning on per-key transactions, preserving
+  active snapshots and avoiding conflicts with normal writes. Scheduled pruning
+  now keeps exactly `MaxVersionsPerKey` closed versions; its next cycle may
+  remove one extra version retained by the previous lifecycle planner.
+- Fully remove namespace-owned indexes, dictionaries, adjacency, MVCC history,
+  heads, and prune floors on database drop; count every Badger key family in
+  storage byte metrics.
 - Remove Cypher comments before redacting rejection and slow-query log
   records, preventing comment text from exposing secrets in query logs.
 - Gate the V2-to-V3 storage upgrade behind `--upgrade-storage` and restore

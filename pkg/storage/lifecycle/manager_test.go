@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -10,6 +11,56 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestManagerRunPruneNow_RealEngineKeepsClosedVersions(t *testing.T) {
+	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{InMemory: true, EngineOptions: storage.EngineOptions{
+		RetentionPolicy: storage.RetentionPolicy{MaxVersionsPerKey: 100},
+	}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	nodeID := storage.NodeID("lifecycle:n")
+	_, err = engine.CreateNode(&storage.Node{ID: nodeID, Properties: map[string]any{"v": 0}})
+	require.NoError(t, err)
+	for version := 1; version <= 10; version++ {
+		require.NoError(t, engine.UpdateNode(&storage.Node{ID: nodeID, Properties: map[string]any{"v": version}}))
+	}
+	var logical []byte
+	require.NoError(t, engine.IterateMVCCHeads(context.Background(), func(key []byte, _ storage.MVCCHead) error {
+		if key[0] == 0x0c {
+			logical = bytes.Clone(key)
+		}
+		return nil
+	}))
+	require.NotEmpty(t, logical)
+	countVersions := func() int {
+		count := 0
+		require.NoError(t, engine.IterateMVCCVersions(context.Background(), logical, func(_ storage.MVCCVersion, _ bool, _ int64) error {
+			count++
+			return nil
+		}))
+		return count
+	}
+	require.Equal(t, 10, countVersions())
+	config := DefaultLifecycleConfig()
+	config.Enabled = true
+	config.MaxVersionsPerKey = 2
+	manager := NewMVCCLifecycleManager(config, engine)
+	engine.SetLifecycleController(manager)
+	release := engine.RegisterSnapshotReader(storage.SnapshotReaderInfo{Namespace: "lifecycle"})
+	deleted, err := manager.RunPruneNow(context.Background(), storage.MVCCPruneOptions{})
+	require.NoError(t, err)
+	require.Zero(t, deleted)
+	require.Equal(t, 10, countVersions())
+	release()
+	deleted, err = manager.RunPruneNow(context.Background(), storage.MVCCPruneOptions{})
+	require.NoError(t, err)
+	require.Equal(t, int64(8), deleted)
+	require.Equal(t, 2, countVersions())
+	deleted, err = manager.RunPruneNow(context.Background(), storage.MVCCPruneOptions{MaxVersionsPerKey: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), deleted)
+	require.Equal(t, 1, countVersions())
+}
 
 type mockLifecycleEngine struct {
 	mu          sync.Mutex

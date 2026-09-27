@@ -52,6 +52,7 @@ const (
 	prefixEdgeBetweenHead   = byte(0x19) // edgebetween_head:start:end:type -> edgeID (fast single relationship lookup)
 	prefixMVCCOutgoingAdj   = byte(0x23) // mvcc_outgoing:nodeNum:edgeNum:version -> adjacency membership tombstone/live
 	prefixMVCCIncomingAdj   = byte(0x24) // mvcc_incoming:nodeNum:edgeNum:version -> adjacency membership tombstone/live
+	prefixMVCCPruneFloor    = byte(0x25) // pruned historical floor:kind:numID -> MVCCVersion
 )
 
 // prefixMVCCMeta subkeys reserved by storage metadata records.
@@ -271,6 +272,7 @@ type BadgerEngine struct {
 
 	retentionPolicy           RetentionPolicy
 	activeMVCCSnapshotReaders atomic.Int64
+	mvccPruneMu               sync.Mutex
 	lifecycleController       MVCCLifecycleController
 
 	// Cached per-namespace counts for O(1) multi-database stats.
