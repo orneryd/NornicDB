@@ -285,3 +285,206 @@ func TestConcurrentWritersOfOneNodeKey(t *testing.T) {
 	wg.Wait()
 	require.EqualValues(t, 1, won.Load())
 }
+
+// TestAsyncEngineCheckedWritesThatPassAreStoredAtOnce: checked updates, bulk
+// node creates and bulk relationship creates that pass their constraints are
+// in the engine when the call returns, nothing is left in the write cache, and
+// a violating update or bulk relationship create is the writer's error (#700).
+func TestAsyncEngineCheckedWritesThatPassAreStoredAtOnce(t *testing.T) {
+	ae, inner := newCheckedWritesAsync(t)
+
+	_, err := ae.CreateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"email": "a@x"}})
+	require.NoError(t, err)
+	require.NoError(t, ae.UpdateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"email": "b@x"}}))
+	stored, err := inner.GetNode("test:u1")
+	require.NoError(t, err)
+	require.Equal(t, "b@x", stored.Properties["email"])
+
+	require.NoError(t, ae.BulkCreateNodes([]*Node{
+		{ID: "test:u2", Labels: []string{"User"}, Properties: map[string]any{"email": "c@x"}},
+		{ID: "test:p1", Labels: []string{"Plain"}},
+		{ID: "test:p2", Labels: []string{"Plain"}},
+	}))
+	for _, id := range []NodeID{"test:u2", "test:p1", "test:p2"} {
+		_, err := inner.GetNode(id)
+		require.NoError(t, err, id)
+	}
+
+	require.NoError(t, ae.BulkCreateEdges([]*Edge{
+		{ID: "test:e1", Type: "RD", StartNode: "test:p1", EndNode: "test:p2", Properties: map[string]any{"w": int64(1)}},
+		{ID: "test:e2", Type: "PLAIN", StartNode: "test:p2", EndNode: "test:p1"},
+	}))
+	_, err = inner.GetEdge("test:e1")
+	require.NoError(t, err)
+	require.NoError(t, ae.UpdateEdge(&Edge{ID: "test:e1", Type: "RD", StartNode: "test:p1", EndNode: "test:p2", Properties: map[string]any{"w": int64(2)}}))
+	edge, err := inner.GetEdge("test:e1")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), edge.Properties["w"])
+	requireViolation(t, ae.UpdateEdge(&Edge{ID: "test:e1", Type: "RD", StartNode: "test:p1", EndNode: "test:p2", Properties: map[string]any{"w": int64(3)}}), ConstraintDomain)
+	requireViolation(t, ae.BulkCreateEdges([]*Edge{
+		{ID: "test:e3", Type: "RD", StartNode: "test:p1", EndNode: "test:p2", Properties: map[string]any{"w": int64(9)}},
+	}), ConstraintDomain)
+	_, err = inner.GetEdge("test:e3")
+	require.ErrorIs(t, err, ErrNotFound)
+	require.False(t, ae.HasPendingWrites())
+}
+
+// TestAsyncEngineCheckedUpdateUsesTheStoredLabels: an update is checked by
+// the labels the node had as well as the ones it gets, read from the write
+// cache or, once flushed, from the engine; a node the engine doesn't have has
+// none.
+func TestAsyncEngineCheckedUpdateUsesTheStoredLabels(t *testing.T) {
+	ae, inner := newCheckedWritesAsync(t)
+
+	_, err := ae.CreateNode(&Node{ID: "test:n1", Labels: []string{"Plain"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"Plain"}, ae.cachedNodeLabels("test:n1"))
+	require.NoError(t, ae.Flush())
+	require.Equal(t, []string{"Plain"}, ae.cachedNodeLabels("test:n1"))
+	require.Nil(t, ae.cachedNodeLabels("test:missing"))
+
+	// Moving a node onto a checked label goes through to the engine.
+	require.NoError(t, ae.UpdateNode(&Node{ID: "test:n1", Labels: []string{"User"}, Properties: map[string]any{"email": "n@x"}}))
+	stored, err := inner.GetNode("test:n1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"User"}, stored.Labels)
+	require.False(t, ae.HasPendingWrites())
+
+	// A relationship whose ID has no namespace isn't checked here; the engine
+	// refuses it when it is written.
+	require.False(t, ae.edgeWriteChecked(&Edge{ID: "no-prefix", Type: "RD"}))
+}
+
+// TestAsyncEngineSchemaPauseReportsAFailedFlush: when the cached writes can't
+// be flushed before a schema change, the pause returns the error, and its
+// resume function still releases the writers.
+func TestAsyncEngineSchemaPauseReportsAFailedFlush(t *testing.T) {
+	ae, inner := newCheckedWritesAsync(t)
+	_, err := ae.CreateNode(&Node{ID: "test:p1", Labels: []string{"Plain"}})
+	require.NoError(t, err)
+	require.True(t, ae.HasPendingWrites())
+	require.NoError(t, inner.Close())
+
+	resume, err := ae.PauseWritesForSchemaChange()
+	require.Error(t, err)
+	require.NotNil(t, resume)
+	resume()
+	require.True(t, ae.writeGate.TryLock(), "the writers are released")
+	ae.writeGate.Unlock()
+}
+
+// TestSchemaWriteChecksCoverEveryRuleKind: which labels and relationship
+// types the schema checks on write: constraints, relationship policies (by
+// their source and target labels), property types and constraint contracts.
+func TestSchemaWriteChecksCoverEveryRuleKind(t *testing.T) {
+	var none *SchemaManager
+	require.False(t, none.NodeWriteChecked([]string{"A"}))
+	require.False(t, none.EdgeWriteChecked("R"))
+	require.False(t, none.HasWriteRules())
+
+	sm := NewSchemaManager()
+	require.False(t, sm.HasWriteRules())
+	require.False(t, sm.NodeWriteChecked(nil))
+	require.False(t, sm.EdgeWriteChecked(""))
+
+	sm.constraints["p"] = Constraint{Name: "p", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "LINKS", SourceLabel: "Src", TargetLabel: "Dst"}
+	require.True(t, sm.HasWriteRules())
+	require.True(t, sm.NodeWriteChecked([]string{"Other", "Src"}))
+	require.True(t, sm.NodeWriteChecked([]string{"Dst"}))
+	require.False(t, sm.NodeWriteChecked([]string{"Other"}))
+	require.True(t, sm.EdgeWriteChecked("LINKS"))
+	require.False(t, sm.EdgeWriteChecked("OTHER"))
+
+	typed := NewSchemaManager()
+	require.NoError(t, typed.AddPropertyTypeConstraint("t_node", "Typed", "v", PropertyTypeString))
+	require.NoError(t, typed.AddPropertyTypeConstraint("t_rel", "TYPED", "v", PropertyTypeString, ConstraintEntityRelationship))
+	require.True(t, typed.HasWriteRules())
+	require.True(t, typed.NodeWriteChecked([]string{"Typed"}))
+	require.True(t, typed.EdgeWriteChecked("TYPED"))
+	require.False(t, typed.NodeWriteChecked([]string{"Other"}))
+	require.False(t, typed.EdgeWriteChecked("OTHER"))
+
+	contracts := NewSchemaManager()
+	contracts.constraintContracts["cn"] = ConstraintContract{Name: "cn", TargetEntityType: string(ConstraintEntityNode), TargetLabelOrType: "Doc"}
+	contracts.constraintContracts["cr"] = ConstraintContract{Name: "cr", TargetEntityType: string(ConstraintEntityRelationship), TargetLabelOrType: "CITES"}
+	require.True(t, contracts.HasWriteRules())
+	require.True(t, contracts.NodeWriteChecked([]string{"Doc"}))
+	require.False(t, contracts.NodeWriteChecked([]string{"CITES"}))
+	require.True(t, contracts.EdgeWriteChecked("CITES"))
+	require.False(t, contracts.EdgeWriteChecked("Doc"))
+}
+
+// TestTransactionMayReuseAValueItDeleted: a transaction that deletes the node
+// holding a UNIQUE value can create another node with that value, as in
+// Neo4j: the committed-state check leaves out the node it deletes.
+func TestTransactionMayReuseAValueItDeleted(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	schema := engine.GetSchemaForNamespace("test")
+	require.NoError(t, schema.AddConstraint(Constraint{Name: "u_email", Type: ConstraintUnique, Label: "User", Properties: []string{"email"}}))
+	_, err = engine.CreateNode(&Node{ID: "test:old", Labels: []string{"User"}, Properties: map[string]any{"email": "a@x"}})
+	require.NoError(t, err)
+
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetDeferredConstraintValidation(false))
+	require.NoError(t, tx.DeleteNode("test:old"))
+	_, err = tx.CreateNode(&Node{ID: "test:new", Labels: []string{"User"}, Properties: map[string]any{"email": "a@x"}})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	_, err = engine.GetNode("test:old")
+	require.ErrorIs(t, err, ErrNotFound)
+	stored, err := engine.GetNode("test:new")
+	require.NoError(t, err)
+	require.Equal(t, "a@x", stored.Properties["email"])
+}
+
+// TestAsyncEngineCheckedWriteFailsWhenTheCacheCannotBeFlushed: a checked
+// write flushes the cached writes first; if that fails, the write fails with
+// it and isn't made.
+func TestAsyncEngineCheckedWriteFailsWhenTheCacheCannotBeFlushed(t *testing.T) {
+	ae, inner := newCheckedWritesAsync(t)
+	_, err := ae.CreateNode(&Node{ID: "test:p1", Labels: []string{"Plain"}})
+	require.NoError(t, err)
+	require.NoError(t, inner.Close())
+	_, err = ae.CreateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"email": "a@x"}})
+	require.Error(t, err)
+}
+
+// TestConstraintKeyLocksCoverNodeConstraintsOnly: no nodes, or no schema,
+// take no lock; a relationship constraint whose type shares a node's label
+// takes none either.
+func TestConstraintKeyLocksCoverNodeConstraintsOnly(t *testing.T) {
+	var none *SchemaManager
+	none.lockConstraintKeysOf(&Node{ID: "test:n", Labels: []string{"X"}, Properties: map[string]any{"k": 1}})()
+	sm := NewSchemaManager()
+	sm.lockConstraintKeysOf()()
+	require.NoError(t, sm.AddConstraint(Constraint{Name: "r_k", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "X", Properties: []string{"k"}}))
+	release := sm.lockConstraintKeysOf(&Node{ID: "test:n", Labels: []string{"X"}, Properties: map[string]any{"k": 1}})
+	release()
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	require.Empty(t, sm.uniqueConstraintCommitLocks)
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+}
+
+// TestTransactionConstraintCheckFailsWhenTheEngineCannotBeRead: a constraint
+// check that can't read the committed nodes fails the write.
+func TestTransactionConstraintCheckFailsWhenTheEngineCannotBeRead(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	schema := engine.GetSchemaForNamespace("test")
+	require.NoError(t, schema.AddConstraint(Constraint{Name: "u_email", Type: ConstraintUnique, Label: "User", Properties: []string{"email"}}))
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	tx.mu.Lock()
+	_, err = tx.committedConstraintNodesLocked("User")
+	tx.mu.Unlock()
+	require.NoError(t, err)
+	require.NoError(t, engine.Close())
+	tx.mu.Lock()
+	_, err = tx.committedConstraintNodesLocked("User")
+	tx.mu.Unlock()
+	require.Error(t, err)
+}

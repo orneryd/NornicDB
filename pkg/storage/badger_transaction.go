@@ -2559,9 +2559,6 @@ func (tx *BadgerTransaction) committedConstraintNodesLocked(label string) ([]*No
 	}
 	kept := nodes[:0]
 	for _, node := range nodes {
-		if node == nil {
-			continue
-		}
 		if _, deleted := tx.deletedNodes[node.ID]; deleted {
 			continue
 		}
