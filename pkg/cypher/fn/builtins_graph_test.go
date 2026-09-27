@@ -94,6 +94,10 @@ func TestGraphPropertiesByName(t *testing.T) {
 		require.EqualError(t, err, "Insufficient parameters for function 'graph.propertiesByName'")
 		_, _, err = EvaluateFunction("graph.propertiesByName", []string{"a", "a"}, ctx)
 		require.EqualError(t, err, "Too many parameters for function 'graph.propertiesByName'")
+		// An empty argument list may arrive as one empty argument.
+		names, _, err := EvaluateFunction("graph.names", []string{" "}, ctx)
+		require.NoError(t, err)
+		require.NotNil(t, names)
 		_, _, err = EvaluateFunction("graph.names", []string{"1"}, ctx)
 		require.EqualError(t, err, "Too many parameters for function 'graph.names'")
 		var count *ParameterCountError

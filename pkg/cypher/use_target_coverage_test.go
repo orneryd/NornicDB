@@ -305,3 +305,76 @@ func TestCompositeGraphFunctionParameterCounts(t *testing.T) {
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
 }
+
+// TestGraphAccess: a request's or session's graph is allowed when every
+// database AccessDatabases lists is, and its data database is the last one;
+// an unreadable composite refuses access; a nil check allows all.
+func TestGraphAccess(t *testing.T) {
+	manager := &accessTestManager{}
+	allow := func(allowed ...string) func(string) bool {
+		return func(database string) bool {
+			for _, name := range allowed {
+				if name == database {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	data, allowed := GraphAccess(manager, "cmp.a", allow("cmp", "dba"))
+	require.True(t, allowed)
+	require.Equal(t, "dba", data)
+	data, allowed = GraphAccess(manager, "cmp.a", allow("dba"))
+	require.False(t, allowed, "the composite isn't allowed")
+	require.Equal(t, "dba", data)
+	data, allowed = GraphAccess(manager, "al", nil)
+	require.True(t, allowed)
+	require.Equal(t, "target", data)
+	data, allowed = GraphAccess(&accessTestManager{constituentsErr: errors.New("unavailable")}, "cmp.a", nil)
+	require.False(t, allowed, "an unreadable composite refuses access")
+	require.Equal(t, "cmp.a", data)
+}
+
+// TestUndefinedVariableError: an expression that starts with a name that
+// isn't a function call names an undefined variable.
+func TestUndefinedVariableError(t *testing.T) {
+	for expression, want := range map[string]string{"nosuch": "nosuch", "x.y": "x", "g + 1": "g"} {
+		err, undefined := undefinedVariableError(expression)
+		require.True(t, undefined, expression)
+		require.EqualError(t, err, "Variable `"+want+"` not defined", expression)
+	}
+	for _, expression := range []string{"f(1)", "toUpper ('a')", "1", "'s'", ""} {
+		_, undefined := undefinedVariableError(expression)
+		require.False(t, undefined, expression)
+	}
+}
+
+// TestCypherTypeSystemNameWithArticle: Neo4j's "but it was …" type names.
+func TestCypherTypeSystemNameWithArticle(t *testing.T) {
+	for value, want := range map[interface{}]string{nil: "NULL", int64(1): "an INTEGER", 1.5: "a FLOAT", true: "a BOOLEAN", "s": "a STRING"} {
+		require.Equal(t, want, cypherTypeSystemNameWithArticle(value), "%#v", value)
+	}
+	require.Equal(t, "a LIST", cypherTypeSystemNameWithArticle([]interface{}{1}))
+	require.Equal(t, "a MAP", cypherTypeSystemNameWithArticle(map[string]interface{}{}))
+}
+
+// TestRowGraphFunctionArguments: in the row evaluator, a graph function's
+// argument error is the statement's error, and an argument the row can't
+// resolve leaves the call unresolved; a well-formed call returns the value.
+func TestRowGraphFunctionArguments(t *testing.T) {
+	exec := newCompositeFixture(t)
+	value, resolved, err := exec.evaluateRowGraphFunction("graph.propertiesByName", "1 / 0", map[string]interface{}{})
+	require.Error(t, err)
+	require.False(t, resolved)
+	require.Nil(t, value)
+	value, resolved, err = exec.evaluateRowGraphFunction("graph.propertiesByName", "missing", map[string]interface{}{})
+	require.NoError(t, err)
+	require.False(t, resolved)
+	require.Nil(t, value)
+	graphs, composite := exec.compositeGraphs()
+	require.True(t, composite)
+	value, resolved, err = exec.evaluateRowGraphFunction("graph.propertiesByName", "g", map[string]interface{}{"g": graphs[0]})
+	require.NoError(t, err)
+	require.True(t, resolved)
+	require.Equal(t, map[string]interface{}{}, value)
+}
