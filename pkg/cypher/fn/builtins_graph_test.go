@@ -18,9 +18,17 @@ func graphTestContext(graphs []string, composite bool, vars map[string]interface
 			}
 			return vars[expr], nil
 		},
-		Graphs: func() ([]string, bool) { return graphs, composite },
+		Graphs: testGraphCatalog{graphs: graphs, composite: composite},
 	}
 }
+
+// testGraphCatalog is a fixed GraphCatalog.
+type testGraphCatalog struct {
+	graphs    []string
+	composite bool
+}
+
+func (c testGraphCatalog) CompositeGraphs() ([]string, bool) { return c.graphs, c.composite }
 
 func TestGraphNamesListsCompositeGraphs(t *testing.T) {
 	ctx := graphTestContext([]string{"cmp.a", "cmp.b"}, true, nil)

@@ -45,10 +45,11 @@ func (e *StorageExecutor) dynamicUseError(clause fabric.UseClause) error {
 		localization.CypherCommandRoutingUseDynamicLookupNotAllowed(clause.Text()))
 }
 
-// compositeGraphs lists the graphs of the composite database this executor
+// CompositeGraphs lists the graphs of the composite database this executor
 // runs on, as qualified names (composite.alias, sorted), for graph.names();
-// composite is false for any other database.
-func (e *StorageExecutor) compositeGraphs() (graphs []string, composite bool) {
+// composite is false for any other database. The executor is the function
+// contexts' GraphCatalog (cypherfn.Context.Graphs).
+func (e *StorageExecutor) CompositeGraphs() (graphs []string, composite bool) {
 	if !e.sessionIsComposite() {
 		return nil, false
 	}

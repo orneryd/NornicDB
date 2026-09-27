@@ -284,7 +284,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 			}
 			return value, nil
 		},
-		Graphs: e.compositeGraphs,
+		Graphs: e,
 	})
 	if errors.Is(err, errRowArgumentUnresolved) {
 		return nil, false, nil

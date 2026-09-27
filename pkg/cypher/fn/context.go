@@ -21,8 +21,16 @@ type Context struct {
 	Eval func(expr string) (interface{}, error)
 	Now  func() time.Time
 
-	// Graphs returns the graphs of the composite database the query runs
-	// on (qualified names, composite.alias) and whether it is a composite
-	// database. Nil means not a composite database.
-	Graphs func() ([]string, bool)
+	// Graphs lists the graphs of the composite database the query runs on.
+	// Nil means not a composite database.
+	Graphs GraphCatalog
+}
+
+// GraphCatalog lists the graphs of the composite database a query runs on:
+// their qualified names (composite.alias) and whether it is a composite
+// database. It is an interface rather than a function so that a context
+// built per row can carry its executor without allocating (a method value
+// would build a closure each time).
+type GraphCatalog interface {
+	CompositeGraphs() (graphs []string, composite bool)
 }

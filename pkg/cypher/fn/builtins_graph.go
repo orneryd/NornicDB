@@ -102,5 +102,5 @@ func compositeGraphs(ctx Context) ([]string, bool) {
 	if ctx.Graphs == nil {
 		return nil, false
 	}
-	return ctx.Graphs()
+	return ctx.Graphs.CompositeGraphs()
 }
