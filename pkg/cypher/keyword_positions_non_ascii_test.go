@@ -82,3 +82,23 @@ func BenchmarkCaseHelpers(b *testing.B) {
 		}
 	})
 }
+
+// TestKeywordPositionHelpersWithNonASCIIText: the fallback helpers that cut
+// clause text at a keyword found in an ASCII-upper-cased copy keep the
+// original text intact when non-ASCII text comes before the keyword (#748).
+func TestKeywordPositionHelpersWithNonASCIIText(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "k748h"))
+	ctx := context.Background()
+
+	require.Equal(t, "MATCH (n)-[:R]->(m:İ {x: 'ıı'})",
+		exec.extractSubquery("n.a = 'ıı' AND EXISTS { MATCH (n)-[:R]->(m:İ {x: 'ıı'}) }", "EXISTS"))
+	require.Equal(t, "", exec.extractSubquery("n.a = 'ıı'", "EXISTS"))
+
+	node := &storage.Node{ID: "k748h:n", Labels: []string{"P"}, Properties: map[string]any{"name": "ıstanbul", "tag": "İİ-x"}}
+	require.True(t, exec.evaluateStringOp(ctx, node, "n", "n.name STARTS WITH 'ıs'", "STARTS WITH"))
+	require.True(t, exec.evaluateStringOp(ctx, node, "n", "n.tag CONTAINS 'İ-'", "CONTAINS"))
+	require.False(t, exec.evaluateStringOp(ctx, node, "n", "n.name ENDS WITH 'ıı'", "ENDS WITH"))
+
+	require.NoError(t, exec.validateSetAssignments([]string{"n.a = toUpper('ıı')", "n:İ"}))
+	require.Error(t, exec.validateSetAssignments([]string{"n.a = notAFunction('ıı')"}))
+}
