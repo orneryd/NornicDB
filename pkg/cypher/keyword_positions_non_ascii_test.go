@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -58,4 +59,26 @@ func TestCaseHelpersKeepPositions(t *testing.T) {
 	require.Equal(t, "match (n:İ) return n", lowerASCII("MATCH (n:İ) RETURN n"))
 	same := "ALREADY UPPER"
 	require.Equal(t, same, upperASCII(same))
+}
+
+func BenchmarkCaseHelpers(b *testing.B) {
+	text := "MATCH (n:Person {name: $name}) WHERE n.age > 30 RETURN n.name AS name ORDER BY name LIMIT 10"
+	b.Run("upperASCII", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = upperASCII(text)
+		}
+	})
+	b.Run("lowerASCII", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = lowerASCII(text)
+		}
+	})
+	b.Run("strings.ToUpper", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = strings.ToUpper(text)
+		}
+	})
 }

@@ -777,11 +777,14 @@ func asciiUpper(b byte) byte {
 func upperASCII(text string) string {
 	for i := 0; i < len(text); i++ {
 		if c := text[i]; c >= 'a' && c <= 'z' {
-			out := []byte(text)
-			for j := i; j < len(out); j++ {
-				out[j] = asciiUpper(out[j])
+			// One allocation, as strings.ToUpper's ASCII path.
+			var out strings.Builder
+			out.Grow(len(text))
+			out.WriteString(text[:i])
+			for j := i; j < len(text); j++ {
+				out.WriteByte(asciiUpper(text[j]))
 			}
-			return string(out)
+			return out.String()
 		}
 	}
 	return text
@@ -793,13 +796,17 @@ func upperASCII(text string) string {
 func lowerASCII(text string) string {
 	for i := 0; i < len(text); i++ {
 		if c := text[i]; c >= 'A' && c <= 'Z' {
-			out := []byte(text)
-			for j := i; j < len(out); j++ {
-				if c := out[j]; c >= 'A' && c <= 'Z' {
-					out[j] = c + ('a' - 'A')
+			var out strings.Builder
+			out.Grow(len(text))
+			out.WriteString(text[:i])
+			for j := i; j < len(text); j++ {
+				c := text[j]
+				if c >= 'A' && c <= 'Z' {
+					c += 'a' - 'A'
 				}
+				out.WriteByte(c)
 			}
-			return string(out)
+			return out.String()
 		}
 	}
 	return text
