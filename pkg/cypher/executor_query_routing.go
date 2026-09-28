@@ -815,6 +815,15 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input: adjacent string literals require an operator between them")
 	}
+	if explainProfileConflict(cypher) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "EXPLAIN cannot be combined with PROFILE")
+	}
+	if _, ok := trailingBareFinish(cypher); ok {
+		// FINISH only terminates reading/writing clauses; after RETURN, WITH
+		// or YIELD it is invalid. Valid trailing FINISH positions were
+		// stripped before validation.
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "FINISH cannot follow RETURN, WITH or YIELD")
+	}
 	if !hasValidStartKeyword(cypher) {
 		// Neo4j reports an unrecognized statement as a syntax error; classify
 		// the localized terminal so Bolt carries the proper status code.

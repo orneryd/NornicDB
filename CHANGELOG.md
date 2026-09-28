@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list literals (`[1, 2,]`, `[, 1]`), adjacent string literals (`'a''b'` —
   Cypher's string escape is a backslash, not a doubled quote), and a
   statement whose last clause is `UNWIND` with nothing after it.
+- Accept Neo4j 5 statement preambles (`CYPHER [version] [option=value …]`
+  groups, any number, on every route) and run the statement they precede.
+- Support the `FINISH` clause terminator (Neo4j 5.19+): a statement ending in
+  `FINISH` runs and returns no rows, including on each UNION branch and in
+  `CALL { }` bodies; `FINISH` after RETURN/WITH/YIELD stays a SyntaxError.
+- Reject `EXPLAIN PROFILE` / `PROFILE EXPLAIN` as a SyntaxError, as Neo4j
+  does.
 - Truncate logged query shapes at a rune boundary so redaction/log seams can
   never emit invalid UTF-8.
 - Unify scheduled and explicit MVCC pruning on per-key transactions, preserving

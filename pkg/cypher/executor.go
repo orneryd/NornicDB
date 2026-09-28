@@ -1389,16 +1389,39 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
+	// Neo4j 5 statement framing: leading CYPHER [version] [option=value …]
+	// groups run the statement they precede, and a trailing FINISH (on every
+	// UNION branch) runs it and returns no rows.
+	cypher, _ = stripCypherPreamble(cypher)
+	cypher = strings.TrimSpace(cypher)
+	finishTerminated := false
+	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
+		cypher = strings.TrimSpace(stripped)
+		finishTerminated = true
+	}
 	if cypher == "" {
+		if finishTerminated {
+			return &ExecuteResult{}, nil
+		}
 		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
 	// A statement whose last clause is UNWIND has nothing after it — Neo4j
 	// rejects it. This is a whole-statement rule, not part of
 	// validateSyntaxNornic: fabric fragments legitimately end in UNWIND when
-	// the surrounding statement continues in another fragment.
-	if lastTopLevelClauseWord(cypher) == "UNWIND" {
+	// the surrounding statement continues in another fragment. A FINISH
+	// terminator is itself the clause that follows UNWIND, so a
+	// FINISH-terminated statement is exempt.
+	if !finishTerminated && lastTopLevelClauseWord(cypher) == "UNWIND" {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input: UNWIND must be followed by a clause")
+	}
+	if finishTerminated {
+		defer func() {
+			if result != nil {
+				result.Columns = nil
+				result.Rows = nil
+			}
+		}()
 	}
 
 	// Typed Go maps and slices become Cypher maps and lists here, once, for

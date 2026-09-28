@@ -19,7 +19,7 @@ import (
 // The key property is that internal subqueries/procedure bodies participate in
 // the caller's transaction context (explicit tx or implicit tx wrapper carried
 // on ctx), avoiding nested implicit transactions and misrouting.
-func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -29,8 +29,24 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
+	finishTerminated := false
+	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
+		cypher = strings.TrimSpace(stripped)
+		finishTerminated = true
+	}
 	if cypher == "" {
+		if finishTerminated {
+			return &ExecuteResult{}, nil
+		}
 		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
+	}
+	if finishTerminated {
+		defer func() {
+			if result != nil {
+				result.Columns = nil
+				result.Rows = nil
+			}
+		}()
 	}
 
 	if use, remaining, hasUse, err := parseUseClause(cypher, false); hasUse || err != nil {
