@@ -803,6 +803,18 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	if e.hasCachedValidSyntax(cypher) {
 		return nil
 	}
+	if containsNotInOperator(cypher) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			"Invalid input 'NOT': NOT IN is not a Cypher operator; write NOT x IN [list]")
+	}
+	if containsTrailingListComma(cypher) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			"Invalid input ']': expected an expression")
+	}
+	if hasAdjacentStringLiterals(cypher) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			"Invalid input: adjacent string literals require an operator between them")
+	}
 	if !hasValidStartKeyword(cypher) {
 		// Neo4j reports an unrecognized statement as a syntax error; classify
 		// the localized terminal so Bolt carries the proper status code.

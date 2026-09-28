@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WHERE [1]`) now fails with `Neo.ClientError.Statement.TypeError`
   (`Type mismatch: expected Boolean but was Integer/Node/…`) instead of
   silently keeping rows. Null stays falsy.
+- Reject forms Neo4j rejects that the validator previously accepted: the
+  `NOT IN` operator (write `NOT x IN [list]`), trailing or leading commas in
+  list literals (`[1, 2,]`, `[, 1]`), adjacent string literals (`'a''b'` —
+  Cypher's string escape is a backslash, not a doubled quote), and a
+  statement whose last clause is `UNWIND` with nothing after it.
 - Truncate logged query shapes at a rune boundary so redaction/log seams can
   never emit invalid UTF-8.
 - Unify scheduled and explicit MVCC pruning on per-key transactions, preserving

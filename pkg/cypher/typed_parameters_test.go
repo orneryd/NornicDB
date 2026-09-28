@@ -66,7 +66,7 @@ func TestParameterReferencesOutsideStringLiterals(t *testing.T) {
 	}{
 		{"RETURN 'price: $p USD' AS s", map[string]interface{}{"p": 12}, "price: $p USD"},
 		{"RETURN \"$p\" AS s", map[string]interface{}{"p": "x"}, "$p"},
-		{"RETURN 'it''s $p' AS s", map[string]interface{}{"p": "x"}, "it's $p"},
+		{`RETURN 'it\'s $p' AS s`, map[string]interface{}{"p": "x"}, "it's $p"},
 		{`RETURN 'a\'$p' AS s`, map[string]interface{}{"p": "x"}, "a'$p"},
 		{"RETURN $p + ' and $p' AS s", map[string]interface{}{"p": "x"}, "x and $p"},
 	} {
