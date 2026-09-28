@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   active snapshots and avoiding conflicts with normal writes. Scheduled pruning
   now keeps exactly `MaxVersionsPerKey` closed versions; its next cycle may
   remove one extra version retained by the previous lifecycle planner.
+- Skip prune-floor lookups for MVCC nodes and relationships with no persisted
+  floor, restoring point-read and label-scan allocations without changing
+  visibility of pruned history after restart or backup restore.
 - Fully remove namespace-owned indexes, dictionaries, adjacency, MVCC history,
   heads, and prune floors on database drop; count every Badger key family in
   storage byte metrics.

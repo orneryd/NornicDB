@@ -169,7 +169,57 @@ func mvccPruneFloorKey(logical []byte) []byte {
 	return key
 }
 
-func applyMVCCPruneFloorInTxn(txn *badger.Txn, logical []byte, head *MVCCHead) error {
+func (b *BadgerEngine) loadMVCCFloorKeys(db *badger.DB) error {
+	keys := make(map[[9]byte]struct{})
+	err := db.View(func(txn *badger.Txn) error {
+		prefix := []byte{prefixMVCCPruneFloor}
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		defer it.Close()
+		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			key := it.Item().Key()
+			if len(key) != 10 || (key[1] != prefixMVCCNode && key[1] != prefixMVCCEdge) {
+				continue
+			}
+			var logical [9]byte
+			copy(logical[:], key[1:])
+			keys[logical] = struct{}{}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	b.mvccFloorKeysMu.Lock()
+	b.mvccFloorKeys = keys
+	b.mvccFloorKeysMu.Unlock()
+	return nil
+}
+
+func (b *BadgerEngine) markMVCCFloorKey(logical []byte) {
+	var key [9]byte
+	copy(key[:], logical)
+	b.mvccFloorKeysMu.Lock()
+	if b.mvccFloorKeys == nil {
+		b.mvccFloorKeys = make(map[[9]byte]struct{})
+	}
+	b.mvccFloorKeys[key] = struct{}{}
+	b.mvccFloorKeysMu.Unlock()
+}
+
+func (b *BadgerEngine) hasMVCCFloor(kind byte, numID uint64) bool {
+	var key [9]byte
+	key[0] = kind
+	binary.BigEndian.PutUint64(key[1:], numID)
+	b.mvccFloorKeysMu.RLock()
+	_, known := b.mvccFloorKeys[key]
+	b.mvccFloorKeysMu.RUnlock()
+	return known
+}
+
+func (b *BadgerEngine) applyMVCCPruneFloorInTxn(txn *badger.Txn, logical []byte, head *MVCCHead) error {
+	if len(logical) == 9 && !b.hasMVCCFloor(logical[0], binary.BigEndian.Uint64(logical[1:])) {
+		return nil
+	}
 	item, err := txn.Get(mvccPruneFloorKey(logical))
 	if err == badger.ErrKeyNotFound {
 		return nil
@@ -491,11 +541,15 @@ func loadMVCCHead[K mvccHeadKeyLookup](b *BadgerEngine, id string) (MVCCHead, er
 		}); err != nil {
 			return err
 		}
-		logical := append([]byte{prefixMVCCNode}, key[1:]...)
+		kind := prefixMVCCNode
 		if key[0] == prefixMVCCEdgeHead {
-			logical[0] = prefixMVCCEdge
+			kind = prefixMVCCEdge
 		}
-		return applyMVCCPruneFloorInTxn(rtxn, logical, &head)
+		if !b.hasMVCCFloor(kind, binary.BigEndian.Uint64(key[1:])) {
+			return nil
+		}
+		logical := append([]byte{kind}, key[1:]...)
+		return b.applyMVCCPruneFloorInTxn(rtxn, logical, &head)
 	})
 	if err == badger.ErrKeyNotFound {
 		return MVCCHead{}, ErrNotFound
@@ -791,9 +845,11 @@ func (b *BadgerEngine) loadNodeMVCCHeadInTxn(txn *badger.Txn, id NodeID) (MVCCHe
 	if err != nil {
 		return MVCCHead{}, err
 	}
-	logical := append([]byte{prefixMVCCNode}, key[1:]...)
-	if err := applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
-		return MVCCHead{}, err
+	if b.hasMVCCFloor(prefixMVCCNode, binary.BigEndian.Uint64(key[1:])) {
+		logical := append([]byte{prefixMVCCNode}, key[1:]...)
+		if err := b.applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
+			return MVCCHead{}, err
+		}
 	}
 	return head, nil
 }
@@ -816,9 +872,11 @@ func (b *BadgerEngine) loadEdgeMVCCHeadByNumWithPhysicalVersionInTxn(txn *badger
 	if err != nil {
 		return MVCCHead{}, 0, err
 	}
-	logical := append([]byte{prefixMVCCEdge}, encodeNumID(numID)...)
-	if err := applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
-		return MVCCHead{}, 0, err
+	if b.hasMVCCFloor(prefixMVCCEdge, numID) {
+		logical := append([]byte{prefixMVCCEdge}, encodeNumID(numID)...)
+		if err := b.applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
+			return MVCCHead{}, 0, err
+		}
 	}
 	return head, physicalVersion, nil
 }
@@ -1281,8 +1339,10 @@ func (b *BadgerEngine) iterateNodesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 		}); err != nil {
 			return err
 		}
-		if err := applyMVCCPruneFloorInTxn(txn, append([]byte{prefixMVCCNode}, key[1:]...), &head); err != nil {
-			return err
+		if b.hasMVCCFloor(prefixMVCCNode, nodeNum) {
+			if err := b.applyMVCCPruneFloorInTxn(txn, append([]byte{prefixMVCCNode}, key[1:]...), &head); err != nil {
+				return err
+			}
 		}
 		if version.Compare(head.FloorVersion) < 0 {
 			continue
@@ -1368,8 +1428,10 @@ func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 		}); err != nil {
 			return err
 		}
-		if err := applyMVCCPruneFloorInTxn(txn, append([]byte{prefixMVCCEdge}, key[1:]...), &head); err != nil {
-			return err
+		if b.hasMVCCFloor(prefixMVCCEdge, edgeNum) {
+			if err := b.applyMVCCPruneFloorInTxn(txn, append([]byte{prefixMVCCEdge}, key[1:]...), &head); err != nil {
+				return err
+			}
 		}
 		if version.Compare(head.FloorVersion) < 0 {
 			continue
@@ -2291,6 +2353,7 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 				return nil
 			}
 			if hasExternalHead && deleted > deletedBefore {
+				b.markMVCCFloorKey(currentGroup[0].logical)
 				if err := txn.Set(mvccPruneFloorKey(currentGroup[0].logical), encodeMVCCSortVersion(head.Version)); err != nil {
 					return err
 				}
@@ -2362,6 +2425,7 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 			floorVersion = head.Version
 		}
 		if hasExternalHead && groupDeleted {
+			b.markMVCCFloorKey(currentGroup[0].logical)
 			if err := txn.Set(mvccPruneFloorKey(currentGroup[0].logical), encodeMVCCSortVersion(floorVersion)); err != nil {
 				return err
 			}
