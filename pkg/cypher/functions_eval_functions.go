@@ -273,6 +273,11 @@ skipArrayIndexing:
 		}
 
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		if innerVal == nil {
+			// length(null) is null in Neo4j; a missing/unbound argument must
+			// not report a fabricated zero-length value (#581).
+			return nil
+		}
 		switch v := innerVal.(type) {
 		case string:
 			return int64(cyphertext.Length(v))

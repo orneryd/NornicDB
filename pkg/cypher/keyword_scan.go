@@ -919,6 +919,26 @@ func lowerASCII(text string) string {
 	return text
 }
 
+// indexASCIIFold returns the first index at which the lower-case ASCII
+// substring occurs in text, compared case-insensitively, or -1. Zero
+// allocations on the miss path; shares equalFoldASCII with the other ASCII
+// keyword comparisons.
+func indexASCIIFold(text, lowerSub string) int {
+	if lowerSub == "" {
+		return 0
+	}
+	first := lowerSub[0]
+	for i := 0; i+len(lowerSub) <= len(text); i++ {
+		if asciiLowerByte(text[i]) != first {
+			continue
+		}
+		if equalFoldASCII(text[i:i+len(lowerSub)], lowerSub) {
+			return i
+		}
+	}
+	return -1
+}
+
 func isIdentByte(b byte) bool {
 	if b >= 0x80 {
 		return true

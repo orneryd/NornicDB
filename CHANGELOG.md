@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fix `OPTIONAL MATCH p = shortestPath(...)` returning a fabricated
+  `{result: null}` row with the wrong columns instead of projecting the
+  path. Clause-only and anchored forms (`MATCH (a) OPTIONAL MATCH
+  p = shortestPath((a)-...->(c))`) now run the shared shortestPath BFS with
+  left-outer-join semantics: one row per seed, real values when a path
+  exists, nulls when none, and errors propagate instead of being swallowed.
+- Allow `shortestPath(...)` / `allShortestPaths(...)` in value position
+  (`RETURN length(shortestPath((a)-[:R*]->(b)))`) instead of rejecting the
+  statement as an illegal projected pattern expression. Value forms reuse
+  the same BFS machinery as clause forms and project per row.
+- Return null (not a fabricated `0`) for `length(null)` / `length()` of an
+  unbound path in a non-matching OPTIONAL MATCH.
 - Isolate one-statement transaction scripts (`BEGIN … COMMIT/ROLLBACK`) on a
   private executor instead of the shared per-database executor. A client
   statement could previously open the script's transaction on the executor

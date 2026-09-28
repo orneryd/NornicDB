@@ -3541,6 +3541,46 @@ func (e *StorageExecutor) executeOptionalMatch(ctx context.Context, cypher strin
 
 	modifiedQuery := cypher[:optMatchIdx] + "MATCH" + cypher[optMatchIdx+14:]
 
+	// OPTIONAL MATCH p = shortestPath(...) routes through the shortestPath
+	// machinery so path endpoints, rel types, and hops are parsed the same
+	// way as a plain MATCH. Optional semantics: no path yields one row of
+	// nulls under the same columns. Errors propagate instead of being
+	// swallowed into a null row.
+	if isShortestPathQuery(modifiedQuery) {
+		query, err := e.parseShortestPathQuery(ctx, modifiedQuery)
+		if err != nil {
+			return nil, err
+		}
+		result, err := e.executeShortestPathQuery(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		if len(result.Rows) == 0 {
+			// Project the single null row with the same evaluator as the path
+			// rows so constants, p IS NULL, and arithmetic behave exactly like
+			// a non-matching OPTIONAL MATCH in Neo4j instead of blanking every
+			// projected value.
+			items := e.parseReturnItems(query.returnClause)
+			if len(items) == 0 {
+				return &ExecuteResult{
+					Columns: []string{query.pathVariable},
+					Rows:    [][]interface{}{{nil}},
+				}, nil
+			}
+			emptyCtx := PathContext{
+				nodes: map[string]*storage.Node{},
+				rels:  map[string]*storage.Edge{},
+				paths: map[string]*PathResult{},
+			}
+			row := e.buildOptionalShortestPathRow(ctx, items, query.pathVariable, nil, emptyCtx)
+			return &ExecuteResult{
+				Columns: result.Columns,
+				Rows:    [][]interface{}{row},
+			}, nil
+		}
+		return result, nil
+	}
+
 	result, err := e.executeMatch(ctx, modifiedQuery)
 
 	// Handle error case - return result with null values

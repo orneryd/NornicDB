@@ -362,6 +362,10 @@ func validatePatternExpressionPlacement(cypher string) error {
 // expression. Relationship brackets (`-[r]->`) are not list delimiters.
 func containsIllegalProjectedPatternExpression(expression string) bool {
 	expression = maskSubqueryBodies(expression)
+	// shortestPath(...) / allShortestPaths(...) are path functions, not
+	// legacy pattern expressions: their pattern argument stays valid in value
+	// position (RETURN / WITH / SET projections).
+	expression = maskPathFunctionCalls(expression)
 	segmentStart := 0
 	for index := 0; index < len(expression); index++ {
 		if expression[index] != '[' || (index > 0 && expression[index-1] == '-') {
@@ -384,6 +388,48 @@ func containsIllegalProjectedPatternExpression(expression string) bool {
 		segmentStart = close + 1
 	}
 	return containsRelExistencePattern(expression[segmentStart:])
+}
+
+// maskPathFunctionCalls blanks the argument spans of shortestPath(...) and
+// allShortestPaths(...) so pattern scanners do not mistake their relationship
+// syntax for a legacy pattern expression. The returned string keeps its byte
+// length so every caller index stays valid.
+func maskPathFunctionCalls(expression string) string {
+	// Zero-allocation fast path: ordinary projections contain neither call.
+	if indexASCIIFold(expression, "shortestpath") < 0 && indexASCIIFold(expression, "allshortestpaths") < 0 {
+		return expression
+	}
+	masked := []byte(expression)
+	for _, name := range []string{"shortestpath", "allshortestpaths"} {
+		searchStart := 0
+		for searchStart < len(expression) {
+			idx := indexASCIIFold(expression[searchStart:], name)
+			if idx < 0 {
+				break
+			}
+			idx += searchStart
+			if idx > 0 && isWordChar(expression[idx-1]) {
+				searchStart = idx + 1
+				continue
+			}
+			openParen := skipSpaces(expression, idx+len(name))
+			if openParen >= len(expression) || expression[openParen] != '(' {
+				searchStart = idx + 1
+				continue
+			}
+			closeParen := findMatchingParen(expression, openParen)
+			if closeParen < 0 {
+				break
+			}
+			for position := idx; position <= closeParen; position++ {
+				if masked[position] != '\n' && masked[position] != '\r' {
+					masked[position] = ' '
+				}
+			}
+			searchStart = closeParen + 1
+		}
+	}
+	return string(masked)
 }
 
 func invalidPatternExpressionPlacementError() error {

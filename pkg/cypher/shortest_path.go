@@ -112,8 +112,9 @@ func (e *StorageExecutor) resolveShortestPathVariables(ctx context.Context, quer
 
 func extractShortestPathCall(cypher string) (string, string, int, bool) {
 	upperCypher := upperASCII(cypher)
-	for _, funcName := range []string{"allShortestPaths", "shortestPath"} {
-		upperFunc := upperASCII(funcName)
+	// Upper-case literals avoid upperASCII(funcName) allocations on every
+	// statement; the compiler places this constant slice in static data.
+	for _, upperFunc := range []string{"ALLSHORTESTPATHS", "SHORTESTPATH"} {
 		searchStart := 0
 		for searchStart < len(cypher) {
 			idx := strings.Index(upperCypher[searchStart:], upperFunc)
@@ -125,7 +126,7 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 				searchStart = idx + 1
 				continue
 			}
-			openParen := idx + len(funcName)
+			openParen := idx + len(upperFunc)
 			for openParen < len(cypher) && (cypher[openParen] == ' ' || cypher[openParen] == '\t' || cypher[openParen] == '\n' || cypher[openParen] == '\r') {
 				openParen++
 			}
@@ -135,9 +136,15 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 			}
 			closeParen := findMatchingParen(cypher, openParen)
 			if closeParen < 0 {
-				return funcName, "", idx, false
+				if upperFunc == "ALLSHORTESTPATHS" {
+					return "allShortestPaths", "", idx, false
+				}
+				return "shortestPath", "", idx, false
 			}
-			return funcName, strings.TrimSpace(cypher[openParen+1 : closeParen]), idx, true
+			if upperFunc == "ALLSHORTESTPATHS" {
+				return "allShortestPaths", strings.TrimSpace(cypher[openParen+1 : closeParen]), idx, true
+			}
+			return "shortestPath", strings.TrimSpace(cypher[openParen+1 : closeParen]), idx, true
 		}
 	}
 	return "", "", -1, false
@@ -380,6 +387,252 @@ func (e *StorageExecutor) executeShortestPathQuery(ctx context.Context, query *S
 	return result, nil
 }
 
+// executeOptionalShortestPath handles anchored shortestPath forms:
+//
+//	MATCH (a:ZSP {id:1}) OPTIONAL MATCH p = shortestPath((a)-[:ZS*]->(c:ZSP {id:3})) RETURN ...
+//
+// The initial MATCH clause provides the seed rows; each seed row that binds a
+// bare start/end variable runs one BFS and contributes either a path row or a
+// null row, preserving OPTIONAL MATCH semantics. Patterned endpoints resolve
+// via the schema-aware findNodeByPattern once per statement.
+func (e *StorageExecutor) executeOptionalShortestPath(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	params := getParamsFromContext(ctx)
+	if params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
+	funcName, pattern, funcIdx, ok := extractShortestPathCall(cypher)
+	if !ok {
+		return nil, localizedError(localization.CypherMatchingShortestPathQueryExpected(), nil)
+	}
+	findAll := strings.EqualFold(funcName, "allShortestPaths")
+
+	optMatchIdx := findKeywordIndexInContext(cypher, "OPTIONAL MATCH")
+	if optMatchIdx < 0 {
+		return nil, localizedError(localization.CypherResidualOptionalMatchNotFound(truncateQuery(cypher, 80)), nil)
+	}
+
+	match := e.parseTraversalPattern(ctx, pattern)
+	if match == nil {
+		return nil, localizedError(localization.CypherMatchingPathPatternInvalid(pattern), nil)
+	}
+
+	maxHops := VarLengthUnboundedMaxHops
+	if match.Relationship.MaxHops > 0 {
+		maxHops = match.Relationship.MaxHops
+	}
+	pathVariable := extractShortestPathPathVariable(cypher, funcIdx)
+
+	returnIdx := findKeywordIndexInContext(cypher, "RETURN")
+	if returnIdx <= funcIdx {
+		returnIdx = -1
+	}
+	var whereClause string
+	if whereIdx := findKeywordIndexInContext(cypher, "WHERE"); whereIdx > optMatchIdx && (returnIdx < 0 || whereIdx < returnIdx) {
+		whereClause = strings.TrimSpace(cypher[whereIdx+5 : returnIdx])
+	}
+	returnClause := ""
+	if returnIdx > 0 {
+		returnClause = strings.TrimSpace(cypher[returnIdx+6:])
+	}
+
+	startHasPattern := len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0
+	endHasPattern := len(match.EndNode.labels) > 0 || len(match.EndNode.properties) > 0
+
+	// Seed the row space from the initial MATCH clause. Bare variables in the
+	// traversal pattern are resolved per row; patterned endpoints resolve once.
+	var seedColumns []string
+	if !startHasPattern && match.StartNode.variable != "" {
+		seedColumns = append(seedColumns, match.StartNode.variable)
+	}
+	if !endHasPattern && match.EndNode.variable != "" {
+		seedColumns = append(seedColumns, match.EndNode.variable)
+	}
+
+	var startByPattern, endByPattern *storage.Node
+	if startHasPattern {
+		startByPattern = e.findNodeByPattern(match.StartNode)
+	}
+	if endHasPattern {
+		endByPattern = e.findNodeByPattern(match.EndNode)
+	}
+
+	rows := [][]interface{}{{nil}}
+	if len(seedColumns) > 0 {
+		initial := strings.TrimSpace(cypher[:optMatchIdx])
+		seedResult, err := e.executeInternal(ctx, initial+" RETURN "+strings.Join(seedColumns, ", "), nil)
+		if err != nil {
+			return nil, err
+		}
+		if len(seedResult.Rows) > 0 {
+			rows = seedResult.Rows
+		}
+	}
+
+	// Bound columns carry *storage.Node values keyed by the seed column names.
+	buildResult := func(columnNames []string, builtRows [][]interface{}) *ExecuteResult {
+		return &ExecuteResult{Columns: columnNames, Rows: builtRows, Stats: &QueryStats{}}
+	}
+
+	var result *ExecuteResult
+	if returnClause != "" {
+		returnItems := e.parseReturnItems(returnClause)
+		columnNames := make([]string, len(returnItems))
+		for i, item := range returnItems {
+			if item.alias != "" {
+				columnNames[i] = item.alias
+			} else {
+				columnNames[i] = item.expr
+			}
+		}
+		traversal := &TraversalMatch{
+			StartNode:    match.StartNode,
+			EndNode:      match.EndNode,
+			PathVariable: pathVariable,
+		}
+		builtRows := make([][]interface{}, 0, len(rows))
+		for _, seed := range rows {
+			bound := map[string]interface{}{}
+			for i, name := range seedColumns {
+				bound[name] = seed[i]
+			}
+			start, end := startByPattern, endByPattern
+			if !startHasPattern && match.StartNode.variable != "" {
+				start, _ = bound[match.StartNode.variable].(*storage.Node)
+			}
+			if !endHasPattern && match.EndNode.variable != "" {
+				end, _ = bound[match.EndNode.variable].(*storage.Node)
+			}
+			if start == nil || end == nil || start.ID == end.ID {
+				nullCtx := PathContext{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}, paths: map[string]*PathResult{}}
+				for i, name := range seedColumns {
+					if node, ok := seed[i].(*storage.Node); ok {
+						nullCtx.nodes[name] = node
+					}
+				}
+				builtRows = append(builtRows, e.buildOptionalShortestPathRow(ctx, returnItems, pathVariable, nil, nullCtx))
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			var paths []PathResult
+			if findAll {
+				found, err := e.allShortestPaths(ctx, start, end, match.Relationship.Types, match.Relationship.Direction, maxHops)
+				if err != nil {
+					return nil, err
+				}
+				paths = found
+			} else {
+				found, err := e.shortestPath(ctx, start, end, match.Relationship.Types, match.Relationship.Direction, maxHops)
+				if err != nil {
+					return nil, err
+				}
+				if found != nil {
+					paths = append(paths, *found)
+				}
+			}
+			if len(paths) == 0 {
+				nullCtx := PathContext{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}, paths: map[string]*PathResult{}}
+				for i, name := range seedColumns {
+					if node, ok := seed[i].(*storage.Node); ok {
+						nullCtx.nodes[name] = node
+					}
+				}
+				builtRows = append(builtRows, e.buildOptionalShortestPathRow(ctx, returnItems, pathVariable, nil, nullCtx))
+				continue
+			}
+			for _, path := range paths {
+				pathContext := e.buildPathContext(path, traversal)
+				row := e.buildOptionalShortestPathRow(ctx, returnItems, pathVariable, &path, pathContext)
+				if whereClause != "" && !isTruthy(e.evaluateExpressionWithPathContext(ctx, whereClause, pathContext)) {
+					continue
+				}
+				builtRows = append(builtRows, row)
+			}
+		}
+		result = buildResult(columnNames, builtRows)
+	} else {
+		// Neo4j rejects a query that concludes with OPTIONAL MATCH.
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "OptionalMatchConcludesQuery", "Query cannot conclude with OPTIONAL MATCH")
+	}
+	return result, nil
+}
+
+// buildOptionalShortestPathRow projects one row for an optional shortestPath:
+// the path variable itself projects the path map, everything else evaluates
+// against the path context (length(p), p IS NULL, nodes(p), arithmetic, ...).
+func (e *StorageExecutor) buildOptionalShortestPathRow(ctx context.Context, items []returnItem, pathVariable string, path *PathResult, pathContext PathContext) []interface{} {
+	row := make([]interface{}, len(items))
+	for i, item := range items {
+		if item.expr == pathVariable {
+			if path != nil {
+				row[i] = e.pathToMap(*path)
+			}
+			continue
+		}
+		row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, pathContext)
+	}
+	return row
+}
+
+// evaluateShortestPathValue evaluates shortestPath(...) / allShortestPaths(...)
+// in expression position for one row: bare endpoint variables resolve against
+// the row's node bindings, patterned endpoints via the schema-aware lookup.
+// It shares the same BFS machinery as the clause handlers so MATCH, OPTIONAL
+// MATCH, and value forms all traverse identically. handled=false lets the
+// ordinary evaluator report its own error when the argument is not a
+// traversal pattern.
+func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcName, pattern string, nodes map[string]*storage.Node) (interface{}, bool) {
+	match := e.parseTraversalPattern(ctx, pattern)
+	if match == nil {
+		return nil, false
+	}
+	startHasPattern := len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0
+	endHasPattern := len(match.EndNode.labels) > 0 || len(match.EndNode.properties) > 0
+
+	var start, end *storage.Node
+	if !startHasPattern && match.StartNode.variable != "" {
+		start = nodes[match.StartNode.variable]
+	} else if startHasPattern {
+		start = e.findNodeByPattern(match.StartNode)
+	}
+	if !endHasPattern && match.EndNode.variable != "" {
+		end = nodes[match.EndNode.variable]
+	} else if endHasPattern {
+		end = e.findNodeByPattern(match.EndNode)
+	}
+	if start == nil || end == nil || start.ID == end.ID {
+		return nil, true
+	}
+
+	maxHops := VarLengthUnboundedMaxHops
+	if match.Relationship.MaxHops > 0 {
+		maxHops = match.Relationship.MaxHops
+	}
+
+	if strings.EqualFold(funcName, "allShortestPaths") {
+		paths, err := e.allShortestPaths(ctx, start, end, match.Relationship.Types, match.Relationship.Direction, maxHops)
+		if err != nil {
+			return nil, true
+		}
+		values := make([]interface{}, 0, len(paths))
+		for _, path := range paths {
+			values = append(values, e.pathToMap(path))
+		}
+		return values, true
+	}
+
+	path, err := e.shortestPath(ctx, start, end, match.Relationship.Types, match.Relationship.Direction, maxHops)
+	if err != nil {
+		return nil, true
+	}
+	if path == nil {
+		return nil, true
+	}
+	return e.pathToMap(*path), true
+}
+
 func nodeToValue(n *storage.Node) interface{} {
 	props := make(map[string]interface{}, len(n.Properties))
 	for k, v := range n.Properties {
@@ -460,4 +713,22 @@ func pathValueParts(path map[string]interface{}) (nodes, relationships []interfa
 func isShortestPathQuery(cypher string) bool {
 	upper := upperASCII(cypher)
 	return strings.Contains(upper, "SHORTESTPATH") || strings.Contains(upper, "ALLSHORTESTPATHS")
+}
+
+// isShortestPathClause reports whether the shortestPath/allShortestPaths call
+// lives inside a MATCH clause rather than in a RETURN/WITH projection. The
+// clause-level executor claims only clause forms; value forms project per row
+// through the shared expression evaluator.
+func isShortestPathClause(cypher string) bool {
+	_, _, funcIdx, ok := extractShortestPathCall(cypher)
+	if !ok {
+		return false
+	}
+	matchIdx := lastKeywordIndexBefore(cypher, "MATCH", funcIdx)
+	if matchIdx < 0 {
+		return false
+	}
+	returnIdx := lastKeywordIndexBefore(cypher, "RETURN", funcIdx)
+	withIdx := lastKeywordIndexBefore(cypher, "WITH", funcIdx)
+	return matchIdx > returnIdx && matchIdx > withIdx
 }

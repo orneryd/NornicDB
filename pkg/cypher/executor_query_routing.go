@@ -418,6 +418,9 @@ skipMatchCallRoute:
 		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
 			return outcome.result, outcome.err
 		}
+		if isShortestPathClause(cypher) {
+			return e.executeOptionalShortestPath(ctx, cypher)
+		}
 		withBeforeOptional := findKeywordIndex(cypher[:optionalMatchIdx], "WITH")
 		if withBeforeOptional > 0 {
 			return e.executeMatchWithOptionalMatch(ctx, cypher)
@@ -437,7 +440,7 @@ skipMatchCallRoute:
 			return outcome.result, outcome.err
 		}
 		return e.executeOptionalMatch(ctx, cypher)
-	case startsWithMatch && isShortestPathQuery(cypher):
+	case startsWithMatch && isShortestPathClause(cypher):
 		spCypher := cypher
 		if params := getParamsFromContext(ctx); params != nil {
 			spCypher = e.substituteParams(spCypher, params)

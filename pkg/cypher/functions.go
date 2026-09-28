@@ -77,6 +77,23 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	if expr == "" {
 		return nil
 	}
+	// shortestPath(...) / allShortestPaths(...) as a value: cheap prefix guard
+	// keeps the hot path allocation-free, then the shared BFS machinery runs
+	// once for this row.
+	if len(expr) >= len("shortestPath") {
+		head := expr
+		if len(head) > len("allShortestPaths") {
+			head = head[:len("allShortestPaths")]
+		}
+		if equalFoldASCII(head[:len("shortestPath")], "shortestpath") || equalFoldASCII(head, "allshortestpaths") {
+			if name, inner, ok := parseFunctionCallWS(expr); ok &&
+				(strings.EqualFold(name, "shortestPath") || strings.EqualFold(name, "allShortestPaths")) {
+				if value, handled := e.evaluateShortestPathValue(ctx, name, inner, nodes); handled {
+					return value
+				}
+			}
+		}
+	}
 	if plan := planRowSubqueries(expr); plan != nil {
 		// Subquery expressions nested in a larger expression are evaluated
 		// for this row and the rest runs on the row evaluator.
