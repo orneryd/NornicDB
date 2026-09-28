@@ -11,6 +11,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestPrivateReproCachedExecutorsRejectBareTransactionCommands pins the
+// shared-executor boundary at the server's cached per-database executor:
+// bare transaction commands are rejected there, session executors keep the
+// embedded explicit-transaction pattern, and one-statement scripts still
+// work on a private clone.
+func TestPrivateReproCachedExecutorsRejectBareTransactionCommands(t *testing.T) {
+	server, _ := setupTestServer(t)
+	ctx := context.Background()
+
+	shared, err := server.getExecutorForDatabase("nornic")
+	require.NoError(t, err)
+	for _, query := range []string{"BEGIN", "COMMIT", "ROLLBACK", "BEGIN TRANSACTION"} {
+		_, err := shared.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		require.False(t, shared.HasActiveTransaction(), query)
+	}
+
+	// Protocol transaction owners use their own per-session executors, which
+	// are not shared and keep accepting transaction control.
+	session, err := server.newExecutorForDatabase("nornic")
+	require.NoError(t, err)
+	_, err = session.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = session.Execute(ctx, "CREATE (:CachedSessionProbe)", nil)
+	require.NoError(t, err)
+	_, err = session.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+
+	// The one-statement script form still runs on the shared executor's
+	// private clone and leaves no transaction behind.
+	_, err = shared.Execute(ctx, "BEGIN CREATE (:CachedScriptProbe) COMMIT", nil)
+	require.NoError(t, err)
+	require.False(t, shared.HasActiveTransaction())
+	rows, err := shared.Execute(ctx, "MATCH (n:CachedScriptProbe) RETURN count(n) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows.Rows[0][0])
+}
+
 func TestPrivateReproHTTPBareBeginRollbackOtherRequest(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")

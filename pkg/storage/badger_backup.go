@@ -79,6 +79,9 @@ func (b *BadgerEngine) Restore(path string) error {
 	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
+	if err := b.loadMVCCFloorKeys(db); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
 	b.idDict = newIDDictionary()
 	b.propKeyDict = newPropertyKeyDictionary()
 	if err := b.idDict.loadFromBadger(db); err != nil {

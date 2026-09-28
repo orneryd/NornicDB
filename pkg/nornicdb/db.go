@@ -948,6 +948,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Initialize Cypher executor
 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)
+	// The base executor is shared by every embedded caller of DB.Cypher /
+	// ExecuteCypher: a statement must never leave it inside a transaction.
+	// Embedded callers that want explicit transactions create their own
+	// session executor (cypher.NewStorageExecutor(db.GetStorage())).
+	db.cypherExecutor.SetSharedExecutor(true)
 
 	// Configure executor with embedding dimensions for vector index creation
 	if config.Memory.EmbeddingDimensions > 0 {

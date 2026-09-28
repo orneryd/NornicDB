@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other clients' auto-commit statements run on, letting a low-privilege
   caller crash the process mid-run and cause unrelated clients' acknowledged
   writes to fail or be silently lost.
+- Reject bare `BEGIN`/`COMMIT`/`ROLLBACK` statements on cached per-database
+  executors (the embedded `DB.Cypher`/`DB.ExecuteCypher` base executor and
+  the HTTP and Bolt autocommit executor caches) with the same
+  `Neo.ClientError.Statement.SyntaxError` a client statement gets. A bare
+  `BEGIN` on an unmarked context previously opened a transaction on the
+  shared executor, after which every concurrent auto-commit statement and
+  one-statement script ran inside that caller's transaction. Embedded
+  callers that want explicit transactions create their own session executor
+  (`cypher.NewStorageExecutor(db.GetStorage())`); HTTP/Bolt protocol
+  transaction owners keep their per-session executors.
 - Treat pattern comprehensions (`[(n)-->(m) | …]`) and `COUNT { }`/`EXISTS { }`
   pattern subqueries as graph access for the composite-root guard. They
   previously slipped past the per-database authorization and read, counted,
@@ -49,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   active snapshots and avoiding conflicts with normal writes. Scheduled pruning
   now keeps exactly `MaxVersionsPerKey` closed versions; its next cycle may
   remove one extra version retained by the previous lifecycle planner.
+- Skip prune-floor lookups for MVCC nodes and relationships with no persisted
+  floor, restoring point-read and label-scan allocations without changing
+  visibility of pruned history after restart or backup restore.
 - Fully remove namespace-owned indexes, dictionaries, adjacency, MVCC history,
   heads, and prune floors on database drop; count every Badger key family in
   storage byte metrics.

@@ -529,6 +529,61 @@ func TestBadgerEngine_PruneMVCCVersions_UsesRetentionPolicyDefaults(t *testing.T
 	require.EqualValues(t, 3, nodeAtV3.Properties["version"])
 }
 
+func TestBadgerEngine_PruneFloorSurvivesReopenAndRestore(t *testing.T) {
+	options := BadgerOptions{
+		DataDir: filepath.Join(t.TempDir(), "mvcc-floor-restart"),
+		EngineOptions: EngineOptions{
+			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 1},
+		},
+	}
+	engine, err := NewBadgerEngineWithOptions(options)
+	require.NoError(t, err)
+	nodeID := NodeID(prefixTestID("mvcc-floor-node"))
+	edgeID := EdgeID(prefixTestID("mvcc-floor-edge"))
+	_, err = engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}})
+	require.NoError(t, err)
+	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: nodeID, EndNode: nodeID, Type: "LINKS"}))
+	nodeV1, err := engine.GetNodeCurrentHead(nodeID)
+	require.NoError(t, err)
+	edgeV1, err := engine.GetEdgeCurrentHead(edgeID)
+	require.NoError(t, err)
+	for version := 2; version <= 3; version++ {
+		err = engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": version}})
+		require.NoError(t, err)
+		require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: nodeID, EndNode: nodeID, Type: "LINKS", Properties: map[string]any{"version": version}}))
+	}
+	_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{})
+	require.NoError(t, err)
+	backupPath := filepath.Join(t.TempDir(), "floor.backup")
+	require.NoError(t, engine.Backup(backupPath))
+	require.NoError(t, engine.Close())
+
+	check := func(current *BadgerEngine) {
+		t.Helper()
+		nodeHead, err := current.GetNodeCurrentHead(nodeID)
+		require.NoError(t, err)
+		require.Positive(t, nodeHead.FloorVersion.Compare(nodeV1.Version))
+		edgeHead, err := current.GetEdgeCurrentHead(edgeID)
+		require.NoError(t, err)
+		require.Positive(t, edgeHead.FloorVersion.Compare(edgeV1.Version))
+		_, err = current.GetNodeVisibleAt(nodeID, nodeV1.Version)
+		require.ErrorIs(t, err, ErrNotVisibleAtSnapshot)
+		_, err = current.GetEdgeVisibleAt(edgeID, edgeV1.Version)
+		require.ErrorIs(t, err, ErrNotVisibleAtSnapshot)
+	}
+
+	reopened, err := NewBadgerEngineWithOptions(options)
+	require.NoError(t, err)
+	check(reopened)
+	require.NoError(t, reopened.Close())
+
+	restored, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, EngineOptions: options.EngineOptions})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	require.NoError(t, restored.Restore(backupPath))
+	check(restored)
+}
+
 func TestBadgerEngine_PruneMVCCVersions_TombstoneCompactionHonorsActiveReaders(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 	nodeID := NodeID(prefixTestID("mvcc-tombstone-compact"))

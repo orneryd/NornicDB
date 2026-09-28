@@ -273,6 +273,8 @@ type BadgerEngine struct {
 	retentionPolicy           RetentionPolicy
 	activeMVCCSnapshotReaders atomic.Int64
 	mvccPruneMu               sync.Mutex
+	mvccFloorKeysMu           sync.RWMutex
+	mvccFloorKeys             map[[9]byte]struct{}
 	lifecycleController       MVCCLifecycleController
 
 	// Cached per-namespace counts for O(1) multi-database stats.
@@ -926,6 +928,11 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		engine.db = newDB
 		db = newDB
 		engine.compactAfterMigration()
+	}
+
+	if err := engine.loadMVCCFloorKeys(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to load mvcc prune floors: %w", err)
 	}
 
 	// Now bodies are guaranteed v2. Schema load + unique-value rebuild

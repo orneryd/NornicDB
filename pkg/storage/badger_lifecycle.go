@@ -154,7 +154,7 @@ func (b *BadgerEngine) IterateMVCCHeads(ctx context.Context, yield func(logicalK
 					it.Close()
 					return err
 				}
-				if err := applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
+				if err := b.applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
 					it.Close()
 					return err
 				}
@@ -252,7 +252,7 @@ func (b *BadgerEngine) ReadMVCCHead(ctx context.Context, logicalKey []byte) (MVC
 		if innerErr != nil {
 			return innerErr
 		}
-		return applyMVCCPruneFloorInTxn(txn, logicalKey, &head)
+		return b.applyMVCCPruneFloorInTxn(txn, logicalKey, &head)
 	})
 	return head, err
 }
