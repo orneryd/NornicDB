@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Deliver EXPLAIN/PROFILE query plans to clients (#744): Bolt PULL SUCCESS
+  metadata now carries `plan` (EXPLAIN) and `profile` with runtime counters
+  (PROFILE), and HTTP transaction results carry `plan`/`profile` in the
+  Neo4j JSON shape (`operatorType`, `identifiers`, `args` with
+  `EstimatedRows`, `children`; profile adds `rows`/`dbHits`). The Go driver
+  reads both via `summary.Plan()` and `summary.Profile()`.
+- Stop PROFILE's inner execution from serving and populating the result
+  cache: a cached result object was mutated with plan metadata and leaked it
+  into ordinary cached reads of the same query.
 - Fix `OPTIONAL MATCH p = shortestPath(...)` returning a fabricated
   `{result: null}` row with the wrong columns instead of projecting the
   path. Clause-only and anchored forms (`MATCH (a) OPTIONAL MATCH

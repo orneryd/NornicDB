@@ -1498,7 +1498,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		// Mirror normal query-cache policy for Fabric reads (autocommit only).
 		// A cached result is served only to a caller the statement is
 		// authorized for (fabricResultCacheKey).
-		if allowResultCache && !inExplicitTx && info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) {
+		if allowResultCache && !inExplicitTx && info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
 			if key, cacheable := e.fabricResultCacheKey(ctx, preparedFabric, cypher, mergedParams); cacheable {
 				fabricResultCacheKey = key
 				if cached, found := e.cache.get(fabricResultCacheKey); found {
@@ -1744,7 +1744,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Capture the storage revision before execution so mutations performed
 	// outside this executor cannot leave a stale cached result behind.
 	resultCacheKey := ""
-	if info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) {
+	if info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
 		resultCacheKey = resultCacheEntryKey(cypher, params)
 		if provider, ok := e.storage.(storage.GraphMutationVersionProvider); ok {
 			if version, supported := provider.GraphMutationVersion(); supported {

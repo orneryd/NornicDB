@@ -117,6 +117,12 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	}
 	plan.Mode = ModeProfile
 
+	// PROFILE's inner execution must bypass the result cache on both read and
+	// write: Neo4j profiles actual execution, and a result object shared with
+	// the cache would otherwise be mutated by attachPlanMetadata below,
+	// leaking plan metadata into ordinary cached reads of the same query.
+	ctx = context.WithValue(ctx, profileExecutionKey{}, true)
+
 	// Execute the actual query to collect statistics
 	startTime := time.Now()
 	result, execErr := e.Execute(ctx, query, nil)
@@ -758,6 +764,63 @@ func (e *StorageExecutor) attachPlanMetadata(result *ExecuteResult, plan *Execut
 	result.Metadata["planType"] = string(plan.Mode)
 
 	return result
+}
+
+// Neo4jPlanMap renders the plan tree in the shape Neo4j puts in Bolt SUCCESS
+// metadata and HTTP results: each node carries operatorType, identifiers,
+// args (with EstimatedRows), and children; the profile form adds rows and
+// dbHits. Bolt and HTTP both deliver this map so plans reach clients (#744).
+func Neo4jPlanMap(plan *ExecutionPlan, profile bool) map[string]any {
+	if plan == nil {
+		return nil
+	}
+	return neo4jPlanOperatorMap(plan.Root, profile)
+}
+
+// profileExecutionKey marks PROFILE's inner execution so it neither serves nor
+// populates the result cache (#744): a cached result object would otherwise be
+// mutated by attachPlanMetadata and hand plan metadata to ordinary cached
+// reads of the same query.
+type profileExecutionKey struct{}
+
+func profileExecutionBypassesCache(ctx context.Context) bool {
+	bypass, _ := ctx.Value(profileExecutionKey{}).(bool)
+	return bypass
+}
+
+func neo4jPlanOperatorMap(op *PlanOperator, profile bool) map[string]any {
+	if op == nil {
+		return nil
+	}
+	node := make(map[string]any, 4)
+	node["operatorType"] = op.OperatorType
+	if len(op.Identifiers) > 0 {
+		node["identifiers"] = op.Identifiers
+	}
+	args := make(map[string]interface{}, len(op.Arguments)+1)
+	for key, value := range op.Arguments {
+		args[key] = value
+	}
+	if op.EstimatedRows > 0 {
+		args["EstimatedRows"] = op.EstimatedRows
+	}
+	if len(args) > 0 {
+		node["args"] = args
+	}
+	if len(op.Children) > 0 {
+		children := make([]map[string]any, 0, len(op.Children))
+		for _, child := range op.Children {
+			if childMap := neo4jPlanOperatorMap(child, profile); childMap != nil {
+				children = append(children, childMap)
+			}
+		}
+		node["children"] = children
+	}
+	if profile {
+		node["rows"] = op.ActualRows
+		node["dbHits"] = op.DBHits
+	}
+	return node
 }
 
 // StatementColumns returns the columns query declares (its YIELD or last

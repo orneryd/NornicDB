@@ -1005,9 +1005,11 @@ type TransactionInfo struct {
 
 // QueryResult is a single query result.
 type QueryResult struct {
-	Columns []string    `json:"columns"`
-	Data    []ResultRow `json:"data"`
-	Stats   *QueryStats `json:"stats,omitempty"`
+	Columns []string       `json:"columns"`
+	Data    []ResultRow    `json:"data"`
+	Stats   *QueryStats    `json:"stats,omitempty"`
+	Plan    map[string]any `json:"plan,omitempty"`    // EXPLAIN plan (Neo4j-shaped)
+	Profile map[string]any `json:"profile,omitempty"` // PROFILE plan with runtime counters
 }
 
 // ResultRow is a row of results with metadata.
@@ -1483,6 +1485,18 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 	}
 	if includeStats {
 		qr.Stats = queryStatsFromResult(result)
+	}
+	// EXPLAIN/PROFILE plan delivery (#744): Neo4j's HTTP result entry carries
+	// the plan tree under "plan" (EXPLAIN) and "profile" (PROFILE).
+	if result.Metadata != nil {
+		if rawPlan, ok := result.Metadata["plan"]; ok {
+			if plan, ok := rawPlan.(*cypher.ExecutionPlan); ok && plan != nil {
+				qr.Plan = cypher.Neo4jPlanMap(plan, false)
+				if plan.Mode == cypher.ModeProfile {
+					qr.Profile = cypher.Neo4jPlanMap(plan, true)
+				}
+			}
+		}
 	}
 	response.Results = append(response.Results, qr)
 	applyResultMetadata(response, result.Metadata)

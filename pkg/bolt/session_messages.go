@@ -857,6 +857,21 @@ func (s *Session) handlePull(data []byte) error {
 			metadata["stats"] = stats
 		}
 
+		// EXPLAIN/PROFILE plan delivery (#744): Neo4j puts the plan tree in
+		// this SUCCESS metadata ("plan" for EXPLAIN, "profile" with runtime
+		// counters for PROFILE) and the driver reads both via summary.Plan()
+		// and summary.Profile().
+		if stream.result != nil && stream.result.Metadata != nil {
+			if rawPlan, ok := stream.result.Metadata["plan"]; ok {
+				if plan, ok := rawPlan.(*cypher.ExecutionPlan); ok && plan != nil {
+					metadata["plan"] = cypher.Neo4jPlanMap(plan, false)
+					if plan.Mode == cypher.ModeProfile {
+						metadata["profile"] = cypher.Neo4jPlanMap(plan, true)
+					}
+				}
+			}
+		}
+
 		// Note: Neo4j does NOT send has_more when it's false
 		if err := s.sendSuccessNoFlush(metadata); err != nil {
 			return err
