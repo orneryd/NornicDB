@@ -34,6 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Classify and route `CREATE OR REPLACE DATABASE` as an admin command: it
   previously skipped the admin check and silently did nothing; it now
   requires admin permission and creates or replaces the database.
+- Evaluate every arithmetic operator in CREATE/MERGE property maps and list
+  items. `CREATE (n:T {a: 2 * 3})` previously stored the expression's own text
+  `'2 * 3'` as the property value (silent wrong data) because only `+` and `/`
+  were routed through the evaluator; `*`, `-`, `^`, `%` and unary minus now
+  evaluate to their values, null operands omit the property, and a runtime
+  failure (e.g. `1 / 0`) fails the statement.
+- Decode a quoted property value only when it is exactly one quoted literal:
+  `{s: 'a' + 'b'}` previously decoded to `"a' + 'b"` instead of evaluating
+  the concatenation.
 - Truncate logged query shapes at a rune boundary so redaction/log seams can
   never emit invalid UTF-8.
 - Unify scheduled and explicit MVCC pruning on per-key transactions, preserving

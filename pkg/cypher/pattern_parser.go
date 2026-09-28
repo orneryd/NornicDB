@@ -395,10 +395,11 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 		return nil
 	}
 
-	// Handle quoted strings
-	if len(valueStr) >= 2 {
-		first, last := valueStr[0], valueStr[len(valueStr)-1]
-		if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
+	// Handle quoted strings — but only when the value is exactly one quoted
+	// literal. A leading quote is not enough: 'a' + 'b' is an expression, and
+	// decoding it as one string produced "a' + 'b" instead of "ab" (#514).
+	if len(valueStr) >= 2 && (valueStr[0] == '\'' || valueStr[0] == '"') {
+		if end := skipCypherQuotedText(valueStr, 0, valueStr[0]); end >= len(valueStr) || strings.TrimSpace(valueStr[end:]) == "" {
 			if decoded, ok := decodeCypherQuotedString(valueStr); ok {
 				return decoded
 			}
@@ -434,30 +435,18 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 		return e.parseProperties(ctx, valueStr)
 	}
 
-	// Handle expression-valued properties such as 't' + toString(0).
-	// Keep this after scalar/list/map literals so ordinary property values do
-	// not get routed through expression evaluation unnecessarily.
-	if hasTopLevelPlus(valueStr) {
+	// Handle expression-valued properties with any arithmetic operator
+	// ('+', '-', '*', '/', '%', '^' and unary minus). All of them route
+	// through the scalar property evaluator so a constant expression such as
+	// 2 * 3 stores its value, never its own text (#514/#656). A null result
+	// (null operand) omits the property, and a recorded runtime failure
+	// (division by zero, type errors) fails the statement later, exactly like
+	// the previous top-level '+' and '/' paths.
+	if e.hasArithmeticOperator(valueStr) {
 		if evaluated, ok := e.evaluateScalarPropertyExpression(ctx, valueStr); ok {
 			return normalizePropValue(evaluated)
 		}
-	}
-	if leftExpr, rightExpr, divided := splitByOperatorWithOptions(valueStr, "/", true, false); divided {
-		for _, operand := range []string{leftExpr, rightExpr} {
-			operand = strings.TrimSpace(operand)
-			if strings.EqualFold(operand, "null") {
-				return nil
-			}
-			if value, resolved := resolveDirectParamRef(ctx, operand); resolved && value == nil {
-				return nil
-			}
-		}
-		if evaluated := e.evaluateExpressionWithContext(ctx, valueStr, nil, nil); evaluated != nil {
-			return normalizePropValue(evaluated)
-		}
-		if getExpressionFailure(ctx) != nil {
-			return nil
-		}
+		return nil
 	}
 
 	// Handle function calls like kalman.init(), toUpper('test'), etc.
@@ -486,43 +475,6 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 
 	// Otherwise return as string (handles unquoted identifiers, etc.)
 	return valueStr
-}
-
-func hasTopLevelPlus(expr string) bool {
-	inQuote := false
-	quoteChar := rune(0)
-	parenDepth := 0
-	bracketDepth := 0
-	braceDepth := 0
-
-	for i, c := range expr {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-		case c == '(' && !inQuote:
-			parenDepth++
-		case c == ')' && !inQuote:
-			parenDepth--
-		case c == '[' && !inQuote:
-			bracketDepth++
-		case c == ']' && !inQuote:
-			bracketDepth--
-		case c == '{' && !inQuote:
-			braceDepth++
-		case c == '}' && !inQuote:
-			braceDepth--
-		case c == '+' && !inQuote && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0:
-			if i > 0 && i+1 < len(expr) && expr[i-1] != '+' && expr[i+1] != '+' && expr[i+1] != '=' {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (e *StorageExecutor) evaluateScalarPropertyExpression(ctx context.Context, expr string) (interface{}, bool) {

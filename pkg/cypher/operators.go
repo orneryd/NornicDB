@@ -596,9 +596,10 @@ func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr strin
 //	hasArithmeticOperator("-5")      // false (unary minus)
 //	hasArithmeticOperator("a - b")   // true
 func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
-	// Include + for date arithmetic (date + duration)
-	// Check with and without spaces for + and - operators
-	ops := []string{" + ", "+", "*", "/", "%", " - ", "-"}
+	// Include + for date arithmetic (date + duration) and ^ for exponentiation
+	// (#656: CREATE property maps must evaluate every arithmetic operator,
+	// never store the expression text).
+	ops := []string{" + ", "+", "*", "/", "%", "^", " - ", "-"}
 	for _, op := range ops {
 		if e.hasOperatorOutsideQuotes(expr, op) {
 			return true
