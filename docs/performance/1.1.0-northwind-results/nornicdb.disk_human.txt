@@ -1,1 +1,1 @@
-134M	~/src/NornicDB/bench-data/nornic
+144M	/Users/timothysweet/src/NornicDB/bench-data/nornic

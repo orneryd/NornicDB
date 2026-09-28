@@ -1,1 +1,1 @@
-~/src/NornicDB/bench-data/nornic
+/Users/timothysweet/src/NornicDB/bench-data/nornic

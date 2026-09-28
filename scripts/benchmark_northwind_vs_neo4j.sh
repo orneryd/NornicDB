@@ -306,9 +306,11 @@ run_nornic() {
 
   log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY}"
   # Note: ${arr[@]+"${arr[@]}"} guards against `set -u` tripping on an empty
-  # array expansion. macOS ships bash 3.2 which is strict here.
+  # array expansion. macOS ships bash 3.2 which is strict here. Extra env
+  # vars ride through `env` because bash does NOT recognize a word produced
+  # by expansion as an assignment prefix — it would run it as a command.
   NORNICDB_NO_AUTH=true NORNICDB_EMBEDDING_ENABLED=false \
-    ${nornic_extra_env[@]+"${nornic_extra_env[@]}"} \
+    env ${nornic_extra_env[@]+"${nornic_extra_env[@]}"} \
     "${NORNIC_BIN}" serve \
       --bolt-port "${NORNIC_BOLT_PORT}" \
       --http-port "${NORNIC_HTTP_PORT}" \
