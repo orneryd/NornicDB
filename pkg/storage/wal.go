@@ -1291,7 +1291,14 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 
 	// Close current WAL file
 	walPath := walActivePath(w.config.Dir)
+	tmpPath := walPath + ".truncate.tmp"
+	tmpFile, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("wal: failed to create temp WAL: %w", err)
+	}
 	if err := w.file.Close(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
 		return fmt.Errorf("wal: failed to close for truncate: %w", err)
 	}
 
@@ -1349,13 +1356,6 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	}
 
 	// Write new WAL with only kept entries
-	tmpPath := walPath + ".truncate.tmp"
-	tmpFile, err := os.Create(tmpPath)
-	if err != nil {
-		w.reopenWAL()
-		return fmt.Errorf("wal: failed to create temp WAL: %w", err)
-	}
-
 	tmpWriter := bufio.NewWriterSize(tmpFile, 64*1024)
 	var bytesWritten int64
 

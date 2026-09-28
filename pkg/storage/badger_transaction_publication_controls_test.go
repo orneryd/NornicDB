@@ -2,11 +2,59 @@
 package storage
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
+	dir := t.TempDir()
+	open := func() *BadgerEngine {
+		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true})
+		require.NoError(t, err)
+		return engine
+	}
+	engine := open()
+	keepID := NodeID(prefixTestID("keep"))
+	_, err := engine.CreateNode(&Node{ID: keepID, Labels: []string{"Keep"}, Properties: map[string]interface{}{"value": "original"}})
+	require.NoError(t, err)
+
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.DeleteNode(keepID))
+	_, err = tx.CreateNode(&Node{ID: NodeID(prefixTestID("staged-0")), Labels: []string{"Staged"}})
+	require.NoError(t, err)
+	largeKeySuffix := strings.Repeat("k", 32<<10)
+	var oversizedErr error
+	for index := 0; index < 2000; index++ {
+		oversizedErr = tx.badgerTx.Set([]byte(fmt.Sprintf("oversized-%04d-%s", index, largeKeySuffix)), []byte{1})
+		if oversizedErr != nil {
+			break
+		}
+	}
+	if oversizedErr == nil {
+		oversizedErr = tx.Commit()
+	} else {
+		require.NoError(t, tx.Rollback())
+	}
+	require.True(t, errors.Is(oversizedErr, badger.ErrTxnTooBig), "expected oversized transaction, got %v", oversizedErr)
+	require.NoError(t, engine.Close())
+
+	engine = open()
+	defer engine.Close()
+	kept, err := engine.GetNode(keepID)
+	require.NoError(t, err)
+	require.Equal(t, "original", kept.Properties["value"])
+	_, err = engine.GetNode(NodeID(prefixTestID("staged-0")))
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("after")), Labels: []string{"Keep"}})
+	require.NoError(t, err)
+}
 
 // stageReservedPublication pauses the existing Commit path immediately before
 // Badger publishes its staged bytes. It deliberately uses the production

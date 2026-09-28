@@ -40,6 +40,7 @@ import (
 
 type QueryStat struct {
 	Name         string    `json:"name"`
+	Description  string    `json:"description"`
 	Iterations   int       `json:"iterations"`
 	Cypher       string    `json:"cypher"`
 	LatenciesMs  []float64 `json:"latencies_ms"`
@@ -93,8 +94,15 @@ type Report struct {
 	StartedAt         time.Time `json:"started_at"`
 	FinishedAt        time.Time `json:"finished_at"`
 	SeedDurationMs    float64   `json:"seed_duration_ms"`
+	SeedWipeMs        float64   `json:"seed_wipe_ms"`
+	SeedIndexMs       float64   `json:"seed_index_ms"`
+	SeedIngestionMs   float64   `json:"seed_ingestion_ms"`
+	SeedBatchSize     int       `json:"seed_batch_size"`
+	SeedParallelism   int       `json:"seed_parallelism"`
 	TotalBenchMs      float64   `json:"total_benchmark_duration_ms"`
+	TotalBenchOps     int       `json:"total_benchmark_operations"`
 	Iterations        int       `json:"iterations_per_query"`
+	Warmup            int       `json:"warmup_iterations"`
 	Categories        int       `json:"categories"`
 	Suppliers         int       `json:"suppliers"`
 	Customers         int       `json:"customers"`
@@ -113,9 +121,10 @@ type Report struct {
 	// failure should follow.
 	SeedCounts SeedCounts `json:"seed_counts"`
 
-	Queries          []QueryStat `json:"queries"`
-	OverallMeanMs    float64     `json:"overall_mean_ms"`
-	OverallOpsPerSec float64     `json:"overall_ops_per_second"`
+	Queries               []QueryStat `json:"queries"`
+	OverallMeanMs         float64     `json:"overall_mean_ms"`
+	OverallOpsPerSec      float64     `json:"overall_ops_per_second"`
+	QueryLatencyOpsPerSec float64     `json:"query_latency_only_ops_per_second"`
 
 	// CorrectnessErrors lists any per-query intra-run mismatches (result
 	// set changed between iterations) OR seed-count mismatches. Empty when
@@ -124,13 +133,15 @@ type Report struct {
 }
 
 type benchQuery struct {
-	name   string
-	cypher string
+	name        string
+	description string
+	cypher      string
 }
 
 var queries = []benchQuery{
 	{
-		name: "products_per_category",
+		name:        "products_per_category",
+		description: "Product counts grouped by category, with a full result sort.",
 		cypher: `
 			MATCH (c:Category)<-[:PART_OF]-(p:Product)
 			RETURN c.categoryName AS categoryName, count(p) AS productCount
@@ -140,7 +151,8 @@ var queries = []benchQuery{
 		// Deterministic tie-break on (companyName, categoryName) so the
 		// LIMIT 10 picks the same rows on both engines when many rows
 		// are tied at the same `orders` count.
-		name: "customer_category_distinct_orders",
+		name:        "customer_category_distinct_orders",
+		description: "Four-hop customer-to-category traversal with distinct-order aggregation.",
 		cypher: `
 			MATCH (c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)-[:PART_OF]->(cat:Category)
 			RETURN c.companyName AS companyName, cat.categoryName AS categoryName, count(DISTINCT o) AS orders
@@ -150,7 +162,8 @@ var queries = []benchQuery{
 	{
 		// Deterministic tie-break on productName so LIMIT 100 is stable
 		// across engines when many products tie on orderCount.
-		name: "optional_match_orders_count",
+		name:        "optional_match_orders_count",
+		description: "Optional product-to-order traversal with zero-match preservation and top-100 sorting.",
 		cypher: `
 			MATCH (p:Product)
 			OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)
@@ -161,13 +174,103 @@ var queries = []benchQuery{
 	{
 		// Deterministic tie-break on productName so LIMIT 10 picks the
 		// same products on both engines when revenues tie.
-		name: "revenue_by_product",
+		name:        "revenue_by_product",
+		description: "Relationship-property arithmetic and revenue aggregation grouped by product.",
 		cypher: `
 			MATCH (p:Product)<-[r:ORDERS]-(:Order)
 			WITH p, sum(p.unitPrice * r.quantity) AS revenue
 			RETURN p.productName AS productName, revenue
 			ORDER BY revenue DESC, productName ASC
 			LIMIT 10`,
+	},
+	{
+		name:        "products_by_supplier",
+		description: "Supplier-to-product traversal with top-N aggregation and deterministic ties.",
+		cypher: `
+			MATCH (s:Supplier)-[:SUPPLIES]->(p:Product)
+			RETURN s.companyName AS supplier, count(p) AS products
+			ORDER BY products DESC, supplier ASC
+			LIMIT 25`,
+	},
+	{
+		name:        "orders_by_customer",
+		description: "Customer-to-order traversal grouped into a top-25 order-count ranking.",
+		cypher: `
+			MATCH (c:Customer)-[:PURCHASED]->(o:Order)
+			RETURN c.companyName AS customer, count(o) AS orders
+			ORDER BY orders DESC, customer ASC
+			LIMIT 25`,
+	},
+	{
+		name:        "revenue_by_category",
+		description: "Three-hop category revenue aggregation from order-line quantities and product prices.",
+		cypher: `
+			MATCH (c:Category)<-[:PART_OF]-(p:Product)<-[r:ORDERS]-(:Order)
+			RETURN c.categoryName AS category, sum(p.unitPrice * r.quantity) AS revenue
+			ORDER BY revenue DESC, category ASC`,
+	},
+	{
+		name:        "revenue_by_supplier",
+		description: "Supplier-to-product-to-order traversal with revenue aggregation and top-25 sorting.",
+		cypher: `
+			MATCH (s:Supplier)-[:SUPPLIES]->(p:Product)<-[r:ORDERS]-(:Order)
+			RETURN s.companyName AS supplier, sum(p.unitPrice * r.quantity) AS revenue
+			ORDER BY revenue DESC, supplier ASC
+			LIMIT 25`,
+	},
+	{
+		name:        "revenue_by_customer",
+		description: "Customer-order-product traversal with relationship-property revenue aggregation.",
+		cypher: `
+			MATCH (c:Customer)-[:PURCHASED]->(:Order)-[r:ORDERS]->(p:Product)
+			RETURN c.companyName AS customer, sum(p.unitPrice * r.quantity) AS revenue
+			ORDER BY revenue DESC, customer ASC
+			LIMIT 25`,
+	},
+	{
+		name:        "order_line_sales_by_country",
+		description: "Order-line scan grouped by shipping country with line-count and unit aggregation.",
+		cypher: `
+			MATCH (o:Order)-[r:ORDERS]->(:Product)
+			RETURN o.shipCountry AS country, count(r) AS orderLines, sum(r.quantity) AS units
+			ORDER BY orderLines DESC, country ASC`,
+	},
+	{
+		name:        "low_stock_products",
+		description: "Selective numeric property filter followed by a stable top-100 product sort.",
+		cypher: `
+			MATCH (p:Product)
+			WHERE p.unitsInStock < 25
+			RETURN p.productName AS product, p.unitsInStock AS unitsInStock, p.unitPrice AS unitPrice
+			ORDER BY unitsInStock ASC, product ASC
+			LIMIT 100`,
+	},
+	{
+		name:        "products_in_category",
+		description: "Selective category lookup and adjacent product traversal with a top-100 result.",
+		cypher: `
+			MATCH (c:Category {categoryID: 7})<-[:PART_OF]-(p:Product)
+			RETURN p.productName AS product, p.unitPrice AS unitPrice, p.unitsInStock AS unitsInStock
+			ORDER BY product ASC
+			LIMIT 100`,
+	},
+	{
+		name:        "order_line_quantity_distribution",
+		description: "Full relationship-property scan grouped by line quantity.",
+		cypher: `
+			MATCH ()-[r:ORDERS]->()
+			RETURN r.quantity AS quantity, count(r) AS lineCount
+			ORDER BY quantity ASC`,
+	},
+	{
+		name:        "customer_order_details",
+		description: "Selective customer lookup followed by order-line expansion and computed row projection.",
+		cypher: `
+			MATCH (c:Customer {customerID: 42})-[:PURCHASED]->(o:Order)-[r:ORDERS]->(p:Product)
+			RETURN o.orderID AS orderID, p.productName AS product, r.quantity AS quantity,
+			       p.unitPrice * r.quantity AS extendedPrice
+			ORDER BY orderID ASC, product ASC
+			LIMIT 100`,
 	},
 }
 
@@ -259,11 +362,11 @@ func main() {
 		ordersN       = flag.Int("orders", 8000, "number of Order nodes")
 		orderLinesMin = flag.Int("order-lines-min", 1, "minimum ORDERS edges per order")
 		orderLinesMax = flag.Int("order-lines-max", 6, "maximum ORDERS edges per order")
-		batchSize     = flag.Int("batch-size", 200, "UNWIND rows per create batch")
+		batchSize     = flag.Int("batch-size", 500, "UNWIND rows per create batch")
 		parallel      = flag.Int("parallel", 4, "concurrent Bolt sessions per seed phase (1 = serial; higher values shard batches across workers to keep the server's write pipeline full)")
 		seed          = flag.Uint64("seed", 42, "PRNG seed (deterministic dataset)")
-		iterations    = flag.Int("iterations", 10, "iterations per query")
-		warmup        = flag.Int("warmup", 2, "warmup iterations per query (not recorded)")
+		iterations    = flag.Int("iterations", 30, "iterations per query")
+		warmup        = flag.Int("warmup", 5, "warmup iterations per query (not recorded)")
 		out           = flag.String("out", "", "output path for JSON report (stdout if empty)")
 		label         = flag.String("label", "db", "label for this run (e.g. nornicdb, neo4j)")
 		skipSeed      = flag.Bool("skip-seed", false, "assume dataset is already present")
@@ -297,24 +400,27 @@ func main() {
 	}
 
 	report := &Report{
-		Label:         *label,
-		URI:           *uri,
-		Database:      *database,
-		Iterations:    *iterations,
-		Categories:    *categories,
-		Suppliers:     *suppliers,
-		Customers:     *customersN,
-		Products:      *products,
-		Orders:        *ordersN,
-		OrderLinesMin: *orderLinesMin,
-		OrderLinesMax: *orderLinesMax,
-		RandomSeed:    *seed,
-		StartedAt:     time.Now(),
+		Label:           *label,
+		URI:             *uri,
+		Database:        *database,
+		Iterations:      *iterations,
+		Warmup:          *warmup,
+		SeedBatchSize:   *batchSize,
+		SeedParallelism: *parallel,
+		Categories:      *categories,
+		Suppliers:       *suppliers,
+		Customers:       *customersN,
+		Products:        *products,
+		Orders:          *ordersN,
+		OrderLinesMin:   *orderLinesMin,
+		OrderLinesMax:   *orderLinesMax,
+		RandomSeed:      *seed,
+		StartedAt:       time.Now(),
 	}
 
 	if !*skipSeed {
-		log("[%s] seeding Northwind (categories=%d suppliers=%d customers=%d products=%d orders=%d, seed=%d)",
-			*label, *categories, *suppliers, *customersN, *products, *ordersN, *seed)
+		log("[%s] seeding Northwind (categories=%d suppliers=%d customers=%d products=%d orders=%d, batch_size=%d parallel=%d seed=%d)",
+			*label, *categories, *suppliers, *customersN, *products, *ordersN, *batchSize, *parallel, *seed)
 		seedStart := time.Now()
 		stats, err := seedNorthwind(ctx, driver, *database, seedConfig{
 			categories:    *categories,
@@ -333,6 +439,9 @@ func main() {
 			die("seed: %v", err)
 		}
 		report.SeedDurationMs = float64(time.Since(seedStart).Microseconds()) / 1000.0
+		report.SeedWipeMs = stats.wipeMs
+		report.SeedIndexMs = stats.indexMs
+		report.SeedIngestionMs = stats.ingestionMs
 		report.SeedNodes = stats.nodes
 		report.SeedRelationships = stats.relationships
 		report.ApproxSeedBytes = stats.approxPayloadBytes
@@ -384,18 +493,13 @@ func main() {
 		log("[%s] CORRECTNESS: %d issue(s) recorded in report; see correctness_errors.", *label, len(report.CorrectnessErrors))
 	}
 	report.TotalBenchMs = float64(time.Since(benchStart).Microseconds()) / 1000.0
+	report.TotalBenchOps = totalOps
 	report.FinishedAt = time.Now()
 	if len(allLatencies) > 0 {
 		report.OverallMeanMs = mean(allLatencies)
-		// Derive overall throughput from the timed-iteration latencies only,
-		// not from TotalBenchMs. TotalBenchMs includes session setup, warmup
-		// calls, fingerprinting, and correctness checks — none of which appear
-		// in the per-query ops/sec numbers. Using mean latency keeps the
-		// overall number consistent with per-query throughput.
-		if report.OverallMeanMs > 0 {
-			report.OverallOpsPerSec = 1000.0 / report.OverallMeanMs
-		}
+		report.QueryLatencyOpsPerSec = throughputOpsPerSecond(len(allLatencies), sumFloat64(allLatencies))
 	}
+	report.OverallOpsPerSec = throughputOpsPerSecond(totalOps, report.TotalBenchMs)
 
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -428,10 +532,15 @@ type seedConfig struct {
 }
 
 type seedStats struct {
+	wipeMs             float64
+	indexMs            float64
+	ingestionMs        float64
 	nodes              int
 	relationships      int
 	approxPayloadBytes int64
 }
+
+const maxGraphWipeBatchSize = 500
 
 // seedNorthwind wipes the target database and creates a randomised
 // Northwind-shaped graph. Property values vary in length (names, descriptions,
@@ -443,11 +552,14 @@ func seedNorthwind(ctx context.Context, driver neo4j.DriverWithContext, database
 
 	stats := seedStats{}
 
-	// Best-effort wipe. Large prior datasets may time out a single DETACH DELETE;
-	// for the purposes of this harness the orchestrator already resets data dirs,
-	// so a failure here is not fatal.
-	if _, err := session.Run(ctx, "MATCH (n) DETACH DELETE n", nil); err != nil {
-		log("[%s] warning: wipe failed (%v); assuming empty database", cfg.label, err)
+	wipeStart := time.Now()
+	deletedNodes, err := wipeGraph(ctx, session, cfg.batchSize)
+	if err != nil {
+		return stats, fmt.Errorf("wipe existing graph: %w", err)
+	}
+	stats.wipeMs = float64(time.Since(wipeStart).Microseconds()) / 1000.0
+	if deletedNodes > 0 {
+		log("[%s] wiped %d existing nodes in bounded transactions", cfg.label, deletedNodes)
 	}
 
 	// Seeding strategy: do NOT use `UNWIND $rows MATCH ... CREATE` — that
@@ -480,12 +592,19 @@ func seedNorthwind(ctx context.Context, driver neo4j.DriverWithContext, database
 		"CREATE INDEX customer_name IF NOT EXISTS FOR (n:Customer) ON (n.companyName)",
 		"CREATE INDEX category_name IF NOT EXISTS FOR (n:Category) ON (n.categoryName)",
 	}
+	indexStart := time.Now()
 	for _, q := range ensureIndexes {
-		if _, err := session.Run(ctx, q, nil); err != nil {
-			log("[%s] warning: index create failed (%v); continuing", cfg.label, err)
+		result, err := session.Run(ctx, q, nil)
+		if err != nil {
+			return stats, fmt.Errorf("create index %q: %w", q, err)
+		}
+		if _, err := result.Consume(ctx); err != nil {
+			return stats, fmt.Errorf("create index %q: %w", q, err)
 		}
 	}
+	stats.indexMs = float64(time.Since(indexStart).Microseconds()) / 1000.0
 
+	ingestionStart := time.Now()
 	r := newRNG(cfg.seed)
 
 	// --- Categories ---
@@ -642,8 +761,48 @@ func seedNorthwind(ctx context.Context, driver neo4j.DriverWithContext, database
 	}
 	stats.relationships += totalLines
 	stats.approxPayloadBytes += approxBytes(lineRows)
+	stats.ingestionMs = float64(time.Since(ingestionStart).Microseconds()) / 1000.0
 
 	return stats, nil
+}
+
+func graphWipeBatchSize(seedBatchSize int) int {
+	if seedBatchSize <= 0 || seedBatchSize > maxGraphWipeBatchSize {
+		return maxGraphWipeBatchSize
+	}
+	return seedBatchSize
+}
+
+func wipeGraph(ctx context.Context, session neo4j.SessionWithContext, seedBatchSize int) (int64, error) {
+	batchSize := graphWipeBatchSize(seedBatchSize)
+	return wipeGraphBatches(ctx, batchSize, func(ctx context.Context, limit int) (int64, error) {
+		result, err := session.Run(ctx,
+			`MATCH (n) WITH n LIMIT $limit DETACH DELETE n`,
+			map[string]any{"limit": limit},
+		)
+		if err != nil {
+			return 0, err
+		}
+		summary, err := result.Consume(ctx)
+		if err != nil {
+			return 0, err
+		}
+		return int64(summary.Counters().NodesDeleted()), nil
+	})
+}
+
+func wipeGraphBatches(ctx context.Context, batchSize int, deleteBatch func(context.Context, int) (int64, error)) (int64, error) {
+	var totalDeleted int64
+	for batchNumber := 1; ; batchNumber++ {
+		deleted, err := deleteBatch(ctx, batchSize)
+		if err != nil {
+			return totalDeleted, fmt.Errorf("batch %d (limit %d): %w", batchNumber, batchSize, err)
+		}
+		if deleted == 0 {
+			return totalDeleted, nil
+		}
+		totalDeleted += deleted
+	}
 }
 
 // batchWrite splits rows into chunks of batchSize and issues one UNWIND query
@@ -848,6 +1007,7 @@ func runQuery(ctx context.Context, driver neo4j.DriverWithContext, database stri
 
 	stat := QueryStat{
 		Name:          q.name,
+		Description:   q.description,
 		Iterations:    iterations,
 		Cypher:        q.cypher,
 		LatenciesMs:   latencies,
@@ -1060,6 +1220,21 @@ func mean(xs []float64) float64 {
 		s += x
 	}
 	return s / float64(len(xs))
+}
+
+func sumFloat64(xs []float64) float64 {
+	var total float64
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+
+func throughputOpsPerSecond(operations int, durationMs float64) float64 {
+	if operations <= 0 || durationMs <= 0 {
+		return 0
+	}
+	return float64(operations) * 1000.0 / durationMs
 }
 
 func stddev(xs []float64) float64 {

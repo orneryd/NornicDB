@@ -199,15 +199,15 @@ func TestNorthwindFastPaths(t *testing.T) {
 		res := testutil.ExecuteQuery(t, exec, `
 			MATCH (p:Product)
 			OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)
-			RETURN p.productName, count(o) as orderCount
-			ORDER BY orderCount DESC
+			RETURN p.productName AS productName, count(o) AS orderCount
+			ORDER BY orderCount DESC, productName ASC
+			LIMIT 3
 		`, nil)
-		require.Equal(t, []string{"p.productName", "orderCount"}, res.Columns)
-		require.Len(t, res.Rows, 4)
-		// NoOrders should have 0 and end up last when ordering by count desc.
-		last := res.Rows[len(res.Rows)-1]
-		assert.Equal(t, "NoOrders", last[0])
-		assert.Equal(t, int64(0), last[1])
+		require.Equal(t, []string{"productName", "orderCount"}, res.Columns)
+		require.Len(t, res.Rows, 3)
+		assert.Equal(t, "Aniseed Syrup", res.Rows[0][0])
+		assert.Equal(t, int64(1), res.Rows[0][1])
+		assert.NotContains(t, res.Rows, []interface{}{"NoOrders", int64(0)})
 	})
 
 	t.Run("Create and delete relationship (fast no-op)", func(t *testing.T) {

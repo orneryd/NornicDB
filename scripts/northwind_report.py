@@ -412,7 +412,78 @@ def fmt_num(x: float, decimals: int = 2) -> str:
     return f"{x:,.{decimals}f}"
 
 
-def render_single_report(run: dict, iterations: int, products: int, orders: int) -> str:
+def query_sample_count(query: dict, fallback: int = 0) -> int:
+    latencies = query.get("latencies_ms") or []
+    return len(latencies) if latencies else int(query.get("iterations", fallback) or fallback)
+
+
+def benchmark_operations(results: dict) -> int:
+    declared = results.get("total_benchmark_operations")
+    if declared is not None:
+        return int(declared)
+    fallback = int(results.get("iterations_per_query", 0) or 0)
+    return sum(query_sample_count(query, fallback) for query in results.get("queries", []))
+
+
+def benchmark_throughput(results: dict) -> dict:
+    """Return end-to-end suite rate and query-latency-only rate, in ops/sec."""
+    operations = benchmark_operations(results)
+    duration_ms = float(results.get("total_benchmark_duration_ms", 0) or 0)
+    end_to_end = operations * 1000.0 / duration_ms if operations and duration_ms > 0 else 0.0
+
+    query_duration_ms = 0.0
+    fallback_iterations = int(results.get("iterations_per_query", 0) or 0)
+    for query in results.get("queries", []):
+        latencies = query.get("latencies_ms") or []
+        if latencies:
+            query_duration_ms += sum(float(sample) for sample in latencies)
+        else:
+            samples = query_sample_count(query, fallback_iterations)
+            query_duration_ms += float(query.get("mean_ms", 0) or 0) * samples
+    latency_only = operations * 1000.0 / query_duration_ms if operations and query_duration_ms > 0 else 0.0
+    return {
+        "operations": operations,
+        "duration_ms": duration_ms,
+        "end_to_end_ops_per_second": end_to_end,
+        "query_latency_ms": query_duration_ms,
+        "query_latency_ops_per_second": latency_only,
+    }
+
+
+def seed_rate_per_second(results: dict, count_key: str, duration_key: str = "seed_duration_ms") -> float:
+    duration_ms = float(results.get(duration_key, 0) or 0)
+    count = float(results.get(count_key, 0) or 0)
+    return count * 1000.0 / duration_ms if duration_ms > 0 else 0.0
+
+
+def ordered_query_names(*query_maps: dict) -> list[str]:
+    names = []
+    seen = set()
+    for query_map in query_maps:
+        for name in query_map:
+            if name not in seen:
+                names.append(name)
+                seen.add(name)
+    return names
+
+
+def comparison_configuration_mismatches(nornic: dict, neo4j: dict) -> list[str]:
+    mismatches = []
+    for field in (
+        "categories", "suppliers", "customers", "products", "orders",
+        "order_lines_min", "order_lines_max", "random_seed", "seed_batch_size",
+        "seed_parallelism", "iterations_per_query", "warmup_iterations",
+    ):
+        if field in nornic and field in neo4j and nornic[field] != neo4j[field]:
+            mismatches.append(f"{field}: NornicDB={nornic[field]} Neo4j={neo4j[field]}")
+    n_operations = benchmark_operations(nornic)
+    m_operations = benchmark_operations(neo4j)
+    if n_operations != m_operations:
+        mismatches.append(f"measured operations: NornicDB={n_operations} Neo4j={m_operations}")
+    return mismatches
+
+
+def render_single_report(run: dict, iterations: int, warmup: int, batch_size: int, parallel: int, products: int, orders: int) -> str:
     label = run["label"]
     r = run["results"]
     p = run["power"]
@@ -421,6 +492,7 @@ def render_single_report(run: dict, iterations: int, products: int, orders: int)
     raw = totals["raw_data"]
     disk_total = run["disk_total_bytes"]
     wall = run["wall_seconds"]
+    throughput = benchmark_throughput(r)
 
     display_name = {"nornicdb": "NornicDB", "neo4j": "Neo4j"}.get(label, label)
 
@@ -442,22 +514,42 @@ def render_single_report(run: dict, iterations: int, products: int, orders: int)
         mib = r["approx_seed_payload_bytes"] / (1024 * 1024)
         lines.append(f"- Approx. seed payload (JSON-serialized): **{mib:.1f} MiB**")
     lines.append(f"- Seed duration: **{fmt_ms(r.get('seed_duration_ms', 0))} ms**")
+    if "seed_ingestion_ms" in r:
+        lines.append(f"- Wipe duration: **{fmt_ms(r['seed_wipe_ms'])} ms**")
+        lines.append(f"- Index setup duration: **{fmt_ms(r['seed_index_ms'])} ms**")
+        lines.append(f"- Ingestion duration (row generation and writes): **{fmt_ms(r['seed_ingestion_ms'])} ms**")
+        rate_duration = "seed_ingestion_ms"
+        rate_label = "Ingestion"
+    else:
+        rate_duration = "seed_duration_ms"
+        rate_label = "Seed (total including setup; legacy)"
+    lines.append(f"- {rate_label} nodes/sec: **{fmt_num(seed_rate_per_second(r, 'seed_nodes', rate_duration))}**")
+    lines.append(f"- {rate_label} relationships/sec: **{fmt_num(seed_rate_per_second(r, 'seed_relationships', rate_duration))}**")
+    lines.append(f"- Seed batch size: **{r.get('seed_batch_size', batch_size):,} rows**")
+    lines.append(f"- Seed parallelism: **{r.get('seed_parallelism', parallel)} sessions per phase**")
+    lines.append(f"- Query workloads: **{len(r.get('queries', []))}**")
     lines.append(f"- Iterations per query: **{r.get('iterations_per_query', iterations)}**")
+    lines.append(f"- Warmup iterations per query: **{r.get('warmup_iterations', warmup)}**")
     lines.append("")
     lines.append("## Query Latency")
     lines.append("")
-    lines.append("| Query | Mean (ms) | Median (ms) | P95 (ms) | P99 (ms) | Min (ms) | Max (ms) | StdDev (ms) | Ops/sec |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("| Query | Description | Samples | Mean (ms) | Median (ms) | P95 (ms) | P99 (ms) | Min (ms) | Max (ms) | StdDev (ms) | Ops/sec |")
+    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for q in r.get("queries", []):
         lines.append(
-            f"| `{q['name']}` | {fmt_ms(q['mean_ms'])} | {fmt_ms(q['median_ms'])} | "
+            f"| `{q['name']}` | {q.get('description', '')} | {query_sample_count(q, iterations)} | "
+            f"{fmt_ms(q['mean_ms'])} | {fmt_ms(q['median_ms'])} | "
             f"{fmt_ms(q['p95_ms'])} | {fmt_ms(q['p99_ms'])} | {fmt_ms(q['min_ms'])} | "
             f"{fmt_ms(q['max_ms'])} | {fmt_ms(q['stddev_ms'])} | {fmt_num(q['ops_per_second'])} |"
         )
     lines.append("")
     lines.append(f"- **Overall mean latency:** {fmt_ms(r.get('overall_mean_ms', 0))} ms")
-    lines.append(f"- **Overall throughput:** {fmt_num(r.get('overall_ops_per_second', 0))} ops/sec")
-    lines.append(f"- **Total benchmark wall-clock (sampled):** {fmt_num(wall, 3)} s")
+    lines.append(f"- **Measured query operations:** {throughput['operations']:,}")
+    lines.append(f"- **End-to-end query-loop throughput:** {fmt_num(throughput['end_to_end_ops_per_second'])} ops/sec")
+    lines.append(f"- **Query-latency-only aggregate throughput:** {fmt_num(throughput['query_latency_ops_per_second'])} ops/sec")
+    lines.append(f"- **Query-loop duration:** {fmt_num(throughput['duration_ms'] / 1000.0, 3)} s")
+    lines.append("- Query-loop duration includes warmups and per-query setup; only measured iterations count toward the end-to-end rate.")
+    lines.append(f"- **Full lifecycle wall-clock (sampled):** {fmt_num(wall, 3)} s")
     lines.append("")
 
     # ---- Correctness (per-engine) ----
@@ -582,7 +674,7 @@ def render_single_report(run: dict, iterations: int, products: int, orders: int)
     return "\n".join(lines)
 
 
-def render_comparison(runs: dict[str, dict], iterations: int, products: int, orders: int) -> str:
+def render_comparison(runs: dict[str, dict], iterations: int, warmup: int, batch_size: int, parallel: int, products: int, orders: int) -> str:
     n = runs.get("nornicdb")
     m = runs.get("neo4j")
 
@@ -600,7 +692,18 @@ def render_comparison(runs: dict[str, dict], iterations: int, products: int, ord
     lines.append("# NornicDB vs Neo4j — Northwind Benchmark Comparison")
     lines.append("")
     lines.append(f"- Products seeded: **{products:,}**, Orders seeded: **{orders:,}**")
-    lines.append(f"- Iterations per query: **{iterations}** (after 2 warmup iterations)")
+    lines.append(f"- Query workloads: **{len(n['results'].get('queries', []))}** NornicDB / **{len(m['results'].get('queries', []))}** Neo4j")
+    lines.append(
+        f"- Iterations/query: **{n['results'].get('iterations_per_query', iterations)}** NornicDB "
+        f"(**{n['results'].get('warmup_iterations', warmup)} warmup**) / "
+        f"**{m['results'].get('iterations_per_query', iterations)}** Neo4j "
+        f"(**{m['results'].get('warmup_iterations', warmup)} warmup**)"
+    )
+    lines.append(
+        f"- Seed batches / parallel sessions: **{n['results'].get('seed_batch_size', batch_size)} / "
+        f"{n['results'].get('seed_parallelism', parallel)}** NornicDB; **"
+        f"{m['results'].get('seed_batch_size', batch_size)} / {m['results'].get('seed_parallelism', parallel)}** Neo4j"
+    )
     lines.append("")
     lines.append("## Summary")
     lines.append("")
@@ -620,13 +723,39 @@ def render_comparison(runs: dict[str, dict], iterations: int, products: int, ord
     m_r = m["results"]
     n_p = n["power"]
     m_p = m["power"]
+    n_throughput = benchmark_throughput(n_r)
+    m_throughput = benchmark_throughput(m_r)
+
+    configuration_mismatches = comparison_configuration_mismatches(n_r, m_r)
+    if configuration_mismatches:
+        lines.append("> **Invalid workload comparison:** benchmark settings or operation counts differ between engines.")
+        for mismatch in configuration_mismatches:
+            lines.append(f"> - {mismatch}")
+        lines.append("")
 
     row("Overall mean latency (ms)", n_r.get("overall_mean_ms", 0), m_r.get("overall_mean_ms", 0), fmt_ms)
-    row("Overall throughput (ops/sec)",
-        n_r.get("overall_ops_per_second", 0),
-        m_r.get("overall_ops_per_second", 0),
+    row("End-to-end query-loop throughput (ops/sec)",
+        n_throughput["end_to_end_ops_per_second"],
+        m_throughput["end_to_end_ops_per_second"],
         fmt_num, lower_is_better=False)
+    row("Query-latency-only aggregate throughput (ops/sec)",
+        n_throughput["query_latency_ops_per_second"],
+        m_throughput["query_latency_ops_per_second"],
+        fmt_num, lower_is_better=False)
+    row("Query-loop duration (s)", n_throughput["duration_ms"] / 1000.0, m_throughput["duration_ms"] / 1000.0, lambda x: fmt_num(x, 3))
     row("Seed duration (ms)", n_r.get("seed_duration_ms", 0), m_r.get("seed_duration_ms", 0), fmt_ms)
+    if "seed_ingestion_ms" in n_r and "seed_ingestion_ms" in m_r:
+        for key, label in (("seed_wipe_ms", "Wipe duration (ms)"),
+                           ("seed_index_ms", "Index setup duration (ms)"),
+                           ("seed_ingestion_ms", "Ingestion duration (ms)")):
+            row(label, n_r[key], m_r[key], fmt_ms)
+        for count_key, label in (("seed_nodes", "Ingestion nodes/sec"),
+                                 ("seed_relationships", "Ingestion relationships/sec")):
+            row(label, seed_rate_per_second(n_r, count_key, "seed_ingestion_ms"),
+                seed_rate_per_second(m_r, count_key, "seed_ingestion_ms"), fmt_num, lower_is_better=False)
+    else:
+        row("Seed nodes/sec (total incl. setup, legacy)", seed_rate_per_second(n_r, "seed_nodes"), seed_rate_per_second(m_r, "seed_nodes"), fmt_num, lower_is_better=False)
+        row("Seed relationships/sec (total incl. setup, legacy)", seed_rate_per_second(n_r, "seed_relationships"), seed_rate_per_second(m_r, "seed_relationships"), fmt_num, lower_is_better=False)
     row("Avg CPU power (mW)", n_p.get("cpu_power_mw_avg", 0), m_p.get("cpu_power_mw_avg", 0))
     row("Avg GPU power (mW)", n_p.get("gpu_power_mw_avg", 0), m_p.get("gpu_power_mw_avg", 0))
     row("Avg package power (mW)", n_p.get("package_power_mw_avg", 0), m_p.get("package_power_mw_avg", 0))
@@ -642,24 +771,48 @@ def render_comparison(runs: dict[str, dict], iterations: int, products: int, ord
 
     lines.append("")
     lines.append("_Delta = (NornicDB − Neo4j) / Neo4j. Ratio compares Neo4j to NornicDB for metrics where lower is better (latency, energy, disk), and NornicDB to Neo4j for throughput (higher is better)._")
+    lines.append("_End-to-end query-loop throughput divides measured operations by the full suite window, including warmups and per-query setup; the query-latency-only rate excludes both._")
     lines.append("")
-    lines.append("## Per-Query Latency")
-    lines.append("")
-    lines.append("| Query | NornicDB mean (ms) | Neo4j mean (ms) | Delta | NornicDB P95 | Neo4j P95 | NornicDB ops/s | Neo4j ops/s |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
-
     nornic_by_name = {q["name"]: q for q in n_r.get("queries", [])}
     neo4j_by_name = {q["name"]: q for q in m_r.get("queries", [])}
-    for name in nornic_by_name:
-        nq = nornic_by_name[name]
-        mq = neo4j_by_name.get(name, {"mean_ms": 0, "p95_ms": 0, "ops_per_second": 0})
-        lines.append(
-            f"| `{name}` | {fmt_ms(nq['mean_ms'])} | {fmt_ms(mq['mean_ms'])} | "
-            f"{pct_delta(nq['mean_ms'], mq['mean_ms'])} | "
-            f"{fmt_ms(nq['p95_ms'])} | {fmt_ms(mq['p95_ms'])} | "
-            f"{fmt_num(nq['ops_per_second'])} | {fmt_num(mq['ops_per_second'])} |"
-        )
+    query_names = ordered_query_names(nornic_by_name, neo4j_by_name)
+    lines.append("## Full Query Suite")
     lines.append("")
+    lines.append("Each workload is reported independently with all recorded latency percentiles, range, sample count, and per-query rate.")
+    lines.append("")
+    for name in query_names:
+        nq = nornic_by_name.get(name)
+        mq = neo4j_by_name.get(name)
+        query = nq or mq or {}
+        lines.append(f"### `{name}`")
+        if query.get("description"):
+            lines.append("")
+            lines.append(query["description"])
+        lines.append("")
+        lines.append("| Engine | Samples | Mean (ms) | Median (ms) | P95 (ms) | P99 (ms) | Min (ms) | Max (ms) | StdDev (ms) | Ops/sec | Rows |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        for engine, engine_query, run in (
+            ("NornicDB", nq, n_r),
+            ("Neo4j", mq, m_r),
+        ):
+            if engine_query is None:
+                lines.append(f"| {engine} | not run | — | — | — | — | — | — | — | — | — |")
+                continue
+            sample_count = query_sample_count(engine_query, int(run.get("iterations_per_query", iterations)))
+            lines.append(
+                f"| {engine} | {sample_count} | {fmt_ms(engine_query.get('mean_ms', 0))} | "
+                f"{fmt_ms(engine_query.get('median_ms', 0))} | {fmt_ms(engine_query.get('p95_ms', 0))} | "
+                f"{fmt_ms(engine_query.get('p99_ms', 0))} | {fmt_ms(engine_query.get('min_ms', 0))} | "
+                f"{fmt_ms(engine_query.get('max_ms', 0))} | {fmt_ms(engine_query.get('stddev_ms', 0))} | "
+                f"{fmt_num(engine_query.get('ops_per_second', 0))} | {engine_query.get('row_count', 0):,} |"
+            )
+        if nq and mq and float(nq.get("mean_ms", 0) or 0) > 0:
+            speed_ratio = float(mq.get("mean_ms", 0) or 0) / float(nq["mean_ms"])
+            lines.append(f"\nMean-latency ratio (Neo4j / NornicDB): **{speed_ratio:.2f}×**.")
+        cypher = query.get("cypher", "").strip()
+        if cypher:
+            lines.extend(["", "<details><summary>Cypher</summary>", "", "```cypher", cypher, "```", "", "</details>"])
+        lines.append("")
 
     # ------------------------------------------------------------------
     # Correctness section — cross-engine diff of seed counts + per-query
@@ -702,23 +855,29 @@ def render_comparison(runs: dict[str, dict], iterations: int, products: int, ord
     lines.append("| Query | NornicDB rows | Neo4j rows | NornicDB hash | Neo4j hash | Match |")
     lines.append("|---|---:|---:|---|---|:---:|")
     fingerprint_mismatches = []
-    for name in nornic_by_name:
-        nq = nornic_by_name[name]
-        mq = neo4j_by_name.get(name, {})
-        n_rows = nq.get("row_count", -1)
-        m_rows = mq.get("row_count", -1)
-        n_hash = nq.get("result_hash", "")
-        m_hash = mq.get("result_hash", "")
-        match = (n_rows == m_rows) and (n_hash == m_hash)
+    for name in query_names:
+        nq = nornic_by_name.get(name)
+        mq = neo4j_by_name.get(name)
+        n_rows = nq.get("row_count", -1) if nq else -1
+        m_rows = mq.get("row_count", -1) if mq else -1
+        n_hash = nq.get("result_hash", "") if nq else ""
+        m_hash = mq.get("result_hash", "") if mq else ""
+        match = nq is not None and mq is not None and n_rows == m_rows and n_hash == m_hash
         if not match:
             reason = []
-            if n_rows != m_rows:
+            if nq is None:
+                reason.append("missing in NornicDB")
+            if mq is None:
+                reason.append("missing in Neo4j")
+            if nq is not None and mq is not None and n_rows != m_rows:
                 reason.append(f"rows {n_rows}≠{m_rows}")
-            if n_hash != m_hash:
+            if nq is not None and mq is not None and n_hash != m_hash:
                 reason.append("hash differs")
             fingerprint_mismatches.append(f"{name}: {', '.join(reason)}")
         lines.append(
-            f"| `{name}` | {n_rows:,} | {m_rows:,} | `{n_hash[:12]}…` | `{m_hash[:12]}…` | {'✅' if match else '❌'} |"
+            f"| `{name}` | {f'{n_rows:,}' if nq else 'not run'} | {f'{m_rows:,}' if mq else 'not run'} | "
+            f"{f'`{n_hash[:12]}…`' if nq else '—'} | {f'`{m_hash[:12]}…`' if mq else '—'} | "
+            f"{'✅' if match else '❌'} |"
         )
     lines.append("")
 
@@ -826,9 +985,12 @@ def render_comparison(runs: dict[str, dict], iterations: int, products: int, ord
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True, type=Path)
-    ap.add_argument("--iterations", type=int, default=10)
-    ap.add_argument("--products", type=int, default=2000)
-    ap.add_argument("--orders", type=int, default=2000)
+    ap.add_argument("--iterations", type=int, default=30)
+    ap.add_argument("--warmup", type=int, default=5)
+    ap.add_argument("--batch-size", type=int, default=500)
+    ap.add_argument("--parallel", type=int, default=4)
+    ap.add_argument("--products", type=int, default=48000)
+    ap.add_argument("--orders", type=int, default=48000)
     args = ap.parse_args()
 
     out_dir: Path = args.dir
@@ -844,12 +1006,12 @@ def main():
             print(f"warning: skipping {label}: {e}", file=sys.stderr)
 
     for label, run in runs.items():
-        report = render_single_report(run, args.iterations, args.products, args.orders)
+        report = render_single_report(run, args.iterations, args.warmup, args.batch_size, args.parallel, args.products, args.orders)
         (out_dir / f"{label}.md").write_text(report)
         print(f"wrote {out_dir / (label + '.md')}")
 
     if "nornicdb" in runs and "neo4j" in runs:
-        comp = render_comparison(runs, args.iterations, args.products, args.orders)
+        comp = render_comparison(runs, args.iterations, args.warmup, args.batch_size, args.parallel, args.products, args.orders)
         (out_dir / "comparison.md").write_text(comp)
         print(f"wrote {out_dir / 'comparison.md'}")
     else:

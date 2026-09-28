@@ -31,17 +31,34 @@ For each database:
    reproducible — identical graphs are written to NornicDB and Neo4j in the
    same run. For much larger runs, raise `PRODUCTS` / `ORDERS`; seed time
    scales linearly but query times are dominated by the larger fan-out.
-5. Run four read queries `ITERATIONS` times each (default 10), with 2 warmup
-   iterations that are discarded:
+5. Run the 14-workload read suite `ITERATIONS` times per query (default 30),
+   with `WARMUP` iterations (default 5) that are discarded:
    - `products_per_category`
    - `customer_category_distinct_orders`
    - `optional_match_orders_count`
    - `revenue_by_product`
-6. Record latencies (mean / p50 / p95 / p99 / min / max / stddev / ops/sec).
-7. **SIGKILL the database process** (no graceful shutdown — observability
-   signal handlers in some builds can hang on SIGTERM).
-8. Stop powermetrics.
-9. Measure on-disk data directory size (`du -sk`) after the DB has exited.
+   - `products_by_supplier`
+   - `orders_by_customer`
+   - `revenue_by_category`
+   - `revenue_by_supplier`
+   - `revenue_by_customer`
+   - `order_line_sales_by_country`
+   - `low_stock_products`
+   - `products_in_category`
+   - `order_line_quantity_distribution`
+   - `customer_order_details`
+6. Record each query's sample count, mean / median / p95 / p99 / min / max /
+   standard deviation, result rows, and per-query ops/sec. The comparison
+   includes every query from either engine. End-to-end throughput is measured
+   operations divided by total query-loop duration (including warmups and
+   per-query setup); latency-only aggregate throughput is reported separately.
+7. Seed writes use configurable `BATCH_SIZE` UNWIND chunks and
+   `SEED_PARALLEL` independent Bolt sessions per phase (default 500 rows and 4
+   sessions). Dependencies between seed phases remain ordered.
+8. Stop the databases cleanly: NornicDB receives SIGTERM to flush storage, and
+   Neo4j is stopped through its CLI.
+9. Stop powermetrics.
+10. Measure on-disk data directory size (`du -sk`) after the DB has exited.
 
 `powermetrics` samples CPU, GPU, and package power at 1-second intervals and
 wraps the entire DB lifecycle (startup → seed → benchmark → shutdown), so the
@@ -87,6 +104,12 @@ comparison.md                side-by-side report
 
 ## Step-by-step instructions
 
+> **Destructive:** the orchestrator deletes the configured NornicDB data
+> directory and wipes Neo4j's `databases/` and `transactions/` directories.
+> Use dedicated benchmark-only paths; do not point it at data you need.
+> It refuses to reset an open NornicDB data directory or a running Neo4j
+> instance. Stop those servers before starting the benchmark.
+
 1. **Install Neo4j** (once):
 
    ```bash
@@ -102,14 +125,17 @@ comparison.md                side-by-side report
 3. **(Optional) Tune parameters** via env vars:
 
    ```bash
-   export ITERATIONS=10          # default: 10
-   export WARMUP=2               # default: 2
-   export PRODUCTS=2000          # default: 2000
-   export ORDERS=2000            # default: 2000
+   export ITERATIONS=30          # default: 30 measured runs per query
+   export WARMUP=5               # default: 5 discarded runs per query
+   export BATCH_SIZE=500         # default: 500 rows per UNWIND batch
+   export SEED_PARALLEL=4        # default: 4 concurrent Bolt sessions per phase
+   export PRODUCTS=2000          # default: 48000
+   export ORDERS=2000            # default: 48000
    ```
 
-   All four of the Northwind benchmark queries run `ITERATIONS + WARMUP` times
-   per database. With defaults that's 48 queries per DB after seed.
+   All 14 Northwind workloads run `ITERATIONS + WARMUP` times per database.
+   Defaults produce 420 measured operations and 70 warmup operations per DB.
+   Seed settings are included in each report to make tuning reproducible.
 
 4. **Run the orchestrator**:
 
@@ -118,8 +144,8 @@ comparison.md                side-by-side report
    ```
 
    You will be prompted once for your sudo password (for `powermetrics`).
-   After that the script runs unattended. Expect roughly 2–5 minutes per
-   database at default scale on a modern Mac, plus Neo4j startup time (~15s).
+   After that the script runs unattended. Runtime depends on dataset scale,
+   query iterations, storage configuration, and Neo4j startup time.
 
    You may also run the whole script under sudo if your shell doesn't
    support a TTY sudo prompt:
@@ -158,8 +184,8 @@ comparison.md                side-by-side report
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ITERATIONS` | `10` | Iterations per query (excluding warmup). |
-| `WARMUP` | `2` | Warmup iterations per query (not recorded). |
+| `ITERATIONS` | `30` | Measured iterations per query (excluding warmup). |
+| `WARMUP` | `5` | Warmup iterations per query (not recorded). |
 | `CATEGORIES` | `96` | Category nodes seeded. |
 | `SUPPLIERS` | `144` | Supplier nodes seeded. |
 | `CUSTOMERS` | `1200` | Customer nodes seeded. |
@@ -168,7 +194,9 @@ comparison.md                side-by-side report
 | `ORDER_LINES_MIN` | `1` | Minimum ORDERS edges per Order (randomised per order). |
 | `ORDER_LINES_MAX` | `6` | Maximum ORDERS edges per Order. |
 | `BATCH_SIZE` | `500` | Rows per `UNWIND` seed batch. |
+| `SEED_PARALLEL` | `4` | Concurrent Bolt sessions per seed phase. |
 | `SEED` | `42` | PRNG seed — same seed produces an identical dataset on both DBs. |
+| `GRAPH_ONLY` | `1` | Disable NornicDB BM25/vector-index maintenance for this graph-only workload. Set to `0` to include search-index build cost. |
 | `NORNIC_DATA_DIR` | `./bench-data/nornic` | NornicDB data directory. Wiped each run. |
 | `NEO4J_HOME` | `/opt/homebrew/opt/neo4j` | Neo4j install prefix. |
 | `NEO4J_DATA_DIR` | `/opt/homebrew/var/neo4j/data` | Neo4j data dir. `databases/` and `transactions/` are wiped each run. |
@@ -195,6 +223,17 @@ Repeat runs are designed to be deterministic in shape:
 Latency and power figures will vary between runs — laptop thermals, OS
 background load, and Bolt driver warmup all contribute noise. For a stable
 comparison run the script 3+ times back-to-back and read the aggregate.
+When tuning ingestion, change one of `BATCH_SIZE` or `SEED_PARALLEL` at a time
+and compare ingestion duration on the same dataset and graph-only mode. The
+report separates graph wipe, index setup, and ingestion (row generation plus
+node and relationship writes). Total seed duration includes all three and
+session overhead; ingestion nodes/sec and relationships/sec use only ingestion
+time. Older reports without phase timings show rates based on total seed time
+and label them as legacy. Index setup measures creating the declared indexes
+before writing data, not the index maintenance performed during ingestion.
+The defaults
+are configurable baselines, not a claim that 500 rows / 4 sessions is optimal
+on every machine.
 
 ## Troubleshooting
 

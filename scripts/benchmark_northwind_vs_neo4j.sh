@@ -21,8 +21,10 @@
 # non-interactively.
 #
 # Configuration via env (with defaults):
-#   ITERATIONS=10           iterations per query (per-DB, per-query)
-#   WARMUP=2                warmup iterations (not recorded)
+#   ITERATIONS=30           iterations per query (per-DB, per-query)
+#   WARMUP=5                warmup iterations (not recorded)
+#   BATCH_SIZE=500          rows per UNWIND seed batch
+#   SEED_PARALLEL=4         concurrent Bolt sessions per seed phase
 #   PRODUCTS=2000           products in seed
 #   ORDERS=2000             orders in seed
 #   NORNIC_DATA_DIR         NornicDB data dir (default ./bench-data/nornic)
@@ -33,11 +35,15 @@
 #   GRAPH_ONLY=1            (default 1) Disable BM25 fulltext + vector ANN index
 #                           build/maintenance for the NornicDB run via the per-DB
 #                           --search-bm25-enabled=false / --search-vector-enabled=false
-#                           startup flags. The Northwind benchmark performs no
-#                           text or vector search, so leaving these on costs
-#                           seed-time CPU on every IndexNode/IndexBatch call
+#                           startup flags, and disable memory-decay access scoring
+#                           via NORNICDB_MEMORY_DECAY_ENABLED=false. The Northwind
+#                           benchmark performs no text/vector search and no
+#                           decay-aware reads, so leaving these on costs seed-time
+#                           CPU on every node/edge access (decay scoring was
+#                           profiled at ~29% of seed wall time when enabled)
 #                           without affecting query results. Set GRAPH_ONLY=0 to
-#                           include search index build cost in the comparison.
+#                           include search index build + decay scoring cost in the
+#                           comparison.
 
 set -euo pipefail
 
@@ -45,8 +51,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-ITERATIONS="${ITERATIONS:-10}"
-WARMUP="${WARMUP:-2}"
+ITERATIONS="${ITERATIONS:-30}"
+WARMUP="${WARMUP:-5}"
 CATEGORIES="${CATEGORIES:-96}"
 SUPPLIERS="${SUPPLIERS:-144}"
 CUSTOMERS="${CUSTOMERS:-1200}"
@@ -55,6 +61,7 @@ ORDERS="${ORDERS:-48000}"
 ORDER_LINES_MIN="${ORDER_LINES_MIN:-1}"
 ORDER_LINES_MAX="${ORDER_LINES_MAX:-6}"
 BATCH_SIZE="${BATCH_SIZE:-500}"
+SEED_PARALLEL="${SEED_PARALLEL:-4}"
 SEED="${SEED:-42}"
 NORNIC_DATA_DIR="${NORNIC_DATA_DIR:-${REPO_ROOT}/bench-data/nornic}"
 NEO4J_HOME="${NEO4J_HOME:-/opt/homebrew/opt/neo4j}"
@@ -105,12 +112,15 @@ require() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1
 require go
 require sudo
 require python3
+require lsof
+require nc
 require "${NEO4J_HOME}/bin/neo4j"
 CYPHER_SHELL="${CYPHER_SHELL:-$(command -v cypher-shell || true)}"
 [[ -x "${CYPHER_SHELL}" ]] || die "cypher-shell not found on PATH (set CYPHER_SHELL=/path/to/cypher-shell)"
 [[ -x /usr/bin/powermetrics ]] || die "/usr/bin/powermetrics not found"
 
 log "config: iterations=${ITERATIONS} warmup=${WARMUP}"
+log "config: seed_batch_size=${BATCH_SIZE} seed_parallel=${SEED_PARALLEL}"
 log "config: categories=${CATEGORIES} suppliers=${SUPPLIERS} customers=${CUSTOMERS}"
 log "config: products=${PRODUCTS} orders=${ORDERS} order_lines=${ORDER_LINES_MIN}..${ORDER_LINES_MAX} seed=${SEED}"
 log "config: report_dir=${REPORT_DIR}"
@@ -132,6 +142,17 @@ else
 fi
 
 log "wiping data directories before run (NornicDB + Neo4j databases/transactions)…"
+if nc -z 127.0.0.1 "${NORNIC_BOLT_PORT}" 2>/dev/null; then
+  die "NornicDB benchmark Bolt port ${NORNIC_BOLT_PORT} is already in use"
+fi
+# Never remove an open database directory. A live server keeps its WAL file
+# descriptor after rm -rf, then fails the next snapshot or write.
+if [[ -d "${NORNIC_DATA_DIR}" ]] && lsof -nP +D "${NORNIC_DATA_DIR}" 2>/dev/null | awk 'NR > 1 {found=1} END {exit !found}'; then
+  die "NornicDB data directory is open by another process: ${NORNIC_DATA_DIR}"
+fi
+if pgrep -f 'org\.neo4j\.server\.' >/dev/null 2>&1; then
+  die "Neo4j is running; stop it before benchmarking (its data directory would be wiped)"
+fi
 # NornicDB: remove the whole data dir. If a prior run left it root-owned
 # (sudo invocation), fall through to a sudo rm so the wipe actually succeeds.
 if [[ -d "${NORNIC_DATA_DIR}" ]]; then
@@ -141,14 +162,9 @@ if [[ -d "${NORNIC_DATA_DIR}" ]]; then
 fi
 mkdir -p "${NORNIC_DATA_DIR}"
 
-# Neo4j: stop any running instance first so the wipe isn't fighting a live JVM,
-# then remove the ephemeral `databases/` + `transactions/` subtrees (leave the
-# parent alone so the brew-managed config/logs directories persist).
+# Neo4j: remove the ephemeral `databases/` + `transactions/` subtrees (leave
+# the parent alone so the brew-managed config/logs directories persist).
 if [[ -x "${NEO4J_HOME}/bin/neo4j" ]]; then
-  # If a stale JVM is still alive, kill it hard — neo4j stop can be slow.
-  if stale=$(pgrep -f "org\.neo4j\.server\." 2>/dev/null); then
-    [[ -n "${stale}" ]] && echo "${stale}" | xargs -n1 kill -9 2>/dev/null || true
-  fi
   if [[ -d "${NEO4J_DATA_DIR}/databases" || -d "${NEO4J_DATA_DIR}/transactions" ]]; then
     if ! rm -rf "${NEO4J_DATA_DIR}/databases" "${NEO4J_DATA_DIR}/transactions" 2>/dev/null; then
       sudo rm -rf "${NEO4J_DATA_DIR}/databases" "${NEO4J_DATA_DIR}/transactions"
@@ -270,22 +286,29 @@ run_nornic() {
   VMSTAT_PID=$(start_vmstat "${REPORT_DIR}/nornicdb.vmstat.log")
   local t0=$(date +%s.%N)
 
-  # Optional graph-only mode: disable BM25 + vector index build at startup.
-  # The Northwind benchmark performs zero text or vector search, so these
-  # indexes are pure overhead on every node/edge insert. Toggle via GRAPH_ONLY
-  # (default 1); set GRAPH_ONLY=0 to include the index-build cost.
+  # Optional graph-only mode: disable BM25 + vector index build at startup
+  # and memory-decay access scoring. The Northwind benchmark performs zero
+  # text/vector search and no decay-aware reads, so these are pure overhead
+  # on every node/edge access. Toggle via GRAPH_ONLY (default 1); set
+  # GRAPH_ONLY=0 to include the index-build + decay-scoring cost.
   local nornic_extra_flags=()
+  local nornic_extra_env=()
   if [[ "${GRAPH_ONLY}" == "1" ]]; then
     nornic_extra_flags=(
       --search-bm25-enabled=false
       --search-vector-enabled=false
     )
+    # Decay has no CLI flag; the env var is the only switch. Profile-verified:
+    # decay scoring costs ~29% of seed wall time when enabled (11.7s -> 8.3s
+    # for the default seed size) via per-entity AccessMeta reads + scoring.
+    nornic_extra_env=(NORNICDB_MEMORY_DECAY_ENABLED=false)
   fi
 
   log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY}"
   # Note: ${arr[@]+"${arr[@]}"} guards against `set -u` tripping on an empty
   # array expansion. macOS ships bash 3.2 which is strict here.
   NORNICDB_NO_AUTH=true NORNICDB_EMBEDDING_ENABLED=false \
+    ${nornic_extra_env[@]+"${nornic_extra_env[@]}"} \
     "${NORNIC_BIN}" serve \
       --bolt-port "${NORNIC_BOLT_PORT}" \
       --http-port "${NORNIC_HTTP_PORT}" \
@@ -317,6 +340,7 @@ run_nornic() {
     -order-lines-min "${ORDER_LINES_MIN}" \
     -order-lines-max "${ORDER_LINES_MAX}" \
     -batch-size "${BATCH_SIZE}" \
+    -parallel "${SEED_PARALLEL}" \
     -seed "${SEED}" \
     -iterations "${ITERATIONS}" \
     -warmup "${WARMUP}" \
@@ -388,15 +412,8 @@ run_neo4j() {
     NEO4J_RUN_PREFIX=()
   fi
 
-  # Kill any stale Neo4j JVM from a previous failed run. The main class name
-  # varies across Neo4j versions; match on the classpath + `org.neo4j.server`
-  # package to cover CommunityEntryPoint, Neo4jCommunity, and friends.
-  local stale
-  stale=$(pgrep -f "org\.neo4j\.server\." 2>/dev/null || true)
-  if [[ -n "${stale}" ]]; then
-    log "killing stale Neo4j JVM(s): ${stale}"
-    echo "${stale}" | xargs -n1 kill -9 2>/dev/null || true
-    sleep 2
+  if pgrep -f 'org\.neo4j\.server\.' >/dev/null 2>&1; then
+    die "Neo4j started during the NornicDB phase; refusing to benchmark or stop a different server"
   fi
 
   # Data dir already wiped at script start (including any prior Neo4j
@@ -449,6 +466,7 @@ run_neo4j() {
     -order-lines-min "${ORDER_LINES_MIN}" \
     -order-lines-max "${ORDER_LINES_MAX}" \
     -batch-size "${BATCH_SIZE}" \
+    -parallel "${SEED_PARALLEL}" \
     -seed "${SEED}" \
     -iterations "${ITERATIONS}" \
     -warmup "${WARMUP}" \
@@ -506,6 +524,9 @@ generate_reports() {
   python3 "${SCRIPT_DIR}/northwind_report.py" \
     --dir "${REPORT_DIR}" \
     --iterations "${ITERATIONS}" \
+    --warmup "${WARMUP}" \
+    --batch-size "${BATCH_SIZE}" \
+    --parallel "${SEED_PARALLEL}" \
     --products "${PRODUCTS}" \
     --orders "${ORDERS}"
   log "reports written to ${REPORT_DIR}"

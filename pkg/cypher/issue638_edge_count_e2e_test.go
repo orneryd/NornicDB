@@ -22,6 +22,18 @@ type getEdgesByTypeProbe struct {
 	calls int
 }
 
+type forwardingNamespacedEngine struct {
+	storage.Engine
+}
+
+func (engine *forwardingNamespacedEngine) Namespace() string {
+	return engine.Engine.(*storage.NamespacedEngine).Namespace()
+}
+
+func (engine *forwardingNamespacedEngine) GetInnerEngine() storage.Engine {
+	return engine.Engine
+}
+
 func (p *getEdgesByTypeProbe) GetEdgesByType(edgeType string) ([]*storage.Edge, error) {
 	p.calls++
 	return p.Engine.GetEdgesByType(edgeType)
@@ -151,6 +163,76 @@ func TestIssue638_RelationshipCountShapes_ExactRows(t *testing.T) {
 	result, err = exec.Execute(ctx, "MATCH (s:Helper)-[r:CALLS]->() RETURN count(r) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(n/20), result.Rows[0][0])
+}
+
+func TestOptionalOrderCountAfterBulkEdges(t *testing.T) {
+	store, _, exec, _ := newIssue638E2EStore(t)
+	ctx := context.Background()
+	const products = 200
+	for index := 0; index < products; index++ {
+		_, err := store.CreateNode(&storage.Node{
+			ID: storage.NodeID(fmt.Sprintf("product%d", index)), Labels: []string{"Product"},
+			Properties: map[string]interface{}{"productName": fmt.Sprintf("Product %d", index)},
+		})
+		require.NoError(t, err)
+	}
+	_, err := store.CreateNode(&storage.Node{ID: "order", Labels: []string{"Order"}})
+	require.NoError(t, err)
+	edges := make([]*storage.Edge, products)
+	for index := range edges {
+		edges[index] = &storage.Edge{
+			ID: storage.EdgeID(fmt.Sprintf("order-line%d", index)), Type: "ORDERS",
+			StartNode: "order", EndNode: storage.NodeID(fmt.Sprintf("product%d", max(1, index))),
+		}
+	}
+	require.NoError(t, store.BulkCreateEdges(edges))
+	result, err := exec.Execute(ctx, `MATCH (p:Product)
+		OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)
+		RETURN p.productName AS productName, count(o) AS orderCount
+		ORDER BY orderCount DESC, productName ASC LIMIT 200`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, products)
+	require.Equal(t, int64(2), result.Rows[0][1])
+	require.Equal(t, int64(0), result.Rows[products-1][1])
+	expectedRows := result.Rows
+	txExec := NewStorageExecutor(store)
+	_, err = txExec.Execute(WithTransactionControl(ctx), "BEGIN", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = txExec.Execute(WithTransactionControl(ctx), "ROLLBACK", nil) })
+	result, err = txExec.Execute(ctx, `MATCH (p:Product)
+		OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)
+		RETURN p.productName AS productName, count(o) AS orderCount
+		ORDER BY orderCount DESC, productName ASC LIMIT 200`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, products)
+	require.Equal(t, int64(2), result.Rows[0][1])
+	require.Equal(t, int64(0), result.Rows[products-1][1])
+	require.Equal(t, expectedRows, result.Rows)
+}
+
+func TestOptionalOrderCountThroughAsyncStorage(t *testing.T) {
+	base, err := storage.NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	async := storage.NewAsyncEngine(base, nil)
+	t.Cleanup(func() { require.NoError(t, async.Close()) })
+	store := storage.NewNamespacedEngine(async, "nornic")
+	for _, node := range []*storage.Node{
+		{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "With orders"}},
+		{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "No orders"}},
+		{ID: "o1", Labels: []string{"Order"}},
+	} {
+		_, err := store.CreateNode(node)
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "line1", Type: "ORDERS", StartNode: "o1", EndNode: "p1"}))
+	async.Flush()
+	exec := NewStorageExecutor(&forwardingNamespacedEngine{Engine: store})
+	result, err := exec.Execute(context.Background(), `MATCH (p:Product)
+		OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)
+		RETURN p.productName AS productName, count(o) AS orderCount
+		ORDER BY orderCount DESC, productName ASC LIMIT 100`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"With orders", int64(1)}, {"No orders", int64(0)}}, result.Rows)
 }
 
 func TestIssue638_RelationshipCountShapes_ColdExecutionIsFast(t *testing.T) {

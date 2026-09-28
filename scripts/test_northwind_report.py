@@ -1,0 +1,133 @@
+import unittest
+
+from northwind_report import benchmark_throughput, render_comparison, render_single_report
+
+
+def make_query(name, mean_ms=20.0, latencies_ms=None):
+    latencies = latencies_ms if latencies_ms is not None else [mean_ms, mean_ms]
+    return {
+        "name": name,
+        "description": f"{name} workload",
+        "cypher": f"RETURN '{name}' AS name",
+        "iterations": len(latencies),
+        "latencies_ms": latencies,
+        "mean_ms": mean_ms,
+        "median_ms": mean_ms,
+        "p95_ms": mean_ms,
+        "p99_ms": mean_ms,
+        "min_ms": min(latencies),
+        "max_ms": max(latencies),
+        "stddev_ms": 0.0,
+        "ops_per_second": 1000.0 / mean_ms,
+        "row_count": 1,
+        "result_hash": "abc123",
+    }
+
+
+def make_run(queries, operations, duration_ms):
+    return {
+        "results": {
+            "queries": queries,
+            "total_benchmark_operations": operations,
+            "total_benchmark_duration_ms": duration_ms,
+            "overall_ops_per_second": 10.56,
+            "iterations_per_query": 2,
+            "warmup_iterations": 1,
+            "seed_batch_size": 500,
+            "seed_parallelism": 4,
+            "seed_counts": {},
+        },
+        "power": {},
+        "wall_seconds": 1.0,
+        "memory": {},
+        "storage": {
+            "totals": {
+                "raw_data": 0,
+                "index": 0,
+                "logs": 0,
+                "meta": 0,
+                "skip": 0,
+                "other": 0,
+            }
+        },
+        "disk_total_bytes": 0,
+    }
+
+
+class NorthwindReportTests(unittest.TestCase):
+    def test_seed_phases_and_legacy_rates(self):
+        nornic = make_run([make_query("shared")], 2, 100.0)
+        neo4j = make_run([make_query("shared")], 2, 100.0)
+        for run in (nornic, neo4j):
+            run["results"].update(seed_duration_ms=1000, seed_wipe_ms=100,
+                                  seed_index_ms=200, seed_ingestion_ms=700,
+                                  seed_nodes=700, seed_relationships=1400)
+        nornic["label"] = "nornicdb"
+        nornic["storage"]["files"] = {"raw_data": []}
+        args = dict(iterations=2, warmup=1, batch_size=500, parallel=4, products=10, orders=10)
+
+        single = render_single_report(nornic, **args)
+        comparison = render_comparison({"nornicdb": nornic, "neo4j": neo4j}, **args)
+        self.assertIn("Index setup duration: **200.00 ms**", single)
+        self.assertIn("Ingestion nodes/sec: **1,000.00**", single)
+        self.assertIn("| Ingestion duration (ms) |", comparison)
+        self.assertIn("| Ingestion nodes/sec | 1,000.00 | 1,000.00 |", comparison)
+
+        del neo4j["results"]["seed_ingestion_ms"]
+        legacy = render_comparison({"nornicdb": nornic, "neo4j": neo4j}, **args)
+        self.assertIn("Seed nodes/sec (total incl. setup, legacy)", legacy)
+        self.assertNotIn("| Ingestion nodes/sec |", legacy)
+
+    def test_throughput_uses_measured_suite_duration(self):
+        per_operation_ms = 1000.0 / 10.56
+        result = {
+            "total_benchmark_operations": 40,
+            "total_benchmark_duration_ms": 5239.733,
+            "overall_ops_per_second": 10.56,
+            "queries": [make_query("legacy", latencies_ms=[per_operation_ms] * 40)],
+        }
+
+        throughput = benchmark_throughput(result)
+
+        self.assertAlmostEqual(throughput["end_to_end_ops_per_second"], 7.63399, places=4)
+        self.assertAlmostEqual(throughput["query_latency_ops_per_second"], 10.56, places=6)
+
+    def test_comparison_includes_union_of_query_names(self):
+        nornic = make_run([make_query("nornic_only"), make_query("shared")], 4, 100.0)
+        neo4j = make_run([make_query("shared"), make_query("neo4j_only")], 4, 100.0)
+
+        report = render_comparison(
+            {"nornicdb": nornic, "neo4j": neo4j},
+            iterations=2,
+            warmup=1,
+            batch_size=500,
+            parallel=4,
+            products=10,
+            orders=10,
+        )
+
+        self.assertIn("### `nornic_only`", report)
+        self.assertIn("### `neo4j_only`", report)
+        self.assertIn("| Neo4j | not run |", report)
+        self.assertIn("| NornicDB | not run |", report)
+        self.assertIn("End-to-end query-loop throughput (ops/sec)", report)
+        self.assertIn("Query-latency-only aggregate throughput (ops/sec)", report)
+
+    def test_comparison_flags_unequal_workload_configuration(self):
+        nornic = make_run([make_query("shared")], 2, 100.0)
+        neo4j = make_run([make_query("shared")], 3, 100.0)
+        neo4j["results"]["random_seed"] = 99
+        nornic["results"]["random_seed"] = 42
+
+        report = render_comparison(
+            {"nornicdb": nornic, "neo4j": neo4j},
+            iterations=2, warmup=1, batch_size=500, parallel=4, products=10, orders=10,
+        )
+
+        self.assertIn("Invalid workload comparison", report)
+        self.assertIn("random_seed: NornicDB=42 Neo4j=99", report)
+        self.assertIn("measured operations: NornicDB=2 Neo4j=3", report)
+
+
+if __name__ == "__main__":
+    unittest.main()

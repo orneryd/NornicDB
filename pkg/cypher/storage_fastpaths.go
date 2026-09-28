@@ -6,13 +6,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-type namespacedStorageEngine interface {
-	Namespace() string
-	storage.EngineUnwrapper
-}
-
 func (e *StorageExecutor) storageFast() (engine storage.Engine, idPrefix string) {
-	if ns, ok := e.storage.(namespacedStorageEngine); ok {
+	if ns, ok := e.storage.(*storage.NamespacedEngine); ok {
 		// NamespacedEngine uses ":" as the separator today.
 		return ns.GetInnerEngine(), ns.Namespace() + ":"
 	}

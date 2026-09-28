@@ -2439,6 +2439,22 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 }
 
 func TestWAL_TruncateAfterSnapshot_EarlyErrorBranches(t *testing.T) {
+	t.Run("missing WAL directory preserves active handle", func(t *testing.T) {
+		parent := t.TempDir()
+		dir := filepath.Join(parent, "wal")
+		wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})
+		require.NoError(t, err)
+		defer wal.Close()
+		require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"before": true}))
+
+		moved := filepath.Join(parent, "moved")
+		require.NoError(t, os.Rename(dir, moved))
+		err = wal.TruncateAfterSnapshot(0)
+		require.ErrorContains(t, err, "failed to create temp WAL")
+		require.NoError(t, os.Rename(moved, dir))
+		require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"after": true}))
+	})
+
 	t.Run("returns flush error before truncate when syncLocked fails", func(t *testing.T) {
 		dir := t.TempDir()
 		walPath := walActivePath(dir)
