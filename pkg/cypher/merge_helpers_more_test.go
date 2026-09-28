@@ -109,3 +109,14 @@ func TestMergeContextHelpers_MoreBranches(t *testing.T) {
 	require.True(t, isOnMatchModifier("MERGE (n) ON MATCH SET n.x = 1", 12))
 	require.True(t, isOptionalMatchModifier("OPTIONAL MATCH (n) RETURN n", 9))
 }
+
+func TestMergeWhereRejectsNonBooleanProperty(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	ctx := withExpressionFailureSlot(context.Background())
+	nodeCtx := map[string]*storage.Node{
+		"n": {Properties: map[string]interface{}{"name": "alice"}},
+	}
+
+	require.False(t, exec.evaluateWhereForMergeContext(ctx, "n.name", nodeCtx, nil))
+	require.ErrorContains(t, getExpressionFailure(ctx), "Type mismatch: expected Boolean but was String")
+}

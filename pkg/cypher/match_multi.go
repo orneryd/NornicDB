@@ -2042,12 +2042,7 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 
 	// Fallback: parse/evaluate as expression with full node context.
 	result := e.evaluateExpressionWithContext(ctx, clause, nodes, nil)
-	truth, err := predicateTruthFromValue(result)
-	if err != nil {
-		recordExpressionFailure(ctx, err)
-		return false
-	}
-	return truth == truthTrue
+	return predicateValueIsTrue(ctx, result)
 }
 
 // evaluateBoundRelationshipPattern evaluates a WHERE pattern against the

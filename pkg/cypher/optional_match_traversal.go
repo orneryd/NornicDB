@@ -75,11 +75,9 @@ func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, pre
 	}
 	predicate = substituteWithWhereLabelTests(predicate, values)
 	if value, evaluated := e.evaluateRowExpressionWithContext(ctx, predicate, pipelineRow(values)); evaluated {
-		passes, ok := value.(bool)
-		return ok && passes
+		return predicateValueIsTrue(ctx, value)
 	}
-	passes, ok := e.evaluateExpressionWithContext(ctx, predicate, row.nodes, row.rels).(bool)
-	return ok && passes
+	return predicateValueIsTrue(ctx, e.evaluateExpressionWithContext(ctx, predicate, row.nodes, row.rels))
 }
 
 // splitOptionalMatchClauses splits the text that follows the first

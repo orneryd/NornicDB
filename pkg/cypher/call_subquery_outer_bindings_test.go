@@ -68,3 +68,45 @@ func TestCallSubqueryTailPreservesEmptyWildcardSchemaAndWriteStats(t *testing.T)
 	require.Equal(t, [][]interface{}{{"write"}}, result.Rows)
 	require.EqualValues(t, 1, result.Stats.NodesCreated)
 }
+
+func TestCallSubqueryRefreshesOuterNodeAfterWrite(t *testing.T) {
+	for _, explicitTx := range []bool{false, true} {
+		name := "auto-commit"
+		if explicitTx {
+			name = "explicit-transaction"
+		}
+		t.Run(name, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "call648_refresh")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE (:C648Refresh {id:'a', x:5}), (:C648Refresh {id:'b', x:3})", nil)
+			require.NoError(t, err)
+
+			if explicitTx {
+				_, err = exec.handleBegin()
+				require.NoError(t, err)
+			}
+			result, err := exec.Execute(ctx, "MATCH (n:C648Refresh {id:'a'}) CALL (n) { SET n.y = 2 } RETURN n.y AS y", nil)
+			require.NoError(t, err)
+			require.Equal(t, []string{"y"}, result.Columns)
+			require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+
+			result, err = exec.Execute(ctx, "MATCH (n:C648Refresh {id:'a'}) CALL { WITH n SET n.y = 3 } RETURN n.y AS y", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
+
+			result, err = exec.Execute(ctx, "MATCH (n:C648Refresh {id:'a'}) CALL (n) { SET n:C648Added } RETURN n:C648Added AS hasLabel", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{true}}, result.Rows)
+
+			result, err = exec.Execute(ctx, "MATCH (n:C648Refresh {id:'a'}), (m:C648Refresh {id:'b'}) CALL (n) { SET n.y = 4 } RETURN n.y AS y, m.id AS id", nil)
+			require.NoError(t, err)
+			require.Equal(t, []string{"y", "id"}, result.Columns)
+			require.Equal(t, [][]interface{}{{int64(4), "b"}}, result.Rows)
+			if explicitTx {
+				_, err = exec.handleCommit()
+				require.NoError(t, err)
+			}
+		})
+	}
+}

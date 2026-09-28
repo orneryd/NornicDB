@@ -118,6 +118,9 @@ func TestNonBooleanWhereExpressionsReturnTypeError(t *testing.T) {
 		{"MATCH (n:NonBooleanWhere) WHERE {a: 1} RETURN n", "Map"},
 		{"MATCH (n:NonBooleanWhere) WHERE 'x' RETURN n", "String"},
 		{"MATCH (n:NonBooleanWhere), (m:NonBooleanTarget) WHERE 1 RETURN n", "Integer"},
+		{"MATCH (n:NonBooleanWhere), (n)-[:TO]->(m:NonBooleanTarget) WHERE 1 RETURN n", "Integer"},
+		{"MATCH (n:NonBooleanWhere) OPTIONAL MATCH (n)-[:TO]->(m:NonBooleanTarget) WHERE 1 RETURN n", "Integer"},
+		{"MATCH (n:NonBooleanWhere) WITH n OPTIONAL MATCH (n)-[:TO]->(m:NonBooleanTarget) WHERE 1 RETURN n", "Integer"},
 		{"MATCH p=(n:NonBooleanWhere)-[:TO]->(m:NonBooleanTarget) WHERE 1 RETURN p", "Integer"},
 	}
 	for _, tc := range queries {

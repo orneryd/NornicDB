@@ -50,7 +50,7 @@ func (e *StorageExecutor) executeMixedPatternMatch(
 					rels[name] = entity
 				}
 			}
-			if keep, ok := e.evaluateExpressionWithContext(ctx, whereClause, nodes, rels).(bool); ok && keep {
+			if predicateValueIsTrue(ctx, e.evaluateExpressionWithContext(ctx, whereClause, nodes, rels)) {
 				filtered = append(filtered, row)
 			}
 		}

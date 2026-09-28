@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sort"
@@ -39,6 +40,15 @@ func predicateTruthFromValue(value interface{}) (cypherTruth, error) {
 			fmt.Sprintf("Type mismatch: expected Boolean but was %s", cypherTypeName(value)),
 		)
 	}
+}
+
+func predicateValueIsTrue(ctx context.Context, value interface{}) bool {
+	truth, err := predicateTruthFromValue(value)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
+	return truth == truthTrue
 }
 
 // neo4jValueRepr renders a value the way Neo4j's runtime errors show it:

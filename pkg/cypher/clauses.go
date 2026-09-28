@@ -4146,8 +4146,7 @@ func (e *StorageExecutor) optionalRelatedMatchesWhere(ctx context.Context, sourc
 		relCtx[pattern.relVar] = related.edge
 	}
 	result := e.evaluateExpressionWithContext(ctx, whereClause, nodeCtx, relCtx)
-	passes, ok := result.(bool)
-	return ok && passes
+	return predicateValueIsTrue(ctx, result)
 }
 
 // processWithAggregation handles WITH clauses with aggregation functions

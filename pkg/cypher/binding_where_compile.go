@@ -945,12 +945,7 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context,
 func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
 	resolved := e.substituteParams(expr, params)
 	result := e.evaluateExpressionWithContext(ctx, resolved, b, nil)
-	truth, err := predicateTruthFromValue(result)
-	if err != nil {
-		recordExpressionFailure(ctx, err)
-		return false
-	}
-	return truth == truthTrue
+	return predicateValueIsTrue(ctx, result)
 }
 
 func (e *StorageExecutor) compareNodeIDs(leftID, rightID string, op string) bool {

@@ -3,6 +3,7 @@ package cypher
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -777,6 +778,12 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 					return nil, localizedError(localization.CypherSubqueriesCorrelatedUnionBranchFailed(i+1, seedID, err), err)
 				}
 				writeStats = mergeQueryStats(writeStats, branchResult.Stats)
+				if branch.isWrite && queryStatsMayContainNodeMutation(branchResult.Stats) {
+					seedNode, err = subqueryExecutor.refreshCallSeedNodeAfterWrite(ctx, seedNode, branchResult.Stats)
+					if err != nil {
+						return nil, err
+					}
+				}
 				e.normalizeUnionBranchColumns(branch.innerBody, branchResult)
 
 				if perSeed == nil {
@@ -853,6 +860,12 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 					continue
 				}
 				writeStats = mergeQueryStats(writeStats, innerResult.Stats)
+				if queryStatsMayContainNodeMutation(innerResult.Stats) {
+					seedNode, err = subqueryExecutor.refreshCallSeedNodeAfterWrite(ctx, seedNode, innerResult.Stats)
+					if err != nil {
+						return nil, err
+					}
+				}
 				innerResult = appendCorrelatedBinding(innerResult, nodePattern.variable, seedNode)
 
 				if combinedResult == nil {
@@ -892,6 +905,12 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			continue
 		}
 		writeStats = mergeQueryStats(writeStats, innerResult.Stats)
+		if queryStatsMayContainNodeMutation(innerResult.Stats) {
+			seedNode, err = subqueryExecutor.refreshCallSeedNodeAfterWrite(ctx, seedNode, innerResult.Stats)
+			if err != nil {
+				return nil, err
+			}
+		}
 		innerResult = appendCorrelatedBinding(innerResult, nodePattern.variable, seedNode)
 
 		if combinedResult == nil {
@@ -2557,6 +2576,10 @@ func (e *StorageExecutor) executeCorrelatedCallWithSeedRows(ctx context.Context,
 		if err != nil {
 			return nil, localizedError(localization.CypherSubqueriesCallError(err), err)
 		}
+		seedRow, err = e.refreshCallSeedNodeValues(ctx, seedRow, colMap, importVars, innerRes.Stats)
+		if err != nil {
+			return nil, err
+		}
 		stats = mergeQueryStats(stats, innerRes.Stats)
 
 		if len(innerRes.Rows) == 0 {
@@ -2594,6 +2617,80 @@ func (e *StorageExecutor) executeCorrelatedCallWithSeedRows(ctx context.Context,
 	}
 
 	return &ExecuteResult{Columns: combinedCols, Rows: combinedRows, Stats: stats}, nil
+}
+
+func (e *StorageExecutor) refreshCallSeedNodeValues(ctx context.Context, seedRow []interface{}, colMap map[string]int, importVars []string, stats *QueryStats) ([]interface{}, error) {
+	if !queryStatsMayContainNodeMutation(stats) {
+		return seedRow, nil
+	}
+
+	importedNodeIDs := make(map[storage.NodeID]struct{}, len(importVars))
+	for _, variable := range importVars {
+		index, ok := colMap[variable]
+		if !ok || index < 0 || index >= len(seedRow) {
+			continue
+		}
+		if node, ok := seedRow[index].(*storage.Node); ok && node != nil {
+			importedNodeIDs[node.ID] = struct{}{}
+		}
+	}
+	if len(importedNodeIDs) == 0 {
+		return seedRow, nil
+	}
+
+	checkedIDs := make(map[storage.NodeID]struct{}, len(importedNodeIDs))
+	updatedNodes := make(map[storage.NodeID]*storage.Node, len(importedNodeIDs))
+	var refreshed []interface{}
+	for index, value := range seedRow {
+		node, ok := value.(*storage.Node)
+		if !ok || node == nil {
+			continue
+		}
+		if _, imported := importedNodeIDs[node.ID]; !imported {
+			continue
+		}
+		if _, checked := checkedIDs[node.ID]; !checked {
+			checkedIDs[node.ID] = struct{}{}
+			current, err := e.refreshCallSeedNodeAfterWrite(ctx, node, stats)
+			if err != nil {
+				return nil, err
+			}
+			if current != nil {
+				updatedNodes[node.ID] = current
+			}
+		}
+		if current := updatedNodes[node.ID]; current != nil {
+			if refreshed == nil {
+				refreshed = append([]interface{}(nil), seedRow...)
+			}
+			refreshed[index] = current
+		}
+	}
+	if refreshed == nil {
+		return seedRow, nil
+	}
+	return refreshed, nil
+}
+
+func (e *StorageExecutor) refreshCallSeedNodeAfterWrite(ctx context.Context, node *storage.Node, stats *QueryStats) (*storage.Node, error) {
+	if node == nil || !queryStatsMayContainNodeMutation(stats) {
+		return node, nil
+	}
+	current, err := e.getStorage(ctx).GetNode(node.ID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return node, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return node, nil
+	}
+	return current, nil
+}
+
+func queryStatsMayContainNodeMutation(stats *QueryStats) bool {
+	return stats != nil && (stats.PropertiesSet > 0 || stats.LabelsAdded > 0 || stats.LabelsRemoved > 0)
 }
 
 func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
@@ -3324,7 +3421,14 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 	for i, col := range innerResult.Columns {
 		colMap[col] = i
 	}
-	if len(parts) > 0 {
+	hasWildcard := false
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "*" {
+			hasWildcard = true
+			break
+		}
+	}
+	if hasWildcard {
 		expanded := make([]string, 0, len(parts)+len(innerResult.Columns))
 		for _, part := range parts {
 			if strings.TrimSpace(part) == "*" {
