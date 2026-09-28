@@ -337,7 +337,7 @@ type StorageExecutor struct {
 	// transaction owners run on their own per-session executors, which are
 	// never marked shared.
 	sharedExecutor bool
-	cache     *SmartQueryCache    // Query result cache with label-aware invalidation
+	cache          *SmartQueryCache // Query result cache with label-aware invalidation
 	// Query cache policy is immutable and scoped to this executor's database.
 	queryCacheMaxEntries         int
 	queryCacheTTL                time.Duration
@@ -1391,6 +1391,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if cypher == "" {
 		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
+	}
+	// A statement whose last clause is UNWIND has nothing after it — Neo4j
+	// rejects it. This is a whole-statement rule, not part of
+	// validateSyntaxNornic: fabric fragments legitimately end in UNWIND when
+	// the surrounding statement continues in another fragment.
+	if lastTopLevelClauseWord(cypher) == "UNWIND" {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			"Invalid input: UNWIND must be followed by a clause")
 	}
 
 	// Typed Go maps and slices become Cypher maps and lists here, once, for

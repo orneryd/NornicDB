@@ -45,7 +45,7 @@ func TestCypherWhereIN_LiteralListMembership(t *testing.T) {
 
 	t.Run("NOT IN excludes matches", func(t *testing.T) {
 		result, err := e.Execute(context.Background(),
-			"MATCH (u:User) WHERE u.name NOT IN ['alice', 'bob'] RETURN u.name AS name", nil)
+			"MATCH (u:User) WHERE NOT u.name IN ['alice', 'bob'] RETURN u.name AS name", nil)
 		require.NoError(t, err)
 		gotNames := []string{}
 		for _, row := range result.Rows {
