@@ -49,5 +49,6 @@ files, per instruction. PR per branch with fix description + benchmark evidence.
 - [x] Shared-executor transaction follow-up (lane-3 finding 1) — PR #755 (`fix/shared-executor-transaction-control`).
 - [x] Cluster A (property-map expression values, #514 core + #656) — PR #757 (`fix/cypher-property-expression-values`).
 - [x] Cluster C (statement framing, #743 FINISH + #744 CYPHER preamble / EXPLAIN PROFILE) — PR #758 (`fix/cypher-statement-framing`).
-- [x] Cluster B (validator leniency, #514 family: `NOT IN`, list trailing/leading comma, doubled-quote string adjacency, dangling `UNWIND`) — `fix/cypher-validator-strictness`. PR pending.
-- [ ] Cluster E (#744 §2 plan delivery to clients) and clusters D, F–L pending.
+- [x] Cluster B (validator leniency, #514 family: `NOT IN`, list trailing/leading comma, doubled-quote string adjacency, dangling `UNWIND`) — PR #759 (`fix/cypher-validator-strictness`).
+- [x] Cluster D (non-boolean WHERE, #514/#728 remaining) — `fix/cypher-non-boolean-where`: the row-predicate and binding-WHERE terminals raise `Type mismatch: expected Boolean but was <type>` instead of truthiness; null stays falsy. PR pending.
+- [ ] Cluster E (#744 §2 plan delivery to clients) and clusters F–L pending.

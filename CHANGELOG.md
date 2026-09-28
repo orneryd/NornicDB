@@ -53,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Decode a quoted property value only when it is exactly one quoted literal:
   `{s: 'a' + 'b'}` previously decoded to `"a' + 'b"` instead of evaluating
   the concatenation.
+- Enforce the boolean rule in WHERE predicates: a predicate that evaluates
+  to a non-boolean, non-null value (`WHERE 42`, `WHERE n`, `WHERE 'x'`,
+  `WHERE [1]`) now fails with `Neo.ClientError.Statement.TypeError`
+  (`Type mismatch: expected Boolean but was Integer/Node/…`) instead of
+  silently keeping rows. Null stays falsy.
 - Truncate logged query shapes at a rune boundary so redaction/log seams can
   never emit invalid UTF-8.
 - Unify scheduled and explicit MVCC pruning on per-key transactions, preserving

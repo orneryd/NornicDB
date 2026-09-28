@@ -1830,7 +1830,10 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		return resolved && known && matched
 	}
 	value, ok := e.rowPredicateOperand(ctx, expression, values)
-	return ok && isTruthy(value)
+	if !ok {
+		return false
+	}
+	return requireBooleanPredicate(ctx, value)
 }
 
 // rowPredicateOperand evaluates an operand of a row predicate. An error is

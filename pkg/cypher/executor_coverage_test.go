@@ -355,10 +355,11 @@ func TestEvaluateWhereNoValidOperator(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	// WHERE clause without a recognized operator - should include all
-	result, err := exec.Execute(ctx, "MATCH (n:NoOp) WHERE n.val RETURN n", nil)
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 1)
+	// A WHERE clause whose operand is a non-boolean value is Neo4j's
+	// Type mismatch (#514, #728) — it never silently keeps rows.
+	_, err = exec.Execute(ctx, "MATCH (n:NoOp) WHERE n.val RETURN n", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Type mismatch: expected Boolean but was Float")
 }
 
 func TestEvaluateWhereNonPropertyComparison(t *testing.T) {

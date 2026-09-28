@@ -644,6 +644,26 @@ func isTruthy(val interface{}) bool {
 	return true
 }
 
+// requireBooleanPredicate is the strict boolean rule for WHERE predicates
+// (#514, #728): a predicate that evaluates to a non-boolean, non-null value
+// is Neo4j's Type mismatch (TypeError), not truthiness. The error is
+// recorded on ctx so the pipeline surfaces it and the statement fails; null
+// stays falsy.
+func requireBooleanPredicate(ctx context.Context, value interface{}) bool {
+	if value == nil {
+		return false
+	}
+	if b, ok := value.(bool); ok {
+		return b
+	}
+	recordExpressionFailure(ctx, newSemanticError(
+		"Neo.ClientError.Statement.TypeError",
+		"TypeMismatch",
+		fmt.Sprintf("Type mismatch: expected Boolean but was %s", cypherTypeName(value)),
+	))
+	return false
+}
+
 // indexCaseInsensitive finds the index of a keyword in a case-insensitive manner.
 func indexCaseInsensitive(s, keyword string) int {
 	if len(keyword) == 0 || len(s) < len(keyword) {

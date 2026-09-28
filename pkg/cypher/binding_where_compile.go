@@ -857,7 +857,7 @@ func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context
 	if boolResult, ok := result.(bool); ok {
 		return boolResult
 	}
-	return false
+	return requireBooleanPredicate(ctx, result)
 }
 
 func (e *StorageExecutor) compareNodeIDs(leftID, rightID string, op string) bool {
