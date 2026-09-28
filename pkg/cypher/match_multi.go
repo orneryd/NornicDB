@@ -1520,7 +1520,7 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 	// This avoids catastrophic row explosion for shapes like:
 	// MATCH (o),(t) WHERE o.k IN [...] AND t.k = o.k
 	if whereClause != "" && len(patternMatches) > 1 {
-		patternMatches = e.applyCartesianWherePushdown(patternMatches, whereClause)
+		patternMatches = e.applyCartesianWherePushdown(ctx, patternMatches, whereClause)
 	}
 
 	// Use an equality join when WHERE provides a supported key; otherwise keep
@@ -1646,6 +1646,7 @@ type cartesianEqConstraint struct {
 }
 
 func (e *StorageExecutor) applyCartesianWherePushdown(
+	ctx context.Context,
 	patternMatches []struct {
 		variable string
 		nodes    []*storage.Node
@@ -1707,6 +1708,23 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 				rightProp: rp,
 			})
 			continue
+		}
+		if variable, ok := parseCartesianSingleNodeComparisonTerm(term); ok {
+			idx, exists := varIndex[variable]
+			if !exists {
+				continue
+			}
+			predicate, supported := e.getCompiledSimpleWhere(ctx, variable, term)
+			if !supported {
+				continue
+			}
+			filtered := make([]*storage.Node, 0, len(patternMatches[idx].nodes))
+			for _, node := range patternMatches[idx].nodes {
+				if node != nil && predicate(node) {
+					filtered = append(filtered, node)
+				}
+			}
+			patternMatches[idx].nodes = filtered
 		}
 	}
 
@@ -1810,6 +1828,29 @@ func parseCartesianVarProp(expr string) (string, string, bool) {
 		return "", "", false
 	}
 	return v, property, true
+}
+
+func parseCartesianSingleNodeComparisonTerm(term string) (string, bool) {
+	clause := strings.TrimSpace(term)
+	scan, comparison := scanComparisonChain(clause)
+	if !comparison || scan.count != 1 {
+		return "", false
+	}
+	span := scan.operator(0)
+	operator := clause[span.offset : span.offset+span.length]
+	switch operator {
+	case "=", "<>", "!=", ">", ">=", "<", "<=", "=~":
+	default:
+		return "", false
+	}
+	variable, _, ok := parseCartesianVarProp(clause[:span.offset])
+	if !ok {
+		return "", false
+	}
+	if _, ok := parseLiteralValue(clause[span.offset+span.length:]); !ok {
+		return "", false
+	}
+	return variable, true
 }
 
 func parseCartesianInListTerm(term string) (string, string, []interface{}, bool) {

@@ -147,13 +147,13 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 			},
 		}
 
-		out := exec.applyCartesianWherePushdown(patternMatches, "a.id IN ['x'] AND a.v IS NOT NULL AND a.id = b.id")
+		out := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "a.id IN ['x'] AND a.v IS NOT NULL AND a.id = b.id")
 		require.Len(t, out[0].nodes, 1)
 		require.Equal(t, storage.NodeID("a1"), out[0].nodes[0].ID)
 		require.Len(t, out[1].nodes, 1)
 		require.Equal(t, storage.NodeID("b1"), out[1].nodes[0].ID)
 
-		conflicted := exec.applyCartesianWherePushdown(patternMatches, "a.v IS NULL AND a.v IS NOT NULL")
+		conflicted := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "a.v IS NULL AND a.v IS NOT NULL")
 		require.Empty(t, conflicted[0].nodes)
 	})
 }

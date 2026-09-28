@@ -1613,7 +1613,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			// Push down selective multi-variable WHERE predicates before
 			// cartesian expansion to avoid combinatorial blow-ups on join-shapes.
 			if postFilterWhere != "" && len(patternMatches) > 1 {
-				patternMatches = e.applyCartesianWherePushdown(patternMatches, postFilterWhere)
+				patternMatches = e.applyCartesianWherePushdown(ctx, patternMatches, postFilterWhere)
 				if joined, ok := e.buildCombinationsUsingWhereJoin(patternMatches, postFilterWhere); ok {
 					allCombinations = joined
 				}

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -56,4 +57,36 @@ func TestIsNumericLiteral_Branches(t *testing.T) {
 	require.True(t, isNumericLiteral("12"))
 	require.True(t, isNumericLiteral("-3.14"))
 	require.False(t, isNumericLiteral("12a"))
+}
+
+func BenchmarkExecuteMultiMatchCompiledWhere(b *testing.B) {
+	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "multi_match_where_bench")
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	for i := 0; i < 64; i++ {
+		_, err := store.CreateNode(&storage.Node{
+			ID:         storage.NodeID("where-" + strconv.Itoa(i)),
+			Labels:     []string{"MultiWhereBench"},
+			Properties: map[string]interface{}{"age": int64(i)},
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	ctx := context.Background()
+	query := "MATCH (a:MultiWhereBench), (b:MultiWhereBench) WHERE a.age >= 32 AND b.age >= 32 RETURN count(*) AS c"
+	result, err := exec.Execute(ctx, query, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if len(result.Rows) != 1 || result.Rows[0][0] != int64(1024) {
+		b.Fatalf("got result %v, want count 1024", result.Rows)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := exec.Execute(ctx, query, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

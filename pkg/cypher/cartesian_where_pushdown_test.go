@@ -119,7 +119,7 @@ func TestCartesianWherePushdown_NullConstraint(t *testing.T) {
 		}},
 	}
 
-	filtered := exec.applyCartesianWherePushdown(patternMatches, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	filtered := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
 	require.Len(t, filtered, 2)
 	require.Len(t, filtered[0].nodes, 1)
 	require.Equal(t, "o-1", string(filtered[0].nodes[0].ID))
@@ -147,10 +147,40 @@ func TestCartesianWherePushdown_ContradictoryNullConstraint(t *testing.T) {
 		}},
 	}
 
-	filtered := exec.applyCartesianWherePushdown(patternMatches, "o.joinKey IS NULL AND o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	filtered := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "o.joinKey IS NULL AND o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
 	require.Len(t, filtered, 2)
 	require.Len(t, filtered[0].nodes, 0)
 	require.Len(t, filtered[1].nodes, 1)
+}
+
+func TestCartesianWherePushdown_SingleNodeComparisons(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	patternMatches := []struct {
+		variable string
+		nodes    []*storage.Node
+	}{
+		{variable: "a", nodes: []*storage.Node{
+			{ID: "a-1", Properties: map[string]interface{}{"age": int64(20)}},
+			{ID: "a-2", Properties: map[string]interface{}{"age": int64(40)}},
+		}},
+		{variable: "b", nodes: []*storage.Node{
+			{ID: "b-1", Properties: map[string]interface{}{"age": int64(20)}},
+			{ID: "b-2", Properties: map[string]interface{}{"age": int64(40)}},
+		}},
+	}
+
+	filtered := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "a.age >= 32 AND b.age < 30")
+	require.Len(t, filtered[0].nodes, 1)
+	require.Equal(t, storage.NodeID("a-2"), filtered[0].nodes[0].ID)
+	require.Len(t, filtered[1].nodes, 1)
+	require.Equal(t, storage.NodeID("b-1"), filtered[1].nodes[0].ID)
+	require.Len(t, exec.buildCartesianProduct(filtered), 1)
+
+	for _, clause := range []string{"a.age >= b.age", "size(a.age) > 1", "a.age >= $minimum"} {
+		if _, ok := parseCartesianSingleNodeComparisonTerm(clause); ok {
+			t.Fatalf("unexpected pushdown eligibility for %q", clause)
+		}
+	}
 }
 
 func TestMatchCreate_BatchJoinWithDualInFilters(t *testing.T) {
