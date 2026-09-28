@@ -222,6 +222,10 @@ func (s *Server) getExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	if err != nil {
 		return nil, err
 	}
+	// The cached executor is shared by every auto-commit request of this
+	// database: a statement must never leave it inside a transaction.
+	// Explicit transactions run on their own per-session executors.
+	executor.SetSharedExecutor(true)
 
 	// Cache the executor (write lock for cache update)
 	s.executorsMu.Lock()

@@ -329,6 +329,14 @@ type StorageExecutor struct {
 	parser    *Parser
 	storage   storage.Engine
 	txContext *TransactionContext // Active transaction context
+	// sharedExecutor marks a cached per-database executor that every
+	// auto-commit client of the database runs on (server cached executors,
+	// the embedded DB's base executor). A statement must never leave such an
+	// executor inside a transaction: bare transaction commands are rejected
+	// there, and one-statement scripts run on a private clone. Protocol
+	// transaction owners run on their own per-session executors, which are
+	// never marked shared.
+	sharedExecutor bool
 	cache     *SmartQueryCache    // Query result cache with label-aware invalidation
 	// Query cache policy is immutable and scoped to this executor's database.
 	queryCacheMaxEntries         int
@@ -531,6 +539,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		parser:                         e.parser,
 		storage:                        override,
 		txContext:                      e.txContext,
+		sharedExecutor:                 e.sharedExecutor,
 		cache:                          e.cache,
 		queryCacheMaxEntries:           e.queryCacheMaxEntries,
 		queryCacheTTL:                  e.queryCacheTTL,
@@ -867,6 +876,16 @@ func (e *StorageExecutor) SetLogger(logger *slog.Logger) {
 // from cfg.Logging.SlowQueryThreshold at the bootstrap site.
 func (e *StorageExecutor) SetSlowQueryThreshold(d time.Duration) {
 	e.slowQueryThreshold = d
+}
+
+// SetSharedExecutor marks an executor as the cached, per-database executor
+// that every auto-commit client of its database runs on. A shared executor
+// rejects bare BEGIN/COMMIT/ROLLBACK statements: a statement must never
+// leave the cached executor inside a transaction. Protocol transaction
+// owners (Bolt/HTTP sessions) use their own per-session executors and are
+// never marked shared. See the sharedExecutor field.
+func (e *StorageExecutor) SetSharedExecutor(shared bool) {
+	e.sharedExecutor = shared
 }
 
 // Logger returns the bound *slog.Logger. Exposed so transient executors
@@ -1391,6 +1410,19 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if err := clientTransactionCommand(ctx, cypher); err != nil {
 		return nil, err
+	}
+	// A cached per-database executor is shared by every auto-commit client of
+	// its database. A bare transaction command must not open a transaction on
+	// it: any later statement (or one-statement script) would then run inside
+	// another caller's transaction, and COMMIT/ROLLBACK would end writes the
+	// caller never issued. Neo4j clients cannot send Cypher transaction
+	// statements either; embedded callers that want explicit transactions
+	// create their own session executor.
+	if e.sharedExecutor && (e.txContext == nil || !e.txContext.active) {
+		if word := bareTransactionCommand(cypher); word != "" {
+			message := localization.CypherTransactionsCommandNotStatement(word)
+			return nil, localizedError(message, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message.Fallback))
+		}
 	}
 	// A query after :USE <db> runs on that database, like one after a USE
 	// clause (#738).

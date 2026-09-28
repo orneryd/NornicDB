@@ -2275,6 +2275,12 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 		return nil, err
 	}
 
+	// The cached executor is shared by every auto-commit RUN of this
+	// database: a statement must never leave it inside a transaction.
+	// Explicit transactions use getTransactionalExecutorForDatabase, which
+	// builds a fresh per-connection executor.
+	executor.SetSharedExecutor(true)
+
 	dbExecutor := &boltQueryExecutorAdapter{executor: executor}
 	if useAuthScopedResolver {
 		return dbExecutor, nil

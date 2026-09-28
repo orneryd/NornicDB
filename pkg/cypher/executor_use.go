@@ -77,6 +77,7 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 	cloned := NewStorageExecutor(store)
 	cloned.deferFlush = e.deferFlush
 	cloned.embedder = e.embedder
+	cloned.sharedExecutor = e.sharedExecutor
 	// Do not propagate the parent's search service to composite engines —
 	// composite search must come from constituent-scoped executors, not
 	// from a parent-namespace-scoped service.
