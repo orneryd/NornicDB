@@ -16,6 +16,12 @@ func TestCallSubqueryImportsAnyOuterVariable(t *testing.T) {
 		query string
 		want  [][]interface{}
 	}{
+		{"CALL { RETURN 1 AS x } RETURN *", [][]interface{}{{int64(1)}}},
+		{"CALL { RETURN 1 AS x } WITH x AS y RETURN y", [][]interface{}{{int64(1)}}},
+		{"CALL { RETURN 1 AS x } WITH x AS y WHERE y = 1 RETURN y", [][]interface{}{{int64(1)}}},
+		{"CALL { RETURN 1 AS x } UNWIND [x, x + 1] AS y RETURN x, y ORDER BY y", [][]interface{}{{int64(1), int64(1)}, {int64(1), int64(2)}}},
+		{"CALL { RETURN 1 AS x } MATCH (n:C648) RETURN x, n.id AS id ORDER BY id", [][]interface{}{{int64(1), "a"}, {int64(1), "b"}, {int64(1), "c"}}},
+		{"CALL { CREATE (n:C648 {id:'write'}) RETURN n } RETURN n.id AS id", [][]interface{}{{"write"}}},
 		{"MATCH (o:C648 {id:'b'}) CALL (o) { RETURN o.id AS z } RETURN z ORDER BY z", [][]interface{}{{"b"}}},
 		{"MATCH (i:C648 {id:'a'})-->(o) CALL (o) { RETURN o.id AS z } RETURN z ORDER BY z", [][]interface{}{{"b"}, {"c"}}},
 		{"MATCH (i:C648 {id:'a'})-->(o) CALL (o) { WITH o RETURN o.id AS z } RETURN z ORDER BY z", [][]interface{}{{"b"}, {"c"}}},
@@ -41,5 +47,24 @@ func TestCallSubqueryImportsAnyOuterVariable(t *testing.T) {
 		result, err := exec.Execute(ctx, tc.query, nil)
 		require.NoError(t, err, tc.query)
 		require.Equal(t, tc.want, result.Rows, tc.query)
+		if tc.query == "CALL { RETURN 1 AS x } RETURN *" {
+			require.Equal(t, []string{"x"}, result.Columns)
+		}
 	}
+}
+
+func TestCallSubqueryTailPreservesEmptyWildcardSchemaAndWriteStats(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call648_tail"))
+	ctx := context.Background()
+
+	result, err := exec.Execute(ctx, "CALL { MATCH (n:C648 {id:'missing'}) RETURN n AS x } RETURN *", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"x"}, result.Columns)
+	require.Empty(t, result.Rows)
+
+	result, err = exec.Execute(ctx, "CALL { CREATE (n:C648 {id:'write'}) RETURN n } WITH n AS created RETURN created.id AS id", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"id"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"write"}}, result.Rows)
+	require.EqualValues(t, 1, result.Stats.NodesCreated)
 }

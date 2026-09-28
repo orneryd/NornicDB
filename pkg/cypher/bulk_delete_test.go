@@ -53,6 +53,9 @@ func TestLargeDetachDeleteInOneStatementAndInTransactions(t *testing.T) {
 		require.NoError(t, err)
 		_, err = exec.Execute(ctx, "MATCH (a:BD), (b:BD) WHERE b.i = a.i + 1 CREATE (a)-[:NEXT]->(b)", nil)
 		require.NoError(t, err)
+		relationships, err := exec.Execute(ctx, "MATCH ()-[r:NEXT]->() RETURN count(r) AS c", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(499)}}, relationships.Rows)
 		_, err = exec.Execute(ctx, "CREATE (:Keep)", nil)
 		require.NoError(t, err)
 

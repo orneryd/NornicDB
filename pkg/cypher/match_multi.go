@@ -1523,8 +1523,17 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 		patternMatches = e.applyCartesianWherePushdown(patternMatches, whereClause)
 	}
 
-	// Build cartesian product
-	allMatches := e.buildCartesianProduct(patternMatches)
+	// Use an equality join when WHERE provides a supported key; otherwise keep
+	// the general cartesian expansion for predicates the join planner cannot
+	// safely reduce.
+	var allMatches []map[string]*storage.Node
+	joinedByWhere := false
+	if whereClause != "" && len(patternMatches) > 1 {
+		allMatches, joinedByWhere = e.buildCombinationsUsingWhereJoin(patternMatches, whereClause)
+	}
+	if !joinedByWhere {
+		allMatches = e.buildCartesianProduct(patternMatches)
+	}
 
 	// Apply WHERE clause to filter combinations
 	if whereClause != "" {
@@ -1796,10 +1805,11 @@ func parseCartesianVarProp(expr string) (string, string, bool) {
 	}
 	v := strings.TrimSpace(expr[:dot])
 	p := strings.TrimSpace(expr[dot+1:])
-	if !isSimpleIdentifierCartesian(v) || p == "" {
+	property, validProperty := isOneSymbolicName(p)
+	if !isSimpleIdentifierCartesian(v) || !validProperty {
 		return "", "", false
 	}
-	return v, normalizePropertyKey(p), true
+	return v, property, true
 }
 
 func parseCartesianInListTerm(term string) (string, string, []interface{}, bool) {
@@ -2032,10 +2042,12 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 
 	// Fallback: parse/evaluate as expression with full node context.
 	result := e.evaluateExpressionWithContext(ctx, clause, nodes, nil)
-	if b, ok := result.(bool); ok {
-		return b
+	truth, err := predicateTruthFromValue(result)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
 	}
-	return false
+	return truth == truthTrue
 }
 
 // evaluateBoundRelationshipPattern evaluates a WHERE pattern against the

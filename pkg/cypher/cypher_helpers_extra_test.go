@@ -2802,11 +2802,11 @@ func TestCypherHelpers_EvaluateWhereAsBooleanBranches(t *testing.T) {
 	ctx := context.Background()
 	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "n.age >= 21", "n", node))
 	assert.False(t, exec.evaluateWhereAsBoolean(ctx, "n.missing", "n", node))
-	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "1", "n", node))
-	assert.False(t, exec.evaluateWhereAsBoolean(ctx, "0", "n", node))
-	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "1.5", "n", node))
-	assert.False(t, exec.evaluateWhereAsBoolean(ctx, "0.0", "n", node))
-	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "'x'", "n", node))
+	for _, expression := range []string{"1", "0", "1.5", "0.0", "'x'"} {
+		predicateCtx := withExpressionFailureSlot(ctx)
+		assert.False(t, exec.evaluateWhereAsBoolean(predicateCtx, expression, "n", node))
+		assert.ErrorContains(t, getExpressionFailure(predicateCtx), "Type mismatch: expected Boolean")
+	}
 }
 
 func TestCypherHelpers_ComparisonHelpers_Branches(t *testing.T) {

@@ -2063,6 +2063,36 @@ func (e *StorageExecutor) processAfterCallSubquery(ctx context.Context, innerRes
 		// Check for LIMIT/SKIP after ORDER BY
 		return e.applyResultModifiers(ctx, result, afterCall)
 	}
+	if clauses, ok := canExecuteAsPipeline(afterCall); ok {
+		rows := make([]pipelineRow, 0, len(innerResult.Rows))
+		scope := make(map[string]struct{}, len(innerResult.Columns))
+		for _, column := range innerResult.Columns {
+			scope[column] = struct{}{}
+		}
+		params := getParamsFromContext(ctx)
+		for _, seed := range innerResult.Rows {
+			row := make(pipelineRow, len(innerResult.Columns)+len(params))
+			for index, column := range innerResult.Columns {
+				if index < len(seed) {
+					row[column] = seed[index]
+				} else {
+					row[column] = nil
+				}
+			}
+			for name, value := range params {
+				row["$"+name] = parameterRowValue(value)
+			}
+			rows = append(rows, row)
+		}
+		result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			result.Stats = mergeQueryStats(result.Stats, innerResult.Stats)
+			return result, nil
+		}
+	}
 
 	// Unsupported clause after CALL {}
 	firstWord := strings.Split(upperAfter, " ")[0]
@@ -2117,6 +2147,11 @@ func (e *StorageExecutor) executeChainedCallSubquery(ctx context.Context, seedRe
 	withVars, innerBody, hasWith, err := parseLeadingWithImports(subqueryBody)
 	if err != nil {
 		return nil, err
+	}
+	if scopedVars := parseCallSubqueryImportVariables(callClause); len(scopedVars) > 0 {
+		withVars = scopedVars
+		innerBody = subqueryBody
+		hasWith = true
 	}
 	implicitImportVars := detectReferencedCallSubquerySeedColumns(seedResult, subqueryBody)
 
@@ -3288,6 +3323,17 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 	colMap := make(map[string]int)
 	for i, col := range innerResult.Columns {
 		colMap[col] = i
+	}
+	if len(parts) > 0 {
+		expanded := make([]string, 0, len(parts)+len(innerResult.Columns))
+		for _, part := range parts {
+			if strings.TrimSpace(part) == "*" {
+				expanded = append(expanded, innerResult.Columns...)
+				continue
+			}
+			expanded = append(expanded, part)
+		}
+		parts = expanded
 	}
 
 	// Check if RETURN clause has aggregation functions

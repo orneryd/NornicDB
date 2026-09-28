@@ -53,6 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Decode a quoted property value only when it is exactly one quoted literal:
   `{s: 'a' + 'b'}` previously decoded to `"a' + 'b"` instead of evaluating
   the concatenation.
+- Reject non-boolean, non-null WHERE results with Neo4j's `TypeError` across
+  row, binding, path, multi-node, and WITH predicate routes; null remains
+  unknown and does not retain a row.
+- Preserve CALL-subquery result columns through `RETURN *` and supported
+  trailing `WITH`, `UNWIND`, and `MATCH` clauses, including empty results and
+  write counters.
+- Accept `SHOW ... YIELD ... WHERE ... RETURN ...` in ANTLR parser mode.
+- Avoid Cartesian expansion for supported comma-MATCH property equality
+  joins, while leaving computed predicates on the general evaluation path.
 - Reject forms Neo4j rejects that the validator previously accepted: the
   `NOT IN` operator (write `NOT x IN [list]`), trailing or leading commas in
   list literals (`[1, 2,]`, `[, 1]`), adjacent string literals (`'a''b'` —

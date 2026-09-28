@@ -393,14 +393,11 @@ func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr strin
 	}
 
 	result := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-	switch v := result.(type) {
-	case bool:
-		return v, nil
-	case nil:
-		return false, nil
-	default:
-		return false, nil
+	truth, err := predicateTruthFromValue(result)
+	if err != nil {
+		return false, err
 	}
+	return truth == truthTrue, nil
 }
 
 // aggregateFnNames lists the aggregating function names recognized

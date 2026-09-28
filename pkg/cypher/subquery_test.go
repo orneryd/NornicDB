@@ -2437,8 +2437,18 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 	require.Len(t, ordered.Rows, 1)
 	assert.Equal(t, "alice", ordered.Rows[0][0])
 
-	// unsupported clause branch
-	_, err = exec.processAfterCallSubquery(ctx, inner, "WITH name RETURN name")
+	// A WITH projection after CALL keeps the yielded row in scope.
+	innerForWith := &ExecuteResult{
+		Columns: []string{"name", "score"},
+		Rows:    [][]interface{}{{"alice", float64(0.9)}, {"bob", float64(0.8)}},
+	}
+	projected, err := exec.processAfterCallSubquery(ctx, innerForWith, "WITH name RETURN name")
+	require.NoError(t, err)
+	require.Equal(t, []string{"name"}, projected.Columns)
+	require.Equal(t, [][]interface{}{{"alice"}, {"bob"}}, projected.Rows)
+
+	// Unsupported clauses still take the syntax-error branch.
+	_, err = exec.processAfterCallSubquery(ctx, inner, "WITH name")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported clause after CALL {}")
 

@@ -43,3 +43,38 @@ RETURN node.id AS id, score
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "doc-1", res.Rows[0][0])
 }
+
+func TestCallYieldWhereRejectsNonBooleanValue(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:CallYieldWhereLabel)", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label RETURN label", nil)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
+}
+
+func TestCallYieldWhereCanReferenceYieldAlias(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:YieldWhereAlias)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, `CALL db.labels() YIELD label AS alias WHERE alias = 'YieldWhereAlias' RETURN alias`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"alias"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"YieldWhereAlias"}}, result.Rows)
+}
+
+func TestStandaloneCallYieldWhereOrderAndPage(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:YieldTailAlpha), (:YieldTailBeta)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, `CALL db.labels() YIELD label AS name
+WHERE name STARTS WITH 'YieldTail'
+ORDER BY name DESC SKIP 1 LIMIT 1
+RETURN name`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"name"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"YieldTailAlpha"}}, result.Rows)
+}

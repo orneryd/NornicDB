@@ -101,6 +101,83 @@ func TestRowPredicateCombinesNumericBounds(t *testing.T) {
 		"other.age > 24 AND other.age < 26", row))
 }
 
+func TestNonBooleanWhereExpressionsReturnTypeError(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:NonBooleanWhere {id: 'string'})-[:TO]->(:NonBooleanTarget)", nil)
+	require.NoError(t, err)
+
+	queries := []struct {
+		query    string
+		wantType string
+	}{
+		{"MATCH (n:NonBooleanWhere) WHERE 1 RETURN n", "Integer"},
+		{"MATCH (n:NonBooleanWhere) WHERE [1] RETURN n", "List"},
+		{"MATCH (n:NonBooleanWhere) WITH 1 AS x WHERE x RETURN x", "Integer"},
+		{"MATCH (n:NonBooleanWhere) WHERE n.id RETURN n", "String"},
+		{"MATCH (n:NonBooleanWhere) WHERE n RETURN n", "Node"},
+		{"MATCH (n:NonBooleanWhere) WHERE {a: 1} RETURN n", "Map"},
+		{"MATCH (n:NonBooleanWhere) WHERE 'x' RETURN n", "String"},
+		{"MATCH (n:NonBooleanWhere), (m:NonBooleanTarget) WHERE 1 RETURN n", "Integer"},
+		{"MATCH p=(n:NonBooleanWhere)-[:TO]->(m:NonBooleanTarget) WHERE 1 RETURN p", "Integer"},
+	}
+	for _, tc := range queries {
+		t.Run(tc.query, func(t *testing.T) {
+			_, err := exec.Execute(ctx, tc.query, nil)
+			require.Error(t, err, "WHERE must reject non-boolean values")
+			require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
+			require.ErrorContains(t, err, "Type mismatch: expected Boolean but was "+tc.wantType)
+		})
+	}
+
+	for query, want := range map[string]int64{
+		"MATCH (n:NonBooleanWhere) WHERE true RETURN count(n) AS c":  1,
+		"MATCH (n:NonBooleanWhere) WHERE false RETURN count(n) AS c": 0,
+		"MATCH (n:NonBooleanWhere) WHERE null RETURN count(n) AS c":  0,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
+}
+
+func TestNonBooleanWhereFailsExplicitTransaction(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.handleBegin()
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:NonBooleanWhere {id: 'string'})", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "MATCH (n:NonBooleanWhere) WHERE 42 RETURN count(n) AS c", nil)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Type mismatch: expected Boolean but was Integer")
+	if _, err := exec.handleCommit(); err != nil {
+		t.Logf("commit err (expected failed tx): %v", err)
+	}
+
+	result, err := exec.Execute(ctx, "MATCH (n:NonBooleanWhere) RETURN count(n) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), result.Rows[0][0], "the failed statement's writes roll back")
+}
+
+func TestPathWhereRejectsNonBooleanProperty(t *testing.T) {
+	exec := &StorageExecutor{}
+	ctx := withExpressionFailureSlot(context.Background())
+	pathContext := PathContext{nodes: map[string]*storage.Node{
+		"n": {Properties: map[string]interface{}{"id": "string"}},
+	}}
+
+	require.False(t, exec.evaluateWhereOnPath(ctx, "n.id", pathContext))
+	require.ErrorContains(t, getExpressionFailure(ctx), "Type mismatch: expected Boolean")
+}
+
+func TestBindingWhereRejectsNonBooleanResult(t *testing.T) {
+	exec := &StorageExecutor{}
+	ctx := withExpressionFailureSlot(context.Background())
+
+	require.False(t, exec.evaluateBindingWhereGeneric(ctx, binding{}, "1", nil))
+	require.ErrorContains(t, getExpressionFailure(ctx), "Type mismatch: expected Boolean")
+}
+
 func TestRowPredicateNegatesParenthesizedConjunctionWithoutWhitespace(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewMemoryEngine())
 	value, ok := rowValue(t, exec, "NOT(n.name = 'apa' AND false)", map[string]interface{}{

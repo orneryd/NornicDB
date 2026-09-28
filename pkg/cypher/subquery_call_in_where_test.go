@@ -41,6 +41,31 @@ func TestCallSubqueryBodyInWherePredicates(t *testing.T) {
 	}
 }
 
+func TestCorrelatedCallOpeningWithWhereFiltersOuterRows(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	queries := []string{
+		`UNWIND [1, 2, 3] AS i
+CALL (i) {
+  WITH i WHERE i > 1
+  RETURN i AS j
+}
+RETURN i, j ORDER BY i`,
+		`UNWIND [1, 2, 3] AS i
+CALL (i) {
+  WITH i AS j WHERE j > 1
+  RETURN j
+}
+RETURN i, j ORDER BY i`,
+	}
+	for _, query := range queries {
+		t.Run(query, func(t *testing.T) {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(2), int64(2)}, {int64(3), int64(3)}}, result.Rows)
+		})
+	}
+}
+
 // TestCountSubqueryDegreeFastPathShapes pins COUNT results for the bodies the
 // degree fast path (boundDegreeCount) takes and for the ones it must leave to
 // the traversal kernel: a labelled or filtered far end, an undirected hop,

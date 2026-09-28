@@ -772,21 +772,11 @@ func normalizeNodeIDValue(v interface{}) interface{} {
 func (e *StorageExecutor) evaluateWhereAsBoolean(ctx context.Context, whereClause, variable string, node *storage.Node) bool {
 	nodes := map[string]*storage.Node{variable: node}
 	result := e.evaluateExpressionWithContext(ctx, whereClause, nodes, nil)
-	switch v := result.(type) {
-	case bool:
-		return v
-	case nil:
-		return false
-	case int64:
-		return v != 0
-	case float64:
-		return v != 0
-	case int:
-		return v != 0
-	default:
-		// Non-empty string, etc. - treat as true
-		return result != nil
+	truth, err := predicateTruthFromValue(result)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
 	}
+	return truth == truthTrue
 }
 
 // parseValue extracts the actual value from a Cypher literal

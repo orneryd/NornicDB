@@ -2,11 +2,42 @@ package cypher
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func BenchmarkCartesianMatchEqualityJoin(b *testing.B) {
+	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-bench")
+	const nodeCount = 500
+	for i := 0; i < nodeCount; i++ {
+		key := strconv.Itoa(i)
+		for _, node := range []*storage.Node{
+			{ID: storage.NodeID("left-" + key), Labels: []string{"CartesianLeft"}, Properties: map[string]interface{}{"key": key}},
+			{ID: storage.NodeID("right-" + key), Labels: []string{"CartesianRight"}, Properties: map[string]interface{}{"key": key}},
+		} {
+			if _, err := store.CreateNode(node); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	ctx := context.Background()
+	query := "MATCH (a:CartesianLeft), (b:CartesianRight) WHERE a.key = b.key RETURN count(*) AS c"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result, err := exec.Execute(ctx, query, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(result.Rows) != 1 || result.Rows[0][0] != int64(nodeCount) {
+			b.Fatalf("got rows %v, want count %d", result.Rows, nodeCount)
+		}
+	}
+}
 
 func TestCartesianWherePushdown_InAndEqualityJoin(t *testing.T) {
 	store := storage.NewMemoryEngine()
@@ -68,6 +99,7 @@ ORDER BY k
 	}
 	require.Equal(t, int64(2), got["k1"])
 	require.Equal(t, int64(1), got["k2"])
+
 }
 
 func TestCartesianWherePushdown_NullConstraint(t *testing.T) {

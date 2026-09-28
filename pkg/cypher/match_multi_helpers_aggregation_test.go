@@ -37,6 +37,10 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 
 		_, _, ok = parseCartesianVarProp("a")
 		require.False(t, ok)
+		_, _, ok = parseCartesianVarProp("a.i + 1")
+		require.False(t, ok)
+		_, _, _, _, ok = parseCartesianVarPropEqualityTerm("b.i = a.i + 1")
+		require.False(t, ok)
 
 		varName, prop, listVals, ok := parseCartesianInListTerm("a.kind IN ['x', 2, true]")
 		require.True(t, ok)

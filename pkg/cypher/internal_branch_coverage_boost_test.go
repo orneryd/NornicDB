@@ -43,7 +43,8 @@ func TestEvaluateWithWhere_Branches(t *testing.T) {
 	require.True(t, ok)
 
 	ok, err = exec.evaluateWithWhere(ctx, "n.name", map[string]interface{}{"n": node})
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected Boolean")
 	require.False(t, ok)
 
 	ok, err = exec.evaluateWithWhere(ctx, "   ", map[string]interface{}{"n": node})

@@ -339,7 +339,7 @@ func TestEvaluateInOpNotAList(t *testing.T) {
 	assert.Contains(t, err.Error(), "Type mismatch: expected List<T> but was String")
 }
 
-func TestEvaluateWhereNoValidOperator(t *testing.T) {
+func TestEvaluateWhereNonBooleanPredicateReturnsTypeError(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 
 	store := storage.NewNamespacedEngine(baseStore, "test")
@@ -355,10 +355,9 @@ func TestEvaluateWhereNoValidOperator(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	// WHERE clause without a recognized operator - should include all
-	result, err := exec.Execute(ctx, "MATCH (n:NoOp) WHERE n.val RETURN n", nil)
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 1)
+	_, err = exec.Execute(ctx, "MATCH (n:NoOp) WHERE n.val RETURN n", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected Boolean")
 }
 
 func TestEvaluateWhereNonPropertyComparison(t *testing.T) {

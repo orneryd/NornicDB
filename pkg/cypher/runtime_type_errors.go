@@ -26,6 +26,21 @@ func runtimeTypeError(message string) error {
 	return newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", message)
 }
 
+func predicateTruthFromValue(value interface{}) (cypherTruth, error) {
+	switch boolean := value.(type) {
+	case bool:
+		return truthOf(boolean), nil
+	case nil:
+		return truthUnknown, nil
+	default:
+		return truthFalse, newSemanticError(
+			"Neo.ClientError.Statement.TypeError",
+			"TypeMismatch",
+			fmt.Sprintf("Type mismatch: expected Boolean but was %s", cypherTypeName(value)),
+		)
+	}
+}
+
 // neo4jValueRepr renders a value the way Neo4j's runtime errors show it:
 // Long(1), Double(1.500000e+00), String("x"), Boolean('true'),
 // LongArray[1, 2], List{Long(1), String("a")}.

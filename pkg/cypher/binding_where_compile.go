@@ -77,6 +77,28 @@ func truthOrLazy(left cypherTruth, right func() cypherTruth) cypherTruth {
 // others report their boolean result as known.
 type bindingWhereTruth func(binding, map[string]interface{}) cypherTruth
 
+type bindingWherePlan struct {
+	predicate bindingWherePredicate
+	truth     bindingWhereTruth
+}
+
+func (p bindingWherePlan) truthValue(b binding, params map[string]interface{}) cypherTruth {
+	if p.truth != nil {
+		return p.truth(b, params)
+	}
+	return truthOf(p.predicate(b, params))
+}
+
+func (p bindingWherePlan) asPredicate() bindingWherePredicate {
+	if p.truth == nil {
+		return p.predicate
+	}
+	truth := p.truth
+	return func(b binding, params map[string]interface{}) bool {
+		return truth(b, params) == truthTrue
+	}
+}
+
 func (t bindingWhereTruth) predicate() bindingWherePredicate {
 	return func(b binding, params map[string]interface{}) bool {
 		return t(b, params) == truthTrue
@@ -233,11 +255,99 @@ func (e *StorageExecutor) getCompiledBindingWhereTruthIfSupported(ctx context.Co
 // true only when the clause is known true (Cypher three-valued logic: null and
 // false both drop the row).
 func (e *StorageExecutor) tryCompileBindingWhere(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
-	truth, ok := e.tryCompileBindingWhereTruth(ctx, whereClause)
+	plan, ok := e.compileBindingWherePlan(ctx, whereClause)
 	if !ok {
 		return nil, false
 	}
-	return truth.predicate(), true
+	return plan.asPredicate(), true
+}
+
+func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClause string) (bindingWherePlan, bool) {
+	clause := strings.TrimSpace(whereClause)
+	if clause == "" {
+		return bindingWherePlan{predicate: func(binding, map[string]interface{}) bool { return true }}, true
+	}
+	if inner, ok := stripEnclosingExpressionParentheses(clause); ok {
+		return e.compileBindingWherePlan(ctx, inner)
+	}
+	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
+		left, leftOK := e.compileBindingWherePlan(ctx, clause[:orIdx])
+		right, rightOK := e.compileBindingWherePlan(ctx, clause[orIdx+4:])
+		if !leftOK || !rightOK {
+			return bindingWherePlan{}, false
+		}
+		if left.truth == nil && right.truth == nil {
+			leftPredicate, rightPredicate := left.predicate, right.predicate
+			return bindingWherePlan{predicate: func(b binding, params map[string]interface{}) bool {
+				return leftPredicate(b, params) || rightPredicate(b, params)
+			}}, true
+		}
+		return bindingWherePlan{truth: func(b binding, params map[string]interface{}) cypherTruth {
+			return truthOrLazy(left.truthValue(b, params), func() cypherTruth {
+				return right.truthValue(b, params)
+			})
+		}}, true
+	}
+	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
+		left, leftOK := e.compileBindingWherePlan(ctx, clause[:andIdx])
+		right, rightOK := e.compileBindingWherePlan(ctx, clause[andIdx+5:])
+		if !leftOK || !rightOK {
+			return bindingWherePlan{}, false
+		}
+		if left.truth == nil && right.truth == nil {
+			leftPredicate, rightPredicate := left.predicate, right.predicate
+			return bindingWherePlan{predicate: func(b binding, params map[string]interface{}) bool {
+				return leftPredicate(b, params) && rightPredicate(b, params)
+			}}, true
+		}
+		return bindingWherePlan{truth: func(b binding, params map[string]interface{}) cypherTruth {
+			return truthAndLazy(left.truthValue(b, params), func() cypherTruth {
+				return right.truthValue(b, params)
+			})
+		}}, true
+	}
+	if hasPrefixFold(clause, "NOT ") {
+		inner, ok := e.compileBindingWherePlan(ctx, clause[len("NOT "):])
+		if !ok {
+			return bindingWherePlan{}, false
+		}
+		if inner.truth == nil {
+			predicate := inner.predicate
+			return bindingWherePlan{predicate: func(b binding, params map[string]interface{}) bool {
+				return !predicate(b, params)
+			}}, true
+		}
+		truth := inner.truth
+		return bindingWherePlan{truth: func(b binding, params map[string]interface{}) cypherTruth {
+			return truth(b, params).not()
+		}}, true
+	}
+
+	if predicate, ok := e.compileBindingNullPredicate(clause, " IS NOT NULL", true); ok {
+		return bindingWherePlan{predicate: predicate}, true
+	}
+	if predicate, ok := e.compileBindingNullPredicate(clause, " IS NULL", false); ok {
+		return bindingWherePlan{predicate: predicate}, true
+	}
+	if predicate, ok := e.compileBindingStringPredicate(clause, " STARTS WITH "); ok {
+		return bindingWherePlan{predicate: predicate}, true
+	}
+	if predicate, ok := e.compileBindingStringPredicate(clause, " ENDS WITH "); ok {
+		return bindingWherePlan{predicate: predicate}, true
+	}
+	if predicate, ok := e.compileBindingStringPredicate(clause, " CONTAINS "); ok {
+		return bindingWherePlan{predicate: predicate}, true
+	}
+	if truth, ok := e.compileBindingInPredicate(clause, " IN ", false); ok {
+		return bindingWherePlan{truth: truth}, true
+	}
+	if truth, ok := e.compileBindingInPredicate(clause, " NOT IN ", true); ok {
+		return bindingWherePlan{truth: truth}, true
+	}
+	if predicate, ok := e.compileBindingComparisonPredicate(clause); ok {
+		return bindingWherePlan{predicate: predicate}, true
+	}
+	return bindingWherePlan{}, false
 }
 
 func (e *StorageExecutor) tryCompileBindingWhereTruth(ctx context.Context, whereClause string) (bindingWhereTruth, bool) {
@@ -742,27 +852,8 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b bin
 	}
 
 	for _, pred := range []string{" STARTS WITH ", " ENDS WITH ", " CONTAINS "} {
-		if idx := findTopLevelKeyword(clause, pred); idx > 0 {
-			left := strings.TrimSpace(clause[:idx])
-			right := strings.TrimSpace(clause[idx+len(pred):])
-			if dotIdx := strings.Index(left, "."); dotIdx > 0 {
-				varName := left[:dotIdx]
-				propName := left[dotIdx+1:]
-				if node := b[varName]; node != nil {
-					actual, _ := node.Properties[propName].(string)
-					expectedRaw := e.resolveBindingFallbackValue(ctx, right, b, params)
-					expected, _ := expectedRaw.(string)
-					switch strings.TrimSpace(upperASCII(pred)) {
-					case "STARTS WITH":
-						return strings.HasPrefix(actual, expected)
-					case "ENDS WITH":
-						return strings.HasSuffix(actual, expected)
-					case "CONTAINS":
-						return strings.Contains(actual, expected)
-					}
-				}
-			}
-			return false
+		if findTopLevelKeyword(clause, pred) > 0 {
+			return e.evaluateBindingExpressionAsBoolean(ctx, b, clause, params)
 		}
 	}
 
@@ -854,10 +945,12 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context,
 func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
 	resolved := e.substituteParams(expr, params)
 	result := e.evaluateExpressionWithContext(ctx, resolved, b, nil)
-	if boolResult, ok := result.(bool); ok {
-		return boolResult
+	truth, err := predicateTruthFromValue(result)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
 	}
-	return false
+	return truth == truthTrue
 }
 
 func (e *StorageExecutor) compareNodeIDs(leftID, rightID string, op string) bool {

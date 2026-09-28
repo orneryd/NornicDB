@@ -2750,15 +2750,13 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 		return val == nil
 	}
 
-	if isSimpleIdentifierOrProperty(whereClause) {
-		val := e.evaluateExpressionWithPathContext(ctx, whereClause, pathCtx)
-		if boolVal, ok := val.(bool); ok {
-			return boolVal
-		}
+	value := e.evaluateExpressionWithPathContext(ctx, whereClause, pathCtx)
+	truth, err := predicateTruthFromValue(value)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
 		return false
 	}
-
-	return true // Default: pass through
+	return truth == truthTrue
 }
 
 func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathContext, subquery string) bool {

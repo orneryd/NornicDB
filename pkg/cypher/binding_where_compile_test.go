@@ -62,6 +62,16 @@ func TestCompiledBindingWhere_UnsupportedFallsBackCompliantly(t *testing.T) {
 	assert.False(t, exec.evaluateBindingWhere(ctx, bindingRow, "a.name", nil))
 }
 
+func TestBindingWhereStringPredicateFallsBackForExpressionOperand(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	ctx := context.Background()
+	row := binding{
+		"n": &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "alice"}},
+	}
+
+	assert.True(t, exec.evaluateBindingWhereGeneric(ctx, row, "toUpper(n.name) STARTS WITH 'AL'", nil))
+}
+
 func TestCompiledBindingWhere_NodeOrderingUsesNumericComparisonForNumericIDs(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewMemoryEngine())
 

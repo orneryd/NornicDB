@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -35,6 +36,17 @@ func TestShowDefaultAndHomeDatabase(t *testing.T) {
 	result, err := exec.Execute(ctx, "SHOW DEFAULT DATABASE YIELD name WHERE name = 'x' RETURN count(*) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+}
+
+func TestShowFunctionsYieldWhereWithANTLRParser(t *testing.T) {
+	cleanup := config.WithANTLRParser()
+	defer cleanup()
+
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "show-antlr"))
+	result, err := exec.Execute(context.Background(), "SHOW FUNCTIONS YIELD name WHERE name IS NOT NULL RETURN count(*) AS c", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Greater(t, result.Rows[0][0].(int64), int64(0))
 }
 
 // TestShowUsersAndCurrentUser: SHOW USERS lists the user directory by name,

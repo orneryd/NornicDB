@@ -72,7 +72,8 @@ queryPrefix
 
 // SHOW commands
 showCommand
-    : SHOW (INDEXES | INDEX | CONSTRAINTS | CONSTRAINT | PROCEDURES | FUNCTIONS | DATABASE | DATABASES | ALL?)
+        : SHOW (INDEXES | INDEX | CONSTRAINTS | CONSTRAINT | PROCEDURES | FUNCTIONS | DATABASE | DATABASES | ALL?)
+            (YIELD (MULT | yieldItems) returnSt?)?
     ;
 
 // Schema commands (DROP INDEX, CREATE INDEX, etc.)

@@ -33,7 +33,7 @@ already-fixed.
 | F. MERGE whole-pattern creation | #640 | Unbound node patterns in a merged relationship pattern reuse existing nodes instead of creating the whole pattern | `merge.go` / pipeline MERGE |
 | G. Typed list properties | #643 | No Neo4j list-property type rule (homogeneous, null-free) and no int→float coercion on storage | property value conversion |
 | H. OPTIONAL MATCH shortestPath | #581 | shortestPath pattern binding not supported in OPTIONAL MATCH position | `match`/traversal planning |
-| I. CALL (n) {} row staleness | #648 (remaining) | Outer row not refreshed after a subquery writes the bound node | CALL subquery row plumbing |
+| I. CALL (n) {} row staleness | #648 (remaining) | Outer row not refreshed after a subquery writes the bound node; this PR separately fixes `RETURN *` and supported clauses after a CALL subquery | CALL subquery row plumbing |
 | J. Explicit-tx create+remove | #741 | Staged state keeps removed edges/nodes inconsistent at COMMIT; label counters one high | `pkg/storage` transaction staging |
 | K. Route parity | #657 (Bolt conn close/error code), #745 element ids across routes, #668 HTTP result entry | Protocol-layer divergences | `pkg/bolt`, `pkg/server` |
 | L. Infra | #726 race, #445 stats, #446 ANN floor, #715 tests, #591 perf, #739 antlr, #547 debt, #754 CI | Infrastructure-specific root causes | various |
@@ -50,4 +50,5 @@ files, per instruction. PR per branch with fix description + benchmark evidence.
 - [x] Cluster A (property-map expression values, #514 core + #656) — PR #757 (`fix/cypher-property-expression-values`).
 - [x] Cluster C (statement framing, #743 FINISH + #744 CYPHER preamble / EXPLAIN PROFILE) — PR #758 (`fix/cypher-statement-framing`).
 - [x] Cluster B (validator leniency, #514 family: `NOT IN`, list trailing/leading comma, doubled-quote string adjacency, dangling `UNWIND`) — `fix/cypher-validator-strictness`. PR pending.
-- [ ] Cluster E (#744 §2 plan delivery to clients) and clusters D, F–L pending.
+- [ ] Cluster E (#744 §2 plan delivery to clients) and clusters F–L pending.
+- [ ] Cluster D (#514/#728 WHERE semantics and convergence) — this PR covers non-boolean TypeErrors and the validated predicate-route cases; one shared semantic contract is in place, but evaluator placement convergence and #591's compiled-WHERE performance claim remain open.
