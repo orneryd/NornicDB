@@ -52,3 +52,4 @@ files, per instruction. PR per branch with fix description + benchmark evidence.
 - [x] Cluster B (validator leniency, #514 family: `NOT IN`, list trailing/leading comma, doubled-quote string adjacency, dangling `UNWIND`) — `fix/cypher-validator-strictness`. PR pending.
 - [ ] Cluster E (#744 §2 plan delivery to clients) and clusters F–L pending.
 - [ ] Cluster D (#514/#728 WHERE semantics and convergence) — this PR covers non-boolean TypeErrors and the validated predicate-route cases; one shared semantic contract is in place, but evaluator placement convergence and #591's compiled-WHERE performance claim remain open.
+- [x] Cluster G (typed list properties, #643) — PR #761 (`fix/cypher-typed-list-properties`): the shared property-value rule enforces Neo4j's array rule (single primitive/temporal kind, no null, int/float mixes stored as floats) with an allocation-free bitmask.

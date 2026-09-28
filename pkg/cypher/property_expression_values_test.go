@@ -39,7 +39,9 @@ func TestPropertyMapArithmeticOperatorsEvaluateToValues(t *testing.T) {
 		{"CREATE (n:T {a: 6 / 2}) RETURN n.a", int64(3)},
 		{"CREATE (n:T {a: 2 * 3 + 1}) RETURN n.a", int64(7)},
 		{"CREATE (n:T {a: [1 + 1, 2 * 2, 7 % 4, 2 ^ 2]}) RETURN n.a",
-			[]interface{}{int64(2), int64(4), int64(3), float64(4.0)}},
+			// The float result of 2 ^ 2 makes the stored array all-floats, as
+			// in Neo4j's array property rule (#643).
+			[]interface{}{float64(2), float64(4), float64(3), float64(4)}},
 		{"CREATE (:T)-[r:R {w: 2 * 3}]->(:T) RETURN r.w", int64(6)},
 		{"MERGE (n:T {a: 2 * 3}) RETURN n.a", int64(6)},
 		{"CREATE (n:T {a: 2.5 * 2}) RETURN n.a", float64(5.0)},

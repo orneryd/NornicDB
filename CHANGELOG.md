@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CALL { }` bodies; `FINISH` after RETURN/WITH/YIELD stays a SyntaxError.
 - Reject `EXPLAIN PROFILE` / `PROFILE EXPLAIN` as a SyntaxError, as Neo4j
   does.
+- Enforce Neo4j's array property rule on CREATE/MERGE/SET writes: a list
+  property whose elements don't share one primitive or temporal kind, or
+  that contains null, now fails with a TypeError and nothing is stored; an
+  int/float mix is stored as floats (`[1, 2.5]` stores `[1.0, 2.5]`).
 - Truncate logged query shapes at a rune boundary so redaction/log seams can
   never emit invalid UTF-8.
 - Unify scheduled and explicit MVCC pruning on per-key transactions, preserving

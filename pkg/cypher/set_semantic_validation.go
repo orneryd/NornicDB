@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"math/bits"
 	"reflect"
 	"strings"
 
@@ -355,21 +356,105 @@ func validateSetPropertyValue(value interface{}) error {
 	if typeOf != nil && typeOf.Kind() == reflect.Map {
 		return invalidSetPropertyType(value)
 	}
-	if items, list := toInterfaceSlice(value); list {
-		for _, item := range items {
-			itemType := reflect.TypeOf(item)
-			if itemType != nil && (itemType.Kind() == reflect.Map || itemType.Kind() == reflect.Slice || itemType.Kind() == reflect.Array) {
-				return invalidSetPropertyType(value)
-			}
-			if _, invalid := item.(*storage.Node); invalid {
-				return invalidSetPropertyType(value)
-			}
-			if _, invalid := item.(*storage.Edge); invalid {
-				return invalidSetPropertyType(value)
+	items, list := toInterfaceSlice(value)
+	if !list {
+		return nil
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	// Neo4j's array property rule (#643): elements must share one primitive
+	// or temporal kind, null is not storable, and an int/float mix is stored
+	// as floats. The backing []interface{} is mutated in place so the coerced
+	// floats are the values that get stored. Kinds are a bitmask so the rule
+	// is allocation-free per write.
+	var kinds uint16
+	for _, item := range items {
+		if item == nil {
+			return newSemanticError(
+				"Neo.ClientError.Statement.TypeError",
+				"InvalidPropertyType",
+				"Collections containing null values can not be stored in properties.",
+			)
+		}
+		itemType := reflect.TypeOf(item)
+		if itemType != nil && (itemType.Kind() == reflect.Map || itemType.Kind() == reflect.Slice || itemType.Kind() == reflect.Array) {
+			return invalidSetPropertyType(value)
+		}
+		if _, invalid := item.(*storage.Node); invalid {
+			return invalidSetPropertyType(value)
+		}
+		if _, invalid := item.(*storage.Edge); invalid {
+			return invalidSetPropertyType(value)
+		}
+		kinds |= 1 << propertyArrayElementOf(item)
+	}
+	if kinds&(1<<arrayElemOther) != 0 {
+		return invalidSetPropertyType(value)
+	}
+	numIntFloat := uint16(1<<arrayElemInt) | uint16(1<<arrayElemFloat)
+	if bits.OnesCount16(kinds) > 2 ||
+		(bits.OnesCount16(kinds) == 2 && kinds&numIntFloat != numIntFloat) {
+		return newSemanticError(
+			"Neo.ClientError.Statement.TypeError",
+			"InvalidPropertyType",
+			"Neo4j only supports a subset of Cypher types for storage as singleton or array properties.",
+		)
+	}
+	if kinds&(1<<arrayElemFloat) != 0 {
+		for i, item := range items {
+			if f, ok := toFloat64(item); ok {
+				items[i] = f
 			}
 		}
 	}
 	return nil
+}
+
+// propertyArrayElement categorizes an array element for the Neo4j property
+// array rule (#643).
+type propertyArrayElement uint8
+
+const (
+	arrayElemEmpty propertyArrayElement = iota
+	arrayElemInt
+	arrayElemFloat
+	arrayElemString
+	arrayElemBool
+	arrayElemDate
+	arrayElemTime
+	arrayElemLocalTime
+	arrayElemDateTime
+	arrayElemLocalDateTime
+	arrayElemDuration
+	arrayElemOther
+)
+
+func propertyArrayElementOf(item interface{}) propertyArrayElement {
+	switch item.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return arrayElemInt
+	case float32, float64:
+		return arrayElemFloat
+	case string:
+		return arrayElemString
+	case bool:
+		return arrayElemBool
+	case CypherDate, *CypherDate:
+		return arrayElemDate
+	case CypherTime, *CypherTime:
+		return arrayElemTime
+	case CypherLocalTime, *CypherLocalTime:
+		return arrayElemLocalTime
+	case CypherDateTime, *CypherDateTime:
+		return arrayElemDateTime
+	case CypherLocalDateTime, *CypherLocalDateTime:
+		return arrayElemLocalDateTime
+	case CypherDuration, *CypherDuration:
+		return arrayElemDuration
+	default:
+		return arrayElemOther
+	}
 }
 
 // validatePropertyValues applies the property value rule
