@@ -458,6 +458,11 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	if subqueryBody == "" {
 		return nil, localizedError(localization.CypherSubqueriesCallBodyEmpty(), nil)
 	}
+	if inTransactions {
+		if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
+			return nil, err
+		}
+	}
 
 	// The rest of this handler runs the subquery for the nodes of the MATCH's
 	// first node pattern, with that node as the only outer variable. When the
@@ -520,8 +525,17 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 		return subqueryExecutor.executeVariableScopeCallInTransactions(ctx, seedNodes, nodePattern.variable, subqueryBody, afterCall, batchSize)
 	}
 	if !strings.HasPrefix(upperBody, "WITH ") {
-		// No WITH clause - execute as standalone subquery for each seed
-		return subqueryExecutor.executeCallSubquery(ctx, "CALL { "+subqueryBody+" }")
+		// A body that references the seed variable is correlated: bind it per
+		// seed row like Neo4j, even without an explicit (n) import list or a
+		// leading WITH (#648: MATCH (n) CALL { CREATE (:X {from: n.id}) } must
+		// run once per row, not once with n unbound).
+		if isIdentifierReferenced(subqueryBody, nodePattern.variable) {
+			subqueryBody = "WITH " + nodePattern.variable + " " + subqueryBody
+			upperBody = upperASCII(strings.TrimSpace(subqueryBody))
+		} else {
+			// Truly independent unit subquery: execute once.
+			return subqueryExecutor.executeCallSubquery(ctx, "CALL { "+subqueryBody+" }")
+		}
 	}
 
 	// Find where the WITH imports end (at the next query clause).
@@ -1666,6 +1680,9 @@ func importsVariable(vars []string, variable string) bool {
 }
 
 func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Context, seedNodes []*storage.Node, seedVar, subqueryBody, afterCall string, batchSize int) (*ExecuteResult, error) {
+	if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
+		return nil, err
+	}
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
@@ -1760,7 +1777,22 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 //  1. First execute the subquery to determine the total number of rows (read-only)
 //  2. If it contains write operations, process in batches by adding LIMIT/SKIP to the MATCH
 //  3. Each batch is executed in its own transaction via executeWithImplicitTransaction
+// rejectCallInTransactionsInExplicitTx enforces the Neo4j rule that
+// CALL { ... } IN TRANSACTIONS cannot run inside an explicit transaction:
+// its batches would execute inside the caller's transaction and survive a
+// ROLLBACK (#648).
+func (e *StorageExecutor) rejectCallInTransactionsInExplicitTx() error {
+	if e.txContext != nil && e.txContext.active {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidCallInTransactions",
+			"CALL { ... } IN TRANSACTIONS is not allowed inside an explicit transaction")
+	}
+	return nil
+}
+
 func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquery string, batchSize int) (*ExecuteResult, error) {
+	if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
+		return nil, err
+	}
 	if batchSize <= 0 {
 		batchSize = 1000 // Default batch size
 	}
