@@ -347,7 +347,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		}
 		// Still need to apply WHERE clause filter (in case there are other conditions)
 		if whereClause != "" {
-			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause)
+			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
 		}
 	} else if matches.TraversalLimit > 0 && !matches.IsChained && len(matches.StartNode.properties) == 0 {
 		viewport, _ := TemporalViewportFromContext(ctx)
@@ -366,7 +366,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		paths = e.traverseGraph(ctx, matches)
 		// Apply WHERE clause filter if present
 		if whereClause != "" {
-			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause)
+			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
 		}
 	}
 	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
@@ -750,7 +750,7 @@ func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *Tra
 		}
 	}
 	if whereClause != "" {
-		paths = e.filterPathsByWhere(ctx, paths, matches, whereClause)
+		paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
 	}
 	return paths, true
 }
@@ -2590,8 +2590,11 @@ func (e *StorageExecutor) getRelType(relID storage.EdgeID) string {
 }
 
 // filterPathsByWhere filters paths based on a WHERE clause condition.
-// This evaluates conditions like "i.name = 'value'" against each path's context.
-func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathResult, matches *TraversalMatch, whereClause string) []PathResult {
+// This evaluates conditions like "i.name = 'value'" against each path's
+// context. extra merges the row's other bindings into the context, so a
+// predicate can also reference seed-row variables beyond the path endpoints
+// (#581: WHERE length(p) > limit.n).
+func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathResult, matches *TraversalMatch, whereClause string, extra map[string]interface{}) []PathResult {
 	if whereClause == "" {
 		return paths
 	}
@@ -2599,6 +2602,18 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 	var filtered []PathResult
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
+		for name, value := range extra {
+			switch v := value.(type) {
+			case *storage.Node:
+				if v != nil {
+					context.nodes[name] = v
+				}
+			case *storage.Edge:
+				if v != nil {
+					context.rels[name] = v
+				}
+			}
+		}
 		if e.evaluateWhereOnPath(ctx, whereClause, context) {
 			filtered = append(filtered, path)
 		}

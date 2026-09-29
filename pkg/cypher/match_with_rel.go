@@ -242,7 +242,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 
 	// Apply pre-WITH WHERE clause filter if present
 	if preWithWhere != "" {
-		paths = e.filterPathsByWhere(ctx, paths, matches, preWithWhere)
+		paths = e.filterPathsByWhere(ctx, paths, matches, preWithWhere, nil)
 	}
 
 	// Parse WITH items

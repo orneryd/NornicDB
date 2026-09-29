@@ -555,10 +555,12 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 		if isIdentifierReferenced(subqueryBody, nodePattern.variable) {
 			subqueryBody = "WITH " + nodePattern.variable + " " + subqueryBody
 			upperBody = upperASCII(strings.TrimSpace(subqueryBody))
-		} else {
-			// Truly independent unit subquery: execute once.
-			return subqueryExecutor.executeCallSubquery(ctx, "CALL { "+subqueryBody+" }")
 		}
+		// A body that references no seed variable is still a unit subquery:
+		// Neo4j executes it once per incoming row too (#648:
+		// MATCH (t:T) CALL () { CREATE (:X) } creates one :X per t), so it
+		// falls through to the same per-seed loop below instead of running
+		// once for the whole statement.
 	}
 
 	// Find where the WITH imports end (at the next query clause).
@@ -566,6 +568,9 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	// unit subqueries like:
 	//   CALL { WITH p CREATE ... }
 	// otherwise restOfSubquery becomes empty and side effects are skipped.
+	// A body without a leading WITH (an uncorrelated unit subquery, or a
+	// correlated body bound above) has no import section: the whole body is
+	// the per-seed clause, so withEndIdx is 0.
 	withEndIdx := len(subqueryBody)
 	clauseStarts := []int{
 		findKeywordIndex(subqueryBody, "WHERE"),
@@ -582,10 +587,14 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 		findKeywordIndex(subqueryBody, "RETURN"),
 		findKeywordIndex(subqueryBody, "WITH"),
 	}
-	for _, idx := range clauseStarts {
-		if idx > 0 && idx < withEndIdx {
-			withEndIdx = idx
+	if strings.HasPrefix(upperBody, "WITH ") {
+		for _, idx := range clauseStarts {
+			if idx > 0 && idx < withEndIdx {
+				withEndIdx = idx
+			}
 		}
+	} else {
+		withEndIdx = 0
 	}
 
 	// Parse UNION branches once (if present) so correlated execution only binds rows.

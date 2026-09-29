@@ -176,58 +176,12 @@ func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereC
 }
 
 // evaluateMatchWhereCondition is the MATCH-clause entry into the shared row
-// predicate evaluator: the only difference from the strict evaluation is the
-// final truth coercion — a bare value reference or literal holding a
-// non-boolean still raises TypeError, but a computed non-boolean expression
-// filters the row out (#728). The evaluation path is identical.
+// predicate evaluator: every WHERE position evaluates identically — a
+// non-boolean value is a TypeError, null drops the row (#728).
 func (e *StorageExecutor) evaluateMatchWhereCondition(ctx context.Context, whereClause string, values map[string]interface{}) bool {
 	return e.evaluateMatchRowPredicate(ctx, whereClause, values)
 }
 
-// expressionHasNoIdentifiers reports whether expr contains no identifier
-// tokens outside string literals: a literal or a combination of literals,
-// whose predicate type Neo4j checks at compile time (WHERE 1, WHERE [1]).
-// Backtick-quoted names count as identifiers. A whole map or list literal
-// has a compile-time-known non-boolean type regardless of its elements, so
-// it is constant-shaped too (WHERE {a: 1}).
-func expressionHasNoIdentifiers(expr string) bool {
-	trimmed := strings.TrimSpace(expr)
-	if len(trimmed) >= 2 {
-		if trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}' {
-			return true
-		}
-		if trimmed[0] == '[' && trimmed[len(trimmed)-1] == ']' {
-			return true
-		}
-	}
-	inQuote := byte(0)
-	for i := 0; i < len(expr); i++ {
-		c := expr[i]
-		if inQuote != 0 {
-			if c == '\\' && inQuote != '`' && i+1 < len(expr) {
-				i++
-				continue
-			}
-			if c == inQuote {
-				inQuote = 0
-			}
-			continue
-		}
-		switch c {
-		case '\'', '"', '`':
-			if c == '`' {
-				// A backtick opens an identifier: not a pure literal.
-				return false
-			}
-			inQuote = c
-		default:
-			if c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-				return false
-			}
-		}
-	}
-	return true
-}
 
 // withWhereNeedsFullEvaluator reports whether a WITH-attached WHERE predicate
 // has to go through the general expression evaluator rather than this

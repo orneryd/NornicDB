@@ -442,22 +442,22 @@ func TestFilterPathsByWhere(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("filter by end node property", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "i.name = 'Informal Register (tú)'")
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, "i.name = 'Informal Register (tú)'", nil)
 		assert.Len(t, filtered, 1)
 	})
 
 	t.Run("filter by start node property", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score < 90")
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score < 90", nil)
 		assert.Len(t, filtered, 1)
 	})
 
 	t.Run("no filter", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "")
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, "", nil)
 		assert.Len(t, filtered, 2)
 	})
 
 	t.Run("filter all out", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score > 100")
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score > 100", nil)
 		assert.Len(t, filtered, 0)
 	})
 }

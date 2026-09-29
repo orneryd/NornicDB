@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"testing"
 
@@ -43,6 +44,17 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		_, _, _, _, offset, ok := parseCartesianVarPropEqualityTerm("b.i = a.i + 1")
 		require.True(t, ok)
 		require.Equal(t, int64(1), offset)
+
+		// The operator must parse independently of whitespace (#692).
+		_, _, _, _, offset, ok = parseCartesianVarPropEqualityTerm("b.i=a.i+1")
+		require.True(t, ok)
+		require.Equal(t, int64(1), offset)
+		_, _, _, _, offset, ok = parseCartesianVarPropEqualityTerm("b.i = a.i-1")
+		require.True(t, ok)
+		require.Equal(t, int64(-1), offset)
+		_, _, _, _, offset, ok = parseCartesianVarPropEqualityTerm("b.i=a.i - 1")
+		require.True(t, ok)
+		require.Equal(t, int64(-1), offset)
 
 		varName, prop, listVals, ok := parseCartesianInListTerm("a.kind IN ['x', 2, true]")
 		require.True(t, ok)
@@ -391,4 +403,34 @@ func TestEvaluateWhereForContext_RelationshipAndBooleanBranches(t *testing.T) {
 	require.True(t, exec.evaluateWhereForContext(ctx, "a.x = 1 AND b.x = 2", nodeMap))
 	require.True(t, exec.evaluateWhereForContext(ctx, "a.x = 3 OR b.x = 2", nodeMap))
 	require.True(t, exec.evaluateWhereForContext(ctx, "NOT a.x = 3", nodeMap))
+}
+
+func TestCartesianOffsetArithmeticExact(t *testing.T) {
+	// Offset joins must use exact integer arithmetic (#692 review): above
+	// 2^53 float64 rounds, so a float residual would falsely satisfy an
+	// offset equality (or drop a true one).
+	require.True(t, cartesianOffsetValuesEqual(int64(9007199254740993), int64(9007199254740992), 1),
+		"9007199254740993 == 9007199254740992 + 1 exactly")
+	require.False(t, cartesianOffsetValuesEqual(int64(9007199254740994), int64(9007199254740992), 1))
+	require.True(t, cartesianOffsetValuesEqual(int64(9007199254740991), int64(9007199254740992), -1))
+
+	// The shifted lookup key stays exact and keeps the stored type.
+	key, ok := cartesianShiftValueKey(int64(9007199254740992), 1)
+	require.True(t, ok)
+	require.Equal(t, "i64:9007199254740993", key)
+	intKey, ok := cartesianShiftValueKey(5, -2)
+	require.True(t, ok)
+	require.Equal(t, "i:3", intKey)
+	_, ok = cartesianShiftValueKey("x", 1)
+	require.False(t, ok)
+
+	// Overflow never wraps into a wrong bucket.
+	_, ok = addInt64Offset(math.MaxInt64, 1)
+	require.False(t, ok)
+	_, ok = addInt64Offset(math.MinInt64, -1)
+	require.False(t, ok)
+
+	// Floats still compare through float64.
+	require.True(t, cartesianOffsetValuesEqual(2.5, 1.5, 1))
+	require.False(t, cartesianOffsetValuesEqual("x", int64(1), 1))
 }

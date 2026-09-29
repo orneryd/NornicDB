@@ -2769,17 +2769,16 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 					}
 					lookupKey := cartesianValueKey(baseVal)
 					if lookupOffset != 0 {
-						baseNum, numeric := toFloat64(baseVal)
-						if !numeric {
+						// Shift the value exactly: integer offsets use integer
+						// arithmetic (no float64 rounding above 2^53, #692).
+						// Floats keep their float keys so float offset joins
+						// still find their index entries.
+						if key, ok := cartesianShiftValueKey(baseVal, lookupOffset); ok {
+							lookupKey = key
+						} else if baseNum, numeric := toFloat64(baseVal); numeric {
+							lookupKey = cartesianValueKey(baseNum + float64(lookupOffset))
+						} else {
 							continue
-						}
-						// Keep the value's integer type so the key matches the
-						// index, which is keyed by the stored values' type.
-						switch baseVal.(type) {
-						case int:
-							lookupKey = cartesianValueKey(int(baseNum) + int(lookupOffset))
-						default:
-							lookupKey = cartesianValueKey(int64(baseNum) + lookupOffset)
 						}
 					}
 					for _, matchNode := range idx[lookupKey] {
@@ -2823,10 +2822,9 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 					}
 					continue
 				}
-				// lv must equal rv + offset numerically (#692).
-				lNum, lNumeric := toFloat64(lv)
-				rNum, rNumeric := toFloat64(rv)
-				if !lNumeric || !rNumeric || lNum != rNum+float64(c.offset) {
+				// lv must equal rv + offset exactly (#692): integer values
+				// compare through integer arithmetic, others through float64.
+				if !cartesianOffsetValuesEqual(lv, rv, c.offset) {
 					keep = false
 					break
 				}

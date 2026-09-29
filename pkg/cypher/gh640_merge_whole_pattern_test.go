@@ -229,3 +229,20 @@ func TestGh640_FindMergeNodeDoesNotScanAllNodes(t *testing.T) {
 	require.EqualValues(t, 50, gh640Count(t, exec, ctx, "MATCH (n:M) RETURN count(n) AS c"))
 	require.Zero(t, counter.allNodesCalls.Load(), "labelled MERGE lookups must not scan all nodes")
 }
+
+func TestGh640_WholePatternMatchesExistingSelfLoop(t *testing.T) {
+	// Distinct endpoint variables may bind the same node: an existing
+	// self-loop whose endpoints satisfy both node patterns is the
+	// whole-pattern match, so MERGE creates nothing new.
+	exec := newGh640Executor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (n:T {id: 1})-[:R]->(n)", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MERGE (a:T {id: 1})-[:R]->(b:T {id: 1}) RETURN count(*) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, result.Stats.NodesCreated)
+	require.Equal(t, 0, result.Stats.RelationshipsCreated)
+	require.EqualValues(t, 1, gh640Count(t, exec, ctx, "MATCH (n:T) RETURN count(n) AS c"))
+	require.EqualValues(t, 1, gh640Count(t, exec, ctx, "MATCH (t)-[r:R]->(t) RETURN count(r) AS c"))
+}

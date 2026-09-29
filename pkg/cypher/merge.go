@@ -2315,9 +2315,14 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		search:
 			for _, candidateStart := range startCandidates {
 				for _, candidateEnd := range endCandidates {
-					if candidateStart == nil || candidateEnd == nil || candidateStart.ID == candidateEnd.ID {
+					if candidateStart == nil || candidateEnd == nil {
 						continue
 					}
+					// Distinct endpoint variables may bind the same node: an
+					// existing self-loop whose endpoints satisfy both node
+					// patterns is a valid whole-pattern match, so a same-ID
+					// pair must still be searched (#640 whole-pattern
+					// semantics).
 					var found *storage.Edge
 					switch parsedPattern.direction {
 					case mergeRelationshipIncoming:

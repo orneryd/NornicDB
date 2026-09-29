@@ -84,6 +84,40 @@ func TestGh648_WriteSubqueryWithoutImportsRunsPerRow(t *testing.T) {
 	require.Equal(t, int64(3), count.Rows[0][0], "one X per outer row")
 }
 
+func TestGh648_UncorrelatedUnitSubqueryRunsPerRow(t *testing.T) {
+	// A CALL body that references no outer variable is still a unit subquery:
+	// Neo4j runs it once per incoming row, not once per statement.
+
+	t.Run("call_empty_import_list", func(t *testing.T) {
+		exec := newGh648Executor(t)
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (:T {id: 1}), (:T {id: 2})", nil)
+		require.NoError(t, err)
+
+		result, err := exec.Execute(ctx, "MATCH (t:T) CALL () { CREATE (:X) } RETURN count(*) AS c", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), result.Rows[0][0], "one X per outer row")
+
+		count, err := exec.Execute(ctx, "MATCH (x:X) RETURN count(x) AS c", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), count.Rows[0][0])
+	})
+
+	t.Run("call_no_import_list_then_count", func(t *testing.T) {
+		exec := newGh648Executor(t)
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (:T {id: 1}), (:T {id: 2})", nil)
+		require.NoError(t, err)
+
+		result, err := exec.Execute(ctx,
+			"MATCH (t:T) CALL { CREATE (:X) } WITH count(*) AS c MATCH (x:X) RETURN c, count(x) AS total", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		require.Equal(t, int64(2), result.Rows[0][0])
+		require.Equal(t, int64(2), result.Rows[0][1], "one X per outer row")
+	})
+}
+
 func TestGh648_InTransactionsRejectedInExplicitTransaction(t *testing.T) {
 	exec := newGh648Executor(t)
 	ctx := context.Background()

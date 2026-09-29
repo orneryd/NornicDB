@@ -219,3 +219,36 @@ func TestGh581_OptionalShortestPathProjection(t *testing.T) {
 		require.Equal(t, [][]int64{{3}}, intRows(t, result))
 	})
 }
+
+func TestGh581_ClauseWhereReferencesSeedRowVariables(t *testing.T) {
+	// The shortestPath clause WHERE must see every seed-row binding, not just
+	// the path and its endpoints: `limit` comes from an earlier pattern and
+	// its property decides whether the path row survives.
+	exec := newGh581Executor(t)
+	ctx := context.Background()
+	seedGh581ZSP(t, exec, ctx)
+	_, err := exec.Execute(ctx, "CREATE (:Lim {n: 1}), (:Lim {n: 3})", nil)
+	require.NoError(t, err)
+
+	t.Run("seed_property_keeps_path", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (a:ZSP {id: 1}), (b:ZSP {id: 3}), (limit:Lim {n: 1})
+			MATCH p = shortestPath((a)-[:ZS*]->(b))
+			WHERE length(p) > limit.n
+			RETURN length(p) AS l
+		`, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]int64{{2}}, intRows(t, result))
+	})
+
+	t.Run("seed_property_drops_path", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (a:ZSP {id: 1}), (b:ZSP {id: 3}), (limit:Lim {n: 3})
+			MATCH p = shortestPath((a)-[:ZS*]->(b))
+			WHERE length(p) > limit.n
+			RETURN length(p) AS l
+		`, nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Rows)
+	})
+}

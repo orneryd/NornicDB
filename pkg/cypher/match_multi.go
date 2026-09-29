@@ -1969,29 +1969,96 @@ func parseCartesianVarPropEqualityTerm(term string) (string, string, string, str
 }
 
 // parseCartesianVarPropOffset parses <var>.<prop> + <int> or
-// <var>.<prop> - <int> (spaced operators only, integer literal offset).
+// <var>.<prop> - <int> with an integer literal offset, independent of
+// whitespace around the operator (b.id=a.id+1 parses the same as
+// b.id = a.id + 1, #692).
 func parseCartesianVarPropOffset(expr string) (string, string, int64, bool) {
-	for _, op := range []string{" + ", " - "} {
-		idx := strings.Index(expr, op)
-		if idx <= 0 {
+	expr = strings.TrimSpace(expr)
+	for i := 0; i < len(expr); i++ {
+		ch := expr[i]
+		if ch != '+' && ch != '-' {
 			continue
 		}
-		left := strings.TrimSpace(expr[:idx])
-		literal := strings.TrimSpace(expr[idx+len(op):])
+		left := strings.TrimSpace(expr[:i])
+		literal := strings.TrimSpace(expr[i+1:])
 		variable, prop, ok := parseCartesianVarProp(left)
 		if !ok {
 			continue
 		}
 		offset, err := strconv.ParseInt(literal, 10, 64)
 		if err != nil {
-			continue
+			return "", "", 0, false
 		}
-		if op == " - " {
+		if ch == '-' {
 			offset = -offset
 		}
 		return variable, prop, offset, true
 	}
 	return "", "", 0, false
+}
+
+// addInt64Offset adds offset to value exactly, reporting false when the sum
+// overflows int64.
+func addInt64Offset(value, offset int64) (int64, bool) {
+	sum := value + offset
+	if (offset > 0 && sum < value) || (offset < 0 && sum > value) {
+		return 0, false
+	}
+	return sum, true
+}
+
+// cartesianShiftValueKey shifts an integer property value by offset exactly
+// (no float64 rounding above 2^53, #692), keeping its stored type in the
+// key. It reports false when the value is not an integer or the shift
+// overflows.
+func cartesianShiftValueKey(v interface{}, offset int64) (string, bool) {
+	var base int64
+	switch x := v.(type) {
+	case int:
+		base = int64(x)
+	case int64:
+		base = x
+	default:
+		return "", false
+	}
+	sum, ok := addInt64Offset(base, offset)
+	if !ok {
+		return "", false
+	}
+	switch v.(type) {
+	case int:
+		return cartesianValueKey(int(sum)), true
+	default:
+		return cartesianValueKey(sum), true
+	}
+}
+
+// cartesianOffsetValuesEqual reports whether left == right + offset.
+// Integer values compare exactly (no float64 rounding above 2^53, #692);
+// non-integer values compare through float64, and non-numeric values never
+// satisfy an offset join.
+func cartesianOffsetValuesEqual(left, right interface{}, offset int64) bool {
+	if li, lok := int64OfValue(left); lok {
+		if ri, rok := int64OfValue(right); rok {
+			sum, ok := addInt64Offset(ri, offset)
+			return ok && li == sum
+		}
+	}
+	lNum, lNumeric := toFloat64(left)
+	rNum, rNumeric := toFloat64(right)
+	return lNumeric && rNumeric && lNum == rNum+float64(offset)
+}
+
+// int64OfValue reports an integer value exactly (int or int64).
+func int64OfValue(v interface{}) (int64, bool) {
+	switch x := v.(type) {
+	case int:
+		return int64(x), true
+	case int64:
+		return x, true
+	default:
+		return 0, false
+	}
 }
 
 func cartesianValueKey(v interface{}) string {
@@ -2159,9 +2226,16 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 		}
 	}
 
-	// Fallback: parse/evaluate as expression with full node context.
-	result := e.evaluateExpressionWithContext(ctx, clause, nodes, nil)
-	return predicateValueIsTrue(ctx, result)
+	// Fallback: evaluate the clause through the shared row predicate
+	// evaluator (#728 convergence): operator parsing is whitespace-independent
+	// and integer arithmetic is exact, so the residual filter always agrees
+	// with the cartesian join planner above (a.id=b.id+2 filters the same as
+	// a.id = b.id + 2).
+	values := make(map[string]interface{}, len(nodes))
+	for name, node := range nodes {
+		values[name] = node
+	}
+	return e.evaluateRowPredicate(ctx, clause, values)
 }
 
 // evaluateBoundRelationshipPattern evaluates a WHERE pattern against the

@@ -486,7 +486,7 @@ func (e *StorageExecutor) executeBoundEndShortestPath(ctx context.Context, query
 		for i, name := range seed.Columns {
 			row[name] = seedRow[i]
 		}
-		for _, path := range e.filterPathsByWhere(ctx, found.paths, traversal, query.whereClause) {
+		for _, path := range e.filterPathsByWhere(ctx, found.paths, traversal, query.whereClause, map[string]interface{}(row)) {
 			projected := make(pipelineRow, len(row)+1)
 			for name, value := range row {
 				projected[name] = value
@@ -694,7 +694,11 @@ func (e *StorageExecutor) executeOptionalShortestPath(ctx context.Context, cyphe
 				builtRows = append(builtRows, e.buildOptionalShortestPathRow(ctx, returnItems, pathVariable, nil, nullCtx))
 				continue
 			}
-			for _, path := range e.filterPathsByWhere(ctx, found.paths, traversal, whereClause) {
+			bindings := make(map[string]interface{}, len(seedColumns))
+			for i, name := range seedColumns {
+				bindings[name] = seed[i]
+			}
+			for _, path := range e.filterPathsByWhere(ctx, found.paths, traversal, whereClause, bindings) {
 				pathContext := e.buildPathContext(path, traversal)
 				row := e.buildOptionalShortestPathRow(ctx, returnItems, pathVariable, &path, pathContext)
 				builtRows = append(builtRows, row)

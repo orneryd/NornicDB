@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -359,7 +360,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			if text, isString := value.(string); isString {
 				switch lowerASCII(function) {
 				case "size":
-					return int64(len([]rune(text))), true, nil
+					return evaluateCypherSize(value)
 				case "reverse":
 					runes := []rune(text)
 					for left, right := 0, len(runes)-1; left < right; left, right = left+1, right-1 {
@@ -373,9 +374,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			valueType := reflect.TypeOf(value)
 			if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
 				if strings.EqualFold(function, "size") {
-					if err := sizeArgumentError(value); err != nil {
-						return nil, false, err
-					}
+					return evaluateCypherSize(value)
 				}
 				return nil, false, nil
 			}
@@ -403,7 +402,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 				}
 				return reversed, true, nil
 			default:
-				return int64(len(items)), true, nil
+				return evaluateCypherSize(value)
 			}
 		case "nodes", "relationships":
 			value, resolved, err := e.evaluateRowValue(argument, values)
@@ -1645,7 +1644,7 @@ func rowSubscriptIndex(value interface{}) (int, bool) {
 // value to a row variable that replaces the block, and evaluates the
 // predicate that remains. The value keeps its type (a list or map stays one),
 // unlike a literal substitution.
-func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context, expression string, spans []caseBlockSpan, values map[string]interface{}, relaxed bool) bool {
+func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context, expression string, spans []caseBlockSpan, values map[string]interface{}) bool {
 	scope := make(map[string]interface{}, len(values)+len(spans))
 	for name, value := range values {
 		scope[name] = value
@@ -1669,7 +1668,7 @@ func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context,
 		last = span.end
 	}
 	builder.WriteString(expression[last:])
-	return e.evaluateRowPredicateParts(ctx, builder.String(), scope, relaxed)
+	return e.evaluateRowPredicateParts(ctx, builder.String(), scope)
 }
 
 // evaluateRowPredicate evaluates a WHERE predicate against a row.
@@ -1680,30 +1679,28 @@ func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context,
 // first, once per predicate, as the context evaluator substitutes them
 // (evaluateExpressionWithCASESubstituted).
 func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
-	return e.evaluateRowPredicateMode(ctx, expression, values, false)
+	return e.evaluateRowPredicateMode(ctx, expression, values)
 }
 
-// evaluateMatchRowPredicate is the MATCH-clause flavor of the same predicate
-// evaluator: for a computed non-boolean expression the row is filtered out
-// instead of raising (#728), while a bare value reference and a literal keep
-// the strict TypeError. The evaluation path is identical to
-// evaluateRowPredicate; only the final truth coercion differs.
+// evaluateMatchRowPredicate is the MATCH-clause entry into the same shared
+// evaluator: a non-boolean WHERE value is a TypeError in every clause
+// position (#728), and null drops the row.
 func (e *StorageExecutor) evaluateMatchRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
-	return e.evaluateRowPredicateMode(ctx, expression, values, true)
+	return e.evaluateRowPredicate(ctx, expression, values)
 }
 
-func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expression string, values map[string]interface{}, relaxed bool) bool {
+func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expression string, values map[string]interface{}) bool {
 	if mayContainCaseKeyword(expression) {
 		if spans := caseBlockSpans(expression); len(spans) > 0 {
-			return e.evaluateRowPredicateWithCASEBound(ctx, expression, spans, values, relaxed)
+			return e.evaluateRowPredicateWithCASEBound(ctx, expression, spans, values)
 		}
 	}
-	return e.evaluateRowPredicateParts(ctx, expression, values, relaxed)
+	return e.evaluateRowPredicateParts(ctx, expression, values)
 }
 
 // evaluateRowPredicateParts is evaluateRowPredicate for a predicate whose CASE
 // blocks are bound; it recurses into its OR / AND / NOT parts.
-func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, expression string, values map[string]interface{}, relaxed bool) bool {
+func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, expression string, values map[string]interface{}) bool {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return false
@@ -1717,7 +1714,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	// generic comparison/expression evaluators and returning a wrong
 	// (false) result instead of evaluating the subquery.
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		return e.evaluateRowPredicateParts(ctx, inner, values, relaxed)
+		return e.evaluateRowPredicateParts(ctx, inner, values)
 	}
 	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
 	// COUNT { … } + 1 > 1, …) are evaluated for the row first, unless AND / OR
@@ -1732,10 +1729,10 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 			if count, ok := value.(int64); ok {
 				return plan.integerComparison.holds(count)
 			}
-			return e.evaluateRowPredicateMode(ctx, plan.rewritten, plan.extendRow(pipelineRow(values), []interface{}{value}), relaxed)
+			return e.evaluateRowPredicateMode(ctx, plan.rewritten, plan.extendRow(pipelineRow(values), []interface{}{value}))
 		}
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
-		return e.evaluateRowPredicateMode(ctx, rewritten, extended, relaxed)
+		return e.evaluateRowPredicateMode(ctx, rewritten, extended)
 	}
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
 		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
@@ -1743,20 +1740,20 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	// AND parts that compare or null-test simple operands are parsed once per
 	// predicate text (planRowPredicate), not once per row.
 	if plan := planRowPredicate(expression); plan != nil {
-		return e.evaluateRowPredicatePlan(ctx, plan, values, relaxed)
+		return e.evaluateRowPredicatePlan(ctx, plan, values)
 	}
-	return e.evaluateRowPredicateText(ctx, expression, values, relaxed)
+	return e.evaluateRowPredicateText(ctx, expression, values)
 }
 
 // evaluateRowPredicateText is evaluateRowPredicate without the predicate plan:
 // the predicate is evaluated from its text. A planned part whose operand the
 // plan can't resolve directly is evaluated here.
-func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expression string, values map[string]interface{}, relaxed bool) bool {
+func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expression string, values map[string]interface{}) bool {
 	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, true); ok {
-		return e.evaluateRowPredicateParts(ctx, left, values, relaxed) || e.evaluateRowPredicateParts(ctx, right, values, relaxed)
+		return e.evaluateRowPredicateParts(ctx, left, values) || e.evaluateRowPredicateParts(ctx, right, values)
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, true); ok {
-		return e.evaluateRowPredicateParts(ctx, left, values, relaxed) && e.evaluateRowPredicateParts(ctx, right, values, relaxed)
+		return e.evaluateRowPredicateParts(ctx, left, values) && e.evaluateRowPredicateParts(ctx, right, values)
 	}
 	// EXISTS and NOT EXISTS are complete predicates. Resolve both before the
 	// generic NOT operator so a subquery is evaluated against its correlated
@@ -1773,11 +1770,11 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 			boolean, isBoolean := value.(bool)
 			return isBoolean && !boolean
 		}
-		return !e.evaluateRowPredicateParts(ctx, inner, values, relaxed)
+		return !e.evaluateRowPredicateParts(ctx, inner, values)
 	}
 	if plan := planRowSubqueries(expression); plan != nil {
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
-		return e.evaluateRowPredicateMode(ctx, rewritten, extended, relaxed)
+		return e.evaluateRowPredicateMode(ctx, rewritten, extended)
 	}
 	if nodeCtx, _ := withWhereValueContext(values); len(nodeCtx) > 0 && looksLikeRowRelationshipPattern(expression) {
 		if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, expression, nodeCtx); recognized {
@@ -1846,16 +1843,34 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 	if !ok {
 		return false
 	}
-	// #728 truth coercion, in the shared evaluator's final fallthrough:
-	//   - a bare variable/property reference or a pure literal holding a
-	//     non-boolean raises TypeError (WHERE n.id, WHERE 1, WHERE [1]);
-	//   - in MATCH position a computed non-boolean expression filters the
-	//     row out (WHERE n.id + 'z' -> no rows) instead of raising.
-	if relaxed && !isBareValueReference(expression) && !expressionHasNoIdentifiers(expression) {
-		boolean, isBoolean := value.(bool)
-		return isBoolean && boolean
-	}
+	// A non-boolean WHERE value is a TypeError in every clause position
+	// (#728); null drops the row. The shared truth coercion raises and
+	// records the error on ctx.
 	return predicateValueIsTrue(ctx, value)
+}
+
+// evaluateCypherSize computes size(value) for the shared row evaluator and
+// the compiled binding resolver (the compiled fast path is a compiled form
+// of the same evaluator, #728): null stays null, a string sizes in runes, a
+// list or array in items, and anything else is the argument type error.
+func evaluateCypherSize(value interface{}) (interface{}, bool, error) {
+	if value == nil {
+		return nil, true, nil
+	}
+	if text, isString := value.(string); isString {
+		// RuneCountInString counts code points the way len([]rune(s)) does
+		// (invalid UTF-8 bytes become U+FFFD), without the allocation.
+		return int64(utf8.RuneCountInString(text)), true, nil
+	}
+	valueType := reflect.TypeOf(value)
+	if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
+		if err := sizeArgumentError(value); err != nil {
+			return nil, false, err
+		}
+		return nil, false, nil
+	}
+	items := toAnySlice(value)
+	return int64(len(items)), true, nil
 }
 
 // rowPredicateOperand evaluates an operand of a row predicate. An error is

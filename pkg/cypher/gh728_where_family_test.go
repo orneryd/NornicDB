@@ -123,10 +123,12 @@ func TestGh728_NonBooleanWhere(t *testing.T) {
 		_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.id RETURN n.id", nil)
 		require.Error(t, err)
 	})
-	t.Run("runtime_string_expression_no_rows", func(t *testing.T) {
-		result, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.id + 'z' RETURN n.id", nil)
-		require.NoError(t, err)
-		require.Empty(t, result.Rows)
+	t.Run("runtime_string_expression_rejected", func(t *testing.T) {
+		// #728: a non-boolean WHERE value is a type error in every clause
+		// position — computed expressions included.
+		_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.id + 'z' RETURN n.id", nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Type mismatch")
 	})
 	t.Run("runtime_bool_property", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.f RETURN n.id", nil)
@@ -261,4 +263,34 @@ func TestGh728_CommaMatchWhereCorrectness(t *testing.T) {
 		require.Len(t, result.Rows, 1)
 		require.Equal(t, int64(50), result.Rows[0][0])
 	})
+}
+
+func TestGh728_OffsetJoinWhitespaceIndependentAndExact(t *testing.T) {
+	// The offset join must parse without spaces around the operator and must
+	// compare integer values exactly: above 2^53 a float64 residual would
+	// drop the true pair (#692 review).
+	exec := newGh728Executor(t)
+	ctx := context.Background()
+	// a = 2^53+3 (representable), b = 2^53+1 (rounds down in float64).
+	_, err := exec.Execute(ctx, "CREATE (:Doc {id: $a}), (:Doc {id: $b})",
+		map[string]interface{}{"a": int64(9007199254740995), "b": int64(9007199254740993)})
+	require.NoError(t, err)
+
+	for _, predicate := range []string{
+		"a.id = b.id + 2",
+		"a.id=b.id+2",
+		"b.id = a.id - 2",
+		"b.id=a.id- 2",
+	} {
+		result, err := exec.Execute(ctx,
+			"MATCH (a:Doc), (b:Doc) WHERE "+predicate+" RETURN count(*) AS c", nil)
+		require.NoError(t, err, "predicate %q", predicate)
+		require.Equal(t, int64(1), result.Rows[0][0], "predicate %q must match exactly once", predicate)
+	}
+
+	// An exact miss: float64 rounding would falsely satisfy a.id = b.id + 1.
+	result, err := exec.Execute(ctx,
+		"MATCH (a:Doc), (b:Doc) WHERE a.id = b.id + 1 RETURN count(*) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), result.Rows[0][0])
 }
