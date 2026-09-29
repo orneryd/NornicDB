@@ -909,6 +909,18 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 		deletedEdgeIDs = append(deletedEdgeIDs, inIDs...)
 	}
 
+	// Edges staged (created) by this transaction are invisible to the
+	// committed-adjacency scans above. A relationship created earlier in the
+	// same transaction would otherwise survive its endpoint's deletion and
+	// commit validation would then reject the whole transaction with
+	// "invalid edge: start or end node not found" (#741).
+	pendingCount, pendingIDs, err := tx.deletePendingEdgesIncidentToBuffered(nodeID, deletedNode.Labels)
+	if err != nil {
+		return 0, nil, err
+	}
+	edgesDeleted += pendingCount
+	deletedEdgeIDs = append(deletedEdgeIDs, pendingIDs...)
+
 	// Buffer pending embeddings index deletion
 	tx.bufferDelete(pendingEmbedKey(nodeID))
 
@@ -917,6 +929,65 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 	tx.bufferDelete(key)
 
 	return edgesDeleted, deletedEdgeIDs, nil
+}
+
+// deletePendingEdgesIncidentToBuffered removes every edge this transaction has
+// staged (created) that is incident to the deleted node. The committed-
+// adjacency scans cannot see staged edges, so a relationship created earlier
+// in the same transaction would survive its endpoint's deletion and commit
+// validation would then reject the whole transaction with "invalid edge:
+// start or end node not found" (#741). The bookkeeping mirrors
+// deleteEdgesWithPrefixBuffered: index entries, counters, and pending state.
+func (tx *BadgerTransaction) deletePendingEdgesIncidentToBuffered(nodeID NodeID, deletedNodeLabels []string) (int64, []EdgeID, error) {
+	var deletedCount int64
+	var deletedIDs []EdgeID
+	for edgeID, edge := range tx.pendingEdges {
+		if edge.StartNode != nodeID && edge.EndNode != nodeID {
+			continue
+		}
+		if _, deleted := tx.deletedEdges[edgeID]; deleted {
+			continue
+		}
+
+		tx.bufferDelete(edgeKey(edgeID))
+		if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edgeID); outKey != nil {
+			tx.bufferDelete(outKey)
+		}
+		if inKey := tx.engine.incomingIndexKeyStringLookup(edge.EndNode, edgeID); inKey != nil {
+			tx.bufferDelete(inKey)
+		}
+		if typeKey := tx.engine.edgeTypeIndexKeyStringLookup(edge.Type, edgeID); typeKey != nil {
+			tx.bufferDelete(typeKey)
+		}
+		tx.bufferDeleteEdgeBetweenIndexes(edge)
+
+		deletedCount++
+		deletedIDs = append(deletedIDs, edgeID)
+		tx.deletedEdges[edgeID] = struct{}{}
+		delete(tx.pendingEdges, edgeID)
+
+		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edgeID), edge.Type, -1)
+
+		// Positional (label, type) counters: the deleted node's labels for its
+		// side, the peer's tx-visible labels for the other.
+		startLabels := deletedNodeLabels
+		endLabels := deletedNodeLabels
+		if edge.StartNode == nodeID && edge.EndNode != nodeID {
+			peer, err := tx.nodeLabelsTxVisibleLocked(edge.EndNode)
+			if err != nil {
+				return 0, nil, err
+			}
+			endLabels = peer
+		} else if edge.EndNode == nodeID && edge.StartNode != nodeID {
+			peer, err := tx.nodeLabelsTxVisibleLocked(edge.StartNode)
+			if err != nil {
+				return 0, nil, err
+			}
+			startLabels = peer
+		}
+		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edgeID), edge.Type, startLabels, endLabels, -1)
+	}
+	return deletedCount, deletedIDs, nil
 }
 
 // deleteEdgesWithPrefixBuffered deletes all edges with a given prefix, buffering writes.
@@ -2600,6 +2671,12 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 				}
 			}
 		case OpCreateEdge:
+			// Created and deleted in the same transaction: nothing reaches
+			// commit, so neither the create conflict nor the endpoint checks
+			// apply (#741: DELETE r / DETACH DELETE after CREATE in one tx).
+			if _, deleted := tx.deletedEdges[op.EdgeID]; deleted {
+				continue
+			}
 			if err := tx.checkEdgeCreateConflict(op.EdgeID); err != nil {
 				return err
 			}
@@ -2607,6 +2684,9 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 				return err
 			}
 		case OpUpdateEdge:
+			if _, deleted := tx.deletedEdges[op.EdgeID]; deleted {
+				continue
+			}
 			if err := tx.checkEdgeWriteConflict(op.EdgeID); err != nil {
 				return err
 			}
