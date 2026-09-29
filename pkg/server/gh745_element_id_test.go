@@ -7,6 +7,7 @@ package server
 import (
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -40,4 +41,47 @@ func TestGh745_HTTPElementIDUsesRequestDatabase(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "5:otherdb:e1", edgeMeta["elementId"])
 	require.Equal(t, "relationship", edgeMeta["type"])
+}
+
+func TestGh745_HTTPCompositeElementIDUsesConstituentDatabase(t *testing.T) {
+	// A composite request's row values and meta must name the constituent
+	// that actually holds each entity (#745 §3), not the composite root.
+	server, _ := setupTestServer(t)
+	require.NoError(t, server.dbManager.CreateDatabase("cmp_745_a"))
+	require.NoError(t, server.dbManager.CreateDatabase("cmp_745_b"))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase("cmp_745", []multidb.ConstituentRef{
+		{Alias: "a", DatabaseName: "cmp_745_a", Type: "local", AccessMode: "read_write"},
+		{Alias: "b", DatabaseName: "cmp_745_b", Type: "local", AccessMode: "read_write"},
+	}))
+
+	storeA, err := server.dbManager.GetStorage("cmp_745.a")
+	require.NoError(t, err)
+	_, err = storeA.CreateNode(&storage.Node{ID: "cmp_745_a:n1", Labels: []string{"L"}, Properties: map[string]interface{}{"k": int64(1)}})
+	require.NoError(t, err)
+	_, err = storeA.CreateNode(&storage.Node{ID: "cmp_745_a:n2", Labels: []string{"L"}, Properties: map[string]interface{}{"k": int64(2)}})
+	require.NoError(t, err)
+	require.NoError(t, storeA.CreateEdge(&storage.Edge{ID: "cmp_745_a:e1", Type: "R", StartNode: "cmp_745_a:n1", EndNode: "cmp_745_a:n2", Properties: map[string]interface{}{}}))
+
+	node := &storage.Node{ID: "cmp_745_a:n1", Labels: []string{"L"}, Properties: map[string]interface{}{"k": int64(1)}}
+	edge := &storage.Edge{ID: "cmp_745_a:e1", Type: "R", StartNode: "cmp_745_a:n1", EndNode: "cmp_745_a:n2", Properties: map[string]interface{}{}}
+
+	converted := server.convertRowToNeo4jFormat([]interface{}{node, edge}, "cmp_745")
+	require.Len(t, converted, 2)
+	nodeMap, ok := converted[0].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "4:cmp_745_a:cmp_745_a:n1", nodeMap["elementId"])
+	edgeMap, ok := converted[1].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "5:cmp_745_a:cmp_745_a:e1", edgeMap["elementId"])
+	require.Equal(t, "4:cmp_745_a:cmp_745_a:n1", edgeMap["startNodeElementId"])
+	require.Equal(t, "4:cmp_745_a:cmp_745_a:n2", edgeMap["endNodeElementId"])
+
+	meta := server.generateRowMeta(converted)
+	require.Equal(t, "4:cmp_745_a:cmp_745_a:n1", meta[0].(map[string]interface{})["elementId"])
+	require.Equal(t, "5:cmp_745_a:cmp_745_a:e1", meta[1].(map[string]interface{})["elementId"])
+
+	// An entity no constituent holds falls back to the request database.
+	stray := &storage.Node{ID: "nobody:n1", Labels: []string{"L"}}
+	strayConverted := server.convertRowToNeo4jFormat([]interface{}{stray}, "cmp_745")
+	require.Equal(t, "4:cmp_745:nobody:n1", strayConverted[0].(map[string]interface{})["elementId"])
 }

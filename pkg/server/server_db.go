@@ -1316,6 +1316,36 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) inter
 	}
 }
 
+// entityDatabase resolves the database an entity actually lives in for
+// element-id projection: for a composite execution database, the constituent
+// that holds the node or edge; otherwise dbName itself (#745 §3, HTTP row
+// and meta output). A miss (deleted entity, unavailable constituent) falls
+// back to dbName.
+func (s *Server) entityDatabase(dbName string, nodeID storage.NodeID, edgeID storage.EdgeID) string {
+	if s.dbManager == nil || !s.dbManager.IsCompositeDatabase(dbName) {
+		return dbName
+	}
+	engine, err := s.dbManager.GetStorage(dbName)
+	if err != nil {
+		return dbName
+	}
+	composite, ok := engine.(*storage.CompositeEngine)
+	if !ok {
+		return dbName
+	}
+	if nodeID != "" {
+		if name := composite.ConstituentDatabaseForNode(nodeID); name != "" {
+			return name
+		}
+	}
+	if edgeID != "" {
+		if name := composite.ConstituentDatabaseForEdge(edgeID); name != "" {
+			return name
+		}
+	}
+	return dbName
+}
+
 // nodeToNeo4jHTTPFormat converts a storage.Node to Neo4j HTTP API format.
 // Neo4j format: {"elementId": "4:db:id", "labels": [...], "properties": {...}}
 func (s *Server) nodeToNeo4jHTTPFormat(node *storage.Node, dbName string) map[string]interface{} {
@@ -1323,8 +1353,9 @@ func (s *Server) nodeToNeo4jHTTPFormat(node *storage.Node, dbName string) map[st
 		return nil
 	}
 
-	// The element id names the database the entity actually lives in (#745).
-	elementId := fmt.Sprintf("4:%s:%s", dbName, node.ID)
+	// The element id names the database the entity actually lives in (#745),
+	// resolved per entity so composite constituents keep their own name.
+	elementId := fmt.Sprintf("4:%s:%s", s.entityDatabase(dbName, node.ID, ""), node.ID)
 
 	// Preserve user properties exactly as stored for Neo4j compatibility.
 	props := node.Properties
@@ -1338,7 +1369,11 @@ func (s *Server) nodeToNeo4jHTTPFormat(node *storage.Node, dbName string) map[st
 
 // mapNodeToNeo4jHTTPFormat converts a map representation to Neo4j HTTP format.
 func (s *Server) mapNodeToNeo4jHTTPFormat(nodeId interface{}, m map[string]interface{}, dbName string) map[string]interface{} {
-	elementId := fmt.Sprintf("4:%s:%v", dbName, nodeId)
+	entityDB := dbName
+	if idText, ok := nodeId.(string); ok && idText != "" {
+		entityDB = s.entityDatabase(dbName, storage.NodeID(idText), "")
+	}
+	elementId := fmt.Sprintf("4:%s:%v", entityDB, nodeId)
 
 	// Extract labels
 	var labels []string
@@ -1382,9 +1417,11 @@ func (s *Server) edgeToNeo4jHTTPFormat(edge *storage.Edge, dbName string) map[st
 		return nil
 	}
 
-	elementId := fmt.Sprintf("5:%s:%s", dbName, edge.ID)
-	startElementId := fmt.Sprintf("4:%s:%s", dbName, edge.StartNode)
-	endElementId := fmt.Sprintf("4:%s:%s", dbName, edge.EndNode)
+	// Each entity names its own database (#745): the relationship resolves
+	// through its holder constituent, the endpoints through theirs.
+	elementId := fmt.Sprintf("5:%s:%s", s.entityDatabase(dbName, "", edge.ID), edge.ID)
+	startElementId := fmt.Sprintf("4:%s:%s", s.entityDatabase(dbName, edge.StartNode, ""), edge.StartNode)
+	endElementId := fmt.Sprintf("4:%s:%s", s.entityDatabase(dbName, edge.EndNode, ""), edge.EndNode)
 
 	return map[string]interface{}{
 		"elementId":          elementId,

@@ -702,9 +702,15 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	if err := b.ensureOpen(); err != nil {
+	// Hold the write barrier for the whole operation, as the other public
+	// mutators do: Close cannot pass the publication + notification
+	// registration below until this call finishes, so a successful bulk
+	// delete always dispatches its node-deleted notifications (#726).
+	release, err := b.beginWrite()
+	if err != nil {
 		return err
 	}
+	defer release()
 
 	// Track which nodes were actually deleted for accurate counting
 	deletedNodeCount := int64(0)

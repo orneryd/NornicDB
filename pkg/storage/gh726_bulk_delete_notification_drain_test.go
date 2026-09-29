@@ -9,6 +9,7 @@ package storage
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -55,4 +56,51 @@ func TestGh726_BulkDeleteNotificationsAfterCloseAreSkipped(t *testing.T) {
 	err = engine.BulkDeleteNodes([]NodeID{"nornic:n-1"})
 	require.Error(t, err)
 	require.Zero(t, notifications.Load())
+}
+
+func TestGh726_CloseWaitsForInFlightBulkDeleteNotification(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "nornic:n-1", Labels: []string{"T"}})
+	require.NoError(t, err)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce atomic.Bool
+	var notifications atomic.Int64
+	engine.OnNodeDeleted(func(id NodeID) {
+		notifications.Add(1)
+		if startedOnce.CompareAndSwap(false, true) {
+			close(started)
+		}
+		<-release
+	})
+
+	var deleteErr error
+	deleteDone := make(chan struct{})
+	go func() {
+		defer close(deleteDone)
+		deleteErr = engine.BulkDeleteNodes([]NodeID{"nornic:n-1"})
+	}()
+
+	// The notification dispatch is in flight (blocked on release).
+	<-started
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- engine.Close() }()
+
+	// Close must not return while the dispatch is still running: the write
+	// barrier keeps BulkDeleteNodes' notification registration inside the
+	// window Close drains.
+	select {
+	case <-closeDone:
+		t.Fatal("Close returned before the in-flight notification finished")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(release)
+	require.NoError(t, <-closeDone)
+	<-deleteDone
+	require.NoError(t, deleteErr)
+	require.Equal(t, int64(1), notifications.Load(), "the in-flight dispatch ran before Close returned")
 }
