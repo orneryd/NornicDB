@@ -14,6 +14,7 @@ import (
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 // mockExecutor implements QueryExecutor for testing.
@@ -898,10 +899,9 @@ func TestHandshakeVersionNegotiation(t *testing.T) {
 		session := newTestSession(conn, nil)
 
 		err := session.handshake()
-		// Should still work (server picks best available or rejects)
-		if err != nil && session.version == 0 {
-			// Expected behavior - no matching version
-		}
+		require.Error(t, err, "no mutually supported Bolt protocol version")
+		require.Equal(t, []byte{0, 0, 0, 0}, conn.writeData,
+			"the protocol-level rejection is four zero bytes before closing")
 	})
 
 	t.Run("read error during handshake", func(t *testing.T) {

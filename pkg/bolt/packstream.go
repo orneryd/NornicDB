@@ -25,41 +25,7 @@ func encodePackStreamMapInto(dst []byte, m map[string]any) []byte {
 }
 
 func encodePackStreamMapIntoWithUTC(dst []byte, m map[string]any, useUTCDateTimeStructs bool) []byte {
-	if len(m) == 0 {
-		return append(dst, 0xA0)
-	}
-
-	// Some Cypher internals use helper sentinel keys that should not be serialized
-	// to clients. Keep these out of the wire format.
-	//
-	// Note: we cannot skip all "_" keys because Bolt-compatible node/edge maps use
-	// `_nodeId` / `_edgeId`.
-	skipPathResult := false
-	if _, ok := m["_pathResult"]; ok {
-		skipPathResult = true
-	}
-
-	size := len(m)
-	if skipPathResult {
-		size--
-	}
-	if size < 16 {
-		dst = append(dst, byte(0xA0+size))
-	} else if size < 256 {
-		dst = append(dst, 0xD8, byte(size))
-	} else {
-		dst = append(dst, 0xD9, byte(size>>8), byte(size))
-	}
-
-	for k, v := range m {
-		if k == "_pathResult" {
-			continue
-		}
-		dst = encodePackStreamStringInto(dst, k)
-		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
-	}
-
-	return dst
+	return encodeRecordMapInto(dst, m, useUTCDateTimeStructs, false, "")
 }
 
 func encodePackStreamMap(m map[string]any) []byte {
@@ -71,24 +37,7 @@ func encodePackStreamListInto(dst []byte, items []any) []byte {
 }
 
 func encodePackStreamListIntoWithUTC(dst []byte, items []any, useUTCDateTimeStructs bool) []byte {
-	if len(items) == 0 {
-		return append(dst, 0x90)
-	}
-
-	size := len(items)
-	if size < 16 {
-		dst = append(dst, byte(0x90+size))
-	} else if size < 256 {
-		dst = append(dst, 0xD4, byte(size))
-	} else {
-		dst = append(dst, 0xD5, byte(size>>8), byte(size))
-	}
-
-	for _, item := range items {
-		dst = encodePackStreamValueIntoWithUTC(dst, item, useUTCDateTimeStructs)
-	}
-
-	return dst
+	return encodeRecordListInto(dst, items, useUTCDateTimeStructs, false, "")
 }
 
 func encodePackStreamList(items []any) []byte {
@@ -927,6 +876,22 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 		return encodeRecordListInto(dst, items, useUTCDateTimeStructs, true, dbName)
 	case []any:
 		return encodeRecordListInto(dst, val, useUTCDateTimeStructs, true, dbName)
+	case []map[string]any:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		if size < 16 {
+			dst = append(dst, byte(0x90+size))
+		} else if size < 256 {
+			dst = append(dst, 0xD4, byte(size))
+		} else {
+			dst = append(dst, 0xD5, byte(size>>8), byte(size))
+		}
+		for _, m := range val {
+			dst = encodeRecordValueInto(dst, m, useUTCDateTimeStructs, true, dbName)
+		}
+		return dst
 	case map[string]any:
 		// Node maps (_nodeId + labels) and paths carry entities.
 		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {
@@ -937,8 +902,58 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 		if path, ok := extractPathFromMap(val); ok {
 			return encodePathV5Into(dst, path.Nodes, path.Relationships, dbName)
 		}
+		// Ordinary maps recurse through the version-aware encoder so nested
+		// entities keep their Bolt 5.0 structures (#745: RETURN {n: n}).
+		return encodeRecordMapInto(dst, val, useUTCDateTimeStructs, true, dbName)
 	}
 	return encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+}
+
+// encodeRecordMapInto encodes a map for the negotiated Bolt version. Bolt 5.0
+// recurses through encodeRecordValueInto so entities nested anywhere in the
+// map get their element-id structures; Bolt 4.x keeps the shared legacy
+// encoder. The _pathResult sentinel key is always dropped (the shared 4.x
+// behavior).
+func encodeRecordMapInto(dst []byte, m map[string]any, useUTCDateTimeStructs, bolt5 bool, dbName string) []byte {
+	if len(m) == 0 {
+		return append(dst, 0xA0)
+	}
+
+	// Some Cypher internals use helper sentinel keys that should not be
+	// serialized to clients. Keep these out of the wire format.
+	//
+	// Note: we cannot skip all "_" keys because Bolt-compatible node/edge maps
+	// use `_nodeId` / `_edgeId`.
+	skipPathResult := false
+	if _, ok := m["_pathResult"]; ok {
+		skipPathResult = true
+	}
+
+	size := len(m)
+	if skipPathResult {
+		size--
+	}
+	if size < 16 {
+		dst = append(dst, byte(0xA0+size))
+	} else if size < 256 {
+		dst = append(dst, 0xD8, byte(size))
+	} else {
+		dst = append(dst, 0xD9, byte(size>>8), byte(size))
+	}
+
+	for k, v := range m {
+		if k == "_pathResult" {
+			continue
+		}
+		dst = encodePackStreamStringInto(dst, k)
+		if bolt5 {
+			dst = encodeRecordValueInto(dst, v, useUTCDateTimeStructs, true, dbName)
+		} else {
+			dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+		}
+	}
+
+	return dst
 }
 
 // encodeStorageNodeV5Into encodes a node with the Bolt 5.0 four-field
@@ -953,15 +968,20 @@ func encodeStorageNodeV5Into(dst []byte, node *storage.Node, dbName string) []by
 	return encodePackStreamStringInto(dst, storage.NodeElementID(dbName, node.ID))
 }
 
-// encodeStorageEdgeV5Into encodes a relationship with the Bolt 5.0 six-field
-// structure (id, start, end, type, properties, element_id).
+// encodeStorageEdgeV5Into encodes a relationship with the Bolt 5.0 eight-field
+// structure (id, start, end, type, properties, element_id,
+// start_node_element_id, end_node_element_id). It reuses the 4.x field
+// encoding and upgrades the struct marker before appending the element ids.
 func encodeStorageEdgeV5Into(dst []byte, edge *storage.Edge, dbName string) []byte {
 	start := len(dst)
 	dst = encodeStorageEdgeIntoWithUTC(dst, edge, true)
 	if start+1 < len(dst) {
-		dst[start] = 0xB6 // B5 52 (5 fields) -> B6 52 (6 fields)
+		dst[start] = 0xB8 // B5 52 (5 fields) -> B8 52 (8 fields)
 	}
-	return encodePackStreamStringInto(dst, storage.RelationshipElementID(dbName, edge.ID))
+	dst = encodePackStreamStringInto(dst, storage.RelationshipElementID(dbName, edge.ID))
+	dst = encodePackStreamStringInto(dst, storage.NodeElementID(dbName, edge.StartNode))
+	dst = encodePackStreamStringInto(dst, storage.NodeElementID(dbName, edge.EndNode))
+	return dst
 }
 
 // encodeNodeV5Into encodes a map-backed node (id, labels, properties,
@@ -979,8 +999,8 @@ func encodeNodeV5Into(dst []byte, nodeId any, labels any, nodeMap map[string]any
 	return encodePackStreamStringInto(dst, storage.NodeElementID(dbName, storage.NodeID(id)))
 }
 
-// encodePathV5Into encodes a path whose nodes carry Bolt 5.0 element ids.
-// Unbound relationships keep their three-field structure in Bolt 5.0.
+// encodePathV5Into encodes a path whose nodes and unbound relationships carry
+// Bolt 5.0 element ids (B4 72 unbound relationships).
 func encodePathV5Into(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, dbName string) []byte {
 	dst = append(dst, 0xB3, 0x50)
 	if len(pathNodes) == 0 {
@@ -1000,14 +1020,49 @@ func encodePathV5Into(dst []byte, pathNodes []*storage.Node, pathRels []*storage
 	}
 	dst = encodeRecordListInto(dst, nodeItems, true, true, dbName)
 
-	rels := make([]any, len(uniqueRels))
+	rels := make([]unboundRelationship, len(uniqueRels))
 	for i, rel := range uniqueRels {
 		rels[i] = unboundRelationship{id: rel.ID, relType: rel.Type, properties: rel.Properties}
 	}
-	dst = encodePackStreamListIntoWithUTC(dst, rels, true)
+	dst = encodeUnboundRelationshipListV5Into(dst, rels, dbName)
 
 	sequence := buildPathSequence(pathNodes, pathRels, nodeIndex, relIndex)
 	return encodePackStreamValueIntoWithUTC(dst, sequence, true)
+}
+
+// encodeUnboundRelationshipV5Into encodes a Bolt 5.0 unbound relationship:
+// B4 72 (id, type, properties, element_id). Bolt 5.0 added the element id as
+// the fourth field; the 4.x structure keeps three.
+func encodeUnboundRelationshipV5Into(dst []byte, rel *unboundRelationship, dbName string) []byte {
+	dst = append(dst, 0xB4, 0x72)
+	dst = encodePackStreamIntInto(dst, util.HashStringToInt64(string(rel.id)))
+	dst = encodePackStreamStringInto(dst, rel.relType)
+	if len(rel.properties) == 0 {
+		dst = append(dst, 0xA0)
+	} else {
+		dst = encodePackStreamMapIntoWithUTC(dst, rel.properties, true)
+	}
+	return encodePackStreamStringInto(dst, storage.RelationshipElementID(dbName, rel.id))
+}
+
+// encodeUnboundRelationshipListV5Into encodes a list of Bolt 5.0 unbound
+// relationships (path field 2).
+func encodeUnboundRelationshipListV5Into(dst []byte, rels []unboundRelationship, dbName string) []byte {
+	if len(rels) == 0 {
+		return append(dst, 0x90)
+	}
+	size := len(rels)
+	if size < 16 {
+		dst = append(dst, byte(0x90+size))
+	} else if size < 256 {
+		dst = append(dst, 0xD4, byte(size))
+	} else {
+		dst = append(dst, 0xD5, byte(size>>8), byte(size))
+	}
+	for i := range rels {
+		dst = encodeUnboundRelationshipV5Into(dst, &rels[i], dbName)
+	}
+	return dst
 }
 
 func encodePathIntoWithUTC(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, useUTCDateTimeStructs bool) []byte {

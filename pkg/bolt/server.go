@@ -1572,11 +1572,13 @@ func (s *Session) boltV5() bool {
 
 // selectBoltVersion picks the highest mutually supported protocol version
 // from a client's four handshake proposals. Each proposal is the wire
-// [0x00, back, minor, major] encoding; the first proposal may be the Bolt
-// manifest marker (0x000001FF), which this server does not speak — clients
-// that offer it also offer concrete versions. It returns the selected
-// major.minor version, the exact proposal bytes to echo, and whether any
-// proposal was mutually supported.
+// [0x00, back, minor, major] encoding and names the range [minor-back,
+// minor] of one major version (a Python-driver offer of 5.8 with back=8
+// covers 5.0..5.8); the first proposal may be the Bolt manifest marker
+// (0x000001FF), which this server does not speak — clients that offer it
+// also offer concrete versions. It returns the selected major.minor
+// version, the reply bytes [0x00, 0x00, minor, major] (a concrete version,
+// never a range), and whether any proposal was mutually supported.
 func selectBoltVersion(offers []uint32) (version uint32, reply uint32, ok bool) {
 	selected := uint32(0)
 	selectedWire := uint32(0)
@@ -1584,14 +1586,23 @@ func selectBoltVersion(offers []uint32) (version uint32, reply uint32, ok bool) 
 		if offered&0xFF000000 != 0 {
 			continue // manifest marker or reserved range
 		}
-		major := offered & 0xFF
-		minor := (offered >> 8) & 0xFF
-		mm := (major << 8) | minor
-		switch mm {
-		case BoltV5_0, BoltV4_4, BoltV4_3, BoltV4_2, BoltV4_1, BoltV4_0:
-			if mm > selected {
-				selected = mm
-				selectedWire = offered
+		major := int(offered & 0xFF)
+		minor := int((offered >> 8) & 0xFF)
+		back := int((offered >> 16) & 0xFF)
+		lowest := minor - back
+		if lowest < 0 {
+			lowest = 0
+		}
+		// A proposal covers [minor-back, minor]. Pick the highest supported
+		// minor in the range; lower candidates can't beat it.
+		for candidate := minor; candidate >= lowest; candidate-- {
+			mm := uint32(major<<8 | candidate)
+			if mm == BoltV5_0 || mm == BoltV4_4 || mm == BoltV4_3 || mm == BoltV4_2 || mm == BoltV4_1 || mm == BoltV4_0 {
+				if mm > selected {
+					selected = mm
+					selectedWire = uint32(candidate<<8 | major)
+				}
+				break
 			}
 		}
 	}
@@ -1625,7 +1636,7 @@ func (s *Session) handshake() error {
 	// Select the highest version the client offers that we support, so a
 	// Neo4j 5 driver negotiates Bolt 5.0 and receives element ids in the
 	// node/relationship structures (#745). Older clients keep 4.x. The reply
-	// is the exact offered proposal bytes (wire format [0x00, back, minor,
+	// is the concrete selected version (wire format [0x00, 0x00, minor,
 	// major]); the session records the major.minor version.
 	offers := []uint32{
 		binary.BigEndian.Uint32(versions[0:4]),
@@ -1635,6 +1646,11 @@ func (s *Session) handshake() error {
 	}
 	selected, reply, ok := selectBoltVersion(offers)
 	if !ok {
+		// Bolt handshake spec: a rejection is four zero bytes on the wire
+		// before closing, so clients see the protocol-level no-version
+		// result instead of an EOF.
+		_, _ = s.writer.Write([]byte{0, 0, 0, 0})
+		_ = s.writer.Flush()
 		return fmt.Errorf("no mutually supported Bolt protocol version")
 	}
 	s.version = selected

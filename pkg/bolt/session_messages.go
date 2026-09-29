@@ -784,7 +784,7 @@ func (s *Session) handlePull(data []byte) error {
 
 	// For large batches (>50 records), use batched writing to reduce syscalls
 	if remaining > 50 {
-		if err := s.sendRecordsBatched(stream.result.Rows[stream.index : stream.index+remaining]); err != nil {
+		if err := s.sendRecordsBatched(stream.result.Rows[stream.index : stream.index+remaining], stream.database); err != nil {
 			return err
 		}
 		stream.index += remaining
@@ -797,7 +797,7 @@ func (s *Session) handlePull(data []byte) error {
 			}
 
 			row := stream.result.Rows[stream.index]
-			if err := s.writeRecordNoFlush(row); err != nil {
+			if err := s.writeRecordNoFlush(row, stream.database); err != nil {
 				return err
 			}
 
@@ -1455,8 +1455,9 @@ func (s *Session) sendRecord(fields []any) error {
 
 // writeRecordNoFlush writes a RECORD message but does not flush.
 // It is used by PULL streaming to batch many records into a single flush
-// (the final SUCCESS message flushes everything).
-func (s *Session) writeRecordNoFlush(fields []any) error {
+// (the final SUCCESS message flushes everything). dbName is the database the
+// active result stream ran on (its entities carry its element ids, #745).
+func (s *Session) writeRecordNoFlush(fields []any, dbName string) error {
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1464,7 +1465,7 @@ func (s *Session) writeRecordNoFlush(fields []any) error {
 	buf = buf[:0]
 
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database)
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName)
 
 	err := s.writeMessageNoFlush(buf)
 	s.recordBuf = buf[:0]
@@ -1474,8 +1475,9 @@ func (s *Session) writeRecordNoFlush(fields []any) error {
 // sendRecordsBatched sends multiple RECORD responses using buffered I/O.
 // This dramatically reduces syscall overhead for large result sets.
 // For 500 records: ~500 syscalls → 1 syscall = ~8x faster
-// Uses buffer pooling to reduce allocations per record.
-func (s *Session) sendRecordsBatched(rows [][]any) error {
+// Uses buffer pooling to reduce allocations per record. dbName is the
+// database the active result stream ran on (#745 element ids).
+func (s *Session) sendRecordsBatched(rows [][]any, dbName string) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1492,7 +1494,7 @@ func (s *Session) sendRecordsBatched(rows [][]any) error {
 
 		// Build record: struct marker + signature + list of fields
 		buf = append(buf, recordHeader...)
-		buf = encodeRecordListInto(buf, row, s.useUTCDateTimeStructs(), s.boltV5(), s.database)
+		buf = encodeRecordListInto(buf, row, s.useUTCDateTimeStructs(), s.boltV5(), dbName)
 
 		// bufio.Writer does not retain the provided slice after Write returns,
 		// so it's safe to reuse the pooled buffer on the next iteration.

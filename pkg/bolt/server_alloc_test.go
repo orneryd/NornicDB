@@ -17,12 +17,12 @@ func TestWriteRecordNoFlush_Allocs_SmallRowIsZero(t *testing.T) {
 	row := []any{int64(1), "Alice", int64(30)}
 
 	// Prime any one-time allocations (buffer growth) outside measurement.
-	if err := session.writeRecordNoFlush(row); err != nil {
+	if err := session.writeRecordNoFlush(row, "nornic"); err != nil {
 		t.Fatal(err)
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		boltAllocSink = session.writeRecordNoFlush(row)
+		boltAllocSink = session.writeRecordNoFlush(row, "nornic")
 	})
 
 	if allocs != 0 {
@@ -46,12 +46,12 @@ func TestWriteRecordNoFlush_Allocs_LargeRowIsZero(t *testing.T) {
 	}
 	row := []any{node, "ok", float64(3.14159)}
 
-	if err := session.writeRecordNoFlush(row); err != nil {
+	if err := session.writeRecordNoFlush(row, "nornic"); err != nil {
 		t.Fatal(err)
 	}
 
 	allocs := testing.AllocsPerRun(500, func() {
-		boltAllocSink = session.writeRecordNoFlush(row)
+		boltAllocSink = session.writeRecordNoFlush(row, "nornic")
 	})
 
 	if allocs != 0 {

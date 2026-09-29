@@ -80,7 +80,7 @@ func BenchmarkBolt_WriteRecordNoFlush_SmallRow(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		if err := session.writeRecordNoFlush(row); err != nil {
+		if err := session.writeRecordNoFlush(row, "nornic"); err != nil {
 			b.Fatal(err)
 		}
 		// mimic end-of-pull flush
@@ -109,7 +109,7 @@ func BenchmarkBolt_WriteRecordNoFlush_LargeRow(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		if err := session.writeRecordNoFlush(row); err != nil {
+		if err := session.writeRecordNoFlush(row, "nornic"); err != nil {
 			b.Fatal(err)
 		}
 		if err := session.sendSuccess(map[string]any{"has_more": true}); err != nil {
@@ -163,7 +163,7 @@ func BenchmarkBolt_SendRecordsBatched_SmallRow(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		if err := session.sendRecordsBatched(rows); err != nil {
+		if err := session.sendRecordsBatched(rows, "nornic"); err != nil {
 			b.Fatal(err)
 		}
 		if err := session.sendSuccess(map[string]any{"has_more": false}); err != nil {
@@ -235,7 +235,7 @@ func BenchmarkBolt_SendRecordsBatched_LargeRow(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		if err := session.sendRecordsBatched(rows); err != nil {
+		if err := session.sendRecordsBatched(rows, "nornic"); err != nil {
 			b.Fatal(err)
 		}
 		if err := session.sendSuccess(map[string]any{"has_more": false}); err != nil {
