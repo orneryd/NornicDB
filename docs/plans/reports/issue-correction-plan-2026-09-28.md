@@ -141,7 +141,7 @@ returns `[1, null]` (Neo4j `[1,2],[2,2],[3,2]`); the WHERE variant returns `[]`.
 
 **Tests:** the four reopened statements on all three routes vs Neo4j, twice, `-race`.
 
-**Status: DONE** (commit 0f6f47a):
+**Status: DONE** (commit 26e3fb2d):
 - `executeBoundEndShortestPath` (`shortest_path.go`): when one or both endpoints are
   bare variable references, the preceding clause chain seeds the row space
   (`prefix RETURN *`, executed once) and the BFS runs per input row. Path rows are
