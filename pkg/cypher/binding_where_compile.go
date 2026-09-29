@@ -945,7 +945,66 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context,
 func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
 	resolved := e.substituteParams(expr, params)
 	result := e.evaluateExpressionWithContext(ctx, resolved, b, nil)
+	// Neo4j distinguishes a bare value reference from a computed expression in
+	// predicate position (#728): a variable or property that holds a
+	// non-boolean raises TypeError ("Don't know how to treat that as a
+	// predicate"), while a computed non-boolean expression filters the row out.
+	// e.g. WHERE n.id -> TypeError; WHERE n.id + 'z' -> no rows.
+	if !isBareValueReference(expr) && !expressionHasNoIdentifiers(expr) {
+		boolean, isBoolean := result.(bool)
+		return isBoolean && boolean
+	}
 	return predicateValueIsTrue(ctx, result)
+}
+
+// isBareValueReference reports whether expr is a plain variable or property
+// reference (identifier, or identifier dotted chains) with no operator,
+// literal, or function call. Backtick-quoted identifiers count as references.
+func isBareValueReference(expr string) bool {
+	trimmed := strings.TrimSpace(expr)
+	if trimmed == "" {
+		return false
+	}
+	hasIdent := false
+	afterIdent := false // last significant token was an identifier
+	expectIdent := true
+	inBacktick := false
+	for i := 0; i < len(trimmed); i++ {
+		c := trimmed[i]
+		if inBacktick {
+			if c == '`' {
+				if i+1 < len(trimmed) && trimmed[i+1] == '`' {
+					i++
+					continue
+				}
+				inBacktick = false
+				hasIdent = true
+				afterIdent = true
+				expectIdent = false
+			}
+			continue
+		}
+		if c == '`' {
+			inBacktick = true
+			continue
+		}
+		if isIdentByte(c) {
+			hasIdent = true
+			afterIdent = true
+			expectIdent = false
+			continue
+		}
+		if c == '.' {
+			if !afterIdent {
+				return false
+			}
+			expectIdent = true
+			afterIdent = false
+			continue
+		}
+		return false
+	}
+	return hasIdent && !expectIdent
 }
 
 func (e *StorageExecutor) compareNodeIDs(leftID, rightID string, op string) bool {

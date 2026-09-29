@@ -2084,7 +2084,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			if !isNode || node == nil || !pipelineNodeMatchesPattern(node, nodePattern) {
 				continue
 			}
-			if materializedWhere == "" || e.evaluateWithWhereCondition(ctx, materializedWhere, map[string]interface{}(row)) {
+			if materializedWhere == "" || e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(row)) {
 				out = append(out, e.pipelineBindZeroLengthPath(row, pathVariable, node))
 			}
 			continue
@@ -2112,7 +2112,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			if pathVariable != "" {
 				joined[pathVariable] = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
 			}
-			if materializedWhere == "" || e.evaluateWithWhereCondition(ctx, materializedWhere, map[string]interface{}(joined)) {
+			if materializedWhere == "" || e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(joined)) {
 				out = append(out, joined)
 			}
 		}

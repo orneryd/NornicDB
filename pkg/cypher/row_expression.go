@@ -1645,7 +1645,7 @@ func rowSubscriptIndex(value interface{}) (int, bool) {
 // value to a row variable that replaces the block, and evaluates the
 // predicate that remains. The value keeps its type (a list or map stays one),
 // unlike a literal substitution.
-func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context, expression string, spans []caseBlockSpan, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context, expression string, spans []caseBlockSpan, values map[string]interface{}, relaxed bool) bool {
 	scope := make(map[string]interface{}, len(values)+len(spans))
 	for name, value := range values {
 		scope[name] = value
@@ -1669,7 +1669,7 @@ func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context,
 		last = span.end
 	}
 	builder.WriteString(expression[last:])
-	return e.evaluateRowPredicateParts(ctx, builder.String(), scope)
+	return e.evaluateRowPredicateParts(ctx, builder.String(), scope, relaxed)
 }
 
 // evaluateRowPredicate evaluates a WHERE predicate against a row.
@@ -1680,17 +1680,30 @@ func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context,
 // first, once per predicate, as the context evaluator substitutes them
 // (evaluateExpressionWithCASESubstituted).
 func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
+	return e.evaluateRowPredicateMode(ctx, expression, values, false)
+}
+
+// evaluateMatchRowPredicate is the MATCH-clause flavor of the same predicate
+// evaluator: for a computed non-boolean expression the row is filtered out
+// instead of raising (#728), while a bare value reference and a literal keep
+// the strict TypeError. The evaluation path is identical to
+// evaluateRowPredicate; only the final truth coercion differs.
+func (e *StorageExecutor) evaluateMatchRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
+	return e.evaluateRowPredicateMode(ctx, expression, values, true)
+}
+
+func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expression string, values map[string]interface{}, relaxed bool) bool {
 	if mayContainCaseKeyword(expression) {
 		if spans := caseBlockSpans(expression); len(spans) > 0 {
-			return e.evaluateRowPredicateWithCASEBound(ctx, expression, spans, values)
+			return e.evaluateRowPredicateWithCASEBound(ctx, expression, spans, values, relaxed)
 		}
 	}
-	return e.evaluateRowPredicateParts(ctx, expression, values)
+	return e.evaluateRowPredicateParts(ctx, expression, values, relaxed)
 }
 
 // evaluateRowPredicateParts is evaluateRowPredicate for a predicate whose CASE
 // blocks are bound; it recurses into its OR / AND / NOT parts.
-func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, expression string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, expression string, values map[string]interface{}, relaxed bool) bool {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return false
@@ -1704,7 +1717,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	// generic comparison/expression evaluators and returning a wrong
 	// (false) result instead of evaluating the subquery.
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		return e.evaluateRowPredicateParts(ctx, inner, values)
+		return e.evaluateRowPredicateParts(ctx, inner, values, relaxed)
 	}
 	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
 	// COUNT { … } + 1 > 1, …) are evaluated for the row first, unless AND / OR
@@ -1719,10 +1732,10 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 			if count, ok := value.(int64); ok {
 				return plan.integerComparison.holds(count)
 			}
-			return e.evaluateRowPredicate(ctx, plan.rewritten, plan.extendRow(pipelineRow(values), []interface{}{value}))
+			return e.evaluateRowPredicateMode(ctx, plan.rewritten, plan.extendRow(pipelineRow(values), []interface{}{value}), relaxed)
 		}
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
-		return e.evaluateRowPredicate(ctx, rewritten, extended)
+		return e.evaluateRowPredicateMode(ctx, rewritten, extended, relaxed)
 	}
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
 		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
@@ -1730,20 +1743,20 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	// AND parts that compare or null-test simple operands are parsed once per
 	// predicate text (planRowPredicate), not once per row.
 	if plan := planRowPredicate(expression); plan != nil {
-		return e.evaluateRowPredicatePlan(ctx, plan, values)
+		return e.evaluateRowPredicatePlan(ctx, plan, values, relaxed)
 	}
-	return e.evaluateRowPredicateText(ctx, expression, values)
+	return e.evaluateRowPredicateText(ctx, expression, values, relaxed)
 }
 
 // evaluateRowPredicateText is evaluateRowPredicate without the predicate plan:
 // the predicate is evaluated from its text. A planned part whose operand the
 // plan can't resolve directly is evaluated here.
-func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expression string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expression string, values map[string]interface{}, relaxed bool) bool {
 	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, true); ok {
-		return e.evaluateRowPredicateParts(ctx, left, values) || e.evaluateRowPredicateParts(ctx, right, values)
+		return e.evaluateRowPredicateParts(ctx, left, values, relaxed) || e.evaluateRowPredicateParts(ctx, right, values, relaxed)
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, true); ok {
-		return e.evaluateRowPredicateParts(ctx, left, values) && e.evaluateRowPredicateParts(ctx, right, values)
+		return e.evaluateRowPredicateParts(ctx, left, values, relaxed) && e.evaluateRowPredicateParts(ctx, right, values, relaxed)
 	}
 	// EXISTS and NOT EXISTS are complete predicates. Resolve both before the
 	// generic NOT operator so a subquery is evaluated against its correlated
@@ -1760,11 +1773,11 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 			boolean, isBoolean := value.(bool)
 			return isBoolean && !boolean
 		}
-		return !e.evaluateRowPredicateParts(ctx, inner, values)
+		return !e.evaluateRowPredicateParts(ctx, inner, values, relaxed)
 	}
 	if plan := planRowSubqueries(expression); plan != nil {
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
-		return e.evaluateRowPredicate(ctx, rewritten, extended)
+		return e.evaluateRowPredicateMode(ctx, rewritten, extended, relaxed)
 	}
 	if nodeCtx, _ := withWhereValueContext(values); len(nodeCtx) > 0 && looksLikeRowRelationshipPattern(expression) {
 		if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, expression, nodeCtx); recognized {
@@ -1832,6 +1845,15 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 	value, ok := e.rowPredicateOperand(ctx, expression, values)
 	if !ok {
 		return false
+	}
+	// #728 truth coercion, in the shared evaluator's final fallthrough:
+	//   - a bare variable/property reference or a pure literal holding a
+	//     non-boolean raises TypeError (WHERE n.id, WHERE 1, WHERE [1]);
+	//   - in MATCH position a computed non-boolean expression filters the
+	//     row out (WHERE n.id + 'z' -> no rows) instead of raising.
+	if relaxed && !isBareValueReference(expression) && !expressionHasNoIdentifiers(expression) {
+		boolean, isBoolean := value.(bool)
+		return isBoolean && boolean
 	}
 	return predicateValueIsTrue(ctx, value)
 }

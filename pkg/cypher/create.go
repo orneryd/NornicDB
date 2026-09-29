@@ -2619,7 +2619,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 		if term == "" {
 			continue
 		}
-		lv, lp, rv, rp, ok := parseCartesianVarPropEqualityTerm(term)
+		lv, lp, rv, rp, offset, ok := parseCartesianVarPropEqualityTerm(term)
 		if !ok {
 			continue
 		}
@@ -2634,6 +2634,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 			leftProp:  lp,
 			rightVar:  rv,
 			rightProp: rp,
+			offset:    offset,
 		})
 	}
 	if len(eqConstraints) == 0 {
@@ -2729,10 +2730,17 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 				baseProp := ""
 				newVar := ""
 				newProp := ""
+				// leftVar.leftProp = rightVar.rightProp + offset. Expanding
+				// from a base variable to a new variable needs the new
+				// variable's value expressed through the base's: from left to
+				// right it is left - offset, from right to left it is
+				// right + offset.
+				lookupOffset := int64(0)
 				if _, ok := added[c.leftVar]; ok {
 					if _, seen := added[c.rightVar]; !seen {
 						baseVar, baseProp = c.leftVar, c.leftProp
 						newVar, newProp = c.rightVar, c.rightProp
+						lookupOffset = -c.offset
 					}
 				}
 				if baseVar == "" {
@@ -2740,6 +2748,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 						if _, seen := added[c.leftVar]; !seen {
 							baseVar, baseProp = c.rightVar, c.rightProp
 							newVar, newProp = c.leftVar, c.leftProp
+							lookupOffset = c.offset
 						}
 					}
 				}
@@ -2758,7 +2767,22 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 					if !ok {
 						continue
 					}
-					for _, matchNode := range idx[cartesianValueKey(baseVal)] {
+					lookupKey := cartesianValueKey(baseVal)
+					if lookupOffset != 0 {
+						baseNum, numeric := toFloat64(baseVal)
+						if !numeric {
+							continue
+						}
+						// Keep the value's integer type so the key matches the
+						// index, which is keyed by the stored values' type.
+						switch baseVal.(type) {
+						case int:
+							lookupKey = cartesianValueKey(int(baseNum) + int(lookupOffset))
+						default:
+							lookupKey = cartesianValueKey(int64(baseNum) + lookupOffset)
+						}
+					}
+					for _, matchNode := range idx[lookupKey] {
 						joined := make(map[string]*storage.Node, util.SafePreallocSum(len(row), 1))
 						for k, v := range row {
 							joined[k] = v
@@ -2788,7 +2812,21 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 				}
 				lv, lok := ln.Properties[c.leftProp]
 				rv, rok := rn.Properties[c.rightProp]
-				if !lok || !rok || cartesianValueKey(lv) != cartesianValueKey(rv) {
+				if !lok || !rok {
+					keep = false
+					break
+				}
+				if c.offset == 0 {
+					if cartesianValueKey(lv) != cartesianValueKey(rv) {
+						keep = false
+						break
+					}
+					continue
+				}
+				// lv must equal rv + offset numerically (#692).
+				lNum, lNumeric := toFloat64(lv)
+				rNum, rNumeric := toFloat64(rv)
+				if !lNumeric || !rNumeric || lNum != rNum+float64(c.offset) {
 					keep = false
 					break
 				}

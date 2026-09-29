@@ -469,57 +469,29 @@ func (e *StorageExecutor) executeBoundEndShortestPath(ctx context.Context, query
 		EndNode:      query.endNode,
 		PathVariable: query.pathVariable,
 	}
+	seeded, err := e.runSeededShortestPaths(ctx, seed.Columns, seed.Rows,
+		startByPattern, endByPattern, startIsVarRef, endIsVarRef,
+		query.startNode.variable, query.endNode.variable,
+		query.findAll, query.relTypes, query.direction, query.maxHops)
+	if err != nil {
+		return nil, true, err
+	}
 	rows := make([]pipelineRow, 0, len(seed.Rows))
-	for _, seedRow := range seed.Rows {
+	for _, found := range seeded {
+		if len(found.paths) == 0 {
+			continue
+		}
+		seedRow := seed.Rows[found.seedIndex]
 		row := make(pipelineRow, len(seed.Columns))
 		for i, name := range seed.Columns {
 			row[name] = seedRow[i]
 		}
-		start, end := startByPattern, endByPattern
-		if startIsVarRef {
-			if node, isNode := row[query.startNode.variable].(*storage.Node); isNode {
-				start = node
-			}
-		}
-		if endIsVarRef {
-			if node, isNode := row[query.endNode.variable].(*storage.Node); isNode {
-				end = node
-			}
-		}
-		if start == nil || end == nil || start.ID == end.ID {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, true, err
-		}
-		var paths []PathResult
-		if query.findAll {
-			found, err := e.allShortestPaths(ctx, start, end, query.relTypes, query.direction, query.maxHops)
-			if err != nil {
-				return nil, true, err
-			}
-			paths = found
-		} else {
-			found, err := e.shortestPath(ctx, start, end, query.relTypes, query.direction, query.maxHops)
-			if err != nil {
-				return nil, true, err
-			}
-			if found != nil {
-				paths = append(paths, *found)
-			}
-		}
-		for _, path := range paths {
+		for _, path := range e.filterPathsByWhere(ctx, found.paths, traversal, query.whereClause) {
 			projected := make(pipelineRow, len(row)+1)
 			for name, value := range row {
 				projected[name] = value
 			}
 			projected[query.pathVariable] = e.pathToMap(path)
-			if query.whereClause != "" {
-				pathContext := e.buildPathContext(path, traversal)
-				if !isTruthy(e.evaluateExpressionWithPathContext(ctx, query.whereClause, pathContext)) {
-					continue
-				}
-			}
 			rows = append(rows, projected)
 		}
 	}
@@ -532,6 +504,71 @@ func (e *StorageExecutor) executeBoundEndShortestPath(ctx context.Context, query
 		projected.Stats = &QueryStats{}
 	}
 	return projected, true, nil
+}
+
+// seededShortestPathResult is the BFS outcome for one seed row.
+type seededShortestPathResult struct {
+	seedIndex int
+	paths     []PathResult
+}
+
+// runSeededShortestPaths runs the shortestPath/allShortestPaths BFS once per
+// seed row, resolving bare endpoint variables against the row and patterned
+// endpoints once per statement. It is the shared per-row traversal behind the
+// bound-end MATCH handler (#581/#721) and the OPTIONAL MATCH handler, so both
+// clause forms traverse identically; only their row semantics differ
+// (dropping vs. null rows).
+func (e *StorageExecutor) runSeededShortestPaths(
+	ctx context.Context,
+	seedColumns []string,
+	seedRows [][]interface{},
+	startByPattern, endByPattern *storage.Node,
+	startIsVarRef, endIsVarRef bool,
+	startVar, endVar string,
+	findAll bool,
+	relTypes []string,
+	direction string,
+	maxHops int,
+) ([]seededShortestPathResult, error) {
+	results := make([]seededShortestPathResult, 0, len(seedRows))
+	for index, seed := range seedRows {
+		bound := make(map[string]interface{}, len(seedColumns))
+		for i, name := range seedColumns {
+			bound[name] = seed[i]
+		}
+		start, end := startByPattern, endByPattern
+		if startIsVarRef {
+			start, _ = bound[startVar].(*storage.Node)
+		}
+		if endIsVarRef {
+			end, _ = bound[endVar].(*storage.Node)
+		}
+		if start == nil || end == nil || start.ID == end.ID {
+			results = append(results, seededShortestPathResult{seedIndex: index})
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var paths []PathResult
+		if findAll {
+			found, err := e.allShortestPaths(ctx, start, end, relTypes, direction, maxHops)
+			if err != nil {
+				return nil, err
+			}
+			paths = found
+		} else {
+			found, err := e.shortestPath(ctx, start, end, relTypes, direction, maxHops)
+			if err != nil {
+				return nil, err
+			}
+			if found != nil {
+				paths = append(paths, *found)
+			}
+		}
+		results = append(results, seededShortestPathResult{seedIndex: index, paths: paths})
+	}
+	return results, nil
 }
 
 // executeOptionalShortestPath handles anchored shortestPath forms:
@@ -637,64 +674,29 @@ func (e *StorageExecutor) executeOptionalShortestPath(ctx context.Context, cyphe
 			EndNode:      match.EndNode,
 			PathVariable: pathVariable,
 		}
+		seeded, err := e.runSeededShortestPaths(ctx, seedColumns, rows,
+			startByPattern, endByPattern, !startHasPattern, !endHasPattern,
+			match.StartNode.variable, match.EndNode.variable,
+			findAll, match.Relationship.Types, match.Relationship.Direction, maxHops)
+		if err != nil {
+			return nil, err
+		}
 		builtRows := make([][]interface{}, 0, len(rows))
-		for _, seed := range rows {
-			bound := map[string]interface{}{}
+		for _, found := range seeded {
+			seed := rows[found.seedIndex]
+			nullCtx := PathContext{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}, paths: map[string]*PathResult{}}
 			for i, name := range seedColumns {
-				bound[name] = seed[i]
-			}
-			start, end := startByPattern, endByPattern
-			if !startHasPattern && match.StartNode.variable != "" {
-				start, _ = bound[match.StartNode.variable].(*storage.Node)
-			}
-			if !endHasPattern && match.EndNode.variable != "" {
-				end, _ = bound[match.EndNode.variable].(*storage.Node)
-			}
-			if start == nil || end == nil || start.ID == end.ID {
-				nullCtx := PathContext{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}, paths: map[string]*PathResult{}}
-				for i, name := range seedColumns {
-					if node, ok := seed[i].(*storage.Node); ok {
-						nullCtx.nodes[name] = node
-					}
+				if node, ok := seed[i].(*storage.Node); ok {
+					nullCtx.nodes[name] = node
 				}
+			}
+			if len(found.paths) == 0 {
 				builtRows = append(builtRows, e.buildOptionalShortestPathRow(ctx, returnItems, pathVariable, nil, nullCtx))
 				continue
 			}
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			var paths []PathResult
-			if findAll {
-				found, err := e.allShortestPaths(ctx, start, end, match.Relationship.Types, match.Relationship.Direction, maxHops)
-				if err != nil {
-					return nil, err
-				}
-				paths = found
-			} else {
-				found, err := e.shortestPath(ctx, start, end, match.Relationship.Types, match.Relationship.Direction, maxHops)
-				if err != nil {
-					return nil, err
-				}
-				if found != nil {
-					paths = append(paths, *found)
-				}
-			}
-			if len(paths) == 0 {
-				nullCtx := PathContext{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}, paths: map[string]*PathResult{}}
-				for i, name := range seedColumns {
-					if node, ok := seed[i].(*storage.Node); ok {
-						nullCtx.nodes[name] = node
-					}
-				}
-				builtRows = append(builtRows, e.buildOptionalShortestPathRow(ctx, returnItems, pathVariable, nil, nullCtx))
-				continue
-			}
-			for _, path := range paths {
+			for _, path := range e.filterPathsByWhere(ctx, found.paths, traversal, whereClause) {
 				pathContext := e.buildPathContext(path, traversal)
 				row := e.buildOptionalShortestPathRow(ctx, returnItems, pathVariable, &path, pathContext)
-				if whereClause != "" && !isTruthy(e.evaluateExpressionWithPathContext(ctx, whereClause, pathContext)) {
-					continue
-				}
 				builtRows = append(builtRows, row)
 			}
 		}

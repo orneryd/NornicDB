@@ -181,6 +181,42 @@ materialized before WHERE applies (OOM at 10k nodes); non-boolean WHERE keeps ro
 **Tests:** the issue's null-row and cross-product statements at 10k nodes (memory-bounded,
 no OOM), three routes.
 
+**Status: DONE** (see §6 fixes; commit follows §6 convergence):
+- **Convergence (no new evaluation paths):** the strict/relaxed distinction lives
+  inside the shared `evaluateRowPredicate*` evaluator as a `relaxed` mode flag
+  (`evaluateRowPredicateMode`); `evaluateMatchWhereCondition` is a one-line entry
+  into that same path. Final truth coercion in the shared fallthrough:
+  bare reference or pure literal → TypeError; MATCH-position computed non-boolean
+  → row filtered (WHERE `n.id + 'z'` → no rows); all other positions strict.
+- CALL-body `WITH … WHERE` null rows: in `executeMatchWithCallSubquery`'s per-seed
+  loop, a subquery that returns zero rows removes its outer row only when the body
+  carried its own RETURN (`innerHadReturn`); write-only bodies keep the seed row.
+- Importing-WITH validation: `CALL { WITH i WHERE … }` without a CALL import list
+  and referencing an outer variable is a SyntaxError (Neo4j row 7); plain importing
+  WITHs stay allowed.
+- #692 cross product: `parseCartesianVarPropEqualityTerm` now parses integer-offset
+  joins (`b.id = a.id + 1`, normalized both directions); `applyCartesianWherePushdown`
+  shifts allowed value sets by the offset, and `buildCombinationsUsingWhereJoin`
+  performs the offset hash-join with offset-aware residual checks — the offset join
+  no longer materializes the full product.
+- #599: measured GenericFallback 12.2µs (pre-#566 band 11.7-13.2µs) — the lift/lower
+  regression is already gone on main; this sweep stays within noise of both
+  WHERE benchmarks (A/B vs main: 12.2 vs 11.6-12.0µs GenericFallback,
+  71.1 vs 70.8-78.9µs CompiledJoin).
+
+**Convergence pass (earlier fixes folded into the shared paths):**
+- §5 shortestPath: `executeBoundEndShortestPath` and `executeOptionalShortestPath`
+  now share one per-row BFS (`runSeededShortestPaths`) and the existing
+  `filterPathsByWhere`; only their row semantics (drop vs null) differ.
+- §4 MERGE: `resolveMergeRelationshipEndpoint` and the whole-pattern branch share
+  `createMergeRelationshipEndpointNode`; conflict re-find keeps `errors.Is`
+  through the localized wrap.
+- §1 storage: committed-edge (`deleteEdgesWithPrefixBuffered`) and staged-edge
+  (`deletePendingEdgesIncidentToBuffered`) deletions share
+  `bufferRemoveEdgeBookkeepingBuffered` — one removal-bookkeeping path.
+- §6 WHERE: MATCH/WITH/YIELD all evaluate through the one flagged
+  `evaluateRowPredicate*` path; no parallel evaluator was added.
+
 ### 7. #745 — one element id on every route
 
 **Facts:** Bolt negotiates 4.4 → driver `element_id` is a hash no query finds; HTTP

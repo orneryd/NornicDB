@@ -948,46 +948,58 @@ func (tx *BadgerTransaction) deletePendingEdgesIncidentToBuffered(nodeID NodeID,
 		if _, deleted := tx.deletedEdges[edgeID]; deleted {
 			continue
 		}
-
-		tx.bufferDelete(edgeKey(edgeID))
-		if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edgeID); outKey != nil {
-			tx.bufferDelete(outKey)
+		if err := tx.bufferRemoveEdgeBookkeepingBuffered(edge, nodeID, deletedNodeLabels); err != nil {
+			return 0, nil, err
 		}
-		if inKey := tx.engine.incomingIndexKeyStringLookup(edge.EndNode, edgeID); inKey != nil {
-			tx.bufferDelete(inKey)
-		}
-		if typeKey := tx.engine.edgeTypeIndexKeyStringLookup(edge.Type, edgeID); typeKey != nil {
-			tx.bufferDelete(typeKey)
-		}
-		tx.bufferDeleteEdgeBetweenIndexes(edge)
-
 		deletedCount++
 		deletedIDs = append(deletedIDs, edgeID)
-		tx.deletedEdges[edgeID] = struct{}{}
-		delete(tx.pendingEdges, edgeID)
-
-		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edgeID), edge.Type, -1)
-
-		// Positional (label, type) counters: the deleted node's labels for its
-		// side, the peer's tx-visible labels for the other.
-		startLabels := deletedNodeLabels
-		endLabels := deletedNodeLabels
-		if edge.StartNode == nodeID && edge.EndNode != nodeID {
-			peer, err := tx.nodeLabelsTxVisibleLocked(edge.EndNode)
-			if err != nil {
-				return 0, nil, err
-			}
-			endLabels = peer
-		} else if edge.EndNode == nodeID && edge.StartNode != nodeID {
-			peer, err := tx.nodeLabelsTxVisibleLocked(edge.StartNode)
-			if err != nil {
-				return 0, nil, err
-			}
-			startLabels = peer
-		}
-		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edgeID), edge.Type, startLabels, endLabels, -1)
 	}
 	return deletedCount, deletedIDs, nil
+}
+
+// bufferRemoveEdgeBookkeepingBuffered buffers an edge's primary-key and index
+// deletions, marks it deleted, removes it from the pending set, and adjusts the
+// per-type and positional (label, type) counters. It is the single removal
+// bookkeeping path for both committed-adjacency deletions
+// (deleteEdgesWithPrefixBuffered) and staged-edge deletions
+// (deletePendingEdgesIncidentToBuffered, #741), so the two stay identical.
+func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, deletedNodeID NodeID, deletedNodeLabels []string) error {
+	tx.bufferDelete(edgeKey(edge.ID))
+	if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
+		tx.bufferDelete(outKey)
+	}
+	if inKey := tx.engine.incomingIndexKeyStringLookup(edge.EndNode, edge.ID); inKey != nil {
+		tx.bufferDelete(inKey)
+	}
+	if typeKey := tx.engine.edgeTypeIndexKeyStringLookup(edge.Type, edge.ID); typeKey != nil {
+		tx.bufferDelete(typeKey)
+	}
+	tx.bufferDeleteEdgeBetweenIndexes(edge)
+
+	tx.deletedEdges[edge.ID] = struct{}{}
+	delete(tx.pendingEdges, edge.ID)
+
+	tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, -1)
+
+	// Positional (label, type) counters: the deleted node's labels for its
+	// side, the peer's tx-visible labels for the other.
+	startLabels := deletedNodeLabels
+	endLabels := deletedNodeLabels
+	if edge.StartNode == deletedNodeID && edge.EndNode != deletedNodeID {
+		peer, err := tx.nodeLabelsTxVisibleLocked(edge.EndNode)
+		if err != nil {
+			return err
+		}
+		endLabels = peer
+	} else if edge.EndNode == deletedNodeID && edge.StartNode != deletedNodeID {
+		peer, err := tx.nodeLabelsTxVisibleLocked(edge.StartNode)
+		if err != nil {
+			return err
+		}
+		startLabels = peer
+	}
+	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, startLabels, endLabels, -1)
+	return nil
 }
 
 // deleteEdgesWithPrefixBuffered deletes all edges with a given prefix, buffering writes.
@@ -1053,46 +1065,14 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, delete
 		}
 
 		// Buffer edge and index deletions. Lookup-only: these num IDs
-		// must have existed at write time.
-		tx.bufferDelete(edgeKey)
-		if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edgeID); outKey != nil {
-			tx.bufferDelete(outKey)
+		// must have existed at write time. The shared bookkeeping helper
+		// keeps this path identical to staged-edge deletion (#741).
+		if err := tx.bufferRemoveEdgeBookkeepingBuffered(edge, deletedNodeID, deletedNodeLabels); err != nil {
+			return 0, nil, err
 		}
-		if inKey := tx.engine.incomingIndexKeyStringLookup(edge.EndNode, edgeID); inKey != nil {
-			tx.bufferDelete(inKey)
-		}
-		if typeKey := tx.engine.edgeTypeIndexKeyStringLookup(edge.Type, edgeID); typeKey != nil {
-			tx.bufferDelete(typeKey)
-		}
-		tx.bufferDeleteEdgeBetweenIndexes(edge)
 
 		deletedCount++
 		deletedIDs = append(deletedIDs, edgeID)
-		tx.deletedEdges[edgeID] = struct{}{}
-		delete(tx.pendingEdges, edgeID)
-
-		// Derived per-type counter follows the index entry removal (issue #638).
-		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edgeID), edge.Type, -1)
-
-		// Positional (label, type) counters: the deleted node's labels are
-		// supplied by the caller; the peer endpoint's labels are read
-		// tx-visible while its body is still live.
-		startLabels := deletedNodeLabels
-		endLabels := deletedNodeLabels
-		if edge.StartNode == deletedNodeID && edge.EndNode != deletedNodeID {
-			peer, err := tx.nodeLabelsTxVisibleLocked(edge.EndNode)
-			if err != nil {
-				return 0, nil, err
-			}
-			endLabels = peer
-		} else if edge.EndNode == deletedNodeID && edge.StartNode != deletedNodeID {
-			peer, err := tx.nodeLabelsTxVisibleLocked(edge.StartNode)
-			if err != nil {
-				return 0, nil, err
-			}
-			startLabels = peer
-		}
-		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edgeID), edge.Type, startLabels, endLabels, -1)
 	}
 
 	return deletedCount, deletedIDs, nil

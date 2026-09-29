@@ -2580,32 +2580,24 @@ func (e *StorageExecutor) resolveMergeRelationshipEndpoint(store storage.Engine,
 		return node, false, err
 	}
 
-	node = &storage.Node{
-		ID:         storage.NodeID(e.generateID()),
-		Labels:     pattern.labels,
-		Properties: pattern.properties,
-	}
-	if err := validatePropertyValues(node.Properties); err != nil {
-		return nil, false, err
-	}
-	actualID, err := store.CreateNode(node)
+	// Same creation path as the whole-pattern branch (#640): one helper for
+	// every MERGE node creation (validate, CreateNode, notify, cache).
+	node, err = e.createMergeRelationshipEndpointNode(store, pattern)
 	if err != nil {
 		if !mergeCreateConflict(err) {
-			return nil, false, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
+			return nil, false, err
 		}
+		// A concurrent MERGE created the node between the lookup and this
+		// create: re-find it instead of failing.
 		recovered, findErr := e.findMergeNode(store, pattern.labels, pattern.properties)
 		if findErr != nil {
 			return nil, false, findErr
 		}
 		if recovered == nil {
-			return nil, false, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
+			return nil, false, err
 		}
 		return recovered, false, nil
 	}
-
-	node.ID = actualID
-	e.notifyNodeMutated(string(node.ID))
-	e.cacheMergeNode(pattern.labels, pattern.properties, node)
 	return node, true, nil
 }
 

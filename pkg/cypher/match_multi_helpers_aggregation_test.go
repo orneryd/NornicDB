@@ -39,8 +39,10 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		require.False(t, ok)
 		_, _, ok = parseCartesianVarProp("a.i + 1")
 		require.False(t, ok)
-		_, _, _, _, ok = parseCartesianVarPropEqualityTerm("b.i = a.i + 1")
-		require.False(t, ok)
+		// #692: the join predicate b.i = a.i + 1 parses as an offset equality.
+		_, _, _, _, offset, ok := parseCartesianVarPropEqualityTerm("b.i = a.i + 1")
+		require.True(t, ok)
+		require.Equal(t, int64(1), offset)
 
 		varName, prop, listVals, ok := parseCartesianInListTerm("a.kind IN ['x', 2, true]")
 		require.True(t, ok)
@@ -54,14 +56,28 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		require.True(t, isSimpleIdentifierCartesian("a_1"))
 		require.False(t, isSimpleIdentifierCartesian("1a"))
 
-		lv, lp, rv, rp, ok := parseCartesianVarPropEqualityTerm("a.id = b.id")
+		lv, lp, rv, rp, offset, ok := parseCartesianVarPropEqualityTerm("a.id = b.id")
 		require.True(t, ok)
 		require.Equal(t, "a", lv)
 		require.Equal(t, "id", lp)
 		require.Equal(t, "b", rv)
 		require.Equal(t, "id", rp)
+		require.Equal(t, int64(0), offset)
 
-		_, _, _, _, ok = parseCartesianVarPropEqualityTerm("a.id = 10")
+		// Normalization: a.id + 1 = b.id reads as b.id = a.id + 1.
+		lv, lp, rv, rp, offset, ok = parseCartesianVarPropEqualityTerm("a.id + 1 = b.id")
+		require.True(t, ok)
+		require.Equal(t, "b", lv)
+		require.Equal(t, "id", lp)
+		require.Equal(t, "a", rv)
+		require.Equal(t, "id", rp)
+		require.Equal(t, int64(1), offset)
+
+		// Non-integer offsets are not parseable join keys.
+		_, _, _, _, _, ok = parseCartesianVarPropEqualityTerm("a.id = b.id + c.k")
+		require.False(t, ok)
+
+		_, _, _, _, _, ok = parseCartesianVarPropEqualityTerm("a.id = 10")
 		require.False(t, ok)
 
 		require.Equal(t, "<nil>", cartesianValueKey(nil))

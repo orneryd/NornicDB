@@ -521,6 +521,29 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 		subqueryBody = "WITH " + strings.Join(callImportVars, ", ") + " " + subqueryBody
 		upperBody = upperASCII(strings.TrimSpace(subqueryBody))
 	}
+	// #728: without an explicit CALL (…) import list, an importing WITH may
+	// only list variables, not attach a WHERE to the import (Neo4j:
+	// "an importing WITH may only list variables"). Referencing an
+	// outer-scope variable in such a WITH … WHERE is a SyntaxError.
+	if len(callImportVars) == 0 && strings.HasPrefix(upperBody, "WITH ") {
+		afterWith := strings.TrimSpace(subqueryBody[len("WITH "):])
+		if nextIdx := firstKeywordIndexFromDefault(afterWith, 0, withImportClauseKeywords...); nextIdx > 0 && nextIdx < len(afterWith) {
+			keywordText := upperASCII(afterWith[nextIdx:])
+			if strings.HasPrefix(keywordText, "WHERE") && (len(keywordText) == len("WHERE") || isWhitespace(keywordText[len("WHERE")])) {
+				if withVars, _, hasWith, parseErr := parseLeadingWithImports(subqueryBody); hasWith && parseErr == nil {
+					for _, name := range withVars {
+						if isIdentifierReferenced(outerPart, name) {
+							return nil, newSemanticError(
+								"Neo.ClientError.Statement.SyntaxError",
+								"InvalidVariableImport",
+								"An importing WITH in a CALL subquery may only list variables imported through the CALL import list (variable `"+name+"` is not in scope inside the subquery)",
+							)
+						}
+					}
+				}
+			}
+		}
+	}
 	if inTransactions && importsVariable(callImportVars, nodePattern.variable) {
 		return subqueryExecutor.executeVariableScopeCallInTransactions(ctx, seedNodes, nodePattern.variable, subqueryBody, afterCall, batchSize)
 	}
@@ -918,6 +941,9 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			// Log but continue with other seeds
 			continue
 		}
+		// A subquery with its own RETURN clause yields columns even when a
+		// WHERE filtered every row out. A write-only body yields none.
+		innerHadReturn := len(innerResult.Columns) > 0
 		writeStats = mergeQueryStats(writeStats, innerResult.Stats)
 		if queryStatsMayContainNodeMutation(innerResult.Stats) {
 			seedNode, err = subqueryExecutor.refreshCallSeedNodeAfterWrite(ctx, seedNode, innerResult.Stats)
@@ -952,12 +978,14 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			combinedResult.Rows = append(combinedResult.Rows, newRow)
 		}
 
-		// If inner query returned 0 rows but we have a seed, create a row with just the seed
-		if len(innerResult.Rows) == 0 {
-			// Create a row with the seed node and empty neighbors
+		// A RETURN-bearing subquery that filters a seed row out removes the
+		// outer row (#728): CALL (i) { WITH i WHERE … RETURN … } must not
+		// contribute a null row. Only a write-only body (no RETURN) keeps the
+		// seed as its result row, per the #648 semantics.
+		if len(innerResult.Rows) == 0 && !innerHadReturn {
 			emptyRow := make([]interface{}, len(innerResult.Columns))
 			for colIdx, colName := range innerResult.Columns {
-				if strings.EqualFold(colName, nodePattern.variable) {
+				if strings.EqualFold(strings.TrimSpace(colName), nodePattern.variable) {
 					emptyRow[colIdx] = seedNode
 				}
 			}

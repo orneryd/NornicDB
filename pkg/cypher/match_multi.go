@@ -1643,6 +1643,10 @@ type cartesianEqConstraint struct {
 	leftProp  string
 	rightVar  string
 	rightProp string
+	// offset is the integer offset in leftVar.leftProp = rightVar.rightProp
+	// + offset, parsed from joins like b.id = a.id + 1 (#692). 0 means a
+	// plain property equality.
+	offset int64
 }
 
 func (e *StorageExecutor) applyCartesianWherePushdown(
@@ -1700,12 +1704,13 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 			nullConstraints[key] = c
 			continue
 		}
-		if lv, lp, rv, rp, ok := parseCartesianVarPropEqualityTerm(term); ok {
+		if lv, lp, rv, rp, offset, ok := parseCartesianVarPropEqualityTerm(term); ok {
 			eqConstraints = append(eqConstraints, cartesianEqConstraint{
 				leftVar:   lv,
 				leftProp:  lp,
 				rightVar:  rv,
 				rightProp: rp,
+				offset:    offset,
 			})
 			continue
 		}
@@ -1756,17 +1761,54 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 			if len(leftAllowed) == 0 || len(rightAllowed) == 0 {
 				continue
 			}
-			if filtered := filterNodesByAllowedPropSet(patternMatches[rightIdx].nodes, c.rightProp, leftAllowed); len(filtered) != len(patternMatches[rightIdx].nodes) {
+			// leftVar.leftProp = rightVar.rightProp + offset:
+			//   allowed right values = left values shifted by -offset
+			//   allowed left values  = right values shifted by +offset
+			rightCandidates := leftAllowed
+			leftCandidates := rightAllowed
+			if c.offset != 0 {
+				rightCandidates = shiftCartesianIntKeySet(leftAllowed, -c.offset)
+				leftCandidates = shiftCartesianIntKeySet(rightAllowed, c.offset)
+				if len(rightCandidates) == 0 || len(leftCandidates) == 0 {
+					continue
+				}
+			}
+			if filtered := filterNodesByAllowedPropSet(patternMatches[rightIdx].nodes, c.rightProp, rightCandidates); len(filtered) != len(patternMatches[rightIdx].nodes) {
 				patternMatches[rightIdx].nodes = filtered
 				changed = true
 			}
-			if filtered := filterNodesByAllowedPropSet(patternMatches[leftIdx].nodes, c.leftProp, rightAllowed); len(filtered) != len(patternMatches[leftIdx].nodes) {
+			if filtered := filterNodesByAllowedPropSet(patternMatches[leftIdx].nodes, c.leftProp, leftCandidates); len(filtered) != len(patternMatches[leftIdx].nodes) {
 				patternMatches[leftIdx].nodes = filtered
 				changed = true
 			}
 		}
 	}
 	return patternMatches
+}
+
+// shiftCartesianIntKeySet shifts the integer values in a cartesian value-key
+// set by offset, dropping keys that are not integers. The shifted set names
+// the property values that may pair with the original set under an
+// lv.lp = rv.rp + offset constraint (#692).
+func shiftCartesianIntKeySet(set map[string]struct{}, offset int64) map[string]struct{} {
+	out := make(map[string]struct{}, len(set))
+	for key := range set {
+		var digits string
+		switch {
+		case strings.HasPrefix(key, "i64:"):
+			digits = key[len("i64:"):]
+		case strings.HasPrefix(key, "i:"):
+			digits = key[len("i:"):]
+		default:
+			continue
+		}
+		value, err := strconv.ParseInt(digits, 10, 64)
+		if err != nil {
+			continue
+		}
+		out[fmt.Sprintf("i64:%d", value+offset)] = struct{}{}
+	}
+	return out
 }
 
 func applyCartesianNullConstraints(
@@ -1901,19 +1943,55 @@ func isSimpleIdentifierCartesian(s string) bool {
 	return true
 }
 
-func parseCartesianVarPropEqualityTerm(term string) (string, string, string, string, bool) {
+func parseCartesianVarPropEqualityTerm(term string) (string, string, string, string, int64, bool) {
 	idx := strings.Index(term, "=")
 	if idx <= 0 || idx+1 >= len(term) {
-		return "", "", "", "", false
+		return "", "", "", "", 0, false
 	}
 	lhs := strings.TrimSpace(term[:idx])
 	rhs := strings.TrimSpace(term[idx+1:])
-	lv, lp, lok := parseCartesianVarProp(lhs)
-	rv, rp, rok := parseCartesianVarProp(rhs)
-	if !lok || !rok {
-		return "", "", "", "", false
+	if lv, lp, lok := parseCartesianVarProp(lhs); lok {
+		if rv, rp, rok := parseCartesianVarProp(rhs); rok {
+			return lv, lp, rv, rp, 0, true
+		}
+		// b.id = a.id + 1: the right side is an offset expression.
+		if rv, rp, offset, rok := parseCartesianVarPropOffset(rhs); rok {
+			return lv, lp, rv, rp, offset, true
+		}
 	}
-	return lv, lp, rv, rp, true
+	// a.id + 1 = b.id normalizes to b.id = a.id + 1.
+	if lv, lp, offset, lok := parseCartesianVarPropOffset(lhs); lok {
+		if rv, rp, rok := parseCartesianVarProp(rhs); rok {
+			return rv, rp, lv, lp, offset, true
+		}
+	}
+	return "", "", "", "", 0, false
+}
+
+// parseCartesianVarPropOffset parses <var>.<prop> + <int> or
+// <var>.<prop> - <int> (spaced operators only, integer literal offset).
+func parseCartesianVarPropOffset(expr string) (string, string, int64, bool) {
+	for _, op := range []string{" + ", " - "} {
+		idx := strings.Index(expr, op)
+		if idx <= 0 {
+			continue
+		}
+		left := strings.TrimSpace(expr[:idx])
+		literal := strings.TrimSpace(expr[idx+len(op):])
+		variable, prop, ok := parseCartesianVarProp(left)
+		if !ok {
+			continue
+		}
+		offset, err := strconv.ParseInt(literal, 10, 64)
+		if err != nil {
+			continue
+		}
+		if op == " - " {
+			offset = -offset
+		}
+		return variable, prop, offset, true
+	}
+	return "", "", 0, false
 }
 
 func cartesianValueKey(v interface{}) string {

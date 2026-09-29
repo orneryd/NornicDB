@@ -237,22 +237,22 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 }
 
 // evaluateRowPredicatePlan evaluates a planned predicate for a row.
-func (e *StorageExecutor) evaluateRowPredicatePlan(ctx context.Context, plan *rowPredicatePlan, values map[string]interface{}) bool {
-	return e.evaluateRowPredicatePart(ctx, &plan.root, values)
+func (e *StorageExecutor) evaluateRowPredicatePlan(ctx context.Context, plan *rowPredicatePlan, values map[string]interface{}, relaxed bool) bool {
+	return e.evaluateRowPredicatePart(ctx, &plan.root, values, relaxed)
 }
 
-func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *rowPredicatePart, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *rowPredicatePart, values map[string]interface{}, relaxed bool) bool {
 	switch part.kind {
 	case rowPredicateAnd:
 		for i := range part.parts {
-			if !e.evaluateRowPredicatePart(ctx, &part.parts[i], values) {
+			if !e.evaluateRowPredicatePart(ctx, &part.parts[i], values, relaxed) {
 				return false
 			}
 		}
 		return true
 	case rowPredicateOr:
 		for i := range part.parts {
-			if e.evaluateRowPredicatePart(ctx, &part.parts[i], values) {
+			if e.evaluateRowPredicatePart(ctx, &part.parts[i], values, relaxed) {
 				return true
 			}
 		}
@@ -261,7 +261,7 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 		left, leftOK := part.left.resolve(values)
 		right, rightOK := part.right.resolve(values)
 		if !leftOK || !rightOK {
-			return e.evaluateRowPredicateText(ctx, part.text, values)
+			return e.evaluateRowPredicateText(ctx, part.text, values, relaxed)
 		}
 		// A null operand makes the comparison null, which doesn't hold, as in
 		// evaluateComparisonChain.
@@ -274,14 +274,14 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 		needle, needleOK := part.left.resolve(values)
 		haystack, haystackOK := part.right.resolve(values)
 		if !needleOK || !haystackOK {
-			return e.evaluateRowPredicateText(ctx, part.text, values)
+			return e.evaluateRowPredicateText(ctx, part.text, values, relaxed)
 		}
 		member, ok := rowMembershipOfValues(needle, haystack, false)
 		return ok && member == true
 	case rowPredicateIsNull, rowPredicateIsNotNull:
 		value, ok := part.left.resolve(values)
 		if !ok {
-			return e.evaluateRowPredicateText(ctx, part.text, values)
+			return e.evaluateRowPredicateText(ctx, part.text, values, relaxed)
 		}
 		if part.kind == rowPredicateIsNull {
 			return value == nil
@@ -290,6 +290,6 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 	default:
 		// Text parts go through the whole row predicate evaluator: they have
 		// no plan of their own, so this doesn't come back here.
-		return e.evaluateRowPredicate(ctx, part.text, values)
+		return e.evaluateRowPredicateMode(ctx, part.text, values, relaxed)
 	}
 }
