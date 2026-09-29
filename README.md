@@ -42,7 +42,7 @@
 
 ```bash
 # Homebrew
-brew tap --trust orneryd/nornicdb && brew install nornicdb && brew services start nornicdb
+brew tap orneryd/nornicdb && brew install nornicdb && brew services start nornicdb
 
 # arm64 / Apple Silicon
 docker run -d --name nornicdb -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data timothyswt/nornicdb-arm64-metal-bge:latest
