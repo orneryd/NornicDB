@@ -347,3 +347,91 @@ Order: #741 → #648 → #514 → #640 → #581 → #728 → #745 → #446 → #
 
 One PR from `fix/correctness-sweep` to `main` at the end, listing every issue with
 its fix, tests, and benchmark numbers in the description.
+
+## PR #768 review feedback (2026-09-29)
+
+- **HIGH — Bolt handshake replies with a range proposal, not a selected version.**
+  `pkg/bolt/server.go` (`selectBoltVersion`) returns `selectedWire = offered` even
+  when the proposal has a nonzero `back` byte. For the Go-driver offer
+  `00 02 04 04`, the server replies `00 02 04 04` rather than the concrete
+  `00 00 04 04`. Bolt's range-handshake specification requires a single selected
+  version with no range. The new `TestSelectBoltVersion` pins the invalid reply.
+  Select an actual supported minor within each proposed range and send it with
+  the `back` byte cleared; test a real driver handshake with a range offer.
+
+- **HIGH — Bolt 5 relationship and path records use Bolt 4 field counts.**
+  `pkg/bolt/packstream.go` (`encodeStorageEdgeV5Into`) writes `B6 52` and only
+  appends the relationship element ID. Bolt 5 requires `B8 52`: the final three
+  fields are the relationship, start-node, and end-node element IDs. Likewise,
+  `encodePathV5Into` uses the old `B3 72` unbound relationship encoder, while
+  Bolt 5 requires `B4 72` with an element ID. Bolt 5 drivers can reject
+  `RETURN r` or `RETURN p`, and path relationships cannot round-trip their IDs.
+  The new wire test asserts `B6 52` instead of the specified `B8 52`; replace
+  those assertions with driver-decoded relationship and path tests.
+
+- **HIGH — Bolt 5 nested entities still use Bolt 4 encoding.**
+  `pkg/bolt/packstream.go` (`encodeRecordValueInto`) switches to the V5 encoder
+  for top-level nodes, edges, and a few typed lists, but ordinary maps and
+  other nested containers fall through to `encodePackStreamValueIntoWithUTC`.
+  That encoder recursively writes `B3 4E` nodes, `B5 52` relationships, and
+  old path structures. For example, returning a node inside a map or nested
+  list after negotiating Bolt 5 yields an incompatible structure despite the
+  same node working at top level. Make the version-aware encoder recursive
+  across maps and lists, and verify nested entity values with a Bolt 5 client.
+
+No separate security finding was substantiated in the reviewed changes. The
+focused Bolt tests pass, but the new tests encode the first two divergences
+rather than detecting them.
+
+### Resolutions (committed on `fix/correctness-sweep`)
+
+- **Range handshake — RESOLVED.** `selectBoltVersion` now expands each
+  proposal's `[minor-back, minor]` range, selects the highest supported
+  concrete version inside it, and replies `[0x00, 0x00, minor, major]`
+  (back cleared). `TestSelectBoltVersion` pins `00 02 04 04 → 00 00 04 04`
+  and `00 08 05 → 00 00 05` (5.0). `TestGh745_RealDriverBolt5Entities`
+  negotiates with the real neo4j-go-driver and asserts
+  `ProtocolVersion == {5, 0}`.
+
+- **Bolt 5 field counts — RESOLVED.** `encodeStorageEdgeV5Into` emits
+  `B8 52` (8 fields: id, start, end, type, properties, element_id,
+  start_node_element_id, end_node_element_id). `encodePathV5Into` emits
+  `B4 72` unbound relationships with the element id. The real-driver test
+  decodes `RETURN r` and `RETURN p`: `rel.ElementId`,
+  `rel.StartElementId`, `rel.EndElementId` and
+  `path.Relationships[0].ElementId` all round-trip and equal
+  `elementId(r)`.
+
+- **Recursive Bolt 5 encoding — RESOLVED.** `encodeRecordValueInto` now
+  recurses through ordinary maps (`encodeRecordMapInto`) and lists of
+  maps; `encodePackStreamMapIntoWithUTC`/`encodePackStreamListIntoWithUTC`
+  are thin wrappers over the one version-aware pair (convergence). The
+  real-driver test decodes `{n: a}` with a Bolt 5 node whose element id
+  matches the top-level node.
+
+- **Copilot's 14 open review threads — RESOLVED** in the same pass:
+  range expansion (#4134855167), zero-byte handshake rejection
+  (#4134855601), stream-database record provenance (#4134855670), B8 52 /
+  B4 72 / recursive maps (above), exact integer offset joins + whitespace-
+  independent parsing (#4134855275, #4134855758), uncorrelated subqueries
+  per row (#4134855347), strict non-boolean WHERE (#4134855401), HTTP
+  composite provenance (#4134855478), write barrier across
+  BulkDeleteNodes (#4134855545), self-loop whole-pattern match
+  (#4134855823), and seed bindings in shortestPath WHERE (#4134855888).
+  Each has a PR reply with the exact evidence.
+
+### Verification after the review pass
+
+- Suites: `pkg/cypher` (42.9s), `pkg/storage` (53.0s), `pkg/bolt` (41.1s),
+  `pkg/server` (122.7s), `pkg/fabric` (0.6s) — all green.
+- `go test -race ./pkg/storage` clean (92.0s).
+- `make cypher-tck-ratchet`: 7794/7794.
+- Routing benchmark in band: autocommit 161 allocs / 17.7-17.8µs,
+  explicit_tx 88 allocs / 11.5-11.6µs.
+- WHERE benchmarks, correct results now: CompiledJoin 68.1-73.0µs
+  (band 50-79µs); GenericFallback 36.8-37.0µs / 1 alloc. The previous
+  ~12µs band measured a compiled path that silently dropped every row
+  (the `size(n.name)` property resolver compiled `name)` as a property
+  name and always failed); the correct compiled path resolves `size(…)`
+  through the shared `evaluateCypherSize` helper, so the compiled fast
+  path is the compiled form of the same evaluator.
