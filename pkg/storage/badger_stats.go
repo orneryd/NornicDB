@@ -191,6 +191,15 @@ func (b *BadgerEngine) Close() error {
 
 	b.closed = true
 	db := b.db
+	b.mu.Unlock()
+
+	// Drain in-flight node-deleted notifications before releasing the
+	// callback fields and other engine state they run against (#726). No
+	// new notifications can start: BulkDeleteNodes adds them under mu only
+	// when the engine is not closed.
+	b.notifyWG.Wait()
+
+	b.mu.Lock()
 	b.releaseClosedStateLocked()
 	b.mu.Unlock()
 

@@ -795,18 +795,28 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 			b.notifyEdgeDeleted(edgeID)
 		}
 
-		// Notify listeners (e.g., search service) for each deleted node
-		// Use async notifications to avoid blocking bulk deletes (e.g., collection deletion)
-		// The search service can handle these notifications in the background
+		// Notify listeners (e.g., search service) for each deleted node.
+		// Dispatch asynchronously so bulk deletes don't block on listeners,
+		// but track the goroutine: Close drains it before releasing the
+		// engine state, so a notification can never outlive teardown
+		// (#726). The Add is guarded by b.mu and the closed flag, and Close
+		// sets closed under the same lock before waiting, so no Add can run
+		// concurrently with the Wait.
 		if len(deletedNodeIDs) > 0 {
 			for _, id := range deletedNodeIDs {
 				b.graphMutationVersions.changed(namespaceForNodeID(id))
 			}
-			go func(ids []NodeID) {
-				for _, id := range ids {
-					b.dispatchNodeDeleted(id)
-				}
-			}(deletedNodeIDs)
+			b.mu.Lock()
+			if !b.closed {
+				b.notifyWG.Add(1)
+				go func(ids []NodeID) {
+					defer b.notifyWG.Done()
+					for _, id := range ids {
+						b.dispatchNodeDeleted(id)
+					}
+				}(deletedNodeIDs)
+			}
+			b.mu.Unlock()
 		}
 	}
 
