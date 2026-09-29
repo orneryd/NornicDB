@@ -8,11 +8,11 @@ Reference database: `neo4j:5.26.30-community` (the pinned differential image).
 
 | # | Issue | Severity | Status |
 | --- | --- | --- | --- |
-| 1 | #741 explicit-tx COMMIT failure + (label,type) counter drift | CRITICAL: data lost, counts wrong | |
-| 2 | #648 CALL { } write subquery per-row semantics | CRITICAL: writes don't run per row | |
-| 3 | #514 MERGE `{k: a.id}` after WITH stores text; evaluator text-fallback | CRITICAL: silent wrong data | |
-| 4 | #640 MERGE whole-pattern creation + `findMergeNode` full scan | CRITICAL: wrong graph / O(N) per row | |
-| 5 | #581 (reopened) shortestPath between bound end nodes | HIGH: wrong rows | |
+| 1 | #741 explicit-tx COMMIT failure + (label,type) counter drift | CRITICAL: data lost, counts wrong | DONE (01c79665) |
+| 2 | #648 CALL { } write subquery per-row semantics | CRITICAL: writes don't run per row | DONE (02592a57) |
+| 3 | #514 MERGE `{k: a.id}` after WITH stores text; evaluator text-fallback | CRITICAL: silent wrong data | DONE (16f13151) |
+| 4 | #640 MERGE whole-pattern creation + `findMergeNode` full scan | CRITICAL: wrong graph / O(N) per row | DONE (see §4) |
+| 5 | #581 (reopened) shortestPath between bound end nodes | HIGH: wrong rows | IN PROGRESS |
 | 6 | #728 WITH … WHERE in CALL bodies adds null rows; cartesian before WHERE | HIGH: wrong rows / OOM | |
 | 7 | #745 element ids differ by route | HIGH: clients can't re-find entities | |
 | 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | |
@@ -107,6 +107,20 @@ label scan misses → O(N) per created row (85ms at 20k nodes).
 **Tests:** the 5 statements of the issue (nodes_created + graph afterwards), plus the
 perf guard: `MERGE (:M6 {v:1})` with 20k unrelated nodes must not scan all nodes
 (timing or call-count assertion), all routes.
+
+**Status: DONE** (commit 5d8a6db):
+- Whole-pattern creation branch in `executeMergeRelationshipWithContext`: both
+  endpoints unbound and different variables → search candidate pairs for an existing
+  whole-pattern match; on miss create both endpoints fresh (`createMergeRelationshipEndpointNode`).
+- Self-referencing `(a)-[:R]->(a)` keeps get-or-create self-loop semantics.
+- `findMergeNode` `AllNodes()` fallback removed (#640/#694): label index + schema
+  lookups authoritative; `mergeNodeIndexedCandidateIDs` used by `findMergeNodes`.
+- Stale-label test rewritten to pin Neo4j-equivalent constraint-violation behavior
+  (no silent O(N) recovery).
+- Regression tests `pkg/cypher/gh640_merge_whole_pattern_test.go` (7 subtests, all 5
+  issue statements + self-loop + call-count scan guard).
+- Benchmarks: routing autocommit 161 allocs / 17.3-17.7µs, explicit_tx 88 allocs /
+  11.0-11.4µs (within band).
 
 ### 5. #581 (reopened) — shortestPath between end nodes bound by an earlier MATCH
 

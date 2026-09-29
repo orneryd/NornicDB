@@ -1475,7 +1475,7 @@ func TestExecuteMerge_CreatesNodeWhenLegacySequentialIDWouldCollide(t *testing.T
 	assert.NotEqual(t, storage.NodeID("node-1"), files[0].ID)
 }
 
-func TestExecuteCompoundMatchMerge_RecoversFromDuplicateCreateForParameterizedParameterMerge(t *testing.T) {
+func TestExecuteCompoundMatchMerge_StaleLabelLookupSurfacesConstraintViolation(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	require.NoError(t, store.GetSchema().AddConstraint(storage.Constraint{
@@ -1513,6 +1513,12 @@ func TestExecuteCompoundMatchMerge_RecoversFromDuplicateCreateForParameterizedPa
 	})
 	ctx := context.Background()
 
+	// GH #640: MERGE node lookup must not fall back to a global AllNodes()
+	// scan. With a stale label index, the existing Parameter node cannot be
+	// located, so the unique constraint surfaces the duplicate-create conflict
+	// exactly like Neo4j does. The previous AllNodes() fallback silently
+	// "recovered" from the stale index at O(N) cost per row, which hid real
+	// index problems and diverged from Neo4j end-user behavior.
 	result, err := exec.Execute(ctx, `
 		MATCH (fn:Function {name: $func_name, path: $path, line_number: $function_line_number})
 		MERGE (p:Parameter {name: $name, path: $path, function_line_number: $function_line_number})
@@ -1525,12 +1531,11 @@ func TestExecuteCompoundMatchMerge_RecoversFromDuplicateCreateForParameterizedPa
 		"name":                 "query",
 	})
 
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	assert.Equal(t, "query", result.Rows[0][0])
-	assert.Equal(t, "/Users/timothysweet/src/my-CodeGraphContext/tests/unit/tools/test_indexing_scalability.py", result.Rows[0][1])
-	assert.Equal(t, int64(365), result.Rows[0][2])
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+	assert.Nil(t, result)
 
+	// The conflict aborts the statement before the relationship MERGE runs.
 	params, err := store.GetNodesByLabel("Parameter")
 	require.NoError(t, err)
 	require.Len(t, params, 1)
@@ -1539,11 +1544,9 @@ func TestExecuteCompoundMatchMerge_RecoversFromDuplicateCreateForParameterizedPa
 
 	fn, err := store.GetFirstNodeByLabel("Function")
 	require.NoError(t, err)
-	param := params[0]
-	edges, err := store.GetEdgesBetween(fn.ID, param.ID)
+	edges, err := store.GetEdgesBetween(fn.ID, params[0].ID)
 	require.NoError(t, err)
-	require.Len(t, edges, 1)
-	assert.Equal(t, "HAS_PARAMETER", edges[0].Type)
+	require.Empty(t, edges)
 }
 
 func TestExecuteCompoundMatchMerge_SecondMergeAndErrorBranches(t *testing.T) {

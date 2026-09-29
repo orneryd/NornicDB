@@ -383,17 +383,12 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 		}
 	}
 
-	allNodes, err := store.AllNodes()
-	if err != nil {
-		return nil, err
-	}
-	for _, node := range allNodes {
-		if mergeNodeMatches(node, labels, props) {
-			e.cacheMergeNode(labels, props, node)
-			return node, nil
-		}
-	}
-
+	// No global AllNodes() fallback (#640, #694): the label index and schema
+	// lookups are transactionally maintained and authoritative. Scanning every
+	// node in the database for each creating MERGE row made bulk MERGE
+	// ingestion quadratic (85 ms per row at 20k nodes) while Neo4j bounds the
+	// lookup to the label's own scan. A missed label means no match, exactly
+	// as in Neo4j with an out-of-date index.
 	return nil, nil
 }
 
@@ -2274,6 +2269,105 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	startNode := nodeContext[parsedPattern.startVariable]
 	endNode := nodeContext[parsedPattern.endVariable]
 
+	// Whole-pattern MERGE semantics (#640): when neither endpoint is bound by
+	// an earlier clause, an existing relationship whose endpoints satisfy both
+	// node patterns is the match; when none exists, every endpoint node is
+	// created fresh — even if a node matching its pattern already exists.
+	// Neo4j does not reuse such a node. The one-bound and both-bound forms
+	// keep their get-or-create semantics below (the issue confirms those
+	// already agree with Neo4j).
+	var existingEdge *storage.Edge
+	if startNode == nil && endNode == nil {
+		// Self-referencing pattern (a)-[:R]->(a): the end is the same node as
+		// the start; resolve it with get-or-create semantics.
+		if parsedPattern.startVariable != "" && parsedPattern.startVariable == parsedPattern.endVariable {
+			var created bool
+			startNode, created, err = e.resolveMergeRelationshipEndpoint(store, parsedPattern.startNodePattern)
+			if err != nil {
+				return nil, err
+			}
+			if startNode == nil {
+				return nil, localizedError(localization.CypherMergeStartVariableNotBound(parsedPattern.startVariable, getKeys(nodeContext)), nil)
+			}
+			if created {
+				result.Stats.NodesCreated++
+				countCreatedEntity(result.Stats, startNode.Labels, startNode.Properties)
+			}
+			endNode = startNode
+			if parsedPattern.startVariable != "" {
+				nodeContext[parsedPattern.startVariable] = startNode
+			}
+		} else {
+			startPattern := parsedPattern.startNodePattern
+			endPattern := parsedPattern.endNodePattern
+			if (len(startPattern.labels) == 0 && len(startPattern.properties) == 0) ||
+				(len(endPattern.labels) == 0 && len(endPattern.properties) == 0) {
+				return nil, localizedError(localization.CypherMergeStartVariableNotBound(parsedPattern.startVariable, getKeys(nodeContext)), nil)
+			}
+			startCandidates, err := e.findMergeNodes(store, startPattern.labels, startPattern.properties)
+			if err != nil {
+				return nil, err
+			}
+			endCandidates, err := e.findMergeNodes(store, endPattern.labels, endPattern.properties)
+			if err != nil {
+				return nil, err
+			}
+		search:
+			for _, candidateStart := range startCandidates {
+				for _, candidateEnd := range endCandidates {
+					if candidateStart == nil || candidateEnd == nil || candidateStart.ID == candidateEnd.ID {
+						continue
+					}
+					var found *storage.Edge
+					switch parsedPattern.direction {
+					case mergeRelationshipIncoming:
+						found, err = findRelationshipForMerge(store, candidateEnd.ID, candidateStart.ID, parsedPattern.relType, parsedPattern.properties)
+					default:
+						found, err = findRelationshipForMerge(store, candidateStart.ID, candidateEnd.ID, parsedPattern.relType, parsedPattern.properties)
+						if found == nil && err == nil && parsedPattern.direction == mergeRelationshipUndirected {
+							found, err = findRelationshipForMerge(store, candidateEnd.ID, candidateStart.ID, parsedPattern.relType, parsedPattern.properties)
+						}
+					}
+					if err != nil {
+						return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
+					}
+					if found != nil {
+						existingEdge = found
+						startNode, endNode = candidateStart, candidateEnd
+						if parsedPattern.startVariable != "" {
+							nodeContext[parsedPattern.startVariable] = startNode
+						}
+						if parsedPattern.endVariable != "" {
+							nodeContext[parsedPattern.endVariable] = endNode
+						}
+						break search
+					}
+				}
+			}
+			if existingEdge == nil {
+				// Create the whole pattern fresh.
+				startNode, err = e.createMergeRelationshipEndpointNode(store, startPattern)
+				if err != nil {
+					return nil, err
+				}
+				result.Stats.NodesCreated++
+				countCreatedEntity(result.Stats, startNode.Labels, startNode.Properties)
+				if parsedPattern.startVariable != "" {
+					nodeContext[parsedPattern.startVariable] = startNode
+				}
+				endNode, err = e.createMergeRelationshipEndpointNode(store, endPattern)
+				if err != nil {
+					return nil, err
+				}
+				result.Stats.NodesCreated++
+				countCreatedEntity(result.Stats, endNode.Labels, endNode.Properties)
+				if parsedPattern.endVariable != "" {
+					nodeContext[parsedPattern.endVariable] = endNode
+				}
+			}
+		}
+	}
+
 	if startNode == nil {
 		var created bool
 		startNode, created, err = e.resolveMergeRelationshipEndpoint(store, parsedPattern.startNodePattern)
@@ -2318,14 +2412,16 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	// Cypher relationship properties inside the MERGE pattern are identity
 	// fields. Scan the bounded endpoint pair so same-type relationships with
 	// different property identities remain distinct.
-	existingEdge, err := findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
-	if err != nil {
-		return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
-	}
-	if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
-		existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+	if existingEdge == nil {
+		existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
 		if err != nil {
 			return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
+		}
+		if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
+			existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+			if err != nil {
+				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
+			}
 		}
 	}
 
@@ -2448,6 +2544,32 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	return result, nil
 }
 
+// createMergeRelationshipEndpointNode creates a fresh node for a whole-pattern
+// MERGE relationship (#640): when no relationship matching the whole pattern
+// exists, every unbound endpoint node is created even if a node matching its
+// pattern already exists.
+func (e *StorageExecutor) createMergeRelationshipEndpointNode(store storage.Engine, pattern nodePatternInfo) (*storage.Node, error) {
+	node := &storage.Node{
+		ID:         storage.NodeID(e.generateID()),
+		Labels:     pattern.labels,
+		Properties: pattern.properties,
+	}
+	if err := validatePropertyValues(node.Properties); err != nil {
+		return nil, err
+	}
+	actualID, err := store.CreateNode(node)
+	if err != nil {
+		return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
+	}
+	node.ID = actualID
+	e.notifyNodeMutated(string(node.ID))
+	e.cacheMergeNode(pattern.labels, pattern.properties, node)
+	return node, nil
+}
+
+// resolveMergeRelationshipEndpoint resolves a MERGE relationship endpoint with
+// get-or-create semantics, used when at least one endpoint is already bound
+// (the forms the issue confirms match Neo4j).
 func (e *StorageExecutor) resolveMergeRelationshipEndpoint(store storage.Engine, pattern nodePatternInfo) (*storage.Node, bool, error) {
 	if len(pattern.labels) == 0 && len(pattern.properties) == 0 {
 		return nil, false, nil
