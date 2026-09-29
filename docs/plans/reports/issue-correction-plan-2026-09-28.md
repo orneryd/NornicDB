@@ -108,7 +108,7 @@ label scan misses → O(N) per created row (85ms at 20k nodes).
 perf guard: `MERGE (:M6 {v:1})` with 20k unrelated nodes must not scan all nodes
 (timing or call-count assertion), all routes.
 
-**Status: DONE** (commit 5d8a6db):
+**Status: DONE** (commit 83ca5225):
 - Whole-pattern creation branch in `executeMergeRelationshipWithContext`: both
   endpoints unbound and different variables → search candidate pairs for an existing
   whole-pattern match; on miss create both endpoints fresh (`createMergeRelationshipEndpointNode`).
