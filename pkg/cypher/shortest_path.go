@@ -55,10 +55,12 @@ func (e *StorageExecutor) parseShortestPathQuery(ctx context.Context, cypher str
 	}
 	query.pathVariable = extractShortestPathPathVariable(cypher, funcIdx)
 
-	// Extract WHERE clause if present
+	// Extract WHERE clause if present. The WHERE must follow the shortestPath
+	// call: a WHERE on an earlier MATCH clause belongs to that clause, not to
+	// this one (#581 bound-end forms).
 	whereIdx := findKeywordIndexInContext(cypher, "WHERE")
 	returnIdx := findKeywordIndexInContext(cypher, "RETURN")
-	if whereIdx > 0 && whereIdx < returnIdx {
+	if whereIdx > funcIdx && whereIdx < returnIdx {
 		query.whereClause = strings.TrimSpace(cypher[whereIdx+5 : returnIdx])
 	}
 
@@ -256,19 +258,31 @@ func (e *StorageExecutor) executeShortestPathQuery(ctx context.Context, query *S
 		Stats:   &QueryStats{},
 	}
 
-	// Resolve start and end nodes from variable bindings (from MATCH clause)
-	// If startNode/endNode has a variable reference but no labels/props, it references
-	// a node from the preceding MATCH clause. We need to find those nodes.
-
-	var startNodes []*storage.Node
-	var endNodes []*storage.Node
-
 	// Check if we have concrete node patterns or just variable references
 	startHasPattern := len(query.startNode.labels) > 0 || len(query.startNode.properties) > 0
 	endHasPattern := len(query.endNode.labels) > 0 || len(query.endNode.properties) > 0
 
 	startIsVarRef := !startHasPattern && query.startNode.variable != ""
 	endIsVarRef := !endHasPattern && query.endNode.variable != ""
+
+	// Bound-end shortestPath (#581/#721): an endpoint that is a bare variable
+	// reference is bound per row by the preceding clause chain, and Neo4j runs
+	// the traversal once per input row. Seed the row space from the preceding
+	// clauses and project through the shared pipeline RETURN machinery so
+	// aggregation, implicit grouping, ORDER BY and SKIP/LIMIT behave exactly
+	// like the general pipeline.
+	if query.returnClause != "" && query.pathVariable != "" && (startIsVarRef || endIsVarRef) {
+		if res, handled, err := e.executeBoundEndShortestPath(ctx, query, startIsVarRef, endIsVarRef); handled {
+			return res, err
+		}
+	}
+
+	// Resolve start and end nodes from variable bindings (from MATCH clause)
+	// If startNode/endNode has a variable reference but no labels/props, it references
+	// a node from the preceding MATCH clause. We need to find those nodes.
+
+	var startNodes []*storage.Node
+	var endNodes []*storage.Node
 
 	if startIsVarRef && query.startVarBinding != nil {
 		startNodes = []*storage.Node{query.startVarBinding}
@@ -385,6 +399,139 @@ func (e *StorageExecutor) executeShortestPathQuery(ctx context.Context, query *S
 	}
 
 	return result, nil
+}
+
+// executeBoundEndShortestPath evaluates shortestPath with one or both
+// endpoints bound per row by the preceding clause chain (#581/#721):
+//
+//	MATCH (node:D)-[:R*1..3]->(x)
+//	MATCH p = shortestPath((node)-[:R*1..3]->(x))
+//	RETURN node.k AS k, min(length(p)) AS m ORDER BY k
+//
+// The preceding clauses seed the row space (executed once, read-only); the
+// BFS runs per seed row; path rows are projected through pipelineApplyReturn
+// so RETURN aggregation, grouping, ORDER BY, SKIP/LIMIT and DISTINCT match
+// the general pipeline. handled=false means the statement shape is outside
+// this handler (no RETURN, anonymous path variable, no preceding clause, or
+// clauses between the shortestPath MATCH and RETURN) and the caller keeps
+// the single-shot behavior.
+func (e *StorageExecutor) executeBoundEndShortestPath(ctx context.Context, query *ShortestPathQuery, startIsVarRef, endIsVarRef bool) (*ExecuteResult, bool, error) {
+	_, _, funcIdx, ok := extractShortestPathCall(query.originalCypher)
+	if !ok {
+		return nil, false, nil
+	}
+	matchIdx := lastKeywordIndexBefore(query.originalCypher, "MATCH", funcIdx)
+	if matchIdx <= 0 {
+		return nil, false, nil
+	}
+	prefix := strings.TrimSpace(query.originalCypher[:matchIdx])
+	if prefix == "" {
+		return nil, false, nil
+	}
+	// The shortestPath MATCH clause must be the final MATCH: between its call
+	// and RETURN only a WHERE on the clause itself may sit. Anything else
+	// would be swallowed by the per-row rewrite below.
+	openParen := strings.Index(query.originalCypher[funcIdx:], "(")
+	if openParen < 0 {
+		return nil, false, nil
+	}
+	openParen += funcIdx
+	closeParen := findMatchingParen(query.originalCypher, openParen)
+	if closeParen < 0 {
+		return nil, false, nil
+	}
+	returnIdx := findKeywordIndexInContext(query.originalCypher, "RETURN")
+	if returnIdx <= closeParen {
+		return nil, false, nil
+	}
+	tail := strings.TrimSpace(query.originalCypher[closeParen+1 : returnIdx])
+	if tail != "" {
+		if query.whereClause == "" || !strings.EqualFold(strings.TrimSpace(tail), "WHERE "+strings.TrimSpace(query.whereClause)) {
+			return nil, false, nil
+		}
+	}
+
+	seed, err := e.executeInternal(ctx, prefix+" RETURN *", nil)
+	if err != nil {
+		return nil, true, err
+	}
+
+	startByPattern, endByPattern := (*storage.Node)(nil), (*storage.Node)(nil)
+	if !startIsVarRef {
+		startByPattern = e.findNodeByPattern(query.startNode)
+	}
+	if !endIsVarRef {
+		endByPattern = e.findNodeByPattern(query.endNode)
+	}
+
+	traversal := &TraversalMatch{
+		StartNode:    query.startNode,
+		EndNode:      query.endNode,
+		PathVariable: query.pathVariable,
+	}
+	rows := make([]pipelineRow, 0, len(seed.Rows))
+	for _, seedRow := range seed.Rows {
+		row := make(pipelineRow, len(seed.Columns))
+		for i, name := range seed.Columns {
+			row[name] = seedRow[i]
+		}
+		start, end := startByPattern, endByPattern
+		if startIsVarRef {
+			if node, isNode := row[query.startNode.variable].(*storage.Node); isNode {
+				start = node
+			}
+		}
+		if endIsVarRef {
+			if node, isNode := row[query.endNode.variable].(*storage.Node); isNode {
+				end = node
+			}
+		}
+		if start == nil || end == nil || start.ID == end.ID {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, true, err
+		}
+		var paths []PathResult
+		if query.findAll {
+			found, err := e.allShortestPaths(ctx, start, end, query.relTypes, query.direction, query.maxHops)
+			if err != nil {
+				return nil, true, err
+			}
+			paths = found
+		} else {
+			found, err := e.shortestPath(ctx, start, end, query.relTypes, query.direction, query.maxHops)
+			if err != nil {
+				return nil, true, err
+			}
+			if found != nil {
+				paths = append(paths, *found)
+			}
+		}
+		for _, path := range paths {
+			projected := make(pipelineRow, len(row)+1)
+			for name, value := range row {
+				projected[name] = value
+			}
+			projected[query.pathVariable] = e.pathToMap(path)
+			if query.whereClause != "" {
+				pathContext := e.buildPathContext(path, traversal)
+				if !isTruthy(e.evaluateExpressionWithPathContext(ctx, query.whereClause, pathContext)) {
+					continue
+				}
+			}
+			rows = append(rows, projected)
+		}
+	}
+
+	projected, ok := e.pipelineApplyReturn(ctx, rows, "RETURN "+strings.TrimSpace(query.returnClause))
+	if !ok {
+		return nil, false, nil
+	}
+	if projected.Stats == nil {
+		projected.Stats = &QueryStats{}
+	}
+	return projected, true, nil
 }
 
 // executeOptionalShortestPath handles anchored shortestPath forms:

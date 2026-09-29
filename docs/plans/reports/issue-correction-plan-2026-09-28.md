@@ -12,8 +12,8 @@ Reference database: `neo4j:5.26.30-community` (the pinned differential image).
 | 2 | #648 CALL { } write subquery per-row semantics | CRITICAL: writes don't run per row | DONE (02592a57) |
 | 3 | #514 MERGE `{k: a.id}` after WITH stores text; evaluator text-fallback | CRITICAL: silent wrong data | DONE (16f13151) |
 | 4 | #640 MERGE whole-pattern creation + `findMergeNode` full scan | CRITICAL: wrong graph / O(N) per row | DONE (see §4) |
-| 5 | #581 (reopened) shortestPath between bound end nodes | HIGH: wrong rows | IN PROGRESS |
-| 6 | #728 WITH … WHERE in CALL bodies adds null rows; cartesian before WHERE | HIGH: wrong rows / OOM | |
+| 5 | #581 (reopened) shortestPath between bound end nodes | HIGH: wrong rows | DONE (see §5) |
+| 6 | #728 WITH … WHERE in CALL bodies adds null rows; cartesian before WHERE | HIGH: wrong rows / OOM | IN PROGRESS |
 | 7 | #745 element ids differ by route | HIGH: clients can't re-find entities | |
 | 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | |
 | 9 | #726 BulkDeleteNodes notification data race | HIGH: race, `-race` suite broken | |
@@ -140,6 +140,26 @@ returns `[1, null]` (Neo4j `[1,2],[2,2],[3,2]`); the WHERE variant returns `[]`.
   semantics of `p = shortestPath(...)`.
 
 **Tests:** the four reopened statements on all three routes vs Neo4j, twice, `-race`.
+
+**Status: DONE** (commit 0f6f47a):
+- `executeBoundEndShortestPath` (`shortest_path.go`): when one or both endpoints are
+  bare variable references, the preceding clause chain seeds the row space
+  (`prefix RETURN *`, executed once) and the BFS runs per input row. Path rows are
+  projected through `pipelineApplyReturn`, so RETURN aggregation, implicit grouping,
+  ORDER BY, SKIP/LIMIT and DISTINCT match the general pipeline exactly.
+- Clause `WHERE` (e.g. `WHERE length(p) > 1`) filters per path with the shared path
+  context; `allShortestPaths` bound-end form emits one row per path.
+- `parseShortestPathQuery` WHERE extraction now requires the WHERE to follow the
+  shortestPath call (previously a WHERE on an earlier MATCH leaked into the clause).
+- Shapes outside the handler (anonymous path variable, no RETURN, no preceding
+  clause, non-final MATCH) keep the single-shot behavior — no silent clause
+  swallowing.
+- Regression tests `pkg/cypher/gh581_shortest_path_bound_ends_test.go`: all 9 #721
+  table statements + the 5 original #581 OPTIONAL statements + clause-WHERE and
+  bound-end allShortestPaths pins.
+- Verification: full cypher suite green, `-race` green, TCK ratchet 7794/7794,
+  routing benchmark within band (autocommit 161 allocs / 17.5-17.7µs, explicit_tx
+  88 allocs / 11.2-11.3µs).
 
 ### 6. #728 (remaining) — WITH … WHERE in CALL bodies; cartesian before WHERE
 
