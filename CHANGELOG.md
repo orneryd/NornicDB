@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Accept the legacy variable-length MVCC version-key layout
+  (`[prefix][string ID][0x00][version]`) alongside the fixed-width layout
+  during the V2→V3 edge-adjacency migration and in the runtime version
+  scans. Stores that predate the fixed-width key rewrite previously failed
+  startup with "migration v2→v3 failed: repair archived edge adjacency:
+  invalid mvcc edge version key: len=61".
+
 - Deliver EXPLAIN/PROFILE query plans to clients (#744): Bolt PULL SUCCESS
   metadata now carries `plan` (EXPLAIN) and `profile` with runtime counters
   (PROFILE), and HTTP transaction results carry `plan`/`profile` in the

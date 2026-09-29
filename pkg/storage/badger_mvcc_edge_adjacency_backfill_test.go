@@ -179,3 +179,99 @@ func TestV3MigrationPreservesDeletedLegacyEdgeHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, current)
 }
+
+// TestRepairArchivedEdgeAdjacencyToleratesLegacyVersionKeys pins the
+// V2→V3 migration's tolerance for the pre-fixed-width MVCC version key
+// layout: [prefixMVCCEdge][string edgeID][0x00][version 16B]. Stores that
+// predate the fixed-width rewrite keep such keys, and the archived-adjacency
+// repair plus the runtime version scans must accept them (#752-style startup
+// failure: "invalid mvcc edge version key: len=61").
+func TestRepairArchivedEdgeAdjacencyToleratesLegacyVersionKeys(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = engine.Close()
+	})
+
+	startID := NodeID("legacy:owner")
+	endID := NodeID("legacy:item")
+	edgeID := EdgeID("legacy:relationship")
+	require.NoError(t, engine.BulkCreateNodes([]*Node{
+		{ID: startID, Labels: []string{"Owner"}},
+		{ID: endID, Labels: []string{"Item"}},
+	}))
+	edge := &Edge{ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS"}
+	require.NoError(t, engine.BulkCreateEdges([]*Edge{edge}))
+	head, err := engine.loadEdgeMVCCHead(edgeID)
+	require.NoError(t, err)
+
+	// Drop the adjacency keys so the repair has something to restore.
+	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
+		outgoingKey, err := engine.mvccOutgoingAdjacencyKeyString(txn, startID, edgeID, head.Version)
+		if err != nil {
+			return err
+		}
+		incomingKey, err := engine.mvccIncomingAdjacencyKeyString(txn, endID, edgeID, head.Version)
+		if err != nil {
+			return err
+		}
+		for _, key := range [][]byte{outgoingKey, incomingKey} {
+			if err := txn.Delete(key); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	// Write a legacy variable-length version key exactly as the old writer
+	// did: [prefix][string edgeID][0x00][version 16B].
+	legacyKey := append([]byte{prefixMVCCEdge}, []byte(edgeID)...)
+	legacyKey = append(legacyKey, 0x00)
+	legacyKey = append(legacyKey, encodeMVCCSortVersion(head.Version)...)
+	require.Equal(t, 1+len(edgeID)+1+16, len(legacyKey), "legacy layout length")
+	payload, err := encodeMVCCEdgeRecord(edge, false)
+	require.NoError(t, err)
+	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(legacyKey, payload)
+	}))
+
+	// The archived-adjacency repair must accept the legacy key.
+	require.NoError(t, engine.repairArchivedEdgeAdjacency())
+
+	// The runtime version scan must yield the legacy entry with its version.
+	found := false
+	_, _, err = engine.withViewEdgeMVCCVersionsFromKey([]byte{prefixMVCCEdge}, 100, func(id EdgeID, version MVCCVersion, tombstoned bool) error {
+		if id == edgeID {
+			found = true
+			require.False(t, tombstoned)
+			require.Equal(t, head.Version, version)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.True(t, found, "legacy edge version key must be visible to the runtime scan")
+
+	// Adjacency must be restored for the legacy-keyed edge.
+	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
+		outgoingKey, err := engine.mvccOutgoingAdjacencyKeyString(txn, startID, edgeID, head.Version)
+		if err != nil {
+			return err
+		}
+		if _, err := txn.Get(outgoingKey); err != nil {
+			return err
+		}
+		incomingKey, err := engine.mvccIncomingAdjacencyKeyString(txn, endID, edgeID, head.Version)
+		if err != nil {
+			return err
+		}
+		_, err = txn.Get(incomingKey)
+		return err
+	}))
+
+	// Malformed keys still error rather than being silently skipped.
+	_, err = extractEdgeVersionFromVersionKey([]byte{prefixMVCCEdge, 0, 0})
+	require.Error(t, err)
+	bad := append([]byte{prefixMVCCEdge}, []byte("legacy-shape-without-separator")...)
+	_, err = extractEdgeVersionFromVersionKey(bad)
+	require.Error(t, err)
+}
