@@ -13,8 +13,8 @@ Reference database: `neo4j:5.26.30-community` (the pinned differential image).
 | 3 | #514 MERGE `{k: a.id}` after WITH stores text; evaluator text-fallback | CRITICAL: silent wrong data | DONE (16f13151) |
 | 4 | #640 MERGE whole-pattern creation + `findMergeNode` full scan | CRITICAL: wrong graph / O(N) per row | DONE (see §4) |
 | 5 | #581 (reopened) shortestPath between bound end nodes | HIGH: wrong rows | DONE (see §5) |
-| 6 | #728 WITH … WHERE in CALL bodies adds null rows; cartesian before WHERE | HIGH: wrong rows / OOM | IN PROGRESS |
-| 7 | #745 element ids differ by route | HIGH: clients can't re-find entities | |
+| 6 | #728 WITH … WHERE in CALL bodies adds null rows; cartesian before WHERE | HIGH: wrong rows / OOM | DONE (30c255e1) |
+| 7 | #745 element ids differ by route | HIGH: clients can't re-find entities | IN PROGRESS |
 | 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | |
 | 9 | #726 BulkDeleteNodes notification data race | HIGH: race, `-race` suite broken | |
 
