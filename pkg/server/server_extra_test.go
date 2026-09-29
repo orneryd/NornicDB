@@ -1749,7 +1749,7 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	converted := server.mapNodeToNeo4jHTTPFormat("n1", map[string]interface{}{
 		"labels": []interface{}{"Doc"},
 		"title":  "T",
-	})
+	}, "nornicdb")
 	assert.Equal(t, "4:nornicdb:n1", converted["elementId"])
 	assert.Equal(t, []string{"Doc"}, converted["labels"])
 	props, ok := converted["properties"].(map[string]interface{})
@@ -1764,7 +1764,7 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 		"nested": []interface{}{
 			map[string]interface{}{"id": "n3", "labels": []interface{}{"M"}, "k": "v"},
 		},
-	})
+	}, "nornicdb")
 	vm, ok := v.(map[string]interface{})
 	assert.True(t, ok)
 	assert.NotContains(t, vm, "_pathResult")
@@ -2496,7 +2496,7 @@ func TestRouteRegistrationAdvancedBranches(t *testing.T) {
 func TestValueConversionAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	assert.Nil(t, server.convertValueToNeo4jFormat(nil))
+	assert.Nil(t, server.convertValueToNeo4jFormat(nil, "nornicdb"))
 
 	node := &storage.Node{
 		ID:         "node-x",
@@ -2511,8 +2511,8 @@ func TestValueConversionAdditionalBranches(t *testing.T) {
 		Properties: map[string]interface{}{"weight": 1},
 	}
 
-	nv := server.convertValueToNeo4jFormat(node)
-	ev := server.convertValueToNeo4jFormat(edge)
+	nv := server.convertValueToNeo4jFormat(node, "nornicdb")
+	ev := server.convertValueToNeo4jFormat(edge, "nornicdb")
 	nm, ok := nv.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, "4:nornicdb:node-x", nm["elementId"])
@@ -2521,14 +2521,14 @@ func TestValueConversionAdditionalBranches(t *testing.T) {
 	assert.Equal(t, "5:nornicdb:edge-x", em["elementId"])
 
 	already := map[string]interface{}{"elementId": "4:nornicdb:keep"}
-	assert.Equal(t, already, server.convertValueToNeo4jFormat(already))
+	assert.Equal(t, already, server.convertValueToNeo4jFormat(already, "nornicdb"))
 
 	v := server.convertValueToNeo4jFormat(map[string]interface{}{
 		"id":     "map-node",
 		"labels": []string{"Mapped"},
 		"name":   "alice",
 		"nested": []interface{}{map[string]interface{}{"x": "y"}},
-	})
+	}, "nornicdb")
 	vm, ok := v.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, "4:nornicdb:map-node", vm["elementId"])
@@ -2536,7 +2536,7 @@ func TestValueConversionAdditionalBranches(t *testing.T) {
 	sliceVal := server.convertValueToNeo4jFormat([]interface{}{
 		map[string]interface{}{"id": "n100", "labels": []string{"L"}},
 		"text",
-	})
+	}, "nornicdb")
 	sliceOut, ok := sliceVal.([]interface{})
 	assert.True(t, ok)
 	assert.Len(t, sliceOut, 2)

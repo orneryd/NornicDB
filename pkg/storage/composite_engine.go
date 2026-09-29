@@ -322,6 +322,31 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 	return nodeID, nil
 }
 
+// ConstituentDatabaseForNode returns the backing database name of the
+// constituent that holds nodeID, or "" when none of the readable
+// constituents holds it. It also resolves nodes created directly on a
+// constituent (the nodeToConstituent index only records writes routed
+// through the composite), so element-id projections on a composite
+// coordinator can name the entity's own database (#745 §3).
+func (c *CompositeEngine) ConstituentDatabaseForNode(id NodeID) string {
+	for _, alias := range c.getConstituentsForRead() {
+		engine, err := c.getConstituent(alias)
+		if err != nil {
+			continue
+		}
+		if _, err := engine.GetNode(id); err == nil {
+			c.mu.RLock()
+			name, ok := c.constituentNames[alias]
+			c.mu.RUnlock()
+			if !ok || name == "" {
+				name = alias
+			}
+			return name
+		}
+	}
+	return ""
+}
+
 // GetNode retrieves a node. Searches all readable constituents.
 func (c *CompositeEngine) GetNode(id NodeID) (*Node, error) {
 	readConstituents := c.getConstituentsForRead()

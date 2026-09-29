@@ -123,6 +123,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -154,6 +155,7 @@ var boltTxWriteAnalyzer = cypher.NewQueryAnalyzer(256)
 
 // Protocol versions supported
 const (
+	BoltV5_0 = 0x0500 // Bolt 5.0 (element ids in node/relationship structures)
 	BoltV4_4 = 0x0404 // Bolt 4.4
 	BoltV4_3 = 0x0403 // Bolt 4.3
 	BoltV4_2 = 0x0402 // Bolt 4.2
@@ -1562,6 +1564,40 @@ func (s *Session) useUTCDateTimeStructs() bool {
 	return s.utcPatchNegotiated
 }
 
+// boltV5 reports whether the session negotiated Bolt 5.0 or newer: node and
+// relationship structures then carry their element id (#745).
+func (s *Session) boltV5() bool {
+	return s.version >= 0x0500
+}
+
+// selectBoltVersion picks the highest mutually supported protocol version
+// from a client's four handshake proposals. Each proposal is the wire
+// [0x00, back, minor, major] encoding; the first proposal may be the Bolt
+// manifest marker (0x000001FF), which this server does not speak — clients
+// that offer it also offer concrete versions. It returns the selected
+// major.minor version, the exact proposal bytes to echo, and whether any
+// proposal was mutually supported.
+func selectBoltVersion(offers []uint32) (version uint32, reply uint32, ok bool) {
+	selected := uint32(0)
+	selectedWire := uint32(0)
+	for _, offered := range offers {
+		if offered&0xFF000000 != 0 {
+			continue // manifest marker or reserved range
+		}
+		major := offered & 0xFF
+		minor := (offered >> 8) & 0xFF
+		mm := (major << 8) | minor
+		switch mm {
+		case BoltV5_0, BoltV4_4, BoltV4_3, BoltV4_2, BoltV4_1, BoltV4_0:
+			if mm > selected {
+				selected = mm
+				selectedWire = offered
+			}
+		}
+	}
+	return selected, selectedWire, selected != 0
+}
+
 // boltMessage represents a parsed Bolt message ready for processing
 type boltMessage struct {
 	msgType byte
@@ -1586,11 +1622,25 @@ func (s *Session) handshake() error {
 		return fmt.Errorf("failed to read versions: %w", err)
 	}
 
-	// Select highest supported version
-	s.version = BoltV4_4
+	// Select the highest version the client offers that we support, so a
+	// Neo4j 5 driver negotiates Bolt 5.0 and receives element ids in the
+	// node/relationship structures (#745). Older clients keep 4.x. The reply
+	// is the exact offered proposal bytes (wire format [0x00, back, minor,
+	// major]); the session records the major.minor version.
+	offers := []uint32{
+		binary.BigEndian.Uint32(versions[0:4]),
+		binary.BigEndian.Uint32(versions[4:8]),
+		binary.BigEndian.Uint32(versions[8:12]),
+		binary.BigEndian.Uint32(versions[12:16]),
+	}
+	selected, reply, ok := selectBoltVersion(offers)
+	if !ok {
+		return fmt.Errorf("no mutually supported Bolt protocol version")
+	}
+	s.version = selected
 
 	// Send selected version using buffered writer
-	response := []byte{0x00, 0x00, 0x04, 0x04} // Bolt 4.4
+	response := []byte{byte(reply >> 24), byte(reply >> 16), byte(reply >> 8), byte(reply)}
 	if _, err := s.writer.Write(response); err != nil {
 		return fmt.Errorf("failed to send version: %w", err)
 	}

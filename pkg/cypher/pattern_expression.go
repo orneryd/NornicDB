@@ -226,6 +226,16 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	if subquery, ok := standaloneSubqueryExpression(expr); ok {
 		return e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, values)
 	}
+	// id() / elementId() resolve the entity identity at this context-aware
+	// boundary: the allocation-conscious row evaluator below carries no
+	// context and would build the id with the executor's default database,
+	// losing a composite subquery's constituent identity (#745 §3).
+	if function, argument, ok := parseFunctionCallWS(strings.TrimSpace(expr)); ok &&
+		(strings.EqualFold(function, "id") || strings.EqualFold(function, "elementId")) {
+		if value, resolved := e.evaluateRowEntityIdentity(ctx, function, argument, values); resolved {
+			return value, true
+		}
+	}
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
 		return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, values), true
 	}
@@ -282,4 +292,51 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		}
 	}
 	return value, resolved
+}
+
+// evaluateRowEntityIdentity resolves id(entity) and elementId(entity) at the
+// context-aware row boundary. The element id names the database the statement
+// currently executes on — a composite subquery's constituent after
+// CALL { USE … } — so the identity survives the row projection (#745 §3).
+func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, function, argument string, values pipelineRow) (interface{}, bool) {
+	inner := strings.TrimSpace(argument)
+	var node *storage.Node
+	var edge *storage.Edge
+	if value, bound := values[inner]; bound {
+		node, _ = value.(*storage.Node)
+		edge, _ = value.(*storage.Edge)
+	} else if value, resolved, err := e.evaluateRowValue(inner, values); err == nil && resolved {
+		node, _ = value.(*storage.Node)
+		edge, _ = value.(*storage.Edge)
+	} else {
+		return nil, false
+	}
+	switch {
+	case node != nil:
+		if strings.EqualFold(function, "id") {
+			return string(node.ID), true
+		}
+		return storage.NodeElementID(e.entityIdentityDatabase(ctx, node.ID), node.ID), true
+	case edge != nil:
+		if strings.EqualFold(function, "id") {
+			return string(edge.ID), true
+		}
+		return storage.RelationshipElementID(e.entityIdentityDatabase(ctx, storage.NodeID(edge.StartNode)), edge.ID), true
+	}
+	return nil, false
+}
+
+// entityIdentityDatabase is the database an entity identity should name: the
+// statement's execution database, or — on a composite coordinator — the
+// constituent that actually holds the entity (#745 §3).
+func (e *StorageExecutor) entityIdentityDatabase(ctx context.Context, anchor storage.NodeID) string {
+	db := e.executionDatabaseName(ctx)
+	if e.dbManager != nil && e.dbManager.IsCompositeDatabase(db) {
+		if composite, ok := e.storage.(*storage.CompositeEngine); ok {
+			if constituent := composite.ConstituentDatabaseForNode(anchor); constituent != "" {
+				return constituent
+			}
+		}
+	}
+	return db
 }

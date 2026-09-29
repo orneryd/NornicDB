@@ -1262,26 +1262,26 @@ func (s *Server) grantAccessToNewDatabase(ctx context.Context, dbName string, cl
 
 // convertRowToNeo4jFormat converts each value in a row to Neo4j-compatible format.
 // This ensures nodes and edges use elementId and have filtered properties.
-func (s *Server) convertRowToNeo4jFormat(row []interface{}) []interface{} {
+func (s *Server) convertRowToNeo4jFormat(row []interface{}, dbName string) []interface{} {
 	converted := make([]interface{}, len(row))
 	for i, val := range row {
-		converted[i] = s.convertValueToNeo4jFormat(val)
+		converted[i] = s.convertValueToNeo4jFormat(val, dbName)
 	}
 	return converted
 }
 
 // convertValueToNeo4jFormat converts a single value to Neo4j HTTP format.
 // Handles storage.Node, storage.Edge, maps, and slices recursively.
-func (s *Server) convertValueToNeo4jFormat(val interface{}) interface{} {
+func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) interface{} {
 	if val == nil {
 		return nil
 	}
 
 	switch v := val.(type) {
 	case *storage.Node:
-		return s.nodeToNeo4jHTTPFormat(v)
+		return s.nodeToNeo4jHTTPFormat(v, dbName)
 	case *storage.Edge:
-		return s.edgeToNeo4jHTTPFormat(v)
+		return s.edgeToNeo4jHTTPFormat(v, dbName)
 	case map[string]interface{}:
 		// Check if this is already a converted node (has elementId)
 		if _, hasElementId := v["elementId"]; hasElementId {
@@ -1289,11 +1289,11 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}) interface{} {
 		}
 		// Check if this looks like a node map (has _nodeId or id + labels)
 		if nodeId, hasNodeId := v["_nodeId"]; hasNodeId {
-			return s.mapNodeToNeo4jHTTPFormat(nodeId, v)
+			return s.mapNodeToNeo4jHTTPFormat(nodeId, v, dbName)
 		}
 		if nodeId, hasId := v["id"]; hasId {
 			if _, hasLabels := v["labels"]; hasLabels {
-				return s.mapNodeToNeo4jHTTPFormat(nodeId, v)
+				return s.mapNodeToNeo4jHTTPFormat(nodeId, v, dbName)
 			}
 		}
 		// Regular map - convert nested values
@@ -1302,13 +1302,13 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}) interface{} {
 			if k == "_pathResult" {
 				continue
 			}
-			result[k] = s.convertValueToNeo4jFormat(vv)
+			result[k] = s.convertValueToNeo4jFormat(vv, dbName)
 		}
 		return result
 	case []interface{}:
 		result := make([]interface{}, len(v))
 		for i, vv := range v {
-			result[i] = s.convertValueToNeo4jFormat(vv)
+			result[i] = s.convertValueToNeo4jFormat(vv, dbName)
 		}
 		return result
 	default:
@@ -1318,12 +1318,13 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}) interface{} {
 
 // nodeToNeo4jHTTPFormat converts a storage.Node to Neo4j HTTP API format.
 // Neo4j format: {"elementId": "4:db:id", "labels": [...], "properties": {...}}
-func (s *Server) nodeToNeo4jHTTPFormat(node *storage.Node) map[string]interface{} {
+func (s *Server) nodeToNeo4jHTTPFormat(node *storage.Node, dbName string) map[string]interface{} {
 	if node == nil {
 		return nil
 	}
 
-	elementId := fmt.Sprintf("4:nornicdb:%s", node.ID)
+	// The element id names the database the entity actually lives in (#745).
+	elementId := fmt.Sprintf("4:%s:%s", dbName, node.ID)
 
 	// Preserve user properties exactly as stored for Neo4j compatibility.
 	props := node.Properties
@@ -1336,8 +1337,8 @@ func (s *Server) nodeToNeo4jHTTPFormat(node *storage.Node) map[string]interface{
 }
 
 // mapNodeToNeo4jHTTPFormat converts a map representation to Neo4j HTTP format.
-func (s *Server) mapNodeToNeo4jHTTPFormat(nodeId interface{}, m map[string]interface{}) map[string]interface{} {
-	elementId := fmt.Sprintf("4:nornicdb:%v", nodeId)
+func (s *Server) mapNodeToNeo4jHTTPFormat(nodeId interface{}, m map[string]interface{}, dbName string) map[string]interface{} {
+	elementId := fmt.Sprintf("4:%s:%v", dbName, nodeId)
 
 	// Extract labels
 	var labels []string
@@ -1376,14 +1377,14 @@ func (s *Server) mapNodeToNeo4jHTTPFormat(nodeId interface{}, m map[string]inter
 }
 
 // edgeToNeo4jHTTPFormat converts a storage.Edge to Neo4j HTTP API format.
-func (s *Server) edgeToNeo4jHTTPFormat(edge *storage.Edge) map[string]interface{} {
+func (s *Server) edgeToNeo4jHTTPFormat(edge *storage.Edge, dbName string) map[string]interface{} {
 	if edge == nil {
 		return nil
 	}
 
-	elementId := fmt.Sprintf("5:nornicdb:%s", edge.ID)
-	startElementId := fmt.Sprintf("4:nornicdb:%s", edge.StartNode)
-	endElementId := fmt.Sprintf("4:nornicdb:%s", edge.EndNode)
+	elementId := fmt.Sprintf("5:%s:%s", dbName, edge.ID)
+	startElementId := fmt.Sprintf("4:%s:%s", dbName, edge.StartNode)
+	endElementId := fmt.Sprintf("4:%s:%s", dbName, edge.EndNode)
 
 	return map[string]interface{}{
 		"elementId":          elementId,
@@ -1408,9 +1409,11 @@ func (s *Server) generateRowMeta(row []interface{}) []interface{} {
 				if strings.HasPrefix(elementId, "5:") {
 					entityType = "relationship"
 				}
-				// Extract numeric ID from elementId (4:nornicdb:uuid -> hash to int)
-				idPart := strings.TrimPrefix(elementId, "4:nornicdb:")
-				idPart = strings.TrimPrefix(idPart, "5:nornicdb:")
+				// Extract the entity id from the canonical "4:<db>:<id>" shape.
+				idPart := elementId
+				if parts := strings.SplitN(elementId, ":", 3); len(parts) == 3 {
+					idPart = parts[2]
+				}
 				numericId := s.hashStringToInt64(idPart)
 
 				meta[i] = map[string]interface{}{
@@ -1470,7 +1473,7 @@ func (s *Server) transactionCommitURL(r *http.Request, dbName, txID string) stri
 	return s.transactionURL(r, dbName, txID) + "/commit"
 }
 
-func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, includeStats bool) {
+func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool) {
 	columns := result.Columns
 	if columns == nil {
 		columns = []string{}
@@ -1480,7 +1483,7 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		Data:    make([]ResultRow, len(result.Rows)),
 	}
 	for i, row := range result.Rows {
-		convertedRow := s.convertRowToNeo4jFormat(row)
+		convertedRow := s.convertRowToNeo4jFormat(row, dbName)
 		qr.Data[i] = ResultRow{Row: convertedRow, Meta: s.generateRowMeta(convertedRow)}
 	}
 	if includeStats {
@@ -1797,7 +1800,7 @@ func (s *Server) runRequestStatement(
 		result.Rows = filtered
 	}
 
-	s.appendStatementResult(response, result, stmt.IncludeStats)
+	s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats)
 	return nil
 }
 

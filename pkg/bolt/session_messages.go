@@ -1445,7 +1445,7 @@ func (s *Session) sendRecord(fields []any) error {
 
 	// Format: <struct marker 0xB1> <signature 0x71> <list of fields>
 	buf = append(buf, recordHeader...)
-	buf = encodePackStreamListIntoWithUTC(buf, fields, s.useUTCDateTimeStructs())
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database)
 
 	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
 	err := s.sendChunk(buf)
@@ -1464,7 +1464,7 @@ func (s *Session) writeRecordNoFlush(fields []any) error {
 	buf = buf[:0]
 
 	buf = append(buf, recordHeader...)
-	buf = encodePackStreamListIntoWithUTC(buf, fields, s.useUTCDateTimeStructs())
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database)
 
 	err := s.writeMessageNoFlush(buf)
 	s.recordBuf = buf[:0]
@@ -1492,7 +1492,7 @@ func (s *Session) sendRecordsBatched(rows [][]any) error {
 
 		// Build record: struct marker + signature + list of fields
 		buf = append(buf, recordHeader...)
-		buf = encodePackStreamListIntoWithUTC(buf, row, s.useUTCDateTimeStructs())
+		buf = encodeRecordListInto(buf, row, s.useUTCDateTimeStructs(), s.boltV5(), s.database)
 
 		// bufio.Writer does not retain the provided slice after Write returns,
 		// so it's safe to reuse the pooled buffer on the next iteration.

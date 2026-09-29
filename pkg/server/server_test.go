@@ -652,10 +652,11 @@ func TestMetaField_NodeMetadata(t *testing.T) {
 	require.Equal(t, "node", metaMap["type"], "type should be 'node'")
 	require.Equal(t, false, metaMap["deleted"], "deleted should be false")
 
-	// Verify elementId format
+	// Verify elementId format: the request database is "nornic", so the meta
+	// elementId names it (#745 §2).
 	elementId, ok := metaMap["elementId"].(string)
 	require.True(t, ok, "elementId should be a string")
-	require.True(t, strings.HasPrefix(elementId, "4:nornicdb:"), "elementId should start with '4:nornicdb:'")
+	require.True(t, strings.HasPrefix(elementId, "4:nornic:"), "elementId should start with '4:nornic:'")
 }
 
 // TestMetaField_PrimitiveValues verifies that meta field is null for primitive values.
@@ -4272,8 +4273,8 @@ func TestDbConfigGPUAndMiddleware_AdditionalBranches(t *testing.T) {
 func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	require.Nil(t, server.nodeToNeo4jHTTPFormat(nil))
-	require.Nil(t, server.edgeToNeo4jHTTPFormat(nil))
+	require.Nil(t, server.nodeToNeo4jHTTPFormat(nil, "nornicdb"))
+	require.Nil(t, server.edgeToNeo4jHTTPFormat(nil, "nornicdb"))
 
 	converted := server.convertValueToNeo4jFormat(map[string]interface{}{
 		"_pathResult": "drop",
@@ -4286,7 +4287,7 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 			&storage.Edge{ID: "cv-edge", StartNode: "a", EndNode: "b", Type: "REL"},
 			"text",
 		},
-	})
+	}, "nornicdb")
 	m, ok := converted.(map[string]interface{})
 	require.True(t, ok)
 	require.NotContains(t, m, "_pathResult")
@@ -4296,7 +4297,7 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 	withProps := server.mapNodeToNeo4jHTTPFormat("n-props", map[string]interface{}{
 		"labels":     []string{"Doc"},
 		"properties": map[string]interface{}{"title": "t"},
-	})
+	}, "nornicdb")
 	props, ok := withProps["properties"].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "t", props["title"])
@@ -4304,7 +4305,7 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 	withMixedLabels := server.mapNodeToNeo4jHTTPFormat("n-mixed", map[string]interface{}{
 		"labels": []interface{}{"A", 123, "B"},
 		"name":   "mixed",
-	})
+	}, "nornicdb")
 	labels, ok := withMixedLabels["labels"].([]string)
 	require.True(t, ok)
 	require.Equal(t, "A", labels[0])
@@ -4328,7 +4329,7 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 			"receipt":    map[string]interface{}{"writes": 1},
 			"optimistic": map[string]interface{}{"createdNodeIds": []string{"nornic:1"}},
 		},
-	}, false)
+	}, "nornicdb", false)
 	require.Len(t, resp.Results, 1)
 	require.NotNil(t, resp.Receipt)
 	require.NotNil(t, resp.Optimistic)
@@ -4338,7 +4339,7 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 	server.appendStatementResult(resp, &cypher.ExecuteResult{
 		Columns: nil,
 		Rows:    [][]interface{}{},
-	}, false)
+	}, "nornicdb", false)
 	require.Len(t, resp.Results, 1)
 	require.NotNil(t, resp.Results[0].Columns)
 	require.Len(t, resp.Results[0].Columns, 0)

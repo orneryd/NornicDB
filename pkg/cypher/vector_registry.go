@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -75,6 +76,18 @@ func (e *StorageExecutor) databaseName() string {
 		return conf.Database.DefaultDatabase
 	}
 	return "nornic"
+}
+
+// executionDatabaseName is the database the statement currently executes on:
+// the :USE / subquery USE selection carried on the context when present, else
+// the executor's own database. elementId() and id projections must use it so
+// an entity returned through a composite subquery keeps its constituent's
+// identity (#745).
+func (e *StorageExecutor) executionDatabaseName(ctx context.Context) string {
+	if db := GetUseDatabaseFromContext(ctx); db != "" {
+		return db
+	}
+	return e.databaseName()
 }
 
 func toDistanceMetric(similarity string) (vectorspace.DistanceMetric, error) {

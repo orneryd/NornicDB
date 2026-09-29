@@ -14,8 +14,8 @@ Reference database: `neo4j:5.26.30-community` (the pinned differential image).
 | 4 | #640 MERGE whole-pattern creation + `findMergeNode` full scan | CRITICAL: wrong graph / O(N) per row | DONE (see §4) |
 | 5 | #581 (reopened) shortestPath between bound end nodes | HIGH: wrong rows | DONE (see §5) |
 | 6 | #728 WITH … WHERE in CALL bodies adds null rows; cartesian before WHERE | HIGH: wrong rows / OOM | DONE (30c255e1) |
-| 7 | #745 element ids differ by route | HIGH: clients can't re-find entities | IN PROGRESS |
-| 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | |
+| 7 | #745 element ids differ by route | HIGH: clients can't re-find entities | DONE (see §7) |
+| 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | IN PROGRESS |
 | 9 | #726 BulkDeleteNodes notification data race | HIGH: race, `-race` suite broken | |
 
 ## Per-issue plan
@@ -233,6 +233,31 @@ through `CALL { USE … }` gets the default database's id instead of the constit
   5.x structures. Prefer the smaller change that makes `element_id` round-trip.
 - HTTP `meta` elementId must use the database name from context, not the constant.
 - Composite subqueries must keep the constituent identity through `CALL { USE … }`.
+
+**Status: DONE** (commit follows §7):
+- **Bolt (§1):** the handshake now selects the highest mutually supported version
+  from the client's wire proposals (`selectBoltVersion`, [0x00, back, minor, major]
+  parsing, manifest marker skipped) and echoes the exact proposal. Bolt 5.0
+  negotiates for drivers that offer it; node/relationship structures then carry
+  their element id as the final field (`encodeRecordListInto`/`encodeRecordValueInto`,
+  B4 4E / B6 52, paths via `encodePathV5Into`). 4.x clients keep the 3/5-field
+  structures unchanged.
+- **HTTP (§2):** the request database name threads through
+  `convertRowToNeo4jFormat` → `nodeToNeo4jHTTPFormat`/`edgeToNeo4jHTTPFormat` →
+  `generateRowMeta` (id parsing is prefix-agnostic), so row meta and values name
+  the database the entity lives in.
+- **Composite (§3):** `evaluateRowEntityIdentity` resolves id()/elementId() at the
+  context-aware row boundary (the allocation-conscious row evaluator carries no
+  ctx); `entityIdentityDatabase` names the constituent that holds the entity via
+  the new `CompositeEngine.ConstituentDatabaseForNode` when the execution database
+  is a composite. `fn.Context.Database` and `resolveBindingExprWithRelationships`
+  use `executionDatabaseName` (ctx USE database first).
+- Tests: `pkg/bolt/gh745_element_id_test.go` (wire-format negotiation + V5 struct
+  encoding), `pkg/server/gh745_element_id_test.go` (db-named meta), and
+  `pkg/cypher/gh745_element_id_test.go` (composite subquery identity + round-trip).
+- Verification: full bolt/cypher/storage/fabric/server suites green; routing
+  benchmark in band (autocommit 161 allocs / 17.5-17.7µs, explicit_tx 88 allocs /
+  11.4-11.5µs).
 
 **Tests:** the issue's three sections on Bolt + HTTP + composite; a lookup by the
 returned id finds the entity (`MATCH (n) WHERE elementId(n) = $e`).
