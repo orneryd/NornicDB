@@ -1039,8 +1039,9 @@ func TestBoltServerStress(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	// Create storage and executor
-	store := storage.NewMemoryEngine()
+	// Create storage and executor using the production-matching chain
+	// (namespaced engine so Cypher-generated node IDs are accepted).
+	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
 
@@ -1065,29 +1066,64 @@ func TestBoltServerStress(t *testing.T) {
 			defer conn.Close()
 
 			// Perform handshake
-			PerformHandshakeWithTesting(t, conn)
-			SendHello(t, conn, nil)
-			ReadSuccess(t, conn)
+			if err := PerformHandshakeWithTesting(t, conn); err != nil {
+				done <- fmt.Errorf("handshake: %w", err)
+				return
+			}
+			if err := SendHello(t, conn, nil); err != nil {
+				done <- fmt.Errorf("HELLO: %w", err)
+				return
+			}
+			if err := ReadSuccess(t, conn); err != nil {
+				done <- fmt.Errorf("HELLO reply: %w", err)
+				return
+			}
 
 			// Execute queries
 			query := fmt.Sprintf("CREATE (n:Test {id: %d}) RETURN n", id)
-			SendRun(t, conn, query, nil, nil)
-			ReadSuccess(t, conn)
-			SendPull(t, conn, nil)
-
-			// Read results
-			for {
-				msgType, err := ReadMessageType(t, conn)
-				if err != nil {
-					done <- err
-					return
-				}
-				if msgType == MsgSuccess {
-					break
-				}
+			if err := SendRun(t, conn, query, nil, nil); err != nil {
+				done <- fmt.Errorf("RUN: %w", err)
+				return
+			}
+			if err := ReadSuccess(t, conn); err != nil {
+				done <- fmt.Errorf("RUN reply: %w", err)
+				return
+			}
+			if err := SendPull(t, conn, nil); err != nil {
+				done <- fmt.Errorf("PULL: %w", err)
+				return
 			}
 
-			done <- nil
+			// Read results: exactly one RECORD followed by SUCCESS.
+			recordSeen := false
+			for {
+				msgType, msgData, err := ReadMessage(conn)
+				if err != nil {
+					done <- fmt.Errorf("PULL reply: %w", err)
+					return
+				}
+				switch msgType {
+				case MsgRecord:
+					if recordSeen {
+						done <- fmt.Errorf("unexpected second RECORD: %x", msgData)
+						return
+					}
+					recordSeen = true
+				case MsgSuccess:
+					if !recordSeen {
+						done <- fmt.Errorf("PULL SUCCESS without a RECORD")
+						return
+					}
+					done <- nil
+					return
+				case MsgFailure, MsgIgnored:
+					done <- fmt.Errorf("PULL got 0x%02X: %x", msgType, msgData)
+					return
+				default:
+					done <- fmt.Errorf("PULL got unexpected message 0x%02X", msgType)
+					return
+				}
+			}
 		}(i)
 	}
 

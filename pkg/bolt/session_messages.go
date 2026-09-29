@@ -1584,9 +1584,13 @@ func (s *Session) sendRunFailure(code, message string) error {
 }
 
 func (s *Session) sendRunFailureWithDetail(code, message, detail string) error {
-	if s.inTransaction {
-		s.failedUntilReset = true
-	}
+	// Bolt spec: a FAILURE poisons the connection until RESET — every queued
+	// or subsequent message (except RESET/GOODBYE) gets IGNORED. This applies
+	// to auto-commit RUNs too: a pipelined PULL must be answered with
+	// IGNORED, not an empty SUCCESS, or drivers desynchronize their stream
+	// (observed as hangs and "Expected structure, found marker 00" under
+	// concurrent auto-commit MERGE conflicts, #769).
+	s.failedUntilReset = true
 	return s.sendFailureWithDetail(code, message, detail)
 }
 
