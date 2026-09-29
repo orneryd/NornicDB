@@ -15,8 +15,8 @@ Reference database: `neo4j:5.26.30-community` (the pinned differential image).
 | 5 | #581 (reopened) shortestPath between bound end nodes | HIGH: wrong rows | DONE (see §5) |
 | 6 | #728 WITH … WHERE in CALL bodies adds null rows; cartesian before WHERE | HIGH: wrong rows / OOM | DONE (30c255e1) |
 | 7 | #745 element ids differ by route | HIGH: clients can't re-find entities | DONE (see §7) |
-| 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | IN PROGRESS |
-| 9 | #726 BulkDeleteNodes notification data race | HIGH: race, `-race` suite broken | |
+| 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | DONE (0bc50dc1) |
+| 9 | #726 BulkDeleteNodes notification data race | HIGH: race, `-race` suite broken | DONE (a979b47d) |
 
 ## Per-issue plan
 
@@ -282,6 +282,19 @@ vs HNSW 0.99. The raising block for `effective.MaxCandidateLimit` only runs when
 recall check on the #440-style dataset if feasible; re-run the existing search
 suite and record recall@10 before/after.
 
+**Status: DONE** (commit 0bc50dc1):
+- The fix already lives on the main path: `resolveVectorAdaptiveOverfetch` applies
+  the unconditional compressed `profile.RerankTopK` floor regardless of the
+  request-derived limit. No new code path was added — the floor is enforced where
+  the overfetch is decided, on the existing hot path.
+- Pin test `pkg/search/gh446_rerank_floor_test.go`:
+  `TestGh446_CompressedRerankFloorNotClampedByRequestLimit` locks the behavior so
+  it cannot silently regress: floor applied with a request limit far below
+  RerankTopK, floor applied with no explicit request limit, explicit limit above
+  the floor stays in effect.
+- Verification: full search suite green (9.3s); test-only change, no runtime perf
+  impact.
+
 ### 9. #726 — BulkDeleteNodes notification goroutine races Close
 
 **Facts:** `badger_edges.go:~727` dispatches node-deleted notifications from an
@@ -297,6 +310,20 @@ untracked goroutine; `dispatchNodeDeleted` reads `b.onNodeDeleted` under
   `Close` waits for in-flight dispatches before releasing state.
 
 **Tests:** `go test -race ./pkg/storage` clean; the listed tests still pass.
+
+**Status: DONE** (commit a979b47d):
+- Callback read/clear were already under `callbackMu` on main (verified race-clean
+  at 94.5s before this change); the remaining gap was that `Close` did not wait for
+  the in-flight notification goroutine, so notifications could outlive teardown.
+- `BadgerEngine.notifyWG` tracks the dispatch goroutines. `BulkDeleteNodes` adds
+  under `b.mu` only while the engine is not closed; `Close` sets `closed` under the
+  same lock, then waits on `notifyWG` before releasing callback state and closing
+  Badger. No new spawn can race the wait (closed flag + shared lock).
+- Regression tests `pkg/storage/gh726_bulk_delete_notification_drain_test.go`:
+  notifications all dispatched before Close returns (exact count) and a bulk delete
+  on a closed engine fails without dispatching.
+- Verification: `go test -race ./pkg/storage` clean (95.0s); full storage suite
+  green (48.4s); no hot-path change (bulk-delete teardown only).
 
 ## Execution order
 
