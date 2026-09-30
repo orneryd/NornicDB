@@ -187,6 +187,7 @@ func (e *StorageExecutor) evaluateMapLiteral(ctx context.Context, expr string, n
 // evaluateMapLiteralFull parses and evaluates a map literal with full path context
 func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) map[string]interface{} {
 	result := make(map[string]interface{})
+	keys := make([]string, 0)
 
 	expr = strings.TrimSpace(expr)
 	if !strings.HasPrefix(expr, "{") || !strings.HasSuffix(expr, "}") {
@@ -219,7 +220,13 @@ func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr strin
 
 		// Evaluate the value expression in context with full path info
 		value := e.evaluateExpressionWithContextFull(ctx, valueExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		if _, exists := result[key]; !exists {
+			keys = append(keys, key)
+		}
 		result[key] = value
+	}
+	if failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure); ok {
+		failure.recordMapKeyOrder(result, keys)
 	}
 
 	return result

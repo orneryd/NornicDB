@@ -7,6 +7,8 @@ type ExecuteResult struct {
 	Rows     [][]interface{}
 	Stats    *QueryStats
 	Metadata map[string]interface{} // Additional result metadata (e.g., execution plan)
+	// MapKeyOrders retains evaluated map traversal order for transaction HTTP metadata.
+	MapKeyOrders map[uintptr][]string `json:"-"`
 }
 
 // QueryStats holds query execution statistics.

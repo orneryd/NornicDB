@@ -1202,19 +1202,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		return result
 	}
 
-	// [x IN list WHERE condition | expression] - filter before projection.
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(upperASCII(expr), " WHERE ") && strings.Contains(expr, " | ") {
-		inner := strings.TrimSpace(expr[1 : len(expr)-1])
-		upperInner := upperASCII(inner)
-		inIdx := strings.Index(upperInner, " IN ")
-		whereIdx := strings.Index(upperInner, " WHERE ")
-		pipeIdx := strings.LastIndex(inner, " | ")
-		if inIdx > 0 && whereIdx > inIdx && pipeIdx > whereIdx {
-			varName := strings.TrimSpace(inner[:inIdx])
-			listExpr := strings.TrimSpace(inner[inIdx+4 : whereIdx])
-			condition := strings.TrimSpace(inner[whereIdx+7 : pipeIdx])
-			projection := strings.TrimSpace(inner[pipeIdx+3:])
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
+		varName, listExpr, condition, projection, comprehension := parseListComprehension(inner)
+		if comprehension && condition != "" {
 			list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			if list == nil {
+				return nil
+			}
 			items, ok := toInterfaceSlice(list)
 			if !ok {
 				return []interface{}{}
@@ -1232,99 +1226,20 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			itemCtx := withValueBindings(ctx, values)
 			for _, item := range items {
 				bindEvaluationValue(varName, item, boundNodes, boundRels, values)
-				if e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength) == true {
-					result = append(result, e.evaluateExpressionWithContextFull(itemCtx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength))
+				predicate := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
+				truth, err := predicateTruthFromValue(predicate)
+				if err != nil {
+					recordExpressionFailure(ctx, err)
+					return nil
 				}
-			}
-			return result
-		}
-	}
-
-	// [x IN list WHERE condition] - list comprehension with filter
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(upperASCII(expr), " WHERE ") {
-		inner := strings.TrimSpace(expr[1 : len(expr)-1])
-		upperInner := upperASCII(inner)
-		inIdx := strings.Index(upperInner, " IN ")
-		whereIdx := strings.Index(upperInner, " WHERE ")
-
-		if inIdx > 0 && whereIdx > inIdx {
-			varName := strings.TrimSpace(inner[:inIdx])
-			listExpr := strings.TrimSpace(inner[inIdx+4 : whereIdx])
-			condition := strings.TrimSpace(inner[whereIdx+7:])
-
-			// Evaluate the list expression
-			list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-
-			// Convert to []interface{} if needed
-			var items []interface{}
-			switch v := list.(type) {
-			case []interface{}:
-				items = v
-			case []string:
-				items = make([]interface{}, len(v))
-				for i, s := range v {
-					items[i] = s
+				if truth != truthTrue {
+					continue
 				}
-			default:
-				return []interface{}{}
-			}
-
-			// Filter by condition
-			result := make([]interface{}, 0, len(items))
-			for _, item := range items {
-				// Evaluate condition with item substituted
-				itemStr := fmt.Sprintf("%v", item)
-
-				// Handle different condition patterns
-				matches := true
-				if strings.Contains(condition, "<>") {
-					parts := strings.SplitN(condition, "<>", 2)
-					condVar := strings.TrimSpace(parts[0])
-					condVal := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
-					if condVar == varName {
-						matches = itemStr != condVal
-					}
-				} else if strings.Contains(condition, "!=") {
-					parts := strings.SplitN(condition, "!=", 2)
-					condVar := strings.TrimSpace(parts[0])
-					condVal := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
-					if condVar == varName {
-						matches = itemStr != condVal
-					}
-				} else if strings.Contains(condition, ">=") {
-					parts := strings.SplitN(condition, ">=", 2)
-					condVar := strings.TrimSpace(parts[0])
-					condVal := strings.TrimSpace(parts[1])
-					if condVar == varName {
-						if itemNum, ok := toFloat64(item); ok {
-							if condNum, ok := toFloat64(e.parseValue(ctx, condVal)); ok {
-								matches = itemNum >= condNum
-							}
-						}
-					}
-				} else if strings.Contains(condition, ">") {
-					parts := strings.SplitN(condition, ">", 2)
-					condVar := strings.TrimSpace(parts[0])
-					condVal := strings.TrimSpace(parts[1])
-					if condVar == varName {
-						if itemNum, ok := toFloat64(item); ok {
-							if condNum, ok := toFloat64(e.parseValue(ctx, condVal)); ok {
-								matches = itemNum > condNum
-							}
-						}
-					}
-				} else if strings.Contains(condition, "=") {
-					parts := strings.SplitN(condition, "=", 2)
-					condVar := strings.TrimSpace(parts[0])
-					condVal := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
-					if condVar == varName {
-						matches = itemStr == condVal
-					}
+				value := item
+				if projection != "" {
+					value = e.evaluateExpressionWithContextFull(itemCtx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
 				}
-
-				if matches {
-					result = append(result, item)
-				}
+				result = append(result, value)
 			}
 			return result
 		}

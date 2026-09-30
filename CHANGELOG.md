@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup with "migration v2→v3 failed: repair archived edge adjacency:
   invalid mvcc edge version key: len=61".
 
+- Preserve evaluated map-literal order in transaction HTTP rows and metadata,
+  including aliases and nested collections; snapshot ordering before caching.
+  Restore remote HTTP node/relationship reads through standard row+graph results
+  and one metadata-aware decoder, including identities, labels and endpoints.
+- Match computed arithmetic filters combined with known boolean AND/OR operands;
+  reject numeric-only WHERE arithmetic statically and non-boolean comprehension
+  predicates at runtime. Remove generic comprehension's default-true fallback.
+- Validate FOREACH mutation bodies before row evaluation through the shared
+  parser and recursive mutation validation, rejecting trailing garbage and empty
+  assignments even when MATCH produces no rows.
 - Align transaction HTTP entity rows with Neo4j: return properties in rows and
   identities in metadata, including nested collections and paths. Ordinary maps
   are no longer inferred to be entities from their field names; the previous

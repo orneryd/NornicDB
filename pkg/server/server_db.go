@@ -1277,7 +1277,7 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) inter
 	return value
 }
 
-func (s *Server) transactionHTTPValue(value interface{}, dbName string) (interface{}, []interface{}) {
+func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ...*transactionHTTPValueState) (interface{}, []interface{}) {
 	entityMeta := func(id, prefix, entityType, database string) []interface{} {
 		return []interface{}{map[string]interface{}{
 			"id": s.hashStringToInt64(id), "elementId": prefix + ":" + database + ":" + id,
@@ -1293,6 +1293,9 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string) (interfa
 		if properties == nil {
 			properties = map[string]interface{}{}
 		}
+		if len(graph) > 0 && graph[0].graph != nil {
+			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: "4:" + s.entityDatabase(dbName, typed.ID, "") + ":" + string(typed.ID), Labels: typed.Labels, Properties: properties})
+		}
 		return properties, entityMeta(string(typed.ID), "4", "node", s.entityDatabase(dbName, typed.ID, ""))
 	case *storage.Edge:
 		if typed == nil {
@@ -1302,12 +1305,15 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string) (interfa
 		if properties == nil {
 			properties = map[string]interface{}{}
 		}
+		if len(graph) > 0 && graph[0].graph != nil {
+			graph[0].addEdge(GraphRelationship{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: "5:" + s.entityDatabase(dbName, "", typed.ID) + ":" + string(typed.ID), Type: typed.Type, StartNode: "4:" + s.entityDatabase(dbName, typed.StartNode, "") + ":" + string(typed.StartNode), EndNode: "4:" + s.entityDatabase(dbName, typed.EndNode, "") + ":" + string(typed.EndNode), Properties: properties})
+		}
 		return properties, entityMeta(string(typed.ID), "5", "relationship", s.entityDatabase(dbName, "", typed.ID))
 	case *cypher.PathResult:
 		if typed == nil {
 			return nil, []interface{}{nil}
 		}
-		return s.transactionHTTPValue(*typed, dbName)
+		return s.transactionHTTPValue(*typed, dbName, graph...)
 	case cypher.PathResult:
 		entities := make([]interface{}, 0, len(typed.Nodes)+len(typed.Relationships))
 		for index, node := range typed.Nodes {
@@ -1316,14 +1322,14 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string) (interfa
 				entities = append(entities, typed.Relationships[index])
 			}
 		}
-		row, metadata := s.transactionHTTPValue(entities, dbName)
+		row, metadata := s.transactionHTTPValue(entities, dbName, graph...)
 		return row, []interface{}{metadata}
 	case map[string]interface{}:
 		switch path := typed["_pathResult"].(type) {
 		case cypher.PathResult:
-			return s.transactionHTTPValue(path, dbName)
+			return s.transactionHTTPValue(path, dbName, graph...)
 		case *cypher.PathResult:
-			return s.transactionHTTPValue(path, dbName)
+			return s.transactionHTTPValue(path, dbName, graph...)
 		}
 		result := make(map[string]interface{}, len(typed))
 		metadata := make([]interface{}, 0)
@@ -1332,10 +1338,19 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string) (interfa
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
+		ordered := false
+		if len(graph) > 0 {
+			if evaluatedKeys, ok := graph[0].mapKeyOrders[uintptr(reflect.ValueOf(typed).UnsafePointer())]; ok {
+				keys, ordered = evaluatedKeys, true
+			}
+		}
 		for _, key := range keys {
-			converted, nested := s.transactionHTTPValue(typed[key], dbName)
+			converted, nested := s.transactionHTTPValue(typed[key], dbName, graph...)
 			result[key] = converted
 			metadata = append(metadata, nested...)
+		}
+		if ordered {
+			return transactionHTTPOrderedMap{keys: keys, values: result}, metadata
 		}
 		return result, metadata
 	default:
@@ -1345,7 +1360,7 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string) (interfa
 				result := make([]interface{}, sequence.Len())
 				metadata := make([]interface{}, 0, sequence.Len())
 				for index := 0; index < sequence.Len(); index++ {
-					converted, nested := s.transactionHTTPValue(sequence.Index(index).Interface(), dbName)
+					converted, nested := s.transactionHTTPValue(sequence.Index(index).Interface(), dbName, graph...)
 					result[index] = converted
 					metadata = append(metadata, nested...)
 				}
@@ -1427,7 +1442,7 @@ func (s *Server) transactionCommitURL(r *http.Request, dbName, txID string) stri
 	return s.transactionURL(r, dbName, txID) + "/commit"
 }
 
-func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool) {
+func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents ...[]string) {
 	columns := result.Columns
 	if columns == nil {
 		columns = []string{}
@@ -1437,14 +1452,29 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		Data:    make([]ResultRow, len(result.Rows)),
 	}
 	for i, row := range result.Rows {
+		var graph []*transactionHTTPValueState
+		if len(result.MapKeyOrders) > 0 {
+			graph = []*transactionHTTPValueState{{mapKeyOrders: result.MapKeyOrders}}
+		}
+		if len(contents) > 0 {
+			for _, format := range contents[0] {
+				if format == "graph" {
+					graph = []*transactionHTTPValueState{{graph: &GraphResult{Nodes: []GraphNode{}, Relationships: []GraphRelationship{}}, mapKeyOrders: result.MapKeyOrders}}
+					break
+				}
+			}
+		}
 		convertedRow := make([]interface{}, len(row))
 		metadata := make([]interface{}, 0, len(row))
 		for column, value := range row {
-			converted, nested := s.transactionHTTPValue(value, dbName)
+			converted, nested := s.transactionHTTPValue(value, dbName, graph...)
 			convertedRow[column] = converted
 			metadata = append(metadata, nested...)
 		}
 		qr.Data[i] = ResultRow{Row: convertedRow, Meta: metadata}
+		if len(graph) > 0 && graph[0].graph != nil {
+			qr.Data[i].Graph = graph[0].graph
+		}
 	}
 	if includeStats {
 		qr.Stats = queryStatsFromResult(result)
@@ -1760,7 +1790,7 @@ func (s *Server) runRequestStatement(
 		result.Rows = filtered
 	}
 
-	s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats)
+	s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
 	return nil
 }
 

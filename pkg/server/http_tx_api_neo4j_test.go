@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -46,6 +47,35 @@ func TestTransactionHTTPValueBoundaries(t *testing.T) {
 	}
 }
 
+func TestTransactionHTTPOrderedMapAndGraphState(t *testing.T) {
+	for _, testCase := range []struct {
+		value     transactionHTTPOrderedMap
+		want      string
+		wantError bool
+	}{
+		{transactionHTTPOrderedMap{}, `{}`, false},
+		{transactionHTTPOrderedMap{keys: []string{"node", "k"}, values: map[string]interface{}{"node": 1, "k": 2}}, `{"node":1,"k":2}`, false},
+		{transactionHTTPOrderedMap{keys: []string{"bad"}, values: map[string]interface{}{"bad": make(chan int)}}, "", true},
+	} {
+		encoded, err := testCase.value.MarshalJSON()
+		if testCase.wantError {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, testCase.want, string(encoded))
+		}
+	}
+	state := &transactionHTTPValueState{graph: &GraphResult{}}
+	for _, identity := range []string{"4:a:n", "4:a:n", "4:b:n"} {
+		state.addNode(GraphNode{ElementID: identity})
+	}
+	for _, identity := range []string{"5:a:r", "5:a:r", "5:b:r"} {
+		state.addEdge(GraphRelationship{ElementID: identity})
+	}
+	require.Len(t, state.graph.Nodes, 2)
+	require.Len(t, state.graph.Relationships, 2)
+}
+
 func TestHTTPTransactionEntityRows(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
@@ -61,6 +91,114 @@ func TestHTTPTransactionEntityRows(t *testing.T) {
 	require.Equal(t, []interface{}{node, edge, []interface{}{node, edge}, map[string]interface{}{"entity": node}, map[string]interface{}{"elementId": "user", "labels": []interface{}{"custom"}, "properties": map[string]interface{}{"value": float64(1)}}, nil}, data.Row)
 	require.Equal(t, "node", data.Meta[0].(map[string]interface{})["type"])
 	require.Equal(t, "relationship", data.Meta[1].(map[string]interface{})["type"])
+}
+
+func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	response := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{
+		"statements": []map[string]any{{"statement": "CREATE (:RP {name:'x', v:1})-[:LINK {weight:2}]->(:Target)"}},
+	}, token)
+	var result TransactionResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	require.Empty(t, result.Errors)
+	host := httptest.NewServer(server.buildRouter())
+	defer host.Close()
+	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: host.URL, Database: "nornic", AuthToken: token})
+	require.NoError(t, err)
+	defer remote.Close()
+	nodes, err := remote.GetNodesByLabel("RP")
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.NotEmpty(t, nodes[0].ID)
+	require.Equal(t, []string{"RP"}, nodes[0].Labels)
+	require.Equal(t, map[string]interface{}{"name": "x", "v": float64(1)}, nodes[0].Properties)
+	edges, err := remote.AllEdges()
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.NotEmpty(t, edges[0].ID)
+	require.Equal(t, "LINK", edges[0].Type)
+	require.Equal(t, nodes[0].ID, edges[0].StartNode)
+	require.NotEmpty(t, edges[0].EndNode)
+	require.Equal(t, float64(2), edges[0].Properties["weight"])
+	transaction, err := remote.BeginCypherTx(context.Background())
+	require.NoError(t, err)
+	defer transaction.Rollback(context.Background())
+	_, rows, err := transaction.QueryCypher(context.Background(), "MATCH (n:RP) RETURN n", nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "x", rows[0][0].(map[string]interface{})["properties"].(map[string]interface{})["name"])
+	for _, query := range []string{
+		"MATCH (n:RP) RETURN {node:n} AS m, n",
+		"MATCH (n:RP) RETURN {node:n,k:1} AS m, n, [n,1] AS mixed",
+	} {
+		_, rows, err := transaction.QueryCypher(context.Background(), query, nil)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		ordinary := rows[0][0].(map[string]interface{})
+		require.Contains(t, ordinary, "node", query)
+		require.Contains(t, ordinary["node"], "properties", query)
+		require.Contains(t, rows[0][1], "properties", query)
+	}
+}
+
+func TestRemoteHTTPPinnedNeo4j(t *testing.T) {
+	endpoint := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI")
+	if endpoint == "" {
+		t.Skip("set pinned reference HTTP URI to validate remote transport")
+	}
+	response, err := http.Post(endpoint+"/db/neo4j/tx/commit", "application/json", strings.NewReader(`{"statements":[{"statement":"MATCH (n:RemoteHTTPParity) DETACH DELETE n"},{"statement":"CREATE (:RemoteHTTPParity:RemoteHTTPParitySource {name:'x',v:1})-[:REMOTE_HTTP_PARITY {weight:2}]->(:RemoteHTTPParity)"}]}`))
+	require.NoError(t, err)
+	defer response.Body.Close()
+	var setup TransactionResponse
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&setup))
+	require.Empty(t, setup.Errors)
+	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: endpoint, Database: "neo4j"})
+	require.NoError(t, err)
+	defer remote.Close()
+	nodes, err := remote.GetNodesByLabel("RemoteHTTPParitySource")
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.NotEmpty(t, nodes[0].ID)
+	require.Contains(t, nodes[0].Labels, "RemoteHTTPParitySource")
+	require.Equal(t, "x", nodes[0].Properties["name"])
+	edges, err := remote.GetEdgesByType("REMOTE_HTTP_PARITY")
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.NotEmpty(t, edges[0].ID)
+	require.Equal(t, nodes[0].ID, edges[0].StartNode)
+	require.NotEmpty(t, edges[0].EndNode)
+	transaction, err := remote.BeginCypherTx(context.Background())
+	require.NoError(t, err)
+	defer transaction.Rollback(context.Background())
+	_, rows, err := transaction.QueryCypher(context.Background(), "MATCH (n:RemoteHTTPParitySource) RETURN {node:n,k:1} AS m, n, [n,1] AS mixed", nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0][0].(map[string]interface{})["node"], "properties")
+	require.Contains(t, rows[0][1], "properties")
+}
+
+func TestHTTPMapMetadataRetainsValueOrder(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	for _, query := range []string{
+		"CREATE (n:H {a:1}) RETURN {node:n,k:1} AS m",
+		"CREATE (n:H {a:1}) WITH {node:n,k:1} AS m RETURN m",
+		"CREATE (n:H {a:1}) RETURN [{node:n,k:1}] AS m",
+	} {
+		t.Run(query, func(t *testing.T) {
+			response := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{"statements": []map[string]any{{"statement": query}}}, token)
+			var result TransactionResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+			require.Empty(t, result.Errors)
+			metadata := result.Results[0].Data[0].Meta
+			require.Len(t, metadata, 2)
+			require.IsType(t, map[string]interface{}{}, metadata[0], "%s", response.Body.String())
+			require.Equal(t, "node", metadata[0].(map[string]interface{})["type"])
+			require.Nil(t, metadata[1])
+			require.Contains(t, response.Body.String(), `"node":{"a":1},"k":1`)
+		})
+	}
 }
 
 func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
@@ -80,6 +218,9 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 	var cases []differentialHTTPCase
 	require.NoError(t, json.Unmarshal(content, &cases))
 	cases = append(cases,
+		differentialHTTPCase{Name: "HTTP map metadata follows literal order", Ordered: true, Query: "CREATE (n:H {a:1}) RETURN {node:n,k:1} AS m"},
+		differentialHTTPCase{Name: "HTTP map metadata follows aliased order", Ordered: true, Query: "CREATE (n:H {a:1}) WITH {node:n,k:1} AS m RETURN m"},
+		differentialHTTPCase{Name: "HTTP nested map metadata follows value order", Ordered: true, Query: "CREATE (n:H {a:1}) RETURN [{node:n,k:1}] AS m"},
 		differentialHTTPCase{
 			Name: "HTTP nested entities and ordinary maps", Ordered: true,
 			Query: "CREATE p=(a:Person {name:'Alice'})-[r:KNOWS {since:2020}]->(b:Person {name:'Bob'}) RETURN a, r, [a, r], {entity:a}, {elementId:'user', labels:['custom'], properties:{value:1}}, null, p",

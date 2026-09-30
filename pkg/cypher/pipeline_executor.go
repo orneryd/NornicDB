@@ -1404,7 +1404,7 @@ func validatePipelineSetAssignments(assignments []string) error {
 		}
 		target, _, operator, right := splitSetAssignment(assignment)
 		if operator == "" || !isValidIdentifier(target) || right == "" {
-			return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid SET assignment: "+assignment)
 		}
 		if right == "$" {
 			return localizedError(localization.CypherMutationsSetAssignmentParameterNameRequired(), nil)
@@ -3504,40 +3504,9 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 	invalid := func() error {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidForeach", "invalid or unsupported FOREACH update")
 	}
-	open := strings.Index(clause, "(")
-	if open < 0 || !strings.EqualFold(strings.TrimSpace(clause[:open]), "FOREACH") {
-		return nil, invalid()
-	}
-	close := findMatchingParen(clause, open)
-	if close < 0 || strings.TrimSpace(clause[close+1:]) != "" {
-		return nil, invalid()
-	}
-	inner := clause[open+1 : close]
-	inIndex := topLevelKeywordIndex(inner, "IN")
-	if inIndex < 0 {
-		return nil, invalid()
-	}
-	variable := strings.TrimSpace(inner[:inIndex])
-	if !isValidIdentifier(variable) {
-		return nil, invalid()
-	}
-	remainder := inner[inIndex+len("IN"):]
-	pipeIndex := findTopLevelByte(remainder, '|')
-	if pipeIndex < 0 {
-		return nil, invalid()
-	}
-	listExpr := strings.TrimSpace(remainder[:pipeIndex])
-	update := strings.TrimSpace(remainder[pipeIndex+1:])
-	updates, supported := splitPipelineClauses(update)
-	if !supported || len(updates) == 0 {
-		return nil, invalid()
-	}
-	for _, clause := range updates {
-		switch clause.kind {
-		case pipelineClauseCreate, pipelineClauseSet, pipelineClauseMerge, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
-		default:
-			return nil, invalid()
-		}
+	variable, listExpr, updates, err := parsePipelineForeach(clause)
+	if err != nil {
+		return nil, err
 	}
 	stats := &QueryStats{}
 	for _, row := range rows {

@@ -20,9 +20,10 @@ import (
 // staticOperand is an operand's static type: kind drives the operator rules,
 // display is how the error names it, parameter the parameter it comes from.
 type staticOperand struct {
-	kind      string
-	display   string
-	parameter string
+	kind       string
+	display    string
+	parameter  string
+	nonBoolean bool
 }
 
 func knownOperand(kind string) staticOperand {
@@ -190,7 +191,7 @@ func checkOperator(op byte, left, right staticOperand) (staticOperand, error) {
 		}
 		return knownOperand("Float"), nil
 	}
-	return staticOperand{}, nil
+	return staticOperand{display: "Float, Integer or Duration", nonBoolean: true}, nil
 }
 
 // staticComparisonOperators split a predicate into the operands whose
@@ -546,7 +547,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 		if err != nil {
 			return err
 		}
-		if operand.known() && operand.kind != "Boolean" && operand.kind != "Null" {
+		if operand.nonBoolean || (operand.known() && operand.kind != "Boolean" && operand.kind != "Null") {
 			return operandMismatch(operand, "Boolean")
 		}
 	}

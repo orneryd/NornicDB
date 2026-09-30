@@ -137,6 +137,44 @@
     "query": "MATCH (n:W709p) WHERE n.id + 'z' RETURN n.id"
   },
   {
+    "name": "where arithmetic and true filters rows",
+    "setup": ["CREATE (:W1 {id:'a'})"],
+    "query": "MATCH (n:W1) WHERE n.id + 'z' AND true RETURN n.id"
+  },
+  {
+    "name": "where arithmetic or comparison keeps matching row",
+    "setup": ["CREATE (:W1 {id:'a'})"],
+    "query": "MATCH (n:W1) WHERE n.id + 'z' OR n.id = 'a' RETURN n.id"
+  },
+  {
+    "name": "where multiplication is statically nonboolean",
+    "setup": ["CREATE (:W1 {id:1})"],
+    "query": "MATCH (n:W1) WHERE n.id * 0 RETURN n.id"
+  },
+  {
+    "name": "comprehension arithmetic predicate is type error",
+    "setup": ["CREATE (:W1 {id:1})"],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x + n.id] AS l"
+  },
+  {
+    "name": "foreach trailing garbage rejected before writes",
+    "setup": ["CREATE (:T {id:1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = 1 garbage here) RETURN t.id"
+  },
+  {
+    "name": "foreach trailing garbage rejected without rows",
+    "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = 1 garbage here) RETURN t.id"
+  },
+  {
+    "name": "foreach empty assignment rejected before writes",
+    "setup": ["CREATE (:T {id:1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = ) RETURN t.id"
+  },
+  {
+    "name": "foreach empty assignment rejected without rows",
+    "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = ) RETURN t.id"
+  },
+  {
     "name": "where bare dynamic string is type error",
     "setup": ["CREATE (:W709p {id:'a'})"],
     "query": "MATCH (n:W709p) WHERE n.id RETURN n.id"

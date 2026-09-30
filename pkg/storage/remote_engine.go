@@ -66,8 +66,9 @@ type RemoteEngine struct {
 }
 
 type remoteStatement struct {
-	Statement  string                 `json:"statement"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"`
+	Statement          string                 `json:"statement"`
+	Parameters         map[string]interface{} `json:"parameters,omitempty"`
+	ResultDataContents []string               `json:"resultDataContents,omitempty"`
 }
 
 // NewRemoteEngine creates a remote engine. Transport is auto-detected from the URI scheme.
@@ -388,7 +389,13 @@ type remoteTxResponse struct {
 	Results []struct {
 		Columns []string `json:"columns"`
 		Data    []struct {
-			Row []interface{} `json:"row"`
+			RawRow []json.RawMessage `json:"row"`
+			Row    []interface{}     `json:"-"`
+			Meta   []interface{}     `json:"meta"`
+			Graph  struct {
+				Nodes         []map[string]interface{} `json:"nodes"`
+				Relationships []map[string]interface{} `json:"relationships"`
+			} `json:"graph"`
 		} `json:"data"`
 	} `json:"results"`
 	Errors []struct {
@@ -472,12 +479,38 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 		first := txResp.Errors[0]
 		return nil, localizedError(localization.StorageRemoteError(first.Code, first.Message), nil)
 	}
+	for resultIndex := range txResp.Results {
+		for rowIndex := range txResp.Results[resultIndex].Data {
+			data := &txResp.Results[resultIndex].Data[rowIndex]
+			entities := make(map[string]interface{})
+			for _, node := range data.Graph.Nodes {
+				entities[fmt.Sprint(node["elementId"])] = map[string]interface{}{
+					"elementId": node["elementId"], "labels": node["labels"], "properties": node["properties"],
+				}
+			}
+			for _, edge := range data.Graph.Relationships {
+				entities[fmt.Sprint(edge["elementId"])] = map[string]interface{}{
+					"elementId": edge["elementId"], "type": edge["type"], "properties": edge["properties"],
+					"startNodeElementId": edge["startNodeElementId"], "endNodeElementId": edge["endNodeElementId"],
+				}
+			}
+			metadataIndex := 0
+			data.Row = make([]interface{}, len(data.RawRow))
+			for column, raw := range data.RawRow {
+				value, err := decodeRemoteHTTPValue(raw, data.Meta, &metadataIndex, entities)
+				if err != nil {
+					return nil, err
+				}
+				data.Row[column] = value
+			}
+		}
+	}
 	return &txResp, nil
 }
 
 func (h *httpTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
 	txResp, err := h.doRequest(ctx, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph"}}},
 	})
 	if err != nil {
 		return nil, err
@@ -494,7 +527,7 @@ func (h *httpTransport) query(ctx context.Context, statement string, params map[
 
 func (h *httpTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 	txResp, err := h.doRequest(ctx, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph"}}},
 	})
 	if err != nil {
 		return nil, nil, err
@@ -572,7 +605,7 @@ func (t *httpCypherTx) QueryCypher(ctx context.Context, statement string, params
 		return nil, nil, localizedError(localization.StorageRemoteTransactionClosed(), nil)
 	}
 	txResp, err := t.transport.doRequestToURL(ctx, http.MethodPost, t.executeURL, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph"}}},
 	})
 	if err != nil {
 		return nil, nil, err

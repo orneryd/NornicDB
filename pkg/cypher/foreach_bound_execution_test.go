@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,6 +13,25 @@ type cancelOnFirstCreateEngine struct {
 	storage.Engine
 	cancel  context.CancelFunc
 	creates int
+}
+
+func TestForeachRejectsMalformedBodyBeforeRows(t *testing.T) {
+	for _, populated := range []bool{false, true} {
+		for _, body := range []string{"CREATE (w:W {id:i}) SET w.y = 1 garbage here", "CREATE (w:W {id:i}) SET w.y = "} {
+			t.Run(fmt.Sprintf("populated=%v/body=%s", populated, body), func(t *testing.T) {
+				exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+				if populated {
+					_, err := exec.Execute(context.Background(), "CREATE (:T {id:1})", nil)
+					require.NoError(t, err)
+				}
+				_, err := exec.Execute(context.Background(), "MATCH (t:T) FOREACH (i IN [1,2] | "+body+") RETURN t.id", nil)
+				require.ErrorContains(t, err, "SyntaxError")
+				result, err := exec.Execute(context.Background(), "MATCH (n:W) RETURN count(n)", nil)
+				require.NoError(t, err)
+				require.Equal(t, int64(0), result.Rows[0][0])
+			})
+		}
+	}
 }
 
 func (engine *cancelOnFirstCreateEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {

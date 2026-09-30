@@ -254,6 +254,16 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	}
 	// The row evaluator's error is the statement's: it is recorded, and the
 	// expression is unresolved.
+	if strings.Contains(expr, "{") {
+		if failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure); ok {
+			scope := make(pipelineRow, len(values)+1)
+			for name, value := range values {
+				scope[name] = value
+			}
+			scope["\x00mapKeyOrders"] = failure
+			values = scope
+		}
+	}
 	value, resolved, err := e.evaluateRowValue(expr, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)

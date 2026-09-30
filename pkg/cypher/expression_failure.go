@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"reflect"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -28,6 +29,33 @@ type expressionFailure struct {
 	mu              sync.Mutex
 	err             error
 	readScopeEngine *storage.BadgerEngine
+	mapKeyOrders    map[uintptr][]string
+}
+
+func (failure *expressionFailure) recordMapKeyOrder(value map[string]interface{}, keys []string) {
+	failure.mu.Lock()
+	defer failure.mu.Unlock()
+	if failure.mapKeyOrders == nil {
+		failure.mapKeyOrders = make(map[uintptr][]string)
+	}
+	failure.mapKeyOrders[uintptr(reflect.ValueOf(value).UnsafePointer())] = keys
+}
+
+func snapshotMapKeyOrders(ctx context.Context) map[uintptr][]string {
+	failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure)
+	if !ok {
+		return nil
+	}
+	failure.mu.Lock()
+	defer failure.mu.Unlock()
+	if len(failure.mapKeyOrders) == 0 {
+		return nil
+	}
+	orders := make(map[uintptr][]string, len(failure.mapKeyOrders))
+	for pointer, keys := range failure.mapKeyOrders {
+		orders[pointer] = append([]string(nil), keys...)
+	}
+	return orders
 }
 
 func recordExpressionFailure(ctx context.Context, err error) {

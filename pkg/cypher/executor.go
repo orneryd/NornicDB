@@ -1324,6 +1324,13 @@ func queryDeletesNodes(query string) bool {
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	defer func() {
+		if result != nil && retErr == nil && result.MapKeyOrders == nil {
+			if orders := snapshotMapKeyOrders(ctx); len(orders) > 0 {
+				result.MapKeyOrders = orders
+			}
+		}
+	}()
 	e.resetHotPathTrace()
 	// A result served from the result cache that returns no node or
 	// relationship has no access to record (resultHasMaterializedEntities).
@@ -1801,6 +1808,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// For strict ACID, users should use explicit BEGIN/COMMIT transactions
 	ctx = withExpressionFailureSlot(ctx)
 	result, err = e.executeImplicitAsync(ctx, cypher, upperQuery)
+	if result != nil && err == nil {
+		if orders := snapshotMapKeyOrders(ctx); len(orders) > 0 {
+			result.MapKeyOrders = orders
+		}
+	}
 	// An expression error recorded while the statement ran is its error,
 	// whichever route ran it: no route's result stands in for it.
 	if err == nil {

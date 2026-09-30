@@ -1016,6 +1016,9 @@ func hasAdjacentOperands(cypher string) bool {
 				return true
 			}
 			property := start > 0 && cypher[start-1] == '.' && (start < 2 || cypher[start-2] != '.')
+			if operandEnded && !property && !startsProperty && !isSyntaxBoundaryKeyword(cypher[start:index]) {
+				return true
+			}
 			if !property && !startsProperty && bareWordBeforeLiteral(cypher, start, index) {
 				return true
 			}
@@ -1027,6 +1030,17 @@ func hasAdjacentOperands(cypher string) bool {
 			index++
 			operandEnded = false
 		}
+	}
+	return false
+}
+
+func isSyntaxBoundaryKeyword(word string) bool {
+	if _, allowed := literalLeadingKeywords[upperASCII(word)]; allowed {
+		return true
+	}
+	switch upperASCII(word) {
+	case "AS", "END", "STARTS", "ENDS", "MATCH", "OPTIONAL", "CREATE", "MERGE", "SET", "REMOVE", "DETACH", "FOREACH", "CALL", "ON", "ORDER", "ASC", "DESC", "ASCENDING", "DESCENDING", "NULL", "ROWS", "ROW", "TRANSACTIONS", "TRANSACTION", "REPORT", "STATUS", "BREAK", "CONTINUE", "FAIL", "ERROR", "UNION", "FINISH", "USING", "INDEX", "JOIN", "SCAN":
+		return true
 	}
 	return false
 }

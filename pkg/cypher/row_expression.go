@@ -137,6 +137,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 	}
 	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
 		result := make(map[string]interface{})
+		keys := make([]string, 0)
 		if inner == "" {
 			return result, true, nil
 		}
@@ -153,7 +154,13 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			if !ok {
 				return nil, false, nil
 			}
+			if _, exists := result[key]; !exists {
+				keys = append(keys, key)
+			}
 			result[key] = value
+		}
+		if failure, ok := values["\x00mapKeyOrders"].(*expressionFailure); ok {
+			failure.recordMapKeyOrder(result, keys)
 		}
 		return result, true, nil
 	}
@@ -1257,12 +1264,12 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 			if !evaluated {
 				return nil, true, false, nil
 			}
-			matches, isBoolean := condition.(bool)
-			if condition == nil || (isBoolean && !matches) {
-				continue
+			truth, err := predicateTruthFromValue(condition)
+			if err != nil {
+				return nil, true, false, err
 			}
-			if !isBoolean {
-				return nil, true, false, nil
+			if truth != truthTrue {
+				continue
 			}
 		}
 		value := item
@@ -1723,8 +1730,27 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		return e.evaluateRowPredicateParts(ctx, inner, values)
 	}
-	if mayContainArithmetic(expression) && (startsWithKeywordFold(expression, "NOT") ||
-		topLevelKeywordIndex(expression, "AND") >= 0 || topLevelKeywordIndex(expression, "OR") >= 0 || topLevelKeywordIndex(expression, "XOR") >= 0) {
+	strictLogical := startsWithKeywordFold(expression, "NOT") || topLevelKeywordIndex(expression, "XOR") >= 0
+	if mayContainArithmetic(expression) && !strictLogical {
+		checker := staticOperatorChecker{}
+		for _, operator := range []string{" AND ", " OR "} {
+			if left, right, found := splitByOperatorWithOptions(expression, operator, true, true); found {
+				for _, operand := range []string{left, right} {
+					if mayContainArithmetic(operand) {
+						continue
+					}
+					typeInfo, _ := checker.check(operand)
+					if !typeInfo.known() {
+						typeInfo, _ = checker.checkAtom(operand)
+					}
+					if !typeInfo.known() {
+						strictLogical = true
+					}
+				}
+			}
+		}
+	}
+	if mayContainArithmetic(expression) && strictLogical {
 		value, evaluated, err := e.evaluateRowValue(expression, values)
 		if err != nil {
 			recordExpressionFailure(ctx, err)

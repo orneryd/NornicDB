@@ -25,6 +25,46 @@ func newGh728Executor(t *testing.T) *StorageExecutor {
 	return NewStorageExecutor(store)
 }
 
+func TestComprehensionStrictPredicateAcrossExecutionRoutes(t *testing.T) {
+	exec := newGh728Executor(t)
+	for _, expression := range []string{"[x IN [1,2] WHERE x + 1]", "[x IN [1,2] WHERE x + 1 | x]"} {
+		t.Run(expression, func(t *testing.T) {
+			ctx := withExpressionFailureSlot(context.Background())
+			exec.evaluateExpressionWithContextFull(ctx, expression, nil, nil, nil, nil, nil, 0)
+			require.Error(t, getExpressionFailure(ctx))
+			for _, prefix := range []string{"RETURN ", "CREATE (n:StrictComprehension) RETURN "} {
+				_, err := exec.Execute(context.Background(), prefix+expression, nil)
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestMapKeyOrderSnapshotsAndCachedResults(t *testing.T) {
+	require.Nil(t, snapshotMapKeyOrders(context.Background()))
+	failure := &expressionFailure{}
+	ctx := context.WithValue(context.Background(), expressionFailureKey{}, failure)
+	require.Nil(t, snapshotMapKeyOrders(ctx))
+	keys := []string{"node", "k"}
+	failure.recordMapKeyOrder(map[string]interface{}{"node": 1, "k": 2}, keys)
+	snapshot := snapshotMapKeyOrders(ctx)
+	keys[0] = "changed"
+	failure.recordMapKeyOrder(map[string]interface{}{"other": 1}, []string{"other"})
+	require.Len(t, snapshot, 1)
+	for _, order := range snapshot {
+		require.Equal(t, []string{"node", "k"}, order)
+	}
+	exec := newGh728Executor(t)
+	for iteration := 0; iteration < 3; iteration++ {
+		result, err := exec.Execute(context.Background(), "RETURN {node:1,k:2} AS m", nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, result.MapKeyOrders)
+		for _, order := range result.MapKeyOrders {
+			require.Equal(t, []string{"node", "k"}, order)
+		}
+	}
+}
+
 func TestGh728_MultiMatchWhereChains(t *testing.T) {
 	exec := newGh728Executor(t)
 	ctx := context.Background()
@@ -91,6 +131,31 @@ func TestGh728_MultiMatchWhereChains(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []string{"x1"}, strRows(t, result))
 	})
+}
+
+func TestReportedPredicateContextVariants(t *testing.T) {
+	for _, testCase := range []struct {
+		name, query, code string
+		rows              [][]interface{}
+	}{
+		{"and true", "MATCH (n:W1) WHERE n.id + 'z' AND true RETURN n.id", "", [][]interface{}{}},
+		{"or comparison", "MATCH (n:W1) WHERE n.id + 'z' OR n.id = 'a' RETURN n.id", "", [][]interface{}{{"a"}}},
+		{"numeric multiplication", "MATCH (n:W2) WHERE n.id * 0 RETURN n.id", "SyntaxError", nil},
+		{"comprehension arithmetic", "MATCH (n:W2) RETURN [x IN [1, 2] WHERE x + n.id] AS l", "TypeError", nil},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+			_, err := exec.Execute(context.Background(), "CREATE (:W1 {id:'a'}), (:W2 {id:1})", nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(context.Background(), testCase.query, nil)
+			if testCase.code != "" {
+				require.ErrorContains(t, err, testCase.code)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, testCase.rows, result.Rows)
+		})
+	}
 }
 
 func TestGh728_NonBooleanWhere(t *testing.T) {

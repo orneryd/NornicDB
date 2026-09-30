@@ -18,14 +18,52 @@ Reference database: `neo4j:5.26.30-community` (the pinned differential image).
 | 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | Reconstruction fixed; external dataset recall still unverified |
 | 9 | #726 BulkDeleteNodes notification data race | HIGH: race, `-race` suite broken | DONE (a979b47d) |
 
-## Follow-up verification: 2026-09-29
+## Latest review follow-up: 2026-09-30
+
+Addresses the review of `16a1dbc3`, including the still-open malformed FOREACH
+variants. The preceding verification is historical and is superseded for these
+new variants. The reference image digest below is unchanged.
+
+| Area | Exact repair | Final evidence |
+| --- | --- | --- |
+| HTTP map metadata | Record evaluated literal keys in both expression routes; render JSON values and flattened metadata in that order; freeze the record before result-cache publication | Direct literal, WITH alias and nested-list cases match both HTTP transaction modes; repeated cached projections and snapshot isolation pass |
+| Remote HTTP transport | Request standard row+graph for every HTTP read route; reconstruct typed entities from graph identity and row metadata through one shared wire-order decoder | Actual NornicDB and pinned Neo4j round trips preserve node identity, labels and properties, relationship identity/properties/endpoints, explicit transactions and nested projections |
+| Predicate contexts | Computed arithmetic with known boolean AND/OR operands retains filter semantics; numeric-only multiplication is statically nonboolean; both comprehension evaluators use strict truth conversion | AND true yields no rows; OR comparison returns a; multiplication yields SyntaxError; arithmetic comprehension yields TypeError; NOT/dynamic conjunction regressions remain passing |
+| FOREACH preflight | Share parsing between execution and semantic validation; recursively validate nested mutations before MATCH row evaluation | Trailing garbage and empty RHS yield SyntaxError on populated and empty databases, without creating W nodes |
+| Bolt reference | Auto-commit and explicit transaction | 57/57 cases each |
+| HTTP reference | Auto-commit and explicit transaction | 62/62 cases each; 238 total comparisons across four routes |
+| Official Cypher TCK | Final supported-feature ratchet | 7,794/7,794; zero gaps, blocked setups or harness errors |
+| Affected suites | Cypher, server, storage, Bolt | All pass on final code |
+| Focused concurrency and static gates | Cypher/HTTP/decoder races, affected-package vet, CLI build | Pass |
+
+The reference runner now includes both real remote-engine interoperability tests
+in addition to the differential corpus. Its 62 distinct matrix cases comprise
+57 shared cases and five HTTP-specific entity/map cases. The latter are not
+claimed to have run over Bolt. Results below are generated from final structured
+`DIFFERENTIAL_RESULT` records, not inferred from local tests.
+
+Final helper coverage: map-order recorder/snapshot and recursive mutation-scope
+validation 100%; FOREACH parser 96.3%; recursive HTTP serializer 98.3%; graph
+deduplication 100%; ordered-map JSON encoder 93.8%; remote recursive decoder
+86.4% (remaining defensive parser-error returns follow successful JSON decoding).
+Full package coverage is Cypher 87.2%, server 89.8%, storage 85.9%, Bolt 88.5%.
+These are measured values, not a claim of repository-wide 90% coverage.
+
+Scope limits: the full external 308-statement replay and #446 dataset were not
+rerun. Ordered HTTP cases check metadata structure after identity normalization;
+unordered cases do not assert every metadata leaf. Primitive property arrays can
+still have different null-metadata cardinality, so this is not complete HTTP
+conformance. Existing unrelated server races in #770 remain outside this change.
+
+## Earlier follow-up verification: 2026-09-29
 
 This section supersedes the earlier DONE labels for the newly reported variants.
 It does not claim that the user's entire 308-statement replay was rerun.
 
 Reference: `neo4j:5.26.30-community@sha256:3388e05ee53c8313d01acdf33e63ad175af95a92226dc8551160564439ce2c8c`.
-Run `./scripts/cypher-tck/run-differential.sh` for 49 shared cases plus two
-HTTP-specific entity/path cases: 200 comparisons across the four routes.
+At publication of `16a1dbc3`, `./scripts/cypher-tck/run-differential.sh` covered
+49 shared cases plus two HTTP-specific entity/path cases: 200 comparisons across
+the four routes. The current expanded runner and totals are documented above.
 
 | Area | Change | Evidence |
 | --- | --- | --- |
@@ -69,27 +107,27 @@ Important reference findings and limits:
 
 ### NornicDB vs Neo4j Case Matrix
 
-Captured on 2026-09-29 by `./scripts/cypher-tck/run-differential.sh`: 200
-successful comparisons, 49 shared cases in each Bolt mode and 51 in each HTTP
-mode. Verbose tests emit structured `DIFFERENTIAL_RESULT` records for both engines.
-The case names map directly to the shared JSON corpus or the two HTTP-specific
-cases in `TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j`.
+Captured on 2026-09-30 by `./scripts/cypher-tck/run-differential.sh`: 238
+successful comparisons, 57 shared cases in each Bolt mode and 62 in each HTTP
+mode. All 62 rows below are generated from structured `DIFFERENTIAL_RESULT`
+records. Five HTTP-specific entity/map cases were not run over Bolt. Real
+remote-engine interoperability tests are additional checks, not matrix cells.
 
 AC = auto-commit; TX = explicit transaction. Result cells show observed HTTP
-rows, not entity envelopes; `[]` means no rows. Bolt separately compares its
-typed values and projection columns. `Match` means the reference comparison
-passed, including expected rejection cases. Successful queries also compare
-observed graph effects/contents. Metadata structure is compared for ordered HTTP
-cases; engine-specific identity values are checked for presence/type, not equality.
-Error messages are not required to match: Bolt compares classification/phase,
-and HTTP compares exact codes. Short error names expand as follows:
+rows without entity-envelope normalization; `[]` means no rows. When outcomes
+differ by mode, both are shown. Bolt compares typed values, columns and error
+classification/phase. HTTP compares raw row values, columns and exact error codes;
+ordered cases additionally compare metadata structure with identity values
+normalized. Unordered cases do not assert every metadata leaf. Both routes check
+committed graph effects. `Match` means these defined assertions passed, not full
+HTTP conformance. Error messages are not required to match.
 
 - `SyntaxError`: `Neo.ClientError.Statement.SyntaxError`.
 - `TypeError`: `Neo.ClientError.Statement.TypeError`.
 - `TransactionStartFailed`: `Neo.DatabaseError.Transaction.TransactionStartFailed`.
 
-Only the label-order case is displayed as a sorted label set. Ordinary list
-ordering is preserved. The two HTTP-specific cases were not run over Bolt.
+Only the explicitly unordered labels() case is displayed as a sorted label set.
+Ordinary list ordering is preserved.
 
 | Case | NornicDB Result | Neo4j Result | Bolt AC | Bolt TX | HTTP AC | HTTP TX |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -125,6 +163,14 @@ ordering is preserved. The two HTTP-specific cases were not run over Bolt.
 | where arithmetic boolean operand is type error | `TypeError` | `TypeError` | Match | Match | Match | Match |
 | where negated arithmetic is type error | `TypeError` | `TypeError` | Match | Match | Match | Match |
 | where computed dynamic string filters rows | `[]` | `[]` | Match | Match | Match | Match |
+| where arithmetic and true filters rows | `[]` | `[]` | Match | Match | Match | Match |
+| where arithmetic or comparison keeps matching row | `[["a"]]` | `[["a"]]` | Match | Match | Match | Match |
+| where multiplication is statically nonboolean | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| comprehension arithmetic predicate is type error | `TypeError` | `TypeError` | Match | Match | Match | Match |
+| foreach trailing garbage rejected before writes | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| foreach trailing garbage rejected without rows | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| foreach empty assignment rejected before writes | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| foreach empty assignment rejected without rows | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
 | where bare dynamic string is type error | `TypeError` | `TypeError` | Match | Match | Match | Match |
 | importing with cannot filter | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
 | call integer sum preserves type | `[[60]]` | `[[60]]` | Match | Match | Match | Match |
@@ -142,6 +188,9 @@ ordering is preserved. The two HTTP-specific cases were not run over Bolt.
 | correlated call with projected where filters rows | `[[2],[3]]` | `[[2],[3]]` | Match | Match | Match | Match |
 | unit write subquery executes once per outer row | `[[2]]` | `[[2]]` | Match | Match | Match | Match |
 | foreach merge retains outer row | `[[1]]` | `[[1]]` | Match | Match | Match | Match |
+| HTTP map metadata follows literal order | `[[{"k":1,"node":{"a":1}}]]` | `[[{"k":1,"node":{"a":1}}]]` | Not run | Not run | Match | Match |
+| HTTP map metadata follows aliased order | `[[{"k":1,"node":{"a":1}}]]` | `[[{"k":1,"node":{"a":1}}]]` | Not run | Not run | Match | Match |
+| HTTP nested map metadata follows value order | `[[[{"k":1,"node":{"a":1}}]]]` | `[[[{"k":1,"node":{"a":1}}]]]` | Not run | Not run | Match | Match |
 | HTTP nested entities and ordinary maps | `[[{"name":"Alice"},{"since":2020},[{"name":"Alice"},{"since":2020}],{"entity":{"name":"Alice"}},{"elementId":"user","labels":["custom"],"properties":{"value":1}},null,[{"name":"Alice"},{"since":2020},{"name":"Bob"}]]]` | `[[{"name":"Alice"},{"since":2020},[{"name":"Alice"},{"since":2020}],{"entity":{"name":"Alice"}},{"elementId":"user","labels":["custom"],"properties":{"value":1}},null,[{"name":"Alice"},{"since":2020},{"name":"Bob"}]]]` | Not run | Not run | Match | Match |
 | HTTP empty properties and metadata-like user fields | `[[{},{},{"_nodeId":"user","_pathResult":"user","id":1,"labels":["L"]},[],{}]]` | `[[{},{},{"_nodeId":"user","_pathResult":"user","id":1,"labels":["L"]},[],{}]]` | Not run | Not run | Match | Match |
 
@@ -165,7 +214,7 @@ The corrected ranking costs about 24% more time in this adversarial heap workloa
 while recovering the true neighbors; no speedup is claimed. Allocation count is
 unchanged. Real-dataset latency and recall still require measurement.
 
-Changed-helper coverage: CALL projection 100%, FOREACH 93.9%, procedure output
+Earlier changed-helper coverage: CALL projection 100%, FOREACH 93.9%, procedure output
 adapter 93.8%, procedure type conversion 100%, static operator validation 100%,
 IVF SearchApprox 90%, recursive HTTP entity serializer 98%. Final Cypher/server/Bolt
 suites, focused Cypher/HTTP race checks, affected-package vet, and CLI build pass.

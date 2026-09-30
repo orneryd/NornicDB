@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -15,6 +16,44 @@ import (
 
 // Compile-time interface assertion (also in remote_engine.go, duplicated here per project convention).
 var _ Engine = (*RemoteEngine)(nil)
+
+func TestRemoteHTTPValueDecoding(t *testing.T) {
+	node := map[string]interface{}{"elementId": "4:db:n", "properties": map[string]interface{}{"a": float64(1)}}
+	entities := map[string]interface{}{"4:db:n": node}
+	meta := map[string]interface{}{"elementId": "4:db:n", "type": "node"}
+	for _, testCase := range []struct {
+		name, raw string
+		metadata  []interface{}
+		entities  map[string]interface{}
+		want      interface{}
+		consumed  int
+		wantError bool
+	}{
+		{"legacy scalar", `1`, nil, nil, float64(1), 0, false},
+		{"scalar", `1`, []interface{}{nil}, entities, float64(1), 1, false},
+		{"missing metadata", `null`, nil, entities, nil, 0, false},
+		{"node", `{"a":1}`, []interface{}{meta}, entities, node, 1, false},
+		{"wire ordered map", `{"node":{"a":1},"k":1}`, []interface{}{meta, nil}, entities, map[string]interface{}{"node": node, "k": float64(1)}, 2, false},
+		{"entity wrapper is ordinary map", `{"node":{"a":1}}`, []interface{}{meta}, entities, map[string]interface{}{"node": node}, 1, false},
+		{"list", `[{"a":1},1]`, []interface{}{meta, nil}, entities, []interface{}{node, float64(1)}, 2, false},
+		{"path", `[{"a":1}]`, []interface{}{[]interface{}{meta}}, entities, []interface{}{node}, 1, false},
+		{"unknown identity", `{"a":1}`, []interface{}{map[string]interface{}{"elementId": "missing"}}, entities, map[string]interface{}{"a": float64(1)}, 1, false},
+		{"empty map", `{}`, nil, entities, map[string]interface{}{}, 0, false},
+		{"empty list", `[]`, nil, entities, []interface{}{}, 0, false},
+		{"invalid JSON", `{`, nil, entities, nil, 0, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			index := 0
+			value, err := decodeRemoteHTTPValue(json.RawMessage(testCase.raw), testCase.metadata, &index, testCase.entities)
+			if (err != nil) != testCase.wantError {
+				t.Fatalf("error: %v", err)
+			}
+			if !reflect.DeepEqual(testCase.want, value) || index != testCase.consumed {
+				t.Fatalf("value=%#v, consumed=%d; want=%#v, consumed=%d", value, index, testCase.want, testCase.consumed)
+			}
+		})
+	}
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

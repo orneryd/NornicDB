@@ -27,4 +27,4 @@ NORNICDB_NEO4J_REFERENCE_URI="bolt://${published_address}" \
 
 published_http_address="$(docker port "${container_name}" 7474/tcp)"
 NORNICDB_NEO4J_REFERENCE_HTTP_URI="http://${published_http_address}" \
-  go test -tags 'noui,nolocalllm' ./pkg/server -run '^TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j$' -count=1 -v
+  go test -tags 'noui,nolocalllm' ./pkg/server -run '^(TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j|TestRemoteHTTPGraphRoundTrip|TestRemoteHTTPPinnedNeo4j)$' -count=1 -v

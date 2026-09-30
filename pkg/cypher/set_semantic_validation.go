@@ -14,14 +14,17 @@ import (
 // an undefined variable is a compile-time error even when MATCH yields no rows.
 func (e *StorageExecutor) validateSetSemanticScopes(cypher string) error {
 	if !containsKeywordOutsideStrings(cypher, "SET") && !containsKeywordOutsideStrings(cypher, "REMOVE") &&
-		!containsKeywordOutsideStrings(cypher, "DELETE") {
+		!containsKeywordOutsideStrings(cypher, "DELETE") && !containsKeywordOutsideStrings(cypher, "FOREACH") {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
 		return nil
 	}
-	scope := newSemanticBindingScope()
+	return e.validateMutationClauseScopes(clauses, newSemanticBindingScope())
+}
+
+func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause, scope *semanticBindingScope) error {
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseMerge, pipelineClauseCreate:
@@ -45,6 +48,19 @@ func (e *StorageExecutor) validateSetSemanticScopes(cypher string) error {
 			}
 		case pipelineClauseSet:
 			if err := e.validateSetClauseScope(scope, clause.text); err != nil {
+				return err
+			}
+		case pipelineClauseForeach:
+			variable, _, updates, err := parsePipelineForeach(clause.text)
+			if err != nil {
+				return err
+			}
+			child := newSemanticBindingScope()
+			for name := range scope.names {
+				child.bind(name)
+			}
+			child.bind(variable)
+			if err := e.validateMutationClauseScopes(updates, child); err != nil {
 				return err
 			}
 		case pipelineClauseRemove:
