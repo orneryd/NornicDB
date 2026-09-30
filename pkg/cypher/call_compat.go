@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -972,137 +973,73 @@ func (e *StorageExecutor) parseStringArray(s string) []string {
 // callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
 // Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
 func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	store := e.getStorage(ctx)
-	// Parse: CALL db.create.setNodeVectorProperty(nodeId, 'propertyKey', [vector])
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, "SETNODEVECTORPROPERTY")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresSetNodeVectorInvalidSyntax(), nil)
-	}
-
-	remainder := cypher[idx:]
-	openParen := strings.Index(remainder, "(")
-	closeParen := strings.LastIndex(remainder, ")")
-	if openParen < 0 || closeParen < 0 {
-		return nil, localizedError(localization.CypherProceduresSetNodeVectorParenthesesRequired(), nil)
-	}
-
-	argsStr := remainder[openParen+1 : closeParen]
-
-	// Extract nodeId (first arg)
-	commaIdx := strings.Index(argsStr, ",")
-	if commaIdx < 0 {
-		return nil, localizedError(localization.CypherProceduresSetNodeVectorArgumentsRequired(), nil)
-	}
-	nodeIDStr := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
-	argsStr = argsStr[commaIdx+1:]
-
-	// Extract property key (second arg)
-	commaIdx = strings.Index(argsStr, ",")
-	if commaIdx < 0 {
-		return nil, localizedError(localization.CypherProceduresSetNodeVectorArgumentRequired(), nil)
-	}
-	propertyKey := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
-	argsStr = argsStr[commaIdx+1:]
-
-	// Extract vector (third arg) - can be [1.0, 2.0, 3.0] format
-	vectorStr := strings.TrimSpace(argsStr)
-	vectorStr = strings.Trim(vectorStr, "[]")
-	vectorParts := strings.Split(vectorStr, ",")
-	vector := make([]float64, len(vectorParts))
-	for i, vp := range vectorParts {
-		var val float64
-		fmt.Sscanf(strings.TrimSpace(vp), "%f", &val)
-		vector[i] = val
-	}
-
-	// Get and update the node
-	nodeID := storage.NodeID(nodeIDStr)
-	node, err := store.GetNode(nodeID)
+	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setNodeVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
 	if err != nil {
-		return nil, localizedError(localization.CypherProceduresNodeNotFound(nodeIDStr), nil)
+		return nil, err
 	}
-
-	// Set the vector property
-	node.Properties[propertyKey] = vector
-	err = store.UpdateNode(node)
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
-	}
-	e.notifyNodeMutated(string(node.ID))
-
-	return &ExecuteResult{
-		Columns: []string{"node"},
-		Rows:    [][]interface{}{{node}},
-	}, nil
+	return e.callSetVectorProperty(ctx, arguments, false)
 }
 
 // callDbCreateSetRelationshipVectorProperty sets a vector property on a relationship - Neo4j db.create.setRelationshipVectorProperty()
 // Syntax: CALL db.create.setRelationshipVectorProperty(relationship, propertyKey, vector)
 func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setRelationshipVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
+	if err != nil {
+		return nil, err
+	}
+	return e.callSetVectorProperty(ctx, arguments, true)
+}
+
+func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
+	if len(arguments) != 3 {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments", "vector property setter requires three arguments")
+	}
+	identifier, validID := arguments[0].(string)
+	switch entity := arguments[0].(type) {
+	case *storage.Node:
+		if !relationship && entity != nil {
+			identifier, validID = string(entity.ID), true
+		}
+	case *storage.Edge:
+		if relationship && entity != nil {
+			identifier, validID = string(entity.ID), true
+		}
+	}
+	propertyKey, validKey := arguments[1].(string)
+	if expression, raw := arguments[2].(string); raw && strings.HasPrefix(strings.TrimSpace(expression), "[") {
+		arguments[2] = e.evaluateExpressionWithContext(ctx, expression, nil, nil)
+	}
+	vector, validVector := toFloat64Slice(arguments[2])
+	if !validID || !validKey || !validVector {
+		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "vector property setter requires an entity, a STRING property key, and a numeric vector")
+	}
 	store := e.getStorage(ctx)
-	// Parse: CALL db.create.setRelationshipVectorProperty(relId, 'propertyKey', [vector])
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, "SETRELATIONSHIPVECTORPROPERTY")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresSetRelationshipVectorInvalidSyntax(), nil)
+	if relationship {
+		edge, err := store.GetEdge(storage.EdgeID(identifier))
+		if err != nil {
+			return nil, localizedError(localization.CypherProceduresRelationshipNotFound(identifier), nil)
+		}
+		if current, ok := toFloat64Slice(edge.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
+			edge.Properties[propertyKey] = vector
+			if err := store.UpdateEdge(edge); err != nil {
+				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
+			}
+			e.notifyEdgeMutated(string(edge.ID))
+		}
+		return &ExecuteResult{Columns: []string{"relationship"}, Rows: [][]interface{}{{e.procedureRelationship(edge)}}}, nil
 	}
-
-	remainder := cypher[idx:]
-	openParen := strings.Index(remainder, "(")
-	closeParen := strings.LastIndex(remainder, ")")
-	if openParen < 0 || closeParen < 0 {
-		return nil, localizedError(localization.CypherProceduresSetRelationshipVectorParentheses(), nil)
-	}
-
-	argsStr := remainder[openParen+1 : closeParen]
-
-	// Extract relId (first arg)
-	commaIdx := strings.Index(argsStr, ",")
-	if commaIdx < 0 {
-		return nil, localizedError(localization.CypherProceduresSetRelationshipVectorArguments(), nil)
-	}
-	relIDStr := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
-	argsStr = argsStr[commaIdx+1:]
-
-	// Extract property key (second arg)
-	commaIdx = strings.Index(argsStr, ",")
-	if commaIdx < 0 {
-		return nil, localizedError(localization.CypherProceduresSetRelationshipVectorArgument(), nil)
-	}
-	propertyKey := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
-	argsStr = argsStr[commaIdx+1:]
-
-	// Extract vector (third arg)
-	vectorStr := strings.TrimSpace(argsStr)
-	vectorStr = strings.Trim(vectorStr, "[]")
-	vectorParts := strings.Split(vectorStr, ",")
-	vector := make([]float64, len(vectorParts))
-	for i, vp := range vectorParts {
-		var val float64
-		fmt.Sscanf(strings.TrimSpace(vp), "%f", &val)
-		vector[i] = val
-	}
-
-	// Get and update the relationship
-	relID := storage.EdgeID(relIDStr)
-	rel, err := store.GetEdge(relID)
+	node, err := store.GetNode(storage.NodeID(identifier))
 	if err != nil {
-		return nil, localizedError(localization.CypherProceduresRelationshipNotFound(relIDStr), nil)
+		return nil, localizedError(localization.CypherProceduresNodeNotFound(identifier), nil)
 	}
-
-	// Set the vector property
-	rel.Properties[propertyKey] = vector
-	err = store.UpdateEdge(rel)
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
+	if current, ok := toFloat64Slice(node.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
+		node.Properties[propertyKey] = vector
+		if err := store.UpdateNode(node); err != nil {
+			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
+		}
+		e.notifyNodeMutated(string(node.ID))
 	}
-	e.notifyEdgeMutated(string(rel.ID))
-
-	return &ExecuteResult{
-		Columns: []string{"relationship"},
-		Rows:    [][]interface{}{{e.procedureRelationship(rel)}},
-	}, nil
+	return &ExecuteResult{Columns: []string{"node"}, Rows: [][]interface{}{{node}}}, nil
 }
 
 // callTxSetMetadata sets transaction metadata - Neo4j tx.setMetaData()

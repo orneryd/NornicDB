@@ -2880,8 +2880,8 @@ func TestCypherHelpers_ExecuteUnwind_Branches(t *testing.T) {
 	assert.Equal(t, int64(6), aggRes.Rows[0][0])
 	assert.Equal(t, int64(3), aggRes.Rows[0][1])
 	assert.Equal(t, 2.0, aggRes.Rows[0][2])
-	assert.Equal(t, 1.0, aggRes.Rows[0][3])
-	assert.Equal(t, 3.0, aggRes.Rows[0][4])
+	assert.Equal(t, int64(1), aggRes.Rows[0][3])
+	assert.Equal(t, int64(3), aggRes.Rows[0][4])
 	assert.Equal(t, []interface{}{int64(1), int64(2)}, aggRes.Rows[0][5])
 
 	rowRes, err := exec.executeUnwind(ctx, "UNWIND ['a','b'] AS x RETURN x AS value")

@@ -78,30 +78,12 @@ func TestUnwindClauseParsers_MoreBranches(t *testing.T) {
 func TestUnwindCollectProjectionAndRewrite_MoreBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "clauses_unwind_collect_more_cov"))
 
-	plan, ok := exec.parseUnwindCollectDistinctProjection("WITH collect(DISTINCT row.k) AS keys RETURN keys")
-	require.True(t, ok)
-	require.Equal(t, "row", plan.srcVar)
-	require.Equal(t, "k", plan.prop)
-	require.Equal(t, "keys", plan.alias)
-
-	_, ok = exec.parseUnwindCollectDistinctProjection("WITH collect(row.k) AS keys RETURN keys")
-	require.False(t, ok)
-	_, ok = exec.parseUnwindCollectDistinctProjection("WITH collect(DISTINCT row.k) AS keys RETURN other")
-	require.False(t, ok)
-
-	res, ok := exec.executeUnwindWithCollectProjection("row", []interface{}{
-		map[string]interface{}{"k": "a"},
-		map[interface{}]interface{}{"k": "a"},
-		map[string]interface{}{"k": "b"},
-		int64(42),
-	}, "WITH collect(DISTINCT row.k) AS keys RETURN keys")
-	require.True(t, ok)
+	res, err := exec.Execute(context.Background(), `UNWIND [{k:'a'}, {k:'a'}, {k:'b'}, {}] AS row
+WITH collect(DISTINCT row.k) AS keys RETURN keys`, nil)
+	require.NoError(t, err)
 	require.Equal(t, []string{"keys"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, []interface{}{"a", "b"}, res.Rows[0][0])
-
-	_, ok = exec.executeUnwindWithCollectProjection("item", []interface{}{}, "WITH collect(DISTINCT row.k) AS keys RETURN keys")
-	require.False(t, ok)
 
 	require.False(t, canApplySetBasedUnwindRewrite("UNWIND $rows AS row RETURN count(row)", []interface{}{nil, nil}))
 	require.False(t, canApplySetBasedUnwindRewrite("UNWIND $rows AS row RETURN row", []interface{}{1, 2}))

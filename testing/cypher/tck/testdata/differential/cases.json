@@ -1,5 +1,34 @@
 [
   {
+    "name": "unwind shared integer aggregation types",
+    "query": "UNWIND [1,2,3] AS x RETURN sum(x) AS s, count(x) AS c, avg(x) AS a, min(x) AS mn, max(x) AS mx, collect(x)[..2] AS cs"
+  },
+  {
+    "name": "unwind lazy range filter count",
+    "query": "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind range window before filter",
+    "query": "UNWIND range(1, 4) AS x WITH x LIMIT 2 WHERE x > 2 RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind range projected filters",
+    "query": "UNWIND range(1, 4) AS x WITH x + 1 AS y WHERE y > 2 WITH y * 2 AS z WHERE z < 9 RETURN collect(z) AS zs"
+  },
+  {
+    "name": "unwind descending range ordered limit",
+    "query": "UNWIND range(5, 1, -2) AS x WITH x ORDER BY x LIMIT 2 RETURN collect(x) AS xs"
+  },
+  {
+    "name": "unwind nested range filter",
+    "query": "UNWIND [1, 2] AS start UNWIND range(start, 2) AS x WITH x WHERE x > 1 RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind range shared mutation",
+    "query": "UNWIND range(1, 3) AS x WITH x WHERE x > 1 CREATE (n:RangeRow {v: x}) RETURN n.v ORDER BY n.v",
+    "ordered": true
+  },
+  {
     "name": "foreach merge on create retains outer row",
     "setup": ["CREATE (:T {id: 1})"],
     "query": "MATCH (t:T) FOREACH (i IN [1, 2] | MERGE (w:W {id: i}) ON CREATE SET w.x = i) RETURN t.id"

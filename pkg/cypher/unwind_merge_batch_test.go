@@ -24,7 +24,7 @@ func (e *countingEdgeLookupEngine) GetEdgeBetween(startID, endID storage.NodeID,
 	return e.Engine.GetEdgeBetween(startID, endID, edgeType)
 }
 
-func TestUnwindCollectDistinctProjection_UsesHelperRoute(t *testing.T) {
+func TestUnwindCollectDistinctProjection_UsesSharedPipeline(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
@@ -50,18 +50,6 @@ RETURN keys
 	require.Len(t, values, 2)
 	require.Equal(t, "k1", values[0])
 	require.Equal(t, "k2", values[1])
-}
-
-func TestParseUnwindCollectDistinctProjection(t *testing.T) {
-	exec := &StorageExecutor{}
-	plan, ok := exec.parseUnwindCollectDistinctProjection("WITH collect(DISTINCT row.textKey128) AS keys RETURN keys")
-	require.True(t, ok)
-	require.Equal(t, "row", plan.srcVar)
-	require.Equal(t, "textKey128", plan.prop)
-	require.Equal(t, "keys", plan.alias)
-
-	_, ok = exec.parseUnwindCollectDistinctProjection("WITH collect(DISTINCT row.textKey128) AS keys RETURN other")
-	require.False(t, ok)
 }
 
 // TestParseUnwindMergeChainPattern_NamedRelationshipSet verifies that the

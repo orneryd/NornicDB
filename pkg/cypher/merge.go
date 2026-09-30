@@ -2144,11 +2144,12 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		}
 	}
 
-	// Save updates
-	if err := store.UpdateNode(node); err != nil {
-		return nil, localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+	if setIdx > 0 || (existingNode == nil && onCreateIdx > 0) {
+		if err := store.UpdateNode(node); err != nil {
+			return nil, localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
+		}
+		e.notifyNodeMutated(string(node.ID))
 	}
-	e.notifyNodeMutated(string(node.ID))
 	e.cacheMergeNode(labels, matchProps, node)
 
 	// Anonymous pattern nodes do not introduce a variable into scope.
@@ -2212,7 +2213,8 @@ func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText st
 				variable := strings.TrimSpace(text[:dot])
 				_, boundNode := nodeContext[variable]
 				_, boundRel := relContext[variable]
-				if boundNode || boundRel {
+				_, boundValue := valueBindingsFromContext(ctx)[variable]
+				if boundNode || boundRel || boundValue {
 					value = e.evaluateExpressionWithContext(ctx, text, nodeContext, relContext)
 				}
 			}

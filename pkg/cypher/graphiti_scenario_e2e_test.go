@@ -242,7 +242,7 @@ func TestGraphitiScenarioE2E_VerbatimCopySkipsRedundantVectorPropertyUpdates(t *
 	require.NoError(t, err)
 	require.Len(t, res.Rows, len(payload.nodes))
 	require.Equal(t, int64(len(payload.nodes)), counting.NodeUpdateCount(), "node copy should only pay the SET n = row update, not an extra vector setter update")
-	require.Equal(t, int64(2*len(payload.nodes)), counting.NodeGetCount(), "node copy should only read once for setNodeVectorProperty and once for live search indexing")
+	require.Equal(t, int64(3*len(payload.nodes)), counting.NodeGetCount(), "shared CREATE and SET notifications each index the node; the vector setter reads once without updating")
 	require.Equal(t, len(payload.nodes), searchSvc.CountPropertyVectorEntries("name_embedding"))
 
 	res, err = exec.Execute(ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})

@@ -641,9 +641,6 @@ skipMatchCallRoute:
 // sync through the converged clause pipeline. Shapes outside the pipeline's
 // grammar continue through the residual handler.
 func (e *StorageExecutor) executeTopLevelUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-		return outcome.result, outcome.err
-	}
 	return e.executeUnwind(ctx, cypher)
 }
 

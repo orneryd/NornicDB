@@ -2,58 +2,68 @@ package cypher
 
 import (
 	"fmt"
+	"iter"
 	"math"
 	"strings"
 )
 
 func evaluateCypherRange(arguments []interface{}) ([]interface{}, error) {
+	sequence, err := newCypherRange(arguments)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]interface{}, 0)
+	for value := range sequence.values() {
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+type cypherRange struct{ start, end, step int64 }
+
+func newCypherRange(arguments []interface{}) (cypherRange, error) {
 	if len(arguments) != 2 && len(arguments) != 3 {
-		return nil, invalidRangeArgumentType("range() requires two or three INTEGER arguments", nil)
+		return cypherRange{}, invalidRangeArgumentType("range() requires two or three INTEGER arguments", nil)
 	}
 	start, ok := cypherIntegerValue(arguments[0])
 	if !ok {
-		return nil, invalidRangeArgumentType("range() start must be an INTEGER", arguments[0])
+		return cypherRange{}, invalidRangeArgumentType("range() start must be an INTEGER", arguments[0])
 	}
 	end, ok := cypherIntegerValue(arguments[1])
 	if !ok {
-		return nil, invalidRangeArgumentType("range() end must be an INTEGER", arguments[1])
+		return cypherRange{}, invalidRangeArgumentType("range() end must be an INTEGER", arguments[1])
 	}
 	step := int64(1)
 	if len(arguments) == 3 {
 		step, ok = cypherIntegerValue(arguments[2])
 		if !ok {
-			return nil, invalidRangeArgumentType("range() step must be an INTEGER", arguments[2])
+			return cypherRange{}, invalidRangeArgumentType("range() step must be an INTEGER", arguments[2])
 		}
 	}
 	if step == 0 {
-		return nil, newSemanticError(
+		return cypherRange{}, newSemanticError(
 			"Neo.ClientError.Statement.ArgumentError",
 			"NumberOutOfRange",
 			"range() step must not be zero",
 		)
 	}
 
-	values := make([]interface{}, 0)
-	if step > 0 {
-		for value := start; value <= end; {
-			values = append(values, value)
-			next := value + step
-			if next < value {
-				break
+	return cypherRange{start: start, end: end, step: step}, nil
+}
+
+func (sequence cypherRange) values() iter.Seq[int64] {
+	return func(yield func(int64) bool) {
+		for value := sequence.start; (sequence.step > 0 && value <= sequence.end) || (sequence.step < 0 && value >= sequence.end); {
+			if !yield(value) {
+				return
+			}
+			next := value + sequence.step
+			if (sequence.step > 0 && next < value) || (sequence.step < 0 && next > value) {
+				return
 			}
 			value = next
 		}
-		return values, nil
 	}
-	for value := start; value >= end; {
-		values = append(values, value)
-		next := value + step
-		if next > value {
-			break
-		}
-		value = next
-	}
-	return values, nil
 }
 
 func cypherIntegerValue(value interface{}) (int64, bool) {
@@ -115,7 +125,7 @@ func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow)
 		if arguments == nil {
 			continue
 		}
-		if _, err := evaluateCypherRange(arguments); err != nil {
+		if _, err := newCypherRange(arguments); err != nil {
 			return err
 		}
 	}

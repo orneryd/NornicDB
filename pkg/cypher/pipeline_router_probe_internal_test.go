@@ -8,10 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCallWithCreateTail_DoesNotHitPipelineExecutor probes which router path
-// the CALL YIELD CREATE test hits. It asserts the pipeline executor is NOT
-// invoked for this shape (CALL starts the query, not MATCH).
-func TestCallWithCreateTail_DoesNotHitPipelineExecutor(t *testing.T) {
+func TestCallWithCreateTailUsesSharedPipeline(t *testing.T) {
 	q := `
 CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0, 0.0, 0.0])
 YIELD node, score
@@ -23,8 +20,7 @@ RETURN m.name AS probeName`
 	for i, c := range clauses {
 		t.Logf("  [%d] kind=%d text=%q", i, c.kind, c.text[:min(80, len(c.text))])
 	}
-	// CALL is not a supported clause kind in our splitter; it should reject.
-	require.False(t, ok, "pipeline must not claim to handle CALL queries")
+	require.True(t, ok, "registered CALL procedures and mutation tails use the shared pipeline")
 }
 
 // TestPipelineBailsOnCallInMiddle ensures the splitter's disallow-list

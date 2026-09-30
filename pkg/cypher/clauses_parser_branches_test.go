@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -102,35 +103,15 @@ func TestParseSimpleCountAndBatchReturn_Branches(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestParseUnwindCollectDistinctProjection_Branches(t *testing.T) {
+func TestUnwindCollectDistinctUsesSharedProjection(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-
-	plan, ok := exec.parseUnwindCollectDistinctProjection("WITH COLLECT(DISTINCT row.name) AS names RETURN names")
-	require.True(t, ok)
-	require.Equal(t, "row", plan.srcVar)
-	require.Equal(t, "name", plan.prop)
-	require.Equal(t, "names", plan.alias)
-
-	_, ok = exec.parseUnwindCollectDistinctProjection("WITH COLLECT(row.name) AS names RETURN names")
-	require.False(t, ok)
-	_, ok = exec.parseUnwindCollectDistinctProjection("WITH COLLECT(DISTINCT row.name) AS names RETURN names AS x")
-	require.False(t, ok)
-	_, ok = exec.parseUnwindCollectDistinctProjection("RETURN names")
-	require.False(t, ok)
-
-	res, matched := exec.executeUnwindWithCollectProjection("row", []interface{}{
-		map[string]interface{}{"name": "a"},
-		map[string]interface{}{"name": "a"},
-		map[string]interface{}{"name": "b"},
-		map[interface{}]interface{}{"name": "c"},
-		123,
-	}, "WITH COLLECT(DISTINCT row.name) AS names RETURN names")
-	require.True(t, matched)
-	require.NotNil(t, res)
+	res, err := exec.Execute(context.Background(), `UNWIND [{name:'a'}, {name:'a'}, {name:'b'}, {name:'c'}, {}] AS row
+WITH COLLECT(DISTINCT row.name) AS names RETURN names`, nil)
+	require.NoError(t, err)
 	require.Equal(t, []string{"names"}, res.Columns)
 	require.Equal(t, [][]interface{}{{[]interface{}{"a", "b", "c"}}}, res.Rows)
-
-	res, matched = exec.executeUnwindWithCollectProjection("item", []interface{}{map[string]interface{}{"name": "a"}}, "WITH COLLECT(DISTINCT row.name) AS names RETURN names")
-	require.False(t, matched)
-	require.Nil(t, res)
+	res, err = exec.Execute(context.Background(), `UNWIND [] AS row WITH COLLECT(DISTINCT row.name) AS names RETURN names AS x`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"x"}, res.Columns)
+	require.Equal(t, [][]interface{}{{[]interface{}{}}}, res.Rows)
 }
