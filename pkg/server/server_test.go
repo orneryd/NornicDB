@@ -3160,6 +3160,33 @@ func TestServerStartStop(t *testing.T) {
 	}
 }
 
+func TestServerStatsConcurrentWithStart(t *testing.T) {
+	server, _ := setupTestServer(t)
+	server.config.Port = 0
+	start := make(chan struct{})
+	started := make(chan error, 1)
+	var readers sync.WaitGroup
+	for reader := 0; reader < 8; reader++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			<-start
+			for iteration := 0; iteration < 10000; iteration++ {
+				_ = server.Stats()
+			}
+		}()
+	}
+	go func() { <-start; started <- server.Start() }()
+	close(start)
+	startErr := <-started
+	readers.Wait()
+	require.NoError(t, startErr)
+	require.Positive(t, server.Stats().Uptime)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, server.Stop(ctx))
+}
+
 func TestServerStats(t *testing.T) {
 	server, _ := setupTestServer(t)
 

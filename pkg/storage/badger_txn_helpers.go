@@ -33,22 +33,36 @@ func (b *BadgerEngine) beginWrite() (func(), error) {
 }
 
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
-	if err := b.ensureOpen(); err != nil {
+	db, err := b.beginHelperTxn()
+	if err != nil {
 		return err
 	}
+	defer b.txnWG.Done()
 	return recoverBadgerClosedPanic(func() error {
-		return b.db.View(fn)
+		return db.View(fn)
 	})
 }
 
+func (b *BadgerEngine) beginHelperTxn() (*badger.DB, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.closed {
+		return nil, ErrStorageClosed
+	}
+	b.txnWG.Add(1)
+	return b.db, nil
+}
+
 func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
-	if err := b.ensureOpen(); err != nil {
+	db, err := b.beginHelperTxn()
+	if err != nil {
 		return err
 	}
+	defer b.txnWG.Done()
 	var nodeMax, edgeMax uint64
 	var propKeyDrain propKeyTxnDrain
-	err := recoverBadgerClosedPanic(func() error {
-		return b.db.Update(func(txn *badger.Txn) error {
+	err = recoverBadgerClosedPanic(func() error {
+		return db.Update(func(txn *badger.Txn) error {
 			if err := fn(txn); err != nil {
 				if b.idDict != nil {
 					b.idDict.discardTxnCounters(txn)
@@ -67,7 +81,7 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 			}
 			if b.propKeyDict != nil {
 				propKeyDrain = b.propKeyDict.flushTxnCounters(txn)
-				if err := b.propKeyDict.persistTxnCounters(b.db, propKeyDrain); err != nil {
+				if err := b.propKeyDict.persistTxnCounters(db, propKeyDrain); err != nil {
 					return fmt.Errorf("persisting property key dictionary: %w", err)
 				}
 			}
@@ -77,7 +91,7 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 	if err == nil {
 		runCommitTailHook()
 		if b.idDict != nil {
-			b.idDict.persistCounters(b.db, nodeMax, edgeMax)
+			b.idDict.persistCounters(db, nodeMax, edgeMax)
 		}
 	}
 	return err

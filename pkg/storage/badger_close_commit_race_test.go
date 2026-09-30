@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,9 +30,26 @@ func closeWhileTailRuns(t *testing.T, engine *BadgerEngine) <-chan error {
 	restore := setCommitTailHook(func() {
 		go func() { closeDone <- engine.Close() }()
 		time.Sleep(150 * time.Millisecond)
+		engine.mu.RLock()
+		released := engine.db == nil
+		engine.mu.RUnlock()
+		if released {
+			t.Error("Close released engine state before the update tail completed")
+		}
 	})
 	t.Cleanup(restore)
 	return closeDone
+}
+
+func TestBadgerEngine_HelperUpdateTailSurvivesConcurrentClose(t *testing.T) {
+	engine, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	closeDone := closeWhileTailRuns(t, engine)
+	err = engine.withUpdate(func(txn *badger.Txn) error { return txn.Set([]byte("helper-update"), []byte("value")) })
+	require.NoError(t, err)
+	require.NoError(t, <-closeDone)
+	require.ErrorIs(t, engine.withUpdate(func(*badger.Txn) error { t.Error("callback called after Close"); return nil }), ErrStorageClosed)
 }
 
 // TestBadgerTransaction_CommitTailSurvivesConcurrentClose pins the shutdown

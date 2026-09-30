@@ -121,7 +121,7 @@ func sanitizeUIBasePath(raw string) string {
 }
 
 // newUIHandler creates a handler for serving embedded UI assets
-func newUIHandler() (*uiHandler, error) {
+func newUIHandler(basePaths ...string) (*uiHandler, error) {
 	if !UIEnabled {
 		return nil, nil
 	}
@@ -163,10 +163,16 @@ func newUIHandler() (*uiHandler, error) {
 		return nil, fmt.Errorf("failed to read index.html: %w", err)
 	}
 
+	var basePath string
+	if len(basePaths) > 0 {
+		basePath = basePaths[0]
+	} else {
+		basePath = UIBasePath
+	}
 	return &uiHandler{
 		fileServer: http.FileServer(http.FS(distFS)),
 		indexHTML:  indexHTML,
-		basePath:   sanitizeUIBasePath(UIBasePath),
+		basePath:   sanitizeUIBasePath(basePath),
 	}, nil
 }
 

@@ -61,8 +61,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) *uiHandler {
 		return nil
 	}
 
-	SetUIBasePath(s.config.BasePath)
-	uiHandler, uiErr := newUIHandler()
+	uiHandler, uiErr := newUIHandler(s.config.BasePath)
 	if uiErr != nil {
 		s.logEvent(context.Background(), slog.LevelWarn, localization.ServerUIInitializationFailedEvent(uiErr))
 		return nil

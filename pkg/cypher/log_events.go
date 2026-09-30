@@ -34,7 +34,11 @@ func (e *StorageExecutor) logEvent(level slog.Level, event localization.LogEvent
 }
 
 func (e *StorageExecutor) emitRejectionReport(query string, err error) {
-	if e == nil || e.log == nil || err == nil || !e.log.Enabled(context.Background(), slog.LevelInfo) || !nornicerrors.HasNeo4jStatus(err) {
+	if e == nil || err == nil {
+		return
+	}
+	logger := e.log.Load()
+	if logger == nil || !logger.Enabled(context.Background(), slog.LevelInfo) || !nornicerrors.HasNeo4jStatus(err) {
 		return
 	}
 	code, _ := nornicerrors.Neo4jStatus(err)
@@ -53,7 +57,7 @@ func (e *StorageExecutor) emitRejectionReport(query string, err error) {
 	if len(redacted) > 500 {
 		redacted = truncateRuneSafe(redacted, 500)
 	}
-	e.log.Info("query rejected", "event_id", "cypher.query_rejected", "event", "query_rejected", "reason", "syntax_error", "statement_class", statementClass, "shape_hash", hash, "query", redacted)
+	logger.Info("query rejected", "event_id", "cypher.query_rejected", "event", "query_rejected", "reason", "syntax_error", "statement_class", statementClass, "shape_hash", hash, "query", redacted)
 }
 
 // truncateRuneSafe returns s truncated to at most max bytes without splitting

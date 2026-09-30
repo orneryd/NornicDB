@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fix server concurrency races (#770): atomically publish executor loggers and
+  startup timestamps, keep UI base paths local to each router, and drain admitted
+  Badger helper transactions through their commit tails before releasing engine
+  state during Close. Add fail-before concurrency and shutdown regressions.
 - Accept the legacy variable-length MVCC version-key layout
   (`[prefix][string ID][0x00][version]`) alongside the fixed-width layout
   during the V2→V3 edge-adjacency migration and in the runtime version

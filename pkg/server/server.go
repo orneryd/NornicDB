@@ -729,7 +729,7 @@ type Server struct {
 
 	mu      sync.RWMutex
 	closed  atomic.Bool
-	started time.Time
+	started atomic.Pointer[time.Time]
 
 	// Metrics
 	requestCount   atomic.Int64
@@ -2002,7 +2002,8 @@ func (s *Server) Start() error {
 	}
 
 	s.listener = listener
-	s.started = time.Now()
+	started := time.Now()
+	s.started.Store(&started)
 
 	// Build router
 	mux := s.buildRouter()
@@ -2154,8 +2155,12 @@ func (s *Server) Addr() string {
 //
 // Thread-safe: Can be called concurrently from multiple goroutines.
 func (s *Server) Stats() ServerStats {
+	var started time.Time
+	if snapshot := s.started.Load(); snapshot != nil {
+		started = *snapshot
+	}
 	return ServerStats{
-		Uptime:         time.Since(s.started),
+		Uptime:         time.Since(started),
 		RequestCount:   s.requestCount.Load(),
 		ErrorCount:     s.errorCount.Load(),
 		ActiveRequests: s.activeRequests.Load(),
