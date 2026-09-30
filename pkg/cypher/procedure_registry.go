@@ -160,6 +160,49 @@ func validateProcedureSpec(spec ProcedureSpec) error {
 	return nil
 }
 
+func procedureOutputTypes(clause string) map[string]string {
+	procedure, found := globalProcedureRegistry.Get(extractProcedureName(clause))
+	if !found {
+		return nil
+	}
+	outputs := procedure.Spec.Returns
+	if len(outputs) == 0 {
+		separator := strings.LastIndex(procedure.Spec.Signature, " :: (")
+		if separator < 0 || !strings.HasSuffix(procedure.Spec.Signature, ")") {
+			return nil
+		}
+		for _, output := range splitTopLevelComma(procedure.Spec.Signature[separator+5 : len(procedure.Spec.Signature)-1]) {
+			if name, typeName, ok := strings.Cut(output, "::"); ok {
+				outputs = append(outputs, ProcedureColumn{Name: strings.TrimSpace(name), Type: typeName})
+			}
+		}
+	}
+	result := make(map[string]string, len(outputs))
+	for _, output := range outputs {
+		if typeName := procedureStaticType(output.Type); typeName != "" {
+			result[output.Name] = typeName
+		}
+	}
+	return result
+}
+
+func procedureStaticType(typeName string) string {
+	typeName = strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(typeName)), "?")
+	if strings.HasPrefix(typeName, "LIST<") && strings.HasSuffix(typeName, ">") {
+		element := procedureStaticType(typeName[5 : len(typeName)-1])
+		if element == "" {
+			element = "Any"
+		}
+		return "List<" + element + ">"
+	}
+	switch typeName {
+	case "STRING", "INTEGER", "FLOAT", "BOOLEAN", "NODE", "RELATIONSHIP", "PATH", "MAP":
+		return typeName[:1] + strings.ToLower(typeName[1:])
+	default:
+		return ""
+	}
+}
+
 var globalProcedureRegistry = NewProcedureRegistry()
 
 // RegisterUserProcedure registers a user-defined procedure into the global registry.

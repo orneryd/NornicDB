@@ -101,7 +101,7 @@ func TestRowPredicateCombinesNumericBounds(t *testing.T) {
 		"other.age > 24 AND other.age < 26", row))
 }
 
-func TestNonBooleanWhereExpressionsReturnTypeError(t *testing.T) {
+func TestNonBooleanWhereExpressionsReturnClassifiedErrors(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	_, err := exec.Execute(ctx, "CREATE (:NonBooleanWhere {id: 'string'})-[:TO]->(:NonBooleanTarget)", nil)
 	require.NoError(t, err)
@@ -127,7 +127,11 @@ func TestNonBooleanWhereExpressionsReturnTypeError(t *testing.T) {
 		t.Run(tc.query, func(t *testing.T) {
 			_, err := exec.Execute(ctx, tc.query, nil)
 			require.Error(t, err, "WHERE must reject non-boolean values")
-			require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
+			code := "Neo.ClientError.Statement.SyntaxError"
+			if tc.query == "MATCH (n:NonBooleanWhere) WHERE n.id RETURN n" {
+				code = "Neo.ClientError.Statement.TypeError"
+			}
+			require.ErrorContains(t, err, code)
 			require.ErrorContains(t, err, "Type mismatch: expected Boolean but was "+tc.wantType)
 		})
 	}

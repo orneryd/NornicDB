@@ -129,10 +129,24 @@ func TestForeach_ComposedMutationShapes(t *testing.T) {
 	}
 }
 
+func TestForeach_PipelineValidation(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	for _, clause := range []string{
+		"FOREACH", "FOREACH (i [1] | CREATE (:F))", "FOREACH (1 IN [1] | CREATE (:F))",
+		"FOREACH (i IN [1] CREATE (:F))", "FOREACH (i IN [1] | )",
+		"FOREACH (i IN [1] | RETURN i)", "FOREACH (i IN [1] | SET missing.x = i)",
+	} {
+		t.Run(clause, func(t *testing.T) {
+			_, err := exec.pipelineApplyForeach(context.Background(), []pipelineRow{{}}, clause)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestForeach_UnsupportedUpdateRollsBack(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
-	_, err := exec.Execute(ctx, "CREATE (a:F {id: 1}) FOREACH (x IN [1] | DELETE a)", nil)
+	_, err := exec.Execute(ctx, "CREATE (a:F {id: 1}) FOREACH (x IN [1] | MATCH (b:F) DELETE b)", nil)
 	require.Error(t, err)
 	result, err := exec.Execute(ctx, "MATCH (a:F) RETURN count(a)", nil)
 	require.NoError(t, err)

@@ -101,34 +101,31 @@ func TestGh728_NonBooleanWhere(t *testing.T) {
 
 	t.Run("literal_integer_rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE 1 RETURN n.id", nil)
-		require.Error(t, err)
+		require.ErrorContains(t, err, "SyntaxError")
 	})
 	t.Run("literal_list_rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE [1] RETURN n.id", nil)
-		require.Error(t, err)
+		require.ErrorContains(t, err, "SyntaxError")
 	})
 	t.Run("with_literal_rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "WITH 1 AS x WHERE x RETURN x", nil)
-		require.Error(t, err)
+		require.ErrorContains(t, err, "SyntaxError")
 	})
 	t.Run("unwind_with_string_arithmetic_rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "UNWIND ['a'] AS x WITH x WHERE x + 1 RETURN x", nil)
-		require.Error(t, err)
+		require.ErrorContains(t, err, "SyntaxError")
 	})
 	t.Run("call_yield_where_nonboolean_rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label + 1 RETURN label", nil)
-		require.Error(t, err)
+		require.ErrorContains(t, err, "SyntaxError")
 	})
 	t.Run("runtime_string_property_rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.id RETURN n.id", nil)
 		require.Error(t, err)
 	})
 	t.Run("runtime_string_expression_rejected", func(t *testing.T) {
-		// #728: a non-boolean WHERE value is a type error in every clause
-		// position — computed expressions included.
 		_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.id + 'z' RETURN n.id", nil)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "Type mismatch")
+		require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
 	})
 	t.Run("runtime_bool_property", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.f RETURN n.id", nil)

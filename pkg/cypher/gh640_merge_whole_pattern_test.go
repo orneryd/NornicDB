@@ -16,6 +16,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -83,6 +84,44 @@ func TestGh640_MatchForeachMergeReturnsOuterRow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 	require.EqualValues(t, 2, gh640Count(t, exec, ctx, "MATCH (n:X) RETURN count(n) AS c"))
+}
+
+func TestGh640_ForeachCompoundUpdates(t *testing.T) {
+	for _, update := range []string{
+		"MERGE (w:W {id: i}) ON CREATE SET w.x = i",
+		"MERGE (w:W {id: i}) ON CREATE SET w.x = i SET w.y = 1",
+		"CREATE (w:W {id: i}) SET w.y = 1",
+		"MERGE (w:W {id: i}) SET w.y = 1",
+	} {
+		t.Run(update, func(t *testing.T) {
+			exec := newGh640Executor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE (:T {id: 1})", nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(ctx, "MATCH (t:T) FOREACH (i IN [1, 2] | "+update+") RETURN t.id", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+			stored, err := exec.Execute(ctx, "MATCH (w:W) RETURN w.id, w.x, w.y ORDER BY w.id", nil)
+			require.NoError(t, err)
+			require.Len(t, stored.Rows, 2)
+			for index, row := range stored.Rows {
+				require.Equal(t, int64(index+1), row[0])
+				if strings.Contains(update, "w.x") {
+					require.Equal(t, int64(index+1), row[1])
+				}
+				if strings.Contains(update, "w.y") {
+					require.Equal(t, int64(1), row[2])
+				}
+			}
+		})
+	}
+}
+
+func TestGh640_CreateMergeOnCreateSet(t *testing.T) {
+	exec := newGh640Executor(t)
+	result, err := exec.Execute(context.Background(), "CREATE (a:B) MERGE (n:UK {k: 2}) ON CREATE SET n.k = 1 RETURN n.k", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 }
 
 func TestGh640_MergeWholePatternCreatesFreshEndpoints(t *testing.T) {

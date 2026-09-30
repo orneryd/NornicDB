@@ -1,14 +1,129 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
+	referenceURL := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI")
+	if referenceURL == "" {
+		t.Skip("set NORNICDB_NEO4J_REFERENCE_HTTP_URI to run the pinned HTTP differential corpus")
+	}
+	content, err := os.ReadFile("../../testing/cypher/tck/testdata/differential/cases.json")
+	require.NoError(t, err)
+	var cases []struct {
+		Name    string   `json:"name"`
+		Setup   []string `json:"setup"`
+		Query   string   `json:"query"`
+		Ordered bool     `json:"ordered"`
+	}
+	require.NoError(t, json.Unmarshal(content, &cases))
+	client := &http.Client{Timeout: 15 * time.Second}
+	for _, explicit := range []bool{false, true} {
+		mode := "autocommit"
+		if explicit {
+			mode = "explicit-transaction"
+		}
+		t.Run(mode, func(t *testing.T) {
+			server, authenticator := setupTestServer(t)
+			local := httptest.NewServer(server.buildRouter())
+			defer local.Close()
+			token := "Bearer " + getAuthToken(t, authenticator, "admin")
+			post := func(t *testing.T, endpoint, statement string) TransactionResponse {
+				t.Helper()
+				payload, err := json.Marshal(map[string]any{"statements": []map[string]any{{"statement": statement}}})
+				require.NoError(t, err)
+				request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+				require.NoError(t, err)
+				request.Header.Set("Content-Type", "application/json")
+				if strings.HasPrefix(endpoint, local.URL+"/") {
+					request.Header.Set("Authorization", token)
+				}
+				response, err := client.Do(request)
+				require.NoError(t, err)
+				defer response.Body.Close()
+				require.Contains(t, []int{http.StatusOK, http.StatusCreated}, response.StatusCode)
+				var result TransactionResponse
+				require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
+				return result
+			}
+			rows := func(response TransactionResponse, wrappedEntities bool) [][]interface{} {
+				result := make([][]interface{}, 0)
+				for _, data := range response.Results[0].Data {
+					row := append([]interface{}{}, data.Row...)
+					if wrappedEntities {
+						for column, value := range row {
+							if column >= len(data.Meta) {
+								continue
+							}
+							metadata, ok := data.Meta[column].(map[string]interface{})
+							if !ok || (metadata["type"] != "node" && metadata["type"] != "relationship") {
+								continue
+							}
+							entity, ok := value.(map[string]interface{})
+							require.True(t, ok)
+							require.Contains(t, entity, "properties")
+							row[column] = entity["properties"]
+						}
+					}
+					result = append(result, row)
+				}
+				return result
+			}
+			for _, testCase := range cases {
+				t.Run(testCase.Name, func(t *testing.T) {
+					endpoints := []string{local.URL + "/db/nornic/tx", referenceURL + "/db/neo4j/tx"}
+					var results [2]TransactionResponse
+					var snapshots [2][][]interface{}
+					var relationships [2][][]interface{}
+					for backend, endpoint := range endpoints {
+						require.Empty(t, post(t, endpoint+"/commit", "MATCH (n) DETACH DELETE n").Errors)
+						for _, setup := range testCase.Setup {
+							require.Empty(t, post(t, endpoint+"/commit", setup).Errors)
+						}
+						queryEndpoint := endpoint + "/commit"
+						if explicit {
+							queryEndpoint = endpoint
+						}
+						results[backend] = post(t, queryEndpoint, testCase.Query)
+						if explicit && len(results[backend].Errors) == 0 {
+							require.NotEmpty(t, results[backend].Commit)
+							require.Empty(t, post(t, results[backend].Commit, "RETURN 1").Errors)
+						}
+						observed := post(t, endpoint+"/commit", "MATCH (n) RETURN labels(n) AS labels, properties(n) AS properties")
+						require.Empty(t, observed.Errors)
+						snapshots[backend] = rows(observed, backend == 0)
+						observed = post(t, endpoint+"/commit", "MATCH (a)-[r]->(b) RETURN properties(a) AS start, type(r) AS type, properties(r) AS properties, properties(b) AS end")
+						require.Empty(t, observed.Errors)
+						relationships[backend] = rows(observed, backend == 0)
+					}
+					require.Equal(t, len(results[1].Errors), len(results[0].Errors), "NornicDB: %+v; Neo4j: %+v", results[0].Errors, results[1].Errors)
+					if len(results[1].Errors) > 0 {
+						require.Equal(t, results[1].Errors[0].Code, results[0].Errors[0].Code)
+					} else {
+						require.Equal(t, results[1].Results[0].Columns, results[0].Results[0].Columns)
+						if testCase.Ordered {
+							require.Equal(t, rows(results[1], false), rows(results[0], true))
+						} else {
+							require.ElementsMatch(t, rows(results[1], false), rows(results[0], true))
+						}
+					}
+					require.ElementsMatch(t, snapshots[1], snapshots[0], "committed graph differs")
+					require.ElementsMatch(t, relationships[1], relationships[0], "committed relationships differ")
+				})
+			}
+		})
+	}
+}
 
 // Parameter numbers keep Neo4j's INTEGER / FLOAT distinction at any depth
 // (#570).

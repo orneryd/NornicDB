@@ -13,6 +13,7 @@ docker run --detach --rm \
   --name "${container_name}" \
   --env NEO4J_AUTH=none \
   --publish 127.0.0.1::7687 \
+  --publish 127.0.0.1::7474 \
   "${neo4j_image}" >/dev/null
 
 published_address="$(docker port "${container_name}" 7687/tcp)"
@@ -23,3 +24,7 @@ fi
 
 NORNICDB_NEO4J_REFERENCE_URI="bolt://${published_address}" \
   go test -tags 'noui,nolocalllm' ./testing/cypher/tck -run '^TestFixedDifferentialCorpusMatchesPinnedNeo4j$' -count=1 -v
+
+published_http_address="$(docker port "${container_name}" 7474/tcp)"
+NORNICDB_NEO4J_REFERENCE_HTTP_URI="http://${published_http_address}" \
+  go test -tags 'noui,nolocalllm' ./pkg/server -run '^TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j$' -count=1 -v

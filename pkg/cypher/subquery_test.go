@@ -2615,7 +2615,7 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, aggRes.Rows, 1)
 	assert.Equal(t, int64(3), aggRes.Rows[0][0])
-	assert.Equal(t, float64(60), aggRes.Rows[0][1])
+	assert.Equal(t, int64(60), aggRes.Rows[0][1])
 	assert.Equal(t, float64(20), aggRes.Rows[0][2])
 
 	_, err = exec.processAfterCallSubquery(ctx, inner, "SET x = 1")

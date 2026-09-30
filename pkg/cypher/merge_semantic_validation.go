@@ -162,6 +162,14 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	if err := e.validateMergeActionScopes(scope, clause); err != nil {
 		return err
 	}
+	for _, nodePattern := range e.splitNodePatterns(pattern) {
+		if err := e.validateCreatePatternExpressions(scope, nodePattern); err != nil {
+			return err
+		}
+	}
+	if err := e.validateCreateRelationshipExpressions(scope, pattern); err != nil {
+		return err
+	}
 	return nil
 }
 

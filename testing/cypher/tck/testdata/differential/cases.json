@@ -1,5 +1,157 @@
 [
   {
+    "name": "foreach merge on create retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1, 2] | MERGE (w:W {id: i}) ON CREATE SET w.x = i) RETURN t.id"
+  },
+  {
+    "name": "foreach merge on create and set retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1, 2] | MERGE (w:W {id: i}) ON CREATE SET w.x = i SET w.y = 1) RETURN t.id"
+  },
+  {
+    "name": "foreach create set retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1, 2] | CREATE (w:W {id: i}) SET w.y = 1) RETURN t.id"
+  },
+  {
+    "name": "foreach merge set retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) FOREACH (i IN [1, 2] | MERGE (w:W {id: i}) SET w.y = 1) RETURN t.id"
+  },
+  {
+    "name": "create merge on create set property",
+    "query": "CREATE (a:B) MERGE (n:UK {k: 2}) ON CREATE SET n.k = 1 RETURN n.k"
+  },
+  {
+    "name": "create merge set label ordering",
+    "query": "CREATE (a:B) MERGE (n:UK {k: 2}) SET n:X RETURN labels(n)"
+  },
+  {
+    "name": "merge expression after with arithmetic",
+    "query": "MERGE (a:T {id:1}) SET a.x=5 WITH a MERGE (b:X {k:a.x+1}) RETURN b.k"
+  },
+  {
+    "name": "merge undefined property variable",
+    "query": "MERGE (n:F {v: undefinedvar})"
+  },
+  {
+    "name": "create property list comprehension",
+    "query": "CREATE (n:T {a:[x IN [1,2] | x*2]}) RETURN n.a"
+  },
+  {
+    "name": "merge property list comprehension",
+    "query": "MERGE (n:T {a:[x IN [1,2] | x*2]}) RETURN n.a"
+  },
+  {
+    "name": "second create property list comprehension",
+    "query": "CREATE (a:B), (n:T {a:[x IN [1,2] | x*2]}) RETURN n.a"
+  },
+  {
+    "name": "empty terminal with",
+    "query": "MATCH (n:INC) WITH n.name AS x WITH"
+  },
+  {
+    "name": "call star includes outer scalar",
+    "query": "WITH 1 AS i CALL (i) { RETURN i * 2 AS d } RETURN *"
+  },
+  {
+    "name": "call star includes unimported outer scalar",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) WITH t, 5 AS z CALL (t) { RETURN t.id * 2 AS d } RETURN *"
+  },
+  {
+    "name": "unscoped call outer integer column name",
+    "query": "WITH 1 AS v CALL { RETURN 2 AS c } RETURN v,c"
+  },
+  {
+    "name": "unscoped call outer string column name",
+    "query": "WITH 'abc' AS v CALL { RETURN 2 AS c } RETURN v,c"
+  },
+  {
+    "name": "unscoped call multiple outer column names",
+    "query": "WITH 1 AS v, 3 AS w CALL { RETURN 2 AS c } RETURN v,c,w"
+  },
+  {
+    "name": "scoped call create in transactions",
+    "query": "UNWIND [1,2,3] AS i CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS"
+  },
+  {
+    "name": "scoped call merge in transactions",
+    "query": "UNWIND [1,2,3] AS i CALL (i) { MERGE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS"
+  },
+  {
+    "name": "scoped call set in transactions",
+    "query": "UNWIND [1,2,3] AS i CALL (i) { CREATE (n:X {i:i}) SET n.x = 1 } IN TRANSACTIONS OF 2 ROWS"
+  },
+  {
+    "name": "standalone call create in transactions",
+    "query": "CALL { CREATE (:X {i:1}) } IN TRANSACTIONS"
+  },
+  {
+    "name": "standalone call merge in transactions",
+    "query": "CALL { MERGE (:X {i:1}) } IN TRANSACTIONS"
+  },
+  {
+    "name": "standalone call set in transactions",
+    "query": "CALL { CREATE (n:X {i:1}) SET n.x = 1 } IN TRANSACTIONS"
+  },
+  {
+    "name": "where integer literal is syntax error",
+    "query": "MATCH (n) WHERE 1 RETURN n"
+  },
+  {
+    "name": "where list literal is syntax error",
+    "query": "MATCH (n) WHERE [1] RETURN n"
+  },
+  {
+    "name": "where projected integer is syntax error",
+    "query": "WITH 1 AS x WHERE x RETURN x"
+  },
+  {
+    "name": "where unwound computed string is syntax error",
+    "query": "UNWIND ['a'] AS x WITH x WHERE x+1 RETURN x"
+  },
+  {
+    "name": "where procedure computed string is syntax error",
+    "query": "CALL db.labels() YIELD label WHERE label+1 RETURN label"
+  },
+  {
+    "name": "where procedure string is syntax error",
+    "query": "CALL db.labels() YIELD label WHERE label RETURN label"
+  },
+  {
+    "name": "where computed dynamic string is type error",
+    "setup": ["CREATE (:W709p {id:'a'})"],
+    "query": "MATCH (n:W709p) WHERE n.id + 'z' RETURN n.id"
+  },
+  {
+    "name": "where bare dynamic string is type error",
+    "setup": ["CREATE (:W709p {id:'a'})"],
+    "query": "MATCH (n:W709p) WHERE n.id RETURN n.id"
+  },
+  {
+    "name": "importing with cannot filter",
+    "setup": ["CREATE (:W709p {id:'a'})"],
+    "query": "MATCH (i:W709p) CALL { WITH i WHERE i.id <> 'a' RETURN i.id AS id } RETURN id"
+  },
+  {
+    "name": "call integer sum preserves type",
+    "query": "CALL { UNWIND [10,20,30] AS x RETURN x } RETURN sum(x) AS total"
+  },
+  {
+    "name": "where node is syntax error",
+    "query": "MATCH (n) WHERE n RETURN n"
+  },
+  {
+    "name": "where map is syntax error",
+    "query": "MATCH (n) WHERE {a:1} RETURN n"
+  },
+  {
+    "name": "where string literal is syntax error",
+    "query": "MATCH (n) WHERE 'x' RETURN n"
+  },
+  {
     "name": "integer division truncates",
     "query": "RETURN 7 / 2 AS value",
     "ordered": true

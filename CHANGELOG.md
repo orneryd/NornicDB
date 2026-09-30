@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup with "migration v2→v3 failed: repair archived edge adjacency:
   invalid mvcc edge version key: len=61".
 
+- Preserve compound FOREACH updates, MERGE action bindings, and outer CALL
+  variables through shared clause execution (#640, #648). CALL projections
+  now reuse pipeline RETURN, including wildcard columns and integer sums.
+- Validate undefined MERGE property variables and empty WITH projections;
+  evaluate CREATE/MERGE property list comprehensions (#514).
+- Distinguish statically invalid WHERE predicates (SyntaxError) from dynamic
+  non-boolean values (TypeError), using procedure output types for YIELD;
+  reject filtering importing-WITH clauses and transactional CALL inside an
+  explicit transaction with Neo4j's error code (#728, #648).
+- Correct IVF/PQ score reconstruction to add the raw centroid used during
+  residual training, preventing centroid-norm bias before exact rescoring
+  (#446). Controlled service recall improves; the issue's external dataset
+  recall remains unverified.
 - Deliver EXPLAIN/PROFILE query plans to clients (#744): Bolt PULL SUCCESS
   metadata now carries `plan` (EXPLAIN) and `profile` with runtime counters
   (PROFILE), and HTTP transaction results carry `plan`/`profile` in the

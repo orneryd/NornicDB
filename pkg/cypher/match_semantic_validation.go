@@ -86,6 +86,7 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 				e.matchSemanticValidationCache.add(cypher)
 				return nil
 			}
+			outputTypes := procedureOutputTypes(clause.text)
 			for _, item := range yield.items {
 				name := item.name
 				if item.alias != "" {
@@ -96,6 +97,15 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 						localization.CypherCoreProcedureOutputShadowsVariable(name))
 				}
 				scope[name] = matchBindingUnknown
+				if typeName := outputTypes[item.name]; typeName != "" {
+					if valueTypes == nil {
+						valueTypes = make(map[string]string)
+					}
+					valueTypes[name] = typeName
+				}
+			}
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+				return err
 			}
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
 			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {

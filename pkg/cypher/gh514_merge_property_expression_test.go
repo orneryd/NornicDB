@@ -58,6 +58,39 @@ func TestGh514_MergeBoundNodePropertyAfterSetWith(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(1)}}, stored.Rows)
 }
 
+func TestGh514_RemainingPropertyExpressions(t *testing.T) {
+	for _, statement := range []string{
+		"MERGE (a:T {id: 1}) SET a.x = 5 WITH a MERGE (b:X {k: a.x + 1}) RETURN b.k",
+		"CREATE (n:T {a: [x IN [1, 2] | x * 2]}) RETURN n.a",
+		"MERGE (n:T {a: [x IN [1, 2] | x * 2]}) RETURN n.a",
+		"CREATE (m:M), (n:T {a: [x IN [1, 2] | x * 2]}) RETURN n.a",
+	} {
+		t.Run(statement, func(t *testing.T) {
+			exec := newGh514Executor(t)
+			result, err := exec.Execute(context.Background(), statement, nil)
+			require.NoError(t, err)
+			var expected interface{} = []interface{}{int64(2), int64(4)}
+			if statement[0:8] == "MERGE (a" {
+				expected = int64(6)
+			}
+			require.Equal(t, [][]interface{}{{expected}}, result.Rows)
+		})
+	}
+}
+
+func TestGh514_RemainingInvalidStatements(t *testing.T) {
+	for _, statement := range []string{
+		"MERGE (n:F {v: undefinedvar})",
+		"MATCH (n:INC) WITH n.name AS x WITH",
+	} {
+		t.Run(statement, func(t *testing.T) {
+			exec := newGh514Executor(t)
+			_, err := exec.Execute(context.Background(), statement, nil)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestGh514_UnevaluableExpressionsAreErrorsNotText(t *testing.T) {
 	exec := newGh514Executor(t)
 	ctx := context.Background()

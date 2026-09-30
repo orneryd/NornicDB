@@ -64,7 +64,7 @@ func (i *IVFPQIndex) SearchApprox(ctx context.Context, query []float32, k int, m
 			continue
 		}
 		list := i.lists[lid]
-		base := float64(vector.DotProduct(queryNorm, centroidNorm[lid]))
+		base := float64(vector.DotProduct(queryNorm, i.centroids[lid]))
 		codeSize := list.CodeSize
 		if codeSize <= 0 {
 			continue

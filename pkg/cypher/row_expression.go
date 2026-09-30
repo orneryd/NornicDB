@@ -1843,9 +1843,6 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 	if !ok {
 		return false
 	}
-	// A non-boolean WHERE value is a TypeError in every clause position
-	// (#728); null drops the row. The shared truth coercion raises and
-	// records the error on ctx.
 	return predicateValueIsTrue(ctx, value)
 }
 

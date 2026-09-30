@@ -971,9 +971,6 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context,
 func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
 	resolved := e.substituteParams(expr, params)
 	result := e.evaluateExpressionWithContext(ctx, resolved, b, nil)
-	// A non-boolean WHERE value is a TypeError in every clause position
-	// (#728); null drops the row. The shared truth coercion raises and
-	// records the error on ctx.
 	return predicateValueIsTrue(ctx, result)
 }
 

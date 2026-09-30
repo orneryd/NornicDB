@@ -427,6 +427,10 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 
 	// Handle arrays
 	if strings.HasPrefix(valueStr, "[") && strings.HasSuffix(valueStr, "]") {
+		if _, _, _, _, comprehension := parseListComprehension(valueStr[1 : len(valueStr)-1]); comprehension {
+			value, _ := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings)
+			return value
+		}
 		return e.parseArrayValue(ctx, valueStr)
 	}
 

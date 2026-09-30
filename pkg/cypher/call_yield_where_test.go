@@ -44,6 +44,26 @@ RETURN node.id AS id, score
 	require.Equal(t, "doc-1", res.Rows[0][0])
 }
 
+func TestProcedureOutputTypes(t *testing.T) {
+	ensureBuiltInProceduresRegistered()
+	for input, expected := range map[string]string{
+		"ANY": "", "": "", "INTEGER?": "Integer", "LIST<ANY>": "List<Any>", "LIST<LIST<STRING>>": "List<List<String>>",
+	} {
+		require.Equal(t, expected, procedureStaticType(input))
+	}
+	require.Nil(t, procedureOutputTypes("CALL missing.procedure()"))
+	require.Equal(t, map[string]string{"label": "String"}, procedureOutputTypes("CALL db.labels()"))
+	require.Equal(t, "List<String>", procedureOutputTypes("CALL db.indexes()")["properties"])
+	require.NoError(t, globalProcedureRegistry.RegisterUser(ProcedureSpec{
+		Name: "test.yieldTypes", Mode: ProcedureModeRead,
+		Returns: []ProcedureColumn{{Name: "valid", Type: "BOOLEAN"}},
+	}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+		return nil, nil
+	}))
+	t.Cleanup(ClearUserProcedures)
+	require.Equal(t, map[string]string{"valid": "Boolean"}, procedureOutputTypes("CALL test.yieldTypes()"))
+}
+
 func TestCallYieldWhereRejectsNonBooleanValue(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	_, err := exec.Execute(ctx, "CREATE (:CallYieldWhereLabel)", nil)
@@ -51,7 +71,7 @@ func TestCallYieldWhereRejectsNonBooleanValue(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label RETURN label", nil)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.SyntaxError")
 }
 
 func TestCallYieldWhereCanReferenceYieldAlias(t *testing.T) {

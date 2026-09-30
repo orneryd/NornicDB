@@ -216,6 +216,23 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 			return e.executeUnion(ctx, cypher, unionAll)
 		}
 	}
+	if strings.Contains(upperQuery, "CALL") {
+		if callIndex := firstTopLevelCallSubquery(cypher); callIndex >= 0 {
+			callClause := strings.TrimSpace(cypher[callIndex:])
+			_, _, inTransactions, _ := e.parseCallSubquery(callClause)
+			if inTransactions {
+				if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
+					return nil, err
+				}
+			} else if callIndex > 0 {
+				seed, err := e.executeInternal(ctx, strings.TrimSpace(cypher[:callIndex])+" RETURN *", nil)
+				if err != nil {
+					return nil, err
+				}
+				return e.executeChainedCallSubquery(ctx, seed, callClause)
+			}
+		}
+	}
 
 	if result, handled := e.tryFastPathSimpleMatchReturnLimit(ctx, cypher, upperQuery); handled {
 		return result, nil
@@ -266,12 +283,8 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 
 skipMatchCallRoute:
 	if startsWithMerge {
-		// REMOVE is a row clause: statements with one run on the pipeline,
-		// which applies MERGE actions, SET and REMOVE row by row.
-		if !containsKeywordOutsideStrings(cypher, "SET") || containsKeywordOutsideStrings(cypher, "REMOVE") {
-			if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-				return outcome.result, outcome.err
-			}
+		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
+			return outcome.result, outcome.err
 		}
 		if findKeywordIndexInContext(cypher, "OPTIONAL MATCH") > 0 ||
 			findKeywordIndexInContext(cypher, "WITH") > 0 ||
@@ -298,6 +311,11 @@ skipMatchCallRoute:
 		optionalMatchIdx = findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH")
 	} else if startsWithCreate {
 		if clauses, ok := splitPipelineClauses(cypher); ok {
+			if pipelineHasClauseKind(clauses, pipelineClauseMerge) {
+				if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
+					return outcome.result, outcome.err
+				}
+			}
 			createCount := 0
 			hasMutationBetweenCreates := false
 			hasRowPipelineClause := false

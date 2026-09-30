@@ -148,7 +148,7 @@ func withProjectionHasEmptyItem(clause string) bool {
 // empty item: a leading, trailing or doubled top-level comma.
 func projectionHasEmptyItem(items string) bool {
 	items = strings.TrimSpace(items)
-	if strings.HasPrefix(items, ",") || strings.HasSuffix(items, ",") {
+	if items == "" || strings.HasPrefix(items, ",") || strings.HasSuffix(items, ",") {
 		return true
 	}
 	for _, item := range splitTopLevelComma(items) {
@@ -206,6 +206,21 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 			continue
 		}
 		body := strings.TrimSpace(cypher[index+1 : closeBrace])
+		if !scoped && startsWithKeywordFold(body, "WITH") {
+			if clauses, ok := splitPipelineClauses(body); ok && len(clauses) > 0 {
+				projection, tail := projectionSemanticBodyAndTail(clauses[0].text, "WITH")
+				importsOuter := false
+				for _, variable := range expressionFreeVariables(projection) {
+					if isIdentifierReferenced(cypher[:position], variable) {
+						importsOuter = true
+					}
+				}
+				if importsOuter && (strings.TrimSpace(tail) != "" || topLevelKeywordIndex(projection, "AS") >= 0) {
+					return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
+						"Importing WITH must contain only simple references to outside variables")
+				}
+			}
+		}
 		if imports == "*" || startsWithKeywordFold(body, "WITH *") {
 			continue
 		}

@@ -15,8 +15,72 @@ Reference database: `neo4j:5.26.30-community` (the pinned differential image).
 | 5 | #581 (reopened) shortestPath between bound end nodes | HIGH: wrong rows | DONE (see §5) |
 | 6 | #728 WITH … WHERE in CALL bodies adds null rows; cartesian before WHERE | HIGH: wrong rows / OOM | DONE (30c255e1) |
 | 7 | #745 element ids differ by route | HIGH: clients can't re-find entities | DONE (see §7) |
-| 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | DONE (0bc50dc1) |
+| 8 | #446 compressed ANN rescoring floor clamped by request limit | HIGH: silent recall degradation | Reconstruction fixed; external dataset recall still unverified |
 | 9 | #726 BulkDeleteNodes notification data race | HIGH: race, `-race` suite broken | DONE (a979b47d) |
+
+## Follow-up verification: 2026-09-29
+
+This section supersedes the earlier DONE labels for the newly reported variants.
+It does not claim that the user's entire 308-statement replay was rerun.
+
+Reference: `neo4j:5.26.30-community@sha256:3388e05ee53c8313d01acdf33e63ad175af95a92226dc8551160564439ce2c8c`.
+Run `./scripts/cypher-tck/run-differential.sh` for the shared 47-case corpus.
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| #640 | Compound FOREACH runs all update clauses through the existing pipeline; action-bearing MERGE no longer declines that pipeline | Four reported FOREACH bodies, CREATE/MERGE/ON CREATE SET, and graph effects match reference |
+| #514 | Bound MERGE arithmetic, list-comprehension property evaluation, undefined-variable and empty-WITH validation | Exact reported shapes match reference |
+| #648 | CALL receives full seed rows; RETURN reuses pipeline projection; all transactional CALL forms reject explicit transactions with TransactionStartFailed | Outer scalar names, wildcard scope, and six batching variants match reference |
+| #728 | Static predicate validation uses projected and procedure YIELD types; filtering importing-WITH is rejected | Static SyntaxError and dynamic TypeError cases match reference |
+| #446 | Search adds the raw centroid used in PQ residual training, not its normalized counterpart | Service regression fails before the one-line fix and retrieves all ten exact neighbors after it |
+| Bolt | Auto-commit and explicit transactions | 47/47 each; columns, values, classified errors, and observed effects |
+| HTTP | Auto-commit and explicit transactions | 47/47 each; columns, semantic values, exact error codes, committed nodes and relationships |
+| Cypher TCK | Official pinned corpus | 7,794/7,794 |
+| Package suites | Cypher, search, server, Bolt | All pass |
+| Focused race | Reported Cypher and search regressions | Pass; unrelated server race #770 remains outside this change |
+
+Important reference findings and limits:
+
+- With a seeded string property, `MATCH (n:W709p) WHERE n.id + 'z' RETURN n.id`
+  raises TypeError on this pinned Neo4j in all four routes. No special computed
+  string coercion was added. The replay's no-row result was not reproduced.
+- Neo4j [does not guarantee labels() order](https://neo4j.com/docs/cypher-manual/5/functions/list/#functions-labels).
+  `['X','UK']` versus `['UK','X']` is not a semantic mismatch. No global label sort
+  was added; the exact statement happens to match in the runner's token history.
+- HTTP semantic comparison unwraps typed node/relationship properties using
+  row metadata. NornicDB's existing entity envelope differs from Neo4j's HTTP
+  properties-only row; these results do not claim wire-format identity.
+- General evaluator raw-expression fallback remains where it is an internal
+  unresolved-expression protocol. Validation prevents the reported invalid
+  property writes; globally deleting that fallback is not this fix.
+- The 609k-vector, 1024-dimensional #446 dataset is unavailable here. No claim
+  is made about its recall@10, hybrid recall, or the requested 0.92-0.99 band.
+  Keep #446 open pending workload validation.
+
+### Controlled IVF/PQ benchmark
+
+`go test ./pkg/search -run '^TestGh446_' -bench '^BenchmarkGh446_ServiceRecall$' -benchmem -count=3`
+
+Apple M2 Max, darwin/arm64; 50 two-dimensional vectors, two unequal-norm coarse
+centroids, exact residual codewords, two probes, 32 rescored candidates, k=10.
+Both variants use the production service pipeline and file-backed exact scorer;
+the baseline fixture replaces raw centroids with normalized centroids to reproduce
+the previous reconstruction formula. This is a controlled defect test, not a
+representative production retrieval benchmark.
+
+| Reconstruction | Recall@10 | ns/op (3 runs) | B/op | allocs/op |
+| --- | --- | --- | --- | --- |
+| Previous normalized centroid | 0 | 3,846-3,861 | 4,463-4,521 | 12 |
+| Correct raw centroid | 1 | 4,762-4,809 | 4,475-4,480 | 12 |
+
+The corrected ranking costs about 24% more time in this adversarial heap workload
+while recovering the true neighbors; no speedup is claimed. Allocation count is
+unchanged. Real-dataset latency and recall still require measurement.
+
+Changed-helper coverage: CALL projection 100%, FOREACH 93.9%, procedure output
+adapter 93.8%, procedure type conversion 100%, static operator validation 100%,
+IVF SearchApprox 90%. The full Cypher/search aggregate is 87.2%, not 90%; no claim
+is made that this change raises the entire existing codebase above its target.
 
 ## Per-issue plan
 

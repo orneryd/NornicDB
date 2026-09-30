@@ -120,22 +120,6 @@ func pipelineClausesFor(cypher string) ([]pipelineClause, bool) {
 	if strings.Contains(cypher, "$(") {
 		return nil, false
 	}
-	// MERGE actions (ON CREATE SET / ON MATCH SET) stay part of their MERGE
-	// clause (splitPipelineClauses) and pipelineApplyMerge applies them. The
-	// MERGE routes (executeMerge*, executeUnwind and its UNWIND batch
-	// operators) run MERGE actions faster for ingestion shapes but have no
-	// REMOVE and no WITH after the MERGE, so a statement with MERGE actions
-	// runs here only when it also removes something or continues with WITH.
-	// A relationship MERGE after MATCH also runs here: its endpoints are
-	// bound, and every relationship matching the pattern is a row that ON
-	// MATCH SET applies to, as in Neo4j. The compound MATCH … MERGE route
-	// takes only the first match (#640).
-	upper := upperASCII(cypher)
-	if (strings.Contains(upper, "ON CREATE SET") || strings.Contains(upper, "ON MATCH SET")) &&
-		(!strings.Contains(upper, "REMOVE") || !containsRemoveClauseAnywhere(cypher)) &&
-		!pipelineHasWithAfterMerge(clauses) && !pipelineHasRelationshipMergeAfterMatch(clauses) {
-		return nil, false
-	}
 	for _, clause := range clauses {
 		if clause.kind == pipelineClauseOptionalMatch && strings.Contains(clause.text, "*") {
 			return nil, false
@@ -163,40 +147,6 @@ func pipelineClauseBody(text, keyword string) string {
 		text = text[len(keyword):]
 	}
 	return strings.TrimSpace(text)
-}
-
-// pipelineHasWithAfterMerge reports whether a WITH clause follows a MERGE.
-// pipelineHasRelationshipMergeAfterMatch reports whether a MERGE of a
-// relationship pattern follows a MATCH clause, so that its endpoints are bound
-// and the pipeline's all-matches relationship MERGE applies (#640).
-func pipelineHasRelationshipMergeAfterMatch(clauses []pipelineClause) bool {
-	matched := false
-	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseMatch:
-			matched = true
-		case pipelineClauseMerge:
-			if matched && (strings.Contains(clause.text, "]-") || strings.Contains(clause.text, "-[")) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func pipelineHasWithAfterMerge(clauses []pipelineClause) bool {
-	merged := false
-	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseMerge:
-			merged = true
-		case pipelineClauseWith:
-			if merged {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // pipelineClauseSplits caches parsePipelineClauses by statement text: one
@@ -3579,12 +3529,15 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 	listExpr := strings.TrimSpace(remainder[:pipeIndex])
 	update := strings.TrimSpace(remainder[pipeIndex+1:])
 	updates, supported := splitPipelineClauses(update)
-	if !supported || len(updates) != 1 {
+	if !supported || len(updates) == 0 {
 		return nil, invalid()
 	}
-	kind := updates[0].kind
-	if kind != pipelineClauseCreate && kind != pipelineClauseSet && kind != pipelineClauseMerge {
-		return nil, invalid()
+	for _, clause := range updates {
+		switch clause.kind {
+		case pipelineClauseCreate, pipelineClauseSet, pipelineClauseMerge, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
+		default:
+			return nil, invalid()
+		}
 	}
 	stats := &QueryStats{}
 	for _, row := range rows {
@@ -3603,24 +3556,18 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 				child[name] = value
 			}
 			child[variable] = item
-			var change *QueryStats
-			var err error
-			switch kind {
-			case pipelineClauseCreate:
-				_, change, ok, err = e.pipelineApplyCreate(ctx, []pipelineRow{child}, update)
-			case pipelineClauseSet:
-				change, ok, err = e.pipelineApplySet(ctx, []pipelineRow{child}, update)
-			case pipelineClauseMerge:
-				_, change, err = e.pipelineApplyMerge(ctx, []pipelineRow{child}, update)
-				ok = true
+			scope := make(map[string]struct{}, len(child))
+			for name := range child {
+				scope[name] = struct{}{}
 			}
+			result, handled, err := e.runPipelineClauses(ctx, []pipelineRow{child}, scope, updates, updates)
 			if err != nil {
 				return nil, err
 			}
-			if !ok {
+			if !handled {
 				return nil, invalid()
 			}
-			addQueryStats(stats, change)
+			addQueryStats(stats, result.Stats)
 		}
 	}
 	return stats, nil

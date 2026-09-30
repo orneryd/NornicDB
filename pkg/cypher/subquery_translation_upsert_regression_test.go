@@ -27,12 +27,14 @@ OPTIONAL MATCH (o)-[:TRANSLATES_TO]->(t:TranslatedText {language: 'es'})
 WITH o, t
 CALL {
   WITH o, t
+	WITH o, t
   WHERE t IS NULL
   CREATE (newT:TranslatedText {language: 'es', translatedText: 'hola'})
   CREATE (o)-[:TRANSLATES_TO]->(newT)
   RETURN newT AS node
   UNION
   WITH o, t
+	WITH o, t
   WHERE t IS NOT NULL
   SET t.translatedText = 'hola-2'
   RETURN t AS node

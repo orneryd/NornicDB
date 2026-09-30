@@ -118,6 +118,68 @@ func TestGh648_UncorrelatedUnitSubqueryRunsPerRow(t *testing.T) {
 	})
 }
 
+func TestGh648_SharedReturnBoundary(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	inner := &ExecuteResult{Columns: []string{"value", "missing"}, Rows: [][]interface{}{{int64(1)}}, Stats: &QueryStats{}}
+	unchanged, err := exec.processCallSubqueryReturn(ctx, inner, "")
+	require.NoError(t, err)
+	require.Same(t, inner, unchanged)
+	projected, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN value, missing")
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1), nil}}, projected.Rows)
+	require.Same(t, inner.Stats, projected.Stats)
+	_, err = exec.processCallSubqueryReturn(ctx, inner, "RETURN range(1, 2, 0)")
+	require.Error(t, err)
+}
+
+func TestGh648_OuterScopeAndColumnNames(t *testing.T) {
+	for _, testCase := range []struct {
+		query   string
+		columns []string
+		rows    [][]interface{}
+	}{
+		{"WITH 1 AS i CALL (i) { RETURN i * 2 AS d } RETURN *", []string{"d", "i"}, [][]interface{}{{int64(2), int64(1)}}},
+		{"WITH 1 AS v CALL { RETURN 2 AS c } RETURN v, c", []string{"v", "c"}, [][]interface{}{{int64(1), int64(2)}}},
+		{"WITH 'x' AS v CALL { RETURN 2 AS c } RETURN v, c", []string{"v", "c"}, [][]interface{}{{"x", int64(2)}}},
+		{"WITH 1 AS v, 3 AS w CALL { RETURN 2 AS c } RETURN v, w, c", []string{"v", "w", "c"}, [][]interface{}{{int64(1), int64(3), int64(2)}}},
+		{"MATCH (t:T) WITH t, 5 AS z CALL (t) { RETURN t.id * 2 AS d } RETURN z, d", []string{"z", "d"}, [][]interface{}{{int64(5), int64(2)}}},
+	} {
+		t.Run(testCase.query, func(t *testing.T) {
+			exec := newGh648Executor(t)
+			_, err := exec.Execute(context.Background(), "CREATE (:T {id: 1})", nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(context.Background(), testCase.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, testCase.columns, result.Columns)
+			require.Equal(t, testCase.rows, result.Rows)
+		})
+	}
+}
+
+func TestGh648_AllTransactionalCallsRejectExplicitTransaction(t *testing.T) {
+	for _, query := range []string{
+		"UNWIND [1, 2, 3] AS i CALL (i) { CREATE (:X {i: i}) } IN TRANSACTIONS OF 2 ROWS",
+		"UNWIND [1, 2, 3] AS i CALL (i) { MERGE (x:X {i: i}) SET x.y = 1 } IN TRANSACTIONS OF 2 ROWS",
+		"CALL { CREATE (:X {i: 1}) } IN TRANSACTIONS",
+		"CALL () { CREATE (:X {i: 1}) } IN TRANSACTIONS",
+		"CALL { CREATE (:X {i: 1}) } IN TRANSACTIONS OF 2 ROWS",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec := newGh648Executor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, query, nil)
+			require.ErrorContains(t, err, "TransactionStartFailed")
+			_, _ = exec.Execute(ctx, "ROLLBACK", nil)
+			stored, err := exec.Execute(ctx, "MATCH (x:X) RETURN count(x)", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(0)}}, stored.Rows)
+		})
+	}
+}
+
 func TestGh648_InTransactionsRejectedInExplicitTransaction(t *testing.T) {
 	exec := newGh648Executor(t)
 	ctx := context.Background()

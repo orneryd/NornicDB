@@ -1820,7 +1820,7 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 // ROLLBACK (#648).
 func (e *StorageExecutor) rejectCallInTransactionsInExplicitTx() error {
 	if e.txContext != nil && e.txContext.active {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidCallInTransactions",
+		return newSemanticError("Neo.DatabaseError.Transaction.TransactionStartFailed", "InvalidCallInTransactions",
 			"CALL { ... } IN TRANSACTIONS is not allowed inside an explicit transaction")
 	}
 	return nil
@@ -3459,262 +3459,31 @@ func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
 
 // processCallSubqueryReturn processes the RETURN clause after CALL {}
 func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
-	// Parse RETURN expressions
-	returnIdx := findKeywordIndex(afterCall, "RETURN")
-	if returnIdx == -1 {
+	if findKeywordIndex(afterCall, "RETURN") == -1 {
 		return innerResult, nil
 	}
-
-	returnClause := strings.TrimSpace(afterCall[returnIdx+6:])
-
-	// Check for ORDER BY, LIMIT, SKIP using top-level keyword scanning so
-	// multiline RETURN clauses are split deterministically.
-	modifierIdx := len(returnClause)
-	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(returnClause, kw); idx >= 0 && idx < modifierIdx {
-			modifierIdx = idx
-		}
+	rows := make([]pipelineRow, 0, len(innerResult.Rows))
+	scope := make(map[string]struct{}, len(innerResult.Columns))
+	for _, column := range innerResult.Columns {
+		scope[column] = struct{}{}
 	}
-
-	returnExprs := strings.TrimSpace(returnClause[:modifierIdx])
-	modifierClause := ""
-	if modifierIdx < len(returnClause) {
-		modifierClause = returnClause[modifierIdx:]
-	}
-
-	// Parse return expressions
-	parts := splitReturnExpressions(returnExprs)
-
-	// Build column mapping from inner result
-	colMap := make(map[string]int)
-	for i, col := range innerResult.Columns {
-		colMap[col] = i
-	}
-	hasWildcard := false
-	for _, part := range parts {
-		if strings.TrimSpace(part) == "*" {
-			hasWildcard = true
-			break
-		}
-	}
-	if hasWildcard {
-		expanded := make([]string, 0, len(parts)+len(innerResult.Columns))
-		for _, part := range parts {
-			if strings.TrimSpace(part) == "*" {
-				expanded = append(expanded, innerResult.Columns...)
-				continue
-			}
-			expanded = append(expanded, part)
-		}
-		parts = expanded
-	}
-
-	// Check if RETURN clause has aggregation functions
-	hasAggregation := false
-	for _, part := range parts {
-		if containsAggregateFunc(part) {
-			hasAggregation = true
-			break
-		}
-	}
-
-	if hasAggregation {
-		// Handle aggregation - aggregate all rows into one
-		newColumns := make([]string, len(parts))
-		resultRow := make([]interface{}, len(parts))
-
-		for i, part := range parts {
-			part = strings.TrimSpace(part)
-
-			// Check for alias
-			alias := part
-			expr := part
-			if asIdx := projectionAliasIndex(part); asIdx != -1 {
-				alias = strings.TrimSpace(part[asIdx+len("AS"):])
-				expr = strings.TrimSpace(part[:asIdx])
-			}
-
-			newColumns[i] = alias
-
-			if containsAggregateFunc(expr) {
-				// Handle aggregation functions
-				inner := extractFuncInner(expr)
-
-				if isAggregateFuncName(expr, "collect") {
-					// Handle COLLECT (with or without DISTINCT)
-					collectExpr, isDistinct := cutDistinct(inner)
-
-					seen := make(map[string]bool)
-					var collected []interface{}
-					for _, row := range innerResult.Rows {
-						// Build a values map from the row
-						values := make(map[string]interface{})
-						for j, col := range innerResult.Columns {
-							if j < len(row) {
-								values[col] = row[j]
-							}
-						}
-						val := e.evaluateExpressionFromValues(collectExpr, values)
-						if isDistinct {
-							key := fmt.Sprintf("%v", val)
-							if !seen[key] {
-								seen[key] = true
-								collected = append(collected, val)
-							}
-						} else {
-							collected = append(collected, val)
-						}
-					}
-					resultRow[i] = collected
-				} else if isAggregateFuncName(expr, "count") {
-					if inner == "*" {
-						resultRow[i] = int64(len(innerResult.Rows))
-					} else {
-						count := int64(0)
-						for _, row := range innerResult.Rows {
-							if idx, ok := colMap[inner]; ok && idx < len(row) && row[idx] != nil {
-								count++
-							}
-						}
-						resultRow[i] = count
-					}
-				} else if isAggregateFuncName(expr, "sum") {
-					sum := float64(0)
-					for _, row := range innerResult.Rows {
-						if idx, ok := colMap[inner]; ok && idx < len(row) {
-							if num, ok := toFloat64(row[idx]); ok {
-								sum += num
-							}
-						}
-					}
-					resultRow[i] = sum
-				} else if isAggregateFuncName(expr, "avg") {
-					sum := float64(0)
-					count := 0
-					for _, row := range innerResult.Rows {
-						if idx, ok := colMap[inner]; ok && idx < len(row) {
-							if num, ok := toFloat64(row[idx]); ok {
-								sum += num
-								count++
-							}
-						}
-					}
-					if count > 0 {
-						resultRow[i] = sum / float64(count)
-					}
-				} else if isAggregateFuncName(expr, "min") {
-					var minVal interface{}
-					for _, row := range innerResult.Rows {
-						if idx, ok := colMap[inner]; ok && idx < len(row) {
-							val := row[idx]
-							if val != nil && (minVal == nil || e.compareOrderValues(val, minVal) < 0) {
-								minVal = val
-							}
-						}
-					}
-					resultRow[i] = minVal
-				} else if isAggregateFuncName(expr, "max") {
-					var maxVal interface{}
-					for _, row := range innerResult.Rows {
-						if idx, ok := colMap[inner]; ok && idx < len(row) {
-							val := row[idx]
-							if val != nil && (maxVal == nil || e.compareOrderValues(val, maxVal) > 0) {
-								maxVal = val
-							}
-						}
-					}
-					resultRow[i] = maxVal
-				}
+	for _, values := range innerResult.Rows {
+		row := make(pipelineRow, len(innerResult.Columns))
+		for index, column := range innerResult.Columns {
+			if index < len(values) {
+				row[column] = values[index]
 			} else {
-				// Non-aggregated column - use value from first row
-				if len(innerResult.Rows) > 0 {
-					if idx, ok := colMap[expr]; ok && idx < len(innerResult.Rows[0]) {
-						resultRow[i] = innerResult.Rows[0][idx]
-					}
-				}
+				row[column] = nil
 			}
 		}
-
-		result := &ExecuteResult{
-			Columns: newColumns,
-			Rows:    [][]interface{}{resultRow},
-			Stats:   innerResult.Stats,
-		}
-
-		// Apply modifiers (ORDER BY, LIMIT, SKIP)
-		if modifierClause != "" {
-			return e.applyResultModifiers(ctx, result, modifierClause)
-		}
-		return result, nil
+		rows = append(rows, row)
 	}
-
-	// No aggregation - Project columns
-	type returnProjection struct {
-		alias string
-		expr  string
-		idx   int
+	clauses := []pipelineClause{{kind: pipelineClauseReturn, text: afterCall}}
+	result, _, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	if err != nil {
+		return nil, err
 	}
-	projections := make([]returnProjection, 0, len(parts))
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-
-		// Check for alias
-		alias := part
-		expr := part
-		if asIdx := projectionAliasIndex(part); asIdx != -1 {
-			alias = strings.TrimSpace(part[asIdx+len("AS"):])
-			expr = strings.TrimSpace(part[:asIdx])
-		}
-
-		idx := -1
-		if colIdx, ok := colMap[expr]; ok {
-			idx = colIdx
-		}
-		projections = append(projections, returnProjection{
-			alias: alias,
-			expr:  expr,
-			idx:   idx,
-		})
-	}
-
-	// Project rows
-	newColumns := make([]string, len(projections))
-	for i := range projections {
-		newColumns[i] = projections[i].alias
-	}
-	newRows := make([][]interface{}, 0, len(innerResult.Rows))
-	for _, row := range innerResult.Rows {
-		// Build expression yield-context once per row for computed projections.
-		yieldCtx := make(map[string]interface{}, len(innerResult.Columns))
-		for i, col := range innerResult.Columns {
-			if i < len(row) {
-				yieldCtx[col] = row[i]
-			}
-		}
-
-		newRow := make([]interface{}, len(projections))
-		for i, p := range projections {
-			if p.idx >= 0 && p.idx < len(row) {
-				newRow[i] = row[p.idx]
-				continue
-			}
-			newRow[i], _ = e.evaluateRowExpressionWithContext(ctx, p.expr, pipelineRow(yieldCtx))
-		}
-		newRows = append(newRows, newRow)
-	}
-
-	result := &ExecuteResult{
-		Columns: newColumns,
-		Rows:    newRows,
-		Stats:   innerResult.Stats,
-	}
-
-	// Apply modifiers (ORDER BY, LIMIT, SKIP)
-	if modifierClause != "" {
-		return e.applyResultModifiers(ctx, result, modifierClause)
-	}
-
+	result.Stats = innerResult.Stats
 	return result, nil
 }
 

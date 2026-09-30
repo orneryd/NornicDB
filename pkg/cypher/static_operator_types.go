@@ -530,6 +530,26 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 // projection's aliases replace the variables they rename
 // (RETURN n.num AS n ORDER BY n + 2).
 func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope, params map[string]interface{}) error {
+	if where := topLevelKeywordIndex(clause.text, "WHERE"); where >= 0 {
+		predicate := clause.text[where+len("WHERE"):]
+		for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+			if index := topLevelKeywordIndex(predicate, keyword); index >= 0 {
+				predicate = predicate[:index]
+			}
+		}
+		predicateScope := scope
+		if projectedScope != nil {
+			predicateScope = projectedScope()
+		}
+		checker := staticOperatorChecker{scope: predicateScope, params: params}
+		operand, err := checker.check(predicate)
+		if err != nil {
+			return err
+		}
+		if operand.known() && operand.kind != "Boolean" && operand.kind != "Null" {
+			return operandMismatch(operand, "Boolean")
+		}
+	}
 	var projected *staticOperatorChecker
 	return e.forEachClauseOperatorExpression(clause, func(expression string, afterProjection bool) error {
 		checker := staticOperatorChecker{scope: scope, params: params}
