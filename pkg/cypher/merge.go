@@ -3437,7 +3437,7 @@ func (e *StorageExecutor) splitMergeChainSegments(cypher string) []string {
 // the node and variable name. It adds what it writes (a created node and its
 // properties and labels, and its ON CREATE SET / ON MATCH SET / SET) to stats,
 // which may be nil.
-func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment string, stats *QueryStats) (*storage.Node, string, error) {
+func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment string, stats *QueryStats, boundNodes ...map[string]*storage.Node) (*storage.Node, string, error) {
 	store := e.getStorage(ctx)
 	// Parse: MERGE (varName:Label {props}) [ON CREATE SET ...] [ON MATCH SET ...]
 	mergeIdx := findKeywordIndex(segment, "MERGE")
@@ -3465,7 +3465,15 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 	pattern := strings.TrimSpace(segment[mergeIdx+5 : patternEnd])
 
 	// Parse the pattern
-	varName, labels, props, err := e.parseMergePattern(ctx, pattern)
+	var varName string
+	var labels []string
+	var props map[string]interface{}
+	var err error
+	if len(boundNodes) > 0 {
+		varName, labels, props, err = e.parseMergeNodePattern(ctx, pattern, boundNodes[0], nil)
+	} else {
+		varName, labels, props, err = e.parseMergePattern(ctx, pattern)
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -3859,7 +3867,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 				}
 			} else {
 				// Node MERGE
-				node, varName, err := e.executeMergeNodeSegment(ctx, segment, result.Stats)
+				node, varName, err := e.executeMergeNodeSegment(ctx, segment, result.Stats, nodeContext)
 				if err != nil {
 					return nil, localizedError(localization.CypherMergeNodeFailed(err), err)
 				}

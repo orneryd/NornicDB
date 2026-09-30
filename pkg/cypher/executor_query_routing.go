@@ -383,6 +383,11 @@ skipMatchCallRoute:
 		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
 		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
 		!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
+		if findKeywordIndexInContext(cypher, "MERGE") > 0 {
+			if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
+				return outcome.result, outcome.err
+			}
+		}
 		return e.executeCreateSet(ctx, cypher)
 	}
 

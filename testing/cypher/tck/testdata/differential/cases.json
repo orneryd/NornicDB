@@ -31,5 +31,31 @@
     "name": "comma separated create patterns share scope",
     "query": "CREATE (a:Fixture {name: 'a'}), (b:Fixture {name: 'b'}), (a)-[:NEXT]->(b)",
     "ordered": true
+  },
+  {
+    "name": "merge property after set with uses bound node value",
+    "query": "MERGE (a:T {id: 1}) SET a.q = 1 WITH a MERGE (b:X {k: a.id}) RETURN b.k AS k",
+    "ordered": true
+  },
+  {
+    "name": "create merge set keeps merged variable",
+    "query": "CREATE (a:T {id: 1}) MERGE (n:X {k: a.id}) SET n.extra = 2 RETURN n.k AS k, n.extra AS extra",
+    "ordered": true
+  },
+  {
+    "name": "correlated call with projected where filters rows",
+    "query": "UNWIND [1, 2, 3] AS i CALL (i) { WITH i AS j WHERE j > 1 RETURN j AS value } RETURN value ORDER BY value",
+    "ordered": true
+  },
+  {
+    "name": "unit write subquery executes once per outer row",
+    "query": "UNWIND [1, 2] AS i CALL () { CREATE (:X) } RETURN count(*) AS count",
+    "ordered": true
+  },
+  {
+    "name": "foreach merge retains outer row",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (a:T) FOREACH (v IN [1, 2] | MERGE (:X {k: v})) RETURN a.id AS id",
+    "ordered": true
   }
 ]

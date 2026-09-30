@@ -66,6 +66,25 @@ func gh640Labels(t *testing.T, exec *StorageExecutor, ctx context.Context, query
 	return labels
 }
 
+func TestGh640_CreateMergeSetReturnsMergedVariable(t *testing.T) {
+	exec := newGh640Executor(t)
+	ctx := context.Background()
+	result, err := exec.Execute(ctx, "CREATE (a:T {id: 1}) MERGE (n:X {k: a.id}) SET n.extra = 2 RETURN n.k AS k, n.extra AS extra", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1), int64(2)}}, result.Rows)
+}
+
+func TestGh640_MatchForeachMergeReturnsOuterRow(t *testing.T) {
+	exec := newGh640Executor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:T {id: 1})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (a:T) FOREACH (v IN [1, 2] | MERGE (:X {k: v})) RETURN a.id AS id", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	require.EqualValues(t, 2, gh640Count(t, exec, ctx, "MATCH (n:X) RETURN count(n) AS c"))
+}
+
 func TestGh640_MergeWholePatternCreatesFreshEndpoints(t *testing.T) {
 	// Issue statement 1: fresh database with (:T {id: 1}), then
 	// MERGE (a:T {id: 1})-[:R]->(b:BC {id: 2}).

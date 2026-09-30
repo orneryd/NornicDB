@@ -48,6 +48,16 @@ func TestGh514_MergePropertyValueAfterWithAndSet(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(7), int64(7)}}, stored.Rows)
 }
 
+func TestGh514_MergeBoundNodePropertyAfterSetWith(t *testing.T) {
+	exec := newGh514Executor(t)
+	result, err := exec.Execute(context.Background(), "MERGE (a:T {id: 1}) SET a.q = 1 WITH a MERGE (b:X {k: a.id}) RETURN b.k AS k", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	stored, err := exec.Execute(context.Background(), "MATCH (b:X) RETURN b.k AS k", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, stored.Rows)
+}
+
 func TestGh514_UnevaluableExpressionsAreErrorsNotText(t *testing.T) {
 	exec := newGh514Executor(t)
 	ctx := context.Background()
