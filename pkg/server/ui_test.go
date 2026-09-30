@@ -1,13 +1,44 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"testing/fstest"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestUIRouterBasePathIsInstanceScoped(t *testing.T) {
+	originalEnabled, originalAssets, originalPath := UIEnabled, UIAssets, UIBasePath
+	t.Cleanup(func() { UIEnabled, UIAssets, UIBasePath = originalEnabled, originalAssets, originalPath })
+	SetUIAssets(fstest.MapFS{"dist/index.html": &fstest.MapFile{Data: []byte(`<script src="/assets/app.js"></script>`)}})
+	SetUIBasePath("/legacy")
+	type handlerResult struct {
+		handler  *uiHandler
+		basePath string
+	}
+	results := make(chan handlerResult, 8)
+	var workers sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		workers.Add(1)
+		go func(worker int) {
+			defer workers.Done()
+			basePath := fmt.Sprintf("/server-%d", worker)
+			server := &Server{config: &Config{BasePath: basePath}}
+			results <- handlerResult{server.registerUIRoutes(http.NewServeMux()), basePath}
+		}(worker)
+	}
+	workers.Wait()
+	close(results)
+	for result := range results {
+		require.NotNil(t, result.handler)
+		require.Equal(t, result.basePath, result.handler.basePath)
+	}
+	require.Equal(t, "/legacy", UIBasePath)
+}
 
 func TestSanitizeUIBasePath(t *testing.T) {
 	t.Run("allows normal prefixed path", func(t *testing.T) {

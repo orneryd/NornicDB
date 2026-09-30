@@ -197,6 +197,7 @@ func (b *BadgerEngine) Close() error {
 	// callback fields and other engine state they run against (#726). No
 	// new notifications can start: BulkDeleteNodes adds them under mu only
 	// when the engine is not closed.
+	b.txnWG.Wait()
 	b.notifyWG.Wait()
 
 	b.mu.Lock()

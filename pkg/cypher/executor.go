@@ -118,6 +118,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -450,7 +451,7 @@ type StorageExecutor struct {
 	// emission. Threaded via SetLogger after construction (D-01 non-breaking
 	// pattern — NewStorageExecutor signature unchanged). Nil-safe via the
 	// internal logger() helper which lazily installs a discard fallback.
-	log *slog.Logger
+	log atomic.Pointer[slog.Logger]
 
 	// slowQueryThreshold gates the D-04c slow-query emission path. Zero or
 	// negative values disable slow-query logging entirely. Set via
@@ -868,7 +869,7 @@ func (e *StorageExecutor) SetLogger(logger *slog.Logger) {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	e.log = logger.With("component", "cypher")
+	e.log.Store(logger.With("component", "cypher"))
 }
 
 // SetSlowQueryThreshold configures the D-04c slow-query emission gate.
@@ -1022,10 +1023,12 @@ func (e *StorageExecutor) observeSlowQueryIfThresholded(duration time.Duration) 
 // logger via this helper, never via the stdlib package-level default
 // (LOG-09 forbids that path).
 func (e *StorageExecutor) logger() *slog.Logger {
-	if e.log == nil {
-		e.log = slog.New(slog.NewTextHandler(io.Discard, nil)).With("component", "cypher")
+	if logger := e.log.Load(); logger != nil {
+		return logger
 	}
-	return e.log
+	fallback := slog.New(slog.NewTextHandler(io.Discard, nil)).With("component", "cypher")
+	e.log.CompareAndSwap(nil, fallback)
+	return e.log.Load()
 }
 
 // emitSlowQueryLog writes a single WARN record matching the LOG-07 schema

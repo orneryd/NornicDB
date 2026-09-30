@@ -6,14 +6,44 @@ package cypher
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+func TestExecutorLoggerConcurrentConfiguration(t *testing.T) {
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var workers sync.WaitGroup
+	start := make(chan struct{})
+	for worker := 0; worker < 8; worker++ {
+		workers.Add(1)
+		go func(worker int) {
+			defer workers.Done()
+			<-start
+			for iteration := 0; iteration < 300; iteration++ {
+				if worker%2 == 0 {
+					executor.SetLogger(logger)
+					executor.SetLogger(nil)
+				} else {
+					executor.Logger().Debug("concurrent logger")
+				}
+			}
+		}(worker)
+	}
+	close(start)
+	workers.Wait()
+	if executor.Logger() == nil {
+		t.Fatal("logger must always have a fallback")
+	}
+}
 
 // TestExecutor_SlowQueryLog_Schema asserts the LOG-07 schema:
 //
