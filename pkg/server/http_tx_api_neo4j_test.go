@@ -27,6 +27,48 @@ func TestDecodeTransactionRequestKeepsIntegerParameters(t *testing.T) {
 	require.Error(t, decodeTransactionRequest(strings.NewReader(`{"statements":[`), &req))
 }
 
+func TestHTTPCompoundMergeAndSubqueryRows(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	post := func(statement string) TransactionResponse {
+		rec := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{
+			"statements": []map[string]any{{"statement": statement}},
+		}, token)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var response TransactionResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+		require.Empty(t, response.Errors, statement)
+		return response
+	}
+
+	for _, testCase := range []struct {
+		statement string
+		want      [][]interface{}
+	}{
+		{"MERGE (a:HT514 {id: 1}) SET a.q = 1 WITH a MERGE (b:HX514 {k: a.id}) RETURN b.k AS k", [][]interface{}{{float64(1)}}},
+		{"CREATE (a:HT640 {id: 1}) MERGE (n:HX640 {k: a.id}) SET n.extra = 2 RETURN n.k AS k, n.extra AS extra", [][]interface{}{{float64(1), float64(2)}}},
+		{"UNWIND [1, 2, 3] AS i CALL (i) { WITH i AS j WHERE j > 1 RETURN j AS value } RETURN value ORDER BY value", [][]interface{}{{float64(2)}, {float64(3)}}},
+		{"UNWIND [1, 2] AS i CALL () { CREATE (:HT648) } RETURN count(*) AS count", [][]interface{}{{float64(2)}}},
+	} {
+		t.Run(testCase.statement, func(t *testing.T) {
+			response := post(testCase.statement)
+			var rows [][]interface{}
+			for _, data := range response.Results[0].Data {
+				rows = append(rows, data.Row)
+			}
+			require.Equal(t, testCase.want, rows)
+		})
+	}
+
+	stored := post("MATCH (b:HX514) RETURN b.k AS k")
+	require.Equal(t, []interface{}{float64(1)}, stored.Results[0].Data[0].Row)
+	post("CREATE (:HTForeach {id: 1})")
+	foreach := post("MATCH (a:HTForeach) FOREACH (v IN [1, 2] | MERGE (:HXForeach {k: v})) RETURN a.id AS id")
+	require.Equal(t, []interface{}{float64(1)}, foreach.Results[0].Data[0].Row)
+	count := post("MATCH (n:HXForeach) RETURN count(n) AS count")
+	require.Equal(t, []interface{}{float64(2)}, count.Results[0].Data[0].Row)
+}
+
 // /tx/commit reports the engine's error code (#575), the executor's counters
 // in Neo4j's stats object (#576) and integer parameters (#570); explicit
 // transactions report stats too, and the commit URL and Location header
