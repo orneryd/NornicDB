@@ -25,6 +25,7 @@
   },
   {
     "name": "create merge set label ordering",
+    "unordered_labels": true,
     "query": "CREATE (a:B) MERGE (n:UK {k: 2}) SET n:X RETURN labels(n)"
   },
   {
@@ -121,7 +122,17 @@
     "query": "CALL db.labels() YIELD label WHERE label RETURN label"
   },
   {
-    "name": "where computed dynamic string is type error",
+    "name": "where arithmetic boolean operand is type error",
+    "setup": ["CREATE (:W709p {id:'a', f:true})"],
+    "query": "MATCH (n:W709p) WHERE (n.id + 'z') AND n.f RETURN n.id"
+  },
+  {
+    "name": "where negated arithmetic is type error",
+    "setup": ["CREATE (:W709p {id:'a'})"],
+    "query": "MATCH (n:W709p) WHERE NOT (n.id + 'z') RETURN n.id"
+  },
+  {
+    "name": "where computed dynamic string filters rows",
     "setup": ["CREATE (:W709p {id:'a'})"],
     "query": "MATCH (n:W709p) WHERE n.id + 'z' RETURN n.id"
   },

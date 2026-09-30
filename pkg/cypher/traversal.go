@@ -2766,7 +2766,7 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 	}
 
 	value := e.evaluateExpressionWithPathContext(ctx, whereClause, pathCtx)
-	return predicateValueIsTrue(ctx, value)
+	return predicateValueIsTrue(ctx, value, whereClause)
 }
 
 func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathContext, subquery string) bool {

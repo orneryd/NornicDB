@@ -971,7 +971,7 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context,
 func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
 	resolved := e.substituteParams(expr, params)
 	result := e.evaluateExpressionWithContext(ctx, resolved, b, nil)
-	return predicateValueIsTrue(ctx, result)
+	return predicateValueIsTrue(ctx, result, expr)
 }
 
 func (e *StorageExecutor) compareNodeIDs(leftID, rightID string, op string) bool {

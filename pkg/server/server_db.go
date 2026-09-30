@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -1260,8 +1261,7 @@ func (s *Server) grantAccessToNewDatabase(ctx context.Context, dbName string, cl
 	}
 }
 
-// convertRowToNeo4jFormat converts each value in a row to Neo4j-compatible format.
-// This ensures nodes and edges use elementId and have filtered properties.
+// convertRowToNeo4jFormat returns transaction row values without entity envelopes.
 func (s *Server) convertRowToNeo4jFormat(row []interface{}, dbName string) []interface{} {
 	converted := make([]interface{}, len(row))
 	for i, val := range row {
@@ -1273,46 +1273,86 @@ func (s *Server) convertRowToNeo4jFormat(row []interface{}, dbName string) []int
 // convertValueToNeo4jFormat converts a single value to Neo4j HTTP format.
 // Handles storage.Node, storage.Edge, maps, and slices recursively.
 func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) interface{} {
-	if val == nil {
-		return nil
-	}
+	value, _ := s.transactionHTTPValue(val, dbName)
+	return value
+}
 
-	switch v := val.(type) {
+func (s *Server) transactionHTTPValue(value interface{}, dbName string) (interface{}, []interface{}) {
+	entityMeta := func(id, prefix, entityType, database string) []interface{} {
+		return []interface{}{map[string]interface{}{
+			"id": s.hashStringToInt64(id), "elementId": prefix + ":" + database + ":" + id,
+			"type": entityType, "deleted": false,
+		}}
+	}
+	switch typed := value.(type) {
 	case *storage.Node:
-		return s.nodeToNeo4jHTTPFormat(v, dbName)
+		if typed == nil {
+			return nil, []interface{}{nil}
+		}
+		properties := typed.Properties
+		if properties == nil {
+			properties = map[string]interface{}{}
+		}
+		return properties, entityMeta(string(typed.ID), "4", "node", s.entityDatabase(dbName, typed.ID, ""))
 	case *storage.Edge:
-		return s.edgeToNeo4jHTTPFormat(v, dbName)
+		if typed == nil {
+			return nil, []interface{}{nil}
+		}
+		properties := typed.Properties
+		if properties == nil {
+			properties = map[string]interface{}{}
+		}
+		return properties, entityMeta(string(typed.ID), "5", "relationship", s.entityDatabase(dbName, "", typed.ID))
+	case *cypher.PathResult:
+		if typed == nil {
+			return nil, []interface{}{nil}
+		}
+		return s.transactionHTTPValue(*typed, dbName)
+	case cypher.PathResult:
+		entities := make([]interface{}, 0, len(typed.Nodes)+len(typed.Relationships))
+		for index, node := range typed.Nodes {
+			entities = append(entities, node)
+			if index < len(typed.Relationships) {
+				entities = append(entities, typed.Relationships[index])
+			}
+		}
+		row, metadata := s.transactionHTTPValue(entities, dbName)
+		return row, []interface{}{metadata}
 	case map[string]interface{}:
-		// Check if this is already a converted node (has elementId)
-		if _, hasElementId := v["elementId"]; hasElementId {
-			return v
+		switch path := typed["_pathResult"].(type) {
+		case cypher.PathResult:
+			return s.transactionHTTPValue(path, dbName)
+		case *cypher.PathResult:
+			return s.transactionHTTPValue(path, dbName)
 		}
-		// Check if this looks like a node map (has _nodeId or id + labels)
-		if nodeId, hasNodeId := v["_nodeId"]; hasNodeId {
-			return s.mapNodeToNeo4jHTTPFormat(nodeId, v, dbName)
+		result := make(map[string]interface{}, len(typed))
+		metadata := make([]interface{}, 0)
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
 		}
-		if nodeId, hasId := v["id"]; hasId {
-			if _, hasLabels := v["labels"]; hasLabels {
-				return s.mapNodeToNeo4jHTTPFormat(nodeId, v, dbName)
-			}
+		sort.Strings(keys)
+		for _, key := range keys {
+			converted, nested := s.transactionHTTPValue(typed[key], dbName)
+			result[key] = converted
+			metadata = append(metadata, nested...)
 		}
-		// Regular map - convert nested values
-		result := make(map[string]interface{}, len(v))
-		for k, vv := range v {
-			if k == "_pathResult" {
-				continue
-			}
-			result[k] = s.convertValueToNeo4jFormat(vv, dbName)
-		}
-		return result
-	case []interface{}:
-		result := make([]interface{}, len(v))
-		for i, vv := range v {
-			result[i] = s.convertValueToNeo4jFormat(vv, dbName)
-		}
-		return result
+		return result, metadata
 	default:
-		return val
+		if value != nil {
+			sequence := reflect.ValueOf(value)
+			if sequence.Kind() == reflect.Slice || sequence.Kind() == reflect.Array {
+				result := make([]interface{}, sequence.Len())
+				metadata := make([]interface{}, 0, sequence.Len())
+				for index := 0; index < sequence.Len(); index++ {
+					converted, nested := s.transactionHTTPValue(sequence.Index(index).Interface(), dbName)
+					result[index] = converted
+					metadata = append(metadata, nested...)
+				}
+				return result, metadata
+			}
+		}
+		return value, []interface{}{nil}
 	}
 }
 
@@ -1344,129 +1384,6 @@ func (s *Server) entityDatabase(dbName string, nodeID storage.NodeID, edgeID sto
 		}
 	}
 	return dbName
-}
-
-// nodeToNeo4jHTTPFormat converts a storage.Node to Neo4j HTTP API format.
-// Neo4j format: {"elementId": "4:db:id", "labels": [...], "properties": {...}}
-func (s *Server) nodeToNeo4jHTTPFormat(node *storage.Node, dbName string) map[string]interface{} {
-	if node == nil {
-		return nil
-	}
-
-	// The element id names the database the entity actually lives in (#745),
-	// resolved per entity so composite constituents keep their own name.
-	elementId := fmt.Sprintf("4:%s:%s", s.entityDatabase(dbName, node.ID, ""), node.ID)
-
-	// Preserve user properties exactly as stored for Neo4j compatibility.
-	props := node.Properties
-
-	return map[string]interface{}{
-		"elementId":  elementId,
-		"labels":     node.Labels,
-		"properties": props,
-	}
-}
-
-// mapNodeToNeo4jHTTPFormat converts a map representation to Neo4j HTTP format.
-func (s *Server) mapNodeToNeo4jHTTPFormat(nodeId interface{}, m map[string]interface{}, dbName string) map[string]interface{} {
-	entityDB := dbName
-	if idText, ok := nodeId.(string); ok && idText != "" {
-		entityDB = s.entityDatabase(dbName, storage.NodeID(idText), "")
-	}
-	elementId := fmt.Sprintf("4:%s:%v", entityDB, nodeId)
-
-	// Extract labels
-	var labels []string
-	if l, ok := m["labels"].([]string); ok {
-		labels = l
-	} else if l, ok := m["labels"].([]interface{}); ok {
-		labels = make([]string, len(l))
-		for i, v := range l {
-			if s, ok := v.(string); ok {
-				labels[i] = s
-			}
-		}
-	}
-
-	// Extract properties without key-based filtering.
-	var props map[string]interface{}
-	if p, ok := m["properties"].(map[string]interface{}); ok {
-		props = p
-	} else {
-		// Properties might be at top level - collect them
-		props = make(map[string]interface{})
-		for k, v := range m {
-			// Skip metadata fields
-			if k == "id" || k == "_nodeId" || k == "labels" || k == "properties" || k == "elementId" || k == "embedding" {
-				continue
-			}
-			props[k] = v
-		}
-	}
-
-	return map[string]interface{}{
-		"elementId":  elementId,
-		"labels":     labels,
-		"properties": props,
-	}
-}
-
-// edgeToNeo4jHTTPFormat converts a storage.Edge to Neo4j HTTP API format.
-func (s *Server) edgeToNeo4jHTTPFormat(edge *storage.Edge, dbName string) map[string]interface{} {
-	if edge == nil {
-		return nil
-	}
-
-	// Each entity names its own database (#745): the relationship resolves
-	// through its holder constituent, the endpoints through theirs.
-	elementId := fmt.Sprintf("5:%s:%s", s.entityDatabase(dbName, "", edge.ID), edge.ID)
-	startElementId := fmt.Sprintf("4:%s:%s", s.entityDatabase(dbName, edge.StartNode, ""), edge.StartNode)
-	endElementId := fmt.Sprintf("4:%s:%s", s.entityDatabase(dbName, edge.EndNode, ""), edge.EndNode)
-
-	return map[string]interface{}{
-		"elementId":          elementId,
-		"type":               edge.Type,
-		"startNodeElementId": startElementId,
-		"endNodeElementId":   endElementId,
-		"properties":         edge.Properties,
-	}
-}
-
-// generateRowMeta generates Neo4j-compatible metadata for each value in a row.
-// Neo4j meta format: {"id": 123, "type": "node", "deleted": false, "elementId": "4:db:id"}
-func (s *Server) generateRowMeta(row []interface{}) []interface{} {
-	meta := make([]interface{}, len(row))
-	for i, val := range row {
-		switch v := val.(type) {
-		case map[string]interface{}:
-			// Check for elementId (Neo4j format node/edge)
-			if elementId, ok := v["elementId"].(string); ok {
-				// Determine if it's a node or relationship based on elementId prefix
-				entityType := "node"
-				if strings.HasPrefix(elementId, "5:") {
-					entityType = "relationship"
-				}
-				// Extract the entity id from the canonical "4:<db>:<id>" shape.
-				idPart := elementId
-				if parts := strings.SplitN(elementId, ":", 3); len(parts) == 3 {
-					idPart = parts[2]
-				}
-				numericId := s.hashStringToInt64(idPart)
-
-				meta[i] = map[string]interface{}{
-					"id":        numericId,
-					"type":      entityType,
-					"deleted":   false,
-					"elementId": elementId,
-				}
-			} else {
-				meta[i] = nil
-			}
-		default:
-			meta[i] = nil
-		}
-	}
-	return meta
 }
 
 // hashStringToInt64 converts a string ID to an int64 for Neo4j compatibility.
@@ -1520,8 +1437,14 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		Data:    make([]ResultRow, len(result.Rows)),
 	}
 	for i, row := range result.Rows {
-		convertedRow := s.convertRowToNeo4jFormat(row, dbName)
-		qr.Data[i] = ResultRow{Row: convertedRow, Meta: s.generateRowMeta(convertedRow)}
+		convertedRow := make([]interface{}, len(row))
+		metadata := make([]interface{}, 0, len(row))
+		for column, value := range row {
+			converted, nested := s.transactionHTTPValue(value, dbName)
+			convertedRow[column] = converted
+			metadata = append(metadata, nested...)
+		}
+		qr.Data[i] = ResultRow{Row: convertedRow, Meta: metadata}
 	}
 	if includeStats {
 		qr.Stats = queryStatsFromResult(result)

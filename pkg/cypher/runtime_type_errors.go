@@ -42,7 +42,20 @@ func predicateTruthFromValue(value interface{}) (cypherTruth, error) {
 	}
 }
 
-func predicateValueIsTrue(ctx context.Context, value interface{}) bool {
+func predicateValueIsTrue(ctx context.Context, value interface{}, expression string) bool {
+	if mayContainArithmetic(expression) {
+		for {
+			inner, enclosed := stripEnclosingExpressionParentheses(expression)
+			if !enclosed {
+				break
+			}
+			expression = inner
+		}
+		if _, _, _, arithmetic := splitRowArithmeticTier(expression, "+-*/%^"); arithmetic {
+			boolean, _ := value.(bool)
+			return boolean
+		}
+	}
 	truth, err := predicateTruthFromValue(value)
 	if err != nil {
 		recordExpressionFailure(ctx, err)

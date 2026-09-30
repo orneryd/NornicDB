@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup with "migration v2→v3 failed: repair archived edge adjacency:
   invalid mvcc edge version key: len=61".
 
+- Align transaction HTTP entity rows with Neo4j: return properties in rows and
+  identities in metadata, including nested collections and paths. Ordinary maps
+  are no longer inferred to be entities from their field names; the previous
+  entity-envelope format is removed.
+- Match standalone computed arithmetic WHERE filtering on the pinned Neo4j
+  default lookup-index schema while retaining TypeError for non-boolean logical
+  operands. Restore default lookup indexes in the differential reset harness;
+  compare labels as sets only where their order is explicitly unspecified.
 - Preserve compound FOREACH updates, MERGE action bindings, and outer CALL
   variables through shared clause execution (#640, #648). CALL projections
   now reuse pipeline RETURN, including wildcard columns and integer sums.

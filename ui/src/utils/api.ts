@@ -398,8 +398,9 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-// neo4jValueToPlain unwraps Bolt-typed values into the same shape the
-// HTTP /tx/commit path produced. The neo4j-driver-lite ships its own
+// neo4jValueToPlain unwraps Bolt-typed values into the UI's entity shape.
+// Transaction HTTP rows instead contain properties with separate metadata.
+// The neo4j-driver-lite ships its own
 // Integer / Node / Relationship / Path classes; the UI's existing
 // consumers (parseCypherRows, QueryResultsTable) expect plain JS
 // numbers, plain objects, etc. This walks the value tree and substitutes.
@@ -409,8 +410,7 @@ function neo4jValueToPlain(v: unknown): unknown {
   }
   // neo4j Integer: detected via the driver's isInt() typeguard. Values
   // within Number.MIN_SAFE_INTEGER..MAX_SAFE_INTEGER come back as JS
-  // Number; larger ones round-trip as String to avoid precision loss
-  // (matching the HTTP /tx/commit path's JSON serialization).
+  // Number; larger ones round-trip as String to avoid precision loss.
   if (isInt(v)) {
     const intValue = v as Integer;
     if (intValue.inSafeRange()) {
@@ -421,8 +421,7 @@ function neo4jValueToPlain(v: unknown): unknown {
   // Node / Relationship / PathSegment: serialize properties + identity.
   // Surface elementId at the top level so downstream consumers
   // (extractNodeFromResult, the Browser select-button column) can find
-  // it without diving into driver-specific fields. Same shape the HTTP
-  // /tx/commit path produced.
+  // it without diving into driver-specific fields.
   if (
     typeof v === "object" &&
     v !== null &&

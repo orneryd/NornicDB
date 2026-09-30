@@ -4273,8 +4273,8 @@ func TestDbConfigGPUAndMiddleware_AdditionalBranches(t *testing.T) {
 func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	require.Nil(t, server.nodeToNeo4jHTTPFormat(nil, "nornicdb"))
-	require.Nil(t, server.edgeToNeo4jHTTPFormat(nil, "nornicdb"))
+	require.Nil(t, server.convertValueToNeo4jFormat((*storage.Node)(nil), "nornicdb"))
+	require.Nil(t, server.convertValueToNeo4jFormat((*storage.Edge)(nil), "nornicdb"))
 
 	converted := server.convertValueToNeo4jFormat(map[string]interface{}{
 		"_pathResult": "drop",
@@ -4290,26 +4290,26 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 	}, "nornicdb")
 	m, ok := converted.(map[string]interface{})
 	require.True(t, ok)
-	require.NotContains(t, m, "_pathResult")
+	require.Equal(t, "drop", m["_pathResult"])
 	require.Contains(t, m, "node")
 	require.Contains(t, m, "vals")
 
-	withProps := server.mapNodeToNeo4jHTTPFormat("n-props", map[string]interface{}{
+	withProps := server.convertValueToNeo4jFormat(map[string]interface{}{
 		"labels":     []string{"Doc"},
 		"properties": map[string]interface{}{"title": "t"},
 	}, "nornicdb")
-	props, ok := withProps["properties"].(map[string]interface{})
+	props, ok := withProps.(map[string]interface{})["properties"].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "t", props["title"])
 
-	withMixedLabels := server.mapNodeToNeo4jHTTPFormat("n-mixed", map[string]interface{}{
+	withMixedLabels := server.convertValueToNeo4jFormat(map[string]interface{}{
 		"labels": []interface{}{"A", 123, "B"},
 		"name":   "mixed",
 	}, "nornicdb")
-	labels, ok := withMixedLabels["labels"].([]string)
+	labels, ok := withMixedLabels.(map[string]interface{})["labels"].([]interface{})
 	require.True(t, ok)
 	require.Equal(t, "A", labels[0])
-	require.Equal(t, "", labels[1])
+	require.Equal(t, 123, labels[1])
 	require.Equal(t, "B", labels[2])
 
 	// The commit URL follows the host the client used; without a Host header

@@ -22,16 +22,16 @@ func TestGh745_HTTPElementIDUsesRequestDatabase(t *testing.T) {
 
 	nodeMap, ok := converted[0].(map[string]interface{})
 	require.True(t, ok)
-	require.Equal(t, "4:otherdb:n1", nodeMap["elementId"])
+	require.Equal(t, node.Properties, nodeMap)
 
 	edgeMap, ok := converted[1].(map[string]interface{})
 	require.True(t, ok)
-	require.Equal(t, "5:otherdb:e1", edgeMap["elementId"])
-	require.Equal(t, "4:otherdb:n1", edgeMap["startNodeElementId"])
-	require.Equal(t, "4:otherdb:n2", edgeMap["endNodeElementId"])
+	require.Equal(t, edge.Properties, edgeMap)
 
 	// The row meta echoes the same canonical element id.
-	meta := s.generateRowMeta(converted)
+	_, nodeMetadata := s.transactionHTTPValue(node, "otherdb")
+	_, edgeMetadata := s.transactionHTTPValue(edge, "otherdb")
+	meta := append(nodeMetadata, edgeMetadata...)
 	require.Len(t, meta, 2)
 	nodeMeta, ok := meta[0].(map[string]interface{})
 	require.True(t, ok)
@@ -69,19 +69,19 @@ func TestGh745_HTTPCompositeElementIDUsesConstituentDatabase(t *testing.T) {
 	require.Len(t, converted, 2)
 	nodeMap, ok := converted[0].(map[string]interface{})
 	require.True(t, ok)
-	require.Equal(t, "4:cmp_745_a:cmp_745_a:n1", nodeMap["elementId"])
+	require.Equal(t, node.Properties, nodeMap)
 	edgeMap, ok := converted[1].(map[string]interface{})
 	require.True(t, ok)
-	require.Equal(t, "5:cmp_745_a:cmp_745_a:e1", edgeMap["elementId"])
-	require.Equal(t, "4:cmp_745_a:cmp_745_a:n1", edgeMap["startNodeElementId"])
-	require.Equal(t, "4:cmp_745_a:cmp_745_a:n2", edgeMap["endNodeElementId"])
+	require.Equal(t, edge.Properties, edgeMap)
 
-	meta := server.generateRowMeta(converted)
+	_, nodeMetadata := server.transactionHTTPValue(node, "cmp_745")
+	_, edgeMetadata := server.transactionHTTPValue(edge, "cmp_745")
+	meta := append(nodeMetadata, edgeMetadata...)
 	require.Equal(t, "4:cmp_745_a:cmp_745_a:n1", meta[0].(map[string]interface{})["elementId"])
 	require.Equal(t, "5:cmp_745_a:cmp_745_a:e1", meta[1].(map[string]interface{})["elementId"])
 
 	// An entity no constituent holds falls back to the request database.
 	stray := &storage.Node{ID: "nobody:n1", Labels: []string{"L"}}
-	strayConverted := server.convertRowToNeo4jFormat([]interface{}{stray}, "cmp_745")
-	require.Equal(t, "4:cmp_745:nobody:n1", strayConverted[0].(map[string]interface{})["elementId"])
+	_, strayMetadata := server.transactionHTTPValue(stray, "cmp_745")
+	require.Equal(t, "4:cmp_745:nobody:n1", strayMetadata[0].(map[string]interface{})["elementId"])
 }

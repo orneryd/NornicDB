@@ -1746,15 +1746,11 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	assert.False(t, dbInfos[0].CreatedAt().IsZero())
 
 	// Map-node conversion and recursive conversion helpers.
-	converted := server.mapNodeToNeo4jHTTPFormat("n1", map[string]interface{}{
+	converted := server.convertValueToNeo4jFormat(map[string]interface{}{
 		"labels": []interface{}{"Doc"},
 		"title":  "T",
 	}, "nornicdb")
-	assert.Equal(t, "4:nornicdb:n1", converted["elementId"])
-	assert.Equal(t, []string{"Doc"}, converted["labels"])
-	props, ok := converted["properties"].(map[string]interface{})
-	assert.True(t, ok)
-	assert.Equal(t, "T", props["title"])
+	assert.Equal(t, map[string]interface{}{"labels": []interface{}{"Doc"}, "title": "T"}, converted)
 
 	v := server.convertValueToNeo4jFormat(map[string]interface{}{
 		"_nodeId":     "n2",
@@ -1767,7 +1763,7 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	}, "nornicdb")
 	vm, ok := v.(map[string]interface{})
 	assert.True(t, ok)
-	assert.NotContains(t, vm, "_pathResult")
+	assert.Equal(t, "drop-me", vm["_pathResult"])
 
 	// responseWriter.Flush and uiHandler.ServeHTTP branches.
 	rw := &responseWriter{ResponseWriter: httptest.NewRecorder()}
@@ -2515,10 +2511,10 @@ func TestValueConversionAdditionalBranches(t *testing.T) {
 	ev := server.convertValueToNeo4jFormat(edge, "nornicdb")
 	nm, ok := nv.(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, "4:nornicdb:node-x", nm["elementId"])
+	assert.Equal(t, node.Properties, nm)
 	em, ok := ev.(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, "5:nornicdb:edge-x", em["elementId"])
+	assert.Equal(t, edge.Properties, em)
 
 	already := map[string]interface{}{"elementId": "4:nornicdb:keep"}
 	assert.Equal(t, already, server.convertValueToNeo4jFormat(already, "nornicdb"))
@@ -2531,7 +2527,8 @@ func TestValueConversionAdditionalBranches(t *testing.T) {
 	}, "nornicdb")
 	vm, ok := v.(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, "4:nornicdb:map-node", vm["elementId"])
+	assert.Equal(t, "map-node", vm["id"])
+	assert.Equal(t, []interface{}{"Mapped"}, vm["labels"])
 
 	sliceVal := server.convertValueToNeo4jFormat([]interface{}{
 		map[string]interface{}{"id": "n100", "labels": []string{"L"}},

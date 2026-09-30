@@ -545,6 +545,12 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			if !leftOK || !rightOK {
 				return nil, false, nil
 			}
+			if _, err := predicateTruthFromValue(leftValue); err != nil {
+				return nil, false, err
+			}
+			if _, err := predicateTruthFromValue(rightValue); err != nil {
+				return nil, false, err
+			}
 			value, ok := evaluateRowBooleanOperator(strings.TrimSpace(operator), leftValue, rightValue)
 			return value, ok, nil
 		}
@@ -567,7 +573,8 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		}
 		boolean, ok := value.(bool)
 		if !ok {
-			return nil, false, nil
+			_, err := predicateTruthFromValue(value)
+			return nil, false, err
 		}
 		return !boolean, true, nil
 	}
@@ -1683,8 +1690,8 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 }
 
 // evaluateMatchRowPredicate is the MATCH-clause entry into the same shared
-// evaluator: a non-boolean WHERE value is a TypeError in every clause
-// position (#728), and null drops the row.
+// evaluator: null drops the row, while predicate conversion and runtime
+// type errors are shared across clause positions.
 func (e *StorageExecutor) evaluateMatchRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
 	return e.evaluateRowPredicate(ctx, expression, values)
 }
@@ -1715,6 +1722,17 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	// (false) result instead of evaluating the subquery.
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		return e.evaluateRowPredicateParts(ctx, inner, values)
+	}
+	if mayContainArithmetic(expression) && (startsWithKeywordFold(expression, "NOT") ||
+		topLevelKeywordIndex(expression, "AND") >= 0 || topLevelKeywordIndex(expression, "OR") >= 0 || topLevelKeywordIndex(expression, "XOR") >= 0) {
+		value, evaluated, err := e.evaluateRowValue(expression, values)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return false
+		}
+		if evaluated {
+			return predicateValueIsTrue(ctx, value, expression)
+		}
 	}
 	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
 	// COUNT { … } + 1 > 1, …) are evaluated for the row first, unless AND / OR
@@ -1843,7 +1861,7 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 	if !ok {
 		return false
 	}
-	return predicateValueIsTrue(ctx, value)
+	return predicateValueIsTrue(ctx, value, expression)
 }
 
 // evaluateCypherSize computes size(value) for the shared row evaluator and

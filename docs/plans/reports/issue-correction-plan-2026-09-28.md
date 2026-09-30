@@ -24,38 +24,126 @@ This section supersedes the earlier DONE labels for the newly reported variants.
 It does not claim that the user's entire 308-statement replay was rerun.
 
 Reference: `neo4j:5.26.30-community@sha256:3388e05ee53c8313d01acdf33e63ad175af95a92226dc8551160564439ce2c8c`.
-Run `./scripts/cypher-tck/run-differential.sh` for the shared 47-case corpus.
+Run `./scripts/cypher-tck/run-differential.sh` for 49 shared cases plus two
+HTTP-specific entity/path cases: 200 comparisons across the four routes.
 
 | Area | Change | Evidence |
 | --- | --- | --- |
 | #640 | Compound FOREACH runs all update clauses through the existing pipeline; action-bearing MERGE no longer declines that pipeline | Four reported FOREACH bodies, CREATE/MERGE/ON CREATE SET, and graph effects match reference |
 | #514 | Bound MERGE arithmetic, list-comprehension property evaluation, undefined-variable and empty-WITH validation | Exact reported shapes match reference |
 | #648 | CALL receives full seed rows; RETURN reuses pipeline projection; all transactional CALL forms reject explicit transactions with TransactionStartFailed | Outer scalar names, wildcard scope, and six batching variants match reference |
-| #728 | Static predicate validation uses projected and procedure YIELD types; filtering importing-WITH is rejected | Static SyntaxError and dynamic TypeError cases match reference |
+| #728 | Static predicate validation uses projected and procedure YIELD types; filtering importing-WITH is rejected; standalone arithmetic filtering and strict logical operands share evaluator conversion | Static SyntaxError, dynamic property TypeError, NOT/conjunction TypeError, and computed-string filtering match reference |
 | #446 | Search adds the raw centroid used in PQ residual training, not its normalized counterpart | Service regression fails before the one-line fix and retrieves all ten exact neighbors after it |
-| Bolt | Auto-commit and explicit transactions | 47/47 each; columns, values, classified errors, and observed effects |
-| HTTP | Auto-commit and explicit transactions | 47/47 each; columns, semantic values, exact error codes, committed nodes and relationships |
+| Bolt | Auto-commit and explicit transactions | 49/49 each; columns, values, classified errors, and observed effects |
+| HTTP | One typed recursive row/metadata serializer; no legacy envelopes or entity guessing from map keys | 51/51 each transaction mode; raw rows, metadata structure, exact error codes, committed nodes and relationships |
 | Cypher TCK | Official pinned corpus | 7,794/7,794 |
 | Package suites | Cypher, search, server, Bolt | All pass |
-| Focused race | Reported Cypher and search regressions | Pass; unrelated server race #770 remains outside this change |
+| Focused race | Reported Cypher/search regressions and HTTP entity/provenance serialization | Pass; unrelated server race #770 remains outside this change |
 
 Important reference findings and limits:
 
 - With a seeded string property, `MATCH (n:W709p) WHERE n.id + 'z' RETURN n.id`
-  raises TypeError on this pinned Neo4j in all four routes. No special computed
-  string coercion was added. The replay's no-row result was not reproduced.
+  filters the row on pinned Neo4j's normal lookup-index schema. The earlier
+  TypeError conclusion was incorrect: the reset harness dropped token lookup
+  indexes, causing an AllNodesScan with an implicit label conjunction instead
+  of NodeByLabelScan. The differential reset now restores the default lookup
+  indexes on both backends. NOT and a dynamic boolean conjunction still raise
+  TypeError for the computed string. No blanket non-boolean coercion is applied
+  to logical operands, and the internal unresolved-expression fallback remains.
 - Neo4j [does not guarantee labels() order](https://neo4j.com/docs/cypher-manual/5/functions/list/#functions-labels).
   `['X','UK']` versus `['UK','X']` is not a semantic mismatch. No global label sort
-  was added; the exact statement happens to match in the runner's token history.
-- HTTP semantic comparison unwraps typed node/relationship properties using
-  row metadata. NornicDB's existing entity envelope differs from Neo4j's HTTP
-  properties-only row; these results do not claim wire-format identity.
+  was added; only the labels-result case and graph snapshot labels are compared
+  as sets. Ordinary list values remain ordered.
+- HTTP rows are compared without envelope normalization. Typed node and
+  relationship rows contain properties; identities are carried in metadata.
+  Lists/maps flatten metadata, paths nest their alternating entity metadata,
+  and ordinary maps preserve all fields. Metadata identities necessarily differ
+  across databases; their presence/types and remaining structure are checked.
+  This verifies the tested row contract, not every transaction HTTP feature.
 - General evaluator raw-expression fallback remains where it is an internal
   unresolved-expression protocol. Validation prevents the reported invalid
   property writes; globally deleting that fallback is not this fix.
 - The 609k-vector, 1024-dimensional #446 dataset is unavailable here. No claim
   is made about its recall@10, hybrid recall, or the requested 0.92-0.99 band.
   Keep #446 open pending workload validation.
+
+### NornicDB vs Neo4j Case Matrix
+
+Captured on 2026-09-29 by `./scripts/cypher-tck/run-differential.sh`: 200
+successful comparisons, 49 shared cases in each Bolt mode and 51 in each HTTP
+mode. Verbose tests emit structured `DIFFERENTIAL_RESULT` records for both engines.
+The case names map directly to the shared JSON corpus or the two HTTP-specific
+cases in `TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j`.
+
+AC = auto-commit; TX = explicit transaction. Result cells show observed HTTP
+rows, not entity envelopes; `[]` means no rows. Bolt separately compares its
+typed values and projection columns. `Match` means the reference comparison
+passed, including expected rejection cases. Successful queries also compare
+observed graph effects/contents. Metadata structure is compared for ordered HTTP
+cases; engine-specific identity values are checked for presence/type, not equality.
+Error messages are not required to match: Bolt compares classification/phase,
+and HTTP compares exact codes. Short error names expand as follows:
+
+- `SyntaxError`: `Neo.ClientError.Statement.SyntaxError`.
+- `TypeError`: `Neo.ClientError.Statement.TypeError`.
+- `TransactionStartFailed`: `Neo.DatabaseError.Transaction.TransactionStartFailed`.
+
+Only the label-order case is displayed as a sorted label set. Ordinary list
+ordering is preserved. The two HTTP-specific cases were not run over Bolt.
+
+| Case | NornicDB Result | Neo4j Result | Bolt AC | Bolt TX | HTTP AC | HTTP TX |
+| --- | --- | --- | --- | --- | --- | --- |
+| foreach merge on create retains outer row | `[[1]]` | `[[1]]` | Match | Match | Match | Match |
+| foreach merge on create and set retains outer row | `[[1]]` | `[[1]]` | Match | Match | Match | Match |
+| foreach create set retains outer row | `[[1]]` | `[[1]]` | Match | Match | Match | Match |
+| foreach merge set retains outer row | `[[1]]` | `[[1]]` | Match | Match | Match | Match |
+| create merge on create set property | `[[1]]` | `[[1]]` | Match | Match | Match | Match |
+| create merge set label ordering | `[[["UK","X"]]]` | `[[["UK","X"]]]` | Match | Match | Match | Match |
+| merge expression after with arithmetic | `[[6]]` | `[[6]]` | Match | Match | Match | Match |
+| merge undefined property variable | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| create property list comprehension | `[[[2,4]]]` | `[[[2,4]]]` | Match | Match | Match | Match |
+| merge property list comprehension | `[[[2,4]]]` | `[[[2,4]]]` | Match | Match | Match | Match |
+| second create property list comprehension | `[[[2,4]]]` | `[[[2,4]]]` | Match | Match | Match | Match |
+| empty terminal with | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| call star includes outer scalar | `[[2,1]]` | `[[2,1]]` | Match | Match | Match | Match |
+| call star includes unimported outer scalar | `[[2,{"id":1},5]]` | `[[2,{"id":1},5]]` | Match | Match | Match | Match |
+| unscoped call outer integer column name | `[[1,2]]` | `[[1,2]]` | Match | Match | Match | Match |
+| unscoped call outer string column name | `[["abc",2]]` | `[["abc",2]]` | Match | Match | Match | Match |
+| unscoped call multiple outer column names | `[[1,2,3]]` | `[[1,2,3]]` | Match | Match | Match | Match |
+| scoped call create in transactions | AC: `[]`; TX: `TransactionStartFailed` | AC: `[]`; TX: `TransactionStartFailed` | Match | Match | Match | Match |
+| scoped call merge in transactions | AC: `[]`; TX: `TransactionStartFailed` | AC: `[]`; TX: `TransactionStartFailed` | Match | Match | Match | Match |
+| scoped call set in transactions | AC: `[]`; TX: `TransactionStartFailed` | AC: `[]`; TX: `TransactionStartFailed` | Match | Match | Match | Match |
+| standalone call create in transactions | AC: `[]`; TX: `TransactionStartFailed` | AC: `[]`; TX: `TransactionStartFailed` | Match | Match | Match | Match |
+| standalone call merge in transactions | AC: `[]`; TX: `TransactionStartFailed` | AC: `[]`; TX: `TransactionStartFailed` | Match | Match | Match | Match |
+| standalone call set in transactions | AC: `[]`; TX: `TransactionStartFailed` | AC: `[]`; TX: `TransactionStartFailed` | Match | Match | Match | Match |
+| where integer literal is syntax error | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| where list literal is syntax error | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| where projected integer is syntax error | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| where unwound computed string is syntax error | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| where procedure computed string is syntax error | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| where procedure string is syntax error | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| where arithmetic boolean operand is type error | `TypeError` | `TypeError` | Match | Match | Match | Match |
+| where negated arithmetic is type error | `TypeError` | `TypeError` | Match | Match | Match | Match |
+| where computed dynamic string filters rows | `[]` | `[]` | Match | Match | Match | Match |
+| where bare dynamic string is type error | `TypeError` | `TypeError` | Match | Match | Match | Match |
+| importing with cannot filter | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| call integer sum preserves type | `[[60]]` | `[[60]]` | Match | Match | Match | Match |
+| where node is syntax error | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| where map is syntax error | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| where string literal is syntax error | `SyntaxError` | `SyntaxError` | Match | Match | Match | Match |
+| integer division truncates | `[[3]]` | `[[3]]` | Match | Match | Match | Match |
+| floating division retains fraction | `[[3.5]]` | `[[3.5]]` | Match | Match | Match | Match |
+| exponentiation returns floating point | `[[8]]` | `[[8]]` | Match | Match | Match | Match |
+| list comprehension filters and projects | `[[[1,9,25]]]` | `[[[1,9,25]]]` | Match | Match | Match | Match |
+| conditional aggregation reads node properties | `[[2,1]]` | `[[2,1]]` | Match | Match | Match | Match |
+| comma separated create patterns share scope | `[]` | `[]` | Match | Match | Match | Match |
+| merge property after set with uses bound node value | `[[1]]` | `[[1]]` | Match | Match | Match | Match |
+| create merge set keeps merged variable | `[[1,2]]` | `[[1,2]]` | Match | Match | Match | Match |
+| correlated call with projected where filters rows | `[[2],[3]]` | `[[2],[3]]` | Match | Match | Match | Match |
+| unit write subquery executes once per outer row | `[[2]]` | `[[2]]` | Match | Match | Match | Match |
+| foreach merge retains outer row | `[[1]]` | `[[1]]` | Match | Match | Match | Match |
+| HTTP nested entities and ordinary maps | `[[{"name":"Alice"},{"since":2020},[{"name":"Alice"},{"since":2020}],{"entity":{"name":"Alice"}},{"elementId":"user","labels":["custom"],"properties":{"value":1}},null,[{"name":"Alice"},{"since":2020},{"name":"Bob"}]]]` | `[[{"name":"Alice"},{"since":2020},[{"name":"Alice"},{"since":2020}],{"entity":{"name":"Alice"}},{"elementId":"user","labels":["custom"],"properties":{"value":1}},null,[{"name":"Alice"},{"since":2020},{"name":"Bob"}]]]` | Not run | Not run | Match | Match |
+| HTTP empty properties and metadata-like user fields | `[[{},{},{"_nodeId":"user","_pathResult":"user","id":1,"labels":["L"]},[],{}]]` | `[[{},{},{"_nodeId":"user","_pathResult":"user","id":1,"labels":["L"]},[],{}]]` | Not run | Not run | Match | Match |
 
 ### Controlled IVF/PQ benchmark
 
@@ -79,7 +167,9 @@ unchanged. Real-dataset latency and recall still require measurement.
 
 Changed-helper coverage: CALL projection 100%, FOREACH 93.9%, procedure output
 adapter 93.8%, procedure type conversion 100%, static operator validation 100%,
-IVF SearchApprox 90%. The full Cypher/search aggregate is 87.2%, not 90%; no claim
+IVF SearchApprox 90%, recursive HTTP entity serializer 98%. Final Cypher/server/Bolt
+suites, focused Cypher/HTTP race checks, affected-package vet, and CLI build pass.
+The full Cypher/search aggregate is 87.2%, not 90%; no claim
 is made that this change raises the entire existing codebase above its target.
 
 ## Per-issue plan

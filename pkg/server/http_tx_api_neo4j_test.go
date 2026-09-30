@@ -6,12 +6,62 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTransactionHTTPValueBoundaries(t *testing.T) {
+	server := &Server{}
+	node := &storage.Node{ID: "node"}
+	edge := &storage.Edge{ID: "edge"}
+	path := cypher.PathResult{Nodes: []*storage.Node{node, node}, Relationships: []*storage.Edge{edge}}
+	for _, testCase := range []struct {
+		name      string
+		value     interface{}
+		row       interface{}
+		metaCount int
+	}{
+		{"nil", nil, nil, 1},
+		{"nil node", (*storage.Node)(nil), nil, 1},
+		{"nil edge", (*storage.Edge)(nil), nil, 1},
+		{"nil path", (*cypher.PathResult)(nil), nil, 1},
+		{"empty node properties", node, map[string]interface{}{}, 1},
+		{"empty edge properties", edge, map[string]interface{}{}, 1},
+		{"typed nodes", []*storage.Node{node}, []interface{}{map[string]interface{}{}}, 1},
+		{"array", [2]int{1, 2}, []interface{}{1, 2}, 2},
+		{"path pointer", &path, []interface{}{map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{}}, 1},
+		{"path marker", map[string]interface{}{"_pathResult": &path}, []interface{}{map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{}}, 1},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			row, metadata := server.transactionHTTPValue(testCase.value, "nornic")
+			require.Equal(t, testCase.row, row)
+			require.Len(t, metadata, testCase.metaCount)
+		})
+	}
+}
+
+func TestHTTPTransactionEntityRows(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	response := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{
+		"statements": []map[string]any{{"statement": "CREATE (a:Person {name:'Alice'})-[r:KNOWS {since:2020}]->(b:Person {name:'Bob'}) RETURN a, r, [a, r], {entity:a}, {elementId:'user', labels:['custom'], properties:{value:1}}, null"}},
+	}, token)
+	var result TransactionResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	require.Empty(t, result.Errors)
+	data := result.Results[0].Data[0]
+	node := map[string]interface{}{"name": "Alice"}
+	edge := map[string]interface{}{"since": float64(2020)}
+	require.Equal(t, []interface{}{node, edge, []interface{}{node, edge}, map[string]interface{}{"entity": node}, map[string]interface{}{"elementId": "user", "labels": []interface{}{"custom"}, "properties": map[string]interface{}{"value": float64(1)}}, nil}, data.Row)
+	require.Equal(t, "node", data.Meta[0].(map[string]interface{})["type"])
+	require.Equal(t, "relationship", data.Meta[1].(map[string]interface{})["type"])
+}
 
 func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 	referenceURL := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI")
@@ -20,13 +70,25 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 	}
 	content, err := os.ReadFile("../../testing/cypher/tck/testdata/differential/cases.json")
 	require.NoError(t, err)
-	var cases []struct {
-		Name    string   `json:"name"`
-		Setup   []string `json:"setup"`
-		Query   string   `json:"query"`
-		Ordered bool     `json:"ordered"`
+	type differentialHTTPCase struct {
+		Name            string   `json:"name"`
+		Setup           []string `json:"setup"`
+		Query           string   `json:"query"`
+		Ordered         bool     `json:"ordered"`
+		UnorderedLabels bool     `json:"unordered_labels"`
 	}
+	var cases []differentialHTTPCase
 	require.NoError(t, json.Unmarshal(content, &cases))
+	cases = append(cases,
+		differentialHTTPCase{
+			Name: "HTTP nested entities and ordinary maps", Ordered: true,
+			Query: "CREATE p=(a:Person {name:'Alice'})-[r:KNOWS {since:2020}]->(b:Person {name:'Bob'}) RETURN a, r, [a, r], {entity:a}, {elementId:'user', labels:['custom'], properties:{value:1}}, null, p",
+		},
+		differentialHTTPCase{
+			Name: "HTTP empty properties and metadata-like user fields", Ordered: true,
+			Query: "CREATE (a:Empty)-[r:EMPTY]->(b:Empty) RETURN a, r, {id:1, labels:['L'], _nodeId:'user', _pathResult:'user'}, [], {}",
+		},
+	)
 	client := &http.Client{Timeout: 15 * time.Second}
 	for _, explicit := range []bool{false, true} {
 		mode := "autocommit"
@@ -56,28 +118,32 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 				require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
 				return result
 			}
-			rows := func(response TransactionResponse, wrappedEntities bool) [][]interface{} {
+			rows := func(response TransactionResponse) [][]interface{} {
 				result := make([][]interface{}, 0)
 				for _, data := range response.Results[0].Data {
 					row := append([]interface{}{}, data.Row...)
-					if wrappedEntities {
-						for column, value := range row {
-							if column >= len(data.Meta) {
-								continue
-							}
-							metadata, ok := data.Meta[column].(map[string]interface{})
-							if !ok || (metadata["type"] != "node" && metadata["type"] != "relationship") {
-								continue
-							}
-							entity, ok := value.(map[string]interface{})
-							require.True(t, ok)
-							require.Contains(t, entity, "properties")
-							row[column] = entity["properties"]
-						}
-					}
 					result = append(result, row)
 				}
 				return result
+			}
+			var metadataShape func(interface{}) interface{}
+			metadataShape = func(value interface{}) interface{} {
+				switch typed := value.(type) {
+				case map[string]interface{}:
+					require.Len(t, typed, 4)
+					require.IsType(t, float64(0), typed["id"])
+					require.NotEmpty(t, typed["elementId"])
+					return map[string]interface{}{"type": typed["type"], "deleted": typed["deleted"]}
+				case []interface{}:
+					result := make([]interface{}, len(typed))
+					for index, entry := range typed {
+						result[index] = metadataShape(entry)
+					}
+					return result
+				default:
+					require.Nil(t, value)
+					return nil
+				}
 			}
 			for _, testCase := range cases {
 				t.Run(testCase.Name, func(t *testing.T) {
@@ -101,20 +167,41 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 						}
 						observed := post(t, endpoint+"/commit", "MATCH (n) RETURN labels(n) AS labels, properties(n) AS properties")
 						require.Empty(t, observed.Errors)
-						snapshots[backend] = rows(observed, backend == 0)
+						snapshots[backend] = rows(observed)
+						for _, row := range snapshots[backend] {
+							labels := row[0].([]interface{})
+							sort.Slice(labels, func(left, right int) bool { return labels[left].(string) < labels[right].(string) })
+						}
 						observed = post(t, endpoint+"/commit", "MATCH (a)-[r]->(b) RETURN properties(a) AS start, type(r) AS type, properties(r) AS properties, properties(b) AS end")
 						require.Empty(t, observed.Errors)
-						relationships[backend] = rows(observed, backend == 0)
+						relationships[backend] = rows(observed)
 					}
+					evidence, err := json.Marshal(map[string]interface{}{
+						"case": testCase.Name, "route": "http/" + mode,
+						"nornicdb": results[0].Results, "neo4j": results[1].Results,
+						"nornicdb_errors": results[0].Errors, "neo4j_errors": results[1].Errors,
+					})
+					require.NoError(t, err)
+					t.Logf("DIFFERENTIAL_RESULT %s", evidence)
 					require.Equal(t, len(results[1].Errors), len(results[0].Errors), "NornicDB: %+v; Neo4j: %+v", results[0].Errors, results[1].Errors)
 					if len(results[1].Errors) > 0 {
 						require.Equal(t, results[1].Errors[0].Code, results[0].Errors[0].Code)
 					} else {
 						require.Equal(t, results[1].Results[0].Columns, results[0].Results[0].Columns)
-						if testCase.Ordered {
-							require.Equal(t, rows(results[1], false), rows(results[0], true))
+						if testCase.UnorderedLabels {
+							actual, expected := rows(results[0]), rows(results[1])
+							require.Len(t, actual, 1)
+							require.Len(t, expected, 1)
+							require.ElementsMatch(t, expected[0][0], actual[0][0])
+						} else if testCase.Ordered {
+							require.Equal(t, rows(results[1]), rows(results[0]))
 						} else {
-							require.ElementsMatch(t, rows(results[1], false), rows(results[0], true))
+							require.ElementsMatch(t, rows(results[1]), rows(results[0]))
+						}
+						if testCase.Ordered {
+							for index, data := range results[1].Results[0].Data {
+								require.Equal(t, metadataShape(data.Meta), metadataShape(results[0].Results[0].Data[index].Meta))
+							}
 						}
 					}
 					require.ElementsMatch(t, snapshots[1], snapshots[0], "committed graph differs")

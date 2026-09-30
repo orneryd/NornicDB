@@ -15,10 +15,11 @@ import (
 )
 
 type differentialCase struct {
-	Name    string   `json:"name"`
-	Setup   []string `json:"setup"`
-	Query   string   `json:"query"`
-	Ordered bool     `json:"ordered"`
+	Name            string   `json:"name"`
+	Setup           []string `json:"setup"`
+	Query           string   `json:"query"`
+	Ordered         bool     `json:"ordered"`
+	UnorderedLabels bool     `json:"unordered_labels"`
 }
 
 func TestFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
@@ -64,10 +65,25 @@ func TestFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 					nornicResult, nornicErr := nornic.Execute(ctx, testCase.Query, nil)
 					referenceResult, referenceErr := reference.Execute(ctx, testCase.Query, nil)
 					compareDifferentialErrors(t, nornicErr, referenceErr)
+					outcome := func(result QueryResult, executionErr error) interface{} {
+						var queryErr *QueryError
+						if errors.As(executionErr, &queryErr) {
+							return map[string]string{"error": queryErr.Type, "phase": queryErr.Phase}
+						}
+						return result
+					}
+					evidence, err := json.Marshal(map[string]interface{}{
+						"case": testCase.Name, "route": "bolt/" + string(mode),
+						"nornicdb": outcome(nornicResult, nornicErr), "neo4j": outcome(referenceResult, referenceErr),
+					})
+					if err != nil {
+						t.Fatalf("encode differential evidence: %v", err)
+					}
+					t.Logf("DIFFERENTIAL_RESULT %s", evidence)
 					if referenceErr != nil {
 						return
 					}
-					if err := CompareResults(nornicResult, referenceResult, testCase.Ordered, false); err != nil {
+					if err := CompareResults(nornicResult, referenceResult, testCase.Ordered, testCase.UnorderedLabels); err != nil {
 						t.Fatalf("result differs from Neo4j: %v", err)
 					}
 
@@ -125,6 +141,14 @@ func resetDifferentialBackend(t *testing.T, ctx context.Context, backend *BoltBa
 	t.Helper()
 	if err := backend.Reset(ctx); err != nil {
 		t.Fatalf("reset %s: %v", name, err)
+	}
+	for _, query := range []string{
+		"CREATE LOOKUP INDEX differential_node_labels IF NOT EXISTS FOR (n) ON EACH labels(n)",
+		"CREATE LOOKUP INDEX differential_relationship_types IF NOT EXISTS FOR ()-[r]-() ON EACH type(r)",
+	} {
+		if _, err := backend.Execute(ctx, query, nil); err != nil {
+			t.Fatalf("restore default %s lookup indexes: %v", name, err)
+		}
 	}
 }
 

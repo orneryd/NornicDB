@@ -123,11 +123,21 @@ func TestGh728_NonBooleanWhere(t *testing.T) {
 		_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.id RETURN n.id", nil)
 		require.Error(t, err)
 	})
-	t.Run("runtime_string_expression_rejected", func(t *testing.T) {
-		_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.id + 'z' RETURN n.id", nil)
-		require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
+	t.Run("runtime_string_expression_filters_row", func(t *testing.T) {
+		for _, query := range []string{
+			"MATCH (n:W728) WHERE n.id + 'z' RETURN n.id",
+			"MATCH (n:W728) WITH n WHERE n.id + 'z' RETURN n.id",
+		} {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Empty(t, result.Rows, query)
+		}
 	})
 	t.Run("runtime_bool_property", func(t *testing.T) {
+		for _, predicate := range []string{"NOT (n.id + 'z')", "(n.id + 'z') AND n.f"} {
+			_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE "+predicate+" RETURN n.id", nil)
+			require.ErrorContains(t, err, "TypeError", predicate)
+		}
 		result, err := exec.Execute(ctx, "MATCH (n:W728) WHERE n.f RETURN n.id", nil)
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 1)
