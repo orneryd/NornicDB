@@ -108,11 +108,11 @@ func ensureBuiltInProceduresRegistered() {
 
 		registerBuiltInProcedure("db.create.setNodeVectorProperty", "db.create.setNodeVectorProperty(nodeId :: STRING, propertyKey :: STRING, vector :: LIST<FLOAT>)", localization.CypherProcedureMetadata("db.create.setNodeVectorProperty"), ProcedureModeWrite, 3, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbCreateSetNodeVectorProperty(ctx, cypher)
+				return e.callSetVectorProperty(ctx, args, false)
 			})
 		registerBuiltInProcedure("db.create.setRelationshipVectorProperty", "db.create.setRelationshipVectorProperty(relationshipId :: STRING, propertyKey :: STRING, vector :: LIST<FLOAT>)", localization.CypherProcedureMetadata("db.create.setRelationshipVectorProperty"), ProcedureModeWrite, 3, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbCreateSetRelationshipVectorProperty(ctx, cypher)
+				return e.callSetVectorProperty(ctx, args, true)
 			})
 
 		registerBuiltInProcedure("dbms.components", "dbms.components() :: (name :: STRING, versions :: LIST<STRING>, edition :: STRING)", localization.CypherProcedureMetadata("dbms.components"), ProcedureModeDBMS, 0, 0, true,

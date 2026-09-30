@@ -99,7 +99,7 @@ func TestPlan_DynamicUseInImportingCallSubquery(t *testing.T) {
 	execs := collectPlannedExecs(fragment)
 	require.Len(t, execs, 3)
 
-	require.Equal(t, "UNWIND $graphs AS g", execs[0].Query)
+	require.Equal(t, "UNWIND $graphs AS g RETURN *", execs[0].Query)
 	require.Equal(t, "cmp", execs[0].GraphName)
 	require.Nil(t, execs[0].Graph)
 

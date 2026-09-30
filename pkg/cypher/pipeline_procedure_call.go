@@ -8,24 +8,16 @@ import (
 )
 
 // pipelineProcedureCallsAreClauses reports whether every CALL in the statement
-// is a top-level call of a registered read-only procedure in a statement that
-// doesn't write, which the pipeline runs as a clause. A CALL { } subquery, a
-// CALL nested inside another construct, a write or unregistered procedure,
-// and a statement with write clauses keep their own routes (the vector and
-// fulltext search tails, UNWIND batch writers with vector setters, …).
+// is a top-level call of a registered read or write procedure. CALL subqueries,
+// nested calls, and unregistered procedures are not procedure clauses.
 func pipelineProcedureCallsAreClauses(cypher string) bool {
 	if !containsFold(cypher, "CALL") || hasCallSubqueryPattern(cypher) {
 		return false
 	}
-	for _, keyword := range []string{"CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH"} {
-		if findKeywordIndexInContext(cypher, keyword) >= 0 {
-			return false
-		}
-	}
 	ensureBuiltInProceduresRegistered()
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
 		procedure, found := globalProcedureRegistry.Get(extractProcedureName(cypher[position:]))
-		if !found || procedure.Spec.Mode != ProcedureModeRead {
+		if !found || (procedure.Spec.Mode != ProcedureModeRead && procedure.Spec.Mode != ProcedureModeWrite) {
 			return false
 		}
 	}
@@ -51,25 +43,35 @@ func pipelineProcedureCallsAreClauses(cypher string) bool {
 // row at once, so aggregation, ORDER BY and SKIP / LIMIT apply to all of
 // them.
 //
-// It declines (ok false) for a call without YIELD, and when an argument that
-// uses a row variable evaluates to a node, relationship or path, which the
-// procedure implementations can't take as argument text.
+// Write calls without YIELD receive typed row arguments and preserve input
+// rows. Read calls require YIELD; entity arguments that cannot be represented
+// by their procedure implementations cause a decline before any writes.
 func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, []string, bool, error) {
 	yieldIndex := findKeywordIndexInContext(clause, "YIELD")
-	if yieldIndex < 0 {
+	invocation := strings.TrimSpace(clause)
+	if yieldIndex >= 0 {
+		invocation = strings.TrimSpace(clause[:yieldIndex])
+	}
+	procedure, found := globalProcedureRegistry.Get(extractProcedureName(invocation))
+	if !found || (yieldIndex < 0 && procedure.Spec.Mode != ProcedureModeWrite) {
 		return nil, nil, false, nil
 	}
-	invocation := strings.TrimSpace(clause[:yieldIndex])
 	if err := validateProcedureCallArguments(invocation); err != nil {
 		return nil, nil, true, err
 	}
-	yieldBody := strings.TrimSpace(clause[yieldIndex+len("YIELD"):])
+	yieldBody := ""
+	if yieldIndex >= 0 {
+		yieldBody = strings.TrimSpace(clause[yieldIndex+len("YIELD"):])
+	}
 	where := ""
 	if whereIndex := topLevelKeywordIndex(yieldBody, "WHERE"); whereIndex >= 0 {
 		where = strings.TrimSpace(yieldBody[whereIndex+len("WHERE"):])
 		yieldBody = strings.TrimSpace(yieldBody[:whereIndex])
 	}
-	yieldText := "YIELD " + yieldBody
+	yieldText := ""
+	if yieldIndex >= 0 {
+		yieldText = "YIELD " + yieldBody
+	}
 
 	name, arguments, hasArguments := splitProcedureInvocationArguments(invocation)
 	rowDependent := false
@@ -84,6 +86,25 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 	var shared *ExecuteResult
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, true, err
+		}
+		if yieldIndex < 0 && procedure.Spec.Mode == ProcedureModeWrite {
+			values := make([]interface{}, len(arguments))
+			for index, argument := range arguments {
+				value, resolved := e.evaluateRowExpressionWithContext(ctx, argument, row)
+				if !resolved {
+					pipelineItemUnevaluable(ctx, argument)
+					return nil, nil, true, getExpressionFailure(ctx)
+				}
+				values[index] = value
+			}
+			if _, err := procedure.Handler(ctx, e, invocation, values); err != nil {
+				return nil, nil, true, procedureRuntimeError(procedure.Spec.Name, err)
+			}
+			out = append(out, row)
+			continue
+		}
 		result := shared
 		if result == nil {
 			call := invocation
@@ -98,6 +119,14 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 					if err != nil {
 						return nil, nil, true, err
 					}
+					if procedure.Spec.Mode == ProcedureModeWrite {
+						switch entity := value.(type) {
+						case *storage.Node:
+							value = string(entity.ID)
+						case *storage.Edge:
+							value = string(entity.ID)
+						}
+					}
 					if !evaluated || !procedureArgumentLiteralSafe(value) {
 						return nil, nil, false, nil
 					}
@@ -110,9 +139,13 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			if err != nil {
 				return nil, nil, true, err
 			}
-			if !rowDependent {
+			if !rowDependent && procedure.Spec.Mode != ProcedureModeWrite {
 				shared = result
 			}
+		}
+		if yieldIndex < 0 {
+			out = append(out, row)
+			continue
 		}
 		if yielded == nil {
 			yielded = append([]string(nil), result.Columns...)

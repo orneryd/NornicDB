@@ -589,7 +589,7 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 		// Preserve outer query segments before each CALL block.
 		prefix := strings.TrimSpace(fullQuery[lastPos:block.startPos])
 		if prefix != "" {
-			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(prefix, top, scope), Columns: nil}
+			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix), top, scope), Columns: nil}
 		}
 
 		subUse, subBody, hasUse, err := parseLeadingUse(block.body, true)
