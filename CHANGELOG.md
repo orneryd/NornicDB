@@ -16,14 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve each outer row exactly once after successful unit CALL subqueries,
+  even when inner MATCH or WITH filters remove all rows. Keep returning CALL
+  joins and transactional batches on the shared pipeline (#771).
 - Extend shared node-product streaming across successive MATCH and row-local
-  WITH clauses (#728). Evaluate computed properties through the shared row
-  evaluator and reject incomplete arithmetic before writes (#514). Preserve
+  WITH clauses (#728, #777). Evaluate computed properties through the shared row
+  evaluator and reject incomplete arithmetic before writes (#514, #778). Preserve
   Unicode lowercase expansion (#698), recursively serialize entity temporal
-  properties over HTTP (#668), and reject system graph reads consistently
+  properties over HTTP (#668, #779), and reject system graph reads consistently
   (#738). Apply outer composite projections through the main Cypher pipeline
   without leaking inner columns; encode constituent-aware Bolt entity IDs
-  recursively (#745, #648).
+  recursively (#745, #648, #780).
 - Replace mutation RETURN/WITH projectors and transactional CALL text batching
   with shared typed pipeline operators. Preserve empty CALL schemas, counters,
   UNION exports, embedding options, and partial runtime-error rows while rolling
