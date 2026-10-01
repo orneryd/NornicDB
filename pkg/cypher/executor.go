@@ -1404,6 +1404,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// UNION branch) runs it and returns no rows.
 	cypher, _ = stripCypherPreamble(cypher)
 	cypher = strings.TrimSpace(cypher)
+	if err := e.validateStatementFraming(cypher); err != nil {
+		return nil, err
+	}
 	finishTerminated := false
 	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
 		cypher = strings.TrimSpace(stripped)

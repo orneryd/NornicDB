@@ -222,36 +222,23 @@ func (e *StorageExecutor) parseMapLiteral(ctx context.Context, s string) map[str
 // splitBySemicolon splits a string by semicolons, respecting quotes.
 func (e *StorageExecutor) splitBySemicolon(s string) []string {
 	var result []string
-	var current strings.Builder
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, c := range s {
-		if inQuote {
-			current.WriteRune(c)
-			if c == quoteChar && !isBackslashEscaped(s, i) {
-				inQuote = false
+	start := 0
+	for position := 0; position < len(s); position++ {
+		switch s[position] {
+		case '\'', '"', '`':
+			position = skipCypherQuotedText(s, position, s[position]) - 1
+		case '/':
+			if position+1 < len(s) && (s[position+1] == '/' || s[position+1] == '*') {
+				position = queryCommentEnd(s, position) - 1
 			}
-			continue
-		}
-
-		switch c {
-		case '\'', '"':
-			inQuote = true
-			quoteChar = c
-			current.WriteRune(c)
 		case ';':
-			result = append(result, current.String())
-			current.Reset()
-		default:
-			current.WriteRune(c)
+			result = append(result, s[start:position])
+			start = position + 1
 		}
 	}
-
-	if current.Len() > 0 {
-		result = append(result, current.String())
+	if start < len(s) {
+		result = append(result, s[start:])
 	}
-
 	return result
 }
 

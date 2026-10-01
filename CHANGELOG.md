@@ -131,6 +131,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   string formatting, and temporal text (#698). Reject malformed expressions and
   undefined variables in function-result property access (#514, #657). Exclude
   nested property functions from pattern-variable scope discovery.
+- Reject semicolon-chained statements and mixed RETURN/FINISH UNION branches
+  before graph writes (#743, #744). Conflicting EXPLAIN/PROFILE modes report
+  compile-time ArgumentError, including through HTTP transactions; Bolt PROFILE
+  summaries publish only the profile key. Regenerate the shared ANTLR grammar
+  to accept scoped CALL after UNWIND (#739).
 
 - Accept the legacy variable-length MVCC version-key layout
   (`[prefix][string ID][0x00][version]`) alongside the fixed-width layout

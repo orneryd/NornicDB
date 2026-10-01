@@ -29,6 +29,9 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
+	if err := e.validateStatementFraming(cypher); err != nil {
+		return nil, err
+	}
 	finishTerminated := false
 	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
 		cypher = strings.TrimSpace(stripped)

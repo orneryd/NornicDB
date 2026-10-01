@@ -38,6 +38,39 @@ func IsCompileTimeStatus(code string) bool {
 	return ok
 }
 
+type compileTimeError struct{ error }
+
+func (err *compileTimeError) Unwrap() error { return err.error }
+
+// MarkCompileTime records that an error occurred during statement preparation.
+// For example, conflicting execution options are ArgumentError at compile time,
+// while invalid function arguments may use the same status at runtime.
+func MarkCompileTime(err error) error {
+	if err == nil {
+		return nil
+	}
+	var marked *compileTimeError
+	if stderrors.As(err, &marked) {
+		return err
+	}
+	return &compileTimeError{err}
+}
+
+// IsCompileTimeError reports a preparation error, including wrapped errors,
+// or an error with a status that always occurs at compile time.
+// Use it when deciding whether a failed HTTP statement has a result shell.
+func IsCompileTimeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var marked *compileTimeError
+	if stderrors.As(err, &marked) {
+		return true
+	}
+	code, _ := Neo4jStatus(err)
+	return IsCompileTimeStatus(code)
+}
+
 // ErrCommitRolledBack marks a COMMIT failure after which nothing the
 // transaction wrote is stored (the failure was detected before any write), so
 // the outcome is known and the client connection can stay usable.

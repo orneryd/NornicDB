@@ -1116,7 +1116,7 @@ func statementError(err error) QueryError {
 // statement failing at compile time has no result.
 func statementFailure(response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error) QueryError {
 	failure := statementError(err)
-	if executor != nil && !nornicerrors.IsCompileTimeStatus(failure.Code) {
+	if executor != nil && !nornicerrors.IsCompileTimeError(err) {
 		if columns := executor.StatementColumns(query); len(columns) > 0 {
 			response.Results = append(response.Results, QueryResult{Columns: columns, Data: []ResultRow{}})
 		}
