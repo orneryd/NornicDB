@@ -373,8 +373,7 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		// Wait for WAL sync
-		time.Sleep(150 * time.Millisecond)
+		require.NoError(t, adapter.FlushWAL())
 
 		// Get entries after position 2
 		entries, err := adapter.GetWALEntries(2, 10)
@@ -402,8 +401,7 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		// Wait for WAL sync
-		time.Sleep(150 * time.Millisecond)
+		require.NoError(t, adapter.FlushWAL())
 
 		// Request max 3 entries
 		entries, err := adapter.GetWALEntries(0, 3)
@@ -432,10 +430,8 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 			err := adapter1.ApplyCommand(cmd)
 			require.NoError(t, err)
 		}
-		adapter1.Close()
-
-		// Wait for WAL sync
-		time.Sleep(150 * time.Millisecond)
+		require.NoError(t, adapter1.FlushWAL())
+		require.NoError(t, adapter1.Close())
 
 		// Create new adapter - should see previous entries
 		adapter2, err := NewStorageAdapterWithWAL(engine, walDir)

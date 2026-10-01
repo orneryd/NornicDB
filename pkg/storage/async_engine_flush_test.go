@@ -256,7 +256,7 @@ func TestFlushFailedNodesStayInCache(t *testing.T) {
 	// Make node "fail-me" fail on update
 	errEngine.failNodeIDs["fail-me"] = true
 
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000} // Don't auto-flush
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour} // Don't auto-flush
 	ae := NewAsyncEngine(errEngine, cfg)
 	defer ae.Close()
 
@@ -316,7 +316,7 @@ func TestFlushFailedEdgesStayInCache(t *testing.T) {
 	errEngine.failEdgeIDs["fail-edge"] = true
 	errEngine.failBulkEdges = true // Force individual creates
 
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000} // Don't auto-flush
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour} // Don't auto-flush
 	ae := NewAsyncEngine(errEngine, cfg)
 	defer ae.Close()
 
@@ -356,7 +356,7 @@ func TestFlushReturnsErrorOnFailures(t *testing.T) {
 	errEngine := newErrorEngine()
 	errEngine.failNodeIDs["fail"] = true
 
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(errEngine, cfg)
 	defer ae.Close()
 
@@ -372,7 +372,7 @@ func TestFlushReturnsErrorOnFailures(t *testing.T) {
 func TestFlushSucceedsWithNoErrors(t *testing.T) {
 	errEngine := newErrorEngine()
 
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(errEngine, cfg)
 	defer ae.Close()
 
@@ -395,7 +395,7 @@ func TestFailedNodesRetryOnNextFlush(t *testing.T) {
 	// First flush will fail
 	errEngine.failNodeIDs["retry-me"] = true
 
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(errEngine, cfg)
 	defer ae.Close()
 
@@ -456,7 +456,7 @@ func TestPartialFlushClearsOnlySuccessfulItems(t *testing.T) {
 	errEngine.failNodeIDs["fail1"] = true
 	errEngine.failNodeIDs["fail2"] = true
 
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(errEngine, cfg)
 	defer ae.Close()
 
@@ -502,7 +502,7 @@ func TestBulkDeleteFallbackToIndividual(t *testing.T) {
 	// Make bulk deletes fail - should fall back to individual
 	errEngine.failBulkDeletes = true
 
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(errEngine, cfg)
 	defer ae.Close()
 
@@ -536,7 +536,7 @@ func TestFlushConcurrentWriteSafety(t *testing.T) {
 	base := NewMemoryEngine()
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(engine, cfg)
 	defer ae.Close()
 
@@ -575,7 +575,7 @@ func TestEmptyFlushReturnsEmptyResult(t *testing.T) {
 	base := NewMemoryEngine()
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(engine, cfg)
 	defer ae.Close()
 
@@ -598,7 +598,7 @@ func TestCloseSucceedsWithNoData(t *testing.T) {
 	base := NewMemoryEngine()
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(engine, cfg)
 
 	err := ae.Close()
@@ -612,7 +612,7 @@ func TestCloseSucceedsAfterSuccessfulFlush(t *testing.T) {
 	base := NewMemoryEngine()
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(engine, cfg)
 
 	// Add some data
@@ -649,7 +649,7 @@ func TestCloseReportsFlushErrors(t *testing.T) {
 	errEngine := newErrorEngine()
 	errEngine.failNodeIDs["fail-on-close"] = true
 
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(errEngine, cfg)
 
 	// Add a node that will fail to flush
@@ -671,7 +671,7 @@ func TestCloseReportsUnflushedData(t *testing.T) {
 	errEngine := newErrorEngine()
 	errEngine.failNodeIDs["stuck"] = true
 
-	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
+	cfg := &AsyncEngineConfig{FlushInterval: time.Hour}
 	ae := NewAsyncEngine(errEngine, cfg)
 
 	// Add a node that will fail to flush
@@ -724,7 +724,7 @@ func TestFlushNodeWithRebaseAndHelpers(t *testing.T) {
 		engine := newRebaseTrackingEngine()
 		defer engine.Close()
 
-		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: 1000000})
+		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
 		defer ae.Close()
 
 		err := ae.flushNodeWithRebase(nil, nil)
@@ -737,7 +737,7 @@ func TestFlushNodeWithRebaseAndHelpers(t *testing.T) {
 		engine := newRebaseTrackingEngine()
 		defer engine.Close()
 
-		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: 1000000})
+		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
 		defer ae.Close()
 
 		pending := &Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Doc"}, Properties: map[string]any{"title": "pending"}}
@@ -756,7 +756,7 @@ func TestFlushNodeWithRebaseAndHelpers(t *testing.T) {
 		engine := newRebaseTrackingEngine()
 		defer engine.Close()
 
-		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: 1000000})
+		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
 		defer ae.Close()
 
 		base := &Node{
@@ -819,7 +819,7 @@ func TestFlushNodeWithRebaseAndHelpers(t *testing.T) {
 		defer engine.Close()
 		engine.updateErrs = []error{errors.New("first"), errors.New("second"), nil}
 
-		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: 1000000})
+		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
 		defer ae.Close()
 
 		base := &Node{ID: NodeID(prefixTestID("n3")), Labels: []string{"Doc"}, Properties: map[string]any{"title": "base"}}
@@ -839,7 +839,7 @@ func TestFlushNodeWithRebaseAndHelpers(t *testing.T) {
 		defer engine.Close()
 		engine.updateErrs = []error{errors.New("first"), errors.New("second"), errors.New("third")}
 
-		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: 1000000})
+		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
 		defer ae.Close()
 
 		base := &Node{ID: NodeID(prefixTestID("n4")), Labels: []string{"Doc"}, Properties: map[string]any{"title": "base"}}
