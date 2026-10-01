@@ -25,7 +25,7 @@ require (
 	github.com/qdrant/go-client v1.18.3
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
-	github.com/vektah/gqlparser/v2 v2.5.36
+	github.com/vektah/gqlparser/v2 v2.5.58
 	github.com/viterin/vek v0.4.3
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.opentelemetry.io/otel v1.46.0
