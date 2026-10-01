@@ -867,6 +867,167 @@ func TestHTTPMapMetadataRetainsValueOrder(t *testing.T) {
 	}
 }
 
+func resetHTTPDifferentialBackend(post func(string) TransactionResponse) error {
+	execute := func(statement string) (TransactionResponse, error) {
+		response := post(statement)
+		if len(response.Errors) != 0 {
+			return response, fmt.Errorf("%s: %v", statement, response.Errors)
+		}
+		return response, nil
+	}
+	if _, err := execute("MATCH (n) DETACH DELETE n"); err != nil {
+		return err
+	}
+	for _, schema := range []struct{ show, drop string }{
+		{"SHOW CONSTRAINTS", "DROP CONSTRAINT"},
+		{"SHOW INDEXES", "DROP INDEX"},
+	} {
+		response, err := execute(schema.show)
+		if err != nil {
+			return err
+		}
+		if len(response.Results) != 1 {
+			return fmt.Errorf("%s returned %d results, want one", schema.show, len(response.Results))
+		}
+		result := response.Results[0]
+		nameIndex := -1
+		for index, column := range result.Columns {
+			if column == "name" {
+				nameIndex = index
+				break
+			}
+		}
+		if nameIndex < 0 {
+			return fmt.Errorf("%s did not return column name", schema.show)
+		}
+		for _, data := range result.Data {
+			if nameIndex >= len(data.Row) {
+				return fmt.Errorf("%s returned a row without column name", schema.show)
+			}
+			name, ok := data.Row[nameIndex].(string)
+			if !ok || strings.TrimSpace(name) == "" {
+				return fmt.Errorf("%s returned invalid schema object name %v", schema.show, data.Row[nameIndex])
+			}
+			if _, err := execute(schema.drop + " `" + strings.ReplaceAll(name, "`", "``") + "` IF EXISTS"); err != nil {
+				return err
+			}
+		}
+	}
+	for _, statement := range []string{
+		"CREATE LOOKUP INDEX differential_node_labels IF NOT EXISTS FOR (n) ON EACH labels(n)",
+		"CREATE LOOKUP INDEX differential_relationship_types IF NOT EXISTS FOR ()-[r]-() ON EACH type(r)",
+		"CALL db.clearQueryCaches()",
+	} {
+		if _, err := execute(statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestHTTPDifferentialResetClearsSchemaArtifacts(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	backends := map[string]string{"nornicdb": ""}
+	if referenceURL := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI"); referenceURL != "" {
+		backends["neo4j"] = referenceURL + "/db/neo4j/tx/commit"
+	}
+	for name, endpoint := range backends {
+		t.Run(name, func(t *testing.T) {
+			post := func(statement string) TransactionResponse {
+				if endpoint != "" {
+					payload, err := json.Marshal(map[string]any{"statements": []map[string]any{{"statement": statement}}})
+					require.NoError(t, err)
+					response, err := (&http.Client{Timeout: 15 * time.Second}).Post(endpoint, "application/json", bytes.NewReader(payload))
+					require.NoError(t, err)
+					defer response.Body.Close()
+					require.Equal(t, http.StatusOK, response.StatusCode)
+					var result TransactionResponse
+					require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
+					return result
+				}
+				response := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{
+					"statements": []map[string]any{{"statement": statement}},
+				}, token)
+				var result TransactionResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+				return result
+			}
+			require.NoError(t, resetHTTPDifferentialBackend(post))
+			for iteration := 0; iteration < 2; iteration++ {
+				for _, statement := range []string{
+					"CREATE CONSTRAINT reset_unique FOR (n:ResetProbe) REQUIRE n.id IS UNIQUE",
+					"CREATE INDEX reset_value FOR (n:ResetProbe) ON (n.value)",
+					"CREATE (:ResetProbe {id:1, value:2})",
+				} {
+					require.Empty(t, post(statement).Errors, statement)
+				}
+				require.NoError(t, resetHTTPDifferentialBackend(post))
+				constraints := post("SHOW CONSTRAINTS")
+				require.Empty(t, constraints.Errors)
+				require.Len(t, constraints.Results, 1)
+				require.Empty(t, constraints.Results[0].Data)
+				graph := post("MATCH (n) RETURN count(n)")
+				require.Empty(t, graph.Errors)
+				require.Equal(t, []interface{}{float64(0)}, graph.Results[0].Data[0].Row)
+				indexes := post("SHOW INDEXES")
+				require.Empty(t, indexes.Errors)
+				require.Len(t, indexes.Results, 1)
+				require.Len(t, indexes.Results[0].Data, 2)
+				for _, data := range indexes.Results[0].Data {
+					for index, column := range indexes.Results[0].Columns {
+						if column == "type" {
+							require.Equal(t, "LOOKUP", data.Row[index])
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestHTTPDifferentialResetTypedRows(t *testing.T) {
+	for _, testCase := range []struct {
+		name, constraints, indexes, wantError string
+	}{
+		{"quoted names and reordered columns", `{"results":[{"columns":["id","name"],"data":[{"row":[1,"constraint\u0060 name"]}]}]}`, `{"results":[{"columns":["name","id"],"data":[{"row":["index\u0060 name",2]}]}]}`, ""},
+		{"missing result", `{}`, "", "returned 0 results"},
+		{"missing column", `{"results":[{"columns":["id"]}]}`, "", "did not return column name"},
+		{"short row", `{"results":[{"columns":["id","name"],"data":[{"row":[1]}]}]}`, "", "row without column name"},
+		{"non-string name", `{"results":[{"columns":["name"],"data":[{"row":[1]}]}]}`, "", "invalid schema object name"},
+		{"blank name", `{"results":[{"columns":["name"],"data":[{"row":[" "]}]}]}`, "", "invalid schema object name"},
+		{"schema error", `{"errors":[{"code":"Neo.ClientError.Statement.SyntaxError","message":"probe"}]}`, "", "SHOW CONSTRAINTS"},
+		{"index error", `{"results":[{"columns":["name"]}]}`, `{"errors":[{"code":"Neo.ClientError.Statement.SyntaxError","message":"probe"}]}`, "SHOW INDEXES"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var statements []string
+			err := resetHTTPDifferentialBackend(func(statement string) TransactionResponse {
+				statements = append(statements, statement)
+				var result TransactionResponse
+				switch statement {
+				case "SHOW CONSTRAINTS":
+					require.NoError(t, json.Unmarshal([]byte(testCase.constraints), &result))
+				case "SHOW INDEXES":
+					require.NoError(t, json.Unmarshal([]byte(testCase.indexes), &result))
+				}
+				return result
+			})
+			if testCase.wantError != "" {
+				require.ErrorContains(t, err, testCase.wantError)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, []string{
+				"MATCH (n) DETACH DELETE n", "SHOW CONSTRAINTS", "DROP CONSTRAINT `constraint`` name` IF EXISTS",
+				"SHOW INDEXES", "DROP INDEX `index`` name` IF EXISTS",
+				"CREATE LOOKUP INDEX differential_node_labels IF NOT EXISTS FOR (n) ON EACH labels(n)",
+				"CREATE LOOKUP INDEX differential_relationship_types IF NOT EXISTS FOR ()-[r]-() ON EACH type(r)",
+				"CALL db.clearQueryCaches()",
+			}, statements)
+		})
+	}
+}
+
 func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 	referenceURL := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI")
 	if referenceURL == "" {
@@ -959,7 +1120,9 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 					var snapshots [2][][]interface{}
 					var relationships [2][][]interface{}
 					for backend, endpoint := range endpoints {
-						require.Empty(t, post(t, endpoint+"/commit", "MATCH (n) DETACH DELETE n").Errors)
+						require.NoError(t, resetHTTPDifferentialBackend(func(statement string) TransactionResponse {
+							return post(t, endpoint+"/commit", statement)
+						}))
 						for _, setup := range testCase.Setup {
 							require.Empty(t, post(t, endpoint+"/commit", setup).Errors)
 						}
