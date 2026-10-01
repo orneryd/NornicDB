@@ -1027,5 +1027,79 @@
     "name": "issue 739 unwind scoped call ordered rows",
     "ordered": true,
     "query": "UNWIND [1, 2] AS x CALL (x) { RETURN x * 2 AS y } RETURN y ORDER BY y"
+  },
+  {
+    "name": "monster531 text index admission",
+    "query": "CREATE TEXT INDEX s530_text FOR (n:S530) ON (n.t)"
+  },
+  {
+    "name": "monster531 point index admission",
+    "query": "CREATE POINT INDEX s530_point FOR (n:S530) ON (n.p)"
+  },
+  {
+    "name": "monster530 typed indexes show kinds",
+    "setup": ["CREATE TEXT INDEX s530_text FOR (n:S530) ON (n.t)", "CREATE POINT INDEX s530_point FOR (n:S530) ON (n.p)"],
+    "query": "SHOW INDEXES YIELD name, type, properties WHERE name STARTS WITH 's530_' RETURN name, type, properties ORDER BY name",
+    "ordered": true
+  },
+  {
+    "name": "monster531 named composite node unique admission",
+    "query": "CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"
+  },
+  {
+    "name": "monster531 unnamed composite node unique admission",
+    "query": "CREATE CONSTRAINT FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"
+  },
+  {
+    "name": "monster531 composite unique if not exists",
+    "setup": ["CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"],
+    "query": "CREATE CONSTRAINT cu1 IF NOT EXISTS FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"
+  },
+  {
+    "name": "monster531 composite unique allows distinct and incomplete tuples",
+    "setup": ["CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"],
+    "query": "CREATE (:CU {a: 1, b: 2}), (:CU {a: 1, b: 3}), (:CU {a: 1}), (:CU {a: 1}) RETURN 4 AS created"
+  },
+  {
+    "name": "monster531 composite unique rejects duplicate tuple",
+    "setup": ["CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE", "CREATE (:CU {a: 1, b: 2})"],
+    "query": "CREATE (:CU {a: 1, b: 2})"
+  },
+  {
+    "name": "monster531 composite unique rejects existing duplicates atomically",
+    "setup": ["CREATE (:CU {a: 1, b: 2}), (:CU {a: 1, b: 2})"],
+    "query": "CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE"
+  },
+  {
+    "name": "monster531 duplicate constraint same name same definition",
+    "setup": ["CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"],
+    "query": "CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"
+  },
+  {
+    "name": "monster531 duplicate constraint different name same definition",
+    "setup": ["CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"],
+    "query": "CREATE CONSTRAINT other FOR (n:T) REQUIRE n.u IS UNIQUE"
+  },
+  {
+    "name": "monster531 duplicate constraint same name different definition",
+    "setup": ["CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"],
+    "query": "CREATE CONSTRAINT dupc FOR (n:U) REQUIRE n.v IS UNIQUE"
+  },
+  {
+    "name": "monster531 reject neo4j4 node key syntax",
+    "query": "CREATE CONSTRAINT mykey ON (n:L) ASSERT (n.a) IS NODE KEY"
+  },
+  {
+    "name": "monster531 reject neo4j4 unique syntax",
+    "query": "CREATE CONSTRAINT myuniq ON (n:L) ASSERT n.b IS UNIQUE"
+  },
+  {
+    "name": "monster530 yield where static type empty",
+    "query": "CALL db.labels() YIELD label WHERE label + 1 RETURN label"
+  },
+  {
+    "name": "monster530 yield where static type populated",
+    "setup": ["CREATE (:T)"],
+    "query": "CALL db.labels() YIELD label WHERE label + 1 RETURN label"
   }
 ]

@@ -2,11 +2,174 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMonster531CompositeNodeUnique(t *testing.T) {
+	for _, query := range []string{
+		"CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE",
+		"CREATE CONSTRAINT FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE",
+		"CREATE CONSTRAINT cu1 IF NOT EXISTS FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE",
+		"CREATE CONSTRAINT cu1 FOR (`n`:CU) REQUIRE (`n`.`a`, `n`.`b`) IS UNIQUE",
+	} {
+		t.Run(query, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "monster531")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err)
+			constraints := store.GetSchema().GetAllConstraints()
+			require.Len(t, constraints, 1)
+			require.Equal(t, []string{"a", "b"}, constraints[0].Properties)
+			_, err = exec.Execute(ctx, "CREATE (:CU {a: 1, b: 2}), (:CU {a: 1, b: 3}), (:CU {a: 1}), (:CU {a: 1})", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, "CREATE (:CU {a: 1, b: 2})", nil)
+			require.Error(t, err)
+			result, err := exec.Execute(ctx, "MATCH (n:CU) RETURN count(n)", nil)
+			require.NoError(t, err)
+			require.Equal(t, int64(4), result.Rows[0][0])
+		})
+	}
+}
+
+func TestMonster531DuplicateConstraintStatus(t *testing.T) {
+	for _, testCase := range []struct {
+		query string
+		code  string
+	}{
+		{"CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE", "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists"},
+		{"CREATE CONSTRAINT other FOR (n:T) REQUIRE n.u IS UNIQUE", "Neo.ClientError.Schema.ConstraintAlreadyExists"},
+		{"CREATE CONSTRAINT dupc FOR (n:U) REQUIRE n.v IS UNIQUE", "Neo.ClientError.Schema.ConstraintWithNameAlreadyExists"},
+	} {
+		t.Run(testCase.query, func(t *testing.T) {
+			exec, store := newTestExecutor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, testCase.query, nil)
+			require.Error(t, err)
+			require.Contains(t, statusText(err), testCase.code)
+			require.Len(t, store.GetSchema().GetAllConstraints(), 1)
+		})
+	}
+}
+
+func TestMonster531RejectLegacyConstraintSyntax(t *testing.T) {
+	for _, query := range []string{
+		"CREATE CONSTRAINT mykey ON (n:L) ASSERT (n.a) IS NODE KEY",
+		"CREATE CONSTRAINT myuniq ON (n:L) ASSERT n.b IS UNIQUE",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec, store := newTestExecutor(t)
+			_, err := exec.Execute(context.Background(), query, nil)
+			require.Error(t, err)
+			require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+			require.Empty(t, store.GetSchema().GetAllConstraints())
+		})
+	}
+}
+
+func TestMonster531RejectMalformedCompositeUnique(t *testing.T) {
+	for _, testCase := range []struct {
+		pattern   string
+		predicate string
+	}{
+		{"(n:CU)", "(n.a, garbage)"},
+		{"(n:CU)", "(n.a, m.b)"},
+		{"(n:CU)", "(m.a, m.b)"},
+		{"(n:CU)", "(n.a, n.a)"},
+		{"(n:CU)", "(n.a, n.`a`)"},
+		{"(n:CU)", "(n.a, n.b + 1)"},
+		{"(n:CU)", "(n.a, n.b,)"},
+		{"()-[r:CU]-()", "(r.a, s.b)"},
+		{"()-[r:CU]-()", "(r.a, r.a)"},
+		{"()-[r:CU]-()", "(r.a, r.b + 1)"},
+	} {
+		t.Run(testCase.pattern+testCase.predicate, func(t *testing.T) {
+			exec, store := newTestExecutor(t)
+			_, err := exec.Execute(context.Background(), "CREATE CONSTRAINT cu1 FOR "+testCase.pattern+" REQUIRE "+testCase.predicate+" IS UNIQUE", nil)
+			require.Error(t, err)
+			require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+			require.Empty(t, store.GetSchema().GetAllConstraints())
+		})
+	}
+}
+
+func TestMonster531TextAndPointIndexAdmission(t *testing.T) {
+	for _, testCase := range []struct {
+		kind     string
+		property string
+	}{
+		{"TEXT", "t"},
+		{"POINT", "p"},
+	} {
+		t.Run(testCase.kind, func(t *testing.T) {
+			exec, _ := newTestExecutor(t)
+			ctx := context.Background()
+			name := "s530_" + strings.ToLower(testCase.kind)
+			_, err := exec.Execute(ctx, "CREATE "+testCase.kind+" INDEX "+name+" FOR (n:S530) ON (n."+testCase.property+")", nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, type, properties WHERE name = '"+name+"' RETURN type, properties", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{testCase.kind, []string{testCase.property}}}, result.Rows)
+		})
+	}
+}
+
+func TestMonster531CompositeUniqueCreationAtomicity(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "monster531_atomic")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:CU {a: 1, b: 2}), (:CU {a: 1, b: 2})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Schema.ConstraintCreationFailed")
+	require.Empty(t, store.GetSchema().GetAllConstraints())
+	indexes, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, type", nil)
+	require.NoError(t, err)
+	require.Len(t, indexes.Rows, 2)
+	for _, row := range indexes.Rows {
+		require.Equal(t, "LOOKUP", row[1])
+	}
+}
+
+func TestMonster531TypedIndexDDLMatrix(t *testing.T) {
+	for _, query := range []string{
+		"CREATE TEXT INDEX FOR (n:T) ON (n.value)",
+		"CREATE POINT INDEX FOR ()-[r:T]-() ON (r.value)",
+		"CREATE TEXT INDEX rel_text FOR ()-[r:T]-() ON (r.value)",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec, _ := newTestExecutor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, type, createStatement WHERE type <> 'LOOKUP' RETURN name, type, createStatement", nil)
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			_, err = exec.Execute(ctx, "DROP INDEX "+quoteSchemaName(result.Rows[0][0].(string)), nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, result.Rows[0][2].(string), nil)
+			require.NoError(t, err)
+		})
+	}
+	for _, query := range []string{
+		"CREATE TEXT INDEX bad FOR (n:T) ON (n.a, n.b)",
+		"CREATE POINT INDEX bad FOR (n:T) ON (garbage)",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec, store := newTestExecutor(t)
+			_, err := exec.Execute(context.Background(), query, nil)
+			require.Error(t, err)
+			require.Len(t, store.GetSchema().GetIndexes(), 2)
+		})
+	}
+}
 
 func TestCreateConstraint_BranchMatrix_NodeAndRelationshipVariants(t *testing.T) {
 	base := newTestMemoryEngine(t)
@@ -53,6 +216,10 @@ func TestCreateConstraint_BranchMatrix_NodeAndRelationshipVariants(t *testing.T)
 
 	for _, q := range queries {
 		_, err := exec.executeCreateConstraint(ctx, q)
+		if strings.Contains(q, " ASSERT ") {
+			require.Error(t, err, q)
+			continue
+		}
 		require.NoError(t, err, q)
 	}
 

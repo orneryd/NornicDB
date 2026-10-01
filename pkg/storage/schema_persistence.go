@@ -53,6 +53,7 @@ type SchemaCompositeIndexDef struct {
 
 type SchemaRangeIndexDef struct {
 	Name             string               `json:"name"`
+	Kind             IndexKind            `json:"kind,omitempty"`
 	Label            string               `json:"label"`
 	Property         string               `json:"property"`
 	Properties       []string             `json:"properties,omitempty"`
@@ -227,6 +228,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 		for _, idx := range sm.rangeIndexes {
 			def.RangeIndexes = append(def.RangeIndexes, SchemaRangeIndexDef{
 				Name:             idx.Name,
+				Kind:             idx.Kind,
 				Label:            idx.Label,
 				Property:         idx.Property,
 				Properties:       idx.Properties,
@@ -458,6 +460,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	for _, idx := range def.RangeIndexes {
 		sm.rangeIndexes[idx.Name] = &RangeIndex{
 			Name:             idx.Name,
+			Kind:             idx.Kind,
 			Label:            idx.Label,
 			Property:         idx.Property,
 			Properties:       idx.Properties,

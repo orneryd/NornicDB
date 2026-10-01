@@ -107,6 +107,26 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 	for _, c := range constraints {
 		switch c.Type {
 		case ConstraintUnique:
+			if len(c.Properties) > 1 {
+				values := make([]interface{}, len(c.Properties))
+				complete := true
+				for index, property := range c.Properties {
+					values[index] = node.Properties[property]
+					if values[index] == nil {
+						complete = false
+						break
+					}
+				}
+				if complete {
+					if err := b.scanForNodeKeyViolationInTxn(txn, namespace, c.Label, c.Properties, values, excludeNodeID); err != nil {
+						if violation, ok := err.(*ConstraintViolationError); ok {
+							violation.Type = ConstraintUnique
+						}
+						return err
+					}
+				}
+				continue
+			}
 			if len(c.Properties) != 1 {
 				continue
 			}

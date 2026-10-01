@@ -44,7 +44,7 @@ func isCompositeAllowedCommand(cypher string) bool {
 		// which return more specific composite-root error messages.
 		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX", "SHOW LOOKUP INDEX",
 		"SHOW CONSTRAINT",
-		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX", "CREATE LOOKUP INDEX",
+		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX", "CREATE LOOKUP INDEX", "CREATE TEXT INDEX", "CREATE POINT INDEX",
 		"CREATE CONSTRAINT",
 		"DROP INDEX", "DROP CONSTRAINT",
 		"CREATE DATABASE", "DROP DATABASE",
@@ -85,6 +85,8 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		run = e.executeCreateVectorIndex
 	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
 		run = e.executeCreateRangeIndex
+	} else if startsWithKeywords(cypher, "CREATE", "TEXT INDEX") || startsWithKeywords(cypher, "CREATE", "POINT INDEX") {
+		run = e.executeCreateTypedPropertyIndex
 	} else if startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX") {
 		run = e.executeCreateLookupIndex
 	} else if strings.Contains(upper, "CREATE INDEX") {
@@ -93,6 +95,12 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		return nil, localizedError(localization.CypherSchemaUnknownCommand(cypher), nil)
 	}
 	result, err := e.countSchemaChanges(ctx, cypher, run)
+	if err != nil && startsWithKeywords(cypher, "CREATE", "CONSTRAINT") {
+		var violation *storage.ConstraintViolationError
+		if errors.As(err, &violation) {
+			return nil, &classifiedCypherError{cause: err, code: "Neo.ClientError.Schema.ConstraintCreationFailed", detail: "ConstraintCreationFailed"}
+		}
+	}
 
 	// Invalidate query cache — cached SHOW INDEXES/CONSTRAINTS results are now stale.
 	if err == nil && e.cache != nil {
@@ -186,8 +194,13 @@ func pauseAsyncWritesForSchemaDDL(engine storage.Engine) (func(), error) {
 //
 // Supported syntax (Neo4j 4.x):
 //
-//	CREATE CONSTRAINT IF NOT EXISTS ON (n:Label) ASSERT n.property IS UNIQUE
+//	CREATE CONSTRAINT FOR (n:Label) REQUIRE (n.first, n.last) IS UNIQUE
 func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	onPosition := keywordIndexFrom(cypher, "ON", 0, defaultKeywordScanOpts())
+	forPosition := keywordIndexFrom(cypher, "FOR", 0, defaultKeywordScanOpts())
+	if onPosition >= 0 && (forPosition < 0 || onPosition < forPosition) {
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
+	}
 	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
 	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
 	if result, handled, err := e.executeCreateConstraintContract(ctx, cypher, ifNotExists); handled {
@@ -473,9 +486,11 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 
 		constraint := storage.Constraint{
-			EntityType: storage.ConstraintEntityRelationship,
 			Label:      parsed.label,
 			Properties: parsed.properties,
+		}
+		if parsed.isRelationship {
+			constraint.EntityType = storage.ConstraintEntityRelationship
 		}
 		if parsed.kind == "rel_key" {
 			constraint.Type = storage.ConstraintRelationshipKey
@@ -1261,10 +1276,11 @@ type parsedNodeKeyConstraintDDL struct {
 }
 
 type parsedRelationshipKeyOrCompositeUniqueDDL struct {
-	name       string
-	label      string
-	properties []string
-	kind       string // rel_key | unique
+	name           string
+	label          string
+	properties     []string
+	kind           string // rel_key | unique
+	isRelationship bool
 }
 
 type parsedConstraintForRequireDDL struct {
@@ -1881,17 +1897,49 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, err
 	}
 
-	_, relType, isRelationship, err := parseCreateIndexForPattern(patternSpan)
-	if err != nil || !isRelationship {
+	label, relType, isRelationship, err := parseCreateIndexForPattern(patternSpan)
+	if err != nil {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("relationship FOR"), nil)
 	}
 
 	kind, props, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(requireExpr)
-	if !ok {
+	if !ok || (!isRelationship && kind != "unique") {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("relationship key/unique"), nil)
 	}
+	patternExpr := strings.TrimSpace(patternSpan)
+	var patternInside string
+	if isRelationship {
+		patternInside, _, ok = extractBracketSection(patternExpr[strings.Index(patternExpr, "["):])
+	} else {
+		patternInside, _, ok = extractParenSection(patternExpr)
+	}
+	colon := strings.Index(patternInside, ":")
+	if !ok || colon < 0 {
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("constraint FOR"), nil)
+	}
+	variable := normalizeIdentifierToken(patternInside[:colon])
+	propertyExpr := requireExpr
+	if inside, _, wrapped := extractParenSection(requireExpr); wrapped {
+		propertyExpr = inside
+	} else if isPos := keywordIndexFrom(requireExpr, "IS", 0, defaultKeywordScanOpts()); isPos >= 0 {
+		propertyExpr = requireExpr[:isPos]
+	}
+	if !qualifiedIndexPropertiesWellFormed(propertyExpr) {
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)
+	}
+	seen := make(map[string]bool, len(props))
+	for _, reference := range strings.Split(propertyExpr, ",") {
+		qualifier, property, valid := parseConstraintQualifiedProperty(reference)
+		if !valid || normalizeIdentifierToken(qualifier) != variable || seen[property] {
+			return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)
+		}
+		seen[property] = true
+	}
 
-	return parsedRelationshipKeyOrCompositeUniqueDDL{name: name, label: relType, properties: props, kind: kind}, nil
+	if isRelationship {
+		label = relType
+	}
+	return parsedRelationshipKeyOrCompositeUniqueDDL{name: name, label: label, properties: props, kind: kind, isRelationship: isRelationship}, nil
 }
 
 func (e *StorageExecutor) parseCreateConstraintTypeDDL(cypher string) (parsedTypeConstraintDDL, error) {

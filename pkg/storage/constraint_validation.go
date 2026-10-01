@@ -434,6 +434,9 @@ func validatePolicyOnCreationForEngine(engine Engine, edges []*Edge, c Constrain
 
 // validateUniqueConstraintOnCreation checks all existing nodes for duplicates.
 func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
+	if len(c.Properties) > 1 {
+		return validateNodeKeyConstraintOnCreationWithEngine(engine, c)
+	}
 	if len(c.Properties) != 1 {
 		return localizedError(localization.StorageValidationUniquePropertyCount(len(c.Properties)), nil)
 	}
@@ -470,7 +473,7 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 		return localizedError(localization.StorageValidationNodeKeyPropertyRequired(), nil)
 	}
 
-	seen := make(map[string]NodeID) // composite key -> nodeID
+	seen := make(map[string][]*Node)
 
 	nodes, err := engine.GetNodesByLabel(c.Label)
 	if err != nil {
@@ -480,30 +483,48 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 	for _, node := range nodes {
 		// Extract all property values
 		values := make([]interface{}, len(c.Properties))
+		keyValues := make([]interface{}, len(c.Properties))
 		hasAllValues := true
 
 		for i, prop := range c.Properties {
 			val := node.Properties[prop]
 			if val == nil {
+				if c.Type == ConstraintUnique {
+					hasAllValues = false
+					break
+				}
 				message := localization.StorageValidationNodeKeyNullCreation(string(node.ID), prop)
 				return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
 			}
 			values[i] = val
+			keyValues[i] = val
+			if numeric, ok := numericConstraintValue(val); ok {
+				keyValues[i] = numeric
+			}
 		}
 
 		if !hasAllValues {
 			continue
 		}
 
-		// Create composite key string
-		compositeKey := fmt.Sprintf("%v", values)
-
-		if existingNodeID, found := seen[compositeKey]; found {
-			message := localization.StorageValidationNodeKeyDuplicateCreation(string(existingNodeID), string(node.ID), c.Properties, values)
-			return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
+		key := fmt.Sprintf("%#v", keyValues)
+		for _, existing := range seen[key] {
+			match := true
+			for index, property := range c.Properties {
+				if !compareValues(existing.Properties[property], values[index]) {
+					match = false
+					break
+				}
+			}
+			if match {
+				message := localization.StorageValidationNodeKeyDuplicateCreation(string(existing.ID), string(node.ID), c.Properties, values)
+				if c.Type == ConstraintUnique {
+					message = localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
+				}
+				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
+			}
 		}
-
-		seen[compositeKey] = node.ID
+		seen[key] = append(seen[key], node)
 	}
 
 	return nil

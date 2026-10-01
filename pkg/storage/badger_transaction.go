@@ -2972,6 +2972,12 @@ func (tx *BadgerTransaction) validateNodeConstraints(node *Node) error {
 	for _, constraint := range constraints {
 		switch constraint.Type {
 		case ConstraintUnique:
+			if len(constraint.Properties) > 1 {
+				if err := tx.checkNodeKeyConstraint(node, constraint); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := tx.checkUniqueConstraint(node, constraint); err != nil {
 				return err
 			}
@@ -3148,6 +3154,9 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	for i, prop := range c.Properties {
 		values[i] = node.Properties[prop]
 		if values[i] == nil {
+			if c.Type == ConstraintUnique {
+				return nil
+			}
 			message := localization.StorageValidationNodeKeyNull(prop)
 			return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
 		}
@@ -3178,12 +3187,15 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 
 		if match {
 			message := localization.StorageValidationNodeKeyInTransaction(c.Properties, values)
-			return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 		}
 	}
 
 	// Full-scan check: scan all existing nodes with this label (namespace-scoped).
 	if err := tx.scanForNodeKeyViolation(tx.namespace, c.Label, c.Properties, values, node.ID); err != nil {
+		if violation, ok := err.(*ConstraintViolationError); ok {
+			violation.Type = c.Type
+		}
 		return err
 	}
 

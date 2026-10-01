@@ -272,6 +272,8 @@ func analyzeQuery(cypher string) *QueryInfo {
 		containsKeyword(upper, "CREATE RANGE INDEX") ||
 		containsKeyword(upper, "CREATE FULLTEXT INDEX") ||
 		containsKeyword(upper, "CREATE VECTOR INDEX") ||
+		containsKeyword(upper, "CREATE TEXT INDEX") ||
+		containsKeyword(upper, "CREATE POINT INDEX") ||
 		containsKeyword(upper, "DROP INDEX") ||
 		containsKeyword(upper, "CREATE CONSTRAINT") ||
 		containsKeyword(upper, "DROP CONSTRAINT")

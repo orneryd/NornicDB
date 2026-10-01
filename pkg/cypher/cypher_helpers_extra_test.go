@@ -1242,6 +1242,10 @@ func TestCypherHelpers_CreateAndDropConstraintVariants(t *testing.T) {
 			eng := storage.NewNamespacedEngine(base, "test")
 			exec := NewStorageExecutor(eng)
 			_, err := exec.executeCreateConstraint(context.Background(), q)
+			if strings.Contains(q, " ASSERT ") {
+				require.Error(t, err, q)
+				return
+			}
 			require.NoError(t, err, q)
 		})
 	}
@@ -1942,6 +1946,10 @@ func TestCypherHelpers_ExecuteCreateConstraint_MultiSyntaxCoverage(t *testing.T)
 	}
 	for _, q := range valid {
 		_, err := exec.executeCreateConstraint(ctx, q)
+		if strings.Contains(q, " ASSERT ") {
+			require.Error(t, err, q)
+			continue
+		}
 		require.NoError(t, err, q)
 	}
 
