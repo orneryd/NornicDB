@@ -32,6 +32,99 @@ func TestSessionGetExecutorForDatabase_WiresDatabaseManagerCommands(t *testing.T
 	require.NotEmpty(t, res.Rows)
 }
 
+func TestGh738_BoltStatementAdmission(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
+	t.Cleanup(func() { _ = server.Close() })
+	port := startBoltTestServer(t, server)
+	ctx := context.Background()
+	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+	for _, explicit := range []bool{false, true} {
+		for _, testCase := range []struct{ query, code string }{
+			{"USE system CREATE (:U717 {v:2})", "Neo.ClientError.Statement.SemanticError"},
+			{"USE nosuchdb RETURN 1", "Neo.ClientError.Database.DatabaseNotFound"},
+		} {
+			t.Run(fmt.Sprint(explicit)+testCase.query, func(t *testing.T) {
+				session := driver.NewSession(ctx, neo4jdriver.SessionConfig{DatabaseName: "nornic"})
+				defer session.Close(ctx)
+				var queryErr error
+				if explicit {
+					tx, beginErr := session.BeginTransaction(ctx)
+					require.NoError(t, beginErr)
+					defer tx.Close(ctx)
+					result, runErr := tx.Run(ctx, testCase.query, nil)
+					queryErr = runErr
+					if queryErr == nil {
+						_, queryErr = result.Consume(ctx)
+					}
+				} else {
+					result, runErr := session.Run(ctx, testCase.query, nil)
+					queryErr = runErr
+					if queryErr == nil {
+						_, queryErr = result.Consume(ctx)
+					}
+				}
+				var status *neo4jdriver.Neo4jError
+				require.ErrorAs(t, queryErr, &status)
+				require.Equal(t, testCase.code, status.Code)
+			})
+		}
+	}
+	store, err := manager.GetStorage("system")
+	require.NoError(t, err)
+	nodes, err := store.GetNodesByLabel("U717")
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+}
+
+func TestGh683_BoltCompositeCommit(t *testing.T) {
+	for _, writes := range []int{1, 2} {
+		t.Run(fmt.Sprint(writes), func(t *testing.T) {
+			base := storage.NewMemoryEngine()
+			manager, err := multidb.NewDatabaseManager(base, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = manager.Close() })
+			require.NoError(t, manager.CreateDatabase("share_shard"))
+			require.NoError(t, manager.CreateCompositeDatabase("cmp_sh", []multidb.ConstituentRef{
+				{Alias: "sh", DatabaseName: "share_shard", Type: "local", AccessMode: "read_write"},
+			}))
+			server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
+			t.Cleanup(func() { _ = server.Close() })
+			port := startBoltTestServer(t, server)
+			ctx := context.Background()
+			driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = driver.Close(context.Background()) })
+			session := driver.NewSession(ctx, neo4jdriver.SessionConfig{DatabaseName: "cmp_sh"})
+			defer session.Close(ctx)
+			tx, err := session.BeginTransaction(ctx)
+			require.NoError(t, err)
+			defer tx.Close(ctx)
+			for index := 0; index < writes; index++ {
+				result, runErr := tx.Run(ctx, "USE cmp_sh.sh CREATE (:TxShare {id:$id})", map[string]any{"id": index})
+				require.NoError(t, runErr)
+				_, err = result.Consume(ctx)
+				require.NoError(t, err)
+			}
+			result, err := tx.Run(ctx, "USE cmp_sh.sh MATCH (n:TxShare) RETURN count(n) AS c", nil)
+			require.NoError(t, err)
+			record, err := result.Single(ctx)
+			require.NoError(t, err)
+			require.Equal(t, int64(writes), record.Values[0])
+			require.NoError(t, tx.Commit(ctx))
+			store, err := manager.GetStorage("share_shard")
+			require.NoError(t, err)
+			nodes, err := store.GetNodesByLabel("TxShare")
+			require.NoError(t, err)
+			require.Len(t, nodes, writes)
+		})
+	}
+}
+
 func TestSessionGetExecutorForDatabase_RollbackRemovesDatabaseScopedWrites(t *testing.T) {
 	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 	exec := transactionalDatabaseScopedExecutor(t, store)

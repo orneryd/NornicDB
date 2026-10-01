@@ -32,6 +32,7 @@ func TestTransactionHTTPValueBoundaries(t *testing.T) {
 		{"nil node", (*storage.Node)(nil), nil, 1},
 		{"nil edge", (*storage.Edge)(nil), nil, 1},
 		{"nil path", (*cypher.PathResult)(nil), nil, 1},
+		{"nil duration", (*cypher.CypherDuration)(nil), nil, 1},
 		{"empty node properties", node, map[string]interface{}{}, 1},
 		{"empty edge properties", edge, map[string]interface{}{}, 1},
 		{"typed nodes", []*storage.Node{node}, []interface{}{map[string]interface{}{}}, 1},
@@ -44,6 +45,70 @@ func TestTransactionHTTPValueBoundaries(t *testing.T) {
 			require.Equal(t, testCase.row, row)
 			require.Len(t, metadata, testCase.metaCount)
 		})
+	}
+}
+
+func TestGh738_HTTPStatementAdmission(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	for _, endpoint := range []string{"/db/nornic/tx/commit", "/db/nornic/tx"} {
+		for _, testCase := range []struct{ query, code string }{
+			{"USE system CREATE (:U717 {v:2})", "Neo.ClientError.Statement.SemanticError"},
+			{"USE nosuchdb RETURN 1", "Neo.ClientError.Database.DatabaseNotFound"},
+		} {
+			t.Run(endpoint+testCase.query, func(t *testing.T) {
+				response := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{"statements": []map[string]any{{"statement": testCase.query}}}, token)
+				expectedStatus := http.StatusOK
+				if endpoint == "/db/nornic/tx" {
+					expectedStatus = http.StatusCreated
+				}
+				require.Equal(t, expectedStatus, response.Code)
+				var result TransactionResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+				require.Len(t, result.Errors, 1)
+				require.Equal(t, testCase.code, result.Errors[0].Code)
+			})
+		}
+	}
+	response := makeRequest(t, server, http.MethodPost, "/db/nosuchdb/tx/commit", map[string]any{"statements": []map[string]any{{"statement": "RETURN 1"}}}, token)
+	require.Equal(t, http.StatusNotFound, response.Code)
+	store, err := server.dbManager.GetStorage("system")
+	require.NoError(t, err)
+	nodes, err := store.GetNodesByLabel("U717")
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+}
+
+func TestGh668_HTTPTemporalText(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	for _, endpoint := range []string{"/db/nornic/tx/commit", "/db/nornic/tx"} {
+		for _, testCase := range []struct{ expression, text string }{
+			{"date('2020-12-31')", "2020-12-31"},
+			{"duration('P1Y2M')", "P1Y2M"},
+			{"localtime('10:00:05')", "10:00:05"},
+			{"time('10:00:00+01:00')", "10:00+01:00"},
+			{"localdatetime('2020-01-01T10:00:00')", "2020-01-01T10:00"},
+			{"datetime('2020-01-01T10:00:00Z')", "2020-01-01T10:00Z"},
+		} {
+			t.Run(endpoint+testCase.expression, func(t *testing.T) {
+				query := "WITH " + testCase.expression + " AS value RETURN value, [value], {nested:value}"
+				response := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{"statements": []map[string]any{{"statement": query}}}, token)
+				var result TransactionResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+				require.Empty(t, result.Errors)
+				require.Len(t, result.Results, 1)
+				require.Len(t, result.Results[0].Data, 1)
+				if result.Commit != "" {
+					commitPath := result.Commit[strings.Index(result.Commit, "/db/"):]
+					commit := makeRequest(t, server, http.MethodPost, commitPath, map[string]any{"statements": []any{}}, token)
+					var committed TransactionResponse
+					require.NoError(t, json.Unmarshal(commit.Body.Bytes(), &committed))
+					require.Empty(t, committed.Errors)
+				}
+				require.Equal(t, []interface{}{testCase.text, []interface{}{testCase.text}, map[string]interface{}{"nested": testCase.text}}, result.Results[0].Data[0].Row)
+			})
+		}
 	}
 }
 

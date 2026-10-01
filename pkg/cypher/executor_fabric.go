@@ -866,12 +866,13 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 		return nil, localizedError(localization.CypherCommandRoutingFabricShardTransactionFailed(dbName, err), err)
 	}
 
+	terminalCtx := context.WithoutCancel(beginCtx)
 	commitFn := func(_ *fabric.SubTransaction) error {
-		_, err := txExec.Execute(beginCtx, "COMMIT", nil)
+		_, err := txExec.Execute(terminalCtx, "COMMIT", nil)
 		return err
 	}
 	rollbackFn := func(_ *fabric.SubTransaction) error {
-		_, err := txExec.Execute(beginCtx, "ROLLBACK", nil)
+		_, err := txExec.Execute(terminalCtx, "ROLLBACK", nil)
 		return err
 	}
 	if err := c.bindCallbacksOnce(sub, commitFn, rollbackFn); err != nil {

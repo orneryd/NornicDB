@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -82,6 +83,51 @@ func TestCompositeExplicitTx_BeginCommitLifecycle(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "COMMIT", nil)
 	require.NoError(t, err)
+}
+
+func TestGh683_CompositeTerminalContext(t *testing.T) {
+	for _, canceledCommit := range []bool{false, true} {
+		t.Run(fmt.Sprint(canceledCommit), func(t *testing.T) {
+			manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+			require.NoError(t, err)
+			defer manager.Close()
+			require.NoError(t, manager.CreateDatabase("share_shard"))
+			require.NoError(t, manager.CreateCompositeDatabase("cmp_sh", []multidb.ConstituentRef{{Alias: "sh", DatabaseName: "share_shard", Type: "local", AccessMode: "read_write"}}))
+			store, err := manager.GetStorage("cmp_sh")
+			require.NoError(t, err)
+			exec := NewStorageExecutor(store)
+			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+			ctx := context.Background()
+			_, err = exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+			runCtx, cancelRun := context.WithCancel(ctx)
+			_, err = exec.Execute(runCtx, "USE cmp_sh.sh CREATE (:TxShare {id:1})", nil)
+			require.NoError(t, err)
+			cancelRun()
+			commitCtx, cancelCommit := context.WithCancel(ctx)
+			defer cancelCommit()
+			if canceledCommit {
+				cancelCommit()
+			}
+			_, err = exec.Execute(commitCtx, "COMMIT", nil)
+			if canceledCommit {
+				require.ErrorIs(t, err, context.Canceled)
+				_, err = exec.Execute(ctx, "ROLLBACK", nil)
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			shard, err := manager.GetStorage("share_shard")
+			require.NoError(t, err)
+			nodes, err := shard.GetNodesByLabel("TxShare")
+			require.NoError(t, err)
+			if canceledCommit {
+				require.Empty(t, nodes)
+			} else {
+				require.Len(t, nodes, 1)
+			}
+		})
+	}
 }
 
 func TestCompositeExplicitTx_DocumentationExamples(t *testing.T) {
