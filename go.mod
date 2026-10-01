@@ -17,7 +17,7 @@ require (
 	github.com/hashicorp/go-kms-wrapping/v2 v2.0.24
 	github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11
 	github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.15
-	github.com/hybridgroup/yzma v1.27.0
+	github.com/hybridgroup/yzma v1.28.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/prometheus/client_golang v1.24.1
