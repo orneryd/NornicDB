@@ -114,7 +114,7 @@ countSubquery
     ;
 
 callSubquery
-    : CALL LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF numLit ROWS)?)?
+    : CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF numLit ROWS)?)?
     ;
 
 // Subquery body can start with WITH (to import variables) or have statements

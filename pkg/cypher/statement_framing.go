@@ -1,6 +1,39 @@
 package cypher
 
-import "strings"
+import (
+	"strings"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
+)
+
+func (e *StorageExecutor) validateStatementFraming(cypher string) error {
+	if containsOutsideStrings(cypher, ";") {
+		statements := e.splitBySemicolon(cypher)
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherCommandRoutingMultipleStatements(len(statements)))
+	}
+	if explainProfileConflict(cypher) {
+		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+			"Can't specify multiple conflicting values for execution mode"))
+	}
+	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
+		hasFinish, hasColumns := false, false
+		for _, branch := range branches {
+			_, finishes := stripTrailingFinish(branch)
+			if finishes {
+				hasFinish = true
+			} else if len(e.StatementColumns(branch)) > 0 {
+				hasColumns = true
+			}
+		}
+		if hasFinish && hasColumns {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidProjection",
+				"All sub queries in an UNION must have the same return column names")
+		}
+	}
+	return nil
+}
 
 // Statement framing helpers: Neo4j 5 statement preamble (CYPHER … groups),
 // the FINISH clause terminator, and the EXPLAIN/PROFILE exclusivity rule.
@@ -218,16 +251,21 @@ func firstWordUpper(s string) (string, bool) {
 func explainProfileConflict(cypher string) bool {
 	query := strings.TrimSpace(cypher)
 	first := ""
-	if matchKeywordAt(query, 0, "EXPLAIN") {
-		first = "EXPLAIN"
-	} else if matchKeywordAt(query, 0, "PROFILE") {
-		first = "PROFILE"
-	} else {
-		return false
+	for {
+		query = strings.TrimSpace(query[queryGapEnd(query, 0):])
+		query, _ = stripCypherPreamble(query)
+		mode := ""
+		if matchKeywordAt(query, 0, "EXPLAIN") {
+			mode = "EXPLAIN"
+		} else if matchKeywordAt(query, 0, "PROFILE") {
+			mode = "PROFILE"
+		} else {
+			return false
+		}
+		if first != "" && first != mode {
+			return true
+		}
+		first = mode
+		query = strings.TrimSpace(query[len(mode):])
 	}
-	rest := strings.TrimSpace(query[len(first):])
-	if first == "EXPLAIN" {
-		return matchKeywordAt(rest, 0, "PROFILE")
-	}
-	return matchKeywordAt(rest, 0, "EXPLAIN")
 }

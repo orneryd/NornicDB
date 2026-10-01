@@ -997,5 +997,35 @@
     "name": "GH657 control/count fresh local",
     "query": "WITH 5 AS s RETURN COUNT { WITH {a: 1} AS inner RETURN inner.a } AS r",
     "no_effects": true
+  },
+  {
+    "name": "issue 744 rejects semicolon chained statements before writes",
+    "query": "CREATE (:Semi); MATCH (n:Semi) RETURN count(n) AS c"
+  },
+  {
+    "name": "issue 744 conflicting explain profile is argument error",
+    "query": "EXPLAIN PROFILE RETURN 1"
+  },
+  {
+    "name": "issue 744 conflicting profile explain is argument error",
+    "query": "PROFILE EXPLAIN RETURN 1"
+  },
+  {
+    "name": "issue 744 profile match summary",
+    "setup": ["CREATE (:ProfileBoundary {id: 1})"],
+    "query": "PROFILE MATCH (n) RETURN n"
+  },
+  {
+    "name": "issue 743 union return finish output mismatch",
+    "query": "RETURN 1 AS x UNION FINISH"
+  },
+  {
+    "name": "issue 743 union return finish rejects writes before execution",
+    "query": "CREATE (:Semi) RETURN 1 AS x UNION FINISH"
+  },
+  {
+    "name": "issue 739 unwind scoped call ordered rows",
+    "ordered": true,
+    "query": "UNWIND [1, 2] AS x CALL (x) { RETURN x * 2 AS y } RETURN y ORDER BY y"
   }
 ]

@@ -10,6 +10,31 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+func TestCompileTimeErrorPhase(t *testing.T) {
+	runtimeError := stderrors.New("Neo.ClientError.Statement.ArgumentError: invalid argument")
+	if IsCompileTimeError(runtimeError) || IsCompileTimeError(nil) {
+		t.Fatal("runtime and nil errors must not be preparation failures")
+	}
+	if MarkCompileTime(nil) != nil {
+		t.Fatal("nil must remain nil")
+	}
+	marked := MarkCompileTime(runtimeError)
+	if MarkCompileTime(marked) != marked {
+		t.Fatal("phase annotation must be idempotent")
+	}
+	wrapped := fmt.Errorf("preparation: %w", marked)
+	if !IsCompileTimeError(wrapped) || !stderrors.Is(wrapped, runtimeError) {
+		t.Fatal("phase and original error identity must survive wrapping")
+	}
+	code, message := Neo4jStatus(marked)
+	if code != "Neo.ClientError.Statement.ArgumentError" || message != "invalid argument" {
+		t.Fatalf("status changed: %s: %s", code, message)
+	}
+	if !IsCompileTimeError(stderrors.New("Neo.ClientError.Statement.SyntaxError: invalid statement")) {
+		t.Fatal("syntax errors remain compile-time failures")
+	}
+}
+
 // TestMapTransientTransactionError verifies the protocol-code boundary for
 // retryable transaction failures and non-retryable ordinary errors.
 func TestMapTransientTransactionError(t *testing.T) {
