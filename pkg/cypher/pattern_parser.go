@@ -439,33 +439,13 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 		return e.parseProperties(ctx, valueStr)
 	}
 
-	// Handle expression-valued properties with any arithmetic operator
-	// ('+', '-', '*', '/', '%', '^' and unary minus). All of them route
-	// through the scalar property evaluator so a constant expression such as
-	// 2 * 3 stores its value, never its own text (#514/#656). A null result
-	// (null operand) omits the property, and a recorded runtime failure
-	// (division by zero, type errors) fails the statement later, exactly like
-	// the previous top-level '+' and '/' paths.
-	if e.hasArithmeticOperator(valueStr) {
-		if evaluated, ok := e.evaluateScalarPropertyExpression(ctx, valueStr); ok {
-			return normalizePropValue(evaluated)
-		}
-		return nil
-	}
-
-	// Handle function calls like kalman.init(), toUpper('test'), etc.
-	// A function call has the pattern: name(...) or name.sub.name(...)
-	if looksLikeFunctionCall(valueStr) {
-		result, defined := e.evaluateExpressionWithContextDefined(ctx, valueStr, nil, nil)
-		if defined && result != valueStr {
-			return result
-		}
-	}
-
 	// Check for malformed values (unquoted colon indicates injection attempt or syntax error)
-	if strings.Contains(valueStr, ":") && !strings.HasPrefix(valueStr, "{") {
+	if findTopLevelMapKeyValueSeparator(valueStr) >= 0 && !strings.HasPrefix(valueStr, "{") {
 		// Return a special marker that will trigger validation error
 		return invalidPropertyValue{raw: valueStr}
+	}
+	if value, defined := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings); defined {
+		return normalizePropValue(value)
 	}
 
 	// Bound loop variables (FOREACH x, UNWIND rows): a bare identifier that
@@ -481,60 +461,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 }
 
 func (e *StorageExecutor) evaluateScalarPropertyExpression(ctx context.Context, expr string) (interface{}, bool) {
-	expr = strings.TrimSpace(expr)
-	if evaluated, ok := e.evaluateScalarPropertyExpressionFast(ctx, expr); ok {
-		return evaluated, true
-	}
-	evaluated := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
-	if evaluated == nil {
-		return nil, false
-	}
-	if s, ok := evaluated.(string); ok && s == expr {
-		return nil, false
-	}
-	return evaluated, true
-}
-
-func (e *StorageExecutor) evaluateScalarPropertyExpressionFast(ctx context.Context, expr string) (interface{}, bool) {
-	if value, ok := evaluateScalarPropertyOperand(ctx, expr); ok {
-		return value, true
-	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " + ", true, false); ok {
-		left, leftOK := evaluateScalarPropertyOperand(ctx, leftExpr)
-		right, rightOK := evaluateScalarPropertyOperand(ctx, rightExpr)
-		return e.evaluateArithmeticLookupResult('+', left, leftOK, right, rightOK)
-	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "+", true, false); ok {
-		left, leftOK := evaluateScalarPropertyOperand(ctx, leftExpr)
-		right, rightOK := evaluateScalarPropertyOperand(ctx, rightExpr)
-		return e.evaluateArithmeticLookupResult('+', left, leftOK, right, rightOK)
-	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "*", true, false); ok {
-		left, leftOK := evaluateScalarPropertyOperand(ctx, leftExpr)
-		right, rightOK := evaluateScalarPropertyOperand(ctx, rightExpr)
-		return e.evaluateArithmeticLookupResult('*', left, leftOK, right, rightOK)
-	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "/", true, false); ok {
-		left, leftOK := evaluateScalarPropertyOperand(ctx, leftExpr)
-		right, rightOK := evaluateScalarPropertyOperand(ctx, rightExpr)
-		return e.evaluateArithmeticLookupResult('/', left, leftOK, right, rightOK)
-	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "%", true, false); ok {
-		left, leftOK := evaluateScalarPropertyOperand(ctx, leftExpr)
-		right, rightOK := evaluateScalarPropertyOperand(ctx, rightExpr)
-		return e.evaluateArithmeticLookupResult('%', left, leftOK, right, rightOK)
-	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " - ", true, false); ok {
-		left, leftOK := evaluateScalarPropertyOperand(ctx, leftExpr)
-		right, rightOK := evaluateScalarPropertyOperand(ctx, rightExpr)
-		return e.evaluateArithmeticLookupResult('-', left, leftOK, right, rightOK)
-	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "-", true, false); ok && strings.TrimSpace(leftExpr) != "" {
-		left, leftOK := evaluateScalarPropertyOperand(ctx, leftExpr)
-		right, rightOK := evaluateScalarPropertyOperand(ctx, rightExpr)
-		return e.evaluateArithmeticLookupResult('-', left, leftOK, right, rightOK)
-	}
-	return nil, false
+	return e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(expr), e.fabricRecordBindings)
 }
 
 func (e *StorageExecutor) evaluateArithmeticLookupResult(op byte, left interface{}, leftOK bool, right interface{}, rightOK bool) (interface{}, bool) {
@@ -554,27 +481,7 @@ func (e *StorageExecutor) evaluateArithmeticLookupResult(op byte, left interface
 	case '-':
 		value = e.subtract(left, right)
 	}
-	if value == nil {
-		return nil, false
-	}
-	return value, true
-}
-
-func evaluateScalarPropertyOperand(ctx context.Context, expr string) (interface{}, bool) {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return nil, false
-	}
-	if v, ok := resolveParamPathRef(ctx, expr); ok {
-		return normalizePropValue(v), true
-	}
-	if parsed, ok := parseLiteralValueFromComputedRow(expr); ok {
-		return parsed, true
-	}
-	if v, ok := resolveContextPathRef(ctx, expr); ok {
-		return normalizePropValue(v), true
-	}
-	return nil, false
+	return value, value != nil
 }
 
 // invalidPropertyValue marks a property value that failed parsing validation

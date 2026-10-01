@@ -419,9 +419,9 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 
 	empty, err := exec.projectTransactionReturn(ctx, input, "")
 	require.NoError(t, err)
-	require.Equal(t, []string{"*"}, empty.Columns)
+	require.Equal(t, []string{"n", "x"}, empty.Columns)
 	require.Len(t, empty.Rows, 1)
-	require.Equal(t, "*", empty.Rows[0][0])
+	require.Equal(t, []interface{}{nodes["n"], int64(7)}, empty.Rows[0])
 }
 
 func TestCypherHelpers_ToStringAnyMapAndSubstringSet(t *testing.T) {
@@ -3613,23 +3613,6 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 		_, mapOK := v.(map[string]interface{})
 		require.True(t, mapOK)
 	}
-
-	// resolveSetTrailingValue: direct column hit.
-	row := []interface{}{"vcol", node}
-	colIndex := map[string]int{"col": 0, "n": 1}
-	val, resolved := resolveSetTrailingValue("col", row, colIndex, map[string]*storage.Node{"n": node})
-	require.True(t, resolved)
-	assert.Equal(t, "vcol", val)
-
-	// resolveSetTrailingValue: property hit through node scope.
-	val, resolved = resolveSetTrailingValue("n.flag", row, colIndex, map[string]*storage.Node{"n": node})
-	require.True(t, resolved)
-	assert.Equal(t, true, val)
-
-	// resolveSetTrailingValue: unresolved branch.
-	val, resolved = resolveSetTrailingValue("missing.prop", row, colIndex, map[string]*storage.Node{})
-	require.False(t, resolved)
-	assert.Nil(t, val)
 
 	// executeSetTrailingWithReturn: non-WITH trailing text => handled=false.
 	out, handled, err := exec.executeSetTrailingWithReturn(ctx, "UNWIND [1] AS x RETURN x", mr, &ExecuteResult{Stats: &QueryStats{}})

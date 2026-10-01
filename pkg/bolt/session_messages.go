@@ -784,7 +784,7 @@ func (s *Session) handlePull(data []byte) error {
 
 	// For large batches (>50 records), use batched writing to reduce syscalls
 	if remaining > 50 {
-		if err := s.sendRecordsBatched(stream.result.Rows[stream.index : stream.index+remaining], stream.database); err != nil {
+		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database); err != nil {
 			return err
 		}
 		stream.index += remaining
@@ -1436,6 +1436,26 @@ func (s *Session) handleRollback(data []byte) error {
 
 // sendRecord sends a RECORD response.
 // Uses buffer pooling to reduce allocations for high-frequency record sending.
+func (s *Session) recordEntityDatabaseResolver(dbName string) boltEntityDatabaseResolver {
+	if s.server == nil || s.server.dbManager == nil {
+		return nil
+	}
+	engine, err := s.server.dbManager.GetStorage(dbName)
+	if err != nil {
+		return nil
+	}
+	composite, ok := engine.(*storage.CompositeEngine)
+	if !ok {
+		return nil
+	}
+	return func(nodeID storage.NodeID, edgeID storage.EdgeID) string {
+		if nodeID != "" {
+			return composite.ConstituentDatabaseForNode(nodeID)
+		}
+		return composite.ConstituentDatabaseForEdge(edgeID)
+	}
+}
+
 func (s *Session) sendRecord(fields []any) error {
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
@@ -1445,7 +1465,7 @@ func (s *Session) sendRecord(fields []any) error {
 
 	// Format: <struct marker 0xB1> <signature 0x71> <list of fields>
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database)
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database, s.recordEntityDatabaseResolver(s.database))
 
 	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
 	err := s.sendChunk(buf)
@@ -1465,7 +1485,7 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string) error {
 	buf = buf[:0]
 
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName)
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName))
 
 	err := s.writeMessageNoFlush(buf)
 	s.recordBuf = buf[:0]
@@ -1481,6 +1501,7 @@ func (s *Session) sendRecordsBatched(rows [][]any, dbName string) error {
 	if len(rows) == 0 {
 		return nil
 	}
+	resolver := s.recordEntityDatabaseResolver(dbName)
 
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
@@ -1494,7 +1515,7 @@ func (s *Session) sendRecordsBatched(rows [][]any, dbName string) error {
 
 		// Build record: struct marker + signature + list of fields
 		buf = append(buf, recordHeader...)
-		buf = encodeRecordListInto(buf, row, s.useUTCDateTimeStructs(), s.boltV5(), dbName)
+		buf = encodeRecordListInto(buf, row, s.useUTCDateTimeStructs(), s.boltV5(), dbName, resolver)
 
 		// bufio.Writer does not retain the provided slice after Write returns,
 		// so it's safe to reuse the pooled buffer on the next iteration.

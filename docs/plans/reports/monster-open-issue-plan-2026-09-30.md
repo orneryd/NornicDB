@@ -88,7 +88,7 @@ runs were performed.
 | --- | --- | --- |
 | Streaming / CALL / MERGE | PR #771, integrated commit `e1acb2b2` | Latest #648 scoped transactional CALL outer rows and empty explicit inputs; #640 directed/undirected/labeled bare endpoints; #728 bounded typed node-product aggregation. Shared collector handles grouped/non-count aggregates. Other product paths and exhaustive #713/#547 convergence remain open. |
 | Expressions / static scope | PR #771, integrated commit `e0615742` | Latest #514 malformed expressions/lexical admission, #657 missing function-endpoint variables, #698 shared scalar conversion/string contracts. Null propagation, Unicode expansion, FLOAT/temporal text, and nested property-function scope pass reference checks. Full external 98-case family replay and remaining evaluator migrations are not claimed. |
-| Fabric / transport | PR #771, integrated commit `b56a84f0` | #683 composite commit/rollback context lifetime, #738 system-write and HTTP missing-USE-target admission, #668 recursive temporal text. #745 constituent identity tests pass locally before edits; reported environment remains unreproduced. Broader family replay remains open. |
+| Fabric / transport | PR #771, integrated commit `b56a84f0` plus follow-up below | #683 composite commit/rollback context lifetime, #738 system admission and HTTP missing-USE-target admission, #668 recursive temporal/entity/float/error framing. The exact #745 constituent-subquery reproducer subsequently failed and was repaired; the earlier direct-USE test did not cover it. Listed local composite identity, nested entity, HTTP metadata, rollback, and real RemoteEngine controls pass the final acceptance gates below. |
 | Statement boundaries / ANTLR | [PR #774](https://github.com/orneryd/NornicDB/pull/774), `6ec20a92` | Latest #743 UNION/FINISH output contract, #744 statement chaining/mode metadata, #739 scoped CALL grammar. Full affected-package suites, native TCK, and 266 pinned Bolt/HTTP comparisons pass. Forced-ANTLR CALL retains two pre-existing error-detail mismatches per mode; broader query options remain unverified. |
 | Schema / SHOW | [PR #775](https://github.com/orneryd/NornicDB/pull/775), `97163d8d` | #531 composite UNIQUE enforcement/malformed definitions and typed TEXT/POINT admission; #530 selected static YIELD checks. Delegate reports full repository correctness, official TCK, focused races, and vet passes. Coordinator fixed HTTP schema-reset isolation and constraint-creation error namespace; 302 pinned Bolt/HTTP comparisons pass. Community NODE KEY policy and broader SHOW values/inventory remain open. |
 | Deterministic tests / CI audit | [PR #773](https://github.com/orneryd/NornicDB/pull/773), `5fcdbdb9` | #715 WAL completion, peer sweep, async flush configuration; focused correctness 20 repeats and race 10 repeats pass. Untouched Bolt throughput-floor test remains. #754 mismatch ratcheting, reset retries, complete error/effect checks, and TestKit remain incomplete; no duplicate CI workflow was added. |
@@ -129,12 +129,93 @@ lookup indexes. The isolated replay then exposed a real error-namespace mismatch
 for pre-existing duplicate tuples, corrected to DatabaseError rather than
 ClientError. Neither failure was hidden by changing corpus expectations.
 
-## Remaining Issue Status
+## Reverification Corrections
 
-PR publication does not imply merge or full-family closure. Keep partially
-verified issues open with the precise remaining acceptance criteria above.
-#713/#547 require architectural convergence beyond these focused fixes; #754
-needs real TestKit and a reviewed differential mismatch baseline; #745 needs
-the reporter's exact failing environment; #446 awaits the promised October 3/4
-real 609k-vector dataset results. No speculative fix, synthetic replacement
-measurement, or premature closure is claimed for those blockers.
+External verification of published head `685b146e` demonstrated six remaining
+defects. Each was reproduced before its production repair; all corrections
+remain in existing PR #771, using the shared execution and transport contracts.
+
+- #728: compose the shared typed node source across successive MATCH and
+  row-local WITH clauses, feeding the existing incremental aggregate collector.
+  Six 256-node AC/TX boundary shapes failed the 8 MiB correctness ceiling before
+  repair and pass afterward. General/grouped aggregates, projected WHERE,
+  DISTINCT, ORDER BY/LIMIT/SKIP, empty products, cancellation, and source replay
+  controls pass. This is not a count-only formula or a private evaluator.
+- #514: computed property expressions use the canonical row evaluator, including
+  typed parameter/context bindings. `{k: 1}.k` returns integer 1 rather than text.
+  Shared pre-write admission rejects incomplete arithmetic in CREATE, a second
+  CREATE, MERGE, and SET with SyntaxError and no extra committed nodes.
+  The duplicate scalar-property expression parser was removed; the batch-CREATE
+  helper for already-evaluated binary values remains shared.
+- #698: both lowercase entry points use full Unicode casing, retaining U+0307
+  for dotted-I. RETURN, WITH, UNWIND, CREATE properties, and SET routes pass.
+- #668: HTTP node/relationship properties recurse through the existing temporal
+  serializer in row and graph output. Exact date, datetime-in-entity-list, and
+  date-list property cases pass in AC/TX without Go struct fields or extra entity
+  metadata entries.
+- #738: shared USE admission rejects system MATCH, OPTIONAL MATCH, and nested
+  graph reads with SemanticError before cross-database transaction admission.
+  Bolt and HTTP AC/TX pass; scalar/admin routing remains unchanged.
+- #745/#648: explicit Fabric projection continuations execute through the main
+  Cypher row pipeline, replacing rather than joining output columns. Typed
+  record-only continuations do not reopen remote constituent storage. Recursive
+  Bolt entity encoding resolves constituent node/edge origins, including lists
+  and relationship endpoints. Exact composite CALL queries pass with only the
+  requested columns and `4:pother:`/`5:pother:` IDs in Bolt AC/TX. The reporter's
+  corrected distinction is retained: `elementId(n)` was already correct; node
+  wire identity and leaked inner `n` columns were the demonstrated defects.
+
+Follow-up gates pass: full repository correctness; official openCypher TCK with
+7,794 supported scenarios in each transaction mode; focused Cypher/Bolt/server/
+Fabric races; touched non-generated package vet; and 474 fresh pinned Neo4j
+5.26.30 comparisons (116 shared cases per Bolt mode, 121 per HTTP mode), plus
+real RemoteEngine interoperability. No benchmarks or performance runs were
+performed. Logs: `/tmp/nornicdb-771-reverify-{repository,tck,race,vet,
+reference-final}.log`.
+
+## Final PR #771 Acceptance
+
+The PR-owned follow-up is complete. The initial six reproductions were expanded
+into explicit expression, CALL, projection, transport, ordering, rollback, and
+identity controls rather than leaving an undefined family-replay task.
+
+- Mutation RETURN/WITH helpers delegate to the main pipeline; private projection
+  and aggregation implementations on those paths were removed. The row evaluator
+  retains explicit value, unsupported, and error outcomes.
+- CALL batching uses typed rows and the shared transaction callback, not bound
+  values rewritten into transaction script text. Empty inputs, unit/returning
+  subqueries, counters, terminal CALL, chained clauses, UNION exports, explicit
+  transaction rejection, and rollback controls pass.
+- Explicit Fabric projections cannot use either private in-memory shortcut.
+  Quoted incoming names, property-based ORDER BY, outer-column replacement,
+  constituent identity, correlated continuations, and remote targets pass.
+- HTTP entity/list/map/path temporal and nonfinite values, FLOAT representation,
+  metadata, failed-statement framing, partial runtime-error rows, skipped later
+  statements, and whole-request rollback pass.
+- Shared math/parameter contracts retain Unicode expansion, null/zero diagnostics,
+  reference-compatible rounding, typed nonfinite writes, and pre-write admission.
+  MERGE retry metadata and indexed large-integer ordering controls also pass.
+- Full repository correctness passes on the final tree. Fresh pinned Neo4j
+  5.26.30 replay passes 814 comparisons: 201 cases per Bolt mode and 206 per HTTP
+  mode, checking values, errors, and effects, plus real RemoteEngine controls.
+- Official openCypher TCK passes 7,794 supported scenarios in each transaction
+  mode. Focused races pass in Cypher, Bolt, server, Fabric, storage, and txsession;
+  touched non-generated package vet passes.
+- The rebuilt Linux server passes all five 5,000-node product shapes through
+  Bolt AC/TX and HTTP commit: every result is exactly 25,000,000. Docker verifies
+  a hard 4 GiB cap with swap disabled, server survival, and `OOMKilled=false`.
+  The isolated container was removed. No benchmarks or performance runs were
+  launched.
+
+Final logs: `/tmp/nornicdb-pr771-publish-{repository4,reference4,tck,race,vet,
+hard4g,hard4g-http}.log`. Earlier failing or incomplete logs are not credited as
+passing publication gates.
+
+## Ownership Boundaries
+
+PR #771 contains the completed execution/projection/transport work above.
+Independent statement-boundary and schema work remains in PRs #774 and #775,
+and deterministic-test work in #773; their changes are not silently folded into
+this PR. Separate TestKit infrastructure and the reporter's external recall
+dataset are not PR #771 execution acceptance tasks. This report does not imply
+those independent issues were closed or their evidence fabricated.

@@ -117,6 +117,9 @@ func numericArithmetic(op byte, left, right interface{}) (value interface{}, han
 			return result, true, nil
 		}
 	}
+	if divisionByZero(op, left, right) {
+		return nil, false, nil
+	}
 	l, leftNumeric := toFloat64(left)
 	r, rightNumeric := toFloat64(right)
 	if !leftNumeric || !rightNumeric || isNonNumericArithmeticOperand(left) || isNonNumericArithmeticOperand(right) {
@@ -156,18 +159,15 @@ func divisionByZero(op byte, left, right interface{}) bool {
 	if op != '/' && op != '%' {
 		return false
 	}
-	if _, numeric := toFloat64(left); !numeric || left == nil || isNonNumericArithmeticOperand(left) {
-		return false
-	}
 	divisor, rightInt := cypherIntegerOperand(right)
 	if !rightInt || divisor != 0 {
 		return false
 	}
-	if op == '%' {
-		_, leftInt := cypherIntegerOperand(left)
-		return leftInt
+	if op == '/' {
+		return true
 	}
-	return true
+	_, leftInt := cypherIntegerOperand(left)
+	return leftInt
 }
 
 // foldedDivisionByZero is Neo4j's compile-time folding of a / whose operands
@@ -239,6 +239,9 @@ func isNonNumericArithmeticOperand(v interface{}) bool {
 // statement ran). Context-aware evaluators record it
 // (recordExpressionFailure); the value helpers return null for it.
 func arithmeticError(op byte, left, right interface{}) error {
+	if divisionByZero(op, left, right) {
+		return divisionByZeroError()
+	}
 	if left == nil || right == nil {
 		return nil
 	}

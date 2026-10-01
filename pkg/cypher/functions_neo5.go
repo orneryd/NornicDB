@@ -26,11 +26,40 @@ import (
 // mismatch: expected … but was …" SyntaxError (cypherfn.TypeMismatchError).
 func init() {
 	cypherfn.Register("radians", fnRadians)
+	cypherfn.Register("pi", fnMathConstant("pi", math.Pi))
+	cypherfn.Register("e", fnMathConstant("e", math.E))
+	cypherfn.Register("round", fnRound)
+	for name, operation := range map[string]func(float64) float64{
+		"sin":      math.Sin,
+		"cos":      math.Cos,
+		"tan":      math.Tan,
+		"cot":      rowMathCot,
+		"asin":     math.Asin,
+		"acos":     fdlibmAcos,
+		"atan":     math.Atan,
+		"exp":      math.Exp,
+		"log":      math.Log,
+		"log10":    math.Log10,
+		"sqrt":     math.Sqrt,
+		"degrees":  rowMathDegrees,
+		"haversin": rowMathHaversin,
+		"sinh":     math.Sinh,
+		"cosh":     math.Cosh,
+		"tanh":     math.Tanh,
+		"coth":     rowMathCoth,
+	} {
+		cypherfn.Register(name, fnMathUnary(name, operation))
+	}
+	cypherfn.Register("ceil", fnMathUnary("ceil", math.Ceil))
+	cypherfn.Register("ceiling", fnMathUnary("ceiling", math.Ceil))
+	cypherfn.Register("floor", fnMathUnary("floor", math.Floor))
+	cypherfn.Register("atan2", fnMathBinary("atan2", math.Atan2))
+	cypherfn.Register("power", fnMathBinary("power", math.Pow))
 	cypherfn.Register("isnan", fnIsNaN)
 	cypherfn.Register("char_length", fnCharLength)
 	cypherfn.Register("character_length", fnCharLength)
 	cypherfn.Register("upper", fnStringCase(func(text string) string { return cases.Upper(language.Und).String(text) }, "upper"))
-	cypherfn.Register("lower", fnStringCase(strings.ToLower, "lower"))
+	cypherfn.Register("lower", fnStringCase(func(text string) string { return cases.Lower(language.Und).String(text) }, "lower"))
 	cypherfn.Register("btrim", fnTrimFunction("btrim", true, true))
 	cypherfn.Register("ltrim", fnTrimFunction("ltrim", true, false))
 	cypherfn.Register("rtrim", fnTrimFunction("rtrim", false, true))
@@ -56,6 +85,101 @@ func init() {
 			cypherfn.Register(name+"ornull", fnScalarConversion(name, convert, true))
 		}
 	}
+}
+
+func fnMathConstant(name string, value float64) cypherfn.Func {
+	return func(_ cypherfn.Context, args []string) (interface{}, error) {
+		if len(args) != 0 {
+			return nil, argumentCountError(name, "0", len(args))
+		}
+		return value, nil
+	}
+}
+
+func fnMathUnary(name string, operation func(float64) float64) cypherfn.Func {
+	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, argumentCountError(name, "1", len(args))
+		}
+		values, err := evalArgs(ctx, args)
+		if err != nil || values[0] == nil {
+			return nil, err
+		}
+		number, ok := toFloat64(values[0])
+		if !ok {
+			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Float or Integer", Value: values[0]}
+		}
+		return operation(number), nil
+	}
+}
+
+func fnMathBinary(name string, operation func(float64, float64) float64) cypherfn.Func {
+	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+		if len(args) != 2 {
+			return nil, argumentCountError(name, "2", len(args))
+		}
+		values, err := evalArgs(ctx, args)
+		if err != nil || values[0] == nil || values[1] == nil {
+			return nil, err
+		}
+		left, leftOK := toFloat64(values[0])
+		right, rightOK := toFloat64(values[1])
+		if !leftOK {
+			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Float or Integer", Value: values[0]}
+		}
+		if !rightOK {
+			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Float or Integer", Value: values[1]}
+		}
+		return operation(left, right), nil
+	}
+}
+
+func fnRound(ctx cypherfn.Context, args []string) (interface{}, error) {
+	if len(args) < 1 || len(args) > 3 {
+		return nil, argumentCountError("round", "1 to 3", len(args))
+	}
+	values, err := evalArgs(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	for _, value := range values {
+		if value == nil {
+			return nil, nil
+		}
+	}
+	number, ok := toFloat64(values[0])
+	if !ok {
+		return nil, &cypherfn.TypeMismatchError{Function: "round", Expected: "Float or Integer", Value: values[0]}
+	}
+	precision := 0
+	if len(values) > 1 {
+		precision, ok = toInt(values[1])
+		if !ok {
+			return nil, &cypherfn.TypeMismatchError{Function: "round", Expected: "Integer", Value: values[1]}
+		}
+		if precision < 0 {
+			return nil, newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", "Precision argument to 'round()' cannot be negative")
+		}
+	}
+	var mode string
+	if len(values) == 3 {
+		mode, ok = values[2].(string)
+		if !ok {
+			return nil, &cypherfn.TypeMismatchError{Function: "round", Expected: "String", Value: values[2]}
+		}
+	}
+	factor := math.Pow10(precision)
+	var rounded float64
+	if len(values) == 3 {
+		var validMode bool
+		rounded, validMode = roundRowNumber(number*factor, mode)
+		if !validMode {
+			return nil, newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", "Unknown rounding mode. Valid values are: CEILING, FLOOR, UP, DOWN, HALF_EVEN, HALF_UP, HALF_DOWN, UNNECESSARY.")
+		}
+	} else {
+		rounded = math.Floor(number*factor + 0.5)
+	}
+	return rounded / factor, nil
 }
 
 func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {

@@ -46,6 +46,9 @@ func TestGh738_BoltStatementAdmission(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, testCase := range []struct{ query, code string }{
 			{"USE system CREATE (:U717 {v:2})", "Neo.ClientError.Statement.SemanticError"},
+			{"USE system MATCH (n) RETURN count(n) AS c", "Neo.ClientError.Statement.SemanticError"},
+			{"USE system OPTIONAL MATCH (n) RETURN n", "Neo.ClientError.Statement.SemanticError"},
+			{"USE system CALL { MATCH (n) RETURN n } RETURN n", "Neo.ClientError.Statement.SemanticError"},
 			{"USE nosuchdb RETURN 1", "Neo.ClientError.Database.DatabaseNotFound"},
 		} {
 			t.Run(fmt.Sprint(explicit)+testCase.query, func(t *testing.T) {
@@ -79,6 +82,74 @@ func TestGh738_BoltStatementAdmission(t *testing.T) {
 	nodes, err := store.GetNodesByLabel("U717")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
+}
+
+func TestGh745_BoltCompositeSubqueryResults(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	require.NoError(t, manager.CreateDatabase("pother"))
+	require.NoError(t, manager.CreateCompositeDatabase("pcomp", []multidb.ConstituentRef{{Alias: "other", DatabaseName: "pother", Type: "local", AccessMode: "read_write"}}))
+	store, err := manager.GetStorage("pother")
+	require.NoError(t, err)
+	_, err = cypher.NewStorageExecutor(store).Execute(context.Background(), "CREATE (:EI {v: 1})-[:R]->(:EI {v: 2})", nil)
+	require.NoError(t, err)
+	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
+	t.Cleanup(func() { _ = server.Close() })
+	port := startBoltTestServer(t, server)
+	ctx := context.Background()
+	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+	for _, explicit := range []bool{false, true} {
+		for _, testCase := range []struct {
+			query   string
+			columns []string
+		}{
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1}) RETURN n } RETURN n", []string{"n"}},
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1}) RETURN n } RETURN elementId(n) AS e", []string{"e"}},
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1}) RETURN n } RETURN n.v AS v", []string{"v"}},
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1}) RETURN elementId(n) AS e } RETURN e", []string{"e"}},
+			{"CALL { USE pcomp.other MATCH (n:EI {v: 1})-[r:R]->(m) RETURN n,r,m } RETURN [n,r,m] AS entities", []string{"entities"}},
+		} {
+			t.Run(fmt.Sprint(explicit)+testCase.query, func(t *testing.T) {
+				session := driver.NewSession(ctx, neo4jdriver.SessionConfig{DatabaseName: "pcomp"})
+				defer session.Close(ctx)
+				var result neo4jdriver.ResultWithContext
+				if explicit {
+					tx, beginErr := session.BeginTransaction(ctx)
+					require.NoError(t, beginErr)
+					defer tx.Close(ctx)
+					result, err = tx.Run(ctx, testCase.query, nil)
+				} else {
+					result, err = session.Run(ctx, testCase.query, nil)
+				}
+				require.NoError(t, err)
+				columns, err := result.Keys()
+				require.NoError(t, err)
+				require.Equal(t, testCase.columns, columns)
+				records, err := result.Collect(ctx)
+				require.NoError(t, err)
+				require.Len(t, records, 1)
+				value := records[0].Values[0]
+				switch testCase.columns[0] {
+				case "n":
+					require.Contains(t, value.(neo4jdriver.Node).ElementId, "4:pother:")
+				case "e":
+					require.Contains(t, value.(string), "4:pother:")
+				case "v":
+					require.Equal(t, int64(1), value)
+				case "entities":
+					entities := value.([]interface{})
+					require.Contains(t, entities[0].(neo4jdriver.Node).ElementId, "4:pother:")
+					relationship := entities[1].(neo4jdriver.Relationship)
+					require.Contains(t, relationship.ElementId, "5:pother:")
+					require.Equal(t, entities[0].(neo4jdriver.Node).ElementId, relationship.StartElementId)
+					require.Equal(t, entities[2].(neo4jdriver.Node).ElementId, relationship.EndElementId)
+				}
+			})
+		}
+	}
 }
 
 func TestGh683_BoltCompositeCommit(t *testing.T) {

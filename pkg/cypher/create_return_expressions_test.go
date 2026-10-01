@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -118,4 +119,53 @@ func TestMatchCreateReturnOverSeveralVariables(t *testing.T) {
 	res, err := exec.Execute(ctx, "MATCH (s:Seed) CREATE (a:P {v: 1})-[r:R {w: 2}]->(s) RETURN s.v + a.v AS x, r.w * a.v AS y, [s.v, a.v] AS l, a.v AS v, count(*) AS c", nil)
 	require.NoError(t, err)
 	assert.Equal(t, [][]interface{}{{int64(11), int64(2), []interface{}{int64(10), int64(1)}, int64(1), int64(1)}}, res.Rows)
+}
+
+func TestCreateProjectionCanonicalTypedParameters(t *testing.T) {
+	params := map[string]interface{}{
+		"whole":   float64(7),
+		"payload": map[string]interface{}{"values": []interface{}{float64(3), int64(4)}},
+	}
+	for _, query := range []string{
+		"CREATE (n:P {v: 1}) RETURN $whole, $payload, n.v",
+		"CREATE (n:P {v: 1}) CREATE (m:Q) RETURN $whole, $payload, n.v",
+		"CREATE (n:P {v: 1}) SET n.extra = true RETURN $whole, $payload, n.v",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec, _ := newTestExecutor(t)
+			ctx := context.WithValue(context.Background(), paramsKey, params)
+			var result *ExecuteResult
+			var err error
+			if strings.Contains(query, "CREATE (m") {
+				result, err = exec.executeMultipleCreates(ctx, query)
+			} else if strings.Contains(query, " SET ") {
+				result, err = exec.executeCreateSet(ctx, query)
+			} else {
+				result, err = exec.executeCreate(ctx, query)
+			}
+			require.NoError(t, err)
+			require.Equal(t, []string{"$whole", "$payload", "n.v"}, result.Columns)
+			require.Equal(t, [][]interface{}{{params["whole"], params["payload"], int64(1)}}, result.Rows)
+			require.NotNil(t, result.Stats)
+		})
+	}
+}
+
+func TestCreateProjectionCanonicalRowsAndPaths(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+	result, err := exec.executeMultipleCreates(ctx, "CREATE p = (a:P)-[r:R]->(b:Q) WITH p AS path, a, r, 2 AS scalar CREATE (c:C) RETURN DISTINCT length(path) AS hops, type(r) AS kind, scalar, c LIMIT 1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"hops", "kind", "scalar", "c"}, result.Columns)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, []interface{}{int64(1), "R", int64(2)}, result.Rows[0][:3])
+	require.IsType(t, &storage.Node{}, result.Rows[0][3])
+	require.Equal(t, 3, result.Stats.NodesCreated)
+	require.Equal(t, 1, result.Stats.RelationshipsCreated)
+
+	result, err = exec.executeCreate(ctx, "CREATE (n:N {v: 3}) RETURN * LIMIT 0")
+	require.NoError(t, err)
+	require.Equal(t, []string{"n"}, result.Columns)
+	require.Empty(t, result.Rows)
+	require.Equal(t, 1, result.Stats.NodesCreated)
 }

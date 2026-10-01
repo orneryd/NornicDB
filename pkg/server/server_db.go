@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"reflect"
 	"sort"
@@ -1278,13 +1279,17 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) inter
 }
 
 func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ...*transactionHTTPValueState) (interface{}, []interface{}) {
-	entityMeta := func(id, prefix, entityType, database string) []interface{} {
+	entityMeta := func(id, elementID, entityType string) []interface{} {
 		return []interface{}{map[string]interface{}{
-			"id": s.hashStringToInt64(id), "elementId": prefix + ":" + database + ":" + id,
+			"id": s.hashStringToInt64(id), "elementId": elementID,
 			"type": entityType, "deleted": false,
 		}}
 	}
 	switch typed := value.(type) {
+	case float32:
+		return transactionHTTPFloat(float64(typed), 32), []interface{}{nil}
+	case float64:
+		return transactionHTTPFloat(typed, 64), []interface{}{nil}
 	case cypher.CypherDate, cypher.CypherLocalTime, cypher.CypherTime, cypher.CypherLocalDateTime, cypher.CypherDateTime:
 		return typed.(fmt.Stringer).String(), []interface{}{nil}
 	case *cypher.CypherDuration:
@@ -1296,26 +1301,24 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		if typed == nil {
 			return nil, []interface{}{nil}
 		}
-		properties := typed.Properties
-		if properties == nil {
-			properties = map[string]interface{}{}
-		}
+		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
+		properties := converted.(map[string]interface{})
+		elementID := storage.NodeElementID(s.entityDatabase(dbName, typed.ID, ""), typed.ID)
 		if len(graph) > 0 && graph[0].graph != nil {
-			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: "4:" + s.entityDatabase(dbName, typed.ID, "") + ":" + string(typed.ID), Labels: typed.Labels, Properties: properties})
+			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Labels: typed.Labels, Properties: properties})
 		}
-		return properties, entityMeta(string(typed.ID), "4", "node", s.entityDatabase(dbName, typed.ID, ""))
+		return properties, entityMeta(string(typed.ID), elementID, "node")
 	case *storage.Edge:
 		if typed == nil {
 			return nil, []interface{}{nil}
 		}
-		properties := typed.Properties
-		if properties == nil {
-			properties = map[string]interface{}{}
-		}
+		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
+		properties := converted.(map[string]interface{})
+		elementID := storage.RelationshipElementID(s.entityDatabase(dbName, "", typed.ID), typed.ID)
 		if len(graph) > 0 && graph[0].graph != nil {
-			graph[0].addEdge(GraphRelationship{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: "5:" + s.entityDatabase(dbName, "", typed.ID) + ":" + string(typed.ID), Type: typed.Type, StartNode: "4:" + s.entityDatabase(dbName, typed.StartNode, "") + ":" + string(typed.StartNode), EndNode: "4:" + s.entityDatabase(dbName, typed.EndNode, "") + ":" + string(typed.EndNode), Properties: properties})
+			graph[0].addEdge(GraphRelationship{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), EndNode: storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode), Properties: properties})
 		}
-		return properties, entityMeta(string(typed.ID), "5", "relationship", s.entityDatabase(dbName, "", typed.ID))
+		return properties, entityMeta(string(typed.ID), elementID, "relationship")
 	case *cypher.PathResult:
 		if typed == nil {
 			return nil, []interface{}{nil}
@@ -1375,6 +1378,23 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			}
 		}
 		return value, []interface{}{nil}
+	}
+}
+
+func transactionHTTPFloat(value float64, bits int) interface{} {
+	switch {
+	case math.IsInf(value, 1):
+		return "Infinity"
+	case math.IsInf(value, -1):
+		return "-Infinity"
+	case math.IsNaN(value):
+		return "NaN"
+	default:
+		text := strconv.FormatFloat(value, 'g', -1, bits)
+		if !strings.ContainsAny(text, ".eE") {
+			text += ".0"
+		}
+		return json.Number(text)
 	}
 }
 
@@ -1766,6 +1786,10 @@ func (s *Server) runRequestStatement(
 		if errors.As(err, &own) {
 			return &own.QueryError
 		}
+		if failure := statementError(err); result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
+			s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
+			return &failure
+		}
 		queryErr := statementFailure(response, executor, queryStatement, err)
 		return &queryErr
 	}
@@ -1825,11 +1849,45 @@ func (s *Server) runOneShotTransaction(
 		response.Errors = append(response.Errors, *openErr)
 		return
 	}
-	if s.runRequestStatements(s.withRequestIdentity(r.Context(), r, claims), r.Header.Get("Authorization"), claims, dbName, statements, s.sessionStatementRunner(session), localize, response) {
-		s.rollbackFailedTransaction(r.Context(), session, response)
+	wrote := false
+	run := func(ctx context.Context, target, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
+		if session == nil {
+			var openErr *QueryError
+			session, openErr = s.openRequestTransaction(r, claims, dbName, localize)
+			if openErr != nil {
+				return nil, nil, &requestStatementError{QueryError: *openErr}
+			}
+		}
+		result, executor, err := s.sessionStatementRunner(session)(ctx, target, query, params)
+		var detail interface{ BoltErrorDetail() string }
+		code, _ := mapSessionExecError(err)
+		if err != nil && code == "Neo.DatabaseError.Transaction.TransactionStartFailed" && errors.As(err, &detail) && detail.BoltErrorDetail() == "InvalidCallInTransactions" {
+			if wrote {
+				return nil, executor, &requestStatementError{QueryError{
+					Code:    "Neo.DatabaseError.Statement.ExecutionFailed",
+					Message: "Expected transaction state to be empty when calling transactional subquery. (Transactions committed: 0)",
+				}}
+			}
+			if rollbackErr := s.txSessions.RollbackAndDelete(ctx, session); rollbackErr != nil {
+				return nil, executor, rollbackErr
+			}
+			session = nil
+			return s.autoCommitStatementRunner(r.Header.Get("Authorization"))(ctx, target, query, params)
+		}
+		if err == nil && queryStatsFromResult(result).ContainsUpdates {
+			wrote = true
+		}
+		return result, executor, err
+	}
+	if s.runRequestStatements(s.withRequestIdentity(r.Context(), r, claims), r.Header.Get("Authorization"), claims, dbName, statements, run, localize, response) {
+		if session != nil {
+			s.rollbackFailedTransaction(r.Context(), session, response)
+		}
 		return
 	}
-	s.commitRequestTransaction(r.Context(), session, response)
+	if session != nil {
+		s.commitRequestTransaction(r.Context(), session, response)
+	}
 }
 
 // openRequestTransaction opens a transaction on dbName for an HTTP request.

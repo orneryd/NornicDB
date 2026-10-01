@@ -266,6 +266,9 @@ func parseSetAssignmentTarget(target string) (variable string, property string, 
 //	splitSetAssignments("n.embedding = [0.1, 0.2], n.dim = 4")
 //	// Returns: ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
 func splitSetAssignments(setClause string) []string {
+	if strings.TrimSpace(setClause) == "" {
+		return nil
+	}
 	var assignments []string
 	var current strings.Builder
 	parenDepth := 0
@@ -292,19 +295,14 @@ func splitSetAssignments(setClause string) []string {
 			parenDepth--
 			current.WriteRune(c)
 		case c == ',' && !inQuote && parenDepth == 0:
-			if s := strings.TrimSpace(current.String()); s != "" {
-				assignments = append(assignments, s)
-			}
+			assignments = append(assignments, strings.TrimSpace(current.String()))
 			current.Reset()
 		default:
 			current.WriteRune(c)
 		}
 	}
 
-	// Add final assignment
-	if s := strings.TrimSpace(current.String()); s != "" {
-		assignments = append(assignments, s)
-	}
+	assignments = append(assignments, strings.TrimSpace(current.String()))
 
 	return assignments
 }

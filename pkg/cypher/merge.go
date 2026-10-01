@@ -671,7 +671,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 			Labels:     labels,
 			Properties: matchProps,
 		}
-		if err := validatePropertyValues(node.Properties); err != nil {
+		if err := validateMergePatternProperties(node.Properties, "node"); err != nil {
 			return nil, err
 		}
 		actualID, err := store.CreateNode(node)
@@ -689,6 +689,9 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 		result.Columns = []string{varName}
 		result.Rows = append(result.Rows, []interface{}{node})
 		return result, nil
+	}
+	if err := validateMergePatternProperties(matchProps, "node"); err != nil {
+		return nil, err
 	}
 
 	// Try to find existing node
@@ -2043,6 +2046,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		labels = e.extractLabels(mergePattern)
 		matchProps = make(map[string]interface{})
 	}
+	if err := validateMergePatternProperties(matchProps, "node"); err != nil {
+		return nil, err
+	}
 
 	// Try to find existing node
 	var existingNode *storage.Node
@@ -2219,7 +2225,7 @@ func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText st
 				}
 			}
 		}
-		if value == nil {
+		if value == nil && strings.EqualFold(valueText, "null") {
 			continue
 		}
 		props[key] = value
@@ -2258,6 +2264,15 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 
 	parsedPattern, err := e.parseMergeRelationshipPattern(ctx, pattern, nodeContext, relContext)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateMergePatternProperties(parsedPattern.startNodePattern.properties, "node"); err != nil {
+		return nil, err
+	}
+	if err := validateMergePatternProperties(parsedPattern.endNodePattern.properties, "node"); err != nil {
+		return nil, err
+	}
+	if err := validateMergePatternProperties(parsedPattern.properties, "relationship"); err != nil {
 		return nil, err
 	}
 
@@ -2990,6 +3005,7 @@ func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelin
 // the query returns 0 rows (the chain is broken). The MERGE still executes
 // for nodes found before the break.
 func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	ctx = withExpressionFailureSlot(ctx)
 	originalFabricBindings := e.fabricRecordBindings
 	defer func() {
 		e.fabricRecordBindings = originalFabricBindings
@@ -3071,36 +3087,19 @@ func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher stri
 				return nil, localizedError(localization.CypherMergeForeachFailed(err), err)
 			}
 		} else if strings.HasPrefix(upperSeg, "RETURN") {
-			// RETURN segment: build final result
-			if chainBroken {
-				// Chain broken - return 0 rows
-				returnClause := strings.TrimSpace(segment[6:])
-				items := e.parseReturnItems(returnClause)
-				for _, item := range items {
-					if item.alias != "" {
-						result.Columns = append(result.Columns, item.alias)
-					} else {
-						result.Columns = append(result.Columns, item.expr)
-					}
+			rows := []pipelineRow{}
+			if !chainBroken {
+				row := e.mergeBindingRow(ctx, nodeContext, relContext)
+				for name, value := range scalarContext {
+					row[name] = value
 				}
-				// No rows - chain was broken
-				return result, nil
+				rows = append(rows, row)
 			}
-
-			// Build result from context
-			returnClause := strings.TrimSpace(segment[6:])
-			items := e.parseReturnItems(returnClause)
-
-			row := make([]interface{}, len(items))
-			for i, item := range items {
-				if item.alias != "" {
-					result.Columns = append(result.Columns, item.alias)
-				} else {
-					result.Columns = append(result.Columns, item.expr)
-				}
-				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeContext, relContext)
+			projected, err := e.projectMergeReturn(ctx, rows, segment)
+			if err != nil {
+				return nil, err
 			}
-			result.Rows = append(result.Rows, row)
+			result.Columns, result.Rows = projected.Columns, projected.Rows
 		} else {
 			// Segment after WITH: starts with a WITH projection (e.g., "e") followed by one or more clauses.
 			// Example:
@@ -3115,6 +3114,12 @@ func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher stri
 			segmentScalarCtx := scalarContext
 
 			remaining, newNodeCtx, newRelCtx, newScalarCtx := e.applyWithProjection(ctx, segment, segmentNodeCtx, segmentRelCtx, segmentScalarCtx)
+			if failure := getExpressionFailure(ctx); failure != nil {
+				return nil, failure
+			}
+			if remaining == "" {
+				chainBroken = true
+			}
 			segmentNodeCtx = newNodeCtx
 			segmentRelCtx = newRelCtx
 			segmentScalarCtx = newScalarCtx
@@ -3229,10 +3234,10 @@ func (e *StorageExecutor) applyWithProjection(ctx context.Context, segment strin
 		return "", nodeCtx, relCtx, scalarCtx
 	}
 
-	keywords := []string{"OPTIONAL MATCH", "MATCH", "MERGE", "FOREACH", "RETURN"}
+	keywords := []string{"OPTIONAL MATCH", "MATCH", "MERGE", "FOREACH", "CREATE", "SET", "DELETE", "REMOVE", "CALL", "UNWIND", "RETURN"}
 	nextClausePos := -1
 	for _, kw := range keywords {
-		if idx := findKeywordIndex(segment, kw); idx >= 0 {
+		if idx := topLevelKeywordIndex(segment, kw); idx >= 0 {
 			if nextClausePos == -1 || idx < nextClausePos {
 				nextClausePos = idx
 			}
@@ -3246,51 +3251,29 @@ func (e *StorageExecutor) applyWithProjection(ctx context.Context, segment strin
 	withPart := strings.TrimSpace(segment[:nextClausePos])
 	remaining = strings.TrimSpace(segment[nextClausePos:])
 
-	// WITH * keeps everything.
-	if strings.TrimSpace(withPart) == "*" {
-		return remaining, nodeCtx, relCtx, scalarCtx
+	row := e.mergeBindingRow(ctx, nodeCtx, relCtx)
+	for name, value := range scalarCtx {
+		row[name] = value
 	}
-
-	items := e.parseReturnItems(withPart)
-	if len(items) == 0 {
-		// If we can't parse, avoid dropping context.
-		return remaining, nodeCtx, relCtx, scalarCtx
-	}
-
+	rows, ok := e.pipelineApplyWith(ctx, []pipelineRow{row}, "WITH "+withPart)
 	newNodeCtx = make(map[string]*storage.Node)
 	newRelCtx = make(map[string]*storage.Edge)
 	newScalarCtx = make(map[string]interface{})
-	for _, item := range items {
-		alias := strings.TrimSpace(item.alias)
-		expr := strings.TrimSpace(item.expr)
-		if alias == "" {
-			alias = expr
-		}
-		if alias == "" {
-			continue
-		}
-		if n, ok := nodeCtx[expr]; ok {
-			newNodeCtx[alias] = n
-			continue
-		}
-		if r, ok := relCtx[expr]; ok {
-			newRelCtx[alias] = r
-			continue
-		}
-		if scalarCtx != nil {
-			if val, ok := scalarCtx[expr]; ok {
-				newScalarCtx[alias] = val
-				continue
-			}
-		}
-		if item.alias != "" {
-			if value := e.evaluateExpressionWithContext(ctx, expr, nodeCtx, relCtx); value != nil {
-				if literal, ok := value.(string); ok && literal == expr {
-					continue
-				}
-				newScalarCtx[alias] = value
-				continue
-			}
+	if !ok {
+		pipelineItemUnevaluable(ctx, withPart)
+		return remaining, newNodeCtx, newRelCtx, newScalarCtx
+	}
+	if len(rows) == 0 {
+		return "", newNodeCtx, newRelCtx, newScalarCtx
+	}
+	for name, value := range rows[0] {
+		switch bound := value.(type) {
+		case *storage.Node:
+			newNodeCtx[name] = bound
+		case *storage.Edge:
+			newRelCtx[name] = bound
+		default:
+			newScalarCtx[name] = value
 		}
 	}
 
@@ -3473,6 +3456,9 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 		varName, labels, props, err = e.parseMergePattern(ctx, pattern)
 	}
 	if err != nil {
+		return nil, "", err
+	}
+	if err := validateMergePatternProperties(props, "node"); err != nil {
 		return nil, "", err
 	}
 

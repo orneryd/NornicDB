@@ -22,9 +22,10 @@ func TestExecuteCreateSet_WithPipelineBranches(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "WITH clause cannot be empty")
 
-	_, err = exec.executeCreateSet(ctx, "CREATE (n:Node) SET n.x = 1 WITH 1 AS one RETURN one")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "does not resolve to a node or relationship")
+	scalar, err := exec.executeCreateSet(ctx, "CREATE (n:Node) SET n.x = 1 WITH 1 AS one RETURN one")
+	require.NoError(t, err)
+	require.Equal(t, []string{"one"}, scalar.Columns)
+	require.Equal(t, [][]interface{}{{int64(1)}}, scalar.Rows)
 
 	_, err = exec.executeCreateSet(ctx, "CREATE (n:Node) SET n.x = 1 DELETE n RETURN n")
 	require.Error(t, err)

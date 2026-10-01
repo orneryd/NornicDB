@@ -85,9 +85,9 @@ func TestApplyWithProjection_EmptyProjectionKeepsContext(t *testing.T) {
 
 	remaining, outNodes, outRels, outScalars := exec.applyWithProjection(ctx, "MATCH (n) RETURN n", nodeCtx, relCtx, scalarCtx)
 	require.Equal(t, "MATCH (n) RETURN n", remaining)
-	require.Empty(t, outNodes)
+	require.Equal(t, nodeCtx, outNodes)
 	require.Empty(t, outRels)
-	require.Empty(t, outScalars)
+	require.Equal(t, scalarCtx, outScalars)
 }
 
 func TestExecuteMergeWithContext_RelationshipChainAndSet(t *testing.T) {

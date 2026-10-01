@@ -95,6 +95,9 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				}
 				for _, item := range splitTopLevelComma(strings.TrimSpace(body[:end])) {
 					expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+					if err := validateExpressionOperandCompleteness(expression); err != nil {
+						return err
+					}
 					if aliasIndex := topLevelKeywordIndex(item, "AS"); aliasIndex >= 0 {
 						alias := strings.TrimSpace(item[aliasIndex+len("AS"):])
 						if simpleSemanticIdentifier(alias) == "" && !(len(alias) >= 2 && alias[0] == '`' && alias[len(alias)-1] == '`') {
@@ -300,6 +303,9 @@ func validateWithProjectionSemantics(cypher string) error {
 				continue
 			}
 			expression, alias := parseProjectionExprAlias(item)
+			if err := validateExpressionOperandCompleteness(expression); err != nil {
+				return err
+			}
 			explicitAlias := topLevelKeywordIndex(item, "AS") > 0
 			if !explicitAlias && expression != "*" && simpleSemanticIdentifier(expression) == "" {
 				if containsMalformedCreateClauseToken(expression) {

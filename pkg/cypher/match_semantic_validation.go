@@ -77,6 +77,18 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			}
 		}
 		switch clause.kind {
+		case pipelineClauseCallSubquery:
+			body, _, _, _ := e.parseCallSubquery(clause.text)
+			if branches, _, _, union := parseTopLevelUnionBranches(body); union && len(branches) > 0 {
+				body = branches[0]
+			}
+			if returnIndex := topLevelKeywordIndex(body, "RETURN"); returnIndex >= 0 {
+				for _, name := range pipelineReturnSourceColumns(body[returnIndex:]) {
+					if name != "*" {
+						scope[name] = matchBindingUnknown
+					}
+				}
+			}
 		case pipelineClauseCall:
 			// CALL proc() YIELD x: a yielded name must be new (Neo4j:
 			// VariableAlreadyBound). YIELD * names nothing statically, so

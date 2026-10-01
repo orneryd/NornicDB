@@ -629,6 +629,27 @@ func (c *cypherFabricExecutor) ExecuteQuery(ctx context.Context, dbName string, 
 	return c.ExecuteQueryWithRecord(ctx, dbName, engine, query, params, nil)
 }
 
+func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, bool, error) {
+	clauses, supported := canExecuteAsPipeline(query)
+	if !supported || containsRelExistencePattern(query) {
+		return nil, nil, false, nil
+	}
+	for _, clause := range clauses {
+		if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseUnwind && clause.kind != pipelineClauseReturn {
+			return nil, nil, false, nil
+		}
+	}
+	keywords := queryKeywords(query)
+	if keywords["MATCH"] || keywords["STARTNODE"] || keywords["ENDNODE"] || keywords["SHORTESTPATH"] {
+		return nil, nil, false, nil
+	}
+	executor := c.base.cloneForStorage(c.base.storage)
+	executor.fabricRecordBindings = recordBindings
+	ctx = withExecutionDatabase(WithAuthToken(ctx, c.authToken), dbName)
+	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params)
+	return columns, rows, true, err
+}
+
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
 
@@ -651,6 +672,10 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 	}
 
 	ctx = withExecutionDatabase(ctx, dbName)
+	return c.executeFragmentQuery(ctx, exec, query, params)
+}
+
+func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 	result, err := exec.executeInternal(ctx, query, params)
 	if err != nil {
 		return nil, nil, err

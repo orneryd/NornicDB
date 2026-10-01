@@ -135,6 +135,13 @@ func TestGh648_SharedReturnBoundary(t *testing.T) {
 }
 
 func TestGh648_OuterScopeAndColumnNames(t *testing.T) {
+	t.Run("independent_return_bindings", func(t *testing.T) {
+		exec := newGh648Executor(t)
+		rows, _, handled, err := exec.pipelineApplyCallSubquery(context.Background(), []pipelineRow{{"v": int64(1)}}, "CALL { RETURN 2 AS c }")
+		require.NoError(t, err)
+		require.True(t, handled)
+		require.Equal(t, []pipelineRow{{"v": int64(1), "c": int64(2)}}, rows)
+	})
 	for _, testCase := range []struct {
 		query   string
 		columns []string
@@ -255,6 +262,143 @@ func TestMonster648TransactionalBatchBindings(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, want, result.Rows)
 			require.Equal(t, 3, result.Stats.NodesCreated)
+		})
+	}
+}
+
+func TestPR771TransactionalCallChainedRows(t *testing.T) {
+	exec := newGh648Executor(t)
+	ctx := context.Background()
+	query := "CALL { UNWIND [1,2,3] AS i RETURN i } CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS RETURN i ORDER BY i"
+	clauses, split := splitPipelineClausesAllowingProcedureCalls(query)
+	t.Logf("clauses: split=%v values=%+v", split, clauses)
+	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubquery(ctx, []pipelineRow{{"i": int64(1)}}, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS")
+	t.Logf("call probe: rows=%+v stats=%+v handled=%v err=%v", callRows, callStats, callHandled, callErr)
+	runner := newGh648Executor(t)
+	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubquery(ctx, []pipelineRow{{}}, clauses[0].text)
+	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubquery(ctx, firstRows, clauses[1].text)
+	t.Logf("step probes: first=%+v stats=%+v handled=%v err=%v second=%+v stats=%+v handled=%v err=%v", firstRows, firstStats, firstHandled, firstErr, secondRows, secondStats, secondHandled, secondErr)
+	manual, manualHandled, manualErr := runner.runPipelineClauses(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses)
+	t.Logf("runner probe: handled=%v err=%v result=%+v", manualHandled, manualErr, manual)
+	probe := newGh648Executor(t).executePipeline(ctx, query)
+	t.Logf("pipeline probe: handled=%v err=%v result=%+v", probe.terminal(), probe.err, probe.result)
+	result, err := exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}}, result.Rows)
+	require.Equal(t, 3, result.Stats.NodesCreated)
+	stored, err := exec.Execute(ctx, "MATCH (x:X) RETURN x.i AS i ORDER BY i", nil)
+	require.NoError(t, err)
+	require.Equal(t, result.Rows, stored.Rows)
+}
+
+func TestPR771CallOrderModifiersCanonicalExpressions(t *testing.T) {
+	exec := newGh648Executor(t)
+	input := &ExecuteResult{
+		Columns: []string{"value"},
+		Rows:    [][]interface{}{{int64(1)}, {int64(4)}, {int64(3)}, {int64(2)}},
+		Stats:   &QueryStats{NodesCreated: 4},
+	}
+	result, err := exec.processAfterCallSubquery(context.Background(), input, "ORDER BY value % 2, value DESC SKIP 1 LIMIT 2")
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}, {int64(3)}}, result.Rows)
+	require.Same(t, input.Stats, result.Stats)
+}
+
+func TestPR771TransactionalCallBodyIsOneOuterRow(t *testing.T) {
+	exec := newGh648Executor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Src {v:2}), (:Src {v:1}), (:Src {v:0})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CALL { MATCH (s:Src) WITH s ORDER BY s.v DESC CREATE (:Dst {v:1/s.v}) } IN TRANSACTIONS OF 2 ROWS", nil)
+	require.Error(t, err)
+	stored, err := exec.Execute(ctx, "MATCH (d:Dst) RETURN count(d)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, stored.Rows)
+}
+
+func TestPR771TransactionalCallPriorExplicitWrites(t *testing.T) {
+	for _, query := range []string{
+		"CALL { CREATE (:X) } IN TRANSACTIONS",
+		"MATCH (n:Prior) CALL (n) { CREATE (:X) } IN TRANSACTIONS",
+		"MATCH (n:Prior) CALL { WITH n CREATE (:X) } IN TRANSACTIONS",
+		"UNWIND [1] AS i CALL (i) { CREATE (:X) } IN TRANSACTIONS",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec := newGh648Executor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, "CREATE (:Prior)", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, query, nil)
+			require.Error(t, err)
+			var classified interface{ BoltErrorCode() string }
+			require.ErrorAs(t, err, &classified)
+			require.Equal(t, "Neo.DatabaseError.Statement.ExecutionFailed", classified.BoltErrorCode())
+			require.Equal(t, "Expected transaction state to be empty when calling transactional subquery. (Transactions committed: 0)", err.Error())
+			_, err = exec.Execute(ctx, "COMMIT", nil)
+			require.Error(t, err)
+			stored, err := exec.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(0)}}, stored.Rows)
+		})
+	}
+}
+
+func TestPR771TransactionalCallExplicitInputBoundary(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		query string
+		empty bool
+	}{
+		{"standalone", "CALL { CREATE (:X) } IN TRANSACTIONS", false},
+		{"scoped match", "MATCH (n:Seed) CALL (n) { CREATE (:X) } IN TRANSACTIONS", false},
+		{"legacy match", "MATCH (n:Seed) CALL { WITH n CREATE (:X) } IN TRANSACTIONS", false},
+		{"unwind returning", "UNWIND [1] AS i CALL (i) { CREATE (:X) RETURN i AS value } IN TRANSACTIONS RETURN value", false},
+		{"empty scoped match", "MATCH (n:Missing) CALL (n) { CREATE (:X) } IN TRANSACTIONS", true},
+		{"empty legacy match", "MATCH (n:Missing) CALL { WITH n CREATE (:X) } IN TRANSACTIONS RETURN count(*) AS c", true},
+		{"empty unwind", "UNWIND [] AS i CALL (i) { CREATE (:X) } IN TRANSACTIONS", true},
+		{"empty unwind returning", "UNWIND [] AS i CALL (i) { CREATE (:X) RETURN i AS value } IN TRANSACTIONS RETURN count(*) AS c", true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			exec := newGh648Executor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE (:Seed)", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(ctx, testCase.query, nil)
+			if testCase.empty {
+				require.NoError(t, err)
+				if len(result.Columns) == 0 {
+					require.Empty(t, result.Rows)
+				} else {
+					require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+				}
+			} else {
+				var classified interface{ BoltErrorCode() string }
+				require.ErrorAs(t, err, &classified)
+				require.Equal(t, "Neo.DatabaseError.Transaction.TransactionStartFailed", classified.BoltErrorCode())
+			}
+			_, err = exec.Execute(ctx, "ROLLBACK", nil)
+			require.NoError(t, err)
+			stored, err := exec.Execute(ctx, "MATCH (x:X) RETURN count(x)", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(0)}}, stored.Rows)
+		})
+	}
+}
+
+func TestPR771TransactionalCallOuterBatchPersistence(t *testing.T) {
+	for _, suffix := range []string{"", " RETURN i AS value"} {
+		t.Run(suffix, func(t *testing.T) {
+			exec := newGh648Executor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "UNWIND [2,1,0] AS i CALL (i) { CREATE (:Dst {v:1/i})"+suffix+" } IN TRANSACTIONS OF 2 ROWS", nil)
+			require.Error(t, err)
+			stored, err := exec.Execute(ctx, "MATCH (d:Dst) RETURN count(d)", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(2)}}, stored.Rows)
 		})
 	}
 }

@@ -59,7 +59,7 @@ func (h *indexedOrderHeap) Pop() interface{} {
 // only the best limit nodes are retained while every boundary tie is examined.
 func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int) ([]*storage.Node, bool, error) {
 	compareWithinGroup := func(a, b *storage.Node) int {
-		if cmp := e.compareNodeOrderSpecs(a, b, specs[1:]); cmp != 0 {
+		if cmp := e.compareNodeOrderSpecs(a, b, specs); cmp != 0 {
 			return cmp
 		}
 		return strings.Compare(string(a.ID), string(b.ID))
@@ -93,13 +93,6 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 			if filter != nil && !filter(node) {
 				continue
 			}
-			if len(specs) == 1 {
-				nodes = append(nodes, node)
-				if len(nodes) == limit {
-					return false
-				}
-				continue
-			}
 			if groupTop.Len() < remaining {
 				heap.Push(groupTop, node)
 			} else if compareWithinGroup(node, groupTop.nodes[0]) < 0 {
@@ -107,14 +100,12 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 				heap.Fix(groupTop, 0)
 			}
 		}
-		if len(specs) > 1 {
-			sort.Slice(groupTop.nodes, func(i, j int) bool {
-				return compareWithinGroup(groupTop.nodes[i], groupTop.nodes[j]) < 0
-			})
-			nodes = append(nodes, groupTop.nodes...)
-			if len(nodes) == limit {
-				return false
-			}
+		sort.Slice(groupTop.nodes, func(i, j int) bool {
+			return compareWithinGroup(groupTop.nodes[i], groupTop.nodes[j]) < 0
+		})
+		nodes = append(nodes, groupTop.nodes...)
+		if len(nodes) == limit {
+			return false
 		}
 		return true
 	})

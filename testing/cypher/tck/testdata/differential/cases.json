@@ -412,5 +412,409 @@
     "setup": ["CREATE (:T {id: 1})"],
     "query": "MATCH (a:T) FOREACH (v IN [1, 2] | MERGE (:X {k: v})) RETURN a.id AS id",
     "ordered": true
+  },
+  {
+    "name": "monster 728 consecutive match shared source",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc) MATCH (b:Doc) RETURN count(*) AS c, count(b) AS b, sum(a.id) AS s"
+  },
+  {
+    "name": "monster 728 product with both nodes",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a,b RETURN count(*) AS c, sum(a.id) AS s"
+  },
+  {
+    "name": "monster 728 product with one node",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a RETURN count(*) AS c, sum(a.id) AS s"
+  },
+  {
+    "name": "monster 728 product with scalar projection",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a.id AS x RETURN count(*) AS c, sum(x) AS s"
+  },
+  {
+    "name": "monster 728 composed match with grouped aggregates",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc) WITH a MATCH (b:Doc) WITH a.id % 2 AS k,b RETURN k,count(*) AS c,sum(b.id) AS s ORDER BY k",
+    "ordered": true
+  },
+  {
+    "name": "monster 728 blocking distinct with product",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH DISTINCT a.id AS x RETURN sum(x) AS s"
+  },
+  {
+    "name": "monster 728 product window before aggregate",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a,b ORDER BY a.id,b.id SKIP 1 LIMIT 2 RETURN sum(a.id) AS s"
+  },
+  {
+    "name": "monster 728 product projected filter",
+    "setup": ["CREATE (:Doc {id: 0}), (:Doc {id: 1})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a.id AS x WHERE x = 1 RETURN count(*) AS c"
+  },
+  {
+    "name": "monster 728 product empty with aggregation",
+    "setup": ["CREATE (:Doc {id: 0})"],
+    "query": "MATCH (a:Doc), (b:Missing) WITH a.id AS x RETURN count(*) AS c, sum(x) AS s"
+  },
+  {
+    "name": "monster 514 computed literal map property",
+    "query": "CREATE (n:T {s: 'a' + 'b', l: size([1,2]), m: {k: 1}.k}) RETURN n.s,n.l,n.m"
+  },
+  {
+    "name": "monster 514 incomplete create arithmetic admission",
+    "query": "CREATE (n:T {v: 1 +}) RETURN n.v"
+  },
+  {
+    "name": "monster 514 incomplete second create no partial effects",
+    "query": "CREATE (:Before) CREATE (n:T {v: 1 +}) RETURN n.v"
+  },
+  {
+    "name": "monster 514 incomplete merge arithmetic admission",
+    "query": "MERGE (n:T {v: 1 +}) RETURN n.v"
+  },
+  {
+    "name": "monster 514 incomplete set arithmetic admission",
+    "setup": ["CREATE (:T {v: 1})"],
+    "query": "MATCH (n:T) SET n.v = 1 + RETURN n.v"
+  },
+  {
+    "name": "monster 698 full lowercase dotted I",
+    "query": "RETURN toLower('\u0130') AS l,toLower('\u0130I') AS l2,lower('\u0130') AS l3"
+  },
+  {
+    "name": "monster 698 lowercase row null and sigma",
+    "query": "UNWIND ['\u0130I', null, '\u039f\u03a3'] AS s RETURN toLower(s) AS l",
+    "ordered": true
+  },
+  {
+    "name": "monster 668 temporal node property",
+    "query": "CREATE (n:D {d: date('2020-01-02')}) RETURN n"
+  },
+  {
+    "name": "monster 668 temporal relationship property",
+    "query": "CREATE ()-[r:R {d: date('2020-01-02')}]->() RETURN r"
+  },
+  {
+    "name": "monster 668 temporal property nested entity",
+    "query": "CREATE (n:D {t: datetime('2020-01-02T03:04:05Z')}) RETURN [n] AS l"
+  },
+  {
+    "name": "monster 668 temporal list property on entity",
+    "query": "CREATE (n:D {d: [date('2020-01-02')]}) RETURN n"
+  },
+  {
+    "name": "monster 738 system graph read admission",
+    "query": "USE system MATCH (n) RETURN count(n) AS c"
+  },
+  {
+    "name": "canonical indexed comprehension map projection",
+    "query": "WITH [{k: 1, texts: ['a']}, {k: 2, texts: ['b']}] AS grouped WITH [g IN grouped WHERE g.k = 1][0] AS hit RETURN hit.texts AS texts"
+  },
+  {
+    "name": "monster math round null precision",
+    "query": "RETURN round(1.5, null) AS value",
+    "no_effects": true
+  },
+  {
+    "name": "monster math round negative precision",
+    "query": "RETURN round(1.5, -1) AS value",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "expected_message": "Precision argument to 'round()' cannot be negative",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "monster math round invalid mode",
+    "query": "RETURN round(1.5, 0, 'BAD') AS value",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "expected_message": "Unknown rounding mode. Valid values are: CEILING, FLOOR, UP, DOWN, HALF_EVEN, HALF_UP, HALF_DOWN, UNNECESSARY.",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "monster math acos half",
+    "query": "RETURN acos(.5) AS value",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 full unicode fi ligature uppercase aliases",
+    "query": "RETURN toUpper('\ufb01') AS first, upper('\ufb01') AS second, toUpper('a\ufb01z') AS embedded, upper('a\ufb01z') AS embeddedAlias",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 float string lower threshold",
+    "parameters": {"below": 0.0009999999999999998, "at": 0.001, "above": 0.0010000000000000002},
+    "query": "RETURN toString($below) AS below, toString($at) AS at, toString($above) AS above, toString(-$below) AS negativeBelow, toString(-$at) AS negativeAt",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 float string upper threshold",
+    "parameters": {"below": 9999999.999999998, "at": 10000000.0, "above": 10000000.000000002},
+    "query": "RETURN toString($below) AS below, toString($at) AS at, toString($above) AS above, toString(-$below) AS negativeBelow, toString(-$at) AS negativeAt",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 float string threshold literals",
+    "query": "RETURN toString(0.0009999999999999998) AS belowSmall, toString(1e-3) AS small, toString(9999999.999999998) AS belowLarge, toString(1e7) AS large",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 large float reverse concatenation and list conversion",
+    "parameters": {"value": 1.5e20},
+    "query": "RETURN toString($value) AS text, reverse(toString($value)) AS reversed, 'v=' + $value AS prefix, $value + '=v' AS suffix, toStringList([$value, 1.5e20, -0.0, null]) AS strings",
+    "no_effects": true
+  },
+  {
+    "name": "monster 698 structured parameter conversion types",
+    "parameters": {"values": [1, 1.0, null, true, "2", "BAD"], "nested": {"large": 9007199254740993, "float": 1.0}},
+    "query": "RETURN toIntegerList($values) AS integers, toFloatList($values) AS floats, toStringList($values) AS strings, $nested.large AS large, $nested.float AS floating",
+    "no_effects": true
+  },
+  {"name": "division matrix integer one by integer one", "parameters": {"lhs": 1, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by integer zero", "parameters": {"lhs": 1, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by float one", "parameters": {"lhs": 1, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by positive zero", "parameters": {"lhs": 1, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by negative zero", "parameters": {"lhs": 1, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer one by null", "parameters": {"lhs": 1, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by integer one", "parameters": {"lhs": 0, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by integer zero", "parameters": {"lhs": 0, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by float one", "parameters": {"lhs": 0, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by positive zero", "parameters": {"lhs": 0, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by negative zero", "parameters": {"lhs": 0, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix integer zero by null", "parameters": {"lhs": 0, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by integer one", "parameters": {"lhs": 1.0, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by integer zero", "parameters": {"lhs": 1.0, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by float one", "parameters": {"lhs": 1.0, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by positive zero", "parameters": {"lhs": 1.0, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by negative zero", "parameters": {"lhs": 1.0, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix float one by null", "parameters": {"lhs": 1.0, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by integer one", "parameters": {"lhs": 0.0, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by integer zero", "parameters": {"lhs": 0.0, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by float one", "parameters": {"lhs": 0.0, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by positive zero", "parameters": {"lhs": 0.0, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by negative zero", "parameters": {"lhs": 0.0, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive zero by null", "parameters": {"lhs": 0.0, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by integer one", "parameters": {"lhs": -0.0, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by integer zero", "parameters": {"lhs": -0.0, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by float one", "parameters": {"lhs": -0.0, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by positive zero", "parameters": {"lhs": -0.0, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by negative zero", "parameters": {"lhs": -0.0, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative zero by null", "parameters": {"lhs": -0.0, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by integer one", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by integer zero", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by float one", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by positive zero", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by negative zero", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix NaN by null", "parameters": {"lhs": {"$tck": "NaN"}, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by integer one", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by integer zero", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by float one", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by positive zero", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by negative zero", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix positive infinity by null", "parameters": {"lhs": {"$tck": "Inf"}, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by integer one", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": 1}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by integer zero", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": 0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by float one", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": 1.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by positive zero", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": 0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by negative zero", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": -0.0}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {"name": "division matrix negative infinity by null", "parameters": {"lhs": {"$tck": "-Inf"}, "rhs": null}, "query": "RETURN $lhs / $rhs AS value", "no_effects": true},
+  {
+    "name": "division literal integer zero diagnostic",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "RETURN 1 / 0 AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division literal negative integer truncation",
+    "query": "RETURN -7 / 2 AS negative, 7 / -2 AS denominator, -7 / -2 AS both",
+    "no_effects": true
+  },
+  {
+    "name": "division literal signed zeros and null",
+    "query": "RETURN 1.0 / 0.0 AS positive, 1.0 / -0.0 AS negative, 0.0 / 0.0 AS nan, null / 0 AS missing, -0.0 / 1.0 AS zero",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime WHERE integer zero diagnostic",
+    "setup": ["CREATE (:Division {numerator: 1, denominator: 0})"],
+    "query": "MATCH (n:Division) WHERE n.numerator / n.denominator > 0 RETURN n.numerator AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime function integer zero diagnostic",
+    "parameters": {"numerator": 1, "denominator": 0},
+    "query": "RETURN abs($numerator / $denominator) AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime property integer zero diagnostic",
+    "setup": ["CREATE (:Division {numerator: 1, denominator: 0, value: 7})"],
+    "query": "MATCH (n:Division) SET n.value = n.numerator / n.denominator RETURN n.value AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime create integer zero has no effects",
+    "parameters": {"numerator": 1, "denominator": 0},
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE (n:Division {value: $numerator / $denominator}) RETURN n.value AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime WHERE floating zero",
+    "setup": ["CREATE (:Division {numerator: 1.0, denominator: -0.0})"],
+    "query": "MATCH (n:Division) WHERE n.numerator / n.denominator < 0 RETURN toString(n.numerator / n.denominator) AS value",
+    "no_effects": true
+  },
+  {
+    "name": "division runtime function floating zero",
+    "parameters": {"numerator": 0.0, "denominator": -0.0},
+    "query": "RETURN toString(abs($numerator / $denominator)) AS value",
+    "no_effects": true
+  },
+  {
+    "name": "division literal null by integer zero diagnostic",
+    "query": "RETURN null / 0 AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "division parameter null by integer zero diagnostic",
+    "parameters": {"lhs": null, "rhs": 0},
+    "query": "RETURN $lhs / $rhs AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "expected_message": "/ by zero",
+    "expected_phase": "runtime",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 computed CREATE unary nested null remainder power",
+    "parameters": {"value": 5, "missing": null},
+    "query": "CREATE (n:Computed {negative: -($value + 1), nested: (($value + 2) * (3 - 1)), missing: ($missing + 1) * 2, remainder: ($value + 2) % 3, power: ($value - 3) ^ 3}) RETURN properties(n) AS properties"
+  },
+  {
+    "name": "monster 514 computed MERGE unary nested remainder power",
+    "parameters": {"value": 5},
+    "query": "MERGE (n:Computed {negative: -($value + 1), nested: (($value + 2) * (3 - 1)), remainder: ($value + 2) % 3, power: ($value - 3) ^ 3}) RETURN properties(n) AS properties"
+  },
+  {
+    "name": "monster 514 computed MERGE null has no effects",
+    "parameters": {"missing": null},
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "MERGE (n:Computed {missing: ($missing + 1) * 2}) RETURN properties(n) AS properties",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 computed SET unary nested null remainder power",
+    "parameters": {"value": 5, "missing": null},
+    "setup": ["CREATE (:Computed {missing: 7})"],
+    "query": "MATCH (n:Computed) SET n.negative = -($value + 1), n.nested = (($value + 2) * (3 - 1)), n.missing = ($missing + 1) * 2, n.remainder = ($value + 2) % 3, n.power = ($value - 3) ^ 3 RETURN properties(n) AS properties"
+  },
+  {
+    "name": "monster 514 computed relationship CREATE unary nested null remainder power",
+    "parameters": {"value": 5, "missing": null},
+    "query": "CREATE ()-[r:COMPUTED {negative: -($value + 1), nested: (($value + 2) * (3 - 1)), missing: ($missing + 1) * 2, remainder: ($value + 2) % 3, power: ($value - 3) ^ 3}]->() RETURN properties(r) AS properties"
+  },
+  {
+    "name": "monster 514 computed relationship MERGE unary nested remainder power",
+    "parameters": {"value": 5},
+    "setup": ["CREATE (:Endpoint {id: 1}), (:Endpoint {id: 2})"],
+    "query": "MATCH (a:Endpoint {id: 1}), (b:Endpoint {id: 2}) MERGE (a)-[r:COMPUTED {negative: -($value + 1), nested: (($value + 2) * (3 - 1)), remainder: ($value + 2) % 3, power: ($value - 3) ^ 3}]->(b) RETURN properties(r) AS properties"
+  },
+  {
+    "name": "monster 514 computed relationship MERGE null has no effects",
+    "parameters": {"missing": null},
+    "setup": ["CREATE (:Endpoint {id: 1}), (:Endpoint {id: 2})"],
+    "query": "MATCH (a:Endpoint {id: 1}), (b:Endpoint {id: 2}) MERGE (a)-[r:COMPUTED {missing: ($missing + 1) * 2}]->(b) RETURN properties(r) AS properties",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 computed relationship SET unary nested null remainder power",
+    "parameters": {"value": 5, "missing": null},
+    "setup": ["CREATE ()-[:COMPUTED {missing: 7}]->()"],
+    "query": "MATCH ()-[r:COMPUTED]->() SET r.negative = -($value + 1), r.nested = (($value + 2) * (3 - 1)), r.missing = ($missing + 1) * 2, r.remainder = ($value + 2) % 3, r.power = ($value - 3) ^ 3 RETURN properties(r) AS properties"
+  },
+  {
+    "name": "monster 514 malformed CREATE closer no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE (n:Broken {value: (1 + 2]}) RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed MERGE closer no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) MERGE (n:Broken {value: [1, 2)}) RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed SET closer no effects",
+    "setup": ["CREATE (:Broken {value: 7})"],
+    "query": "MATCH (n:Broken) SET n.value = (1 + 2] RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed relationship closer no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE ()-[r:BROKEN {value: (1 + 2]}]->() RETURN r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed CREATE comma no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE (n:Broken {value: 1,, other: 2}) RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed MERGE comma no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) MERGE (n:Broken {value: 1,, other: 2}) RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed SET comma no effects",
+    "setup": ["CREATE (:Broken {value: 7})"],
+    "query": "MATCH (n:Broken) SET n.value = 1,, n.other = 2 RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "monster 514 malformed relationship comma no effects",
+    "setup": ["CREATE (:Sentinel {value: 7})"],
+    "query": "CREATE (:Before) CREATE ()-[r:BROKEN {value: 1,, other: 2}]->() RETURN r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
   }
 ]

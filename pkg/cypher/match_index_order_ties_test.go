@@ -11,6 +11,116 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIndexedOrderExactIntegers(t *testing.T) {
+	for _, transaction := range []bool{false, true} {
+		for _, indexed := range []bool{false, true} {
+			for _, smaller := range []int64{2, 9007199254740992} {
+				t.Run(fmt.Sprintf("tx=%t/index=%t/smaller=%d", transaction, indexed, smaller), func(t *testing.T) {
+					store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "exact-order")
+					exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+					ctx := context.Background()
+					larger := smaller + 1
+					for _, entry := range []struct {
+						id    storage.NodeID
+						value int64
+					}{
+						{"a-larger", larger}, {"z-smaller", smaller},
+					} {
+						_, err := store.CreateNode(&storage.Node{
+							ID: entry.id, Labels: []string{"ExactOrder"},
+							Properties: map[string]interface{}{"rank": entry.value, "secondary": -entry.value},
+						})
+						require.NoError(t, err)
+					}
+					if indexed {
+						_, err := exec.Execute(ctx, "CREATE RANGE INDEX exact_rank FOR (n:ExactOrder) ON (n.rank)", nil)
+						require.NoError(t, err)
+						require.True(t, store.GetSchema().HasPropertyIndex("ExactOrder", "rank"))
+					}
+					if transaction {
+						_, err := exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						t.Cleanup(func() {
+							_, err := exec.Execute(ctx, "ROLLBACK", nil)
+							require.NoError(t, err)
+						})
+					}
+					for _, test := range []struct {
+						name, query string
+						want        [][]interface{}
+					}{
+						{"ascending limit", "MATCH (n:ExactOrder) WHERE n.rank IS NOT NULL RETURN n.rank ORDER BY n.rank ASC LIMIT 1", [][]interface{}{{smaller}}},
+						{"descending limit", "MATCH (n:ExactOrder) WHERE n.rank IS NOT NULL RETURN n.rank ORDER BY n.rank DESC LIMIT 1", [][]interface{}{{larger}}},
+						{"no limit", "MATCH (n:ExactOrder) WHERE n.rank IS NOT NULL RETURN n.rank ORDER BY n.rank ASC", [][]interface{}{{smaller}, {larger}}},
+						{"with", "MATCH (n:ExactOrder) WHERE n.rank IS NOT NULL WITH n ORDER BY n.rank ASC LIMIT 1 RETURN n.rank", [][]interface{}{{smaller}}},
+						{"skip", "MATCH (n:ExactOrder) WHERE n.rank IS NOT NULL RETURN n.rank ORDER BY n.rank ASC SKIP 1 LIMIT 1", [][]interface{}{{larger}}},
+						{"secondary key", "MATCH (n:ExactOrder) WHERE n.rank IS NOT NULL RETURN n.rank ORDER BY n.rank ASC, n.secondary ASC LIMIT 1", [][]interface{}{{smaller}}},
+						{"without where", "MATCH (n:ExactOrder) RETURN n.rank ORDER BY n.rank ASC LIMIT 1", [][]interface{}{{smaller}}},
+					} {
+						t.Run(test.name, func(t *testing.T) {
+							for repeat := 0; repeat < 5; repeat++ {
+								result, err := exec.Execute(ctx, test.query, nil)
+								require.NoError(t, err)
+								require.Equal(t, test.want, result.Rows, "run %d: %s", repeat, test.query)
+								if indexed && !transaction && test.name == "ascending limit" {
+									require.True(t, exec.LastHotPathTrace().OuterIndexTopK)
+								}
+							}
+						})
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestIndexedOrderMixedNumericWidening(t *testing.T) {
+	const integer int64 = 9007199254740993
+	const rounded float64 = 9007199254740992
+	require.Zero(t, compareValuesForSort(integer, rounded))
+	require.Zero(t, compareValuesForSort(rounded, integer))
+	for _, transaction := range []bool{false, true} {
+		t.Run(fmt.Sprintf("tx=%t", transaction), func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "mixed-order")
+			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			ctx := context.Background()
+			for _, entry := range []struct {
+				id    storage.NodeID
+				value interface{}
+			}{
+				{"a-integer", integer}, {"z-float", rounded},
+			} {
+				_, err := store.CreateNode(&storage.Node{
+					ID: entry.id, Labels: []string{"MixedOrder"},
+					Properties: map[string]interface{}{"rank": entry.value, "name": string(entry.id)},
+				})
+				require.NoError(t, err)
+			}
+			_, err := exec.Execute(ctx, "CREATE RANGE INDEX mixed_rank FOR (n:MixedOrder) ON (n.rank)", nil)
+			require.NoError(t, err)
+			if transaction {
+				_, err = exec.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+				t.Cleanup(func() {
+					_, err := exec.Execute(ctx, "ROLLBACK", nil)
+					require.NoError(t, err)
+				})
+			}
+			for _, parameter := range []interface{}{integer, rounded} {
+				result, err := exec.Execute(ctx, "MATCH (n:MixedOrder) WHERE n.rank = $value RETURN n.name ORDER BY n.name ASC", map[string]interface{}{"value": parameter})
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{"a-integer"}, {"z-float"}}, result.Rows)
+			}
+			for _, direction := range []string{"ASC", "DESC"} {
+				query := "MATCH (n:MixedOrder) WHERE n.rank IS NOT NULL RETURN n.name ORDER BY n.rank " + direction + ", n.name ASC LIMIT 1"
+				result, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{"a-integer"}}, result.Rows)
+			}
+		})
+	}
+}
+
 func indexedOrderFixture(tb testing.TB, count int) *StorageExecutor {
 	tb.Helper()
 	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "order-ties")

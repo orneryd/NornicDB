@@ -164,7 +164,7 @@ func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query 
 		terminalErr, notify := m.rememberTerminalErrorLocked(session, err)
 		session.mu.Unlock()
 		m.notifyTerminalError(session, terminalErr, notify)
-		return nil, terminalErr
+		return result, terminalErr
 	}
 	session.Expires = m.nowFunc().Add(m.ttl)
 	session.mu.Unlock()

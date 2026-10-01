@@ -6,6 +6,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSchemaOrderExactIntegers(t *testing.T) {
+	const smaller int64 = 9007199254740992
+	const larger int64 = 9007199254740993
+	for _, test := range []struct {
+		name        string
+		left, right interface{}
+		want        int
+	}{
+		{"adjacent ascending", smaller, larger, -1},
+		{"adjacent descending", larger, smaller, 1},
+		{"equal integers", larger, larger, 0},
+		{"mixed signed widths", int(smaller), larger, -1},
+		{"unsigned integers", uint64(smaller), uint64(larger), -1},
+		{"signed unsigned", larger, uint64(smaller), 1},
+		{"unsigned signed", uint64(smaller), larger, -1},
+		{"negative adjacent", -larger, -smaller, -1},
+		{"unsigned above signed range", ^uint64(0), int64(9223372036854775807), 1},
+		{"signed below unsigned range", int64(9223372036854775807), ^uint64(0), -1},
+		{"negative unsigned", int64(-1), uint64(0), -1},
+		{"unsigned negative", uint64(0), int64(-1), 1},
+		{"mixed float widening", larger, float64(smaller), 0},
+		{"mixed float widening reverse", float64(smaller), larger, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, compareSchemaIndexValues(test.left, test.right))
+		})
+	}
+
+	t.Run("raw integer keys", func(t *testing.T) {
+		schema := NewSchemaManager()
+		require.NoError(t, schema.AddPropertyIndex("rank", "Item", []string{"rank"}))
+		index := schema.propertyIndexes["Item:rank"]
+		index.values[larger] = []NodeID{"a-larger"}
+		index.values[smaller] = []NodeID{"z-smaller"}
+		index.keysDirty = true
+		for _, descending := range []bool{false, true} {
+			var groups [][]NodeID
+			require.True(t, schema.VisitPropertyIndexGroups("Item", "rank", descending, func(ids []NodeID) bool {
+				groups = append(groups, ids)
+				return true
+			}))
+			want := [][]NodeID{{"z-smaller"}, {"a-larger"}}
+			if descending {
+				want = [][]NodeID{{"a-larger"}, {"z-smaller"}}
+			}
+			require.Equal(t, want, groups)
+			require.Equal(t, want[0], schema.PropertyIndexTopK("Item", "rank", 1, descending))
+		}
+	})
+}
+
 func TestVisitPropertyIndexGroups(t *testing.T) {
 	sm := NewSchemaManager()
 	called := false

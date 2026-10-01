@@ -8,6 +8,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSetTrailingProjectionCanonicalRowSet(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.WithValue(context.Background(), paramsKey, map[string]interface{}{"offset": int64(10), "skip": int64(1)})
+	node := &storage.Node{ID: "n", Properties: map[string]interface{}{"v": int64(2)}}
+	input := &ExecuteResult{Columns: []string{"n", "value"}, Rows: [][]interface{}{{node, int64(3)}, {node, int64(1)}, {node, int64(3)}}}
+	stats := &QueryStats{PropertiesSet: 3}
+	for _, test := range []struct {
+		clause  string
+		columns []string
+		rows    [][]interface{}
+	}{
+		{"WITH DISTINCT value AS x ORDER BY x DESC SKIP $skip LIMIT 1 RETURN x + $offset AS total", []string{"total"}, [][]interface{}{{int64(11)}}},
+		{"WITH n, count(*) AS c RETURN n.v + c AS total, c", []string{"total", "c"}, [][]interface{}{{int64(5), int64(3)}}},
+		{"WITH value AS x RETURN DISTINCT x ORDER BY x DESC SKIP 1 LIMIT 1", []string{"x"}, [][]interface{}{{int64(1)}}},
+		{"WITH * RETURN value ORDER BY n.v, value DESC LIMIT 1", []string{"value"}, [][]interface{}{{int64(3)}}},
+	} {
+		t.Run(test.clause, func(t *testing.T) {
+			result, handled, err := exec.executeSetTrailingWithReturn(ctx, test.clause, input, &ExecuteResult{Stats: stats})
+			require.NoError(t, err)
+			require.True(t, handled)
+			require.Equal(t, test.columns, result.Columns)
+			require.Equal(t, test.rows, result.Rows)
+			require.Same(t, stats, result.Stats)
+		})
+	}
+}
+
 func TestExecuteSet_TrailingFallbackMatchProjection(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "set_trailing_fallback_cov")

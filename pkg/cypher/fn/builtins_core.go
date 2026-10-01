@@ -271,7 +271,7 @@ func evalToLower(ctx Context, args []string) (interface{}, error) {
 	if err != nil || v == nil {
 		return nil, err
 	}
-	return strings.ToLower(fmt.Sprintf("%v", v)), nil
+	return cases.Lower(language.Und).String(fmt.Sprintf("%v", v)), nil
 }
 
 func evalToUpper(ctx Context, args []string) (interface{}, error) {

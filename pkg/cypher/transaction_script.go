@@ -178,38 +178,19 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 }
 
 func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
-	items := e.parseReturnItems(returnExpr)
-	if len(items) == 0 {
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	rows := make([]pipelineRow, 0, len(input.Rows))
+	for _, row := range input.Rows {
+		rows = append(rows, pipelineRow(buildRowValueMap(input.Columns, row)))
 	}
-
-	outCols := make([]string, 0, len(items))
-	for _, item := range items {
-		if item.alias != "" {
-			outCols = append(outCols, item.alias)
-			continue
-		}
-		outCols = append(outCols, item.expr)
+	if strings.TrimSpace(returnExpr) == "" {
+		returnExpr = "*"
 	}
-
-	outRows := make([][]interface{}, 0, len(input.Rows))
-	for _, inRow := range input.Rows {
-		nodes, rels := buildRowGraphContext(input.Columns, inRow)
-		rowMap := buildRowValueMap(input.Columns, inRow)
-		outRow := make([]interface{}, 0, len(items))
-		for _, item := range items {
-			v := e.evaluateExpressionWithContext(ctx, item.expr, nodes, rels)
-			if v == nil {
-				if direct, ok := rowMap[item.expr]; ok {
-					v = direct
-				}
-			}
-			outRow = append(outRow, v)
-		}
-		outRows = append(outRows, outRow)
+	projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+returnExpr)
+	if err != nil {
+		return nil, err
 	}
-
-	return &ExecuteResult{Columns: outCols, Rows: outRows}, nil
+	projected.Stats = input.Stats
+	return projected, nil
 }
 
 func buildRowGraphContext(cols []string, row []interface{}) (map[string]*storage.Node, map[string]*storage.Edge) {

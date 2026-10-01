@@ -3350,60 +3350,19 @@ func (e *StorageExecutor) resolveReturnExprFromVarMap(
 	targetNode *storage.Node,
 	targetEdge *storage.Edge,
 ) interface{} {
-	expr = strings.TrimSpace(expr)
-
-	// Property access: var.prop
-	if dotIdx := strings.Index(expr, "."); dotIdx > 0 {
-		varName := expr[:dotIdx]
-		propName := expr[dotIdx+1:]
-
-		// Check optional match target/rel first
-		if varName == targetVar {
-			if targetNode == nil {
-				return nil
-			}
-			if val, ok := targetNode.Properties[propName]; ok {
-				return val
-			}
-			return nil
-		}
-		if varName == relVar && targetEdge != nil {
-			if val, ok := targetEdge.Properties[propName]; ok {
-				return val
-			}
-			return nil
-		}
-
-		// Check the varMap (from initial MATCH)
-		if val, ok := varMap[varName]; ok {
-			if node, isNode := val.(*storage.Node); isNode {
-				if node == nil {
-					return nil
-				}
-				if pval, exists := node.Properties[propName]; exists {
-					return pval
-				}
-				return nil
-			}
-		}
-		if isSimpleIdentifier(strings.TrimSpace(varName)) && isSimpleIdentifier(strings.TrimSpace(propName)) {
-			return nil
+	row := e.mergeBindingRow(ctx,
+		map[string]*storage.Node{targetVar: targetNode},
+		map[string]*storage.Edge{relVar: targetEdge})
+	for name, value := range varMap {
+		if name != targetVar && name != relVar {
+			row[name] = value
 		}
 	}
-
-	// Bare variable reference
-	if expr == targetVar {
-		return targetNode
+	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, "RETURN "+strings.TrimSpace(expr))
+	if err != nil || len(projected.Rows) == 0 || len(projected.Rows[0]) == 0 {
+		return nil
 	}
-	if expr == relVar {
-		return targetEdge
-	}
-	if val, ok := varMap[expr]; ok {
-		return val
-	}
-
-	// Literal / function — delegate to parseValue
-	return e.parseValue(ctx, expr)
+	return projected.Rows[0][0]
 }
 
 // parseOptionalRelPattern parses patterns like (a)-[r:TYPE]->(b:Label)

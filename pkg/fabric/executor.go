@@ -436,6 +436,16 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	if inputIter == nil {
 		inputIter = NewResultRowIterator(nil)
 	}
+	if continuation, ok := f.Inner.(*FragmentExec); ok && f.Projection && continuation.Graph == nil {
+		inputResult, err := materializeIterator(inputCols, inputIter)
+		if err != nil {
+			return nil, fmt.Errorf("apply input failed: %w", err)
+		}
+		if result, handled, err := e.executeApplyAsPipeline(ctx, tx, inputResult, continuation, params, authToken); handled {
+			return result, err
+		}
+		inputIter = NewResultRowIterator(inputResult)
+	}
 
 	// For non-simple leading WITH pipelines (e.g. trailing WITH collect(...) after
 	// CALL blocks), execute once over the full input row stream instead of per-row.
@@ -454,7 +464,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		if err != nil {
 			return nil, fmt.Errorf("apply input failed: %w", err)
 		}
-		if len(inputResult.Rows) <= fabricApplyInMemoryMaxRows {
+		if !f.Projection && len(inputResult.Rows) <= fabricApplyInMemoryMaxRows {
 			if streamRes, handled := executeApplyInMemoryProjection(inputResult, execFrag.Query); handled {
 				return streamRes, nil
 			}
@@ -477,14 +487,6 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 			}
 			return batched, nil
 		}
-		if len(inputResult.Rows) <= fabricApplyInMemoryMaxRows {
-			if piped, handled, err := e.executeApplyAsPipeline(ctx, tx, inputResult, execFrag, params, authToken); handled {
-				if err != nil {
-					return nil, fmt.Errorf("apply inner failed: %w", err)
-				}
-				return piped, nil
-			}
-		}
 		// Re-seed iterator for the generic correlated APPLY fallback.
 		inputCols = inputResult.Columns
 		inputIter = NewResultRowIterator(inputResult)
@@ -501,7 +503,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		mergedBind := bindingsFromParentAndRow(parentBindings, inputCols, inputRow)
 		innerCtx := WithRecordBindings(ctx, mergedBind)
 
-		if execFrag, ok := innerFragment.(*FragmentExec); ok && execFrag.Graph == nil {
+		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && execFrag.Graph == nil {
 			if cols, projected, ok := projectSimpleReturnFromRow(execFrag.Query, inputCols, inputRow); ok {
 				if len(result.Columns) == 0 {
 					result.Columns = cols
@@ -530,7 +532,11 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 
 		// Combine input and inner columns/rows.
 		if len(result.Columns) == 0 {
-			result.Columns = combineColumns(inputCols, innerResult.Columns)
+			if f.Projection {
+				result.Columns = append([]string(nil), innerResult.Columns...)
+			} else {
+				result.Columns = combineColumns(inputCols, innerResult.Columns)
+			}
 		}
 		if len(innerResult.Rows) == 0 {
 			continue
@@ -2911,13 +2917,6 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 	if !isWith && !isReturn {
 		return nil, false, nil
 	}
-	// Do not pipeline plain RETURN fragments through UNWIND $__fabric_apply_rows.
-	// Current Cypher execution can surface the raw map variable (e.g. "__fabric_row")
-	// instead of projected aliases for this shape, which leaks internal columns to clients.
-	// Keep RETURN fragments on the per-row correlated path for correctness.
-	if isReturn {
-		return nil, false, nil
-	}
 	if isWith {
 		withEnd, ok := findLeadingWithClauseEnd(trimmed)
 		if !ok || withEnd <= 0 {
@@ -2950,10 +2949,8 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 		if strings.HasPrefix(col, "__fabric_") {
 			continue
 		}
-		if !isSimpleIdentifier(col) {
-			return nil, false, nil
-		}
-		projections = append(projections, "__fabric_row."+col+" AS "+col)
+		quotedCol := quoteCypherIdentifier(col)
+		projections = append(projections, "__fabric_row."+quotedCol+" AS "+quotedCol)
 	}
 	if len(projections) == 0 {
 		return nil, false, nil
@@ -3011,6 +3008,13 @@ func importColumnsFromFragment(f Fragment) []string {
 		return init.Columns
 	}
 	return nil
+}
+
+func quoteCypherIdentifier(identifier string) string {
+	if isSimpleIdentifier(identifier) {
+		return identifier
+	}
+	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
 }
 
 func rewriteFragmentWithImports(fragment Fragment) Fragment {

@@ -431,7 +431,6 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	if matchIdx == -1 {
 		return nil, localizedError(localization.CypherSubqueriesMatchBeforeCallNotFound(), nil)
 	}
-
 	// Extract the pattern segment (up to optional WHERE/WITH/RETURN/ORDER/SKIP/LIMIT)
 	// so we can parse the correlated variable name from the node pattern while still
 	// executing the full outer segment (including WITH/LIMIT) for seed extraction.
@@ -449,6 +448,9 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	nodePattern := e.parseNodePattern(ctx, nodePatternStr)
 	if nodePattern.variable == "" {
 		return nil, localizedError(localization.CypherSubqueriesNodePatternInvalid(nodePatternStr), nil)
+	}
+	if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
+		return outcome.result, outcome.err
 	}
 
 	// Parse the CALL {} subquery and what comes after
@@ -1330,6 +1332,9 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 		}
 
 		np := e.parseNodePattern(ctx, matchBody)
+		if np.variable != "" && !isIdentifierReferenced(trimmedOuter, variable) {
+			return nil, nil
+		}
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
 			if whereClause != "" {
 				// O(1) direct ID seek path for: MATCH (v) WHERE id(v)=...
@@ -1504,6 +1509,9 @@ func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
 // Syntax: CALL { <subquery> } [IN TRANSACTIONS [OF n ROWS]]
 // The subquery can contain MATCH, CREATE, RETURN, UNION, etc.
 func (e *StorageExecutor) executeCallSubquery(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
+		return outcome.result, outcome.err
+	}
 	// Substitute parameters
 	if params := getParamsFromContext(ctx); params != nil {
 		cypher = e.substituteParams(cypher, params)
@@ -1513,6 +1521,9 @@ func (e *StorageExecutor) executeCallSubquery(ctx context.Context, cypher string
 	subqueryBody, afterCall, inTransactions, batchSize := e.parseCallSubquery(cypher)
 	if subqueryBody == "" {
 		return nil, localizedError(localization.CypherSubqueriesCallBodyExpected(), nil)
+	}
+	if inTransactions {
+		return nil, localizedError(localization.CypherSubqueriesTransactionBodyEmpty("CALL"), nil)
 	}
 
 	// Check if the subquery body starts with USE — this indicates a fabric
@@ -1547,19 +1558,13 @@ func (e *StorageExecutor) executeCallSubquery(ctx context.Context, cypher string
 		// Execute in batches (for large data operations)
 		innerResult, err = subqueryExecutor.executeCallInTransactions(ctx, subqueryBody, batchSize)
 	} else {
-		// Check if subquery contains UNION - route to executeUnion if so
-		// This must be checked before calling Execute, as Execute routes based on first keyword
-		if findKeywordIndex(subqueryBody, "UNION ALL") >= 0 {
-			innerResult, err = subqueryExecutor.executeUnion(ctx, subqueryBody, true)
-		} else if findKeywordIndex(subqueryBody, "UNION") >= 0 {
-			innerResult, err = subqueryExecutor.executeUnion(ctx, subqueryBody, false)
-		} else {
-			// Execute as single query
-			innerResult, err = subqueryExecutor.executeInternal(ctx, subqueryBody, nil)
-		}
+		innerResult, err = subqueryExecutor.executeInternal(ctx, subqueryBody, nil)
 	}
 
 	if err != nil {
+		if inTransactions {
+			return nil, err
+		}
 		return nil, localizedError(localization.CypherSubqueriesCallError(err), err)
 	}
 
@@ -1825,6 +1830,13 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 // ROLLBACK (#648).
 func (e *StorageExecutor) rejectCallInTransactionsInExplicitTx() error {
 	if e.txContext != nil && e.txContext.active {
+		if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok && tx.OperationCount() > 0 {
+			return &classifiedCypherError{
+				cause:  errors.New("Expected transaction state to be empty when calling transactional subquery. (Transactions committed: 0)"),
+				code:   "Neo.DatabaseError.Statement.ExecutionFailed",
+				detail: "InvalidCallInTransactions",
+			}
+		}
 		return newSemanticError("Neo.DatabaseError.Transaction.TransactionStartFailed", "InvalidCallInTransactions",
 			"CALL { ... } IN TRANSACTIONS is not allowed inside an explicit transaction")
 	}
@@ -2137,7 +2149,7 @@ func (e *StorageExecutor) processAfterCallSubquery(ctx context.Context, innerRes
 	upperAfter := upperASCII(afterCall)
 
 	// Handle chained CALL { } subqueries.
-	if strings.HasPrefix(upperAfter, "CALL") && isCallSubquery(afterCall) {
+	if strings.HasPrefix(upperAfter, "CALL") && startsWithCallSubquery(afterCall) {
 		return e.executeChainedCallSubquery(ctx, innerResult, afterCall)
 	}
 
@@ -2152,9 +2164,7 @@ func (e *StorageExecutor) processAfterCallSubquery(ctx context.Context, innerRes
 
 	// Handle ORDER BY (without RETURN means use inner result's columns)
 	if strings.HasPrefix(upperAfter, "ORDER BY ") {
-		result := e.applyOrderByToResult(innerResult, afterCall)
-		// Check for LIMIT/SKIP after ORDER BY
-		return e.applyResultModifiers(ctx, result, afterCall)
+		return e.applyResultModifiers(ctx, innerResult, afterCall)
 	}
 	if clauses, ok := canExecuteAsPipeline(afterCall); ok {
 		rows := make([]pipelineRow, 0, len(innerResult.Rows))
@@ -2209,9 +2219,29 @@ func (e *StorageExecutor) executeChainedCallSubquery(ctx context.Context, seedRe
 	if subqueryBody == "" {
 		return nil, localizedError(localization.CypherSubqueriesCallBodyExpected(), nil)
 	}
-
 	if inTransactions {
 		return nil, localizedError(localization.CypherSubqueriesChainedTransactionsUnsupported(batchSize), nil)
+	}
+	seedRows := callPipelineRowsFromResult(ctx, seedResult)
+	scope := make(map[string]struct{}, len(seedResult.Columns))
+	for _, column := range seedResult.Columns {
+		scope[column] = struct{}{}
+	}
+	callOnly := strings.TrimSpace(callClause)
+	if strings.TrimSpace(afterCall) != "" {
+		callOnly = strings.TrimSpace(strings.TrimSuffix(callOnly, afterCall))
+	}
+	metadata := &pipelineCallMetadata{scope: scope}
+	pipelineRows, pipelineStats, handled, pipelineErr := e.pipelineApplyCallSubqueryWithMetadata(ctx, seedRows, callOnly, metadata)
+	if pipelineErr != nil {
+		return nil, pipelineErr
+	}
+	if handled {
+		combined := callPipelineResultFromRows(pipelineRows, seedResult, pipelineStats, metadata.columns)
+		if strings.TrimSpace(afterCall) != "" {
+			return e.processAfterCallSubquery(ctx, combined, afterCall)
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: pipelineStats}, nil
 	}
 
 	use, bodyWithoutUse, hasUse, err := parseUseClause(subqueryBody, true)
@@ -3484,9 +3514,12 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 		rows = append(rows, row)
 	}
 	clauses := []pipelineClause{{kind: pipelineClauseReturn, text: afterCall}}
-	result, _, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
 	if err != nil {
 		return nil, err
+	}
+	if !handled || result == nil {
+		return nil, localizedError(localization.CypherSubqueriesAfterCallClauseUnsupported("RETURN"), nil)
 	}
 	result.Stats = innerResult.Stats
 	return result, nil
@@ -3494,51 +3527,15 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 
 // applyResultModifiers applies ORDER BY, LIMIT, SKIP to a result
 func (e *StorageExecutor) applyResultModifiers(ctx context.Context, result *ExecuteResult, modifiers string) (*ExecuteResult, error) {
-	orderByCol, orderByDesc, hasOrderBy := parseOrderByModifier(modifiers)
-	orderTerms := parseOrderByTerms(modifiers)
-	skip, hasSkip := e.parseIntModifier(ctx, modifiers, "SKIP")
-	limit, hasLimit := e.parseIntModifier(ctx, modifiers, "LIMIT")
-
-	if hasOrderBy && len(orderTerms) == 1 && hasLimit && limit >= 0 {
-		if colIdx := findColumnIndexByName(result.Columns, orderByCol); colIdx >= 0 {
-			k := limit
-			if hasSkip && skip > 0 {
-				k += skip
-			}
-			switch {
-			case k <= 0:
-				result.Rows = [][]interface{}{}
-				return result, nil
-			case k < len(result.Rows):
-				result.Rows = selectTopKRowsForOrder(result.Rows, colIdx, orderByDesc, k)
-			default:
-				result = e.applyOrderByToResult(result, modifiers)
-			}
-		} else {
-			// Preserve prior behavior for unknown ORDER BY columns.
-			result = e.applyOrderByToResult(result, modifiers)
-		}
-	} else if hasOrderBy {
-		result = e.applyOrderByToResult(result, modifiers)
+	skip := 0
+	if value, ok := e.parseIntModifier(ctx, modifiers, "SKIP"); ok {
+		skip = value
 	}
-
-	// Apply SKIP after ORDER BY/TOP-K.
-	if hasSkip && skip > 0 {
-		if skip < len(result.Rows) {
-			result.Rows = result.Rows[skip:]
-		} else {
-			result.Rows = [][]interface{}{}
-		}
+	limit := -1
+	if value, ok := e.parseIntModifier(ctx, modifiers, "LIMIT"); ok {
+		limit = value
 	}
-
-	// Apply LIMIT after ORDER BY/TOP-K.
-	if hasLimit && limit >= 0 {
-		if limit < len(result.Rows) {
-			result.Rows = result.Rows[:limit]
-		}
-	}
-
-	return result, nil
+	return e.applyCallResultOrderWindow(ctx, result, parseOrderByTerms(modifiers), skip, limit)
 }
 
 // applyOrderByToResult applies ORDER BY to a result set
@@ -3547,58 +3544,49 @@ func (e *StorageExecutor) applyOrderByToResult(result *ExecuteResult, orderByCla
 	if len(terms) == 0 {
 		terms = parseOrderByClause(orderByClause)
 	}
-	if len(terms) == 0 {
-		return result
-	}
-	type resolvedOrderTerm struct {
-		columnIndex int
-		property    string
-		descending  bool
-	}
-	resolved := make([]resolvedOrderTerm, 0, len(terms))
-	for _, term := range terms {
-		columnIndex := findColumnIndexByName(result.Columns, term.column)
-		property := ""
-		if columnIndex < 0 && strings.Contains(term.column, ".") {
-			parts := strings.SplitN(term.column, ".", 2)
-			columnIndex = findColumnIndexByName(result.Columns, parts[0])
-			if columnIndex >= 0 {
-				property = parts[1]
-			}
-		}
-		if columnIndex < 0 {
-			// A leading hidden ORDER BY expression must be evaluated before
-			// projection by the owning query plan. Sorting on only the remaining
-			// terms would violate the requested lexicographic order.
-			return result
-		}
-		resolved = append(resolved, resolvedOrderTerm{columnIndex: columnIndex, property: property, descending: term.descending})
-	}
-	if len(resolved) == 0 {
-		return result
-	}
+	_, _ = e.applyCallResultOrderWindow(context.Background(), result, terms, 0, -1)
+	return result
+}
 
-	sort.SliceStable(result.Rows, func(i, j int) bool {
-		for _, term := range resolved {
-			vi := result.Rows[i][term.columnIndex]
-			vj := result.Rows[j][term.columnIndex]
-			if term.property != "" {
-				vi = extractPropertyFromValue(vi, term.property)
-				vj = extractPropertyFromValue(vj, term.property)
+func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result *ExecuteResult, terms []orderByTerm, skip, limit int) (*ExecuteResult, error) {
+	rows := make([]pipelineRow, 0, len(result.Rows))
+	for _, values := range result.Rows {
+		row := make(pipelineRow, len(result.Columns))
+		for index, column := range result.Columns {
+			if index < len(values) {
+				row[column] = values[index]
+			} else {
+				row[column] = nil
 			}
-			comparison := compareValuesForSort(vi, vj)
-			if comparison == 0 {
+		}
+		for _, term := range terms {
+			parts := strings.SplitN(term.column, ".", 2)
+			if len(parts) != 2 {
 				continue
 			}
-			if term.descending {
-				return comparison > 0
+			if value, ok := row[parts[0]].(map[string]interface{}); ok {
+				if _, nested := value["properties"].(map[string]interface{}); nested {
+					row[term.column] = extractPropertyFromValue(value, parts[1])
+				}
 			}
-			return comparison < 0
 		}
-		return false
-	})
-
-	return result
+		rows = append(rows, row)
+	}
+	if !e.orderPipelineRows(ctx, rows, terms) {
+		if err := getExpressionFailure(ctx); err != nil {
+			return nil, err
+		}
+	}
+	rows = applyPipelineWindow(rows, skip, limit)
+	result.Rows = make([][]interface{}, 0, len(rows))
+	for _, row := range rows {
+		values := make([]interface{}, len(result.Columns))
+		for index, column := range result.Columns {
+			values[index] = row[column]
+		}
+		result.Rows = append(result.Rows, values)
+	}
+	return result, nil
 }
 
 type orderByTerm struct {

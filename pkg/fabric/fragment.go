@@ -101,6 +101,8 @@ func (f *FragmentExec) OutputColumns() []string {
 // execute Inner and concatenate results. This models correlated subqueries
 // where the inner query references variables from the outer scope.
 type FragmentApply struct {
+	// Projection marks an outer continuation whose columns replace input bindings.
+	Projection bool
 	// Input is the outer fragment producing driver rows.
 	Input Fragment
 

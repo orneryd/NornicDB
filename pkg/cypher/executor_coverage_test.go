@@ -582,8 +582,7 @@ func TestParseReturnItemsMapProjectionWithoutAlias(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// Test that map projection syntax n { .*, key: value } WITHOUT AS alias
-	// Neo4j infers the column name from the variable before the map projection
+	// Unaliased map projections preserve their source expression as the column name.
 	params := map[string]interface{}{
 		"props": map[string]interface{}{
 			"name":      "TestNode",
@@ -595,9 +594,8 @@ func TestParseReturnItemsMapProjectionWithoutAlias(t *testing.T) {
 	result, err := exec.Execute(ctx, "CREATE (n:Node $props) RETURN n { .*, embedding: null }", params)
 	require.NoError(t, err)
 
-	// Should have exactly 1 column named "n" (inferred from variable)
 	assert.Len(t, result.Columns, 1, "Should have exactly 1 column, not split on comma inside {}")
-	assert.Equal(t, "n", result.Columns[0], "Column should be named 'n' inferred from variable before {}")
+	assert.Equal(t, "n { .*, embedding: null }", result.Columns[0])
 
 	// Should have 1 row
 	assert.Len(t, result.Rows, 1)
@@ -2194,8 +2192,8 @@ func TestResolveReturnItem_AdditionalBranches(t *testing.T) {
 	assert.Equal(t, node, exec.resolveReturnItem(ctx, returnItem{expr: "*"}, "p", node))
 	assert.Equal(t, node, exec.resolveReturnItem(ctx, returnItem{expr: "p"}, "p", node))
 
-	// Collect subquery placeholder branch.
-	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "COLLECT { MATCH (p)-[:R]->(q) RETURN q }"}, "p", node))
+	// Collect subqueries use the canonical projection operator.
+	assert.Equal(t, []interface{}{}, exec.resolveReturnItem(ctx, returnItem{expr: "COLLECT { MATCH (p)-[:R]->(q) RETURN q }"}, "p", node))
 
 	// CASE/function/IS NULL/arithmetic evaluation branches.
 	assert.Equal(t, "adult", exec.resolveReturnItem(ctx, returnItem{expr: "CASE WHEN p.age > 20 THEN 'adult' ELSE 'child' END"}, "p", node))

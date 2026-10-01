@@ -207,6 +207,28 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 // evaluator with graph expressions that require storage access. Callers with
 // an execution context use this as the converged expression entry point.
 func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
+	var extended pipelineRow
+	bind := func(name string, value interface{}) {
+		if _, exists := values[name]; exists {
+			return
+		}
+		if extended == nil {
+			extended = make(pipelineRow, len(values)+1)
+			for key, existing := range values {
+				extended[key] = existing
+			}
+		}
+		extended[name] = value
+	}
+	for name, value := range valueBindingsFromContext(ctx) {
+		bind(name, value)
+	}
+	for name, value := range getParamsFromContext(ctx) {
+		bind("$"+name, parameterRowValue(value))
+	}
+	if extended != nil {
+		values = extended
+	}
 	// A row variable, or a plain property chain on one (e.uuid), resolves
 	// without the graph-expression checks below, which can't match it.
 	if value, bound := values[expr]; bound {

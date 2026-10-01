@@ -1789,7 +1789,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		ctx = withExpressionFailureSlot(ctx)
 		result, err := e.executeInTransaction(ctx, cypher, upperQuery)
 		if failure := getExpressionFailure(ctx); failure != nil {
-			return nil, failure
+			return result, failure
 		}
 		return result, err
 	}
@@ -2405,6 +2405,17 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 // clients own any replay decision because NornicDB does not know whether a
 // conflict is recoverable for the application.
 func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	executionCypher, executionUpperQuery := cypher, upperQuery
+	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher); inlineEmbeddingEnabled {
+		executionCypher = parsedCypher
+		executionUpperQuery = upperASCII(parsedCypher)
+	}
+	return e.executeWithImplicitTransactionCallback(ctx, cypher, upperQuery, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+		return txExec.executeWithoutTransaction(txCtx, executionCypher, executionUpperQuery)
+	})
+}
+
+func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
@@ -2429,9 +2440,9 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 		if inlineEmbeddingEnabled {
 			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
-		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
+		result, err := execute(ctx, e)
 		if err != nil {
-			return nil, err
+			return result, err
 		}
 		// Flush if needed
 		if !e.deferFlush {
@@ -2516,7 +2527,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	txExec := e.cloneWithStorage(txWrapper)
 
 	// Execute the query
-	result, execErr := txExec.executeWithoutTransaction(txCtx, cypher, upperQuery)
+	result, execErr := execute(txCtx, txExec)
 	// An expression error recorded while the statement ran is its error, so
 	// nothing it wrote is committed.
 	if execErr == nil {
@@ -2531,7 +2542,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, execErr.Error())
 		}
-		return nil, execErr
+		return result, execErr
 	}
 
 	// A write-shaped query can legitimately match no mutation targets. Committing

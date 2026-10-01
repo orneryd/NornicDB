@@ -29,25 +29,34 @@ func newGh728Executor(t *testing.T) *StorageExecutor {
 
 func TestMonster728ProductAggregateAllocations(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
-		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
-			exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "product"), 0, 0)
-			ctx := context.Background()
-			_, err := exec.Execute(ctx, "UNWIND range(0, 255) AS i CREATE (:Doc {id: i})", nil)
-			require.NoError(t, err)
-			if explicit {
-				_, err = exec.Execute(ctx, "BEGIN", nil)
+		for _, query := range []string{
+			"MATCH (a:Doc), (b:Doc) RETURN count(*) AS c",
+			"MATCH (a:Doc) MATCH (b:Doc) RETURN count(*) AS c",
+			"MATCH (a:Doc), (b:Doc) WITH a, b RETURN count(*) AS c",
+			"MATCH (a:Doc), (b:Doc) WITH a RETURN count(*) AS c",
+			"MATCH (a:Doc), (b:Doc) WITH a.id AS x RETURN count(*) AS c",
+			"MATCH (a:Doc) WITH a MATCH (b:Doc) WITH a.id AS x, b RETURN count(*) AS c",
+		} {
+			t.Run(fmt.Sprint(explicit)+query, func(t *testing.T) {
+				exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "product"), 0, 0)
+				ctx := context.Background()
+				_, err := exec.Execute(ctx, "UNWIND range(0, 255) AS i CREATE (:Doc {id: i})", nil)
 				require.NoError(t, err)
-				t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
-			}
-			var before, after runtime.MemStats
-			runtime.ReadMemStats(&before)
-			result, err := exec.Execute(ctx, "MATCH (a:Doc), (b:Doc) RETURN count(*) AS c", nil)
-			runtime.ReadMemStats(&after)
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{int64(65536)}}, result.Rows)
-			t.Logf("total_alloc_bytes=%d", after.TotalAlloc-before.TotalAlloc)
-			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8*1024*1024), "product bindings must be consumed incrementally")
-		})
+				if explicit {
+					_, err = exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+				}
+				var before, after runtime.MemStats
+				runtime.ReadMemStats(&before)
+				result, err := exec.Execute(ctx, query, nil)
+				runtime.ReadMemStats(&after)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(65536)}}, result.Rows)
+				t.Logf("total_alloc_bytes=%d", after.TotalAlloc-before.TotalAlloc)
+				require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8*1024*1024), "product bindings must be consumed incrementally")
+			})
+		}
 	}
 }
 
@@ -69,6 +78,16 @@ func TestMonster728ProductAggregateSemantics(t *testing.T) {
 		{"MATCH (a:Doc), (b:Doc) RETURN a.id AS a, b.id AS b ORDER BY a, b", [][]interface{}{{int64(1), int64(1)}, {int64(1), int64(2)}, {int64(2), int64(1)}, {int64(2), int64(2)}}},
 		{"MATCH (a:Doc {id: 1}) MATCH (a:Doc), (b:Doc) RETURN a.id AS a, b.id AS b ORDER BY b", [][]interface{}{{int64(1), int64(1)}, {int64(1), int64(2)}}},
 		{"MATCH (a:Doc), (a:Doc) RETURN count(*) AS c", [][]interface{}{{int64(2)}}},
+		{"MATCH (a:Doc) MATCH (b:Doc) RETURN sum(a.id) AS s, avg(b.id) AS a", [][]interface{}{{int64(6), float64(1.5)}}},
+		{"MATCH (a:Doc), (b:Doc) WITH a, b RETURN sum(a.id) AS s, count(b) AS c", [][]interface{}{{int64(6), int64(4)}}},
+		{"MATCH (a:Doc), (b:Doc) WITH a RETURN sum(a.id) AS s", [][]interface{}{{int64(6)}}},
+		{"MATCH (a:Doc), (b:Doc) WITH a.id AS x RETURN sum(x) AS s", [][]interface{}{{int64(6)}}},
+		{"MATCH (a:Doc) MATCH (b:Doc) WITH a.id % 2 AS k, b WITH k, sum(b.id) AS s, count(*) AS c RETURN k,s,c ORDER BY k", [][]interface{}{{int64(0), int64(3), int64(2)}, {int64(1), int64(3), int64(2)}}},
+		{"MATCH (a:Doc), (b:Doc) WITH a.id AS x WHERE x = 2 RETURN count(*) AS c", [][]interface{}{{int64(2)}}},
+		{"MATCH (a:Doc), (b:Doc) WITH DISTINCT a.id AS x RETURN sum(x) AS s", [][]interface{}{{int64(3)}}},
+		{"MATCH (a:Doc), (b:Doc) WITH a ORDER BY a.id LIMIT 1 RETURN count(*) AS c, sum(a.id) AS s", [][]interface{}{{int64(1), int64(1)}}},
+		{"MATCH (a:Doc), (b:Doc) WITH a,b ORDER BY a.id,b.id SKIP 1 LIMIT 2 RETURN sum(a.id) AS s", [][]interface{}{{int64(3)}}},
+		{"MATCH (a:Doc), (b:Missing) WITH a.id AS x RETURN count(*) AS c, sum(x) AS s", [][]interface{}{{int64(0), int64(0)}}},
 	} {
 		t.Run(testCase.query, func(t *testing.T) {
 			result, err := exec.Execute(ctx, testCase.query, nil)

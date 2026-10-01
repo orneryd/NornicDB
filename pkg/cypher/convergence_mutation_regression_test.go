@@ -607,6 +607,77 @@ func TestMergeRejectsInvalidPatternBindingsAndValues(t *testing.T) {
 	}
 }
 
+func TestMergeComputedNullPropertiesAreRejectedBeforeWrites(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:Endpoint {id: 1}), (:Endpoint {id: 2})", nil)
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name  string
+		query string
+		count string
+	}{
+		{
+			name:  "node property",
+			query: "MERGE (n:Computed {missing: ($missing + 1) * 2}) RETURN n",
+			count: "MATCH (n:Computed) RETURN count(n) AS count",
+		},
+		{
+			name:  "relationship property",
+			query: "MATCH (a:Endpoint {id: 1}), (b:Endpoint {id: 2}) MERGE (a)-[r:COMPUTED {missing: ($missing + 1) * 2}]->(b) RETURN r",
+			count: "MATCH ()-[r:COMPUTED]->() RETURN count(r) AS count",
+		},
+		{
+			name:  "relationship property before endpoint creation",
+			query: "MERGE (a:UncreatedEndpoint)-[r:COMPUTED {missing: ($missing + 1) * 2}]->(b:UncreatedEndpoint) RETURN r",
+			count: "MATCH (n:UncreatedEndpoint) RETURN count(n) AS count",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := exec.Execute(ctx, test.query, map[string]interface{}{"missing": nil})
+			require.Error(t, err)
+			var semanticError *SemanticError
+			require.ErrorAs(t, err, &semanticError)
+			require.Equal(t, "Neo.ClientError.Statement.SemanticError", semanticError.Code)
+
+			result, err := exec.Execute(ctx, test.count, nil)
+			require.NoError(t, err)
+			requireSingleValue(t, result, int64(0))
+		})
+	}
+}
+
+func TestSetRejectsEmptyCommaSegmentsBeforeWrites(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:Broken {value: 7}), (:Start)-[:BROKEN {value: 7}]->(:End)", nil)
+	require.NoError(t, err)
+
+	for _, query := range []string{
+		"MATCH (n:Broken) SET , n.value = 1 RETURN n",
+		"MATCH (n:Broken) SET n.value = 1,, n.other = 2 RETURN n",
+		"MATCH (n:Broken) SET n.value = 1, RETURN n",
+		"MATCH (n:Broken) SET n.value = (1 + 2] RETURN n",
+		"MATCH ()-[r:BROKEN]->() SET , r.value = 1 RETURN r",
+		"MATCH ()-[r:BROKEN]->() SET r.value = 1,, r.other = 2 RETURN r",
+		"MATCH ()-[r:BROKEN]->() SET r.value = 1, RETURN r",
+		"MATCH ()-[r:BROKEN]->() SET r.value = (1 + 2] RETURN r",
+		"MATCH (n:Missing) SET n.value = 1,, n.other = 2 RETURN n",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, err := exec.Execute(ctx, query, nil)
+			requireSyntaxErrorStatus(t, err, query)
+		})
+	}
+
+	node, err := exec.Execute(ctx, "MATCH (n:Broken) RETURN n.value AS value, n.other AS other", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(7), nil}}, node.Rows)
+
+	relationship, err := exec.Execute(ctx, "MATCH ()-[r:BROKEN]->() RETURN r.value AS value, r.other AS other", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(7), nil}}, relationship.Rows)
+}
+
 func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
 	exec, _ := newConvergenceExecutor(t)
 

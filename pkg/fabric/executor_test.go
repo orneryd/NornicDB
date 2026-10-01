@@ -2024,13 +2024,73 @@ func TestExecuteApplyAsPipeline_NoColumns(t *testing.T) {
 	}
 }
 
-func TestExecuteApplyAsPipeline_ReturnQueryNotPipelined(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+func TestExecuteApplyAsPipeline_ReturnUsesCanonicalPipeline(t *testing.T) {
+	catalog := NewCatalog()
+	catalog.Register("db1", &LocationLocal{DBName: "db1"})
+	capture := &pipelineCaptureCypherExecutor{}
+	exec := NewFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
 	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	inner := &FragmentExec{Query: "RETURN a AS x"}
-	_, used, _ := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if used {
-		t.Fatal("expected RETURN query to not be pipelined")
+	inner := &FragmentExec{Query: "RETURN a AS x", GraphName: "db1"}
+	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
+	if err != nil || !used {
+		t.Fatalf("expected canonical projection pipeline: used=%v err=%v", used, err)
+	}
+	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a RETURN a AS x" {
+		t.Fatalf("unexpected pipeline query: %s", capture.lastQuery)
+	}
+}
+
+func TestFabricExecutor_ProjectionContinuationWithQuotedInputColumnUsesPipeline(t *testing.T) {
+	catalog := NewCatalog()
+	catalog.Register("db1", &LocationLocal{DBName: "db1"})
+	outerQuery := "MATCH (n) RETURN n AS a, n.name AS `display name`"
+	continuationQuery := "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a, __fabric_row.`display name` AS `display name` RETURN a ORDER BY a.id"
+	mock := &mockCypherExecutor{
+		calls: map[string]int{},
+		results: map[string]*ResultStream{
+			outerQuery: {
+				Columns: []string{"a", "display name"},
+				Rows: [][]interface{}{
+					{map[string]interface{}{"id": 2}, "second"},
+					{map[string]interface{}{"id": 1}, "first"},
+				},
+			},
+			continuationQuery: {
+				Columns: []string{"a"},
+				Rows: [][]interface{}{
+					{map[string]interface{}{"id": 1}},
+					{map[string]interface{}{"id": 2}},
+				},
+			},
+		},
+	}
+	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	apply := &FragmentApply{
+		Input: &FragmentExec{
+			Input:     &FragmentInit{},
+			Query:     outerQuery,
+			GraphName: "db1",
+			Columns:   []string{"a", "display name"},
+		},
+		Inner: &FragmentExec{
+			Input:     &FragmentInit{},
+			Query:     "RETURN a ORDER BY a.id",
+			GraphName: "db1",
+			Columns:   []string{"a"},
+		},
+		Projection: true,
+		Columns:    []string{"a"},
+	}
+
+	result, err := exec.Execute(context.Background(), nil, apply, nil, "")
+	if err != nil {
+		t.Fatalf("unexpected projection continuation error: %v", err)
+	}
+	if got := mock.calls[continuationQuery]; got != 1 {
+		t.Fatalf("expected canonical pipeline execution once, got %d", got)
+	}
+	if len(result.Rows) != 2 || result.Rows[0][0].(map[string]interface{})["id"] != 1 || result.Rows[1][0].(map[string]interface{})["id"] != 2 {
+		t.Fatalf("expected continuation rows ordered by a.id, got %#v", result.Rows)
 	}
 }
 
@@ -3530,15 +3590,22 @@ func TestHasKeywordAt_PrevIsIdentChar(t *testing.T) {
 }
 
 func TestExecuteApplyAsPipeline_NonSimpleColumnName(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	catalog := NewCatalog()
+	catalog.Register("db1", &LocationLocal{DBName: "db1"})
+	capture := &pipelineCaptureCypherExecutor{}
+	local := NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil })
+	exec := NewFabricExecutor(catalog, local, nil)
 	input := &ResultStream{
 		Columns: []string{"a.b"}, // Non-simple identifier.
 		Rows:    [][]interface{}{{"v"}},
 	}
-	inner := &FragmentExec{Query: "WITH x AS y MATCH (n) RETURN n"}
-	_, used, _ := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if used {
-		t.Fatal("expected non-simple column to prevent pipeline")
+	inner := &FragmentExec{Query: "WITH x AS y MATCH (n) RETURN n", GraphName: "db1"}
+	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
+	if err != nil || !used {
+		t.Fatalf("expected quoted non-simple column to use pipeline: used=%v err=%v", used, err)
+	}
+	if want := "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.`a.b` AS `a.b` WITH x AS y MATCH (n) RETURN n"; capture.lastQuery != want {
+		t.Fatalf("unexpected pipeline query: got %q, want %q", capture.lastQuery, want)
 	}
 }
 
@@ -4027,7 +4094,7 @@ func TestE2E_CallUseSubqueryRoutesCorrectly(t *testing.T) {
 				Columns: []string{"translationId"},
 				Rows:    [][]interface{}{{"t-1"}},
 			},
-			"RETURN translationId": {
+			"UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.translationId AS translationId RETURN translationId": {
 				Columns: []string{"translationId"},
 				Rows:    [][]interface{}{{"t-1"}},
 			},

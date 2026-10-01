@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Extend shared node-product streaming across successive MATCH and row-local
+  WITH clauses (#728). Evaluate computed properties through the shared row
+  evaluator and reject incomplete arithmetic before writes (#514). Preserve
+  Unicode lowercase expansion (#698), recursively serialize entity temporal
+  properties over HTTP (#668), and reject system graph reads consistently
+  (#738). Apply outer composite projections through the main Cypher pipeline
+  without leaking inner columns; encode constituent-aware Bolt entity IDs
+  recursively (#745, #648).
+- Replace mutation RETURN/WITH projectors and transactional CALL text batching
+  with shared typed pipeline operators. Preserve empty CALL schemas, counters,
+  UNION exports, embedding options, and partial runtime-error rows while rolling
+  failed writes back. Keep quoted Fabric continuations on the canonical pipeline.
+  Preserve nonfinite typed write values, Neo4j math diagnostics and rounding,
+  MERGE conflict retry safety, and large-integer indexed ordering.
 - Preserve outer rows after scoped transactional CALL unit subqueries and
   admit explicit transactions when MATCH or UNWIND supplies zero inputs (#648).
   Accept unbound bare endpoints in whole-pattern relationship MERGE (#640).

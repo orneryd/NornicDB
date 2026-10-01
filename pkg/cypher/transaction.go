@@ -460,7 +460,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		txExec := e.cloneWithStorage(txWrapper)
 		result, err := txExec.executeQueryAgainstStorage(ctx, cypher, upperQuery)
 		if err != nil {
-			return nil, err
+			return result, err
 		}
 		if inlineEmbeddingEnabled {
 			mutated := txWrapper.snapshotMutatedNodeIDs()
@@ -501,7 +501,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	// Execute the query - getStorage() will automatically use the transaction wrapper
 	result, err := txExec.executeQueryAgainstStorage(txCtx, cypher, upperQuery)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	if inlineEmbeddingEnabled {
 		mutated := txWrapper.snapshotMutatedNodeIDs()
