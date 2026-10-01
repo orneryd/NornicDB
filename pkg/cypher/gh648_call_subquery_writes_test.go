@@ -7,6 +7,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -195,4 +196,65 @@ func TestGh648_InTransactionsRejectedInExplicitTransaction(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "MATCH (n:T) CALL { CREATE (:X {from: n.id}) } IN TRANSACTIONS RETURN count(*) AS c", nil)
 	require.Error(t, err, "IN TRANSACTIONS must not run inside an explicit transaction")
+}
+
+func TestMonster648TransactionalOuterRows(t *testing.T) {
+	exec := newGh648Executor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:T {id: 1})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (t:T) CALL (t) { CREATE (:X {i: t.id}) } IN TRANSACTIONS RETURN count(*) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	stored, err := exec.Execute(ctx, "MATCH (x:X) RETURN x.i", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, stored.Rows)
+}
+
+func TestMonster648TransactionalZeroInputs(t *testing.T) {
+	for _, query := range []string{
+		"MATCH (t:T) CALL (t) { CREATE (:X {i: t.id}) } IN TRANSACTIONS",
+		"MATCH (t:T) CALL (t) { CREATE (:X {i: t.id}) } IN TRANSACTIONS RETURN count(*) AS c",
+		"UNWIND [] AS i CALL (i) { CREATE (:X {i: i}) } IN TRANSACTIONS",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec := newGh648Executor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err)
+			if len(result.Columns) == 0 {
+				require.Empty(t, result.Rows)
+			} else {
+				require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+			}
+			_, err = exec.Execute(ctx, "ROLLBACK", nil)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestMonster648TransactionalBatchBindings(t *testing.T) {
+	for _, body := range []string{
+		"CREATE (:X {i: t.id})",
+		"CREATE (:X {i: t.id}) RETURN t.id * 2 AS doubled",
+	} {
+		t.Run(body, func(t *testing.T) {
+			exec := newGh648Executor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE (:T {id: 1}), (:T {id: 2}), (:T {id: 3})", nil)
+			require.NoError(t, err)
+			projection := "t.id AS id"
+			want := [][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}}
+			if strings.Contains(body, "RETURN") {
+				projection += ", doubled"
+				want = [][]interface{}{{int64(1), int64(2)}, {int64(2), int64(4)}, {int64(3), int64(6)}}
+			}
+			result, err := exec.Execute(ctx, "MATCH (t:T) CALL (t) { "+body+" } IN TRANSACTIONS OF 2 ROWS RETURN "+projection+" ORDER BY id", nil)
+			require.NoError(t, err)
+			require.Equal(t, want, result.Rows)
+			require.Equal(t, 3, result.Stats.NodesCreated)
+		})
+	}
 }

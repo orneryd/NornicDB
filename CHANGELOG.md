@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve outer rows after scoped transactional CALL unit subqueries and
+  admit explicit transactions when MATCH or UNWIND supplies zero inputs (#648).
+  Accept unbound bare endpoints in whole-pattern relationship MERGE (#640).
+  Feed unfiltered comma-separated node products into the shared incremental
+  WITH/RETURN aggregate collector rather than retaining every binding (#728).
 - Stream direct UNWIND range inputs through shared row-local WITH projections
   and predicates into shared incremental WITH/RETURN aggregation (#772),
   avoiding eager range validation and both filtered and unfiltered aggregate

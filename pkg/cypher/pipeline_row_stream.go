@@ -4,6 +4,8 @@ import (
 	"context"
 	"iter"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 type pipelineRowProjection struct{ expression, alias string }
@@ -173,6 +175,116 @@ func materializePipelineSource(source pipelineRowSource) ([]pipelineRow, bool) {
 		return true
 	})
 	return out, ok
+}
+
+func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []pipelineRow, clause string) (pipelineRowSource, bool, error) {
+	body := pipelineClauseBody(clause, "MATCH")
+	if topLevelKeywordIndex(body, "WHERE") >= 0 {
+		return nil, false, nil
+	}
+	patterns := splitTopLevelComma(body)
+	if len(patterns) < 2 {
+		return nil, false, nil
+	}
+	templates := make([]*pipelineNodeMatchTemplate, len(patterns))
+	variables := make(map[string]struct{}, len(patterns))
+	for index, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if !strings.HasPrefix(pattern, "(") || findMatchingParen(pattern, 0) != len(pattern)-1 {
+			return nil, false, nil
+		}
+		template := e.pipelineNodeMatchTemplateFor("MATCH " + pattern)
+		if !template.usable {
+			return nil, false, nil
+		}
+		if template.labelErr != nil {
+			return nil, true, template.labelErr
+		}
+		templates[index] = template
+		variables[template.variable] = struct{}{}
+	}
+	for _, template := range templates {
+		for _, property := range template.properties {
+			for _, reference := range semanticExpressionReferences(property.expr) {
+				variable := strings.SplitN(reference, ".", 2)[0]
+				if _, dependent := variables[variable]; dependent {
+					return nil, false, nil
+				}
+			}
+		}
+	}
+	caches := make([]map[string][]*storage.Node, len(templates))
+	for index := range caches {
+		caches[index] = make(map[string][]*storage.Node)
+	}
+	return func(yield func(pipelineRow) bool) bool {
+		for _, input := range rows {
+			current := make(pipelineRow, len(input)+len(templates))
+			for name, value := range input {
+				current[name] = value
+			}
+			resolved := make([]nodePatternInfo, len(templates))
+			candidates := make([][]*storage.Node, len(templates))
+			for index, template := range templates {
+				pattern, ok := template.node(ctx, e, input)
+				if !ok {
+					pipelineItemUnevaluable(ctx, template.pattern)
+					return false
+				}
+				resolved[index] = pattern
+				key, keyed := pipelinePropertiesKey(pattern.properties)
+				nodes, cached := caches[index][key]
+				if !keyed || !cached {
+					var err error
+					nodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+					if err != nil {
+						recordExpressionFailure(ctx, err)
+						return false
+					}
+					if keyed {
+						caches[index][key] = nodes
+					}
+				}
+				candidates[index] = nodes
+			}
+			valid := true
+			var visit func(int) bool
+			visit = func(index int) bool {
+				if err := ctx.Err(); err != nil {
+					recordExpressionFailure(ctx, err)
+					valid = false
+					return false
+				}
+				if index == len(resolved) {
+					return yield(current)
+				}
+				pattern := resolved[index]
+				if value, bound := current[pattern.variable]; bound {
+					node, typed := value.(*storage.Node)
+					if !typed || node == nil || !pipelineNodeMatchesPattern(node, pattern) {
+						return true
+					}
+					return visit(index + 1)
+				}
+				for _, node := range candidates[index] {
+					if !pipelineNodeMatchesPattern(node, pattern) {
+						continue
+					}
+					current[pattern.variable] = node
+					accepted := visit(index + 1)
+					delete(current, pattern.variable)
+					if !accepted {
+						return false
+					}
+				}
+				return true
+			}
+			if !visit(0) {
+				return valid
+			}
+		}
+		return true
+	}, true, nil
 }
 
 func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {

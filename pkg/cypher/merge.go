@@ -2302,10 +2302,6 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		} else {
 			startPattern := parsedPattern.startNodePattern
 			endPattern := parsedPattern.endNodePattern
-			if (len(startPattern.labels) == 0 && len(startPattern.properties) == 0) ||
-				(len(endPattern.labels) == 0 && len(endPattern.properties) == 0) {
-				return nil, localizedError(localization.CypherMergeStartVariableNotBound(parsedPattern.startVariable, getKeys(nodeContext)), nil)
-			}
 			startCandidates, err := e.findMergeNodes(store, startPattern.labels, startPattern.properties)
 			if err != nil {
 				return nil, err

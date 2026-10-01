@@ -458,11 +458,6 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	if subqueryBody == "" {
 		return nil, localizedError(localization.CypherSubqueriesCallBodyEmpty(), nil)
 	}
-	if inTransactions {
-		if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
-			return nil, err
-		}
-	}
 
 	// The rest of this handler runs the subquery for the nodes of the MATCH's
 	// first node pattern, with that node as the only outer variable. When the
@@ -491,6 +486,12 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			return e.processAfterCallSubquery(ctx, empty, afterCall)
 		}
 		return empty, nil
+	}
+
+	if inTransactions {
+		if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
+			return nil, err
+		}
 	}
 
 	// Handle USE clause inside CALL subquery body — resolve the target database
@@ -1717,9 +1718,6 @@ func importsVariable(vars []string, variable string) bool {
 }
 
 func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Context, seedNodes []*storage.Node, seedVar, subqueryBody, afterCall string, batchSize int) (*ExecuteResult, error) {
-	if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
-		return nil, err
-	}
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
@@ -1731,6 +1729,9 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 		return empty, nil
 	}
 
+	if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
+		return nil, err
+	}
 	withVars, innerBody, hasWith, err := parseLeadingWithImports(subqueryBody)
 	if err != nil {
 		return nil, err
@@ -1760,7 +1761,10 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 			continue
 		}
 
-		batchQuery := fmt.Sprintf("MATCH (%s) WHERE id(%s) IN $__call_in_tx_ids %s", seedVar, seedVar, innerBody)
+		batchQuery := fmt.Sprintf("MATCH (%s) WHERE id(%s) IN $__call_in_tx_ids CALL (%s) { %s }", seedVar, seedVar, seedVar, innerBody)
+		if strings.TrimSpace(afterCall) != "" {
+			batchQuery += " RETURN *"
+		}
 		batchParams := map[string]interface{}{"__call_in_tx_ids": ids}
 		if inherited := getParamsFromContext(ctx); inherited != nil {
 			batchParams = make(map[string]interface{}, util.SafePreallocSum(len(inherited), 1))
@@ -1814,6 +1818,7 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 //  1. First execute the subquery to determine the total number of rows (read-only)
 //  2. If it contains write operations, process in batches by adding LIMIT/SKIP to the MATCH
 //  3. Each batch is executed in its own transaction via executeWithImplicitTransaction
+//
 // rejectCallInTransactionsInExplicitTx enforces the Neo4j rule that
 // CALL { ... } IN TRANSACTIONS cannot run inside an explicit transaction:
 // its batches would execute inside the caller's transaction and survive a

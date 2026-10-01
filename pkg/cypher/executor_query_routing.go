@@ -220,11 +220,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		if callIndex := firstTopLevelCallSubquery(cypher); callIndex >= 0 {
 			callClause := strings.TrimSpace(cypher[callIndex:])
 			_, _, inTransactions, _ := e.parseCallSubquery(callClause)
-			if inTransactions {
-				if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
-					return nil, err
-				}
-			} else if callIndex > 0 {
+			if !inTransactions && callIndex > 0 {
 				seed, err := e.executeInternal(ctx, strings.TrimSpace(cypher[:callIndex])+" RETURN *", nil)
 				if err != nil {
 					return nil, err

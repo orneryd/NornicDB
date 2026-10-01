@@ -552,6 +552,17 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		clause := clauses[idx]
 		switch clause.kind {
 		case pipelineClauseMatch:
+			if idx+1 < len(clauses) && pipelineClauseAggregates(clauses[idx+1]) {
+				product, supported, err := e.pipelineNodeProductSource(ctx, rows, clause.text)
+				if err != nil {
+					return nil, true, err
+				}
+				if supported {
+					source, rows = product, nil
+					addPipelinePatternBindings(e, scope, clause.text, "MATCH")
+					continue
+				}
+			}
 			hint := e.pipelineMatchHint(clauses[idx+1:])
 			newRows, ok, err := e.pipelineApplyMatchWithHint(ctx, rows, clause.text, hint)
 			if err != nil {
@@ -1690,6 +1701,16 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 }
 
 func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+	if product, supported, err := e.pipelineNodeProductSource(ctx, rows, clause); supported || err != nil {
+		if err != nil {
+			return nil, true, err
+		}
+		expanded, resolved := materializePipelineSource(product)
+		if !resolved {
+			return nil, true, getExpressionFailure(ctx)
+		}
+		return expanded, true, nil
+	}
 	if expanded, ok, err := e.pipelineApplyBoundRelationshipListMatch(ctx, rows, clause); ok || err != nil {
 		return expanded, ok, err
 	}
