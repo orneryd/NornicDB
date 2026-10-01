@@ -1172,7 +1172,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 	if len(response.Errors) > 0 {
 		for _, err := range response.Errors {
 			// Database not found is an infrastructure error - return 404
-			if err.Code == "Neo.ClientError.Database.DatabaseNotFound" {
+			if err.Code == "Neo.ClientError.Database.DatabaseNotFound" && (s.dbManager == nil || !s.dbManager.ExistsOrIsConstituent(dbName)) {
 				status = http.StatusNotFound
 				break
 			}
@@ -1285,6 +1285,13 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}}
 	}
 	switch typed := value.(type) {
+	case cypher.CypherDate, cypher.CypherLocalTime, cypher.CypherTime, cypher.CypherLocalDateTime, cypher.CypherDateTime:
+		return typed.(fmt.Stringer).String(), []interface{}{nil}
+	case *cypher.CypherDuration:
+		if typed == nil {
+			return nil, []interface{}{nil}
+		}
+		return typed.String(), []interface{}{nil}
 	case *storage.Node:
 		if typed == nil {
 			return nil, []interface{}{nil}

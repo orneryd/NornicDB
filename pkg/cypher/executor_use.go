@@ -217,6 +217,12 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 	if err != nil {
 		return nil, err
 	}
+	if strings.EqualFold(resolvedDB, "system") && !isSystemCommandNoGraph(query) {
+		requirements := QueryPermissionRequirements(query)
+		if requirements.Write || requirements.Schema {
+			return nil, newSemanticError("Neo.ClientError.Statement.SemanticError", "SemanticError", "Graph updates are not supported on the system database")
+		}
+	}
 	if scopedExec != e {
 		if err := e.otherDatabaseInTransactionError(resolvedDB, query); err != nil {
 			return nil, err
