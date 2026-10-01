@@ -159,8 +159,8 @@ github.com/hashicorp/go-kms-wrapping/v2 v2.0.24 h1:gN8NK3SNnBiNSojPkRRhlUsNuAEq1
 github.com/hashicorp/go-kms-wrapping/v2 v2.0.24/go.mod h1:NeK2Ul15t1zutp/dZzt28XQrGZHosbxE/QLNNfaWObM=
 github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11 h1:J9zGa9SlcOHT3SQTj0Vv3shHo0anWbs58weURGCgChI=
 github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11/go.mod h1:iAOCu7/lG5eugg8+k7NVvQt0IpWT8s2Q9wnMtC/guM4=
-github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.15 h1:Y73Tv263K936w0jdmHUPLHsf7fQdDpIyvz9z98JsvCE=
-github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.15/go.mod h1:23eya+c/YxTAW6c7QUuKN8LkIUfip831GDBVicxPFPI=
+github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.16 h1:YMsHDiZvgurM8QK5mpy8TNoUahFtLFDuu9g0yWdk1MQ=
+github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.16/go.mod h1:vIMRRET1LzGgUD99iZv0UdVUoIK025u6PKg6qz0+Xvw=
 github.com/hashicorp/go-memdb v1.3.4 h1:XSL3NR682X/cVk2IeV0d70N4DZ9ljI885xAEU8IoK3c=
 github.com/hashicorp/go-memdb v1.3.4/go.mod h1:uBTr1oQbtuMgd1SSGoR8YV27eT3sBHbYiNm53bMpgSg=
 github.com/hashicorp/go-multierror v1.1.1 h1:H5DkEtf6CXdFp0N0Em5UCwQpXMWke8IA0+lD48awMYo=
