@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,398 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGh776_TransactionBodiesRejectInvalidRequests(t *testing.T) {
+	server, authenticator := setupTestServerWithConfig(t, func(config *Config) {
+		config.MaxRequestSize = 256
+	})
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	valid := `{"statements":[{"statement":"CREATE (:Body776 {final: true})"}]}`
+	for _, body := range []struct {
+		name string
+		text string
+	}{
+		{"oversized parameter", `{"statements":[{"statement":"CREATE (:Body776 {final: true})","parameters":{"unused":"` + strings.Repeat("x", 512) + `"}}]}`},
+		{"truncated JSON", `{"statements":[{"statement":"CREATE (:Body776 {final: true})"`},
+		{"second JSON value", valid + `{}`},
+		{"trailing garbage", valid + ` invalid`},
+		{"oversized trailing whitespace", valid + strings.Repeat(" ", 512)},
+	} {
+		for _, route := range []string{"open", "execute", "commit", "implicit"} {
+			t.Run(body.name+"/"+route, func(t *testing.T) {
+				cleanup := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]interface{}{
+					"statements": []map[string]interface{}{{"statement": "MATCH (n:Body776) DETACH DELETE n"}},
+				}, token)
+				require.Equal(t, http.StatusOK, cleanup.Code)
+				endpoint := "/db/nornic/tx"
+				if route == "execute" || route == "commit" {
+					opened := makeRequest(t, server, http.MethodPost, endpoint, map[string]interface{}{
+						"statements": []map[string]interface{}{{"statement": "CREATE (:Body776 {prior: true})"}},
+					}, token)
+					require.Equal(t, http.StatusCreated, opened.Code)
+					var transaction TransactionResponse
+					require.NoError(t, json.Unmarshal(opened.Body.Bytes(), &transaction))
+					require.Empty(t, transaction.Errors)
+					endpoint = strings.TrimSuffix(transaction.Commit, "/commit")
+					t.Cleanup(func() {
+						makeRequest(t, server, http.MethodDelete, strings.TrimSuffix(transaction.Commit, "/commit"), nil, token)
+					})
+				}
+				if route == "commit" || route == "implicit" {
+					endpoint += "/commit"
+				}
+				request := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(body.text))
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set("Authorization", token)
+				recorder := httptest.NewRecorder()
+				server.buildRouter().ServeHTTP(recorder, request)
+				var response TransactionResponse
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
+				require.Len(t, response.Errors, 1, recorder.Body.String())
+				require.Equal(t, "Neo.ClientError.Request.InvalidFormat", response.Errors[0].Code)
+				require.Empty(t, response.Results)
+				require.Equal(t, http.StatusBadRequest, recorder.Code)
+				if route == "commit" {
+					attempt := makeRequest(t, server, http.MethodPost, endpoint, nil, token)
+					require.Equal(t, http.StatusNotFound, attempt.Code)
+				}
+				stored := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]interface{}{
+					"statements": []map[string]interface{}{{"statement": "MATCH (n:Body776) RETURN count(n)"}},
+				}, token)
+				require.Equal(t, int64(0), extractCountFromTxResponse(t, stored))
+			})
+		}
+	}
+}
+
+func TestGh776_ReadTransactionRequestBoundaries(t *testing.T) {
+	valid := `{"statements":[{"statement":"RETURN $value","parameters":{"value":9007199254740993}}]}`
+	for _, testCase := range []struct {
+		name    string
+		body    string
+		limit   int64
+		wantErr bool
+	}{
+		{"exact limit", valid, int64(len(valid)), false},
+		{"below limit", valid + " \n", int64(len(valid) + 2), false},
+		{"truncated by limit", valid, int64(len(valid) - 1), true},
+		{"chunked oversized suffix", valid + strings.Repeat(" ", 512), int64(len(valid)), true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := &Server{config: &Config{MaxRequestSize: testCase.limit}}
+			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(testCase.body))
+			request.ContentLength = -1
+			var decoded TransactionRequest
+			err := server.readTransactionRequest(request, &decoded)
+			if testCase.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, int64(9007199254740993), decoded.Statements[0].Parameters["value"])
+		})
+	}
+	server := &Server{config: DefaultConfig()}
+	for _, empty := range []string{"", " \n\t"} {
+		var decoded TransactionRequest
+		require.ErrorIs(t, server.readTransactionRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(empty)), &decoded), io.EOF)
+	}
+}
+
+func TestGh776_DefaultBodyLimit(t *testing.T) {
+	body := `{"statements":[{"statement":"RETURN 1 AS result","parameters":{"unused":"` + strings.Repeat("x", 11<<20) + `"}}]}`
+	server := &Server{config: DefaultConfig()}
+	require.Equal(t, int64(10<<20), server.config.MaxRequestSize)
+	var decoded TransactionRequest
+	err := server.readTransactionRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), &decoded)
+	var limitError *http.MaxBytesError
+	require.ErrorAs(t, err, &limitError)
+	require.Equal(t, int64(10<<20), limitError.Limit)
+	server.config.MaxRequestSize = int64(len(body))
+	require.NoError(t, server.readTransactionRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), &decoded))
+	require.Len(t, decoded.Statements[0].Parameters["unused"], 11<<20)
+}
+
+func TestGh776_HTTPMalformedCommitRollback(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	local := httptest.NewServer(server.buildRouter())
+	defer local.Close()
+	backends := []struct{ name, endpoint, token string }{{"nornicdb", local.URL + "/db/nornic/tx", "Bearer " + getAuthToken(t, authenticator, "admin")}}
+	if reference := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI"); reference != "" {
+		backends = append(backends, struct{ name, endpoint, token string }{"neo4j", reference + "/db/neo4j/tx", ""})
+	}
+	for _, backend := range backends {
+		t.Run(backend.name, func(t *testing.T) {
+			client := &http.Client{Timeout: 30 * time.Second}
+			post := func(endpoint, body string) (TransactionResponse, int) {
+				req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+				require.NoError(t, err)
+				req.Header.Set("Content-Type", "application/json")
+				if backend.token != "" {
+					req.Header.Set("Authorization", backend.token)
+				}
+				response, err := client.Do(req)
+				require.NoError(t, err)
+				defer response.Body.Close()
+				var result TransactionResponse
+				require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
+				return result, response.StatusCode
+			}
+			cleaned, _ := post(backend.endpoint+"/commit", `{"statements":[{"statement":"MATCH (n:Body776Reference) DETACH DELETE n"}]}`)
+			require.Empty(t, cleaned.Errors)
+			opened, code := post(backend.endpoint, `{"statements":[{"statement":"CREATE (:Body776Reference {prior:true})"}]}`)
+			require.Equal(t, http.StatusCreated, code)
+			require.Empty(t, opened.Errors)
+			require.NotEmpty(t, opened.Commit)
+			failed, code := post(opened.Commit, `{"statements":[{"statement":"CREATE (:Body776Reference {final:true})"`)
+			require.Len(t, failed.Errors, 1)
+			require.Equal(t, "Neo.ClientError.Request.InvalidFormat", failed.Errors[0].Code)
+			require.Empty(t, failed.Results)
+			if backend.name == "nornicdb" {
+				require.Equal(t, http.StatusBadRequest, code)
+			}
+			stored, _ := post(backend.endpoint+"/commit", `{"statements":[{"statement":"MATCH (n:Body776Reference) RETURN count(n) AS count"}]}`)
+			require.Empty(t, stored.Errors)
+			require.Len(t, stored.Results, 1)
+			require.Len(t, stored.Results[0].Data, 1)
+			require.Equal(t, []interface{}{float64(0)}, stored.Results[0].Data[0].Row)
+			evidence, err := json.Marshal(map[string]interface{}{"backend": backend.name, "status": code, "errors": failed.Errors, "rows": failed.Results, "durable_rows": stored.Results[0].Data[0].Row})
+			require.NoError(t, err)
+			t.Logf("ISSUE776_RESULT %s", evidence)
+		})
+	}
+}
+
+func TestGh776_OptionalEmptyBodies(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	for _, empty := range []string{"", " \n\t"} {
+		t.Run(fmt.Sprintf("body=%q", empty), func(t *testing.T) {
+			post := func(endpoint string) TransactionResponse {
+				request := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(empty))
+				request.Header.Set("Authorization", token)
+				recorder := httptest.NewRecorder()
+				server.buildRouter().ServeHTTP(recorder, request)
+				require.Contains(t, []int{http.StatusCreated, http.StatusOK}, recorder.Code)
+				var response TransactionResponse
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+				require.Empty(t, response.Errors)
+				return response
+			}
+			opened := post("/db/nornic/tx")
+			require.NotEmpty(t, opened.Commit)
+			written := makeRequest(t, server, http.MethodPost, strings.TrimSuffix(opened.Commit, "/commit"), map[string]interface{}{
+				"statements": []map[string]interface{}{{"statement": "CREATE (:EmptyBody776)"}},
+			}, token)
+			require.Equal(t, http.StatusOK, written.Code)
+			post(opened.Commit)
+		})
+	}
+	stored := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]interface{}{
+		"statements": []map[string]interface{}{{"statement": "MATCH (n:EmptyBody776) RETURN count(n)"}},
+	}, token)
+	require.Equal(t, int64(2), extractCountFromTxResponse(t, stored))
+}
+
+func TestGh809_HTTPTransactionIndexVisibility(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	local := httptest.NewServer(server.buildRouter())
+	defer local.Close()
+	backends := []struct{ name, endpoint, token string }{{"nornicdb", local.URL + "/db/nornic/tx", "Bearer " + getAuthToken(t, authenticator, "admin")}}
+	if reference := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI"); reference != "" {
+		backends = append(backends, struct{ name, endpoint, token string }{"neo4j", reference + "/db/neo4j/tx", ""})
+	}
+	rows := make([]interface{}, 0, 48)
+	ids := make([]interface{}, 0, 16)
+	for document := 0; document < 16; document++ {
+		documentID := fmt.Sprintf("doc-%d", document)
+		ids = append(ids, documentID)
+		for _, kind := range []string{"document", "version", "origin"} {
+			rows = append(rows, map[string]interface{}{"properties": map[string]interface{}{
+				"id": documentID + "-" + kind, "document_id": documentID, "kind": kind,
+				"revision": int64(1), "body": "body", "created_at": "created", "updated_at": "updated",
+			}})
+		}
+	}
+	write := map[string]interface{}{"statement": "UNWIND $rows AS row CREATE (n:GH809) SET n = row.properties RETURN n.id AS id", "parameters": map[string]interface{}{"rows": rows}}
+	read := map[string]interface{}{"statement": "MATCH (n:GH809) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body,n.created_at AS created_at,n.updated_at AS updated_at ORDER BY id", "parameters": map[string]interface{}{"ids": ids, "kinds": []interface{}{"version", "origin", "unused"}}}
+	observed := make(map[string][][]interface{})
+	for _, backend := range backends {
+		t.Run(backend.name, func(t *testing.T) {
+			client := &http.Client{Timeout: 30 * time.Second}
+			request := func(method, endpoint string, statements ...map[string]interface{}) TransactionResponse {
+				if statements == nil {
+					statements = []map[string]interface{}{}
+				}
+				payload, err := json.Marshal(map[string]interface{}{"statements": statements})
+				require.NoError(t, err)
+				req, err := http.NewRequest(method, endpoint, bytes.NewReader(payload))
+				require.NoError(t, err)
+				req.Header.Set("Content-Type", "application/json")
+				if backend.token != "" {
+					req.Header.Set("Authorization", backend.token)
+				}
+				response, err := client.Do(req)
+				require.NoError(t, err)
+				defer response.Body.Close()
+				require.Contains(t, []int{http.StatusOK, http.StatusCreated}, response.StatusCode)
+				var result TransactionResponse
+				require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
+				require.Empty(t, result.Errors)
+				return result
+			}
+			for _, property := range []string{"", "document_id", "kind"} {
+				for _, mode := range []string{"single request", "separate requests", "committed"} {
+					t.Run("index="+property+"/"+mode, func(t *testing.T) {
+						request(http.MethodPost, backend.endpoint+"/commit", map[string]interface{}{"statement": "MATCH (n:GH809) DETACH DELETE n"})
+						for _, indexed := range []string{"document_id", "kind"} {
+							request(http.MethodPost, backend.endpoint+"/commit", map[string]interface{}{"statement": "DROP INDEX gh809_" + indexed + " IF EXISTS"})
+						}
+						if property != "" {
+							request(http.MethodPost, backend.endpoint+"/commit", map[string]interface{}{"statement": "CREATE INDEX gh809_" + property + " FOR (n:GH809) ON (n." + property + ")"})
+							if backend.name == "neo4j" {
+								request(http.MethodPost, backend.endpoint+"/commit", map[string]interface{}{"statement": "CALL db.awaitIndexes(30)"})
+							}
+						}
+						statements := []map[string]interface{}{write}
+						if mode == "single request" {
+							statements = append(statements, read)
+						}
+						opened := request(http.MethodPost, backend.endpoint, statements...)
+						require.Len(t, opened.Results[0].Data, 48)
+						require.NotEmpty(t, opened.Commit)
+						closed := false
+						t.Cleanup(func() {
+							if !closed {
+								request(http.MethodDelete, strings.TrimSuffix(opened.Commit, "/commit"))
+							}
+						})
+						result := opened
+						if mode == "separate requests" {
+							result = request(http.MethodPost, strings.TrimSuffix(opened.Commit, "/commit"), read)
+						} else if mode == "committed" {
+							request(http.MethodPost, opened.Commit)
+							closed = true
+							result = request(http.MethodPost, backend.endpoint+"/commit", read)
+						}
+						selected := result.Results[len(result.Results)-1]
+						require.Len(t, selected.Data, 32)
+						actual := make([][]interface{}, 0, 32)
+						for _, data := range selected.Data {
+							actual = append(actual, data.Row)
+							for _, meta := range data.Meta {
+								require.Nil(t, meta)
+							}
+						}
+						key := property + "/" + mode
+						if backend.name == "nornicdb" {
+							observed[key] = actual
+						} else {
+							require.Equal(t, observed[key], actual)
+						}
+						evidence, err := json.Marshal(map[string]interface{}{"backend": backend.name, "route": "http", "index": property, "mode": mode, "columns": selected.Columns, "rows": actual})
+						require.NoError(t, err)
+						t.Logf("ISSUE809_RESULT %s", evidence)
+						if mode != "committed" {
+							request(http.MethodDelete, strings.TrimSuffix(opened.Commit, "/commit"))
+							closed = true
+						}
+					})
+				}
+			}
+		})
+	}
+}
+
+func TestGh810_HTTPNullPropertyMaps(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	local := httptest.NewServer(server.buildRouter())
+	defer local.Close()
+	backends := []struct{ name, endpoint, token string }{{"nornicdb", local.URL + "/db/nornic/tx", "Bearer " + getAuthToken(t, authenticator, "admin")}}
+	if reference := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI"); reference != "" {
+		backends = append(backends, struct{ name, endpoint, token string }{"neo4j", reference + "/db/neo4j/tx", ""})
+	}
+	observed := make(map[string][][]interface{})
+	for _, backend := range backends {
+		t.Run(backend.name, func(t *testing.T) {
+			client := &http.Client{Timeout: 30 * time.Second}
+			post := func(endpoint string, statements ...map[string]interface{}) TransactionResponse {
+				if statements == nil {
+					statements = []map[string]interface{}{}
+				}
+				payload, err := json.Marshal(map[string]interface{}{"statements": statements})
+				require.NoError(t, err)
+				request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+				require.NoError(t, err)
+				request.Header.Set("Content-Type", "application/json")
+				if backend.token != "" {
+					request.Header.Set("Authorization", backend.token)
+				}
+				response, err := client.Do(request)
+				require.NoError(t, err)
+				defer response.Body.Close()
+				require.Contains(t, []int{http.StatusOK, http.StatusCreated}, response.StatusCode)
+				var result TransactionResponse
+				require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
+				require.Empty(t, result.Errors)
+				return result
+			}
+			for _, schema := range []string{"", "CREATE INDEX gh810_ix FOR (n:PDRecord) ON (n.id)", "CREATE CONSTRAINT gh810_uq FOR (n:PDRecord) REQUIRE n.id IS UNIQUE"} {
+				t.Run("schema="+schema, func(t *testing.T) {
+					for _, query := range []string{"MATCH (n:PDRecord) DETACH DELETE n", "DROP CONSTRAINT gh810_uq IF EXISTS", "DROP INDEX gh810_ix IF EXISTS", "CREATE (a:PDRecord {id:'r1',kind:'a'})-[:R]->(b:PDRecord {id:'r2',kind:'b'}), (:PDRecord {id:'r3',kind:'a'}), (:PDRecord {kind:'noid'})"} {
+						post(backend.endpoint+"/commit", map[string]interface{}{"statement": query})
+					}
+					if schema != "" {
+						post(backend.endpoint+"/commit", map[string]interface{}{"statement": schema})
+						if backend.name == "neo4j" {
+							post(backend.endpoint+"/commit", map[string]interface{}{"statement": "CALL db.awaitIndexes(30)"})
+						}
+					}
+					opened := post(backend.endpoint)
+					require.NotEmpty(t, opened.Commit)
+					endpoint := strings.TrimSuffix(opened.Commit, "/commit")
+					for _, query := range []string{
+						"MATCH (n:PDRecord {id:$id}) RETURN n.id",
+						"MATCH (n:PDRecord {id:null}) RETURN n.id",
+						"MATCH (a:PDRecord {id:$id})-[:R]->(b) RETURN b.id",
+						"MATCH (n:PDRecord {id:$id}) SET n.touched=true RETURN count(n)",
+						"MATCH (n:PDRecord {id:$id}) DETACH DELETE n",
+						"MATCH (n {id:$id}) DETACH DELETE n RETURN count(*)",
+					} {
+						result := post(endpoint, map[string]interface{}{"statement": query, "parameters": map[string]interface{}{"id": nil}})
+						require.Len(t, result.Results, 1)
+						actual := make([][]interface{}, 0, len(result.Results[0].Data))
+						for _, row := range result.Results[0].Data {
+							actual = append(actual, row.Row)
+						}
+						if strings.Contains(query, "count(") {
+							require.Equal(t, [][]interface{}{{float64(0)}}, actual)
+						} else {
+							require.Empty(t, actual)
+						}
+						key := schema + "/" + query
+						if backend.name == "nornicdb" {
+							observed[key] = actual
+						} else {
+							require.Equal(t, observed[key], actual)
+						}
+						evidence, err := json.Marshal(map[string]interface{}{"backend": backend.name, "route": "http/explicit", "schema": schema, "query": query, "parameters": map[string]interface{}{"id": nil}, "rows": actual})
+						require.NoError(t, err)
+						t.Logf("ISSUE810_RESULT %s", evidence)
+					}
+					post(opened.Commit)
+					stored := post(backend.endpoint+"/commit", map[string]interface{}{"statement": "MATCH (n:PDRecord) RETURN n.id,n.kind,n.touched ORDER BY n.kind,n.id"})
+					require.Len(t, stored.Results[0].Data, 4)
+					for _, row := range stored.Results[0].Data {
+						require.Nil(t, row.Row[2])
+					}
+					edges := post(backend.endpoint+"/commit", map[string]interface{}{"statement": "MATCH ()-[r:R]->() RETURN count(r)"})
+					require.Equal(t, []interface{}{float64(1)}, edges.Results[0].Data[0].Row)
+				})
+			}
+		})
+	}
+}
 
 func TestTransactionHTTPValueBoundaries(t *testing.T) {
 	server := &Server{}

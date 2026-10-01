@@ -1383,7 +1383,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	if len(nodeInfo.properties) == 0 {
 		return nil, false
 	}
-	schema := store.GetSchema()
+	schema := propertyIndexSchema(store)
 	if schema == nil {
 		return nil, false
 	}
@@ -1469,7 +1469,7 @@ func (e *StorageExecutor) lookupWhereCandidatesUsingPropertyIndex(nodeInfo nodeP
 	if findTopLevelKeyword(wherePart, " OR ") >= 0 {
 		return nil, false
 	}
-	schema := store.GetSchema()
+	schema := propertyIndexSchema(store)
 	if schema == nil {
 		return nil, false
 	}
@@ -2195,8 +2195,8 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 // the parser resolves (a literal, a parameter, an evaluated expression) is
 // that value: a string literal is a string, whatever it reads. An expression
 // the parser leaves as its own text and that reads a bound variable's
-// property (a.id) is evaluated against the bound entities. Null values are
-// left out, as parseProperties leaves them out.
+// property (a.id) is evaluated against the bound entities. Null values remain
+// in the map so the shared MERGE validator rejects them before matching.
 func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) map[string]interface{} {
 	props := make(map[string]interface{})
 	propsText = strings.TrimSpace(propsText)
@@ -2224,9 +2224,6 @@ func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText st
 					value = e.evaluateExpressionWithContext(ctx, text, nodeContext, relContext)
 				}
 			}
-		}
-		if value == nil && strings.EqualFold(valueText, "null") {
-			continue
 		}
 		props[key] = value
 	}

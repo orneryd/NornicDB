@@ -99,7 +99,162 @@ func TestReportedProductBoundariesOnLiveServer(t *testing.T) {
 	}
 }
 
+func TestGh809_BoltTransactionIndexVisibility(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	nornic, shutdown := startConformanceServer(t)
+	defer shutdown()
+	backends := []struct {
+		name, database string
+		driver         neo4j.DriverWithContext
+	}{{"nornicdb", "nornic", nornic}}
+	if uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI"); uri != "" {
+		reference, err := neo4j.NewDriverWithContext(uri, neo4j.NoAuth())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reference.Close(context.Background())
+		if err := waitForReference(ctx, reference); err != nil {
+			t.Fatal(err)
+		}
+		backends = append(backends, struct {
+			name, database string
+			driver         neo4j.DriverWithContext
+		}{"neo4j", "neo4j", reference})
+	}
+	rows := make([]any, 0, 48)
+	ids := make([]any, 0, 16)
+	for document := 0; document < 16; document++ {
+		documentID := fmt.Sprintf("doc-%d", document)
+		ids = append(ids, documentID)
+		for _, kind := range []string{"document", "version", "origin"} {
+			rows = append(rows, map[string]any{"properties": map[string]any{
+				"id": documentID + "-" + kind, "document_id": documentID, "kind": kind,
+				"revision": int64(1), "body": "body", "created_at": "created", "updated_at": "updated",
+			}})
+		}
+	}
+	selector := "MATCH (n:GH809) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body,n.created_at AS created_at,n.updated_at AS updated_at ORDER BY id"
+	parameters := map[string]any{"ids": ids, "kinds": []any{"version", "origin", "unused"}}
+	observed := make(map[string][][]any)
+	for _, backend := range backends {
+		t.Run(backend.name, func(t *testing.T) {
+			session := backend.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: backend.database})
+			defer session.Close(ctx)
+			run := func(query string, params map[string]any, tx neo4j.ExplicitTransaction) [][]any {
+				t.Helper()
+				var result neo4j.ResultWithContext
+				var err error
+				if tx == nil {
+					result, err = session.Run(ctx, query, params)
+				} else {
+					result, err = tx.Run(ctx, query, params)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				records, err := result.Collect(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				values := make([][]any, 0, len(records))
+				for _, record := range records {
+					values = append(values, record.Values)
+				}
+				return values
+			}
+			for _, property := range []string{"", "document_id", "kind"} {
+				for _, commit := range []bool{false, true} {
+					t.Run(fmt.Sprintf("index=%s/commit=%v", property, commit), func(t *testing.T) {
+						run("MATCH (n:GH809) DETACH DELETE n", nil, nil)
+						for _, indexed := range []string{"document_id", "kind"} {
+							run("DROP INDEX gh809_"+indexed+" IF EXISTS", nil, nil)
+						}
+						if property != "" {
+							run("CREATE INDEX gh809_"+property+" FOR (n:GH809) ON (n."+property+")", nil, nil)
+							if backend.name == "neo4j" {
+								run("CALL db.awaitIndexes(30)", nil, nil)
+							}
+						}
+						tx, err := session.BeginTransaction(ctx)
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer tx.Close(ctx)
+						written := run("UNWIND $rows AS row CREATE (n:GH809) SET n = row.properties RETURN n.id AS id", map[string]any{"rows": rows}, tx)
+						if len(written) != 48 {
+							t.Fatalf("expected 48 writes, got %d", len(written))
+						}
+						actual := run(selector, parameters, tx)
+						if len(actual) != 32 {
+							t.Fatalf("expected 32 selected rows, got %#v", actual)
+						}
+						key := fmt.Sprintf("%s/%v", property, commit)
+						if backend.name == "nornicdb" {
+							observed[key] = actual
+						} else if !reflect.DeepEqual(observed[key], actual) {
+							t.Fatalf("row mismatch: NornicDB=%#v Neo4j=%#v", observed[key], actual)
+						}
+						if commit {
+							err = tx.Commit(ctx)
+						} else {
+							err = tx.Rollback(ctx)
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+						stored := run(selector, parameters, nil)
+						if commit && !reflect.DeepEqual(actual, stored) || !commit && len(stored) != 0 {
+							t.Fatalf("unexpected committed state: commit=%v rows=%#v", commit, stored)
+						}
+						evidence, err := json.Marshal(map[string]any{"backend": backend.name, "route": "bolt", "index": property, "commit": commit, "rows": actual, "durable_rows": stored})
+						if err != nil {
+							t.Fatal(err)
+						}
+						t.Logf("ISSUE809_RESULT %s", evidence)
+					})
+				}
+			}
+		})
+	}
+}
+
 func TestFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
+	runDifferentialCases(t, loadDifferentialCases(t))
+}
+
+func TestGh810_NullPropertyMapsMatchPinnedNeo4j(t *testing.T) {
+	var cases []differentialCase
+	for _, schema := range []string{"", "CREATE INDEX ix FOR (n:PDRecord) ON (n.id)", "CREATE CONSTRAINT uq FOR (n:PDRecord) REQUIRE n.id IS UNIQUE"} {
+		setup := []string{"CREATE (a:PDRecord {id:'r1',kind:'a'})-[:R]->(b:PDRecord {id:'r2',kind:'b'}), (:PDRecord {id:'r3',kind:'a'}), (:PDRecord {kind:'noid'})"}
+		if schema != "" {
+			setup = append(setup, schema)
+		}
+		for _, query := range []string{
+			"MATCH (n:PDRecord {id:$id}) RETURN n.id",
+			"MATCH (n:PDRecord {id:null}) RETURN n.id",
+			"MATCH (n:PDRecord {id:$id}) RETURN count(n)",
+			"MATCH (n {id:$id}) RETURN n.id",
+			"MATCH (n:PDRecord {id:$id,kind:$kind}) RETURN n.id",
+			"MATCH (a:PDRecord {id:$id})-[:R]->(b) RETURN b.id",
+			"MATCH (a)-[:R]->(b:PDRecord {id:$id}) RETURN a.id",
+			"OPTIONAL MATCH (n:PDRecord {id:$id}) RETURN n.id",
+			"MATCH (n:PDRecord {id:$id}) SET n.touched=true RETURN count(n)",
+			"MATCH (n:PDRecord {id:$id}) DETACH DELETE n",
+			"MATCH (n {id:$id}) DETACH DELETE n RETURN count(*)",
+			"MERGE (n:PDRecord {id:$id}) RETURN n.id",
+		} {
+			cases = append(cases, differentialCase{
+				Name:  "GH810/schema=" + schema + "/" + query,
+				Setup: setup, Query: query, Parameters: map[string]any{"id": nil, "kind": "a"}, NoEffects: true,
+			})
+		}
+	}
+	runDifferentialCases(t, cases)
+}
+
+func runDifferentialCases(t *testing.T, cases []differentialCase) {
+	t.Helper()
 	referenceURI := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI")
 	if referenceURI == "" {
 		t.Skip("set NORNICDB_NEO4J_REFERENCE_URI to run the pinned Neo4j differential corpus")
@@ -120,13 +275,13 @@ func TestFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 		t.Fatalf("connect to pinned Neo4j reference: %v", err)
 	}
 
-	cases := loadDifferentialCases(t)
 	for _, mode := range []TransactionMode{AutocommitMode, ExplicitTransactionMode} {
 		t.Run(string(mode), func(t *testing.T) {
 			nornicDriver, shutdown := startConformanceServer(t)
 			defer shutdown()
 			nornic := newDifferentialBackend(t, nornicDriver, "nornic", mode)
 			reference := newDifferentialBackend(t, referenceDriver, "neo4j", mode)
+			defer resetDifferentialBackend(t, ctx, reference, "Neo4j")
 
 			for _, testCase := range cases {
 				t.Run(testCase.Name, func(t *testing.T) {
