@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +34,7 @@ func TestAsyncEngine_DeleteNode_RecheckBranches(t *testing.T) {
 		id := NodeID("test:recheck")
 		_, err := inner.CreateNode(&Node{ID: id, Labels: []string{"N"}})
 		require.NoError(t, err)
-		ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: 1_000_000})
+		ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: time.Hour})
 		inner.onGetNode = func() { hook(ae, id) }
 		t.Cleanup(func() { _ = ae.Close() })
 		return ae
@@ -65,14 +66,15 @@ func TestAsyncEngine_DeleteNode_RecheckBranches(t *testing.T) {
 		})
 		require.NoError(t, ae.DeleteNode("test:recheck"))
 		ae.mu.RLock()
-		require.True(t, ae.deleteNodes["test:recheck"])
+		deleted := ae.deleteNodes["test:recheck"]
 		ae.mu.RUnlock()
+		require.True(t, deleted)
 	})
 }
 
 func TestAsyncEngine_DeleteNode_CachedInflightBranch(t *testing.T) {
 	inner := NewMemoryEngine()
-	ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: 1_000_000})
+	ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: time.Hour})
 	defer ae.Close()
 
 	id := NodeID("test:cached-inflight")
@@ -84,9 +86,11 @@ func TestAsyncEngine_DeleteNode_CachedInflightBranch(t *testing.T) {
 
 	require.NoError(t, ae.DeleteNode(id))
 	ae.mu.RLock()
-	require.True(t, ae.deleteNodes[id])
-	require.EqualValues(t, 1, ae.pendingWrites)
+	deleted := ae.deleteNodes[id]
+	pendingWrites := ae.pendingWrites
 	ae.mu.RUnlock()
+	require.True(t, deleted)
+	require.EqualValues(t, 1, pendingWrites)
 }
 
 func TestAsyncEngine_FlushWithResult_BulkDeleteFallbackMixedOutcomes(t *testing.T) {
@@ -101,7 +105,7 @@ func TestAsyncEngine_FlushWithResult_BulkDeleteFallbackMixedOutcomes(t *testing.
 	require.NoError(t, err)
 	require.NoError(t, errEngine.CreateEdge(&Edge{ID: "test:del-ok-edge", StartNode: "test:del-a", EndNode: "test:del-b", Type: "REL"}))
 
-	ae := NewAsyncEngine(errEngine, &AsyncEngineConfig{FlushInterval: 1_000_000})
+	ae := NewAsyncEngine(errEngine, &AsyncEngineConfig{FlushInterval: time.Hour})
 	defer ae.Close()
 
 	ae.mu.Lock()
@@ -121,7 +125,7 @@ func TestAsyncEngine_FlushWithResult_BulkDeleteFallbackMixedOutcomes(t *testing.
 
 func TestAsyncEngine_MergeFallbackAndCachePaths(t *testing.T) {
 	inner := NewMemoryEngine()
-	ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: 1_000_000})
+	ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: time.Hour})
 	defer ae.Close()
 
 	_, err := inner.CreateNode(&Node{ID: "test:engine-node", Labels: []string{"Person"}})
@@ -158,7 +162,7 @@ func TestAsyncEngine_MergeFallbackAndCachePaths(t *testing.T) {
 func TestAsyncEngine_StreamFallbackBranches(t *testing.T) {
 	base := NewMemoryEngine()
 	inner := &asyncNonStreamingEngine{Engine: base}
-	ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: 1_000_000})
+	ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: time.Hour})
 	defer ae.Close()
 
 	_, err := base.CreateNode(&Node{ID: "tenant:a", Labels: []string{"N"}})

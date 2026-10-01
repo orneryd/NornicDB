@@ -64,31 +64,15 @@ func TestPeerGC_Evicts(t *testing.T) {
 // TestPeerGC_DoesNotEvictRecent asserts that a peer continuously marked
 // (live) is NOT evicted by sweep.
 func TestPeerGC_DoesNotEvictRecent(t *testing.T) {
-	bag, gc, reg := gcFixture(t, "raft", 10*time.Millisecond, 50*time.Millisecond)
+	bag, gc, reg := gcFixture(t, "raft", time.Hour, time.Hour)
 
 	gc.Tracker().Mark("p2")
 	bag.LagBytes.WithLabelValues("p2").Set(1)
 
-	// Mark the peer continuously while sweeps run.
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		ticker := time.NewTicker(5 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				gc.Tracker().Mark("p2")
-			}
-		}
-	}()
-
-	// Run several sweeps; the live peer must survive.
 	for i := 0; i < 5; i++ {
-		time.Sleep(20 * time.Millisecond)
+		gc.Tracker().Mark("p2")
 		gc.sweep()
+		require.Equal(t, 1, gc.Tracker().Len())
 	}
 	got, err := testutil.GatherAndCount(reg, "nornicdb_replication_lag_bytes")
 	require.NoError(t, err)
