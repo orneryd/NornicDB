@@ -816,5 +816,63 @@
     "expected_code": "Neo.ClientError.Statement.SyntaxError",
     "expected_phase": "compile time",
     "no_effects": true
+  },
+  {
+    "name": "PR771 unit call legacy filtered delete",
+    "setup": ["CREATE (:T {id: 1, x: 5}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL { WITH n WITH n WHERE n.id = 2 DETACH DELETE n } RETURN count(*) AS c"
+  },
+  {
+    "name": "PR771 unit call legacy filtered set",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL { WITH n WITH n WHERE n.id = 2 SET n.k = 1 } RETURN count(*) AS c"
+  },
+  {
+    "name": "PR771 unit call scoped filtered set",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n WHERE n.id = 2 SET n.k = 1 } RETURN n.id AS id ORDER BY id",
+    "ordered": true
+  },
+  {
+    "name": "PR771 unit call legacy inner match filter",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL { WITH n MATCH (n) WHERE n.id = 2 SET n.k = 1 } RETURN count(*) AS c"
+  },
+  {
+    "name": "PR771 unit call all inner rows filtered",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n WHERE false SET n.k = 1 } RETURN n.id AS id ORDER BY id",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "PR771 unit call multiple inner rows",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n UNWIND [1, 2] AS value WITH n, value WHERE n.id = 2 SET n.k = value } RETURN n.id AS id ORDER BY id",
+    "ordered": true
+  },
+  {
+    "name": "PR771 returning call still filters outer rows",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n WHERE n.id = 2 RETURN n.id AS inner } RETURN n.id AS id, inner",
+    "no_effects": true
+  },
+  {
+    "name": "PR771 unit call empty outer input",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:Missing) CALL (n) { WITH n WHERE n.id = 2 SET n.k = 1 } RETURN count(*) AS c",
+    "no_effects": true
+  },
+  {
+    "name": "PR771 transactional unit call scoped filtered set",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL (n) { WITH n WHERE n.id = 2 SET n.k = 1 } IN TRANSACTIONS OF 1 ROW RETURN n.id AS id ORDER BY id",
+    "ordered": true
+  },
+  {
+    "name": "PR771 transactional unit call legacy filtered set",
+    "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
+    "query": "MATCH (n:T) CALL { WITH n WITH n WHERE n.id = 2 SET n.k = 1 } IN TRANSACTIONS OF 1 ROW RETURN n.id AS id ORDER BY id",
+    "ordered": true
   }
 ]

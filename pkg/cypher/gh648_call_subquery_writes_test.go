@@ -119,6 +119,123 @@ func TestGh648_UncorrelatedUnitSubqueryRunsPerRow(t *testing.T) {
 	})
 }
 
+func TestPR771UnitCallPreservesFilteredOuterRows(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		query   string
+		columns []string
+		rows    [][]interface{}
+		stored  [][]interface{}
+	}{
+		{
+			name:    "legacy filtered delete",
+			query:   "MATCH (n:T) CALL { WITH n WITH n WHERE n.id = 2 DETACH DELETE n } RETURN count(*) AS c",
+			columns: []string{"c"},
+			rows:    [][]interface{}{{int64(2)}},
+			stored:  [][]interface{}{{int64(1), nil}},
+		},
+		{
+			name:    "legacy filtered set",
+			query:   "MATCH (n:T) CALL { WITH n WITH n WHERE n.id = 2 SET n.k = 1 } RETURN count(*) AS c",
+			columns: []string{"c"},
+			rows:    [][]interface{}{{int64(2)}},
+			stored:  [][]interface{}{{int64(1), nil}, {int64(2), int64(1)}},
+		},
+		{
+			name:    "scoped filtered set",
+			query:   "MATCH (n:T) CALL (n) { WITH n WHERE n.id = 2 SET n.k = 1 } RETURN n.id AS id ORDER BY id",
+			columns: []string{"id"},
+			rows:    [][]interface{}{{int64(1)}, {int64(2)}},
+			stored:  [][]interface{}{{int64(1), nil}, {int64(2), int64(1)}},
+		},
+		{
+			name:    "legacy inner match filter",
+			query:   "MATCH (n:T) CALL { WITH n MATCH (n) WHERE n.id = 2 SET n.k = 1 } RETURN count(*) AS c",
+			columns: []string{"c"},
+			rows:    [][]interface{}{{int64(2)}},
+			stored:  [][]interface{}{{int64(1), nil}, {int64(2), int64(1)}},
+		},
+		{
+			name:    "all inner rows filtered",
+			query:   "MATCH (n:T) CALL (n) { WITH n WHERE false SET n.k = 1 } RETURN n.id AS id ORDER BY id",
+			columns: []string{"id"},
+			rows:    [][]interface{}{{int64(1)}, {int64(2)}},
+			stored:  [][]interface{}{{int64(1), nil}, {int64(2), nil}},
+		},
+		{
+			name:    "multiple inner rows do not multiply outer rows",
+			query:   "MATCH (n:T) CALL (n) { WITH n UNWIND [1, 2] AS value WITH n, value WHERE n.id = 2 SET n.k = value } RETURN n.id AS id ORDER BY id",
+			columns: []string{"id"},
+			rows:    [][]interface{}{{int64(1)}, {int64(2)}},
+			stored:  [][]interface{}{{int64(1), nil}, {int64(2), int64(2)}},
+		},
+		{
+			name:    "returning subquery still filters outer rows",
+			query:   "MATCH (n:T) CALL (n) { WITH n WHERE n.id = 2 RETURN n.id AS inner } RETURN n.id AS id, inner",
+			columns: []string{"id", "inner"},
+			rows:    [][]interface{}{{int64(2), int64(2)}},
+			stored:  [][]interface{}{{int64(1), nil}, {int64(2), nil}},
+		},
+		{
+			name:    "empty outer input stays empty",
+			query:   "MATCH (n:Missing) CALL (n) { WITH n WHERE n.id = 2 SET n.k = 1 } RETURN count(*) AS c",
+			columns: []string{"c"},
+			rows:    [][]interface{}{{int64(0)}},
+			stored:  [][]interface{}{{int64(1), nil}, {int64(2), nil}},
+		},
+	} {
+		for _, explicit := range []bool{false, true} {
+			mode := "autocommit"
+			if explicit {
+				mode = "explicit transaction"
+			}
+			t.Run(testCase.name+"/"+mode, func(t *testing.T) {
+				exec := newGh648Executor(t)
+				ctx := context.Background()
+				_, err := exec.Execute(ctx, "CREATE (:T {id: 1, x: 5}), (:T {id: 2})", nil)
+				require.NoError(t, err)
+				if explicit {
+					_, err = exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+				}
+				result, err := exec.Execute(ctx, testCase.query, nil)
+				require.NoError(t, err)
+				require.Equal(t, testCase.columns, result.Columns)
+				require.Equal(t, testCase.rows, result.Rows)
+				if explicit {
+					_, err = exec.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+				}
+				stored, err := exec.Execute(ctx, "MATCH (n:T) RETURN n.id AS id, n.k AS k ORDER BY id", nil)
+				require.NoError(t, err)
+				require.Equal(t, testCase.stored, stored.Rows)
+			})
+		}
+	}
+}
+
+func TestPR771TransactionalUnitCallPreservesFilteredOuterRows(t *testing.T) {
+	for _, body := range []string{
+		"CALL (n) { WITH n WHERE n.id = 2 SET n.k = 1 }",
+		"CALL { WITH n WITH n WHERE n.id = 2 SET n.k = 1 }",
+	} {
+		t.Run(body, func(t *testing.T) {
+			exec := newGh648Executor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE (:T {id: 1}), (:T {id: 2})", nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(ctx, "MATCH (n:T) "+body+" IN TRANSACTIONS OF 1 ROW RETURN n.id AS id ORDER BY id", nil)
+			require.NoError(t, err)
+			require.Equal(t, []string{"id"}, result.Columns)
+			require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}}, result.Rows)
+			stored, err := exec.Execute(ctx, "MATCH (n:T) RETURN n.id AS id, n.k AS k ORDER BY id", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(1), nil}, {int64(2), int64(1)}}, stored.Rows)
+		})
+	}
+}
+
 func TestGh648_SharedReturnBoundary(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()

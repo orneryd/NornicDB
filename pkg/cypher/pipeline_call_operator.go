@@ -132,7 +132,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				if inner != nil {
 					out = appendCallReturnRows(out, outer, inner.Columns, inner.Rows)
 				}
-			} else if len(state.rows) > 0 {
+			} else {
 				retained := make(pipelineRow, len(outer))
 				for name, value := range outer {
 					retained[name] = value
