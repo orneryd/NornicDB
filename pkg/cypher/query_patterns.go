@@ -518,6 +518,16 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 func extractNodeVariables(matchClause string) []string {
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
+		if matchClause[i] == '\'' || matchClause[i] == '"' {
+			i = skipQuotedSemanticText(matchClause, i) - 1
+			continue
+		}
+		if matchClause[i] == '{' {
+			if end := findMatchingDelimiter(matchClause, i, '{', '}'); end >= 0 {
+				i = end
+				continue
+			}
+		}
 		if matchClause[i] != '(' {
 			continue
 		}

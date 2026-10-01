@@ -8,6 +8,8 @@ import (
 
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 func init() {
@@ -265,9 +267,9 @@ func evalToLower(ctx Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
-	v, _ := ctx.Eval(args[0])
-	if v == nil {
-		return nil, nil
+	v, err := ctx.Eval(args[0])
+	if err != nil || v == nil {
+		return nil, err
 	}
 	return strings.ToLower(fmt.Sprintf("%v", v)), nil
 }
@@ -276,16 +278,19 @@ func evalToUpper(ctx Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
-	v, _ := ctx.Eval(args[0])
-	if v == nil {
-		return nil, nil
+	v, err := ctx.Eval(args[0])
+	if err != nil || v == nil {
+		return nil, err
 	}
-	return strings.ToUpper(fmt.Sprintf("%v", v)), nil
+	return cases.Upper(language.Und).String(fmt.Sprintf("%v", v)), nil
 }
 
 func evalCoalesce(ctx Context, args []string) (interface{}, error) {
 	for _, a := range args {
-		v, _ := ctx.Eval(a)
+		v, err := ctx.Eval(a)
+		if err != nil {
+			return nil, err
+		}
 		if v != nil {
 			return v, nil
 		}

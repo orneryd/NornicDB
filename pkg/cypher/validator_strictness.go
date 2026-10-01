@@ -2,6 +2,50 @@ package cypher
 
 import "strings"
 
+func validateExpressionLexicalTokens(text string) error {
+	for index := 0; index < len(text); index++ {
+		character := text[index]
+		if character == '\'' || character == '"' || character == '`' {
+			quote := character
+			for index++; index < len(text); index++ {
+				if text[index] == '\\' && quote != '`' {
+					index++
+					continue
+				}
+				if text[index] == quote {
+					if quote == '`' && index+1 < len(text) && text[index+1] == '`' {
+						index++
+						continue
+					}
+					break
+				}
+			}
+			continue
+		}
+		if character == '/' && index+1 < len(text) {
+			if text[index+1] == '/' {
+				for index < len(text) && text[index] != '\n' {
+					index++
+				}
+				continue
+			}
+			if text[index+1] == '*' {
+				if end := strings.Index(text[index+2:], "*/"); end >= 0 {
+					index += end + 3
+					continue
+				}
+			}
+		}
+		malformedOptional := matchKeywordAt(text, index, "OPTIONAL") &&
+			(index == 0 || !clauseKeywordUsedAsName(text, index, index+len("OPTIONAL"), "OPTIONAL")) &&
+			strings.HasPrefix(text[skipSpaces(text, index+len("OPTIONAL")):], "<tab>")
+		if character == '\\' || malformedOptional {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid expression token")
+		}
+	}
+	return nil
+}
+
 // Validator strictness helpers (#514 family): forms Neo4j rejects but the
 // Nornic validator accepted — the NOT IN operator, trailing/leading commas in
 // list literals, adjacent string literals (Cypher has no doubled-quote

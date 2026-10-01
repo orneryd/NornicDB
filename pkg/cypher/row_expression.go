@@ -249,18 +249,6 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 				}
 			}
 			return nil, true, nil
-		case "tostring":
-			value, resolved, err := e.evaluateRowValue(argument, values)
-			if err != nil {
-				return nil, false, err
-			}
-			if !resolved {
-				return nil, false, nil
-			}
-			if value == nil {
-				return nil, true, nil
-			}
-			return formatCypherValueString(value), true, nil
 		case "length":
 			value, resolved, err := e.evaluateRowValue(argument, values)
 			if err != nil {
@@ -352,7 +340,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 				return nil, false, err
 			}
 			return result, true, nil
-		case "head", "last", "tail", "reverse", "size":
+		case "head", "last", "reverse", "size":
 			value, resolved, err := e.evaluateRowValue(argument, values)
 			if err != nil {
 				return nil, false, err
@@ -397,11 +385,6 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 					return nil, true, nil
 				}
 				return items[len(items)-1], true, nil
-			case "tail":
-				if len(items) <= 1 {
-					return []interface{}{}, true, nil
-				}
-				return append([]interface{}(nil), items[1:]...), true, nil
 			case "reverse":
 				reversed := make([]interface{}, len(items))
 				for index := range items {

@@ -69,6 +69,59 @@
     "ordered": true
   },
   {
+    "name": "monster 514 malformed reduce before create",
+    "query": "CREATE (a:T {n: reduce(s = 0, x IN [1, 2] \\| s + x)}) RETURN a.n"
+  },
+  {
+    "name": "monster 514 malformed comprehension before create",
+    "query": "CREATE (n:T {a: [x IN [1, 2] \\| x * 2]}) RETURN n.a"
+  },
+  {
+    "name": "monster 514 malformed second create has no partial effects",
+    "query": "CREATE (:Before) CREATE (a:T {n: reduce(s = 0, x IN [1, 2] \\| s + x)}) RETURN a.n"
+  },
+  {
+    "name": "monster 514 literal optional tab garbage",
+    "setup": ["CREATE (:K {id: 1})-[:R]->(:K {id: 2})"],
+    "query": "MATCH (n:K {id: 1}) OPTIONAL<tab>MATCH (n)-[:R]->(m) RETURN n.id"
+  },
+  {
+    "name": "monster 657 missing startNode argument member access",
+    "query": "RETURN startNode(r).id AS s"
+  },
+  {
+    "name": "monster 657 missing endNode argument member access",
+    "query": "RETURN endNode(r).id AS s"
+  },
+  {
+    "name": "monster 657 missing endpoint before mutation",
+    "query": "CREATE (n:T) SET n.x = startNode(r).id RETURN n"
+  },
+  {
+    "name": "monster 698 floating string formatting",
+    "query": "RETURN toString(1.0), toString(1e-7), toString(1e16), toString(123456789.0), toString(-0.0)"
+  },
+  {
+    "name": "monster 698 full uppercase expansion",
+    "query": "RETURN toUpper('\u00df'), upper('stra\u00dfe')"
+  },
+  {
+    "name": "monster 698 boolean numeric conversions",
+    "query": "RETURN toInteger(true), toInteger(false), toBoolean(1), toBoolean(0), toFloatOrNull(true)"
+  },
+  {
+    "name": "monster 698 known function nulls",
+    "query": "RETURN toUpper(null), toLower(null), substring(null, 1), substring('abc', null), left(null, 1), right(null, 1), replace(null, 'a', 'b'), split(null, ','), tail(null)"
+  },
+  {
+    "name": "monster 698 null function property values",
+    "query": "CREATE (n:T {upper: toUpper(null), text: toString(null), part: substring(null, 1), rest: tail(null)}) RETURN properties(n)"
+  },
+  {
+    "name": "monster 698 exact integer float equality",
+    "query": "RETURN 9007199254740993 = 9007199254740992.0, 9007199254740992 = 9007199254740992.0"
+  },
+  {
     "name": "foreach merge on create retains outer row",
     "setup": ["CREATE (:T {id: 1})"],
     "query": "MATCH (t:T) FOREACH (i IN [1, 2] | MERGE (w:W {id: i}) ON CREATE SET w.x = i) RETURN t.id"

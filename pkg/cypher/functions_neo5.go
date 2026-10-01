@@ -6,12 +6,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -25,7 +29,7 @@ func init() {
 	cypherfn.Register("isnan", fnIsNaN)
 	cypherfn.Register("char_length", fnCharLength)
 	cypherfn.Register("character_length", fnCharLength)
-	cypherfn.Register("upper", fnStringCase(strings.ToUpper, "upper"))
+	cypherfn.Register("upper", fnStringCase(func(text string) string { return cases.Upper(language.Und).String(text) }, "upper"))
 	cypherfn.Register("lower", fnStringCase(strings.ToLower, "lower"))
 	cypherfn.Register("btrim", fnTrimFunction("btrim", true, true))
 	cypherfn.Register("ltrim", fnTrimFunction("ltrim", true, false))
@@ -38,6 +42,125 @@ func init() {
 	cypherfn.Register("tobooleanlist", fnListConversion("toBooleanList", convertToBooleanOrNull))
 	cypherfn.Register("valuetype", fnValueType)
 	cypherfn.Register("nullif", fnNullIf)
+	cypherfn.Register("tail", fnTail)
+	for _, name := range []string{"substring", "left", "right", "replace", "split"} {
+		cypherfn.Register(name, fnStringOperation(name))
+	}
+	for _, name := range []string{"tointeger", "toint", "tofloat", "toboolean", "tostring"} {
+		convert := map[string]func(interface{}) interface{}{
+			"tointeger": convertToIntegerOrNull, "toint": convertToIntegerOrNull,
+			"tofloat": convertToFloatOrNull, "toboolean": convertToBooleanOrNull, "tostring": convertToStringOrNull,
+		}[name]
+		cypherfn.Register(name, fnScalarConversion(name, convert, false))
+		if name != "toint" {
+			cypherfn.Register(name+"ornull", fnScalarConversion(name, convert, true))
+		}
+	}
+}
+
+func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, argumentCountError("tail", "1", len(args))
+	}
+	value, err := ctx.Eval(args[0])
+	if err != nil || value == nil {
+		return nil, err
+	}
+	items, list := cypherListValue(value)
+	if !list {
+		return nil, &cypherfn.TypeMismatchError{Function: "tail", Expected: "List<T>", Value: value}
+	}
+	if len(items) < 2 {
+		return []interface{}{}, nil
+	}
+	return append([]interface{}{}, items[1:]...), nil
+}
+
+func fnStringOperation(name string) cypherfn.Func {
+	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+		minimum, maximum := 2, 2
+		if name == "substring" {
+			maximum = 3
+		} else if name == "replace" {
+			minimum, maximum = 3, 3
+		}
+		if len(args) < minimum || len(args) > maximum {
+			return nil, argumentCountError(name, strconv.Itoa(minimum), len(args))
+		}
+		values, err := evalArgs(ctx, args)
+		if err != nil {
+			return nil, err
+		}
+		for _, value := range values {
+			if value == nil {
+				return nil, nil
+			}
+		}
+		text, _, err := stringArgument(name, values, 0)
+		if err != nil {
+			return nil, err
+		}
+		if name == "replace" || name == "split" {
+			separator, _, err := stringArgument(name, values, 1)
+			if err != nil {
+				return nil, err
+			}
+			if name == "replace" {
+				replacement, _, err := stringArgument(name, values, 2)
+				if err != nil {
+					return nil, err
+				}
+				return strings.ReplaceAll(text, separator, replacement), nil
+			}
+			parts := strings.Split(text, separator)
+			result := make([]interface{}, len(parts))
+			for index, part := range parts {
+				result[index] = part
+			}
+			return result, nil
+		}
+		position, ok := toInt(values[1])
+		if !ok {
+			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Integer", Value: values[1]}
+		}
+		if position < 0 {
+			return nil, newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgumentValue", "Cannot handle negative start index nor negative length")
+		}
+		switch name {
+		case "left":
+			return cyphertext.Left(text, position), nil
+		case "right":
+			return cyphertext.Right(text, position), nil
+		}
+		if len(values) == 2 {
+			return cyphertext.From(text, position), nil
+		}
+		length, ok := toInt(values[2])
+		if !ok {
+			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Integer", Value: values[2]}
+		}
+		if length < 0 {
+			return nil, newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgumentValue", "Cannot handle negative start index nor negative length")
+		}
+		return cyphertext.Substring(text, position, length), nil
+	}
+}
+
+func fnScalarConversion(name string, convert func(interface{}) interface{}, orNull bool) cypherfn.Func {
+	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, argumentCountError(name, "1", len(args))
+		}
+		value, err := ctx.Eval(args[0])
+		if err != nil || value == nil {
+			return nil, err
+		}
+		if !orNull && !validConversionArgument(name, value) {
+			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
+				fmt.Sprintf("Invalid input for function '%s()': Expected %s, got: %s", conversionFunctionNames[name], conversionFunctionInputs[name], neo4jValueRepr(value)))
+		}
+		return convert(value), nil
+	}
 }
 
 // evalArgs evaluates a function's argument expressions.
@@ -351,9 +474,11 @@ func convertToStringOrNull(value interface{}) interface{} {
 	case bool:
 		return strconv.FormatBool(typed)
 	case float64:
-		return strconv.FormatFloat(typed, 'f', -1, 64)
+		return formatCypherValueString(typed)
 	case float32:
-		return strconv.FormatFloat(float64(typed), 'f', -1, 32)
+		return formatCypherValueString(typed)
+	case time.Time, *time.Time:
+		return formatCypherValueString(typed)
 	case []interface{}, map[string]interface{}, *storage.Node, *storage.Edge:
 		return nil
 	}

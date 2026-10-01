@@ -456,9 +456,8 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	// Handle function calls like kalman.init(), toUpper('test'), etc.
 	// A function call has the pattern: name(...) or name.sub.name(...)
 	if looksLikeFunctionCall(valueStr) {
-		result := e.evaluateExpressionWithContext(ctx, valueStr, nil, nil)
-		// Only use the result if evaluation succeeded (not returned as original string)
-		if result != nil && result != valueStr {
+		result, defined := e.evaluateExpressionWithContextDefined(ctx, valueStr, nil, nil)
+		if defined && result != valueStr {
 			return result
 		}
 	}

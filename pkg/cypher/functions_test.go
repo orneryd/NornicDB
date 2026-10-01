@@ -2505,8 +2505,8 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "toBoolean('TRUE')", nodes, nil); got != true {
 		t.Fatalf("toBoolean('TRUE') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toBoolean(1)", nodes, nil); got != nil {
-		t.Fatalf("toBoolean(1) should be nil, got %#v", got)
+	if got := e.evaluateExpressionWithContext(ctx, "toBoolean(1)", nodes, nil); got != true {
+		t.Fatalf("toBoolean(1) should be true, got %#v", got)
 	}
 
 	// OrNull conversion variants.

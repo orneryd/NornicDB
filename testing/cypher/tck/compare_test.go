@@ -1,6 +1,22 @@
 package tck
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
+
+func TestCompareResultsNumericZerosEqualButStringsDistinct(t *testing.T) {
+	expected := QueryResult{Columns: []string{"value"}, Rows: [][]any{{float64(0)}}}
+	actual := QueryResult{Columns: []string{"value"}, Rows: [][]any{{math.Copysign(0, -1)}}}
+	if err := CompareResults(actual, expected, true, false); err != nil {
+		t.Fatalf("numeric signed zeros must compare equal: %v", err)
+	}
+	expected.Rows = [][]any{{"0.0"}}
+	actual.Rows = [][]any{{"-0.0"}}
+	if err := CompareResults(actual, expected, true, false); err == nil {
+		t.Fatal("string signed zeros must remain distinct")
+	}
+}
 
 func TestCompareResultsUsesRowMultisets(t *testing.T) {
 	expected := QueryResult{Columns: []string{"value"}, Rows: [][]any{{int64(1)}, {int64(2)}, {int64(1)}}}
