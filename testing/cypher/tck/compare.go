@@ -8,8 +8,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"strconv"
+
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 )
 
 func compareGraphSnapshots(left, right GraphSnapshot) error {
@@ -195,6 +196,9 @@ func typedInteger(value int64) map[string]any {
 }
 
 func typedFloat(value float64) map[string]any {
+	if value == 0 {
+		value = 0
+	}
 	representation := strconv.FormatFloat(value, 'g', -1, 64)
 	if math.IsNaN(value) {
 		representation = "NaN"

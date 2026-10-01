@@ -3,11 +3,8 @@ package cypher
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
-
-	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 )
 
 func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string, values map[string]interface{}) (value interface{}, matched bool, resolved bool, err error) {
@@ -70,106 +67,12 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			return nil, true, false, nil
 		}
 		return e.generateUUID(), true, true, nil
-	case "toupper", "tolower":
-		value, ok := one()
-		text, textOK := value.(string)
-		if !ok || !textOK {
-			return nil, true, false, nil
-		}
-		switch name {
-		case "toupper":
-			return strings.ToUpper(text), true, true, nil
-		default:
-			return strings.ToLower(text), true, true, nil
-		}
-	case "tointeger", "toint":
-		value, ok := one()
-		if !ok {
-			return nil, true, false, nil
-		}
-		switch typed := value.(type) {
-		case int64:
-			return typed, true, true, nil
-		case float64:
-			return int64(typed), true, true, nil
-		case string:
-			if parsed, err := strconv.ParseInt(typed, 10, 64); err == nil {
-				return parsed, true, true, nil
-			}
-			parsed, err := strconv.ParseFloat(typed, 64)
-			if err != nil {
-				return nil, true, true, nil
-			}
-			return int64(parsed), true, true, nil
-		default:
-			return nil, true, true, nil
-		}
-	case "tofloat":
-		value, ok := one()
-		if !ok {
-			return nil, true, false, nil
-		}
-		if value == nil {
-			return nil, true, true, nil
-		}
-		if number, numeric := toFloat64(value); numeric {
-			return number, true, true, nil
-		}
-		if text, textOK := value.(string); textOK {
-			number, err := strconv.ParseFloat(text, 64)
-			if err == nil {
-				return number, true, true, nil
-			}
-		}
-		return nil, true, true, nil
-	case "toboolean":
-		value, ok := one()
-		if !ok {
-			return nil, true, false, nil
-		}
-		if value == nil {
-			return nil, true, true, nil
-		}
-		if boolean, isBoolean := value.(bool); isBoolean {
-			return boolean, true, true, nil
-		}
-		if text, isText := value.(string); isText {
-			if strings.EqualFold(text, "true") {
-				return true, true, true, nil
-			}
-			if strings.EqualFold(text, "false") {
-				return false, true, true, nil
-			}
-		}
-		return nil, true, true, nil
-	case "substring", "left", "right":
-		arguments, ok := args()
-		if !ok || len(arguments) < 2 || len(arguments) > 3 {
-			return nil, true, false, nil
-		}
-		text, textOK := arguments[0].(string)
-		start, startOK := toInt(arguments[1])
-		if !textOK || !startOK {
-			return nil, true, false, nil
-		}
-		if start < 0 {
-			return nil, true, false, nil
-		}
-		switch name {
-		case "left":
-			return cyphertext.Left(text, start), true, true, nil
-		case "right":
-			return cyphertext.Right(text, start), true, true, nil
-		default:
-			if len(arguments) == 2 {
-				return cyphertext.From(text, start), true, true, nil
-			}
-			length, lengthOK := toInt(arguments[2])
-			if !lengthOK {
-				return nil, true, false, nil
-			}
-			return cyphertext.Substring(text, start, length), true, true, nil
-		}
+	case "toupper", "tolower", "tostring", "tostringornull", "tointeger", "toint", "tointegerornull", "tofloat", "tofloatornull", "toboolean", "tobooleanornull":
+		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		return value, true, resolved, err
+	case "substring", "left", "right", "replace", "split", "tail":
+		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		return value, true, resolved, err
 	case "lpad", "rpad":
 		arguments, ok := args()
 		if !ok || len(arguments) < 2 || len(arguments) > 3 {
@@ -199,34 +102,6 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			return nil, true, false, nil
 		}
 		return fmt.Sprintf(template, arguments[1:]...), true, true, nil
-	case "replace":
-		arguments, ok := args()
-		if !ok || len(arguments) != 3 {
-			return nil, true, false, nil
-		}
-		value, valueOK := arguments[0].(string)
-		search, searchOK := arguments[1].(string)
-		replacement, replacementOK := arguments[2].(string)
-		if !valueOK || !searchOK || !replacementOK {
-			return nil, true, false, nil
-		}
-		return strings.ReplaceAll(value, search, replacement), true, true, nil
-	case "split":
-		arguments, ok := args()
-		if !ok || len(arguments) != 2 {
-			return nil, true, false, nil
-		}
-		value, valueOK := arguments[0].(string)
-		delimiter, delimiterOK := arguments[1].(string)
-		if !valueOK || !delimiterOK {
-			return nil, true, false, nil
-		}
-		parts := strings.Split(value, delimiter)
-		result := make([]interface{}, len(parts))
-		for index, part := range parts {
-			result[index] = part
-		}
-		return result, true, true, nil
 	case "apoc.create.uuid":
 		return e.generateUUID(), true, true, nil
 	case "apoc.text.join":

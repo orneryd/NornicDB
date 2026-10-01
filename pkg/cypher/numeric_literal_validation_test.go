@@ -61,23 +61,24 @@ func TestIntegerLiteralBoundariesRemainValid(t *testing.T) {
 	}
 }
 
-func TestFloatLiteralZeroIsCanonical(t *testing.T) {
+func TestFloatLiteralZeroPreservesSign(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewMemoryEngine())
 	for _, literal := range []string{"0.0", ".0", "-0.0", "-.0", "-0e10"} {
 		value, ok := parseFloatFast(literal)
 		if !ok {
 			t.Fatalf("%s was not parsed", literal)
 		}
-		if value != 0 || math.Signbit(value) {
-			t.Fatalf("%s = %v (negative=%v), want positive zero", literal, value, math.Signbit(value))
+		negative := literal[0] == '-'
+		if value != 0 || math.Signbit(value) != negative {
+			t.Fatalf("%s = %v (negative=%v), want negative=%v", literal, value, math.Signbit(value), negative)
 		}
 		result, err := exec.Execute(context.Background(), "RETURN "+literal+" AS literal", nil)
 		if err != nil {
 			t.Fatalf("%s: %v", literal, err)
 		}
 		executed, ok := result.Rows[0][0].(float64)
-		if !ok || executed != 0 || math.Signbit(executed) {
-			t.Fatalf("execute %s = %#v, want positive zero", literal, result.Rows[0][0])
+		if !ok || executed != 0 || math.Signbit(executed) != negative {
+			t.Fatalf("execute %s = %#v, want negative=%v", literal, result.Rows[0][0], negative)
 		}
 	}
 }

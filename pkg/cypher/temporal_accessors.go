@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -10,6 +11,10 @@ import (
 
 func formatCypherValueString(value interface{}) string {
 	switch typed := value.(type) {
+	case float64:
+		return formatCypherFloat(typed, 64)
+	case float32:
+		return formatCypherFloat(float64(typed), 32)
 	case CypherDate:
 		return typed.String()
 	case *CypherDate:
@@ -41,6 +46,33 @@ func formatCypherValueString(value interface{}) string {
 	default:
 		return fmt.Sprint(value)
 	}
+}
+
+func formatCypherFloat(value float64, bits int) string {
+	if math.IsInf(value, 1) {
+		return "Infinity"
+	}
+	if math.IsInf(value, -1) {
+		return "-Infinity"
+	}
+	if math.IsNaN(value) {
+		return "NaN"
+	}
+	magnitude := math.Abs(value)
+	if magnitude == 0 || magnitude >= 1e-3 && magnitude < 1e7 {
+		text := strconv.FormatFloat(value, 'f', -1, bits)
+		if !strings.Contains(text, ".") {
+			text += ".0"
+		}
+		return text
+	}
+	text := strconv.FormatFloat(value, 'e', -1, bits)
+	parts := strings.SplitN(text, "e", 2)
+	if !strings.Contains(parts[0], ".") {
+		parts[0] += ".0"
+	}
+	exponent, _ := strconv.Atoi(parts[1])
+	return parts[0] + "E" + strconv.Itoa(exponent)
 }
 
 func formatZonedDateTimeString(value time.Time, zoneID string) string {

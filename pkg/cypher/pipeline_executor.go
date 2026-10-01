@@ -4376,9 +4376,5 @@ func parseFloatFast(s string) (float64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	// Cypher canonicalizes every floating-point zero to positive zero.
-	if f == 0 {
-		return 0, true
-	}
 	return f, true
 }

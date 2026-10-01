@@ -308,6 +308,15 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 		if err := validateKnownFunctionsInExpression(expression); err != nil {
 			return err
 		}
+		if base, _, access := splitPostfixPropertyAccess(expression); access {
+			if _, _, call := parseFunctionCallWS(base); call {
+				for _, name := range expressionFreeVariables(base) {
+					if _, found := scope[name]; !found {
+						return createUndefinedVariableError(name)
+					}
+				}
+			}
+		}
 		if expression == "*" {
 			if len(scope) == 0 {
 				return newSemanticError(

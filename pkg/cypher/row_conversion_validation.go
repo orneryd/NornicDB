@@ -139,7 +139,8 @@ func validConversionArgument(function string, value interface{}) bool {
 		case bool, string:
 			return true
 		}
-		return false
+		_, integer := cypherIntegerValue(value)
+		return integer
 	case "tostring":
 		switch value.(type) {
 		case string, bool,
@@ -153,6 +154,9 @@ func validConversionArgument(function string, value interface{}) bool {
 		kind := reflect.TypeOf(value).Kind()
 		return kind != reflect.Slice && kind != reflect.Array && kind != reflect.Map
 	case "tointeger", "toint", "tofloat":
+		if _, boolean := value.(bool); boolean {
+			return function != "tofloat"
+		}
 		switch value.(type) {
 		case string,
 			int, int8, int16, int32, int64,

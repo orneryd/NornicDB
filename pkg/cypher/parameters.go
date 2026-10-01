@@ -51,6 +51,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -184,6 +185,16 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 		value, exists := params[name]
 		if !exists || isCompositeParamValue(value) {
 			return "", false
+		}
+		switch number := value.(type) {
+		case float64:
+			if math.IsNaN(number) || math.IsInf(number, 0) {
+				return "", false
+			}
+		case float32:
+			if math.IsNaN(float64(number)) || math.IsInf(float64(number), 0) {
+				return "", false
+			}
 		}
 		return e.valueToLiteral(value), true
 	})

@@ -283,7 +283,11 @@ type staticTypeScope struct {
 
 // typeOf is the static type name of variable, or "" when it isn't known.
 func (scope staticTypeScope) typeOf(variable string) string {
-	switch scope.kinds[variable] {
+	kind, bound := scope.kinds[variable]
+	if !bound {
+		return scope.values[variable]
+	}
+	switch kind {
 	case matchBindingNode:
 		return "Node"
 	case matchBindingRelationship:

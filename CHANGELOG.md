@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before cross-database transaction admission; return HTTP 200 for missing USE
   targets without changing missing endpoint database errors (#738). Serialize
   transaction HTTP temporal values as ISO text, including nested values (#668).
+- Share scalar string and conversion function contracts across row and generic
+  evaluation, including null propagation, Unicode uppercase expansion, FLOAT
+  string formatting, and temporal text (#698). Reject malformed expressions and
+  undefined variables in function-result property access (#514, #657). Exclude
+  nested property functions from pattern-variable scope discovery.
 
 - Accept the legacy variable-length MVCC version-key layout
   (`[prefix][string ID][0x00][version]`) alongside the fixed-width layout
