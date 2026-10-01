@@ -128,7 +128,7 @@ func TestMonster531CompositeUniqueCreationAtomicity(t *testing.T) {
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE", nil)
 	require.Error(t, err)
-	require.Contains(t, statusText(err), "Neo.ClientError.Schema.ConstraintCreationFailed")
+	require.Contains(t, statusText(err), "Neo.DatabaseError.Schema.ConstraintCreationFailed")
 	require.Empty(t, store.GetSchema().GetAllConstraints())
 	indexes, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, type", nil)
 	require.NoError(t, err)
