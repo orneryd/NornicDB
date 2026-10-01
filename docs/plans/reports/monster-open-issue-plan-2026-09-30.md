@@ -89,8 +89,8 @@ runs were performed.
 | Streaming / CALL / MERGE | PR #771, integrated commit `e1acb2b2` | Latest #648 scoped transactional CALL outer rows and empty explicit inputs; #640 directed/undirected/labeled bare endpoints; #728 bounded typed node-product aggregation. Shared collector handles grouped/non-count aggregates. Other product paths and exhaustive #713/#547 convergence remain open. |
 | Expressions / static scope | PR #771, integrated commit `e0615742` | Latest #514 malformed expressions/lexical admission, #657 missing function-endpoint variables, #698 shared scalar conversion/string contracts. Null propagation, Unicode expansion, FLOAT/temporal text, and nested property-function scope pass reference checks. Full external 98-case family replay and remaining evaluator migrations are not claimed. |
 | Fabric / transport | PR #771, integrated commit `b56a84f0` | #683 composite commit/rollback context lifetime, #738 system-write and HTTP missing-USE-target admission, #668 recursive temporal text. #745 constituent identity tests pass locally before edits; reported environment remains unreproduced. Broader family replay remains open. |
-| Statement boundaries / ANTLR | [PR #774](https://github.com/orneryd/NornicDB/pull/774), `6ec20a92` | Latest #743 UNION/FINISH output contract, #744 statement chaining/mode metadata, #739 scoped CALL grammar. Full affected-package suites and native TCK pass. Forced-ANTLR CALL retains two pre-existing error-detail mismatches per mode; broader query options and fresh pinned replay remain unverified. |
-| Schema / SHOW | [PR #775](https://github.com/orneryd/NornicDB/pull/775), `ca2142fb` | #531 composite UNIQUE enforcement/malformed definitions and typed TEXT/POINT admission; #530 selected static YIELD checks. Delegate reports full repository correctness, official TCK, focused races, and vet passes. Community NODE KEY policy, broader SHOW values/inventory, and fresh pinned replay remain open. |
+| Statement boundaries / ANTLR | [PR #774](https://github.com/orneryd/NornicDB/pull/774), `6ec20a92` | Latest #743 UNION/FINISH output contract, #744 statement chaining/mode metadata, #739 scoped CALL grammar. Full affected-package suites, native TCK, and 266 pinned Bolt/HTTP comparisons pass. Forced-ANTLR CALL retains two pre-existing error-detail mismatches per mode; broader query options remain unverified. |
+| Schema / SHOW | [PR #775](https://github.com/orneryd/NornicDB/pull/775), `97163d8d` | #531 composite UNIQUE enforcement/malformed definitions and typed TEXT/POINT admission; #530 selected static YIELD checks. Delegate reports full repository correctness, official TCK, focused races, and vet passes. Coordinator fixed HTTP schema-reset isolation and constraint-creation error namespace; 302 pinned Bolt/HTTP comparisons pass. Community NODE KEY policy and broader SHOW values/inventory remain open. |
 | Deterministic tests / CI audit | [PR #773](https://github.com/orneryd/NornicDB/pull/773), `5fcdbdb9` | #715 WAL completion, peer sweep, async flush configuration; focused correctness 20 repeats and race 10 repeats pass. Untouched Bolt throughput-floor test remains. #754 mismatch ratcheting, reset retries, complete error/effect checks, and TestKit remain incomplete; no duplicate CI workflow was added. |
 
 ## Integrated Verification
@@ -120,6 +120,14 @@ credited as complete gates. Cluster reports provide fail-before evidence and
 owning API details:
 [Fabric](monster-fabric-results-2026-09-30.md) and
 [streaming](monster-stream-call-2026-09-30.md).
+
+Independent reference gates also pass: PR #774 has 266 comparisons and PR #775
+has 302. Logs: `/tmp/nornicdb-boundaries-final-reference.log` and
+`/tmp/nornicdb-schema-final-reference2.log`. Schema's first HTTP replay exposed
+fixture schema leakage; structured reset cleanup restores the two default
+lookup indexes. The isolated replay then exposed a real error-namespace mismatch
+for pre-existing duplicate tuples, corrected to DatabaseError rather than
+ClientError. Neither failure was hidden by changing corpus expectations.
 
 ## Remaining Issue Status
 
