@@ -2574,7 +2574,7 @@ func TestHandleImplicitTransaction_BranchMatrix(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
 
-	t.Run("use missing database returns 404", func(t *testing.T) {
+	t.Run("use missing database returns statement error with HTTP 200", func(t *testing.T) {
 		body := `{"statements":[{"statement":":USE missing_db RETURN 1 AS n"}]}`
 		req := httptest.NewRequest(http.MethodPost, "/db/"+dbName+"/tx/commit", strings.NewReader(body))
 		req = req.WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{
@@ -2583,7 +2583,8 @@ func TestHandleImplicitTransaction_BranchMatrix(t *testing.T) {
 		}))
 		rec := httptest.NewRecorder()
 		server.handleImplicitTransaction(rec, req, dbName)
-		require.Equal(t, http.StatusNotFound, rec.Code)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Contains(t, rec.Body.String(), "DatabaseNotFound")
 	})
 
 	t.Run("native USE statement is accepted", func(t *testing.T) {

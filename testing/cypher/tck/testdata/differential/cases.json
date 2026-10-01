@@ -1,5 +1,37 @@
 [
   {
+    "name": "monster 728 unfiltered product aggregate",
+    "setup": ["CREATE (:Doc {v: 1}), (:Doc {v: 2}), (:Doc {v: 3})"],
+    "query": "MATCH (a:Doc), (b:Doc) RETURN count(*) AS c, sum(a.v + b.v) AS total"
+  },
+  {
+    "name": "monster 728 grouped product aggregate",
+    "setup": ["CREATE (:Doc {v: 1}), (:Doc {v: 2}), (:Doc {v: 3})"],
+    "query": "MATCH (a:Doc), (b:Doc) WITH a.v AS value, sum(b.v) AS total RETURN value, total ORDER BY value",
+    "ordered": true
+  },
+  {
+    "name": "monster 640 bare endpoint relationship merge",
+    "query": "MERGE (a)-[r:R]->(b) RETURN count(a) AS nodes, count(r) AS relationships"
+  },
+  {
+    "name": "monster 640 undirected endpoint relationship merge",
+    "query": "MERGE (a)-[r:R]-(b) RETURN count(a) AS nodes, count(r) AS relationships"
+  },
+  {
+    "name": "monster 640 labeled endpoint relationship merge",
+    "query": "MERGE (a:Source)-[r:R]->(b) RETURN count(a) AS nodes, count(r) AS relationships"
+  },
+  {
+    "name": "monster 648 transactional call preserves outer count",
+    "setup": ["CREATE (:T {id: 1})"],
+    "query": "MATCH (t:T) CALL (t) { CREATE (:X {i: t.id}) } IN TRANSACTIONS RETURN count(*) AS c"
+  },
+  {
+    "name": "monster 648 empty transactional call",
+    "query": "MATCH (t:T) CALL (t) { CREATE (:X {i: t.id}) } IN TRANSACTIONS RETURN count(*) AS c"
+  },
+  {
     "name": "unwind unfiltered range count",
     "query": "UNWIND range(1, 30000) AS x RETURN count(*) AS c"
   },
