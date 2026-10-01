@@ -9,6 +9,13 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+func propertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
+	if _, transactional := engine.(*transactionStorageWrapper); transactional {
+		return nil
+	}
+	return engine.GetSchema()
+}
+
 // transactionStorageWrapper wraps a BadgerTransaction to implement storage.Engine
 // for use in implicit transaction execution. It routes writes through the transaction
 // (for atomicity/rollback) and reads through the underlying engine (for performance).

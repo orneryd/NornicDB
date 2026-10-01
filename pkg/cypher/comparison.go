@@ -78,6 +78,9 @@ func (e *StorageExecutor) nodeMatchesProps(node *storage.Node, props map[string]
 		return true
 	}
 	for key, expected := range props {
+		if expected == nil {
+			return false
+		}
 		actual, exists := node.Properties[key]
 		if !exists {
 			return false

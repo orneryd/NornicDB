@@ -943,6 +943,13 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 	if err := decoder.Decode(req); err != nil {
 		return err
 	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("unexpected data after transaction request")
+	}
 	for i := range req.Statements {
 		for key, value := range req.Statements[i].Parameters {
 			req.Statements[i].Parameters[key] = cypherParameterNumbers(value)
@@ -955,7 +962,7 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 // readJSON) through decodeTransactionRequest. Every transaction endpoint
 // reads its statements through here.
 func (s *Server) readTransactionRequest(r *http.Request, req *TransactionRequest) error {
-	return decodeTransactionRequest(io.LimitReader(r.Body, s.config.MaxRequestSize), req)
+	return decodeTransactionRequest(http.MaxBytesReader(nil, r.Body, s.config.MaxRequestSize), req)
 }
 
 // cypherParameterNumbers converts the json.Number values of a decoded
@@ -1980,7 +1987,10 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	}
 
 	var req TransactionRequest
-	_ = s.readTransactionRequest(r, &req) // Optional body
+	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
+		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+		return
+	}
 
 	txSession, openErr := s.openRequestTransaction(r, claims, dbName, func(message localization.Message) string { return s.localizedText(w, r, message) })
 	if openErr != nil {
@@ -2027,7 +2037,10 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req TransactionRequest
-	_ = s.readTransactionRequest(r, &req)
+	if err := s.readTransactionRequest(r, &req); err != nil {
+		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+		return
+	}
 
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
@@ -2056,9 +2069,6 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	var req TransactionRequest
-	_ = s.readTransactionRequest(r, &req) // Optional final statements
-
 	response := TransactionResponse{
 		Results:       make([]QueryResult, 0),
 		Errors:        make([]QueryError, 0),
@@ -2068,6 +2078,13 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims))
 	if !ok || tx == nil || tx.Database != dbName {
 		s.writeNeo4jTransactionNotFound(w, r)
+		return
+	}
+
+	var req TransactionRequest
+	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
+		_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
+		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
 		return
 	}
 

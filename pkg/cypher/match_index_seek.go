@@ -336,7 +336,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, 
 		return nil, false, nil
 	}
 
-	schema := e.storage.GetSchema()
+	schema := propertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -401,7 +401,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 		return nil, false, nil
 	}
 
-	schema := e.storage.GetSchema()
+	schema := propertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -455,7 +455,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 		return nil, false, nil
 	}
 
-	schema := e.storage.GetSchema()
+	schema := propertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -644,7 +644,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 		merged = append(merged, v)
 	}
 
-	schema := e.storage.GetSchema()
+	schema := propertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -729,7 +729,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		return nil, false, nil
 	}
 
-	schema := e.storage.GetSchema()
+	schema := propertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -918,7 +918,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 
-	schema := e.storage.GetSchema()
+	schema := propertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -972,7 +972,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 		return nil, false, nil
 	}
 
-	schema := e.storage.GetSchema()
+	schema := propertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -1003,7 +1003,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 		return nil, false, nil
 	}
 
-	schema := e.storage.GetSchema()
+	schema := propertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}

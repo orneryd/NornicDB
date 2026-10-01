@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve null-valued node pattern predicates instead of dropping them.
+  Null property-map MATCH reads and mutations match nothing; null MERGE
+  properties are rejected before writes. Keep CREATE null-property omission
+  separate from matching semantics (#810).
+- Reject malformed, trailing, and oversized transaction HTTP bodies instead of
+  silently executing an empty request. Roll back prior writes when the final
+  explicit commit body is invalid; preserve optional empty open/commit bodies
+  and the configured request-size policy (#776).
+- Preserve indexed explicit-transaction read-your-writes for equality, IN,
+  pattern-property and ordered reads, including mixed committed/pending rows
+  and MATCH mutations. Decline committed-schema index shortcuts when reading
+  a transaction snapshot and reuse the shared transactional scan paths (#809).
 - Preserve each outer row exactly once after successful unit CALL subqueries,
   even when inner MATCH or WITH filters remove all rows. Keep returning CALL
   joins and transactional batches on the shared pipeline (#771).

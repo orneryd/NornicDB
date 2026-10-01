@@ -440,6 +440,11 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	}
 	nodePattern := e.parseNodePattern(ctx, pattern)
 	e.resolveCreatePropertyReferences(ctx, pattern, nodePattern.properties, nodes, relationships)
+	for key, value := range nodePattern.properties {
+		if value == nil {
+			delete(nodePattern.properties, key)
+		}
+	}
 
 	// An empty label (e.g. "n:" or ":") - only check before properties.
 	head, _ := splitNodePatternProperties(pattern)

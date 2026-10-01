@@ -51,9 +51,9 @@ func (e *StorageExecutor) pipelinePropertyExpressions(props string) ([]pipelineP
 	return out, true
 }
 
-// evaluatePipelineProperties evaluates expressions for row: the property map
-// parseProperties builds from the row's rendered text, where a null value
-// leaves its key out. ok is false when an expression doesn't resolve.
+// evaluatePipelineProperties evaluates pattern predicates for a row without
+// dropping null-valued equality constraints. ok is false when an expression
+// doesn't resolve.
 func (e *StorageExecutor) evaluatePipelineProperties(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow) (map[string]interface{}, bool) {
 	props := make(map[string]interface{}, len(expressions))
 	for _, expression := range expressions {
@@ -61,9 +61,7 @@ func (e *StorageExecutor) evaluatePipelineProperties(ctx context.Context, expres
 		if !ok {
 			return nil, false
 		}
-		if value = normalizePropValue(value); value != nil {
-			props[expression.key] = value
-		}
+		props[expression.key] = normalizePropValue(value)
 	}
 	return props, true
 }

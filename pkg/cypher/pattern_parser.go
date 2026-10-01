@@ -95,7 +95,7 @@ func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) 
 	}
 	head, props := splitNodePatternProperties(pattern)
 	if props != "" {
-		info.properties = e.parseProperties(ctx, props)
+		info.properties = e.parsePropertyMap(ctx, props, true)
 	}
 	info.variable, info.labels, info.labelErr = parseNodeHead(head)
 	return info
@@ -143,6 +143,10 @@ func parseNodeHead(head string) (variable string, labels []string, labelErr erro
 //	parseProperties("{tags: ['a', 'b'], active: true}")
 //	// Returns: {"tags": []interface{}{"a", "b"}, "active": true}
 func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) map[string]interface{} {
+	return e.parsePropertyMap(ctx, propsStr, false)
+}
+
+func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string, retainNull bool) map[string]interface{} {
 	props := make(map[string]interface{})
 
 	// Remove outer braces
@@ -168,10 +172,8 @@ func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) 
 		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		valueStr := strings.TrimSpace(pair[colonIdx+1:])
 
-		// Cypher property containers cannot persist null. Supplying null in a
-		// CREATE/MERGE property map is equivalent to omitting that property.
 		value := e.parsePropertyValue(ctx, valueStr)
-		if value == nil {
+		if value == nil && !retainNull {
 			continue
 		}
 		props[key] = value
