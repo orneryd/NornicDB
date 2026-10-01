@@ -98,7 +98,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	if err != nil && startsWithKeywords(cypher, "CREATE", "CONSTRAINT") {
 		var violation *storage.ConstraintViolationError
 		if errors.As(err, &violation) {
-			return nil, &classifiedCypherError{cause: err, code: "Neo.ClientError.Schema.ConstraintCreationFailed", detail: "ConstraintCreationFailed"}
+			return nil, &classifiedCypherError{cause: err, code: "Neo.DatabaseError.Schema.ConstraintCreationFailed", detail: "ConstraintCreationFailed"}
 		}
 	}
 
