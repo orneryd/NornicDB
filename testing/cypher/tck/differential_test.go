@@ -1,13 +1,16 @@
 package tck
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,11 +18,85 @@ import (
 )
 
 type differentialCase struct {
-	Name            string   `json:"name"`
-	Setup           []string `json:"setup"`
-	Query           string   `json:"query"`
-	Ordered         bool     `json:"ordered"`
-	UnorderedLabels bool     `json:"unordered_labels"`
+	Name            string         `json:"name"`
+	Setup           []string       `json:"setup"`
+	Query           string         `json:"query"`
+	Ordered         bool           `json:"ordered"`
+	UnorderedLabels bool           `json:"unordered_labels"`
+	Parameters      map[string]any `json:"parameters"`
+	ExpectedCode    string         `json:"expected_code"`
+	ExpectedMessage string         `json:"expected_message"`
+	ExpectedPhase   string         `json:"expected_phase"`
+	NoEffects       bool           `json:"no_effects"`
+}
+
+func TestReportedProductBoundariesOnLiveServer(t *testing.T) {
+	uri := os.Getenv("NORNICDB_CORRECTNESS_SERVER_URI")
+	if uri == "" {
+		t.Skip("set NORNICDB_CORRECTNESS_SERVER_URI for the memory-capped server correctness replay")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	driver, err := neo4j.NewDriverWithContext(uri, neo4j.NoAuth())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer driver.Close(context.Background())
+	if err := waitForReference(ctx, driver); err != nil {
+		t.Fatal(err)
+	}
+	run := func(t *testing.T, query string, explicit bool) []*neo4j.Record {
+		t.Helper()
+		session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "nornic"})
+		defer session.Close(ctx)
+		var result neo4j.ResultWithContext
+		if explicit {
+			tx, err := session.BeginTransaction(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Close(ctx)
+			result, err = tx.Run(ctx, query, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			records, err := result.Collect(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			return records
+		}
+		result, err = session.Run(ctx, query, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records, err := result.Collect(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return records
+	}
+	run(t, "MATCH (n) DETACH DELETE n", false)
+	run(t, "UNWIND range(0,4999) AS i CREATE (:Doc {id:i})", false)
+	for _, explicit := range []bool{false, true} {
+		for _, prefix := range []string{
+			"MATCH (a:Doc), (b:Doc)",
+			"MATCH (a:Doc) MATCH (b:Doc)",
+			"MATCH (a:Doc), (b:Doc) WITH a,b",
+			"MATCH (a:Doc), (b:Doc) WITH a",
+			"MATCH (a:Doc), (b:Doc) WITH a.id AS x",
+		} {
+			t.Run(fmt.Sprintf("explicit=%v/%s", explicit, prefix), func(t *testing.T) {
+				records := run(t, prefix+" RETURN count(*) AS c", explicit)
+				if len(records) != 1 || len(records[0].Values) != 1 || records[0].Values[0] != int64(25000000) {
+					t.Fatalf("expected one count of 25000000, got %#v", records)
+				}
+			})
+		}
+	}
 }
 
 func TestFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
@@ -62,31 +139,8 @@ func TestFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 
 					nornicBefore := snapshotDifferentialBackend(t, ctx, nornic, "NornicDB")
 					referenceBefore := snapshotDifferentialBackend(t, ctx, reference, "Neo4j")
-					nornicResult, nornicErr := nornic.Execute(ctx, testCase.Query, nil)
-					referenceResult, referenceErr := reference.Execute(ctx, testCase.Query, nil)
-					compareDifferentialErrors(t, nornicErr, referenceErr)
-					outcome := func(result QueryResult, executionErr error) interface{} {
-						var queryErr *QueryError
-						if errors.As(executionErr, &queryErr) {
-							return map[string]string{"error": queryErr.Type, "phase": queryErr.Phase}
-						}
-						return result
-					}
-					evidence, err := json.Marshal(map[string]interface{}{
-						"case": testCase.Name, "route": "bolt/" + string(mode),
-						"nornicdb": outcome(nornicResult, nornicErr), "neo4j": outcome(referenceResult, referenceErr),
-					})
-					if err != nil {
-						t.Fatalf("encode differential evidence: %v", err)
-					}
-					t.Logf("DIFFERENTIAL_RESULT %s", evidence)
-					if referenceErr != nil {
-						return
-					}
-					if err := CompareResults(nornicResult, referenceResult, testCase.Ordered, testCase.UnorderedLabels); err != nil {
-						t.Fatalf("result differs from Neo4j: %v", err)
-					}
-
+					nornicResult, nornicErr := nornic.Execute(ctx, testCase.Query, testCase.Parameters)
+					referenceResult, referenceErr := reference.Execute(ctx, testCase.Query, testCase.Parameters)
 					nornicAfter := snapshotDifferentialBackend(t, ctx, nornic, "NornicDB")
 					referenceAfter := snapshotDifferentialBackend(t, ctx, reference, "Neo4j")
 					nornicEffects, err := ObserveSideEffects(nornicBefore, nornicAfter)
@@ -97,8 +151,48 @@ func TestFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 					if err != nil {
 						t.Fatalf("observe Neo4j side effects: %v", err)
 					}
+					compareDifferentialErrors(t, nornicErr, referenceErr)
+					assertDifferentialDiagnostic(t, "NornicDB", nornicErr, testCase)
+					assertDifferentialDiagnostic(t, "Neo4j", referenceErr, testCase)
+					outcome := func(result QueryResult, executionErr error) interface{} {
+						var queryErr *QueryError
+						if errors.As(executionErr, &queryErr) {
+							diagnostic := map[string]string{"error": queryErr.Type, "phase": queryErr.Phase}
+							var boltErr *neo4j.Neo4jError
+							if errors.As(executionErr, &boltErr) {
+								diagnostic["code"] = boltErr.Code
+								diagnostic["message"] = boltErr.Msg
+							}
+							return diagnostic
+						}
+						rows := make([][]any, len(result.Rows))
+						for index, row := range result.Rows {
+							rows[index] = differentialEvidenceValue(row).([]any)
+						}
+						result.Rows = rows
+						return result
+					}
+					evidence, err := json.Marshal(map[string]interface{}{
+						"case": testCase.Name, "route": "bolt/" + string(mode),
+						"query": testCase.Query, "parameters": differentialEvidenceValue(testCase.Parameters),
+						"nornicdb": outcome(nornicResult, nornicErr), "neo4j": outcome(referenceResult, referenceErr),
+						"nornicdb_effects": nornicEffects, "neo4j_effects": referenceEffects,
+					})
+					if err != nil {
+						t.Fatalf("encode differential evidence: %v", err)
+					}
+					t.Logf("DIFFERENTIAL_RESULT %s", evidence)
+					if referenceErr == nil && nornicErr == nil {
+						if err := CompareResults(nornicResult, referenceResult, testCase.Ordered, testCase.UnorderedLabels); err != nil {
+							t.Errorf("result differs from Neo4j: %v", err)
+						}
+					}
+
 					if !reflect.DeepEqual(nornicEffects, referenceEffects) {
-						t.Fatalf("side effects differ: NornicDB %#v, Neo4j %#v", nornicEffects, referenceEffects)
+						t.Errorf("side effects differ: NornicDB %#v, Neo4j %#v", nornicEffects, referenceEffects)
+					}
+					if testCase.NoEffects && (nornicEffects != (SideEffects{}) || referenceEffects != (SideEffects{})) {
+						t.Errorf("expected no effects: NornicDB %#v, Neo4j %#v", nornicEffects, referenceEffects)
 					}
 				})
 			}
@@ -114,7 +208,9 @@ func loadDifferentialCases(t *testing.T) []differentialCase {
 		t.Fatalf("read differential corpus: %v", err)
 	}
 	var cases []differentialCase
-	if err := json.Unmarshal(content, &cases); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.UseNumber()
+	if err := decoder.Decode(&cases); err != nil {
 		t.Fatalf("decode differential corpus: %v", err)
 	}
 	if len(cases) == 0 {
@@ -124,8 +220,214 @@ func loadDifferentialCases(t *testing.T) []differentialCase {
 		if testCase.Name == "" || testCase.Query == "" {
 			t.Fatalf("differential case %d requires name and query", index)
 		}
+		parameters, err := convertDifferentialParameter(testCase.Parameters)
+		if err != nil {
+			t.Fatalf("differential case %q parameters: %v", testCase.Name, err)
+		}
+		cases[index].Parameters = parameters.(map[string]any)
 	}
 	return cases
+}
+
+func convertDifferentialParameter(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		return ParseValue(typed.String())
+	case []any:
+		result := make([]any, len(typed))
+		for index, item := range typed {
+			converted, err := convertDifferentialParameter(item)
+			if err != nil {
+				return nil, err
+			}
+			result[index] = converted
+		}
+		return result, nil
+	case map[string]any:
+		if atom, ok := typed["$tck"].(string); ok && len(typed) == 1 {
+			switch atom {
+			case "NaN", "Inf", "-Inf", "-0.0":
+				return ParseValue(atom)
+			default:
+				return nil, fmt.Errorf("unsupported typed parameter %q", atom)
+			}
+		}
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			converted, err := convertDifferentialParameter(item)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			result[key] = converted
+		}
+		return result, nil
+	default:
+		return value, nil
+	}
+}
+
+func assertDifferentialDiagnostic(t *testing.T, backend string, err error, testCase differentialCase) {
+	t.Helper()
+	if mismatch := differentialDiagnosticError(err, testCase); mismatch != nil {
+		t.Errorf("%s diagnostic for %q: %v", backend, testCase.Query, mismatch)
+	}
+}
+
+func differentialDiagnosticError(err error, testCase differentialCase) error {
+	if testCase.ExpectedCode == "" && testCase.ExpectedMessage == "" && testCase.ExpectedPhase == "" {
+		return nil
+	}
+	var queryErr *QueryError
+	if !errors.As(err, &queryErr) {
+		return fmt.Errorf("expected diagnostic, got %v", err)
+	}
+	var boltErr *neo4j.Neo4jError
+	var mismatches []error
+	if testCase.ExpectedCode != "" && (!errors.As(err, &boltErr) || boltErr.Code != testCase.ExpectedCode) {
+		mismatches = append(mismatches, fmt.Errorf("expected code %q, got %v", testCase.ExpectedCode, err))
+	}
+	if testCase.ExpectedMessage != "" && (!errors.As(err, &boltErr) || boltErr.Msg != testCase.ExpectedMessage) {
+		mismatches = append(mismatches, fmt.Errorf("expected message %q, got %v", testCase.ExpectedMessage, err))
+	}
+	if testCase.ExpectedPhase != "" && queryErr.Phase != testCase.ExpectedPhase {
+		mismatches = append(mismatches, fmt.Errorf("expected phase %q, got %q", testCase.ExpectedPhase, queryErr.Phase))
+	}
+	return errors.Join(mismatches...)
+}
+
+func differentialEvidenceValue(value any) any {
+	switch typed := value.(type) {
+	case float64:
+		if math.IsNaN(typed) {
+			return map[string]string{"$tck": "NaN"}
+		}
+		if math.IsInf(typed, 1) {
+			return map[string]string{"$tck": "Inf"}
+		}
+		if math.IsInf(typed, -1) {
+			return map[string]string{"$tck": "-Inf"}
+		}
+		if typed == 0 && math.Signbit(typed) {
+			return map[string]string{"$tck": "-0.0"}
+		}
+	case []any:
+		result := make([]any, len(typed))
+		for index, item := range typed {
+			result[index] = differentialEvidenceValue(item)
+		}
+		return result
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			result[key] = differentialEvidenceValue(item)
+		}
+		return result
+	case NodeValue:
+		typed.Properties = differentialEvidenceValue(typed.Properties).(map[string]any)
+		return typed
+	case RelationshipValue:
+		typed.Properties = differentialEvidenceValue(typed.Properties).(map[string]any)
+		return typed
+	}
+	return value
+}
+
+func TestDifferentialParameterDecoding(t *testing.T) {
+	decoder := json.NewDecoder(strings.NewReader(`{"integer":9007199254740993,"float":1.0,"negative_zero":-0.0,"nested":[null,true,"NaN",{"x":2}],"nan":{"$tck":"NaN"},"positive_infinity":{"$tck":"Inf"},"negative_infinity":{"$tck":"-Inf"},"typed_negative_zero":{"$tck":"-0.0"}}`))
+	decoder.UseNumber()
+	var input map[string]any
+	if err := decoder.Decode(&input); err != nil {
+		t.Fatal(err)
+	}
+	converted, err := convertDifferentialParameter(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parameters := converted.(map[string]any)
+	if parameters["integer"] != int64(9007199254740993) || parameters["float"] != float64(1) {
+		t.Fatalf("numeric types or precision lost: %#v", parameters)
+	}
+	for _, name := range []string{"negative_zero", "typed_negative_zero"} {
+		if value := parameters[name].(float64); value != 0 || !math.Signbit(value) {
+			t.Errorf("%s lost its sign: %v", name, value)
+		}
+	}
+	if !math.IsNaN(parameters["nan"].(float64)) || !math.IsInf(parameters["positive_infinity"].(float64), 1) || !math.IsInf(parameters["negative_infinity"].(float64), -1) {
+		t.Errorf("nonfinite parameters lost: %#v", parameters)
+	}
+	if !reflect.DeepEqual(parameters["nested"], []any{nil, true, "NaN", map[string]any{"x": int64(2)}}) {
+		t.Errorf("nested values changed: %#v", parameters["nested"])
+	}
+	if _, err := json.Marshal(differentialEvidenceValue(parameters)); err != nil {
+		t.Fatalf("nonfinite evidence is not JSON-safe: %v", err)
+	}
+	for _, invalid := range []any{
+		json.Number("9223372036854775808"),
+		map[string]any{"$tck": "bogus"},
+		map[string]any{"nested": []any{json.Number("invalid")}},
+	} {
+		if _, err := convertDifferentialParameter(invalid); err == nil {
+			t.Errorf("accepted invalid parameter %#v", invalid)
+		}
+	}
+}
+
+func TestDifferentialDiagnosticAssertions(t *testing.T) {
+	queryErr := &QueryError{
+		Type: "ArithmeticError", Phase: "runtime", Detail: "not the server message",
+		Cause: &neo4j.Neo4jError{Code: "Neo.ClientError.Statement.ArithmeticError", Msg: "/ by zero"},
+	}
+	tests := []struct {
+		name     string
+		err      error
+		contract differentialCase
+		wantErr  bool
+	}{
+		{name: "legacy success", contract: differentialCase{}},
+		{name: "legacy error retains optional messages", err: queryErr},
+		{name: "wrapped raw diagnostic", err: errors.Join(queryErr, errors.New("cleanup")), contract: differentialCase{ExpectedCode: "Neo.ClientError.Statement.ArithmeticError", ExpectedMessage: "/ by zero", ExpectedPhase: "runtime"}},
+		{name: "code only", err: queryErr, contract: differentialCase{ExpectedCode: "Neo.ClientError.Statement.ArithmeticError"}},
+		{name: "message only", err: queryErr, contract: differentialCase{ExpectedMessage: "/ by zero"}},
+		{name: "phase only", err: queryErr, contract: differentialCase{ExpectedPhase: "runtime"}},
+		{name: "missing error", contract: differentialCase{ExpectedPhase: "runtime"}, wantErr: true},
+		{name: "unclassified error", err: errors.New("transport"), contract: differentialCase{ExpectedPhase: "runtime"}, wantErr: true},
+		{name: "different code", err: queryErr, contract: differentialCase{ExpectedCode: "Neo.ClientError.Statement.SyntaxError"}, wantErr: true},
+		{name: "different message", err: queryErr, contract: differentialCase{ExpectedMessage: "divide by zero"}, wantErr: true},
+		{name: "exact message whitespace", err: queryErr, contract: differentialCase{ExpectedMessage: "/ by zero "}, wantErr: true},
+		{name: "different phase", err: queryErr, contract: differentialCase{ExpectedPhase: "compile time"}, wantErr: true},
+		{name: "no raw driver diagnostic", err: &QueryError{Type: "ArithmeticError", Phase: "runtime"}, contract: differentialCase{ExpectedMessage: "/ by zero"}, wantErr: true},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := differentialDiagnosticError(testCase.err, testCase.contract); (err != nil) != testCase.wantErr {
+				t.Fatalf("diagnostic mismatch = %v, want error %v", err, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestDifferentialCorpusIntegrity(t *testing.T) {
+	cases := loadDifferentialCases(t)
+	if len(cases) < 116 || cases[115].Name != "canonical indexed comprehension map projection" {
+		t.Fatal("original 116-case prefix was displaced")
+	}
+	names := make(map[string]bool, len(cases))
+	matrixCells := 0
+	for _, testCase := range cases {
+		if names[testCase.Name] {
+			t.Errorf("duplicate differential case %q", testCase.Name)
+		}
+		names[testCase.Name] = true
+		if strings.HasPrefix(testCase.Name, "division matrix ") {
+			matrixCells++
+			if len(testCase.Parameters) != 2 || !testCase.NoEffects {
+				t.Errorf("division cell %q requires two parameters and no-effects check", testCase.Name)
+			}
+		}
+	}
+	if matrixCells != 48 {
+		t.Fatalf("division matrix has %d cells, want 48", matrixCells)
+	}
 }
 
 func newDifferentialBackend(t *testing.T, driver neo4j.DriverWithContext, database string, mode TransactionMode) *BoltBackend {
@@ -174,14 +476,16 @@ func compareDifferentialErrors(t *testing.T, nornicErr, referenceErr error) {
 		return
 	}
 	if nornicErr == nil || referenceErr == nil {
-		t.Fatalf("error behavior differs: NornicDB %v, Neo4j %v", nornicErr, referenceErr)
+		t.Errorf("error behavior differs: NornicDB %v, Neo4j %v", nornicErr, referenceErr)
+		return
 	}
 	var nornicQueryErr, referenceQueryErr *QueryError
 	if !errors.As(nornicErr, &nornicQueryErr) || !errors.As(referenceErr, &referenceQueryErr) {
-		t.Fatalf("unclassified differential errors: NornicDB %T %v, Neo4j %T %v", nornicErr, nornicErr, referenceErr, referenceErr)
+		t.Errorf("unclassified differential errors: NornicDB %T %v, Neo4j %T %v", nornicErr, nornicErr, referenceErr, referenceErr)
+		return
 	}
 	if nornicQueryErr.Type != referenceQueryErr.Type || nornicQueryErr.Phase != referenceQueryErr.Phase {
-		t.Fatalf("error classification differs: NornicDB %s/%s, Neo4j %s/%s", nornicQueryErr.Type, nornicQueryErr.Phase, referenceQueryErr.Type, referenceQueryErr.Phase)
+		t.Errorf("error classification differs: NornicDB %s/%s, Neo4j %s/%s", nornicQueryErr.Type, nornicQueryErr.Phase, referenceQueryErr.Type, referenceQueryErr.Phase)
 	}
 }
 

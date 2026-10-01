@@ -34,6 +34,7 @@ type createOutcome struct {
 // (executeCreateWithRefs) - uses it, so they create the same graph and reject
 // the same patterns.
 func (e *StorageExecutor) createFromPattern(ctx context.Context, cypher string) (*createOutcome, error) {
+	projectionCypher := cypher
 	// Substitute parameters AFTER routing to avoid keyword detection issues
 	if params := getParamsFromContext(ctx); params != nil {
 		cypher = e.substituteParams(cypher, params)
@@ -66,8 +67,8 @@ func (e *StorageExecutor) createFromPattern(ctx context.Context, cypher string) 
 		nodes:     createdNodes,
 		edges:     createdEdges,
 		paths:     createdPaths,
-		cypher:    cypher,
-		returnIdx: returnIdx,
+		cypher:    projectionCypher,
+		returnIdx: topLevelKeywordIndex(projectionCypher, "RETURN"),
 	}, nil
 }
 
@@ -384,24 +385,22 @@ func (e *StorageExecutor) planCreateEndpoint(ctx context.Context, content string
 }
 
 // projectCreateReturn fills out.result with the RETURN row of a CREATE
-// statement, if it has one, using projectCreatedReturnItem over the created
-// nodes, relationships and named paths.
-func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOutcome) {
+// statement, if it has one, through the canonical RETURN operator.
+func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOutcome) error {
 	if out.returnIdx <= 0 {
-		return
+		return nil
 	}
-	returnItems := e.parseReturnItems(strings.TrimSpace(out.cypher[out.returnIdx+6:]))
-	out.result.Columns = make([]string, len(returnItems))
-	row := make([]interface{}, len(returnItems))
-	for i, item := range returnItems {
-		if item.alias != "" {
-			out.result.Columns[i] = item.alias
-		} else {
-			out.result.Columns[i] = item.expr
-		}
-		row[i] = e.projectCreatedReturnItem(ctx, item, out.nodes, out.edges, out.paths)
+	row := e.mergeBindingRow(ctx, out.nodes, out.edges)
+	for name, path := range out.paths {
+		row[name] = e.pathToMap(path)
 	}
-	out.result.Rows = [][]interface{}{row}
+	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
+	if err != nil {
+		return err
+	}
+	out.result.Columns = projected.Columns
+	out.result.Rows = projected.Rows
+	return nil
 }
 
 func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
@@ -409,117 +408,23 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 	if err != nil {
 		return nil, err
 	}
-	e.projectCreateReturn(ctx, out)
+	if err := e.projectCreateReturn(ctx, out); err != nil {
+		return nil, err
+	}
 	return out.result, nil
 }
 
-// projectCreatedReturnItem evaluates one RETURN item of a CREATE ... RETURN
-// statement against what the CREATE produced: count(...), created paths,
-// relationships and nodes by variable, and every other item (literals,
-// parameters, arithmetic, expressions over several variables) as an expression.
-// It is the single RETURN projection for the CREATE routes that project their
-// own RETURN - executeCreate, executeCreateWithRefs, executeMultipleCreates
-// (several CREATE clauses) and the auto-commit node-only fast path
-// tryAsyncCreateNodeBatch - so they return the same values.
+// projectCreatedReturnItem adapts single-item callers to canonical RETURN.
 func (e *StorageExecutor) projectCreatedReturnItem(ctx context.Context, item returnItem, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, createdPaths map[string]PathResult) interface{} {
-	if isAggregateFuncName(item.expr, "count") {
-		inner := strings.TrimSpace(extractFuncInner(item.expr))
-		if inner == "*" {
-			return int64(1)
-		}
-		if value := e.evaluateExpressionWithContext(ctx, inner, createdNodes, createdEdges); value != nil {
-			return int64(1)
-		}
-		return int64(0)
+	row := e.mergeBindingRow(ctx, createdNodes, createdEdges)
+	for name, path := range createdPaths {
+		row[name] = e.pathToMap(path)
 	}
-
-	// Items over a created path (RETURN p, length(p) + 1, size(nodes(p)),
-	// nodes(p)[0].id, ...) are evaluated with a path context holding the
-	// created paths, nodes and relationships - the same evaluator the MATCH
-	// path routes use.
-	if pathVar, ok := referencedCreatedPath(item.expr, createdPaths); ok {
-		if item.expr == pathVar {
-			return e.pathToMap(createdPaths[pathVar])
-		}
-		return e.evaluateExpressionWithPathContext(ctx, item.expr, createdPathContext(createdNodes, createdEdges, createdPaths))
+	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, "RETURN "+item.expr)
+	if err != nil || len(projected.Rows) == 0 || len(projected.Rows[0]) == 0 {
+		return nil
 	}
-
-	// Relationship variables next (RETURN r, r.prop, id(r), type(r), ...)
-	//
-	// This matches Neo4j expectations that `r` is returned as a relationship
-	// structure and can be used in functions like id(r)/type(r).
-	if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
-		if edge, ok := createdEdges[varName]; ok && edge != nil && !referencesOtherCreatedVariable(item.expr, varName, createdNodes, createdEdges) {
-			// Direct relationship reference.
-			if item.expr == varName {
-				return edge
-			}
-			// Relationship property access: r.someProp
-			if strings.HasPrefix(item.expr, varName+".") {
-				return edge.Properties[normalizePropertyKey(item.expr[len(varName)+1:])]
-			}
-			// Functions over relationships (id(r), type(r), properties(r), ...)
-			return e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
-		}
-	}
-
-	// Resolve the return expression against the created variables.
-	//
-	// The RETURN item may be:
-	// - variable: a
-	// - property access: a.name
-	// - function call: id(a), elementId(a), labels(a)
-	// - other expressions that reference a single variable
-	varName := extractVariableNameFromReturnItem(item.expr)
-	if varName != "" {
-		if node, ok := createdNodes[varName]; ok && !referencesOtherCreatedVariable(item.expr, varName, createdNodes, createdEdges) {
-			return e.resolveReturnItem(ctx, item, varName, node)
-		}
-	}
-
-	// Anything else (literals, parameters, arithmetic, expressions
-	// over several created variables) is evaluated as an expression
-	// against the created nodes and relationships.
-	return e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
-}
-
-// referencesOtherCreatedVariable reports whether expr mentions a created node or
-// relationship other than varName, e.g. a.v + b.v. Such items need the full
-// expression evaluator; the single-variable shortcuts would see only varName.
-func referencesOtherCreatedVariable(expr, varName string, nodes map[string]*storage.Node, edges map[string]*storage.Edge) bool {
-	for name := range nodes {
-		if name != varName && containsIdentifierToken(expr, name) {
-			return true
-		}
-	}
-	for name := range edges {
-		if name != varName && containsIdentifierToken(expr, name) {
-			return true
-		}
-	}
-	return false
-}
-
-// referencedCreatedPath returns the created path variable an item mentions.
-func referencedCreatedPath(expr string, createdPaths map[string]PathResult) (string, bool) {
-	for name := range createdPaths {
-		if containsIdentifierToken(expr, name) {
-			return name, true
-		}
-	}
-	return "", false
-}
-
-// createdPathContext is the evaluation scope of a CREATE ... RETURN item that
-// uses a created path: the created paths by name plus the created nodes and
-// relationships.
-func createdPathContext(nodes map[string]*storage.Node, edges map[string]*storage.Edge, createdPaths map[string]PathResult) PathContext {
-	paths := make(map[string]*PathResult, len(createdPaths))
-	for name := range createdPaths {
-		path := createdPaths[name]
-		paths[name] = &path
-	}
-	return PathContext{nodes: nodes, rels: edges, paths: paths}
+	return projected.Rows[0][0]
 }
 
 // prepareCreateNodePattern parses and validates one CREATE node pattern. It is
@@ -652,7 +557,9 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	e.projectCreateReturn(ctx, out)
+	if err := e.projectCreateReturn(ctx, out); err != nil {
+		return nil, nil, nil, err
+	}
 	return out.result, out.nodes, out.edges, nil
 }
 
@@ -1703,33 +1610,11 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			// and returns no rows unless RETURN is aggregation-only (then one row).
 			if hadMatchPatterns {
 				if returnPart != "" {
-					returnItems := e.parseReturnItems(returnPart)
-					result.Columns = make([]string, len(returnItems))
-					for i, item := range returnItems {
-						if item.alias != "" {
-							result.Columns[i] = item.alias
-						} else {
-							result.Columns[i] = item.expr
-						}
+					projected, err := e.projectMergeReturn(ctx, nil, "RETURN "+returnPart)
+					if err != nil {
+						return nil, err
 					}
-					if len(returnItems) > 0 {
-						allAggregates := true
-						row := make([]interface{}, len(returnItems))
-						for i, item := range returnItems {
-							if !isAggregateFunc(item.expr) {
-								allAggregates = false
-								break
-							}
-							if isAggregateFuncName(item.expr, "count") {
-								row[i] = int64(0)
-							} else {
-								row[i] = nil
-							}
-						}
-						if allAggregates {
-							result.Rows = [][]interface{}{row}
-						}
-					}
+					result.Columns, result.Rows = projected.Columns, projected.Rows
 				}
 				return result, nil
 			}
@@ -1739,6 +1624,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 
 	// Split CREATE part into individual CREATE statements
 	createClauses := SplitByCreate(createPart)
+	projectionRows := make([]pipelineRow, 0, len(allCombinations))
 
 	// For each combination in the cartesian product, execute CREATE
 	for _, combination := range allCombinations {
@@ -1757,8 +1643,15 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			if clause = strings.TrimSpace(clause); clause == "" {
 				continue
 			}
-			if _, err := e.createPatternsInScope(ctx, clause, combinedNodeVars, edgeVars, result); err != nil {
+			paths, err := e.createPatternsInScope(ctx, clause, combinedNodeVars, edgeVars, result)
+			if err != nil {
 				return nil, err
+			}
+			if len(paths) > 0 {
+				ctx = withValueBindings(ctx, valueBindingsLayer(ctx, len(paths)))
+				for name, path := range paths {
+					valueBindingsFromContext(ctx)[name] = e.pathToMap(path)
+				}
 			}
 		}
 
@@ -1790,6 +1683,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 		for k, v := range combinedNodeVars {
 			nodeVars[k] = v
 		}
+		projectionRows = append(projectionRows, e.mergeBindingRow(ctx, combinedNodeVars, edgeVars))
 	}
 
 	// Ensure all matched nodes from last combination are in nodeVars for RETURN
@@ -1838,54 +1732,25 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 
 	// Handle RETURN clause
 	if returnPart != "" {
-		returnItems := e.parseReturnItems(returnPart)
-		result.Columns = make([]string, len(returnItems))
-		row := make([]interface{}, len(returnItems))
-
-		for i, item := range returnItems {
-			if item.alias != "" {
-				result.Columns[i] = item.alias
-			} else {
-				result.Columns[i] = item.expr
+		if deleteTarget != "" {
+			nodeIDs := []storage.NodeID{}
+			edgeIDs := make(map[storage.EdgeID]struct{})
+			if node := nodeVars[deleteTarget]; node != nil {
+				nodeIDs = append(nodeIDs, node.ID)
 			}
-
-			// Handle count() after DELETE
-			upperExpr := upperASCII(item.expr)
-			if strings.HasPrefix(upperExpr, "COUNT(") && deleteTarget != "" {
-				row[i] = int64(1) // count of deleted items
-				continue
+			if edge := edgeVars[deleteTarget]; edge != nil {
+				edgeIDs[edge.ID] = struct{}{}
 			}
-			if strings.HasPrefix(upperExpr, "COUNT(") {
-				inner := strings.TrimSpace(extractFuncInner(item.expr))
-				if inner == "" || inner == "*" {
-					row[i] = int64(len(allCombinations))
-					continue
-				}
-				var cnt int64
-				for _, combination := range allCombinations {
-					// COUNT(expr) after MATCH...CREATE should be able to see both matched
-					// bindings (from combination) and newly-created bindings (nodeVars).
-					// Using combination alone makes COUNT(newVar) incorrectly return 0.
-					combined := make(map[string]*storage.Node, util.SafePreallocSum(len(nodeVars), len(combination)))
-					for k, v := range nodeVars {
-						combined[k] = v
-					}
-					for k, v := range combination {
-						combined[k] = v
-					}
-					if e.evaluateExpressionWithContext(ctx, inner, combined, edgeVars) != nil {
-						cnt++
-					}
-				}
-				row[i] = cnt
-				continue
+			markPipelineRowsDeletedEntities(projectionRows, nodeIDs, edgeIDs)
+			if err := validateDeletedEntityProjection(projectionRows, "RETURN "+returnPart); err != nil {
+				return nil, err
 			}
-
-			// Everything else goes through the shared CREATE RETURN projection,
-			// over the matched and the newly created variables.
-			row[i] = e.projectCreatedReturnItem(ctx, item, nodeVars, edgeVars, nil)
 		}
-		result.Rows = [][]interface{}{row}
+		projected, err := e.projectMergeReturn(ctx, projectionRows, "RETURN "+returnPart)
+		if err != nil {
+			return nil, err
+		}
+		result.Columns, result.Rows = projected.Columns, projected.Rows
 	}
 
 	return result, nil
@@ -2149,64 +2014,37 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 				return nil, localizedError(localization.CypherMutationsWithClauseEmpty(), nil)
 			}
 
-			projectedNodes := make(map[string]*storage.Node)
-			projectedEdges := make(map[string]*storage.Edge)
-			projectedPaths := make(map[string]PathResult)
-			for _, item := range strings.Split(withProjection, ",") {
-				item = strings.TrimSpace(item)
-				if item == "" {
-					continue
-				}
-				alias := ""
-				expr := item
-				if asIdx := findKeywordIndex(item, "AS"); asIdx > 0 {
-					expr = strings.TrimSpace(item[:asIdx])
-					alias = strings.TrimSpace(item[asIdx+2:])
-				}
-				if alias == "" {
-					alias = strings.TrimSpace(expr)
-				}
-				if alias == "" {
-					return nil, localizedError(localization.CypherResidualWithItemInvalid(item), nil)
-				}
-
-				if node, ok := createdNodes[strings.TrimSpace(expr)]; ok {
-					projectedNodes[alias] = node
-					continue
-				}
-				if edge, ok := createdEdges[strings.TrimSpace(expr)]; ok {
-					projectedEdges[alias] = edge
-					continue
-				}
-				if path, ok := createdPaths[strings.TrimSpace(expr)]; ok {
-					projectedPaths[alias] = path
-					continue
-				}
-
-				evaluated := e.evaluateExpressionWithContext(ctx, expr, createdNodes, createdEdges)
-				switch v := evaluated.(type) {
-				case *storage.Node:
-					if v != nil {
-						projectedNodes[alias] = v
-					}
-				case *storage.Edge:
-					if v != nil {
-						projectedEdges[alias] = v
-					}
-				default:
-					return nil, localizedError(localization.CypherResidualCreateSetScopeEntityRequired(item), nil)
-				}
+			row := e.mergeBindingRow(ctx, createdNodes, createdEdges)
+			for name, path := range createdPaths {
+				row[name] = e.pathToMap(path)
 			}
-
+			rows, ok := e.pipelineApplyWith(ctx, []pipelineRow{row}, "WITH "+withProjection)
+			if !ok {
+				_, _, err := pipelineDecline(ctx, true, "WITH "+withProjection)
+				return nil, err
+			}
+			if len(rows) == 0 {
+				if returnIdx := topLevelKeywordIndex(remainingTrailing, "RETURN"); returnIdx >= 0 {
+					projected, err := e.projectMergeReturn(ctx, nil, remainingTrailing[returnIdx:])
+					if err != nil {
+						return nil, err
+					}
+					result.Columns, result.Rows = projected.Columns, projected.Rows
+				}
+				return result, nil
+			}
 			clear(createdNodes)
-			for k, v := range projectedNodes {
-				createdNodes[k] = v
-			}
 			clear(createdEdges)
-			for k, v := range projectedEdges {
-				createdEdges[k] = v
+			for name, value := range rows[0] {
+				switch bound := value.(type) {
+				case *storage.Node:
+					createdNodes[name] = bound
+				case *storage.Edge:
+					createdEdges[name] = bound
+				}
 			}
-			createdPaths = projectedPaths
+			ctx = withValueBindings(ctx, rows[0])
+			createdPaths = nil
 			continue
 		}
 
@@ -2229,20 +2067,15 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 
 	// Handle RETURN clause
 	if strings.HasPrefix(upperASCII(strings.TrimSpace(remainingTrailing)), "RETURN ") {
-		returnPart := strings.TrimSpace(strings.TrimSpace(remainingTrailing)[len("RETURN "):])
-		returnItems := e.parseReturnItems(returnPart)
-		row := make([]interface{}, len(returnItems))
-
-		for i, item := range returnItems {
-			if item.alias != "" {
-				result.Columns = append(result.Columns, item.alias)
-			} else {
-				result.Columns = append(result.Columns, item.expr)
-			}
-			row[i] = e.projectCreatedReturnItem(ctx, item, createdNodes, createdEdges, createdPaths)
+		row := e.mergeBindingRow(ctx, createdNodes, createdEdges)
+		for name, path := range createdPaths {
+			row[name] = e.pathToMap(path)
 		}
-
-		result.Rows = [][]interface{}{row}
+		projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, strings.TrimSpace(remainingTrailing))
+		if err != nil {
+			return nil, err
+		}
+		result.Columns, result.Rows = projected.Columns, projected.Rows
 	}
 	// Without RETURN the statement has no columns and no rows, as in Neo4j
 	// (#507, #676).
@@ -2408,11 +2241,6 @@ func parseParamPathParts(source string) ([]string, bool) {
 // executeMultipleCreates handles queries with multiple CREATE statements.
 // Example: CREATE (a:Person {name: "Alice"}) CREATE (b:Person {name: "Bob"}) CREATE (a)-[:KNOWS]->(b) RETURN a, b
 func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Substitute parameters
-	if params := getParamsFromContext(ctx); params != nil {
-		cypher = e.substituteParams(cypher, params)
-	}
-
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -2442,67 +2270,54 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 
 		if strings.HasPrefix(upperSeg, "CREATE") {
 			createContent := strings.TrimSpace(segment[6:])
+			if params := getParamsFromContext(ctx); params != nil {
+				createContent = e.substituteParams(createContent, params)
+			}
 			// A CREATE clause has one scope; the shared CREATE core binds every
 			// node of the clause for later patterns, clauses and RETURN.
-			if _, err := e.planCreatePatterns(ctx, createContent, nodeContext, edgeContext, plan); err != nil {
+			paths, err := e.planCreatePatterns(ctx, createContent, nodeContext, edgeContext, plan)
+			if err != nil {
 				return nil, err
 			}
+			bindings := valueBindingsLayer(ctx, len(paths))
+			for name, path := range paths {
+				bindings[name] = e.pathToMap(path)
+			}
+			ctx = withValueBindings(ctx, bindings)
 		} else if strings.HasPrefix(upperSeg, "WITH") {
-			// Process WITH clause - extract variables and update context
-			// WITH a, b means we keep a and b in context, filtering out others
-			withClause := strings.TrimSpace(segment[4:]) // Skip "WITH"
-
-			// Remove WHERE, ORDER BY, SKIP, LIMIT if present
-			for _, keyword := range []string{" WHERE ", " ORDER BY ", " SKIP ", " LIMIT "} {
-				if idx := findKeywordIndex(withClause, keyword); idx >= 0 {
-					withClause = withClause[:idx]
+			rows, ok := e.pipelineApplyWith(ctx, []pipelineRow{e.mergeBindingRow(ctx, nodeContext, edgeContext)}, segment)
+			if !ok {
+				_, _, err := pipelineDecline(ctx, len(plan.nodes)+len(plan.edges) > 0, segment)
+				if err == nil {
+					pipelineItemUnevaluable(ctx, segment)
+					err = getExpressionFailure(ctx)
 				}
+				return nil, err
 			}
-			if withClause == "*" {
-				continue
-			}
-
-			// Parse WITH items (similar to RETURN items)
-			withItems := e.parseReturnItems(withClause)
-
-			// Create new context with only the WITH variables
-			newNodeContext := make(map[string]*storage.Node)
-			newEdgeContext := make(map[string]*storage.Edge)
-			row := make(pipelineRow, util.SafePreallocSum(len(nodeContext), len(edgeContext)))
-			for name, node := range nodeContext {
-				row[name] = node
-			}
-			for name, edge := range edgeContext {
-				row[name] = edge
-			}
-
-			for _, item := range withItems {
-				alias := item.expr
-				if item.alias != "" {
-					alias = item.alias
-				}
-				val, ok, err := e.evaluateRowValue(item.expr, row)
-				if err != nil {
+			if len(rows) == 0 {
+				if err := e.applyCreatePlan(ctx, plan, result); err != nil {
 					return nil, err
 				}
-				if !ok {
-					return nil, localizedError(localization.CypherResidualCreateWithExpressionInvalid(item.expr), nil)
+				if returnIdx := topLevelKeywordIndex(cypher, "RETURN"); returnIdx >= 0 {
+					projected, err := e.projectMergeReturn(ctx, nil, cypher[returnIdx:])
+					if err != nil {
+						return nil, err
+					}
+					result.Columns, result.Rows = projected.Columns, projected.Rows
 				}
-				switch v := val.(type) {
+				return result, nil
+			}
+			clear(nodeContext)
+			clear(edgeContext)
+			for name, value := range rows[0] {
+				switch bound := value.(type) {
 				case *storage.Node:
-					if v != nil {
-						newNodeContext[alias] = v
-					}
+					nodeContext[name] = bound
 				case *storage.Edge:
-					if v != nil {
-						newEdgeContext[alias] = v
-					}
+					edgeContext[name] = bound
 				}
 			}
-
-			// Update context
-			nodeContext = newNodeContext
-			edgeContext = newEdgeContext
+			ctx = withValueBindings(ctx, rows[0])
 		} else if strings.HasPrefix(upperSeg, "RETURN") {
 			if err := e.applyCreatePlan(ctx, plan, result); err != nil {
 				return nil, err
@@ -2511,22 +2326,11 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 			clear(plan.edges)
 			plan.nodes = plan.nodes[:0]
 			plan.edges = plan.edges[:0]
-			// Build result from context
-			returnClause := strings.TrimSpace(segment[6:])
-			items := e.parseReturnItems(returnClause)
-
-			// The CREATE routes' one RETURN projection (count(...) over the
-			// created row included, #507).
-			row := make([]interface{}, len(items))
-			for i, item := range items {
-				if item.alias != "" {
-					result.Columns = append(result.Columns, item.alias)
-				} else {
-					result.Columns = append(result.Columns, item.expr)
-				}
-				row[i] = e.projectCreatedReturnItem(ctx, item, nodeContext, edgeContext, nil)
+			projected, err := e.projectMergeReturn(ctx, []pipelineRow{e.mergeBindingRow(ctx, nodeContext, edgeContext)}, segment)
+			if err != nil {
+				return nil, err
 			}
-			result.Rows = append(result.Rows, row)
+			result.Columns, result.Rows = projected.Columns, projected.Rows
 		}
 	}
 	if err := e.applyCreatePlan(ctx, plan, result); err != nil {

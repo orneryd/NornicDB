@@ -498,9 +498,9 @@ func TestMathFunctions(t *testing.T) {
 	}{
 		{"abs(-5)", int64(5), 0},
 		{"abs(5)", int64(5), 0},
-		{"ceil(4.2)", int64(5), 0},
-		{"floor(4.8)", int64(4), 0},
-		{"round(4.5)", int64(5), 0},
+		{"ceil(4.2)", float64(5), 0},
+		{"floor(4.8)", float64(4), 0},
+		{"round(4.5)", float64(5), 0},
 		{"sign(10)", int64(1), 0},
 		{"sign(-10)", int64(-1), 0},
 		{"sign(0)", int64(0), 0},

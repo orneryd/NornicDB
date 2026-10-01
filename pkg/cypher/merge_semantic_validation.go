@@ -306,6 +306,19 @@ func (e *StorageExecutor) mergePatternContainsNullProperty(pattern string) bool 
 	return false
 }
 
+func validateMergePatternProperties(properties map[string]interface{}, entity string) error {
+	for property, value := range properties {
+		if value == nil {
+			return newSemanticError(
+				"Neo.ClientError.Statement.SemanticError",
+				"MergeNullPropertyValue",
+				fmt.Sprintf("Cannot merge the following %s because of null property value for '%s'", entity, property),
+			)
+		}
+	}
+	return validatePropertyValues(properties)
+}
+
 func mergeVariableAlreadyBoundError(variable string) error {
 	return newSemanticError(
 		"Neo.ClientError.Statement.SyntaxError",

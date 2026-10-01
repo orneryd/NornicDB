@@ -114,3 +114,67 @@ func TestDivisionByZeroMatchesNeo4j(t *testing.T) {
 		require.Contains(t, err.Error(), "/ by zero", query)
 	}
 }
+
+func TestSharedMathContractsMatchNeo4j(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "sharedmath"))
+	ctx := context.Background()
+
+	for _, query := range []string{
+		"RETURN round(1.5, null) AS value",
+		"UNWIND [1.5] AS x RETURN round(x, null) AS value",
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{nil}}, result.Rows, query)
+	}
+
+	for _, test := range []struct {
+		query   string
+		message string
+	}{
+		{
+			query:   "RETURN round(1.5, -1) AS value",
+			message: "Precision argument to 'round()' cannot be negative",
+		},
+		{
+			query:   "RETURN round(1.5, 0, 'BAD') AS value",
+			message: "Unknown rounding mode. Valid values are: CEILING, FLOOR, UP, DOWN, HALF_EVEN, HALF_UP, HALF_DOWN, UNNECESSARY.",
+		},
+		{
+			query:   "UNWIND [1.5] AS x RETURN round(x, -1) AS value",
+			message: "Precision argument to 'round()' cannot be negative",
+		},
+		{
+			query:   "UNWIND [1.5] AS x RETURN round(x, 0, 'BAD') AS value",
+			message: "Unknown rounding mode. Valid values are: CEILING, FLOOR, UP, DOWN, HALF_EVEN, HALF_UP, HALF_DOWN, UNNECESSARY.",
+		},
+	} {
+		requireStatus(t, exec, test.query, nil, "Neo.ClientError.Statement.ArgumentError", test.message)
+	}
+
+	for _, query := range []string{
+		"RETURN acos(.5) AS value",
+		"UNWIND [.5] AS x RETURN acos(x) AS value",
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, 1.0471975511965979, result.Rows[0][0], query)
+	}
+
+}
+
+func TestNullDividendIntegerZeroDivisionMatchesNeo4j(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "null-divzero"))
+	for _, test := range []struct {
+		name   string
+		query  string
+		params map[string]interface{}
+	}{
+		{name: "literal null dividend", query: "RETURN null / 0 AS value"},
+		{name: "parameter null dividend", query: "RETURN $lhs / $rhs AS value", params: map[string]interface{}{"lhs": nil, "rhs": int64(0)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requireStatus(t, exec, test.query, test.params, "Neo.ClientError.Statement.ArithmeticError", "/ by zero")
+		})
+	}
+}

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -14,7 +15,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 const deleteStreamingBatchSize = 500
@@ -35,6 +35,8 @@ func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string)
 
 // executeDelete handles DELETE queries.
 func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	ctx = withExpressionFailureSlot(ctx)
+	projectionCypher := cypher
 	// Substitute parameters AFTER routing to avoid keyword detection issues
 	if params := getParamsFromContext(ctx); params != nil {
 		cypher = e.substituteParams(cypher, params)
@@ -140,28 +142,45 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	// LIMIT/SKIP/WITH/ORDER BY/CALL/UNWIND in the MATCH segment.
 	matchSegment := strings.TrimSpace(cypher[matchIdx:deleteIdx])
 	_, inTransactionWrapper := e.getStorage(ctx).(*transactionStorageWrapper)
-	if hot, ok, err := e.tryExecuteBoundRelationshipDelete(ctx, matchSegment, cypher, deleteVars, detach); ok || err != nil {
+	writeCypher := cypher
+	var projectionInput *ExecuteResult
+	if returnIdx > 0 {
+		writeCypher = strings.TrimSpace(cypher[:returnIdx])
+		var err error
+		projectionInput, err = e.executeMatch(ctx, matchSegment+" RETURN *")
 		if err != nil {
 			return nil, err
 		}
-		return hot, nil
+		e.normalizeSetMatchRowsToNodes(projectionInput, store)
+	}
+	if hot, ok, err := e.tryExecuteBoundRelationshipDelete(ctx, matchSegment, writeCypher, deleteVars, detach); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		if projectionInput != nil {
+			e.applyDeleteReturnProjection(hot, projectionCypher, deleteVars, deleteProjectionInfo{ctx: ctx, input: projectionInput})
+		}
+		return hot, getExpressionFailure(ctx)
 	}
 	if !inTransactionWrapper && e.isDeleteStreamingEligible(matchSegment, deleteVars, detach) {
 		result, err := e.executeDeleteStreaming(ctx, matchSegment, deleteVars, needEdgeStats)
 		if err != nil {
 			return nil, err
 		}
-		e.applyDeleteReturnProjection(result, cypher, deleteVars, singleDeleteProjectionInfo(deleteVars, deleteProjectionNode))
-		return result, nil
+		e.applyDeleteReturnProjection(result, projectionCypher, deleteVars, deleteProjectionInfo{ctx: ctx, input: projectionInput})
+		return result, getExpressionFailure(ctx)
 	}
 
 	// Execute the match first - return the specific variables being deleted
 	// Can't use RETURN * because it returns literal "*" instead of expanding
-	if hot, ok, err := e.tryExecuteDeleteWithWithLimitHotPath(ctx, cypher, matchIdx, deleteIdx, deleteVars, detach, needEdgeStats); ok || err != nil {
+	if hot, ok, err := e.tryExecuteDeleteWithWithLimitHotPath(ctx, writeCypher, matchIdx, deleteIdx, deleteVars, detach, needEdgeStats); ok || err != nil {
 		if err != nil {
 			return nil, err
 		}
-		return hot, nil
+		if projectionInput != nil {
+			e.applyDeleteReturnProjection(hot, projectionCypher, deleteVars, deleteProjectionInfo{ctx: ctx, input: projectionInput})
+		}
+		return hot, getExpressionFailure(ctx)
 	}
 
 	matchQuery := cypher[matchIdx:deleteIdx] + " RETURN " + deleteVars
@@ -220,9 +239,12 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 		result.Stats.RelationshipsDeleted += len(edgeIDsToDelete)
 	}
 
-	e.applyDeleteReturnProjection(result, cypher, deleteVars, inferDeleteProjectionInfo(matchResult.Rows, deleteVars))
+	if projectionInput == nil {
+		projectionInput = matchResult
+	}
+	e.applyDeleteReturnProjection(result, projectionCypher, deleteVars, deleteProjectionInfo{ctx: ctx, input: projectionInput})
 
-	return result, nil
+	return result, getExpressionFailure(ctx)
 }
 
 // tryExecuteBoundStandaloneDelete executes DELETE / DETACH DELETE <var> where
@@ -407,8 +429,12 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 		}
 	}
 
-	e.applyDeleteReturnProjection(result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionNode))
-	return result, true, nil
+	input := &ExecuteResult{Columns: []string{deleteVar}, Rows: make([][]interface{}, 0, len(candidates))}
+	for _, node := range candidates {
+		input.Rows = append(input.Rows, []interface{}{node})
+	}
+	e.applyDeleteReturnProjection(result, cypher, deleteVar, deleteProjectionInfo{ctx: ctx, input: input})
+	return result, true, getExpressionFailure(ctx)
 }
 
 func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
@@ -555,7 +581,8 @@ const (
 )
 
 type deleteProjectionInfo struct {
-	kinds map[string]deleteProjectionKind
+	ctx   context.Context
+	input *ExecuteResult
 }
 
 type deleteTargetValue struct {
@@ -564,16 +591,8 @@ type deleteTargetValue struct {
 	edgeID storage.EdgeID
 }
 
-func singleDeleteProjectionInfo(deleteVar string, kind deleteProjectionKind) deleteProjectionInfo {
-	deleteVar = strings.TrimSpace(deleteVar)
-	if deleteVar == "" {
-		return deleteProjectionInfo{}
-	}
-	return deleteProjectionInfo{kindMap(deleteVar, kind)}
-}
-
-func kindMap(deleteVar string, kind deleteProjectionKind) map[string]deleteProjectionKind {
-	return map[string]deleteProjectionKind{deleteVar: kind}
+func singleDeleteProjectionInfo(_ string, _ deleteProjectionKind) deleteProjectionInfo {
+	return deleteProjectionInfo{}
 }
 
 func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
@@ -601,59 +620,6 @@ func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
 	return deleteTargetValue{}
 }
 
-func inferDeleteProjectionInfo(rows [][]interface{}, deleteVars string) deleteProjectionInfo {
-	vars := strings.Split(deleteVars, ",")
-	if len(vars) == 0 {
-		return deleteProjectionInfo{}
-	}
-	for i := range vars {
-		vars[i] = strings.TrimSpace(vars[i])
-	}
-	info := deleteProjectionInfo{kinds: make(map[string]deleteProjectionKind, len(vars))}
-	for _, row := range rows {
-		for idx, val := range row {
-			if idx >= len(vars) {
-				break
-			}
-			name := vars[idx]
-			if name == "" || info.kindFor(name) != deleteProjectionUnknown {
-				continue
-			}
-			target := classifyDeleteTargetValue(val)
-			if target.kind != deleteProjectionUnknown {
-				info.kinds[name] = target.kind
-			}
-		}
-	}
-	return info
-}
-
-func (i deleteProjectionInfo) kindFor(name string) deleteProjectionKind {
-	if i.kinds == nil {
-		return deleteProjectionUnknown
-	}
-	return i.kinds[strings.TrimSpace(name)]
-}
-
-func deletedCountForProjection(result *ExecuteResult, inner string, info deleteProjectionInfo) int64 {
-	if strings.EqualFold(strings.TrimSpace(inner), "*") {
-		return int64(result.Stats.NodesDeleted + result.Stats.RelationshipsDeleted)
-	}
-	switch info.kindFor(inner) {
-	case deleteProjectionNode:
-		return int64(result.Stats.NodesDeleted)
-	case deleteProjectionRelationship:
-		return int64(result.Stats.RelationshipsDeleted)
-	}
-	if result.Stats.NodesDeleted > 0 && result.Stats.RelationshipsDeleted == 0 {
-		return int64(result.Stats.NodesDeleted)
-	}
-	if result.Stats.RelationshipsDeleted > 0 && result.Stats.NodesDeleted == 0 {
-		return int64(result.Stats.RelationshipsDeleted)
-	}
-	return int64(result.Stats.NodesDeleted)
-}
-
 func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
 	if result == nil {
 		return
@@ -662,52 +628,60 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 	if returnIdx <= 0 {
 		return
 	}
-	returnPart := strings.TrimSpace(cypher[returnIdx+6:])
-	returnItems := e.parseReturnItems(returnPart)
-	result.Columns = make([]string, len(returnItems))
-	row := make([]interface{}, len(returnItems))
-
-	// Build a set of deleted variable names for nil-resolution below.
-	deletedVarSet := make(map[string]struct{})
-	for _, v := range strings.Split(deleteVars, ",") {
-		deletedVarSet[strings.TrimSpace(v)] = struct{}{}
+	ctx := info.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
-
-	for i, item := range returnItems {
-		if item.alias != "" {
-			result.Columns[i] = item.alias
-		} else {
-			result.Columns[i] = item.expr
-		}
-		upperExpr := upperASCII(item.expr)
-
-		// COUNT() aggregation over deleted nodes/relationships.
-		if strings.HasPrefix(upperExpr, "COUNT(") {
-			inner := strings.TrimSpace(item.expr[6 : len(item.expr)-1])
-			row[i] = deletedCountForProjection(result, inner, info)
-			continue
-		}
-
-		// Property access on a deleted variable (e.g. s.title after DELETE s)
-		// yields nil — the node no longer exists.
-		if dotIdx := strings.Index(item.expr, "."); dotIdx > 0 {
-			varName := item.expr[:dotIdx]
-			if _, deleted := deletedVarSet[varName]; deleted {
-				row[i] = nil
-				continue
+	rows := []pipelineRow{}
+	nodeIDs := []storage.NodeID{}
+	edgeIDs := make(map[storage.EdgeID]struct{})
+	if info.input != nil {
+		store := e.getStorage(ctx)
+		for _, values := range info.input.Rows {
+			row := pipelineRow(buildRowValueMap(info.input.Columns, values))
+			rows = append(rows, row)
+			for _, value := range row {
+				switch entity := value.(type) {
+				case *storage.Node:
+					if entity != nil {
+						if _, err := store.GetNode(entity.ID); errors.Is(err, storage.ErrNotFound) {
+							nodeIDs = append(nodeIDs, entity.ID)
+						}
+					}
+				case *storage.Edge:
+					if entity != nil {
+						if _, err := store.GetEdge(entity.ID); errors.Is(err, storage.ErrNotFound) {
+							edgeIDs[entity.ID] = struct{}{}
+						}
+					}
+				}
+			}
+			for _, target := range splitTopLevelComma(deleteVars) {
+				value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(target), row)
+				if !ok {
+					pipelineItemUnevaluable(ctx, target)
+					return
+				}
+				entity := classifyDeleteTargetValue(value)
+				if entity.kind == deleteProjectionNode {
+					nodeIDs = append(nodeIDs, entity.nodeID)
+				} else if entity.kind == deleteProjectionRelationship {
+					edgeIDs[entity.edgeID] = struct{}{}
+				}
 			}
 		}
-		// Bare reference to a deleted variable yields nil.
-		if _, deleted := deletedVarSet[item.expr]; deleted {
-			row[i] = nil
-			continue
-		}
-
-		// Evaluate non-deleted expressions: string literals, numeric
-		// literals, function calls, etc.
-		row[i] = e.parseValue(context.Background(), item.expr)
 	}
-	result.Rows = [][]interface{}{row}
+	markPipelineRowsDeletedEntities(rows, nodeIDs, edgeIDs)
+	if err := validateDeletedEntityProjection(rows, cypher[returnIdx:]); err != nil {
+		recordExpressionFailure(ctx, err)
+		return
+	}
+	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
+	if err != nil {
+		return
+	}
+	result.Columns = projected.Columns
+	result.Rows = projected.Rows
 }
 
 func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars string, detach bool) bool {
@@ -1019,10 +993,6 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	// as the pipeline, MERGE and CREATE ... SET do. Only the targeted
 	// variable changes; other row bindings are evaluation scope.
 	targets := pipelineSetTargetVariables(assignments)
-	variable := ""
-	if len(targets) > 0 {
-		variable = targets[0]
-	}
 	colIndex := make(map[string]int, len(matchResult.Columns))
 	for i, col := range matchResult.Columns {
 		colIndex[col] = i
@@ -1103,177 +1073,11 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 		} else {
 			returnPart = strings.TrimSpace(returnPart[len("RETURN "):])
 		}
-		returnItems := e.parseReturnItems(returnPart)
-		result.Columns = make([]string, len(returnItems))
-		for i, item := range returnItems {
-			if item.alias != "" {
-				result.Columns[i] = item.alias
-			} else {
-				result.Columns[i] = item.expr
-			}
+		projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+returnPart)
+		if err != nil {
+			return nil, err
 		}
-
-		// Aggregation in SET RETURN should produce aggregated rows, not one row per match.
-		// Example: MATCH ... SET ... RETURN count(t) AS updated
-		hasAggregation := false
-		for _, item := range returnItems {
-			if isAggregateFunc(item.expr) {
-				hasAggregation = true
-				break
-			}
-		}
-		if hasAggregation {
-			aggRow := make([]interface{}, len(returnItems))
-			for j, item := range returnItems {
-				exprUpper := upperASCII(strings.TrimSpace(item.expr))
-				switch {
-				case strings.HasPrefix(exprUpper, "COUNT(") && strings.HasSuffix(exprUpper, ")"):
-					inner := strings.TrimSpace(item.expr[len("COUNT(") : len(item.expr)-1])
-					innerUpper := upperASCII(inner)
-					if innerUpper == "*" || inner == "" {
-						aggRow[j] = int64(len(matchResult.Rows))
-						continue
-					}
-					count := int64(0)
-					parts := strings.SplitN(inner, ".", 2)
-					varName := strings.TrimSpace(parts[0])
-					propName := ""
-					if len(parts) == 2 {
-						propName = strings.TrimSpace(parts[1])
-					}
-					for _, row := range matchResult.Rows {
-						varMap := make(map[string]*storage.Node, len(matchResult.Columns))
-						relMap := make(map[string]*storage.Edge, len(matchResult.Columns))
-						for i, colName := range matchResult.Columns {
-							if i >= len(row) {
-								continue
-							}
-							switch entity := row[i].(type) {
-							case *storage.Node:
-								if entity != nil {
-									varMap[colName] = entity
-								}
-							case *storage.Edge:
-								if entity != nil {
-									relMap[colName] = entity
-								}
-							}
-						}
-						if node := varMap[varName]; node != nil {
-							if propName == "" {
-								count++
-								continue
-							}
-							if v, ok := node.Properties[propName]; ok && v != nil {
-								count++
-							}
-							continue
-						}
-						if rel := relMap[varName]; rel != nil {
-							if propName == "" {
-								count++
-								continue
-							}
-							if v, ok := rel.Properties[propName]; ok && v != nil {
-								count++
-							}
-						}
-					}
-					aggRow[j] = count
-				default:
-					// Keep behavior deterministic for mixed projections by evaluating against first row.
-					if len(matchResult.Rows) == 0 {
-						aggRow[j] = nil
-						continue
-					}
-					varMap := make(map[string]*storage.Node, len(matchResult.Columns))
-					relMap := make(map[string]*storage.Edge, len(matchResult.Columns))
-					first := matchResult.Rows[0]
-					for i, colName := range matchResult.Columns {
-						if i < len(first) {
-							switch entity := first[i].(type) {
-							case *storage.Node:
-								if entity != nil {
-									varMap[colName] = entity
-								}
-							case *storage.Edge:
-								if entity != nil {
-									relMap[colName] = entity
-								}
-							}
-						}
-					}
-					if variable != "" {
-						if node, ok := varMap[variable]; ok {
-							aggRow[j] = e.resolveReturnItem(ctx, item, variable, node)
-							continue
-						}
-						if _, ok := relMap[variable]; ok {
-							aggRow[j] = e.evaluateExpressionWithContext(ctx, item.expr, varMap, relMap)
-							continue
-						}
-					}
-					aggRow[j] = e.evaluateExpressionWithContext(ctx, item.expr, varMap, relMap)
-				}
-			}
-			result.Rows = [][]interface{}{aggRow}
-			return result, nil
-		}
-
-		// Return updated nodes
-		// Build a map of variable names to nodes from match result columns
-		// This handles multiple variables (e.g., n, m) correctly
-		for _, row := range matchResult.Rows {
-			// Map column names to values in this row
-			varMap := make(map[string]*storage.Node)
-			relMap := make(map[string]*storage.Edge)
-			for i, colName := range matchResult.Columns {
-				if i < len(row) {
-					switch entity := row[i].(type) {
-					case *storage.Node:
-						if entity != nil {
-							varMap[colName] = entity
-						}
-					case *storage.Edge:
-						if entity != nil {
-							relMap[colName] = entity
-						}
-					}
-				}
-			}
-
-			// Build a single row with all return items
-			newRow := make([]interface{}, len(returnItems))
-			for j, item := range returnItems {
-				// Extract variable name from return item expression
-				// Handle cases like: "n", "n.name", "id(n)", etc.
-				varName := extractVariableNameFromReturnItem(item.expr)
-				if varName != "" {
-					if node, ok := varMap[varName]; ok {
-						newRow[j] = e.resolveReturnItem(ctx, item, varName, node)
-						continue
-					}
-					if _, ok := relMap[varName]; ok {
-						newRow[j] = e.evaluateExpressionWithContext(ctx, item.expr, varMap, relMap)
-						continue
-					}
-				}
-				// Fallback: try to resolve with the first variable (for backward compatibility)
-				if variable != "" {
-					if node, ok := varMap[variable]; ok {
-						newRow[j] = e.resolveReturnItem(ctx, item, variable, node)
-						continue
-					}
-					if _, ok := relMap[variable]; ok {
-						newRow[j] = e.evaluateExpressionWithContext(ctx, item.expr, varMap, relMap)
-						continue
-					}
-				}
-				// If no variable matches, try to evaluate expression with all variables
-				newRow[j] = e.evaluateExpressionWithContext(ctx, item.expr, varMap, relMap)
-			}
-			result.Rows = append(result.Rows, newRow)
-		}
+		result.Columns, result.Rows = projected.Columns, projected.Rows
 	} else {
 		// SET without RETURN has no columns and no rows, as in Neo4j (#676).
 		result.Columns = []string{}
@@ -1500,12 +1304,13 @@ func (e *StorageExecutor) resolveUnwindValueFromExpr(ctx context.Context, unwind
 // executeSetTrailingWithReturn handles MATCH ... SET ... WITH ... RETURN by
 // evaluating WITH/RETURN directly over the mutated MATCH rows.
 func (e *StorageExecutor) executeSetTrailingWithReturn(ctx context.Context, trailingPart string, matchResult *ExecuteResult, result *ExecuteResult) (*ExecuteResult, bool, error) {
+	trailingPart = strings.TrimSpace(trailingPart)
 	upper := upperASCII(strings.TrimSpace(trailingPart))
 	if !strings.HasPrefix(upper, "WITH ") {
 		return nil, false, nil
 	}
 
-	returnIdx := findKeywordIndex(trailingPart, "RETURN")
+	returnIdx := topLevelKeywordIndex(trailingPart, "RETURN")
 	if returnIdx <= 0 {
 		return nil, false, nil
 	}
@@ -1513,120 +1318,27 @@ func (e *StorageExecutor) executeSetTrailingWithReturn(ctx context.Context, trai
 	if withClause == "" {
 		return nil, true, localizedError(localization.CypherMutationsWithExpressionRequired(), nil)
 	}
-	for _, kw := range []string{"ORDER BY", "LIMIT", "SKIP", "UNWIND", "OPTIONAL MATCH", "MATCH", "CALL"} {
-		if findKeywordIndex(withClause, kw) >= 0 {
+	for _, kw := range []string{"UNWIND", "OPTIONAL MATCH", "MATCH", "CALL", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "WITH"} {
+		if topLevelKeywordIndex(withClause, kw) >= 0 {
 			return nil, false, nil
 		}
 	}
-
-	withItems := e.splitWithItems(withClause)
-	type withExpr struct {
-		expr  string
-		alias string
-	}
-	parsedWith := make([]withExpr, 0, len(withItems))
-	for _, item := range withItems {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		asIdx := findKeywordIndex(item, "AS")
-		if asIdx > 0 {
-			expr := strings.TrimSpace(item[:asIdx])
-			alias := strings.TrimSpace(item[asIdx+2:])
-			if expr == "" || alias == "" {
-				return nil, true, localizedError(localization.CypherResidualWithItemInvalid(item), nil)
-			}
-			parsedWith = append(parsedWith, withExpr{expr: expr, alias: alias})
-			continue
-		}
-		parsedWith = append(parsedWith, withExpr{expr: item, alias: item})
-	}
-	if len(parsedWith) == 0 {
-		return nil, true, localizedError(localization.CypherMutationsWithExpressionRequired(), nil)
-	}
-
-	returnClause := strings.TrimSpace(trailingPart[returnIdx+len("RETURN"):])
-	returnItems := e.parseReturnItems(returnClause)
-	result.Columns = make([]string, len(returnItems))
-	for i, item := range returnItems {
-		if item.alias != "" {
-			result.Columns[i] = item.alias
-		} else {
-			result.Columns[i] = item.expr
-		}
-	}
-
-	colIndex := make(map[string]int, len(matchResult.Columns))
-	for i, col := range matchResult.Columns {
-		colIndex[col] = i
-	}
-
+	rows := make([]pipelineRow, 0, len(matchResult.Rows))
 	for _, row := range matchResult.Rows {
-		rowScope := make(map[string]interface{}, len(parsedWith))
-		nodeScope := make(map[string]*storage.Node, util.SafePreallocSum(len(parsedWith), len(matchResult.Columns)))
-		for i, col := range matchResult.Columns {
-			if i >= len(row) {
-				continue
-			}
-			if node, ok := row[i].(*storage.Node); ok && node != nil {
-				nodeScope[col] = node
-			}
-		}
-
-		for _, wi := range parsedWith {
-			val, resolved := resolveSetTrailingValue(wi.expr, row, colIndex, nodeScope)
-			if !resolved {
-				val = e.evaluateExpressionWithContext(ctx, wi.expr, nodeScope, nil)
-			}
-			rowScope[wi.alias] = val
-			if node, ok := val.(*storage.Node); ok && node != nil {
-				nodeScope[wi.alias] = node
-			}
-		}
-
-		out := make([]interface{}, len(returnItems))
-		for i, item := range returnItems {
-			expr := strings.TrimSpace(item.expr)
-			if val, ok := rowScope[expr]; ok {
-				out[i] = val
-				continue
-			}
-			if strings.Contains(expr, ".") {
-				parts := strings.SplitN(expr, ".", 2)
-				base := strings.TrimSpace(parts[0])
-				prop := strings.TrimSpace(parts[1])
-				if node, ok := nodeScope[base]; ok && node != nil {
-					out[i] = node.Properties[prop]
-					continue
-				}
-				if m, ok := rowScope[base].(map[string]interface{}); ok {
-					out[i] = m[prop]
-					continue
-				}
-			}
-			out[i] = e.evaluateExpressionWithContext(ctx, expr, nodeScope, nil)
-		}
-		result.Rows = append(result.Rows, out)
+		rows = append(rows, pipelineRow(buildRowValueMap(matchResult.Columns, row)))
 	}
-
+	rows, ok := e.pipelineApplyWith(ctx, rows, "WITH "+withClause)
+	if !ok {
+		_, _, err := pipelineDecline(ctx, true, "WITH "+withClause)
+		return nil, true, err
+	}
+	projected, err := e.projectMergeReturn(ctx, rows, trailingPart[returnIdx:])
+	if err != nil {
+		return nil, true, err
+	}
+	result.Columns = projected.Columns
+	result.Rows = projected.Rows
 	return result, true, nil
-}
-
-func resolveSetTrailingValue(expr string, row []interface{}, colIndex map[string]int, nodeScope map[string]*storage.Node) (interface{}, bool) {
-	expr = strings.TrimSpace(expr)
-	if idx, ok := colIndex[expr]; ok && idx < len(row) {
-		return row[idx], true
-	}
-	if strings.Contains(expr, ".") {
-		parts := strings.SplitN(expr, ".", 2)
-		base := strings.TrimSpace(parts[0])
-		prop := strings.TrimSpace(parts[1])
-		if node, ok := nodeScope[base]; ok && node != nil {
-			return node.Properties[prop], true
-		}
-	}
-	return nil, false
 }
 
 // normalizeUnwindExpression removes syntactic wrapper parentheses around a valid
@@ -2052,138 +1764,9 @@ func (e *StorageExecutor) applyRemoveToMatchedRows(
 
 // executeCall handles CALL procedure queries.
 
-// smartSplitReturnItems splits a RETURN clause by commas, but respects:
-// - CASE/END boundaries
-// - Parentheses (function calls)
-// - Curly braces (map projections like n { .*, key: value })
-// - Square brackets (list literals)
-// - String literals
-// smartSplitReturnItems splits RETURN items by comma, respecting strings, parentheses, and CASE/END.
-// Properly handles UTF-8 encoded strings with multi-byte characters.
+// smartSplitReturnItems adapts callers to canonical top-level comma splitting.
 func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
-	var result []string
-	var current strings.Builder
-	var inString bool
-	var stringChar rune
-	var parenDepth int
-	var braceDepth int
-	var bracketDepth int
-	var caseDepth int
-
-	runes := []rune(returnPart)
-	runeLen := len(runes)
-
-	// Build rune-to-byte index mapping for keyword checking
-	runeToByteIndex := make([]int, util.SafePreallocSum(runeLen, 1))
-	byteIdx := 0
-	for ri, r := range runes {
-		runeToByteIndex[ri] = byteIdx
-		byteIdx += len(string(r))
-	}
-	runeToByteIndex[runeLen] = byteIdx
-
-	upper := upperASCII(returnPart)
-
-	for ri := 0; ri < runeLen; ri++ {
-		ch := runes[ri]
-		bytePos := runeToByteIndex[ri]
-
-		// Track string literals
-		if ch == '\'' || ch == '"' {
-			if !inString {
-				inString = true
-				stringChar = ch
-			} else if ch == stringChar {
-				inString = false
-			}
-			current.WriteRune(ch)
-			continue
-		}
-
-		if inString {
-			current.WriteRune(ch)
-			continue
-		}
-
-		// Track parentheses
-		if ch == '(' {
-			parenDepth++
-			current.WriteRune(ch)
-			continue
-		}
-		if ch == ')' {
-			parenDepth--
-			current.WriteRune(ch)
-			continue
-		}
-
-		// Track curly braces (map projections)
-		if ch == '{' {
-			braceDepth++
-			current.WriteRune(ch)
-			continue
-		}
-		if ch == '}' {
-			braceDepth--
-			current.WriteRune(ch)
-			continue
-		}
-
-		// Track square brackets (list literals)
-		if ch == '[' {
-			bracketDepth++
-			current.WriteRune(ch)
-			continue
-		}
-		if ch == ']' {
-			bracketDepth--
-			current.WriteRune(ch)
-			continue
-		}
-
-		// Track CASE/END keywords (using byte positions for substring comparison)
-		if bytePos+4 <= len(returnPart) && upper[bytePos:bytePos+4] == "CASE" {
-			// Check if CASE is a word boundary
-			prevOk := ri == 0 || !isAlphaNum(runes[ri-1])
-			nextRuneIdx := ri + 4 // Skip 4 runes for "CASE"
-			// Need to find which rune corresponds to bytePos+4
-			for nextRuneIdx < runeLen && runeToByteIndex[nextRuneIdx] < bytePos+4 {
-				nextRuneIdx++
-			}
-			nextOk := nextRuneIdx >= runeLen || !isAlphaNum(runes[nextRuneIdx])
-			if prevOk && nextOk {
-				caseDepth++
-			}
-		}
-		if bytePos+3 <= len(returnPart) && upper[bytePos:bytePos+3] == "END" {
-			// Check if END is a word boundary
-			prevOk := ri == 0 || !isAlphaNum(runes[ri-1])
-			nextRuneIdx := ri + 3 // Skip 3 runes for "END"
-			for nextRuneIdx < runeLen && runeToByteIndex[nextRuneIdx] < bytePos+3 {
-				nextRuneIdx++
-			}
-			nextOk := nextRuneIdx >= runeLen || !isAlphaNum(runes[nextRuneIdx])
-			if prevOk && nextOk && caseDepth > 0 {
-				caseDepth--
-			}
-		}
-
-		// Split on comma only if we're not inside parens, braces, brackets, CASE, or strings
-		if ch == ',' && parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 && caseDepth == 0 {
-			result = append(result, current.String())
-			current.Reset()
-			continue
-		}
-
-		current.WriteRune(ch)
-	}
-
-	// Add remaining content
-	if current.Len() > 0 {
-		result = append(result, current.String())
-	}
-
-	return result
+	return splitTopLevelComma(returnPart)
 }
 
 // isAlphaNum checks if a character is alphanumeric or underscore
@@ -2192,54 +1775,17 @@ func isAlphaNum(ch rune) bool {
 }
 
 func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
-	items := []returnItem{}
-
-	// Strip top-level trailing clauses from RETURN projection.
-	// Use keyword scanning to avoid false matches in identifiers like "order_count".
-	end := len(returnPart)
-	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(returnPart, kw); idx >= 0 && idx < end {
-			end = idx
-		}
+	if strings.TrimSpace(returnPart) == "" {
+		returnPart = "*"
 	}
-	if end < len(returnPart) {
-		returnPart = strings.TrimSpace(returnPart[:end])
+	plan := returnProjectionPlanFor("RETURN " + returnPart)
+	if plan.star {
+		return []returnItem{{expr: "*"}}
 	}
-
-	// Split by comma, but respect CASE/END boundaries and parentheses
-	parts := e.smartSplitReturnItems(returnPart)
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" || part == "*" {
-			continue
-		}
-
-		item := returnItem{expr: part}
-
-		// Check for AS alias
-		asIdx := projectionAliasIndex(part)
-		if asIdx > 0 {
-			item.expr = strings.TrimSpace(part[:asIdx])
-			item.alias = normalizeProjectionColumnName(part[asIdx+len("AS"):])
-		} else {
-			// Handle map projection without AS alias: n { .*, key: value } -> column name is "n"
-			// Neo4j infers the column name from the variable before the map projection
-			if braceIdx := strings.Index(part, " {"); braceIdx > 0 {
-				varName := strings.TrimSpace(part[:braceIdx])
-				if varName != "" && !strings.Contains(varName, "(") {
-					item.alias = varName
-				}
-			}
-		}
-
-		items = append(items, item)
+	items := make([]returnItem, 0, len(plan.projections))
+	for _, projection := range plan.projections {
+		items = append(items, returnItem{expr: projection.expr, alias: projection.alias})
 	}
-
-	// If empty or *, return all
-	if len(items) == 0 {
-		items = append(items, returnItem{expr: "*"})
-	}
-
 	return items
 }
 

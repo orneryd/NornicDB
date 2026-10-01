@@ -167,6 +167,9 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 			return createUndefinedVariableError(target)
 		}
 		expression := strings.TrimSpace(assignment[operator+operatorWidth:])
+		if err := validateExpressionOperandCompleteness(expression); err != nil {
+			return err
+		}
 		if missing := firstUndefinedSetExpressionVariable(expression, scope); missing != "" {
 			return createUndefinedVariableError(missing)
 		}

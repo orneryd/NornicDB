@@ -465,6 +465,30 @@ func TestTransactionScript_ProjectAndConditionAdditionalBranches(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestTransactionProjectionCanonicalRowSet(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.WithValue(context.Background(), paramsKey, map[string]interface{}{"offset": int64(10)})
+	stats := &QueryStats{NodesCreated: 3}
+	input := &ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{int64(3)}, {int64(1)}, {int64(3)}}, Stats: stats}
+	for _, test := range []struct {
+		projection string
+		columns    []string
+		rows       [][]interface{}
+	}{
+		{"DISTINCT value ORDER BY value DESC SKIP 1 LIMIT 1", []string{"value"}, [][]interface{}{{int64(1)}}},
+		{"count(*) AS total, sum(value) + $offset AS sum", []string{"total", "sum"}, [][]interface{}{{int64(3), int64(17)}}},
+		{"* ORDER BY value DESC LIMIT 1", []string{"value"}, [][]interface{}{{int64(3)}}},
+	} {
+		t.Run(test.projection, func(t *testing.T) {
+			result, err := exec.projectTransactionReturn(ctx, input, test.projection)
+			require.NoError(t, err)
+			require.Equal(t, test.columns, result.Columns)
+			require.Equal(t, test.rows, result.Rows)
+			require.Same(t, stats, result.Stats)
+		})
+	}
+}
+
 func TestTransactionScript_SimpleAndCaseCommitBranches(t *testing.T) {
 	ClearUserProcedures()
 	t.Cleanup(ClearUserProcedures)

@@ -219,8 +219,8 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 	}
 	if strings.EqualFold(resolvedDB, "system") && !isSystemCommandNoGraph(query) {
 		requirements := QueryPermissionRequirements(query)
-		if requirements.Write || requirements.Schema {
-			return nil, newSemanticError("Neo.ClientError.Statement.SemanticError", "SemanticError", "Graph updates are not supported on the system database")
+		if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
+			return nil, newSemanticError("Neo.ClientError.Statement.SemanticError", "SemanticError", "Graph access is not supported on the system database")
 		}
 	}
 	if scopedExec != e {

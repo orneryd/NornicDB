@@ -11,6 +11,7 @@
 package storage
 
 import (
+	"cmp"
 	"fmt"
 	"reflect"
 	"sort"
@@ -2316,6 +2317,24 @@ func compareSchemaIndexValues(a, b interface{}) int {
 	}
 	if b == nil {
 		return 1
+	}
+
+	left, right := reflect.ValueOf(a), reflect.ValueOf(b)
+	switch {
+	case left.CanInt() && right.CanInt():
+		return cmp.Compare(left.Int(), right.Int())
+	case left.CanUint() && right.CanUint():
+		return cmp.Compare(left.Uint(), right.Uint())
+	case left.CanInt() && right.CanUint():
+		if left.Int() < 0 {
+			return -1
+		}
+		return cmp.Compare(uint64(left.Int()), right.Uint())
+	case left.CanUint() && right.CanInt():
+		if right.Int() < 0 {
+			return 1
+		}
+		return cmp.Compare(left.Uint(), uint64(right.Int()))
 	}
 
 	if af, ok := convert.ToFloat64(a); ok {

@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +16,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -48,12 +52,139 @@ func TestTransactionHTTPValueBoundaries(t *testing.T) {
 	}
 }
 
+func TestGh668_HTTPFloatTokens(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	for _, endpoint := range []string{"/db/nornic/tx/commit", "/db/nornic/tx"} {
+		t.Run(endpoint, func(t *testing.T) {
+			response := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{
+				"statements": []map[string]any{{"statement": "RETURN 5.0, toFloat(5), 1.5"}},
+			}, token)
+			var result TransactionResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result), response.Body.String())
+			require.Empty(t, result.Errors)
+			require.Contains(t, response.Body.String(), `"row":[5.0,5.0,1.5]`)
+			if result.Commit != "" {
+				rollback := makeRequest(t, server, http.MethodDelete, strings.TrimSuffix(result.Commit, "/commit"), nil, token)
+				require.Equal(t, http.StatusOK, rollback.Code)
+			}
+		})
+	}
+}
+
+func TestGh668_HTTPNonfiniteRecursiveProperties(t *testing.T) {
+	server := &Server{}
+	values := []interface{}{math.Inf(1), math.Inf(-1), math.NaN(), float32(5), float64(5)}
+	properties := map[string]interface{}{"values": values, "nested": map[string]interface{}{"values": values}}
+	node := &storage.Node{ID: "n", Properties: properties}
+	edge := &storage.Edge{ID: "r", StartNode: "n", EndNode: "n", Properties: properties}
+	path := cypher.PathResult{Nodes: []*storage.Node{node, node}, Relationships: []*storage.Edge{edge}}
+	for _, value := range []interface{}{values, properties, node, edge, path} {
+		response := TransactionResponse{}
+		server.appendStatementResult(&response, &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{value}}}, "nornic", false, []string{"row", "graph"})
+		encoded, err := json.Marshal(response)
+		require.NoError(t, err)
+		require.True(t, json.Valid(encoded))
+		require.Contains(t, string(encoded), `["Infinity","-Infinity","NaN",5.0,5.0]`)
+	}
+}
+
+func TestGh668_HTTPNonfiniteEndpoints(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	values := []interface{}{"Infinity", "-Infinity", "NaN"}
+	properties := map[string]interface{}{"values": values}
+	for _, endpoint := range []string{"/db/nornic/tx/commit", "/db/nornic/tx"} {
+		for _, query := range []string{
+			"WITH [toFloat('Infinity'),toFloat('-Infinity'),toFloat('NaN')] AS values RETURN values, {values:values}",
+			"WITH [toFloat('Infinity'),toFloat('-Infinity'),toFloat('NaN')] AS values CREATE p=(a:NonfiniteHTTP {values:values})-[r:NONFINITE_HTTP {values:values}]->(b:NonfiniteHTTP {values:values}) RETURN values, {values:values}, a, r, [a,r], {node:a,edge:r}, p",
+		} {
+			t.Run(endpoint+query, func(t *testing.T) {
+				recorder := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{
+					"statements": []map[string]any{{"statement": query, "resultDataContents": []string{"row", "graph"}}},
+				}, token)
+				var response TransactionResponse
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
+				require.Empty(t, response.Errors)
+				require.Len(t, response.Results[0].Data, 1)
+				data := response.Results[0].Data[0]
+				if !strings.Contains(query, "CREATE") {
+					require.Equal(t, []interface{}{values, properties}, data.Row)
+					require.Len(t, data.Meta, 6)
+					require.Empty(t, data.Graph.Nodes)
+					require.Empty(t, data.Graph.Relationships)
+				} else {
+					require.Equal(t, []interface{}{values, properties, properties, properties, []interface{}{properties, properties}, map[string]interface{}{"node": properties, "edge": properties}, []interface{}{properties, properties, properties}}, data.Row)
+					require.Len(t, data.Meta, 13)
+					require.Len(t, data.Graph.Nodes, 2)
+					require.Len(t, data.Graph.Relationships, 1)
+					for _, node := range data.Graph.Nodes {
+						require.Equal(t, properties, node.Properties)
+					}
+					require.Equal(t, properties, data.Graph.Relationships[0].Properties)
+				}
+				if response.Commit != "" {
+					rollback := makeRequest(t, server, http.MethodDelete, strings.TrimSuffix(response.Commit, "/commit"), nil, token)
+					require.Equal(t, http.StatusOK, rollback.Code)
+				}
+			})
+		}
+	}
+}
+
+func TestGh668_HTTPRecursiveTemporalEntities(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	for _, endpoint := range []string{"/db/nornic/tx/commit", "/db/nornic/tx"} {
+		for _, testCase := range []struct{ expression, text string }{
+			{"date('2020-12-31')", "2020-12-31"},
+			{"duration('P1Y2M')", "P1Y2M"},
+			{"localtime('10:00:05')", "10:00:05"},
+			{"time('10:00:00+01:00')", "10:00+01:00"},
+			{"localdatetime('2020-01-01T10:00:00')", "2020-01-01T10:00"},
+			{"datetime('2020-01-01T10:00:00Z')", "2020-01-01T10:00Z"},
+		} {
+			t.Run(endpoint+testCase.expression, func(t *testing.T) {
+				query := "WITH " + testCase.expression + " AS value CREATE p=(a:TemporalHTTP {v:value,nested:[value]})-[r:TEMPORAL_HTTP {v:value,nested:[value]}]->(b:TemporalHTTP {v:value,nested:[value]}) RETURN value, [value], {nested:value}, a, r, [a,r], {node:a,edge:r}, p"
+				recorder := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{
+					"statements": []map[string]any{{"statement": query, "resultDataContents": []string{"row", "graph"}}},
+				}, token)
+				var response TransactionResponse
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
+				require.Empty(t, response.Errors)
+				require.Len(t, response.Results[0].Data, 1)
+				data := response.Results[0].Data[0]
+				properties := map[string]interface{}{"v": testCase.text, "nested": []interface{}{testCase.text}}
+				require.Equal(t, []interface{}{testCase.text, []interface{}{testCase.text}, map[string]interface{}{"nested": testCase.text}, properties, properties, []interface{}{properties, properties}, map[string]interface{}{"node": properties, "edge": properties}, []interface{}{properties, properties, properties}}, data.Row)
+				require.Len(t, data.Meta, 10)
+				require.Equal(t, []interface{}{nil, nil, nil}, data.Meta[:3])
+				require.Len(t, data.Meta[9], 3)
+				require.Len(t, data.Graph.Nodes, 2)
+				require.Len(t, data.Graph.Relationships, 1)
+				for _, node := range data.Graph.Nodes {
+					require.Equal(t, properties, node.Properties)
+				}
+				require.Equal(t, properties, data.Graph.Relationships[0].Properties)
+				require.NotContains(t, recorder.Body.String(), `"Time"`)
+				require.NotContains(t, recorder.Body.String(), `"Months"`)
+				if response.Commit != "" {
+					rollback := makeRequest(t, server, http.MethodDelete, strings.TrimSuffix(response.Commit, "/commit"), nil, token)
+					require.Equal(t, http.StatusOK, rollback.Code)
+				}
+			})
+		}
+	}
+}
+
 func TestGh738_HTTPStatementAdmission(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	for _, endpoint := range []string{"/db/nornic/tx/commit", "/db/nornic/tx"} {
 		for _, testCase := range []struct{ query, code string }{
 			{"USE system CREATE (:U717 {v:2})", "Neo.ClientError.Statement.SemanticError"},
+			{"USE system MATCH (n) RETURN count(n) AS c", "Neo.ClientError.Statement.SemanticError"},
+			{"USE system OPTIONAL MATCH (n) RETURN n", "Neo.ClientError.Statement.SemanticError"},
+			{"USE system CALL { MATCH (n) RETURN n } RETURN n", "Neo.ClientError.Statement.SemanticError"},
 			{"USE nosuchdb RETURN 1", "Neo.ClientError.Database.DatabaseNotFound"},
 		} {
 			t.Run(endpoint+testCase.query, func(t *testing.T) {
@@ -112,6 +243,39 @@ func TestGh668_HTTPTemporalText(t *testing.T) {
 	}
 }
 
+func TestGh668_HTTPTemporalEntityProperties(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	for _, endpoint := range []string{"/db/nornic/tx/commit", "/db/nornic/tx"} {
+		for _, testCase := range []struct {
+			query string
+			want  interface{}
+		}{
+			{"CREATE (n:D {d: date('2020-01-02')}) RETURN n", map[string]interface{}{"d": "2020-01-02"}},
+			{"CREATE ()-[r:R {d: date('2020-01-02')}]->() RETURN r", map[string]interface{}{"d": "2020-01-02"}},
+			{"CREATE (n:D {t: datetime('2020-01-02T03:04:05Z')}) RETURN [n] AS l", []interface{}{map[string]interface{}{"t": "2020-01-02T03:04:05Z"}}},
+			{"CREATE (n:D {d: [date('2020-01-02')]}) RETURN n", map[string]interface{}{"d": []interface{}{"2020-01-02"}}},
+		} {
+			t.Run(endpoint+testCase.query, func(t *testing.T) {
+				response := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{"statements": []map[string]any{{"statement": testCase.query, "resultDataContents": []string{"row", "graph"}}}}, token)
+				var result TransactionResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+				require.Empty(t, result.Errors)
+				require.Equal(t, []interface{}{testCase.want}, result.Results[0].Data[0].Row)
+				require.Len(t, result.Results[0].Data[0].Meta, 1)
+				require.NotContains(t, response.Body.String(), `"Time"`)
+				if result.Commit != "" {
+					commitPath := result.Commit[strings.Index(result.Commit, "/db/"):]
+					commit := makeRequest(t, server, http.MethodPost, commitPath, map[string]any{"statements": []any{}}, token)
+					var committed TransactionResponse
+					require.NoError(t, json.Unmarshal(commit.Body.Bytes(), &committed))
+					require.Empty(t, committed.Errors)
+				}
+			})
+		}
+	}
+}
+
 func TestTransactionHTTPOrderedMapAndGraphState(t *testing.T) {
 	for _, testCase := range []struct {
 		value     transactionHTTPOrderedMap
@@ -161,8 +325,10 @@ func TestHTTPTransactionEntityRows(t *testing.T) {
 func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	temporal := ", d:date('2020-12-31'), du:duration('P1Y2M'), lt:localtime('10:00:05'), t:time('10:00:00+01:00'), ldt:localdatetime('2020-01-01T10:00:00'), dt:datetime('2020-01-01T10:00:00Z')"
+	wantTemporal := map[string]interface{}{"d": "2020-12-31", "du": "P1Y2M", "lt": "10:00:05", "t": "10:00+01:00", "ldt": "2020-01-01T10:00", "dt": "2020-01-01T10:00Z"}
 	response := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{
-		"statements": []map[string]any{{"statement": "CREATE (:RP {name:'x', v:1})-[:LINK {weight:2}]->(:Target)"}},
+		"statements": []map[string]any{{"statement": "CREATE (:RP {name:'x', v:1" + temporal + "})-[:LINK {weight:2" + temporal + "}]->(:Target {" + strings.TrimPrefix(temporal, ", ") + "})"}},
 	}, token)
 	var result TransactionResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
@@ -177,7 +343,11 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	require.Len(t, nodes, 1)
 	require.NotEmpty(t, nodes[0].ID)
 	require.Equal(t, []string{"RP"}, nodes[0].Labels)
-	require.Equal(t, map[string]interface{}{"name": "x", "v": float64(1)}, nodes[0].Properties)
+	require.Equal(t, "x", nodes[0].Properties["name"])
+	require.Equal(t, float64(1), nodes[0].Properties["v"])
+	for key, expected := range wantTemporal {
+		require.Equal(t, expected, nodes[0].Properties[key])
+	}
 	edges, err := remote.AllEdges()
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
@@ -186,6 +356,9 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	require.Equal(t, nodes[0].ID, edges[0].StartNode)
 	require.NotEmpty(t, edges[0].EndNode)
 	require.Equal(t, float64(2), edges[0].Properties["weight"])
+	for key, expected := range wantTemporal {
+		require.Equal(t, expected, edges[0].Properties[key])
+	}
 	transaction, err := remote.BeginCypherTx(context.Background())
 	require.NoError(t, err)
 	defer transaction.Rollback(context.Background())
@@ -204,6 +377,41 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 		require.Contains(t, ordinary, "node", query)
 		require.Contains(t, ordinary["node"], "properties", query)
 		require.Contains(t, rows[0][1], "properties", query)
+	}
+	query := "MATCH p=(a:RP)-[r:LINK]->(b:Target) RETURN a,r,b,[a,r],{node:a,edge:r},p,elementId(a),elementId(r),elementId(b),elementId(startNode(r)),elementId(endNode(r))"
+	for _, mode := range []struct {
+		name  string
+		query func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error)
+	}{
+		{"autocommit", remote.QueryCypher},
+		{"explicit", transaction.QueryCypher},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			columns, rows, err := mode.query(context.Background(), query, nil)
+			require.NoError(t, err)
+			require.Len(t, columns, 11)
+			require.Len(t, rows, 1)
+			row := rows[0]
+			require.Len(t, row, 11)
+			for index := 0; index < 3; index++ {
+				entity := row[index].(map[string]interface{})
+				require.Equal(t, row[6+index], entity["elementId"])
+				properties := entity["properties"].(map[string]interface{})
+				for key, expected := range wantTemporal {
+					require.Equal(t, expected, properties[key])
+				}
+			}
+			require.Equal(t, string(nodes[0].ID), row[6])
+			require.Equal(t, string(edges[0].ID), row[7])
+			require.Equal(t, string(edges[0].StartNode), row[9])
+			require.Equal(t, string(edges[0].EndNode), row[10])
+			relationship := row[1].(map[string]interface{})
+			require.Equal(t, row[9], relationship["startNodeElementId"])
+			require.Equal(t, row[10], relationship["endNodeElementId"])
+			require.Equal(t, []interface{}{row[0], row[1]}, row[3])
+			require.Equal(t, map[string]interface{}{"node": row[0], "edge": row[1]}, row[4])
+			require.Equal(t, []interface{}{row[0], row[1], row[2]}, row[5])
+		})
 	}
 }
 
@@ -668,6 +876,96 @@ func TestHTTPFailedStatementReportsItsColumns(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &opened))
 	_, resp = post(strings.TrimSuffix(opened.Commit, "/commit"), "RETURN 1 / 0 AS x")
 	require.Equal(t, [][]string{{"x"}}, columnsOf(resp))
+}
+
+func TestGh668_HTTPFailurePreservesRowsAndRollsBack(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	for _, endpoint := range []string{"/db/nornic/tx/commit", "/db/nornic/tx"} {
+		for _, testCase := range []struct {
+			query   string
+			code    string
+			results int
+			rows    []ResultRow
+		}{
+			{"RETURN 1 / 0 AS x", "Neo.ClientError.Statement.ArithmeticError", 3, []ResultRow{}},
+			{"RETURN missingFunction() AS x", "Neo.ClientError.Statement.SyntaxError", 2, nil},
+			{"UNWIND [1,0] AS d RETURN 1/d AS x", "Neo.ClientError.Statement.ArithmeticError", 3, []ResultRow{{Row: []interface{}{float64(1)}, Meta: []interface{}{nil}}}},
+		} {
+			t.Run(endpoint+testCase.query, func(t *testing.T) {
+				recorder := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{
+					"statements": []map[string]any{{"statement": "CREATE (:FailureRollback)"}, {"statement": "RETURN 42 AS earlier"}, {"statement": testCase.query}, {"statement": "RETURN 99 AS skipped"}},
+				}, token)
+				var response TransactionResponse
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
+				require.Len(t, response.Errors, 1)
+				require.Equal(t, testCase.code, response.Errors[0].Code)
+				require.Len(t, response.Results, testCase.results)
+				require.Equal(t, []interface{}{float64(42)}, response.Results[1].Data[0].Row)
+				store, err := server.dbManager.GetStorage("nornic")
+				require.NoError(t, err)
+				nodes, err := store.GetNodesByLabel("FailureRollback")
+				require.NoError(t, err)
+				require.Empty(t, nodes)
+				if testCase.results == 3 {
+					require.Equal(t, []string{"x"}, response.Results[2].Columns)
+					require.Equal(t, testCase.rows, response.Results[2].Data)
+				}
+			})
+		}
+	}
+}
+
+func TestGh668_HTTPReturnedPartialResult(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	claims, err := authenticator.ValidateToken(getAuthToken(t, authenticator, "admin"))
+	require.NoError(t, err)
+	response := &TransactionResponse{}
+	queryError := server.runRequestStatement(context.Background(), claims, "nornic", StatementRequest{
+		Statement: "UNWIND [1,0] AS d RETURN 1/d AS x",
+	}, func(context.Context, string, string, map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
+		return &cypher.ExecuteResult{Columns: []string{"x"}, Rows: [][]interface{}{{int64(1)}}}, nil, errors.New("Neo.ClientError.Statement.ArithmeticError: / by zero")
+	}, func(localization.Message) string { return "unused" }, response)
+	require.NotNil(t, queryError)
+	require.Equal(t, "Neo.ClientError.Statement.ArithmeticError", queryError.Code)
+	require.Len(t, response.Results, 1)
+	require.Equal(t, []string{"x"}, response.Results[0].Columns)
+	require.Equal(t, []interface{}{int64(1)}, response.Results[0].Data[0].Row)
+}
+
+func TestGh668_HTTPTransactionalCallBoundaries(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	batch := "UNWIND [1,2] AS i CALL (i) { CREATE (:HTTPBatch {i:i}) } IN TRANSACTIONS OF 1 ROWS RETURN i"
+	for _, precedingWrite := range []bool{false, true} {
+		t.Run(fmt.Sprint(precedingWrite), func(t *testing.T) {
+			statements := []map[string]any{}
+			if precedingWrite {
+				statements = append(statements, map[string]any{"statement": "CREATE (:BeforeHTTPBatch)"})
+			}
+			statements = append(statements, map[string]any{"statement": batch}, map[string]any{"statement": "RETURN 1/0 AS x"})
+			recorder := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{"statements": statements}, token)
+			var response TransactionResponse
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
+			require.Len(t, response.Errors, 1)
+			store, err := server.dbManager.GetStorage("nornic")
+			require.NoError(t, err)
+			nodes, err := store.GetNodesByLabel("HTTPBatch")
+			require.NoError(t, err)
+			if precedingWrite {
+				require.Contains(t, response.Errors[0].Message, "Expected transaction state to be empty")
+				require.Len(t, nodes, 2)
+				before, err := store.GetNodesByLabel("BeforeHTTPBatch")
+				require.NoError(t, err)
+				require.Empty(t, before)
+			} else {
+				require.Equal(t, "Neo.ClientError.Statement.ArithmeticError", response.Errors[0].Code)
+				require.Len(t, nodes, 2)
+				require.Len(t, response.Results, 2)
+				require.Len(t, response.Results[0].Data, 2)
+			}
+		})
+	}
 }
 
 // TestHTTPExplicitTransactionCommitFailureStatus verifies a COMMIT that fails

@@ -24,6 +24,10 @@ type LocalFragmentExecutor struct {
 	getEngine  func(dbName string) (storage.Engine, error)
 }
 
+type recordQueryExecutor interface {
+	ExecuteRecordQuery(context.Context, string, string, map[string]interface{}, map[string]interface{}) ([]string, [][]interface{}, bool, error)
+}
+
 // NewLocalFragmentExecutor creates a local executor.
 //
 // Parameters:
@@ -48,6 +52,15 @@ func (l *LocalFragmentExecutor) ExecuteRows(ctx context.Context, loc *LocationLo
 
 // ExecuteWithRecord runs a Cypher query against a local database with optional correlated bindings.
 func (l *LocalFragmentExecutor) ExecuteWithRecord(ctx context.Context, loc *LocationLocal, query string, params map[string]interface{}, recordBindings map[string]interface{}) (*ResultStream, error) {
+	if executor, ok := l.cypherExec.(recordQueryExecutor); ok {
+		columns, rows, handled, err := executor.ExecuteRecordQuery(ctx, loc.DBName, query, params, recordBindings)
+		if handled {
+			if err != nil {
+				return nil, fmt.Errorf("local execution on '%s' failed: %w", loc.DBName, err)
+			}
+			return &ResultStream{Columns: columns, Rows: rows}, nil
+		}
+	}
 	engine, err := l.getEngine(loc.DBName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get storage for database '%s': %w", loc.DBName, err)

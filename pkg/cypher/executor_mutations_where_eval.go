@@ -862,85 +862,12 @@ func cloneStringAnyMap(src map[string]interface{}) map[string]interface{} {
 }
 
 func (e *StorageExecutor) resolveReturnItem(ctx context.Context, item returnItem, variable string, node *storage.Node) interface{} {
-	expr := item.expr
-
-	// Handle wildcard - return the whole node (Neo4j compatible: return *storage.Node)
-	if expr == "*" || expr == variable {
-		return node
-	}
-
-	// A whole COLLECT { } item is evaluated by the caller
-	// (evaluateCollectSubquery); a nested one is evaluated with the rest of its
-	// expression below.
-	if isWholeCollectItem(expr) {
+	row := e.mergeBindingRow(ctx, map[string]*storage.Node{variable: node}, nil)
+	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, "RETURN "+item.expr)
+	if err != nil || len(projected.Rows) == 0 || len(projected.Rows[0]) == 0 {
 		return nil
 	}
-
-	// Check for CASE expression FIRST (before property access check)
-	// CASE expressions contain dots (like p.age) but should not be treated as property access
-	if isCaseExpression(expr) {
-		return e.evaluateExpression(ctx, expr, variable, node)
-	}
-
-	// Check for function calls - these should be evaluated, not treated as property access
-	// e.g., coalesce(p.nickname, p.name), toString(p.age), etc.
-	if strings.Contains(expr, "(") {
-		return e.evaluateExpression(ctx, expr, variable, node)
-	}
-
-	// Check for IS NULL / IS NOT NULL - these need full evaluation
-	upperExpr := upperASCII(expr)
-	if strings.Contains(upperExpr, " IS NULL") || strings.Contains(upperExpr, " IS NOT NULL") {
-		return e.evaluateExpression(ctx, expr, variable, node)
-	}
-
-	// Check for arithmetic operators - need full evaluation
-	if strings.ContainsAny(expr, "+-*/%") {
-		return e.evaluateExpression(ctx, expr, variable, node)
-	}
-
-	// Handle property access: variable.property
-	if strings.Contains(expr, ".") {
-		parts := strings.SplitN(expr, ".", 2)
-		varName := strings.TrimSpace(parts[0])
-		// A backtick-quoted key (n.`a b`) names the unquoted property.
-		propName := normalizePropertyKey(parts[1])
-
-		// Check if variable matches
-		if varName != variable {
-			// Different variable - return nil (variable not in scope)
-			return nil
-		}
-
-		// has_embedding is stored in EmbedMeta by the managed embedding system
-		// This supports queries like: WHERE f.has_embedding = true
-		if propName == "has_embedding" {
-			if node.EmbedMeta != nil {
-				if val, ok := node.EmbedMeta["has_embedding"]; ok {
-					return val
-				}
-			}
-			return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0
-		}
-
-		// Regular property access
-		if val, ok := node.Properties[propName]; ok {
-			return val
-		}
-		return nil
-	}
-
-	// Use the comprehensive expression evaluator for all expressions
-	// This supports: id(n), labels(n), keys(n), properties(n), literals, etc.
-	result := e.evaluateExpression(ctx, expr, variable, node)
-
-	// If the result is just the expression string unchanged, return nil
-	// (expression wasn't recognized/evaluated)
-	if str, ok := result.(string); ok && str == expr && !strings.HasPrefix(expr, "'") && !strings.HasPrefix(expr, "\"") {
-		return nil
-	}
-
-	return result
+	return projected.Rows[0][0]
 }
 
 // isConstantTrueEquality returns true if the expression is a constant equality

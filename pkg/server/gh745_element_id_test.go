@@ -5,12 +5,89 @@ package server
 // fixed "nornicdb".
 
 import (
+	"encoding/json"
+	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGh745_HTTPCompositeQueryIdentities(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	require.NoError(t, server.dbManager.CreateDatabase("identity_leaf"))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase("identity_root", []multidb.ConstituentRef{
+		{Alias: "leaf", DatabaseName: "identity_leaf", Type: "local", AccessMode: "read_write"},
+	}))
+	created := makeRequest(t, server, http.MethodPost, "/db/identity_leaf/tx/commit", map[string]any{
+		"statements": []map[string]any{{"statement": "CREATE (:Identity {name:'a'})-[:LINK {name:'r'}]->(:Identity {name:'b'})"}},
+	}, token)
+	var setup TransactionResponse
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &setup))
+	require.Empty(t, setup.Errors)
+	projection := "RETURN a, r, b, [a,r], {node:a,edge:r}, p, elementId(a), elementId(r), elementId(b), elementId(startNode(r)), elementId(endNode(r))"
+	for _, endpoint := range []string{"/db/identity_root/tx/commit", "/db/identity_root/tx"} {
+		for _, query := range []string{
+			"USE identity_root.leaf MATCH p=(a:Identity)-[r:LINK]->(b:Identity) " + projection,
+			"CALL { USE identity_root.leaf MATCH p=(a:Identity)-[r:LINK]->(b:Identity) RETURN a,r,b,p } " + projection,
+		} {
+			t.Run(endpoint+query, func(t *testing.T) {
+				recorder := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{
+					"statements": []map[string]any{{"statement": query, "resultDataContents": []string{"row", "graph"}}},
+				}, token)
+				var response TransactionResponse
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
+				require.Empty(t, response.Errors)
+				require.Len(t, response.Results, 1)
+				require.Len(t, response.Results[0].Data, 1)
+				data := response.Results[0].Data[0]
+				require.Len(t, data.Meta, 13)
+				for index := 0; index < 3; index++ {
+					require.Equal(t, data.Row[6+index], data.Meta[index].(map[string]interface{})["elementId"])
+				}
+				require.Equal(t, data.Meta[0], data.Meta[3])
+				require.Equal(t, data.Meta[1], data.Meta[4])
+				require.ElementsMatch(t, []interface{}{data.Meta[0], data.Meta[1]}, data.Meta[5:7])
+				require.Equal(t, []interface{}{data.Meta[0], data.Meta[1], data.Meta[2]}, data.Meta[7])
+				require.Equal(t, []interface{}{nil, nil, nil, nil, nil}, data.Meta[8:])
+				require.Len(t, data.Graph.Nodes, 2)
+				require.Len(t, data.Graph.Relationships, 1)
+				require.ElementsMatch(t, []interface{}{data.Row[6], data.Row[8]}, []interface{}{data.Graph.Nodes[0].ElementID, data.Graph.Nodes[1].ElementID})
+				relationship := data.Graph.Relationships[0]
+				require.Equal(t, data.Row[7], relationship.ElementID)
+				require.Equal(t, data.Row[9], relationship.StartNode)
+				require.Equal(t, data.Row[10], relationship.EndNode)
+				if response.Commit != "" {
+					rollback := makeRequest(t, server, http.MethodDelete, strings.TrimSuffix(response.Commit, "/commit"), nil, token)
+					require.Equal(t, http.StatusOK, rollback.Code)
+				}
+			})
+		}
+	}
+}
+
+func TestGh745_HTTPCanonicalRemoteEntityIdentities(t *testing.T) {
+	server := &Server{}
+	node := &storage.Node{ID: "4:remote:n", Properties: map[string]interface{}{"name": "a"}}
+	target := &storage.Node{ID: "4:remote:m", Properties: map[string]interface{}{"name": "b"}}
+	edge := &storage.Edge{ID: "5:remote:r", StartNode: node.ID, EndNode: target.ID, Properties: map[string]interface{}{"name": "r"}}
+	response := &TransactionResponse{}
+	server.appendStatementResult(response, &cypher.ExecuteResult{
+		Columns: []string{"nodes", "edge"}, Rows: [][]interface{}{{[]*storage.Node{node, target}, edge}},
+	}, "coordinator", false, []string{"row", "graph"})
+	data := response.Results[0].Data[0]
+	require.Equal(t, "4:remote:n", data.Meta[0].(map[string]interface{})["elementId"])
+	require.Equal(t, "4:remote:m", data.Meta[1].(map[string]interface{})["elementId"])
+	require.Equal(t, "5:remote:r", data.Meta[2].(map[string]interface{})["elementId"])
+	require.Equal(t, "4:remote:n", data.Graph.Nodes[0].ElementID)
+	require.Equal(t, "5:remote:r", data.Graph.Relationships[0].ElementID)
+	require.Equal(t, "4:remote:n", data.Graph.Relationships[0].StartNode)
+	require.Equal(t, "4:remote:m", data.Graph.Relationships[0].EndNode)
+}
 
 func TestGh745_HTTPElementIDUsesRequestDatabase(t *testing.T) {
 	s := &Server{}

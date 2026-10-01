@@ -51,6 +51,9 @@ func TestMonsterScalarFunctionContracts(t *testing.T) {
 		{"toString($v)", math.Copysign(0, -1), "-0.0"},
 		{"toUpper($v)", "straße", "STRASSE"},
 		{"upper($v)", "straße", "STRASSE"},
+		{"toLower($v)", "\u0130", "i\u0307"},
+		{"toLower($v)", "\u0130I", "i\u0307i"},
+		{"lower($v)", "\u0130", "i\u0307"},
 		{"toInteger($v)", true, int64(1)},
 		{"toInteger($v)", false, int64(0)},
 		{"toIntegerOrNull($v)", true, int64(1)},
@@ -211,5 +214,46 @@ func TestMonsterUnresolvedExpressionProtocol(t *testing.T) {
 	} {
 		_, err := exec.Execute(context.Background(), query, nil)
 		require.NoError(t, err)
+	}
+}
+
+func TestMonsterPropertyExpressionReverification(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
+			executor, _ := newTestExecutor(t)
+			ctx := context.Background()
+			if explicit {
+				_, err := executor.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+			}
+			result, err := executor.Execute(ctx, "CREATE (n:T {s: 'a' + 'b', l: size([1,2]), m: {k: 1}.k}) RETURN n.s, n.l, n.m", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"ab", int64(2), int64(1)}}, result.Rows)
+			if explicit {
+				_, err = executor.Execute(ctx, "COMMIT", nil)
+				require.NoError(t, err)
+			}
+			for _, query := range []string{
+				"CREATE (n:Invalid {v: 1 +}) RETURN n.v",
+				"CREATE (:Before) CREATE (n:Invalid {v: 1 +}) RETURN n.v",
+				"MERGE (n:Invalid {v: 1 +}) RETURN n.v",
+				"MATCH (n:T) SET n.v = 1 + RETURN n.v",
+			} {
+				if explicit {
+					_, err = executor.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+				}
+				_, err := executor.Execute(ctx, query, nil)
+				require.Error(t, err, query)
+				require.Contains(t, statusText(err), "SyntaxError", query)
+				if explicit {
+					_, err = executor.Execute(ctx, "ROLLBACK", nil)
+					require.NoError(t, err)
+				}
+			}
+			result, err = executor.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+		})
 	}
 }

@@ -869,6 +869,14 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 
 func formatCypherFloatLiteral(value float64, bitSize int) string {
 	literal := strconv.FormatFloat(value, 'g', -1, bitSize)
+	switch literal {
+	case "+Inf":
+		return "toFloat('Infinity')"
+	case "-Inf":
+		return "toFloat('-Infinity')"
+	case "NaN":
+		return "toFloat('NaN')"
+	}
 	if !strings.ContainsAny(literal, ".eE") {
 		literal += ".0"
 	}

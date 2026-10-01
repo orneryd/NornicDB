@@ -68,10 +68,9 @@ func TestExecutePipeline_ErrorAndFallbackBranches(t *testing.T) {
 	require.ErrorIs(t, outcome.err, matchErr)
 	require.Nil(t, outcome.result)
 
-	// WITH projection fallback path.
 	outcome = exec.executePipeline(ctx, "MATCH (n:Person) WITH unknownExpr AS x RETURN x")
-	require.Equal(t, pipelineDispatchNotApplicable, outcome.state)
-	require.NoError(t, outcome.err)
+	require.Equal(t, pipelineDispatchParseRejected, outcome.state)
+	require.ErrorContains(t, outcome.err, "unknownExpr")
 	require.Nil(t, outcome.result)
 
 	// CREATE application hard error path.
@@ -90,8 +89,8 @@ func TestExecutePipeline_ErrorAndFallbackBranches(t *testing.T) {
 
 	// RETURN projection fallback path.
 	outcome = exec.executePipeline(ctx, "MATCH (n:Person) WITH n RETURN missing")
-	require.Equal(t, pipelineDispatchNotApplicable, outcome.state)
-	require.NoError(t, outcome.err)
+	require.Equal(t, pipelineDispatchParseRejected, outcome.state)
+	require.ErrorContains(t, outcome.err, "missing")
 	require.Nil(t, outcome.result)
 
 	parseCtx := context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})

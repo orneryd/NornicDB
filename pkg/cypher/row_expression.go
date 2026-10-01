@@ -48,11 +48,11 @@ func rowArithmeticResult(op byte, value, left, right interface{}) (interface{}, 
 	if value != nil {
 		return value, true, nil
 	}
-	if left == nil || right == nil {
-		return nil, true, nil
-	}
 	if divisionByZero(op, left, right) {
 		return nil, false, divisionByZeroError()
+	}
+	if left == nil || right == nil {
+		return nil, true, nil
 	}
 	if err := arithmeticError(op, left, right); err != nil {
 		return nil, false, err
@@ -1214,10 +1214,11 @@ func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[stri
 // bindings. The loop value remains a node, relationship, map, path, or scalar;
 // it is never converted to query text.
 func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[string]interface{}) (interface{}, bool, bool, error) {
-	if len(expr) < 2 || expr[0] != '[' || expr[len(expr)-1] != ']' {
+	inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']')
+	if !enclosed {
 		return nil, false, false, nil
 	}
-	variable, listExpression, predicate, projection, matched := parseListComprehension(expr[1 : len(expr)-1])
+	variable, listExpression, predicate, projection, matched := parseListComprehension(inner)
 	if !matched {
 		return nil, false, false, nil
 	}

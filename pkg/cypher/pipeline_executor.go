@@ -55,9 +55,8 @@ const (
 	pipelineClauseUnwind
 	pipelineClauseReturn
 	pipelineClauseForeach
-	// pipelineClauseCall is a procedure call, CALL proc(args) YIELD … [WHERE …]
-	// (splitPipelineClausesAllowingProcedureCalls only; a CALL { } subquery
-	// is not a pipeline clause).
+	pipelineClauseCallSubquery
+	// pipelineClauseCall is a procedure call, CALL proc(args) YIELD … [WHERE …].
 	pipelineClauseCall
 )
 
@@ -93,7 +92,7 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 		return nil, false
 	}
 	// Must contain at least two clauses.
-	if len(clauses) < 2 && (len(clauses) == 0 || clauses[0].kind != pipelineClauseForeach) {
+	if len(clauses) < 2 && (len(clauses) == 0 || (clauses[0].kind != pipelineClauseForeach && clauses[0].kind != pipelineClauseCallSubquery)) {
 		return nil, false
 	}
 	// Standalone CREATE ... RETURN remains one atomic write operator. CREATE
@@ -239,10 +238,15 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 	// from context and respect node bindings supplied by the caller.
 	if topLevelKeywordIndex(cypher, "CALL") >= 0 {
 		topLevelCall = true
-		if !pipelineProcedureCallsAreClauses(cypher) {
+		callIndex := topLevelKeywordIndex(cypher, "CALL")
+		callText := strings.TrimSpace(cypher[callIndex:])
+		if startsWithCallSubquery(callText) {
+			keywords = append(keywords, kw{"CALL", pipelineClauseCallSubquery})
+		} else if pipelineProcedureCallsAreClauses(cypher) {
+			keywords = append(keywords, kw{"CALL", pipelineClauseCall})
+		} else {
 			return nil, false, true
 		}
-		keywords = append(keywords, kw{"CALL", pipelineClauseCall})
 	}
 
 	// Collect boundary positions for each supported keyword.
@@ -407,7 +411,9 @@ func sortBoundariesByPos(bs []pipelineBoundary) {
 // step. Its outcome distinguishes a safe decline from a parse rejection or a
 // runtime failure, so callers only retry the NotApplicable state.
 func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) pipelineDispatchOutcome {
-	if startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
+	ctx = withExpressionFailureSlot(ctx)
+	hasCallSubquery := firstTopLevelCallSubquery(cypher) >= 0
+	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
 		if !pipelineUnwindUsesRange(cypher) {
 			plan, err := e.prepareTopLevelUnwind(ctx, cypher)
 			if err != nil {
@@ -436,11 +442,13 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) pi
 	// self-contained and our per-clause appliers only have to worry about
 	// pipeline-bound names (from WITH/UNWIND/MATCH), not caller parameters.
 	params := getParamsFromContext(ctx)
-	if result, handled, err := e.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, params); handled || err != nil {
-		return newPipelineDispatchOutcome(result, handled, err)
-	}
-	if result, handled, err := e.tryExecutePipelineSimpleRelationshipCountPlan(ctx, clauses, params); handled || err != nil {
-		return newPipelineDispatchOutcome(result, handled, err)
+	if !hasCallSubquery {
+		if result, handled, err := e.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, params); handled || err != nil {
+			return newPipelineDispatchOutcome(result, handled, err)
+		}
+		if result, handled, err := e.tryExecutePipelineSimpleRelationshipCountPlan(ctx, clauses, params); handled || err != nil {
+			return newPipelineDispatchOutcome(result, handled, err)
+		}
 	}
 	if params != nil {
 		cypher = e.substituteParams(cypher, params)
@@ -548,19 +556,39 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		}
 	}
 	var source pipelineRowSource
+	var terminalCallColumns []string
 	for idx := 0; idx < len(clauses); idx++ {
 		clause := clauses[idx]
+		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
+			!(clause.kind == pipelineClauseReturn && pipelineClauseAggregates(clause)) {
+			var completed bool
+			rows, completed = materializePipelineSource(source)
+			source = nil
+			if !completed {
+				return pipelineDecline(ctx, wrote, clause.text)
+			}
+		}
 		switch clause.kind {
 		case pipelineClauseMatch:
-			if idx+1 < len(clauses) && pipelineClauseAggregates(clauses[idx+1]) {
-				product, supported, err := e.pipelineNodeProductSource(ctx, rows, clause.text)
-				if err != nil {
-					return nil, true, err
-				}
-				if supported {
-					source, rows = product, nil
-					addPipelinePatternBindings(e, scope, clause.text, "MATCH")
-					continue
+			input := source
+			if input == nil {
+				input = pipelineRowsSource(rows)
+			}
+			matched, supported, err := e.pipelineNodeMatchSource(ctx, input, clause.text)
+			if err != nil {
+				return nil, true, err
+			}
+			if supported {
+				source, rows = matched, nil
+				addPipelinePatternBindings(e, scope, clause.text, "MATCH")
+				continue
+			}
+			if source != nil {
+				var completed bool
+				rows, completed = materializePipelineSource(source)
+				source = nil
+				if !completed {
+					return pipelineDecline(ctx, wrote, clause.text)
 				}
 			}
 			hint := e.pipelineMatchHint(clauses[idx+1:])
@@ -636,6 +664,21 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			wrote = true
 		case pipelineClauseWith:
+			if source != nil {
+				if plan, local := parsePipelineRowWith(clause.text); local {
+					source = e.pipelineWithRowSource(ctx, source, plan)
+					scope = pipelineProjectionScope(scope, clause.text)
+					continue
+				}
+				if !pipelineClauseAggregates(clause) {
+					var completed bool
+					rows, completed = materializePipelineSource(source)
+					source = nil
+					if !completed {
+						return pipelineDecline(ctx, wrote, clause.text)
+					}
+				}
+			}
 			if err := e.validatePipelineWithRows(rows, clause.text); err != nil {
 				return nil, true, err
 			}
@@ -700,6 +743,28 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if procedure, found := globalProcedureRegistry.Get(extractProcedureName(clause.text)); found && procedure.Spec.Mode == ProcedureModeWrite {
 				wrote = true
 			}
+		case pipelineClauseCallSubquery:
+			callMetadata := &pipelineCallMetadata{scope: scope}
+			newRows, stats, ok, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.text, callMetadata)
+			addQueryStats(result.Stats, stats)
+			if err != nil {
+				return result, true, err
+			}
+			if !ok {
+				return pipelineDecline(ctx, wrote, clause.text)
+			}
+			rows = newRows
+			terminalCallColumns = append(terminalCallColumns[:0], callMetadata.columns...)
+			for _, row := range rows {
+				for name := range row {
+					if !strings.HasPrefix(name, "$") {
+						scope[name] = struct{}{}
+					}
+				}
+			}
+			if callSubqueryQueryIsWrite(clause.text) || strings.Contains(upperASCII(clause.text), "IN TRANSACTIONS") {
+				wrote = true
+			}
 		case pipelineClauseForeach:
 			stats, err := e.pipelineApplyForeach(ctx, rows, clause.text)
 			if err != nil {
@@ -735,6 +800,17 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			final, ok := e.pipelineApplyReturnSource(ctx, rows, clause.text, source)
 			source = nil
 			if !ok {
+				if failure := getExpressionFailure(ctx); failure != nil && final != nil {
+					if len(final.Columns) == 0 && pipelineClauseBody(clause.text, "RETURN") == "*" {
+						final.Columns = pipelineScopeColumns(scope)
+					}
+					if idx < len(originalClauses) && originalClauses[idx].kind == pipelineClauseReturn {
+						if columns := pipelineReturnSourceColumns(originalClauses[idx].text); len(columns) == len(final.Columns) {
+							final.Columns = columns
+						}
+					}
+					return final, true, failure
+				}
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			if len(final.Columns) == 0 && pipelineClauseBody(clause.text, "RETURN") == "*" {
@@ -752,12 +828,25 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		}
 		_ = idx
 	}
+	if source != nil {
+		var completed bool
+		rows, completed = materializePipelineSource(source)
+		if !completed {
+			return pipelineDecline(ctx, wrote, "end of pipeline")
+		}
+	}
 	// A statement ending with a write has no columns and no rows, as in
 	// Neo4j (#676).
 	if output != nil {
 		output.rows = rows
 		output.scope = scope
 		output.wrote = wrote
+	}
+	if output == nil && len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseCallSubquery {
+		body, _, _, _ := e.parseCallSubquery(clauses[len(clauses)-1].text)
+		if topLevelKeywordIndex(body, "RETURN") >= 0 {
+			result = callPipelineResultFromRows(rows, nil, result.Stats, terminalCallColumns)
+		}
 	}
 	return result, true, nil
 }
@@ -3877,7 +3966,11 @@ func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []
 			for index, p := range projs {
 				value, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
 				if !ok {
-					return nil, false
+					pipelineItemUnevaluable(ctx, p.expr)
+					if failure := getExpressionFailure(ctx); failure == nil || newPipelineDispatchOutcome(nil, true, failure).state == pipelineDispatchParseRejected {
+						return nil, false
+					}
+					return result, false
 				}
 				outRow[index] = value
 			}

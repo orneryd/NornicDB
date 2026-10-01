@@ -2,6 +2,21 @@ package cypher
 
 import "strings"
 
+func validateExpressionOperandCompleteness(expression string) error {
+	expression = strings.TrimSpace(expression)
+	for {
+		inner, enclosed := stripEnclosingExpressionParentheses(expression)
+		if !enclosed {
+			break
+		}
+		expression = strings.TrimSpace(inner)
+	}
+	if expression == "" || (expression != "*" && strings.ContainsAny(expression[len(expression)-1:], "+-*/%^")) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: expected an expression after operator")
+	}
+	return nil
+}
+
 func validateExpressionLexicalTokens(text string) error {
 	for index := 0; index < len(text); index++ {
 		character := text[index]

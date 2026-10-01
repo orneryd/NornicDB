@@ -394,6 +394,9 @@ func (e *StorageExecutor) validateCreatePropertyExpressions(scope *semanticBindi
 			continue
 		}
 		expression := strings.TrimSpace(pair[separator+1:])
+		if err := validateExpressionOperandCompleteness(expression); err != nil {
+			return err
+		}
 		variable, isReference := simpleCreatePropertyReference(expression)
 		if isReference && !scope.contains(variable) {
 			return createUndefinedVariableError(variable)

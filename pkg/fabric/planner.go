@@ -589,7 +589,7 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 		// Preserve outer query segments before each CALL block.
 		prefix := strings.TrimSpace(fullQuery[lastPos:block.startPos])
 		if prefix != "" {
-			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix), top, scope), Columns: nil}
+			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix), top, scope), Projection: true, Columns: nil}
 		}
 
 		subUse, subBody, hasUse, err := parseLeadingUse(block.body, true)
@@ -635,9 +635,10 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 	trailingQuery := strings.TrimSpace(fullQuery[lastPos:])
 	if trailingQuery != "" {
 		currentInput = &FragmentApply{
-			Input:   currentInput,
-			Inner:   newExec(trailingQuery, top, scope),
-			Columns: nil,
+			Input:      currentInput,
+			Inner:      newExec(trailingQuery, top, scope),
+			Projection: true,
+			Columns:    nil,
 		}
 	}
 
