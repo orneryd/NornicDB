@@ -16,6 +16,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -73,6 +74,46 @@ func TestGh640_CreateMergeSetReturnsMergedVariable(t *testing.T) {
 	result, err := exec.Execute(ctx, "CREATE (a:T {id: 1}) MERGE (n:X {k: a.id}) SET n.extra = 2 RETURN n.k AS k, n.extra AS extra", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1), int64(2)}}, result.Rows)
+}
+
+func TestMonster640BareMergeEndpoints(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		for _, testCase := range []struct {
+			query string
+			seed  string
+		}{
+			{"MERGE (a)-[r:KNOWS]->(b) RETURN count(r) AS c", ""},
+			{"MERGE (a)-[r:KNOWS]-(b) RETURN count(r) AS c", "CREATE (a {id: 2}), (b {id: 1})"},
+			{"MERGE (a:P)-[r:KNOWS]->(b) RETURN count(r) AS c", ""},
+		} {
+			t.Run(testCase.query+fmt.Sprint(explicit), func(t *testing.T) {
+				exec := newGh640Executor(t)
+				ctx := context.Background()
+				if testCase.seed != "" {
+					_, err := exec.Execute(ctx, testCase.seed, nil)
+					require.NoError(t, err)
+				}
+				if explicit {
+					_, err := exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+				}
+				result, err := exec.Execute(ctx, testCase.query, nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+				require.Equal(t, 2, result.Stats.NodesCreated)
+				require.Equal(t, 1, result.Stats.RelationshipsCreated)
+				if explicit {
+					_, err = exec.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+				}
+				repeated, err := exec.Execute(ctx, testCase.query, nil)
+				require.NoError(t, err)
+				require.Equal(t, 0, repeated.Stats.NodesCreated)
+				require.Equal(t, 0, repeated.Stats.RelationshipsCreated)
+				require.Equal(t, int64(1), gh640Count(t, exec, ctx, "MATCH ()-[r:KNOWS]->() RETURN count(r)"))
+			})
+		}
+	}
 }
 
 func TestGh640_MatchForeachMergeReturnsOuterRow(t *testing.T) {

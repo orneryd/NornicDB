@@ -542,6 +542,11 @@ func (e *StorageExecutor) splitWithItems(expr string) []string {
 // transaction, as in Neo4j. The clauses after the subquery then run over the
 // rows of every batch; without any, the statement returns no rows.
 func (e *StorageExecutor) executeUnwindCallInTransactions(ctx context.Context, variable string, items []interface{}, body, afterCall string, batchSize int) (*ExecuteResult, error) {
+	if len(items) > 0 {
+		if err := e.rejectCallInTransactionsInExplicitTx(); err != nil {
+			return nil, err
+		}
+	}
 	if batchSize <= 0 {
 		batchSize = 1000
 	}

@@ -8,6 +8,8 @@ package cypher
 
 import (
 	"context"
+	"fmt"
+	"runtime"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -23,6 +25,106 @@ func newGh728Executor(t *testing.T) *StorageExecutor {
 	})
 	store := storage.NewNamespacedEngine(base, "gh728")
 	return NewStorageExecutor(store)
+}
+
+func TestMonster728ProductAggregateAllocations(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+			exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "product"), 0, 0)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "UNWIND range(0, 255) AS i CREATE (:Doc {id: i})", nil)
+			require.NoError(t, err)
+			if explicit {
+				_, err = exec.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+			}
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			result, err := exec.Execute(ctx, "MATCH (a:Doc), (b:Doc) RETURN count(*) AS c", nil)
+			runtime.ReadMemStats(&after)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(65536)}}, result.Rows)
+			t.Logf("total_alloc_bytes=%d", after.TotalAlloc-before.TotalAlloc)
+			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8*1024*1024), "product bindings must be consumed incrementally")
+		})
+	}
+}
+
+func TestMonster728ProductAggregateSemantics(t *testing.T) {
+	exec := newGh728Executor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Doc {id: 1}), (:Doc {id: 2})", nil)
+	require.NoError(t, err)
+	for _, testCase := range []struct {
+		query string
+		rows  [][]interface{}
+	}{
+		{"MATCH (a:Doc), (b:Doc) RETURN sum(a.id) AS s, avg(b.id) AS a, min(a.id) AS lo, max(b.id) AS hi", [][]interface{}{{int64(6), float64(1.5), int64(1), int64(2)}}},
+		{"MATCH (a:Doc), (b:Doc) RETURN a.id AS id, count(*) AS c, sum(b.id) AS s ORDER BY id", [][]interface{}{{int64(1), int64(2), int64(3)}, {int64(2), int64(2), int64(3)}}},
+		{"MATCH (a:Doc), (b:Doc) WITH a.id AS id, sum(b.id) AS s RETURN id, s ORDER BY id", [][]interface{}{{int64(1), int64(3)}, {int64(2), int64(3)}}},
+		{"MATCH (a:Doc), (b:Missing) RETURN count(*) AS c, sum(a.id) AS s", [][]interface{}{{int64(0), int64(0)}}},
+		{"MATCH (a:Doc), (b:Doc), (c:Doc) RETURN count(*) AS c, sum(c.id) AS s", [][]interface{}{{int64(8), int64(12)}}},
+		{"MATCH (a:Doc), (b:Doc) RETURN count(DISTINCT b.id) AS c, count(b.absent) AS missing, sum(a.id * 1.0) AS s", [][]interface{}{{int64(2), int64(0), float64(6)}}},
+		{"MATCH (a:Doc), (b:Doc) RETURN a.id AS a, b.id AS b ORDER BY a, b", [][]interface{}{{int64(1), int64(1)}, {int64(1), int64(2)}, {int64(2), int64(1)}, {int64(2), int64(2)}}},
+		{"MATCH (a:Doc {id: 1}) MATCH (a:Doc), (b:Doc) RETURN a.id AS a, b.id AS b ORDER BY b", [][]interface{}{{int64(1), int64(1)}, {int64(1), int64(2)}}},
+		{"MATCH (a:Doc), (a:Doc) RETURN count(*) AS c", [][]interface{}{{int64(2)}}},
+	} {
+		t.Run(testCase.query, func(t *testing.T) {
+			result, err := exec.Execute(ctx, testCase.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, testCase.rows, result.Rows)
+		})
+	}
+}
+
+func TestMonster728ProductSourceContracts(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "source"))
+	ctx := withExpressionFailureSlot(context.Background())
+	_, err := exec.Execute(ctx, "CREATE (:Doc {id: 1}), (:Doc {id: 2})", nil)
+	require.NoError(t, err)
+	for _, clause := range []string{
+		"MATCH (a:Doc)",
+		"MATCH (a:Doc)-[:R]->(b:Doc), (c:Doc)",
+		"MATCH p = (a:Doc), (b:Doc)",
+		"MATCH (a:Doc), (b:Doc) WHERE a.id = b.id",
+		"MATCH (a:Doc), (b:Doc {id: a.id})",
+	} {
+		_, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{}}, clause)
+		require.NoError(t, err)
+		require.False(t, supported, clause)
+	}
+	source, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"$id": int64(1)}, {"$id": int64(2)}, {"$id": int64(1)}}, "MATCH (a:Doc {id: $id}), (b:Doc)")
+	require.NoError(t, err)
+	require.True(t, supported)
+	retained, completed := materializePipelineSource(source)
+	require.True(t, completed)
+	require.Len(t, retained, 6)
+	for _, row := range retained {
+		node, typed := row["a"].(*storage.Node)
+		require.True(t, typed)
+		require.Equal(t, row["$id"], node.Properties["id"])
+	}
+	visited := 0
+	require.True(t, source(func(row pipelineRow) bool {
+		visited++
+		require.NotNil(t, row["a"])
+		return false
+	}))
+	require.Equal(t, 1, visited)
+	nullSource, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"a": nil}}, "MATCH (a:Doc), (b:Doc)")
+	require.NoError(t, err)
+	require.True(t, supported)
+	empty, completed := materializePipelineSource(nullSource)
+	require.True(t, completed)
+	require.Empty(t, empty)
+	canceled, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))
+	cancel()
+	canceledSource, supported, err := exec.pipelineNodeProductSource(canceled, []pipelineRow{{}}, "MATCH (a:Doc), (b:Doc)")
+	require.NoError(t, err)
+	require.True(t, supported)
+	require.False(t, canceledSource(func(pipelineRow) bool { t.Error("canceled source yielded a row"); return true }))
+	require.ErrorIs(t, getExpressionFailure(canceled), context.Canceled)
 }
 
 func TestComprehensionStrictPredicateAcrossExecutionRoutes(t *testing.T) {
