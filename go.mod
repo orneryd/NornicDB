@@ -14,7 +14,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.23.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/hashicorp/go-kms-wrapping/v2 v2.0.24
+	github.com/hashicorp/go-kms-wrapping/v2 v2.0.26
 	github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11
 	github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.15
 	github.com/hybridgroup/yzma v1.27.0
