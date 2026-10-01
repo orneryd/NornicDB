@@ -715,6 +715,10 @@ func TestSchemaCommandExecution(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := exec.Execute(ctx, tt.query, nil)
+			if tt.name == "constraint_neo4j4" {
+				require.Error(t, err)
+				return
+			}
 			if err != nil {
 				t.Errorf("%s failed: %v", tt.name, err)
 			}
@@ -790,6 +794,10 @@ func TestCreateConstraint_SyntaxVariantCoverage(t *testing.T) {
 	}
 	for _, q := range valid {
 		_, err := exec.Execute(ctx, q, nil)
+		if strings.Contains(q, " ASSERT ") {
+			require.Error(t, err, q)
+			continue
+		}
 		if err != nil {
 			t.Fatalf("expected valid constraint syntax to pass for %q: %v", q, err)
 		}
@@ -841,6 +849,10 @@ func TestCreateConstraint_EachParserPattern(t *testing.T) {
 
 	for _, q := range queries {
 		_, err := exec.executeCreateConstraint(ctx, q)
+		if strings.Contains(q, " ASSERT ") {
+			require.Error(t, err, q)
+			continue
+		}
 		if err != nil {
 			t.Fatalf("expected query to match a CREATE CONSTRAINT parser pattern, got error for %q: %v", q, err)
 		}

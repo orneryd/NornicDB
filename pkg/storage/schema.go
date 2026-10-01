@@ -220,7 +220,7 @@ func NewSchemaManager() *SchemaManager {
 
 func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate bool) error {
 	if _, exists := sm.constraintContracts[c.Name]; exists {
-		return localizedError(localization.StorageSchemaConstraintAlreadyExists(c.Name), nil)
+		return newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(c.Name))
 	}
 	if existing, exists := sm.constraints[c.Name]; exists {
 		if constraintSchemaKey(existing) == constraintSchemaKey(c) && existing.Type == c.Type {
@@ -233,9 +233,9 @@ func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate boo
 			if silentOnDuplicate {
 				return nil
 			}
-			return localizedError(localization.StorageSchemaConstraintAlreadyExists(c.Name), nil)
+			return newSchemaAdmissionError("EquivalentSchemaRuleAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(c.Name))
 		}
-		return localizedError(localization.StorageSchemaConstraintDifferentSchemaOrType(c.Name), nil)
+		return newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintDifferentSchemaOrType(c.Name))
 	}
 
 	newKey := constraintSchemaKey(c)
@@ -260,7 +260,7 @@ func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate boo
 			if silentOnDuplicate {
 				return nil
 			}
-			return localizedError(localization.StorageSchemaEquivalentConstraintAlreadyExists(existing.Name), nil)
+			return newSchemaAdmissionError("ConstraintAlreadyExists", localization.StorageSchemaEquivalentConstraintAlreadyExists(existing.Name))
 		}
 		if (c.Type == ConstraintUnique && existing.Type == ConstraintRelationshipKey) ||
 			(c.Type == ConstraintRelationshipKey && existing.Type == ConstraintUnique) ||
@@ -513,6 +513,7 @@ type VectorIndex struct {
 // It maintains a sorted list of entries for efficient O(log n) range queries.
 type RangeIndex struct {
 	Name             string
+	Kind             IndexKind
 	Label            string
 	Property         string
 	Properties       []string             // composite properties (for multi-property constraint indexes)
@@ -532,13 +533,6 @@ func (sm *SchemaManager) AddUniqueConstraint(name, label, property string, ifNot
 	defer sm.mu.Unlock()
 
 	silent := len(ifNotExists) > 0 && ifNotExists[0]
-	key := fmt.Sprintf("%s:%s", label, property)
-	if _, exists := sm.uniqueConstraints[key]; exists {
-		if silent {
-			return nil
-		}
-		return localizedError(localization.StorageSchemaConstraintAlreadyExists(name), nil)
-	}
 	snapshot := sm.exportDefinitionLocked()
 	constraint := Constraint{
 		Name:       name,
@@ -850,7 +844,7 @@ func (sm *SchemaManager) lockConstraintKeysOf(nodes ...*Node) func() {
 			}
 			var properties []string
 			switch {
-			case c.Type == ConstraintUnique && len(c.Properties) == 1:
+			case c.Type == ConstraintUnique && len(c.Properties) > 0:
 				properties = c.Properties
 			case c.Type == ConstraintNodeKey:
 				properties = c.Properties
@@ -1412,6 +1406,10 @@ func (sm *SchemaManager) AddRangeIndex(name, label, property string) error {
 // AddRangeIndexForEntity adds a range index for NODE or RELATIONSHIP entities.
 // For standalone CREATE INDEX forms, properties may contain one or more fields.
 func (sm *SchemaManager) AddRangeIndexForEntity(name, label string, properties []string, entityType ConstraintEntityType) error {
+	return sm.addIndexForEntity(IndexKindRange, name, label, properties, entityType)
+}
+
+func (sm *SchemaManager) addIndexForEntity(kind IndexKind, name, label string, properties []string, entityType ConstraintEntityType) error {
 	if len(properties) == 0 {
 		return localizedError(localization.StorageSchemaRangeIndexPropertiesRequired(), nil)
 	}
@@ -1426,6 +1424,7 @@ func (sm *SchemaManager) AddRangeIndexForEntity(name, label string, properties [
 	propCopy := append([]string(nil), properties...)
 	sm.rangeIndexes[name] = &RangeIndex{
 		Name:       name,
+		Kind:       kind,
 		Label:      label,
 		Property:   properties[0],
 		Properties: propCopy,
@@ -1982,7 +1981,7 @@ func (sm *SchemaManager) GetIndexes() []interface{} {
 	for _, idx := range sm.rangeIndexes {
 		m := map[string]interface{}{
 			"name":  idx.Name,
-			"type":  "RANGE",
+			"type":  string(idx.effectiveKind()),
 			"label": idx.Label,
 		}
 		// Export entity type (default NODE for backward compat)
@@ -2436,7 +2435,7 @@ func (sm *SchemaManager) GetIndexStats() []IndexStats {
 
 		stats = append(stats, IndexStats{
 			Name:         idx.Name,
-			Type:         "RANGE",
+			Type:         string(idx.effectiveKind()),
 			Label:        idx.Label,
 			Property:     idx.Property,
 			TotalEntries: totalEntries,

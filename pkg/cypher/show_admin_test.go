@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +10,22 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMonster530YieldWhereStaticType(t *testing.T) {
+	for _, populated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("populated=%t", populated), func(t *testing.T) {
+			exec, _ := newTestExecutor(t)
+			ctx := context.Background()
+			if populated {
+				_, err := exec.Execute(ctx, "CREATE (:T)", nil)
+				require.NoError(t, err)
+			}
+			_, err := exec.Execute(ctx, "CALL db.labels() YIELD label WHERE label + 1 RETURN label", nil)
+			require.Error(t, err)
+			require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+		})
+	}
+}
 
 // TestShowDefaultAndHomeDatabase: SHOW DEFAULT / HOME DATABASE list the
 // default database with SHOW DATABASES' columns except default and home, as

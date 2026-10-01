@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -9,6 +10,46 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMonster531TypedIndexPersistence(t *testing.T) {
+	for _, kind := range []IndexKind{IndexKindText, IndexKindPoint} {
+		for _, entity := range []ConstraintEntityType{ConstraintEntityNode, ConstraintEntityRelationship} {
+			t.Run(string(kind)+string(entity), func(t *testing.T) {
+				schema := NewSchemaManager()
+				require.NoError(t, schema.AddTypedIndexForEntity(kind, "typed", "T", []string{"value"}, entity))
+				encoded, err := json.Marshal(schema.ExportDefinition())
+				require.NoError(t, err)
+				var definition SchemaDefinition
+				require.NoError(t, json.Unmarshal(encoded, &definition))
+				restored := NewSchemaManager()
+				require.NoError(t, restored.ReplaceFromDefinition(&definition))
+				index, exists := restored.GetRangeIndex("typed")
+				require.True(t, exists)
+				require.Equal(t, kind, index.Kind)
+				require.Equal(t, entity, index.EntityType)
+				require.Equal(t, []string{"value"}, index.Properties)
+				require.Len(t, restored.GetIndexes(), 3)
+				require.Equal(t, string(kind), restored.GetIndexStats()[0].Type)
+				require.NoError(t, restored.DropIndex("typed"))
+				_, exists = restored.GetRangeIndex("typed")
+				require.False(t, exists)
+			})
+		}
+	}
+	schema := NewSchemaManager()
+	require.Error(t, schema.AddTypedIndexForEntity(IndexKindRange, "bad", "T", []string{"value"}, ConstraintEntityNode))
+	require.Error(t, schema.AddTypedIndexForEntity(IndexKindText, "bad", "T", nil, ConstraintEntityNode))
+	require.Error(t, schema.AddTypedIndexForEntity(IndexKindPoint, "bad", "T", []string{"a", "b"}, ConstraintEntityNode))
+	schema.persist = func(*SchemaDefinition) error { return errors.New("persist failed") }
+	require.ErrorContains(t, schema.AddTypedIndexForEntity(IndexKindText, "failed", "T", []string{"value"}, ConstraintEntityNode), "persist failed")
+	_, exists := schema.GetRangeIndex("failed")
+	require.False(t, exists)
+	legacy := NewSchemaManager()
+	require.NoError(t, legacy.ReplaceFromDefinition(&SchemaDefinition{RangeIndexes: []SchemaRangeIndexDef{{Name: "legacy", Label: "T", Property: "value"}}}))
+	index, exists := legacy.GetRangeIndex("legacy")
+	require.True(t, exists)
+	require.Equal(t, IndexKindRange, index.effectiveKind())
+}
 
 func TestSchemaManager(t *testing.T) {
 	sm := NewSchemaManager()
@@ -1249,15 +1290,13 @@ func TestValidateConstraintOnCreation_UniqueMultipleProperties(t *testing.T) {
 	engine := NewMemoryEngine()
 	defer engine.Close()
 
-	// UNIQUE constraint requires exactly 1 property
 	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
-		Name:       "bad_unique",
+		Name:       "composite_unique",
 		Type:       ConstraintUnique,
 		Label:      "Person",
 		Properties: []string{"first", "last"},
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exactly 1 property")
+	require.NoError(t, err)
 }
 
 func TestValidateExistenceRelationshipConstraint(t *testing.T) {

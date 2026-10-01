@@ -619,7 +619,7 @@ func TestSchemaCommandsNoOp(t *testing.T) {
 	}
 
 	// CREATE CONSTRAINT should be a no-op
-	result, err = e.Execute(ctx, "CREATE CONSTRAINT IF NOT EXISTS ON (n:Person) ASSERT n.id IS UNIQUE", nil)
+	result, err = e.Execute(ctx, "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Person) REQUIRE n.id IS UNIQUE", nil)
 	if err != nil {
 		t.Errorf("CREATE CONSTRAINT should not error: %v", err)
 	}

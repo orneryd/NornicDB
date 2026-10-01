@@ -83,6 +83,8 @@ func isCreateSchemaOrAdministrationCommand(cypher string) bool {
 		startsWithKeywords(cypher, "CREATE", "RANGE INDEX") ||
 		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX") ||
 		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "TEXT INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "POINT INDEX") ||
 		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX")
 }
 

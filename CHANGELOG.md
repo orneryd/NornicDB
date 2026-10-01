@@ -137,6 +137,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   summaries publish only the profile key. Regenerate the shared ANTLR grammar
   to accept scoped CALL after UNWIND (#739).
 
+- Admit composite node uniqueness constraints with atomic validation and
+  namespace-aware enforcement for direct and explicit-transaction writes.
+  Reject malformed composite references and obsolete ON/ASSERT constraint
+  syntax; preserve typed duplicate-schema and constraint-creation errors (#531).
+- Admit TEXT and POINT index DDL through the schema route and persist their
+  typed definitions for SHOW and drop/recreate operations. Query execution
+  retains its existing scan fallback (#531, #530).
 - Accept the legacy variable-length MVCC version-key layout
   (`[prefix][string ID][0x00][version]`) alongside the fixed-width layout
   during the V2→V3 edge-adjacency migration and in the runtime version
