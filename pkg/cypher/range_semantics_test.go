@@ -35,6 +35,42 @@ func TestUnwindRangeFiltersBeforeMaterializingRows(t *testing.T) {
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*1024*1024))
 }
 
+func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		for _, test := range []struct {
+			query string
+			want  int64
+		}{
+			{"UNWIND range(1, 30000) AS x RETURN count(*) AS c", 30000},
+			{"UNWIND range(1, 30000) AS x RETURN sum(x) AS s", 450015000},
+			{"UNWIND range(1, 30000) AS x WITH x RETURN count(*) AS c", 30000},
+			{"UNWIND range(1, 30000) AS x WITH sum(x) AS s RETURN s", 450015000},
+		} {
+			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
+				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), 0, 0)
+				if explicit {
+					_, err := executor.handleBegin()
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = executor.handleRollback() })
+				}
+				var before, after runtime.MemStats
+				runtime.ReadMemStats(&before)
+				var result *ExecuteResult
+				var err error
+				if explicit {
+					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
+				} else {
+					result, err = executor.Execute(context.Background(), test.query, nil)
+				}
+				runtime.ReadMemStats(&after)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{test.want}}, result.Rows)
+				require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*1024*1024), "aggregate state must not retain the UNWIND input")
+			})
+		}
+	}
+}
+
 func TestUnwindRangeExplicitTransactionFiltersBeforeMaterializingRows(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "range_explicit"))
 	_, err := executor.handleBegin()
@@ -48,6 +84,58 @@ func TestUnwindRangeExplicitTransactionFiltersBeforeMaterializingRows(t *testing
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*1024*1024))
+}
+
+func TestUnwindStreamingAggregateSemantics(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		for _, test := range []struct {
+			query string
+			rows  [][]interface{}
+		}{
+			{"UNWIND [1, null, 2, 2] AS x RETURN count(x), count(*), sum(DISTINCT x), avg(x), min(x), max(x), collect(DISTINCT x)", [][]interface{}{{int64(3), int64(4), int64(3), float64(5) / 3, int64(1), int64(2), []interface{}{int64(1), int64(2)}}}},
+			{"UNWIND [] AS x RETURN count(*), sum(x), avg(x), min(x), max(x), collect(x), stDev(x), stDevP(x)", [][]interface{}{{int64(0), int64(0), nil, nil, nil, []interface{}{}, nil, nil}}},
+			{"UNWIND range(1, 4) AS x RETURN x % 2 AS parity, sum(x) AS total ORDER BY parity", [][]interface{}{{int64(0), int64(6)}, {int64(1), int64(4)}}},
+			{"UNWIND range(1, 4) AS x WITH x % 2 AS parity, sum(x) AS total WHERE total > 4 RETURN parity, total", [][]interface{}{{int64(0), int64(6)}}},
+			{"UNWIND range(1, 4) AS x WITH x % 2 AS parity, sum(x) AS total ORDER BY total DESC LIMIT 1 RETURN parity, total", [][]interface{}{{int64(0), int64(6)}}},
+			{"UNWIND [1, 2, 3] AS x RETURN {total: sum(x), counts: [count(*), count(DISTINCT x)]} AS stats, sum(x) + count(*) AS combined", [][]interface{}{{map[string]interface{}{"total": int64(6), "counts": []interface{}{int64(3), int64(3)}}, int64(9)}}},
+			{"UNWIND [1, 2.5, null] AS x RETURN sum(x), avg(x)", [][]interface{}{{3.5, 1.75}}},
+			{"UNWIND [1, 2, 3] AS x RETURN stDev(x), stDevP(x), percentileCont(x, 0.5), percentileDisc(x, 0.5)", [][]interface{}{{float64(1), math.Sqrt(float64(2) / 3), int64(2), int64(2)}}},
+			{"UNWIND range(1, 2) AS x RETURN percentileCont(x, x)", [][]interface{}{{int64(2)}}},
+		} {
+			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
+				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "aggregate_semantics"), 0, 0)
+				var result *ExecuteResult
+				var err error
+				if explicit {
+					_, err = executor.handleBegin()
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = executor.handleRollback() })
+					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
+				} else {
+					result, err = executor.Execute(context.Background(), test.query, nil)
+				}
+				require.NoError(t, err)
+				require.Equal(t, test.rows, result.Rows)
+			})
+		}
+	}
+}
+
+func TestUnwindStreamingAggregateArgumentErrors(t *testing.T) {
+	for _, projection := range []string{
+		"collect(size(x))", "collect(labels(x))", "collect(toInteger([x]))",
+		"collect(range(1, 2, x - 2))", "collect([1][x / 2.0])",
+		"percentileCont(x, x + 1)",
+	} {
+		for _, clause := range []string{"RETURN " + projection, "WITH " + projection + " AS result RETURN result"} {
+			t.Run(clause, func(t *testing.T) {
+				executor := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 0, 0)
+				result, err := executor.Execute(context.Background(), "UNWIND range(1, 2) AS x "+clause, nil)
+				require.Error(t, err)
+				require.Nil(t, result)
+			})
+		}
+	}
 }
 
 func TestRangeRequiresIntegerArgumentsAndNonzeroStep(t *testing.T) {
@@ -213,6 +301,67 @@ func TestUnwindRangeReportedWorkload(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
 			t.Logf("values=%d elapsed=%s total_alloc_bytes=%d heap_alloc_bytes=%d", end, time.Since(started), after.TotalAlloc-before.TotalAlloc, after.HeapAlloc)
+		})
+	}
+}
+
+func TestUnwindRangeReportedAggregateWorkload(t *testing.T) {
+	if os.Getenv("NORNICDB_RUN_LARGE_UNWIND_AGGREGATE") != "1" {
+		t.Skip("large issue #772 aggregate correctness workload")
+	}
+	for _, explicit := range []bool{false, true} {
+		for _, test := range []struct {
+			query string
+			want  int64
+		}{
+			{"UNWIND range(1, 30000000) AS x RETURN count(*) AS c", 30000000},
+			{"UNWIND range(1, 30000000) AS x RETURN sum(x) AS s", 450000015000000},
+			{"UNWIND range(1, 30000000) AS x WITH x RETURN count(*) AS c", 30000000},
+		} {
+			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
+				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "large_aggregate"), 0, 0)
+				var result *ExecuteResult
+				var err error
+				if explicit {
+					_, err = executor.handleBegin()
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = executor.handleRollback() })
+					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
+				} else {
+					result, err = executor.Execute(context.Background(), test.query, nil)
+				}
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{test.want}}, result.Rows)
+			})
+		}
+	}
+}
+
+func TestPipelineAggregateSourceFailureDoesNotReturnPartialGroups(t *testing.T) {
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	projections := returnProjectionPlanFor("RETURN count(*) AS total").projections
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))
+			defer cancel()
+			source := func(yield func(pipelineRow) bool) bool {
+				if !yield(pipelineRow{"x": int64(1)}) {
+					t.Error("first row must be accepted before producer failure")
+					return true
+				}
+				if canceled {
+					cancel()
+					require.False(t, yield(pipelineRow{"x": int64(2)}))
+					return true
+				}
+				return false
+			}
+			groups, resolved := executor.pipelineAggregateGroups(ctx, source, projections)
+			require.False(t, resolved)
+			require.Nil(t, groups)
+			if canceled {
+				require.ErrorIs(t, getExpressionFailure(ctx), context.Canceled)
+			}
 		})
 	}
 }

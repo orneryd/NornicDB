@@ -134,12 +134,19 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 }
 
 func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause string) error {
+	if err := e.validatePipelinePercentileArguments(rows, clause, "WITH"); err != nil {
+		return err
+	}
+	return e.validatePipelineProjectionValues(rows, clause, "WITH")
+}
+
+func (e *StorageExecutor) validatePipelineProjectionValues(rows []pipelineRow, clause, keyword string) error {
 	for _, validate := range []func([]pipelineRow, string, string) error{
-		e.validatePipelineRangeArguments, e.validatePipelinePercentileArguments,
+		e.validatePipelineRangeArguments,
 		e.validatePipelineConversionArguments, e.validatePipelineGraphFunctionArguments,
 		e.validatePipelineProjectionSubscripts, e.validatePipelineSizeArguments,
 	} {
-		if err := validate(rows, clause, "WITH"); err != nil {
+		if err := validate(rows, clause, keyword); err != nil {
 			return err
 		}
 	}
@@ -147,6 +154,28 @@ func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause st
 }
 
 func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) ([]pipelineRow, int, bool) {
+	source, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses)
+	if !ok {
+		return nil, 0, false
+	}
+	out, ok := materializePipelineSource(source)
+	return out, consumed, ok
+}
+
+func materializePipelineSource(source pipelineRowSource) ([]pipelineRow, bool) {
+	out := make([]pipelineRow, 0)
+	ok := source(func(row pipelineRow) bool {
+		retained := make(pipelineRow, len(row))
+		for name, value := range row {
+			retained[name] = value
+		}
+		out = append(out, retained)
+		return true
+	})
+	return out, ok
+}
+
+func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {
 	expression, alias, ok := splitUnwindBody(pipelineClauseBody(clauses[0].text, "UNWIND"))
 	if !ok {
 		return nil, 0, false
@@ -171,48 +200,47 @@ func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []
 	for index := range plans {
 		projected[index], scopes[index] = pipelineRow{}, pipelineRow{}
 	}
-	out := make([]pipelineRow, 0)
-	for _, input := range rows {
-		values, ok := e.pipelineUnwindValues(ctx, expression, input)
-		if !ok {
-			return nil, 0, false
-		}
-		child := make(pipelineRow, len(input)+1)
-		for name, value := range input {
-			child[name] = value
-		}
-		for value := range values {
-			if err := ctx.Err(); err != nil {
-				recordExpressionFailure(ctx, err)
-				return nil, 0, false
+	return func(yield func(pipelineRow) bool) bool {
+		for _, input := range rows {
+			values, ok := e.pipelineUnwindValues(ctx, expression, input)
+			if !ok {
+				return false
 			}
-			child[alias] = value
-			current, accepted := child, true
-			for index, plan := range plans {
-				if strings.ContainsAny(plan.clause, "([") {
-					if err := e.validatePipelineWithRows([]pipelineRow{current}, plan.clause); err != nil {
-						recordExpressionFailure(ctx, err)
-						return nil, 0, false
+			child := make(pipelineRow, len(input)+1)
+			for name, value := range input {
+				child[name] = value
+			}
+			for value := range values {
+				if err := ctx.Err(); err != nil {
+					recordExpressionFailure(ctx, err)
+					return false
+				}
+				child[alias] = value
+				current, accepted := child, true
+				for index, plan := range plans {
+					if strings.ContainsAny(plan.clause, "([") {
+						if err := e.validatePipelineWithRows([]pipelineRow{current}, plan.clause); err != nil {
+							recordExpressionFailure(ctx, err)
+							return false
+						}
+					}
+					var resolved bool
+					current, accepted, resolved = e.pipelineProjectWithRow(ctx, current, plan, projected[index], scopes[index])
+					if !resolved {
+						return false
+					}
+					if !accepted {
+						break
 					}
 				}
-				var resolved bool
-				current, accepted, resolved = e.pipelineProjectWithRow(ctx, current, plan, projected[index], scopes[index])
-				if !resolved {
-					return nil, 0, false
-				}
 				if !accepted {
-					break
+					continue
+				}
+				if !yield(current) {
+					return true
 				}
 			}
-			if !accepted {
-				continue
-			}
-			retained := make(pipelineRow, len(current))
-			for name, value := range current {
-				retained[name] = value
-			}
-			out = append(out, retained)
 		}
-	}
-	return out, len(plans), true
+		return true
+	}, len(plans), true
 }

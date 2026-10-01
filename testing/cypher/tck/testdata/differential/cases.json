@@ -1,5 +1,45 @@
 [
   {
+    "name": "unwind unfiltered range count",
+    "query": "UNWIND range(1, 30000) AS x RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind unfiltered range sum",
+    "query": "UNWIND range(1, 30000) AS x RETURN sum(x) AS s"
+  },
+  {
+    "name": "unwind unfiltered range projection count",
+    "query": "UNWIND range(1, 30000) AS x WITH x RETURN count(*) AS c"
+  },
+  {
+    "name": "unwind incremental grouped with window",
+    "query": "UNWIND range(1, 4) AS x WITH x % 2 AS parity, sum(x) AS total ORDER BY total DESC LIMIT 1 RETURN parity, total"
+  },
+  {
+    "name": "unwind incremental nested aggregate expressions",
+    "query": "UNWIND [1, 2, 3] AS x RETURN {total: sum(x), counts: [count(*), count(DISTINCT x)]} AS stats, sum(x) + count(*) AS combined"
+  },
+  {
+    "name": "unwind incremental empty aggregates",
+    "query": "UNWIND [] AS x RETURN count(*), sum(x), avg(x), min(x), max(x), collect(x), stDev(x), stDevP(x)"
+  },
+  {
+    "name": "unwind incremental percentile and deviation",
+    "query": "UNWIND [1, 2, 3] AS x RETURN stDev(x), stDevP(x), percentileCont(x, 0.5), percentileDisc(x, 0.5)"
+  },
+  {
+    "name": "unwind incremental conversion error",
+    "query": "UNWIND range(1, 2) AS x RETURN collect(toInteger([x]))"
+  },
+  {
+    "name": "unwind incremental percentile first argument",
+    "query": "UNWIND range(1, 2) AS x RETURN percentileCont(x, x)"
+  },
+  {
+    "name": "unwind incremental percentile argument error",
+    "query": "UNWIND range(1, 2) AS x RETURN percentileCont(x, x + 1)"
+  },
+  {
     "name": "unwind shared integer aggregation types",
     "query": "UNWIND [1,2,3] AS x RETURN sum(x) AS s, count(x) AS c, avg(x) AS a, min(x) AS mn, max(x) AS mx, collect(x)[..2] AS cs"
   },

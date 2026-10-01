@@ -70,7 +70,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	lower := int(math.Floor(position))
 	upper := int(math.Ceil(position))
 	if lower == upper {
-		return values[lower].numeric, true
+		return values[lower].original, true
 	}
 	fraction := position - float64(lower)
 	return values[lower].numeric + (values[upper].numeric-values[lower].numeric)*fraction, true
@@ -120,10 +120,8 @@ func (e *StorageExecutor) validatePipelinePercentileArguments(rows []pipelineRow
 	}
 	for _, item := range splitTopLevelComma(strings.TrimSpace(body[:end])) {
 		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
-		for _, row := range rows {
-			if err := e.validatePercentileCalls(expression, row); err != nil {
-				return err
-			}
+		if err := e.validatePercentileCalls(expression, rows[0]); err != nil {
+			return err
 		}
 	}
 	return nil

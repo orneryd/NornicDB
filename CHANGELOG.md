@@ -17,8 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Stream direct UNWIND range inputs through shared row-local WITH projections
-  and predicates before retaining rows (#772), avoiding eager range validation
-  and the reported false-filter OOM. Remove legacy UNWIND replay, aggregation,
+  and predicates into shared incremental WITH/RETURN aggregation (#772),
+  avoiding eager range validation and both filtered and unfiltered aggregate
+  OOMs. Keep scalar aggregate state per group instead of retaining input rows;
+  collect, DISTINCT, and percentiles retain their necessary values.
+  Remove legacy UNWIND replay, aggregation,
   and collect evaluators. Preserve typed mutation/procedure arguments, ordered
   MERGE/SET writes, and row-producing Fabric prefixes in the shared pipeline.
 - Fix server concurrency races (#770): atomically publish executor loggers and

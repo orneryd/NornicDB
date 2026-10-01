@@ -547,6 +547,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			originalClauses = originalClauses[prefix:]
 		}
 	}
+	var source pipelineRowSource
 	for idx := 0; idx < len(clauses); idx++ {
 		clause := clauses[idx]
 		switch clause.kind {
@@ -627,7 +628,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if err := e.validatePipelineWithRows(rows, clause.text); err != nil {
 				return nil, true, err
 			}
-			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text)
+			if source == nil {
+				source = pipelineRowsSource(rows)
+			}
+			newRows, ok := e.pipelineApplyWithSource(ctx, rows, clause.text, source)
+			source = nil
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
@@ -637,11 +642,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if err := e.validatePipelineRangeArguments(rows, clause.text, "UNWIND"); err != nil {
 				return nil, true, err
 			}
-			newRows, consumed, ok := e.pipelineApplyUnwindPrefix(ctx, rows, clauses[idx:])
+			unwound, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses[idx:])
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			rows = newRows
 			if alias := pipelineUnwindAlias(clause.text); alias != "" {
 				scope[alias] = struct{}{}
 			}
@@ -649,6 +653,15 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				scope = pipelineProjectionScope(scope, clauses[idx+offset].text)
 			}
 			idx += consumed
+			if idx+1 < len(clauses) && pipelineClauseAggregates(clauses[idx+1]) {
+				source = unwound
+				rows = nil
+				continue
+			}
+			rows, ok = materializePipelineSource(unwound)
+			if !ok {
+				return pipelineDecline(ctx, wrote, clause.text)
+			}
 			if len(rows) > 1 && idx+1 < len(clauses) {
 				state := &pipelineRowOutput{wrote: wrote}
 				if output != nil {
@@ -705,7 +718,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if err := e.validatePipelineSizeArguments(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
-			final, ok := e.pipelineApplyReturn(ctx, rows, clause.text)
+			if source == nil {
+				source = pipelineRowsSource(rows)
+			}
+			final, ok := e.pipelineApplyReturnSource(ctx, rows, clause.text, source)
+			source = nil
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
@@ -3060,6 +3077,10 @@ func (e *StorageExecutor) materializePipelinePropertyExpressions(ctx context.Con
 // RETURN, and ORDER BY so list, map, property, and postfix operations cannot
 // diverge between pipeline clauses.
 func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
+	return e.pipelineApplyWithSource(ctx, rows, clause, pipelineRowsSource(rows))
+}
+
+func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource) ([]pipelineRow, bool) {
 	if plan, ok := parsePipelineRowWith(clause); ok {
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
@@ -3172,49 +3193,18 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		projectionAliases = append(projectionAliases, alias)
 	}
 	if hasAggregate {
-		type aggregateGroup struct {
-			first pipelineRow
-			rows  []pipelineRow
+		aggregates := make([]returnProjection, len(projections))
+		for index, projection := range projections {
+			aggregates[index] = returnProjection{expr: projection.expr, alias: projection.alias, isAggr: projection.aggregate}
 		}
-		groups := make(map[string]*aggregateGroup)
-		groupOrder := make([]string, 0)
-		for _, row := range rows {
-			keyParts := make([]string, 0, len(projections))
-			for _, projection := range projections {
-				if projection.aggregate {
-					continue
-				}
-				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
-				if !ok {
-					pipelineItemUnevaluable(ctx, projection.expr)
-					return nil, false
-				}
-				keyParts = append(keyParts, pipelineValueKey(value))
-			}
-			key := strings.Join(keyParts, "\x1f")
-			group, exists := groups[key]
-			if !exists {
-				group = &aggregateGroup{first: row}
-				groups[key] = group
-				groupOrder = append(groupOrder, key)
-			}
-			group.rows = append(group.rows, row)
-		}
-		if len(rows) == 0 {
-			allAggregates := len(projections) > 0
-			for _, projection := range projections {
-				allAggregates = allAggregates && projection.aggregate
-			}
-			if allAggregates {
-				groups[""] = &aggregateGroup{}
-				groupOrder = append(groupOrder, "")
-			}
+		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates)
+		if !ok {
+			return nil, false
 		}
 
-		out := make([]pipelineRow, 0, len(groupOrder))
-		orderScopes := make([]pipelineRow, 0, len(groupOrder))
-		for _, key := range groupOrder {
-			group := groups[key]
+		out := make([]pipelineRow, 0, len(groups))
+		orderScopes := make([]pipelineRow, 0, len(groups))
+		for _, group := range groups {
 			newRow := pipelineRow{}
 			projectedExpressions := make(pipelineRow, len(projections))
 			for name, value := range group.first {
@@ -3222,25 +3212,10 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 					newRow[name] = value
 				}
 			}
-			for _, projection := range projections {
-				if !projection.aggregate {
-					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, group.first)
-					if !ok {
-						pipelineItemUnevaluable(ctx, projection.expr)
-						return nil, false
-					}
-					newRow[projection.alias] = value
-					projectedExpressions[projection.expr] = value
-					continue
-				}
-				var value interface{}
-				var ok bool
-				if projection.aggregateName == "" {
-					value, ok = e.evaluatePipelineAggregateExpressionWithContext(ctx, group.rows, projection.aggregateExpr)
-				} else {
-					value, ok = e.evaluatePipelineAggregateWithContext(ctx, group.rows, projection.aggregateName, projection.aggregateExpr, projection.distinct)
-				}
+			for index, projection := range projections {
+				value, ok := group.value(ctx, e, index)
 				if !ok {
+					pipelineItemUnevaluable(ctx, projection.expr)
 					return nil, false
 				}
 				newRow[projection.alias] = value
@@ -3680,92 +3655,16 @@ func (e *StorageExecutor) evaluatePipelineAggregate(rows []pipelineRow, name, ex
 }
 
 func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Context, rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
-	if name == "count" && expr == "*" {
-		return int64(len(rows)), true
-	}
 	if name == "percentilecont" || name == "percentiledisc" {
 		return e.evaluatePipelinePercentile(ctx, rows, name, expr, distinct)
 	}
-	values := make([]interface{}, 0, len(rows))
-	seen := make(map[string]struct{}, len(rows))
+	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct}
 	for _, row := range rows {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row)
-		if !ok {
+		if !state.add(ctx, e, row) {
 			return nil, false
 		}
-		if value == nil {
-			continue
-		}
-		if distinct {
-			key := pipelineValueKey(value)
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-		}
-		values = append(values, value)
 	}
-
-	switch name {
-	case "count":
-		return int64(len(values)), true
-	case "collect":
-		return values, true
-	case "sum":
-		var integerTotal int64
-		var floatingTotal float64
-		hasFloat := false
-		for _, value := range values {
-			numeric, integer, ok := pipelineAggregateNumber(value)
-			if !ok {
-				continue
-			}
-			if integer && !hasFloat {
-				integerTotal += int64(numeric)
-				continue
-			}
-			if !hasFloat {
-				floatingTotal = float64(integerTotal)
-				hasFloat = true
-			}
-			floatingTotal += numeric
-		}
-		if hasFloat {
-			return floatingTotal, true
-		}
-		return integerTotal, true
-	case "avg":
-		var total float64
-		var count int
-		for _, value := range values {
-			numeric, _, ok := pipelineAggregateNumber(value)
-			if !ok {
-				continue
-			}
-			total += numeric
-			count++
-		}
-		if count == 0 {
-			return nil, true
-		}
-		return total / float64(count), true
-	case "min", "max":
-		if len(values) == 0 {
-			return nil, true
-		}
-		selected := values[0]
-		for _, value := range values[1:] {
-			comparison := compareValuesForSort(value, selected)
-			if (name == "min" && comparison < 0) || (name == "max" && comparison > 0) {
-				selected = value
-			}
-		}
-		return selected, true
-	case "stdev", "stdevp":
-		return stdevTraversalAggregateValues(values, name == "stdevp"), true
-	default:
-		return nil, false
-	}
+	return state.result(ctx, e)
 }
 
 func pipelineAggregateNumber(value interface{}) (float64, bool, bool) {
@@ -3895,6 +3794,10 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 // Returns (nil, false) if any item can't be projected, so the caller falls
 // back to the established RETURN projection.
 func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
+	return e.pipelineApplyReturnSource(ctx, rows, clause, pipelineRowsSource(rows))
+}
+
+func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource) (*ExecuteResult, bool) {
 	plan := returnProjectionPlanFor(clause)
 	if !plan.valid {
 		return nil, false
@@ -3920,66 +3823,17 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 	result := &ExecuteResult{Columns: append([]string(nil), plan.columns...)}
 
 	if hasAggregate {
-		type returnGroup struct {
-			first pipelineRow
-			rows  []pipelineRow
-		}
-		groups := make(map[string]*returnGroup)
-		groupOrder := make([]string, 0)
-		for _, inputRow := range rows {
-			keyParts := make([]string, 0, len(projs))
-			for _, projection := range projs {
-				if projection.isAggr {
-					continue
-				}
-				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, inputRow)
-				if !ok {
-					pipelineItemUnevaluable(ctx, projection.expr)
-					return nil, false
-				}
-				keyParts = append(keyParts, pipelineValueKey(value))
-			}
-			key := strings.Join(keyParts, "\x1f")
-			group, exists := groups[key]
-			if !exists {
-				group = &returnGroup{first: inputRow}
-				groups[key] = group
-				groupOrder = append(groupOrder, key)
-			}
-			group.rows = append(group.rows, inputRow)
-		}
-		if len(rows) == 0 && len(projs) > 0 {
-			allAggregates := true
-			for _, projection := range projs {
-				allAggregates = allAggregates && projection.isAggr
-			}
-			if allAggregates {
-				groups[""] = &returnGroup{}
-				groupOrder = append(groupOrder, "")
-			}
+		groups, ok := e.pipelineAggregateGroups(ctx, source, projs)
+		if !ok {
+			return nil, false
 		}
 
-		for _, key := range groupOrder {
-			group := groups[key]
+		for _, group := range groups {
 			outRow := make([]interface{}, 0, len(projs))
-			for _, projection := range projs {
-				if !projection.isAggr {
-					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, group.first)
-					if !ok {
-						pipelineItemUnevaluable(ctx, projection.expr)
-						return nil, false
-					}
-					outRow = append(outRow, value)
-					continue
-				}
-				var value interface{}
-				var ok bool
-				if projection.aggregateName == "" {
-					value, ok = e.evaluatePipelineAggregateExpressionWithContext(ctx, group.rows, projection.aggregateExpr)
-				} else {
-					value, ok = e.evaluatePipelineAggregateWithContext(ctx, group.rows, projection.aggregateName, projection.aggregateExpr, projection.distinct)
-				}
+			for index, projection := range projs {
+				value, ok := group.value(ctx, e, index)
 				if !ok {
+					pipelineItemUnevaluable(ctx, projection.expr)
 					return nil, false
 				}
 				outRow = append(outRow, value)
