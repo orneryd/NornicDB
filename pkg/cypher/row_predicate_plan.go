@@ -210,6 +210,9 @@ func planRowPredicatePart(text string) (rowPredicatePart, bool) {
 // of one. A shape one of evaluateRowPredicate's earlier branches handles (NOT,
 // EXISTS, IN, string operators, =~, labels, calls, lists, strings) isn't one.
 func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
+	if part, ok := planRowLiteralListMembership(text); ok {
+		return part, true
+	}
 	if strings.ContainsAny(text, "'\"") {
 		return planRowStringComparison(text)
 	}
@@ -256,6 +259,51 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		operator = "<>"
 	}
 	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: operator}, true
+}
+
+// planRowLiteralListMembership plans <operand> IN [<literal>, …]: a variable,
+// parameter or property chain tested against a list of scalar literals (the
+// form a list parameter takes once the statement's parameters are written
+// into its text). The list is parsed once, into its values; evaluated as
+// text, it was scanned and split again for every row. A list with anything
+// but scalar literals in it isn't planned.
+func planRowLiteralListMembership(text string) (rowPredicatePart, bool) {
+	if len(text) == 0 || text[len(text)-1] != ']' {
+		return rowPredicatePart{}, false
+	}
+	in := strings.Index(upperASCII(text), " IN ")
+	if in <= 0 {
+		return rowPredicatePart{}, false
+	}
+	left := strings.TrimSpace(text[:in])
+	right := strings.TrimSpace(text[in+len(" IN "):])
+	if strings.ContainsAny(left, "()[]:`'\"") || hasPrefixFoldASCII(left, "NOT ") || hasSuffixFoldASCII(left, " NOT") {
+		return rowPredicatePart{}, false
+	}
+	needle, ok := parseRowOperand(left)
+	if !ok || needle.kind == rowOperandLiteral {
+		return rowPredicatePart{}, false
+	}
+	if len(right) < 2 || right[0] != '[' {
+		return rowPredicatePart{}, false
+	}
+	values := []interface{}{}
+	if inner := strings.TrimSpace(right[1 : len(right)-1]); inner != "" {
+		items := splitTopLevelComma(inner)
+		values = make([]interface{}, 0, len(items))
+		for _, item := range items {
+			item = strings.TrimSpace(item)
+			if strings.ContainsAny(item, "'\"") && !isWholeCypherQuotedString(item) {
+				return rowPredicatePart{}, false
+			}
+			value, ok := parseLiteralScalarForPipeline(item)
+			if !ok {
+				return rowPredicatePart{}, false
+			}
+			values = append(values, value)
+		}
+	}
+	return rowPredicatePart{kind: rowPredicateIn, text: text, left: needle, right: rowOperand{kind: rowOperandLiteral, literal: values}}, true
 }
 
 // planRowStringComparison plans a comparison of a simple operand with a
