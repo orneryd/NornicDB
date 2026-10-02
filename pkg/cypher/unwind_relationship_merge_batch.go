@@ -566,7 +566,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 		if schema != nil && schema.HasPropertyIndex(key.label, key.prop) {
 			unresolved := make(map[string]interface{})
 			for valueKey, value := range distinct {
-				ids := schema.PropertyIndexLookup(key.label, key.prop, value)
+				ids := propertyIndexLookup(store, schema, key.label, key.prop, value)
 				matched := 0
 				for _, id := range ids {
 					node, err := store.GetNode(id)

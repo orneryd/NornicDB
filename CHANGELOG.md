@@ -26,8 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the configured request-size policy (#776).
 - Preserve indexed explicit-transaction read-your-writes for equality, IN,
   pattern-property and ordered reads, including mixed committed/pending rows
-  and MATCH mutations. Decline committed-schema index shortcuts when reading
-  a transaction snapshot and reuse the shared transactional scan paths (#809).
+  and MATCH mutations. Property-index lookups made inside a transaction merge
+  the transaction's own node writes, so they stay index lookups: a read by an
+  indexed property costs the same in a transaction as in auto-commit, and
+  MERGE on an indexed property finds a node the transaction created. Ordered
+  and not-null index scans read the index while the transaction has written
+  no nodes, and the shared transactional scan once it has (#809).
 - Preserve each outer row exactly once after successful unit CALL subqueries,
   even when inner MATCH or WITH filters remove all rows. Keep returning CALL
   joins and transactional batches on the shared pipeline (#771).

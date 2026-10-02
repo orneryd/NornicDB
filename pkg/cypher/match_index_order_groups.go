@@ -58,7 +58,7 @@ func (h *indexedOrderHeap) Pop() interface{} {
 // truncation. A primary-key group may be much larger than the requested page;
 // only the best limit nodes are retained while every boundary tie is examined.
 func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int) ([]*storage.Node, bool, error) {
-	schema := propertyIndexSchema(e.storage)
+	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}

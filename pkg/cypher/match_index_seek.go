@@ -336,7 +336,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, 
 		return nil, false, nil
 	}
 
-	schema := propertyIndexSchema(e.storage)
+	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -348,7 +348,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, 
 
 	idSet := make(map[storage.NodeID]struct{})
 	for _, label := range labels {
-		for _, id := range schema.PropertyIndexLookup(label, property, value) {
+		for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
 			idSet[id] = struct{}{}
 		}
 	}
@@ -401,7 +401,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 		return nil, false, nil
 	}
 
-	schema := propertyIndexSchema(e.storage)
+	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -413,7 +413,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 	idSet := make(map[storage.NodeID]struct{}, 256)
 	for _, label := range labels {
 		for _, value := range listValues {
-			for _, id := range schema.PropertyIndexLookup(label, property, value) {
+			for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
 				idSet[id] = struct{}{}
 			}
 		}
@@ -455,7 +455,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 		return nil, false, nil
 	}
 
-	schema := propertyIndexSchema(e.storage)
+	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -467,7 +467,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 	idSet := make(map[storage.NodeID]struct{}, 256)
 	for _, label := range labels {
 		for _, value := range listValues {
-			for _, id := range schema.PropertyIndexLookup(label, property, value) {
+			for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
 				idSet[id] = struct{}{}
 			}
 		}
@@ -644,7 +644,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 		merged = append(merged, v)
 	}
 
-	schema := propertyIndexSchema(e.storage)
+	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -658,14 +658,14 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 	idSet := make(map[storage.NodeID]struct{}, 256)
 	for _, label := range leftLabels {
 		for _, v := range merged {
-			for _, id := range schema.PropertyIndexLookup(label, lprop, v) {
+			for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, v) {
 				idSet[id] = struct{}{}
 			}
 		}
 	}
 	for _, label := range rightLabels {
 		for _, v := range merged {
-			for _, id := range schema.PropertyIndexLookup(label, rprop, v) {
+			for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, v) {
 				idSet[id] = struct{}{}
 			}
 		}
@@ -729,7 +729,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		return nil, false, nil
 	}
 
-	schema := propertyIndexSchema(e.storage)
+	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -742,12 +742,12 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 
 	idSet := make(map[storage.NodeID]struct{}, 64)
 	for _, label := range leftLabels {
-		for _, id := range schema.PropertyIndexLookup(label, lprop, lval) {
+		for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, lval) {
 			idSet[id] = struct{}{}
 		}
 	}
 	for _, label := range rightLabels {
-		for _, id := range schema.PropertyIndexLookup(label, rprop, rval) {
+		for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, rval) {
 			idSet[id] = struct{}{}
 		}
 	}
@@ -918,7 +918,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 
-	schema := propertyIndexSchema(e.storage)
+	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -972,7 +972,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 		return nil, false, nil
 	}
 
-	schema := propertyIndexSchema(e.storage)
+	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -1003,7 +1003,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 		return nil, false, nil
 	}
 
-	schema := propertyIndexSchema(e.storage)
+	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -1052,6 +1052,9 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 			}
 		}
 		return out
+	}
+	if !labellessPropertyIndexUsable(e.storage) {
+		return nil
 	}
 
 	labels := make(map[string]struct{})

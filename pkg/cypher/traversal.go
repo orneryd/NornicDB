@@ -1611,7 +1611,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 				if len(labels) > 0 {
 					idSet := make(map[storage.NodeID]struct{}, 64)
 					for _, label := range labels {
-						for _, id := range schema.PropertyIndexLookup(label, prop, value) {
+						for _, id := range propertyIndexLookup(e.storage, schema, label, prop, value) {
 							idSet[id] = struct{}{}
 						}
 					}

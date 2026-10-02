@@ -27,7 +27,10 @@ func TestParseMergeProperties(t *testing.T) {
 	require.Equal(t, "n.name", out["literal"])
 	require.Equal(t, "alice", out["from_node"])
 	require.EqualValues(t, int64(7), out["from_rel"])
-	require.NotContains(t, out, "gone")
+	// A null value stays in the map: the MERGE validator rejects it before
+	// matching (#810), which it can't do for a value that was dropped.
+	require.Contains(t, out, "gone")
+	require.Nil(t, out["gone"])
 	require.Empty(t, exec.parseMergeProperties(ctx, "{}", nodeCtx, relCtx))
 	require.Empty(t, exec.parseMergeProperties(ctx, "", nodeCtx, relCtx))
 }
