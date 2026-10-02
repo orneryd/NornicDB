@@ -14,6 +14,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON logs can be grouped into an optimization backlog without retaining
   rejected queries in memory.
 
+### Changed
+
+- Consolidate all 22 open Dependabot updates into one dependency refresh:
+
+| PR | Dependency | Previous | Updated |
+| --- | --- | --- | --- |
+| #787 | lucide-react | 1.37.0 | 1.48.0 |
+| #788 | github.com/googleapis/gax-go/v2 | 2.23.0 | 2.26.2 |
+| #789 | docker/setup-buildx-action | 4.3.0 | 4.4.1 |
+| #790 | react-router-dom | 7.18.3 | 7.18.4 |
+| #791 | github.com/prometheus/client_model | 0.6.2 | 0.6.3 |
+| #792 | github.com/neo4j/neo4j-go-driver/v5 | 5.28.4 | 5.28.5 |
+| #793 | autoprefixer | 10.5.4 | 10.6.1 |
+| #794 | docker/build-push-action | 7.3.0 | 7.4.0 |
+| #795 | github.com/hybridgroup/yzma | 1.27.0 | 1.28.0 |
+| #796 | github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 | 2.0.15 | 2.0.16 |
+| #797 | @vitejs/plugin-react | 6.0.4 | 6.1.1 |
+| #798 | github.com/ebitengine/purego | 0.10.2 | 0.11.1 |
+| #799 | docker/setup-qemu-action | 4.2.0 | 4.4.0 |
+| #800 | go.opentelemetry.io/otel/exporters/prometheus | 0.66.0 | 0.68.0 |
+| #801 | react-dom / @types/react-dom | 19.2.8 / 19.2.5 | 19.3.0 / 19.3.0 |
+| #802 | github.com/hashicorp/go-kms-wrapping/v2 | 2.0.24 | 2.0.26 |
+| #803 | github.com/vektah/gqlparser/v2 | 2.5.36 | 2.5.58 |
+| #804 | postcss | 8.5.26 | 8.5.28 |
+| #805 | golang.org/x/net | 0.58.0 | 0.59.0 |
+| #806 | react / @types/react | 19.2.8 / 19.2.18 | 19.3.0 / 19.3.0 |
+| #807 | baseline-browser-mapping | 2.11.20 | 2.11.26 |
+| #808 | three | 0.185.1 | 0.186.1 |
+
+  Include the corresponding golang.org/x/{crypto,sync,sys,text}, Google IAM
+  and genproto companion updates. Regenerate Go/npm lockfiles together and
+  retain exact SHA pins for the Docker actions.
+
 ### Fixed
 
 - Preserve null-valued node pattern predicates instead of dropping them.
