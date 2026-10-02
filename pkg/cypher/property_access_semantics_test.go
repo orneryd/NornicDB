@@ -37,6 +37,27 @@ func TestGh657_RemainingReportedDiagnostics(t *testing.T) {
 	}
 }
 
+func TestGh657_NestedQuantifierBindings(t *testing.T) {
+	for _, outer := range []struct {
+		name string
+		want bool
+	}{
+		{"none", false},
+		{"single", true},
+		{"any", true},
+		{"all", false},
+	} {
+		for _, inner := range []string{"none", "single", "any", "all"} {
+			t.Run(outer.name+"/"+inner, func(t *testing.T) {
+				executor := setupTestExecutor(t)
+				query := "RETURN " + outer.name + "(x IN [[1], [2]] WHERE " + inner + "(y IN x WHERE y = 1)) AS result"
+				result := executeBehaviorQuery(t, executor, query)
+				require.Equal(t, [][]interface{}{{outer.want}}, result.Rows)
+			})
+		}
+	}
+}
+
 func TestGh657_StaticPropertySubscripts(t *testing.T) {
 	scope := staticTypeScope{kinds: matchSemanticScope{"n": matchBindingNode}}
 	for _, testCase := range []struct {
