@@ -346,7 +346,7 @@ func collectFunctionExpressionBindings(expression string, bindings map[string]st
 			} else {
 				collectLeadingIteratorBinding(inner, bindings)
 			}
-			searchFrom = close + 1
+			searchFrom = open + 1
 		}
 	}
 }
