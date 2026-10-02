@@ -2200,6 +2200,12 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		return nil, false, nil
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
+	if pathVariable != "" {
+		// p = (n:L): the node pattern is what follows the assignment. Parsed
+		// with the assignment, its variable was "p = (n" and it matched no
+		// node.
+		_, pattern, _ = splitPathAssignment(pattern)
+	}
 	basePattern := e.parseNodePattern(ctx, pattern)
 	if basePattern.variable == "" {
 		return nil, false, nil
@@ -2250,18 +2256,38 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		if candidates.whereApplied {
 			materializedWhere = ""
 		}
+		// The predicate is tested on one row reused for every candidate; a
+		// row is built only for a candidate that passes.
+		var probe pipelineRow
 		for _, node := range candidates.nodes {
+			var path interface{}
+			if pathVariable != "" {
+				path = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
+			}
+			if materializedWhere != "" {
+				if probe == nil {
+					probe = make(pipelineRow, len(row)+2)
+					for name, value := range row {
+						probe[name] = value
+					}
+				}
+				probe[nodePattern.variable] = node
+				if pathVariable != "" {
+					probe[pathVariable] = path
+				}
+				if !e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(probe)) {
+					continue
+				}
+			}
 			joined := make(pipelineRow, len(row)+2)
 			for name, value := range row {
 				joined[name] = value
 			}
 			joined[nodePattern.variable] = node
 			if pathVariable != "" {
-				joined[pathVariable] = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
+				joined[pathVariable] = path
 			}
-			if materializedWhere == "" || e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(joined)) {
-				out = append(out, joined)
-			}
+			out = append(out, joined)
 		}
 	}
 	return out, true, nil
