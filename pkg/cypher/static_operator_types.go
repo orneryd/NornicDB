@@ -126,6 +126,9 @@ func checkOperator(op byte, left, right staticOperand) (staticOperand, error) {
 		case left.list() || right.list():
 			return knownOperand("List<T>"), nil
 		}
+		if left.numeric() || right.numeric() {
+			return staticOperand{display: "Float, Integer, String or List<T>", nonBoolean: true}, nil
+		}
 		return staticOperand{}, nil
 	case '-':
 		if left.temporal() || left.duration() {
@@ -287,6 +290,9 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		}
 		if operand.known() && !operand.numeric() {
 			return staticOperand{}, operandMismatch(operand, "Float or Integer")
+		}
+		if !operand.known() {
+			return staticOperand{display: "Float or Integer", nonBoolean: true}, nil
 		}
 		return operand, nil
 	}

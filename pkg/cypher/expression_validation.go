@@ -84,7 +84,11 @@ func wholeListOperand(text string, end int) bool {
 // runs once). A list element declaration (`[n IN list | …]`) is not itself
 // an operand and cannot change the type of a separate `IN n` operand.
 func graphListOperandTypeError(text string, scope matchSemanticScope) error {
-	if len(scope) == 0 {
+	return staticListOperandTypeError(text, staticTypeScope{kinds: scope})
+}
+
+func staticListOperandTypeError(text string, scope staticTypeScope) error {
+	if len(scope.kinds) == 0 && len(scope.values) == 0 {
 		return nil
 	}
 	return forEachListOperand(text, func(start, in int) error {
@@ -96,15 +100,8 @@ func graphListOperandTypeError(text string, scope matchSemanticScope) error {
 			return nil
 		}
 		name := text[start:end]
-		var typeName string
-		switch scope[name] {
-		case matchBindingNode:
-			typeName = "Node"
-		case matchBindingRelationship:
-			typeName = "Relationship"
-		case matchBindingPath:
-			typeName = "Path"
-		default:
+		typeName := scope.typeOf(name)
+		if typeName == "" || strings.HasPrefix(typeName, "List<") {
 			return nil
 		}
 		if foreachDeclaration(text, in) || localListBindingShadowsOperand(text, start, name) {

@@ -777,7 +777,7 @@ func TestVectorSearchQueryModes(t *testing.T) {
 	t.Run("dimension_mismatch_silently_filters", func(t *testing.T) {
 		// Query with different dimension vector - should return 0 results (not error)
 		result, err := exec.Execute(ctx,
-			"CALL db.index.vector.queryNodes('idx', 10, [0.5, 0.5]) YIELD node, score", nil) // 2-dim vs 4-dim
+			"CALL db.index.vector.queryNodes('doc_idx', 10, [0.5, 0.5]) YIELD node, score", nil) // 2-dim vs 4-dim
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Empty(t, result.Rows, "Dimension mismatch should filter out all nodes")
@@ -786,7 +786,7 @@ func TestVectorSearchQueryModes(t *testing.T) {
 	t.Run("limit_results", func(t *testing.T) {
 		// Query with limit of 2
 		result, err := exec.Execute(ctx,
-			"CALL db.index.vector.queryNodes('idx', 2, [0.5, 0.5, 0.5, 0.5]) YIELD node, score", nil)
+			"CALL db.index.vector.queryNodes('doc_idx', 2, [0.5, 0.5, 0.5, 0.5]) YIELD node, score", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.LessOrEqual(t, len(result.Rows), 2, "Should respect limit")

@@ -90,7 +90,7 @@ func TestCaseExpression_NullAndUndefinedDistinction(t *testing.T) {
 		},
 		{
 			name:  "null literal falls through coalesce",
-			query: "RETURN coalesce(missing, null, 5) AS r",
+			query: "RETURN coalesce(null, null, 5) AS r",
 			want:  int64(5),
 		},
 		{

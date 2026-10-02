@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve the 13 remaining reported diagnostic mismatches in #657: validate
+  graph-property subscripts, arithmetic function argument types, function
+  arity, undefined function-expression variables, scalar quantifier inputs,
+  and expression-subquery outer-name shadowing before execution. Reject
+  impossible property access before missing-parameter errors and return
+  `ProcedureCallFailed` for missing vector indexes without managed embeddings.
+  Preserve the managed-embedding fallback, valid subquery identity imports,
+  optional function arguments, and legal map/list access. Add pinned Neo4j
+  5.26.30 differential regressions for Bolt and HTTP transaction modes.
 - Preserve null-valued node pattern predicates instead of dropping them.
   Null property-map MATCH reads and mutations match nothing; null MERGE
   properties are rejected before writes. Keep CREATE null-property omission

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -141,6 +142,14 @@ func (argument staticArgumentType) accepts(typeName string) bool {
 	if typeName == "" {
 		return true
 	}
+	if choices := strings.Split(strings.ReplaceAll(typeName, " or ", ", "), ", "); len(choices) > 1 {
+		for _, choice := range choices {
+			if argument.accepts(choice) {
+				return true
+			}
+		}
+		return false
+	}
 	isList := strings.HasPrefix(typeName, "List<")
 	if isList && argument.acceptsLists {
 		return true
@@ -221,6 +230,25 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				index = open + 1
 				continue
 			}
+		}
+		minimum, maximum := len(arguments), len(arguments)
+		switch lowerASCII(name) {
+		case "round":
+			minimum = 1
+		case "substring":
+			minimum = 2
+		case "ltrim", "rtrim", "btrim":
+			minimum = 1
+		case "normalize":
+			maximum = 2
+		}
+		count := 0
+		if inner != "" {
+			count = len(splitTopLevelComma(inner))
+		}
+		if count < minimum || count > maximum {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments",
+				fmt.Sprintf("Invalid number of arguments for function '%s': expected %d to %d, got %d", name, minimum, maximum, count))
 		}
 		if inner != "" {
 			for position, expression := range splitTopLevelComma(inner) {
@@ -311,6 +339,17 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
 		return scope.typeOf(variable)
 	}
+	if mayContainArithmetic(expression) {
+		operand, err := (staticOperatorChecker{scope: scope}).check(expression)
+		if err == nil {
+			if operand.known() {
+				return operand.kind
+			}
+			if operand.nonBoolean {
+				return operand.display
+			}
+		}
+	}
 	return ""
 }
 
@@ -330,14 +369,14 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 	var scope *staticTypeScope
 	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string) error {
 		variable := simpleSemanticIdentifier(expression)
-		if variable == "" {
+		if variable == "" && !mayContainArithmetic(expression) {
 			return nil
 		}
 		if scope == nil {
 			built := scopeOf()
 			scope = &built
 		}
-		typeName := scope.typeOf(variable)
+		typeName := scope.staticExpressionType(expression)
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
 		}

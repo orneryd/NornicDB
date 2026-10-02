@@ -825,7 +825,7 @@ func TestExecuteAggregationSumNoMatch(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	result, err := exec.Execute(ctx, "MATCH (n:SumNo) RETURN sum(invalid)", nil)
+	result, err := exec.Execute(ctx, "MATCH (n:SumNo) RETURN sum(n.invalid)", nil)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), result.Rows[0][0])
 }
@@ -846,7 +846,7 @@ func TestExecuteAggregationAvgNoMatch(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	result, err := exec.Execute(ctx, "MATCH (n:AvgNo) RETURN avg(invalid)", nil)
+	result, err := exec.Execute(ctx, "MATCH (n:AvgNo) RETURN avg(n.invalid)", nil)
 	require.NoError(t, err)
 	assert.Nil(t, result.Rows[0][0])
 }
@@ -867,7 +867,7 @@ func TestExecuteAggregationMinNoMatch(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	result, err := exec.Execute(ctx, "MATCH (n:MinNo) RETURN min(invalid)", nil)
+	result, err := exec.Execute(ctx, "MATCH (n:MinNo) RETURN min(n.invalid)", nil)
 	require.NoError(t, err)
 	assert.Nil(t, result.Rows[0][0])
 }
@@ -888,7 +888,7 @@ func TestExecuteAggregationMaxNoMatch(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	result, err := exec.Execute(ctx, "MATCH (n:MaxNo) RETURN max(invalid)", nil)
+	result, err := exec.Execute(ctx, "MATCH (n:MaxNo) RETURN max(n.invalid)", nil)
 	require.NoError(t, err)
 	assert.Nil(t, result.Rows[0][0])
 }

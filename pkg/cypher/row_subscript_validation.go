@@ -12,6 +12,38 @@ import (
 // every postfix subscript before a WITH or RETURN projection materializes it.
 // The expression evaluator and optimized physical plans therefore share one
 // validation boundary instead of silently converting invalid access to null.
+func validateStaticPropertySubscripts(text string, scope staticTypeScope) error {
+	for index := 0; index < len(text); index++ {
+		if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
+			index = skipCypherQuotedText(text, index, text[index]) - 1
+			continue
+		}
+		if text[index] != '[' {
+			continue
+		}
+		end := findMatchingDelimiter(text, index, '[', ']')
+		if end < 0 {
+			return nil
+		}
+		start := rowSubscriptReceiverStart(text, index)
+		if start < 0 {
+			continue
+		}
+		base, _, property := rowPropertyChainShape(strings.TrimSpace(text[start:index]))
+		if !property || scope.typeOf(base) != "Node" && scope.typeOf(base) != "Relationship" {
+			continue
+		}
+		key := strings.TrimSpace(text[index+1 : end])
+		if strings.Contains(key, "..") {
+			continue
+		}
+		if typeName := scope.staticExpressionType(key); typeName != "" && typeName != "Integer" {
+			return typeNameMismatchError("Integer", typeName)
+		}
+	}
+	return nil
+}
+
 func (e *StorageExecutor) validatePipelineProjectionSubscripts(rows []pipelineRow, clause, keyword string) error {
 	body := strings.TrimSpace(clause)
 	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {

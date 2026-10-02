@@ -866,6 +866,7 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 	}
 
 	expectSuccess := []string{
+		"CALL db.index.vector.createNodeIndex('idx','L1','embedding',2,'cosine')",
 		"CALL nornicdb.version()",
 		"CALL nornicdb.stats()",
 		"CALL nornicdb.decay.info()",
@@ -2396,6 +2397,7 @@ func TestCypherHelpers_ExecuteCallDispatchAssertions(t *testing.T) {
 	ctx := context.Background()
 
 	expectSuccess := []string{
+		"CALL db.index.vector.createNodeIndex('idx','L1','embedding',2,'cosine')",
 		"CALL db.info()",
 		"CALL db.ping()",
 		"CALL db.labels()",

@@ -156,14 +156,43 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 
 	schema := e.storage.GetSchema()
 	wantDims := 0
+	indexFound := false
 	if schema != nil {
 		if vectorIdx, exists := schema.GetVectorIndex(indexName); exists {
+			indexFound = true
 			targetLabel = vectorIdx.Label
 			targetProperty = vectorIdx.Property
 			similarityFunc = vectorIdx.SimilarityFunc
 			if vectorIdx.Dimensions > 0 {
 				wantDims = vectorIdx.Dimensions
 			}
+		}
+	}
+	if !indexFound {
+		managed := e.searchService != nil && e.searchService.EmbeddingCount() > 0
+		if !managed {
+			stop := errors.New("managed vector found")
+			err := e.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
+				for _, vector := range node.NamedEmbeddings {
+					if len(vector) > 0 {
+						return stop
+					}
+				}
+				for _, vector := range node.ChunkEmbeddings {
+					if len(vector) > 0 {
+						return stop
+					}
+				}
+				return nil
+			})
+			if err != nil && !errors.Is(err, stop) {
+				return nil, err
+			}
+			managed = errors.Is(err, stop)
+		}
+		if !managed {
+			return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "ProcedureCallFailed",
+				fmt.Sprintf("There is no such vector schema index: %s", indexName))
 		}
 	}
 	if wantDims <= 0 && len(queryVector) > 0 {

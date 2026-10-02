@@ -874,5 +874,128 @@
     "setup": ["CREATE (:T {id: 1}), (:T {id: 2})"],
     "query": "MATCH (n:T) CALL { WITH n WITH n WHERE n.id = 2 SET n.k = 1 } IN TRANSACTIONS OF 1 ROW RETURN n.id AS id ORDER BY id",
     "ordered": true
+  },
+  {
+    "name": "GH657 remaining/boolean property string subscript",
+    "setup": ["CREATE (:A {b: true, l: [1, 2], s: 'a', v: 5})"],
+    "query": "MATCH (n:A) RETURN n.b['a']",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/list property string subscript",
+    "setup": ["CREATE (:A {b: true, l: [1, 2], s: 'a', v: 5})"],
+    "query": "MATCH (n:A) RETURN n.l['a']",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/string function arithmetic argument",
+    "query": "MATCH (n:A) RETURN toUpper(n.s * 2)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/string function unary argument",
+    "query": "MATCH (n:A) RETURN toUpper(-n.v)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/size arithmetic argument",
+    "query": "MATCH (n:A) RETURN size(n.v * 2)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/missing vector index",
+    "setup": ["CREATE (:A {v: 5})"],
+    "query": "CALL db.index.vector.queryNodes('nope668', 1, [1.0]) YIELD node RETURN node",
+    "expected_code": "Neo.ClientError.Procedure.ProcedureCallFailed",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/coalesce undefined arithmetic",
+    "query": "RETURN coalesce(a / b, 2)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/quantifier scalar binding",
+    "query": "WITH 5 AS v RETURN any(x IN v WHERE x = 5) AS r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/property syntax before missing parameter",
+    "query": "WITH $m + 1 AS m RETURN m.a",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/count unwind outer shadow",
+    "query": "WITH 5 AS s RETURN COUNT { UNWIND [{a: 1}] AS s RETURN s.a } AS r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/count with outer shadow",
+    "query": "WITH 5 AS s RETURN COUNT { WITH {a: 1} AS s RETURN s.a } AS r",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/too many function arguments",
+    "query": "RETURN toUpper('a', 'b') AS x",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 remaining/missing function argument",
+    "query": "RETURN toUpper() AS x",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/string function arity",
+    "query": "RETURN toUpper('a') AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/optional arity and grammar",
+    "query": "RETURN round(1.25) AS a, substring('abc', 1) AS b, ltrim(' a') AS c, normalize('a', NFC) AS d, trim(LEADING FROM ' a') AS e",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/numeric arithmetic function",
+    "setup": ["CREATE (:A {v: 5})"],
+    "query": "MATCH (n:A) RETURN abs(n.v * 2) AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/map and list subscripts",
+    "query": "WITH {a: 1} AS m, [2, 3] AS l RETURN m['a'] AS a, l[0] AS b",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/graph property integer subscript",
+    "setup": ["CREATE (:A {l: [1, 2]})"],
+    "query": "MATCH (n:A) RETURN n.l[0] AS x, n['l'][0] AS y",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/list quantifier and iterator shadow",
+    "query": "WITH 5 AS x, [1, 2] AS v RETURN any(x IN v WHERE x = 2) AS r",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/count identity import",
+    "query": "WITH 5 AS s RETURN COUNT { WITH s AS s RETURN s } AS r",
+    "no_effects": true
+  },
+  {
+    "name": "GH657 control/count fresh local",
+    "query": "WITH 5 AS s RETURN COUNT { WITH {a: 1} AS inner RETURN inner.a } AS r",
+    "no_effects": true
   }
 ]

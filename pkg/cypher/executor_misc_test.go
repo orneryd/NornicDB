@@ -2630,7 +2630,7 @@ func TestEmbedQueryChunkedAndVectorQueryNodeBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 
 	_, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 2, [0.1,0.2])")
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureCallFailed")
 
 	_, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 2, 'hello')")
 	require.Error(t, err)

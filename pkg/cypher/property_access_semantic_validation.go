@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 )
@@ -93,9 +94,12 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 					if name == "" {
 						continue
 					}
-					if typeName := propertyAccessExpressionType(expression, types, params); typeName != "" {
-						next[normalizeProjectionColumnName(name)] = typeName
+					name = normalizeProjectionColumnName(name)
+					if _, imported := outer[name]; imported && simpleSemanticIdentifier(expression) != name {
+						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+							fmt.Sprintf("Variable `%s` already declared in outer scope", name))
 					}
+					next[name] = propertyAccessExpressionType(expression, types, params)
 				}
 			}
 			// WHERE and ORDER BY see the projection's names; ORDER BY also
@@ -123,6 +127,10 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 				return err
 			}
 			variable := normalizeProjectionColumnName(strings.TrimSpace(body[as+len("AS"):]))
+			if _, imported := outer[variable]; imported {
+				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+					fmt.Sprintf("Variable `%s` already declared in outer scope", variable))
+			}
 			element := ""
 			listType := propertyAccessExpressionType(body[:as], types, params)
 			if strings.HasPrefix(listType, "List<") && strings.HasSuffix(listType, ">") && !strings.Contains(listType, ",") {
@@ -185,6 +193,11 @@ func propertyAccessExpressionType(expression string, types map[string]string, pa
 	if _, list := stripEnclosingRowDelimiter(expression, '[', ']'); list {
 		return "List<T>"
 	}
+	if mayContainArithmetic(expression) {
+		if typeName := (staticTypeScope{values: types}).staticExpressionType(expression); typeName != "" {
+			return typeName
+		}
+	}
 	if expression[0] == '$' {
 		if params == nil {
 			return ""
@@ -215,7 +228,15 @@ func parameterPropertyAccessType(value interface{}) string {
 // rejectsPropertyAccess reports whether a known static type has no
 // properties.
 func rejectsPropertyAccess(typeName string) bool {
-	return typeName != "" && !propertyAccessStaticTypes[typeName]
+	if typeName == "" {
+		return false
+	}
+	for _, choice := range strings.Split(strings.ReplaceAll(typeName, " or ", ", "), ", ") {
+		if propertyAccessStaticTypes[choice] {
+			return false
+		}
+	}
+	return true
 }
 
 // checkPropertyAccesses checks each property access in text whose base is a

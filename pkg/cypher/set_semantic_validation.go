@@ -195,12 +195,34 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // itself (list comprehension iterators, reduce / all / any / none / single).
 // It is the one reference scanner for the static SET and CREATE checks.
 func expressionFreeVariables(expression string) []string {
+	expression = maskPathFunctionCalls(expression)
 	locals := make(map[string]struct{})
 	collectListComprehensionBindings(expression, locals)
 	collectFunctionExpressionBindings(expression, locals)
 	var names []string
 	for index := 0; index < len(expression); {
 		character := expression[index]
+		if character == '[' {
+			if closing := matchingListBracket(expression, index); closing >= 0 {
+				if pattern, projection, comprehension := splitPatternComprehension(expression[index : closing+1]); comprehension {
+					bindings := make(matchSemanticScope)
+					addMatchPatternBindingKinds(bindings, pattern)
+					if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
+						projection += ", " + pattern[where+len("WHERE"):]
+					}
+					for _, reference := range expressionFreeVariables(projection) {
+						if _, bound := bindings[reference]; bound {
+							continue
+						}
+						if _, local := locals[reference]; !local {
+							names = append(names, reference)
+						}
+					}
+					index = closing + 1
+					continue
+				}
+			}
+		}
 		if character == '\'' || character == '"' || character == '`' {
 			quote := character
 			index++
@@ -226,9 +248,52 @@ func expressionFreeVariables(expression string) []string {
 			index++
 			continue
 		}
+		if index > 0 && expression[index-1] >= '0' && expression[index-1] <= '9' {
+			index = next
+			continue
+		}
 		previous := previousSetExpressionByte(expression, index)
 		following := nextSetExpressionByte(expression, next)
 		upper := upperASCII(name)
+		if following == '(' && (upper == "TRIM" || upper == "NORMALIZE") {
+			open := skipSpaces(expression, next)
+			if closing := findMatchingParen(expression, open); closing >= 0 {
+				inner := expression[open+1 : closing]
+				parameters, grammar := trimFromArguments(inner)
+				if upper == "NORMALIZE" {
+					parameters = splitTopLevelComma(inner)
+					grammar = false
+					if len(parameters) == 2 {
+						parameters, grammar = parameters[:1], true
+					}
+				}
+				if grammar {
+					for _, parameter := range parameters {
+						for _, reference := range expressionFreeVariables(parameter) {
+							if _, local := locals[reference]; !local {
+								names = append(names, reference)
+							}
+						}
+					}
+					index = closing + 1
+					continue
+				}
+			}
+		}
+		if following == '.' {
+			functionEnd := skipSpaces(expression, next)
+			for functionEnd < len(expression) && expression[functionEnd] == '.' {
+				_, end, identifier := scanIdentifierToken(expression, skipSpaces(expression, functionEnd+1))
+				if !identifier {
+					break
+				}
+				functionEnd = skipSpaces(expression, end)
+			}
+			if functionEnd < len(expression) && expression[functionEnd] == '(' {
+				index = functionEnd + 1
+				continue
+			}
+		}
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
 		// variables and sees the outer ones; its body isn't an expression.
 		if following == '{' && (upper == "EXISTS" || upper == "COUNT" || upper == "COLLECT") {

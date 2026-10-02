@@ -320,6 +320,13 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 		if err := validateKnownFunctionsInExpression(expression); err != nil {
 			return err
 		}
+		if _, _, call := parseFunctionCallWS(expression); call {
+			for _, name := range expressionFreeVariables(expression) {
+				if _, found := scope[name]; !found {
+					return createUndefinedVariableError(name)
+				}
+			}
+		}
 		if base, _, access := splitPostfixPropertyAccess(expression); access {
 			if _, _, call := parseFunctionCallWS(base); call {
 				for _, name := range expressionFreeVariables(base) {
@@ -662,6 +669,14 @@ func isSchemaCommandStatement(cypher string) bool {
 // clause: function arguments (validateStaticFunctionVariables) and operators
 // (validateStaticOperatorTypes).
 func (e *StorageExecutor) validateStaticClauseTypes(clause pipelineClause, scope staticTypeScope) error {
+	if err := validateStaticPropertySubscripts(clause.text, scope); err != nil {
+		return err
+	}
+	if len(scope.values) > 0 {
+		if err := staticListOperandTypeError(clause.text, scope); err != nil {
+			return err
+		}
+	}
 	var projectedScope func() staticTypeScope
 	if clause.kind == pipelineClauseReturn {
 		projection, rest := splitWithProjection(clause.text)
