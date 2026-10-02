@@ -102,18 +102,21 @@ func TestMonster531RejectMalformedCompositeUnique(t *testing.T) {
 func TestMonster531TextAndPointIndexAdmission(t *testing.T) {
 	for _, testCase := range []struct {
 		kind     string
+		name     string
+		label    string
 		property string
 	}{
-		{"TEXT", "t"},
-		{"POINT", "p"},
+		{"TEXT", "s530_text", "S530", "t"},
+		{"POINT", "s530_point", "S530", "p"},
+		{"TEXT", "ti", "P", "name"},
+		{"POINT", "pi", "P", "loc"},
 	} {
-		t.Run(testCase.kind, func(t *testing.T) {
+		t.Run(testCase.kind+"/"+testCase.label, func(t *testing.T) {
 			exec, _ := newTestExecutor(t)
 			ctx := context.Background()
-			name := "s530_" + strings.ToLower(testCase.kind)
-			_, err := exec.Execute(ctx, "CREATE "+testCase.kind+" INDEX "+name+" FOR (n:S530) ON (n."+testCase.property+")", nil)
+			_, err := exec.Execute(ctx, "CREATE "+testCase.kind+" INDEX "+testCase.name+" FOR (n:"+testCase.label+") ON (n."+testCase.property+")", nil)
 			require.NoError(t, err)
-			result, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, type, properties WHERE name = '"+name+"' RETURN type, properties", nil)
+			result, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, type, properties WHERE name = '"+testCase.name+"' RETURN type, properties", nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{testCase.kind, []string{testCase.property}}}, result.Rows)
 		})

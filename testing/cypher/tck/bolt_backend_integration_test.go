@@ -29,6 +29,45 @@ func (m *conformanceDatabaseManager) Exists(name string) bool { return name == "
 
 func (m *conformanceDatabaseManager) DefaultDatabaseName() string { return "nornic" }
 
+func TestGh775_TypedNodeIndexRouting(t *testing.T) {
+	for _, mode := range []TransactionMode{AutocommitMode, ExplicitTransactionMode} {
+		t.Run(string(mode), func(t *testing.T) {
+			engine, err := storage.NewBadgerEngine(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = engine.Close() })
+			driver, shutdown := startConformanceServerWithEngine(t, storage.NewAsyncEngine(engine, nil))
+			defer shutdown()
+			backend, err := NewBoltBackend(BoltBackendConfig{Driver: driver, DatabaseName: "nornic", Mode: mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			for _, testCase := range []struct {
+				kind, name, property string
+			}{
+				{"TEXT", "ti", "name"},
+				{"POINT", "pi", "loc"},
+			} {
+				t.Run(testCase.kind, func(t *testing.T) {
+					query := "CREATE " + testCase.kind + " INDEX " + testCase.name + " FOR (n:P) ON (n." + testCase.property + ")"
+					if _, err := backend.Execute(ctx, query, nil); err != nil {
+						t.Fatal(err)
+					}
+					result, err := backend.Execute(ctx, "SHOW INDEXES YIELD name, type WHERE name = '"+testCase.name+"' RETURN type", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != testCase.kind {
+						t.Fatalf("expected %s index, got %#v", testCase.kind, result.Rows)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestBoltBackendRunsBehaviorChecksInBothTransactionModes(t *testing.T) {
 	for _, mode := range []TransactionMode{AutocommitMode, ExplicitTransactionMode} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -151,6 +190,11 @@ func startConformanceServer(t *testing.T) (neo4j.DriverWithContext, func()) {
 	if err != nil {
 		t.Fatalf("create Badger engine: %v", err)
 	}
+	return startConformanceServerWithEngine(t, engine)
+}
+
+func startConformanceServerWithEngine(t *testing.T, engine storage.Engine) (neo4j.DriverWithContext, func()) {
+	t.Helper()
 	store := storage.NewNamespacedEngine(engine, "nornic")
 	manager := &conformanceDatabaseManager{store: store}
 	config := bolt.DefaultConfig()
@@ -199,7 +243,7 @@ func startConformanceServer(t *testing.T) (neo4j.DriverWithContext, func()) {
 			t.Error("Bolt server did not stop")
 		}
 		if err := engine.Close(); err != nil {
-			t.Errorf("close Badger engine: %v", err)
+			t.Errorf("close storage engine: %v", err)
 		}
 	}
 }

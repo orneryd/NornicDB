@@ -1101,5 +1101,17 @@
     "name": "monster530 yield where static type populated",
     "setup": ["CREATE (:T)"],
     "query": "CALL db.labels() YIELD label WHERE label + 1 RETURN label"
+  },
+  {
+    "name": "GH775 typed node TEXT index metadata",
+    "setup": ["CREATE TEXT INDEX ti FOR (n:P) ON (n.name)"],
+    "query": "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties WHERE name = 'ti' RETURN name, type, entityType, labelsOrTypes, properties",
+    "no_effects": true
+  },
+  {
+    "name": "GH775 typed node POINT index metadata",
+    "setup": ["CREATE POINT INDEX pi FOR (n:P) ON (n.loc)"],
+    "query": "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties WHERE name = 'pi' RETURN name, type, entityType, labelsOrTypes, properties",
+    "no_effects": true
   }
 ]
