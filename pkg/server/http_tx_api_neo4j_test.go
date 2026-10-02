@@ -22,6 +22,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGh775_HTTPTypedNodeIndexRouting(t *testing.T) {
+	for _, testCase := range []struct {
+		kind, name, property string
+	}{
+		{"TEXT", "ti", "name"},
+		{"POINT", "pi", "loc"},
+	} {
+		for _, explicit := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/explicit=%v", testCase.kind, explicit), func(t *testing.T) {
+				server := setupAsyncUnwindServer(t)
+				token := "Bearer " + getAuthToken(t, server.auth, "admin")
+				endpoint := "/db/nornic/tx/commit"
+				if explicit {
+					endpoint = "/db/nornic/tx"
+				}
+				query := "CREATE " + testCase.kind + " INDEX " + testCase.name + " FOR (n:P) ON (n." + testCase.property + ")"
+				created := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{"statements": []map[string]any{{"statement": query}}}, token)
+				var creation TransactionResponse
+				require.NoError(t, json.Unmarshal(created.Body.Bytes(), &creation))
+				require.Empty(t, creation.Errors)
+				if explicit {
+					require.NotEmpty(t, creation.Commit)
+					endpoint = creation.Commit
+				}
+				shown := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{"statements": []map[string]any{{"statement": "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties WHERE name = '" + testCase.name + "' RETURN type, entityType, labelsOrTypes, properties"}}}, token)
+				var result TransactionResponse
+				require.NoError(t, json.Unmarshal(shown.Body.Bytes(), &result))
+				require.Empty(t, result.Errors)
+				require.Len(t, result.Results, 1)
+				require.Len(t, result.Results[0].Data, 1)
+				require.Equal(t, []any{testCase.kind, "NODE", []any{"P"}, []any{testCase.property}}, result.Results[0].Data[0].Row)
+			})
+		}
+	}
+}
+
 func TestGh776_TransactionBodiesRejectInvalidRequests(t *testing.T) {
 	server, authenticator := setupTestServerWithConfig(t, func(config *Config) {
 		config.MaxRequestSize = 256

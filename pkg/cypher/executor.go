@@ -2211,6 +2211,8 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 		startsWithKeywords(cypher, "CREATE", "INDEX") ||
 		startsWithKeywords(cypher, "CREATE", "FULLTEXT") ||
 		startsWithKeywords(cypher, "CREATE", "VECTOR") ||
+		startsWithKeywords(cypher, "CREATE", "TEXT") ||
+		startsWithKeywords(cypher, "CREATE", "POINT") ||
 		startsWithKeywords(cypher, "CREATE", "RANGE") {
 		return nil, nil, false
 	}

@@ -59,6 +59,14 @@ func TestBug_SchemaCommandsWithAsyncEngine(t *testing.T) {
 		query string
 	}{
 		{
+			name:  "CREATE TEXT INDEX ti",
+			query: "CREATE TEXT INDEX ti FOR (n:P) ON (n.name)",
+		},
+		{
+			name:  "CREATE POINT INDEX pi",
+			query: "CREATE POINT INDEX pi FOR (n:P) ON (n.loc)",
+		},
+		{
 			name: "CREATE CONSTRAINT node_id_unique",
 			query: `
 				CREATE CONSTRAINT node_id_unique IF NOT EXISTS
@@ -123,4 +131,13 @@ func TestBug_SchemaCommandsWithAsyncEngine(t *testing.T) {
 			assert.NoError(t, err, "schema command should succeed with async engine active")
 		})
 	}
+	indexes, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties WHERE name IN ['ti', 'pi'] RETURN name, type, entityType, labelsOrTypes, properties ORDER BY name", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{
+		{"pi", "POINT", "NODE", []string{"P"}, []string{"loc"}},
+		{"ti", "TEXT", "NODE", []string{"P"}, []string{"name"}},
+	}, indexes.Rows)
+	nodes, err := exec.Execute(ctx, "MATCH (n:P) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, nodes.Rows)
 }

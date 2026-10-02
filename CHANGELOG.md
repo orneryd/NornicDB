@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve locally bound iterators in nested list predicates, including
+  same-kind `all`, `any`, `none`, and `single` calls (#774, #775).
+- Route `CREATE TEXT INDEX` and `CREATE POINT INDEX` through schema execution
+  instead of async node batch creation. Preserve typed index metadata in Bolt
+  and HTTP auto-commit and explicit transactions (#775).
 - Resolve the 13 remaining reported diagnostic mismatches in #657: validate
   graph-property subscripts, arithmetic function argument types, function
   arity, undefined function-expression variables, scalar quantifier inputs,
