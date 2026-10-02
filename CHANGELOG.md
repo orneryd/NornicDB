@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comparison with a string literal is parsed once per predicate text rather
   than once per node (an unindexed read of 2,000 ids against 2,000 nodes:
   11.0 s to 3.6 s in auto-commit, 7.9 s to 0.8 s in an explicit transaction).
+- `MATCH (n:Label) WHERE n.k IN $list` no longer tests every candidate node
+  against the text of the whole list. On an indexed property the list's values
+  are looked up and the nodes returned as they are; without an index the list
+  is parsed once into its values (5,000 ids against 5,000 nodes: 30 s to 0.2 s
+  with an index, 0.6 s without).
 - `MATCH p = (n:Label)`, a named path of one node, returned no rows (and
   `MATCH p = (n:Label {k: v}) RETURN n.k` failed to evaluate): the path
   assignment was parsed as part of the node pattern.

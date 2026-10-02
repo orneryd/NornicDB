@@ -2257,8 +2257,15 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			materializedWhere = ""
 		}
 		// The predicate is tested on one row reused for every candidate; a
-		// row is built only for a candidate that passes.
+		// row is built only for a candidate that passes. A predicate with a
+		// complete plan is planned once for the row's candidates.
 		var probe pipelineRow
+		var plan *rowPredicatePlan
+		if materializedWhere != "" {
+			if planned := planRowPredicate(materializedWhere); planned != nil && planned.complete {
+				plan = planned
+			}
+		}
 		for _, node := range candidates.nodes {
 			var path interface{}
 			if pathVariable != "" {
@@ -2275,7 +2282,11 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 				if pathVariable != "" {
 					probe[pathVariable] = path
 				}
-				if !e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(probe)) {
+				if plan != nil {
+					if !e.evaluateRowPredicatePlan(ctx, plan, map[string]interface{}(probe)) {
+						continue
+					}
+				} else if !e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(probe)) {
 					continue
 				}
 			}
@@ -2439,6 +2450,29 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 	// size (#703).
 	if nodes, used, err := e.tryCollectNodesFromIDInParam(nodePattern, whereClause, params); err != nil || used {
 		return nodes, used, err
+	}
+	// A WHERE that is exactly <variable>.<property> IN <list> on an indexed
+	// property is answered by the index: one lookup per list value returns
+	// exactly the nodes it selects, so the caller doesn't test each of them
+	// against the whole list again (quadratic in the list for a list that
+	// names every node).
+	exactPlans := []func() ([]*storage.Node, bool, error){
+		func() ([]*storage.Node, bool, error) {
+			return e.tryCollectNodesFromPropertyIndexIn(nodePattern, whereClause, params)
+		},
+		func() ([]*storage.Node, bool, error) {
+			return e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, whereClause)
+		},
+	}
+	for _, plan := range exactPlans {
+		nodes, used, err := plan()
+		if err == nil && !used {
+			continue
+		}
+		if err == nil && len(nodePattern.properties) > 0 {
+			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+		}
+		return nodes, used && err == nil, err
 	}
 	indexedPlans := []func() ([]*storage.Node, bool, error){
 		func() ([]*storage.Node, bool, error) {
