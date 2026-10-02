@@ -2413,6 +2413,17 @@ func replaceQualifiedReferenceOutsideQuotes(input, reference, replacement string
 // of the shared property-index operators can safely narrow the MATCH. The
 // complete predicate is still evaluated after the join, so these operators
 // only affect the physical seed source and never the logical result.
+// whereIsSimpleIndexedIn reports whether a WHERE is exactly
+// <variable>.<property> IN <parameter or literal list>, the form the IN-list
+// plan answers completely.
+func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, whereClause string, params map[string]interface{}) bool {
+	if _, _, ok := e.parseSimpleIndexedInParam(variable, whereClause, params); ok {
+		return true
+	}
+	_, _, ok := e.parseSimpleIndexedInLiteral(ctx, variable, whereClause)
+	return ok
+}
+
 func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
 	params := getParamsFromContext(ctx)
 	streamingWhere := ""
@@ -2451,48 +2462,29 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 	if nodes, used, err := e.tryCollectNodesFromIDInParam(nodePattern, whereClause, params); err != nil || used {
 		return nodes, used, err
 	}
-	// A WHERE that is exactly <variable>.<property> IN <list> on an indexed
-	// property is answered by the index: one lookup per list value returns
-	// exactly the nodes it selects, so the caller doesn't test each of them
-	// against the whole list again (quadratic in the list for a list that
-	// names every node).
-	exactPlans := []func() ([]*storage.Node, bool, error){
-		func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexIn(nodePattern, whereClause, params)
-		},
-		func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, whereClause)
-		},
-	}
-	for _, plan := range exactPlans {
-		nodes, used, err := plan()
-		if err == nil && !used {
-			continue
-		}
-		if err == nil && len(nodePattern.properties) > 0 {
-			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
-		}
-		return nodes, used && err == nil, err
-	}
-	indexedPlans := []func() ([]*storage.Node, bool, error){
-		func() ([]*storage.Node, bool, error) {
+	// inList marks the plan that answers a WHERE that is exactly an IN list.
+	indexedPlans := []struct {
+		collect func() ([]*storage.Node, bool, error)
+		inList  bool
+	}{
+		{collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
-		},
-		func() ([]*storage.Node, bool, error) {
+		}},
+		{collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereClause, params)
-		},
-		func() ([]*storage.Node, bool, error) {
+		}},
+		{inList: true, collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, whereClause, params)
-		},
-		func() ([]*storage.Node, bool, error) {
+		}},
+		{collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereClause)
-		},
-		func() ([]*storage.Node, bool, error) {
+		}},
+		{collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexNotNull(nodePattern, whereClause)
-		},
+		}},
 	}
 	for _, plan := range indexedPlans {
-		nodes, used, err := plan()
+		nodes, used, err := plan.collect()
 		if err != nil {
 			return nil, false, err
 		}
@@ -2500,7 +2492,15 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 			if len(nodePattern.properties) > 0 {
 				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
 			}
-			return nodes, false, nil
+			// A WHERE that is exactly <variable>.<property> IN <list> on an
+			// indexed property is answered by the index: one lookup per list
+			// value returns exactly the nodes it selects, so the caller
+			// doesn't test each of them against the whole list again
+			// (quadratic in the list for a list that names every node).
+			// Checked only once the index answered, so a read that takes
+			// another route doesn't parse its WHERE for it.
+			exact := plan.inList && e.whereIsSimpleIndexedIn(ctx, nodePattern.variable, whereClause, params)
+			return nodes, exact, nil
 		}
 	}
 	nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, streamingWhere, hint.earlyLimit)
