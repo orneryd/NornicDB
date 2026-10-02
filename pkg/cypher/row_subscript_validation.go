@@ -8,10 +8,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// validatePipelineProjectionSubscripts applies Cypher's runtime type rules to
-// every postfix subscript before a WITH or RETURN projection materializes it.
-// The expression evaluator and optimized physical plans therefore share one
-// validation boundary instead of silently converting invalid access to null.
+// validateStaticPropertySubscripts rejects postfix access with incompatible
+// receiver or key types known before execution.
 func validateStaticPropertySubscripts(text string, scope staticTypeScope) error {
 	for index := 0; index < len(text); index++ {
 		if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
@@ -29,16 +27,28 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 		if start < 0 {
 			continue
 		}
-		base, _, property := rowPropertyChainShape(strings.TrimSpace(text[start:index]))
-		if !property || scope.typeOf(base) != "Node" && scope.typeOf(base) != "Relationship" {
+		receiver := strings.TrimSpace(text[start:index])
+		base, _, property := rowPropertyChainShape(receiver)
+		receiverType := scope.staticExpressionType(receiver)
+		expectedKeyType := ""
+		switch {
+		case property && (scope.typeOf(base) == "Node" || scope.typeOf(base) == "Relationship"):
+			expectedKeyType = "Integer"
+		case strings.HasPrefix(receiverType, "List<"):
+			expectedKeyType = "Integer"
+		case receiverType == "Map" || receiverType == "Node" || receiverType == "Relationship":
+			expectedKeyType = "String"
+		case receiverType == "String" || receiverType == "Boolean" || receiverType == "Integer" || receiverType == "Float" || receiverType == "Duration" || receiverType == "Date" || receiverType == "Time" || receiverType == "LocalTime" || receiverType == "DateTime" || receiverType == "LocalDateTime":
+			return typeNameMismatchError("List<T>, Map, Node or Relationship", receiverType)
+		default:
 			continue
 		}
 		key := strings.TrimSpace(text[index+1 : end])
 		if strings.Contains(key, "..") {
 			continue
 		}
-		if typeName := scope.staticExpressionType(key); typeName != "" && typeName != "Integer" {
-			return typeNameMismatchError("Integer", typeName)
+		if typeName := scope.staticExpressionType(key); typeName != "" && typeName != expectedKeyType {
+			return typeNameMismatchError(expectedKeyType, typeName)
 		}
 	}
 	return nil
@@ -197,7 +207,15 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 	case ']':
 		start = matchingRowDelimiterStart(expression, end, '[', ']')
 		if start > 0 {
-			return rowSubscriptReceiverStart(expression, start)
+			receiverStart := rowSubscriptReceiverStart(expression, start)
+			if receiverStart >= 0 {
+				switch upperASCII(strings.TrimSpace(expression[receiverStart:start])) {
+				case "RETURN", "WITH", "UNWIND", "WHERE", "IN", "AS", "THEN", "ELSE", "WHEN", "DISTINCT":
+					return start
+				default:
+					return receiverStart
+				}
+			}
 		}
 		return start
 	case ')':

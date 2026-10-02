@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -596,6 +597,16 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		clauses.WriteString("WITH *" + paging + " ")
 	}
 	if where := segmentText(3); where != "" {
+		types := map[string]string{"name": "String"}
+		for _, item := range yield.items {
+			if item.alias != "" && types[item.name] != "" {
+				types[item.alias] = types[item.name]
+			}
+		}
+		clause := pipelineClause{kind: pipelineClauseWith, text: "WITH * WHERE " + where}
+		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{values: types}, nil, getParamsFromContext(ctx)); err != nil {
+			return nil, nornicerrors.MarkCompileTime(err)
+		}
 		clauses.WriteString("WITH * WHERE " + where + " ")
 	}
 	quoted := make([]string, len(outputs))

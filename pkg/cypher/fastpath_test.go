@@ -13,6 +13,7 @@ import (
 
 // TestFastPath_MatchCreateDeleteRel tests the fast-path for MATCH...CREATE...DELETE patterns.
 func TestFastPath_MatchCreateDeleteRel(t *testing.T) {
+	requirePerformanceWorkload(t)
 	baseEngine := newTestMemoryEngine(t)
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -63,6 +64,7 @@ func TestFastPath_MatchCreateDeleteRel(t *testing.T) {
 
 // TestFastPath_LDBCPattern tests the LDBC-style pattern with property matching.
 func TestFastPath_LDBCPattern(t *testing.T) {
+	requirePerformanceWorkload(t)
 	baseEngine := newTestMemoryEngine(t)
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")

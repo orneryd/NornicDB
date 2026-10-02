@@ -3,8 +3,32 @@ package cypher
 import (
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResidualShowSchemaNonBooleanPredicates(t *testing.T) {
+	for _, populated := range []bool{false, true} {
+		exec, ctx := newUnitExecutor(t)
+		name := "empty"
+		if populated {
+			name = "populated"
+			_, err := exec.Execute(ctx, "CREATE INDEX named FOR (n:P) ON (n.k)", nil)
+			require.NoError(t, err)
+		}
+		for _, query := range []string{
+			"SHOW INDEXES YIELD name WHERE 1 RETURN name",
+			"SHOW INDEXES YIELD name WHERE name + 1 RETURN name",
+		} {
+			t.Run(name+"/"+query, func(t *testing.T) {
+				_, err := exec.Execute(ctx, query, nil)
+				require.Error(t, err, query)
+				code, _ := nornicerrors.Neo4jStatus(err)
+				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
+			})
+		}
+	}
+}
 
 func TestShowSchemaYieldWhereReturn(t *testing.T) {
 	executor, ctx := newUnitExecutor(t)

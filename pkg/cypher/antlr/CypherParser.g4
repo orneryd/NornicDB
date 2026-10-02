@@ -61,7 +61,11 @@ transactionStatement
 
 // statements
 query
-    : queryPrefix? (regularQuery | standaloneCall | schemaCommand | showCommand)
+    : queryPrefix* useClause? (regularQuery | standaloneCall | schemaCommand | administrationCommand | showCommand)
+    ;
+
+useClause
+    : USE (symbol (DOT symbol)* | functionInvocation)
     ;
 
 // EXPLAIN/PROFILE prefix
@@ -72,18 +76,33 @@ queryPrefix
 
 // SHOW commands
 showCommand
-        : SHOW (INDEXES | INDEX | CONSTRAINTS | CONSTRAINT | PROCEDURES | FUNCTIONS | DATABASE | DATABASES | ALL?)
+        : SHOW ((ALL | FULLTEXT | RANGE_INDEX | TEXT | POINT | VECTOR | LOOKUP)? (INDEXES | INDEX)
+            | CONSTRAINTS | CONSTRAINT | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
+            | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | ALL)
             (YIELD (MULT | yieldItems) returnSt?)?
+    ;
+
+administrationCommand
+    : CREATE COMPOSITE? DATABASE name (IF NOT EXISTS)?
+    | DROP COMPOSITE? DATABASE name (IF EXISTS)?
+    | CREATE ALIAS qualifiedName (IF NOT EXISTS)? FOR DATABASE qualifiedName
+    | DROP ALIAS qualifiedName (IF EXISTS)? (FOR DATABASE)?
+    | ALTER COMPOSITE DATABASE name (ADD ALIAS qualifiedName FOR DATABASE qualifiedName | DROP ALIAS qualifiedName)
+    ;
+
+qualifiedName
+    : name (DOT name)*
     ;
 
 // Schema commands (DROP INDEX, CREATE INDEX, etc.)
 schemaCommand
     : DROP INDEX name? (IF EXISTS)?
-    | CREATE INDEX name? (IF NOT EXISTS)? (FOR nodePattern)? ON? parenExpressionChain?
-    | CREATE FULLTEXT INDEX name? (IF NOT EXISTS)? (FOR nodePattern)? ON? EACH? LBRACK expressionChain RBRACK
-    | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR nodePattern)? ON? parenExpressionChain? (OPTIONS mapLit)?
+    | CREATE (RANGE_INDEX | TEXT | POINT)? INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? parenExpressionChain? (OPTIONS mapLit)?
+    | CREATE FULLTEXT INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? EACH? LBRACK expressionChain RBRACK (OPTIONS mapLit)?
+    | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? parenExpressionChain? (OPTIONS mapLit)?
+    | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
     | DROP CONSTRAINT name? (IF EXISTS)?
-    | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR nodePattern)? REQUIRE (expression | parenExpressionChain) (IS UNIQUE | IS NOT NULL_W | IS NODE KEY | IS COLON COLON propertyTypeName | IS TYPED propertyTypeName) (OPTIONS mapLit)?
+    | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE (expression | parenExpressionChain) (IS UNIQUE | IS NOT NULL_W | IS NODE KEY | IS COLON COLON propertyTypeName | IS TYPED propertyTypeName) (OPTIONS mapLit)?
     | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | NODE KEY | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS mapLit)?
     ;
 
@@ -101,25 +120,29 @@ singleQuery
     ;
 
 standaloneCall
-    : CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems))?
+    : CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
     ;
 
 // Subqueries
 existsSubquery
-    : EXISTS LBRACE matchSt RBRACE
+    : EXISTS LBRACE (matchSt | subqueryBody | pattern where?) RBRACE
     ;
 
 countSubquery
-    : COUNT LBRACE matchSt RBRACE
+    : COUNT LBRACE (matchSt | subqueryBody | pattern where?) RBRACE
+    ;
+
+collectSubquery
+    : COLLECT LBRACE regularQuery RBRACE
     ;
 
 callSubquery
-    : CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF numLit ROWS)?)?
+    : CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF (numLit | parameter) (ROW | ROWS))?)?
     ;
 
 // Subquery body can start with WITH (to import variables) or have statements
 subqueryBody
-    : withSt? (readingStatement | updatingStatement)* returnSt?
+    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (returnSt | FINISH)? (UNION ALL? subqueryBody)?
     ;
 
 returnSt
@@ -213,7 +236,7 @@ foreachSt
     ;
 
 queryCallSt
-    : CALL invocationName parenExpressionChain (YIELD yieldItems)?
+    : CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
     ;
 
 parenExpressionChain
@@ -247,7 +270,7 @@ setItem
     ;
 
 nodeLabels
-    : (COLON name)+
+    : (COLON (name (STICK name)* | DOLLAR LPAREN expression RPAREN))+
     ;
 
 createSt
@@ -279,8 +302,8 @@ andExpression
     ;
 
 notExpression
-    : NOT? comparisonExpression
-    | NOT? existsSubquery
+    : NOT* comparisonExpression
+    | NOT* existsSubquery
     ;
 
 comparisonExpression
@@ -319,7 +342,7 @@ atomicExpression
 
 listExpression
     : IN propertyOrLabelExpression
-    | LBRACK (expression? RANGE expression? | expression) RBRACK
+    | LBRACK (expression? RANGE expression? | expression) RBRACK (DOT name)*
     ;
 
 stringExpression
@@ -374,10 +397,12 @@ nodePattern
 atom
     : literal
     | parameter
+    | mapProjection
     | caseExpression
     | reduceExpression
     | countAll
     | countSubquery
+    | collectSubquery
     | listComprehension
     | patternComprehension
     | filterWith
@@ -386,6 +411,16 @@ atom
     | functionInvocation
     | symbol
     | subqueryExist
+    ;
+
+mapProjection
+    : symbol LBRACE (mapProjectionItem (COMMA mapProjectionItem)*)? RBRACE
+    ;
+
+mapProjectionItem
+    : DOT (name | MULT)
+    | name COLON expression
+    | symbol
     ;
 
 lhs
@@ -419,6 +454,7 @@ invocationName
 
 functionInvocation
     : invocationName LPAREN DISTINCT? expressionChain? RPAREN
+    | TRIM LPAREN (LEADING | TRAILING | BOTH)? expression? FROM expression RPAREN
     ;
 
 parenthesizedExpression
@@ -462,7 +498,7 @@ reduceExpression
     ;
 
 parameter
-    : DOLLAR (symbol | numLit)
+    : DOLLAR (name | numLit)
     ;
 
 // literals
@@ -486,12 +522,11 @@ boolLit
     ;
 
 integerLit
-    : INTEGER
-    | DIGIT
+    : (PLUS | SUB)? (INTEGER | DIGIT)
     ;
 
 numLit
-    : FLOAT
+    : (PLUS | SUB)? FLOAT
     | integerLit
     ;
 
@@ -548,6 +583,22 @@ symbol
     | DROP
     | CREATE
     | VECTOR
+    | LOOKUP
+    | USE
+    | ALIAS
+    | ALIASES
+    | COMPOSITE
+    | ALTER
+    | ADD
+    | RANGE_INDEX
+    | TEXT
+    | POINT
+    | ROW
+    | TRIM
+    | FROM
+    | LEADING
+    | TRAILING
+    | BOTH
     | DELETE
     | ADD
     | REMOVE
@@ -558,6 +609,10 @@ symbol
     | PROCEDURES
     | FUNCTIONS
     | DATABASE
+    | DATABASES
+    | CALL
+    | EXPLAIN
+    | PROFILE
     | EXISTS
     | SHOW
     | OPTIONS
@@ -583,6 +638,7 @@ symbol
     | ALL
     | SHORTESTPATH
     | ALLSHORTESTPATHS
+    | reservedWord
     ;
 
 reservedWord
@@ -609,6 +665,7 @@ reservedWord
     | WHERE
     | WITH
     | UNION
+    | FINISH
     | UNWIND
     | AND
     | AS

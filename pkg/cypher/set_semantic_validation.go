@@ -200,6 +200,7 @@ func expressionFreeVariables(expression string) []string {
 	collectListComprehensionBindings(expression, locals)
 	collectFunctionExpressionBindings(expression, locals)
 	var names []string
+	delimiters := make([]byte, 0, 8)
 	for index := 0; index < len(expression); {
 		character := expression[index]
 		if character == '[' {
@@ -242,6 +243,14 @@ func expressionFreeVariables(expression string) []string {
 				index++
 			}
 			continue
+		}
+		switch character {
+		case '(', '[', '{':
+			delimiters = append(delimiters, character)
+		case ')', ']', '}':
+			if len(delimiters) > 0 {
+				delimiters = delimiters[:len(delimiters)-1]
+			}
 		}
 		name, next, ok := scanIdentifierToken(expression, index)
 		if !ok {
@@ -290,6 +299,7 @@ func expressionFreeVariables(expression string) []string {
 				functionEnd = skipSpaces(expression, end)
 			}
 			if functionEnd < len(expression) && expression[functionEnd] == '(' {
+				delimiters = append(delimiters, '(')
 				index = functionEnd + 1
 				continue
 			}
@@ -302,12 +312,24 @@ func expressionFreeVariables(expression string) []string {
 				continue
 			}
 		}
-		if previous != '$' && previous != '.' && following != '(' && following != ':' && !setExpressionKeyword(upper) {
+		mapKey := following == ':' && len(delimiters) > 0 && delimiters[len(delimiters)-1] == '{' && (previous == '{' || previous == ',')
+		if previous != '$' && previous != '.' && following != '(' && !mapKey && !setExpressionKeyword(upper) {
 			if _, exists := locals[name]; !exists {
 				names = append(names, name)
 			}
 		}
 		index = next
+		if following == ':' && !mapKey {
+			labelStart := skipSpaces(expression, next)
+			for labelStart < len(expression) && expression[labelStart] == ':' {
+				_, labelEnd, valid := scanIdentifierToken(expression, skipSpaces(expression, labelStart+1))
+				if !valid {
+					break
+				}
+				labelStart = skipSpaces(expression, labelEnd)
+				index = labelStart
+			}
+		}
 	}
 	return names
 }

@@ -219,3 +219,104 @@ and deterministic-test work in #773; their changes are not silently folded into
 this PR. Separate TestKit infrastructure and the reporter's external recall
 dataset are not PR #771 execution acceptance tasks. This report does not imply
 those independent issues were closed or their evidence fabricated.
+
+## Residual Close-Out: 2026-10-02
+
+Current main baseline: `1da71c87`, after #773 and #774 merged. #775 is rebased
+and pushed separately at `c596209e`; its fixes are not credited to main until
+merged. The current instruction is to fix residuals on main, then commit, push,
+and close only fully resolved issues with observed Neo4j comparison matrices.
+
+Latest issue bodies/comments and the open issue list were reviewed. This table
+separates behavioral residuals from larger acceptance criteria; a passing narrow
+reproducer is not a claim that an architecture family is complete.
+
+| Issue | Remaining Scope | Current Status |
+| --- | --- | --- |
+| #698 | Five latest expression diagnostics and parameter/static/runtime subscript distinctions. | Reproduced and repaired; eight-path raw-code/phase/effect comparisons pass. FLOAT parameter indexes retain runtime errors. CASE label-predicate variable references also repaired. |
+| #715 | Timing-dependent correctness tests under host load/race instrumentation. | Bolt throughput, Cypher fast-path/profile workloads and COUNT timing now require explicit non-race/non-short opt-in. Deterministic gate controls pass; COUNT correctness stays active. No performance claim. |
+| #739 | Forced-ANTLR valid Neo4j syntax and CALL diagnostic details. | Reported cases and newly exposed standard grammar gaps repaired; both parser ratchets pass 7,794/7,794 and full eight-path reference matrix passes. Native-only DSL/legacy permissive forms are not represented as Neo4j parity. |
+| #743, #781 | FINISH-only UNION, pre-write column mismatch rejection and phantom/unlabeled node prevention. | Reproduced and repaired; graph-effect and raw-code comparisons pass across all eight paths. |
+| #782 | Leading unit CALL CREATE FINISH and scoped SET FINISH. | Reproduced and repaired in both parsers; rows and exact graph effects match the reference. |
+| #783 | Explicit/empty CALL imports and variable-only import validation. | Shared scope validation repaired; valid imports and rejected outer/property reads match the reference. |
+| #744, #784 | Query options/versions, statement termination, repeated modes and HTTP PROFILE shape. | Preamble diagnostics and HTTP envelopes match live reference. Composite EXPLAIN/PROFILE/CYPHER dispatch passes explicit-transaction native controls in both parsers; no live Enterprise comparison is claimed. |
+| #785 | Repeated composite UNIQUE property diagnostic. | Repaired to RepeatedPropertyInCompositeSchema; raw status, compile phase and no-effects controls pass. This does not credit unmerged #775 composite uniqueness. |
+| #786 | Empty/populated SHOW non-boolean predicates. | Shared compile-time boolean validation repaired; invalid/valid alias-predicate controls pass in both parsers and both wire protocols. |
+| #530 | Procedure/function inventory and descriptions, database/user/transaction values, wider SHOW value parity. | Broad family remains open; #775 covers only selected schema/YIELD cases. |
+| #531 | Community NODE KEY compatibility policy and native knowledge-profile option/admission residuals, broader schema values. | Broad family remains open; typed TEXT/POINT/composite uniqueness work stays in #775. Native features must not be silently removed to imitate Community licensing. |
+| #812 | Invalid execute body abort, empty bodies/objects, trailing document framing. | Repaired lifecycle/status/raw-code/graph effects; first document executes and suffixes are ignored without executing a second document. Size-limit rejection remains before writes. Both backends and live reference controls pass. |
+| #814 | Complete label-less indexed property MATCH. | Repaired with complete fallback unless indexed labels cover the namespace; other-label/unlabeled and transaction read controls pass. |
+| #815 | Parameter named as before AS alias. | Shared lexical/UNWIND split and ANTLR parameter admission repaired; eight-path parameter regressions pass. |
+| #816 | Comma-MATCH bound paths and shortestPath. | Variable recognition/binding repaired; rows and mutations match reference across all eight paths. |
+| #713 | 32 reported statements already match; one projection/column-naming/planning implementation remains an acceptance criterion. | Structural inventory/convergence not complete. |
+| #728 | 38 statements and bounded products already match; WHERE placement/evaluator convergence and compiled-WHERE cost evidence remain. | Structural inventory/convergence not complete; no benchmark claim. |
+| #547 | Preparation, typed bindings/outcomes, scanner, storage contract/repair/iterators, typed evaluation, file limits and CI reporting. | Multi-module architecture checklist remains open. |
+| #754 | Issue-linked mismatch ratchet, reset retries, complete error/effect checks, real TestKit orchestration/baseline. | Infrastructure acceptance remains open. |
+| #657 | Already closed; latest 13-diagnostic/four-route matrix is published. | Do not reopen or claim original 71-case replay/message-position coverage from that finite matrix. |
+
+Unrelated GraphQL, UI, ORM and i18n product requests are not closed by Cypher
+residual work. Interrupted checks are not counted as passing evidence.
+
+### Static Subscript Evidence
+
+The three #698 subscript queries failed before repair with TypeError rather
+than the reference SyntaxError. Permanent ordinary tests cover all five latest
+cases. Pinned Neo4j 5.26.30 was queried for the affected older boolean/numeric/
+Unicode literal tests before correcting their expectations. FLOAT parameter
+indexes remain runtime TypeError; parameter MAP/STRING cases are compile errors.
+
+The unmodified official openCypher List1 scenario [6] expects TypeError for
+four statically known scalar receivers, and Map2 scenario [6] expects a runtime
+integer-map-key error. Pinned Neo4j 5.26.30 returns compile-time SyntaxError
+for these exact queries. Explicit scenario-scoped harness profiles accept only
+these five diagnostics, retaining raw Bolt codes, compile phase and graph-effect
+assertions. The corpus, ratchet baseline and differential wire-code checks are
+unchanged. Negative controls reject other scenarios, unrelated errors, runtime
+failures and graph effects.
+
+### Final Reference Matrix
+
+Reference: `neo4j:5.26.30-community`, digest
+`sha256:3388e05ee53c8313d01acdf33e63ad175af95a92226dc8551160564439ce2c8c`.
+Each fixed case runs in auto-commit and explicit transactions. Both parser
+settings run independently; HTTP and Bolt reset the shared reference sequentially.
+The original 116-case prefix remains intact.
+
+| Gate | Native Parser | ANTLR Parser |
+| --- | --- | --- |
+| Official openCypher, two transaction modes | 7,794/7,794 | 7,794/7,794 |
+| Bolt differential, 320 cases x two modes | 640/640 | 640/640 |
+| HTTP differential, 325 cases x two modes | 650/650 | 650/650 |
+
+Total: 2,580 live comparisons, checking columns/rows, raw errors, phase and graph
+effects. HTTP-specific plan-envelope cases account for the five additional cases.
+No unexpected error-presence differences occurred. New grammar controls cover
+both quote styles with literal newlines, post-index parameter/member access
+(also in WHERE), standalone CALL pagination and scoped CALL UNION.
+
+### Verification Limits
+
+- The broad Cypher race suite passes after correcting the now-valid CALL/UNION
+  redaction fixture and separating COUNT timing from unconditional correctness.
+  Broad ANTLR/Bolt/TCK race checks and the focused HTTP lifecycle/plan slice
+  (with live reference) pass. The broad server race suite exceeded its cumulative
+  ten-minute budget while starting TestRetentionPolicies_POST_AddPolicy; it is
+  not counted as passing and emitted no race report/assertion failure.
+- The complete repository correctness rerun passes with performance/throughput/
+  benchmark-named tests excluded and profiling workloads disabled by default.
+  Scoped vet and the tagged server build pass; editor checks report no errors
+  in the touched owner modules.
+- No throughput, latency benchmark or allocation claim is made. Timing/profile
+  workloads require `NORNICDB_RUN_PERFORMANCE_TESTS=1` and are disabled under
+  race/short runs. Larger architecture/allocation gates remain open.
+- Full vet reports existing generated-ANTLR unreachable code, Vulkan/oslocale
+  unsafe-pointer and pool method-signature categories. Scoped vet excludes only
+  those categories; golangci-lint is unavailable.
+- The ordinary forced-parser suite also contains native policy/cardinality/
+  contract/knowledge-profile DSL, single-quoted map keys, legacy bare index ON
+  forms, invalid SET-to-UNWIND ordering and old malformed-input message checks.
+  These are not claimed as an all-green Neo4j-standard suite, and no grammar
+  bypass was added. Native correctness is validated separately.
+- #530, #531, #713, #728, #547 and #754 retain the acceptance criteria listed
+  above. #775 remains separate/unmerged. Community licensing and Enterprise
+  composites are not silently treated as reference-tested native behavior.

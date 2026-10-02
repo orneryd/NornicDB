@@ -126,7 +126,7 @@ func pipelineClausesFor(cypher string) ([]pipelineClause, bool) {
 // top-level AS into the list expression and the alias; an AS inside a
 // string, list or map belongs to the expression.
 func splitUnwindBody(body string) (list, alias string, ok bool) {
-	index := findKeywordIndexInContext(body, "AS")
+	index := topLevelKeywordIndex(body, "AS")
 	if index <= 0 {
 		return "", "", false
 	}
@@ -1790,6 +1790,34 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 }
 
 func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+	body := pipelineClauseBody(clause, "MATCH")
+	patternEnd := len(body)
+	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
+		patternEnd = where
+	}
+	parts := splitTopLevelComma(body[:patternEnd])
+	if len(parts) > 1 && extractPathAssignmentVariable(parts[len(parts)-1]) != "" {
+		nodePrefix := true
+		for _, part := range parts[:len(parts)-1] {
+			if !strings.HasPrefix(strings.TrimSpace(part), "(") || containsRelExistencePattern(part) {
+				nodePrefix = false
+				break
+			}
+		}
+		if nodePrefix {
+			for index, part := range parts {
+				if index == len(parts)-1 {
+					part += " " + body[patternEnd:]
+				}
+				expanded, handled, err := e.pipelineApplyMatch(ctx, rows, "MATCH "+part)
+				if !handled || err != nil {
+					return expanded, handled, err
+				}
+				rows = expanded
+			}
+			return rows, true, nil
+		}
+	}
 	if product, supported, err := e.pipelineNodeProductSource(ctx, rows, clause); supported || err != nil {
 		if err != nil {
 			return nil, true, err

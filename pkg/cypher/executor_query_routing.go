@@ -816,7 +816,17 @@ func (e *StorageExecutor) validateSyntax(cypher string) error {
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
 func (e *StorageExecutor) validateSyntaxANTLR(cypher string) error {
-	return antlr.Validate(cypher)
+	parserError := antlr.Validate(cypher)
+	if parserError == nil {
+		return nil
+	}
+	if err := e.validateSyntaxNornic(cypher); err != nil {
+		return err
+	}
+	if err := e.validateMatchSemanticScopes(cypher); err != nil {
+		return err
+	}
+	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", parserError.Error())
 }
 
 // validateSyntaxNornic performs fast inline syntax validation.

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 
 	"github.com/cucumber/godog"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 const (
@@ -46,24 +48,26 @@ var bindingPatterns = []string{
 }
 
 type scenarioState struct {
-	backend Backend
-	params  map[string]any
-	result  QueryResult
-	err     error
-	before  GraphSnapshot
-	after   GraphSnapshot
+	backend      Backend
+	featureURI   string
+	scenarioName string
+	params       map[string]any
+	result       QueryResult
+	err          error
+	before       GraphSnapshot
+	after        GraphSnapshot
 }
 
 // RegisterSteps installs all step forms used by the pinned openCypher corpus.
 // Each scenario receives a fresh backend from factory.
 func RegisterSteps(ctx *godog.ScenarioContext, factory BackendFactory) {
 	state := &scenarioState{}
-	ctx.Before(func(runCtx context.Context, _ *godog.Scenario) (context.Context, error) {
+	ctx.Before(func(runCtx context.Context, scenario *godog.Scenario) (context.Context, error) {
 		backend, err := factory(runCtx)
 		if err != nil {
 			return runCtx, fmt.Errorf("create scenario backend: %w", err)
 		}
-		*state = scenarioState{backend: backend, params: map[string]any{}}
+		*state = scenarioState{backend: backend, params: map[string]any{}, featureURI: scenario.Uri, scenarioName: scenario.Name}
 		return runCtx, nil
 	})
 	ctx.After(func(runCtx context.Context, _ *godog.Scenario, scenarioErr error) (context.Context, error) {
@@ -220,16 +224,63 @@ func (s *scenarioState) expectError(errorType, phase, detail string) error {
 	if !errors.As(s.err, &queryErr) {
 		return fmt.Errorf("unclassified query error %T: %w", s.err, s.err)
 	}
-	if errorType != "Error" && errorType != "*" && queryErr.Type != errorType {
+	legacyStaticListType := errorType == "TypeError" && phase == "any time" && detail == "InvalidArgumentType" && s.matchesNeo4j526StaticListDiagnostic(queryErr)
+	legacyStaticMapKey := errorType == "Error" && phase == "runtime" && detail == "MapElementAccessByNonString" && s.matchesNeo4j526StaticMapDiagnostic(queryErr)
+	if errorType != "Error" && errorType != "*" && queryErr.Type != errorType && !legacyStaticListType {
 		return fmt.Errorf("error type differs: got %q, want %q", queryErr.Type, errorType)
 	}
-	if phase != "any time" && queryErr.Phase != phase {
+	if phase != "any time" && queryErr.Phase != phase && !legacyStaticMapKey {
 		return fmt.Errorf("error phase differs: got %q, want %q", queryErr.Phase, phase)
 	}
-	if detail != "*" && queryErr.Detail != detail {
+	if detail != "*" && queryErr.Detail != detail && !legacyStaticListType && !legacyStaticMapKey {
 		return fmt.Errorf("error detail differs: got %q, want %q", queryErr.Detail, detail)
 	}
 	return s.expectNoSideEffects()
+}
+
+func (s *scenarioState) matchesNeo4j526StaticMapDiagnostic(queryErr *QueryError) bool {
+	if queryErr.Type != "SyntaxError" || queryErr.Phase != "compile time" ||
+		!strings.HasSuffix(filepath.ToSlash(s.featureURI), "/expressions/map/Map2.feature") ||
+		s.scenarioName != "[6] Fail at runtime when attempting to index with an Int into a Map" {
+		return false
+	}
+	if queryErr.Detail != "InvalidArgumentType" && queryErr.Detail != "50N42" {
+		return false
+	}
+	var raw *neo4j.Neo4jError
+	return errors.As(queryErr, &raw) && raw.Code == "Neo.ClientError.Statement.SyntaxError" &&
+		(strings.HasPrefix(raw.Msg, "Type mismatch: expected String but was Integer") ||
+			strings.HasPrefix(raw.Msg, "Type mismatch: map key must be given as String, but was Integer"))
+}
+
+func (s *scenarioState) matchesNeo4j526StaticListDiagnostic(queryErr *QueryError) bool {
+	if queryErr.Type != "SyntaxError" || queryErr.Phase != "compile time" ||
+		!strings.HasSuffix(filepath.ToSlash(s.featureURI), "/expressions/list/List1.feature") {
+		return false
+	}
+	prefix := "[6] Fail when indexing a non-list #Example: "
+	if !strings.HasPrefix(s.scenarioName, prefix) {
+		return false
+	}
+	typeName := ""
+	switch strings.TrimPrefix(s.scenarioName, prefix) {
+	case "boolean":
+		typeName = "Boolean"
+	case "integer":
+		typeName = "Integer"
+	case "float":
+		typeName = "Float"
+	case "string":
+		typeName = "String"
+	default:
+		return false
+	}
+	if queryErr.Detail != "InvalidArgumentType" && queryErr.Detail != "50N42" && queryErr.Detail != "*" {
+		return false
+	}
+	var raw *neo4j.Neo4jError
+	return errors.As(queryErr, &raw) && raw.Code == "Neo.ClientError.Statement.SyntaxError" &&
+		strings.HasPrefix(raw.Msg, "Type mismatch: expected List<T>") && strings.Contains(raw.Msg, "but was "+typeName)
 }
 
 func (s *scenarioState) registerProcedure(ctx context.Context, signature string, table *godog.Table) error {

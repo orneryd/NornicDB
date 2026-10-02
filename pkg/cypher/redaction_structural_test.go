@@ -74,9 +74,9 @@ func TestRedactLiterals_MismatchedBracketTypeFailsClosed(t *testing.T) {
 // node or relationship pattern, and parameter names, while every identifier
 // and literal is replaced.
 func TestRedactLiterals_InvalidStatementKeepsStructure(t *testing.T) {
-	in := `CALL { MATCH (n:Foo)-[:REL]->(m) WHERE n.name = "alice" RETURN n AS x UNION MATCH (m:Bar) RETURN m AS x } RETURN x LIMIT $limit`
+	in := `CALL { MATCH (n:Foo)-[:REL]->(m) WHERE n.name = "alice" RETURN n AS x UNION MATCH (m:Bar) RETURN m AS x } RETURN x LIMIT`
 	out := RedactLiterals(in)
-	want := `CALL { MATCH (<REDACTED>:Foo)-[:REL]->(<REDACTED>) WHERE <REDACTED>.<REDACTED> = <REDACTED> RETURN <REDACTED> AS <REDACTED> UNION MATCH (<REDACTED>:Bar) RETURN <REDACTED> AS <REDACTED> } RETURN <REDACTED> LIMIT $limit`
+	want := `CALL { MATCH (<REDACTED>:Foo)-[:REL]->(<REDACTED>) WHERE <REDACTED>.<REDACTED> = <REDACTED> RETURN <REDACTED> AS <REDACTED> UNION MATCH (<REDACTED>:Bar) RETURN <REDACTED> AS <REDACTED> } RETURN <REDACTED> LIMIT`
 	if out != want {
 		t.Fatalf("structural redaction mismatch:\n got %q\nwant %q", out, want)
 	}
@@ -86,6 +86,7 @@ func TestRedactLiterals_InvalidStatementKeepsStructure(t *testing.T) {
 // grammar accepts keep today's output: literals redacted, identifiers kept.
 func TestRedactLiterals_ValidStatementsKeepIdentifiers(t *testing.T) {
 	cases := []struct{ in, want string }{
+		{`CALL { MATCH (n:Foo)-[:REL]->(m) WHERE n.name = "alice" RETURN n AS x UNION MATCH (m:Bar) RETURN m AS x } RETURN x LIMIT $limit`, `CALL { MATCH (n:Foo)-[:REL]->(m) WHERE n.name = <REDACTED> RETURN n AS x UNION MATCH (m:Bar) RETURN m AS x } RETURN x LIMIT $limit`},
 		{`MATCH (n:Person {name: 'alice'}) RETURN n.name AS who`, `MATCH (n:Person {name: <REDACTED>}) RETURN n.name AS who`},
 		{`CALL db.labels() YIELD label RETURN label`, `CALL db.labels() YIELD label RETURN label`},
 		{`MATCH (n) RETURN n ORDER BY n.age DESC SKIP 5 LIMIT 10`, `MATCH (n) RETURN n ORDER BY n.age DESC SKIP <REDACTED> LIMIT <REDACTED>`},

@@ -116,7 +116,7 @@ func (e *ExpressionEvaluator) evaluateNot(not INotExpressionContext) bool {
 	}
 
 	// Check for NOT token
-	hasNot := not.NOT() != nil
+	hasNot := len(not.AllNOT())%2 != 0
 
 	comp := not.ComparisonExpression()
 	if comp == nil {
@@ -646,8 +646,8 @@ func (e *ExpressionEvaluator) evaluateAtom(atom IAtomContext) interface{} {
 
 	// Check for parameter
 	if param := atom.Parameter(); param != nil {
-		if sym := param.Symbol(); sym != nil {
-			if val, ok := e.params[sym.GetText()]; ok {
+		if name := param.Name(); name != nil {
+			if val, ok := e.params[name.GetText()]; ok {
 				return val
 			}
 		}

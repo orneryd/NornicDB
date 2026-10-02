@@ -937,18 +937,23 @@ type StatementRequest struct {
 // value, and $a / 2 is fractional. The body is decoded once with UseNumber
 // (parameters are the request's only numbers) and the parameter numbers are
 // converted in place.
+var errInvalidTransactionRequestFormat = errors.New("invalid transaction request format")
+
 func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 	decoder := json.NewDecoder(body)
 	decoder.UseNumber()
 	if err := decoder.Decode(req); err != nil {
-		return err
-	}
-	var trailing interface{}
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.Is(err, io.EOF) || errors.As(err, &tooLarge) {
 			return err
 		}
-		return fmt.Errorf("unexpected data after transaction request")
+		return fmt.Errorf("%w: %w", errInvalidTransactionRequestFormat, err)
+	}
+	if req.Statements == nil {
+		return fmt.Errorf("%w: transaction request must contain a statements list", errInvalidTransactionRequestFormat)
+	}
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return err
 	}
 	for i := range req.Statements {
 		for key, value := range req.Statements[i].Parameters {
@@ -1150,8 +1155,8 @@ type NotificationPos struct {
 // This is the main query endpoint: POST /db/{dbName}/tx/commit
 func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Request, dbName string) {
 	var req TransactionRequest
-	if err := s.readTransactionRequest(r, &req); err != nil {
-		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
+		s.writeNeo4jInvalidTransactionBody(w, r, err)
 		return
 	}
 
@@ -1513,15 +1518,10 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 	if includeStats {
 		qr.Stats = queryStatsFromResult(result)
 	}
-	// EXPLAIN/PROFILE plan delivery (#744): Neo4j's HTTP result entry carries
-	// the plan tree under "plan" (EXPLAIN) and "profile" (PROFILE).
 	if result.Metadata != nil {
 		if rawPlan, ok := result.Metadata["plan"]; ok {
 			if plan, ok := rawPlan.(*cypher.ExecutionPlan); ok && plan != nil {
-				qr.Plan = cypher.Neo4jPlanMap(plan, false)
-				if plan.Mode == cypher.ModeProfile {
-					qr.Profile = cypher.Neo4jPlanMap(plan, true)
-				}
+				qr.Plan = cypher.Neo4jPlanMap(plan, plan.Mode == cypher.ModeProfile)
 			}
 		}
 	}
@@ -2038,7 +2038,8 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 
 	var req TransactionRequest
 	if err := s.readTransactionRequest(r, &req); err != nil {
-		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+		_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
+		s.writeNeo4jInvalidTransactionBody(w, r, err)
 		return
 	}
 
@@ -2084,7 +2085,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 	var req TransactionRequest
 	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
 		_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
-		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+		s.writeNeo4jInvalidTransactionBody(w, r, err)
 		return
 	}
 

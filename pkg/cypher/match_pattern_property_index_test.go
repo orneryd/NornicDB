@@ -57,6 +57,37 @@ type scanCountingEngine struct {
 	getNodeErr          error
 }
 
+func TestResidualLabellessPropertyIndexCompleteness(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "labelless814"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX p_k FOR (n:P) ON (n.k)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})", nil)
+	require.NoError(t, err)
+	for _, query := range []string{
+		"MATCH (n {k: 'a'}) RETURN n.v AS v ORDER BY v",
+		"MATCH (n) WHERE n.k = 'a' RETURN n.v AS v ORDER BY v",
+		"MATCH (n) WHERE n.k = $k RETURN n.v AS v ORDER BY v",
+		"MATCH (n) WHERE n.k IN ['a'] RETURN n.v AS v ORDER BY v",
+		"MATCH (n) WHERE n.k IN $ks RETURN n.v AS v ORDER BY v",
+		"MATCH (n) WHERE n.k = 'a' OR n.k = 'zz' RETURN n.v AS v ORDER BY v",
+		"MATCH (n {k: 'a'}) RETURN count(n) AS c",
+	} {
+		t.Run(query, func(t *testing.T) {
+			result, err := exec.Execute(ctx, query, map[string]interface{}{"k": "a", "ks": []interface{}{"a"}})
+			require.NoError(t, err)
+			if query == "MATCH (n {k: 'a'}) RETURN count(n) AS c" {
+				require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
+			} else {
+				require.Equal(t, [][]interface{}{{int64(1)}, {int64(3)}, {int64(4)}}, result.Rows)
+			}
+		})
+	}
+	result, err := exec.Execute(ctx, "MATCH (n:Q {k: 'a'}) RETURN n.v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
+}
+
 func (e *scanCountingEngine) AllNodes() ([]*storage.Node, error) {
 	atomic.AddInt64(&e.allNodesCalls, 1)
 	return e.MemoryEngine.AllNodes()

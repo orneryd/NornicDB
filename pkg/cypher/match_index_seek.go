@@ -1053,10 +1053,6 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 		}
 		return out
 	}
-	if !labellessPropertyIndexUsable(e.storage) {
-		return nil
-	}
-
 	labels := make(map[string]struct{})
 	for _, raw := range schema.GetIndexes() {
 		idx, ok := raw.(map[string]interface{})
@@ -1098,6 +1094,9 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 		out = append(out, label)
 	}
 	sort.Strings(out)
+	if !labellessPropertyIndexUsable(e.storage, out...) {
+		return nil
+	}
 	return out
 }
 

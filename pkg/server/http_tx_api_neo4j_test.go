@@ -58,6 +58,192 @@ func TestGh775_HTTPTypedNodeIndexRouting(t *testing.T) {
 	}
 }
 
+func TestResidualHTTPProfileEnvelope(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	response := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]interface{}{
+		"statements": []map[string]interface{}{{"statement": "PROFILE MATCH (n) RETURN n"}},
+	}, token)
+	require.Equal(t, http.StatusOK, response.Code)
+	var decoded map[string]interface{}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &decoded))
+	result := decoded["results"].([]interface{})[0].(map[string]interface{})
+	require.Contains(t, result, "plan")
+	require.NotContains(t, result, "profile")
+	require.Contains(t, result["plan"].(map[string]interface{}), "rows")
+}
+
+func TestResidualTransactionBodyLifecycle(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	local := httptest.NewServer(server.buildRouter())
+	defer local.Close()
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	client := &http.Client{Timeout: 15 * time.Second}
+	for _, backend := range []struct {
+		name string
+		url  string
+	}{
+		{"nornicdb", local.URL + "/db/nornic/tx"},
+		{"neo4j", strings.TrimSuffix(os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI"), "/") + "/db/neo4j/tx"},
+	} {
+		t.Run(backend.name, func(t *testing.T) {
+			if backend.name == "neo4j" && os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI") == "" {
+				t.Skip("set NORNICDB_NEO4J_REFERENCE_HTTP_URI to compare lifecycle with Neo4j")
+			}
+			post := func(endpoint, body string) (int, TransactionResponse) {
+				t.Helper()
+				request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+				require.NoError(t, err)
+				request.Header.Set("Content-Type", "application/json")
+				if backend.name == "nornicdb" {
+					request.Header.Set("Authorization", token)
+				}
+				response, err := client.Do(request)
+				require.NoError(t, err)
+				defer response.Body.Close()
+				var decoded TransactionResponse
+				require.NoError(t, json.NewDecoder(response.Body).Decode(&decoded))
+				return response.StatusCode, decoded
+			}
+			for _, testCase := range []struct {
+				name     string
+				body     string
+				commit   bool
+				implicit bool
+				invalid  bool
+			}{
+				{"truncated execute", `{"statements":[{"statement":"CREATE (:Z2)"`, false, false, true},
+				{"array execute", `[1]`, false, false, true},
+				{"object commit", `{}`, true, false, true},
+				{"empty commit", ``, true, false, false},
+				{"empty implicit", ``, true, true, false},
+				{"truncated implicit", `{"statements":[{"statement":"CREATE (:Z2)"`, true, true, true},
+				{"array implicit", `[1]`, true, true, true},
+				{"object implicit", `{}`, true, true, true},
+			} {
+				t.Run(testCase.name, func(t *testing.T) {
+					_, cleared := post(backend.url+"/commit", `{"statements":[{"statement":"MATCH (n) DETACH DELETE n"}]}`)
+					require.Empty(t, cleared.Errors)
+					endpoint := backend.url + "/commit"
+					if !testCase.implicit {
+						statusCode, opened := post(backend.url, `{"statements":[{"statement":"CREATE (:Z1)"}]}`)
+						require.Equal(t, http.StatusCreated, statusCode)
+						require.Empty(t, opened.Errors)
+						endpoint = strings.TrimSuffix(opened.Commit, "/commit")
+						if testCase.commit {
+							endpoint += "/commit"
+						}
+					}
+					statusCode, result := post(endpoint, testCase.body)
+					t.Logf("LIFECYCLE_RESULT backend=%s case=%q status=%d errors=%+v", backend.name, testCase.name, statusCode, result.Errors)
+					if testCase.invalid {
+						require.Len(t, result.Errors, 1)
+						require.Equal(t, "Neo.ClientError.Request.InvalidFormat", result.Errors[0].Code)
+						require.Equal(t, http.StatusOK, statusCode)
+						if !testCase.implicit {
+							commitURL := endpoint
+							if !testCase.commit {
+								commitURL += "/commit"
+							}
+							statusCode, committed := post(commitURL, `{"statements":[]}`)
+							require.Equal(t, http.StatusNotFound, statusCode)
+							require.Len(t, committed.Errors, 1)
+							require.Equal(t, "Neo.ClientError.Transaction.TransactionNotFound", committed.Errors[0].Code)
+						}
+					} else {
+						require.Equal(t, http.StatusOK, statusCode)
+						require.Empty(t, result.Errors)
+						require.Empty(t, result.Results)
+					}
+					_, stored := post(backend.url+"/commit", `{"statements":[{"statement":"MATCH (n) RETURN count(n)"}]}`)
+					require.Empty(t, stored.Errors)
+					count := float64(0)
+					if !testCase.invalid && !testCase.implicit {
+						count = 1
+					}
+					require.Equal(t, count, stored.Results[0].Data[0].Row[0])
+				})
+			}
+		})
+	}
+}
+
+func TestResidualTrailingTransactionBodies(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	local := httptest.NewServer(server.buildRouter())
+	defer local.Close()
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	for _, backend := range []struct{ name, url string }{
+		{"nornicdb", local.URL + "/db/nornic/tx"},
+		{"neo4j", strings.TrimSuffix(os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI"), "/") + "/db/neo4j/tx"},
+	} {
+		t.Run(backend.name, func(t *testing.T) {
+			if backend.name == "neo4j" && os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI") == "" {
+				t.Skip("set NORNICDB_NEO4J_REFERENCE_HTTP_URI to compare trailing-body behavior")
+			}
+			post := func(endpoint, body string) (int, TransactionResponse) {
+				t.Helper()
+				request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+				require.NoError(t, err)
+				request.Header.Set("Content-Type", "application/json")
+				if backend.name == "nornicdb" {
+					request.Header.Set("Authorization", token)
+				}
+				response, err := (&http.Client{Timeout: 15 * time.Second}).Do(request)
+				require.NoError(t, err)
+				defer response.Body.Close()
+				var result TransactionResponse
+				require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
+				return response.StatusCode, result
+			}
+			for _, suffix := range []string{" xyz", `{"statements":[{"statement":"CREATE (:Ignored)"}]}`} {
+				for _, route := range []string{"open", "execute", "commit", "implicit"} {
+					t.Run(route+suffix, func(t *testing.T) {
+						_, cleared := post(backend.url+"/commit", `{"statements":[{"statement":"MATCH (n) DETACH DELETE n"}]}`)
+						require.Empty(t, cleared.Errors)
+						endpoint := backend.url
+						count := float64(1)
+						if route == "execute" || route == "commit" {
+							statusCode, opened := post(backend.url, `{"statements":[{"statement":"CREATE (:Z1)"}]}`)
+							require.Equal(t, http.StatusCreated, statusCode)
+							require.Empty(t, opened.Errors)
+							endpoint = strings.TrimSuffix(opened.Commit, "/commit")
+							count = 2
+						}
+						if route == "commit" || route == "implicit" {
+							endpoint += "/commit"
+						}
+						statusCode, result := post(endpoint, `{"statements":[{"statement":"CREATE (:Z2)"}]}`+suffix)
+						wantStatus := http.StatusOK
+						if route == "open" {
+							wantStatus = http.StatusCreated
+						}
+						require.Equal(t, wantStatus, statusCode)
+						require.Empty(t, result.Errors)
+						require.Len(t, result.Results, 1)
+						if route == "open" || route == "execute" {
+							commitURL := result.Commit
+							if route == "execute" {
+								commitURL = endpoint + "/commit"
+							}
+							statusCode, committed := post(commitURL, `{"statements":[]}`)
+							require.Equal(t, http.StatusOK, statusCode)
+							require.Empty(t, committed.Errors)
+						}
+						_, stored := post(backend.url+"/commit", `{"statements":[{"statement":"MATCH (n) RETURN labels(n)[0] AS label ORDER BY label"}]}`)
+						require.Empty(t, stored.Errors)
+						require.Len(t, stored.Results[0].Data, int(count))
+						if count == 2 {
+							require.Equal(t, []interface{}{"Z1"}, stored.Results[0].Data[0].Row)
+						}
+						require.Equal(t, []interface{}{"Z2"}, stored.Results[0].Data[int(count)-1].Row)
+					})
+				}
+			}
+		})
+	}
+}
+
 func TestGh776_TransactionBodiesRejectInvalidRequests(t *testing.T) {
 	server, authenticator := setupTestServerWithConfig(t, func(config *Config) {
 		config.MaxRequestSize = 256
@@ -70,8 +256,6 @@ func TestGh776_TransactionBodiesRejectInvalidRequests(t *testing.T) {
 	}{
 		{"oversized parameter", `{"statements":[{"statement":"CREATE (:Body776 {final: true})","parameters":{"unused":"` + strings.Repeat("x", 512) + `"}}]}`},
 		{"truncated JSON", `{"statements":[{"statement":"CREATE (:Body776 {final: true})"`},
-		{"second JSON value", valid + `{}`},
-		{"trailing garbage", valid + ` invalid`},
 		{"oversized trailing whitespace", valid + strings.Repeat(" ", 512)},
 	} {
 		for _, route := range []string{"open", "execute", "commit", "implicit"} {
@@ -107,7 +291,11 @@ func TestGh776_TransactionBodiesRejectInvalidRequests(t *testing.T) {
 				require.Len(t, response.Errors, 1, recorder.Body.String())
 				require.Equal(t, "Neo.ClientError.Request.InvalidFormat", response.Errors[0].Code)
 				require.Empty(t, response.Results)
-				require.Equal(t, http.StatusBadRequest, recorder.Code)
+				statusCode := http.StatusBadRequest
+				if body.name == "truncated JSON" && route != "open" {
+					statusCode = http.StatusOK
+				}
+				require.Equal(t, statusCode, recorder.Code)
 				if route == "commit" {
 					attempt := makeRequest(t, server, http.MethodPost, endpoint, nil, token)
 					require.Equal(t, http.StatusNotFound, attempt.Code)
@@ -131,6 +319,8 @@ func TestGh776_ReadTransactionRequestBoundaries(t *testing.T) {
 	}{
 		{"exact limit", valid, int64(len(valid)), false},
 		{"below limit", valid + " \n", int64(len(valid) + 2), false},
+		{"second document", valid + `{}`, int64(len(valid) + 2), false},
+		{"trailing text", valid + " xyz", int64(len(valid) + 4), false},
 		{"truncated by limit", valid, int64(len(valid) - 1), true},
 		{"chunked oversized suffix", valid + strings.Repeat(" ", 512), int64(len(valid)), true},
 	} {
@@ -204,9 +394,7 @@ func TestGh776_HTTPMalformedCommitRollback(t *testing.T) {
 			require.Len(t, failed.Errors, 1)
 			require.Equal(t, "Neo.ClientError.Request.InvalidFormat", failed.Errors[0].Code)
 			require.Empty(t, failed.Results)
-			if backend.name == "nornicdb" {
-				require.Equal(t, http.StatusBadRequest, code)
-			}
+			require.Equal(t, http.StatusOK, code)
 			stored, _ := post(backend.endpoint+"/commit", `{"statements":[{"statement":"MATCH (n:Body776Reference) RETURN count(n) AS count"}]}`)
 			require.Empty(t, stored.Errors)
 			require.Len(t, stored.Results, 1)
@@ -1072,14 +1260,19 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 	content, err := os.ReadFile("../../testing/cypher/tck/testdata/differential/cases.json")
 	require.NoError(t, err)
 	type differentialHTTPCase struct {
-		Name            string   `json:"name"`
-		Setup           []string `json:"setup"`
-		Query           string   `json:"query"`
-		Ordered         bool     `json:"ordered"`
-		UnorderedLabels bool     `json:"unordered_labels"`
+		Name            string                 `json:"name"`
+		Setup           []string               `json:"setup"`
+		Query           string                 `json:"query"`
+		Parameters      map[string]interface{} `json:"parameters"`
+		ExpectedCode    string                 `json:"expected_code"`
+		NoEffects       bool                   `json:"no_effects"`
+		Ordered         bool                   `json:"ordered"`
+		UnorderedLabels bool                   `json:"unordered_labels"`
 	}
 	var cases []differentialHTTPCase
-	require.NoError(t, json.Unmarshal(content, &cases))
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.UseNumber()
+	require.NoError(t, decoder.Decode(&cases))
 	cases = append(cases,
 		differentialHTTPCase{Name: "HTTP map metadata follows literal order", Ordered: true, Query: "CREATE (n:H {a:1}) RETURN {node:n,k:1} AS m"},
 		differentialHTTPCase{Name: "HTTP map metadata follows aliased order", Ordered: true, Query: "CREATE (n:H {a:1}) WITH {node:n,k:1} AS m RETURN m"},
@@ -1104,9 +1297,13 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 			local := httptest.NewServer(server.buildRouter())
 			defer local.Close()
 			token := "Bearer " + getAuthToken(t, authenticator, "admin")
-			post := func(t *testing.T, endpoint, statement string) TransactionResponse {
+			post := func(t *testing.T, endpoint, statement string, parameters ...map[string]interface{}) TransactionResponse {
 				t.Helper()
-				payload, err := json.Marshal(map[string]any{"statements": []map[string]any{{"statement": statement}}})
+				item := map[string]interface{}{"statement": statement}
+				if len(parameters) > 0 {
+					item["parameters"] = parameters[0]
+				}
+				payload, err := json.Marshal(map[string]any{"statements": []map[string]any{item}})
 				require.NoError(t, err)
 				request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
 				require.NoError(t, err)
@@ -1129,6 +1326,19 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 					result = append(result, row)
 				}
 				return result
+			}
+			observeGraph := func(t *testing.T, endpoint string) ([][]interface{}, [][]interface{}) {
+				t.Helper()
+				observed := post(t, endpoint+"/commit", "MATCH (n) RETURN labels(n) AS labels, properties(n) AS properties")
+				require.Empty(t, observed.Errors)
+				nodes := rows(observed)
+				for _, row := range nodes {
+					labels := row[0].([]interface{})
+					sort.Slice(labels, func(left, right int) bool { return labels[left].(string) < labels[right].(string) })
+				}
+				observed = post(t, endpoint+"/commit", "MATCH (a)-[r]->(b) RETURN properties(a) AS start, type(r) AS type, properties(r) AS properties, properties(b) AS end")
+				require.Empty(t, observed.Errors)
+				return nodes, rows(observed)
 			}
 			var metadataShape func(interface{}) interface{}
 			metadataShape = func(value interface{}) interface{} {
@@ -1162,25 +1372,28 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 						for _, setup := range testCase.Setup {
 							require.Empty(t, post(t, endpoint+"/commit", setup).Errors)
 						}
+						var beforeNodes, beforeRelationships [][]interface{}
+						if testCase.NoEffects {
+							beforeNodes, beforeRelationships = observeGraph(t, endpoint)
+						}
 						queryEndpoint := endpoint + "/commit"
 						if explicit {
 							queryEndpoint = endpoint
 						}
-						results[backend] = post(t, queryEndpoint, testCase.Query)
+						results[backend] = post(t, queryEndpoint, testCase.Query, testCase.Parameters)
+						if testCase.ExpectedCode != "" {
+							require.Len(t, results[backend].Errors, 1)
+							require.Equal(t, testCase.ExpectedCode, results[backend].Errors[0].Code)
+						}
 						if explicit && len(results[backend].Errors) == 0 {
 							require.NotEmpty(t, results[backend].Commit)
 							require.Empty(t, post(t, results[backend].Commit, "RETURN 1").Errors)
 						}
-						observed := post(t, endpoint+"/commit", "MATCH (n) RETURN labels(n) AS labels, properties(n) AS properties")
-						require.Empty(t, observed.Errors)
-						snapshots[backend] = rows(observed)
-						for _, row := range snapshots[backend] {
-							labels := row[0].([]interface{})
-							sort.Slice(labels, func(left, right int) bool { return labels[left].(string) < labels[right].(string) })
+						snapshots[backend], relationships[backend] = observeGraph(t, endpoint)
+						if testCase.NoEffects {
+							require.ElementsMatch(t, beforeNodes, snapshots[backend], "unexpected node effects")
+							require.ElementsMatch(t, beforeRelationships, relationships[backend], "unexpected relationship effects")
 						}
-						observed = post(t, endpoint+"/commit", "MATCH (a)-[r]->(b) RETURN properties(a) AS start, type(r) AS type, properties(r) AS properties, properties(b) AS end")
-						require.Empty(t, observed.Errors)
-						relationships[backend] = rows(observed)
 					}
 					evidence, err := json.Marshal(map[string]interface{}{
 						"case": testCase.Name, "route": "http/" + mode,
@@ -1194,6 +1407,8 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 						require.Equal(t, results[1].Errors[0].Code, results[0].Errors[0].Code)
 					} else {
 						require.Equal(t, results[1].Results[0].Columns, results[0].Results[0].Columns)
+						require.Equal(t, results[1].Results[0].Plan != nil, results[0].Results[0].Plan != nil, "plan field presence differs")
+						require.Equal(t, results[1].Results[0].Profile != nil, results[0].Results[0].Profile != nil, "profile field presence differs")
 						if testCase.UnorderedLabels {
 							actual, expected := rows(results[0]), rows(results[1])
 							require.Len(t, actual, 1)

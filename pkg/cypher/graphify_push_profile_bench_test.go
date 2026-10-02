@@ -146,6 +146,7 @@ func runGraphifyPushProfile(tb testing.TB, withIndexes bool, scale graphifyPushS
 // the documented (:Label)(id) indexes in place — the "happy path" graphify
 // operators are told to set up before a push.
 func TestGraphifyPushProfile_WithIndexes(t *testing.T) {
+	requirePerformanceWorkload(t)
 	scale := defaultPushScale(t)
 	timings := runGraphifyPushProfile(t, true, scale)
 	timings.report(t, "with-indexes")
@@ -155,6 +156,7 @@ func TestGraphifyPushProfile_WithIndexes(t *testing.T) {
 // no indexes — the path graphify hits on a fresh, unindexed NornicDB.
 // Smaller-scale to keep wall-clock bounded.
 func TestGraphifyPushProfile_WithoutIndexes(t *testing.T) {
+	requirePerformanceWorkload(t)
 	scale := defaultPushScale(t)
 	// Without indexes the per-op cost is O(label population); shrink the
 	// edge population to keep the test under a couple of minutes.
@@ -185,6 +187,7 @@ func BenchmarkGraphifyPushProfile_WithIndexes(b *testing.B) {
 // bottleneck (not Nornic's per-statement cost) and points at a single-line
 // fix in graphify/graphify/export.py.
 func TestGraphifyPushProfile_EdgeShapeHypothesis(t *testing.T) {
+	requirePerformanceWorkload(t)
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "edge_shape")
 	exec := NewStorageExecutor(ns)

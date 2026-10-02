@@ -104,6 +104,7 @@ OPTIONAL   : 'OPTIONAL';
 ORDER      : 'ORDER';
 REMOVE     : 'REMOVE';
 RETURN     : 'RETURN';
+FINISH     : 'FINISH';
 SET        : 'SET';
 SKIP_W     : 'SKIP';
 WHERE      : 'WHERE';
@@ -151,12 +152,27 @@ FUNCTIONS  : 'FUNCTIONS';
 DATABASE   : 'DATABASE';
 DATABASES  : 'DATABASES';
 FULLTEXT   : 'FULLTEXT';
+LOOKUP     : 'LOOKUP';
+USE        : 'USE';
+ALIAS      : 'ALIAS';
+ALIASES    : 'ALIASES';
+COMPOSITE  : 'COMPOSITE';
+ALTER      : 'ALTER';
+RANGE_INDEX: 'RANGE';
+TEXT       : 'TEXT';
+POINT      : 'POINT';
 OPTIONS    : 'OPTIONS';
 EACH       : 'EACH';
 EMBEDDING  : 'EMBEDDING';
 IF         : 'IF';
 TRANSACTIONS: 'TRANSACTIONS';
 ROWS       : 'ROWS';
+ROW        : 'ROW';
+TRIM       : 'TRIM';
+FROM       : 'FROM';
+LEADING    : 'LEADING';
+TRAILING   : 'TRAILING';
+BOTH       : 'BOTH';
 ASSERT     : 'ASSERT';
 TYPED      : 'TYPED';
 KEY        : 'KEY';
@@ -166,10 +182,10 @@ ALLSHORTESTPATHS: 'allShortestPaths';
 
 // FLOAT must come before INTEGER so 2.00 isn't matched as INTEGER
 // Note: We use [0-9]+ for fractional part to allow numbers like 0.05
-FLOAT : SUB? (([0-9]+ '.' [0-9]+ | '.' [0-9]+) ExponentPart? [fd]? | [0-9]+ (ExponentPart [fd]? | [fd]));
+FLOAT : (([0-9]+ '.' [0-9]+ | '.' [0-9]+) ExponentPart? [fd]? | [0-9]+ (ExponentPart [fd]? | [fd]));
 
 // Integer literal - must be before ID to have priority
-INTEGER : SUB? DecimalInteger;
+INTEGER : DecimalInteger;
 
 // DIGIT - hex, octal, or single digit (for array indices, etc)
 DIGIT : HexInteger | OctalInteger | [0-9];
@@ -179,9 +195,9 @@ ID: Letter LetterOrDigit*;
 
 ESC_LITERAL    : '`' .*? '`';
 // Single-quoted strings can contain any characters except unescaped quotes
-CHAR_LITERAL   : '\'' (~['\\\r\n] | EscapeSequence)* '\'';
+CHAR_LITERAL   : '\'' (~['\\] | EscapeSequence)* '\'';
 // Double-quoted strings can contain any characters except unescaped quotes
-STRING_LITERAL : '"' (~["\\\r\n] | EscapeSequence)* '"';
+STRING_LITERAL : '"' (~["\\] | EscapeSequence)* '"';
 
 WS           : [ \t\r\n\u000C]+ -> channel(HIDDEN);
 COMMENT      : '/*' .*? '*/'    -> channel(COMMENTS);
@@ -195,7 +211,7 @@ fragment EscapeSequence:
     | '\\' 'u'+ HexDigit HexDigit HexDigit HexDigit
 ;
 
-fragment ExponentPart: [e] [+-]? DecimalInteger;
+fragment ExponentPart: [e] [+-]? [0-9]+;
 
 fragment HexInteger  : '0' [xX] HexDigit+;
 fragment HexDigit    : [0-9a-fA-F];

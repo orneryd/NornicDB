@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -81,12 +82,9 @@ func TestMonster531RejectMalformedCompositeUnique(t *testing.T) {
 		{"(n:CU)", "(n.a, garbage)"},
 		{"(n:CU)", "(n.a, m.b)"},
 		{"(n:CU)", "(m.a, m.b)"},
-		{"(n:CU)", "(n.a, n.a)"},
-		{"(n:CU)", "(n.a, n.`a`)"},
 		{"(n:CU)", "(n.a, n.b + 1)"},
 		{"(n:CU)", "(n.a, n.b,)"},
 		{"()-[r:CU]-()", "(r.a, s.b)"},
-		{"()-[r:CU]-()", "(r.a, r.a)"},
 		{"()-[r:CU]-()", "(r.a, r.b + 1)"},
 	} {
 		t.Run(testCase.pattern+testCase.predicate, func(t *testing.T) {
@@ -170,6 +168,25 @@ func TestMonster531TypedIndexDDLMatrix(t *testing.T) {
 			_, err := exec.Execute(context.Background(), query, nil)
 			require.Error(t, err)
 			require.Len(t, store.GetSchema().GetIndexes(), 2)
+		})
+	}
+}
+
+func TestResidualRepeatedUniqueConstraintProperties(t *testing.T) {
+	for _, query := range []string{
+		"CREATE CONSTRAINT cu FOR (n:P) REQUIRE (n.a, n.a) IS UNIQUE",
+		"CREATE CONSTRAINT cu FOR (n:P) REQUIRE (n.a, n.`a`) IS UNIQUE",
+		"CREATE CONSTRAINT cu FOR ()-[r:CU]-() REQUIRE (r.a, r.a) IS UNIQUE",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			_, err := exec.Execute(ctx, query, nil)
+			require.Error(t, err)
+			code, _ := nornicerrors.Neo4jStatus(err)
+			require.Equal(t, "Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema", code)
+			result, err := exec.Execute(ctx, "SHOW CONSTRAINTS", nil)
+			require.NoError(t, err)
+			require.Empty(t, result.Rows)
 		})
 	}
 }

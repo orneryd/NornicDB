@@ -5,9 +5,35 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResidualLookupIndexParserModes(t *testing.T) {
+	for _, mode := range []string{"nornic", "antlr"} {
+		t.Run(mode, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(mode)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			exec := framingExec(t, "lookup")
+			for _, query := range []string{
+				"DROP INDEX " + storage.DefaultNodeLookupIndexName,
+				"DROP INDEX " + storage.DefaultRelationshipLookupIndexName,
+				"CREATE LOOKUP INDEX `lookup_node` FOR (n) ON EACH labels(n)",
+				"CREATE LOOKUP INDEX lookup_relationship FOR ()-[r]-() ON EACH type(r)",
+				"CREATE LOOKUP INDEX lookup_node IF NOT EXISTS FOR (n) ON EACH labels(n)",
+				"CREATE LOOKUP INDEX lookup_relationship IF NOT EXISTS FOR ()-[r]-() ON EACH type(r)",
+			} {
+				_, err := exec.Execute(context.Background(), query, nil)
+				require.NoError(t, err, query)
+			}
+			result, err := exec.Execute(context.Background(), "SHOW INDEXES YIELD name, type, entityType WHERE type = 'LOOKUP' RETURN name, entityType ORDER BY name", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"lookup_node", "NODE"}, {"lookup_relationship", "RELATIONSHIP"}}, result.Rows)
+		})
+	}
+}
 
 // TestCreateLookupIndexNamesAndConflicts: CREATE LOOKUP INDEX takes a
 // backtick-quoted name with escaped backticks; a name another index has is

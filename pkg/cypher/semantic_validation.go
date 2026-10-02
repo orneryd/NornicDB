@@ -202,6 +202,14 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 			}
 			imports = strings.TrimSpace(cypher[index+1 : closeParen])
 			scoped = true
+			if imports != "" && imports != "*" {
+				for _, name := range splitTopLevelComma(imports) {
+					if simpleSemanticIdentifier(strings.TrimSpace(name)) == "" {
+						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
+							"CALL imports must contain only variable names")
+					}
+				}
+			}
 			index = skipSpaces(cypher, closeParen+1)
 		}
 		if index >= len(cypher) || cypher[index] != '{' {
@@ -212,6 +220,9 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 			continue
 		}
 		body := strings.TrimSpace(cypher[index+1 : closeBrace])
+		if stripped, finishes := stripUnionBranchFinishes(body); finishes {
+			body = stripped
+		}
 		if !scoped && startsWithKeywordFold(body, "WITH") {
 			if clauses, ok := splitPipelineClauses(body); ok && len(clauses) > 0 {
 				projection, tail := projectionSemanticBodyAndTail(clauses[0].text, "WITH")
@@ -235,6 +246,11 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 		}
 		if body == "" {
 			continue
+		}
+		if scoped && imports == "" {
+			if err := e.validateMatchSemanticScopes(body); err != nil {
+				return err
+			}
 		}
 		if err := e.validateSetSemanticScopes(body); err != nil {
 			return err

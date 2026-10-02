@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cucumber/godog"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 type contractBackend struct {
@@ -195,5 +196,106 @@ func TestBindingsRejectUnclassifiedErrors(t *testing.T) {
 	})
 	if status == 0 {
 		t.Fatal("bindings accepted an unclassified backend error")
+	}
+}
+
+func TestBindingsNeo4j526StaticMapDiagnosticProfile(t *testing.T) {
+	newState := func(message string) scenarioState {
+		return scenarioState{
+			featureURI:   "testdata/opencypher/features/expressions/map/Map2.feature",
+			scenarioName: "[6] Fail at runtime when attempting to index with an Int into a Map",
+			err: classifyBoltError(&neo4j.Neo4jError{
+				Code: "Neo.ClientError.Statement.SyntaxError", Msg: message, GqlStatus: "50N42",
+			}),
+		}
+	}
+	for _, message := range []string{
+		"Type mismatch: expected String but was Integer",
+		"Type mismatch: map key must be given as String, but was Integer (line 2, column 13 (offset: 44))",
+	} {
+		state := newState(message)
+		if err := state.expectError("Error", "runtime", "MapElementAccessByNonString"); err != nil {
+			t.Fatal(err)
+		}
+		var raw *neo4j.Neo4jError
+		var classified *QueryError
+		if !errors.As(state.err, &raw) || raw.Code != "Neo.ClientError.Statement.SyntaxError" ||
+			!errors.As(state.err, &classified) || classified.Type != "SyntaxError" || classified.Phase != "compile time" {
+			t.Fatalf("raw diagnostic changed: %v", state.err)
+		}
+	}
+	for _, control := range []struct {
+		name   string
+		mutate func(*scenarioState)
+	}{
+		{"other feature", func(state *scenarioState) { state.featureURI = "expressions/map/Map1.feature" }},
+		{"other scenario", func(state *scenarioState) {
+			state.scenarioName = "[7] Fail at runtime when trying to index into a map with a non-string"
+		}},
+		{"other diagnostic", func(state *scenarioState) {
+			state.err = classifyBoltError(&neo4j.Neo4jError{Code: "Neo.ClientError.Statement.SyntaxError", Msg: "Unexpected input", GqlStatus: "UnexpectedSyntax"})
+		}},
+		{"runtime failure", func(state *scenarioState) { state.err.(*QueryError).Phase = "runtime" }},
+		{"graph effects", func(state *scenarioState) { state.after.Nodes = []NodeValue{{Identity: "unexpected"}} }},
+	} {
+		t.Run(control.name, func(t *testing.T) {
+			state := newState("Type mismatch: expected String but was Integer")
+			control.mutate(&state)
+			if err := state.expectError("Error", "runtime", "MapElementAccessByNonString"); err == nil {
+				t.Fatal("accepted invalid diagnostic or graph effects")
+			}
+		})
+	}
+}
+
+func TestBindingsNeo4j526StaticListDiagnosticProfile(t *testing.T) {
+	newState := func(example, typeName string) scenarioState {
+		return scenarioState{
+			featureURI:   "testdata/opencypher/features/expressions/list/List1.feature",
+			scenarioName: "[6] Fail when indexing a non-list #Example: " + example,
+			err: classifyBoltError(&neo4j.Neo4jError{
+				Code:      "Neo.ClientError.Statement.SyntaxError",
+				Msg:       "Type mismatch: expected List<T> but was " + typeName,
+				GqlStatus: "50N42",
+			}),
+		}
+	}
+	for _, example := range []struct{ name, typeName string }{
+		{"boolean", "Boolean"}, {"integer", "Integer"}, {"float", "Float"}, {"string", "String"},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			state := newState(example.name, example.typeName)
+			if err := state.expectError("TypeError", "any time", "InvalidArgumentType"); err != nil {
+				t.Fatal(err)
+			}
+			var raw *neo4j.Neo4jError
+			var classified *QueryError
+			if !errors.As(state.err, &raw) || raw.Code != "Neo.ClientError.Statement.SyntaxError" ||
+				!errors.As(state.err, &classified) || classified.Type != "SyntaxError" || classified.Phase != "compile time" {
+				t.Fatalf("raw diagnostic changed: %v", state.err)
+			}
+		})
+	}
+	for _, control := range []struct {
+		name   string
+		mutate func(*scenarioState)
+	}{
+		{"other feature", func(state *scenarioState) { state.featureURI = "expressions/list/List2.feature" }},
+		{"other scenario", func(state *scenarioState) {
+			state.scenarioName = "[7] Fail when indexing a non-list given by a parameter #Example: boolean"
+		}},
+		{"other diagnostic", func(state *scenarioState) {
+			state.err = classifyBoltError(&neo4j.Neo4jError{Code: "Neo.ClientError.Statement.SyntaxError", Msg: "Unexpected input", GqlStatus: "UnexpectedSyntax"})
+		}},
+		{"runtime failure", func(state *scenarioState) { state.err.(*QueryError).Phase = "runtime" }},
+		{"graph effects", func(state *scenarioState) { state.after.Nodes = []NodeValue{{Identity: "unexpected"}} }},
+	} {
+		t.Run(control.name, func(t *testing.T) {
+			state := newState("boolean", "Boolean")
+			control.mutate(&state)
+			if err := state.expectError("TypeError", "any time", "InvalidArgumentType"); err == nil {
+				t.Fatal("accepted invalid diagnostic or graph effects")
+			}
+		})
 	}
 }

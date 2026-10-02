@@ -48,7 +48,7 @@ func TestStringFunctionsUseUnicodeCodePoints(t *testing.T) {
 		require.Error(t, err)
 		var semanticError *SemanticError
 		require.True(t, errors.As(err, &semanticError))
-		require.Equal(t, "Neo.ClientError.Statement.TypeError", semanticError.Code)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code)
 		require.Equal(t, "InvalidArgumentType", semanticError.Detail)
 	}
 }

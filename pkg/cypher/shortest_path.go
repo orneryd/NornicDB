@@ -158,6 +158,10 @@ func extractShortestPathPathVariable(cypher string, funcIdx int) string {
 		return ""
 	}
 	clause := strings.TrimSpace(cypher[matchIdx+len("MATCH") : funcIdx])
+	parts := splitTopLevelComma(clause)
+	if len(parts) > 0 {
+		clause = strings.TrimSpace(parts[len(parts)-1])
+	}
 	eqIdx := strings.LastIndex(clause, "=")
 	if eqIdx <= 0 {
 		return ""
@@ -421,10 +425,14 @@ func (e *StorageExecutor) executeBoundEndShortestPath(ctx context.Context, query
 		return nil, false, nil
 	}
 	matchIdx := lastKeywordIndexBefore(query.originalCypher, "MATCH", funcIdx)
-	if matchIdx <= 0 {
+	if matchIdx < 0 {
 		return nil, false, nil
 	}
 	prefix := strings.TrimSpace(query.originalCypher[:matchIdx])
+	parts := splitTopLevelComma(query.originalCypher[matchIdx+len("MATCH") : funcIdx])
+	if len(parts) > 1 {
+		prefix = strings.TrimSpace(prefix + " MATCH " + strings.Join(parts[:len(parts)-1], ", "))
+	}
 	if prefix == "" {
 		return nil, false, nil
 	}

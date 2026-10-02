@@ -22,7 +22,7 @@ func TestListSubscriptRejectsNonListReceiversAndNonIntegerIndexes(t *testing.T) 
 		require.Error(t, err)
 		var semanticError *SemanticError
 		require.True(t, errors.As(err, &semanticError))
-		require.Equal(t, "Neo.ClientError.Statement.TypeError", semanticError.Code)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code, query)
 		require.Equal(t, "InvalidArgumentType", semanticError.Detail)
 	}
 }
@@ -52,7 +52,7 @@ func TestDirectListSubscriptsUseTheSharedTypedEvaluator(t *testing.T) {
 		require.Error(t, err)
 		var semanticError *SemanticError
 		require.ErrorAs(t, err, &semanticError)
-		require.Equal(t, "Neo.ClientError.Statement.TypeError", semanticError.Code)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code, query)
 	}
 
 	nullSlice, err := exec.Execute(ctx, "RETURN [1, 2, 3][null..2] AS value", nil)
@@ -82,7 +82,8 @@ func TestMapSubscriptPropagatesNullAndClassifiesNonStringKeys(t *testing.T) {
 	require.Error(t, err)
 	var semanticError *SemanticError
 	require.ErrorAs(t, err, &semanticError)
-	require.Equal(t, "MapElementAccessByNonString", semanticError.Detail)
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code)
+	require.Equal(t, "InvalidArgumentType", semanticError.Detail)
 }
 
 func TestSizeRejectsPathsAndPatternPredicates(t *testing.T) {

@@ -514,6 +514,35 @@
     "query": "WITH [{k: 1, texts: ['a']}, {k: 2, texts: ['b']}] AS grouped WITH [g IN grouped WHERE g.k = 1][0] AS hit RETURN hit.texts AS texts"
   },
   {
+    "name": "residual grammar single quoted multiline string",
+    "query": "RETURN 'line1\nline2' AS text"
+  },
+  {
+    "name": "residual grammar double quoted multiline string",
+    "query": "RETURN \"line1\nline2\" AS text"
+  },
+  {
+    "name": "residual grammar post-index parameter property",
+    "query": "RETURN $items[0].name AS name",
+    "parameters": {"items": [{"name": "alice"}]}
+  },
+  {
+    "name": "residual grammar post-index property in where",
+    "query": "UNWIND [$items] AS items WITH items WHERE items[0].name = 'alice' RETURN items[0].name AS name",
+    "parameters": {"items": [{"name": "alice"}]}
+  },
+  {
+    "name": "residual grammar call-tail pagination",
+    "setup": ["CREATE (:ResidualYieldAlpha), (:ResidualYieldBeta)"],
+    "query": "CALL db.labels() YIELD label AS name WHERE name STARTS WITH 'ResidualYield' ORDER BY name DESC SKIP 1 LIMIT 1 RETURN name",
+    "ordered": true
+  },
+  {
+    "name": "residual grammar scoped call subquery union",
+    "query": "UNWIND [1,2] AS x CALL (x) { WITH x RETURN x AS value UNION WITH x RETURN x + 2 AS value } RETURN value ORDER BY value",
+    "ordered": true
+  },
+  {
     "name": "monster math round null precision",
     "query": "RETURN round(1.5, null) AS value",
     "no_effects": true
@@ -1112,6 +1141,458 @@
     "name": "GH775 typed node POINT index metadata",
     "setup": ["CREATE POINT INDEX pi FOR (n:P) ON (n.loc)"],
     "query": "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties WHERE name = 'pi' RETURN name, type, entityType, labelsOrTypes, properties",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control signed hexadecimal and octal literals",
+    "query": "RETURN -0x1 AS hex, -0o7 AS octal, [-0x1, 0x2] AS values",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control subtraction without whitespace",
+    "query": "RETURN 3-1 AS integer, 3.5-1.5 AS floating",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control zero padded exponents",
+    "query": "RETURN [2E-01, 'text', null, 71034856, false] AS literal, 1e+003 AS x, -2e-001 AS y",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control repeated logical negation",
+    "query": "RETURN NOT NOT true AS t, NOT NOT false AS f, NOT NOT null AS n",
+    "no_effects": true
+  },
+  {
+    "name": "GH739 control missing relationship asterisk",
+    "query": "MATCH (a)-[:LIKES..]->(c) RETURN a",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control CASE label predicate",
+    "setup": ["CREATE (:Ignored), (:Other)"],
+    "query": "MATCH (n) RETURN count(CASE WHEN n:Ignored THEN 1 END) AS count",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control undefined label predicate receiver",
+    "setup": ["CREATE (:Ignored), (:Other)"],
+    "query": "MATCH (n) RETURN count(CASE WHEN missing:Ignored THEN 1 END)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual undefined coalesce",
+    "query": "RETURN coalesce(a / b, 2)",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual scalar reduce",
+    "query": "WITH 5 AS l RETURN reduce(acc = 0, x IN l | acc + x) AS v",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual list string key",
+    "query": "WITH [1, 2, 3] AS l RETURN l['a'] AS v",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual map integer key",
+    "query": "WITH {a: 1} AS m RETURN m[1] AS v",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 residual string receiver",
+    "query": "WITH 'abc' AS s RETURN s[0] AS v",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control boolean receiver",
+    "query": "WITH true AS value RETURN value[0]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control list boolean key",
+    "query": "WITH [1, 2] AS value RETURN value[false]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control list float key",
+    "query": "WITH [1, 2] AS value RETURN value[1.0]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control direct integer receiver",
+    "query": "RETURN 5[0]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control direct list float key",
+    "query": "RETURN [1, 2, 3][1.5]",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control parameter map integer key",
+    "query": "WITH $value AS value, $key AS key RETURN value[key]",
+    "parameters": {"value": {"name": "Mats"}, "key": 0},
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control parameter string receiver",
+    "query": "WITH $value AS value, $key AS key RETURN value[key]",
+    "parameters": {"value": "abc", "key": 0},
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control parameter list float key runtime",
+    "query": "WITH $value AS value, $key AS key RETURN value[key]",
+    "parameters": {"value": [1, 2], "key": 1.5},
+    "expected_code": "Neo.ClientError.Statement.TypeError",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control valid map list keys",
+    "query": "WITH {a: 1} AS m, [2, 3] AS l RETURN m['a'] AS a, l[0] AS b",
+    "no_effects": true
+  },
+  {
+    "name": "GH698 control null slice",
+    "query": "WITH [1, 2, 3] AS value RETURN value[null..2] AS value",
+    "no_effects": true
+  },
+  {
+    "name": "GH781 residual empty FINISH UNION",
+    "query": "FINISH UNION FINISH",
+    "no_effects": true
+  },
+  {
+    "name": "GH781 residual write FINISH UNION",
+    "query": "CREATE (:U) FINISH UNION CREATE (:V) FINISH"
+  },
+  {
+    "name": "GH781 residual write FINISH UNION ALL",
+    "query": "CREATE (:U) FINISH UNION ALL CREATE (:V) FINISH"
+  },
+  {
+    "name": "GH781 control mismatched UNION columns before writes",
+    "query": "CREATE (:Semi) RETURN 1 AS x UNION RETURN 2 AS y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH781 control mismatched UNION ALL columns before writes",
+    "query": "CREATE (:Semi) RETURN 1 AS x UNION ALL RETURN 2 AS y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH782 residual leading CREATE FINISH CALL return",
+    "query": "CALL { CREATE (:U) FINISH } RETURN 1 AS x"
+  },
+  {
+    "name": "GH782 residual leading CREATE FINISH CALL no return",
+    "query": "CALL { CREATE (:U) FINISH }"
+  },
+  {
+    "name": "GH782 residual scoped SET FINISH",
+    "setup": ["CREATE (:T {k: 0})"],
+    "query": "MATCH (t:T) CALL (t) { SET t.k = coalesce(t.k, 0) + 1 FINISH } RETURN t.k"
+  },
+  {
+    "name": "GH784 residual doubled terminator",
+    "query": "RETURN 1 AS x;;",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH784 residual repeated EXPLAIN",
+    "query": "EXPLAIN EXPLAIN RETURN 1 AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH784 residual repeated PROFILE",
+    "query": "PROFILE PROFILE RETURN 1 AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH783 residual empty scoped import",
+    "query": "WITH 1 AS x CALL () { RETURN x AS y } RETURN y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH783 residual property expression import",
+    "query": "WITH {y: 1} AS x CALL (x.y) { RETURN 1 AS y } RETURN y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH783 control empty imports reject before writes",
+    "query": "CREATE (:Before) WITH 1 AS x CALL () { RETURN x AS y } RETURN y",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH783 control valid empty scoped import",
+    "query": "WITH 1 AS x CALL () { RETURN 2 AS y } RETURN x, y",
+    "no_effects": true
+  },
+  {
+    "name": "GH815 residual AS parameter UNWIND",
+    "query": "UNWIND $as AS k RETURN k",
+    "parameters": {"as": ["a"]},
+    "no_effects": true
+  },
+  {
+    "name": "GH815 residual AS parameter UNWIND MATCH",
+    "setup": ["CREATE (:P {k: 'a', v: 1})"],
+    "query": "UNWIND $as AS k MATCH (n:P) WHERE n.k = k RETURN n.v AS v",
+    "parameters": {"as": ["a"]},
+    "no_effects": true
+  },
+  {
+    "name": "GH815 residual AS parameter RETURN",
+    "query": "RETURN $as AS x",
+    "parameters": {"as": ["a"]},
+    "no_effects": true
+  },
+  {
+    "name": "GH815 control AS parameter IN predicate",
+    "setup": ["CREATE (:P {k: 'a', v: 1})"],
+    "query": "MATCH (n:P) WHERE n.k IN $as RETURN n.v AS v",
+    "parameters": {"as": ["a"]},
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless inline equality",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n {k: 'a'}) RETURN n.v AS v ORDER BY v",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless WHERE equality",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k = 'a' RETURN n.v AS v ORDER BY v",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless parameter equality",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k = $k RETURN n.v AS v ORDER BY v",
+    "parameters": {"k": "a"},
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless IN literal",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k IN ['a'] RETURN n.v AS v ORDER BY v",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless IN parameter",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k IN $ks RETURN n.v AS v ORDER BY v",
+    "parameters": {"ks": ["a"]},
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless OR equality",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n) WHERE n.k = 'a' OR n.k = 'zz' RETURN n.v AS v ORDER BY v",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH814 residual labelless count",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n {k: 'a'}) RETURN count(n) AS c",
+    "no_effects": true
+  },
+  {
+    "name": "GH814 control labeled nonindexed property",
+    "setup": ["CREATE INDEX p_k FOR (n:P) ON (n.k)", "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2}), (:Q {k: 'a', v: 3}), ({k: 'a', v: 4})"],
+    "query": "MATCH (n:Q {k: 'a'}) RETURN n.v",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 residual comma bound shortestPath",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), (b:P {k: 'to'}), p = shortestPath((a)-[:R*]->(b)) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 residual comma bound allShortestPaths",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), (b:P {k: 'to'}), p = allShortestPaths((a)-[:R*]->(b)) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 residual comma bound start with inline end",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), p = shortestPath((a)-[:R*]->(b:P {k: 'to'})) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 residual comma bound variable length path",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), (b:P {k: 'to'}), p = (a)-[:R*]->(b) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 control preceding clause shortestPath",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH (a:P {k: 'from'}), (b:P {k: 'to'}) MATCH p = shortestPath((a)-[:R*]->(b)) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH816 control inline endpoint shortestPath",
+    "setup": ["CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})"],
+    "query": "MATCH p = shortestPath((a:P {k: 'from'})-[:R*]->(b:P {k: 'to'})) RETURN length(p) AS hops",
+    "no_effects": true
+  },
+  {
+    "name": "GH785 residual repeated UNIQUE property",
+    "query": "CREATE CONSTRAINT cu FOR (n:P) REQUIRE (n.a, n.a) IS UNIQUE",
+    "expected_code": "Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema",
+    "no_effects": true
+  },
+  {
+    "name": "GH785 residual quoted repeated UNIQUE property",
+    "query": "CREATE CONSTRAINT cu FOR (n:P) REQUIRE (n.a, n.`a`) IS UNIQUE",
+    "expected_code": "Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 residual empty SHOW integer predicate",
+    "query": "SHOW INDEXES YIELD name WHERE 1 RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 residual empty SHOW arithmetic predicate",
+    "query": "SHOW INDEXES YIELD name WHERE name + 1 RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 residual populated SHOW integer predicate",
+    "setup": ["CREATE INDEX named FOR (n:P) ON (n.k)"],
+    "query": "SHOW INDEXES YIELD name WHERE 1 RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 residual populated SHOW arithmetic predicate",
+    "setup": ["CREATE INDEX named FOR (n:P) ON (n.k)"],
+    "query": "SHOW INDEXES YIELD name WHERE name + 1 RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "expected_phase": "compile time",
+    "no_effects": true
+  },
+  {
+    "name": "GH786 control valid SHOW name alias predicate",
+    "setup": ["CREATE INDEX named FOR (n:P) ON (n.k)"],
+    "query": "SHOW INDEXES YIELD name AS indexName WHERE indexName = 'named' RETURN indexName",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual unsupported CYPHER 25",
+    "query": "CYPHER 25 CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual unsupported CYPHER 5.0",
+    "query": "CYPHER 5.0 CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual unsupported CYPHER 3.5",
+    "query": "CYPHER 3.5 CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual unsupported CYPHER 4.4",
+    "query": "CYPHER 4.4 CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual unknown CYPHER option",
+    "query": "CYPHER bogus=foo CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid runtime option",
+    "query": "CYPHER runtime=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid planner option",
+    "query": "CYPHER planner=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid expression engine option",
+    "query": "CYPHER expressionEngine=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid EXPLAIN preamble",
+    "query": "EXPLAIN CYPHER runtime=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual invalid PROFILE preamble",
+    "query": "PROFILE CYPHER runtime=bogus CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.ArgumentError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 residual bare CYPHER option",
+    "query": "CYPHER foo CREATE (:Preamble) RETURN 1 AS x",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 control EXPLAIN preamble",
+    "query": "EXPLAIN CYPHER 5 runtime=slotted RETURN 1 AS x",
+    "no_effects": true
+  },
+  {
+    "name": "GH743 control PROFILE preamble",
+    "query": "PROFILE CYPHER 5 runtime=slotted RETURN 1 AS x",
     "no_effects": true
   }
 ]

@@ -12,6 +12,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func requirePerformanceWorkload(t *testing.T) {
+	t.Helper()
+	if !performanceWorkloadEnabled(os.Getenv("NORNICDB_RUN_PERFORMANCE_TESTS"), cypherRaceEnabled, testing.Short()) {
+		t.Skip("profiling and timing tests require NORNICDB_RUN_PERFORMANCE_TESTS=1, without -race or -short")
+	}
+}
+
+func performanceWorkloadEnabled(optIn string, raceEnabled, short bool) bool {
+	return optIn == "1" && !raceEnabled && !short
+}
+
+func TestPerformanceWorkloadGate(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		optIn       string
+		raceEnabled bool
+		short       bool
+		want        bool
+	}{
+		{name: "default"},
+		{name: "nonexplicit", optIn: "true"},
+		{name: "opted in", optIn: "1", want: true},
+		{name: "race", optIn: "1", raceEnabled: true},
+		{name: "short", optIn: "1", short: true},
+		{name: "race and short", optIn: "1", raceEnabled: true, short: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, performanceWorkloadEnabled(test.optIn, test.raceEnabled, test.short))
+		})
+	}
+}
+
 func assertMinOpsPerSec(t *testing.T, label string, opsPerSec, minOpsPerSec float64) {
 	t.Helper()
 

@@ -22,11 +22,20 @@ type CypherParserListener interface {
 	// EnterQuery is called when entering the query production.
 	EnterQuery(c *QueryContext)
 
+	// EnterUseClause is called when entering the useClause production.
+	EnterUseClause(c *UseClauseContext)
+
 	// EnterQueryPrefix is called when entering the queryPrefix production.
 	EnterQueryPrefix(c *QueryPrefixContext)
 
 	// EnterShowCommand is called when entering the showCommand production.
 	EnterShowCommand(c *ShowCommandContext)
+
+	// EnterAdministrationCommand is called when entering the administrationCommand production.
+	EnterAdministrationCommand(c *AdministrationCommandContext)
+
+	// EnterQualifiedName is called when entering the qualifiedName production.
+	EnterQualifiedName(c *QualifiedNameContext)
 
 	// EnterSchemaCommand is called when entering the schemaCommand production.
 	EnterSchemaCommand(c *SchemaCommandContext)
@@ -48,6 +57,9 @@ type CypherParserListener interface {
 
 	// EnterCountSubquery is called when entering the countSubquery production.
 	EnterCountSubquery(c *CountSubqueryContext)
+
+	// EnterCollectSubquery is called when entering the collectSubquery production.
+	EnterCollectSubquery(c *CollectSubqueryContext)
 
 	// EnterCallSubquery is called when entering the callSubquery production.
 	EnterCallSubquery(c *CallSubqueryContext)
@@ -226,6 +238,12 @@ type CypherParserListener interface {
 	// EnterAtom is called when entering the atom production.
 	EnterAtom(c *AtomContext)
 
+	// EnterMapProjection is called when entering the mapProjection production.
+	EnterMapProjection(c *MapProjectionContext)
+
+	// EnterMapProjectionItem is called when entering the mapProjectionItem production.
+	EnterMapProjectionItem(c *MapProjectionItemContext)
+
 	// EnterLhs is called when entering the lhs production.
 	EnterLhs(c *LhsContext)
 
@@ -337,11 +355,20 @@ type CypherParserListener interface {
 	// ExitQuery is called when exiting the query production.
 	ExitQuery(c *QueryContext)
 
+	// ExitUseClause is called when exiting the useClause production.
+	ExitUseClause(c *UseClauseContext)
+
 	// ExitQueryPrefix is called when exiting the queryPrefix production.
 	ExitQueryPrefix(c *QueryPrefixContext)
 
 	// ExitShowCommand is called when exiting the showCommand production.
 	ExitShowCommand(c *ShowCommandContext)
+
+	// ExitAdministrationCommand is called when exiting the administrationCommand production.
+	ExitAdministrationCommand(c *AdministrationCommandContext)
+
+	// ExitQualifiedName is called when exiting the qualifiedName production.
+	ExitQualifiedName(c *QualifiedNameContext)
 
 	// ExitSchemaCommand is called when exiting the schemaCommand production.
 	ExitSchemaCommand(c *SchemaCommandContext)
@@ -363,6 +390,9 @@ type CypherParserListener interface {
 
 	// ExitCountSubquery is called when exiting the countSubquery production.
 	ExitCountSubquery(c *CountSubqueryContext)
+
+	// ExitCollectSubquery is called when exiting the collectSubquery production.
+	ExitCollectSubquery(c *CollectSubqueryContext)
 
 	// ExitCallSubquery is called when exiting the callSubquery production.
 	ExitCallSubquery(c *CallSubqueryContext)
@@ -540,6 +570,12 @@ type CypherParserListener interface {
 
 	// ExitAtom is called when exiting the atom production.
 	ExitAtom(c *AtomContext)
+
+	// ExitMapProjection is called when exiting the mapProjection production.
+	ExitMapProjection(c *MapProjectionContext)
+
+	// ExitMapProjectionItem is called when exiting the mapProjectionItem production.
+	ExitMapProjectionItem(c *MapProjectionItemContext)
 
 	// ExitLhs is called when exiting the lhs production.
 	ExitLhs(c *LhsContext)

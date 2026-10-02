@@ -1402,11 +1402,8 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 				usedAnyIndex = true
 			}
 		} else {
-			// Labelless: union across every (anyLabel, prop) index. Safe
-			// because the result is filtered by `nodeMatchesProps` later, so
-			// false positives (nodes that match the value but not the rest
-			// of the pattern) cannot reach the output.
-			if labellessPropertyIndexUsable(store) {
+			labels := e.indexCandidateLabels(schema, nil, prop)
+			if labellessPropertyIndexUsable(store, labels...) {
 				ids = schema.PropertyIndexLookupAnyLabel(prop, val)
 			}
 			if ids != nil {

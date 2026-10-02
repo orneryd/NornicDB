@@ -132,51 +132,47 @@ func TestCountOptimization(t *testing.T) {
 	}
 
 	t.Run("CountAllNodes", func(t *testing.T) {
-		start := time.Now()
 		result, err := exec.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
-		elapsed := time.Since(start)
 
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 1)
 		assert.Equal(t, int64(500), result.Rows[0][0])
-		t.Logf("MATCH (n) RETURN count(n): %v (count=%v)", elapsed, result.Rows[0][0])
-
-		// With O(1) optimization, this should be < 1ms
-		assert.Less(t, elapsed, 10*time.Millisecond, "Count should use O(1) optimization")
 	})
 
 	t.Run("CountStar", func(t *testing.T) {
-		start := time.Now()
 		result, err := exec.Execute(ctx, "MATCH (n) RETURN count(*)", nil)
-		elapsed := time.Since(start)
 
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 1)
 		assert.Equal(t, int64(500), result.Rows[0][0])
-		t.Logf("MATCH (n) RETURN count(*): %v (count=%v)", elapsed, result.Rows[0][0])
 	})
 
 	t.Run("CountWithLabel", func(t *testing.T) {
-		start := time.Now()
 		result, err := exec.Execute(ctx, "MATCH (n:TestLabel) RETURN count(n)", nil)
-		elapsed := time.Since(start)
 
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 1)
 		assert.Equal(t, int64(500), result.Rows[0][0])
-		t.Logf("MATCH (n:TestLabel) RETURN count(n): %v (count=%v)", elapsed, result.Rows[0][0])
 	})
 
 	t.Run("CountWithWhere_NoOptimization", func(t *testing.T) {
 		// This should NOT use the optimization since it has a WHERE clause
-		start := time.Now()
 		result, err := exec.Execute(ctx, "MATCH (n:TestLabel) WHERE n.id < 100 RETURN count(n)", nil)
-		elapsed := time.Since(start)
 
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 1)
 		assert.Equal(t, int64(100), result.Rows[0][0])
-		t.Logf("MATCH with WHERE RETURN count(n): %v (count=%v)", elapsed, result.Rows[0][0])
+	})
+
+	t.Run("CountAllNodesTiming", func(t *testing.T) {
+		requirePerformanceWorkload(t)
+		start := time.Now()
+		result, err := exec.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
+		elapsed := time.Since(start)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		assert.Equal(t, int64(500), result.Rows[0][0])
+		assert.Less(t, elapsed, 10*time.Millisecond, "Count should use O(1) optimization")
 	})
 }
 

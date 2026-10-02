@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -31,6 +32,10 @@ func (p *performanceQueryExecutor) Execute(ctx context.Context, query string, pa
 
 // startPerfTestServer starts a server for performance testing
 func startPerfTestServer(t *testing.T) (*Server, int) {
+	t.Helper()
+	if !performanceTestsEnabled(os.Getenv("NORNICDB_RUN_PERFORMANCE_TESTS"), boltRaceEnabled, testing.Short()) {
+		t.Skip("timing assertions require NORNICDB_RUN_PERFORMANCE_TESTS=1, without -race or -short")
+	}
 	store := storage.NewMemoryEngine()
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &performanceQueryExecutor{executor: cypherExec}
@@ -55,6 +60,31 @@ func startPerfTestServer(t *testing.T) (*Server, int) {
 	t.Logf("Bolt server listening on bolt://localhost:%d", port)
 
 	return server, port
+}
+
+func performanceTestsEnabled(optIn string, raceEnabled, short bool) bool {
+	return optIn == "1" && !raceEnabled && !short
+}
+
+func TestPerformanceWorkloadGate(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		optIn       string
+		raceEnabled bool
+		short       bool
+		want        bool
+	}{
+		{name: "default"},
+		{name: "nonexplicit", optIn: "true"},
+		{name: "opted in", optIn: "1", want: true},
+		{name: "race", optIn: "1", raceEnabled: true},
+		{name: "short", optIn: "1", short: true},
+		{name: "race and short", optIn: "1", raceEnabled: true, short: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, performanceTestsEnabled(test.optIn, test.raceEnabled, test.short))
+		})
+	}
 }
 
 // TestPerformance_RelationshipVsNode tests that relationship operations
@@ -238,8 +268,6 @@ func TestPerformance_MinimumThroughput(t *testing.T) {
 
 	t.Logf("Relationship create/delete: %.0f ops/sec", opsPerSec)
 
-	// MINIMUM: Should achieve at least 1000 ops/sec for simple relationship operations
-	// Neo4j achieves ~1800 ops/sec, so 1000 is a reasonable minimum
 	assert.Greater(t, opsPerSec, 1000.0,
 		"Should achieve at least 1000 ops/sec for relationship create/delete. "+
 			"Current: %.0f ops/sec. This is a performance regression.", opsPerSec)

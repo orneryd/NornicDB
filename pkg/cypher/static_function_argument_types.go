@@ -307,6 +307,7 @@ func validateStaticFunctionArguments(cypher string) error {
 type staticTypeScope struct {
 	kinds  matchSemanticScope
 	values map[string]string
+	params map[string]interface{}
 }
 
 // typeOf is the static type name of variable, or "" when it isn't known.
@@ -333,6 +334,9 @@ func (scope staticTypeScope) typeOf(variable string) string {
 // staticExpressionType is the static type of expression in scope: a
 // literal's type or a variable's.
 func (scope staticTypeScope) staticExpressionType(expression string) string {
+	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
+		return propertyAccessExpressionType(expression, scope.values, scope.params)
+	}
 	if typeName := staticLiteralTypeName(expression); typeName != "" {
 		return typeName
 	}
@@ -428,6 +432,13 @@ func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]st
 		if alias == "" {
 			continue
 		}
+		if typeName := staticLiteralTypeName(expression); typeName != "" {
+			if values == nil {
+				values = make(map[string]string)
+			}
+			values[alias] = typeName
+			continue
+		}
 		if variable := simpleSemanticIdentifier(expression); variable != "" {
 			if typeName, found := scope.values[variable]; found {
 				if values == nil {
@@ -435,13 +446,6 @@ func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]st
 				}
 				values[alias] = typeName
 			}
-			continue
-		}
-		if typeName := staticLiteralTypeName(expression); typeName != "" {
-			if values == nil {
-				values = make(map[string]string)
-			}
-			values[alias] = typeName
 		}
 	}
 	return values

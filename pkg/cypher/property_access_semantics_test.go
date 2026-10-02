@@ -19,6 +19,10 @@ func TestGh657_RemainingReportedDiagnostics(t *testing.T) {
 		{"MATCH (n:A) RETURN size(n.v * 2)", "Neo.ClientError.Statement.SyntaxError"},
 		{"CALL db.index.vector.queryNodes('nope668', 1, [1.0]) YIELD node RETURN node", "Neo.ClientError.Procedure.ProcedureCallFailed"},
 		{"RETURN coalesce(a / b, 2)", "Neo.ClientError.Statement.SyntaxError"},
+		{"WITH 5 AS l RETURN reduce(acc = 0, x IN l | acc + x) AS v", "Neo.ClientError.Statement.SyntaxError"},
+		{"WITH [1, 2, 3] AS l RETURN l['a'] AS v", "Neo.ClientError.Statement.SyntaxError"},
+		{"WITH {a: 1} AS m RETURN m[1] AS v", "Neo.ClientError.Statement.SyntaxError"},
+		{"WITH 'abc' AS s RETURN s[0] AS v", "Neo.ClientError.Statement.SyntaxError"},
 		{"WITH 5 AS v RETURN any(x IN v WHERE x = 5) AS r", "Neo.ClientError.Statement.SyntaxError"},
 		{"WITH $m + 1 AS m RETURN m.a", "Neo.ClientError.Statement.SyntaxError"},
 		{"WITH 5 AS s RETURN COUNT { UNWIND [{a: 1}] AS s RETURN s.a } AS r", "Neo.ClientError.Statement.SyntaxError"},
@@ -29,6 +33,28 @@ func TestGh657_RemainingReportedDiagnostics(t *testing.T) {
 		t.Run(testCase.query, func(t *testing.T) {
 			executor := setupTestExecutor(t)
 			_, err := executor.Execute(context.Background(), testCase.query, nil)
+			require.Error(t, err)
+			var diagnostic interface{ BoltErrorCode() string }
+			require.ErrorAs(t, err, &diagnostic)
+			require.Equal(t, testCase.code, diagnostic.BoltErrorCode())
+		})
+	}
+}
+
+func TestGh698_ParameterSubscriptDiagnostics(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		value any
+		key   any
+		code  string
+	}{
+		{"map integer key", map[string]any{"name": "Mats"}, int64(0), "Neo.ClientError.Statement.SyntaxError"},
+		{"string receiver", "abc", int64(0), "Neo.ClientError.Statement.SyntaxError"},
+		{"list float key", []any{int64(1), int64(2)}, float64(1.5), "Neo.ClientError.Statement.TypeError"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			executor := setupTestExecutor(t)
+			_, err := executor.Execute(context.Background(), "WITH $value AS value, $key AS key RETURN value[key]", map[string]any{"value": testCase.value, "key": testCase.key})
 			require.Error(t, err)
 			var diagnostic interface{ BoltErrorCode() string }
 			require.ErrorAs(t, err, &diagnostic)
