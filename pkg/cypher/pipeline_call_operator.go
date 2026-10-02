@@ -64,7 +64,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		return nil, nil, true, err
 	}
 	imports := scopedImports
-	if len(imports) == 0 && !hasLegacyImports && len(rows) > 0 {
+	if scopedImports == nil && !hasLegacyImports && len(rows) > 0 {
 		for name := range rows[0] {
 			if !strings.HasPrefix(name, "$") && isIdentifierReferenced(body, name) {
 				imports = append(imports, name)

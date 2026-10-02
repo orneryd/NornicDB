@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -70,14 +71,27 @@ func TestInQueryProcedureCallRejectsImplicitArguments(t *testing.T) {
 		},
 	))
 
-	exec := &StorageExecutor{}
-	_, err := exec.executeCall(context.Background(), "CALL custom.acceptInteger YIELD out RETURN out")
-	require.Error(t, err)
-
-	var semanticError *SemanticError
-	require.ErrorAs(t, err, &semanticError)
-	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code)
-	require.Equal(t, "InvalidArgumentPassingMode", semanticError.Detail)
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			exec := NewStorageExecutor(storage.NewMemoryEngine())
+			for _, testCase := range []struct{ query, detail string }{
+				{"CALL custom.acceptInteger YIELD out RETURN out", "InvalidArgumentPassingMode"},
+				{"CALL custom.acceptInteger(1) YIELD * RETURN out", "UnexpectedSyntax"},
+			} {
+				_, err := exec.Execute(context.Background(), testCase.query, nil)
+				require.Error(t, err, testCase.query)
+				var semanticError *SemanticError
+				require.ErrorAs(t, err, &semanticError, testCase.query)
+				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code)
+				require.Equal(t, testCase.detail, semanticError.Detail)
+			}
+			_, err := exec.Execute(context.Background(), "CALL custom.acceptInteger(1) YIELD out RETURN out", nil)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestProcedureYieldRejectsDuplicateBindings(t *testing.T) {

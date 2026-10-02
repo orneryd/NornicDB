@@ -2563,7 +2563,11 @@ func TestHandleImplicitTransaction_BranchMatrix(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/db/"+dbName+"/tx/commit", strings.NewReader("{"))
 		rec := httptest.NewRecorder()
 		server.handleImplicitTransaction(rec, req, dbName)
-		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var response TransactionResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+		require.Len(t, response.Errors, 1)
+		require.Equal(t, "Neo.ClientError.Request.InvalidFormat", response.Errors[0].Code)
 	})
 
 	t.Run("mutation denied without claims", func(t *testing.T) {
@@ -3116,9 +3120,11 @@ func TestInvalidJSON(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	server.buildRouter().ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400 for invalid JSON, got %d", recorder.Code)
-	}
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response TransactionResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Len(t, response.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Request.InvalidFormat", response.Errors[0].Code)
 }
 
 func TestNotFound(t *testing.T) {
@@ -3652,9 +3658,11 @@ func TestImplicitTransactionBadJSON(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	server.buildRouter().ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400 for invalid JSON, got %d", recorder.Code)
-	}
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response TransactionResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Len(t, response.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Request.InvalidFormat", response.Errors[0].Code)
 }
 
 func TestGDPRExportCSV(t *testing.T) {

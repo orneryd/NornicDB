@@ -27,11 +27,27 @@ func propertyIndexLookup(engine storage.Engine, schema *storage.SchemaManager, l
 // labellessPropertyIndexUsable reports whether a pattern without a label may
 // take its candidates from the property indexes read through engine. The
 // indexes are per label, so their union for a property lists only the nodes
-// that carry an indexed label; inside a transaction a label-less pattern
-// reads the transaction's merged scan instead, which lists every node.
-func labellessPropertyIndexUsable(engine storage.Engine) bool {
-	_, transactional := engine.(*transactionStorageWrapper)
-	return !transactional
+// that carry an indexed label. A committed lookup is complete only when an
+// indexed label covers the namespace; transaction reads use the merged scan.
+func labellessPropertyIndexUsable(engine storage.Engine, labels ...string) bool {
+	if _, transactional := engine.(*transactionStorageWrapper); transactional {
+		return false
+	}
+	stats, supported := engine.(storage.LabelStatsEngine)
+	if !supported || len(labels) == 0 {
+		return false
+	}
+	total, err := engine.NodeCount()
+	if err != nil {
+		return false
+	}
+	for _, label := range labels {
+		count, err := stats.NodeCountByLabel(label)
+		if err == nil && count == total {
+			return true
+		}
+	}
+	return false
 }
 
 // orderedPropertyIndexSchema returns the schema whose property indexes can

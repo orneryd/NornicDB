@@ -49,6 +49,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject statically invalid LIST/MAP/scalar subscripts with compile-time
+  SyntaxError, including known parameter types, while retaining runtime errors
+  for dynamically typed FLOAT indexes (#698).
+- Validate FINISH/UNION columns before writes, preserve unit-CALL graph effects,
+  and enforce explicit CALL import scopes, including empty imports
+  (#743, #781, #782, #783).
+- Validate CYPHER versions/options and repeated execution-mode prefixes before
+  execution. Preserve EXPLAIN/PROFILE plans through composite dispatch and
+  return HTTP PROFILE plan envelopes (#744, #784).
+- Match repeated composite-constraint diagnostics and compile-time SHOW
+  predicate type validation (#785, #786).
+- Complete label-less indexed property reads across other labels/unlabeled
+  nodes, accept parameters named `as`, and bind comma-MATCH path/shortestPath
+  variables correctly (#814, #815, #816).
+- Expand the forced ANTLR grammar for multipart and expression subqueries,
+  scoped CALL/UNION, CALL pagination, map projections, dynamic labels,
+  schema/administration commands, keyword identifiers, signed numeric literals,
+  multiline strings, and post-index property access. Preserve syntax rejection
+  and odd/even logical negation (#739).
+- Require `NORNICDB_RUN_PERFORMANCE_TESTS=1` for Bolt throughput and Cypher
+  timing/profile workloads, and always disable them under race/short runs.
+  Keep COUNT correctness assertions unconditional (#715).
 - Resolve the 13 remaining reported diagnostic mismatches in #657: validate
   graph-property subscripts, arithmetic function argument types, function
   arity, undefined function-expression variables, scalar quantifier inputs,
@@ -62,10 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Null property-map MATCH reads and mutations match nothing; null MERGE
   properties are rejected before writes. Keep CREATE null-property omission
   separate from matching semantics (#810).
-- Reject malformed, trailing, and oversized transaction HTTP bodies instead of
-  silently executing an empty request. Roll back prior writes when the final
-  explicit commit body is invalid; preserve optional empty open/commit bodies
-  and the configured request-size policy (#776).
+- Reject malformed and oversized transaction HTTP bodies; abort explicit
+  sessions on invalid execute/commit bodies. Match Neo4j's required statement
+  list, optional empty-body and first-document framing rules: ignore trailing
+  documents/garbage without executing them, but drain the size-limited reader
+  before writes so oversized suffixes remain rejected (#776, #812).
 - Preserve indexed explicit-transaction read-your-writes for equality, IN,
   pattern-property and ordered reads, including mixed committed/pending rows
   and MATCH mutations. Property-index lookups made inside a transaction merge

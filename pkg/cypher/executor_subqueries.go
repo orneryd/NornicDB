@@ -1610,6 +1610,9 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 
 	// Extract body (between braces)
 	body = strings.TrimSpace(trimmed[braceStart+1 : braceEnd])
+	if stripped, finishes := stripUnionBranchFinishes(body); finishes && strings.TrimSpace(stripped) != "" {
+		body = stripped
+	}
 
 	// Get what's after the closing brace
 	afterCall = strings.TrimSpace(trimmed[braceEnd+1:])
@@ -1659,6 +1662,9 @@ func parseCallSubqueryImportVariables(cypher string) []string {
 	}
 	body := strings.TrimSpace(trimmed[idx+1 : close])
 	if body == "" {
+		return []string{}
+	}
+	if body == "*" {
 		return nil
 	}
 	parts := splitProcedureTopLevelComma(body)

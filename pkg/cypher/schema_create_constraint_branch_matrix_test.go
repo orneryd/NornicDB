@@ -4,9 +4,28 @@ import (
 	"context"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResidualRepeatedUniqueConstraintProperties(t *testing.T) {
+	for _, query := range []string{
+		"CREATE CONSTRAINT cu FOR (n:P) REQUIRE (n.a, n.a) IS UNIQUE",
+		"CREATE CONSTRAINT cu FOR (n:P) REQUIRE (n.a, n.`a`) IS UNIQUE",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			_, err := exec.Execute(ctx, query, nil)
+			require.Error(t, err)
+			code, _ := nornicerrors.Neo4jStatus(err)
+			require.Equal(t, "Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema", code)
+			result, err := exec.Execute(ctx, "SHOW CONSTRAINTS", nil)
+			require.NoError(t, err)
+			require.Empty(t, result.Rows)
+		})
+	}
+}
 
 func TestCreateConstraint_BranchMatrix_NodeAndRelationshipVariants(t *testing.T) {
 	base := newTestMemoryEngine(t)

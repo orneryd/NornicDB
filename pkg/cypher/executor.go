@@ -1399,6 +1399,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
+	if err := validateCypherPreamble(cypher); err != nil {
+		return nil, err
+	}
 	// Neo4j 5 statement framing: leading CYPHER [version] [option=value …]
 	// groups run the statement they precede, and a trailing FINISH (on every
 	// UNION branch) runs it and returns no rows.
@@ -1491,6 +1494,19 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 		mergedParams := e.mergeShellParams(ctx, params)
 		ctx = context.WithValue(ctx, paramsKey, mergedParams)
+		mode, modeQuery := parseExecutionMode(cypher)
+		if mode != ModeNormal {
+			if err := e.validateSyntax(modeQuery); err != nil {
+				return nil, err
+			}
+			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
+				return nil, err
+			}
+			if mode == ModeExplain {
+				return e.executeExplain(ctx, modeQuery)
+			}
+			return e.executeProfile(ctx, modeQuery)
+		}
 		info := e.analyzer.Analyze(cypher)
 		// Plan 04-03 Site 3 (fabric branch): isFabric=true → op_type="fabric"
 		// per RISK-1 corrected classifier. Observation pre-execute so the
@@ -1880,17 +1896,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	return result, err
 }
 
-// trimTrailingStatementDelimiters removes trailing Cypher statement delimiters
-// (';') and surrounding whitespace, while leaving internal semicolons untouched.
+// trimTrailingStatementDelimiters removes one optional trailing Cypher statement
+// delimiter (';') and whitespace, leaving any additional semicolon for validation.
 // This mirrors Neo4j-compatible client behavior where a final semicolon is optional.
 func trimTrailingStatementDelimiters(query string) string {
 	s := strings.TrimSpace(query)
-	for {
-		if !strings.HasSuffix(s, ";") {
-			return s
-		}
+	if strings.HasSuffix(s, ";") {
 		s = strings.TrimSpace(strings.TrimSuffix(s, ";"))
 	}
+	return s
 }
 
 func normalizeCypherSyntaxConfusables(query string) string {

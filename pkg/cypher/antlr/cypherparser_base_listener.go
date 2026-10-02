@@ -50,6 +50,12 @@ func (s *BaseCypherParserListener) EnterQuery(ctx *QueryContext) {}
 // ExitQuery is called when production query is exited.
 func (s *BaseCypherParserListener) ExitQuery(ctx *QueryContext) {}
 
+// EnterUseClause is called when production useClause is entered.
+func (s *BaseCypherParserListener) EnterUseClause(ctx *UseClauseContext) {}
+
+// ExitUseClause is called when production useClause is exited.
+func (s *BaseCypherParserListener) ExitUseClause(ctx *UseClauseContext) {}
+
 // EnterQueryPrefix is called when production queryPrefix is entered.
 func (s *BaseCypherParserListener) EnterQueryPrefix(ctx *QueryPrefixContext) {}
 
@@ -61,6 +67,18 @@ func (s *BaseCypherParserListener) EnterShowCommand(ctx *ShowCommandContext) {}
 
 // ExitShowCommand is called when production showCommand is exited.
 func (s *BaseCypherParserListener) ExitShowCommand(ctx *ShowCommandContext) {}
+
+// EnterAdministrationCommand is called when production administrationCommand is entered.
+func (s *BaseCypherParserListener) EnterAdministrationCommand(ctx *AdministrationCommandContext) {}
+
+// ExitAdministrationCommand is called when production administrationCommand is exited.
+func (s *BaseCypherParserListener) ExitAdministrationCommand(ctx *AdministrationCommandContext) {}
+
+// EnterQualifiedName is called when production qualifiedName is entered.
+func (s *BaseCypherParserListener) EnterQualifiedName(ctx *QualifiedNameContext) {}
+
+// ExitQualifiedName is called when production qualifiedName is exited.
+func (s *BaseCypherParserListener) ExitQualifiedName(ctx *QualifiedNameContext) {}
 
 // EnterSchemaCommand is called when production schemaCommand is entered.
 func (s *BaseCypherParserListener) EnterSchemaCommand(ctx *SchemaCommandContext) {}
@@ -103,6 +121,12 @@ func (s *BaseCypherParserListener) EnterCountSubquery(ctx *CountSubqueryContext)
 
 // ExitCountSubquery is called when production countSubquery is exited.
 func (s *BaseCypherParserListener) ExitCountSubquery(ctx *CountSubqueryContext) {}
+
+// EnterCollectSubquery is called when production collectSubquery is entered.
+func (s *BaseCypherParserListener) EnterCollectSubquery(ctx *CollectSubqueryContext) {}
+
+// ExitCollectSubquery is called when production collectSubquery is exited.
+func (s *BaseCypherParserListener) ExitCollectSubquery(ctx *CollectSubqueryContext) {}
 
 // EnterCallSubquery is called when production callSubquery is entered.
 func (s *BaseCypherParserListener) EnterCallSubquery(ctx *CallSubqueryContext) {}
@@ -459,6 +483,18 @@ func (s *BaseCypherParserListener) EnterAtom(ctx *AtomContext) {}
 
 // ExitAtom is called when production atom is exited.
 func (s *BaseCypherParserListener) ExitAtom(ctx *AtomContext) {}
+
+// EnterMapProjection is called when production mapProjection is entered.
+func (s *BaseCypherParserListener) EnterMapProjection(ctx *MapProjectionContext) {}
+
+// ExitMapProjection is called when production mapProjection is exited.
+func (s *BaseCypherParserListener) ExitMapProjection(ctx *MapProjectionContext) {}
+
+// EnterMapProjectionItem is called when production mapProjectionItem is entered.
+func (s *BaseCypherParserListener) EnterMapProjectionItem(ctx *MapProjectionItemContext) {}
+
+// ExitMapProjectionItem is called when production mapProjectionItem is exited.
+func (s *BaseCypherParserListener) ExitMapProjectionItem(ctx *MapProjectionItemContext) {}
 
 // EnterLhs is called when production lhs is entered.
 func (s *BaseCypherParserListener) EnterLhs(ctx *LhsContext) {}

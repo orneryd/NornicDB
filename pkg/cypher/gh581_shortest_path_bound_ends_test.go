@@ -11,6 +11,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -60,6 +61,34 @@ func intRows(t *testing.T, result *ExecuteResult) [][]int64 {
 		rows = append(rows, ints)
 	}
 	return rows
+}
+
+func TestResidualCommaBoundPaths(t *testing.T) {
+	for _, mode := range []string{"nornic", "antlr"} {
+		t.Run(mode, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(mode)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			exec := newGh581Executor(t)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE (:P {k: 'from'})-[:R]->(:P {k: 'mid'})-[:R]->(:P {k: 'to'})", nil)
+			require.NoError(t, err)
+			for _, query := range []string{
+				"MATCH (a:P {k: 'from'}), (b:P {k: 'to'}), p = shortestPath((a)-[:R*]->(b)) RETURN length(p) AS hops",
+				"MATCH (a:P {k: 'from'}), (b:P {k: 'to'}), p = allShortestPaths((a)-[:R*]->(b)) RETURN length(p) AS hops",
+				"MATCH (a:P {k: 'from'}), p = shortestPath((a)-[:R*]->(b:P {k: 'to'})) RETURN length(p) AS hops",
+				"MATCH (a:P {k: 'from'}), (b:P {k: 'to'}), p = (a)-[:R*]->(b) RETURN length(p) AS hops",
+				"MATCH (a:P {k: 'from'}), (b:P {k: 'to'}) MATCH p = shortestPath((a)-[:R*]->(b)) RETURN length(p) AS hops",
+				"MATCH p = shortestPath((a:P {k: 'from'})-[:R*]->(b:P {k: 'to'})) RETURN length(p) AS hops",
+			} {
+				t.Run(query, func(t *testing.T) {
+					result, err := exec.Execute(ctx, query, nil)
+					require.NoError(t, err)
+					require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+				})
+			}
+		})
+	}
 }
 
 func TestGh581_BoundEndShortestPath(t *testing.T) {

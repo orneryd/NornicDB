@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	"strings"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -60,11 +61,95 @@ func startsWithClauseKeyword(s string) bool {
 // optional version number, and option tokens (ident, ident=value, or a quoted
 // string) until a clause keyword starts the statement. Neo4j accepts any
 // number of such groups (`CYPHER 5 runtime=slotted CYPHER RETURN 1`).
+var cypherPreambleOptionValues = map[string]string{
+	"runtime":                  "interpreted, legacy, parallel, pipelined, slotted",
+	"planner":                  "cost, dp, idp",
+	"expressionengine":         "compiled, interpreted, only_when_hot",
+	"operatorengine":           "compiled, interpreted",
+	"interpretedpipesfallback": "all, disabled, whitelisted_plans_only",
+	"replan":                   "force, skip",
+	"updatestrategy":           "default, eager",
+	"connectcomponentsplanner": "greedy, idp",
+	"eageranalyzer":            "ir, lp",
+	"inferschemaparts":         "most_selective_label, off",
+	"parallelruntimesupport":   "all, disabled",
+	"debug":                    "ast, disableexistssubquerycaching, disablepropertycaching, generate_java_source, graphviz, inverse_cost, logcostcomparisons, logicalplan, logicalplanbuilder, mermaid, printcostcomparisons, querygraph, rawcardinalities, renderdistinctness, semanticstate, show_bytecode, show_java_source, tostring, verboseeagernessreasons, visualizepipelines, warnoncompilationerrors",
+}
+
+func validateCypherPreamble(query string) error {
+	rest := strings.TrimSpace(query)
+	argumentError := func(message string) error {
+		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", message))
+	}
+	for rest != "" {
+		if matchKeywordAt(rest, 0, "EXPLAIN") || matchKeywordAt(rest, 0, "PROFILE") {
+			rest = strings.TrimSpace(rest[len("EXPLAIN"):])
+			continue
+		}
+		if !matchKeywordAt(rest, 0, "CYPHER") {
+			return nil
+		}
+		rest = strings.TrimSpace(rest[len("CYPHER"):])
+		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
+			end := 0
+			for end < len(rest) && ((rest[end] >= '0' && rest[end] <= '9') || rest[end] == '.') {
+				end++
+			}
+			if version := rest[:end]; version != "5" {
+				return argumentError(fmt.Sprintf("%s is not a valid option for cypher version. Valid options are: 5", version))
+			}
+			rest = strings.TrimSpace(rest[end:])
+		}
+		for rest != "" && !startsWithClauseKeyword(rest) {
+			end := 0
+			for end < len(rest) && isIdentByte(rest[end]) {
+				end++
+			}
+			name := strings.ToLower(rest[:end])
+			rest = strings.TrimSpace(rest[end:])
+			if end == 0 || rest == "" || rest[0] != '=' {
+				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected name=value")
+			}
+			rest = strings.TrimSpace(rest[1:])
+			end = 0
+			for end < len(rest) && isIdentByte(rest[end]) {
+				end++
+			}
+			if end == 0 {
+				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected a value")
+			}
+			value := strings.ToLower(rest[:end])
+			rest = strings.TrimSpace(rest[end:])
+			allowed, known := cypherPreambleOptionValues[name]
+			if !known {
+				return argumentError("Unsupported options: " + name)
+			}
+			valid := false
+			for _, candidate := range strings.Split(allowed, ", ") {
+				if value == candidate {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return argumentError(fmt.Sprintf("%s is not a valid option for %s. Valid options are: %s", value, name, allowed))
+			}
+		}
+	}
+	return nil
+}
+
 func stripCypherPreamble(query string) (string, bool) {
 	rest := query
 	changed := false
+	var modes []string
 	for {
 		trimmed := strings.TrimSpace(rest)
+		if matchKeywordAt(trimmed, 0, "EXPLAIN") || matchKeywordAt(trimmed, 0, "PROFILE") {
+			modes = append(modes, trimmed[:len("EXPLAIN")])
+			rest = strings.TrimSpace(trimmed[len("EXPLAIN"):])
+			continue
+		}
 		if !matchKeywordAt(trimmed, 0, "CYPHER") {
 			break
 		}
@@ -96,6 +181,9 @@ func stripCypherPreamble(query string) (string, bool) {
 		}
 	}
 	if changed {
+		if len(modes) > 0 {
+			return strings.Join(modes, " ") + " " + strings.TrimSpace(rest), true
+		}
 		return strings.TrimSpace(rest), true
 	}
 	return query, false
@@ -230,6 +318,12 @@ func stripUnionBranchFinishes(cypher string) (string, bool) {
 	right, rightStripped := stripUnionBranchFinishes(tail)
 	left, leftStripped := stripTrailingFinish(before)
 	if !leftStripped && !rightStripped {
+		return cypher, false
+	}
+	if leftStripped && rightStripped && left == "" && right == "" {
+		if _, _, mixed, _ := parseTopLevelUnionBranches(cypher); !mixed {
+			return "", true
+		}
 		return cypher, false
 	}
 	return strings.TrimSpace(left + " " + unionWord + " " + right), true

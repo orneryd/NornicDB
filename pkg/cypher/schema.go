@@ -188,6 +188,18 @@ func pauseAsyncWritesForSchemaDDL(engine storage.Engine) (func(), error) {
 //
 //	CREATE CONSTRAINT IF NOT EXISTS ON (n:Label) ASSERT n.property IS UNIQUE
 func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if parsed, err := e.parseCreateConstraintForRequireDDL(cypher); err == nil {
+		if kind, properties, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(parsed.requireExpr); ok && kind == "unique" {
+			seen := make(map[string]struct{}, len(properties))
+			for _, property := range properties {
+				if _, duplicate := seen[property]; duplicate {
+					return nil, newSemanticError("Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema", "RepeatedPropertyInCompositeSchema",
+						"A composite schema cannot contain the same property more than once: "+property)
+				}
+				seen[property] = struct{}{}
+			}
+		}
+	}
 	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
 	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
 	if result, handled, err := e.executeCreateConstraintContract(ctx, cypher, ifNotExists); handled {

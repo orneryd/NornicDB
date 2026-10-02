@@ -842,7 +842,7 @@ func keywordLeftBoundaryOK(s string, pos int, boundary keywordBoundaryMode) bool
 	if boundary == keywordBoundaryWhitespace {
 		return isASCIISpace(prev)
 	}
-	if prev == ':' {
+	if prev == ':' || prev == '$' {
 		return false
 	}
 	return !isIdentByte(prev)

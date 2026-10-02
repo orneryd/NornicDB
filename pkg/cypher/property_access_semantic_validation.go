@@ -43,7 +43,7 @@ func validateStaticPropertyAccessTypes(cypher string) error {
 // access would reject is accessed ($m.a) or projected ($m AS m), so
 // parameterized statements on hot paths cost one scan.
 func validateStaticPropertyAccessParameters(cypher string, params map[string]interface{}) error {
-	if len(params) == 0 || (strings.IndexByte(cypher, '.') < 0 && strings.IndexByte(cypher, '{') < 0) || !parameterMayRejectPropertyAccess(cypher, params) {
+	if len(params) == 0 || !strings.ContainsAny(cypher, ".{[") || !parameterMayRejectPropertyAccess(cypher, params) {
 		return nil
 	}
 	return validatePropertyAccessTypes(cypher, params)
@@ -215,9 +215,12 @@ func propertyAccessExpressionType(expression string, types map[string]string, pa
 }
 
 // parameterPropertyAccessType is the static type Neo4j gives a parameter
-// value for a property access; "" for null, a map, a Float (checked at run
+// value for a property access; "" for null, a Float (checked at run
 // time) and values whose type isn't a Cypher literal type.
 func parameterPropertyAccessType(value interface{}) string {
+	if _, isMap := toStringAnyMap(value); isMap {
+		return "Map"
+	}
 	switch value.(type) {
 	case float32, float64:
 		return ""
@@ -254,6 +257,11 @@ func checkPropertyAccesses(text string, types map[string]string, params map[stri
 // where name { … } is a map projection: Neo4j's "Type mismatch: expected
 // Map, Node or Relationship but was Integer" for a base without properties.
 func checkExpressionPropertyAccesses(text string, types map[string]string, params map[string]interface{}) error {
+	if params != nil {
+		if err := validateStaticPropertySubscripts(text, staticTypeScope{values: types, params: params}); err != nil {
+			return err
+		}
+	}
 	return scanPropertyAccesses(text, types, params, true)
 }
 
@@ -499,7 +507,7 @@ func parameterMayRejectPropertyAccess(cypher string, params map[string]interface
 		}
 		index = next - 1
 		after := queryGapEnd(cypher, next)
-		accessed := propertyAccessFollows(cypher, next)
+		accessed := propertyAccessFollows(cypher, next) || after < len(cypher) && cypher[after] == '['
 		projected := after+2 <= len(cypher) && strings.EqualFold(cypher[after:after+2], "AS") && (after+2 == len(cypher) || !isIdentifierPart(cypher[after+2]))
 		if !accessed && !projected {
 			continue

@@ -9,11 +9,59 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResidualCompositePreambles(t *testing.T) {
+	for _, mode := range []string{"nornic", "antlr"} {
+		t.Run(mode, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(mode)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, manager.Close()) })
+			require.NoError(t, manager.CreateDatabase("preamble_shard"))
+			require.NoError(t, manager.CreateCompositeDatabase("preamble_cmp", []multidb.ConstituentRef{
+				{Alias: "sh", DatabaseName: "preamble_shard", Type: "local", AccessMode: "read_write"},
+			}))
+			shard, err := manager.GetStorage("preamble_shard")
+			require.NoError(t, err)
+			_, err = NewStorageExecutor(shard).Execute(context.Background(), "CREATE (:T)", nil)
+			require.NoError(t, err)
+			store, err := manager.GetStorage("preamble_cmp")
+			require.NoError(t, err)
+			exec := NewStorageExecutor(store)
+			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+			_, err = exec.Execute(context.Background(), "BEGIN", nil)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_, rollbackError := exec.Execute(context.Background(), "ROLLBACK", nil)
+				require.NoError(t, rollbackError)
+			})
+			for _, prefix := range []string{"EXPLAIN", "PROFILE", "CYPHER 5", "CYPHER 5 EXPLAIN", "EXPLAIN CYPHER 5"} {
+				t.Run(prefix, func(t *testing.T) {
+					result, err := exec.Execute(context.Background(), prefix+" USE preamble_cmp.sh MATCH (n:T) RETURN count(n) AS count", nil)
+					require.NoError(t, err)
+					if strings.Contains(prefix, "EXPLAIN") {
+						require.Empty(t, result.Rows)
+					} else {
+						require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+					}
+					if strings.Contains(prefix, "EXPLAIN") || prefix == "PROFILE" {
+						require.NotNil(t, result.Metadata["plan"])
+					}
+				})
+			}
+			_, err = exec.Execute(context.Background(), "USE preamble_cmp.sh EXPLAIN RETURN 1", nil)
+			require.Error(t, err)
+		})
+	}
+}
 
 func TestCompositeExplicitTx_SecondWriteShardRejected(t *testing.T) {
 	base := storage.NewMemoryEngine()
