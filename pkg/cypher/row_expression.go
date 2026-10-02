@@ -1688,6 +1688,11 @@ func (e *StorageExecutor) evaluateMatchRowPredicate(ctx context.Context, express
 }
 
 func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expression string, values map[string]interface{}) bool {
+	// A predicate already planned as complete is evaluated from its plan:
+	// the scans below look for forms it doesn't have, and run once per row.
+	if plan, cached := rowPredicatePlans.get(expression); cached && plan != nil && plan.complete {
+		return e.evaluateRowPredicatePlan(ctx, plan, values)
+	}
 	if mayContainCaseKeyword(expression) {
 		if spans := caseBlockSpans(expression); len(spans) > 0 {
 			return e.evaluateRowPredicateWithCASEBound(ctx, expression, spans, values)

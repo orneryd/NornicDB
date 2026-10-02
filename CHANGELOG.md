@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MERGE on an indexed property finds a node the transaction created. Ordered
   and not-null index scans read the index while the transaction has written
   no nodes, and the shared transactional scan once it has (#809).
+- `UNWIND … MATCH (n:Label) WHERE <predicate>` on a property without an index
+  tests the predicate per candidate node without building a row for it, and a
+  comparison with a string literal is parsed once per predicate text rather
+  than once per node (an unindexed read of 2,000 ids against 2,000 nodes:
+  11.0 s to 3.6 s in auto-commit, 7.9 s to 0.8 s in an explicit transaction).
+- `MATCH p = (n:Label)`, a named path of one node, returned no rows (and
+  `MATCH p = (n:Label {k: v}) RETURN n.k` failed to evaluate): the path
+  assignment was parsed as part of the node pattern.
 - Preserve each outer row exactly once after successful unit CALL subqueries,
   even when inner MATCH or WITH filters remove all rows. Keep returning CALL
   joins and transactional batches on the shared pipeline (#771).

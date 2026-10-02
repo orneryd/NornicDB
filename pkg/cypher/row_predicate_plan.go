@@ -106,6 +106,25 @@ type rowPredicatePart struct {
 // rowPredicatePlan is a planned predicate.
 type rowPredicatePlan struct {
 	root rowPredicatePart
+	// complete: no part of the plan is text. Such a predicate is only
+	// comparisons, IN and null tests of simple operands under AND / OR, so
+	// none of evaluateRowPredicate's other forms (CASE, arithmetic,
+	// subqueries, label tests) applies to it, and it is evaluated from the
+	// plan without scanning its text for them on every row.
+	complete bool
+}
+
+// complete reports whether part and every part below it is planned.
+func (part *rowPredicatePart) complete() bool {
+	if part.kind == rowPredicateText {
+		return false
+	}
+	for i := range part.parts {
+		if !part.parts[i].complete() {
+			return false
+		}
+	}
+	return true
 }
 
 // rowPredicatePlans caches plans by predicate text; a nil plan (a predicate
@@ -122,7 +141,7 @@ func planRowPredicate(expression string) *rowPredicatePlan {
 	var plan *rowPredicatePlan
 	if !strings.ContainsAny(expression, "{}") {
 		if root, planned := planRowPredicatePart(expression); planned {
-			plan = &rowPredicatePlan{root: root}
+			plan = &rowPredicatePlan{root: root, complete: root.complete()}
 		}
 	}
 	rowPredicatePlans.put(expression, plan)
@@ -191,7 +210,10 @@ func planRowPredicatePart(text string) (rowPredicatePart, bool) {
 // of one. A shape one of evaluateRowPredicate's earlier branches handles (NOT,
 // EXISTS, IN, string operators, =~, labels, calls, lists, strings) isn't one.
 func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
-	if strings.ContainsAny(text, "()[]:`'\"") || hasPrefixFoldASCII(text, "NOT ") {
+	if strings.ContainsAny(text, "'\"") {
+		return planRowStringComparison(text)
+	}
+	if strings.ContainsAny(text, "()[]:`") || hasPrefixFoldASCII(text, "NOT ") {
 		return rowPredicatePart{}, false
 	}
 	upper := upperASCII(text)
@@ -234,6 +256,45 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		operator = "<>"
 	}
 	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: operator}, true
+}
+
+// planRowStringComparison plans a comparison of a simple operand with a
+// string literal (n.name = 'Ada', 'a' < n.k). Each quoted operand is one
+// whole string literal, so nothing in it is predicate syntax, whatever it
+// contains; the other operand is a variable, parameter, property chain or
+// literal. Any other text with a quote in it isn't planned.
+func planRowStringComparison(text string) (rowPredicatePart, bool) {
+	operands, operators, ok := splitComparisonChain(text)
+	if !ok || len(operands) != 2 || len(operators) != 1 {
+		return rowPredicatePart{}, false
+	}
+	var sides [2]rowOperand
+	for index, operand := range operands {
+		operand = strings.TrimSpace(operand)
+		if strings.ContainsAny(operand, "'\"") {
+			if !isWholeCypherQuotedString(operand) {
+				return rowPredicatePart{}, false
+			}
+		} else if strings.ContainsAny(operand, "()[]:`") || hasPrefixFoldASCII(operand, "NOT ") {
+			return rowPredicatePart{}, false
+		}
+		side, ok := parseRowOperand(operand)
+		if !ok {
+			return rowPredicatePart{}, false
+		}
+		sides[index] = side
+	}
+	operator := operators[0]
+	switch operator {
+	case "!=":
+		operator = "<>"
+	case "=", "<>", "<", ">", "<=", ">=":
+	default:
+		// =~ and any other operator the chain scanner knows is evaluated as
+		// text.
+		return rowPredicatePart{}, false
+	}
+	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: sides[0], right: sides[1], operator: operator}, true
 }
 
 // evaluateRowPredicatePlan evaluates a planned predicate for a row.
