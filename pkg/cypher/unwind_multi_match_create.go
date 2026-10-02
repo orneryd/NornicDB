@@ -247,7 +247,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		idx := make(map[string]*storage.Node, len(distinct))
 		unresolved := make(map[string]any)
 		for k, val := range distinct {
-			ids := schema.PropertyIndexLookup(m.label, m.propName, val)
+			ids := propertyIndexLookup(store, schema, m.label, m.propName, val)
 			matched := 0
 			for _, id := range ids {
 				n, err := store.GetNode(id)

@@ -9,8 +9,39 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func propertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
-	if _, transactional := engine.(*transactionStorageWrapper); transactional {
+// propertyIndexLookup is the one lookup of label's property = value in a
+// property index, as engine sees it. The index describes committed state, so
+// inside a transaction the transaction's own node writes are merged in
+// (storage.BadgerTransaction.MergePendingPropertyMatches): nodes it created
+// or changed are listed by their current values, nodes it changed or deleted
+// lose their committed entries (#809). The lookup stays an index lookup: a
+// transaction that reads by an indexed property doesn't scan the label.
+func propertyIndexLookup(engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) []storage.NodeID {
+	ids := schema.PropertyIndexLookup(label, property, value)
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		return wrapper.tx.MergePendingPropertyMatches(ids, label, property, value)
+	}
+	return ids
+}
+
+// labellessPropertyIndexUsable reports whether a pattern without a label may
+// take its candidates from the property indexes read through engine. The
+// indexes are per label, so their union for a property lists only the nodes
+// that carry an indexed label; inside a transaction a label-less pattern
+// reads the transaction's merged scan instead, which lists every node.
+func labellessPropertyIndexUsable(engine storage.Engine) bool {
+	_, transactional := engine.(*transactionStorageWrapper)
+	return !transactional
+}
+
+// orderedPropertyIndexSchema returns the schema whose property indexes can
+// answer an ordered or not-null index scan through engine, or nil when they
+// can't: inside a transaction that has written nodes, the order of the
+// committed index isn't the transaction's order, so those scans read the
+// transaction's merged label scan instead. A transaction that has written no
+// nodes reads the index, as an auto-commit statement does.
+func orderedPropertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional && wrapper.tx.HasPendingNodeMutations() {
 		return nil
 	}
 	return engine.GetSchema()

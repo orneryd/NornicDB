@@ -199,7 +199,7 @@ func (e *StorageExecutor) findNodeByPattern(pattern nodePatternInfo) *storage.No
 				if _, ok := schema.GetPropertyIndex(label, prop); !ok {
 					continue
 				}
-				ids := schema.PropertyIndexLookup(label, prop, pattern.properties[prop])
+				ids := propertyIndexLookup(e.storage, schema, label, prop, pattern.properties[prop])
 				for _, id := range ids {
 					n, err := e.storage.GetNode(id)
 					if err != nil || n == nil {

@@ -68,6 +68,10 @@ type BadgerTransaction struct {
 
 	// Track operations for constraint validation
 	pendingNodes map[NodeID]*Node
+	// pendingIndex lists pendingNodes by label and indexed property value,
+	// for property-index lookups made inside the transaction. Nil until the
+	// first such lookup (badger_transaction_pending_index.go).
+	pendingIndex *pendingNodeIndex
 	pendingEdges map[EdgeID]*Edge
 	deletedNodes map[NodeID]struct{}
 	deletedEdges map[EdgeID]struct{}
@@ -641,6 +645,7 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 
 	// Track for read-your-writes and constraint validation
 	nodeCopy := copyNode(node)
+	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	delete(tx.deletedNodes, node.ID)
 
@@ -761,6 +766,7 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 
 	// Track for read-your-writes
 	nodeCopy := copyNode(node)
+	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 		tx.bufferDelete(pendingEmbedKey(node.ID))
@@ -1117,6 +1123,7 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 	}
 
 	// Track deletion
+	tx.pendingNodeChangedLocked(tx.pendingNodes[nodeID], nil)
 	delete(tx.pendingNodes, nodeID)
 	tx.deletedNodes[nodeID] = struct{}{}
 

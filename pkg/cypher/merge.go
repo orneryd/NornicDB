@@ -350,7 +350,7 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 			}
 			schemaLookupUsed = true
 			e.markMergeSchemaLookupUsed()
-			ids := schema.PropertyIndexLookup(label, prop, val)
+			ids := propertyIndexLookup(store, schema, label, prop, val)
 			count := len(ids)
 			if bestCount == -1 || count < bestCount {
 				bestIDs = ids
@@ -471,7 +471,7 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(store storage.Engine, lab
 		if _, ok := schema.GetPropertyIndex(label, prop); !ok {
 			continue
 		}
-		ids := schema.PropertyIndexLookup(label, prop, props[prop])
+		ids := propertyIndexLookup(store, schema, label, prop, props[prop])
 		if !found || len(ids) < len(best) {
 			best, found = ids, true
 		}
@@ -517,7 +517,7 @@ func (e *StorageExecutor) findMergeNodeAnyLabel(store storage.Engine, labels []s
 					continue
 				}
 				e.markMergeSchemaLookupUsed()
-				ids := schema.PropertyIndexLookup(label, prop, val)
+				ids := propertyIndexLookup(store, schema, label, prop, val)
 				count := len(ids)
 				if bestCount == -1 || count < bestCount {
 					bestIDs = ids
@@ -1383,7 +1383,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	if len(nodeInfo.properties) == 0 {
 		return nil, false
 	}
-	schema := propertyIndexSchema(store)
+	schema := store.GetSchema()
 	if schema == nil {
 		return nil, false
 	}
@@ -1398,7 +1398,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		if len(nodeInfo.labels) > 0 {
 			// Labelled: probe the (label, prop) index when one exists.
 			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
-				ids = schema.PropertyIndexLookup(nodeInfo.labels[0], prop, val)
+				ids = propertyIndexLookup(store, schema, nodeInfo.labels[0], prop, val)
 				usedAnyIndex = true
 			}
 		} else {
@@ -1406,7 +1406,9 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			// because the result is filtered by `nodeMatchesProps` later, so
 			// false positives (nodes that match the value but not the rest
 			// of the pattern) cannot reach the output.
-			ids = schema.PropertyIndexLookupAnyLabel(prop, val)
+			if labellessPropertyIndexUsable(store) {
+				ids = schema.PropertyIndexLookupAnyLabel(prop, val)
+			}
 			if ids != nil {
 				usedAnyIndex = true
 			}
@@ -1469,7 +1471,7 @@ func (e *StorageExecutor) lookupWhereCandidatesUsingPropertyIndex(nodeInfo nodeP
 	if findTopLevelKeyword(wherePart, " OR ") >= 0 {
 		return nil, false
 	}
-	schema := propertyIndexSchema(store)
+	schema := store.GetSchema()
 	if schema == nil {
 		return nil, false
 	}
@@ -1489,7 +1491,7 @@ func (e *StorageExecutor) lookupWhereCandidatesUsingPropertyIndex(nodeInfo nodeP
 		if !ok {
 			continue
 		}
-		ids := schema.PropertyIndexLookup(label, prop, lit)
+		ids := propertyIndexLookup(store, schema, label, prop, lit)
 		for _, id := range ids {
 			idSet[id] = struct{}{}
 		}
