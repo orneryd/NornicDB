@@ -572,20 +572,47 @@ func validatePromotionProfile(p *knowledgepolicy.PromotionProfileDef) error {
 	return nil
 }
 
+// ApplyDecayProfileOptions returns a validated updated bundle without modifying
+// the input. Invalid options return an error and the original bundle.
+// For example, updated, err := ApplyDecayProfileOptions(bundle,
+// map[string]interface{}{"halfLifeSeconds": int64(3600)}) changes its half life.
+func ApplyDecayProfileOptions(bundle knowledgepolicy.DecayProfileBundle, updates map[string]interface{}) (knowledgepolicy.DecayProfileBundle, error) {
+	updated := bundle
+	if err := applyBundleUpdates(&updated, updates); err != nil {
+		return bundle, err
+	}
+	if err := validateDecayProfileBundle(&updated); err != nil {
+		return bundle, err
+	}
+	return updated, nil
+}
+
 func applyBundleUpdates(bundle *knowledgepolicy.DecayProfileBundle, updates map[string]interface{}) error {
 	for k, v := range updates {
 		switch k {
+		case "scope":
+			scope, ok := v.(string)
+			if !ok {
+				return localizedError(localization.StorageSchemaInvalidScopeType(v), nil)
+			}
+			bundle.Scope = knowledgepolicy.ScopeType(scope)
 		case "halfLifeSeconds":
 			if n, ok := toInt64(v); ok {
 				bundle.HalfLifeSeconds = n
+			} else {
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue(k, fmt.Sprint(v), false), nil)
 			}
 		case "visibilityThreshold":
 			if f, ok := toFloat64(v); ok {
 				bundle.VisibilityThreshold = f
+			} else {
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue(k, fmt.Sprint(v), false), nil)
 			}
 		case "scoreFloor":
 			if f, ok := toFloat64(v); ok {
 				bundle.ScoreFloor = f
+			} else {
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue(k, fmt.Sprint(v), false), nil)
 			}
 		case "function":
 			if s, ok := v.(string); ok {
@@ -594,14 +621,20 @@ func applyBundleUpdates(bundle *knowledgepolicy.DecayProfileBundle, updates map[
 					return localizedError(localization.StorageSchemaInvalidDecayFunction(s), nil)
 				}
 				bundle.Function = fn
+			} else {
+				return localizedError(localization.StorageSchemaInvalidDecayFunction(v), nil)
 			}
 		case "decayEnabled":
 			if b, ok := v.(bool); ok {
 				bundle.DecayEnabled = b
+			} else {
+				return localizedError(localization.StorageSchemaOptionBooleanRequired(k), nil)
 			}
 		case "enabled":
 			if b, ok := v.(bool); ok {
 				bundle.Enabled = b
+			} else {
+				return localizedError(localization.StorageSchemaOptionBooleanRequired(k), nil)
 			}
 		case "scoreFrom":
 			if s, ok := v.(string); ok {
@@ -610,10 +643,14 @@ func applyBundleUpdates(bundle *knowledgepolicy.DecayProfileBundle, updates map[
 					return localizedError(localization.StorageSchemaInvalidScoreFromMode(s), nil)
 				}
 				bundle.ScoreFrom = mode
+			} else {
+				return localizedError(localization.StorageSchemaInvalidScoreFromMode(v), nil)
 			}
 		case "scoreFromProperty":
 			if s, ok := v.(string); ok {
 				bundle.ScoreFromProperty = s
+			} else {
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue(k, fmt.Sprint(v), false), nil)
 			}
 		default:
 			return localizedError(localization.StorageSchemaUnknownOption(k), nil)

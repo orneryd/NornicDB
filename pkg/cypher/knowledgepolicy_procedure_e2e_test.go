@@ -13,6 +13,61 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestE2E_DecayProfileOptionParity(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			for _, options := range []string{
+				"halfLifeSeconds: 1, visibilityThreshold: 1, scoreFloor: 0, function: 'exponential', scope: 'NODE', decayEnabled: 0, enabled: 1, scoreFrom: 'CREATED'",
+				"HALFLIFESECONDS: 1, visibilitythreshold: 0.5, scorefloor: 0.5, FUNCTION: 'exponential', SCOPE: 'NODE', DECAYENABLED: false, ENABLED: true, SCOREFROM: 'CREATED'",
+			} {
+				t.Run(options, func(t *testing.T) {
+					store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "decay_options")
+					executor := NewStorageExecutor(store)
+					ctx := context.Background()
+					_, err := executor.Execute(ctx, "CREATE DECAY PROFILE expected OPTIONS {"+options+"}", nil)
+					require.NoError(t, err)
+					_, err = executor.Execute(ctx, "CREATE DECAY PROFILE altered OPTIONS {halfLifeSeconds: 3600, function: 'none', scope: 'NODE', scoreFrom: 'CREATED'}", nil)
+					require.NoError(t, err)
+					_, err = executor.Execute(ctx, "ALTER DECAY PROFILE altered SET OPTIONS {"+options+"}", nil)
+					require.NoError(t, err)
+					bundles, _ := store.GetSchema().ShowDecayProfiles()
+					require.Len(t, bundles, 2)
+					byName := make(map[string]knowledgepolicy.DecayProfileBundle)
+					for _, bundle := range bundles {
+						name := bundle.Name
+						bundle.Name = "comparison"
+						byName[name] = bundle
+					}
+					expected, ok := byName["expected"]
+					require.True(t, ok)
+					altered, ok := byName["altered"]
+					require.True(t, ok)
+					require.Equal(t, expected, altered)
+					for _, invalid := range []string{"halfLifeSeconds: 'abc'", "visibilityThreshold: true", "scoreFloor: false", "function: 5", "scope: false", "decayEnabled: 'abc'", "enabled: 'abc'", "scoreFrom: false", "unknown: 1"} {
+						_, err = executor.Execute(ctx, "ALTER DECAY PROFILE altered SET OPTIONS {"+invalid+"}", nil)
+						require.Error(t, err, invalid)
+						current, _ := store.GetSchema().ShowDecayProfiles()
+						require.Len(t, current, 2)
+						found := false
+						for _, unchanged := range current {
+							if unchanged.Name == "altered" {
+								found = true
+								unchanged.Name = "comparison"
+								require.Equal(t, altered, unchanged, invalid)
+							}
+						}
+						require.True(t, found, invalid)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestE2E_KnowledgePolicyProcedureTransactionVisibility(t *testing.T) {
 	for _, parser := range []string{"nornic", "antlr"} {
 		t.Run(parser, func(t *testing.T) {

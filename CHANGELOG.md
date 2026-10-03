@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Converge decay bundle CREATE/ALTER option decoding: canonical case-insensitive
+  keys, typed numeric zero/one, boolean forms, scope updates, and atomic rejection
+  of wrong-typed values. Share validated immutable decay option application with
+  the storage lifecycle (#531).
+
 - Route compatibility vector/fulltext schema procedures through the same
   isolated transaction mutation contract as DDL. Keep vector runtime changes
   commit-local, preserve relationship fulltext scope, and expose staged native
