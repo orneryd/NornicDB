@@ -201,6 +201,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#817).
 - Order values of different types as Neo4j does: points and temporal values
   sort after lists and before strings, booleans and numbers (#837).
+- Seed `MATCH (n:Label {prop: $value}) OPTIONAL MATCH ...` from the property
+  index instead of streaming the whole label, and stop collecting that seed
+  when no fast path needs it. An indexed string, boolean or number that no
+  node holds now answers from the index in MATCH, OPTIONAL MATCH and MERGE
+  instead of falling back to a label or full node scan (#821).
+- Return the same rows from an equality on an indexed property as without the
+  index: `WHERE p.name = toUpper($name)`, `WHERE p.d = date(...)` and other
+  computed values are evaluated before the index lookup instead of being
+  looked up as their own text, and list values are filed in property indexes.
+  A uniqueness constraint now rejects a duplicate list, as in Neo4j (#844).
 - Collect query statistics from database start, as Neo4j 5.26 does:
   `db.stats.status()` reports `collecting` until `db.stats.stop('QUERIES')`,
   and `db.stats.clear('QUERIES')` answers `false`, "Collected data cannot be
