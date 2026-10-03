@@ -144,6 +144,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Accept SKIP and LIMIT expressions that read no row variable: properties of
+  a map parameter (`SKIP $p.n`, `LIMIT size($p.vals)`), map literals and
+  variables the expression binds itself (list comprehensions, `reduce`), as
+  Neo4j does (#829).
 - Preserve locally bound iterators in nested list predicates, including
   same-kind `all`, `any`, `none`, and `single` calls (#774, #775).
 - Route `CREATE TEXT INDEX` and `CREATE POINT INDEX` through schema execution
