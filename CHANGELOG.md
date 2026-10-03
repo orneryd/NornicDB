@@ -135,6 +135,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. A statement may also introduce any number of new property
   names: their records are written in as many batches as they need, and
   staging them is no longer quadratic (#703).
+- Commit the engine's bulk node and relationship creates and deletes (used by
+  recovery, the admin importer, replication, the async engine's flush and
+  the Qdrant API) as one
+  transaction: they succeed at any size or write nothing, instead of failing
+  with "Txn is too big" or, for embedding chunks, writing them in separate
+  commits. They share the transaction's checks and bookkeeping, so bulk-created
+  nodes are queued for embedding like created ones, and recovery no longer
+  splits restore batches. A transaction now rejects a relationship ID that is
+  already committed instead of overwriting it, and reports a missing endpoint
+  as not found. Loading a database's version state on a closed engine returns
+  "storage closed" instead of crashing (#703).
 - Complete `DROP DATABASE` for databases of any size: the namespace drop no
   longer fails with "This transaction has been discarded" after flushing a
   full write batch, which left the database listed and partly deleted (#819).
