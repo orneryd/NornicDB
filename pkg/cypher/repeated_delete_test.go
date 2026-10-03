@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -71,4 +72,25 @@ func TestTransactionWrapperBulkDeleteEdgesSkipsDeleted(t *testing.T) {
 	count, err := base.EdgeCount()
 	require.NoError(t, err)
 	require.Equal(t, int64(0), count)
+}
+
+type failingDeleteEdgeEngine struct {
+	storage.Engine
+	err error
+}
+
+func (e *failingDeleteEdgeEngine) DeleteEdge(storage.EdgeID) error { return e.err }
+
+// A relationship delete that fails for any reason other than the
+// relationship being gone fails the statement.
+func TestRepeatedDeleteOtherErrorsFailTheStatement(t *testing.T) {
+	failure := errors.New("delete failed")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:P {id: 'a'})-[:R]->(:P {id: 'b'})", nil)
+	require.NoError(t, err)
+	failing := NewStorageExecutor(&failingDeleteEdgeEngine{Engine: store, err: failure})
+	_, err = failing.Execute(ctx, "MATCH ()-[r:R]->() WITH collect(r) + collect(r) AS rs UNWIND rs AS r DELETE r", nil)
+	require.ErrorIs(t, err, failure)
 }
