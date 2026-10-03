@@ -108,3 +108,16 @@ func TestTypePredicateSplittingAndRowValueErrors(t *testing.T) {
 	_, ok, err = e.evaluateRowValue("missing.v IS :: INTEGER", pipelineRow{})
 	require.False(t, ok && err == nil, "an operand without a value is not a result")
 }
+
+func TestComparisonScanSkipsTypeAngleBrackets(t *testing.T) {
+	_, comparison := scanComparisonChain("x IS TYPED LIST<INTEGER>")
+	require.False(t, comparison, "LIST<…> is a type, not a comparison")
+	scan, comparison := scanComparisonChain("a<b")
+	require.True(t, comparison)
+	require.Equal(t, 1, scan.count)
+
+	exec, _ := newTestExecutor(t)
+	result, err := exec.Execute(context.Background(), "RETURN [1] IS TYPED LIST<INTEGER> AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{true}}, result.Rows)
+}
