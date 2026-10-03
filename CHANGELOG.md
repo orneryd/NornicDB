@@ -174,6 +174,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schema, let a pipeline `MERGE` that scanned the label and found no node
   create without scanning it again, and skip the text checks a repeated
   statement already passed (#823).
+- Collect query statistics from database start, as Neo4j 5.26 does:
+  `db.stats.status()` reports `collecting` until `db.stats.stop('QUERIES')`,
+  and `db.stats.clear('QUERIES')` answers `false`, "Collected data cannot be
+  cleared while collecting." while collection runs. Recorded invocations no
+  longer allocate a map per query; collection adds no measurable time per
+  statement (#530).
+- Fix `go generate ./pkg/localization`: the procedure-metadata generator no
+  longer requires every procedure to be registered by a literal
+  `registerBuiltInProcedure` call; a test checks that every metadata entry is
+  registered with its localized description in the live registry (#530).
 - Preserve locally bound iterators in nested list predicates, including
   same-kind `all`, `any`, `none`, and `single` calls (#774, #775).
 - Route `CREATE TEXT INDEX` and `CREATE POINT INDEX` through schema execution
