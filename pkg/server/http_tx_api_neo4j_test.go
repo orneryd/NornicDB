@@ -441,6 +441,112 @@ func TestGh776_OptionalEmptyBodies(t *testing.T) {
 	require.Equal(t, int64(2), extractCountFromTxResponse(t, stored))
 }
 
+func TestGh531_HTTPSchemaTransactionLifetime(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	local := httptest.NewServer(server.buildRouter())
+	defer local.Close()
+	backends := []struct{ name, endpoint, token string }{{"nornicdb", local.URL + "/db/nornic/tx", "Bearer " + getAuthToken(t, authenticator, "admin")}}
+	if reference := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI"); reference != "" {
+		backends = append(backends, struct{ name, endpoint, token string }{"neo4j", reference + "/db/neo4j/tx", ""})
+	}
+	for _, backend := range backends {
+		t.Run(backend.name, func(t *testing.T) {
+			client := &http.Client{Timeout: 30 * time.Second}
+			request := func(t *testing.T, method, endpoint string, queries ...string) TransactionResponse {
+				t.Helper()
+				statements := make([]map[string]any, 0, len(queries))
+				for _, query := range queries {
+					statements = append(statements, map[string]any{"statement": query})
+				}
+				body, err := json.Marshal(map[string]any{"statements": statements})
+				require.NoError(t, err)
+				req, err := http.NewRequest(method, endpoint, bytes.NewReader(body))
+				require.NoError(t, err)
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", backend.token)
+				response, err := client.Do(req)
+				require.NoError(t, err)
+				defer response.Body.Close()
+				require.Contains(t, []int{http.StatusOK, http.StatusCreated}, response.StatusCode)
+				var result TransactionResponse
+				require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
+				return result
+			}
+			reset := func(t *testing.T) {
+				t.Helper()
+				require.Empty(t, request(t, http.MethodPost, backend.endpoint+"/commit", "MATCH (n:Gh531SchemaHTTP) DETACH DELETE n").Errors)
+				require.Empty(t, request(t, http.MethodPost, backend.endpoint+"/commit", "DROP INDEX gh531_http_index IF EXISTS").Errors)
+			}
+			probe := func(t *testing.T, present bool, nodes float64) {
+				t.Helper()
+				schema := request(t, http.MethodPost, backend.endpoint+"/commit", "SHOW INDEXES YIELD name WHERE name = 'gh531_http_index' RETURN name")
+				require.Empty(t, schema.Errors)
+				require.Len(t, schema.Results, 1)
+				require.Equal(t, present, len(schema.Results[0].Data) == 1)
+				data := request(t, http.MethodPost, backend.endpoint+"/commit", "MATCH (n:Gh531SchemaHTTP) RETURN count(n)")
+				require.Empty(t, data.Errors)
+				require.Equal(t, []any{nodes}, data.Results[0].Data[0].Row)
+			}
+			create := "CREATE INDEX gh531_http_index FOR (n:Gh531SchemaHTTP) ON (n.id)"
+			for _, dropping := range []bool{false, true} {
+				for _, commit := range []bool{false, true} {
+					t.Run(fmt.Sprintf("drop=%v/commit=%v", dropping, commit), func(t *testing.T) {
+						reset(t)
+						require.Empty(t, request(t, http.MethodPost, backend.endpoint+"/commit", "CREATE (:Gh531SchemaHTTP {id: 'seed'})").Errors)
+						statement := create
+						if dropping {
+							require.Empty(t, request(t, http.MethodPost, backend.endpoint+"/commit", create).Errors)
+							statement = "DROP INDEX gh531_http_index"
+						}
+						opened := request(t, http.MethodPost, backend.endpoint, statement)
+						require.Empty(t, opened.Errors)
+						require.NotEmpty(t, opened.Commit)
+						if commit {
+							require.Empty(t, request(t, http.MethodPost, opened.Commit).Errors)
+						} else {
+							require.Empty(t, request(t, http.MethodDelete, strings.TrimSuffix(opened.Commit, "/commit")).Errors)
+						}
+						probe(t, dropping != commit, 1)
+						t.Logf("ISSUE531_SCHEMA_RESULT backend=%s route=http drop=%v commit=%v present=%v nodes=1", backend.name, dropping, commit, dropping != commit)
+					})
+				}
+			}
+			for _, procedure := range []bool{false, true} {
+				for _, schemaFirst := range []bool{false, true} {
+					for _, oneShot := range []bool{false, true} {
+						t.Run(fmt.Sprintf("mixed/procedure=%v/schema_first=%v/oneshot=%v", procedure, schemaFirst, oneShot), func(t *testing.T) {
+							reset(t)
+							statements := []string{"CREATE (:Gh531SchemaHTTP {id: 'mixed'})", create}
+							if procedure {
+								statements[1] = "CALL db.index.vector.createNodeIndex('gh531_http_index', 'Gh531SchemaHTTP', 'embedding', 3, 'cosine')"
+							}
+							if schemaFirst {
+								statements[0], statements[1] = statements[1], statements[0]
+							}
+							var result TransactionResponse
+							if oneShot {
+								result = request(t, http.MethodPost, backend.endpoint+"/commit", statements...)
+							} else {
+								opened := request(t, http.MethodPost, backend.endpoint, statements[0])
+								require.Empty(t, opened.Errors)
+								result = request(t, http.MethodPost, opened.Commit, statements[1])
+							}
+							require.Len(t, result.Errors, 1)
+							code := "Neo.ClientError.Transaction.ForbiddenDueToTransactionType"
+							if procedure && !schemaFirst {
+								code = "Neo.ClientError.Procedure.ProcedureCallFailed"
+							}
+							require.Equal(t, code, result.Errors[0].Code)
+							probe(t, false, 0)
+							t.Logf("ISSUE531_SCHEMA_RESULT backend=%s route=http schema_first=%v oneshot=%v code=%s present=false nodes=0", backend.name, schemaFirst, oneShot, result.Errors[0].Code)
+						})
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestGh809_HTTPTransactionIndexVisibility(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	local := httptest.NewServer(server.buildRouter())

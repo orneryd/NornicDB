@@ -83,6 +83,9 @@ func (tx *BadgerTransaction) publishKnowledgePolicySchemaLocked() func() {
 	}
 	committed := tx.engine.GetSchemaForNamespace(tx.namespace)
 	committed.mu.Lock()
+	if tx.schemaRuntime != nil {
+		committed.installTransactionSchemaLocked(tx.schemaRuntime)
+	}
 	committed.decayProfileBundles = snapshot.decayProfileBundles
 	committed.decayProfileBindings = snapshot.decayProfileBindings
 	committed.promotionProfiles = snapshot.promotionProfiles
@@ -90,5 +93,13 @@ func (tx *BadgerTransaction) publishKnowledgePolicySchemaLocked() func() {
 	committed.rebuildBindingTableLocked()
 	onChanged := committed.knowledgePolicyChanged
 	committed.mu.Unlock()
+	if tx.schemaRuntime != nil {
+		return func() {
+			committed.trackPendingPairs()
+			if onChanged != nil {
+				onChanged()
+			}
+		}
+	}
 	return onChanged
 }
