@@ -1451,6 +1451,9 @@ func rowPropertyChainTypeError(value interface{}, chain string) error {
 		property := normalizePropertyKey(strings.TrimSpace(chain[start:end]))
 		next, ok := rowPropertyValue(value, property)
 		if !ok {
+			if _, isPoint, err := evaluatePointProperty(value, property); isPoint && err != nil {
+				return err
+			}
 			return propertyAccessTypeError(value)
 		}
 		value = next
@@ -1472,6 +1475,9 @@ func rowPropertyValue(value interface{}, property string) (interface{}, bool) {
 	}
 	if propertyValue, temporal, supported := evaluateTemporalProperty(value, property); temporal {
 		return propertyValue, supported
+	}
+	if propertyValue, isPoint, err := evaluatePointProperty(value, property); isPoint {
+		return propertyValue, err == nil
 	}
 	switch typed := value.(type) {
 	case *storage.Node:

@@ -40,11 +40,11 @@ func (v CypherTime) String() string          { return formatTemporalClock(v.Time
 func (v CypherLocalDateTime) String() string { return formatTemporalDateTime(v.Time, false, "", false) }
 func (v CypherDateTime) String() string      { return formatTemporalDateTime(v.Time, true, v.ZoneID, false) }
 
-func (CypherDate) TemporalPropertyKind() string          { return "date" }
-func (CypherLocalTime) TemporalPropertyKind() string     { return "local-time" }
-func (CypherTime) TemporalPropertyKind() string          { return "time" }
-func (CypherLocalDateTime) TemporalPropertyKind() string { return "local-date-time" }
-func (CypherDateTime) TemporalPropertyKind() string      { return "zoned-date-time" }
+func (CypherDate) PropertyValueKind() string          { return "date" }
+func (CypherLocalTime) PropertyValueKind() string     { return "local-time" }
+func (CypherTime) PropertyValueKind() string          { return "time" }
+func (CypherLocalDateTime) PropertyValueKind() string { return "local-date-time" }
+func (CypherDateTime) PropertyValueKind() string      { return "zoned-date-time" }
 
 func (v CypherDate) TemporalTime() time.Time          { return v.Time }
 func (v CypherLocalTime) TemporalTime() time.Time     { return v.Time }

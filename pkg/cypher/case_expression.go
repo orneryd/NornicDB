@@ -557,6 +557,16 @@ func compareWithOperator(left, right interface{}, op string) bool {
 			return !equal
 		}
 	}
+	if equal, point := comparePointValues(left, right); point {
+		switch op {
+		case "=":
+			return equal
+		case "<>":
+			return !equal
+		default:
+			return false // points are not ordered by <, >, <=, >=
+		}
+	}
 	if comparison, temporal := compareTemporalOrdering(left, right); temporal {
 		switch op {
 		case "<":

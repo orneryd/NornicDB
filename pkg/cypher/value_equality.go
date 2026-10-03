@@ -65,6 +65,9 @@ func cypherEquality(left, right interface{}) interface{} {
 	if equal, temporal := compareTemporalValues(left, right); temporal {
 		return equal
 	}
+	if equal, point := comparePointValues(left, right); point {
+		return equal
+	}
 	return compareValues(left, right)
 }
 

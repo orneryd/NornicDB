@@ -602,7 +602,7 @@ func convertToStringOrNull(value interface{}) interface{} {
 	case float32:
 		return formatCypherValueString(typed)
 	case time.Time, *time.Time, CypherLocalTime, *CypherLocalTime, CypherTime, *CypherTime,
-		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime:
+		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime, CypherPoint, *CypherPoint:
 		return formatCypherValueString(typed)
 	case []interface{}, map[string]interface{}, *storage.Node, *storage.Edge:
 		return nil

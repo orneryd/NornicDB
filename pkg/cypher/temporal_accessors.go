@@ -38,6 +38,10 @@ func formatCypherValueString(value interface{}) string {
 		return formatTemporalDateTime(typed.Time, true, typed.ZoneID, true)
 	case *CypherDateTime:
 		return formatTemporalDateTime(typed.Time, true, typed.ZoneID, true)
+	case CypherPoint:
+		return typed.cypherText()
+	case *CypherPoint:
+		return typed.cypherText()
 	case time.Time:
 		return formatZonedDateTimeString(typed, "")
 	case *time.Time:

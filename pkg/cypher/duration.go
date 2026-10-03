@@ -112,8 +112,8 @@ type CypherDuration struct {
 	Nanos   int64 // Sub-second precision (nanoseconds)
 }
 
-// TemporalPropertyKind identifies durations as durable temporal properties.
-func (*CypherDuration) TemporalPropertyKind() string { return "duration" }
+// PropertyValueKind identifies durations as durable typed properties.
+func (*CypherDuration) PropertyValueKind() string { return "duration" }
 
 // MarshalMsgpack encodes all duration components for msgpack extension storage.
 func (d *CypherDuration) MarshalMsgpack() ([]byte, error) {
