@@ -29,6 +29,32 @@ type bm25Posting struct {
 type bm25TermState struct {
 	Postings []bm25Posting `msgpack:"p"`
 	IDF      float64       `msgpack:"i"`
+	// dead counts postings of removed documents still in Postings. Removing
+	// a document only counts its postings dead (its docLengths entry becomes
+	// 0, which scoring skips); a term's list is compacted once half of it is
+	// dead, so removing N documents that share a term costs O(N) instead of
+	// copying the list per removal (O(N²), #826). Not persisted: snapshots
+	// write live postings only.
+	dead int
+}
+
+// liveDocumentFrequency is the number of live documents holding the term.
+func (st *bm25TermState) liveDocumentFrequency() int {
+	return len(st.Postings) - st.dead
+}
+
+// compactLocked drops the postings of removed documents (docLengths 0, or no
+// docLengths entry).
+func (st *bm25TermState) compactLocked(docLengths []uint32) {
+	live := st.Postings[:0]
+	for _, posting := range st.Postings {
+		if int(posting.DocNum) < len(docLengths) && docLengths[posting.DocNum] != 0 {
+			live = append(live, posting)
+		}
+	}
+	clear(st.Postings[len(live):])
+	st.Postings = live
+	st.dead = 0
 }
 
 // FulltextIndexV2 provides a BM25 index optimized for large datasets.
@@ -234,6 +260,12 @@ func (f *FulltextIndexV2) removeInternalLocked(id string) bool {
 		return false
 	}
 
+	// The document is marked removed first (docLengths 0, docNumToID ""):
+	// its postings stay in place, counted dead, until their term is
+	// compacted (bm25TermState.dead).
+	oldLen := f.docLengths[docNum]
+	f.docNumToID[docNum] = ""
+	f.docLengths[docNum] = 0
 	tokens := f.analyze(text)
 	seen := make(map[string]struct{}, len(tokens))
 	for _, t := range tokens {
@@ -245,24 +277,18 @@ func (f *FulltextIndexV2) removeInternalLocked(id string) bool {
 		if st == nil {
 			continue
 		}
-		dst := st.Postings[:0]
-		for _, p := range st.Postings {
-			if p.DocNum != docNum {
-				dst = append(dst, p)
-			}
-		}
-		st.Postings = dst
-		if len(st.Postings) == 0 {
+		st.dead++
+		switch {
+		case st.liveDocumentFrequency() <= 0:
 			delete(f.termIndex, t)
 			f.removeLexiconTermLocked(t)
+		case st.dead*2 > len(st.Postings):
+			st.compactLocked(f.docLengths)
 		}
 	}
 
 	delete(f.documents, id)
 	delete(f.docIDToNum, id)
-	f.docNumToID[docNum] = ""
-	oldLen := f.docLengths[docNum]
-	f.docLengths[docNum] = 0
 	f.docCount--
 	f.totalDocLength -= int64(oldLen)
 	f.updateAvgDocLengthLocked()
@@ -425,7 +451,7 @@ func (f *FulltextIndexV2) LexicalSeedHints(maxTerms, docsPerTerm int) []LexicalS
 	}
 	terms := make([]termEntry, 0, len(f.termIndex))
 	for term, st := range f.termIndex {
-		df := len(st.Postings)
+		df := st.liveDocumentFrequency()
 		if df < lexicalSeedMinDocumentFrequency() {
 			continue
 		}
@@ -521,7 +547,7 @@ func (f *FulltextIndexV2) rebuildLexiconLocked() {
 	}
 	lexicon := make([]string, 0, len(f.termIndex))
 	for term, state := range f.termIndex {
-		if state != nil && len(state.Postings) > 0 {
+		if state != nil && state.liveDocumentFrequency() > 0 {
 			lexicon = append(lexicon, term)
 		}
 	}
@@ -655,10 +681,10 @@ func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weig
 	terms := make([]weightedTermPostings, 0, len(termWeights))
 	for term, weight := range termWeights {
 		st := f.termIndex[term]
-		if st == nil || len(st.Postings) == 0 {
+		if st == nil || st.liveDocumentFrequency() <= 0 {
 			continue
 		}
-		idf := f.calculateIDFLocked(len(st.Postings))
+		idf := f.calculateIDFLocked(st.liveDocumentFrequency())
 		upper := weight * idf * (bm25K1 + 1)
 		if upper <= 0 {
 			continue
