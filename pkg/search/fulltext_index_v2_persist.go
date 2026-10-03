@@ -46,7 +46,14 @@ func (f *FulltextIndexV2) Save(path string) error {
 	docLens := append([]uint32(nil), f.docLengths...)
 	termIndex := make(map[string]*bm25TermState, len(f.termIndex))
 	for term, st := range f.termIndex {
-		postings := append([]bm25Posting(nil), st.Postings...)
+		// Live postings only: a removed document's postings (docLengths 0)
+		// are not persisted (#826).
+		postings := make([]bm25Posting, 0, st.liveDocumentFrequency())
+		for _, posting := range st.Postings {
+			if f.docLengths[posting.DocNum] != 0 {
+				postings = append(postings, posting)
+			}
+		}
 		termIndex[term] = &bm25TermState{
 			Postings: postings,
 			IDF:      st.IDF,
@@ -183,6 +190,17 @@ func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	f.docLengths = s.DocLengths
 	f.docIDsLexicalByNum = docIDsAreLexicalByNumber(s.DocNumToID)
 	f.termIndex = s.TermIndex
+	// SaveNoCopy writes the term index as it is, with the postings of
+	// removed documents, and dead counts are not persisted: drop those
+	// postings, and terms left without any (#826).
+	for term, st := range f.termIndex {
+		if st != nil {
+			st.compactLocked(f.docLengths)
+		}
+		if st == nil || len(st.Postings) == 0 {
+			delete(f.termIndex, term)
+		}
+	}
 	f.lexicon = s.Lexicon
 	f.lexiconDirty = len(f.lexicon) != len(f.termIndex) || !sort.StringsAreSorted(f.lexicon)
 	f.avgDocLength = s.AvgDocLength

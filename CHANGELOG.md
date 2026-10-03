@@ -228,6 +228,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type and synonym, `NOT NULL`, `LIST<T>`, unions, `ANY`, `NOTHING`, `NULL`
   and `PROPERTY VALUE`. Previously every form failed with "could not evaluate
   expression" (#838).
+- Remove documents from the full-text (BM25) index in time linear in their
+  number: a removal counts its postings dead instead of copying each shared
+  term's posting list, and a list is compacted once half of it is dead.
+  Updating or deleting N nodes that share a property value no longer takes
+  time quadratic in N (#826).
 - Preserve locally bound iterators in nested list predicates, including
   same-kind `all`, `any`, `none`, and `single` calls (#774, #775).
 - Route `CREATE TEXT INDEX` and `CREATE POINT INDEX` through schema execution
