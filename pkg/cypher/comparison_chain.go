@@ -113,6 +113,10 @@ func splitComparisonChain(expression string) ([]string, []string, bool) {
 }
 
 func scanComparisonChain(expression string) (comparisonChainScan, bool) {
+	// The < and > of a type (x IS :: LIST<INTEGER>, #838) are not
+	// comparisons; the scan reads a copy of the same length with types
+	// blanked, and operands are still cut from the caller's text.
+	expression = maskTypePredicateTypes(expression)
 	if scan, ok, needsComplexScan := scanPlainComparisonChain(expression); !needsComplexScan {
 		return scan, ok
 	}
