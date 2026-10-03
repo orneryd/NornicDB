@@ -23,6 +23,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -1398,8 +1399,17 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		}
 	}
 
+	// Rows are deleted as they stream, so an entity an earlier row of the
+	// statement deleted reaches storage again: it is already gone
+	// (storage.ErrNotFound) and counts once, as in Neo4j (#827).
 	deletedEdges := make(map[storage.EdgeID]struct{}, len(edgeIDs))
 	for _, edgeID := range edgeIDs {
+		if err := store.DeleteEdge(edgeID); err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			return nil, true, err
+		}
 		deletedEdges[edgeID] = struct{}{}
 	}
 	if detach {
@@ -1413,14 +1423,12 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			}
 		}
 	}
-	if len(edgeIDs) > 0 {
-		if err := store.BulkDeleteEdges(edgeIDs); err != nil {
-			return nil, true, err
-		}
-	}
 	stats := &QueryStats{RelationshipsDeleted: len(deletedEdges)}
 	for _, nodeID := range nodeIDs {
 		if err := store.DeleteNode(nodeID); err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
 			return nil, true, err
 		}
 		stats.NodesDeleted++
