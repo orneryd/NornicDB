@@ -320,11 +320,25 @@ func convertBoltValue(value any) (any, error) {
 		return formatBoltTemporalDateTime(v, true), nil
 	case dbtype.Duration:
 		return formatBoltDuration(v), nil
+	case dbtype.Point2D:
+		return fmt.Sprintf("point({srid:%d, x:%s, y:%s})", v.SpatialRefId, formatBoltPointCoordinate(v.X), formatBoltPointCoordinate(v.Y)), nil
+	case dbtype.Point3D:
+		return fmt.Sprintf("point({srid:%d, x:%s, y:%s, z:%s})", v.SpatialRefId, formatBoltPointCoordinate(v.X), formatBoltPointCoordinate(v.Y), formatBoltPointCoordinate(v.Z)), nil
 	case nil, bool, string, int, int32, int64, float32, float64:
 		return v, nil
 	default:
 		return nil, fmt.Errorf("unsupported Bolt value %T", value)
 	}
+}
+
+// formatBoltPointCoordinate writes a point coordinate as Neo4j writes the
+// value (1.0, 2.5, -160.0).
+func formatBoltPointCoordinate(value float64) string {
+	text := strconv.FormatFloat(value, 'f', -1, 64)
+	if !strings.ContainsAny(text, ".eE") {
+		text += ".0"
+	}
+	return text
 }
 
 func formatBoltTemporalClock(value time.Time, zoned bool) string {

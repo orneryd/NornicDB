@@ -361,6 +361,13 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 		return encodePackStreamCypherDateTimeInto(dst, val, useUTCDateTimeStructs)
 	case *cypher.CypherDuration:
 		return encodePackStreamCypherDurationInto(dst, val)
+	case cypher.CypherPoint:
+		return encodePackStreamPointInto(dst, val)
+	case *cypher.CypherPoint:
+		if val == nil {
+			return append(dst, 0xC0)
+		}
+		return encodePackStreamPointInto(dst, *val)
 	case time.Duration:
 		// Encode duration as milliseconds (signed).
 		return encodePackStreamIntInto(dst, val.Milliseconds())
@@ -428,6 +435,13 @@ func encodePackStreamValue(v any) []byte {
 		return encodePackStreamCypherDateTimeInto(nil, val, true)
 	case *cypher.CypherDuration:
 		return encodePackStreamCypherDurationInto(nil, val)
+	case cypher.CypherPoint:
+		return encodePackStreamPointInto(nil, val)
+	case *cypher.CypherPoint:
+		if val == nil {
+			return []byte{0xC0}
+		}
+		return encodePackStreamPointInto(nil, *val)
 	case string:
 		return encodePackStreamString(val)
 	// List types
@@ -535,6 +549,23 @@ func encodePackStreamDateInto(dst []byte, value time.Time) []byte {
 	date := time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 	dst = append(dst, 0xB1, 0x44)
 	return encodePackStreamIntInto(dst, date.Unix()/86_400)
+}
+
+// encodePackStreamPointInto writes a point as Bolt's Point2D (0x58: srid,
+// x, y) or Point3D (0x59: srid, x, y, z) structure.
+func encodePackStreamPointInto(dst []byte, point cypher.CypherPoint) []byte {
+	coordinates := point.Coordinates()
+	if len(coordinates) == 3 {
+		dst = append(dst, 0xB4, 0x59)
+	} else {
+		dst = append(dst, 0xB3, 0x58)
+	}
+	dst = encodePackStreamIntInto(dst, int64(point.SRID))
+	for _, coordinate := range coordinates {
+		dst = append(dst, 0xC1)
+		dst = binary.BigEndian.AppendUint64(dst, math.Float64bits(coordinate))
+	}
+	return dst
 }
 
 func encodePackStreamLocalTimeInto(dst []byte, value time.Time) []byte {
@@ -1798,6 +1829,23 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 			}
 		}
 		return map[string]any{"_type": "DateTime", "fields": fields}, fieldsConsumed, nil
+
+	case 0x58, 0x59: // Point2D: [srid, x, y]; Point3D: [srid, x, y, z]
+		if len(fields) == fieldCount && fieldCount >= 3 {
+			srid, okSRID := toInt64Field(fields[0])
+			coordinates := make([]float64, 0, fieldCount-1)
+			for _, field := range fields[1:] {
+				if coordinate, ok := field.(float64); ok {
+					coordinates = append(coordinates, coordinate)
+				}
+			}
+			if okSRID && len(coordinates) == fieldCount-1 {
+				if point, ok := cypher.NewCypherPoint(int(srid), coordinates...); ok {
+					return point, fieldsConsumed, nil
+				}
+			}
+		}
+		return map[string]any{"_type": "Point", "fields": fields}, fieldsConsumed, nil
 
 	case 0x44: // Date: [days since Unix epoch]
 		if fieldCount >= 1 {

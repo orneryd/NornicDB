@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+
+	"github.com/orneryd/nornicdb/pkg/cypher"
 )
 
 type transactionHTTPOrderedMap struct {
@@ -60,4 +62,17 @@ func (value transactionHTTPOrderedMap) MarshalJSON() ([]byte, error) {
 	}
 	encoded.WriteByte('}')
 	return encoded.Bytes(), nil
+}
+
+// transactionHTTPPoint is a point as Neo4j's HTTP API writes it (#817):
+// {"type":"Point","coordinates":[x,y(,z)],"crs":{"srid":…,"name":…,
+// "type":"link","properties":{"href":…,"type":"ogcwkt"}}}, keys in that order.
+func transactionHTTPPoint(point cypher.CypherPoint) transactionHTTPOrderedMap {
+	properties := transactionHTTPOrderedMap{keys: []string{"href", "type"}, values: map[string]interface{}{"href": point.CRSHref(), "type": "ogcwkt"}}
+	crs := transactionHTTPOrderedMap{keys: []string{"srid", "name", "type", "properties"}, values: map[string]interface{}{"srid": int64(point.SRID), "name": point.CRSName(), "type": "link", "properties": properties}}
+	coordinates := make([]interface{}, 0, 3)
+	for _, coordinate := range point.Coordinates() {
+		coordinates = append(coordinates, transactionHTTPFloat(coordinate, 64))
+	}
+	return transactionHTTPOrderedMap{keys: []string{"type", "coordinates", "crs"}, values: map[string]interface{}{"type": "Point", "coordinates": coordinates, "crs": crs}}
 }
