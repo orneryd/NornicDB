@@ -223,6 +223,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Write zero seconds in `toString()` of times, local times, date-times and
   local date-times (`12:34:00`, not `12:34`), as Neo4j does. The value's own
   text, used in HTTP results, still leaves zero seconds out, as in Neo4j (#818).
+- Evaluate type predicate expressions, as Neo4j does: `x IS :: TYPE`,
+  `x IS NOT :: TYPE`, `x :: TYPE` and `x IS [NOT] TYPED TYPE`, with every
+  type and synonym, `NOT NULL`, `LIST<T>`, unions, `ANY`, `NOTHING`, `NULL`
+  and `PROPERTY VALUE`. Previously every form failed with "could not evaluate
+  expression" (#838).
 - Preserve locally bound iterators in nested list predicates, including
   same-kind `all`, `any`, `none`, and `single` calls (#774, #775).
 - Route `CREATE TEXT INDEX` and `CREATE POINT INDEX` through schema execution
