@@ -12,16 +12,7 @@ import (
 )
 
 // namespaceForIDs returns the shared namespace of a slice of node or edge IDs,
-// or an error if the slice is empty / mixed-namespace. Used by the engine's
-// non-transactional bulk APIs (BulkCreateNodes / BulkDeleteNodes) to route
-// the batch's MVCC version allocation through a single namespace's
-// counter — the per-database invariant that BadgerTransaction enforces
-// at the transaction layer also has to hold for these batch APIs.
-//
-// namespaceForNodeIDs and namespaceForEdgeIDs are thin wrappers over this
-// generic kernel; the two differ only in the ID type and the namespace
-// extraction function (HARD_CONVERGENCE.md item 5: node/edge twin
-// consolidation).
+// or an error if the slice is empty / mixed-namespace.
 func namespaceForIDs[T ~string](ids []T, namespaceOf func(T) string, kind string) (string, error) {
 	var ns string
 	for _, id := range ids {
@@ -47,12 +38,18 @@ func namespaceForIDs[T ~string](ids []T, namespaceOf func(T) string, kind string
 	return ns, nil
 }
 
-// namespaceForNodeIDs returns the shared namespace of a slice of node IDs.
-func namespaceForNodeIDs(ids []NodeID) (string, error) {
-	return namespaceForIDs(ids, namespaceForNodeID, "node")
+// firstIDNamespace returns the namespace of the first non-empty ID, or "".
+func firstIDNamespace[T ~string](ids []T) string {
+	for _, id := range ids {
+		if id != "" {
+			ns, _, _ := ParseDatabasePrefix(string(id))
+			return ns
+		}
+	}
+	return ""
 }
 
-// namespaceForEdgeIDs is the edge-id analogue of namespaceForNodeIDs.
+// namespaceForEdgeIDs returns the shared namespace of a slice of edge IDs.
 func namespaceForEdgeIDs(ids []EdgeID) (string, error) {
 	return namespaceForIDs(ids, namespaceForEdgeID, "edge")
 }
@@ -239,7 +236,7 @@ func (b *BadgerEngine) snapshotNamespaceVersions() map[string]MVCCVersion {
 // namespace from disk; returns 0 if the key is absent (fresh namespace).
 func (b *BadgerEngine) loadPersistedNamespaceSequence(namespace string) (uint64, error) {
 	var seq uint64
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		item, err := txn.Get(mvccNamespaceSequenceKey(namespace))
 		if errors.Is(err, badger.ErrKeyNotFound) {
 			return nil
@@ -278,7 +275,7 @@ func (b *BadgerEngine) recoverNamespaceMVCCFloor(namespace string) (uint64, int6
 		}
 	}
 
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		for _, prefix := range []byte{prefixNode, prefixEdge} {
 			opts := badgerIteratorOptions()
 			opts.Prefix = []byte{prefix}

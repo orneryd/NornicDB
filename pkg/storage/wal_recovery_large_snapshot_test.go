@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRecoverFromWALWithResult_RestoresLargeEdgeSnapshotInChunks(t *testing.T) {
+func TestRecoverFromWALWithResult_RestoresLargeEdgeSnapshot(t *testing.T) {
 	dataDir := t.TempDir()
 	snapshotDir := filepath.Join(dataDir, "snapshots")
 	require.NoError(t, os.MkdirAll(snapshotDir, 0755))

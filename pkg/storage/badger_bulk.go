@@ -3,7 +3,6 @@ package storage
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -12,21 +11,18 @@ import (
 // Bulk Operations
 // ============================================================================
 
-// BulkCreateNodes creates multiple nodes in a single transaction.
+// BulkCreateNodes creates nodes as one transaction (BadgerTransaction): all
+// of them or none, with the transaction's existence and constraint checks,
+// and of any size (#703). A node whose ID exists fails the call with
+// ErrAlreadyExists and nothing is written. Nodes of one call share a
+// namespace.
 func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
-	release, barrierErr := b.beginWrite()
-	if barrierErr != nil {
-		return barrierErr
-	}
-	defer release()
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
 	if len(nodes) == 0 {
 		return nil
 	}
-
-	// Validate all nodes first
 	for _, node := range nodes {
 		if node == nil {
 			return ErrInvalidData
@@ -35,123 +31,42 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 			return ErrInvalidID
 		}
 	}
-
 	if err := b.validateBulkNodeConstraints(nodes); err != nil {
 		return err
 	}
+	return b.inBulkTransaction(namespaceForNodeID(nodes[0].ID), func(tx *BadgerTransaction) error {
+		for _, node := range nodes {
+			if _, err := tx.CreateNode(node); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
 
-	ids := make([]NodeID, 0, len(nodes))
-	for _, node := range nodes {
-		ids = append(ids, node.ID)
+// inBulkTransaction runs a bulk operation on namespace as one transaction,
+// which commits all of its writes at once whatever their size. Like the
+// Cypher executor it loads the namespace's MVCC state before beginning, so
+// the snapshot includes what was committed before the engine was reopened. It
+// is implicit: like the engine's other writes it leaves durability to
+// Badger's write options instead of forcing a sync per call.
+func (b *BadgerEngine) inBulkTransaction(namespace string, apply func(tx *BadgerTransaction) error) error {
+	if err := b.EnsureNamespaceMVCC(namespace); err != nil {
+		return err
 	}
-	ns, err := namespaceForNodeIDs(ids)
+	tx, err := b.BeginTransaction()
 	if err != nil {
 		return err
 	}
-	// The constraint keys' commit locks cover the check, the write and the
-	// publication to the constraint cache, as for a transaction's commit.
-	releaseUniqueLocks := b.GetSchemaForNamespace(ns).lockConstraintKeysOf(nodes...)
-	defer releaseUniqueLocks()
-	b.labelCountWriteMu.Lock()
-	err = b.withUpdate(func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, ns, time.Now())
-		if err != nil {
-			return err
-		}
-		// Check for duplicates
-		for _, node := range nodes {
-			_, err := txn.Get(nodeKey(node.ID))
-			if err == nil {
-				return ErrAlreadyExists
-			}
-			if err != badger.ErrKeyNotFound {
-				return err
-			}
-		}
-
-		// Insert all nodes
-		for _, node := range nodes {
-			dbName, _, ok := ParseDatabasePrefix(string(node.ID))
-			if !ok {
-				return localizedError(localization.StorageClientNodeIDNamespaceRequired(string(node.ID)), nil)
-			}
-			schema := b.GetSchemaForNamespace(dbName)
-			if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
-				return err
-			}
-
-			data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
-			if err != nil {
-				return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
-			}
-
-			if err := txn.Set(nodeKey(node.ID), data); err != nil {
-				return err
-			}
-
-			// If embeddings are stored separately, store them now
-			if embeddingsSeparate {
-				for i, emb := range node.ChunkEmbeddings {
-					kvs, err := buildEmbeddingChunkWriteKVs(node.ID, i, emb)
-					if err != nil {
-						return err
-					}
-					for _, kv := range kvs {
-						if err := txn.Set(kv.key, kv.val); err != nil {
-							return localizedError(localization.StorageClientNodeEmbeddingChunkStoreFailed(i, err), err)
-						}
-					}
-				}
-			}
-
-			for _, label := range node.Labels {
-				lblKey, err := b.labelIndexKeyString(txn, label, node.ID)
-				if err != nil {
-					return err
-				}
-				if err := txn.Set(lblKey, []byte{}); err != nil {
-					return err
-				}
-			}
-			if err := b.adjustNodeLabelCountsInTxn(txn, dbName, nil, node.Labels); err != nil {
-				return err
-			}
-			// Create-only path: the primary key (nodeKey) IS the current
-			// head body. No version-record write — that halves write
-			// amplification on the hot path.
-			if err := b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
-	b.labelCountWriteMu.Unlock()
-
-	// Register unique constraint values after successful bulk insert
+	err = tx.SetImplicit(true)
 	if err == nil {
-		for _, node := range nodes {
-			dbName, _, ok := ParseDatabasePrefix(string(node.ID))
-			if !ok {
-				continue
-			}
-			schema := b.GetSchemaForNamespace(dbName)
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-				}
-			}
-		}
-
-		b.cacheOnNodesCreated(nodes)
-
-		// Notify listeners (e.g., search service) to index all new nodes
-		for _, node := range nodes {
-			b.notifyNodeCreated(node)
-		}
+		err = apply(tx)
 	}
-
-	return err
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
@@ -240,21 +155,16 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 	return nil
 }
 
-// BulkCreateEdges creates multiple edges in a single transaction.
+// BulkCreateEdges creates edges as one transaction, all of them or none, of
+// any size (#703). An existing edge ID fails the call with ErrAlreadyExists,
+// a missing endpoint with ErrNotFound; nothing is written.
 func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
-	release, barrierErr := b.beginWrite()
-	if barrierErr != nil {
-		return barrierErr
-	}
-	defer release()
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
 	if len(edges) == 0 {
 		return nil
 	}
-
-	// Validate all edges first
 	for _, edge := range edges {
 		if edge == nil {
 			return ErrInvalidData
@@ -263,129 +173,9 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 			return ErrInvalidID
 		}
 	}
-
-	edgeIDs := make([]EdgeID, 0, len(edges))
-	for _, edge := range edges {
-		edgeIDs = append(edgeIDs, edge.ID)
-	}
-	ns, err := namespaceForEdgeIDs(edgeIDs)
-	if err != nil {
-		return err
-	}
-	err = b.withUpdate(func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, ns, time.Now())
-		if err != nil {
-			return err
-		}
-		// Validate all edges
-		for _, edge := range edges {
-			// Check edge doesn't exist
-			_, err := txn.Get(edgeKey(edge.ID))
-			if err == nil {
-				return ErrAlreadyExists
-			}
-			if err != badger.ErrKeyNotFound {
-				return err
-			}
-
-			// Verify nodes exist
-			if _, err := txn.Get(nodeKey(edge.StartNode)); err == badger.ErrKeyNotFound {
-				return ErrNotFound
-			}
-			if _, err := txn.Get(nodeKey(edge.EndNode)); err == badger.ErrKeyNotFound {
-				return ErrNotFound
-			}
-
-			// Validate relationship constraints
-			dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
-			schema := b.GetSchemaForNamespace(dbName)
-			if schema != nil {
-				if err := b.validateEdgeConstraintsInTxn(txn, edge, schema, dbName, ""); err != nil {
-					return err
-				}
-			}
-		}
-
-		// Insert all edges
-		for _, edge := range edges {
-			edgeNS, _, _ := ParseDatabasePrefix(string(edge.ID))
-			data, err := b.encodeEdgeInTxn(txn, edgeNS, edge)
-			if err != nil {
-				return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
-			}
-
-			if err := txn.Set(edgeKey(edge.ID), data); err != nil {
-				return err
-			}
-
-			outKey, err := b.outgoingIndexKeyString(txn, edge.StartNode, edge.ID)
-			if err != nil {
-				return err
-			}
-			if err := txn.Set(outKey, []byte{}); err != nil {
-				return err
-			}
-			inKey, err := b.incomingIndexKeyString(txn, edge.EndNode, edge.ID)
-			if err != nil {
-				return err
-			}
-			if err := txn.Set(inKey, []byte{}); err != nil {
-				return err
-			}
-			typeKey, err := b.edgeTypeIndexKeyString(txn, edge.Type, edge.ID)
-			if err != nil {
-				return err
-			}
-			if err := txn.Set(typeKey, []byte{}); err != nil {
-				return err
-			}
-			// Per-type derived counter (issue #638) commits with the index entry.
-			if err := b.adjustEdgeTypeCountInTxn(txn, edgeNS, edge.Type, 1); err != nil {
-				return err
-			}
-			// Positional (label, type) counters (issue #638, one-labeled shapes).
-			startLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
-			if err != nil {
-				return err
-			}
-			endLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edge.EndNode)
-			if err != nil {
-				return err
-			}
-			if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, edgeNS, edge.Type, startLabels, endLabels, 1); err != nil {
-				return err
-			}
-			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
-				return err
-			}
-			// Snapshot traversal is driven by versioned adjacency records rather
-			// than the latest-only outgoing/incoming indexes. Bulk creates must
-			// publish both views in the same commit, just like transactional
-			// CreateEdge; otherwise the relationship body exists but a following
-			// transaction cannot discover it from either endpoint.
-			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, nil, edge, version); err != nil {
-				return err
-			}
-			// Create-only path: primary key IS the current head body.
-			if err := b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false); err != nil {
-				return err
-			}
-		}
-
-		return nil
+	return b.inBulkTransaction(namespaceForEdgeID(edges[0].ID), func(tx *BadgerTransaction) error {
+		return tx.BulkCreateEdges(edges)
 	})
-
-	// Invalidate edge type cache on successful bulk create
-	if err == nil && len(edges) > 0 {
-		b.cacheOnEdgesCreated(edges)
-
-		// Notify listeners (e.g., graph analyzers) for all new edges
-		for _, edge := range edges {
-			b.notifyEdgeCreated(edge)
-		}
-	}
-
-	return err
 }
 
 // ============================================================================

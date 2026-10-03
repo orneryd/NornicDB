@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,16 +89,13 @@ func TestBadgerCache_EdgeCreateUpdateDelete_Extra(t *testing.T) {
 func TestBadgerCache_BulkCacheHooks_Extra(t *testing.T) {
 	b := createTestBadgerEngine(t)
 
-	nodes := []*Node{
-		{ID: NodeID(prefixTestID("bn-1")), Labels: []string{"L"}, Properties: map[string]interface{}{}},
-		nil,
-		{ID: NodeID(prefixTestID("bn-2")), Labels: []string{"L"}, Properties: map[string]interface{}{}},
+	for _, id := range []NodeID{NodeID(prefixTestID("bn-1")), NodeID(prefixTestID("bn-2"))} {
+		b.cacheOnNodeCreated(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]interface{}{}})
 	}
-	b.cacheOnNodesCreated(nodes)
 	assert.EqualValues(t, 2, b.nodeCount.Load())
-
-	edges := []*Edge{{ID: EdgeID(prefixTestID("be-1")), Type: "REL"}, nil, {ID: EdgeID(prefixTestID("be-2")), Type: "REL"}}
-	b.cacheOnEdgesCreated(edges)
+	for _, id := range []EdgeID{EdgeID(prefixTestID("be-1")), EdgeID(prefixTestID("be-2")), EdgeID(prefixTestID("be-3"))} {
+		b.cacheOnEdgeCreated(&Edge{ID: id, Type: "REL"})
+	}
 	assert.EqualValues(t, 3, b.edgeCount.Load())
 
 	b.cacheOnEdgesDeleted([]EdgeID{EdgeID(prefixTestID("be-1")), EdgeID(prefixTestID("be-2"))})
@@ -120,12 +118,24 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 	b.labelCacheInvalidateForRemovedLabels(nil, nil, NodeID("x"))
 	b.cacheOnEdgeCreated(nil)
 	b.cacheOnEdgeUpdated("", nil)
-	b.cacheOnEdgesCreated(nil)
 	b.cacheOnEdgesDeleted(nil)
-	b.cacheOnNodesCreated(nil)
 	b.cacheOnNodesDeleted(nil, 0, 0)
-	b.cacheOnNodesDeletedWithLabels(nil, 0, 0)
 
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())
+}
+
+func TestBadgerCache_AdjacencyInvalidateAll_Extra(t *testing.T) {
+	b := createTestBadgerEngine(t)
+	b.adjCacheMu.Lock()
+	b.outgoingAdjCache[NodeID(prefixTestID("a"))] = []EdgeID{EdgeID(prefixTestID("e"))}
+	b.adjCacheMu.Unlock()
+	b.adjCacheInvalidateAll()
+	assert.Empty(t, b.outgoingAdjCache)
+	assert.Empty(t, b.incomingAdjCache)
+
+	// An empty cache is kept, not re-allocated.
+	before := reflect.ValueOf(b.outgoingAdjCache).Pointer()
+	b.adjCacheInvalidateAll()
+	assert.Equal(t, before, reflect.ValueOf(b.outgoingAdjCache).Pointer())
 }

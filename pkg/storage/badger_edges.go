@@ -2,10 +2,12 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Edge Operations
@@ -97,7 +99,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		}
 		data, err := b.encodeEdgeInTxn(txn, dbName, edge)
 		if err != nil {
-			return fmt.Errorf("failed to encode edge: %w", err)
+			return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 		}
 		if err := txn.Set(edgeKey(edge.ID), data); err != nil {
 			return err
@@ -379,7 +381,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		// Store updated edge
 		data, err := b.encodeEdgeInTxn(txn, dbName, edge)
 		if err != nil {
-			return fmt.Errorf("failed to encode edge: %w", err)
+			return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 		}
 
 		// Positional (label, type) counters move with type or endpoint changes.
@@ -693,226 +695,47 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	return edgesDeleted, deletedEdgeIDs, deletedEdges, deletedNode, nil
 }
 
-// BulkDeleteNodes removes multiple nodes in a single transaction.
-// This is much faster than calling DeleteNode repeatedly.
-// IMPORTANT: This also deletes all edges connected to the deleted nodes and updates edge counts.
+// BulkDeleteNodes deletes nodes, with their relationships, as one
+// transaction of any size (#703). IDs that do not exist, or repeat within
+// the call, are skipped.
 func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	// Hold the write barrier for the whole operation, as the other public
-	// mutators do: Close cannot pass the publication + notification
-	// registration below until this call finishes, so a successful bulk
-	// delete always dispatches its node-deleted notifications (#726).
-	release, err := b.beginWrite()
-	if err != nil {
-		return err
-	}
-	defer release()
-
-	// Track which nodes were actually deleted for accurate counting
-	deletedNodeCount := int64(0)
-	deletedNodeIDs := make([]NodeID, 0, len(ids))
-	deletedNodes := make([]*Node, 0, len(ids))
-	// Track edges deleted along with nodes
-	totalEdgesDeleted := int64(0)
-	deletedEdgeIDs := make([]EdgeID, 0)
-	deletedEdges := make([]*Edge, 0)
-
-	ns, err := namespaceForNodeIDs(ids)
-	if err != nil {
-		return err
-	}
-	err = b.withUpdate(func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, ns, time.Now())
-		if err != nil {
-			return err
-		}
+	return b.inBulkTransaction(firstIDNamespace(ids), func(tx *BadgerTransaction) error {
+		seen := make(map[NodeID]struct{}, len(ids))
 		for _, id := range ids {
-			if id == "" {
-				continue // Skip invalid IDs
+			if _, repeated := seen[id]; repeated || id == "" {
+				continue
 			}
-			edgesDeleted, edgeIDs, edges, deletedNode, err := b.deleteNodeInTxn(txn, id)
-			if err == nil {
-				deletedNodeCount++                          // Successfully deleted
-				deletedNodeIDs = append(deletedNodeIDs, id) // Track for callbacks
-				if deletedNode != nil {
-					deletedNodes = append(deletedNodes, deletedNode)
-				}
-				totalEdgesDeleted += edgesDeleted
-				deletedEdgeIDs = append(deletedEdgeIDs, edgeIDs...)
-				deletedEdges = append(deletedEdges, edges...)
-			} else if err != ErrNotFound {
-				return err // Actual error, abort transaction
-			}
-			// ErrNotFound is ignored (node didn't exist, no count change)
-		}
-		// Tombstone markers preserve "deleted at this version" semantics
-		// for snapshot reads. Small fixed-size payloads — no body bloat.
-		for _, id := range deletedNodeIDs {
-			if err := b.writeNodeMVCCTombstoneInTxn(txn, id, version); err != nil {
-				return err
-			}
-			if err := b.writeNodeMVCCHeadInTxn(txn, id, version, true); err != nil {
-				return err
-			}
-		}
-		for i, edgeID := range deletedEdgeIDs {
-			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, deletedEdges[i], nil, version); err != nil {
-				return err
-			}
-			if err := b.writeEdgeMVCCTombstoneInTxn(txn, edgeID, version); err != nil {
-				return err
-			}
-			if err := b.writeEdgeMVCCHeadInTxn(txn, edgeID, version, true); err != nil {
+			seen[id] = struct{}{}
+			if err := tx.DeleteNode(id); err != nil && !errors.Is(err, ErrNotFound) {
 				return err
 			}
 		}
 		return nil
 	})
-
-	// Invalidate cache for deleted nodes and update counts
-	if err == nil {
-		for _, node := range deletedNodes {
-			if node == nil {
-				continue
-			}
-			dbName, _, ok := ParseDatabasePrefix(string(node.ID))
-			if !ok {
-				continue
-			}
-			schema := b.GetSchemaForNamespace(dbName)
-			if schema == nil {
-				continue
-			}
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.UnregisterUniqueValue(label, propName, propValue)
-				}
-			}
-		}
-
-		b.cacheOnNodesDeletedWithLabels(deletedNodes, deletedNodeCount, totalEdgesDeleted)
-
-		// Notify listeners about deleted edges
-		for _, edgeID := range deletedEdgeIDs {
-			b.notifyEdgeDeleted(edgeID)
-		}
-
-		// Notify listeners (e.g., search service) for each deleted node.
-		// Dispatch asynchronously so bulk deletes don't block on listeners,
-		// but track the goroutine: Close drains it before releasing the
-		// engine state, so a notification can never outlive teardown
-		// (#726). The Add is guarded by b.mu and the closed flag, and Close
-		// sets closed under the same lock before waiting, so no Add can run
-		// concurrently with the Wait.
-		if len(deletedNodeIDs) > 0 {
-			for _, id := range deletedNodeIDs {
-				b.graphMutationVersions.changed(namespaceForNodeID(id))
-			}
-			b.mu.Lock()
-			if !b.closed {
-				b.notifyWG.Add(1)
-				go func(ids []NodeID) {
-					defer b.notifyWG.Done()
-					for _, id := range ids {
-						b.dispatchNodeDeleted(id)
-					}
-				}(deletedNodeIDs)
-			}
-			b.mu.Unlock()
-		}
-	}
-
-	return err
 }
 
-// BulkDeleteEdges removes multiple edges in a single transaction.
-// This is much faster than calling DeleteEdge repeatedly.
+// BulkDeleteEdges deletes relationships as one transaction of any size
+// (#703). IDs that do not exist, or repeat within the call, are skipped.
 func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 	if len(ids) == 0 {
 		return nil
 	}
-
-	if err := b.ensureOpen(); err != nil {
-		return err
-	}
-
-	// Track which edges were actually deleted for accurate counting
-	deletedCount := int64(0)
-	deletedIDs := make([]EdgeID, 0, len(ids))
-	deletedEdges := make([]*Edge, 0, len(ids))
-	ns, err := namespaceForEdgeIDs(ids)
-	if err != nil {
-		return err
-	}
-	err = b.withUpdate(func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, ns, time.Now())
-		if err != nil {
-			return err
-		}
+	return b.inBulkTransaction(firstIDNamespace(ids), func(tx *BadgerTransaction) error {
+		seen := make(map[EdgeID]struct{}, len(ids))
 		for _, id := range ids {
-			if id == "" {
-				continue // Skip invalid IDs
+			if _, repeated := seen[id]; repeated || id == "" {
+				continue
 			}
-			edgeForAdjacency, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, id)
-			if err != nil && err != ErrNotFound {
-				return err
-			}
-			err = b.deleteEdgeInTxn(txn, id)
-			if err == nil {
-				deletedCount++                      // Successfully deleted
-				deletedIDs = append(deletedIDs, id) // Track for callbacks
-				deletedEdges = append(deletedEdges, edgeForAdjacency)
-				// Per-type derived counter follows the index entry removal.
-				if edgeForAdjacency != nil && edgeForAdjacency.Type != "" {
-					if err := b.adjustEdgeTypeCountInTxn(txn, namespaceForEdgeID(id), edgeForAdjacency.Type, -1); err != nil {
-						return err
-					}
-					// Positional (label, type) counters follow the endpoint labels.
-					startLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edgeForAdjacency.StartNode)
-					if err != nil {
-						return err
-					}
-					endLabels, err := b.readNodeLabelsIfPresentInTxn(txn, edgeForAdjacency.EndNode)
-					if err != nil {
-						return err
-					}
-					if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, namespaceForEdgeID(id), edgeForAdjacency.Type, startLabels, endLabels, -1); err != nil {
-						return err
-					}
-				}
-			} else if err != ErrNotFound {
-				return err // Actual error, abort transaction
-			}
-			// ErrNotFound is ignored (edge didn't exist, no count change)
-		}
-		// Tombstone markers preserve "deleted at this version" semantics.
-		for i, id := range deletedIDs {
-			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, deletedEdges[i], nil, version); err != nil {
-				return err
-			}
-			if err := b.writeEdgeMVCCTombstoneInTxn(txn, id, version); err != nil {
-				return err
-			}
-			if err := b.writeEdgeMVCCHeadInTxn(txn, id, version, true); err != nil {
+			seen[id] = struct{}{}
+			if err := tx.DeleteEdge(id); err != nil && !errors.Is(err, ErrNotFound) {
 				return err
 			}
 		}
 		return nil
 	})
-
-	// Invalidate edge type cache on successful bulk delete and update count
-	if err == nil && deletedCount > 0 {
-		b.cacheOnEdgesDeleted(deletedIDs)
-
-		// Notify listeners (e.g., graph analyzers) for each deleted edge
-		for _, id := range deletedIDs {
-			b.notifyEdgeDeleted(id)
-		}
-	}
-
-	return err
 }
 
 // ============================================================================
