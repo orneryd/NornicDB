@@ -65,7 +65,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
-	if err := e.prepareSchemaTransaction(); err != nil {
+	if err := e.prepareSchemaTransaction(ctx); err != nil {
 		return nil, err
 	}
 	resumeWrites, err := pauseAsyncWritesForSchemaDDL(e.storage)
@@ -621,7 +621,7 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 	// Tear down the matching in-memory vector data after the schema entry
 	// is gone so concurrent reads can't see a half-dropped index.
 	if droppedVectorIndex != nil {
-		e.afterSchemaCommit(func() {
+		e.afterSchemaCommit(context.Background(), func() {
 			if e.searchService != nil && droppedVectorIndex.Property != "" {
 				e.searchService.RemovePropertyVectorIndex(droppedVectorIndex.Property)
 			}
@@ -2505,7 +2505,7 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 	// directly from relationship properties and schema metadata.
 	// registerVectorSpace is node-vector specific; keep relationship indexes out.
 	if !parsed.isRelationship && (e.searchService == nil || e.searchService.VectorEnabled()) {
-		e.afterSchemaCommit(func() {
+		e.afterSchemaCommit(ctx, func() {
 			e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
 		})
 	}

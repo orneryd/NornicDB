@@ -10,6 +10,60 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestKnowledgePolicySchemaLookupErrorBoundaries(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	tx, err := base.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("lookup"))
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "lookup"))
+	executor.txContext = &TransactionContext{tx: tx, active: true}
+	view, err := executor.knowledgePolicySchema()
+	require.NoError(t, err)
+	require.NotNil(t, view)
+	wrongNamespace := NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "other"})
+	_, err = wrongNamespace.knowledgePolicySchema()
+	require.Error(t, err)
+	require.NoError(t, tx.Rollback())
+	for _, procedure := range []func() (*ExecuteResult, error){
+		executor.callNornicDbKnowledgePolicyInfo,
+		executor.callNornicDbKnowledgePolicyProfiles,
+		executor.callNornicDbKnowledgePolicyPolicies,
+	} {
+		_, err := procedure()
+		require.Error(t, err, "closed transaction introspection must not silently fall back to committed schema")
+	}
+}
+
+func TestSchemaMutationHelperErrorBoundaries(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	require.NoError(t, NewStorageExecutor(base).prepareSchemaTransaction(context.Background()))
+	tx, err := base.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("mutation"))
+	wrongNamespace := NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "other"})
+	ctx := context.Background()
+	called := false
+	err = wrongNamespace.mutateSchema(ctx, func(*storage.SchemaManager) error {
+		called = true
+		return nil
+	})
+	require.Error(t, err)
+	require.False(t, called)
+	executor := NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "mutation"})
+	err = executor.mutateSchema(ctx, func(*storage.SchemaManager) error { return storage.ErrInvalidData })
+	require.ErrorIs(t, err, storage.ErrInvalidData)
+	err = executor.mutateSchema(ctx, func(*storage.SchemaManager) error { return tx.Rollback() })
+	require.Error(t, err, "staging must refuse a transaction closed during its schema callback")
+	require.Error(t, executor.prepareSchemaTransaction(ctx))
+	tx, err = base.BeginTransaction()
+	require.NoError(t, err)
+	_, err = tx.CreateNode(&storage.Node{ID: "mutation:data"})
+	require.NoError(t, err)
+	executor = NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "mutation"})
+	require.ErrorContains(t, executor.prepareSchemaTransaction(ctx), "ForbiddenDueToTransactionType")
+	require.NoError(t, tx.Rollback())
+}
+
 func TestKnowledgePolicyExecuteDDL_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()

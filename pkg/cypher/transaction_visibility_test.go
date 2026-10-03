@@ -93,32 +93,78 @@ func TestExplicitTransactionSchemaBackfillConcurrentWrite(t *testing.T) {
 }
 
 func TestExplicitTransactionVectorSchemaRuntimeLifetime(t *testing.T) {
-	for _, dropping := range []bool{false, true} {
-		for _, commit := range []bool{false, true} {
-			t.Run(map[bool]string{false: "create", true: "drop"}[dropping]+"/"+map[bool]string{false: "rollback", true: "commit"}[commit], func(t *testing.T) {
-				store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "vector_schema")
-				executor := NewStorageExecutor(store)
-				ctx := context.Background()
-				create := "CREATE VECTOR INDEX staged_vector FOR (n:Account) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}"
-				statement := create
-				if dropping {
-					_, err := executor.Execute(ctx, create, nil)
+	for _, procedure := range []bool{false, true} {
+		for _, dropping := range []bool{false, true} {
+			for _, commit := range []bool{false, true} {
+				t.Run(map[bool]string{false: "ddl", true: "procedure"}[procedure]+"/"+map[bool]string{false: "create", true: "drop"}[dropping]+"/"+map[bool]string{false: "rollback", true: "commit"}[commit], func(t *testing.T) {
+					store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "vector_schema")
+					executor := NewStorageExecutor(store)
+					ctx := context.Background()
+					create := "CREATE VECTOR INDEX staged_vector FOR (n:Account) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}"
+					if procedure {
+						create = "CALL db.index.vector.createNodeIndex('staged_vector', 'Account', 'embedding', 3, 'cosine')"
+					}
+					statement := create
+					if dropping {
+						_, err := executor.Execute(ctx, create, nil)
+						require.NoError(t, err)
+						statement = "DROP INDEX staged_vector"
+						if procedure {
+							statement = "CALL db.index.vector.drop('staged_vector')"
+						}
+					}
+					_, err := executor.Execute(ctx, "BEGIN", nil)
 					require.NoError(t, err)
-					statement = "DROP INDEX staged_vector"
-				}
+					_, err = executor.Execute(ctx, statement, nil)
+					require.NoError(t, err)
+					_, stagedRuntimeVisible := executor.vectorIndexSpaces["staged_vector"]
+					_, err = executor.Execute(ctx, map[bool]string{false: "ROLLBACK", true: "COMMIT"}[commit], nil)
+					require.NoError(t, err)
+					require.Equal(t, dropping, stagedRuntimeVisible, "staged DDL must not alter the public vector registry")
+					key, finalRuntimeVisible := executor.vectorIndexSpaces["staged_vector"]
+					require.Equal(t, dropping != commit, finalRuntimeVisible)
+					if finalRuntimeVisible {
+						_, exists := executor.GetVectorRegistry().GetSpace(key)
+						require.True(t, exists)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestExplicitTransactionSchemaProcedureAdmission(t *testing.T) {
+	for _, procedure := range []struct{ name, query, entity string }{
+		{"node_vector", "CALL db.index.vector.createNodeIndex('schema_procedure', 'Account', 'embedding', 3, 'cosine')", "NODE"},
+		{"relationship_vector", "CALL db.index.vector.createRelationshipIndex('schema_procedure', 'ACCOUNT', 'embedding', 3, 'cosine')", "RELATIONSHIP"},
+		{"node_fulltext", "CALL db.index.fulltext.createNodeIndex('schema_procedure', ['Account'], ['name'])", "NODE"},
+		{"relationship_fulltext", "CALL db.index.fulltext.createRelationshipIndex('schema_procedure', ['ACCOUNT'], ['name'])", "RELATIONSHIP"},
+	} {
+		for _, commit := range []bool{false, true} {
+			t.Run(procedure.name+"/"+map[bool]string{false: "rollback", true: "commit"}[commit], func(t *testing.T) {
+				store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "schema_procedure")
+				executor := NewStorageExecutor(store)
+				peer := NewStorageExecutor(store)
+				ctx := context.Background()
 				_, err := executor.Execute(ctx, "BEGIN", nil)
 				require.NoError(t, err)
-				_, err = executor.Execute(ctx, statement, nil)
+				_, err = executor.Execute(ctx, procedure.query, nil)
 				require.NoError(t, err)
-				_, stagedRuntimeVisible := executor.vectorIndexSpaces["staged_vector"]
+				show := "SHOW INDEXES YIELD name, entityType WHERE name = 'schema_procedure' RETURN name, entityType"
+				staged, err := executor.Execute(ctx, show, nil)
+				require.NoError(t, err)
+				visible, err := peer.Execute(ctx, show, nil)
+				require.NoError(t, err)
 				_, err = executor.Execute(ctx, map[bool]string{false: "ROLLBACK", true: "COMMIT"}[commit], nil)
 				require.NoError(t, err)
-				require.Equal(t, dropping, stagedRuntimeVisible, "staged DDL must not alter the public vector registry")
-				key, finalRuntimeVisible := executor.vectorIndexSpaces["staged_vector"]
-				require.Equal(t, dropping != commit, finalRuntimeVisible)
-				if finalRuntimeVisible {
-					_, exists := executor.GetVectorRegistry().GetSpace(key)
-					require.True(t, exists)
+				require.Empty(t, visible.Rows, "uncommitted procedure schema must be private")
+				require.Equal(t, [][]interface{}{{"schema_procedure", procedure.entity}}, staged.Rows)
+				stored, err := peer.Execute(ctx, show, nil)
+				require.NoError(t, err)
+				if commit {
+					require.Equal(t, staged.Rows, stored.Rows)
+				} else {
+					require.Empty(t, stored.Rows)
 				}
 			})
 		}

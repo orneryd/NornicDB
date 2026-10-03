@@ -242,8 +242,11 @@ CREATE PROMOTION POLICY requires an explicit `FOR` target pattern. Use `FOR (n)`
 for an unlabeled-node target; node and relationship targets remain supported.
 Native CREATE declarations are schema operations, not graph entity writes.
 
-Native profile/policy changes are transaction-local. SHOW statements in the same
-transaction see staged definitions; other transactions see committed definitions.
+Native profile/policy changes are transaction-local. SHOW statements and the
+`nornicdb.knowledgepolicy.info`, `.profiles`, and `.policies` procedures in the
+same transaction see staged definitions; other transactions see committed
+definitions. These read procedures do not convert a data transaction into an
+ordinary schema-write transaction.
 COMMIT publishes the persisted native snapshot and ROLLBACK discards it. Concurrent
 changes to the same database's schema can conflict instead of overwriting each
 other. These metadata-only mutations do not increase entity-operation counters.

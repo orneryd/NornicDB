@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Route compatibility vector/fulltext schema procedures through the same
+  isolated transaction mutation contract as DDL. Keep vector runtime changes
+  commit-local, preserve relationship fulltext scope, and expose staged native
+  definitions through knowledge-policy info/profile/policy procedures. Legacy
+  vector creation retains the reference ProcedureCallFailed invocation class
+  when called after a data write (#530, #531).
+
 - Stage ordinary index and constraint DDL in explicit transactions. Commit
   publishes successful definitions and backfills, rollback discards them, and
   mixed schema/data writes fail with ForbiddenDueToTransactionType. Preserve

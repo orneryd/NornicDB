@@ -1,5 +1,11 @@
 package cypher
 
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
 func isOrdinarySchemaDDL(query string) bool {
 	for _, command := range []string{"INDEX", "RANGE INDEX", "TEXT INDEX", "POINT INDEX", "VECTOR INDEX", "FULLTEXT INDEX", "LOOKUP INDEX", "CONSTRAINT"} {
 		if startsWithKeywords(query, "CREATE", command) {
@@ -9,8 +15,8 @@ func isOrdinarySchemaDDL(query string) bool {
 	return startsWithKeywords(query, "DROP", "INDEX") || startsWithKeywords(query, "DROP", "CONSTRAINT")
 }
 
-func (e *StorageExecutor) prepareSchemaTransaction() error {
-	wrapper, ok := e.storage.(*transactionStorageWrapper)
+func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
+	wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper)
 	if !ok {
 		return nil
 	}
@@ -25,10 +31,23 @@ func (e *StorageExecutor) prepareSchemaTransaction() error {
 	return nil
 }
 
-func (e *StorageExecutor) afterSchemaCommit(action func()) {
-	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok && wrapper.schema != nil {
+func (e *StorageExecutor) afterSchemaCommit(ctx context.Context, action func()) {
+	if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok && wrapper.schema != nil {
 		wrapper.schemaCommitActions = append(wrapper.schemaCommitActions, action)
 		return
 	}
 	action()
+}
+
+func (e *StorageExecutor) mutateSchema(ctx context.Context, mutation func(*storage.SchemaManager) error) error {
+	if err := e.prepareSchemaTransaction(ctx); err != nil {
+		return err
+	}
+	if err := mutation(e.getStorage(ctx).GetSchema()); err != nil {
+		return err
+	}
+	if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+		return wrapper.tx.StageSchemaChanges()
+	}
+	return nil
 }

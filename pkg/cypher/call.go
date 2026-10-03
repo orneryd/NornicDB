@@ -3539,7 +3539,11 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, err
 
 	var decayProfiles, decayBindings int
 	var promotionProfiles, promotionPolicies int
-	if schema := e.storage.GetSchema(); schema != nil {
+	schema, err := e.knowledgePolicySchema()
+	if err != nil {
+		return nil, err
+	}
+	if schema != nil {
 		bundles, bindings := schema.ShowDecayProfiles()
 		decayProfiles = len(bundles)
 		decayBindings = len(bindings)

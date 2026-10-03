@@ -511,27 +511,36 @@ func TestGh531_HTTPSchemaTransactionLifetime(t *testing.T) {
 					})
 				}
 			}
-			for _, schemaFirst := range []bool{false, true} {
-				for _, oneShot := range []bool{false, true} {
-					t.Run(fmt.Sprintf("mixed/schema_first=%v/oneshot=%v", schemaFirst, oneShot), func(t *testing.T) {
-						reset(t)
-						statements := []string{"CREATE (:Gh531SchemaHTTP {id: 'mixed'})", create}
-						if schemaFirst {
-							statements[0], statements[1] = statements[1], statements[0]
-						}
-						var result TransactionResponse
-						if oneShot {
-							result = request(t, http.MethodPost, backend.endpoint+"/commit", statements...)
-						} else {
-							opened := request(t, http.MethodPost, backend.endpoint, statements[0])
-							require.Empty(t, opened.Errors)
-							result = request(t, http.MethodPost, opened.Commit, statements[1])
-						}
-						require.Len(t, result.Errors, 1)
-						require.Equal(t, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType", result.Errors[0].Code)
-						probe(t, false, 0)
-						t.Logf("ISSUE531_SCHEMA_RESULT backend=%s route=http schema_first=%v oneshot=%v code=%s present=false nodes=0", backend.name, schemaFirst, oneShot, result.Errors[0].Code)
-					})
+			for _, procedure := range []bool{false, true} {
+				for _, schemaFirst := range []bool{false, true} {
+					for _, oneShot := range []bool{false, true} {
+						t.Run(fmt.Sprintf("mixed/procedure=%v/schema_first=%v/oneshot=%v", procedure, schemaFirst, oneShot), func(t *testing.T) {
+							reset(t)
+							statements := []string{"CREATE (:Gh531SchemaHTTP {id: 'mixed'})", create}
+							if procedure {
+								statements[1] = "CALL db.index.vector.createNodeIndex('gh531_http_index', 'Gh531SchemaHTTP', 'embedding', 3, 'cosine')"
+							}
+							if schemaFirst {
+								statements[0], statements[1] = statements[1], statements[0]
+							}
+							var result TransactionResponse
+							if oneShot {
+								result = request(t, http.MethodPost, backend.endpoint+"/commit", statements...)
+							} else {
+								opened := request(t, http.MethodPost, backend.endpoint, statements[0])
+								require.Empty(t, opened.Errors)
+								result = request(t, http.MethodPost, opened.Commit, statements[1])
+							}
+							require.Len(t, result.Errors, 1)
+							code := "Neo.ClientError.Transaction.ForbiddenDueToTransactionType"
+							if procedure && !schemaFirst {
+								code = "Neo.ClientError.Procedure.ProcedureCallFailed"
+							}
+							require.Equal(t, code, result.Errors[0].Code)
+							probe(t, false, 0)
+							t.Logf("ISSUE531_SCHEMA_RESULT backend=%s route=http schema_first=%v oneshot=%v code=%s present=false nodes=0", backend.name, schemaFirst, oneShot, result.Errors[0].Code)
+						})
+					}
 				}
 			}
 		})

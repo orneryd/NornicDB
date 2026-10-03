@@ -13,6 +13,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestE2E_KnowledgePolicyProcedureTransactionVisibility(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			for _, commit := range []bool{false, true} {
+				t.Run(fmt.Sprintf("commit=%v", commit), func(t *testing.T) {
+					base := newTestMemoryEngine(t)
+					store := storage.NewNamespacedEngine(base, "policy_procedure")
+					executor := NewStorageExecutor(store)
+					peer := NewStorageExecutor(store)
+					ctx := context.Background()
+					_, err := executor.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					for _, statement := range []string{
+						"CREATE DECAY PROFILE decay OPTIONS {halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED', visibilityThreshold: 0.3}",
+						"CREATE DECAY PROFILE binding FOR (n:Account) APPLY {DECAY PROFILE decay}",
+						"CREATE PROMOTION PROFILE promotion OPTIONS {multiplier: 1.25, scope: 'NODE', scoreFloor: 0.4, scoreCap: 0.95}",
+						"CREATE PROMOTION POLICY policy FOR (n:Account) APPLY {WHEN n.count >= 3 APPLY PROFILE promotion}",
+					} {
+						_, err := executor.Execute(ctx, statement, nil)
+						require.NoError(t, err, statement)
+					}
+					staged, err := executor.Execute(ctx, "CALL nornicdb.knowledgepolicy.info()", nil)
+					require.NoError(t, err)
+					visible, err := peer.Execute(ctx, "CALL nornicdb.knowledgepolicy.info()", nil)
+					require.NoError(t, err)
+					profiles, err := executor.Execute(ctx, "CALL nornicdb.knowledgepolicy.profiles()", nil)
+					require.NoError(t, err)
+					policies, err := executor.Execute(ctx, "CALL nornicdb.knowledgepolicy.policies()", nil)
+					require.NoError(t, err)
+					_, err = executor.Execute(ctx, map[bool]string{false: "ROLLBACK", true: "COMMIT"}[commit], nil)
+					require.NoError(t, err)
+					require.Equal(t, []interface{}{1, 1, 1, 1}, staged.Rows[0][2:6])
+					require.Equal(t, []interface{}{0, 0, 0, 0}, visible.Rows[0][2:6])
+					require.Len(t, profiles.Rows, 2)
+					require.Len(t, policies.Rows, 2)
+					stored, err := peer.Execute(ctx, "CALL nornicdb.knowledgepolicy.info()", nil)
+					require.NoError(t, err)
+					if commit {
+						require.Equal(t, staged.Rows[0][2:6], stored.Rows[0][2:6])
+					} else {
+						require.Equal(t, visible.Rows[0][2:6], stored.Rows[0][2:6])
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestE2E_NornicDbKnowledgePolicyInfoReflectsSchemaCounts(t *testing.T) {
 	be, err := storage.NewBadgerEngineInMemory()
 	require.NoError(t, err)

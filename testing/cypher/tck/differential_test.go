@@ -63,6 +63,7 @@ func TestGh531_BoltSchemaTransactionLifetime(t *testing.T) {
 				{"point", "CREATE POINT INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON (n.id)", "DROP INDEX gh531_tx_index", "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name"},
 				{"fulltext", "CREATE FULLTEXT INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON EACH [n.id]", "DROP INDEX gh531_tx_index", "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name"},
 				{"vector", "CREATE VECTOR INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", "DROP INDEX gh531_tx_index", "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name"},
+				{"vector_procedure", "CALL db.index.vector.createNodeIndex('gh531_tx_index', 'Gh531SchemaTX', 'embedding', 3, 'cosine')", "DROP INDEX gh531_tx_index", "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name"},
 				{"unique", "CREATE CONSTRAINT gh531_tx_unique FOR (n:Gh531SchemaTX) REQUIRE n.id IS UNIQUE", "DROP CONSTRAINT gh531_tx_unique", "SHOW CONSTRAINTS YIELD name WHERE name = 'gh531_tx_unique' RETURN name"},
 			} {
 				for _, dropping := range []bool{false, true} {
@@ -102,31 +103,40 @@ func TestGh531_BoltSchemaTransactionLifetime(t *testing.T) {
 					}
 				}
 			}
-			for _, schemaFirst := range []bool{false, true} {
-				t.Run(fmt.Sprintf("mixed/schema_first=%v", schemaFirst), func(t *testing.T) {
-					resetDifferentialBackend(t, ctx, newDifferentialBackend(t, backend.driver, backend.database, AutocommitMode), backend.name)
-					statements := []string{"CREATE (:Gh531SchemaTX {id: 'mixed'})", "CREATE INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON (n.id)"}
-					if schemaFirst {
-						statements[0], statements[1] = statements[1], statements[0]
-					}
-					transaction, err := session.BeginTransaction(ctx)
-					require.NoError(t, err)
-					defer transaction.Close(ctx)
-					_, err = run(t, statements[0], transaction)
-					require.NoError(t, err)
-					_, err = run(t, statements[1], transaction)
-					var diagnostic *neo4j.Neo4jError
-					require.ErrorAs(t, err, &diagnostic)
-					require.Equal(t, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType", diagnostic.Code)
-					require.Error(t, transaction.Commit(ctx))
-					rows, err := run(t, "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name", nil)
-					require.NoError(t, err)
-					require.Empty(t, rows)
-					data, err := run(t, "MATCH (n:Gh531SchemaTX) RETURN count(n)", nil)
-					require.NoError(t, err)
-					require.Equal(t, [][]any{{int64(0)}}, data)
-					t.Logf("ISSUE531_SCHEMA_RESULT backend=%s mixed_schema_first=%v code=%s rows=%v data=%v", backend.name, schemaFirst, diagnostic.Code, rows, data)
-				})
+			for _, procedure := range []bool{false, true} {
+				for _, schemaFirst := range []bool{false, true} {
+					t.Run(fmt.Sprintf("mixed/procedure=%v/schema_first=%v", procedure, schemaFirst), func(t *testing.T) {
+						resetDifferentialBackend(t, ctx, newDifferentialBackend(t, backend.driver, backend.database, AutocommitMode), backend.name)
+						statements := []string{"CREATE (:Gh531SchemaTX {id: 'mixed'})", "CREATE INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON (n.id)"}
+						if procedure {
+							statements[1] = "CALL db.index.vector.createNodeIndex('gh531_tx_index', 'Gh531SchemaTX', 'embedding', 3, 'cosine')"
+						}
+						if schemaFirst {
+							statements[0], statements[1] = statements[1], statements[0]
+						}
+						transaction, err := session.BeginTransaction(ctx)
+						require.NoError(t, err)
+						defer transaction.Close(ctx)
+						_, err = run(t, statements[0], transaction)
+						require.NoError(t, err)
+						_, err = run(t, statements[1], transaction)
+						var diagnostic *neo4j.Neo4jError
+						require.ErrorAs(t, err, &diagnostic)
+						code := "Neo.ClientError.Transaction.ForbiddenDueToTransactionType"
+						if procedure && !schemaFirst {
+							code = "Neo.ClientError.Procedure.ProcedureCallFailed"
+						}
+						require.Equal(t, code, diagnostic.Code)
+						require.Error(t, transaction.Commit(ctx))
+						rows, err := run(t, "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name", nil)
+						require.NoError(t, err)
+						require.Empty(t, rows)
+						data, err := run(t, "MATCH (n:Gh531SchemaTX) RETURN count(n)", nil)
+						require.NoError(t, err)
+						require.Equal(t, [][]any{{int64(0)}}, data)
+						t.Logf("ISSUE531_SCHEMA_RESULT backend=%s mixed_schema_first=%v code=%s rows=%v data=%v", backend.name, schemaFirst, diagnostic.Code, rows, data)
+					})
+				}
 			}
 		})
 	}
