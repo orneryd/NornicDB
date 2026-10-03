@@ -29,6 +29,14 @@ func (e *asyncErrQueryEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	return nil, e.err
 }
 
+func (e *asyncErrQueryEngine) NodeCountByLabel(label string) (int64, error) {
+	return 0, e.err
+}
+
+func (e *asyncErrQueryEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
+	return 0, e.err
+}
+
 func TestAsyncEngine_LowBranchHelpers(t *testing.T) {
 	base := NewMemoryEngine()
 	errEng := &asyncErrQueryEngine{MemoryEngine: base, err: ErrStorageClosed}

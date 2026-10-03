@@ -2248,12 +2248,93 @@ func (ae *AsyncEngine) NodeCountByPrefix(prefix string) (int64, error) {
 	return count, nil
 }
 
+// NodeCountByLabel answers from the inner engine's per-label count plus the
+// cached writes (nodeCountByLabelOverlay), without reading the label's nodes
+// (#843). An inner engine without label counts falls back to the label scan.
 func (ae *AsyncEngine) NodeCountByLabel(label string) (int64, error) {
+	if stats, ok := ae.engine.(LabelStatsEngine); ok {
+		return ae.nodeCountByLabelOverlay(label, "", stats.NodeCountByLabel)
+	}
 	nodes, err := ae.GetNodesByLabel(label)
 	if err != nil {
 		return 0, err
 	}
 	return int64(len(nodes)), nil
+}
+
+// nodeCountByLabelOverlay returns the stored count of label among the nodes
+// whose ID starts with idPrefix ("" for all), as storedCount reports it,
+// adjusted by the cached writes: a cached node counts +1 when it has the label
+// and -1 when its stored version has it, and a cached delete counts -1 when the
+// stored node has it. flushMu keeps a flush from moving writes between the
+// cache and the store while the count is taken, as in NodeCount; the work is
+// O(cached writes), not O(label).
+func (ae *AsyncEngine) nodeCountByLabelOverlay(label, idPrefix string, storedCount func(string) (int64, error)) (int64, error) {
+	ae.flushMu.RLock()
+	defer ae.flushMu.RUnlock()
+
+	ae.mu.RLock()
+	cached := make(map[NodeID]*Node)
+	for id, node := range ae.nodeCache {
+		if strings.HasPrefix(string(id), idPrefix) && !ae.deleteNodes[id] {
+			cached[id] = node
+		}
+	}
+	deleted := make([]NodeID, 0)
+	for id := range ae.deleteNodes {
+		if strings.HasPrefix(string(id), idPrefix) {
+			deleted = append(deleted, id)
+		}
+	}
+	ae.mu.RUnlock()
+
+	count, err := storedCount(label)
+	if err != nil {
+		return 0, err
+	}
+	storedHasLabel := func(id NodeID) (bool, error) {
+		stored, err := ae.engine.GetNode(id)
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return stored != nil && nodeHasLabelFold(stored, label), nil
+	}
+	for id, node := range cached {
+		had, err := storedHasLabel(id)
+		if err != nil {
+			return 0, err
+		}
+		if had {
+			count--
+		}
+		if node != nil && nodeHasLabelFold(node, label) {
+			count++
+		}
+	}
+	for _, id := range deleted {
+		had, err := storedHasLabel(id)
+		if err != nil {
+			return 0, err
+		}
+		if had {
+			count--
+		}
+	}
+	if count < 0 {
+		ae.log.Warn("count went negative",
+			"op", "NodeCountByLabel",
+			"label", label,
+			"cached_nodes", len(cached),
+			"cached_deletes", len(deleted),
+			"result", count,
+			"action", "clamp_to_zero",
+		)
+		return 0, nil
+	}
+	return count, nil
 }
 
 // EdgeCountByType answers the typed count from the inner engine's per-type
@@ -2378,7 +2459,14 @@ func (ae *AsyncEngine) edgeCountOverlayDelta(edgeType string) (int64, map[string
 	return typeDelta, startDeltas, endDeltas, nil
 }
 
+// NodeCountByLabelInNamespace is NodeCountByLabel for the nodes of one
+// namespace.
 func (ae *AsyncEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
+	if stats, ok := ae.engine.(NamespaceLabelStatsProvider); ok {
+		return ae.nodeCountByLabelOverlay(label, namespace+":", func(label string) (int64, error) {
+			return stats.NodeCountByLabelInNamespace(namespace, label)
+		})
+	}
 	nodes, err := ae.GetNodesByLabel(label)
 	if err != nil {
 		return 0, err
