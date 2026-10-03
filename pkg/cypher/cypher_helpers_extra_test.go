@@ -3243,34 +3243,38 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 	assert.Empty(t, res.Rows)
 }
 
+func fixedInitialNodes(nodes []*storage.Node) func() ([]*storage.Node, error) {
+	return func() ([]*storage.Node, error) { return nodes, nil }
+}
+
 func TestCypherHelpers_TryFastCompoundOptionalMatchCount_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
 
 	// Rejection branches.
-	res, ok, err := exec.tryFastCompoundOptionalMatchCount(nil, nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"}, "RETURN p.productName, count(o)")
+	res, ok, err := exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nil), nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"}, "RETURN p.productName, count(o)")
 	require.NoError(t, err)
 	assert.False(t, ok)
 	assert.Nil(t, res)
 
 	nodes := []*storage.Node{{ID: "p0", Properties: map[string]interface{}{"productName": "X"}}}
-	res, ok, err = exec.tryFastCompoundOptionalMatchCount(nodes, nodePatternInfo{variable: ""}, optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"}, "RETURN p.productName, count(o)")
+	res, ok, err = exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nodes), nodePatternInfo{variable: ""}, optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"}, "RETURN p.productName, count(o)")
 	require.NoError(t, err)
 	assert.False(t, ok)
 	assert.Nil(t, res)
 
-	res, ok, err = exec.tryFastCompoundOptionalMatchCount(nodes, nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "out", relType: "ORDERS", targetVar: "o"}, "RETURN p.productName, count(o)")
+	res, ok, err = exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nodes), nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "out", relType: "ORDERS", targetVar: "o"}, "RETURN p.productName, count(o)")
 	require.NoError(t, err)
 	assert.False(t, ok)
 	assert.Nil(t, res)
 
-	res, ok, err = exec.tryFastCompoundOptionalMatchCount(nodes, nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "in", relType: "LIKES", targetVar: "o"}, "RETURN p.productName, count(o)")
+	res, ok, err = exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nodes), nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "in", relType: "LIKES", targetVar: "o"}, "RETURN p.productName, count(o)")
 	require.NoError(t, err)
 	assert.False(t, ok)
 	assert.Nil(t, res)
 
-	res, ok, err = exec.tryFastCompoundOptionalMatchCount(nodes, nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"}, "WITH p RETURN p")
+	res, ok, err = exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nodes), nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"}, "WITH p RETURN p")
 	require.NoError(t, err)
 	assert.False(t, ok)
 	assert.Nil(t, res)
@@ -3298,7 +3302,7 @@ func TestCypherHelpers_TryFastCompoundOptionalMatchCount_Branches(t *testing.T) 
 		{ID: "p3", Properties: map[string]interface{}{"productName": "C"}},
 	}
 	res, ok, err = exec.tryFastCompoundOptionalMatchCount(
-		initial,
+		fixedInitialNodes(initial),
 		nodePatternInfo{variable: "p"},
 		optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"},
 		"RETURN p.productName, count(o) AS orderCount ORDER BY orderCount DESC SKIP 1 LIMIT 1",

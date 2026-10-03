@@ -1405,26 +1405,28 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 
 	for prop, val := range nodeInfo.properties {
 		var ids []storage.NodeID
+		probed := false
 		if len(nodeInfo.labels) > 0 {
 			// Labelled: probe the (label, prop) index when one exists.
 			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
 				ids = propertyIndexLookup(store, schema, nodeInfo.labels[0], prop, val)
-				usedAnyIndex = true
+				probed = true
 			}
 		} else {
 			labels := e.indexCandidateLabels(schema, nil, prop)
 			if labellessPropertyIndexUsable(store, labels...) {
 				ids = schema.PropertyIndexLookupAnyLabel(prop, val)
-			}
-			if ids != nil {
-				usedAnyIndex = true
+				probed = true
 			}
 		}
 		// Property has no covering index — record nothing for this prop.
-		// The residual `nodeMatchesProps` step still enforces it.
-		if ids == nil {
+		// The residual `nodeMatchesProps` step still enforces it. A probe
+		// that finds nothing for a string, boolean or number means no node
+		// holds the value (#821); for other values the scan decides.
+		if ids == nil && !(probed && propertyIndexMissIsAuthoritative(val)) {
 			continue
 		}
+		usedAnyIndex = true
 		set := make(map[storage.NodeID]struct{}, len(ids))
 		for _, id := range ids {
 			set[id] = struct{}{}
@@ -1465,6 +1467,18 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		out = append(out, n)
 	}
 	return out, true
+}
+
+// propertyIndexMissIsAuthoritative reports whether a property index lookup
+// that finds no node for value proves that no node holds an equal value:
+// strings, booleans and numbers are filed under keys that are equal exactly
+// when the values are equal in Cypher (1 and 1.0 share a key).
+func propertyIndexMissIsAuthoritative(value interface{}) bool {
+	switch value.(type) {
+	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return true
+	}
+	return false
 }
 
 func (e *StorageExecutor) lookupWhereCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, wherePart string, store storage.Engine) ([]*storage.Node, bool) {
