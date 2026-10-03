@@ -19,6 +19,7 @@ func TestPackStreamPointRoundTrip(t *testing.T) {
 		encoded := encodePackStreamValue(point)
 		require.Equal(t, encoded, encodePackStreamValueInto(nil, point))
 		require.Equal(t, encoded, encodePackStreamValue(&point))
+		require.Equal(t, encoded, encodePackStreamValueInto(nil, &point))
 		decoded, consumed, err := decodePackStreamValue(encoded, 0)
 		require.NoError(t, err)
 		require.Equal(t, len(encoded), consumed)
