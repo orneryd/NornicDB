@@ -266,6 +266,34 @@ func TestKnowledgePolicyApplyFormattingRoundTrips(t *testing.T) {
 	assert.Equal(t, policy.WhenClauses, parsedPolicy.WhenClauses)
 }
 
+func TestE2E_KnowledgeProfileTrailingAdmissionAcrossParsers(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			exec, ctx := newUnitExecutor(t)
+			require.Equal(t, parser, config.GetParserType())
+			for _, statement := range []string{
+				"CREATE DECAY PROFILE d OPTIONS { halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED' } GARBAGE",
+				"CREATE DECAY PROFILE binding FOR (n:Fact) APPLY { DECAY PROFILE 'd' } GARBAGE",
+				"ALTER DECAY PROFILE binding FOR (n:Fact) APPLY { DECAY PROFILE 'd' } GARBAGE",
+				"CREATE PROMOTION PROFILE p OPTIONS { multiplier: 1.5 } GARBAGE",
+				"ALTER PROMOTION PROFILE p SET OPTIONS { multiplier: 1.5 } GARBAGE",
+				"ALTER DECAY PROFILE d SET OPTIONS { halfLifeSeconds: 3600 } GARBAGE",
+			} {
+				_, err := exec.Execute(ctx, statement, nil)
+				require.ErrorContains(t, err, "expected end of statement", statement)
+			}
+			for _, statement := range []string{"SHOW DECAY PROFILES", "SHOW PROMOTION PROFILES", "SHOW PROMOTION POLICIES"} {
+				result, err := exec.Execute(ctx, statement, nil)
+				require.NoError(t, err)
+				require.Empty(t, result.Rows)
+			}
+		})
+	}
+}
+
 func TestE2E_PromotionProfileOptionParity(t *testing.T) {
 	for _, parser := range []string{"nornic", "antlr"} {
 		t.Run(parser, func(t *testing.T) {

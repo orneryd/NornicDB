@@ -883,6 +883,41 @@ func TestParseDDL_OnAccess_QueryContextVarsInExpression(t *testing.T) {
 
 // ── ALTER PROMOTION POLICY ──────────────────────────────────────────────────
 
+func TestParseDDL_KnowledgeProfileRejectsTrailingText(t *testing.T) {
+	for _, statement := range []string{
+		"CREATE DECAY PROFILE d OPTIONS { halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED' } GARBAGE",
+		"CREATE DECAY PROFILE binding FOR (n:Fact) APPLY { DECAY PROFILE 'd' } GARBAGE",
+		"ALTER DECAY PROFILE binding FOR (n:Fact) APPLY { DECAY PROFILE 'd' } GARBAGE",
+		"CREATE PROMOTION PROFILE p OPTIONS { multiplier: 1.5 } GARBAGE",
+		"ALTER PROMOTION PROFILE p SET OPTIONS { multiplier: 1.5 } GARBAGE",
+		"ALTER DECAY PROFILE d SET OPTIONS { halfLifeSeconds: 3600 } GARBAGE",
+	} {
+		t.Run(statement, func(t *testing.T) {
+			_, _, err := ParseKnowledgePolicyDDL(statement)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestParseDDL_KnowledgeProfileAndPolicyTerminators(t *testing.T) {
+	for _, statement := range []string{
+		"CREATE DECAY PROFILE d OPTIONS { halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED' }",
+		"CREATE DECAY PROFILE binding FOR (n:Fact) APPLY { DECAY PROFILE 'd' }",
+		"ALTER DECAY PROFILE binding FOR (n:Fact) APPLY { DECAY PROFILE 'd' }",
+		"CREATE PROMOTION PROFILE p OPTIONS { multiplier: 1.5 }",
+		"ALTER PROMOTION PROFILE p SET OPTIONS { multiplier: 1.5 }",
+		"ALTER DECAY PROFILE d SET OPTIONS { halfLifeSeconds: 3600 }",
+		"CREATE PROMOTION POLICY pg FOR (n:Fact) APPLY { ON ACCESS { SET n.c = 1 } }",
+		"ALTER PROMOTION POLICY pg SET OPTIONS { enabled: true } DISABLE",
+	} {
+		_, ok, err := ParseKnowledgePolicyDDL(statement + "; ")
+		require.NoError(t, err, statement)
+		require.True(t, ok, statement)
+		_, _, err = ParseKnowledgePolicyDDL(statement + "; GARBAGE")
+		require.Error(t, err, statement)
+	}
+}
+
 func TestParseDDL_AlterPromotionPolicyRejectsUnconsumedClauses(t *testing.T) {
 	_, _, err := ParseKnowledgePolicyDDL("ALTER PROMOTION POLICY")
 	require.Error(t, err)

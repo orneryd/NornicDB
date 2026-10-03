@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reject unconsumed text after native decay/promotion option and binding blocks,
+  using a shared end-of-statement check that preserves one optional semicolon
+  terminator for valid profile and policy statements (#531).
+
 - Share field-specific CREATE/ALTER promotion-profile option decoding, including
   case-insensitive keys and scope support. Preserve numeric 0/1 values in numeric
   fields and reject wrongly typed updates without changing stored profiles (#531).

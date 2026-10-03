@@ -246,6 +246,17 @@ type DropPromotionPolicyCmd struct {
 
 type ShowPromotionPoliciesCmd struct{}
 
+func kpRequireStatementEnd(statement string, index int, command string) error {
+	index = kpSkipSpaces(statement, index)
+	if index < len(statement) && statement[index] == ';' {
+		index = kpSkipSpaces(statement, index+1)
+	}
+	if index != len(statement) {
+		return localizedError(localization.CypherKnowledgePolicyExpectedAfter("end of statement", command), nil)
+	}
+	return nil
+}
+
 func isKnowledgePolicyDDLStatement(statement string) bool {
 	for _, operation := range []string{"CREATE", "ALTER", "DROP"} {
 		if startsWithKeywords(statement, operation, "DECAY PROFILE") ||
@@ -395,7 +406,9 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 	if j < 0 {
 		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "OPTIONS"), nil)
 	}
-	_ = j
+	if err := kpRequireStatementEnd(s, j, "CREATE DECAY PROFILE "+name); err != nil {
+		return nil, false, err
+	}
 
 	bundle := knowledgepolicy.DecayProfileBundle{
 		Name:         name,
@@ -489,11 +502,14 @@ func parseDecayProfileBinding(name, s string, i int) (interface{}, bool, error) 
 		if k < 0 {
 			return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "APPLY"), nil)
 		}
-		_ = k
+		i = k
 
 		if err := parseBindingApplyBlock(body, &binding); err != nil {
 			return nil, false, err
 		}
+	}
+	if err := kpRequireStatementEnd(s, i, "DECAY PROFILE "+name); err != nil {
+		return nil, false, err
 	}
 
 	return &CreateDecayProfileBindingCmd{Binding: binding}, true, nil
@@ -863,11 +879,14 @@ func parseAlterDecayProfile(s string, i int) (interface{}, bool, error) {
 		return &AlterDecayProfileBindingCmd{Binding: cmd.(*CreateDecayProfileBindingCmd).Binding}, true, nil
 	}
 
-	updates, _, ok, err := kpParseSetOptions(s, i)
+	updates, next, ok, err := kpParseSetOptions(s, i)
 	if err != nil {
 		return nil, false, err
 	}
 	if ok && updates != nil {
+		if err := kpRequireStatementEnd(s, next, "ALTER DECAY PROFILE "+name); err != nil {
+			return nil, false, err
+		}
 		return &AlterDecayProfileCmd{Name: name, Updates: updates}, true, nil
 	}
 
@@ -897,7 +916,9 @@ func parseCreatePromotionProfile(s string, i int) (interface{}, bool, error) {
 	if j < 0 {
 		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "OPTIONS"), nil)
 	}
-	_ = j
+	if err := kpRequireStatementEnd(s, j, "CREATE PROMOTION PROFILE "+name); err != nil {
+		return nil, false, err
+	}
 
 	profile := knowledgepolicy.PromotionProfileDef{
 		Name:    name,
@@ -965,11 +986,14 @@ func parseAlterPromotionProfile(s string, i int) (interface{}, bool, error) {
 	}
 
 	i = kpSkipSpaces(s, i)
-	updates, _, ok, err := kpParseSetOptionsWith(s, i, parsePromotionProfileOptions)
+	updates, next, ok, err := kpParseSetOptionsWith(s, i, parsePromotionProfileOptions)
 	if err != nil {
 		return nil, false, err
 	}
 	if ok && updates != nil {
+		if err := kpRequireStatementEnd(s, next, "ALTER PROMOTION PROFILE "+name); err != nil {
+			return nil, false, err
+		}
 		return &AlterPromotionProfileCmd{Name: name, Updates: updates}, true, nil
 	}
 
@@ -1053,8 +1077,8 @@ func parsePromotionPolicyDefinition(name, s string, i int) (knowledgepolicy.Prom
 			return policy, err
 		}
 	}
-	if kpSkipSpaces(s, i) != len(s) {
-		return policy, localizedError(localization.CypherKnowledgePolicyExpectedAfter("end of statement", "PROMOTION POLICY "+name), nil)
+	if err := kpRequireStatementEnd(s, i, "PROMOTION POLICY "+name); err != nil {
+		return policy, err
 	}
 
 	return policy, nil
@@ -1306,8 +1330,8 @@ func parseAlterPromotionPolicy(s string, i int) (interface{}, bool, error) {
 		updates["enabled"] = false
 		i = j
 	}
-	if kpSkipSpaces(s, i) != len(s) {
-		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("end of statement", "ALTER PROMOTION POLICY "+name), nil)
+	if err := kpRequireStatementEnd(s, i, "ALTER PROMOTION POLICY "+name); err != nil {
+		return nil, false, err
 	}
 
 	return &AlterPromotionPolicyCmd{Name: name, Updates: updates}, true, nil

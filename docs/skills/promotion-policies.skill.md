@@ -235,6 +235,9 @@ same field-specific decoding. Numeric fields remain numeric for literal `0` and
 Unknown options, invalid values, and wrongly typed values are rejected without
 changing the stored profile. `scope` can be set during creation or alteration.
 
+Profile and policy statements accept one optional trailing semicolon. Additional
+text after an OPTIONS or APPLY block is rejected rather than silently ignored.
+
 Drop the policy before the profile if both are going away — dropping a profile that policies still reference produces a validation error.
 
 ## Gotchas
