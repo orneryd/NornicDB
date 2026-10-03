@@ -10,6 +10,10 @@
   other: Ejecutar una importación completa sin conexión
 - id: admincli.incremental_import_short
   other: Comando reservado para la importación incremental
+- id: admincli.okf_import_short
+  other: Importar un paquete Open Knowledge Format
+- id: admincli.okf_export_short
+  other: Exportar un paquete Open Knowledge Format importado
 - id: admincli.export_short
   other: Exportar datos de la base de datos para una migración sin conexión
 - id: admincli.neo4j_csv_export_short
@@ -27,7 +31,13 @@
 - id: admincli.flag.relationships
   other: Fuente CSV de relaciones (se puede repetir)
 - id: admincli.flag.from_path
-  other: Directorio que contiene archivos CSV compatibles con Neo4j
+  other: Directorio de origen
+- id: admincli.flag.okf_profile
+  other: "Perfil semántico: okf o pgm-0.4-draft"
+- id: admincli.flag.okf_mode
+  other: "Modo de importación: fail-if-exists"
+- id: admincli.flag.property_map
+  other: Archivo de asignación de propiedades al estilo de variables de entorno
 - id: admincli.flag.schema
   other: Archivo de esquema Cypher que se aplicará después de la carga
 - id: admincli.flag.build_indexes
@@ -49,7 +59,7 @@
 - id: admincli.flag.bad_tolerance
   other: Número de filas no válidas toleradas antes de cancelar
 - id: admincli.flag.chunk_size
-  other: Filas por bloque de escritura masiva
+  other: Registros por bloque de escritura masiva
 - id: admincli.flag.delimiter
   other: Delimitador de campos
 - id: admincli.flag.array_delimiter
@@ -63,7 +73,7 @@
 - id: admincli.flag.verbose
   other: Registro detallado
 - id: admincli.flag.to_path
-  other: Directorio de salida para archivos CSV compatibles con Neo4j
+  other: Directorio de salida
 - id: admincli.incremental_not_implemented
   other: la importación incremental de bases de datos aún no está implementada
 - id: admincli.database_info_not_implemented
@@ -72,6 +82,8 @@
   other: el estado del servidor aún no está implementado
 - id: admincli.to_path_required
   other: se requiere --to-path
+- id: admincli.from_path_required
+  other: se requiere --from-path
 - id: admincli.exact_args
   other: acepta {{.Expected}} argumento(s), se recibieron {{.Received}}
 - id: admincli.unknown_command
