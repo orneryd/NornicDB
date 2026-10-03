@@ -81,6 +81,12 @@ func TestPropertyIndexRangeSeekMatchesLabelScan(t *testing.T) {
 		"MATCH (n:Item) WHERE n.v IN $ids RETURN count(n)",
 		"MATCH (n:Item) WHERE n.v IN $ids RETURN n.v",
 		"MATCH (n:Item) WHERE n.v < 3 CALL (n) { RETURN n.w AS w } RETURN sum(w)",
+		// Without a label the per-label indexes list only some of the nodes
+		// (#814): these must not seed from them.
+		"MATCH (n) WHERE n.v < 5 RETURN n.v",
+		"MATCH (n {v: 3}) RETURN count(n)",
+		"MATCH (n) WHERE n.v = 3 RETURN count(n)",
+		"MATCH (n) WHERE n.v IN $ids RETURN n.v",
 	} {
 		require.Equal(t, rangeSeekRows(t, scanned, query, params), rangeSeekRows(t, indexed, query, params), query)
 	}
