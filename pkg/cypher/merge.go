@@ -397,17 +397,27 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 // existing matches, every match must continue through the remaining clauses.
 // Callers that only need existence may continue to use findMergeNode.
 func (e *StorageExecutor) findMergeNodes(store storage.Engine, labels []string, props map[string]interface{}) ([]*storage.Node, error) {
+	matches, _, err := e.findMergeNodesScanned(store, labels, props)
+	return matches, err
+}
+
+// findMergeNodesScanned is findMergeNodes, also reporting whether it read
+// the pattern's whole label (or every node, without a label). Only such an
+// answer is complete: a node any other lookup (the MERGE cache, a schema
+// index) could return carries the label, so a scan that found none means
+// there is none. An index answer is not; findMergeNode tries further
+// sources after it.
+func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []string, props map[string]interface{}) (matches []*storage.Node, scanned bool, err error) {
 	if ids, indexed := e.mergeNodeIndexedCandidateIDs(store, labels, props); indexed {
-		matches := make([]*storage.Node, 0, len(ids))
+		matches = make([]*storage.Node, 0, len(ids))
 		for _, n := range e.loadMergeCandidateNodes(store, ids) {
 			if mergeNodeMatches(n, labels, props) {
 				matches = append(matches, n)
 			}
 		}
-		return matches, nil
+		return matches, false, nil
 	}
 	var candidates []*storage.Node
-	var err error
 	if len(labels) > 0 && len(props) > 0 {
 		e.markMergeScanFallbackUsed()
 	}
@@ -417,16 +427,16 @@ func (e *StorageExecutor) findMergeNodes(store storage.Engine, labels []string, 
 		candidates, err = store.AllNodes()
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	matches := make([]*storage.Node, 0, len(candidates))
+	matches = make([]*storage.Node, 0, len(candidates))
 	for _, candidate := range candidates {
 		if mergeNodeMatches(candidate, labels, props) {
 			matches = append(matches, candidate)
 		}
 	}
-	return matches, nil
+	return matches, true, nil
 }
 
 // mergeNodeIndexedCandidateIDs returns the candidate node IDs for a MERGE node
@@ -1954,8 +1964,24 @@ func (e *StorageExecutor) buildCartesianProduct(patternMatches []struct {
 	return result
 }
 
+// mergeNodeAbsentKey marks a context whose caller has just scanned the
+// MERGE node pattern's whole label and found no matching node
+// (pipelineApplyMerge, findMergeNodesScanned): the MERGE creates the node
+// without scanning the label a second time (#823).
+type mergeNodeAbsentKey struct{}
+
+func withMergeNodeAbsent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, mergeNodeAbsentKey{}, true)
+}
+
 // executeMergeWithContext executes a MERGE clause with context from a prior MATCH.
 func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
+	// The caller's finding applies to this MERGE's node pattern only, not to
+	// the clauses that follow it.
+	nodeKnownAbsent, _ := ctx.Value(mergeNodeAbsentKey{}).(bool)
+	if nodeKnownAbsent {
+		ctx = context.WithValue(ctx, mergeNodeAbsentKey{}, false)
+	}
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -2054,7 +2080,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	if candidate := nodeContext[varName]; candidate != nil && mergeNodeMatches(candidate, labels, matchProps) {
 		existingNode = candidate
 	}
-	if existingNode == nil {
+	if existingNode == nil && !nodeKnownAbsent {
 		existingNode, err = e.findMergeNode(store, labels, matchProps)
 		if err != nil {
 			return nil, err

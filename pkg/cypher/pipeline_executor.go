@@ -2964,7 +2964,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			if parseErr == nil {
 				_, alreadyBound := nodeContext[variable]
 				if variable == "" || !alreadyBound {
-					matches, findErr := e.findMergeNodes(e.getStorage(ctx), labels, properties)
+					matches, scanned, findErr := e.findMergeNodesScanned(e.getStorage(ctx), labels, properties)
 					if findErr != nil {
 						return nil, nil, findErr
 					}
@@ -2998,6 +2998,9 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 						}
 						out = append(out, matchedRows...)
 						continue
+					}
+					if scanned {
+						ctx = withMergeNodeAbsent(ctx)
 					}
 				}
 			}
