@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 
@@ -647,9 +648,12 @@ func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error 
 	return nil
 }
 
+// BulkDeleteEdges deletes ids in the transaction. Like the engines'
+// BulkDeleteEdges, it skips IDs that do not exist, those the transaction
+// already deleted included (#827).
 func (w *transactionStorageWrapper) BulkDeleteEdges(ids []storage.EdgeID) error {
 	for _, id := range ids {
-		if err := w.tx.DeleteEdge(w.prefixEdgeID(id)); err != nil {
+		if err := w.tx.DeleteEdge(w.prefixEdgeID(id)); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
 	}
