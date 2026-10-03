@@ -378,6 +378,13 @@ func TestGh810_NullPropertyMapsMatchPinnedNeo4j(t *testing.T) {
 	runDifferentialCases(t, cases)
 }
 
+// differentialCaseTimeout bounds one corpus case (resets, setup, the
+// statement and the snapshots, on both servers). Each case has its own
+// deadline: one deadline for the whole corpus made the run fail once the
+// corpus grew past it, every later case then failing with a timeout that
+// says nothing about NornicDB (#754).
+const differentialCaseTimeout = 30 * time.Second
+
 func runDifferentialCases(t *testing.T, cases []differentialCase) {
 	t.Helper()
 	referenceURI := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI")
@@ -406,10 +413,16 @@ func runDifferentialCases(t *testing.T, cases []differentialCase) {
 			defer shutdown()
 			nornic := newDifferentialBackend(t, nornicDriver, "nornic", mode)
 			reference := newDifferentialBackend(t, referenceDriver, "neo4j", mode)
-			defer resetDifferentialBackend(t, ctx, reference, "Neo4j")
+			defer func() {
+				ctx, cancel := context.WithTimeout(context.Background(), differentialCaseTimeout)
+				defer cancel()
+				resetDifferentialBackend(t, ctx, reference, "Neo4j")
+			}()
 
 			for _, testCase := range cases {
 				t.Run(testCase.Name, func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(context.Background(), differentialCaseTimeout)
+					defer cancel()
 					resetDifferentialBackend(t, ctx, nornic, "NornicDB")
 					resetDifferentialBackend(t, ctx, reference, "Neo4j")
 					for _, setup := range testCase.Setup {
