@@ -114,3 +114,17 @@ func TestPointPropertiesAreStored(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE (:Q {bad: [point({x: 1, y: 1}), point({latitude: 1, longitude: 1})]})", nil)
 	require.ErrorContains(t, err, "Collections containing point values with different CRS can not be stored in properties.")
 }
+
+// ORDER BY across types follows Neo4j's orderability: map < list < point <
+// zoned datetime < date < local time < duration < string < boolean < number
+// (#837; Neo4j 5.26.30's order for this list).
+func TestOrderByAcrossTypesMatchesNeo4j(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	result, err := exec.Execute(context.Background(), "UNWIND [1, 'a', true, point({x: 1, y: 1}), date('2020-01-01'), [1], {a: 1}, datetime('2020-01-01T00:00Z'), duration('P1D'), localtime('12:00')] AS v RETURN v ORDER BY v", nil)
+	require.NoError(t, err)
+	var order []string
+	for _, row := range result.Rows {
+		order = append(order, cypherTypeSystemName(row[0]))
+	}
+	require.Equal(t, []string{"MAP", "LIST", "POINT", "ZONED DATETIME", "DATE", "LOCAL TIME", "DURATION", "STRING", "BOOLEAN", "INTEGER"}, order)
+}
