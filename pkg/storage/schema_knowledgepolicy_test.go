@@ -677,6 +677,42 @@ func TestCreatePromotionPolicy_MissingProfileRef(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestApplyPromotionProfileOptions(t *testing.T) {
+	original := knowledgepolicy.PromotionProfileDef{
+		Name: "profile", Scope: knowledgepolicy.ScopeNode, Enabled: true,
+		Multiplier: 1, ScoreCap: 1,
+	}
+	for _, updates := range []map[string]interface{}{
+		{"multiplier": "abc"},
+		{"scoreFloor": "abc"},
+		{"scoreCap": true},
+		{"enabled": nil},
+		{"scope": false},
+		{"scope": "UNKNOWN"},
+		{"scoreFloor": 2.0},
+		{"nonsense": 5},
+		{"multiplier": 2.0, "scoreFloor": "abc"},
+	} {
+		updated, err := ApplyPromotionProfileOptions(original, updates)
+		require.Error(t, err)
+		require.Equal(t, original, updated)
+		sm := NewSchemaManager()
+		require.NoError(t, sm.CreatePromotionProfile(original))
+		require.Error(t, sm.AlterPromotionProfile(original.Name, updates))
+		require.Equal(t, []knowledgepolicy.PromotionProfileDef{original}, sm.ShowPromotionProfiles())
+	}
+	updated, err := ApplyPromotionProfileOptions(original, map[string]interface{}{
+		"scope": string(knowledgepolicy.ScopeNode), "multiplier": 2.0,
+		"scoreFloor": 0.2, "scoreCap": 0.8, "enabled": false,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2.0, updated.Multiplier)
+	require.Equal(t, 0.2, updated.ScoreFloor)
+	require.Equal(t, 0.8, updated.ScoreCap)
+	require.False(t, updated.Enabled)
+	require.Equal(t, 1.0, original.Multiplier)
+}
+
 func TestAlterPromotionPolicyValidatesOptionsAtomically(t *testing.T) {
 	empty := &SchemaManager{}
 	require.Error(t, empty.AlterPromotionPolicy("missing", nil))

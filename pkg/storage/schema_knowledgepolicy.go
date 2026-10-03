@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -621,24 +622,55 @@ func applyBundleUpdates(bundle *knowledgepolicy.DecayProfileBundle, updates map[
 	return nil
 }
 
+// ApplyPromotionProfileOptions returns a validated updated profile without
+// modifying the input. Invalid options return an error and the input profile.
+//
+// Example:
+//
+//	updated, err := ApplyPromotionProfileOptions(profile, map[string]interface{}{"scoreFloor": 0.5})
+func ApplyPromotionProfileOptions(profile knowledgepolicy.PromotionProfileDef, updates map[string]interface{}) (knowledgepolicy.PromotionProfileDef, error) {
+	updated := profile
+	if err := applyPromotionProfileUpdates(&updated, updates); err != nil {
+		return profile, err
+	}
+	if err := validatePromotionProfile(&updated); err != nil {
+		return profile, err
+	}
+	return updated, nil
+}
+
 func applyPromotionProfileUpdates(profile *knowledgepolicy.PromotionProfileDef, updates map[string]interface{}) error {
 	for k, v := range updates {
 		switch k {
+		case "scope":
+			scope, ok := v.(string)
+			if !ok {
+				return localizedError(localization.StorageSchemaInvalidScopeType(v), nil)
+			}
+			profile.Scope = knowledgepolicy.ScopeType(scope)
 		case "multiplier":
 			if f, ok := toFloat64(v); ok {
 				profile.Multiplier = f
+			} else {
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue(k, fmt.Sprint(v), false), nil)
 			}
 		case "scoreFloor":
 			if f, ok := toFloat64(v); ok {
 				profile.ScoreFloor = f
+			} else {
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue(k, fmt.Sprint(v), false), nil)
 			}
 		case "scoreCap":
 			if f, ok := toFloat64(v); ok {
 				profile.ScoreCap = f
+			} else {
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue(k, fmt.Sprint(v), false), nil)
 			}
 		case "enabled":
 			if b, ok := v.(bool); ok {
 				profile.Enabled = b
+			} else {
+				return localizedError(localization.StorageSchemaOptionBooleanRequired(k), nil)
 			}
 		default:
 			return localizedError(localization.StorageSchemaUnknownOption(k), nil)

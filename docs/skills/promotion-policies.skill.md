@@ -229,6 +229,12 @@ their target or APPLY block.
 Native decay and promotion commands use the same DDL handler with either
 `NORNICDB_PARSER=nornic` or `NORNICDB_PARSER=antlr`.
 
+CREATE and ALTER promotion profiles share case-insensitive option keys and the
+same field-specific decoding. Numeric fields remain numeric for literal `0` and
+`1`; the `enabled` option accepts boolean literals and the native `0`/`1` forms.
+Unknown options, invalid values, and wrongly typed values are rejected without
+changing the stored profile. `scope` can be set during creation or alteration.
+
 Drop the policy before the profile if both are going away — dropping a profile that policies still reference produces a validation error.
 
 ## Gotchas

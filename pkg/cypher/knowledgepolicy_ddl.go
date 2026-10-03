@@ -798,6 +798,17 @@ func kpParseKnowledgeName(s string, i int, statement string, isPolicy bool) (str
 // without an OPTIONS block, so callers can tell a parsed (possibly empty) block
 // apart from a missing one.
 func kpParseSetOptions(s string, i int) (updates map[string]interface{}, next int, ok bool, err error) {
+	return kpParseSetOptionsWith(s, i, func(body string) (map[string]interface{}, error) {
+		parsed := make(map[string]interface{})
+		err := parseOptionsMap(body, func(key, rawVal string) error {
+			parsed[key] = parseRawValue(rawVal)
+			return nil
+		})
+		return parsed, err
+	})
+}
+
+func kpParseSetOptionsWith(s string, i int, decode func(string) (map[string]interface{}, error)) (updates map[string]interface{}, next int, ok bool, err error) {
 	j := kpMatchKeywordAt(s, i, "SET")
 	if j < 0 {
 		return nil, i, false, nil
@@ -811,11 +822,8 @@ func kpParseSetOptions(s string, i int) (updates map[string]interface{}, next in
 	if l < 0 {
 		return nil, j, true, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "SET OPTIONS"), nil)
 	}
-	updates = make(map[string]interface{})
-	if err := parseOptionsMap(body, func(key, rawVal string) error {
-		updates[key] = parseRawValue(rawVal)
-		return nil
-	}); err != nil {
+	updates, err = decode(body)
+	if err != nil {
 		return nil, j, true, err
 	}
 	return updates, l, true, nil
@@ -897,47 +905,57 @@ func parseCreatePromotionProfile(s string, i int) (interface{}, bool, error) {
 		Scope:   knowledgepolicy.ScopeNode,
 	}
 
-	if err := parseOptionsMap(body, func(key, rawVal string) error {
+	updates, err := parsePromotionProfileOptions(body)
+	if err != nil {
+		return nil, false, err
+	}
+	profile, err = storage.ApplyPromotionProfileOptions(profile, updates)
+	if err != nil {
+		return nil, false, err
+	}
+	return &CreatePromotionProfileCmd{Profile: profile}, true, nil
+}
+
+func parsePromotionProfileOptions(body string) (map[string]interface{}, error) {
+	updates := make(map[string]interface{})
+	err := parseOptionsMap(body, func(key, rawVal string) error {
 		switch lowerASCII(key) {
 		case "scope":
 			sc := knowledgepolicy.ScopeType(upperASCII(strings.Trim(rawVal, "'\"")))
 			if !knowledgepolicy.ValidScopeTypes[sc] {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scope", rawVal, true), nil)
 			}
-			profile.Scope = sc
+			updates["scope"] = string(sc)
 		case "multiplier":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("multiplier", rawVal, false), err)
 			}
-			profile.Multiplier = f
+			updates["multiplier"] = f
 		case "scorefloor":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scoreFloor", rawVal, false), err)
 			}
-			profile.ScoreFloor = f
+			updates["scoreFloor"] = f
 		case "scorecap":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scoreCap", rawVal, false), err)
 			}
-			profile.ScoreCap = f
+			updates["scoreCap"] = f
 		case "enabled":
 			b, err := strconv.ParseBool(rawVal)
 			if err != nil {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("enabled", rawVal, false), err)
 			}
-			profile.Enabled = b
+			updates["enabled"] = b
 		default:
 			return localizedError(localization.CypherKnowledgePolicyUnknownOption(key), nil)
 		}
 		return nil
-	}); err != nil {
-		return nil, false, err
-	}
-
-	return &CreatePromotionProfileCmd{Profile: profile}, true, nil
+	})
+	return updates, err
 }
 
 func parseAlterPromotionProfile(s string, i int) (interface{}, bool, error) {
@@ -947,7 +965,7 @@ func parseAlterPromotionProfile(s string, i int) (interface{}, bool, error) {
 	}
 
 	i = kpSkipSpaces(s, i)
-	updates, _, ok, err := kpParseSetOptions(s, i)
+	updates, _, ok, err := kpParseSetOptionsWith(s, i, parsePromotionProfileOptions)
 	if err != nil {
 		return nil, false, err
 	}

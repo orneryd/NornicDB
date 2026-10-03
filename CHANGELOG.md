@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Share field-specific CREATE/ALTER promotion-profile option decoding, including
+  case-insensitive keys and scope support. Preserve numeric 0/1 values in numeric
+  fields and reject wrongly typed updates without changing stored profiles (#531).
+
 - Reject malformed promotion-policy clauses, unconsumed definition suffixes,
   unknown options, and non-boolean enabled values before schema mutation.
   Apply terminal ENABLE/DISABLE flags after validating SET OPTIONS. Route native

@@ -266,6 +266,61 @@ func TestKnowledgePolicyApplyFormattingRoundTrips(t *testing.T) {
 	assert.Equal(t, policy.WhenClauses, parsedPolicy.WhenClauses)
 }
 
+func TestE2E_PromotionProfileOptionParity(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			for _, options := range []string{
+				"{ multiplier: 'abc' }",
+				"{ scoreFloor: 'abc' }",
+				"{ scoreCap: 'abc' }",
+				"{ enabled: 'no' }",
+				"{ scope: 'UNKNOWN' }",
+				"{ nonsense: 5 }",
+				"{ multiplier: 2.0, scoreFloor: 'abc' }",
+			} {
+				t.Run("reject "+options, func(t *testing.T) {
+					exec, ctx := newUnitExecutor(t)
+					_, err := exec.Execute(ctx, "CREATE PROMOTION PROFILE invalid OPTIONS "+options, nil)
+					require.Error(t, err)
+					_, err = exec.Execute(ctx, "CREATE PROMOTION PROFILE boost OPTIONS { multiplier: 1.5 }", nil)
+					require.NoError(t, err)
+					before, err := exec.Execute(ctx, "SHOW PROMOTION PROFILES", nil)
+					require.NoError(t, err)
+					_, err = exec.Execute(ctx, "ALTER PROMOTION PROFILE boost SET OPTIONS "+options, nil)
+					require.Error(t, err)
+					after, err := exec.Execute(ctx, "SHOW PROMOTION PROFILES", nil)
+					require.NoError(t, err)
+					require.Equal(t, before.Rows, after.Rows)
+				})
+			}
+			for _, options := range []string{
+				"{ scorefloor: 0.5 }",
+				"{ scoreFloor: 1 }",
+				"{ scope: 'NODE' }",
+				"{ enabled: 0 }",
+			} {
+				t.Run("accept "+options, func(t *testing.T) {
+					exec, ctx := newUnitExecutor(t)
+					_, err := exec.Execute(ctx, "CREATE PROMOTION PROFILE boost OPTIONS { multiplier: 1.5 }", nil)
+					require.NoError(t, err)
+					_, err = exec.Execute(ctx, "CREATE PROMOTION PROFILE expected OPTIONS "+options, nil)
+					require.NoError(t, err)
+					_, err = exec.Execute(ctx, "ALTER PROMOTION PROFILE boost SET OPTIONS "+options, nil)
+					require.NoError(t, err)
+					result, err := exec.Execute(ctx, "SHOW PROMOTION PROFILES YIELD name, scoreFloor, scope, enabled RETURN name, scoreFloor, scope, enabled ORDER BY name", nil)
+					require.NoError(t, err)
+					require.Len(t, result.Rows, 2)
+					require.Equal(t, result.Rows[1][1:], result.Rows[0][1:])
+				})
+			}
+		})
+	}
+}
+
 func TestE2E_KnowledgePolicyDDLAcrossParsers(t *testing.T) {
 	for _, parser := range []string{"nornic", "antlr"} {
 		t.Run(parser, func(t *testing.T) {
