@@ -61,3 +61,22 @@ func TestPaginationExpressionsWithoutRowVariables(t *testing.T) {
 	_, err = exec.Execute(ctx, "MATCH (n:Item) RETURN n.v ORDER BY n.v SKIP n.v", params)
 	require.ErrorContains(t, err, "SKIP requires an expression independent of row variables")
 }
+
+// TestPaginationValidationEdgeBranches: an expression that fails to evaluate
+// is an error, statically and with parameters; one that evaluates to nothing
+// is a type error; without parameters, or with the referenced parameter
+// missing, runtime validation leaves the statement to the ParameterMissing
+// check.
+func TestPaginationValidationEdgeBranches(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	require.Error(t, exec.validateStaticPaginationExpression("LIMIT", "1 / 0"))
+	require.Error(t, exec.validateStaticPaginationExpression("LIMIT", "nosuchfunction(1)"))
+
+	query := "MATCH (n) RETURN n LIMIT $n"
+	require.NoError(t, exec.validateRuntimePaginationExpressions(context.Background(), query))
+	withParams := func(params map[string]interface{}) context.Context {
+		return context.WithValue(context.Background(), paramsKey, params)
+	}
+	require.NoError(t, exec.validateRuntimePaginationExpressions(withParams(map[string]interface{}{"other": int64(1)}), query))
+	require.Error(t, exec.validateRuntimePaginationExpressions(withParams(map[string]interface{}{"n": int64(1)}), "MATCH (n) RETURN n LIMIT $n / 0"))
+}
