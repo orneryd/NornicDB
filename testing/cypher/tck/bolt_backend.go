@@ -206,9 +206,14 @@ func (b *BoltBackend) executeExplicit(ctx context.Context, query string, params 
 	if err != nil {
 		return QueryResult{}, err
 	}
-	inTransaction, err := snapshotWithRunner(ctx, tx.Run)
-	if err != nil {
-		return QueryResult{}, fmt.Errorf("observe explicit transaction before commit: %w", err)
+	head := strings.ToUpper(strings.TrimSpace(query))
+	administrative := strings.HasPrefix(head, "SHOW DATABASE") || strings.HasPrefix(head, "SHOW DEFAULT DATABASE") || strings.HasPrefix(head, "SHOW HOME DATABASE")
+	var inTransaction GraphSnapshot
+	if !administrative {
+		inTransaction, err = snapshotWithRunner(ctx, tx.Run)
+		if err != nil {
+			return QueryResult{}, fmt.Errorf("observe explicit transaction before commit: %w", err)
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return QueryResult{}, classifyBoltError(err)
@@ -218,8 +223,10 @@ func (b *BoltBackend) executeExplicit(ctx context.Context, query string, params 
 	if err != nil {
 		return QueryResult{}, fmt.Errorf("observe explicit transaction after commit: %w", err)
 	}
-	if err := compareGraphSnapshots(inTransaction, fromFreshSession); err != nil {
-		return QueryResult{}, fmt.Errorf("explicit transaction commit visibility: %w", err)
+	if !administrative {
+		if err := compareGraphSnapshots(inTransaction, fromFreshSession); err != nil {
+			return QueryResult{}, fmt.Errorf("explicit transaction commit visibility: %w", err)
+		}
 	}
 	return result, nil
 }

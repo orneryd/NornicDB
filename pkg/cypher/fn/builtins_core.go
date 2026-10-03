@@ -23,6 +23,14 @@ func init() {
 	Register("tolower", evalToLower)
 	Register("toupper", evalToUpper)
 	Register("coalesce", evalCoalesce)
+	for _, name := range []string{"file", "linenumber"} {
+		Register(name, func(ctx Context, args []string) (interface{}, error) {
+			if argumentCount(args) != 0 {
+				return nil, &ParameterCountError{Function: name, TooMany: true}
+			}
+			return nil, nil
+		})
+	}
 }
 
 func evalID(ctx Context, args []string) (interface{}, error) {

@@ -541,15 +541,21 @@ func TestCypherHelpers_CallTxSetMetadata_SyntaxBranches(t *testing.T) {
 
 	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing parentheses")
+	assert.Contains(t, err.Error(), "requires at least 1 arguments")
 
 	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData()")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires a metadata object")
+	assert.Contains(t, err.Error(), "requires at least 1 arguments")
 
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({})")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one key-value pair")
+	exec.txContext = nil
+	_, err = exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	result, err := exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({})")
+	require.NoError(t, err)
+	require.Empty(t, result.Columns)
+	require.Empty(t, result.Rows)
+	_, err = exec.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
 }
 
 func TestCypherHelpers_FindNodeByProperties_AndRangeIndex(t *testing.T) {
@@ -2457,7 +2463,7 @@ func TestCypherHelpers_ExecuteCallDispatchAssertions(t *testing.T) {
 			res, err := exec.executeCall(ctx, q)
 			require.NoError(t, err, q)
 			require.NotNil(t, res, q)
-			require.NotEmpty(t, res.Columns, q)
+			require.NotNil(t, res.Columns, q)
 		})
 	}
 

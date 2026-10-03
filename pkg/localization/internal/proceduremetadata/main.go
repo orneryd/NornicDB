@@ -27,13 +27,16 @@ type entry struct {
 
 func main() {
 	rootFlag := flag.String("root", ".", "repository root")
+	catalogOnly := flag.Bool("catalog-only", false, "generate descriptors and catalogs without rewriting registrations")
 	flag.Parse()
 	root, err := filepath.Abs(*rootFlag)
 	fatalIf(err)
 
 	entries := loadEntries(filepath.Join(root, "pkg/localization/procedure_metadata.yaml"))
 	registryPath := filepath.Join(root, "pkg/cypher/procedure_registry_builtin.go")
-	rewriteRegistry(registryPath, entries)
+	if !*catalogOnly {
+		rewriteRegistry(registryPath, entries)
+	}
 	writeMessages(filepath.Join(root, "pkg/localization/messages_cypher_procedure_metadata.go"), entries)
 	writeCatalog(filepath.Join(root, "pkg/localization/catalog/active.cypherproceduremetadata.en-US.yaml"), entries, "en-US")
 	writeCatalog(filepath.Join(root, "pkg/localization/catalog/active.cypherproceduremetadata.es-ES.yaml"), entries, "es-ES")

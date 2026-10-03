@@ -1594,5 +1594,331 @@
     "name": "GH743 control PROFILE preamble",
     "query": "PROFILE CYPHER 5 runtime=slotted RETURN 1 AS x",
     "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext procedure signature metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, mode WHERE name = 'db.index.fulltext.queryNodes' RETURN name, signature, mode",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext procedure rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, argumentDescription, returnDescription WHERE name = 'db.index.fulltext.queryNodes' RETURN argumentDescription, returnDescription",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext procedure status metadata",
+    "query": "SHOW PROCEDURES YIELD name, worksOnSystem, admin, rolesExecution, rolesBoostedExecution, isDeprecated, deprecatedBy, option WHERE name = 'db.index.fulltext.queryNodes' RETURN worksOnSystem, admin, rolesExecution, rolesBoostedExecution, isDeprecated, deprecatedBy, option",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext procedure relationship metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, argumentDescription, returnDescription, worksOnSystem, admin, isDeprecated, deprecatedBy, option WHERE name = 'db.index.fulltext.queryRelationships' RETURN name, signature, argumentDescription, returnDescription, worksOnSystem, admin, isDeprecated, deprecatedBy, option",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 range function argument metadata",
+    "query": "SHOW FUNCTIONS YIELD name, category, signature, argumentDescription, returnDescription, aggregating WHERE name = 'range' RETURN name, category, signature, argumentDescription, returnDescription, aggregating ORDER BY signature",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 database identity presence",
+    "query": "SHOW DATABASES YIELD databaseID, serverID RETURN count(*) AS databases, count(databaseID) = count(*) AS databaseIDsPresent, count(serverID) = count(*) AS serverIDsPresent, count(DISTINCT serverID) AS servers",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 database creation representations",
+    "query": "SHOW DATABASES YIELD creationTime, lastStartTime RETURN count(creationTime) = count(*) AS creationTimesPresent, count(lastStartTime) = count(*) AS startTimesPresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 database info truthful metadata",
+    "query": "CALL db.info() YIELD id, creationDate RETURN id IS NOT NULL AND size(id) > 0 AS identityPresent, creationDate IS NOT NULL AND datetime(creationDate) IS NOT NULL AS creationDateValid",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS info system metadata",
+    "query": "CALL dbms.info() YIELD id, name, creationDate RETURN id IS NOT NULL AND size(id) > 0 AS identityPresent, name = 'system' AS isSystemDatabase, creationDate IS NOT NULL AND datetime(creationDate) IS NOT NULL AS creationDateValid",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 temporal clock timezone values",
+    "query": "RETURN date.statement('UTC') IS NOT NULL AS datePresent, datetime.statement('UTC') IS NOT NULL AS datetimePresent, localdatetime.statement('UTC') IS NOT NULL AS localdatetimePresent, localtime.statement('UTC') IS NOT NULL AS localtimePresent, time.statement('UTC') IS NOT NULL AS timePresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 temporal statement clock stability",
+    "query": "UNWIND [1, 2, 3] AS i WITH datetime.statement('UTC') AS instant RETURN count(DISTINCT instant) AS instants",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 temporal default truncation values",
+    "query": "RETURN date.truncate('year').month = 1 AS dateTruncated, datetime.truncate('day').hour = 0 AS datetimeTruncated, localdatetime.truncate('day').hour = 0 AS localdatetimeTruncated, localtime.truncate('hour').minute = 0 AS localtimeTruncated, time.truncate('hour').minute = 0 AS timeTruncated",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 CSV metadata outside LOAD CSV",
+    "query": "RETURN file() AS source, linenumber() AS line",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 syntax shaped function rich metadata",
+    "query": "SHOW FUNCTIONS YIELD name, category, description, signature, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy WHERE name IN ['all', 'any', 'none', 'single', 'reduce'] RETURN name, category, description, signature, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy ORDER BY name",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 temporal spatial and CSV function rich metadata",
+    "query": "SHOW FUNCTIONS YIELD name, category, description, signature, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy WHERE name IN ['datetime.statement', 'datetime.fromepoch', 'date.truncate', 'point.distance', 'point.withinBBox', 'file', 'linenumber', 'graph.byName', 'graph.byElementId', 'id'] RETURN name, category, description, signature, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy ORDER BY name, signature",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 token procedure rich metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name IN ['db.labels', 'db.relationshipTypes', 'db.propertyKeys'] RETURN * ORDER BY name",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 label token creation order",
+    "setup": ["CREATE (:S530TokenBb), (:S530TokenAa)"],
+    "query": "CALL db.labels() YIELD label WHERE label IN ['S530TokenBb', 'S530TokenAa'] RETURN label",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 relationship token creation order",
+    "setup": ["CREATE (b:S530TokenBb)-[:S530TokenYy]->(a:S530TokenAa), (a)-[:S530TokenXx]->(b)"],
+    "query": "CALL db.relationshipTypes() YIELD relationshipType WHERE relationshipType IN ['S530TokenYy', 'S530TokenXx'] RETURN relationshipType",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 label token limit creation order",
+    "setup": ["CREATE (:S530TokenBb), (:S530TokenAa)"],
+    "query": "CALL db.labels() YIELD label WHERE label IN ['S530TokenBb', 'S530TokenAa'] LIMIT 1 RETURN label",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 label token recreated creation order",
+    "setup": ["CREATE (:S530TokenBb), (:S530TokenAa)", "MATCH (b:S530TokenBb) DELETE b", "CREATE (:S530TokenBb)"],
+    "query": "CALL db.labels() YIELD label WHERE label IN ['S530TokenBb', 'S530TokenAa'] RETURN label",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 transaction metadata empty map void output",
+    "query": "CALL tx.setMetaData({})",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 transaction metadata nonempty map void output",
+    "query": "CALL tx.setMetaData({app: 's530', requestId: 17})",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 shared administrative procedure rich metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name IN ['db.awaitIndex', 'db.awaitIndexes', 'db.clearQueryCaches', 'db.ping', 'db.resampleIndex', 'dbms.info', 'tx.setMetaData'] RETURN * ORDER BY name",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 await index void output",
+    "setup": ["CREATE INDEX s530_await FOR (n:S530Await) ON (n.value)"],
+    "query": "CALL db.awaitIndex($name)",
+    "parameters": {"name": "s530_await"},
+    "no_effects": true
+  },
+  {
+    "name": "GH530 await indexes void output",
+    "query": "CALL db.awaitIndexes()",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 resample index void output",
+    "setup": ["CREATE INDEX s530_resample FOR (n:S530Resample) ON (n.value)"],
+    "query": "CALL db.resampleIndex($name)",
+    "parameters": {"name": "s530_resample"},
+    "no_effects": true
+  },
+  {
+    "name": "GH530 await missing index diagnostics",
+    "query": "CALL db.awaitIndex('s530_missing_index')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 resample missing index diagnostics",
+    "query": "CALL db.resampleIndex('s530_missing_index')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 vector node setter void output",
+    "setup": ["CREATE (:S530Vector {key: 'node'})"],
+    "query": "MATCH (n:S530Vector {key: 'node'}) CALL db.create.setNodeVectorProperty(n, 'embedding', $vector)",
+    "parameters": {"vector": [1.0, 2.0]}
+  },
+  {
+    "name": "GH530 vector relationship setter void output",
+    "setup": ["CREATE (:S530Vector)-[:S530VectorRel {key: 'relationship'}]->(:S530Vector)"],
+    "query": "MATCH ()-[r:S530VectorRel {key: 'relationship'}]->() CALL db.create.setRelationshipVectorProperty(r, 'embedding', $vector)",
+    "parameters": {"vector": [1.0, 2.0]}
+  },
+  {
+    "name": "GH530 vector node setter preserves outer return",
+    "setup": ["CREATE (:S530Vector {key: 'node'})"],
+    "query": "MATCH (n:S530Vector {key: 'node'}) WITH n CALL db.create.setNodeVectorProperty(n, 'embedding', $vector) RETURN n.key AS key, n.embedding AS embedding",
+    "parameters": {"vector": [1.0, 2.0]}
+  },
+  {
+    "name": "GH530 vector relationship setter preserves outer return",
+    "setup": ["CREATE (:S530Vector)-[:S530VectorRel {key: 'relationship'}]->(:S530Vector)"],
+    "query": "MATCH ()-[r:S530VectorRel {key: 'relationship'}]->() WITH r CALL db.create.setRelationshipVectorProperty(r, 'embedding', $vector) RETURN r.key AS key, r.embedding AS embedding",
+    "parameters": {"vector": [1.0, 2.0]}
+  },
+  {
+    "name": "GH530 vector creation void output",
+    "query": "CALL db.index.vector.createNodeIndex('s530_vector', 'S530Vector', 'embedding', 3, 'cosine')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 vector creation parameterized comma names",
+    "query": "CALL db.index.vector.createNodeIndex($name, $label, $property, $dimension, $similarity)",
+    "parameters": {"name": "s530,vector", "label": "S530,Vector", "property": "embedding,vector", "dimension": 3, "similarity": "COSINE"},
+    "no_effects": true
+  },
+  {
+    "name": "GH530 vector creation schema effects",
+    "setup": ["CALL db.index.vector.createNodeIndex('s530_vector', 'S530Vector', 'embedding', 3, 'cosine')"],
+    "query": "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties WHERE name = 's530_vector' RETURN name, type, entityType, labelsOrTypes, properties",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 vector procedure rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name IN ['db.create.setNodeVectorProperty', 'db.create.setRelationshipVectorProperty', 'db.index.vector.createNodeIndex', 'db.index.vector.queryNodes', 'db.index.vector.queryRelationships'] RETURN * ORDER BY name",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext analyzer shared field metadata",
+    "query": "SHOW PROCEDURES YIELD name, description, mode, worksOnSystem, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name = 'db.index.fulltext.listAvailableAnalyzers' RETURN name, description, mode, worksOnSystem, returnDescription[0..3] AS sharedReturns, admin, isDeprecated, deprecatedBy, option",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 fulltext analyzer stopword column presence",
+    "query": "CALL db.index.fulltext.listAvailableAnalyzers() YIELD analyzer, stopwords RETURN count(analyzer) > 0 AS analyzersPresent, count(stopwords) > 0 AS stopwordMetadataPresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 schema visualization rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name = 'db.schema.visualization' RETURN *",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 schema visualization virtual node labels",
+    "setup": ["CREATE (:S530VizStart)-[:S530VizRel]->(:S530VizEnd)"],
+    "query": "CALL db.schema.visualization() YIELD nodes UNWIND nodes AS n RETURN labels(n) AS labels ORDER BY labels(n)[0]",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 schema visualization virtual relationship types",
+    "setup": ["CREATE (:S530VizStart)-[:S530VizRel]->(:S530VizEnd)"],
+    "query": "CALL db.schema.visualization() YIELD relationships UNWIND relationships AS r RETURN type(r) AS type",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 schema visualization marginal combinations",
+    "setup": ["CREATE (:S530VizStartA)-[:S530VizRel]->(:S530VizEndA), (:S530VizStartB)-[:S530VizRel]->(:S530VizEndB)"],
+    "query": "CALL db.schema.visualization() YIELD nodes, relationships RETURN size(nodes) AS labels, size(relationships) AS combinations",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS config rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name = 'dbms.listConfig' RETURN *",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS config empty filter result",
+    "query": "CALL dbms.listConfig($search)",
+    "parameters": {"search": "s530_unknown_setting"},
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS connection rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name = 'dbms.listConnections' RETURN *",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 DBMS connection populated fields",
+    "query": "CALL dbms.listConnections() YIELD connectionId, connectTime, connector, userAgent, serverAddress, clientAddress RETURN count(connectionId) > 0 AS connectionsPresent, count(connectTime) = count(connectionId) AS timestampsPresent, count(connector) = count(connectionId) AS protocolsPresent, count(userAgent) = count(connectionId) AS agentsPresent, count(serverAddress) = count(connectionId) AS serversPresent, count(clientAddress) = count(connectionId) AS clientsPresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics rich field metadata",
+    "query": "SHOW PROCEDURES YIELD name, signature, description, mode, worksOnSystem, argumentDescription, returnDescription, admin, isDeprecated, deprecatedBy, option WHERE name IN ['db.stats.clear', 'db.stats.collect', 'db.stats.retrieve', 'db.stats.status', 'db.stats.stop'] RETURN * ORDER BY name",
+    "ordered": true,
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics clear result",
+    "query": "CALL db.stats.clear('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics idle status",
+    "setup": ["CALL db.stats.stop('QUERIES')", "CALL db.stats.clear('QUERIES')"],
+    "query": "CALL db.stats.status()",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics collect result",
+    "setup": ["CALL db.stats.stop('QUERIES')"],
+    "query": "CALL db.stats.collect('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics collecting status",
+    "setup": ["CALL db.stats.stop('QUERIES')", "CALL db.stats.collect('QUERIES')"],
+    "query": "CALL db.stats.status()",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics stop result",
+    "setup": ["CALL db.stats.collect('QUERIES')"],
+    "query": "CALL db.stats.stop('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics cleared query rows",
+    "setup": ["CALL db.stats.stop('QUERIES')", "CALL db.stats.clear('QUERIES')"],
+    "query": "CALL db.stats.retrieve('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics executed query retrieval",
+    "setup": ["CALL db.stats.stop('QUERIES')", "CALL db.stats.clear('QUERIES')", "CALL db.stats.collect('QUERIES')", "RETURN 530 AS value", "CALL db.stats.stop('QUERIES')"],
+    "query": "CALL db.stats.retrieve('QUERIES') YIELD data WHERE data.query = 'RETURN 530 AS value' RETURN data.query AS query",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics graph label count",
+    "setup": ["CREATE (:S530StatsStart)-[:S530_STATS]->(:S530StatsEnd)"],
+    "query": "CALL db.stats.retrieve('GRAPH COUNTS') YIELD data UNWIND data.nodes AS node WITH node WHERE node.label = 'S530StatsStart' RETURN node.count AS count",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics graph relationship count",
+    "setup": ["CREATE (:S530StatsStart)-[:S530_STATS]->(:S530StatsEnd)"],
+    "query": "CALL db.stats.retrieve('GRAPH COUNTS') YIELD data UNWIND data.relationships AS rel WITH rel WHERE rel.relationshipType = 'S530_STATS' AND rel.startLabel IS NULL AND rel.endLabel IS NULL RETURN rel.count AS count",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics live token inventory",
+    "setup": ["CREATE (:S530StatsStart {statsProperty: 1})-[:S530_STATS]->(:S530StatsEnd)"],
+    "query": "CALL db.stats.retrieve('TOKENS') YIELD data RETURN 'S530StatsStart' IN data.labels AS labelPresent, 'S530_STATS' IN data.relationshipTypes AS typePresent, 'statsProperty' IN data.propertyKeys AS propertyPresent",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics unknown section status",
+    "query": "CALL db.stats.collect('S530_INVALID')",
+    "no_effects": true
   }
 ]

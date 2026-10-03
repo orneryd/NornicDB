@@ -109,7 +109,31 @@ For operational guidance on NornicDB-specific schema features, including `REQUIR
 SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and values: constraint types such as `UNIQUENESS` / `RELATIONSHIP_UNIQUENESS` and `NODE_PROPERTY_EXISTENCE`, Neo4j's index providers (`range-1.0`, `fulltext-1.0`, `vector-2.0`, …), `options`, and a `createStatement` that recreates each index and constraint. NornicDB's own constraint types (temporal no-overlap, domain, cardinality, endpoint policy) keep their names, and their `createStatement` uses the NornicDB syntax above. Some values have no NornicDB meaning and are `null`:
 
 - SHOW INDEXES `lastRead`, `readCount` and `trackedSince`: NornicDB doesn't track index reads.
-- SHOW DATABASES `databaseID`, `serverID` and `store`: NornicDB has no database or server IDs and no Neo4j store format. A server is the single primary of each database it serves (`currentPrimariesCount` 1, `replicationLag` 0), and `lastStartTime` is the later of the database's creation and the server's start.
+- SHOW DATABASES `store`: NornicDB does not use Neo4j's store format and returns `null` rather than claiming a Neo4j format. A server is the single primary of each database it serves (`currentPrimariesCount` 1, `replicationLag` 0), and `lastStartTime` is the later of the database's creation and the server's start.
+
+`databaseID` and `serverID` are persisted native UUID strings. Neo4j's database ID is an opaque store identifier; callers must not assume identical identifier contents across products or installations. Database UUIDs survive restarts and change when a database is dropped and recreated. The installation UUID survives manager reloads and is shared by its databases. Writable startup upgrades legacy metadata without replacing recorded creation times; read-only legacy stores return unknown IDs as `null` until the writer upgrades them.
+
+`CALL db.info()` reports the selected database's ID, name, and persisted creation date. `CALL dbms.info()` reports the configured system database's identity, matching the Neo4j relationship rather than reporting product identity. Creation dates are UTC ISO-8601 strings; SHOW creation/start fields are temporal values. Unknown metadata is `null`, never a fabricated fixed date. Product announcements and the existing cypher-shell identity override are unchanged.
+
+`db.info()` retains the native `nodeCount` and `relationshipCount` result columns after the three shared identity columns. Their types and descriptions are included in SHOW PROCEDURES metadata. `dbms.components()` describes the native edition as a NornicDB edition; this wording does not alter the configured product announcement or compatibility override. `db.clearQueryCaches()` returns its status text in the shared `value` column.
+
+`tx.setMetaData()` accepts a MAP, including an empty map, and returns no result columns or rows. It uses an active explicit transaction or a statement-scoped implicit transaction for an autocommit call; it does not leave an explicit transaction open. Its SHOW PROCEDURES mode is `DBMS`.
+
+`db.awaitIndex()`, `db.awaitIndexes()`, and `db.resampleIndex()` return no result columns or rows. Named-index calls validate existence and report `Neo.ClientError.Schema.IndexNotFound` for an unknown name. Native indexes are maintained synchronously, so waiting completes immediately and resampling does not invent a background-progress result.
+
+`db.create.setNodeVectorProperty()` and `db.create.setRelationshipVectorProperty()` accept entity arguments and return no result columns or rows. An in-query call preserves outer variables for a subsequent RETURN. Native string IDs remain supported as an input extension. SHOW PROCEDURES declares the shared entity/key/vector argument names and types; native descriptions do not claim a special Neo4j storage representation.
+
+`db.index.vector.createNodeIndex()` returns void and declares its shared SCHEMA mode, argument metadata, and deprecation in favor of CREATE VECTOR INDEX. Evaluated parameters and names containing commas are supported. The native four-argument form defaults to cosine, and the native `dot` similarity remains available. Vector query procedures declare the shared `numberOfNearestNeighbours :: INTEGER` and `query :: ANY` arguments, retaining native text-query embedding support. Native cosine scores use [-1, 1], Euclidean scores use (0, 1], and dot-product scores are unbounded; these are native scoring representations, not Neo4j's [0, 1] score contract.
+
+`db.index.fulltext.listAvailableAnalyzers()` exposes the shared `analyzer`, `description`, and `stopwords` columns before the native `kind`, `version`, `digest`, `dynamicLoad`, and `selectedDatabases` extensions. The native `none` analyzer reports no stopwords; plugin stopwords are `null` because the stemmer ABI does not expose that metadata. The available inventory is native, not a list of Lucene analyzers. Fulltext query descriptions document the shared option keys using native scores and the available `none` analyzer.
+
+`db.schema.visualization()` returns nonpersisted NODE and RELATIONSHIP values with negative statement-local IDs. Each virtual label node carries `name`, comma-joined standalone-index property names in `indexes`, and native recreatable constraint statements in `constraints`. Owned backing indexes are not repeated. Constraint statements deliberately do not invent Neo4j internal schema/store IDs. Relationship endpoints refer to virtual label nodes, with all combinations of the independently observed start/end label sets for each type, including combinations absent from individual stored edges.
+
+`dbms.listConfig()` accepts an optional case-sensitive name substring and returns the shared eight columns with STRING setting values. The inventory uses the same database-scoped resolver, defaults, active values, explicit-override flags, and secret redaction as SHOW SETTINGS, with native valid-value descriptions. Native version and legacy protocol keys remain; protocol state, startup/default values, and explicit-setting status are `null` when the executor has no transport runtime information, rather than fabricated enabled flags. Product wording identifies NornicDB.
+
+`dbms.listConnections()` returns the shared seven fields, including `serverAddress`, from immutable accepted-Bolt-connection snapshots. IDs, timestamps, HELLO user agents, and socket addresses come from real connections; disconnected connections disappear. Administrators and authentication-disabled callers see the instance inventory; other users see their own connections. The main application shares the same inventory with HTTP queries. Embedded executors or independently assembled HTTP servers without a connection source return an empty list rather than invented connections; server integrations can use `SetConnectionLister`.
+
+`CALL db.labels()` and `CALL db.relationshipTypes()` list tokens currently in use in allocation order, not alphabetical order. Namespace writes persist token positions with schema metadata, including transactional and bulk writes. Deleting the last entity hides its token; recreating it retains the original position, including after restart. Legacy or directly imported tokens without recorded positions follow known tokens in alphabetical order because their original allocation history is unavailable.
 
 ### Aggregation Functions
 
@@ -571,6 +595,29 @@ selected database. See [multi-database](../user-guides/multi-database.md).
 ---
 
 ## Recent Changes (November 26, 2025)
+
+### Statistics Representation
+
+`db.stats.collect`, `clear`, `status`, `stop`, and `retrieve` expose the shared
+section/configuration and result contracts. Query collection is opt-in and
+shared by transaction-scoped executors of a database. Duration limits expire
+without a background daemon. Repeated collection preserves the active session;
+zero or omitted duration means no deadline. Statistics calls bypass result caches.
+
+NornicDB retains at most 1,000 distinct statement texts, with at most 100 recent
+invocations per statement; larger statements (over 64 KiB) are not collected.
+Aggregate invocation counts and duration summaries cover the retained statement's
+full collection history, not only the recent samples. Statement text can contain
+literal values: use parameters for sensitive values, which are not retained.
+Execution timing measures the complete executor call; unavailable compilation
+timing, execution plans, and row estimates are null rather than invented.
+
+Graph counts and tokens come from the selected native storage and schema.
+Index and constraint details retain native descriptors; metadata reports the
+actual Go runtime and host instead of fabricated JVM fields. Token inventory
+reflects the native listing policy, not Neo4j's historical token store.
+No-argument query-section calls, `ALL`, and `retrieveAllAnTheStats` remain
+native extensions. Empty query collection returns no fabricated counter row.
 
 ### shortestPath Variable Resolution Fix
 

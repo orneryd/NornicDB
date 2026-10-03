@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +34,108 @@ func TestDatabaseManager_DefaultConfig(t *testing.T) {
 	assert.True(t, info.IsDefault)
 	assert.Equal(t, "standard", info.Type)
 	assert.Equal(t, "online", info.Status)
+}
+
+func TestDatabaseManagerPersistentIdentity(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	t.Cleanup(func() { require.NoError(t, inner.Close()) })
+	manager, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	require.NoError(t, manager.CreateDatabase("identity_test"))
+	metadata := func() (*storage.Node, map[string]map[string]interface{}) {
+		node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+		require.NoError(t, err)
+		var databases map[string]map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(node.Properties["data"].(string)), &databases))
+		return node, databases
+	}
+	node, databases := metadata()
+	const uuidPattern = `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
+	serverID, ok := node.Properties["server_id"].(string)
+	require.True(t, ok, "server identity must be persisted")
+	require.Regexp(t, uuidPattern, serverID)
+	databaseID, ok := databases["identity_test"]["id"].(string)
+	require.True(t, ok, "database identity must be persisted")
+	require.Regexp(t, uuidPattern, databaseID)
+	info, err := manager.GetDatabase("identity_test")
+	require.NoError(t, err)
+	require.Equal(t, databaseID, info.ID, "database snapshots preserve identity")
+	require.NotEqual(t, databaseID, databases["nornic"]["id"])
+	require.NotEqual(t, databaseID, serverID)
+	createdAt, err := time.Parse(time.RFC3339Nano, node.Properties["server_created_at"].(string))
+	require.NoError(t, err)
+	require.False(t, createdAt.IsZero())
+	require.WithinDuration(t, node.CreatedAt, createdAt, time.Second)
+	reloaded, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	nextNode, nextDatabases := metadata()
+	require.Equal(t, serverID, nextNode.Properties["server_id"])
+	require.Equal(t, node.Properties["server_created_at"], nextNode.Properties["server_created_at"])
+	require.Equal(t, databaseID, nextDatabases["identity_test"]["id"])
+	require.NoError(t, reloaded.DropDatabase("identity_test"))
+	require.NoError(t, reloaded.CreateDatabase("identity_test"))
+	nextNode, nextDatabases = metadata()
+	require.Equal(t, serverID, nextNode.Properties["server_id"])
+	require.NotEqual(t, databaseID, nextDatabases["identity_test"]["id"])
+}
+
+type identityReadOnlyEngine struct {
+	storage.Engine
+}
+
+func (e *identityReadOnlyEngine) IsLeader() bool { return false }
+
+func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	t.Cleanup(func() { require.NoError(t, inner.Close()) })
+	manager, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	engine := storage.NewNamespacedEngine(inner, "system")
+	node, err := engine.GetNode(storage.NodeID(metadataNodeID))
+	require.NoError(t, err)
+	var databases map[string]map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(node.Properties["data"].(string)), &databases))
+	for _, database := range databases {
+		delete(database, "id")
+	}
+	data, err := json.Marshal(databases)
+	require.NoError(t, err)
+	node.Properties["data"] = string(data)
+	delete(node.Properties, "server_id")
+	delete(node.Properties, "server_created_at")
+	require.NoError(t, engine.UpdateNode(node))
+	standby, err := NewDatabaseManager(&identityReadOnlyEngine{Engine: inner}, nil)
+	require.NoError(t, err)
+	serverID, createdAt := standby.ServerIdentity()
+	require.Empty(t, serverID)
+	require.Equal(t, node.CreatedAt.UTC(), createdAt.UTC())
+	unchanged, err := engine.GetNode(storage.NodeID(metadataNodeID))
+	require.NoError(t, err)
+	require.Equal(t, node.Properties, unchanged.Properties)
+	upgraded, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	serverID, createdAt = upgraded.ServerIdentity()
+	require.NotEmpty(t, serverID)
+	require.Equal(t, node.CreatedAt.UTC(), createdAt.UTC(), "legacy creation time is preserved")
+	for _, database := range manager.ListDatabases() {
+		id, actualCreatedAt := upgraded.DatabaseIdentity(database.Name)
+		require.NotEmpty(t, id)
+		require.Equal(t, database.CreatedAt.UTC(), actualCreatedAt.UTC())
+	}
+	id, unknownCreatedAt := upgraded.DatabaseIdentity("missing")
+	require.Empty(t, id)
+	require.True(t, unknownCreatedAt.IsZero())
+	reloaded, err := NewDatabaseManager(&identityReadOnlyEngine{Engine: inner}, nil)
+	require.NoError(t, err)
+	actualID, actualCreatedAt := reloaded.ServerIdentity()
+	require.Equal(t, serverID, actualID)
+	require.Equal(t, createdAt.UTC(), actualCreatedAt.UTC())
+	node, err = engine.GetNode(storage.NodeID(metadataNodeID))
+	require.NoError(t, err)
+	node.Properties["server_created_at"] = "not-a-date"
+	require.NoError(t, engine.UpdateNode(node))
+	_, err = NewDatabaseManager(inner, nil)
+	require.Error(t, err)
 }
 
 func TestDatabaseManager_CustomConfig(t *testing.T) {

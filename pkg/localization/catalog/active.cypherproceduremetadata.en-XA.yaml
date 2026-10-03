@@ -1,9 +1,9 @@
 - id: cypherproceduremetadata.db_awaitindex
-  other: "[!! Waits for one index to be online !!]"
+  other: "[!! Wait for an index to come online (for example: CALL db.awaitIndex(\"MyIndex\", 300)). !!]"
 - id: cypherproceduremetadata.db_awaitindexes
-  other: "[!! Waits for all indexes to be online !!]"
+  other: "[!! Wait for all indexes to come online (for example: CALL db.awaitIndexes(300)). !!]"
 - id: cypherproceduremetadata.db_clearquerycaches
-  other: "[!! Clears query caches !!]"
+  other: "[!! Clears all query caches. !!]"
 - id: cypherproceduremetadata.db_constraints
   other: "[!! Lists all constraints in the database !!]"
 - id: cypherproceduremetadata.db_create_setnodevectorproperty
@@ -17,15 +17,15 @@
 - id: cypherproceduremetadata.db_index_fulltext_drop
   other: "[!! Drops fulltext index !!]"
 - id: cypherproceduremetadata.db_index_fulltext_listavailableanalyzers
-  other: "[!! Lists available analyzers !!]"
+  other: "[!! List the available analyzers that the full-text indexes can be configured with. !!]"
 - id: cypherproceduremetadata.db_index_fulltext_querynodes
-  other: "[!! Fulltext search on nodes !!]"
+  other: "[!! Query the given full-text index. Returns the matching nodes and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n !!]"
 - id: cypherproceduremetadata.db_index_fulltext_queryrelationships
-  other: "[!! Fulltext search on relationships !!]"
+  other: "[!! Query the given full-text index. Returns the matching relationships and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n !!]"
 - id: cypherproceduremetadata.db_index_stats
   other: "[!! Returns index statistics !!]"
 - id: cypherproceduremetadata.db_index_vector_createnodeindex
-  other: "[!! Creates vector index on nodes !!]"
+  other: "[!! Create a named node vector index for the specified label and property with the given vector dimensionality using either the EUCLIDEAN or COSINE similarity function.\nBoth similarity functions are case-insensitive.\nUse the `db.index.vector.queryNodes` procedure to query the named index.\n !!]"
 - id: cypherproceduremetadata.db_index_vector_createrelationshipindex
   other: "[!! Creates vector index on relationships !!]"
 - id: cypherproceduremetadata.db_index_vector_drop
@@ -33,27 +33,27 @@
 - id: cypherproceduremetadata.db_index_vector_embed
   other: "[!! Embeds text using configured embedder !!]"
 - id: cypherproceduremetadata.db_index_vector_querynodes
-  other: "[!! Vector search on nodes !!]"
+  other: "[!! Query the given node vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n !!]"
 - id: cypherproceduremetadata.db_index_vector_queryrelationships
-  other: "[!! Vector search on relationships !!]"
+  other: "[!! Query the given relationship vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n !!]"
 - id: cypherproceduremetadata.db_indexes
   other: "[!! Lists all indexes in the database !!]"
 - id: cypherproceduremetadata.db_infer
   other: "[!! LLM inference procedure !!]"
 - id: cypherproceduremetadata.db_info
-  other: "[!! Returns database information !!]"
+  other: "[!! Provides information regarding the database. !!]"
 - id: cypherproceduremetadata.db_labels
-  other: "[!! Lists all labels in the database !!]"
+  other: "[!! List all labels attached to nodes within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those labels. !!]"
 - id: cypherproceduremetadata.db_ping
-  other: "[!! Checks database connectivity !!]"
+  other: "[!! This procedure can be used by client side tooling to test whether they are correctly connected to a database. The procedure is available in all databases and always returns true. A faulty connection can be detected by not being able to call this procedure. !!]"
 - id: cypherproceduremetadata.db_propertykeys
-  other: "[!! Lists all property keys in the database !!]"
+  other: "[!! List all property keys in the database. !!]"
 - id: cypherproceduremetadata.db_relationshiptypes
-  other: "[!! Lists all relationship types in the database !!]"
+  other: "[!! List all types attached to relationships within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those relationship types. !!]"
 - id: cypherproceduremetadata.db_rerank
   other: "[!! Standalone rerank procedure !!]"
 - id: cypherproceduremetadata.db_resampleindex
-  other: "[!! Resamples index statistics !!]"
+  other: "[!! Schedule resampling of an index (for example: CALL db.resampleIndex(\"MyIndex\")). !!]"
 - id: cypherproceduremetadata.db_retrieve
   other: "[!! Hybrid retrieval procedure !!]"
 - id: cypherproceduremetadata.db_rretrieve
@@ -63,19 +63,19 @@
 - id: cypherproceduremetadata.db_schema_relproperties
   other: "[!! Returns relationship properties by type !!]"
 - id: cypherproceduremetadata.db_schema_visualization
-  other: "[!! Visualizes schema !!]"
+  other: "[!! Visualizes the schema of the data based on available statistics. A new node is returned for each label. The properties represented on the node include: `name` (label name), `indexes` (list of indexes), and `constraints` (list of constraints). A relationship of a given type is returned for all possible combinations of start and end nodes. The properties represented on the relationship include: `name` (type name). Note that this may include additional relationships that do not exist in the data from independently observed start and end label sets.  !!]"
 - id: cypherproceduremetadata.db_stats_clear
-  other: "[!! Clears collected statistics !!]"
+  other: "[!! Clear collected data of a given data section. Valid sections are 'QUERIES' !!]"
 - id: cypherproceduremetadata.db_stats_collect
-  other: "[!! Starts statistics collection !!]"
+  other: "[!! Start data collection of a given data section. Valid sections are 'QUERIES' !!]"
 - id: cypherproceduremetadata.db_stats_retrieve
-  other: "[!! Retrieves collected statistics !!]"
+  other: "[!! Retrieve statistical data about the current database. Valid sections are 'GRAPH COUNTS', 'TOKENS', 'QUERIES', 'META' !!]"
 - id: cypherproceduremetadata.db_stats_retrieveallanthestats
   other: "[!! Retrieves all statistics !!]"
 - id: cypherproceduremetadata.db_stats_status
-  other: "[!! Returns statistics collection status !!]"
+  other: "[!! Retrieve the status of all available collector daemons, for this database. !!]"
 - id: cypherproceduremetadata.db_stats_stop
-  other: "[!! Stops statistics collection !!]"
+  other: "[!! Stop data collection of a given data section. Valid sections are 'QUERIES' !!]"
 - id: cypherproceduremetadata.db_temporal_asof
   other: "[!! Reads temporal graph at point in time !!]"
 - id: cypherproceduremetadata.db_temporal_assertnooverlap
@@ -87,15 +87,15 @@
 - id: cypherproceduremetadata.dbms_clientconfig
   other: "[!! Returns client config !!]"
 - id: cypherproceduremetadata.dbms_components
-  other: "[!! Lists DBMS components !!]"
+  other: "[!! List DBMS components and their versions. !!]"
 - id: cypherproceduremetadata.dbms_functions
   other: "[!! Lists functions !!]"
 - id: cypherproceduremetadata.dbms_info
-  other: "[!! Returns DBMS information !!]"
+  other: "[!! Provides information regarding the DBMS. !!]"
 - id: cypherproceduremetadata.dbms_listconfig
-  other: "[!! Lists DBMS configuration !!]"
+  other: "[!! List the currently active configuration settings of NornicDB. !!]"
 - id: cypherproceduremetadata.dbms_listconnections
-  other: "[!! Lists active DBMS connections !!]"
+  other: "[!! List all accepted network connections at this instance that are visible to the user. !!]"
 - id: cypherproceduremetadata.dbms_procedures
   other: "[!! Lists procedures !!]"
 - id: cypherproceduremetadata.gds_fastrp_stats
@@ -139,4 +139,4 @@
 - id: cypherproceduremetadata.nornicdb_version
   other: "[!! Returns NornicDB version !!]"
 - id: cypherproceduremetadata.tx_setmetadata
-  other: "[!! Sets transaction metadata !!]"
+  other: "[!! Attaches a map of data to the transaction. The data will be printed when listing queries, and inserted into the query log. !!]"

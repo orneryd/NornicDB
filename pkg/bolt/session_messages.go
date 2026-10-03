@@ -1749,6 +1749,10 @@ func (s *Session) requestIdentity() *cypher.RequestIdentity {
 		return s.identity
 	}
 	identity := &cypher.RequestIdentity{Connection: cypher.ClientConnection{ID: s.connectionID, Protocol: "bolt"}}
+	if s.server != nil {
+		identity.Connections = s.server.ConnectionListings
+		s.publishConnectionListing()
+	}
 	if s.conn != nil && s.conn.RemoteAddr() != nil {
 		identity.Connection.Address = s.conn.RemoteAddr().String()
 	}

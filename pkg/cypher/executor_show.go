@@ -688,15 +688,21 @@ func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher stri
 		}
 		arguments := make([]interface{}, 0, len(p.Params))
 		for _, param := range p.Params {
-			arguments = append(arguments, map[string]interface{}{"name": param.Name, "type": param.Type, "description": "", "isDeprecated": false})
+			argument := map[string]interface{}{"name": param.Name, "type": param.Type, "description": param.Description, "isDeprecated": param.IsDeprecated}
+			if param.Default != "" {
+				argument["default"] = param.Default
+			}
+			arguments = append(arguments, argument)
 		}
 		returns := make([]interface{}, 0, len(p.Returns))
 		for _, column := range p.Returns {
-			returns = append(returns, map[string]interface{}{"name": column.Name, "type": column.Type, "description": "", "isDeprecated": false})
+			returns = append(returns, map[string]interface{}{"name": column.Name, "type": column.Type, "description": column.Description, "isDeprecated": column.IsDeprecated})
 		}
-		// admin, rolesExecution, rolesBoostedExecution, deprecatedBy and
-		// option aren't known.
-		procedures = append(procedures, []interface{}{p.Name, description, string(p.Mode), p.WorksOnSystem, p.Signature, arguments, returns, nil, nil, nil, false, nil, nil})
+		var deprecatedBy interface{}
+		if p.DeprecatedBy != "" {
+			deprecatedBy = p.DeprecatedBy
+		}
+		procedures = append(procedures, []interface{}{p.Name, description, string(p.Mode), p.WorksOnSystem, p.Signature, arguments, returns, p.Admin, nil, nil, p.IsDeprecated, deprecatedBy, map[string]interface{}{"deprecated": p.IsDeprecated}})
 	}
 
 	return withShowDefaultColumns(&ExecuteResult{
@@ -723,8 +729,26 @@ func showFunctionRows() [][]interface{} {
 				continue
 			}
 			arguments, returns := functionSignatureDescriptions(function.signature)
-			// rolesExecution, rolesBoostedExecution and deprecatedBy aren't known.
-			rows = append(rows, []interface{}{function.name, function.category, function.description, function.signature, true, arguments, returns, function.aggregating, nil, nil, false, nil})
+			if function.arguments != nil {
+				arguments = make([]interface{}, 0, len(function.arguments))
+				for _, parameter := range function.arguments {
+					argument := map[string]interface{}{"name": parameter.Name, "type": parameter.Type, "description": parameter.Description, "isDeprecated": parameter.IsDeprecated}
+					if parameter.Default != "" {
+						argument["default"] = parameter.Default
+					}
+					arguments = append(arguments, argument)
+				}
+			}
+			for index, description := range function.argumentDescriptions {
+				if index < len(arguments) {
+					arguments[index].(map[string]interface{})["description"] = description
+				}
+			}
+			var deprecatedBy interface{}
+			if function.deprecatedBy != "" {
+				deprecatedBy = function.deprecatedBy
+			}
+			rows = append(rows, []interface{}{function.name, function.category, function.description, function.signature, true, arguments, returns, function.aggregating, nil, nil, function.isDeprecated, deprecatedBy})
 		}
 		// Listed by name (sortShowRowsByName then finds them in order).
 		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
@@ -777,15 +801,31 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 		if part == "" {
 			continue
 		}
-		name, typeName := part, "ANY"
+		name, typeName, defaultLiteral := part, "ANY", ""
 		if separator := strings.Index(part, "::"); separator >= 0 {
 			name = strings.TrimSpace(part[:separator])
 			typeName = strings.TrimSpace(part[separator+2:])
 			if defaultValue := strings.Index(typeName, "="); defaultValue >= 0 {
+				defaultLiteral = strings.TrimSpace(typeName[defaultValue+1:])
 				typeName = strings.TrimSpace(typeName[:defaultValue])
 			}
 		}
-		arguments = append(arguments, map[string]interface{}{"name": strings.TrimSuffix(name, "?"), "type": typeName, "description": "", "isDeprecated": false})
+		if defaultValue := strings.Index(name, "="); defaultValue >= 0 {
+			defaultLiteral = strings.TrimSpace(name[defaultValue+1:])
+			name = strings.TrimSpace(name[:defaultValue])
+		}
+		argument := map[string]interface{}{"name": strings.TrimSuffix(name, "?"), "type": typeName, "description": "", "isDeprecated": false}
+		if defaultLiteral != "" {
+			if literal, ok := parseLiteralValueFromComputedRow(defaultLiteral); ok {
+				if text, isString := literal.(string); isString {
+					defaultLiteral = text
+				} else if literal == nil {
+					defaultLiteral = "null"
+				}
+			}
+			argument["default"] = fmt.Sprintf("DefaultParameterValue{value=%s, type=%s}", defaultLiteral, typeName)
+		}
+		arguments = append(arguments, argument)
 	}
 	return arguments, returns
 }
@@ -881,8 +921,9 @@ var showDatabasesColumns = []string{"name", "type", "aliases", "access", "databa
 // primary (currentPrimariesCount 1, currentSecondariesCount 0, replication
 // lag 0). creationTime is when the database was created, and lastStartTime
 // when this process started serving it: its creation or the process start,
-// whichever is later. NornicDB has no database or server IDs and no Neo4j
-// store format, so databaseID, serverID and store are null, as are
+// whichever is later. Identity-capable managers supply persisted native UUIDs.
+// Managers without identity metadata return null IDs. There is no Neo4j
+// store format, so store is null, as are
 // lastStopTime and lastCommittedTxn (Neo4j reports null for both on a
 // running standalone server).
 func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool, createdAt time.Time) []interface{} {
@@ -892,6 +933,20 @@ func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, statu
 			aliases = append(aliases, alias)
 		}
 		sort.Strings(aliases)
+	}
+	var databaseID, serverID interface{}
+	if provider, ok := manager.(DatabaseIdentityProvider); ok {
+		id, databaseCreatedAt := provider.DatabaseIdentity(name)
+		if id != "" {
+			databaseID = id
+		}
+		if !databaseCreatedAt.IsZero() {
+			createdAt = databaseCreatedAt
+		}
+		id, _ = provider.ServerIdentity()
+		if id != "" {
+			serverID = id
+		}
 	}
 	var creationTime, lastStartTime interface{}
 	if !createdAt.IsZero() {
@@ -904,7 +959,7 @@ func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, statu
 	}
 	return []interface{}{
 		name, databaseType, aliases, "read-write",
-		nil, nil, // databaseID, serverID
+		databaseID, serverID,
 		"localhost:7687", "primary", true,
 		status, status, "",
 		isDefault, isDefault,

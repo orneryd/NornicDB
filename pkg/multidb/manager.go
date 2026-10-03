@@ -49,7 +49,9 @@ type DatabaseManager struct {
 	inner storage.Engine
 
 	// Database metadata (persisted in "system" namespace)
-	databases map[string]*DatabaseInfo
+	databases       map[string]*DatabaseInfo
+	serverID        string
+	serverCreatedAt time.Time
 
 	// Configuration
 	config *Config
@@ -68,6 +70,7 @@ type DatabaseManager struct {
 
 // DatabaseInfo holds metadata about a database.
 type DatabaseInfo struct {
+	ID           string           `json:"id"`
 	Name         string           `json:"name"`
 	CreatedAt    time.Time        `json:"created_at"`
 	CreatedBy    string           `json:"created_by,omitempty"`
@@ -671,6 +674,7 @@ func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
 	info.sizeMu.RUnlock()
 
 	return &DatabaseInfo{
+		ID:              info.ID,
 		Name:            info.Name,
 		CreatedAt:       info.CreatedAt,
 		CreatedBy:       info.CreatedBy,

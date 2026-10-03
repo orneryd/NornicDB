@@ -378,7 +378,7 @@ RETURN n.embedding AS embedding`, map[string]interface{}{
 		"rows": []interface{}{map[string]interface{}{"key": "typed", "embedding": vector}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{[]interface{}{vector[0], vector[1]}}}, result.Rows)
+	require.Equal(t, [][]interface{}{{vector}}, result.Rows)
 	require.Equal(t, int64(1), counting.NodeUpdateCount())
 }
 

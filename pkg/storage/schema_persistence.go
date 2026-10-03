@@ -8,7 +8,7 @@ import (
 
 // SchemaDefinition is the persisted representation of NornicDB schema rules.
 //
-// It stores schema *definitions only* (constraints and index definitions), not
+// It stores schema definitions and durable token positions, not
 // derived/indexed data structures (like unique value maps), which are rebuilt
 // from stored nodes/edges on startup.
 //
@@ -16,7 +16,9 @@ import (
 //   - schema rules are durable metadata
 //   - index contents can be rebuilt if needed
 type SchemaDefinition struct {
-	Version int `json:"version"`
+	Version                int      `json:"version"`
+	LabelTokens            []string `json:"label_tokens,omitempty"`
+	RelationshipTypeTokens []string `json:"relationship_type_tokens,omitempty"`
 
 	Constraints         []Constraint         `json:"constraints,omitempty"`
 	ConstraintContracts []ConstraintContract `json:"constraint_contracts,omitempty"`
@@ -75,6 +77,8 @@ func (sm *SchemaManager) ExportDefinition() *SchemaDefinition {
 // REQUIRES: caller holds either sm.mu.RLock() or sm.mu.Lock().
 func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	def := &SchemaDefinition{Version: schemaDefinitionVersion}
+	def.LabelTokens = append([]string(nil), sm.tokenOrder.labels...)
+	def.RelationshipTypeTokens = append([]string(nil), sm.tokenOrder.relationships...)
 	def.LookupIndexes = sm.exportLookupIndexesLocked()
 
 	// Constraints (store as a sorted slice for stable persistence).
@@ -341,6 +345,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	sm.vectorIndexes = make(map[string]*VectorIndex)
 	sm.rangeIndexes = make(map[string]*RangeIndex)
 	sm.lookupIndexes = importLookupIndexes(def.LookupIndexes)
+	sm.tokenOrder = newSchemaTokenOrder(def.LabelTokens, def.RelationshipTypeTokens)
 
 	// Constraints.
 	for _, c := range def.Constraints {

@@ -984,8 +984,8 @@ func TestDbSchemaVisualizationWithRelationships(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, result.Rows, 1)
 	// Should have nodes and relationships
-	schemaNodes := result.Rows[0][0].([]map[string]interface{})
-	schemaRels := result.Rows[0][1].([]map[string]interface{})
+	schemaNodes := result.Rows[0][0].([]*storage.Node)
+	schemaRels := result.Rows[0][1].([]*storage.Edge)
 	assert.Len(t, schemaNodes, 2)
 	assert.Len(t, schemaRels, 1)
 }

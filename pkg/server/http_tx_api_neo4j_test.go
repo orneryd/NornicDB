@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -1294,6 +1297,20 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 		}
 		t.Run(mode, func(t *testing.T) {
 			server, authenticator := setupTestServer(t)
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			boltServer := bolt.NewWithDatabaseManager(&bolt.Config{ReadBufferSize: 8192, WriteBufferSize: 8192}, nil, server.dbManager)
+			server.SetConnectionLister(boltServer.ConnectionListings)
+			serveError := make(chan error, 1)
+			go func() { serveError <- boltServer.Serve(listener) }()
+			driver, err := neo4jdriver.NewDriverWithContext("bolt://"+listener.Addr().String(), neo4jdriver.NoAuth())
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, driver.Close(context.Background()))
+				require.NoError(t, boltServer.Close())
+				require.NoError(t, <-serveError)
+			})
+			require.NoError(t, driver.VerifyConnectivity(context.Background()))
 			local := httptest.NewServer(server.buildRouter())
 			defer local.Close()
 			token := "Bearer " + getAuthToken(t, authenticator, "admin")
@@ -1303,7 +1320,11 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 				if len(parameters) > 0 {
 					item["parameters"] = parameters[0]
 				}
-				payload, err := json.Marshal(map[string]any{"statements": []map[string]any{item}})
+				statements := []map[string]any{item}
+				if statement == "" {
+					statements = []map[string]any{}
+				}
+				payload, err := json.Marshal(map[string]any{"statements": statements})
 				require.NoError(t, err)
 				request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
 				require.NoError(t, err)
@@ -1387,7 +1408,7 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 						}
 						if explicit && len(results[backend].Errors) == 0 {
 							require.NotEmpty(t, results[backend].Commit)
-							require.Empty(t, post(t, results[backend].Commit, "RETURN 1").Errors)
+							require.Empty(t, post(t, results[backend].Commit, "").Errors)
 						}
 						snapshots[backend], relationships[backend] = observeGraph(t, endpoint)
 						if testCase.NoEffects {

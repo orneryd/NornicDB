@@ -218,6 +218,12 @@ func (n *NamespacedEngine) toUserEdge(edge *Edge) *Edge {
 // ============================================================================
 
 func (n *NamespacedEngine) CreateNode(node *Node) (NodeID, error) {
+	if node == nil {
+		return "", ErrInvalidData
+	}
+	if err := n.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
+		return "", err
+	}
 	// Create a copy with namespaced ID
 	namespacedID := n.prefixNodeID(node.ID)
 	namespacedNode := copyNode(node)
@@ -332,6 +338,12 @@ func (n *NamespacedEngine) StreamNodesByLabelProjected(label string, properties 
 }
 
 func (n *NamespacedEngine) UpdateNode(node *Node) error {
+	if node == nil {
+		return ErrInvalidData
+	}
+	if err := n.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
+		return err
+	}
 	// Always prefix the ID (user-facing API always receives unprefixed IDs)
 	namespacedID := n.prefixNodeID(node.ID)
 	namespacedNode := copyNode(node)
@@ -359,6 +371,12 @@ func (n *NamespacedEngine) DeleteNode(id NodeID) error {
 // ============================================================================
 
 func (n *NamespacedEngine) CreateEdge(edge *Edge) error {
+	if edge == nil {
+		return ErrInvalidData
+	}
+	if err := n.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil {
+		return err
+	}
 	// Always prefix node IDs (user-facing API always receives unprefixed IDs)
 	startNodeID := n.prefixNodeID(edge.StartNode)
 	endNodeID := n.prefixNodeID(edge.EndNode)
@@ -389,6 +407,12 @@ func (n *NamespacedEngine) GetEdge(id EdgeID) (*Edge, error) {
 }
 
 func (n *NamespacedEngine) UpdateEdge(edge *Edge) error {
+	if edge == nil {
+		return ErrInvalidData
+	}
+	if err := n.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil {
+		return err
+	}
 	// Always prefix IDs (user-facing API always receives unprefixed IDs)
 	startNodeID := n.prefixNodeID(edge.StartNode)
 	endNodeID := n.prefixNodeID(edge.EndNode)
@@ -963,6 +987,7 @@ func (n *NamespacedEngine) TopLifecycleDebtKeys(limit int) []MVCCLifecycleDebtKe
 
 func (n *NamespacedEngine) BulkCreateNodes(nodes []*Node) error {
 	namespacedNodes := make([]*Node, len(nodes))
+	var labels []string
 	for i, node := range nodes {
 		if node == nil {
 			return ErrInvalidData
@@ -970,12 +995,17 @@ func (n *NamespacedEngine) BulkCreateNodes(nodes []*Node) error {
 		namespacedNode := *node
 		namespacedNode.ID = n.prefixNodeID(node.ID)
 		namespacedNodes[i] = &namespacedNode
+		labels = append(labels, node.Labels...)
+	}
+	if err := n.GetSchema().RegisterTokens(labels, nil); err != nil {
+		return err
 	}
 	return n.inner.BulkCreateNodes(namespacedNodes)
 }
 
 func (n *NamespacedEngine) BulkCreateEdges(edges []*Edge) error {
 	namespacedEdges := make([]*Edge, len(edges))
+	var relationshipTypes []string
 	for i, edge := range edges {
 		if edge == nil {
 			return ErrInvalidData
@@ -985,6 +1015,10 @@ func (n *NamespacedEngine) BulkCreateEdges(edges []*Edge) error {
 		namespacedEdge.StartNode = n.prefixNodeID(edge.StartNode)
 		namespacedEdge.EndNode = n.prefixNodeID(edge.EndNode)
 		namespacedEdges[i] = &namespacedEdge
+		relationshipTypes = append(relationshipTypes, edge.Type)
+	}
+	if err := n.GetSchema().RegisterTokens(nil, relationshipTypes); err != nil {
+		return err
 	}
 	return n.inner.BulkCreateEdges(namespacedEdges)
 }

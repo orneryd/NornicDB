@@ -24,19 +24,37 @@ const (
 )
 
 // ProcedureParam defines one procedure argument in canonical metadata.
+// Description and IsDeprecated are exposed by SHOW PROCEDURES. Default is
+// its display representation, not an argument value; an empty Default omits
+// the metadata entry. Optional does not change the procedure's declared arity.
+//
+// For example, an optional map argument can use:
+//
+//	ProcedureParam{Name: "options", Type: "MAP", Optional: true,
+//		Default: "DefaultParameterValue{value={}, type=MAP}"}
 type ProcedureParam struct {
-	Name     string
-	Type     string
-	Optional bool
+	Name         string
+	Type         string
+	Optional     bool
+	Description  string
+	Default      string
+	IsDeprecated bool
 }
 
 // ProcedureColumn defines one YIELD column in canonical metadata.
+// Description and IsDeprecated describe that column in SHOW PROCEDURES.
 type ProcedureColumn struct {
-	Name string
-	Type string
+	Name         string
+	Type         string
+	Description  string
+	IsDeprecated bool
 }
 
 // ProcedureSpec is the canonical contract for built-in and user-defined procedures.
+// Admin, IsDeprecated and DeprecatedBy describe the procedure in SHOW PROCEDURES;
+// they do not replace handler authorization or change execution behavior.
+// An empty DeprecatedBy is exposed as null. For example, a deprecated procedure
+// can set IsDeprecated: true and DeprecatedBy: "custom.replacement".
 type ProcedureSpec struct {
 	Name               string
 	Signature          string
@@ -44,6 +62,9 @@ type ProcedureSpec struct {
 	DescriptionMessage localization.Message
 	Mode               ProcedureMode
 	WorksOnSystem      bool
+	Admin              bool
+	IsDeprecated       bool
+	DeprecatedBy       string
 	Params             []ProcedureParam
 	Returns            []ProcedureColumn
 	MinArgs            int

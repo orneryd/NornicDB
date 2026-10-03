@@ -153,13 +153,19 @@ func TestVectorPropertyProcedureBranches(t *testing.T) {
 	}
 
 	// Success paths.
-	_, err = exec.callDbCreateSetNodeVectorProperty(ctx, "CALL db.create.setNodeVectorProperty('n1','embedding',[1.0,2.0])")
+	result, err := exec.callDbCreateSetNodeVectorProperty(ctx, "CALL db.create.setNodeVectorProperty('n1','embedding',[1.0,2.0])")
 	if err != nil {
 		t.Fatalf("setNodeVectorProperty success path failed: %v", err)
 	}
-	_, err = exec.callDbCreateSetRelationshipVectorProperty(ctx, "CALL db.create.setRelationshipVectorProperty('e1','embedding',[1.0,2.0])")
+	if len(result.Columns) != 0 || len(result.Rows) != 0 {
+		t.Errorf("Expected void node setter result, got %#v", result)
+	}
+	result, err = exec.callDbCreateSetRelationshipVectorProperty(ctx, "CALL db.create.setRelationshipVectorProperty('e1','embedding',[1.0,2.0])")
 	if err != nil {
 		t.Fatalf("setRelationshipVectorProperty success path failed: %v", err)
+	}
+	if len(result.Columns) != 0 || len(result.Rows) != 0 {
+		t.Errorf("Expected void relationship setter result, got %#v", result)
 	}
 
 	// Argument/syntax errors.

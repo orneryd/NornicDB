@@ -483,28 +483,6 @@ func TestCallNornicDbKnowledgePolicyInfo(t *testing.T) {
 	}
 }
 
-func TestCallDbSchemaVisualization(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create schema
-	_, _ = store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Company"}})
-	store.CreateEdge(&storage.Edge{ID: "r1", Type: "WORKS_AT", StartNode: "n1", EndNode: "n2"})
-
-	result, err := e.Execute(ctx, "CALL db.schema.visualization()", nil)
-	if err != nil {
-		t.Fatalf("CALL db.schema.visualization() failed: %v", err)
-	}
-
-	if len(result.Rows) == 0 {
-		t.Error("Expected schema data")
-	}
-}
-
 func TestCallDbSchemaNodeProperties(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 

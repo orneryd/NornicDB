@@ -1,9 +1,14 @@
 package cypher
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -120,6 +125,76 @@ func TestNeo4j5FunctionsMatchNeo4j(t *testing.T) {
 // TestFunctionCatalogIsTheOneTable: SHOW FUNCTIONS lists every listed
 // catalog entry and nothing else, and the unknown-function check accepts
 // exactly the catalog's names (#698).
+func TestShowPointFunctionInventory(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, "SHOW FUNCTIONS YIELD name, signature WHERE name IN ['point.distance', 'point.withinBBox'] RETURN name, signature ORDER BY name", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{
+		{"point.distance", "point.distance(from :: POINT, to :: POINT) :: FLOAT"},
+		{"point.withinBBox", "point.withinBBox(point :: POINT, lowerLeft :: POINT, upperRight :: POINT) :: BOOLEAN"},
+	}, result.Rows)
+	result, err = executor.Execute(ctx, "RETURN point.distance(point({x:0,y:0}), point({x:3,y:4})) AS distance, point.withinBBox(point({x:1,y:1}), point({x:0,y:0}), point({x:2,y:2})) AS within", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{float64(5), true}}, result.Rows)
+}
+
+func TestCSVMetadataFunctionsOutsideLoadCSV(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, "RETURN file() AS source, linenumber() AS line", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil, nil}}, result.Rows)
+	for _, name := range []string{"file", "linenumber"} {
+		_, err := executor.Execute(ctx, "RETURN "+name+"(1) AS value", nil)
+		require.Error(t, err)
+	}
+}
+
+func TestSharedFunctionInventoryMatchesPinnedNeo4j(t *testing.T) {
+	endpoint := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI")
+	if endpoint == "" {
+		t.Skip("set NORNICDB_NEO4J_REFERENCE_HTTP_URI to compare the shared function inventory")
+	}
+	query := "SHOW FUNCTIONS YIELD name, signature, category, description, isBuiltIn, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy RETURN name, signature, category, description, isBuiltIn, argumentDescription, returnDescription, aggregating, isDeprecated, deprecatedBy ORDER BY name, signature"
+	payload, err := json.Marshal(map[string]interface{}{"statements": []map[string]string{{"statement": query}}})
+	require.NoError(t, err)
+	client := &http.Client{Timeout: 15 * time.Second}
+	response, err := client.Post(strings.TrimRight(endpoint, "/")+"/db/neo4j/tx/commit", "application/json", bytes.NewReader(payload))
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	var reference struct {
+		Results []struct {
+			Data []struct {
+				Row []interface{} `json:"row"`
+			} `json:"data"`
+		} `json:"results"`
+		Errors []interface{} `json:"errors"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&reference))
+	require.Empty(t, reference.Errors)
+	require.Len(t, reference.Results, 1)
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	names := make(map[string]map[string][]interface{}, len(result.Rows))
+	for _, row := range result.Rows {
+		name := row[0].(string)
+		if names[name] == nil {
+			names[name] = make(map[string][]interface{})
+		}
+		names[name][row[1].(string)] = row
+	}
+	for _, row := range reference.Results[0].Data {
+		require.Len(t, row.Row, 10)
+		name, signature := row.Row[0].(string), row.Row[1].(string)
+		t.Run(signature, func(t *testing.T) {
+			require.Contains(t, names, name)
+			require.Contains(t, names[name], signature)
+			require.Equal(t, row.Row, names[name][signature])
+		})
+	}
+}
+
 func TestFunctionCatalogIsTheOneTable(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "fncatalog"))
 	result, err := exec.Execute(context.Background(), "SHOW FUNCTIONS YIELD name", nil)

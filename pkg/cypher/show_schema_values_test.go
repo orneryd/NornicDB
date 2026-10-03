@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -143,6 +144,49 @@ func TestShowSchemaValuesMatchNeo4j(t *testing.T) {
 			}
 		}
 	}
+}
+
+type identityDatabaseManager struct {
+	*mockDatabaseManager
+}
+
+func (m *identityDatabaseManager) ServerIdentity() (string, time.Time) {
+	return "a9957ee6-692d-43b0-937a-8cd3d83a61ab", time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+}
+
+func (m *identityDatabaseManager) DatabaseIdentity(name string) (string, time.Time) {
+	if name == "identity_db" {
+		return "5b832c71-c4ad-4a9c-95f5-7430e06dcf7c", time.Date(2025, 4, 5, 6, 7, 8, 0, time.UTC)
+	}
+	if name == "metadata_system" {
+		return "b73c07d3-1f3f-4328-b80b-416b65df975f", time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+	}
+	return "", time.Time{}
+}
+
+func (m *identityDatabaseManager) SystemDatabaseName() string {
+	return "metadata_system"
+}
+
+func TestShowDatabasePersistentIdentity(t *testing.T) {
+	manager := &identityDatabaseManager{mockDatabaseManager: newMockDatabaseManager()}
+	require.NoError(t, manager.CreateDatabase("identity_db"))
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "identity_db"))
+	executor.SetDatabaseManager(manager)
+	ctx := context.Background()
+	result, err := executor.Execute(ctx, "SHOW DATABASES YIELD name, databaseID, serverID, creationTime WHERE name = 'identity_db' RETURN databaseID, serverID, creationTime", nil)
+	require.NoError(t, err)
+	databaseID, databaseCreatedAt := manager.DatabaseIdentity("identity_db")
+	serverID, _ := manager.ServerIdentity()
+	require.Equal(t, [][]interface{}{{databaseID, serverID, databaseCreatedAt}}, result.Rows)
+	result, err = executor.Execute(ctx, "CALL dbms.info() YIELD id, name, creationDate RETURN id, name, creationDate", nil)
+	require.NoError(t, err)
+	systemID, systemCreatedAt := manager.DatabaseIdentity(manager.SystemDatabaseName())
+	require.NotEqual(t, serverID, systemID)
+	require.Equal(t, [][]interface{}{{systemID, "metadata_system", systemCreatedAt.Format(time.RFC3339Nano)}}, result.Rows)
+	result, err = executor.Execute(ctx, "CALL db.info() YIELD id, name, creationDate RETURN id, name, creationDate", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{databaseID, "identity_db", databaseCreatedAt.Format(time.RFC3339Nano)}}, result.Rows)
 }
 
 func TestShowDatabasesValues(t *testing.T) {

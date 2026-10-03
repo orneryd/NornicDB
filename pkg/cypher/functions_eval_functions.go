@@ -842,7 +842,7 @@ skipArrayIndexing:
 	// ========================================
 	// Date/Time Functions (Neo4j compatible)
 	// ========================================
-	if value, handled := e.evaluateTemporalConstructor(func(argument string) interface{} {
+	if value, handled := e.evaluateTemporalConstructor(ctx, func(argument string) interface{} {
 		return e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}, expr); handled {
 		if value == nil {

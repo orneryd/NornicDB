@@ -21,6 +21,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestProductionExecutorsShareQueryStatistics(t *testing.T) {
+	config := nornicdb.DefaultConfig()
+	config.Memory.DecayEnabled = false
+	config.Memory.AutoLinksEnabled = false
+	config.Database.AsyncWritesEnabled = false
+	db, err := nornicdb.Open(t.TempDir(), config)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	base := db.GetCypherExecutor()
+	_, err = base.Execute(ctx, "CALL db.stats.collect('QUERIES')", nil)
+	require.NoError(t, err)
+	protocol := cypher.NewStorageExecutor(db.GetStorage())
+	NewDBQueryExecutor(db).ConfigureDatabaseExecutor(protocol, "nornic", db.GetStorage())
+	_, err = protocol.Execute(ctx, "RETURN 530 AS sharedValue", nil)
+	require.NoError(t, err)
+	transaction, err := newTxScopedExecutor(db, "nornic")
+	require.NoError(t, err)
+	result, err := transaction.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "RETURN 530 AS sharedValue", result.Rows[0][1].(map[string]interface{})["query"])
+}
+
 // TestConfigureDatabaseExecutor_InheritsLoggerAndSlowQueryThreshold proves
 // that a *cypher.StorageExecutor built by protocol adapters (mirroring what
 // pkg/bolt/server.go's newDatabaseScopedCypherExecutor does for every Bolt

@@ -242,6 +242,10 @@ func functionEvaluationFailure(ctx context.Context, err error) {
 // functionEvaluationError is the statement error for an error a registry
 // function returned, with Neo4j's status and message, for either evaluator.
 func functionEvaluationError(err error) error {
+	var selection *cypherfn.GraphSelectionContextError
+	if errors.As(err, &selection) {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.Message{Fallback: selection.Error()})
+	}
 	var argumentError *cypherfn.ArgumentTypeError
 	if errors.As(err, &argumentError) {
 		err = invalidFunctionArgument(argumentError.Function, argumentError.Value)

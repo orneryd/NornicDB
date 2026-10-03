@@ -3,8 +3,12 @@ package cypher
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -52,8 +56,8 @@ func TestCallDbInfoExtended(t *testing.T) {
 
 	// Check database name
 	if len(result.Rows) > 0 && len(result.Rows[0]) > 1 {
-		if result.Rows[0][1] != "nornicdb" {
-			t.Errorf("Expected database name 'nornicdb', got %v", result.Rows[0][1])
+		if result.Rows[0][1] != "test" {
+			t.Errorf("Expected database name 'test', got %v", result.Rows[0][1])
 		}
 	}
 
@@ -119,6 +123,10 @@ func TestCallDbAwaitIndex(t *testing.T) {
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
+	for _, statement := range []string{"CREATE INDEX my_index FOR (n:IndexManagement) ON (n.first)", "CREATE INDEX user_name_idx FOR (n:IndexManagement) ON (n.name)"} {
+		_, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err)
+	}
 
 	tests := []struct {
 		name  string
@@ -136,20 +144,14 @@ func TestCallDbAwaitIndex(t *testing.T) {
 				t.Fatalf("db.awaitIndex() failed: %v", err)
 			}
 
-			if len(result.Columns) != 1 || result.Columns[0] != "status" {
-				t.Errorf("Expected column 'status', got %v", result.Columns)
-			}
-
-			if len(result.Rows) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(result.Rows))
-			}
-
-			status, ok := result.Rows[0][0].(string)
-			if !ok || !strings.Contains(status, "online") {
-				t.Errorf("Expected status to contain 'online', got %v", result.Rows[0][0])
-			}
+			require.Empty(t, result.Columns)
+			require.Empty(t, result.Rows)
 		})
 	}
+	t.Run("missing index", func(t *testing.T) {
+		_, err := exec.Execute(ctx, "CALL db.awaitIndex('missing_index')", nil)
+		require.Error(t, err)
+	})
 }
 
 // ========================================
@@ -178,18 +180,8 @@ func TestCallDbAwaitIndexes(t *testing.T) {
 				t.Fatalf("db.awaitIndexes() failed: %v", err)
 			}
 
-			if len(result.Columns) != 1 || result.Columns[0] != "status" {
-				t.Errorf("Expected column 'status', got %v", result.Columns)
-			}
-
-			if len(result.Rows) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(result.Rows))
-			}
-
-			status, ok := result.Rows[0][0].(string)
-			if !ok || !strings.Contains(status, "online") {
-				t.Errorf("Expected status to contain 'online', got %v", result.Rows[0][0])
-			}
+			require.Empty(t, result.Columns)
+			require.Empty(t, result.Rows)
 		})
 	}
 }
@@ -204,6 +196,10 @@ func TestCallDbResampleIndex(t *testing.T) {
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
+	for _, statement := range []string{"CREATE INDEX my_index FOR (n:IndexManagement) ON (n.first)", "CREATE INDEX user_email_idx FOR (n:IndexManagement) ON (n.email)"} {
+		_, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err)
+	}
 
 	tests := []struct {
 		name  string
@@ -220,20 +216,14 @@ func TestCallDbResampleIndex(t *testing.T) {
 				t.Fatalf("db.resampleIndex() failed: %v", err)
 			}
 
-			if len(result.Columns) != 1 || result.Columns[0] != "status" {
-				t.Errorf("Expected column 'status', got %v", result.Columns)
-			}
-
-			if len(result.Rows) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(result.Rows))
-			}
-
-			status, ok := result.Rows[0][0].(string)
-			if !ok || !strings.Contains(status, "updated") {
-				t.Errorf("Expected status to contain 'updated', got %v", result.Rows[0][0])
-			}
+			require.Empty(t, result.Columns)
+			require.Empty(t, result.Rows)
 		})
 	}
+	t.Run("missing index", func(t *testing.T) {
+		_, err := exec.Execute(ctx, "CALL db.resampleIndex('missing_index')", nil)
+		require.Error(t, err)
+	})
 }
 
 func TestCallDbIndexStats(t *testing.T) {
@@ -270,6 +260,7 @@ func TestCallTxSetMetadata(t *testing.T) {
 	}{
 		{"simple metadata", `CALL tx.setMetaData({app: 'test'})`},
 		{"multiple keys", `CALL tx.setMetaData({app: 'myapp', userId: 123, requestId: 'abc-123'})`},
+		{"empty metadata", `CALL tx.setMetaData({})`},
 	}
 
 	for _, tt := range tests {
@@ -286,12 +277,12 @@ func TestCallTxSetMetadata(t *testing.T) {
 				t.Fatalf("tx.setMetaData() failed: %v", err)
 			}
 
-			if len(result.Columns) != 1 || result.Columns[0] != "status" {
-				t.Errorf("Expected column 'status', got %v", result.Columns)
+			if len(result.Columns) != 0 {
+				t.Errorf("Expected no result columns, got %v", result.Columns)
 			}
 
-			if len(result.Rows) != 1 {
-				t.Errorf("Expected 1 row, got %d", len(result.Rows))
+			if len(result.Rows) != 0 {
+				t.Errorf("Expected no result rows, got %d", len(result.Rows))
 			}
 
 			// Commit transaction
@@ -302,14 +293,34 @@ func TestCallTxSetMetadata(t *testing.T) {
 		})
 	}
 
-	t.Run("error_without_transaction", func(t *testing.T) {
-		// Try to set metadata without an active transaction
-		_, err := exec.Execute(ctx, `CALL tx.setMetaData({app: 'test'})`, nil)
-		if err == nil {
-			t.Error("Expected error when setting metadata without active transaction")
+	t.Run("implicit_transaction", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `CALL tx.setMetaData({app: 'test'})`, nil)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if err != nil && !strings.Contains(err.Error(), "active transaction") {
-			t.Errorf("Expected error about active transaction, got: %v", err)
+		if len(result.Columns) != 0 || len(result.Rows) != 0 {
+			t.Errorf("Expected void result, got %#v", result)
+		}
+		if exec.txContext != nil && exec.txContext.active {
+			t.Error("Implicit metadata call leaked explicit transaction state")
+		}
+	})
+	t.Run("invalid_metadata_type", func(t *testing.T) {
+		_, err := exec.Execute(ctx, `CALL tx.setMetaData(17)`, nil)
+		if err == nil || !strings.Contains(err.Error(), "MAP") {
+			t.Errorf("Expected MAP type error, got %v", err)
+		}
+	})
+	t.Run("parameterized_whitespace_variants", func(t *testing.T) {
+		for _, query := range []string{"CALL\ntx.setMetaData($metadata)", "CALL\ttx.setMetaData($metadata)", "call tx.setMetaData($metadata)"} {
+			result, err := exec.Execute(ctx, query, map[string]interface{}{"metadata": map[string]interface{}{"app": "test"}})
+			if err != nil {
+				t.Errorf("%q failed: %v", query, err)
+				continue
+			}
+			if len(result.Columns) != 0 || len(result.Rows) != 0 {
+				t.Errorf("Expected void result for %q, got %#v", query, result)
+			}
 		}
 	})
 }
@@ -317,6 +328,244 @@ func TestCallTxSetMetadata(t *testing.T) {
 // ========================================
 // db.stats.* Tests
 // ========================================
+
+func TestDbStatsQueryCollectionLifecycle(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CALL db.stats.clear('QUERIES')", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "CALL db.stats.status()", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"section", "status", "data"}, result.Columns)
+	require.Equal(t, "idle", result.Rows[0][1])
+	_, err = exec.Execute(ctx, "CALL db.stats.collect('QUERIES')", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "RETURN 530 AS value", nil)
+	require.NoError(t, err)
+	result, err = exec.Execute(ctx, "CALL db.stats.status()", nil)
+	require.NoError(t, err)
+	require.Equal(t, "collecting", result.Rows[0][1])
+	_, err = exec.Execute(ctx, "CALL db.stats.stop('QUERIES')", nil)
+	require.NoError(t, err)
+	result, err = exec.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"section", "data"}, result.Columns)
+	var querySeen bool
+	for _, row := range result.Rows {
+		data := row[1].(map[string]interface{})
+		querySeen = querySeen || data["query"] == "RETURN 530 AS value"
+	}
+	require.True(t, querySeen, "retrieval must contain an actually executed query")
+	_, err = exec.Execute(ctx, "CALL db.stats.clear('QUERIES')", nil)
+	require.NoError(t, err)
+	result, err = exec.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	_, err = exec.Execute(ctx, "CALL db.stats.collect('S530_INVALID')", nil)
+	require.Error(t, err)
+}
+
+func TestDbStatsCollectionBoundsAndClones(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CALL db.stats.collect('QUERIES')", nil)
+	require.NoError(t, err)
+	clone := exec.cloneWithStorage(store)
+	_, err = clone.Execute(ctx, "RETURN $value AS value", map[string]interface{}{"value": "sensitive-parameter"})
+	require.NoError(t, err)
+	transactionExecutor := NewStorageExecutor(store)
+	transactionExecutor.ShareQueryStatisticsFrom(exec)
+	transactionExecutor.ShareQueryStatisticsFrom(nil)
+	require.Same(t, exec.queryStatistics, transactionExecutor.queryStatistics)
+	_, err = transactionExecutor.Execute(ctx, "RETURN $value AS value", map[string]interface{}{"value": "other-sensitive-parameter"})
+	require.NoError(t, err)
+	started := time.Now()
+	generation := exec.queryStatistics.start("RETURN 1", started)
+	for invocation := 0; invocation < 101; invocation++ {
+		exec.queryStatistics.record(generation, "RETURN 1", started, time.Duration(invocation+1)*time.Microsecond, true)
+	}
+	result, err := exec.Execute(ctx, "CALL db.stats.retrieve('QUERIES', {maxInvocations: 2})", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2)
+	data := result.Rows[1][1].(map[string]interface{})
+	require.Len(t, data["invocations"], 2)
+	summary := data["invocationSummary"].(map[string]interface{})
+	require.Equal(t, int64(101), summary["invocationCount"])
+	require.Equal(t, map[string]interface{}{"min": int64(1), "max": int64(101), "avg": int64(51)}, summary["executionTimeInUs"])
+	require.NotContains(t, fmt.Sprint(result.Rows), "sensitive-parameter")
+	for query := 0; query < 1001; query++ {
+		exec.queryStatistics.record(generation, fmt.Sprintf("RETURN %d AS bounded", query), started, time.Microsecond, true)
+	}
+	result, err = exec.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1000)
+	exec.queryStatistics.mu.Lock()
+	exec.queryStatistics.deadline = time.Now().Add(-time.Second)
+	exec.queryStatistics.mu.Unlock()
+	result, err = exec.Execute(ctx, "CALL db.stats.status()", nil)
+	require.NoError(t, err)
+	require.Equal(t, "idle", result.Rows[0][1])
+	for _, statement := range []string{
+		"CALL db.stats.collect('QUERIES', {durationSeconds: -2})",
+		"CALL db.stats.collect('QUERIES', {durationSeconds: 'bad'})",
+		"CALL db.stats.collect('QUERIES', {durationSeconds: 9223372036854775807})",
+		"CALL db.stats.retrieve('QUERIES', {maxInvocations: -1})",
+		"CALL db.stats.retrieve('QUERIES', 1)",
+		"CALL db.stats.clear(1)",
+	} {
+		_, err = exec.Execute(ctx, statement, nil)
+		require.Error(t, err, statement)
+	}
+}
+
+func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	_, err := exec.callQueryStatistics(ctx, "collect", []interface{}{"QUERIES", map[string]interface{}{"durationSeconds": int64(0)}})
+	require.NoError(t, err)
+	result, err := exec.callQueryStatistics(ctx, "collect", []interface{}{"QUERIES"})
+	require.NoError(t, err)
+	require.Equal(t, "Collection is already ongoing.", result.Rows[0][2])
+	var workers sync.WaitGroup
+	failures := make(chan error, 8)
+	for worker := 0; worker < 8; worker++ {
+		workers.Add(1)
+		go func(worker int) {
+			defer workers.Done()
+			for invocation := 0; invocation < 32; invocation++ {
+				query := fmt.Sprintf("RETURN %d", worker)
+				started := time.Now()
+				generation := exec.queryStatistics.start(query, started)
+				exec.queryStatistics.record(generation, query, started, time.Microsecond, true)
+				if _, err := exec.callQueryStatistics(ctx, "retrieve", []interface{}{"QUERIES"}); err != nil {
+					failures <- err
+					return
+				}
+			}
+		}(worker)
+	}
+	workers.Wait()
+	close(failures)
+	for err := range failures {
+		require.NoError(t, err)
+	}
+	result, err = exec.callQueryStatistics(ctx, "retrieve", []interface{}{"QUERIES"})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 8)
+	for _, row := range result.Rows {
+		data := row[1].(map[string]interface{})
+		require.Equal(t, int64(32), data["invocationSummary"].(map[string]interface{})["invocationCount"])
+	}
+	data := result.Rows[0][1].(map[string]interface{})
+	data["invocations"].([]interface{})[0].(map[string]interface{})["elapsedExecutionTimeInUs"] = int64(-1)
+	result, err = exec.callQueryStatistics(ctx, "retrieve", []interface{}{"QUERIES"})
+	require.NoError(t, err)
+	data = result.Rows[0][1].(map[string]interface{})
+	require.Equal(t, int64(1), data["invocations"].([]interface{})[0].(map[string]interface{})["elapsedExecutionTimeInUs"])
+	started := time.Now()
+	generation := exec.queryStatistics.start("RETURN stale", started)
+	_, err = exec.callQueryStatistics(ctx, "clear", nil)
+	require.NoError(t, err)
+	exec.queryStatistics.record(generation, "RETURN stale", started, time.Microsecond, true)
+	exec.queryStatistics.record(generation, "RETURN failed", started, time.Microsecond, false)
+	require.Zero(t, exec.queryStatistics.start(strings.Repeat("x", 65537), started))
+	exec.queryStatistics.mu.Lock()
+	exec.queryStatistics.deadline = started.Add(-time.Second)
+	exec.queryStatistics.mu.Unlock()
+	require.Zero(t, exec.queryStatistics.start("RETURN expired", started))
+	result, err = exec.callQueryStatistics(ctx, "retrieve", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+}
+
+func TestDbStatsSharedCollectorNamespaceIsolation(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	owner := NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"))
+	producer := NewStorageExecutor(storage.NewNamespacedEngine(base, "stats_alpha"))
+	consumer := NewStorageExecutor(storage.NewNamespacedEngine(base, "stats_alpha"))
+	other := NewStorageExecutor(storage.NewNamespacedEngine(base, "stats_beta"))
+	for _, executor := range []*StorageExecutor{producer, consumer, other} {
+		executor.ShareQueryStatisticsFrom(owner)
+	}
+	ctx := context.Background()
+	_, err := producer.Execute(ctx, "CALL db.stats.collect('QUERIES')", nil)
+	require.NoError(t, err)
+	result, err := other.Execute(ctx, "CALL db.stats.status()", nil)
+	require.NoError(t, err)
+	require.Equal(t, "idle", result.Rows[0][1])
+	_, err = producer.Execute(ctx, "RETURN 530 AS sharedValue", nil)
+	require.NoError(t, err)
+	result, err = consumer.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "RETURN 530 AS sharedValue", result.Rows[0][1].(map[string]interface{})["query"])
+	result, err = other.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+}
+
+func TestDbStatsStorageErrorsAndLegacyHelpers(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	for _, failNodes := range []bool{true, false} {
+		failure := errors.New("statistics storage failure")
+		exec := NewStorageExecutor(visualizationErrorEngine{Engine: store, failNodes: failNodes, err: failure})
+		_, err := exec.retrieveGraphStatistics(context.Background(), "GRAPH COUNTS")
+		require.ErrorIs(t, err, failure)
+	}
+	exec := NewStorageExecutor(store)
+	for _, helper := range []func() (*ExecuteResult, error){
+		exec.callDbStatsClear,
+		func() (*ExecuteResult, error) {
+			return exec.callDbStatsCollect("CALL db.stats.collect('QUERIES', {durationSeconds: 1})")
+		},
+		exec.callDbStatsStatus,
+		func() (*ExecuteResult, error) { return exec.callDbStatsRetrieve("CALL db.stats.retrieve('QUERIES')") },
+		exec.callDbStatsStop,
+		exec.callDbStatsRetrieveAllAnTheStats,
+	} {
+		_, err := helper()
+		require.NoError(t, err)
+	}
+	_, err := exec.callQueryStatistics(context.Background(), "collect", []interface{}{"GRAPH COUNTS"})
+	require.ErrorContains(t, err, "does not have to be explicitly collected")
+	exec.queryStatistics = nil
+	_, err = exec.callQueryStatistics(context.Background(), "status", nil)
+	require.ErrorContains(t, err, "unavailable")
+}
+
+func TestDbStatsGraphAndTokenSections(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:StatsStart {value: 1})-[:STATS_LINK {weight: 2}]->(:StatsEnd)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE CONSTRAINT stats_unique FOR (n:StatsStart) REQUIRE n.value IS UNIQUE", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "CALL db.stats.retrieve('GRAPH COUNTS')", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"section", "data"}, result.Columns)
+	require.Len(t, result.Rows, 1)
+	data := result.Rows[0][1].(map[string]interface{})
+	require.Contains(t, data["nodes"], map[string]interface{}{"count": int64(2)})
+	require.Contains(t, data["relationships"], map[string]interface{}{"count": int64(1)})
+	require.NotEmpty(t, data["constraints"])
+	require.NotEmpty(t, data["indexes"])
+	result, err = exec.Execute(ctx, "CALL db.stats.retrieve('TOKENS')", nil)
+	require.NoError(t, err)
+	data = result.Rows[0][1].(map[string]interface{})
+	require.ElementsMatch(t, []string{"StatsStart", "StatsEnd"}, data["labels"])
+	require.Equal(t, []string{"STATS_LINK"}, data["relationshipTypes"])
+	require.ElementsMatch(t, []string{"value", "weight"}, data["propertyKeys"])
+	result, err = exec.Execute(ctx, "CALL db.stats.retrieve('META')", nil)
+	require.NoError(t, err)
+	data = result.Rows[0][1].(map[string]interface{})
+	require.Equal(t, int64(2), data["labelCount"])
+	require.Equal(t, int64(1), data["relationshipTypeCount"])
+	require.Equal(t, int64(2), data["propertyKeyCount"])
+}
 
 func TestCallDbStatsClear(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
@@ -330,9 +579,8 @@ func TestCallDbStatsClear(t *testing.T) {
 		t.Fatalf("db.stats.clear() failed: %v", err)
 	}
 
-	if len(result.Columns) != 2 {
-		t.Errorf("Expected 2 columns, got %d", len(result.Columns))
-	}
+	require.Equal(t, []string{"section", "success", "message"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"QUERIES", true, "Data cleared."}}, result.Rows)
 
 	if len(result.Rows) != 1 {
 		t.Errorf("Expected 1 row, got %d", len(result.Rows))
@@ -383,9 +631,7 @@ func TestCallDbStatsRetrieve(t *testing.T) {
 		t.Errorf("Expected 2 columns, got %d", len(result.Columns))
 	}
 
-	if len(result.Rows) < 1 {
-		t.Errorf("Expected at least 1 row, got %d", len(result.Rows))
-	}
+	require.Empty(t, result.Rows, "no collected queries must produce no fabricated statistics")
 }
 
 func TestCallDbStatsStatus(t *testing.T) {
@@ -501,8 +747,8 @@ func TestCallDbClearQueryCaches(t *testing.T) {
 			t.Fatalf("db.clearQueryCaches() failed: %v", err)
 		}
 
-		if len(result.Columns) != 1 || result.Columns[0] != "status" {
-			t.Errorf("Expected column 'status', got %v", result.Columns)
+		if len(result.Columns) != 1 || result.Columns[0] != "value" {
+			t.Errorf("Expected column 'value', got %v", result.Columns)
 		}
 
 		if len(result.Rows) != 1 {
@@ -612,15 +858,37 @@ func TestCallDbmsListConfigExtended(t *testing.T) {
 		t.Fatalf("dbms.listConfig() failed: %v", err)
 	}
 
-	expectedColumns := []string{"name", "description", "value", "dynamic"}
-	if len(result.Columns) != len(expectedColumns) {
-		t.Errorf("Expected %d columns, got %d", len(expectedColumns), len(result.Columns))
+	require.Equal(t, []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"}, result.Columns)
+	require.NotEmpty(t, result.Rows)
+	for _, row := range result.Rows {
+		if row[2] != nil {
+			require.IsType(t, "", row[2])
+		}
+		if row[0] == "nornicdb.bolt.enabled" || row[0] == "nornicdb.http.enabled" {
+			require.Nil(t, row[2], "embedded executors must not invent enabled transports")
+		}
 	}
-
-	// Should have multiple config entries
-	if len(result.Rows) < 1 {
-		t.Errorf("Expected at least 1 config row, got %d", len(result.Rows))
-	}
+	filtered, err := exec.Execute(ctx, "CALL dbms.listConfig($search)", map[string]interface{}{"search": "nornicdb.version"})
+	require.NoError(t, err)
+	require.Len(t, filtered.Rows, 1)
+	require.Equal(t, "nornicdb.version", filtered.Rows[0][0])
+	empty, err := exec.Execute(ctx, "CALL dbms.listConfig('s530_unknown_setting')", nil)
+	require.NoError(t, err)
+	require.Empty(t, empty.Rows)
+	exec.SetSettingsResolver(func() SettingsSnapshot {
+		return SettingsSnapshot{
+			Configured: map[string]string{"db.nornic.search.vector.warming": "lazy", "db.nornic.embedding.api.key": "configured-secret"},
+			Active:     map[string]string{"db.nornic.search.vector.warming": "lazy", "db.nornic.embedding.api.key": "active-secret"},
+		}
+	})
+	resolved, err := exec.Execute(ctx, "CALL dbms.listConfig('db.nornic.') YIELD name, value, startupValue, explicitlySet WHERE name IN ['db.nornic.search.vector.warming', 'db.nornic.embedding.api.key'] RETURN name, value, startupValue, explicitlySet ORDER BY name", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{
+		{"db.nornic.embedding.api.key", "<REDACTED>", "<REDACTED>", true},
+		{"db.nornic.search.vector.warming", "lazy", "lazy", true},
+	}, resolved.Rows)
+	_, err = exec.Execute(ctx, "CALL dbms.listConfig($search)", map[string]interface{}{"search": int64(1)})
+	require.Error(t, err)
 }
 
 func TestCallDbmsClientConfig(t *testing.T) {
@@ -657,12 +925,26 @@ func TestCallDbmsListConnections(t *testing.T) {
 		t.Fatalf("dbms.listConnections() failed: %v", err)
 	}
 
-	expectedColumns := []string{"connectionId", "connectTime", "connector", "username", "userAgent", "clientAddress"}
-	if len(result.Columns) != len(expectedColumns) {
-		t.Errorf("Expected %d columns, got %d", len(expectedColumns), len(result.Columns))
+	require.Equal(t, []string{"connectionId", "connectTime", "connector", "username", "userAgent", "serverAddress", "clientAddress"}, result.Columns)
+	require.Empty(t, result.Rows)
+	identity := &RequestIdentity{
+		User: &AuthenticatedUser{Name: "alice"},
+		Connections: func() []ConnectionListing {
+			return []ConnectionListing{
+				{ConnectionID: "bolt-2", ConnectTime: "2026-10-02T00:00:00Z", Connector: "bolt", Username: "bob", UserAgent: "driver-b", ServerAddress: "server:7687", ClientAddress: "client-b:1234"},
+				{ConnectionID: "bolt-1", ConnectTime: "2026-10-02T00:00:00Z", Connector: "bolt", Username: "alice", UserAgent: "driver-a", ServerAddress: "server:7687", ClientAddress: "client-a:1234"},
+			}
+		},
 	}
-
-	// Connections list can be empty
+	result, err = exec.Execute(WithRequestIdentity(ctx, identity), "CALL dbms.listConnections()", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"bolt-1", "2026-10-02T00:00:00Z", "bolt", "alice", "driver-a", "server:7687", "client-a:1234"}}, result.Rows)
+	identity.User = &AuthenticatedUser{Name: "alice", Roles: []string{"admin"}}
+	result, err = exec.Execute(WithRequestIdentity(ctx, identity), "CALL dbms.listConnections()", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2)
+	require.Equal(t, "bolt-1", result.Rows[0][0])
+	require.Equal(t, "bolt-2", result.Rows[1][0])
 }
 
 // ========================================
@@ -688,13 +970,14 @@ func TestCallDbIndexFulltextListAvailableAnalyzersExtended(t *testing.T) {
 		t.Fatalf("db.index.fulltext.listAvailableAnalyzers() failed: %v", err)
 	}
 
-	require.Equal(t, []string{"analyzer", "description", "kind", "version", "digest", "dynamicLoad", "selectedDatabases"}, result.Columns)
+	require.Equal(t, []string{"analyzer", "description", "stopwords", "kind", "version", "digest", "dynamicLoad", "selectedDatabases"}, result.Columns)
 	require.Len(t, result.Rows, 2)
-	require.Equal(t, []interface{}{"none", "Language-neutral Unicode analyzer", "exact", "", "", false, []string{}}, result.Rows[0])
+	require.Equal(t, []interface{}{"none", "Language-neutral Unicode analyzer", []string{}, "exact", "", "", false, []string{}}, result.Rows[0])
 	require.Equal(t, "snowball.ukrainian", result.Rows[1][0])
-	require.Equal(t, "stemmer", result.Rows[1][2])
-	require.Equal(t, "1.2.3", result.Rows[1][3])
-	require.Equal(t, strings.Repeat("a", 12), result.Rows[1][4])
+	require.Nil(t, result.Rows[1][2])
+	require.Equal(t, "stemmer", result.Rows[1][3])
+	require.Equal(t, "1.2.3", result.Rows[1][4])
+	require.Equal(t, strings.Repeat("a", 12), result.Rows[1][5])
 }
 
 // ========================================

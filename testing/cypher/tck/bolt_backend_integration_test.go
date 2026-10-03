@@ -11,6 +11,7 @@ import (
 	"github.com/cucumber/godog"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/pkg/bolt"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -195,8 +196,11 @@ func startConformanceServer(t *testing.T) (neo4j.DriverWithContext, func()) {
 
 func startConformanceServerWithEngine(t *testing.T, engine storage.Engine) (neo4j.DriverWithContext, func()) {
 	t.Helper()
-	store := storage.NewNamespacedEngine(engine, "nornic")
-	manager := &conformanceDatabaseManager{store: store}
+	manager, err := multidb.NewDatabaseManager(engine, nil)
+	if err != nil {
+		_ = engine.Close()
+		t.Fatalf("create conformance database manager: %v", err)
+	}
 	config := bolt.DefaultConfig()
 	config.Host = "127.0.0.1"
 	config.Port = 0

@@ -78,17 +78,17 @@ const (
 
 // CypherProcedureMetadataDbAwaitIndex describes db.awaitIndex in procedure listings.
 func CypherProcedureMetadataDbAwaitIndex() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbAwaitIndex, Fallback: "Waits for one index to be online"}
+	return Message{ID: MessageCypherProcedureMetadataDbAwaitIndex, Fallback: "Wait for an index to come online (for example: CALL db.awaitIndex(\"MyIndex\", 300))."}
 }
 
 // CypherProcedureMetadataDbAwaitIndexes describes db.awaitIndexes in procedure listings.
 func CypherProcedureMetadataDbAwaitIndexes() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbAwaitIndexes, Fallback: "Waits for all indexes to be online"}
+	return Message{ID: MessageCypherProcedureMetadataDbAwaitIndexes, Fallback: "Wait for all indexes to come online (for example: CALL db.awaitIndexes(300))."}
 }
 
 // CypherProcedureMetadataDbClearQueryCaches describes db.clearQueryCaches in procedure listings.
 func CypherProcedureMetadataDbClearQueryCaches() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbClearQueryCaches, Fallback: "Clears query caches"}
+	return Message{ID: MessageCypherProcedureMetadataDbClearQueryCaches, Fallback: "Clears all query caches."}
 }
 
 // CypherProcedureMetadataDbConstraints describes db.constraints in procedure listings.
@@ -123,17 +123,17 @@ func CypherProcedureMetadataDbIndexFulltextDrop() Message {
 
 // CypherProcedureMetadataDbIndexFulltextListAvailableAnalyzers describes db.index.fulltext.listAvailableAnalyzers in procedure listings.
 func CypherProcedureMetadataDbIndexFulltextListAvailableAnalyzers() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbIndexFulltextListAvailableAnalyzers, Fallback: "Lists available analyzers"}
+	return Message{ID: MessageCypherProcedureMetadataDbIndexFulltextListAvailableAnalyzers, Fallback: "List the available analyzers that the full-text indexes can be configured with."}
 }
 
 // CypherProcedureMetadataDbIndexFulltextQueryNodes describes db.index.fulltext.queryNodes in procedure listings.
 func CypherProcedureMetadataDbIndexFulltextQueryNodes() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbIndexFulltextQueryNodes, Fallback: "Fulltext search on nodes"}
+	return Message{ID: MessageCypherProcedureMetadataDbIndexFulltextQueryNodes, Fallback: "Query the given full-text index. Returns the matching nodes and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n"}
 }
 
 // CypherProcedureMetadataDbIndexFulltextQueryRelationships describes db.index.fulltext.queryRelationships in procedure listings.
 func CypherProcedureMetadataDbIndexFulltextQueryRelationships() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbIndexFulltextQueryRelationships, Fallback: "Fulltext search on relationships"}
+	return Message{ID: MessageCypherProcedureMetadataDbIndexFulltextQueryRelationships, Fallback: "Query the given full-text index. Returns the matching relationships and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n"}
 }
 
 // CypherProcedureMetadataDbIndexStats describes db.index.stats in procedure listings.
@@ -143,7 +143,7 @@ func CypherProcedureMetadataDbIndexStats() Message {
 
 // CypherProcedureMetadataDbIndexVectorCreateNodeIndex describes db.index.vector.createNodeIndex in procedure listings.
 func CypherProcedureMetadataDbIndexVectorCreateNodeIndex() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbIndexVectorCreateNodeIndex, Fallback: "Creates vector index on nodes"}
+	return Message{ID: MessageCypherProcedureMetadataDbIndexVectorCreateNodeIndex, Fallback: "Create a named node vector index for the specified label and property with the given vector dimensionality using either the EUCLIDEAN or COSINE similarity function.\nBoth similarity functions are case-insensitive.\nUse the `db.index.vector.queryNodes` procedure to query the named index.\n"}
 }
 
 // CypherProcedureMetadataDbIndexVectorCreateRelationshipIndex describes db.index.vector.createRelationshipIndex in procedure listings.
@@ -163,12 +163,12 @@ func CypherProcedureMetadataDbIndexVectorEmbed() Message {
 
 // CypherProcedureMetadataDbIndexVectorQueryNodes describes db.index.vector.queryNodes in procedure listings.
 func CypherProcedureMetadataDbIndexVectorQueryNodes() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbIndexVectorQueryNodes, Fallback: "Vector search on nodes"}
+	return Message{ID: MessageCypherProcedureMetadataDbIndexVectorQueryNodes, Fallback: "Query the given node vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n"}
 }
 
 // CypherProcedureMetadataDbIndexVectorQueryRelationships describes db.index.vector.queryRelationships in procedure listings.
 func CypherProcedureMetadataDbIndexVectorQueryRelationships() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbIndexVectorQueryRelationships, Fallback: "Vector search on relationships"}
+	return Message{ID: MessageCypherProcedureMetadataDbIndexVectorQueryRelationships, Fallback: "Query the given relationship vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n"}
 }
 
 // CypherProcedureMetadataDbIndexes describes db.indexes in procedure listings.
@@ -183,27 +183,27 @@ func CypherProcedureMetadataDbInfer() Message {
 
 // CypherProcedureMetadataDbInfo describes db.info in procedure listings.
 func CypherProcedureMetadataDbInfo() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbInfo, Fallback: "Returns database information"}
+	return Message{ID: MessageCypherProcedureMetadataDbInfo, Fallback: "Provides information regarding the database."}
 }
 
 // CypherProcedureMetadataDbLabels describes db.labels in procedure listings.
 func CypherProcedureMetadataDbLabels() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbLabels, Fallback: "Lists all labels in the database"}
+	return Message{ID: MessageCypherProcedureMetadataDbLabels, Fallback: "List all labels attached to nodes within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those labels."}
 }
 
 // CypherProcedureMetadataDbPing describes db.ping in procedure listings.
 func CypherProcedureMetadataDbPing() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbPing, Fallback: "Checks database connectivity"}
+	return Message{ID: MessageCypherProcedureMetadataDbPing, Fallback: "This procedure can be used by client side tooling to test whether they are correctly connected to a database. The procedure is available in all databases and always returns true. A faulty connection can be detected by not being able to call this procedure."}
 }
 
 // CypherProcedureMetadataDbPropertyKeys describes db.propertyKeys in procedure listings.
 func CypherProcedureMetadataDbPropertyKeys() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbPropertyKeys, Fallback: "Lists all property keys in the database"}
+	return Message{ID: MessageCypherProcedureMetadataDbPropertyKeys, Fallback: "List all property keys in the database."}
 }
 
 // CypherProcedureMetadataDbRelationshipTypes describes db.relationshipTypes in procedure listings.
 func CypherProcedureMetadataDbRelationshipTypes() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbRelationshipTypes, Fallback: "Lists all relationship types in the database"}
+	return Message{ID: MessageCypherProcedureMetadataDbRelationshipTypes, Fallback: "List all types attached to relationships within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those relationship types."}
 }
 
 // CypherProcedureMetadataDbRerank describes db.rerank in procedure listings.
@@ -213,7 +213,7 @@ func CypherProcedureMetadataDbRerank() Message {
 
 // CypherProcedureMetadataDbResampleIndex describes db.resampleIndex in procedure listings.
 func CypherProcedureMetadataDbResampleIndex() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbResampleIndex, Fallback: "Resamples index statistics"}
+	return Message{ID: MessageCypherProcedureMetadataDbResampleIndex, Fallback: "Schedule resampling of an index (for example: CALL db.resampleIndex(\"MyIndex\"))."}
 }
 
 // CypherProcedureMetadataDbRetrieve describes db.retrieve in procedure listings.
@@ -238,22 +238,22 @@ func CypherProcedureMetadataDbSchemaRelProperties() Message {
 
 // CypherProcedureMetadataDbSchemaVisualization describes db.schema.visualization in procedure listings.
 func CypherProcedureMetadataDbSchemaVisualization() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbSchemaVisualization, Fallback: "Visualizes schema"}
+	return Message{ID: MessageCypherProcedureMetadataDbSchemaVisualization, Fallback: "Visualizes the schema of the data based on available statistics. A new node is returned for each label. The properties represented on the node include: `name` (label name), `indexes` (list of indexes), and `constraints` (list of constraints). A relationship of a given type is returned for all possible combinations of start and end nodes. The properties represented on the relationship include: `name` (type name). Note that this may include additional relationships that do not exist in the data from independently observed start and end label sets. "}
 }
 
 // CypherProcedureMetadataDbStatsClear describes db.stats.clear in procedure listings.
 func CypherProcedureMetadataDbStatsClear() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbStatsClear, Fallback: "Clears collected statistics"}
+	return Message{ID: MessageCypherProcedureMetadataDbStatsClear, Fallback: "Clear collected data of a given data section. Valid sections are 'QUERIES'"}
 }
 
 // CypherProcedureMetadataDbStatsCollect describes db.stats.collect in procedure listings.
 func CypherProcedureMetadataDbStatsCollect() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbStatsCollect, Fallback: "Starts statistics collection"}
+	return Message{ID: MessageCypherProcedureMetadataDbStatsCollect, Fallback: "Start data collection of a given data section. Valid sections are 'QUERIES'"}
 }
 
 // CypherProcedureMetadataDbStatsRetrieve describes db.stats.retrieve in procedure listings.
 func CypherProcedureMetadataDbStatsRetrieve() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbStatsRetrieve, Fallback: "Retrieves collected statistics"}
+	return Message{ID: MessageCypherProcedureMetadataDbStatsRetrieve, Fallback: "Retrieve statistical data about the current database. Valid sections are 'GRAPH COUNTS', 'TOKENS', 'QUERIES', 'META'"}
 }
 
 // CypherProcedureMetadataDbStatsRetrieveAllAnTheStats describes db.stats.retrieveAllAnTheStats in procedure listings.
@@ -263,12 +263,12 @@ func CypherProcedureMetadataDbStatsRetrieveAllAnTheStats() Message {
 
 // CypherProcedureMetadataDbStatsStatus describes db.stats.status in procedure listings.
 func CypherProcedureMetadataDbStatsStatus() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbStatsStatus, Fallback: "Returns statistics collection status"}
+	return Message{ID: MessageCypherProcedureMetadataDbStatsStatus, Fallback: "Retrieve the status of all available collector daemons, for this database."}
 }
 
 // CypherProcedureMetadataDbStatsStop describes db.stats.stop in procedure listings.
 func CypherProcedureMetadataDbStatsStop() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbStatsStop, Fallback: "Stops statistics collection"}
+	return Message{ID: MessageCypherProcedureMetadataDbStatsStop, Fallback: "Stop data collection of a given data section. Valid sections are 'QUERIES'"}
 }
 
 // CypherProcedureMetadataDbTemporalAsOf describes db.temporal.asOf in procedure listings.
@@ -298,7 +298,7 @@ func CypherProcedureMetadataDbmsClientConfig() Message {
 
 // CypherProcedureMetadataDbmsComponents describes dbms.components in procedure listings.
 func CypherProcedureMetadataDbmsComponents() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbmsComponents, Fallback: "Lists DBMS components"}
+	return Message{ID: MessageCypherProcedureMetadataDbmsComponents, Fallback: "List DBMS components and their versions."}
 }
 
 // CypherProcedureMetadataDbmsFunctions describes dbms.functions in procedure listings.
@@ -308,17 +308,17 @@ func CypherProcedureMetadataDbmsFunctions() Message {
 
 // CypherProcedureMetadataDbmsInfo describes dbms.info in procedure listings.
 func CypherProcedureMetadataDbmsInfo() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbmsInfo, Fallback: "Returns DBMS information"}
+	return Message{ID: MessageCypherProcedureMetadataDbmsInfo, Fallback: "Provides information regarding the DBMS."}
 }
 
 // CypherProcedureMetadataDbmsListConfig describes dbms.listConfig in procedure listings.
 func CypherProcedureMetadataDbmsListConfig() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbmsListConfig, Fallback: "Lists DBMS configuration"}
+	return Message{ID: MessageCypherProcedureMetadataDbmsListConfig, Fallback: "List the currently active configuration settings of NornicDB."}
 }
 
 // CypherProcedureMetadataDbmsListConnections describes dbms.listConnections in procedure listings.
 func CypherProcedureMetadataDbmsListConnections() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbmsListConnections, Fallback: "Lists active DBMS connections"}
+	return Message{ID: MessageCypherProcedureMetadataDbmsListConnections, Fallback: "List all accepted network connections at this instance that are visible to the user."}
 }
 
 // CypherProcedureMetadataDbmsProcedures describes dbms.procedures in procedure listings.
@@ -428,7 +428,7 @@ func CypherProcedureMetadataNornicdbVersion() Message {
 
 // CypherProcedureMetadataTxSetMetaData describes tx.setMetaData in procedure listings.
 func CypherProcedureMetadataTxSetMetaData() Message {
-	return Message{ID: MessageCypherProcedureMetadataTxSetMetaData, Fallback: "Sets transaction metadata"}
+	return Message{ID: MessageCypherProcedureMetadataTxSetMetaData, Fallback: "Attaches a map of data to the transaction. The data will be printed when listing queries, and inserted into the query log."}
 }
 
 var cypherProcedureMetadata = map[string]func() Message{

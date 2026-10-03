@@ -3486,7 +3486,7 @@ func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_ParamAndWhereBranches(t *
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, res.Columns)
 	require.Len(t, res.Rows, 1)
-	assert.Equal(t, "nornicdb", res.Rows[0][0])
+	assert.Equal(t, "test", res.Rows[0][0])
 }
 
 func TestSubqueryHelpers_AddLimitSkipToSubquery_WithWhereAndFallbackVariable(t *testing.T) {

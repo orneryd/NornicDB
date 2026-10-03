@@ -16,6 +16,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replace placeholder `db.stats` rows with bounded, shared query collection,
+  real invocation summaries, live graph/token/meta retrieval, canonical
+  section/configuration contracts, and uncached lifecycle results (#530).
+
+- Preserve label and relationship-type allocation order in CALL token listings,
+  including LIMIT and delete/recreate behavior, with namespace-isolated persisted
+  positions. Correct token procedure system flags and rich metadata while
+  preserving localized descriptions (#530).
+
+- Correct await-index defaults, ping and database/component metadata, and the
+  cache-clearing procedure's `value` result column. Retain native database count
+  extensions and truthful product/edition identity (#530).
+
+- Accept empty transaction metadata maps and return void results from
+  `tx.setMetaData`; support standalone autocommit calls through an implicit
+  transaction and declare canonical MAP/DBMS metadata (#530).
+
+- Return void from await/resample index procedures and validate named indexes
+  with the shared IndexNotFound status; correct resample READ/system metadata
+  and preserve parameterized index-name support (#530).
+
+- Return void from vector-property setters and declare shared entity/key/vector
+  argument metadata, preserving outer RETURN rows and native string-ID inputs
+  without claiming a backend-specific storage representation (#530).
+
+- Correct vector node-index creation to return void, consume evaluated arguments,
+  and declare SCHEMA/deprecation metadata. Supply rich vector query metadata and
+  the analyzer `stopwords` column, retaining native scoring, plugin inventory,
+  and documented extension fields (#530).
+
+- Return typed nonpersisted schema-visualization entities with label metadata,
+  virtual relationship endpoints, and marginal label combinations. Include
+  standalone indexes and native constraint statements without fabricated store
+  IDs or duplicate owned backing indexes (#530).
+
+- Supply dbms.listConfig filtering and eight shared result fields from the
+  database-scoped settings resolver, preserving secret redaction and native
+  inventory while replacing invented transport state with unknown values (#530).
+
+- Populate dbms.listConnections from immutable live Bolt snapshots, including
+  server addresses, user agents, acceptance timestamps, user visibility, and
+  disconnect cleanup; share the instance inventory with HTTP queries (#530).
+
+- Persist native database/server UUIDs and expose them through SHOW DATABASES,
+  Bolt, and HTTP. Replace fixed db.info/dbms.info names and creation dates with
+  actual selected/system database metadata; preserve legacy timestamps and
+  read-only startup behavior (#530).
+
+- Render SHOW PROCEDURES argument/return descriptions, optional defaults, and
+  status flags from canonical procedure metadata. Match pinned Neo4j fulltext
+  node/relationship query signatures, field metadata, and system flags, and
+  SHOW FUNCTIONS argument descriptions for both range overloads (#530).
+
 - Consolidate all 22 open Dependabot updates into one dependency refresh:
 
 | PR | Dependency | Previous | Updated |

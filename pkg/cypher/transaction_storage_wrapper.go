@@ -162,6 +162,12 @@ func (w *transactionStorageWrapper) clearMutatedNodeIDs(processed map[string]str
 
 // Write operations - go through transaction for atomicity
 func (w *transactionStorageWrapper) CreateNode(node *storage.Node) (storage.NodeID, error) {
+	if node == nil {
+		return "", storage.ErrInvalidData
+	}
+	if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
+		return "", err
+	}
 	if w.namespace == "" {
 		id, err := w.tx.CreateNode(node)
 		if err == nil {
@@ -181,6 +187,12 @@ func (w *transactionStorageWrapper) CreateNode(node *storage.Node) (storage.Node
 }
 
 func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
+	if node == nil {
+		return storage.ErrInvalidData
+	}
+	if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
+		return err
+	}
 	if w.namespace == "" {
 		err := w.tx.UpdateNode(node)
 		if err == nil {
@@ -202,6 +214,12 @@ func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID) error {
 }
 
 func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
+	if edge == nil {
+		return storage.ErrInvalidData
+	}
+	if err := w.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil {
+		return err
+	}
 	if w.namespace == "" {
 		return w.tx.CreateEdge(edge)
 	}
@@ -240,6 +258,12 @@ func (w *transactionStorageWrapper) GetEdge(id storage.EdgeID) (*storage.Edge, e
 }
 
 func (w *transactionStorageWrapper) UpdateEdge(edge *storage.Edge) error {
+	if edge == nil {
+		return storage.ErrInvalidData
+	}
+	if err := w.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil {
+		return err
+	}
 	if w.namespace == "" {
 		return w.tx.UpdateEdge(edge)
 	}
@@ -580,6 +604,16 @@ func (w *transactionStorageWrapper) BulkCreateNodes(nodes []*storage.Node) error
 }
 
 func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error {
+	var relationshipTypes []string
+	for _, edge := range edges {
+		if edge == nil {
+			return storage.ErrInvalidData
+		}
+		relationshipTypes = append(relationshipTypes, edge.Type)
+	}
+	if err := w.GetSchema().RegisterTokens(nil, relationshipTypes); err != nil {
+		return err
+	}
 	if w.namespace == "" {
 		return w.tx.BulkCreateEdges(edges)
 	}

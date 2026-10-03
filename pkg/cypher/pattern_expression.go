@@ -226,6 +226,9 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	for name, value := range getParamsFromContext(ctx) {
 		bind("$"+name, parameterRowValue(value))
 	}
+	if containsTemporalClockCall(expr) {
+		bind(temporalRowContextKey, ctx)
+	}
 	if extended != nil {
 		values = extended
 	}

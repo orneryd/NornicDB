@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"testing"
+	"time"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -21,6 +22,12 @@ func TestSessionGetExecutorForDatabase_WiresDatabaseManagerCommands(t *testing.T
 	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase("tenant_a"))
+	provider, ok := interface{}(&boltDatabaseManagerAdapter{manager: mgr}).(cypher.DatabaseIdentityProvider)
+	require.True(t, ok, "Bolt must forward persisted administrative identity")
+	id, createdAt := provider.DatabaseIdentity("tenant_a")
+	actualID, actualCreatedAt := mgr.DatabaseIdentity("tenant_a")
+	require.Equal(t, actualID, id)
+	require.True(t, actualCreatedAt.Equal(createdAt))
 
 	s := &Session{server: &Server{dbManager: mgr}}
 	exec, err := s.getExecutorForDatabase("nornic")
@@ -30,6 +37,44 @@ func TestSessionGetExecutorForDatabase_WiresDatabaseManagerCommands(t *testing.T
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotEmpty(t, res.Rows)
+}
+
+func TestBoltListConnectionsReportsLiveConnection(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
+	t.Cleanup(func() { _ = server.Close() })
+	port := startBoltTestServer(t, server)
+	ctx := context.Background()
+	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth(), func(config *neo4jdriver.Config) {
+		config.UserAgent = "nornicdb-connections-test"
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{DatabaseName: "nornic"})
+	t.Cleanup(func() { _ = session.Close(context.Background()) })
+	result, err := session.Run(ctx, "CALL dbms.listConnections() YIELD connectionId, connectTime, connector, userAgent, serverAddress, clientAddress RETURN *", nil)
+	require.NoError(t, err)
+	records, err := result.Collect(ctx)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	connectionID, _ := records[0].Get("connectionId")
+	require.Contains(t, connectionID, "bolt-")
+	connectTime, _ := records[0].Get("connectTime")
+	_, err = time.Parse(time.RFC3339Nano, connectTime.(string))
+	require.NoError(t, err)
+	connector, _ := records[0].Get("connector")
+	require.Equal(t, "bolt", connector)
+	userAgent, _ := records[0].Get("userAgent")
+	require.Equal(t, "nornicdb-connections-test", userAgent)
+	serverAddress, _ := records[0].Get("serverAddress")
+	require.Contains(t, serverAddress, fmt.Sprintf(":%d", port))
+	clientAddress, _ := records[0].Get("clientAddress")
+	require.Contains(t, clientAddress, "127.0.0.1:")
+	require.NoError(t, session.Close(ctx))
+	require.NoError(t, driver.Close(ctx))
+	require.Eventually(t, func() bool { return len(server.ConnectionListings()) == 0 }, time.Second, time.Millisecond)
 }
 
 func TestGh738_BoltStatementAdmission(t *testing.T) {

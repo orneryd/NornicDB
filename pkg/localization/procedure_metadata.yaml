@@ -1,16 +1,16 @@
 - {
     name: db.awaitIndex,
-    en: "Waits for one index to be online",
+    en: "Wait for an index to come online (for example: CALL db.awaitIndex(\"MyIndex\", 300)).",
     es: "Espera a que un índice esté en línea",
   }
 - {
     name: db.awaitIndexes,
-    en: "Waits for all indexes to be online",
+    en: "Wait for all indexes to come online (for example: CALL db.awaitIndexes(300)).",
     es: "Espera a que todos los índices estén en línea",
   }
 - {
     name: db.clearQueryCaches,
-    en: "Clears query caches",
+    en: "Clears all query caches.",
     es: "Borra las cachés de consultas",
   }
 - {
@@ -45,17 +45,17 @@
   }
 - {
     name: db.index.fulltext.listAvailableAnalyzers,
-    en: "Lists available analyzers",
+    en: "List the available analyzers that the full-text indexes can be configured with.",
     es: "Enumera los analizadores disponibles",
   }
 - {
     name: db.index.fulltext.queryNodes,
-    en: "Fulltext search on nodes",
+    en: "Query the given full-text index. Returns the matching nodes and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n",
     es: "Busca texto completo en nodos",
   }
 - {
     name: db.index.fulltext.queryRelationships,
-    en: "Fulltext search on relationships",
+    en: "Query the given full-text index. Returns the matching relationships and their native fulltext query score, ordered by score.\nValid _key: value_ pairs for the `options` map are:\n\n* 'skip' -- to skip the top N results.\n* 'limit' -- to limit the number of results returned.\n* 'analyzer' -- to use the specified analyzer as a search analyzer for this query.\n\nThe `options` map and any of the keys are optional.\nAn example of the `options` map: `{skip: 30, limit: 10, analyzer: 'none'}`\n",
     es: "Busca texto completo en relaciones",
   }
 - {
@@ -65,7 +65,7 @@
   }
 - {
     name: db.index.vector.createNodeIndex,
-    en: "Creates vector index on nodes",
+    en: "Create a named node vector index for the specified label and property with the given vector dimensionality using either the EUCLIDEAN or COSINE similarity function.\nBoth similarity functions are case-insensitive.\nUse the `db.index.vector.queryNodes` procedure to query the named index.\n",
     es: "Crea un índice vectorial en nodos",
   }
 - {
@@ -85,12 +85,12 @@
   }
 - {
     name: db.index.vector.queryNodes,
-    en: "Vector search on nodes",
+    en: "Query the given node vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n",
     es: "Realiza una búsqueda vectorial en nodos",
   }
 - {
     name: db.index.vector.queryRelationships,
-    en: "Vector search on relationships",
+    en: "Query the given relationship vector index.\nReturns requested number of nearest neighbors to the provided query vector,\nand their similarity score to that query vector, based on the configured similarity function for the index.\nNative cosine scores are in [-1, 1]; Euclidean scores are in (0, 1]; native dot-product scores are unbounded.\n",
     es: "Realiza una búsqueda vectorial en relaciones",
   }
 - {
@@ -105,27 +105,27 @@
   }
 - {
     name: db.info,
-    en: "Returns database information",
+    en: "Provides information regarding the database.",
     es: "Devuelve información de la base de datos",
   }
 - {
     name: db.labels,
-    en: "Lists all labels in the database",
+    en: "List all labels attached to nodes within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those labels.",
     es: "Enumera todas las etiquetas de la base de datos",
   }
 - {
     name: db.ping,
-    en: "Checks database connectivity",
+    en: "This procedure can be used by client side tooling to test whether they are correctly connected to a database. The procedure is available in all databases and always returns true. A faulty connection can be detected by not being able to call this procedure.",
     es: "Comprueba la conectividad de la base de datos",
   }
 - {
     name: db.propertyKeys,
-    en: "Lists all property keys in the database",
+    en: "List all property keys in the database.",
     es: "Enumera todas las claves de propiedad de la base de datos",
   }
 - {
     name: db.relationshipTypes,
-    en: "Lists all relationship types in the database",
+    en: "List all types attached to relationships within a database according to the user's access rights. The procedure returns empty results if the user is not authorized to view those relationship types.",
     es: "Enumera todos los tipos de relación de la base de datos",
   }
 - {
@@ -135,7 +135,7 @@
   }
 - {
     name: db.resampleIndex,
-    en: "Resamples index statistics",
+    en: "Schedule resampling of an index (for example: CALL db.resampleIndex(\"MyIndex\")).",
     es: "Vuelve a muestrear las estadísticas del índice",
   }
 - {
@@ -160,22 +160,22 @@
   }
 - {
     name: db.schema.visualization,
-    en: "Visualizes schema",
+    en: "Visualizes the schema of the data based on available statistics. A new node is returned for each label. The properties represented on the node include: `name` (label name), `indexes` (list of indexes), and `constraints` (list of constraints). A relationship of a given type is returned for all possible combinations of start and end nodes. The properties represented on the relationship include: `name` (type name). Note that this may include additional relationships that do not exist in the data from independently observed start and end label sets. ",
     es: "Visualiza el esquema",
   }
 - {
     name: db.stats.clear,
-    en: "Clears collected statistics",
+    en: "Clear collected data of a given data section. Valid sections are 'QUERIES'",
     es: "Borra las estadísticas recopiladas",
   }
 - {
     name: db.stats.collect,
-    en: "Starts statistics collection",
+    en: "Start data collection of a given data section. Valid sections are 'QUERIES'",
     es: "Inicia la recopilación de estadísticas",
   }
 - {
     name: db.stats.retrieve,
-    en: "Retrieves collected statistics",
+    en: "Retrieve statistical data about the current database. Valid sections are 'GRAPH COUNTS', 'TOKENS', 'QUERIES', 'META'",
     es: "Recupera las estadísticas recopiladas",
   }
 - {
@@ -185,12 +185,12 @@
   }
 - {
     name: db.stats.status,
-    en: "Returns statistics collection status",
+    en: "Retrieve the status of all available collector daemons, for this database.",
     es: "Devuelve el estado de la recopilación de estadísticas",
   }
 - {
     name: db.stats.stop,
-    en: "Stops statistics collection",
+    en: "Stop data collection of a given data section. Valid sections are 'QUERIES'",
     es: "Detiene la recopilación de estadísticas",
   }
 - {
@@ -220,23 +220,23 @@
   }
 - {
     name: dbms.components,
-    en: "Lists DBMS components",
+    en: "List DBMS components and their versions.",
     es: "Enumera los componentes del DBMS",
   }
 - { name: dbms.functions, en: "Lists functions", es: "Enumera las funciones" }
 - {
     name: dbms.info,
-    en: "Returns DBMS information",
+    en: "Provides information regarding the DBMS.",
     es: "Devuelve información del DBMS",
   }
 - {
     name: dbms.listConfig,
-    en: "Lists DBMS configuration",
+    en: "List the currently active configuration settings of NornicDB.",
     es: "Enumera la configuración del DBMS",
   }
 - {
     name: dbms.listConnections,
-    en: "Lists active DBMS connections",
+    en: "List all accepted network connections at this instance that are visible to the user.",
     es: "Enumera las conexiones activas del DBMS",
   }
 - {
@@ -346,6 +346,6 @@
   }
 - {
     name: tx.setMetaData,
-    en: "Sets transaction metadata",
+    en: "Attaches a map of data to the transaction. The data will be printed when listing queries, and inserted into the query log.",
     es: "Establece los metadatos de la transacción",
   }

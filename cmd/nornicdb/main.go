@@ -942,6 +942,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	queryExecutor := NewDBQueryExecutor(db)
 	queryExecutor.localizer = localizer
 	boltServer := bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
+	httpServer.SetConnectionLister(boltServer.ConnectionListings)
 	connectionTracker := multidb.NewConnectionTracker()
 	boltServer.SetDatabaseConnectionAdmission(httpServer.GetDatabaseManager().ResolveConnectionLimitOwner, func(databaseName string) error {
 		return connectionTracker.TryIncrementConnection(httpServer.GetDatabaseManager(), databaseName)
@@ -1509,6 +1510,7 @@ func newTxScopedExecutor(db *nornicdb.DB, dbName string) (*cypher.StorageExecuto
 
 	// Keep query embedding and search behavior consistent with the base DB executor.
 	if baseExec := db.GetCypherExecutor(); baseExec != nil {
+		executor.ShareQueryStatisticsFrom(baseExec)
 		if embedder := baseExec.GetEmbedder(); embedder != nil {
 			executor.SetEmbedder(embedder)
 		}
@@ -1558,6 +1560,7 @@ func (e *DBQueryExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageExecutor
 		return
 	}
 	if baseExec := e.db.GetCypherExecutor(); baseExec != nil {
+		exec.ShareQueryStatisticsFrom(baseExec)
 		if emb := baseExec.GetEmbedder(); emb != nil {
 			exec.SetEmbedder(emb)
 		}

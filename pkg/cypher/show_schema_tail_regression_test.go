@@ -7,6 +7,66 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestShowBuiltInProcedureSignatureDescriptions(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, "SHOW PROCEDURES YIELD name, argumentDescription, returnDescription WHERE name = 'db.index.fulltext.queryNodes' RETURN size(argumentDescription) AS arguments, size(returnDescription) AS returns, [argument IN argumentDescription | argument.name] AS names", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(3), int64(2), []interface{}{"indexName", "queryString", "options"}}}, result.Rows)
+}
+
+func TestShowBuiltInProcedureRichDescriptions(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, "SHOW PROCEDURES YIELD name, argumentDescription, returnDescription WHERE name = 'db.index.fulltext.queryNodes' RETURN argumentDescription, returnDescription", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{
+		[]interface{}{
+			map[string]interface{}{"name": "indexName", "type": "STRING", "description": "The name of the full-text index.", "isDeprecated": false},
+			map[string]interface{}{"name": "queryString", "type": "STRING", "description": "The string to find approximate matches for.", "isDeprecated": false},
+			map[string]interface{}{"name": "options", "type": "MAP", "description": "{skip :: INTEGER, limit :: INTEGER, analyzer :: STRING}", "default": "DefaultParameterValue{value={}, type=MAP}", "isDeprecated": false},
+		},
+		[]interface{}{
+			map[string]interface{}{"name": "node", "type": "NODE", "description": "A node which contains a property similar to the query string.", "isDeprecated": false},
+			map[string]interface{}{"name": "score", "type": "FLOAT", "description": "The score measuring how similar the node property is to the query string.", "isDeprecated": false},
+		},
+	}}, result.Rows)
+}
+
+func TestShowBuiltInProcedureFlags(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, "SHOW PROCEDURES YIELD name, worksOnSystem, admin, rolesExecution, rolesBoostedExecution, isDeprecated, deprecatedBy, option WHERE name = 'db.index.fulltext.queryNodes' RETURN worksOnSystem, admin, rolesExecution, rolesBoostedExecution, isDeprecated, deprecatedBy, option", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{true, false, nil, nil, false, nil, map[string]interface{}{"deprecated": false}}}, result.Rows)
+}
+
+func TestShowFulltextRelationshipProcedureMetadata(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, "SHOW PROCEDURES YIELD name, signature, argumentDescription, returnDescription, worksOnSystem WHERE name = 'db.index.fulltext.queryRelationships' RETURN signature, argumentDescription, returnDescription, worksOnSystem", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{
+		"db.index.fulltext.queryRelationships(indexName :: STRING, queryString :: STRING, options = {} :: MAP) :: (relationship :: RELATIONSHIP, score :: FLOAT)",
+		[]interface{}{
+			map[string]interface{}{"name": "indexName", "type": "STRING", "description": "The name of the full-text index.", "isDeprecated": false},
+			map[string]interface{}{"name": "queryString", "type": "STRING", "description": "The string to find approximate matches for.", "isDeprecated": false},
+			map[string]interface{}{"name": "options", "type": "MAP", "description": "{skip :: INTEGER, limit :: INTEGER, analyzer :: STRING}", "default": "DefaultParameterValue{value={}, type=MAP}", "isDeprecated": false},
+		},
+		[]interface{}{
+			map[string]interface{}{"name": "relationship", "type": "RELATIONSHIP", "description": "A relationship which contains a property similar to the query string.", "isDeprecated": false},
+			map[string]interface{}{"name": "score", "type": "FLOAT", "description": "The score measuring how similar the relationship property is to the query string.", "isDeprecated": false},
+		},
+		true,
+	}}, result.Rows)
+}
+
+func TestShowRangeFunctionArgumentDescriptions(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, "SHOW FUNCTIONS YIELD name, signature, argumentDescription WHERE name = 'range' RETURN signature, [argument IN argumentDescription | argument.description] AS descriptions ORDER BY signature", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{
+		{"range(start :: INTEGER, end :: INTEGER) :: LIST<INTEGER>", []interface{}{"The start value of the range.", "The end value of the range."}},
+		{"range(start :: INTEGER, end :: INTEGER, step :: INTEGER) :: LIST<INTEGER>", []interface{}{"The start value of the range.", "The end value of the range.", "The size of the increment (default value: 1)."}},
+	}, result.Rows)
+}
+
 func TestResidualShowSchemaNonBooleanPredicates(t *testing.T) {
 	for _, populated := range []bool{false, true} {
 		exec, ctx := newUnitExecutor(t)

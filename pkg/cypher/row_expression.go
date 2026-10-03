@@ -193,7 +193,11 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 
 	if function, argument, ok := parseFunctionCallWS(expr); ok {
 		var argumentErr error
-		if value, handled := e.evaluateTemporalConstructor(func(inner string) interface{} {
+		temporalContext, _ := values[temporalRowContextKey].(context.Context)
+		if temporalContext == nil {
+			temporalContext = context.Background()
+		}
+		if value, handled := e.evaluateTemporalConstructor(temporalContext, func(inner string) interface{} {
 			value, evaluated, err := e.evaluateRowValue(inner, values)
 			if err != nil && argumentErr == nil {
 				argumentErr = err
@@ -224,7 +228,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			return value, resolved, err
 		}
 		switch lowerASCII(function) {
-		case "graph.names", "graph.propertiesbyname":
+		case "graph.names", "graph.propertiesbyname", "graph.byname", "graph.byelementid":
 			return e.evaluateRowGraphFunction(function, argument, values)
 		case "reduce":
 			return e.evaluateRowReduce(argument, values)
@@ -831,9 +835,15 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		return e.subtract(int64(0), value), true, nil
 	}
 
-	// The property access splits at the first dot outside brackets, braces and
-	// quotes: n {.k}.k reads k from the map projection n {.k} (#712).
+	// Use the last top-level dot so qualified calls remain intact as the base.
 	if dot := topLevelSymbolIndex(expr, "."); dot > 0 {
+		for {
+			next := topLevelSymbolIndex(expr[dot+1:], ".")
+			if next < 0 {
+				break
+			}
+			dot += next + 1
+		}
 		base, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:dot]), values)
 		if err != nil {
 			return nil, false, err

@@ -9,6 +9,16 @@ func TestIsCacheableReadQuery_NewPrimitives(t *testing.T) {
 		expect bool
 	}{
 		{
+			name:   "statistics state not cacheable",
+			query:  "CALL db.stats.status()",
+			expect: false,
+		},
+		{
+			name:   "nested statistics state not cacheable",
+			query:  "CALL { CALL db.stats.retrieve('QUERIES') YIELD data RETURN data } RETURN data",
+			expect: false,
+		},
+		{
 			name:   "retrieve continuation not cacheable",
 			query:  "CALL db.retrieve({query: 'alpha', limit: 10})",
 			expect: false,

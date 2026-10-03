@@ -38,13 +38,13 @@ func TestShowColumnSetsMatchNeo4j(t *testing.T) {
 	require.Equal(t, "String", result.Rows[1][0])
 	require.Equal(t, true, result.Rows[1][1])
 	require.Equal(t, []interface{}{
-		map[string]interface{}{"name": "original", "type": "STRING", "description": "", "isDeprecated": false},
-		map[string]interface{}{"name": "start", "type": "INTEGER", "description": "", "isDeprecated": false},
+		map[string]interface{}{"name": "original", "type": "STRING", "description": "The string to be shortened.", "isDeprecated": false},
+		map[string]interface{}{"name": "start", "type": "INTEGER", "description": "The start position of the new string.", "isDeprecated": false},
 	}, result.Rows[0][2])
 	require.Equal(t, []interface{}{
-		map[string]interface{}{"name": "original", "type": "STRING", "description": "", "isDeprecated": false},
-		map[string]interface{}{"name": "start", "type": "INTEGER", "description": "", "isDeprecated": false},
-		map[string]interface{}{"name": "length", "type": "INTEGER", "description": "", "isDeprecated": false},
+		map[string]interface{}{"name": "original", "type": "STRING", "description": "The string to be shortened.", "isDeprecated": false},
+		map[string]interface{}{"name": "start", "type": "INTEGER", "description": "The start position of the new string.", "isDeprecated": false},
+		map[string]interface{}{"name": "length", "type": "INTEGER", "description": "The length of the new string.", "isDeprecated": false},
 	}, result.Rows[1][2])
 	require.Equal(t, "STRING", result.Rows[1][3])
 }

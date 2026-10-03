@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -164,7 +166,73 @@ func decodeCypherDateTime(decoder *msgpack.Decoder, value reflect.Value, length 
 	return nil
 }
 
-func (e *StorageExecutor) evaluateTemporalConstructor(ctxEval func(string) interface{}, expression string) (interface{}, bool) {
+type temporalStatementTimeKey struct{}
+
+const temporalRowContextKey = "\x00temporal_context"
+
+func containsTemporalClockCall(expression string) bool {
+	for index := 0; index < len(expression); index++ {
+		if expression[index] != '(' {
+			continue
+		}
+		end := index
+		for end > 0 && isASCIISpace(expression[end-1]) {
+			end--
+		}
+		start := end
+		for start > 0 && (isIdentByte(expression[start-1]) || expression[start-1] == '.') {
+			start--
+		}
+		name := lowerASCII(expression[start:end])
+		if dot := strings.IndexByte(name, '.'); dot >= 0 {
+			name = name[:dot]
+		}
+		switch name {
+		case "date", "datetime", "localdatetime", "time", "localtime":
+			return true
+		}
+	}
+	return false
+}
+
+func (e *StorageExecutor) temporalClockTime(ctx context.Context, clock string) time.Time {
+	if clock == "realtime" {
+		return time.Now().UTC()
+	}
+	if clock != "statement" {
+		if e.txContext != nil && e.txContext.active {
+			if transaction, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
+				return transaction.StartTime.UTC()
+			}
+		}
+		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+			return wrapper.tx.StartTime.UTC()
+		}
+	}
+	if instant, ok := ctx.Value(temporalStatementTimeKey{}).(time.Time); ok {
+		return instant
+	}
+	return time.Now().UTC()
+}
+
+func temporalClockValue(kind string, instant time.Time, zoneID string) (interface{}, bool) {
+	switch kind {
+	case "date":
+		return CypherDate{Time: time.Date(instant.Year(), instant.Month(), instant.Day(), 0, 0, 0, 0, time.UTC)}, true
+	case "localtime":
+		return CypherLocalTime{Time: instant}, true
+	case "time":
+		return CypherTime{Time: instant}, true
+	case "localdatetime":
+		return CypherLocalDateTime{Time: instant}, true
+	case "datetime":
+		return CypherDateTime{Time: instant, ZoneID: zoneID}, true
+	default:
+		return nil, false
+	}
+}
+
+func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEval func(string) interface{}, expression string) (interface{}, bool) {
 	name, argument, ok := parseFunctionCallWS(expression)
 	if !ok {
 		return nil, false
@@ -193,49 +261,58 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctxEval func(string) inter
 	if strings.HasSuffix(kind, ".truncate") {
 		kind = strings.TrimSuffix(kind, ".truncate")
 		arguments := e.splitFunctionArgs(argument)
-		if len(arguments) < 2 || len(arguments) > 3 {
+		if len(arguments) < 1 || len(arguments) > 3 {
 			return nil, true
 		}
 		unit, unitOK := ctxEval(strings.TrimSpace(arguments[0])).(string)
 		if !unitOK {
 			return nil, true
 		}
-		value := ctxEval(strings.TrimSpace(arguments[1]))
+		var value interface{}
+		if len(arguments) == 1 {
+			value, _ = temporalClockValue(kind, e.temporalClockTime(ctx, "transaction"), "")
+		} else {
+			value = ctxEval(strings.TrimSpace(arguments[1]))
+		}
 		fields := map[string]interface{}{}
 		if len(arguments) == 3 {
-			var fieldsOK bool
-			fields, fieldsOK = toStringAnyMap(ctxEval(strings.TrimSpace(arguments[2])))
-			if !fieldsOK {
-				return nil, true
+			if input := ctxEval(strings.TrimSpace(arguments[2])); input != nil {
+				var fieldsOK bool
+				fields, fieldsOK = toStringAnyMap(input)
+				if !fieldsOK {
+					return nil, true
+				}
 			}
 		}
 		return truncateTemporalValue(kind, unit, value, fields)
 	}
+	clock := "transaction"
+	clockFunction := false
 	if dot := strings.IndexByte(kind, '.'); dot > 0 {
 		suffix := kind[dot+1:]
 		if suffix == "transaction" || suffix == "statement" || suffix == "realtime" {
+			clock, clockFunction = suffix, true
 			kind = kind[:dot]
 		}
 	}
 	switch kind {
 	case "date", "localtime", "time", "localdatetime", "datetime", "duration":
 		argument = strings.TrimSpace(argument)
-		if argument == "" {
-			now := time.Now()
-			switch kind {
-			case "date":
-				return CypherDate{Time: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)}, true
-			case "localtime":
-				return CypherLocalTime{Time: now}, true
-			case "time":
-				return CypherTime{Time: now}, true
-			case "localdatetime":
-				return CypherLocalDateTime{Time: now}, true
-			case "datetime":
-				return CypherDateTime{Time: now}, true
-			default:
+		if clockFunction && argument != "" {
+			zoneID, valid := ctxEval(argument).(string)
+			if !valid {
 				return nil, true
 			}
+			instant := e.temporalClockTime(ctx, clock)
+			location, zoneID, valid := temporalLocationForProjection(map[string]interface{}{"timezone": zoneID}, true, instant, true)
+			if !valid {
+				return nil, true
+			}
+			return temporalClockValue(kind, instant.In(location), zoneID)
+		}
+		if argument == "" {
+			value, _ := temporalClockValue(kind, e.temporalClockTime(ctx, clock), "")
+			return value, true
 		}
 		value := ctxEval(argument)
 		if value == nil {

@@ -35,6 +35,20 @@ type RequestIdentity struct {
 	// Users lists the user store; nil without one, and SHOW USERS then
 	// lists the signed-in user only.
 	Users func() []UserListing
+	// Connections snapshots the transport's accepted connections; nil for embedded callers.
+	Connections func() []ConnectionListing
+}
+
+// ConnectionListing is an immutable accepted-connection snapshot for dbms.listConnections.
+// Transports supply it through RequestIdentity.Connections instead of exposing live sessions.
+type ConnectionListing struct {
+	ConnectionID  string
+	ConnectTime   string
+	Connector     string
+	Username      string
+	UserAgent     string
+	ServerAddress string
+	ClientAddress string
 }
 
 // WithRequestIdentity attaches a request's identity.

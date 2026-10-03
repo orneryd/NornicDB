@@ -33,6 +33,43 @@ func TestPinnedTimezoneArchiveIsCompatibleWithGoZoneinfoLoading(t *testing.T) {
 	require.True(t, foundStockholm)
 }
 
+func TestTemporalClockFunctionsAndDefaultTruncation(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	for _, kind := range []string{"date", "datetime", "localdatetime", "localtime", "time"} {
+		for _, clock := range []string{"statement", "transaction", "realtime"} {
+			t.Run(kind+"."+clock, func(t *testing.T) {
+				result, err := executor.Execute(ctx, "RETURN "+kind+"."+clock+"('UTC') AS value", nil)
+				require.NoError(t, err)
+				require.Len(t, result.Rows, 1)
+				require.NotNil(t, result.Rows[0][0])
+			})
+		}
+		t.Run(kind+".truncate", func(t *testing.T) {
+			unit := "hour"
+			if kind == "date" {
+				unit = "year"
+			}
+			result, err := executor.Execute(ctx, "RETURN "+kind+".truncate('"+unit+"') AS value", nil)
+			require.NoError(t, err)
+			require.NotNil(t, result.Rows[0][0])
+			property := "minute"
+			expected := "0"
+			if kind == "date" {
+				property, expected = "month", "1"
+			} else if kind == "datetime" || kind == "localdatetime" {
+				property = "hour"
+				unit = "day"
+			}
+			result, err = executor.Execute(ctx, "RETURN "+kind+".truncate('"+unit+"')."+property+" = "+expected+" AS truncated", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{true}}, result.Rows)
+		})
+	}
+	result, err := executor.Execute(ctx, "RETURN datetime.statement() = datetime.statement() AS stable", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{true}}, result.Rows)
+}
+
 func TestTemporalMapConstructorsUseSharedComponentSemantics(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(baseEngine, "test"))

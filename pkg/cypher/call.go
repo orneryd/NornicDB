@@ -3164,7 +3164,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		result, err = e.callGdsFastRPStats(callCypher)
 	// Additional Neo4j procedures for compatibility
 	case strings.Contains(upper, "DB.INFO"):
-		result, err = e.callDbInfo()
+		result, err = e.callDbInfo(ctx)
 	case strings.Contains(upper, "DB.PING"):
 		result, err = e.callDbPing()
 	case strings.Contains(upper, "DB.INDEX.FULLTEXT.QUERYRELATIONSHIPS"):
@@ -3299,7 +3299,7 @@ func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
 		Columns: []string{"label"},
 		Rows:    make([][]interface{}, 0, len(labelSet)),
 	}
-	for _, label := range sortedStringSet(labelSet) {
+	for _, label := range e.storage.GetSchema().OrderTokens(sortedStringSet(labelSet), false) {
 		result.Rows = append(result.Rows, []interface{}{label})
 	}
 	return result, nil
@@ -3332,7 +3332,7 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 		Columns: []string{"relationshipType"},
 		Rows:    make([][]interface{}, 0, len(typeSet)),
 	}
-	for _, relType := range sortedStringSet(typeSet) {
+	for _, relType := range e.storage.GetSchema().OrderTokens(sortedStringSet(typeSet), true) {
 		result.Rows = append(result.Rows, []interface{}{relType})
 	}
 	return result, nil
@@ -3566,45 +3566,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, err
 // Neo4j schema procedures
 
 func (e *StorageExecutor) callDbSchemaVisualization() (*ExecuteResult, error) {
-	// Return a simplified schema visualization
-	nodes, _ := e.storage.AllNodes()
-	edges, _ := e.storage.AllEdges()
-
-	// Collect unique labels and relationship types
-	labelSet := make(map[string]bool)
-	for _, node := range nodes {
-		for _, label := range node.Labels {
-			labelSet[label] = true
-		}
-	}
-
-	relTypeSet := make(map[string]bool)
-	for _, edge := range edges {
-		relTypeSet[edge.Type] = true
-	}
-
-	// Build schema nodes (one per label)
-	var schemaNodes []map[string]interface{}
-	for label := range labelSet {
-		schemaNodes = append(schemaNodes, map[string]interface{}{
-			"label": label,
-		})
-	}
-
-	// Build schema relationships
-	var schemaRels []map[string]interface{}
-	for relType := range relTypeSet {
-		schemaRels = append(schemaRels, map[string]interface{}{
-			"type": relType,
-		})
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"nodes", "relationships"},
-		Rows: [][]interface{}{
-			{schemaNodes, schemaRels},
-		},
-	}, nil
+	return e.callDbSchemaVisualizationWithContext(context.Background())
 }
 
 func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {

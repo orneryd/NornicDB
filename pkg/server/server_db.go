@@ -151,6 +151,7 @@ func normalizeStatementForExecution(defaultDB string, statement string) (effecti
 // TRANSACTIONS (#718).
 func (s *Server) withRequestIdentity(ctx context.Context, r *http.Request, claims *auth.JWTClaims) context.Context {
 	identity := &cypher.RequestIdentity{Connection: cypher.ClientConnection{Protocol: "http"}}
+	identity.Connections = s.connectionLister
 	if claims != nil && strings.TrimSpace(claims.Username) != "" {
 		identity.User = &cypher.AuthenticatedUser{Name: claims.Username, Roles: claims.Roles}
 	}
@@ -220,7 +221,7 @@ func (s *Server) getExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	s.executorsMu.RUnlock()
 
 	// Get namespaced storage for this database
-	executor, err := s.newExecutorForDatabase(dbName)
+	executor, err := s.newDatabaseScopedExecutor(dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -273,6 +274,7 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 	}
 
 	if baseExec := s.db.GetCypherExecutor(); baseExec != nil {
+		executor.ShareQueryStatisticsFrom(baseExec)
 		if emb := baseExec.GetEmbedder(); emb != nil {
 			executor.SetEmbedder(emb)
 		}
@@ -311,6 +313,19 @@ func (s *Server) databaseHasRemoteConstituent(dbName string) bool {
 // Unlike getExecutorForDatabase, this does not cache the executor and is intended
 // for per-transaction session state (explicit HTTP transactions).
 func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor, error) {
+	base, err := s.getExecutorForDatabase(dbName)
+	if err != nil {
+		return nil, err
+	}
+	executor, err := s.newDatabaseScopedExecutor(dbName)
+	if err != nil {
+		return nil, err
+	}
+	executor.ShareQueryStatisticsFrom(base)
+	return executor, nil
+}
+
+func (s *Server) newDatabaseScopedExecutor(dbName string) (*cypher.StorageExecutor, error) {
 	// This returns a NamespacedEngine that automatically prefixes all keys
 	// with the database name, ensuring complete data isolation.
 	storageEngine, err := s.dbManager.GetStorage(dbName)
@@ -334,6 +349,7 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 
 	// Copy query embedder from the base DB executor so string-input vector procedures work.
 	if baseExec := s.db.GetCypherExecutor(); baseExec != nil {
+		executor.ShareQueryStatisticsFrom(baseExec)
 		if emb := baseExec.GetEmbedder(); emb != nil {
 			executor.SetEmbedder(emb)
 		}
@@ -386,6 +402,18 @@ type databaseManagerAdapter struct {
 
 func (a *databaseManagerAdapter) CreateDatabase(name string) error {
 	return a.manager.CreateDatabase(name)
+}
+
+func (a *databaseManagerAdapter) ServerIdentity() (string, time.Time) {
+	return a.manager.ServerIdentity()
+}
+
+func (a *databaseManagerAdapter) SystemDatabaseName() string {
+	return a.manager.SystemDatabaseName()
+}
+
+func (a *databaseManagerAdapter) DatabaseIdentity(name string) (string, time.Time) {
+	return a.manager.DatabaseIdentity(name)
 }
 
 func (a *databaseManagerAdapter) DropDatabase(name string) error {

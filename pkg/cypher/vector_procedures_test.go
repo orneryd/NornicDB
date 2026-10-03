@@ -36,29 +36,48 @@ func TestCallDbIndexVectorCreateNodeIndex(t *testing.T) {
 	t.Run("create_vector_index", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('embeddings_idx', 'Document', 'embedding', 384, 'cosine')", nil)
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-
-		assert.Equal(t, "embeddings_idx", result.Rows[0][0])
-		assert.Equal(t, "Document", result.Rows[0][1])
-		assert.Equal(t, "embedding", result.Rows[0][2])
-		assert.Equal(t, 384, result.Rows[0][3])
-		assert.Equal(t, "cosine", result.Rows[0][4])
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("embeddings_idx")
+		require.True(t, exists)
+		assert.Equal(t, "Document", index.Label)
+		assert.Equal(t, "embedding", index.Property)
+		assert.Equal(t, 384, index.Dimensions)
+		assert.Equal(t, "cosine", index.SimilarityFunc)
 	})
 
 	t.Run("create_with_default_similarity", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('idx2', 'Node', 'vec', 128)", nil)
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-
-		assert.Equal(t, "cosine", result.Rows[0][4]) // Default similarity
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("idx2")
+		require.True(t, exists)
+		assert.Equal(t, "cosine", index.SimilarityFunc)
 	})
 
 	t.Run("create_with_euclidean", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('idx3', 'Item', 'features', 256, 'euclidean')", nil)
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("idx3")
+		require.True(t, exists)
+		assert.Equal(t, "euclidean", index.SimilarityFunc)
+	})
 
-		assert.Equal(t, "euclidean", result.Rows[0][4])
+	t.Run("parameterized_names_with_commas", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.index.vector.createNodeIndex($name, $label, $property, $dimension, $similarity)", map[string]interface{}{
+			"name": "comma,index", "label": "Comma,Label", "property": "embedding,property", "dimension": int64(3), "similarity": "COSINE",
+		})
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("comma,index")
+		require.True(t, exists)
+		assert.Equal(t, "Comma,Label", index.Label)
+		assert.Equal(t, "embedding,property", index.Property)
+		assert.Equal(t, 3, index.Dimensions)
 	})
 }
 
@@ -268,7 +287,8 @@ func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {
 	t.Run("set_vector_property", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "CALL db.create.setNodeVectorProperty('node1', 'embedding', [0.1, 0.2, 0.3, 0.4])", nil)
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
 
 		// Verify the vector was set
 		node, err := engine.GetNode("node1")
@@ -282,7 +302,8 @@ func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {
 	t.Run("update_vector_property", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "CALL db.create.setNodeVectorProperty('node1', 'embedding', [0.5, 0.6, 0.7, 0.8])", nil)
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
 
 		// Verify the vector was updated
 		node, err := engine.GetNode("node1")
@@ -324,7 +345,8 @@ func TestCallDbCreateSetRelationshipVectorProperty(t *testing.T) {
 	t.Run("set_relationship_vector", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "CALL db.create.setRelationshipVectorProperty('rel1', 'features', [1.0, 2.0, 3.0])", nil)
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
 
 		// Verify the vector was set
 		rel, err := engine.GetEdge("rel1")
@@ -1875,8 +1897,11 @@ func TestVectorIndexWorkflow(t *testing.T) {
 		result, err := exec.Execute(ctx,
 			"CALL db.index.vector.createNodeIndex('memory_embeddings', 'Memory', 'embedding', 1024, 'cosine')", nil)
 		require.NoError(t, err)
-		assert.Equal(t, "memory_embeddings", result.Rows[0][0])
-		assert.Equal(t, 1024, result.Rows[0][3])
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		index, exists := engine.GetSchema().GetVectorIndex("memory_embeddings")
+		require.True(t, exists)
+		assert.Equal(t, 1024, index.Dimensions)
 
 		// 2. Create relationship vector index
 		result, err = exec.Execute(ctx,
@@ -1896,7 +1921,8 @@ func TestVectorIndexWorkflow(t *testing.T) {
 		result, err = exec.Execute(ctx,
 			"CALL db.create.setNodeVectorProperty('mem1', 'embedding', [0.1, 0.2, 0.3, 0.4])", nil)
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1) // Returns the updated node
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
 
 		// 5. Query vector index
 		result, err = exec.Execute(ctx,

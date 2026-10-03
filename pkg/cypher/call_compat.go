@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -19,14 +20,28 @@ import (
 // ===== Additional Neo4j Compatibility Procedures =====
 
 // callDbInfo returns database information - Neo4j db.info()
-func (e *StorageExecutor) callDbInfo() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
+	name := e.currentDatabaseName()
+	if selected := GetUseDatabaseFromContext(ctx); selected != "" {
+		name = selected
+	}
+	var id, creationDate interface{}
+	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
+		databaseID, createdAt := provider.DatabaseIdentity(name)
+		if databaseID != "" {
+			id = databaseID
+		}
+		if !createdAt.IsZero() {
+			creationDate = createdAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
 
 	return &ExecuteResult{
 		Columns: []string{"id", "name", "creationDate", "nodeCount", "relationshipCount"},
 		Rows: [][]interface{}{
-			{"nornicdb-default", "nornicdb", "2024-01-01T00:00:00Z", nodeCount, edgeCount},
+			{id, name, creationDate, nodeCount, edgeCount},
 		},
 	}, nil
 }
@@ -41,24 +56,68 @@ func (e *StorageExecutor) callDbPing() (*ExecuteResult, error) {
 
 // callDbmsInfo returns DBMS information - Neo4j dbms.info()
 func (e *StorageExecutor) callDbmsInfo() (*ExecuteResult, error) {
+	name := "system"
+	if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
+		name = manager.SystemDatabaseName()
+	}
+	var id, creationDate interface{}
+	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
+		databaseID, createdAt := provider.DatabaseIdentity(name)
+		if databaseID != "" {
+			id = databaseID
+		}
+		if !createdAt.IsZero() {
+			creationDate = createdAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
 	return &ExecuteResult{
 		Columns: []string{"id", "name", "creationDate"},
 		Rows: [][]interface{}{
-			{"nornicdb-instance", "NornicDB", "2024-01-01T00:00:00Z"},
+			{id, name, creationDate},
 		},
 	}, nil
 }
 
 // callDbmsListConfig lists DBMS configuration - Neo4j dbms.listConfig()
 func (e *StorageExecutor) callDbmsListConfig() (*ExecuteResult, error) {
-	return &ExecuteResult{
-		Columns: []string{"name", "description", "value", "dynamic"},
-		Rows: [][]interface{}{
-			{"nornicdb.version", "NornicDB version", buildinfo.Version(), false},
-			{"nornicdb.bolt.enabled", "Bolt protocol enabled", true, false},
-			{"nornicdb.http.enabled", "HTTP API enabled", true, false},
-		},
-	}, nil
+	return e.callDbmsListConfigArguments(context.Background(), nil)
+}
+
+func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+	searchString := ""
+	if len(arguments) > 0 {
+		var valid bool
+		searchString, valid = arguments[0].(string)
+		if !valid {
+			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "dbms.listConfig requires a STRING search filter")
+		}
+	}
+	settings, err := e.executeShowSettings(ctx, "SHOW SETTINGS")
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]interface{}, 0, len(settings.Rows)+3)
+	for _, setting := range settings.Rows {
+		validValues, _ := setting[7].([]string)
+		rows = append(rows, []interface{}{setting[0], setting[4], setting[1], setting[2], setting[3], setting[5], setting[6], strings.Join(validValues, ", ")})
+	}
+	version := buildinfo.Version()
+	rows = append(rows,
+		[]interface{}{"nornicdb.version", "NornicDB version", version, false, version, version, false, "Build version"},
+		[]interface{}{"nornicdb.bolt.enabled", "Bolt protocol enabled", nil, false, nil, nil, nil, "true, false"},
+		[]interface{}{"nornicdb.http.enabled", "HTTP API enabled", nil, false, nil, nil, nil, "true, false"},
+	)
+	sort.Slice(rows, func(first, second int) bool { return rows[first][0].(string) < rows[second][0].(string) })
+	result := &ExecuteResult{
+		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
+		Rows:    [][]interface{}{},
+	}
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), searchString) {
+			result.Rows = append(result.Rows, row)
+		}
+	}
+	return result, nil
 }
 
 // callDbmsClientConfig lists client-visible configuration - Neo4j dbms.clientConfig()
@@ -74,15 +133,37 @@ func (e *StorageExecutor) callDbmsClientConfig() (*ExecuteResult, error) {
 
 // callDbmsListConnections lists active connections - Neo4j dbms.listConnections()
 func (e *StorageExecutor) callDbmsListConnections() (*ExecuteResult, error) {
-	return &ExecuteResult{
-		Columns: []string{"connectionId", "connectTime", "connector", "username", "userAgent", "clientAddress"},
+	return e.callDbmsListConnectionsWithContext(context.Background())
+}
+
+func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context) (*ExecuteResult, error) {
+	result := &ExecuteResult{
+		Columns: []string{"connectionId", "connectTime", "connector", "username", "userAgent", "serverAddress", "clientAddress"},
 		Rows:    [][]interface{}{},
-	}, nil
+	}
+	identity := requestIdentityFromContext(ctx)
+	if identity == nil || identity.Connections == nil {
+		return result, nil
+	}
+	viewAll := identity.User == nil
+	if identity.User != nil {
+		for _, role := range identity.User.Roles {
+			viewAll = viewAll || strings.EqualFold(role, "admin")
+		}
+	}
+	for _, connection := range identity.Connections() {
+		if !viewAll && connection.Username != identity.User.Name {
+			continue
+		}
+		result.Rows = append(result.Rows, []interface{}{connection.ConnectionID, connection.ConnectTime, connection.Connector, connection.Username, connection.UserAgent, connection.ServerAddress, connection.ClientAddress})
+	}
+	sort.Slice(result.Rows, func(first, second int) bool { return result.Rows[first][0].(string) < result.Rows[second][0].(string) })
+	return result, nil
 }
 
 // callDbIndexFulltextListAvailableAnalyzers lists fulltext analyzers - Neo4j db.index.fulltext.listAvailableAnalyzers()
 func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteResult, error) {
-	rows := [][]interface{}{{"none", "Language-neutral Unicode analyzer", "exact", "", "", false, []string{}}}
+	rows := [][]interface{}{{"none", "Language-neutral Unicode analyzer", []string{}, "exact", "", "", false, []string{}}}
 	for _, registration := range stemmer.Available() {
 		digest := registration.Digest
 		if len(digest) > 12 {
@@ -91,6 +172,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 		rows = append(rows, []interface{}{
 			registration.ID,
 			"Registered BM25 stemmer plugin",
+			nil,
 			"stemmer",
 			registration.Version,
 			digest,
@@ -99,7 +181,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 		})
 	}
 	return &ExecuteResult{
-		Columns: []string{"analyzer", "description", "kind", "version", "digest", "dynamicLoad", "selectedDatabases"},
+		Columns: []string{"analyzer", "description", "stopwords", "kind", "version", "digest", "dynamicLoad", "selectedDatabases"},
 		Rows:    rows,
 	}, nil
 }
@@ -631,51 +713,47 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 // callDbIndexVectorCreateNodeIndex creates a vector index on nodes - Neo4j db.index.vector.createNodeIndex()
 // Syntax: CALL db.index.vector.createNodeIndex(indexName, label, property, dimension, similarityFunction)
 func (e *StorageExecutor) callDbIndexVectorCreateNodeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Parse: CALL db.index.vector.createNodeIndex('indexName', 'Label', 'propertyKey', dimension, 'similarity')
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, "CREATENODEINDEX")
-	if idx < 0 {
+	if !strings.EqualFold(extractProcedureName(cypher), "db.index.vector.createNodeIndex") {
 		return nil, localizedError(localization.CypherProceduresVectorCreateNodeInvalidSyntax(false), nil)
 	}
-
-	remainder := cypher[idx:]
-	openParen := strings.Index(remainder, "(")
-	closeParen := strings.LastIndex(remainder, ")")
-	if openParen < 0 || closeParen < 0 {
+	if !strings.Contains(cypher, "(") || !strings.Contains(cypher, ")") {
 		return nil, localizedError(localization.CypherProceduresVectorCreateNodeInvalidSyntax(true), nil)
 	}
+	arguments, err := extractProcedureInvocationArguments(ctx, vectorCreateNodeProcedureSpec(), cypher)
+	if err != nil {
+		return nil, err
+	}
+	return e.callDbIndexVectorCreateNodeIndexArguments(ctx, arguments)
+}
 
-	args := remainder[openParen+1 : closeParen]
-	parts := strings.Split(args, ",")
-	if len(parts) < 4 {
+func (e *StorageExecutor) callDbIndexVectorCreateNodeIndexArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+	if len(arguments) < 4 || len(arguments) > 5 {
 		return nil, localizedError(localization.CypherProceduresVectorCreateNodeArgumentsRequired(), nil)
 	}
-
-	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
-	label := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
-	property := strings.Trim(strings.TrimSpace(parts[2]), "'\"")
-	dimensionStr := strings.TrimSpace(parts[3])
-	var dimension int
-	fmt.Sscanf(dimensionStr, "%d", &dimension)
-
-	similarity := "cosine" // Default
-	if len(parts) > 4 {
-		similarity = strings.Trim(strings.TrimSpace(parts[4]), "'\"")
+	indexName, validName := arguments[0].(string)
+	label, validLabel := arguments[1].(string)
+	property, validProperty := arguments[2].(string)
+	dimension := toInt64(arguments[3])
+	validDimension := isIntegerProcedureValue(arguments[3])
+	similarity := "cosine"
+	validSimilarity := true
+	if len(arguments) == 5 {
+		similarity, validSimilarity = arguments[4].(string)
 	}
-
-	// Create vector index using schema manager
-	schema := e.storage.GetSchema()
-	err := schema.AddVectorIndexForEntity(indexName, label, property, dimension, similarity, storage.ConstraintEntityNode)
+	if !validName || !validLabel || !validProperty || !validDimension || !validSimilarity {
+		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "vector index creation requires STRING names, an INTEGER dimension, and a STRING similarity function")
+	}
+	similarity = strings.ToLower(similarity)
+	if dimension <= 0 || (similarity != "cosine" && similarity != "euclidean" && similarity != "dot") {
+		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
+	}
+	schema := e.getStorage(ctx).GetSchema()
+	err := schema.AddVectorIndexForEntity(indexName, label, property, int(dimension), similarity, storage.ConstraintEntityNode)
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCreateVectorIndexFailed(err), err)
 	}
-
-	e.registerVectorSpace(indexName, label, property, dimension, similarity)
-
-	return &ExecuteResult{
-		Columns: []string{"name", "label", "property", "dimension", "similarityFunction"},
-		Rows:    [][]interface{}{{indexName, label, property, dimension, similarity}},
-	}, nil
+	e.registerVectorSpace(indexName, label, property, int(dimension), similarity)
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
 // callDbIndexVectorCreateRelationshipIndex creates a vector index on relationships - Neo4j db.index.vector.createRelationshipIndex()
@@ -1026,7 +1104,10 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 			}
 			e.notifyEdgeMutated(string(edge.ID))
 		}
-		return &ExecuteResult{Columns: []string{"relationship"}, Rows: [][]interface{}{{e.procedureRelationship(edge)}}}, nil
+		if entity, ok := arguments[0].(*storage.Edge); ok {
+			entity.Properties = edge.Properties
+		}
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 	node, err := store.GetNode(storage.NodeID(identifier))
 	if err != nil {
@@ -1039,7 +1120,10 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		}
 		e.notifyNodeMutated(string(node.ID))
 	}
-	return &ExecuteResult{Columns: []string{"node"}, Rows: [][]interface{}{{node}}}, nil
+	if entity, ok := arguments[0].(*storage.Node); ok {
+		entity.Properties = node.Properties
+	}
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
 // callTxSetMetadata sets transaction metadata - Neo4j tx.setMetaData()
@@ -1047,46 +1131,44 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 // This procedure is used to attach metadata to transactions for logging/debugging.
 // Syntax: CALL tx.setMetaData({key: value})
 //
-// Requires an active transaction (BEGIN ... COMMIT). If no transaction is active,
-// returns an error. Metadata is stored with the transaction and can be used for
-// logging, debugging, or audit trails.
+// Uses the active explicit transaction or the statement's implicit transaction.
+// Metadata is stored with the transaction for logging, debugging, or audit trails.
 func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Check if there's an active transaction
-	if e.txContext == nil || !e.txContext.active {
+	if !strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData") {
+		return nil, localizedError(localization.CypherProceduresMetadataInvalidSyntax(false), nil)
+	}
+	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "tx.setMetaData", MinArgs: 1, MaxArgs: 1}, cypher)
+	if err != nil {
+		return nil, err
+	}
+	return e.callTxSetMetadataArguments(ctx, arguments)
+}
+
+func (e *StorageExecutor) callTxSetMetadataArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+	var tx *storage.BadgerTransaction
+	if e.txContext != nil && e.txContext.active {
+		var supported bool
+		tx, supported = e.txContext.tx.(*storage.BadgerTransaction)
+		if !supported {
+			return nil, localizedError(localization.CypherProceduresMetadataTransactionUnsupported(), nil)
+		}
+	} else if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+		tx = wrapper.tx
+	}
+	if tx == nil {
 		return nil, localizedError(localization.CypherProceduresMetadataActiveTransactionRequired(), nil)
 	}
 
-	// Extract metadata object from Cypher: CALL tx.setMetaData({key: value})
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, "SETMETADATA")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresMetadataInvalidSyntax(false), nil)
-	}
-
-	// Find opening parenthesis
-	remainder := cypher[idx:]
-	openParen := strings.Index(remainder, "(")
-	closeParen := strings.LastIndex(remainder, ")")
-	if openParen < 0 || closeParen < 0 {
-		return nil, localizedError(localization.CypherProceduresMetadataInvalidSyntax(true), nil)
-	}
-
-	// Extract the metadata object string: {key: value}
-	argsStr := strings.TrimSpace(remainder[openParen+1 : closeParen])
-	if argsStr == "" {
+	if len(arguments) != 1 {
 		return nil, localizedError(localization.CypherProceduresMetadataObjectRequired(), nil)
 	}
 
-	// Parse the metadata object
-	metadata := e.parseProperties(ctx, argsStr)
-	if len(metadata) == 0 {
-		return nil, localizedError(localization.CypherProceduresMetadataEntryRequired(), nil)
+	metadata, valid := toStringAnyMap(arguments[0])
+	if expression, raw := arguments[0].(string); raw {
+		metadata, valid = toStringAnyMap(e.evaluateExpressionWithContext(ctx, expression, nil, nil))
 	}
-
-	// Get the transaction and set metadata
-	tx, ok := e.txContext.tx.(*storage.BadgerTransaction)
-	if !ok {
-		return nil, localizedError(localization.CypherProceduresMetadataTransactionUnsupported(), nil)
+	if !valid {
+		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "tx.setMetaData requires a MAP")
 	}
 
 	err := tx.SetMetadata(metadata)
@@ -1094,10 +1176,5 @@ func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) 
 		return nil, localizedError(localization.CypherProceduresSetMetadataFailed(err), err)
 	}
 
-	return &ExecuteResult{
-		Columns: []string{"status"},
-		Rows: [][]interface{}{
-			{"Transaction metadata set successfully"},
-		},
-	}, nil
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }

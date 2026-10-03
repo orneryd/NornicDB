@@ -664,6 +664,7 @@ type Server struct {
 	// nextHTTPConnectionID numbers HTTP requests for SHOW TRANSACTIONS
 	// (connectionId http-N).
 	nextHTTPConnectionID atomic.Uint64
+	connectionLister     func() []cypher.ConnectionListing
 
 	// log is the structured logger for operational events (Phase 2 D-01).
 	// Tagged .With("component", "server") at construction so every record

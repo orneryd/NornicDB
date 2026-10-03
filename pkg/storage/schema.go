@@ -74,7 +74,8 @@ func (c Constraint) EffectiveEntityType() ConstraintEntityType {
 
 // SchemaManager manages database schema including constraints and indexes.
 type SchemaManager struct {
-	mu sync.RWMutex
+	mu         sync.RWMutex
+	tokenOrder schemaTokenOrder
 
 	// Active commit-time locks for exact UNIQUE constraint values. Entries are
 	// reference-counted across holders and waiters, then removed when unused, so
