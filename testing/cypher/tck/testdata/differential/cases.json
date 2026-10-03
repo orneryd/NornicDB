@@ -2097,5 +2097,31 @@
     "name": "issue531 fulltext relationship type order only",
     "setup": ["CREATE FULLTEXT INDEX fdup FOR ()-[r:R1|R2]-() ON EACH [r.title, r.body]"],
     "query": "CREATE FULLTEXT INDEX other FOR ()-[r:R2|R1]-() ON EACH [r.title, r.body]"
+  },
+  {
+    "name": "GH838 type predicates on scalars",
+    "query": "RETURN 1 IS :: INTEGER AS a, 'a' IS :: STRING NOT NULL AS b, null IS :: INTEGER AS c, null IS :: INTEGER NOT NULL AS d, 1 IS NOT :: STRING AS e, 1.5 IS :: INTEGER | FLOAT AS f, 1 IS :: FLOAT AS g, 1 :: INTEGER AS h, 1 IS TYPED INTEGER AS i, 1 IS NOT TYPED INTEGER AS j",
+    "no_effects": true
+  },
+  {
+    "name": "GH838 type predicate synonyms",
+    "query": "RETURN 1 IS :: SIGNED INTEGER AS a, 'a' IS :: VARCHAR AS b, true IS :: BOOL AS c, localtime() IS :: TIME WITHOUT TIME ZONE AS d, time() IS :: TIME WITH TIME ZONE AS e, localdatetime() IS :: TIMESTAMP WITHOUT TIME ZONE AS f, datetime() IS :: TIMESTAMP WITH TIME ZONE AS g, {a: 1} IS :: ANY MAP AS h, 1 IS :: ANY VALUE AS i",
+    "no_effects": true
+  },
+  {
+    "name": "GH838 type predicates on lists",
+    "query": "RETURN [1, null] IS :: LIST<INTEGER> AS a, [1, null] IS :: LIST<INTEGER NOT NULL> AS b, [] IS :: LIST<NOTHING> AS c, [1, 'a'] IS :: LIST<INTEGER | STRING> AS d, [1, 'a'] IS :: LIST<INTEGER> | LIST<STRING> AS e, [1, 2] IS :: ARRAY<INT> AS f, 1 IS :: ANY<INTEGER | FLOAT> AS g",
+    "no_effects": true
+  },
+  {
+    "name": "GH838 NULL NOTHING ANY and PROPERTY VALUE",
+    "query": "RETURN null IS :: NULL AS a, 1 IS :: NULL AS b, null IS :: NOTHING AS c, null IS :: ANY NOT NULL AS d, 1 IS :: PROPERTY VALUE AS e, [1, 2] IS :: PROPERTY VALUE AS f, {a: 1} IS :: PROPERTY VALUE AS g, [1, 'a'] IS :: PROPERTY VALUE AS h, null IS NOT :: STRING NOT NULL AS i",
+    "no_effects": true
+  },
+  {
+    "name": "GH838 type predicate filters rows",
+    "setup": ["UNWIND [1, 'a', 2.5, null] AS x CREATE (:T838 {v: x, i: 1})"],
+    "query": "MATCH (n:T838) RETURN count(CASE WHEN n.v IS :: INTEGER | FLOAT THEN 1 END) AS numeric, count(CASE WHEN n.v IS NOT :: STRING THEN 1 END) AS notString, count(CASE WHEN n.v IS :: STRING THEN 1 END) AS stringOrNull",
+    "no_effects": true
   }
 ]

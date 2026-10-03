@@ -253,3 +253,56 @@ func evaluateTypePredicate(value interface{}, negated bool, spec cypherTypeSpec)
 	}
 	return matched
 }
+
+// typeGrammarWords are the words a type after :: or TYPED can be made of.
+var typeGrammarWords = map[string]bool{
+	"BOOL": true, "BOOLEAN": true, "STRING": true, "VARCHAR": true, "INT": true, "INTEGER": true, "SIGNED": true,
+	"FLOAT": true, "DATE": true, "LOCAL": true, "ZONED": true, "TIME": true, "DATETIME": true, "TIMESTAMP": true,
+	"WITH": true, "WITHOUT": true, "ZONE": true, "DURATION": true, "POINT": true, "NODE": true, "VERTEX": true,
+	"RELATIONSHIP": true, "EDGE": true, "MAP": true, "PATH": true, "ANY": true, "VALUE": true, "NOTHING": true,
+	"NULL": true, "NOT": true, "PROPERTY": true, "LIST": true, "ARRAY": true,
+}
+
+// maskTypePredicateTypes blanks the type after each `::` and `TYPED` in an
+// expression, so scanners that look for variables (expressionFreeVariables)
+// do not read type names (INTEGER, LIST<STRING>) as variables (#838).
+func maskTypePredicateTypes(expression string) string {
+	if !strings.Contains(expression, "::") && !containsFold(expression, "TYPED") {
+		return expression
+	}
+	masked := []byte(expression)
+	for index := 0; index < len(masked); index++ {
+		start, position := -1, 0
+		switch {
+		case masked[index] == ':' && index+1 < len(masked) && masked[index+1] == ':':
+			start, position = index, index+2
+		case index+5 <= len(masked) && strings.EqualFold(string(masked[index:index+5]), "TYPED") &&
+			(index == 0 || !isIdentByte(masked[index-1])) && (index+5 == len(masked) || !isIdentByte(masked[index+5])):
+			start, position = index, index+5
+		}
+		if start < 0 {
+			continue
+		}
+		for position < len(masked) {
+			next := skipSpaces(expression, position)
+			if next >= len(masked) {
+				position = next
+				break
+			}
+			if character := masked[next]; character == '<' || character == '>' || character == '|' {
+				position = next + 1
+				continue
+			}
+			word, end, ok := scanIdentifierToken(expression, next)
+			if !ok || !typeGrammarWords[upperASCII(word)] {
+				break
+			}
+			position = end
+		}
+		for blank := start; blank < position; blank++ {
+			masked[blank] = ' '
+		}
+		index = position - 1
+	}
+	return string(masked)
+}
