@@ -150,6 +150,11 @@ SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and v
 - ✅ List functions: size, head, tail, last, range, etc.
 - ✅ Type functions: toInteger, toFloat, toString, toBoolean
 - ✅ Spatial functions: point, distance
+- ✅ POINT values (cartesian, cartesian-3d, wgs-84, wgs-84-3d): stored as
+  properties (also lists of one CRS), returned over Bolt as Point2D / Point3D
+  and over HTTP in Neo4j's GeoJSON-like form; fields `x`, `y`, `z`,
+  `latitude`, `longitude`, `height`, `crs`, `srid`; `point.distance`,
+  `point.withinBBox`, equality and ORDER BY as in Neo4j 5.26
 - ✅ Date/time functions: date, datetime, timestamp
 
 ### Bolt Handshake Compatibility for `cypher-shell`
