@@ -32,7 +32,7 @@ func validatePropertyValueForStorage(value interface{}) error {
 		float64,
 		time.Time:
 		return nil
-	case TemporalPropertyValue:
+	case TypedPropertyValue:
 		return nil
 	case []interface{}:
 		for i, item := range typedValue {
@@ -55,10 +55,13 @@ func validatePropertyValueForStorage(value interface{}) error {
 	}
 }
 
-// TemporalPropertyValue marks a typed temporal scalar that supplies its own
-// durable serialization while remaining opaque to the storage layer.
-type TemporalPropertyValue interface {
-	TemporalPropertyKind() string
+// TypedPropertyValue marks a typed Cypher scalar (temporal values, points)
+// that supplies its own durable serialization while remaining opaque to the
+// storage layer. PropertyValueKind names the type for property type
+// constraints: date, local-time, time, local-date-time, zoned-date-time,
+// duration, point.
+type TypedPropertyValue interface {
+	PropertyValueKind() string
 }
 
 func normalizePropertyMapShapes(properties map[string]interface{}) {

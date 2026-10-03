@@ -645,12 +645,31 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// point({x: val, y: val}) or point({latitude: val, longitude: val})
 	if matchFuncStartAndSuffix(expr, "point") {
 		inner := extractFuncArgs(expr, "point")
-		// Return the point as a map
-		if strings.HasPrefix(inner, "{") && strings.HasSuffix(inner, "}") {
-			props := e.parseProperties(ctx, inner)
-			return props
+		var fields map[string]interface{}
+		switch value := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(type) {
+		case map[string]interface{}:
+			fields = value
+		case *storage.Node:
+			if value != nil {
+				fields = value.Properties
+			}
+		case *storage.Edge:
+			if value != nil {
+				fields = value.Properties
+			}
 		}
-		return nil
+		if fields == nil {
+			return nil
+		}
+		point, ok, err := newPointFromMap(fields)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
+		}
+		if !ok {
+			return nil
+		}
+		return point
 	}
 
 	// distance(p1, p2) - Euclidean distance between two points
@@ -660,9 +679,17 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		if len(args) >= 2 {
 			p1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			p2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			if left, ok := pointValue(p1); ok {
+				if right, ok := pointValue(p2); ok {
+					if distance, ok := pointDistance(left, right); ok {
+						return distance
+					}
+					return nil
+				}
+			}
 
-			m1, ok1 := p1.(map[string]interface{})
-			m2, ok2 := p2.(map[string]interface{})
+			m1, ok1 := spatialMap(p1)
+			m2, ok2 := spatialMap(p2)
 
 			if ok1 && ok2 {
 				// Try x/y coordinates
@@ -693,10 +720,20 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		point := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		lowerLeft := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		upperRight := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		if target, ok := pointValue(point); ok {
+			low, lowOK := pointValue(lowerLeft)
+			high, highOK := pointValue(upperRight)
+			if lowOK && highOK {
+				if within, ok := pointWithinBBox(target, low, high); ok {
+					return within
+				}
+				return nil
+			}
+		}
 
-		pm, ok1 := point.(map[string]interface{})
-		llm, ok2 := lowerLeft.(map[string]interface{})
-		urm, ok3 := upperRight.(map[string]interface{})
+		pm, ok1 := spatialMap(point)
+		llm, ok2 := spatialMap(lowerLeft)
+		urm, ok3 := spatialMap(upperRight)
 		if !ok1 || !ok2 || !ok3 {
 			return false
 		}
@@ -726,7 +763,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	if matchFuncStartAndSuffix(expr, "point.x") {
 		inner := extractFuncArgs(expr, "point.x")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if m, ok := val.(map[string]interface{}); ok {
+		if m, ok := spatialMap(val); ok {
 			if x, ok := m["x"]; ok {
 				if v, ok := toFloat64(x); ok {
 					return v
@@ -740,7 +777,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	if matchFuncStartAndSuffix(expr, "point.y") {
 		inner := extractFuncArgs(expr, "point.y")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if m, ok := val.(map[string]interface{}); ok {
+		if m, ok := spatialMap(val); ok {
 			if y, ok := m["y"]; ok {
 				if v, ok := toFloat64(y); ok {
 					return v
@@ -754,7 +791,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	if matchFuncStartAndSuffix(expr, "point.z") {
 		inner := extractFuncArgs(expr, "point.z")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if m, ok := val.(map[string]interface{}); ok {
+		if m, ok := spatialMap(val); ok {
 			if z, ok := m["z"]; ok {
 				if v, ok := toFloat64(z); ok {
 					return v
@@ -768,7 +805,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	if matchFuncStartAndSuffix(expr, "point.latitude") {
 		inner := extractFuncArgs(expr, "point.latitude")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if m, ok := val.(map[string]interface{}); ok {
+		if m, ok := spatialMap(val); ok {
 			if lat, ok := m["latitude"]; ok {
 				if v, ok := toFloat64(lat); ok {
 					return v
@@ -782,7 +819,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	if matchFuncStartAndSuffix(expr, "point.longitude") {
 		inner := extractFuncArgs(expr, "point.longitude")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if m, ok := val.(map[string]interface{}); ok {
+		if m, ok := spatialMap(val); ok {
 			if lon, ok := m["longitude"]; ok {
 				if v, ok := toFloat64(lon); ok {
 					return v
@@ -796,7 +833,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	if matchFuncStartAndSuffix(expr, "point.srid") {
 		inner := extractFuncArgs(expr, "point.srid")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if m, ok := val.(map[string]interface{}); ok {
+		if m, ok := spatialMap(val); ok {
 			if srid, ok := m["srid"]; ok {
 				return srid
 			}
@@ -816,9 +853,17 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		if len(args) >= 2 {
 			p1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			p2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			if left, ok := pointValue(p1); ok {
+				if right, ok := pointValue(p2); ok {
+					if distance, ok := pointDistance(left, right); ok {
+						return distance
+					}
+					return nil
+				}
+			}
 
-			m1, ok1 := p1.(map[string]interface{})
-			m2, ok2 := p2.(map[string]interface{})
+			m1, ok1 := spatialMap(p1)
+			m2, ok2 := spatialMap(p2)
 
 			if ok1 && ok2 {
 				// Try x/y coordinates
@@ -849,10 +894,20 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		point := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		lowerLeft := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		upperRight := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		if target, ok := pointValue(point); ok {
+			low, lowOK := pointValue(lowerLeft)
+			high, highOK := pointValue(upperRight)
+			if lowOK && highOK {
+				if within, ok := pointWithinBBox(target, low, high); ok {
+					return within
+				}
+				return nil
+			}
+		}
 
-		pm, ok1 := point.(map[string]interface{})
-		llm, ok2 := lowerLeft.(map[string]interface{})
-		urm, ok3 := upperRight.(map[string]interface{})
+		pm, ok1 := spatialMap(point)
+		llm, ok2 := spatialMap(lowerLeft)
+		urm, ok3 := spatialMap(upperRight)
 		if !ok1 || !ok2 || !ok3 {
 			return false
 		}
@@ -887,8 +942,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		center := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		maxDist := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 
-		pm, ok1 := point.(map[string]interface{})
-		cm, ok2 := center.(map[string]interface{})
+		pm, ok1 := spatialMap(point)
+		cm, ok2 := spatialMap(center)
 		dist, ok3 := toFloat64(maxDist)
 		if !ok1 || !ok2 || !ok3 {
 			return false
@@ -916,7 +971,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	if matchFuncStartAndSuffix(expr, "point.height") {
 		inner := extractFuncArgs(expr, "point.height")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if m, ok := val.(map[string]interface{}); ok {
+		if m, ok := spatialMap(val); ok {
 			// Try z first (3D Cartesian)
 			if z, ok := m["z"]; ok {
 				if v, ok := toFloat64(z); ok {
@@ -943,7 +998,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	if matchFuncStartAndSuffix(expr, "point.crs") {
 		inner := extractFuncArgs(expr, "point.crs")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if m, ok := val.(map[string]interface{}); ok {
+		if m, ok := spatialMap(val); ok {
 			// Check if CRS is explicitly set
 			if crs, ok := m["crs"]; ok {
 				return crs
@@ -1058,7 +1113,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		pointVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		polygonVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 
-		pm, ok1 := pointVal.(map[string]interface{})
+		pm, ok1 := spatialMap(pointVal)
 		polygonMap, ok2 := polygonVal.(map[string]interface{})
 		if !ok1 || !ok2 {
 			return false
@@ -1097,7 +1152,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		pointVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 
 		polygonMap, ok1 := polygonVal.(map[string]interface{})
-		pm, ok2 := pointVal.(map[string]interface{})
+		pm, ok2 := spatialMap(pointVal)
 		if !ok1 || !ok2 {
 			return false
 		}

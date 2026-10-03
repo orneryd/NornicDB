@@ -507,6 +507,18 @@ func validateSetPropertyValue(value interface{}) error {
 			"Neo4j only supports a subset of Cypher types for storage as singleton or array properties.",
 		)
 	}
+	if kinds == 1<<arrayElemPoint {
+		first, _ := pointValue(items[0])
+		for _, item := range items[1:] {
+			if point, _ := pointValue(item); point.SRID != first.SRID {
+				return newSemanticError(
+					"Neo.ClientError.Statement.TypeError",
+					"InvalidPropertyType",
+					"Collections containing point values with different CRS can not be stored in properties.",
+				)
+			}
+		}
+	}
 	if kinds&(1<<arrayElemFloat) != 0 {
 		for i, item := range items {
 			if f, ok := toFloat64(item); ok {
@@ -533,6 +545,7 @@ const (
 	arrayElemDateTime
 	arrayElemLocalDateTime
 	arrayElemDuration
+	arrayElemPoint
 	arrayElemOther
 )
 
@@ -558,6 +571,8 @@ func propertyArrayElementOf(item interface{}) propertyArrayElement {
 		return arrayElemLocalDateTime
 	case CypherDuration, *CypherDuration:
 		return arrayElemDuration
+	case CypherPoint, *CypherPoint:
+		return arrayElemPoint
 	default:
 		return arrayElemOther
 	}

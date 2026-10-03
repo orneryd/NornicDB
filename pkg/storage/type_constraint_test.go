@@ -8,7 +8,7 @@ import (
 
 type typedTemporalProperty string
 
-func (value typedTemporalProperty) TemporalPropertyKind() string { return string(value) }
+func (value typedTemporalProperty) PropertyValueKind() string { return string(value) }
 
 // TestValidatePropertyType tests property type validation.
 func TestValidatePropertyType(t *testing.T) {

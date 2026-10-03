@@ -3689,6 +3689,9 @@ func compareValuesForSort(a, b interface{}) int {
 	if comparison, temporal := compareTemporalOrdering(a, b); temporal {
 		return comparison
 	}
+	if comparison, points := comparePointOrdering(a, b); points {
+		return comparison
+	}
 
 	aRank := cypherSortRank(a)
 	bRank := cypherSortRank(b)
@@ -3758,7 +3761,17 @@ func compareValuesForSort(a, b interface{}) int {
 // cypherSortRank implements the openCypher comparability order used by ORDER
 // BY: maps, nodes, relationships, lists, paths, strings, booleans, numbers,
 // NaN, and null. Null is handled before this function.
+// cypherSortRank is a value's position in Neo4j's orderability across types:
+// map < node < relationship < list < path < point < zoned datetime < local
+// datetime < date < zoned time < local time < duration < string < boolean <
+// number < NaN (#817, #837).
 func cypherSortRank(value interface{}) int {
+	if _, ok := pointValue(value); ok {
+		return 5
+	}
+	if kind, _, ok := temporalOrderParts(value); ok {
+		return temporalSortRanks[kind]
+	}
 	switch value.(type) {
 	case *storage.Node:
 		return 1
@@ -3766,10 +3779,12 @@ func cypherSortRank(value interface{}) int {
 		return 2
 	case PathResult, *PathResult:
 		return 4
+	case CypherDuration, *CypherDuration:
+		return 11
 	case string:
-		return 5
+		return 12
 	case bool:
-		return 6
+		return 13
 	}
 	if object, isMap := toStringAnyMap(value); isMap {
 		if _, isPath := object["_pathResult"]; isPath {
@@ -3778,9 +3793,9 @@ func cypherSortRank(value interface{}) int {
 	}
 	if number, ok := strictNumericValue(value); ok {
 		if math.IsNaN(number) {
-			return 8
+			return 15
 		}
-		return 7
+		return 14
 	}
 	typeOf := reflect.TypeOf(value)
 	if typeOf != nil {
@@ -3791,8 +3806,11 @@ func cypherSortRank(value interface{}) int {
 			return 3
 		}
 	}
-	return 10
+	return 20
 }
+
+// temporalSortRanks are the temporal kinds' positions in cypherSortRank.
+var temporalSortRanks = map[string]int{"datetime": 6, "localdatetime": 7, "date": 8, "time": 9, "localtime": 10}
 
 func cypherSortList(value interface{}) ([]interface{}, bool) {
 	typeOf := reflect.TypeOf(value)

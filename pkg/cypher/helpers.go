@@ -176,9 +176,10 @@ func getLatLon(m map[string]interface{}) (float64, float64, bool) {
 	return lat, lon, okLat && okLon
 }
 
-// haversineDistance calculates the distance between two lat/lon points in meters
+// haversineDistance calculates the distance between two lat/lon points in
+// meters, on the Earth radius Neo4j's point.distance uses.
 func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadius = 6371000 // meters
+	const earthRadius = earthRadiusMeters
 
 	lat1Rad := lat1 * math.Pi / 180
 	lat2Rad := lat2 * math.Pi / 180
