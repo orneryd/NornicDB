@@ -128,3 +128,28 @@ func TestOrderByAcrossTypesMatchesNeo4j(t *testing.T) {
 	}
 	require.Equal(t, []string{"MAP", "LIST", "POINT", "ZONED DATETIME", "DATE", "LOCAL TIME", "DURATION", "STRING", "BOOLEAN", "INTEGER"}, order)
 }
+
+// A POINT index can be created and points stored and found under it (#817).
+func TestPointPropertiesWithPointIndex(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE POINT INDEX pi FOR (n:P) ON (n.loc)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:P {loc: point({x: 1, y: 1})}), (:P {loc: point({x: 2, y: 2})}), (:P {loc: point({latitude: 1, longitude: 1})})", nil)
+	require.NoError(t, err)
+	for query, want := range map[string]int64{
+		"MATCH (n:P) WHERE n.loc = point({x: 1, y: 1}) RETURN count(n)":                                       1,
+		"MATCH (n:P) WHERE point.distance(n.loc, point({x: 0, y: 0})) < 2 RETURN count(n)":                    1,
+		"MATCH (n:P) WHERE point.withinBBox(n.loc, point({x: 0, y: 0}), point({x: 3, y: 3})) RETURN count(n)": 2,
+		"MATCH (n:P {loc: point({latitude: 1, longitude: 1})}) RETURN count(n)":                               1,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
+	_, err = exec.Execute(ctx, "MATCH (n:P) WHERE n.loc = point({x: 1, y: 1}) SET n.loc = point({x: 5, y: 5})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (n:P) WHERE n.loc = point({x: 5, y: 5}) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+}
