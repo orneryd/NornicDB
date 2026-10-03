@@ -35,10 +35,10 @@ type CypherDateTime struct {
 }
 
 func (v CypherDate) String() string          { return v.Time.Format("2006-01-02") }
-func (v CypherLocalTime) String() string     { return formatTemporalClock(v.Time, false, "") }
-func (v CypherTime) String() string          { return formatTemporalClock(v.Time, true, "") }
-func (v CypherLocalDateTime) String() string { return formatTemporalDateTime(v.Time, false, "") }
-func (v CypherDateTime) String() string      { return formatTemporalDateTime(v.Time, true, v.ZoneID) }
+func (v CypherLocalTime) String() string     { return formatTemporalClock(v.Time, false, "", false) }
+func (v CypherTime) String() string          { return formatTemporalClock(v.Time, true, "", false) }
+func (v CypherLocalDateTime) String() string { return formatTemporalDateTime(v.Time, false, "", false) }
+func (v CypherDateTime) String() string      { return formatTemporalDateTime(v.Time, true, v.ZoneID, false) }
 
 func (CypherDate) TemporalPropertyKind() string          { return "date" }
 func (CypherLocalTime) TemporalPropertyKind() string     { return "local-time" }
@@ -764,9 +764,13 @@ func buildDurationFromFields(fields map[string]interface{}) *CypherDuration {
 	}
 }
 
-func formatTemporalClock(value time.Time, zoned bool, zoneID string) string {
+// formatTemporalClock writes a clock time with its offset and zone. Neo4j
+// writes seconds two ways: its value serialization (HTTP results, the
+// String methods) leaves out zero seconds (12:34), while toString() always
+// writes them (12:34:00, #818); alwaysSeconds selects toString()'s form.
+func formatTemporalClock(value time.Time, zoned bool, zoneID string, alwaysSeconds bool) string {
 	format := "15:04"
-	if value.Second() != 0 || value.Nanosecond() != 0 {
+	if alwaysSeconds || value.Second() != 0 || value.Nanosecond() != 0 {
 		format = "15:04:05"
 		if value.Nanosecond() != 0 {
 			format += ".999999999"
@@ -783,8 +787,10 @@ func formatTemporalClock(value time.Time, zoned bool, zoneID string) string {
 	return result
 }
 
-func formatTemporalDateTime(value time.Time, zoned bool, zoneID string) string {
-	result := value.Format("2006-01-02T") + formatTemporalClock(value, zoned, "")
+// formatTemporalDateTime writes a date-time; alwaysSeconds as in
+// formatTemporalClock.
+func formatTemporalDateTime(value time.Time, zoned bool, zoneID string, alwaysSeconds bool) string {
+	result := value.Format("2006-01-02T") + formatTemporalClock(value, zoned, "", alwaysSeconds)
 	if zoneID != "" {
 		result += "[" + zoneID + "]"
 	}

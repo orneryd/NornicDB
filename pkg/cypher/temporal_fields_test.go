@@ -81,7 +81,7 @@ func TestTemporalMapFieldsMatchNeo4j(t *testing.T) {
 		"RETURN toString(date({date: date('2020-05-31'), quarter: 1})) AS v":                                 "2020-02-29",
 		"RETURN toString(localtime({time: localtime('10:00'), second: 5})) AS v":                             "10:00:05",
 		"RETURN toString(localtime({hour: 1, minute: 0, second: 0, millisecond: 5, microsecond: 999})) AS v": "01:00:00.005999",
-		"RETURN toString(localdatetime({year: 2020, ordinalDay: 5, hour: 1})) AS v":                          "2020-01-05T01:00",
+		"RETURN toString(localdatetime({year: 2020, ordinalDay: 5, hour: 1})) AS v":                          "2020-01-05T01:00:00",
 	}
 	for query, want := range values {
 		result, err := exec.Execute(ctx, query, nil)

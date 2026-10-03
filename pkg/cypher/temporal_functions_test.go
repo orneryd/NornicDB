@@ -103,7 +103,7 @@ func TestTemporalMapConstructorsUseSharedComponentSemantics(t *testing.T) {
 			if strings.Contains(value.Location().String(), "/") {
 				zoneID = value.Location().String()
 			}
-			got = formatTemporalDateTime(value, true, zoneID)
+			got = formatTemporalDateTime(value, true, zoneID, false)
 		}
 		if got != test.expected {
 			t.Fatalf("%s = %q, want %q", test.expression, got, test.expected)
@@ -119,7 +119,7 @@ func TestNamedTimezoneUsesNeo4jHistoricalRulesIndependentlyOfHostTZData(t *testi
 	if got, want := zoneID, "Europe/Stockholm"; got != want {
 		t.Fatalf("zone ID = %q, want %q", got, want)
 	}
-	if got, want := formatTemporalDateTime(value, true, zoneID), "1818-07-21T21:40:32.142+00:53:28[Europe/Stockholm]"; got != want {
+	if got, want := formatTemporalDateTime(value, true, zoneID, false), "1818-07-21T21:40:32.142+00:53:28[Europe/Stockholm]"; got != want {
 		t.Fatalf("historical datetime = %q, want %q", got, want)
 	}
 	if _, offset := value.Zone(); offset != 53*60+28 {
@@ -410,7 +410,9 @@ func TestTemporalTruncationUsesOneTypedImplementation(t *testing.T) {
 			if !ok {
 				t.Fatalf("expression %q was not evaluated", test.expression)
 			}
-			if text := formatCypherValueString(got); text != test.want {
+			// The value's own text, as Neo4j shows the value (toString() writes
+			// zero seconds, the value's text leaves them out).
+			if text := fmt.Sprint(got); text != test.want {
 				t.Fatalf("expression %q = %q, want %q (%T)", test.expression, text, test.want, got)
 			}
 		})
