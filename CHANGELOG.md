@@ -16,6 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Converge decay bundle CREATE/ALTER option decoding: canonical case-insensitive
+  keys, typed numeric zero/one, boolean forms, scope updates, and atomic rejection
+  of wrong-typed values. Share validated immutable decay option application with
+  the storage lifecycle (#531).
+
+- Route compatibility vector/fulltext schema procedures through the same
+  isolated transaction mutation contract as DDL. Keep vector runtime changes
+  commit-local, preserve relationship fulltext scope, and expose staged native
+  definitions through knowledge-policy info/profile/policy procedures. Legacy
+  vector creation retains the reference ProcedureCallFailed invocation class
+  when called after a data write (#530, #531).
+
+- Stage ordinary index and constraint DDL in explicit transactions. Commit
+  publishes successful definitions and backfills, rollback discards them, and
+  mixed schema/data writes fail with ForbiddenDueToTransactionType. Preserve
+  existing index caches and reject stale schema snapshots after concurrent
+  same-database data writes (#531).
+
 - Compile default knowledge-policy bootstrap declarations with canonical APPLY,
   ON ACCESS, WHEN APPLY PROFILE, and prefix Kalman syntax, retaining their actual
   access mutations and promotion clauses instead of silently ignoring them (#531).

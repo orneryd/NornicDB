@@ -25,6 +25,103 @@ type txLifecycleControllerStub struct {
 	registeredInfo []SnapshotReaderInfo
 }
 
+func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
+	engine := NewMemoryEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	committed := engine.GetSchemaForNamespace("schema_lifetime")
+	require.NoError(t, committed.AddPropertyIndex("retained", "Account", []string{"name"}))
+	require.NoError(t, committed.BackfillPropertyIndex("Account", "name", map[NodeID]interface{}{"schema_lifetime:existing": "existing"}))
+	require.NoError(t, committed.AddUniqueConstraint("retained_unique", "Account", "retainedUID"))
+	require.NoError(t, committed.AddCompositeIndex("retained_composite", "Account", []string{"name", "retainedUID"}))
+	require.NoError(t, committed.AddRangeIndex("retained_range", "Account", "age"))
+	retainedProperty, _ := committed.GetPropertyIndex("Account", "name")
+	retainedUnique := committed.uniqueConstraints["Account:retainedUID"]
+	retainedComposite := committed.compositeIndexes["retained_composite"]
+	retainedRange, _ := committed.GetRangeIndex("retained_range")
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.ErrorContains(t, tx.StageSchemaChanges(), "require a transaction schema view")
+	require.NoError(t, tx.SetNamespace("schema_lifetime"))
+	view, err := tx.Schema()
+	require.NoError(t, err)
+	require.NoError(t, tx.StageSchemaChanges())
+	require.Nil(t, tx.schemaRuntime)
+	require.NoError(t, view.AddPropertyIndex("created", "Account", []string{"id"}))
+	require.NoError(t, view.BackfillPropertyIndex("Account", "id", map[NodeID]interface{}{"schema_lifetime:created": int64(1)}))
+	require.NoError(t, view.AddUniqueConstraint("created_unique", "Account", "uid"))
+	view.RegisterUniqueValue("Account", "uid", "created", "schema_lifetime:created")
+	view.uniqueConstraints["Account:uid"].valuesCacheComplete = true
+	require.NoError(t, view.AddCompositeIndex("created_composite", "Account", []string{"id", "uid"}))
+	view.compositeIndexes["created_composite"].fullIndex["created"] = []NodeID{"schema_lifetime:created"}
+	view.compositeIndexes["created_composite"].prefixIndex["created"] = []NodeID{"schema_lifetime:created"}
+	require.NoError(t, view.AddRangeIndex("created_range", "Account", "score"))
+	require.NoError(t, view.RangeIndexInsert("created_range", "schema_lifetime:created", float64(1)))
+	require.NoError(t, tx.StageSchemaChanges())
+	require.NoError(t, view.BackfillPropertyIndex("Account", "id", map[NodeID]interface{}{"schema_lifetime:later": int64(2)}))
+	require.NoError(t, tx.Commit())
+	require.Equal(t, []NodeID{"schema_lifetime:created"}, committed.PropertyIndexLookup("Account", "id", int64(1)))
+	require.Empty(t, committed.PropertyIndexLookup("Account", "id", int64(2)))
+	require.Equal(t, []NodeID{"schema_lifetime:created"}, committed.compositeIndexes["created_composite"].fullIndex["created"])
+	require.Equal(t, []NodeID{"schema_lifetime:created"}, committed.compositeIndexes["created_composite"].prefixIndex["created"])
+	require.Equal(t, float64(1), committed.rangeIndexes["created_range"].nodeValue["schema_lifetime:created"])
+	_, found, exists, complete := committed.LookupUniqueConstraintValueForPlanning("Account", "uid", "created")
+	require.True(t, found)
+	require.True(t, exists)
+	require.True(t, complete)
+	actualProperty, _ := committed.GetPropertyIndex("Account", "name")
+	require.Same(t, retainedProperty, actualProperty)
+	require.Same(t, retainedUnique, committed.uniqueConstraints["Account:retainedUID"])
+	require.Same(t, retainedComposite, committed.compositeIndexes["retained_composite"])
+	require.Same(t, retainedRange, committed.rangeIndexes["retained_range"])
+	require.Error(t, tx.StageSchemaChanges())
+	_, err = tx.Schema()
+	require.Error(t, err)
+}
+
+func TestSchemaTransactionRejectsAllEntityMutations(t *testing.T) {
+	engine := NewMemoryEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("schema_mutations"))
+	_, err = tx.Schema()
+	require.NoError(t, err)
+	_, err = tx.CreateNode(&Node{ID: "schema_mutations:node"})
+	require.ErrorContains(t, err, "ForbiddenDueToTransactionType")
+	for _, mutation := range []func() error{
+		func() error { return tx.UpdateNode(&Node{ID: "schema_mutations:node"}) },
+		func() error { return tx.DeleteNode("schema_mutations:node") },
+		func() error { return tx.CreateEdge(&Edge{ID: "schema_mutations:edge"}) },
+		func() error { return tx.BulkCreateEdges([]*Edge{{ID: "schema_mutations:edge"}}) },
+		func() error { return tx.UpdateEdge(&Edge{ID: "schema_mutations:edge"}) },
+		func() error { return tx.DeleteEdge("schema_mutations:edge") },
+	} {
+		require.ErrorContains(t, mutation(), "ForbiddenDueToTransactionType")
+	}
+	require.NoError(t, tx.Rollback())
+	_, err = tx.CreateNode(&Node{ID: "schema_mutations:node"})
+	require.Error(t, err)
+	_, err = tx.Schema()
+	require.Error(t, err)
+	tx, err = engine.BeginTransaction()
+	require.NoError(t, err)
+	_, err = tx.CreateNode(&Node{ID: "schema_mutations:node"})
+	require.NoError(t, err)
+	_, err = tx.Schema()
+	require.ErrorContains(t, err, "ForbiddenDueToTransactionType")
+	_, err = tx.KnowledgePolicySchema()
+	require.NoError(t, err)
+	require.ErrorContains(t, tx.StageSchemaChanges(), "ForbiddenDueToTransactionType")
+	require.NoError(t, tx.Rollback())
+}
+
+func TestSchemaWriteBarrierRejectsClosedEngine(t *testing.T) {
+	engine := NewMemoryEngine()
+	require.NoError(t, engine.Close())
+	_, err := engine.beginSchemaWrite()
+	require.ErrorIs(t, err, ErrStorageClosed)
+}
+
 func (s *txLifecycleControllerStub) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
 	s.mu.Lock()
 	s.registerCount++

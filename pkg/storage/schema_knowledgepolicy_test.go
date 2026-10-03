@@ -372,6 +372,39 @@ func TestDropDecayProfile_IfExists(t *testing.T) {
 }
 
 // TestAlterDecayProfile tests that AlterDecayProfile updates halfLifeSeconds.
+func TestApplyDecayProfileOptions(t *testing.T) {
+	original := validBundle("immutable_decay")
+	updated, err := ApplyDecayProfileOptions(original, map[string]interface{}{
+		"halfLifeSeconds": int64(1), "visibilityThreshold": float64(1), "scoreFloor": float64(0),
+		"function": "none", "scope": "NODE", "decayEnabled": false, "enabled": false,
+		"scoreFrom": "CREATED", "scoreFromProperty": "created_at",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), updated.HalfLifeSeconds)
+	require.Equal(t, float64(1), updated.VisibilityThreshold)
+	require.Equal(t, float64(0), updated.ScoreFloor)
+	require.Equal(t, knowledgepolicy.DecayFunction("none"), updated.Function)
+	require.False(t, updated.DecayEnabled)
+	require.False(t, updated.Enabled)
+	require.Equal(t, "created_at", updated.ScoreFromProperty)
+	require.Equal(t, validBundle("immutable_decay"), original)
+	for _, invalid := range []map[string]interface{}{
+		{"halfLifeSeconds": true}, {"visibilityThreshold": false}, {"scoreFloor": true},
+		{"function": 1}, {"function": "bogus"}, {"scope": false}, {"scope": "bogus"},
+		{"decayEnabled": 1}, {"enabled": "false"}, {"scoreFrom": true}, {"scoreFrom": "bogus"},
+		{"scoreFromProperty": 1}, {"unknown": 1}, {"visibilityThreshold": float64(2)},
+	} {
+		returned, err := ApplyDecayProfileOptions(original, invalid)
+		require.Error(t, err, invalid)
+		require.Equal(t, original, returned, invalid)
+		schema := NewSchemaManager()
+		require.NoError(t, schema.CreateDecayProfileBundle(original))
+		require.Error(t, schema.AlterDecayProfile(original.Name, invalid))
+		bundles, _ := schema.ShowDecayProfiles()
+		require.Equal(t, []knowledgepolicy.DecayProfileBundle{original}, bundles, invalid)
+	}
+}
+
 func TestAlterDecayProfile(t *testing.T) {
 	sm := NewSchemaManager()
 

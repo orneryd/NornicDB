@@ -315,27 +315,28 @@ func TestManagedBadger_LoadRejectsInvalidBackup(t *testing.T) {
 	require.NoError(t, err, "a failed load releases the commit gate")
 }
 
-// A commit that cannot take what publication needs before turning large
-// fails without taking the exclusive commit gate.
-func TestCommitWriter_BeforeLargeFailureStopsTheCommit(t *testing.T) {
+// The hook a commit sets for what publication needs runs once, when the
+// commit turns large, and not for a commit that fits one batch.
+func TestCommitWriter_BeforeLargeRunsOnceWhenTheCommitTurnsLarge(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
 	defer engine.Close()
-	txn, readTs := engine.db.beginTxn(true)
-	cw := engine.newCommitWriter(engine.db, txn)
-	refused := errors.New("engine closing")
-	cw.beforeLarge = func() error { return refused }
-	value := []byte(strings.Repeat("x", 100))
-	var err error
-	for i := 0; err == nil && i < 1_000_000; i++ {
-		key := []byte(fmt.Sprintf("before-large-%06d", i))
-		err = cw.write(func(txn *badger.Txn) error { return txn.Set(key, value) })
+	write := func(n int, prefix string) int {
+		txn, readTs := engine.db.beginTxn(true)
+		defer engine.db.endRead(readTs)
+		cw := engine.newCommitWriter(engine.db, txn)
+		defer cw.discard()
+		calls := 0
+		cw.beforeLarge = func() { calls++ }
+		value := []byte(strings.Repeat("x", 100))
+		for i := 0; i < n; i++ {
+			key := []byte(fmt.Sprintf("%s-%06d", prefix, i))
+			require.NoError(t, cw.write(func(txn *badger.Txn) error { return txn.Set(key, value) }))
+		}
+		require.NoError(t, cw.finish())
+		return calls
 	}
-	require.ErrorIs(t, err, refused)
-	require.NoError(t, cw.abort())
-	cw.discard()
-	engine.db.endRead(readTs)
-	_, err = engine.CreateNode(&Node{ID: "test:after", Labels: []string{"X"}})
-	require.NoError(t, err, "the commit gate is free")
+	require.Zero(t, write(10, "small"))
+	require.Equal(t, 1, write(60_000, "large"))
 }
 
 func TestIsPropertyKeyDictionaryKey(t *testing.T) {
