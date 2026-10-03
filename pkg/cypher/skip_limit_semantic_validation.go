@@ -132,36 +132,13 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 	return nil
 }
 
+// paginationExpressionUsesRowVariable reports whether a SKIP / LIMIT
+// expression reads a variable. Parameters and their properties ($p.n), map
+// keys, function names and variables the expression binds itself (list
+// comprehensions, reduce) are not variables; expressionFreeVariables is the
+// one scanner that knows them (#829).
 func paginationExpressionUsesRowVariable(expression string) bool {
-	for index := 0; index < len(expression); {
-		if expression[index] == '\'' || expression[index] == '"' || expression[index] == '`' {
-			index = numericValidationSkipQuoted(expression, index)
-			continue
-		}
-		name, next, ok := scanIdentifierToken(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		previous := index - 1
-		for previous >= 0 && isWhitespace(expression[previous]) {
-			previous--
-		}
-		if previous >= 0 && expression[previous] == '$' {
-			index = next
-			continue
-		}
-		after := skipSpaces(expression, next)
-		if after < len(expression) && expression[after] == '(' {
-			index = next
-			continue
-		}
-		if !strings.EqualFold(name, "true") && !strings.EqualFold(name, "false") && !strings.EqualFold(name, "null") {
-			return true
-		}
-		index = next
-	}
-	return false
+	return len(expressionFreeVariables(expression)) > 0
 }
 
 func paginationCompileTypeError(keyword string, value interface{}) error {
