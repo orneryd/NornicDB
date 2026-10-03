@@ -190,6 +190,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schema, let a pipeline `MERGE` that scanned the label and found no node
   create without scanning it again, and skip the text checks a repeated
   statement already passed (#823).
+- Store spatial points as properties: `point(…)` returns a POINT value
+  (cartesian, cartesian-3d, wgs-84, wgs-84-3d) instead of a map that storage
+  rejected with "unsupported type Map". Points (and lists of points of one
+  CRS) are stored and read back, sent over Bolt as Point2D / Point3D and over
+  HTTP in Neo4j's form, and support Neo4j's construction rules and errors,
+  fields, `point.distance` (on Neo4j's Earth radius), `point.withinBBox`,
+  equality, DISTINCT and ORDER BY; they can be indexed with a POINT index
+  (#817).
+- Order values of different types as Neo4j does: points and temporal values
+  sort after lists and before strings, booleans and numbers (#837).
 - Collect query statistics from database start, as Neo4j 5.26 does:
   `db.stats.status()` reports `collecting` until `db.stats.stop('QUERIES')`,
   and `db.stats.clear('QUERIES')` answers `false`, "Collected data cannot be
