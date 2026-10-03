@@ -277,13 +277,13 @@ func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract
 	}
 
 	for _, compiled := range compiledConstraints {
-		if err := sm.addConstraintLocked(compiled, false); err != nil {
+		if _, err := sm.addConstraintLocked(compiled, false); err != nil {
 			sm.replaceFromDefinitionLocked(snapshot)
 			return err
 		}
 	}
 	for _, compiled := range compiledTypes {
-		if err := sm.addPropertyTypeConstraintValueLocked(compiled, false); err != nil {
+		if _, err := sm.addPropertyTypeConstraintValueLocked(compiled, false); err != nil {
 			sm.replaceFromDefinitionLocked(snapshot)
 			return err
 		}

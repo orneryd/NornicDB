@@ -52,8 +52,8 @@ func TestTransaction_WriteSkew_IsAllowedUnderSnapshotIsolation(t *testing.T) {
 	require.Equal(t, 0, countNodesWithBoolProperty(t, verifyTx, "Doctor", "on_call"))
 }
 
-func TestNormalizeTransactionCommitError_MapsBadgerConflict(t *testing.T) {
-	err := normalizeTransactionCommitError(badger.ErrConflict)
+func TestCommitConflictError_MapsBadgerConflict(t *testing.T) {
+	err := commitConflictError(badger.ErrConflict)
 	require.ErrorIs(t, err, ErrConflict)
 	require.ErrorIs(t, err, badger.ErrConflict)
 	require.True(t, strings.Contains(err.Error(), "concurrent transaction modified data before commit"))

@@ -407,7 +407,7 @@ func (b *BadgerEngine) GetInDegree(nodeID NodeID) int {
 	}
 	count := 0
 	_ = b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -434,7 +434,7 @@ func (b *BadgerEngine) GetOutDegree(nodeID NodeID) int {
 	}
 	count := 0
 	_ = b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {

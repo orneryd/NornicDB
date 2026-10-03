@@ -95,9 +95,8 @@ func (b *BadgerEngine) collectNamespaceNodeIDs(namespace string) ([]NodeID, erro
 	prefix := append([]byte{prefixNode}, []byte(namespace+":")...)
 	ids := make([]NodeID, 0)
 	err := b.withView(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = prefix
-		opts.PrefetchValues = false
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -112,9 +111,8 @@ func (b *BadgerEngine) collectNamespaceEdgeIDs(namespace string) ([]EdgeID, erro
 	prefix := append([]byte{prefixEdge}, []byte(namespace+":")...)
 	ids := make([]EdgeID, 0)
 	err := b.withView(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = prefix
-		opts.PrefetchValues = false
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {

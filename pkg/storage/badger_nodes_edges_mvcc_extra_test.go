@@ -69,7 +69,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 			return txn.Set(embeddingKey("test:embed-node", 0), []byte{1, 2, 3})
 		}))
-		readTxn := engine.db.NewTransaction(false)
+		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
 		_, _, _, _, err := engine.deleteNodeInTxn(readTxn, "test:embed-node")
 		require.ErrorContains(t, err, "failed to delete embedding chunk")
@@ -91,7 +91,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		_, err := engine.CreateNode(&Node{ID: "test:archive-node", Labels: []string{"N"}})
 		require.NoError(t, err)
-		readTxn := engine.db.NewTransaction(false)
+		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
 		_, _, _, _, err = engine.deleteNodeInTxn(readTxn, "test:archive-node")
 		require.Error(t, err)
@@ -122,7 +122,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 			return engine.writeNodeMVCCHeadWithFloorInTxn(txn, "test:label-delete-node", head.Version, true, head.FloorVersion)
 		}))
-		readTxn := engine.db.NewTransaction(false)
+		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
 		_, _, _, _, err = engine.deleteNodeInTxn(readTxn, "test:label-delete-node")
 		require.Error(t, err)
@@ -137,7 +137,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 			return engine.writeNodeMVCCHeadWithFloorInTxn(txn, "test:primary-delete-node", head.Version, true, head.FloorVersion)
 		}))
-		readTxn := engine.db.NewTransaction(false)
+		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
 		_, _, _, _, err = engine.deleteNodeInTxn(readTxn, "test:primary-delete-node")
 		require.Error(t, err)
@@ -430,7 +430,7 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_AllOperationKinds(t *testing.T)
 			{Type: OpUpdateEdge, Edge: &Edge{ID: "test:me1", StartNode: "test:m1", EndNode: "test:m2", Type: "REL2", Properties: map[string]any{"w": 11}}, OldEdge: oldE1},
 			{Type: OpDeleteEdge, EdgeID: "test:me2", OldEdge: oldE2},
 		}
-		return engine.materializeMVCCCommitInTxn(txn, version, ops)
+		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
 	}))
 
 	_, err = engine.GetNodeCurrentHead("test:newfresh")
@@ -517,7 +517,7 @@ func TestBadgerEngine_MVCCAdjacencyTxnErrorBranches(t *testing.T) {
 	version := MVCCVersion{CommitTimestamp: time.Unix(456, 789).UTC(), CommitSequence: 9}
 	edge := &Edge{ID: "test:txn-edge", StartNode: "test:txn-start", EndNode: "test:txn-end", Type: "REL"}
 
-	txn := engine.db.NewTransaction(true)
+	txn := engine.db.testTxn(true)
 	txn.Discard()
 
 	_, err := engine.mvccOutgoingAdjacencyKeyString(txn, edge.StartNode, edge.ID, version)

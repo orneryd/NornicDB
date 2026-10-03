@@ -60,9 +60,8 @@ func (b *BadgerEngine) ScanAccessMeta() ([]*knowledgepolicy.AccessMetaEntry, err
 	var entries []*knowledgepolicy.AccessMetaEntry
 
 	err := b.withView(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = []byte{prefixAccessMeta}
-		opts.PrefetchValues = true
 		it := txn.NewIterator(opts)
 		defer it.Close()
 

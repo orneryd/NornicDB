@@ -130,7 +130,7 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_OperationMatrix(t *testing.T) {
 
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 7777}
 	err = engine.withUpdate(func(txn *badger.Txn) error {
-		return engine.materializeMVCCCommitInTxn(txn, version, ops)
+		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
 	})
 	require.NoError(t, err)
 
@@ -204,7 +204,7 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_AdjacencyEffects(t *testing.T) 
 			{Type: OpUpdateEdge, Edge: newUpdate, OldEdge: oldUpdate},
 			{Type: OpDeleteEdge, EdgeID: "test:mat-delete", OldEdge: oldDelete},
 		}
-		return engine.materializeMVCCCommitInTxn(txn, version, ops)
+		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
 	}))
 
 	outA, err := engine.GetOutgoingEdgesVisibleAt("test:mat-a", version)

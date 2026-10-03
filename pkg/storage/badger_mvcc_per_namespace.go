@@ -280,9 +280,8 @@ func (b *BadgerEngine) recoverNamespaceMVCCFloor(namespace string) (uint64, int6
 
 	err := b.db.View(func(txn *badger.Txn) error {
 		for _, prefix := range []byte{prefixNode, prefixEdge} {
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = []byte{prefix}
-			opts.PrefetchValues = false
 			it := txn.NewIterator(opts)
 			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
 				key := it.Item().Key()

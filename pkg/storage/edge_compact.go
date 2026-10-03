@@ -209,7 +209,7 @@ func (b *BadgerEngine) encodeEdgeCompactV2(txn *badger.Txn, namespace string, ed
 // the id dictionary and emits a V2 compact edge body. Callers must
 // supply the namespace so property-key allocation goes to the correct
 // per-namespace bucket.
-func (b *BadgerEngine) encodeEdgeInTxn(txn *badger.Txn, namespace string, edge *Edge) ([]byte, error) {
+func (b *BadgerEngine) encodeEdgeInTxn(txn kvWriter, namespace string, edge *Edge) ([]byte, error) {
 	startNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.StartNode)
 	if err != nil {
 		return nil, fmt.Errorf("allocating start node numID: %w", err)
@@ -218,7 +218,7 @@ func (b *BadgerEngine) encodeEdgeInTxn(txn *badger.Txn, namespace string, edge *
 	if err != nil {
 		return nil, fmt.Errorf("allocating end node numID: %w", err)
 	}
-	return b.encodeEdgeCompactV2(txn, namespace, edge, startNum, endNum)
+	return b.encodeEdgeCompactV2(kvWriterTxn(txn), namespace, edge, startNum, endNum)
 }
 
 // decodeEdgeBody is the V2 hot-path decoder. It rejects any non-V2

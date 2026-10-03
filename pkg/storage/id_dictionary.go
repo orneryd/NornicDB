@@ -195,7 +195,7 @@ func (d *idDictionary) flushTxnCounters(txn *badger.Txn) (uint64, uint64) {
 // nextNode/nextEdge atomics are authoritative for the engine's lifetime;
 // a crash between commit and persistence loses at most the unflushed
 // window of allocated numIDs, reconciled at next engine open.
-func (d *idDictionary) persistCounters(db *badger.DB, nodeMax, edgeMax uint64) {
+func (d *idDictionary) persistCounters(db badgerKV, nodeMax, edgeMax uint64) {
 	if db == nil || (nodeMax == 0 && edgeMax == 0) {
 		return
 	}
@@ -216,6 +216,19 @@ func (d *idDictionary) persistCounters(db *badger.DB, nodeMax, edgeMax uint64) {
 		}
 		return nil
 	})
+}
+
+// moveTxnCounters re-stages from's counter high-water marks against to, a
+// Badger transaction just opened (nothing is staged against it yet). A
+// commit larger than one Badger batch continues in a new Badger transaction
+// (see commitWriter.openBatch); its staged counters follow it.
+func (d *idDictionary) moveTxnCounters(from, to *badger.Txn) {
+	d.txnMu.Lock()
+	if st, ok := d.txnCounters[from]; ok {
+		delete(d.txnCounters, from)
+		d.txnCounters[to] = st
+	}
+	d.txnMu.Unlock()
 }
 
 // discardTxnCounters drops any staged counter state for a txn that is
@@ -296,7 +309,7 @@ func (d *idDictionary) pushFreeEdgeInTxn(txn *badger.Txn, numID uint64) error {
 // Fast path: when the in-memory pending counter is zero, we skip the
 // Badger iterator entirely. Seed workloads on a fresh database never
 // touch the freelist iterator and pay zero overhead per allocation.
-func (d *idDictionary) popAgedFreelistEntryInTxn(txn *badger.Txn, kind byte, ttl time.Duration) (uint64, bool, error) {
+func (d *idDictionary) popAgedFreelistEntryInTxn(txn kvWriter, kind byte, ttl time.Duration) (uint64, bool, error) {
 	// Empty-freelist fast path. No Seek, no allocation.
 	switch kind {
 	case freelistKindNode:
@@ -310,12 +323,16 @@ func (d *idDictionary) popAgedFreelistEntryInTxn(txn *badger.Txn, kind byte, ttl
 	}
 	prefix := []byte{prefixIDFreelist, kind}
 	cutoffNanos := uint64(time.Now().Add(-ttl).UnixNano())
-	opts := badger.DefaultIteratorOptions
+	opts := badgerIteratorOptions()
 	opts.Prefix = prefix
-	opts.PrefetchValues = false
 	it := txn.NewIterator(opts)
 	defer it.Close()
+	// Skip entries this transaction already popped: a transaction stages
+	// its pops (stagedKV), and the iterator does not see staged deletions.
 	it.Rewind()
+	for it.ValidForPrefix(prefix) && kvStagedDeleted(txn, it.Item().Key()) {
+		it.Next()
+	}
 	if !it.ValidForPrefix(prefix) {
 		return 0, false, nil
 	}
@@ -344,13 +361,12 @@ func (d *idDictionary) popAgedFreelistEntryInTxn(txn *badger.Txn, kind byte, ttl
 
 // freelistStagedCount returns the persisted freelist entry count for
 // the given kind. Used by metrics + tests.
-func (d *idDictionary) freelistStagedCount(db *badger.DB, kind byte) (int, error) {
+func (d *idDictionary) freelistStagedCount(db badgerKV, kind byte) (int, error) {
 	prefix := []byte{prefixIDFreelist, kind}
 	count := 0
 	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = prefix
-		opts.PrefetchValues = false
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
@@ -373,14 +389,13 @@ func (d *idDictionary) freelistStagedCount(db *badger.DB, kind byte) (int, error
 // allocation reissues a live numID and two string IDs share one compact key
 // in every numID-keyed index (adjacency, label, edge-between, MVCC heads),
 // silently merging the two entities.
-func (d *idDictionary) loadFromBadger(db *badger.DB) error {
+func (d *idDictionary) loadFromBadger(db badgerKV) error {
 	var maxNodeNum, maxEdgeNum uint64
 	return db.View(func(txn *badger.Txn) error {
 		// Node forward map.
 		{
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = []byte{prefixIDDictNodeForward}
-			opts.PrefetchValues = true
 			it := txn.NewIterator(opts)
 			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
 				item := it.Item()
@@ -410,9 +425,8 @@ func (d *idDictionary) loadFromBadger(db *badger.DB) error {
 		}
 		// Edge forward map.
 		{
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = []byte{prefixIDDictEdgeForward}
-			opts.PrefetchValues = true
 			it := txn.NewIterator(opts)
 			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
 				item := it.Item()
@@ -482,9 +496,8 @@ func (d *idDictionary) loadFromBadger(db *badger.DB) error {
 		var nodePending, edgePending int64
 		for _, kind := range [2]byte{freelistKindNode, freelistKindEdge} {
 			prefix := []byte{prefixIDFreelist, kind}
-			flOpts := badger.DefaultIteratorOptions
+			flOpts := badgerIteratorOptions()
 			flOpts.Prefix = prefix
-			flOpts.PrefetchValues = false
 			flIt := txn.NewIterator(flOpts)
 			count := int64(0)
 			for flIt.Rewind(); flIt.ValidForPrefix(prefix); flIt.Next() {
@@ -531,7 +544,7 @@ func edgeIDForwardKey(id EdgeID) []byte {
 // the loser's numID becomes orphaned and the pruner + freelist reclaim
 // it on the next cycle. The counter itself is atomic (never reused
 // across a race).
-func (d *idDictionary) resolveOrAllocateNodeNumIDInTxn(txn *badger.Txn, id NodeID) (uint64, error) {
+func (d *idDictionary) resolveOrAllocateNodeNumIDInTxn(txn kvWriter, id NodeID) (uint64, error) {
 	d.mu.RLock()
 	if num, ok := d.nodeForward[id]; ok {
 		d.mu.RUnlock()
@@ -571,7 +584,7 @@ func (d *idDictionary) resolveOrAllocateNodeNumIDInTxn(txn *badger.Txn, id NodeI
 		return 0, err
 	}
 	if !ok {
-		d.recordTxnCounterUse(txn, freelistKindNode, num)
+		d.recordTxnCounterUse(kvWriterTxn(txn), freelistKindNode, num)
 	}
 
 	// Update the in-memory map under a narrow write lock. Resolve
@@ -600,7 +613,7 @@ func (d *idDictionary) lookupNodeIDByNum(num uint64) (NodeID, bool) {
 
 // resolveOrAllocateEdgeNumIDInTxn is the edge analogue of
 // resolveOrAllocateNodeNumIDInTxn.
-func (d *idDictionary) resolveOrAllocateEdgeNumIDInTxn(txn *badger.Txn, id EdgeID) (uint64, error) {
+func (d *idDictionary) resolveOrAllocateEdgeNumIDInTxn(txn kvWriter, id EdgeID) (uint64, error) {
 	d.mu.RLock()
 	if num, ok := d.edgeForward[id]; ok {
 		d.mu.RUnlock()
@@ -632,7 +645,7 @@ func (d *idDictionary) resolveOrAllocateEdgeNumIDInTxn(txn *badger.Txn, id EdgeI
 		return 0, err
 	}
 	if !ok {
-		d.recordTxnCounterUse(txn, freelistKindEdge, num)
+		d.recordTxnCounterUse(kvWriterTxn(txn), freelistKindEdge, num)
 	}
 
 	d.mu.Lock()

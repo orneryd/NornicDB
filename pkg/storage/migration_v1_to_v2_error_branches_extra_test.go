@@ -81,7 +81,7 @@ func TestMigrationV1ToV2_DecodeEdgeAnyV1_ErrorBranches(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		txn := eng.db.NewTransaction(true)
+		txn := eng.db.testTxn(true)
 		txn.Discard()
 		_, _, _, err = decodeEdgeAnyV1(eng, txn, data, EdgeID("test:e-start-bad"))
 		require.Error(t, err)
