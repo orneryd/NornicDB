@@ -274,10 +274,17 @@ func (b *BadgerEngine) adjCacheInvalidateForEdge(edge *Edge) {
 	b.adjCacheMu.Unlock()
 }
 
-// adjCacheInvalidateAll clears the entire adjacency cache. Used by bulk
-// edge deletion paths that can't cheaply enumerate the affected node IDs.
+// adjCacheInvalidateAll clears the entire adjacency cache. Used by edge
+// deletion paths that can't cheaply enumerate the affected node IDs. An
+// empty cache is left as it is: a commit that deletes many edges calls this
+// once per edge, and re-allocating two maps sized for the whole cache each
+// time made deleting n edges cost n full-size allocations.
 func (b *BadgerEngine) adjCacheInvalidateAll() {
 	b.adjCacheMu.Lock()
+	if len(b.outgoingAdjCache) == 0 && len(b.incomingAdjCache) == 0 {
+		b.adjCacheMu.Unlock()
+		return
+	}
 	b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	b.adjCacheMu.Unlock()

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -122,4 +123,19 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())
+}
+
+func TestBadgerCache_AdjacencyInvalidateAll_Extra(t *testing.T) {
+	b := createTestBadgerEngine(t)
+	b.adjCacheMu.Lock()
+	b.outgoingAdjCache[NodeID(prefixTestID("a"))] = []EdgeID{EdgeID(prefixTestID("e"))}
+	b.adjCacheMu.Unlock()
+	b.adjCacheInvalidateAll()
+	assert.Empty(t, b.outgoingAdjCache)
+	assert.Empty(t, b.incomingAdjCache)
+
+	// An empty cache is kept, not re-allocated.
+	before := reflect.ValueOf(b.outgoingAdjCache).Pointer()
+	b.adjCacheInvalidateAll()
+	assert.Equal(t, before, reflect.ValueOf(b.outgoingAdjCache).Pointer())
 }
