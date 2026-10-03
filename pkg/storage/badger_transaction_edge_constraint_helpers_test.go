@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -9,18 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNormalizeTransactionCommitError(t *testing.T) {
-	err := normalizeTransactionCommitError(ErrConflict)
+func TestCommitConflictError(t *testing.T) {
+	err := commitConflictError(badger.ErrConflict)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "concurrent transaction modified data")
-
-	err = normalizeTransactionCommitError(badger.ErrConflict)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "concurrent transaction modified data")
-
-	err = normalizeTransactionCommitError(errors.New("disk failure"))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "badger commit failed")
+	require.ErrorIs(t, err, ErrConflict)
 }
 
 func TestBadgerTransaction_CheckEdgeUniqueness(t *testing.T) {

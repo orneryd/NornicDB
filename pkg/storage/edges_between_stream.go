@@ -99,8 +99,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
 		prefix := typedEdgeBetweenIndexPrefix(startNum, endNum, edgeType)
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = prefix
+		opts := badgerPrefixIteratorOptions(prefix)
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
@@ -154,7 +153,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 		}
 		if !indexed {
 			// Other edges between the pair mean it is indexed.
-			pairIt := txn.NewIterator(badgerIterOptsKeyOnly(edgeBetweenIndexPrefix(startNum, endNum)))
+			pairIt := txn.NewIterator(badgerPrefixIteratorOptions(edgeBetweenIndexPrefix(startNum, endNum)))
 			defer pairIt.Close()
 			pairIt.Rewind()
 			indexed = pairIt.Valid()

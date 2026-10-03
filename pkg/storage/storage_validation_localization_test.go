@@ -84,7 +84,7 @@ func TestStorageValidationLocalizedTransactionErrorsPreserveSentinels(t *testing
 	})
 
 	t.Run("Badger conflict", func(t *testing.T) {
-		err := normalizeTransactionCommitError(badger.ErrConflict)
+		err := commitConflictError(badger.ErrConflict)
 		requireStorageValidationLocalizedError(t, err, localization.MessageStorageTransactionCommitConflict, "conflict detected: concurrent transaction modified data before commit: Transaction Conflict. Please retry")
 		require.ErrorIs(t, err, ErrConflict)
 		require.ErrorIs(t, err, badger.ErrConflict)

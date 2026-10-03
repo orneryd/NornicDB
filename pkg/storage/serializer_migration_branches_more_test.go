@@ -76,6 +76,7 @@ func TestMigratePrefixToMsgpack_HeaderAndEncodeErrorBranches(t *testing.T) {
 
 	_, _, _, err := migratePrefixToMsgpack(
 		db,
+		func() migrationBatch { return db.NewWriteBatch() },
 		prefixNode,
 		"node",
 		func(data []byte) (any, error) { return decodeNodeV1(data) },
@@ -101,6 +102,7 @@ func TestMigratePrefixToMsgpack_HeaderAndEncodeErrorBranches(t *testing.T) {
 
 	_, _, _, err = migratePrefixToMsgpack(
 		db,
+		func() migrationBatch { return db.NewWriteBatch() },
 		prefixNode,
 		"node",
 		func(data []byte) (any, error) { return decodeNodeV1(data) },

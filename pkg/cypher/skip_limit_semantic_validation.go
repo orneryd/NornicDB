@@ -98,9 +98,7 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 		return nil
 	}
 	values := make(pipelineRow, len(params))
-	for name, value := range params {
-		values["$"+name] = value
-	}
+	bindParameterRow(ctx, values)
 	for _, pagination := range extractPaginationExpressions(cypher) {
 		if !strings.Contains(pagination.value, "$") {
 			continue

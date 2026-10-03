@@ -1166,7 +1166,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		tx.bufferSet(dropKey, []byte("value"))
 		tx.bufferDelete(dropKey)
 
-		require.NoError(t, tx.flushBufferedWrites())
+		require.NoError(t, tx.flushBufferedWrites(singleBatchWriter(tx.badgerTx)))
 		require.Empty(t, tx.pendingWrites)
 		require.Empty(t, tx.pendingDeletes)
 
@@ -1189,7 +1189,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		defer tx.Rollback()
 
 		tx.bufferDelete([]byte{})
-		err = tx.flushBufferedWrites()
+		err = tx.flushBufferedWrites(singleBatchWriter(tx.badgerTx))
 		require.Error(t, err)
 	})
 

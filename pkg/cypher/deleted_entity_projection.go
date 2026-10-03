@@ -23,15 +23,7 @@ func markPipelineRowsDeletedEntities(rows []pipelineRow, nodeIDs []storage.NodeI
 }
 
 func validateDeletedEntityProjection(rows []pipelineRow, clause string) error {
-	body := strings.TrimSpace(clause[len("RETURN"):])
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
-			body = strings.TrimSpace(body[:index])
-		}
-	}
-	body, _ = cutDistinct(body)
-	for _, item := range splitTopLevelComma(body) {
-		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+	for _, expression := range projectionExpressions(clause, "RETURN") {
 		variable := deletedEntityAccessVariable(expression)
 		if variable == "" {
 			continue

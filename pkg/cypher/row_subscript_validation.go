@@ -55,24 +55,7 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 }
 
 func (e *StorageExecutor) validatePipelineProjectionSubscripts(rows []pipelineRow, clause, keyword string) error {
-	body := strings.TrimSpace(clause)
-	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
-		return nil
-	}
-	body = strings.TrimSpace(body[len(keyword):])
-	body, _ = cutDistinct(body)
-	end := len(body)
-	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, suffix); index >= 0 && index < end {
-			end = index
-		}
-	}
-	body = strings.TrimSpace(body[:end])
-	if body == "" || body == "*" {
-		return nil
-	}
-	for _, item := range splitTopLevelComma(body) {
-		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+	for _, expression := range projectionExpressions(clause, keyword) {
 		for _, row := range rows {
 			if err := e.validateRowSubscriptTypes(expression, row); err != nil {
 				return err
@@ -291,13 +274,7 @@ func mapElementAccessByNonStringError(value interface{}) error {
 }
 
 func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clause, keyword string) error {
-	body := strings.TrimSpace(clause)
-	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
-		return nil
-	}
-	body = strings.TrimSpace(body[len(keyword):])
-	for _, item := range splitTopLevelComma(body) {
-		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+	for _, expression := range projectionExpressions(clause, keyword) {
 		name, argument, functionCall := parseFunctionCallWS(expression)
 		if !functionCall || !strings.EqualFold(name, "size") {
 			continue

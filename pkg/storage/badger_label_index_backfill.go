@@ -100,7 +100,7 @@ func (b *BadgerEngine) labelIndexReady() (bool, error) {
 func (b *BadgerEngine) hasAnyStoredNodes() (bool, error) {
 	var hasNodes bool
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsKeyOnly([]byte{prefixNode}))
+		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
 		defer it.Close()
 		it.Rewind()
 		hasNodes = it.ValidForPrefix([]byte{prefixNode})
@@ -205,7 +205,7 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 		}
 		done := false
 		err := b.withUpdate(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerIterOptsPrefetchValues([]byte{prefixNode}, 100))
+			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
 			defer it.Close()
 			start := cursor
 			if len(start) == 0 {

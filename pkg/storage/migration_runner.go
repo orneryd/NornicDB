@@ -16,9 +16,8 @@ func (b *BadgerEngine) isStorageEmpty() (bool, error) {
 	empty := true
 	err := b.db.View(func(txn *badger.Txn) error {
 		for _, prefix := range [][]byte{{prefixNode}, {prefixEdge}} {
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = prefix
-			opts.PrefetchValues = false
 			it := txn.NewIterator(opts)
 			it.Rewind()
 			if it.ValidForPrefix(prefix) {

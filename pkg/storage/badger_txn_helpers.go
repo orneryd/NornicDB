@@ -52,7 +52,7 @@ func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
 	})
 }
 
-func (b *BadgerEngine) beginHelperTxn() (*badger.DB, error) {
+func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	if b.closed {
@@ -62,6 +62,16 @@ func (b *BadgerEngine) beginHelperTxn() (*badger.DB, error) {
 	return b.db, nil
 }
 
+// withUpdate runs fn as one atomic engine write, committed through the same
+// commit writer as a transaction. fn reads and writes in one Badger
+// transaction and cannot be repeated, so its writes must fit one Badger
+// batch (badger.ErrTxnTooBig otherwise).
+//
+// Property-key tokens are made durable before the entity bytes that
+// reference them (a later failure leaves only harmless orphaned tokens,
+// matching Neo4j's token-before-entity invariant), and the numeric-ID
+// counter high-water marks are persisted after the commit, in a separate
+// transaction, so concurrent writers never conflict on the shared keys.
 func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 	db, err := b.beginHelperTxn()
 	if err != nil {
@@ -69,39 +79,28 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 	}
 	defer b.txnWG.Done()
 	var nodeMax, edgeMax uint64
-	var propKeyDrain propKeyTxnDrain
 	err = recoverBadgerClosedPanic(func() error {
-		return db.Update(func(txn *badger.Txn) error {
-			if err := fn(txn); err != nil {
-				if b.idDict != nil {
-					b.idDict.discardTxnCounters(txn)
-				}
-				if b.propKeyDict != nil {
-					b.propKeyDict.discardTxnCounters(txn)
-				}
-				return err
-			}
-			// Property-key tokens must be durable before entity bytes can
-			// reference them. Persist them in a separate transaction first;
-			// a later user-transaction failure leaves only harmless orphaned
-			// tokens, matching Neo4j's token-before-entity invariant.
-			if b.idDict != nil {
-				nodeMax, edgeMax = b.idDict.flushTxnCounters(txn)
-			}
-			if b.propKeyDict != nil {
-				propKeyDrain = b.propKeyDict.flushTxnCounters(txn)
-				if err := b.propKeyDict.persistTxnCounters(db, propKeyDrain); err != nil {
-					return fmt.Errorf("persisting property key dictionary: %w", err)
-				}
-			}
-			return nil
-		})
+		txn, readTs := db.beginTxn(true)
+		defer db.endRead(readTs)
+		cw := b.newCommitWriter(db, txn)
+		defer cw.discard()
+		fail := func(err error) error {
+			b.idDict.discardTxnCounters(cw.txn)
+			b.propKeyDict.discardTxnCounters(cw.txn)
+			return err
+		}
+		if err := cw.writeOnce(fn); err != nil {
+			return fail(err)
+		}
+		nodeMax, edgeMax = b.idDict.flushTxnCounters(cw.txn)
+		if err := cw.finish(); err != nil {
+			return fail(err)
+		}
+		return nil
 	})
 	if err == nil {
 		runCommitTailHook()
-		if b.idDict != nil {
-			b.idDict.persistCounters(db, nodeMax, edgeMax)
-		}
+		b.idDict.persistCounters(db, nodeMax, edgeMax)
 	}
 	return err
 }

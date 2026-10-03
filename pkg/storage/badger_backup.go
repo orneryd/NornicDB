@@ -175,7 +175,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	countKeys := func(keyPrefix []byte) (int64, error) {
 		var count int64
 		if err := b.db.View(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerIterOptsKeyOnly(keyPrefix))
+			it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 			defer it.Close()
 
 			for it.Rewind(); it.ValidForPrefix(keyPrefix); it.Next() {
@@ -222,7 +222,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		{prefixIDDictNodeForward, nodeNums}, {prefixIDDictEdgeForward, edgeNums},
 	} {
 		if err := b.db.View(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerIterOptsKeyOnly(append([]byte{entry.kind}, prefixBytes...)))
+			it := txn.NewIterator(badgerPrefixIteratorOptions(append([]byte{entry.kind}, prefixBytes...)))
 			defer it.Close()
 			for it.Rewind(); it.ValidForPrefix(append([]byte{entry.kind}, prefixBytes...)); it.Next() {
 				if err := it.Item().Value(func(value []byte) error {
@@ -298,7 +298,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		pending := 0
 
 		if err := b.db.View(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerIterOptsKeyOnly(indexKeyPrefix))
+			it := txn.NewIterator(badgerPrefixIteratorOptions(indexKeyPrefix))
 			defer it.Close()
 
 			for it.Rewind(); it.ValidForPrefix(indexKeyPrefix); it.Next() {
@@ -402,7 +402,7 @@ func (b *BadgerEngine) deleteNamespaceKeyFamilies(prefix []byte, namespace strin
 	pending := 0
 	for _, family := range badgerKeyFamilies {
 		err := b.db.View(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerIterOptsKeyOnly([]byte{family.prefix}))
+			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{family.prefix}))
 			defer it.Close()
 			for it.Rewind(); it.ValidForPrefix([]byte{family.prefix}); it.Next() {
 				key := it.Item().Key()

@@ -111,6 +111,9 @@ const (
 	// label; the end tier counts edges whose physical END endpoint does.
 	prefixMVCCMetaEdgeTypeStartLabelCount = byte(0x0B)
 	prefixMVCCMetaEdgeTypeEndLabelCount   = byte(0x0C)
+	// prefixMVCCMetaLargeCommitIntent marks a commit larger than one Badger
+	// batch while its batches are written (see largeCommitIntentKey).
+	prefixMVCCMetaLargeCommitIntent = byte(0x0D)
 )
 
 // maxNodeSize is the maximum size for a node to be stored inline (50KB to leave room for BadgerDB overhead)
@@ -157,7 +160,7 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
-	db     *badger.DB
+	db     *managedBadgerDB
 	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
 	closed bool
 	// notifyWG tracks the asynchronous node-deleted notification goroutines
@@ -383,9 +386,14 @@ func (b *BadgerEngine) IsInMemory() bool {
 // DB returns the underlying *badger.DB handle. Used by Plan 04-04-04
 // bytes_metrics_sweeper to call EstimateSize(prefix). Read-only handle —
 // callers must not invoke lifecycle methods (Close/DropAll) on the
-// returned pointer; the engine owns lifecycle.
+// returned pointer; the engine owns lifecycle. Badger runs in managed mode
+// (see managedBadgerDB): transactions and writes must go through the
+// engine, never through this handle.
 func (b *BadgerEngine) DB() *badger.DB {
-	return b.db
+	if b.db == nil {
+		return nil
+	}
+	return b.db.DB
 }
 
 // OnNodeCreated sets a callback to be invoked when nodes are created.
@@ -823,7 +831,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 			WithIndexCacheSize(32 << 20)  // 32MB index cache
 	}
 
-	db, err := badger.Open(badgerOpts)
+	db, err := openManagedBadger(badgerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
 	}
@@ -995,14 +1003,14 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 // dictionary, MVCC sequence, cached counts. Schema load is intentionally
 // deferred to the caller — it decodes node bodies, so it has to run
 // after migrations + reopen, not from inside this helper.
-func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Options) (*badger.DB, error) {
+func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Options) (*managedBadgerDB, error) {
 	if b.log != nil {
 		b.log.Info("post-migration DB reopen starting")
 	}
 	if err := b.db.Close(); err != nil {
 		return nil, fmt.Errorf("close pre-compaction DB: %w", err)
 	}
-	newDB, err := badger.Open(badgerOpts)
+	newDB, err := openManagedBadger(badgerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("reopen DB: %w", err)
 	}

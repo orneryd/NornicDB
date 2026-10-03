@@ -121,14 +121,16 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 	eng := newTestEngine(t)
 	dict := eng.propKeyDict
 
-	firstTxn := eng.db.NewTransaction(true)
+	firstTxn := eng.db.testTxn(true)
 	_, err := dict.resolveOrAllocateInTxn(firstTxn, "nornic", "novelProperty")
 	require.NoError(t, err)
 	drain := dict.flushTxnCounters(firstTxn)
 	firstTxn.Discard()
-	require.Error(t, dict.persistTxnCounters(nil, drain))
+	closed := newTestEngine(t)
+	require.NoError(t, closed.db.Close())
+	require.Error(t, dict.persistTxnCounters(closed.db, drain))
 
-	secondTxn := eng.db.NewTransaction(true)
+	secondTxn := eng.db.testTxn(true)
 	_, err = dict.resolveOrAllocateInTxn(secondTxn, "nornic", "novelProperty")
 	require.NoError(t, err)
 	retryDrain := dict.flushTxnCounters(secondTxn)
@@ -315,7 +317,7 @@ func TestPropertyKeyDict_DiscardTxnCounters(t *testing.T) {
 	dict := eng.propKeyDict
 
 	// Open a write txn, stage allocations, then discard.
-	txn := eng.db.NewTransaction(true)
+	txn := eng.db.testTxn(true)
 	_, err := dict.resolveOrAllocateInTxn(txn, "ns", "x")
 	require.NoError(t, err)
 	dict.discardTxnCounters(txn)

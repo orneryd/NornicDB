@@ -427,7 +427,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		} else {
 			// Node fits inline - clean up any old separately stored embeddings
 			embPrefix := embeddingPrefix(node.ID)
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = embPrefix
 			it := txn.NewIterator(opts)
 			defer it.Close()
@@ -621,7 +621,7 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 		} else {
 			// Node fits inline - clean up any old separately stored embeddings
 			embPrefix := embeddingPrefix(node.ID)
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = embPrefix
 			embIt := txn.NewIterator(opts)
 			defer embIt.Close()
@@ -679,7 +679,7 @@ func (b *BadgerEngine) deleteEmbeddingChunksBatched(nodeID NodeID) error {
 	for {
 		keys := make([][]byte, 0, deleteBatchSize)
 		err := b.withView(func(txn *badger.Txn) error {
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = prefix
 			it := txn.NewIterator(opts)
 			defer it.Close()
@@ -905,8 +905,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 // Returns the count of edges actually deleted for accurate stats tracking.
 // IMPORTANT: The returned count MUST be used to decrement edgeCount after txn commits.
 func (b *BadgerEngine) deleteEdgesWithPrefix(txn *badger.Txn, prefix []byte) (int64, []EdgeID, []*Edge, error) {
-	opts := badger.DefaultIteratorOptions
-	opts.PrefetchValues = false
+	opts := badgerIteratorOptions()
 	it := txn.NewIterator(opts)
 	defer it.Close()
 

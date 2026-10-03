@@ -132,9 +132,8 @@ func (b *BadgerEngine) evaluateSnapshotReader(info SnapshotReaderInfo) (bool, bo
 func (b *BadgerEngine) IterateMVCCHeads(ctx context.Context, yield func(logicalKey []byte, head MVCCHead) error) error {
 	return b.withView(func(txn *badger.Txn) error {
 		for _, prefix := range []byte{prefixMVCCNodeHead, prefixMVCCEdgeHead} {
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = []byte{prefix}
-			opts.PrefetchValues = true
 			it := txn.NewIterator(opts)
 			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
 				select {
@@ -176,9 +175,8 @@ func (b *BadgerEngine) IterateMVCCVersions(ctx context.Context, logicalKey []byt
 	}
 	return b.withView(func(txn *badger.Txn) error {
 		prefix := mvccVersionPrefixForLogicalKey(logicalKey)
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = prefix
-		opts.PrefetchValues = true
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {

@@ -26,8 +26,7 @@ func (b *BadgerEngine) initializeCounts() error {
 
 	err := b.db.View(func(txn *badger.Txn) error {
 		// Count nodes
-		nodeOpts := badger.DefaultIteratorOptions
-		nodeOpts.PrefetchValues = false // Only need keys for counting
+		nodeOpts := badgerIteratorOptions()
 		nodeIt := txn.NewIterator(nodeOpts)
 		defer nodeIt.Close()
 
@@ -44,8 +43,7 @@ func (b *BadgerEngine) initializeCounts() error {
 		}
 
 		// Count edges
-		edgeOpts := badger.DefaultIteratorOptions
-		edgeOpts.PrefetchValues = false // Only need keys for counting
+		edgeOpts := badgerIteratorOptions()
 		edgeIt := txn.NewIterator(edgeOpts)
 		defer edgeIt.Close()
 
@@ -109,7 +107,7 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 		keyPrefix = append(keyPrefix, keyType)
 		keyPrefix = append(keyPrefix, []byte(prefix)...)
 
-		it := txn.NewIterator(badgerIterOptsKeyOnly(keyPrefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			count++
@@ -293,7 +291,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 
 	_ = b.withUpdate(func(txn *badger.Txn) error {
 		prefix := []byte{prefixPendingEmbed}
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 10))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -396,7 +394,7 @@ func (b *BadgerEngine) PendingEmbeddingsCount() int {
 	count := 0
 	_ = b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixPendingEmbed}
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -425,7 +423,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	// Remove entries for nodes that don't exist or already have embeddings
 	cleanupErr := b.withUpdate(func(txn *badger.Txn) error {
 		pendingPrefix := []byte{prefixPendingEmbed}
-		it := txn.NewIterator(badgerIterOptsKeyOnly(pendingPrefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(pendingPrefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -509,7 +507,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	// Second pass: Add missing nodes to the index
 	_ = b.withUpdate(func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 100))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -574,7 +572,7 @@ func (b *BadgerEngine) IterateNodes(fn func(*Node) bool) error {
 
 	return b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -682,7 +680,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 
 	return b.withView(func(txn *badger.Txn) error {
 		if opts.Prefix == "" {
-			it := txn.NewIterator(badgerIterOptsPrefetchValues([]byte{prefixNode}, 10))
+			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
 			defer it.Close()
 			for it.Rewind(); it.Valid(); it.Next() {
 				if err := visit(txn, it.Item()); err != nil {
@@ -695,7 +693,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			return nil
 		}
 		seekPrefix := append([]byte{prefixNode}, []byte(opts.Prefix)...)
-		it := txn.NewIterator(badgerIterOptsKeyOnly(seekPrefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(seekPrefix))
 		defer it.Close()
 		for it.Seek(seekPrefix); it.ValidForPrefix(seekPrefix); it.Next() {
 			if err := visit(txn, it.Item()); err != nil {
@@ -755,7 +753,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 
 	return b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -808,7 +806,7 @@ func (b *BadgerEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn f
 
 	return b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, min(chunkSize, 100)))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		chunk := make([]*Node, 0, chunkSize)
@@ -895,7 +893,7 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 	var nodeIDs []NodeID
 	err := b.withView(func(txn *badger.Txn) error {
 		keyPrefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(keyPrefix, 100))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
