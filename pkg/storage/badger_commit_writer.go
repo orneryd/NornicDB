@@ -35,7 +35,7 @@ type commitWriter struct {
 	prev *badger.Txn
 	// beforeLarge, when set, runs once before the commit becomes large,
 	// i.e. before the exclusive commit gate is taken.
-	beforeLarge func() error
+	beforeLarge func()
 	// onBatch, when set, is told about every batch the writer opens.
 	onBatch func(next *badger.Txn)
 }
@@ -51,9 +51,7 @@ func (b *BadgerEngine) newCommitWriter(db *managedBadgerDB, txn *badger.Txn) *co
 func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 	if cw.large == nil {
 		if cw.beforeLarge != nil {
-			if err := cw.beforeLarge(); err != nil {
-				return err
-			}
+			cw.beforeLarge()
 		}
 		lc, err := cw.db.beginLargeCommit()
 		if err != nil {

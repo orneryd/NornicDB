@@ -418,67 +418,77 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 		Scope:        knowledgepolicy.ScopeNode,
 	}
 
-	if err := parseOptionsMap(body, func(key, rawVal string) error {
+	updates, err := parseDecayProfileOptions(body)
+	if err != nil {
+		return nil, false, err
+	}
+	bundle, err = storage.ApplyDecayProfileOptions(bundle, updates)
+	if err != nil {
+		return nil, false, err
+	}
+	return &CreateDecayProfileBundleCmd{Bundle: bundle}, true, nil
+}
+
+func parseDecayProfileOptions(body string) (map[string]interface{}, error) {
+	updates := make(map[string]interface{})
+	err := parseOptionsMap(body, func(key, rawVal string) error {
 		switch lowerASCII(key) {
 		case "halflifeseconds":
 			n, err := strconv.ParseInt(rawVal, 10, 64)
 			if err != nil {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("halfLifeSeconds", rawVal, false), err)
 			}
-			bundle.HalfLifeSeconds = n
+			updates["halfLifeSeconds"] = n
 		case "visibilitythreshold":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("visibilityThreshold", rawVal, false), err)
 			}
-			bundle.VisibilityThreshold = f
+			updates["visibilityThreshold"] = f
 		case "scorefloor":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scoreFloor", rawVal, false), err)
 			}
-			bundle.ScoreFloor = f
+			updates["scoreFloor"] = f
 		case "function":
 			fn := knowledgepolicy.DecayFunction(strings.Trim(rawVal, "'\""))
 			if !knowledgepolicy.ValidDecayFunctions[fn] {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("decay function", rawVal, true), nil)
 			}
-			bundle.Function = fn
+			updates["function"] = string(fn)
 		case "scope":
 			sc := knowledgepolicy.ScopeType(upperASCII(strings.Trim(rawVal, "'\"")))
 			if !knowledgepolicy.ValidScopeTypes[sc] {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scope", rawVal, true), nil)
 			}
-			bundle.Scope = sc
+			updates["scope"] = string(sc)
 		case "decayenabled":
 			b, err := strconv.ParseBool(rawVal)
 			if err != nil {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("decayEnabled", rawVal, false), err)
 			}
-			bundle.DecayEnabled = b
+			updates["decayEnabled"] = b
 		case "scorefrom":
 			mode := knowledgepolicy.ScoreFromMode(upperASCII(strings.Trim(rawVal, "'\"")))
 			if !knowledgepolicy.ValidScoreFromModes[mode] {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scoreFrom", rawVal, true), nil)
 			}
-			bundle.ScoreFrom = mode
+			updates["scoreFrom"] = string(mode)
 		case "scorefromproperty":
-			bundle.ScoreFromProperty = strings.Trim(rawVal, "'\"")
+			updates["scoreFromProperty"] = strings.Trim(rawVal, "'\"")
 		case "enabled":
 			b, err := strconv.ParseBool(rawVal)
 			if err != nil {
 				return localizedError(localization.CypherKnowledgePolicyInvalidValue("enabled", rawVal, false), err)
 			}
-			bundle.Enabled = b
+			updates["enabled"] = b
 		default:
 			return localizedError(localization.CypherKnowledgePolicyUnknownOption(key), nil)
 		}
 		return nil
-	}); err != nil {
-		return nil, false, err
-	}
-
-	return &CreateDecayProfileBundleCmd{Bundle: bundle}, true, nil
+	})
+	return updates, err
 }
 
 func parseDecayProfileBinding(name, s string, i int) (interface{}, bool, error) {
@@ -879,7 +889,7 @@ func parseAlterDecayProfile(s string, i int) (interface{}, bool, error) {
 		return &AlterDecayProfileBindingCmd{Binding: cmd.(*CreateDecayProfileBindingCmd).Binding}, true, nil
 	}
 
-	updates, next, ok, err := kpParseSetOptions(s, i)
+	updates, next, ok, err := kpParseSetOptionsWith(s, i, parseDecayProfileOptions)
 	if err != nil {
 		return nil, false, err
 	}

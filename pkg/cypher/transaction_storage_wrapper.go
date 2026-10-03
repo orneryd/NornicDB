@@ -67,12 +67,14 @@ func orderedPropertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
 // for use in implicit transaction execution. It routes writes through the transaction
 // (for atomicity/rollback) and reads through the underlying engine (for performance).
 type transactionStorageWrapper struct {
-	tx               *storage.BadgerTransaction
-	underlying       storage.Engine // For read operations not supported by transaction
-	namespace        string
-	separator        string
-	mutatedNodeIDs   map[string]struct{}
-	mutatedNodeIDsMu sync.Mutex
+	tx                  *storage.BadgerTransaction
+	underlying          storage.Engine // For read operations not supported by transaction
+	schema              *storage.SchemaManager
+	schemaCommitActions []func()
+	namespace           string
+	separator           string
+	mutatedNodeIDs      map[string]struct{}
+	mutatedNodeIDsMu    sync.Mutex
 
 	// txNodeLookupCache scopes the executor's MERGE/MATCH lookup cache to
 	// this single transaction. Concurrent transactions get distinct
@@ -588,6 +590,9 @@ func (w *transactionStorageWrapper) GetOutDegree(nodeID storage.NodeID) int {
 }
 
 func (w *transactionStorageWrapper) GetSchema() *storage.SchemaManager {
+	if w.schema != nil {
+		return w.schema
+	}
 	return w.underlying.GetSchema()
 }
 

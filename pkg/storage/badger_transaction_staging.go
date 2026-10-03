@@ -94,33 +94,24 @@ func kvHas(w kvWriter, key []byte) (bool, error) {
 	return err == nil, err
 }
 
-// acquireCommitPublicationLocked takes what a commit holds from the moment
-// its writes can reach Badger until they are published and its derived
-// state is updated:
-//   - the engine's write barrier: once the data is durable, the publication
-//     steps (label counts, MVCC sequence, ID counters, caches, callbacks)
-//     must run against live engine state and the client must be told the
-//     truth. Close waits on this barrier; a commit that arrives after Close
-//     finished fails here without touching Badger. Released when Commit
-//     returns (releaseWriteBarrierLocked).
-//   - labelCountWriteMu / edgeTypeCountWriteMu when the commit changes those
-//     derived counts. The count keys are not in badgerTx, so this does not
-//     create optimistic conflicts; holding the locks through the follow-up
-//     delta writes preserves mutation order and keeps count readers from
-//     observing the committed entities without their derived counts.
+// acquireCommitPublicationLocked takes the count locks a commit holds from
+// the moment its writes can reach Badger until they are published:
+// labelCountWriteMu / edgeTypeCountWriteMu when the commit changes those
+// derived counts. The count keys are not in badgerTx, so this does not
+// create optimistic conflicts; holding the locks through the follow-up delta
+// writes preserves mutation order and keeps count readers from observing the
+// committed entities without their derived counts.
 //
-// An ordinary commit acquires them just before its Badger commit; a large
-// commit before its first batch, ahead of the exclusive commit gate (lock
-// order: write barrier, count locks, commit gate). Idempotent.
-func (tx *BadgerTransaction) acquireCommitPublicationLocked() error {
-	if tx.commitReleaseWrite != nil {
-		return nil
+// The engine's write barrier is taken earlier, at the start of Commit
+// (commitReleaseWrite). An ordinary commit takes the count locks just before
+// its Badger commit; a large commit before its first batch, ahead of the
+// exclusive commit gate (lock order: write barrier, count locks, commit
+// gate). Idempotent.
+func (tx *BadgerTransaction) acquireCommitPublicationLocked() {
+	if tx.commitCountsHeld {
+		return
 	}
-	release, err := tx.engine.beginWrite()
-	if err != nil {
-		return err
-	}
-	tx.commitReleaseWrite = release
+	tx.commitCountsHeld = true
 	if len(tx.pendingLabelCountDeltas) > 0 {
 		tx.engine.labelCountWriteMu.Lock()
 		tx.commitLabelCounts = true
@@ -129,7 +120,6 @@ func (tx *BadgerTransaction) acquireCommitPublicationLocked() error {
 		tx.engine.edgeTypeCountWriteMu.Lock()
 		tx.commitEdgeTypeCounts = true
 	}
-	return nil
 }
 
 func (tx *BadgerTransaction) releaseLabelCountLockLocked() {

@@ -32,6 +32,15 @@ func (b *BadgerEngine) beginWrite() (func(), error) {
 	return b.writeBarrier.RUnlock, nil
 }
 
+func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
+	b.writeBarrier.Lock()
+	if err := b.ensureOpen(); err != nil {
+		b.writeBarrier.Unlock()
+		return nil, err
+	}
+	return b.writeBarrier.Unlock, nil
+}
+
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
 	db, err := b.beginHelperTxn()
 	if err != nil {

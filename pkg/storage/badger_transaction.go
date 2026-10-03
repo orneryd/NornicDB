@@ -58,6 +58,8 @@ type BadgerTransaction struct {
 	knowledgeSchema           *SchemaManager
 	knowledgeSchemaDefinition *SchemaDefinition
 	knowledgeSchemaDirty      bool
+	schemaRuntime             *SchemaManager
+	schemaTransaction         bool
 
 	// Badger's native transaction. It carries the transaction's conflict-
 	// tracked reads; statement-time writes are staged in pendingWrites /
@@ -82,9 +84,12 @@ type BadgerTransaction struct {
 
 	// commitW is the commit writer while Commit writes (see commitWriter).
 	commitW *commitWriter
-	// commitReleaseWrite, commitLabelCounts and commitEdgeTypeCounts record
-	// what Commit holds while publishing (acquireCommitPublicationLocked).
+	// commitReleaseWrite releases the write barrier Commit holds until it
+	// returns. commitCountsHeld, commitLabelCounts and commitEdgeTypeCounts
+	// record the count locks it holds while publishing
+	// (acquireCommitPublicationLocked).
 	commitReleaseWrite   func()
+	commitCountsHeld     bool
 	commitLabelCounts    bool
 	commitEdgeTypeCounts bool
 
@@ -595,7 +600,7 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return "", err
 	}
 
@@ -702,7 +707,7 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 
@@ -1119,7 +1124,7 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 
@@ -1174,7 +1179,7 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 	if err := tx.validateNewEdgeLocked(edge, tx.nodeExists, nil); err != nil {
@@ -1197,7 +1202,7 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 	if len(edges) == 0 {
@@ -1349,7 +1354,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	if edge.ID == "" {
 		return ErrInvalidID
 	}
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
@@ -1497,7 +1502,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 
@@ -2075,6 +2080,28 @@ func (tx *BadgerTransaction) Commit() error {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
+	// The engine's write barrier is held from here until Commit returns
+	// (releaseWriteBarrierLocked): exclusively for a schema transaction, so
+	// no data write publishes between its snapshot check and its schema
+	// publication; shared otherwise, so Close waits for the commit and a
+	// commit that arrives after Close finished fails here without touching
+	// Badger.
+	var releaseWrite func()
+	var writeErr error
+	if tx.schemaRuntime != nil {
+		releaseWrite, writeErr = tx.engine.beginSchemaWrite()
+	} else {
+		releaseWrite, writeErr = tx.engine.beginWrite()
+	}
+	if writeErr != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return writeErr
+	}
+	tx.commitReleaseWrite = releaseWrite
+	if tx.schemaRuntime != nil && tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence != tx.readTS.CommitSequence {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("schema snapshot changed before commit: %w", ErrConflict)
+	}
 
 	// Acquire per-(label, property, value) commit locks for every unique
 	// constraint value touched by this transaction's pending nodes. Held
@@ -2150,8 +2177,8 @@ func (tx *BadgerTransaction) Commit() error {
 	// tracked reads; when a write does not fit there, the commit becomes a
 	// large commit whose batches stay invisible until the last one is
 	// written (#703). Each new batch becomes tx.badgerTx. Before the commit
-	// turns large it takes what publication needs (count locks, write
-	// barrier) ahead of the exclusive commit gate.
+	// turns large it takes the count locks publication needs, ahead of the
+	// exclusive commit gate.
 	cw := tx.engine.newCommitWriter(tx.badgerDB, tx.badgerTx)
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
@@ -2178,13 +2205,10 @@ func (tx *BadgerTransaction) Commit() error {
 	// Materialization can allocate numIDs, so this follows it.
 	idCounterNodeMax, idCounterEdgeMax := tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 
-	// From here to the end of the tail the engine must stay open and the
-	// derived counts this commit changes stay locked; see
-	// acquireCommitPublicationLocked. A large commit acquired both before its
-	// first batch.
-	if err := tx.acquireCommitPublicationLocked(); err != nil {
-		return tx.abortCommitLocked(err)
-	}
+	// From here to the end of the tail the derived counts this commit
+	// changes stay locked; see acquireCommitPublicationLocked. A large
+	// commit acquired them before its first batch.
+	tx.acquireCommitPublicationLocked()
 
 	// Commit Badger transaction (atomic!). A large commit writes its last
 	// batch and only then becomes visible, all at once.

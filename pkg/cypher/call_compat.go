@@ -747,12 +747,18 @@ func (e *StorageExecutor) callDbIndexVectorCreateNodeIndexArguments(ctx context.
 	if dimension <= 0 || (similarity != "cosine" && similarity != "euclidean" && similarity != "dot") {
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
-	schema := e.getStorage(ctx).GetSchema()
-	err := schema.AddVectorIndexForEntity(indexName, label, property, int(dimension), similarity, storage.ConstraintEntityNode)
+	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		return schema.AddVectorIndexForEntity(indexName, label, property, int(dimension), similarity, storage.ConstraintEntityNode)
+	})
 	if err != nil {
-		return nil, localizedError(localization.CypherProceduresCreateVectorIndexFailed(err), err)
+		return nil, &classifiedCypherError{
+			cause: localizedError(localization.CypherProceduresCreateVectorIndexFailed(err), err),
+			code:  "Neo.ClientError.Procedure.ProcedureCallFailed", detail: "ProcedureCallFailed",
+		}
 	}
-	e.registerVectorSpace(indexName, label, property, int(dimension), similarity)
+	e.afterSchemaCommit(ctx, func() {
+		e.registerVectorSpace(indexName, label, property, int(dimension), similarity)
+	})
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
@@ -792,14 +798,13 @@ func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.C
 	}
 
 	// Create vector index on relationships using schema manager
-	schema := e.storage.GetSchema()
 	// Use relationship type as "label" for index naming
-	err = schema.AddVectorIndexForEntity(indexName, relType, property, dimension, similarity, storage.ConstraintEntityRelationship)
+	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		return schema.AddVectorIndexForEntity(indexName, relType, property, dimension, similarity, storage.ConstraintEntityRelationship)
+	})
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCreateRelationshipVectorIndexFailed(err), err)
 	}
-
-	e.registerVectorSpace(indexName, relType, property, dimension, similarity)
 
 	return &ExecuteResult{
 		Columns: []string{"name", "relationshipType", "property", "dimension", "similarityFunction"},
@@ -837,8 +842,9 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 	properties := e.parseStringArray(propsStr)
 
 	// Create fulltext index using schema manager
-	schema := e.storage.GetSchema()
-	err := schema.AddFulltextIndex(indexName, labels, properties)
+	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		return schema.AddFulltextIndex(indexName, labels, properties)
+	})
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCreateFulltextIndexFailed(err), err)
 	}
@@ -879,8 +885,9 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 	properties := e.parseStringArray(propsStr)
 
 	// Create fulltext index using schema manager
-	schema := e.storage.GetSchema()
-	err := schema.AddFulltextIndex(indexName, relTypes, properties)
+	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		return schema.AddFulltextRelationshipIndex(indexName, relTypes, properties)
+	})
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCreateRelationshipFulltextIndexFailed(err), err)
 	}
@@ -956,12 +963,13 @@ func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storag
 	if isCompositeRoot(e.storage) {
 		return localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
-	schema := e.storage.GetSchema()
-	if schema == nil || !exists(schema) {
-		return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex",
-			fmt.Sprintf("there is no %s index named %q", kind, name))
-	}
-	return e.dropIndexByName(name, false)
+	return e.mutateSchema(context.Background(), func(schema *storage.SchemaManager) error {
+		if schema == nil || !exists(schema) {
+			return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex",
+				fmt.Sprintf("there is no %s index named %q", kind, name))
+		}
+		return e.dropIndexByName(name, false)
+	})
 }
 
 // splitArgsSimple splits comma-separated arguments, respecting quoted strings

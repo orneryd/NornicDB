@@ -9,8 +9,27 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+func (e *StorageExecutor) knowledgePolicySchema() (*storage.SchemaManager, error) {
+	var transaction *storage.BadgerTransaction
+	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+		transaction = wrapper.tx
+	} else if e.txContext != nil && e.txContext.active {
+		transaction, _ = e.txContext.tx.(*storage.BadgerTransaction)
+	}
+	if transaction == nil {
+		return e.storage.GetSchema(), nil
+	}
+	if err := transaction.SetNamespace(e.currentDatabaseName()); err != nil {
+		return nil, err
+	}
+	return transaction.KnowledgePolicySchema()
+}
+
 func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult, error) {
-	schema := e.storage.GetSchema()
+	schema, err := e.knowledgePolicySchema()
+	if err != nil {
+		return nil, err
+	}
 	if schema == nil {
 		return nil, localizedError(localization.CypherKnowledgePolicySchemaManagerUnavailable(), nil)
 	}
@@ -75,7 +94,10 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult,
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult, error) {
-	schema := e.storage.GetSchema()
+	schema, err := e.knowledgePolicySchema()
+	if err != nil {
+		return nil, err
+	}
 	if schema == nil {
 		return nil, localizedError(localization.CypherKnowledgePolicySchemaManagerUnavailable(), nil)
 	}

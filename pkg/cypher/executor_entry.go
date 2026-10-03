@@ -589,7 +589,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// or implicit transactions: they operate on dbManager/metadata, not graph storage.
 	// Routing them through executeWithoutTransaction directly ensures correct handling and
 	// avoids the write path (tryAsyncCreateNodeBatch / executeWithImplicitTransaction).
-	if isSystemCommandNoGraph(cypher) {
+	if isSystemCommandNoGraph(cypher) || isOrdinarySchemaDDL(cypher) {
 		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
 		if err != nil {
 			return nil, err

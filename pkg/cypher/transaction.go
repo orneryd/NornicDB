@@ -328,6 +328,9 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	if e.txContext.storageWrapper != nil {
 		txExec := e.cloneWithStorage(e.txContext.storageWrapper)
 		txExec.promoteNodeLookupCacheTo(e)
+		for _, action := range e.txContext.storageWrapper.schemaCommitActions {
+			action()
+		}
 	}
 
 	if e.txContext.fabricRemoteExe != nil {

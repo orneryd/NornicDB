@@ -257,6 +257,38 @@ Use the two listings together:
 
 ## Operational guidance
 
+### Commit schema migrations separately
+
+Ordinary index and constraint CREATE/DROP commands participate in explicit
+transactions. Their changes are visible to that transaction, become public on
+commit, and are discarded on rollback. Do not mix schema changes with graph
+entity writes in either order: the transaction fails with
+`Neo.ClientError.Transaction.ForbiddenDueToTransactionType` and must be rolled
+back. Read-only queries may accompany schema changes.
+
+For example, using a Neo4j-compatible driver session:
+
+```python
+with session.begin_transaction() as tx:
+  tx.run("CREATE CONSTRAINT account_id FOR (n:Account) REQUIRE n.id IS UNIQUE").consume()
+  tx.commit()
+```
+
+Commit data migrations in a separate transaction. A schema transaction whose
+database data changed since its snapshot may fail with a transient conflict;
+retry the complete schema transaction rather than publishing an incomplete
+index backfill. Autocommit DDL continues to use the database's schema persister.
+Native decay/promotion declarations use their separate knowledge-policy
+transaction contract.
+
+Compatibility vector/fulltext schema creation/drop procedures follow the same
+commit/rollback lifetime as ordinary DDL. Relationship fulltext creation uses
+relationship types rather than node labels. Like Neo4j, the deprecated
+`db.index.vector.createNodeIndex` reports a schema invocation rejected after a
+data write as `Neo.ClientError.Procedure.ProcedureCallFailed`; performing a data
+write after its schema change still fails with
+`Neo.ClientError.Transaction.ForbiddenDueToTransactionType`.
+
 ### Prefer explicit names
 
 Always name NornicDB-specific constraints and contracts. Named schema objects are easier to inspect, compare across environments, and drop or recreate during migrations.
