@@ -2789,12 +2789,7 @@ func pipelineNodeMatchesPattern(node *storage.Node, pattern nodePatternInfo) boo
 	if !mergeNodeHasLabels(node, pattern.labels) {
 		return false
 	}
-	for property, expected := range pattern.properties {
-		if actual, exists := node.Properties[property]; !exists || !reflect.DeepEqual(actual, expected) {
-			return false
-		}
-	}
-	return true
+	return nodePropertiesMatch(node, pattern.properties)
 }
 
 // pipelineApplyCreate runs CREATE for each binding row, threading pre-bound

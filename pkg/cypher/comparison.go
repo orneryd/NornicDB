@@ -74,9 +74,17 @@ import (
 //	nodeMatchesProps(node, map[string]interface{}{"name": "Alice", "age": 30})
 //	// Returns true only if node has both name="Alice" AND age=30
 func (e *StorageExecutor) nodeMatchesProps(node *storage.Node, props map[string]interface{}) bool {
-	if props == nil {
-		return true
-	}
+	return nodePropertiesMatch(node, props)
+}
+
+// nodePropertiesMatch is the one property test of a node pattern
+// ((n {key: value}) in MATCH, OPTIONAL MATCH and MERGE): every property is
+// present and equal to its value under Cypher equality, so 1 matches 1.0,
+// [1, 2] matches a stored integer list, and a date matches the same date read
+// back from storage. A null value matches nothing. Comparing Go values
+// instead (reflect.DeepEqual, or MERGE's type-tagged form) missed those, and
+// MERGE created a duplicate node (#846).
+func nodePropertiesMatch(node *storage.Node, props map[string]interface{}) bool {
 	for key, expected := range props {
 		if expected == nil {
 			return false
@@ -85,7 +93,7 @@ func (e *StorageExecutor) nodeMatchesProps(node *storage.Node, props map[string]
 		if !exists {
 			return false
 		}
-		if !e.compareEqual(actual, expected) {
+		if matched, _ := cypherEquality(actual, expected).(bool); !matched {
 			return false
 		}
 	}
