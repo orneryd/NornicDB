@@ -473,9 +473,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) pi
 	for name, value := range e.fabricRecordBindings {
 		initialRow[name] = value
 	}
-	for name, value := range params {
-		initialRow["$"+name] = parameterRowValue(value)
-	}
+	bindParameterRow(ctx, initialRow)
 	rows := []pipelineRow{initialRow}
 	scope := make(map[string]struct{})
 	for name := range e.fabricRecordBindings {
@@ -682,10 +680,13 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if err := e.validatePipelineWithRows(rows, clause.text); err != nil {
 				return nil, true, err
 			}
+			// The rows just validated are the clause's input when no
+			// stream feeds it.
+			rowsValidated := source == nil
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			newRows, ok := e.pipelineApplyWithSource(ctx, rows, clause.text, source)
+			newRows, ok := e.pipelineApplyWithSource(ctx, rows, clause.text, source, rowsValidated)
 			source = nil
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
@@ -776,28 +777,19 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if err := validateDeletedEntityProjection(rows, clause.text); err != nil {
 				return nil, true, err
 			}
-			if err := e.validatePipelineRangeArguments(rows, clause.text, "RETURN"); err != nil {
-				return nil, true, err
-			}
 			if err := e.validatePipelinePercentileArguments(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
-			if err := e.validatePipelineConversionArguments(rows, clause.text, "RETURN"); err != nil {
+			if err := e.validatePipelineProjectionValues(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
-			if err := e.validatePipelineGraphFunctionArguments(rows, clause.text, "RETURN"); err != nil {
-				return nil, true, err
-			}
-			if err := e.validatePipelineProjectionSubscripts(rows, clause.text, "RETURN"); err != nil {
-				return nil, true, err
-			}
-			if err := e.validatePipelineSizeArguments(rows, clause.text, "RETURN"); err != nil {
-				return nil, true, err
-			}
+			// The rows just validated are the clause's input when no
+			// stream feeds it.
+			rowsValidated := source == nil
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			final, ok := e.pipelineApplyReturnSource(ctx, rows, clause.text, source)
+			final, ok := e.pipelineApplyReturnSource(ctx, rows, clause.text, source, rowsValidated)
 			source = nil
 			if !ok {
 				if failure := getExpressionFailure(ctx); failure != nil && final != nil {
@@ -1095,16 +1087,15 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 			return e.evaluateWithWhereCondition(ctx, whereClause, predicateRow)
 		}
 	}
-	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
 	hideSystemNodes := shouldHideSystemNodes(store)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
 	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
 	var count int64
-	err := reader.StreamNodesByLabelProjected(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
+	countNode := func(node *storage.Node, whereApplied bool) error {
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
 			return nil
 		}
-		if !mergeNodeHasLabels(node, nodePattern.labels) || !e.nodeMatchesProps(node, nodePattern.properties) || !whereFilter(node) {
+		if !mergeNodeHasLabels(node, nodePattern.labels) || !e.nodeMatchesProps(node, nodePattern.properties) || (!whereApplied && !whereFilter(node)) {
 			return nil
 		}
 		if hasViewport && canCheckViewport {
@@ -1118,6 +1109,24 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		}
 		count++
 		return nil
+	}
+	// A lookup an index can narrow is counted from the same seed the row
+	// read uses (#820); only otherwise is the label streamed.
+	candidates, whereApplied, indexed, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, pipelineMatchPhysicalHint{})
+	if err != nil {
+		return nil, true, err
+	}
+	if indexed {
+		for _, node := range candidates {
+			if err := countNode(node, whereApplied); err != nil {
+				return nil, true, localizedError(localization.CypherMatchingStorageFailed(err), err)
+			}
+		}
+		return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
+	}
+	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
+	err = reader.StreamNodesByLabelProjected(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
+		return countNode(node, false)
 	})
 	if err != nil {
 		return nil, true, localizedError(localization.CypherMatchingStorageFailed(err), err)
@@ -2437,10 +2446,6 @@ func replaceQualifiedReferenceOutsideQuotes(input, reference, replacement string
 	return output.String()
 }
 
-// collectPipelineInitialNodeCandidates chooses an indexed seed whenever one
-// of the shared property-index operators can safely narrow the MATCH. The
-// complete predicate is still evaluated after the join, so these operators
-// only affect the physical seed source and never the logical result.
 // whereIsSimpleIndexedIn reports whether a WHERE is exactly
 // <variable>.<property> IN <parameter or literal list>, the form the IN-list
 // plan answers completely.
@@ -2452,84 +2457,19 @@ func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, 
 	return ok
 }
 
+// collectPipelineInitialNodeCandidates chooses an indexed seed whenever one
+// of the shared property-index operators can safely narrow the MATCH, and
+// streams the label otherwise. The complete predicate is still evaluated
+// after the join, so these operators only affect the physical seed source and
+// never the logical result.
 func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
-	params := getParamsFromContext(ctx)
+	nodes, whereApplied, used, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, hint)
+	if err != nil || used {
+		return nodes, whereApplied, err
+	}
 	streamingWhere := ""
 	if hint.earlyLimit > 0 {
 		streamingWhere = whereClause
-	}
-	if hint.limit > 0 && hint.orderExpr != "" {
-		orderedPlans := []func() ([]*storage.Node, bool, error){
-			func() ([]*storage.Node, bool, error) {
-				return e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit)
-			},
-			func() ([]*storage.Node, bool, error) {
-				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit)
-			},
-		}
-		for _, plan := range orderedPlans {
-			nodes, used, err := plan()
-			if err != nil {
-				return nil, false, err
-			}
-			if used {
-				e.markOuterIndexTopKUsed()
-				return nodes, false, nil
-			}
-		}
-	}
-	if nodes, used, err := e.tryCollectNodesFromIDEqualityCompound(ctx, nodePattern, whereClause, params); err != nil || used {
-		return nodes, false, err
-	}
-	// The id IN $list seek only applies when that predicate is the whole
-	// WHERE, and returns exactly the nodes it selects: the caller need not
-	// evaluate the WHERE again on each of them. Evaluating it per row checked
-	// every node against the whole list: CALL { … } IN TRANSACTIONS batches,
-	// which select their rows by id(n) IN $ids, were quadratic in the batch
-	// size (#703).
-	if nodes, used, err := e.tryCollectNodesFromIDInParam(nodePattern, whereClause, params); err != nil || used {
-		return nodes, used, err
-	}
-	// inList marks the plan that answers a WHERE that is exactly an IN list.
-	indexedPlans := []struct {
-		collect func() ([]*storage.Node, bool, error)
-		inList  bool
-	}{
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
-		}},
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereClause, params)
-		}},
-		{inList: true, collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, whereClause, params)
-		}},
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereClause)
-		}},
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexNotNull(nodePattern, whereClause)
-		}},
-	}
-	for _, plan := range indexedPlans {
-		nodes, used, err := plan.collect()
-		if err != nil {
-			return nil, false, err
-		}
-		if used {
-			if len(nodePattern.properties) > 0 {
-				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
-			}
-			// A WHERE that is exactly <variable>.<property> IN <list> on an
-			// indexed property is answered by the index: one lookup per list
-			// value returns exactly the nodes it selects, so the caller
-			// doesn't test each of them against the whole list again
-			// (quadratic in the list for a list that names every node).
-			// Checked only once the index answered, so a read that takes
-			// another route doesn't parse its WHERE for it.
-			exact := plan.inList && e.whereIsSimpleIndexedIn(ctx, nodePattern.variable, whereClause, params)
-			return nodes, exact, nil
-		}
 	}
 	nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, streamingWhere, hint.earlyLimit)
 	return nodes, false, err
@@ -3275,10 +3215,10 @@ func (e *StorageExecutor) materializePipelinePropertyExpressions(ctx context.Con
 // RETURN, and ORDER BY so list, map, property, and postfix operations cannot
 // diverge between pipeline clauses.
 func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
-	return e.pipelineApplyWithSource(ctx, rows, clause, pipelineRowsSource(rows))
+	return e.pipelineApplyWithSource(ctx, rows, clause, pipelineRowsSource(rows), false)
 }
 
-func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource) ([]pipelineRow, bool) {
+func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
 	if plan, ok := parsePipelineRowWith(clause); ok {
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
@@ -3395,7 +3335,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		for index, projection := range projections {
 			aggregates[index] = returnProjection{expr: projection.expr, alias: projection.alias, isAggr: projection.aggregate}
 		}
-		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates)
+		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates, rowsValidated)
 		if !ok {
 			return nil, false
 		}
@@ -3992,10 +3932,10 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 // Returns (nil, false) if any item can't be projected, so the caller falls
 // back to the established RETURN projection.
 func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
-	return e.pipelineApplyReturnSource(ctx, rows, clause, pipelineRowsSource(rows))
+	return e.pipelineApplyReturnSource(ctx, rows, clause, pipelineRowsSource(rows), false)
 }
 
-func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource) (*ExecuteResult, bool) {
+func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) (*ExecuteResult, bool) {
 	plan := returnProjectionPlanFor(clause)
 	if !plan.valid {
 		return nil, false
@@ -4021,7 +3961,7 @@ func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []
 	result := &ExecuteResult{Columns: append([]string(nil), plan.columns...)}
 
 	if hasAggregate {
-		groups, ok := e.pipelineAggregateGroups(ctx, source, projs)
+		groups, ok := e.pipelineAggregateGroups(ctx, source, projs, rowsValidated)
 		if !ok {
 			return nil, false
 		}

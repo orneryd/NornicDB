@@ -13,20 +13,7 @@ import (
 )
 
 func (e *StorageExecutor) validatePipelineGraphFunctionArguments(rows []pipelineRow, clause, keyword string) error {
-	body := strings.TrimSpace(clause)
-	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
-		return nil
-	}
-	body = strings.TrimSpace(body[len(keyword):])
-	body, _ = cutDistinct(body)
-	end := len(body)
-	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, suffix); index >= 0 && index < end {
-			end = index
-		}
-	}
-	for _, item := range splitTopLevelComma(strings.TrimSpace(body[:end])) {
-		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+	for _, expression := range projectionExpressions(clause, keyword) {
 		for _, row := range rows {
 			if err := e.validateRowGraphFunctionArguments(expression, row); err != nil {
 				return err

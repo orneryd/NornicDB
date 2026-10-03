@@ -43,7 +43,11 @@ type pipelineAggregateGroup struct {
 	projections []pipelineAggregateProjection
 }
 
-func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection) ([]*pipelineAggregateGroup, bool) {
+// pipelineAggregateGroups aggregates the rows of source into groups. Rows are
+// validated as they stream in, unless rowsValidated says the caller already
+// validated exactly these rows; validating them again doubled the cost of
+// aggregating projections (#823).
+func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool) ([]*pipelineAggregateGroup, bool) {
 	templates := make([]pipelineAggregateProjection, len(projections))
 	validationClauses := make([]string, 0)
 	allAggregates := len(projections) > 0
@@ -65,7 +69,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		}
 		rewritten.WriteString(projection.expr[last:])
 		templates[index].expression = rewritten.String()
-		if needsValidation || strings.ContainsAny(templates[index].expression, "([") {
+		if !rowsValidated && (needsValidation || strings.ContainsAny(templates[index].expression, "([")) {
 			validationClauses = append(validationClauses, "WITH "+projection.expr)
 		}
 	}

@@ -656,9 +656,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	for name, value := range e.fabricRecordBindings {
 		row[name] = value
 	}
-	for name, value := range params {
-		row["$"+name] = parameterRowValue(value)
-	}
+	bindParameterRow(ctx, row)
 	// Bound child contexts (§6.2): UNION/CALL branches may reference values
 	// that travel in the value scope; the innermost bindings shadow params.
 	if bindings := valueBindingsFromContext(ctx); bindings != nil {

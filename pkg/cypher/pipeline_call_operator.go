@@ -84,9 +84,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		hasReturn := pipelineHasClauseKind(clauses, pipelineClauseReturn)
 		for _, outer := range outerRows {
 			input := pipelineRow{}
-			for name, value := range getParamsFromContext(runCtx) {
-				input["$"+name] = parameterRowValue(value)
-			}
+			bindParameterRow(runCtx, input)
 			if hasLegacyImports {
 				for name, value := range outer {
 					input[name] = value
@@ -226,9 +224,7 @@ func mergeCallPipelineRows(outer, inner pipelineRow) pipelineRow {
 func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pipelineRow {
 	if result == nil {
 		row := pipelineRow{}
-		for name, value := range getParamsFromContext(ctx) {
-			row["$"+name] = parameterRowValue(value)
-		}
+		bindParameterRow(ctx, row)
 		return []pipelineRow{row}
 	}
 	if len(result.Rows) == 0 {
@@ -245,9 +241,7 @@ func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pi
 				row[name] = nil
 			}
 		}
-		for name, value := range params {
-			row["$"+name] = parameterRowValue(value)
-		}
+		bindParameterRow(ctx, row)
 		rows = append(rows, row)
 	}
 	return rows

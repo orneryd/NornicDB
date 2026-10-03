@@ -1784,7 +1784,7 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 			}
 			batchParams["__call_in_tx_ids"] = ids
 		}
-		batchCtx := context.WithValue(ctx, paramsKey, batchParams)
+		batchCtx := withQueryParams(ctx, batchParams)
 		batchResult, err := e.executeWithImplicitTransaction(batchCtx, batchQuery, upperASCII(batchQuery))
 		if err != nil {
 			return nil, localizedError(localization.CypherSubqueriesTransactionBatchFailed(seedVar, start/batchSize+1, err), err)
@@ -2188,9 +2188,7 @@ func (e *StorageExecutor) processAfterCallSubquery(ctx context.Context, innerRes
 					row[column] = nil
 				}
 			}
-			for name, value := range params {
-				row["$"+name] = parameterRowValue(value)
-			}
+			bindParameterRow(ctx, row)
 			rows = append(rows, row)
 		}
 		result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
