@@ -1969,5 +1969,75 @@
     "query": "SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE name IN ['dupidx', 'vdup', 'dupc'] RETURN name, labelsOrTypes, properties ORDER BY name, labelsOrTypes",
     "ordered": true,
     "no_effects": true
+  },
+  {
+    "name": "GH817 cartesian point value",
+    "query": "RETURN point({x: 1, y: 2}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 geographic 3D point value",
+    "query": "RETURN point({latitude: 1.5, longitude: 2.5, height: 10}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point toString forms",
+    "query": "RETURN toString(point({x: 1, y: 2})) AS a, toString(point({latitude: 1.5, longitude: 2.5})) AS b, toString(point({x: 1, y: 2, z: 3})) AS c, toString(point({latitude: 1, longitude: 2, height: 3})) AS d",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point fields",
+    "query": "WITH point({latitude: 1.5, longitude: 2.5, height: 10}) AS p RETURN p.latitude AS lat, p.longitude AS lon, p.height AS h, p.x AS x, p.y AS y, p.z AS z, p.crs AS crs, p.srid AS srid",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point distance and bounding box",
+    "query": "RETURN point.distance(point({x: 0, y: 0}), point({x: 3, y: 4})) AS d, point.distance(point({latitude: 0, longitude: 0}), point({latitude: 0, longitude: 1})) AS w, point.distance(point({x: 0, y: 0}), point({latitude: 0, longitude: 1})) AS mixed, point.withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}), point({x: 2, y: 2})) AS inside",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point equality",
+    "query": "RETURN point({x: 1, y: 2}) = point({x: 1.0, y: 2.0}) AS eq, point({x: 1, y: 2}) = point({latitude: 2, longitude: 1}) AS crossCrs, point({x: 1, y: 2}) <> point({x: 1, y: 3}) AS ne, point({x: 1, y: 2}) < point({x: 2, y: 2}) AS lt",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point order",
+    "query": "UNWIND [point({x: 2, y: 1}), point({latitude: 1, longitude: 1}), point({x: 1, y: 5}), point({x: 1, y: 2, z: 0})] AS p RETURN p ORDER BY p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point longitude wraps",
+    "query": "RETURN point({latitude: 0, longitude: 200}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point null coordinate",
+    "query": "RETURN point({x: null, y: 1}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point invalid latitude",
+    "query": "RETURN point({latitude: 100, longitude: 0}) AS p",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point properties stored",
+    "query": "CREATE (n:Pt {loc: point({x: 1, y: 2}), w: point({latitude: 1.5, longitude: 2.5, height: 3}), pts: [point({x: 1, y: 1}), point({x: 2, y: 2})]}) RETURN n.loc AS loc, n.w AS w, n.pts AS pts"
+  },
+  {
+    "name": "GH817 point property read back",
+    "setup": ["CREATE (:Pt {loc: point({x: 3, y: 4})})"],
+    "query": "MATCH (n:Pt) WHERE n.loc = point({x: 3, y: 4}) RETURN n.loc AS loc, n.loc.x AS x, point.distance(n.loc, point({x: 0, y: 0})) AS d",
+    "no_effects": true
+  },
+  {
+    "name": "GH817 point mixed CRS list property",
+    "query": "CREATE (:Pt {bad: [point({x: 1, y: 1}), point({latitude: 1, longitude: 1})]})",
+    "no_effects": true
+  },
+  {
+    "name": "GH837 order across types",
+    "query": "UNWIND [1, 'a', true, date('2020-01-01'), [1], {a: 1}, datetime('2020-01-01T00:00Z'), duration('P1D'), localtime('12:00'), point({x: 1, y: 1})] AS v RETURN v ORDER BY v",
+    "no_effects": true
   }
 ]

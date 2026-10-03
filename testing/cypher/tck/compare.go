@@ -120,7 +120,7 @@ func canonicalValue(value any, ignoreListOrder bool) (any, error) {
 		return typedFloat(float64(v)), nil
 	case float64:
 		return typedFloat(v), nil
-	case dbtype.Date, dbtype.LocalTime, dbtype.Time, dbtype.LocalDateTime, dbtype.Duration, time.Time:
+	case dbtype.Date, dbtype.LocalTime, dbtype.Time, dbtype.LocalDateTime, dbtype.Duration, time.Time, dbtype.Point2D, dbtype.Point3D:
 		converted, err := convertBoltValue(v)
 		if err != nil {
 			return nil, err

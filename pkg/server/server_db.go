@@ -1337,6 +1337,13 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			return nil, []interface{}{nil}
 		}
 		return typed.String(), []interface{}{nil}
+	case cypher.CypherPoint:
+		return transactionHTTPPoint(typed), []interface{}{map[string]interface{}{"type": "point"}}
+	case *cypher.CypherPoint:
+		if typed == nil {
+			return nil, []interface{}{nil}
+		}
+		return transactionHTTPPoint(*typed), []interface{}{map[string]interface{}{"type": "point"}}
 	case *storage.Node:
 		if typed == nil {
 			return nil, []interface{}{nil}

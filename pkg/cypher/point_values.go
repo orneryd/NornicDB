@@ -461,3 +461,18 @@ func spatialMap(value interface{}) (map[string]interface{}, bool) {
 	fields, ok := value.(map[string]interface{})
 	return fields, ok
 }
+
+// NewCypherPoint builds a point from an SRID and its coordinates, as Bolt's
+// Point2D / Point3D structures carry it. ok is false for an unknown SRID or
+// a coordinate count that does not match its coordinate reference system.
+func NewCypherPoint(srid int, coordinates ...float64) (CypherPoint, bool) {
+	crs, known := pointCRSBySRID(srid)
+	if !known || crs.dimensions != len(coordinates) {
+		return CypherPoint{}, false
+	}
+	point := CypherPoint{SRID: srid, X: coordinates[0], Y: coordinates[1]}
+	if len(coordinates) == 3 {
+		point.Z = coordinates[2]
+	}
+	return point, true
+}
