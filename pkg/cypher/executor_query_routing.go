@@ -793,6 +793,11 @@ func splitReturnExpressions(clause string) []string {
 // When NORNICDB_PARSER=antlr, uses ANTLR for strict OpenCypher grammar validation.
 // When NORNICDB_PARSER=nornic (default), uses fast inline validation.
 func (e *StorageExecutor) validateSyntax(cypher string) error {
+	// A text the Nornic validator accepted passed every check below (it is
+	// marked valid only then), so a repeated query skips them all (#823).
+	if !config.IsANTLRParser() && e.hasCachedValidSyntax(cypher) {
+		return nil
+	}
 	if err := validateUnicodeOperators(cypher); err != nil {
 		return err
 	}

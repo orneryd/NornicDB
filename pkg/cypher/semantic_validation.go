@@ -13,15 +13,22 @@ import (
 // canonicalize alike but can validate differently (their column names
 // differ).
 func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string) error {
-	if err := validateExpressionLexicalTokens(cypher); err != nil {
-		return err
-	}
 	names := quotedVariableNamesFor(ctx, cypher)
 	cacheKey := cypher
 	if names != nil {
 		cacheKey = names.original
 	}
-	if e.semanticValidationCache.contains(cacheKey) {
+	// A text cached under its own key passed every check here, the lexical
+	// one included, so a repeated query skips them all (#823). A rewritten
+	// text cached under its original still gets its own lexical check.
+	cached := e.semanticValidationCache.contains(cacheKey)
+	if cached && names == nil {
+		return nil
+	}
+	if err := validateExpressionLexicalTokens(cypher); err != nil {
+		return err
+	}
+	if cached {
 		return nil
 	}
 	if err := e.validateCallSubqueryScopes(cypher); err != nil {
