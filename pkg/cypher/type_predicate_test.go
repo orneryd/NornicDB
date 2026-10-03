@@ -51,3 +51,10 @@ func TestTypePredicatesMatchNeo4j(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"other"}, {"other"}, {"text"}, {"text"}}, result.Rows, "null IS :: STRING is true")
 }
+
+func TestTypePredicateTypesAreNotVariables(t *testing.T) {
+	require.Empty(t, expressionFreeVariables("1 IS :: INTEGER | LIST<STRING NOT NULL>"))
+	require.Equal(t, []string{"n"}, expressionFreeVariables("count(CASE WHEN n.v IS :: INTEGER | FLOAT THEN 1 END)"))
+	require.Equal(t, []string{"x", "y"}, expressionFreeVariables("x IS TYPED TIME WITH TIME ZONE AND y IS NOT TYPED ANY<INT> NOT NULL"))
+	require.Equal(t, "plain", maskTypePredicateTypes("plain"))
+}

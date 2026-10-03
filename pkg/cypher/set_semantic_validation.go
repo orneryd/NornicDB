@@ -191,11 +191,12 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 
 // expressionFreeVariables returns the variables an expression reads, in order
 // of appearance: identifiers outside string literals that are not parameters,
-// property or map keys, function names, keywords, or names the expression binds
-// itself (list comprehension iterators, reduce / all / any / none / single).
+// property or map keys, function names, keywords, type names after :: or TYPED,
+// or names the expression binds itself (list comprehension iterators, reduce /
+// all / any / none / single).
 // It is the one reference scanner for the static SET and CREATE checks.
 func expressionFreeVariables(expression string) []string {
-	expression = maskPathFunctionCalls(expression)
+	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
 	locals := make(map[string]struct{})
 	collectListComprehensionBindings(expression, locals)
 	collectFunctionExpressionBindings(expression, locals)
