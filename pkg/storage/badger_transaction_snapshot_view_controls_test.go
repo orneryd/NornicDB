@@ -114,7 +114,7 @@ func TestTransactionSnapshotHeadInViewShortCircuitsAndPropagatesReadErrors(t *te
 	reader, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
-	discarded := engine.db.NewTransaction(false)
+	discarded := engine.db.testTxn(false)
 	discarded.Discard()
 
 	conflict, err = reader.snapshotHeadConflictInView(discarded, key, reader.readTS)

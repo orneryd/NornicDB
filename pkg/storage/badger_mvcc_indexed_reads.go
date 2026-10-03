@@ -186,7 +186,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	normalizedLabel := normalizeLabel(label)
 	return view(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(normalizedLabel)
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().Key()
@@ -250,7 +250,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	nowNanos := DecayScoringTime()
 	return view(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(normalizedLabel)
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		if afterNodeID == "" {
 			it.Rewind()
@@ -379,7 +379,7 @@ func (b *BadgerEngine) getEdgesByTypeVisibleAtSnapshotWithView(edgeType string, 
 			})
 		}
 		prefix := edgeTypeIndexPrefix(edgeType)
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(it.Item().Key())

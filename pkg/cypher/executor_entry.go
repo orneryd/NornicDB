@@ -265,7 +265,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		mergedParams := e.mergeShellParams(ctx, params)
-		ctx = context.WithValue(ctx, paramsKey, mergedParams)
+		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
 		if mode != ModeNormal {
 			if err := e.validateSyntax(modeQuery); err != nil {
@@ -476,7 +476,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// This matches Neo4j's architecture where params are kept separate.
 
 	// Store params in context for handlers to use
-	ctx = context.WithValue(ctx, paramsKey, params)
+	ctx = withQueryParams(ctx, params)
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
 	}

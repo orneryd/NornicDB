@@ -130,6 +130,8 @@
   other: "commit: transaction has writes but no pinned namespace"
 - id: storage.transaction.commit_conflict
   other: "conflict detected: concurrent transaction modified data before commit: {{.Cause}}"
+- id: storage.transaction.large_commit_unrecoverable
+  other: "storage refuses writes until restart: a failed large commit could not be rolled back: {{.Cause}}"
 - id: storage.transaction.metadata_too_large
   other: "transaction metadata too large: {{.Actual}} chars (max {{.Maximum}})"
 - id: storage.transaction.edge_changed

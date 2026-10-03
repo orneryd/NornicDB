@@ -144,6 +144,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Commit statements of any size atomically. A statement whose writes exceed
+  one Badger batch (about 15% of the memtable) is written as several hidden
+  batches under one reserved run of commit timestamps and becomes visible all
+  at once; readers never wait, conflicts are checked across the whole
+  transaction, a failed or crash-interrupted large commit is rolled back (on
+  the next open, for a crash), and stores written by earlier releases open
+  unchanged. A statement may also introduce any number of new property
+  names: their records are written in as many batches as they need, and
+  staging them is no longer quadratic (#703).
+- Complete `DROP DATABASE` for databases of any size: the namespace drop no
+  longer fails with "This transaction has been discarded" after flushing a
+  full write batch, which left the database listed and partly deleted (#819).
+- Use a property index for counting and range lookups:
+  `MATCH (p:Person {id: $id}) RETURN count(p)`, `WHERE p.id IN $ids RETURN
+  count(p)` and `WHERE p.id < 200` read the index instead of scanning the
+  label. Row reads and counts share one index seed selection (#820).
+- Read stored values in place during storage scans instead of starting a
+  goroutine per item to prefetch them: snapshot reads of earlier node
+  versions, snapshot adjacency and label scans at a version are 4-40x
+  faster, and
+  short lookups such as relationship `MERGE` no longer wake a thread per
+  item (#703).
+- Restore write-path performance: convert query parameters into row values
+  once per query instead of once per expression evaluation (bare `UNWIND
+  $rows CREATE` and relationship `MERGE` batches were quadratic), validate
+  streamed aggregation rows once with one cached projection parse, check a
+  `CREATE CONSTRAINT ... IF NOT EXISTS` before snapshotting or persisting the
+  schema, let a pipeline `MERGE` that scanned the label and found no node
+  create without scanning it again, and skip the text checks a repeated
+  statement already passed (#823).
 - Collect query statistics from database start, as Neo4j 5.26 does:
   `db.stats.status()` reports `collecting` until `db.stats.stop('QUERIES')`,
   and `db.stats.clear('QUERIES')` answers `false`, "Collected data cannot be

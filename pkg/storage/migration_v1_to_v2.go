@@ -179,7 +179,7 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 	for {
 		var batch []migrationItem
 		err := b.withView(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badger.DefaultIteratorOptions)
+			it := txn.NewIterator(badgerIteratorOptions())
 			defer it.Close()
 			start := cursor
 			if len(start) == 0 {
@@ -264,7 +264,7 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
 	for {
 		var batch []migrationItem
 		err := b.withView(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badger.DefaultIteratorOptions)
+			it := txn.NewIterator(badgerIteratorOptions())
 			defer it.Close()
 			start := cursor
 			if len(start) == 0 {
@@ -540,9 +540,8 @@ type migrationItem struct {
 func (b *BadgerEngine) collectBatch(prefix byte, limit int, skipFormatByte byte) ([]migrationItem, error) {
 	out := make([]migrationItem, 0, util.SafePreallocCap(limit))
 	err := b.withView(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = []byte{prefix}
-		opts.PrefetchValues = true
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {

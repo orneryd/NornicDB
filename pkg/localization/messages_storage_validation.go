@@ -69,6 +69,7 @@ const (
 	MessageStorageTransactionConstraintViolation            MessageID = "storage.transaction.constraint_violation"
 	MessageStorageTransactionCommitNamespaceMissing         MessageID = "storage.transaction.commit_namespace_missing"
 	MessageStorageTransactionCommitConflict                 MessageID = "storage.transaction.commit_conflict"
+	MessageStorageTransactionLargeCommitUnrecoverable       MessageID = "storage.transaction.large_commit_unrecoverable"
 	MessageStorageTransactionMetadataTooLarge               MessageID = "storage.transaction.metadata_too_large"
 	MessageStorageTransactionEdgeChanged                    MessageID = "storage.transaction.edge_changed"
 	MessageStorageTransactionNodeChanged                    MessageID = "storage.transaction.node_changed"
@@ -395,4 +396,12 @@ func StorageValidationLabelChangeDisallowed(sourceLabel, relationshipType, targe
 }
 func StorageValidationLabelChangeAllowed(sourceLabels, relationshipType, targetLabels string) Message {
 	return storageValidationMessage(MessageStorageValidationLabelChangeAllowed, fmt.Sprintf("Label change would violate ALLOWED policy: no ALLOWED policy permits (:%s)-[:%s]->(:%s)", sourceLabels, relationshipType, targetLabels), map[string]any{"SourceLabels": sourceLabels, "RelationshipType": relationshipType, "TargetLabels": targetLabels})
+}
+
+// StorageTransactionLargeCommitUnrecoverable reports that a commit larger
+// than one storage batch failed and its partial writes could not be rolled
+// back. Writes are refused until restart, where opening the store completes
+// the rollback; reads continue unaffected.
+func StorageTransactionLargeCommitUnrecoverable(cause error) Message {
+	return storageValidationMessage(MessageStorageTransactionLargeCommitUnrecoverable, "storage refuses writes until restart: a failed large commit could not be rolled back: "+storageErrorText(cause), map[string]any{"Cause": storageErrorText(cause)})
 }

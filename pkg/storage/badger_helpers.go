@@ -469,7 +469,7 @@ func (b *BadgerEngine) deleteEdgeBetweenHeadIfMatchesInTxn(txn *badger.Txn, edge
 // outgoingIndexKeyString resolves the node/edge string IDs via the dict
 // (allocating num IDs if missing) and returns the compact-keyed key.
 // Callers on write paths pass a txn so the allocation persists.
-func (b *BadgerEngine) outgoingIndexKeyString(txn *badger.Txn, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
+func (b *BadgerEngine) outgoingIndexKeyString(txn kvWriter, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
 	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
 	if err != nil {
 		return nil, err
@@ -482,7 +482,7 @@ func (b *BadgerEngine) outgoingIndexKeyString(txn *badger.Txn, nodeID NodeID, ed
 }
 
 // incomingIndexKeyString is the incoming-side analogue.
-func (b *BadgerEngine) incomingIndexKeyString(txn *badger.Txn, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
+func (b *BadgerEngine) incomingIndexKeyString(txn kvWriter, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
 	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
 	if err != nil {
 		return nil, err
@@ -495,7 +495,7 @@ func (b *BadgerEngine) incomingIndexKeyString(txn *badger.Txn, nodeID NodeID, ed
 }
 
 // edgeTypeIndexKeyString is the edge-type analogue.
-func (b *BadgerEngine) edgeTypeIndexKeyString(txn *badger.Txn, edgeType string, edgeID EdgeID) ([]byte, error) {
+func (b *BadgerEngine) edgeTypeIndexKeyString(txn kvWriter, edgeType string, edgeID EdgeID) ([]byte, error) {
 	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
 	if err != nil {
 		return nil, err
@@ -554,7 +554,7 @@ func (b *BadgerEngine) incomingIndexPrefixString(nodeID NodeID) []byte {
 
 // labelIndexKeyString resolves the node string ID via the dict,
 // allocating a numID if missing, and returns the compact label key.
-func (b *BadgerEngine) labelIndexKeyString(txn *badger.Txn, label string, nodeID NodeID) ([]byte, error) {
+func (b *BadgerEngine) labelIndexKeyString(txn kvWriter, label string, nodeID NodeID) ([]byte, error) {
 	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
 	if err != nil {
 		return nil, err
@@ -575,7 +575,7 @@ func (b *BadgerEngine) labelIndexKeyStringLookup(label string, nodeID NodeID) []
 // mvccNodeHeadKeyString / mvccEdgeHeadKeyString wrap the numeric-keyed
 // MVCC head key with dict-backed string ID resolution. Writers allocate
 // the numID; readers use lookup-only.
-func (b *BadgerEngine) mvccNodeHeadKeyString(txn *badger.Txn, id NodeID) ([]byte, error) {
+func (b *BadgerEngine) mvccNodeHeadKeyString(txn kvWriter, id NodeID) ([]byte, error) {
 	num, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -583,7 +583,7 @@ func (b *BadgerEngine) mvccNodeHeadKeyString(txn *badger.Txn, id NodeID) ([]byte
 	return mvccNodeHeadKey(num), nil
 }
 
-func (b *BadgerEngine) mvccEdgeHeadKeyString(txn *badger.Txn, id EdgeID) ([]byte, error) {
+func (b *BadgerEngine) mvccEdgeHeadKeyString(txn kvWriter, id EdgeID) ([]byte, error) {
 	num, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -609,7 +609,7 @@ func (b *BadgerEngine) mvccEdgeHeadKeyStringLookup(id EdgeID) []byte {
 
 // mvccNodeVersionKeyString / mvccEdgeVersionKeyString wrap the
 // numeric-keyed MVCC version keys.
-func (b *BadgerEngine) mvccNodeVersionKeyString(txn *badger.Txn, id NodeID, version MVCCVersion) ([]byte, error) {
+func (b *BadgerEngine) mvccNodeVersionKeyString(txn kvWriter, id NodeID, version MVCCVersion) ([]byte, error) {
 	num, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -617,7 +617,7 @@ func (b *BadgerEngine) mvccNodeVersionKeyString(txn *badger.Txn, id NodeID, vers
 	return mvccNodeVersionKey(num, version), nil
 }
 
-func (b *BadgerEngine) mvccEdgeVersionKeyString(txn *badger.Txn, id EdgeID, version MVCCVersion) ([]byte, error) {
+func (b *BadgerEngine) mvccEdgeVersionKeyString(txn kvWriter, id EdgeID, version MVCCVersion) ([]byte, error) {
 	num, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, id)
 	if err != nil {
 		return nil, err

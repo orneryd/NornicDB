@@ -130,6 +130,8 @@
   other: "confirmación: la transacción tiene escrituras pero no un espacio de nombres fijado"
 - id: storage.transaction.commit_conflict
   other: "conflicto detectado: una transacción simultánea modificó los datos antes de la confirmación: {{.Cause}}"
+- id: storage.transaction.large_commit_unrecoverable
+  other: "el almacenamiento rechaza escrituras hasta reiniciar: no se pudo revertir una confirmación grande fallida: {{.Cause}}"
 - id: storage.transaction.metadata_too_large
   other: "los metadatos de la transacción son demasiado grandes: {{.Actual}} caracteres (máximo {{.Maximum}})"
 - id: storage.transaction.edge_changed

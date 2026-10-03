@@ -31,15 +31,14 @@ const (
 // Returns (detectedNone, false, nil) for an empty database. Used solely
 // by the migration tool — the engine's read path dispatches on the body
 // header itself, not on a global "active serializer".
-func detectStoredSerializer(db *badger.DB) (detectedSerializer, bool, error) {
+func detectStoredSerializer(db badgerKV) (detectedSerializer, bool, error) {
 	if db == nil {
 		return detectedNone, false, fmt.Errorf("nil badger db")
 	}
 
 	var detected detectedSerializer
 	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
+		opts := badgerIteratorOptions()
 
 		prefixes := [][]byte{
 			{prefixNode},

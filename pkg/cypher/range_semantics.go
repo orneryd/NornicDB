@@ -133,27 +133,9 @@ func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow)
 }
 
 func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, clause, keyword string) error {
-	body := strings.TrimSpace(clause)
-	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
+	expressions := projectionExpressions(clause, keyword)
+	if len(expressions) == 0 {
 		return nil
-	}
-	body = strings.TrimSpace(body[len(keyword):])
-	expressions := make([]string, 0)
-	if strings.EqualFold(keyword, "UNWIND") {
-		if asIndex := topLevelKeywordIndex(body, "AS"); asIndex > 0 {
-			expressions = append(expressions, strings.TrimSpace(body[:asIndex]))
-		}
-	} else {
-		end := len(body)
-		for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndex(body, suffix); index >= 0 && index < end {
-				end = index
-			}
-		}
-		for _, item := range splitTopLevelComma(strings.TrimSpace(body[:end])) {
-			expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
-			expressions = append(expressions, expression)
-		}
 	}
 	if len(rows) == 0 {
 		rows = []pipelineRow{{}}

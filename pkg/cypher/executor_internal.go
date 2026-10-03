@@ -99,7 +99,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		}
 	}
 	params = normalizeQueryParameters(params)
-	ctx = context.WithValue(ctx, paramsKey, params)
+	ctx = withQueryParams(ctx, params)
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
 	}

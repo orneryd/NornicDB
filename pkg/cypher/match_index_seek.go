@@ -1007,40 +1007,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 	if schema == nil {
 		return nil, false, nil
 	}
-
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, property)
-	if len(labels) == 0 {
-		return nil, false, nil
-	}
-
-	idSet := make(map[storage.NodeID]struct{})
-	ordered := make([]storage.NodeID, 0)
-	for _, label := range labels {
-		ids := schema.PropertyIndexAllNonNil(label, property, false)
-		for _, id := range ids {
-			if _, exists := idSet[id]; exists {
-				continue
-			}
-			idSet[id] = struct{}{}
-			ordered = append(ordered, id)
-		}
-	}
-	if len(ordered) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(ordered))
-	for _, id := range ordered {
-		node, err := e.storage.GetNode(id)
-		if err != nil || node == nil {
-			continue
-		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	return nodes, true, nil
+	nodes, used := e.collectNodesFromIndexedProperty(schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
+		return schema.PropertyIndexAllNonNil(label, property, false), true
+	})
+	return nodes, used, nil
 }
 
 func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, queryLabels []string, property string) []string {
@@ -1756,4 +1726,247 @@ found:
 	}
 	// <> case: coalesce(x, d) <> d means x <> d AND x IS NOT NULL
 	return fmt.Sprintf("(%s <> %s AND %s IS NOT NULL)", varProp, rhs, varProp)
+}
+
+// collectNodesFromIndexedProperty is the shared tail of the index seeks that
+// read one indexed property per candidate label: it gathers lookup(label)
+// for every label of the pattern that indexes property, de-duplicates the
+// IDs in lookup order, and loads the nodes that carry all pattern labels.
+// used is false when no candidate label indexes property.
+func (e *StorageExecutor) collectNodesFromIndexedProperty(
+	schema *storage.SchemaManager,
+	nodePattern nodePatternInfo,
+	property string,
+	lookup func(label string) ([]storage.NodeID, bool),
+) (nodes []*storage.Node, used bool) {
+	labels := e.indexCandidateLabels(schema, nodePattern.labels, property)
+	if len(labels) == 0 {
+		return nil, false
+	}
+	idSet := make(map[storage.NodeID]struct{})
+	ordered := make([]storage.NodeID, 0)
+	for _, label := range labels {
+		ids, ok := lookup(label)
+		if !ok {
+			return nil, false
+		}
+		for _, id := range ids {
+			if _, exists := idSet[id]; exists {
+				continue
+			}
+			idSet[id] = struct{}{}
+			ordered = append(ordered, id)
+		}
+	}
+	nodes = make([]*storage.Node, 0, len(ordered))
+	for _, id := range ordered {
+		// An ID the index still lists for a node that is gone or lost a
+		// pattern label is skipped.
+		if node, err := e.storage.GetNode(id); err == nil && node != nil && mergeNodeHasLabels(node, nodePattern.labels) {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes, true
+}
+
+// tryCollectNodesFromPropertyIndexRange seeds a MATCH from a property index
+// when its WHERE bounds an indexed property with <, <=, > or >= against a
+// number or string literal or parameter (p.age > 30, 18 <= p.age < 65,
+// p.name >= $from AND p.name < $to). Only the bounds narrow the seed; the
+// caller still evaluates the whole WHERE on every candidate (#820).
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
+	if len(nodePattern.labels) == 0 {
+		return nil, false, nil
+	}
+	property, bounds, ok := parseIndexedRangeBounds(nodePattern.variable, whereClause, params)
+	if !ok {
+		return nil, false, nil
+	}
+	schema := orderedPropertyIndexSchema(e.storage)
+	if schema == nil {
+		return nil, false, nil
+	}
+	nodes, used := e.collectNodesFromIndexedProperty(schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
+		return schema.PropertyIndexRange(label, property, bounds)
+	})
+	return nodes, used, nil
+}
+
+// parseIndexedRangeBounds finds, among the top-level AND conjuncts of a
+// WHERE, comparisons of variable.property with a literal or parameter, and
+// returns the bounds they place on the first such property.
+func parseIndexedRangeBounds(variable, whereClause string, params map[string]interface{}) (property string, bounds storage.PropertyIndexBounds, ok bool) {
+	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	if clause == "" {
+		return "", bounds, false
+	}
+	for _, raw := range splitTopLevelAndConjuncts(clause) {
+		operands, operators, isChain := splitComparisonChain(unwrapOuterParens(strings.TrimSpace(raw)))
+		if !isChain {
+			continue
+		}
+		for index, operator := range operators {
+			left, right := strings.TrimSpace(operands[index]), strings.TrimSpace(operands[index+1])
+			if leftProperty, isProperty := parseVariableProperty(left, variable); isProperty {
+				if value, resolved := rangeBoundValue(right, params); resolved && (property == "" || property == leftProperty) {
+					property = leftProperty
+					addIndexedRangeBound(&bounds, operator, value)
+				}
+				continue
+			}
+			if rightProperty, isProperty := parseVariableProperty(right, variable); isProperty {
+				if value, resolved := rangeBoundValue(left, params); resolved && (property == "" || property == rightProperty) {
+					property = rightProperty
+					addIndexedRangeBound(&bounds, mirroredComparison(operator), value)
+				}
+			}
+		}
+	}
+	return property, bounds, property != "" && (bounds.HasLower || bounds.HasUpper)
+}
+
+// rangeBoundValue resolves a literal or $parameter operand of a range
+// comparison.
+func rangeBoundValue(operand string, params map[string]interface{}) (interface{}, bool) {
+	if strings.HasPrefix(operand, "$") {
+		value, exists := params[strings.TrimPrefix(operand, "$")]
+		return value, exists
+	}
+	value, ok := parseLiteralValue(operand)
+	if !ok {
+		return nil, false
+	}
+	return value, true
+}
+
+// addIndexedRangeBound records "property operator value". A second bound on
+// the same side is not combined: keeping one still selects every match.
+func addIndexedRangeBound(bounds *storage.PropertyIndexBounds, operator string, value interface{}) {
+	switch operator {
+	case ">", ">=":
+		if !bounds.HasLower {
+			bounds.Lower, bounds.HasLower, bounds.LowerInclusive = value, true, operator == ">="
+		}
+	case "<", "<=":
+		if !bounds.HasUpper {
+			bounds.Upper, bounds.HasUpper, bounds.UpperInclusive = value, true, operator == "<="
+		}
+	}
+}
+
+// mirroredComparison is the operator with its operands swapped (5 < p.x is
+// p.x > 5); others are returned unchanged and ignored by the caller.
+func mirroredComparison(operator string) string {
+	switch operator {
+	case "<":
+		return ">"
+	case "<=":
+		return ">="
+	case ">":
+		return "<"
+	case ">=":
+		return "<="
+	}
+	return operator
+}
+
+// collectPipelineIndexedNodeCandidates is the index half of
+// collectPipelineInitialNodeCandidates: the candidates of the first index
+// operator that can narrow the MATCH, with used false when none can. Row
+// reads and the filtered count (tryStreamPipelineFilteredNodeCount) both seed
+// from it, so a lookup that uses an index for rows uses it for count(*) too
+// (#820).
+func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
+	params := getParamsFromContext(ctx)
+	if hint.limit > 0 && hint.orderExpr != "" {
+		orderedPlans := []func() ([]*storage.Node, bool, error){
+			func() ([]*storage.Node, bool, error) {
+				return e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit)
+			},
+			func() ([]*storage.Node, bool, error) {
+				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit)
+			},
+		}
+		for _, plan := range orderedPlans {
+			nodes, used, err := plan()
+			if err != nil {
+				return nil, false, false, err
+			}
+			if used {
+				e.markOuterIndexTopKUsed()
+				return nodes, false, true, nil
+			}
+		}
+	}
+	if nodes, used, err := e.tryCollectNodesFromIDEqualityCompound(ctx, nodePattern, whereClause, params); err != nil || used {
+		return nodes, false, used, err
+	}
+	// The id IN $list seek only applies when that predicate is the whole
+	// WHERE, and returns exactly the nodes it selects: the caller need not
+	// evaluate the WHERE again on each of them. Evaluating it per row checked
+	// every node against the whole list: CALL { … } IN TRANSACTIONS batches,
+	// which select their rows by id(n) IN $ids, were quadratic in the batch
+	// size (#703).
+	if nodes, used, err := e.tryCollectNodesFromIDInParam(nodePattern, whereClause, params); err != nil || used {
+		return nodes, used, used, err
+	}
+	// inList marks the plan that answers a WHERE that is exactly an IN list.
+	indexedPlans := []struct {
+		collect func() ([]*storage.Node, bool, error)
+		inList  bool
+	}{
+		{collect: func() ([]*storage.Node, bool, error) {
+			return e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+		}},
+		{collect: func() ([]*storage.Node, bool, error) {
+			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereClause, params)
+		}},
+		{inList: true, collect: func() ([]*storage.Node, bool, error) {
+			return e.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, whereClause, params)
+		}},
+		{collect: func() ([]*storage.Node, bool, error) {
+			return e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereClause)
+		}},
+		{collect: func() ([]*storage.Node, bool, error) {
+			// Inline pattern properties ({id: $id}) on an indexed property.
+			nodes, used := e.lookupPatternCandidatesUsingPropertyIndex(nodePattern, e.getStorage(ctx))
+			if !used || len(nodePattern.labels) < 2 {
+				return nodes, used, nil
+			}
+			labelled := nodes[:0]
+			for _, node := range nodes {
+				if mergeNodeHasLabels(node, nodePattern.labels) {
+					labelled = append(labelled, node)
+				}
+			}
+			return labelled, true, nil
+		}},
+		{collect: func() ([]*storage.Node, bool, error) {
+			return e.tryCollectNodesFromPropertyIndexRange(nodePattern, whereClause, params)
+		}},
+		{collect: func() ([]*storage.Node, bool, error) {
+			return e.tryCollectNodesFromPropertyIndexNotNull(nodePattern, whereClause)
+		}},
+	}
+	for _, plan := range indexedPlans {
+		nodes, used, err := plan.collect()
+		if err != nil {
+			return nil, false, false, err
+		}
+		if used {
+			if len(nodePattern.properties) > 0 {
+				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+			}
+			// A WHERE that is exactly <variable>.<property> IN <list> on an
+			// indexed property is answered by the index: one lookup per list
+			// value returns exactly the nodes it selects, so the caller
+			// doesn't test each of them against the whole list again
+			// (quadratic in the list for a list that names every node).
+			// Checked only once the index answered, so a read that takes
+			// another route doesn't parse its WHERE for it.
+			exact := plan.inList && e.whereIsSimpleIndexedIn(ctx, nodePattern.variable, whereClause, params)
+			return nodes, exact, true, nil
+		}
+	}
+	return nil, false, false, nil
 }
