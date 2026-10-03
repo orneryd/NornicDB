@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -34,4 +35,12 @@ func TestTemporalToStringWritesSeconds(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2020-01-02T03:04Z", fmt.Sprint(result.Rows[0][0]), "the value's own text leaves zero seconds out")
 	require.Equal(t, "12:34", fmt.Sprint(result.Rows[0][1]))
+}
+
+func TestFormatCypherValueStringTemporalPointers(t *testing.T) {
+	clock := time.Date(2020, 1, 2, 3, 4, 0, 0, time.UTC)
+	require.Equal(t, "03:04:00", formatCypherValueString(&CypherLocalTime{Time: clock}))
+	require.Equal(t, "03:04:00Z", formatCypherValueString(&CypherTime{Time: clock}))
+	require.Equal(t, "2020-01-02T03:04:00", formatCypherValueString(&CypherLocalDateTime{Time: clock}))
+	require.Equal(t, "2020-01-02T03:04:00Z", formatCypherValueString(&CypherDateTime{Time: clock}))
 }
