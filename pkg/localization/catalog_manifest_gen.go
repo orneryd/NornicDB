@@ -1672,7 +1672,6 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "storage.client.node.embedding_chunk_delete_failed", Constructor: "StorageClientNodeEmbeddingChunkDeleteFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "storage.client.node.embedding_chunk_store_failed", Constructor: "StorageClientNodeEmbeddingChunkStoreFailed", Fields: []string{"Cause", "ChunkIndex"}, PluralForms: []string{"other"}},
 	{ID: "storage.client.node.embedding_chunks_delete_failed", Constructor: "StorageClientNodeEmbeddingChunksDeleteFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
-	{ID: "storage.client.node.embedding_payload_budget_exceeded", Constructor: "StorageClientNodeEmbeddingPayloadBudgetExceeded", Fields: []string{"ChunkIndex"}, PluralForms: []string{"other"}},
 	{ID: "storage.client.node.encode_failed", Constructor: "StorageClientNodeEncodeFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "storage.client.node.id_namespace_required", Constructor: "StorageClientNodeIDNamespaceRequired", Fields: []string{"NodeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.client.node.id_namespace_unprefixed", Constructor: "StorageClientNodeIDNamespaceUnprefixed", Fields: []string{"NodeID"}, PluralForms: []string{"other"}},

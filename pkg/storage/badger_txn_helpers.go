@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -56,14 +57,37 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 // withUpdate runs fn as one atomic engine write, committed through the same
 // commit writer as a transaction. fn reads and writes in one Badger
 // transaction and cannot be repeated, so its writes must fit one Badger
-// batch (badger.ErrTxnTooBig otherwise).
+// batch (badger.ErrTxnTooBig otherwise); writes of any size go through
+// withUpdateUnits.
+func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
+	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) })
+}
+
+// withUpdateUnits commits units as one atomic engine write of any size. Each
+// unit is a repeatable group of blind writes: when one does not fit the open
+// Badger batch, the commit becomes a large commit and the unit is repeated in
+// the next batch, and nothing is visible until every unit is written (#703).
+func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) error {
+	return b.commitEngineWrite(func(cw *commitWriter) error {
+		for _, unit := range units {
+			if err := cw.write(unit); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// commitEngineWrite is the one commit of the engine's own writes (withUpdate,
+// withUpdateUnits): write fills the commit writer, which then commits. A
+// failure rolls back any batches a large commit already wrote.
 //
 // Property-key tokens are made durable before the entity bytes that
 // reference them (a later failure leaves only harmless orphaned tokens,
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
+func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) error {
 	db, err := b.beginHelperTxn()
 	if err != nil {
 		return err
@@ -78,9 +102,12 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 		fail := func(err error) error {
 			b.idDict.discardTxnCounters(cw.txn)
 			b.propKeyDict.discardTxnCounters(cw.txn)
+			if abortErr := cw.abort(); abortErr != nil {
+				err = fmt.Errorf("%w (%w)", err, abortErr)
+			}
 			return err
 		}
-		if err := cw.writeOnce(fn); err != nil {
+		if err := write(cw); err != nil {
 			return fail(err)
 		}
 		nodeMax, edgeMax = b.idDict.flushTxnCounters(cw.txn)
@@ -113,4 +140,14 @@ func recoverBadgerClosedPanic(fn func() error) (err error) {
 func isBadgerClosedPanic(recovered interface{}) bool {
 	message := fmt.Sprint(recovered)
 	return strings.Contains(message, "DB Closed")
+}
+
+// IsTransactionTooBig reports whether err is Badger's "Txn is too big" (the
+// writes exceed one Badger batch), wrapped or only kept as text by a wrapper
+// that dropped the chain.
+func IsTransactionTooBig(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, badger.ErrTxnTooBig) || strings.Contains(err.Error(), badger.ErrTxnTooBig.Error())
 }

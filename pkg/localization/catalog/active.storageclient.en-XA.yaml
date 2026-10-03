@@ -28,8 +28,6 @@
   other: "[!! failed to delete old embedding chunks: {{.Cause}} !!]"
 - id: storage.client.node.embedding_chunk_store_failed
   other: "[!! failed to store embedding chunk {{.ChunkIndex}}: {{.Cause}} !!]"
-- id: storage.client.node.embedding_payload_budget_exceeded
-  other: "[!! failed to store embedding payload for chunk {{.ChunkIndex}}: entry exceeds per-txn write budget !!]"
 - id: storage.client.edge.encode_failed
   other: "[!! failed to encode edge: {{.Cause}} !!]"
 - id: storage.client.receipt.transaction_id_required

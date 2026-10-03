@@ -622,7 +622,7 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	}
 
 	// Check if exists in storage (read from Badger)
-	skipExistenceCheck := tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(node.ID)
+	skipExistenceCheck := tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(node.ID))
 	if !skipExistenceCheck {
 		if _, deleted := tx.deletedNodes[node.ID]; !deleted {
 			_, err := tx.getCommittedNodeLocked(node.ID)
@@ -641,7 +641,7 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	// Serialize node (may store embeddings separately if too large)
 	data, embeddingsSeparate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
 	if err != nil {
-		return "", fmt.Errorf("serializing node: %w", err)
+		return "", localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 	}
 
 	key := nodeKey(node.ID)
@@ -753,7 +753,7 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	// Buffer updated node write
 	nodeBytes, _, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
 	if err != nil {
-		return fmt.Errorf("serializing node: %w", err)
+		return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 	}
 
 	key := nodeKey(node.ID)
@@ -1233,8 +1233,10 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 }
 
 // validateNewEdgeLocked checks that edge can be created in the transaction:
-// it is not nil and has an ID, its namespace pins, both endpoints are visible (nodeVisible),
-// and no pending edge — or edge earlier in the same batch — has its ID.
+// it is not nil and has an ID, its namespace pins, both endpoints are visible
+// (nodeVisible; ErrNotFound otherwise), and no pending edge, edge earlier in
+// the same batch or committed edge has its ID (ErrAlreadyExists). The
+// committed check is skipped for generated IDs exactly as CreateNode skips it.
 func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, nodeVisible func(NodeID) bool, batch map[EdgeID]struct{}) error {
 	// A nil edge is invalid data and an empty ID an invalid ID, as in the
 	// engines' CreateEdge.
@@ -1248,16 +1250,26 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, nodeVisible func(
 		return err
 	}
 	if !nodeVisible(edge.StartNode) {
-		return localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), nil)
+		return localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), ErrNotFound)
 	}
 	if !nodeVisible(edge.EndNode) {
-		return localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), nil)
+		return localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), ErrNotFound)
 	}
 	if _, exists := tx.pendingEdges[edge.ID]; exists {
 		return ErrAlreadyExists
 	}
 	if _, exists := batch[edge.ID]; exists {
 		return ErrAlreadyExists
+	}
+	if _, deleted := tx.deletedEdges[edge.ID]; deleted || (tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(edge.ID))) {
+		return nil
+	}
+	_, err := tx.getCommittedEdgeLocked(edge.ID)
+	if err == nil {
+		return ErrAlreadyExists
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("checking edge existence: %w", err)
 	}
 	return nil
 }
@@ -1270,7 +1282,7 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge) error {
 	// numIDs via the id dictionary — keeps bodies tight.
 	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.staged(), namespaceForEdgeID(edge.ID), edge)
 	if err != nil {
-		return fmt.Errorf("serializing edge: %w", err)
+		return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 	}
 	tx.bufferSet(edgeKey(edge.ID), edgeBytes)
 
@@ -1387,10 +1399,10 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	// If endpoints changed, verify they exist and update outgoing/incoming indexes.
 	if oldEdge.StartNode != edge.StartNode || oldEdge.EndNode != edge.EndNode {
 		if !tx.nodeExists(edge.StartNode) {
-			return localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), nil)
+			return localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), ErrNotFound)
 		}
 		if !tx.nodeExists(edge.EndNode) {
-			return localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), nil)
+			return localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), ErrNotFound)
 		}
 
 		if oldOutKey := tx.engine.outgoingIndexKeyStringLookup(oldEdge.StartNode, edge.ID); oldOutKey != nil {
@@ -1445,7 +1457,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	// Serialize and buffer updated edge record.
 	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.staged(), namespaceForEdgeID(edge.ID), edge)
 	if err != nil {
-		return fmt.Errorf("serializing edge: %w", err)
+		return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 	}
 	tx.bufferSet(edgeKey(edge.ID), edgeBytes)
 
@@ -2949,10 +2961,11 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
 	})
 }
 
-// shouldSkipCreateExistenceCheck avoids a read-before-write for UUID-based IDs.
-// UUID collisions are negligible for generated IDs, so we skip the read to save I/O.
-func shouldSkipCreateExistenceCheck(nodeID NodeID) bool {
-	return hasUUIDShape(string(nodeID))
+// shouldSkipCreateExistenceCheck avoids a read-before-write for UUID-based
+// node and edge IDs. UUID collisions are negligible for generated IDs, so we
+// skip the read to save I/O.
+func shouldSkipCreateExistenceCheck(id string) bool {
+	return hasUUIDShape(id)
 }
 
 // hasUUIDShape reports whether an id is a namespace-prefixed UUID. Because

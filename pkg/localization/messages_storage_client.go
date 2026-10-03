@@ -18,7 +18,6 @@ const (
 	MessageStorageClientNodeEmbeddingChunkDeleteFailed     MessageID = "storage.client.node.embedding_chunk_delete_failed"
 	MessageStorageClientNodeEmbeddingChunksDeleteFailed    MessageID = "storage.client.node.embedding_chunks_delete_failed"
 	MessageStorageClientNodeEmbeddingChunkStoreFailed      MessageID = "storage.client.node.embedding_chunk_store_failed"
-	MessageStorageClientNodeEmbeddingPayloadBudgetExceeded MessageID = "storage.client.node.embedding_payload_budget_exceeded"
 	MessageStorageClientEdgeEncodeFailed                   MessageID = "storage.client.edge.encode_failed"
 	MessageStorageClientReceiptTransactionIDRequired       MessageID = "storage.client.receipt.transaction_id_required"
 	MessageStorageClientReceiptWALSequenceRequired         MessageID = "storage.client.receipt.wal_sequence_required"
@@ -129,10 +128,6 @@ func StorageClientNodeEmbeddingChunksDeleteFailed(cause error) Message {
 
 func StorageClientNodeEmbeddingChunkStoreFailed(chunkIndex int, cause error) Message {
 	return storageClientMessage(MessageStorageClientNodeEmbeddingChunkStoreFailed, fmt.Sprintf("failed to store embedding chunk %d: %s", chunkIndex, storageErrorText(cause)), map[string]any{"ChunkIndex": chunkIndex, "Cause": storageErrorText(cause)})
-}
-
-func StorageClientNodeEmbeddingPayloadBudgetExceeded(chunkIndex int) Message {
-	return storageClientMessage(MessageStorageClientNodeEmbeddingPayloadBudgetExceeded, fmt.Sprintf("failed to store embedding payload for chunk %d: entry exceeds per-txn write budget", chunkIndex), map[string]any{"ChunkIndex": chunkIndex})
 }
 
 func StorageClientEdgeEncodeFailed(cause error) Message {

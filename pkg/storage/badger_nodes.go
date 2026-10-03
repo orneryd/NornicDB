@@ -659,109 +659,45 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 	return err
 }
 
+// replaceSeparateEmbeddingChunks replaces a node's separately stored
+// embedding chunks with embeddings as one atomic commit of any size: the old
+// chunks' deletions come first, then the new chunks, each key its own unit
+// (withUpdateUnits). Readers see the old chunks or the new ones, never a mix
+// (#703).
 func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32) error {
-	if err := b.deleteEmbeddingChunksBatched(nodeID); err != nil {
+	prefix := embeddingPrefix(nodeID)
+	var units []func(txn *badger.Txn) error
+	if err := b.withView(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		defer it.Close()
+		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			key := it.Item().KeyCopy(nil)
+			units = append(units, func(txn *badger.Txn) error { return txn.Delete(key) })
+		}
+		return nil
+	}); err != nil {
 		return localizedError(localization.StorageClientNodeEmbeddingChunksDeleteFailed(err), err)
 	}
-	if len(embeddings) == 0 {
-		return nil
-	}
-	if err := b.writeEmbeddingChunksBatched(nodeID, embeddings); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (b *BadgerEngine) deleteEmbeddingChunksBatched(nodeID NodeID) error {
-	const deleteBatchSize = 256
-	prefix := embeddingPrefix(nodeID)
-
-	for {
-		keys := make([][]byte, 0, deleteBatchSize)
-		err := b.withView(func(txn *badger.Txn) error {
-			opts := badgerIteratorOptions()
-			opts.Prefix = prefix
-			it := txn.NewIterator(opts)
-			defer it.Close()
-			for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-				keys = append(keys, append([]byte(nil), it.Item().Key()...))
-				if len(keys) >= deleteBatchSize {
-					break
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		if len(keys) == 0 {
-			return nil
-		}
-
-		if err := b.withUpdate(func(txn *badger.Txn) error {
-			for _, key := range keys {
-				if err := txn.Delete(key); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
-}
-
-func (b *BadgerEngine) writeEmbeddingChunksBatched(nodeID NodeID, embeddings [][]float32) error {
-	const (
-		maxEntriesPerTxn = 256
-		maxBytesPerTxn   = 1 << 20 // 1 MiB per txn keeps requests small
-	)
-
-	type pendingWrite struct {
-		chunkIndex int
-		kv         embeddingWriteKV
-	}
-	pending := make([]pendingWrite, 0, len(embeddings))
 	for i, emb := range embeddings {
 		kvs, err := buildEmbeddingChunkWriteKVs(nodeID, i, emb)
 		if err != nil {
 			return err
 		}
+		chunkIndex := i
 		for _, kv := range kvs {
-			pending = append(pending, pendingWrite{chunkIndex: i, kv: kv})
+			kv := kv
+			units = append(units, func(txn *badger.Txn) error {
+				if err := txn.Set(kv.key, kv.val); err != nil {
+					return localizedError(localization.StorageClientNodeEmbeddingChunkStoreFailed(chunkIndex, err), err)
+				}
+				return nil
+			})
 		}
 	}
-
-	for start := 0; start < len(pending); {
-		next := start
-		err := b.withUpdate(func(txn *badger.Txn) error {
-			bytesUsed := 0
-			entriesWritten := 0
-			for i := start; i < len(pending); i++ {
-				entry := pending[i]
-				entryBytes := len(entry.kv.val)
-				if entriesWritten > 0 &&
-					(entriesWritten >= maxEntriesPerTxn || bytesUsed+entryBytes > maxBytesPerTxn) {
-					break
-				}
-				if err := txn.Set(entry.kv.key, entry.kv.val); err != nil {
-					return localizedError(localization.StorageClientNodeEmbeddingChunkStoreFailed(entry.chunkIndex, err), err)
-				}
-				next = i + 1
-				entriesWritten++
-				bytesUsed += entryBytes
-			}
-			if entriesWritten == 0 {
-				return localizedError(localization.StorageClientNodeEmbeddingPayloadBudgetExceeded(pending[start].chunkIndex), nil)
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		start = next
+	if len(units) == 0 {
+		return nil
 	}
-	return nil
+	return b.withUpdateUnits(units)
 }
 
 // DeleteNode removes a node and all its edges.

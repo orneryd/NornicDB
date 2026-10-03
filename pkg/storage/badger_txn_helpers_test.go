@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -42,4 +43,11 @@ func TestRecoverBadgerClosedPanic_RepanicsUnexpectedPanic(t *testing.T) {
 			panic("boom")
 		})
 	})
+}
+
+func TestIsTransactionTooBig(t *testing.T) {
+	assert.False(t, IsTransactionTooBig(nil))
+	assert.True(t, IsTransactionTooBig(fmt.Errorf("preface: %w", badger.ErrTxnTooBig)), "wrapped")
+	assert.True(t, IsTransactionTooBig(errors.New("the message: "+badger.ErrTxnTooBig.Error())), "re-formatted")
+	assert.False(t, IsTransactionTooBig(errors.New("unrelated failure")))
 }
