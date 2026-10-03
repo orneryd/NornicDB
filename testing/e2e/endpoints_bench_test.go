@@ -106,7 +106,7 @@ func TestEndpointParityAndBenchmark(t *testing.T) {
 
 	// Verify via Bolt
 	stepStart = time.Now()
-	got := countViaBolt(t, driver, benchLabel)
+	got := countViaBolt(t, driver, "", benchLabel)
 	require.Equal(t, boltPoints, got)
 	reportf("verify via bolt: count=%d took=%s", got, time.Since(stepStart))
 
@@ -151,16 +151,17 @@ func TestEndpointParityAndBenchmark(t *testing.T) {
 			upsertViaQdrantGRPC(t, qconn, collection, dim, grpcPoints)
 			reportf("insert via qdrant grpc: col=%s dim=%d n=%d took=%s", collection, dim, grpcPoints, time.Since(stepStart))
 
-			// Read via Bolt/Graph surfaces: points are stored as nodes with labels:
-			//   :QdrantPoint:<collection>
+			// Read via Bolt/Graph surfaces: each collection is its own
+			// database (named after the collection), and its points are nodes
+			// labelled :QdrantPoint:Point there.
 			qdrantLabel := "QdrantPoint"
 			stepStart = time.Now()
-			gotQdrantPoints := countViaBolt(t, driver, qdrantLabel)
+			gotQdrantPoints := countViaBolt(t, driver, collection, qdrantLabel)
 			require.GreaterOrEqual(t, gotQdrantPoints, grpcPoints)
 			reportf("verify qdrant points via bolt: label=%s count=%d took=%s", qdrantLabel, gotQdrantPoints, time.Since(stepStart))
 
 			stepStart = time.Now()
-			gotQdrantPoints = countViaNeo4jHTTP(t, httpClient, httpAddr, defaultDB, qdrantLabel)
+			gotQdrantPoints = countViaNeo4jHTTP(t, httpClient, httpAddr, collection, qdrantLabel)
 			require.GreaterOrEqual(t, gotQdrantPoints, grpcPoints)
 			reportf("verify qdrant points via neo4j http: label=%s count=%d took=%s", qdrantLabel, gotQdrantPoints, time.Since(stepStart))
 		}
@@ -460,12 +461,13 @@ func insertViaBolt(t *testing.T, driver neo4j.DriverWithContext, label string, n
 	require.NoError(t, err)
 }
 
-func countViaBolt(t *testing.T, driver neo4j.DriverWithContext, label string) int {
+// countViaBolt counts label's nodes in database ("" for the default one).
+func countViaBolt(t *testing.T, driver neo4j.DriverWithContext, database, label string) int {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	sess := driver.NewSession(ctx, neo4j.SessionConfig{})
+	sess := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: database})
 	defer func() { _ = sess.Close(ctx) }()
 
 	outAny, err := sess.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
