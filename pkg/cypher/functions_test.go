@@ -865,10 +865,10 @@ func TestSpatialFunctions(t *testing.T) {
 
 	// Test point function
 	result := e.evaluateExpressionWithContext(ctx, "point({x: 1.0, y: 2.0})", nil, nil)
-	pointMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatalf("point() should return map, got %T", result)
+	if _, isPoint := result.(CypherPoint); !isPoint {
+		t.Fatalf("point() should return a point, got %T", result)
 	}
+	pointMap, _ := spatialMap(result)
 	if pointMap["x"] != float64(1.0) {
 		t.Errorf("point().x = %v, want 1.0", pointMap["x"])
 	}
@@ -2253,7 +2253,7 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	if got := eval("point.srid(point({x: 1, y: 2}))", nil, nil, 0); got != int64(7203) {
 		t.Fatalf("point.srid(cartesian default) = %#v", got)
 	}
-	if got := eval("point.srid(point({x: 1, y: 2, srid: 9157}))", nil, nil, 0); got != int64(9157) {
+	if got := eval("point.srid(point({x: 1, y: 2, z: 3, srid: 9157}))", nil, nil, 0); got != int64(9157) {
 		t.Fatalf("point.srid(explicit) = %#v", got)
 	}
 	if got := eval("point.crs(point({x: 1, y: 2, z: 3}))", nil, nil, 0); got != "cartesian-3d" {
@@ -2265,19 +2265,19 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	if got := eval("point.crs(point({latitude: 1, longitude: 2, height: 3}))", nil, nil, 0); got != "wgs-84-3d" {
 		t.Fatalf("point.crs(wgs84-3d) = %#v", got)
 	}
-	if got := eval("point.crs(point({x: 1, y: 2, crs: 'custom'}))", nil, nil, 0); got != "custom" {
+	if got := eval("point.crs({x: 1, y: 2, crs: 'custom'})", nil, nil, 0); got != "custom" {
 		t.Fatalf("point.crs(custom) = %#v", got)
 	}
-	if got := eval("point.height(point({altitude: 7}))", nil, nil, 0); got != float64(7) {
+	if got := eval("point.height({altitude: 7})", nil, nil, 0); got != float64(7) {
 		t.Fatalf("point.height = %#v", got)
 	}
-	if got := eval("point.height(point({z: 8}))", nil, nil, 0); got != float64(8) {
+	if got := eval("point.height({z: 8})", nil, nil, 0); got != float64(8) {
 		t.Fatalf("point.height(z) = %#v", got)
 	}
-	if got := eval("point.height(point({height: 9}))", nil, nil, 0); got != float64(9) {
+	if got := eval("point.height({height: 9})", nil, nil, 0); got != float64(9) {
 		t.Fatalf("point.height(height) = %#v", got)
 	}
-	if got := eval("point.z(point({z: 10}))", nil, nil, 0); got != float64(10) {
+	if got := eval("point.z({z: 10})", nil, nil, 0); got != float64(10) {
 		t.Fatalf("point.z = %#v", got)
 	}
 	if got := eval("point.latitude(point({latitude: 12.5, longitude: 22.5}))", nil, nil, 0); got != float64(12.5) {

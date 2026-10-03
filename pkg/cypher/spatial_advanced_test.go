@@ -153,7 +153,7 @@ func TestPointIntersectsPolygon(t *testing.T) {
 
 			// Create a node with the polygon for testing
 			polygonMap := polygon.(map[string]interface{})
-			pointMap := point.(map[string]interface{})
+			pointMap, _ := spatialMap(point)
 
 			// Build the point.intersects expression manually
 			result := e.evaluateExpressionWithContext(ctx, "", nil, nil)
