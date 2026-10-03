@@ -667,13 +667,13 @@ func TestTransaction_ConfigSettersAndSkipCreateHelpers(t *testing.T) {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
 
-	if shouldSkipCreateExistenceCheck(NodeID("test:550e8400-e29b-41d4-a716-446655440000")) != true {
+	if shouldSkipCreateExistenceCheck("test:550e8400-e29b-41d4-a716-446655440000") != true {
 		t.Error("Expected UUID-prefixed node ID to skip existence check")
 	}
-	if shouldSkipCreateExistenceCheck(NodeID(prefixTestID("non-uuid"))) {
+	if shouldSkipCreateExistenceCheck(prefixTestID("non-uuid")) {
 		t.Error("Expected non-UUID node ID not to skip existence check")
 	}
-	if shouldSkipCreateExistenceCheck(NodeID("missingprefix")) {
+	if shouldSkipCreateExistenceCheck("missingprefix") {
 		t.Error("Expected non-prefixed node ID not to skip existence check")
 	}
 }

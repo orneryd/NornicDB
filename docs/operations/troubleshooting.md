@@ -252,9 +252,7 @@ On startup, NornicDB will:
 Startup errors that report `property key id ... not in dictionary` are treated
 as corruption signals. That error means a persisted node or edge references a
 tokenized property-key dictionary entry that is missing from the store, so the
-safe recovery path is snapshot + WAL replay into a fresh store. Large recovery
-restores are split into smaller Badger transactions automatically when the
-backend rejects the full restore batch as too large.
+safe recovery path is snapshot + WAL replay into a fresh store.
 
 3. **If recovery can’t run**
 
