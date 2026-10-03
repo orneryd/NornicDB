@@ -85,9 +85,11 @@ func TestMatchIndexSeek_IDEqualityCompoundAndIDInAdditionalBranches(t *testing.T
 		require.NoError(t, err)
 	}
 
+	// The value side `'n1' OR` is no constant: the seek leaves the predicate
+	// to the row filter instead of looking up its text (#844).
 	nodes, used, err := exec.tryCollectNodesFromIDEqualityCompound(ctx, nodePatternInfo{variable: "n"}, "(id(n) = 'n1' OR )", nil)
 	require.NoError(t, err)
-	require.True(t, used)
+	require.False(t, used)
 	require.Empty(t, nodes)
 
 	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(ctx, nodePatternInfo{variable: "n"}, "(id(n) = 'n1' AND elementId(n) = '4:nornic:n2')", nil)

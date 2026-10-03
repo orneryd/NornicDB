@@ -11,6 +11,25 @@ import (
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
+// indexSeekConstant evaluates the value side of a predicate an index seek
+// answers. The seek may use the value only when it is a constant of the
+// statement: no row variable, defined by the evaluator (literals, parameters
+// and functions of them, such as toUpper($name) or date('2020-01-02')).
+// Otherwise ok is false and the predicate is left to the row filter. Reading
+// the value with the literal parser looked up a function call as its own
+// text and returned no rows (#844).
+func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (value interface{}, ok bool) {
+	expr = strings.TrimSpace(expr)
+	if expr == "" || len(expressionFreeVariables(expr)) > 0 {
+		return nil, false
+	}
+	value, ok = e.evaluateRowExpressionWithContext(ctx, expr, e.fabricRecordBindings)
+	if !ok {
+		return nil, false
+	}
+	return normalizePropValue(value), true
+}
+
 // tryCollectNodesFromIDEquality attempts to satisfy:
 //
 //	MATCH (n[:Label]) WHERE id(n) = <id>
@@ -70,7 +89,10 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nod
 		return nil, false, nil
 	}
 
-	rawVal := e.parseValue(ctx, right)
+	rawVal, constant := e.indexSeekConstant(ctx, right)
+	if !constant {
+		return nil, false, nil
+	}
 	idValue, ok := rawVal.(string)
 	if !ok || strings.TrimSpace(idValue) == "" {
 		return []*storage.Node{}, true, nil
@@ -1103,11 +1125,13 @@ func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variab
 
 	prop, isLeftVarProp := parseVariableProperty(left, variable)
 	if isLeftVarProp {
-		return prop, e.parseValue(ctx, right), true
+		value, constant := e.indexSeekConstant(ctx, right)
+		return prop, value, constant
 	}
 	prop, isRightVarProp := parseVariableProperty(right, variable)
 	if isRightVarProp {
-		return prop, e.parseValue(ctx, left), true
+		value, constant := e.indexSeekConstant(ctx, left)
+		return prop, value, constant
 	}
 	return "", nil, false
 }
@@ -1201,7 +1225,10 @@ func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, varia
 	if !strings.HasPrefix(right, "[") || !strings.HasSuffix(right, "]") {
 		return "", nil, false
 	}
-	rawList := e.parseValue(ctx, right)
+	rawList, constant := e.indexSeekConstant(ctx, right)
+	if !constant {
+		return "", nil, false
+	}
 	list := coerceInterfaceList(rawList)
 	if len(list) == 0 {
 		return parsedProp, []interface{}{}, true
