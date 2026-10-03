@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// formatCypherValueString is the text toString() gives a number or temporal
+// value. Times are written with seconds even when they are zero, as Neo4j's
+// toString() writes them (#818).
 func formatCypherValueString(value interface{}) string {
 	switch typed := value.(type) {
 	case float64:
@@ -20,21 +23,21 @@ func formatCypherValueString(value interface{}) string {
 	case *CypherDate:
 		return typed.String()
 	case CypherLocalTime:
-		return typed.String()
+		return formatTemporalClock(typed.Time, false, "", true)
 	case *CypherLocalTime:
-		return typed.String()
+		return formatTemporalClock(typed.Time, false, "", true)
 	case CypherTime:
-		return typed.String()
+		return formatTemporalClock(typed.Time, true, "", true)
 	case *CypherTime:
-		return typed.String()
+		return formatTemporalClock(typed.Time, true, "", true)
 	case CypherLocalDateTime:
-		return typed.String()
+		return formatTemporalDateTime(typed.Time, false, "", true)
 	case *CypherLocalDateTime:
-		return typed.String()
+		return formatTemporalDateTime(typed.Time, false, "", true)
 	case CypherDateTime:
-		return typed.String()
+		return formatTemporalDateTime(typed.Time, true, typed.ZoneID, true)
 	case *CypherDateTime:
-		return typed.String()
+		return formatTemporalDateTime(typed.Time, true, typed.ZoneID, true)
 	case time.Time:
 		return formatZonedDateTimeString(typed, "")
 	case *time.Time:
@@ -79,7 +82,7 @@ func formatZonedDateTimeString(value time.Time, zoneID string) string {
 	if zoneID == "" && strings.Contains(value.Location().String(), "/") {
 		zoneID = value.Location().String()
 	}
-	return formatTemporalDateTime(value, true, zoneID)
+	return formatTemporalDateTime(value, true, zoneID, true)
 }
 
 // compareTemporalValues applies Neo4j temporal equality without depending on
