@@ -155,6 +155,9 @@ SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and v
   and over HTTP in Neo4j's GeoJSON-like form; fields `x`, `y`, `z`,
   `latitude`, `longitude`, `height`, `crs`, `srid`; `point.distance`,
   `point.withinBBox`, equality and ORDER BY as in Neo4j 5.26
+- ✅ Type predicate expressions: `x IS :: TYPE`, `x IS NOT :: TYPE`, `x :: TYPE`,
+  `x IS [NOT] TYPED TYPE` (all types and synonyms, `NOT NULL`, `LIST<T>`,
+  unions, `ANY`, `NOTHING`, `NULL`, `PROPERTY VALUE`)
 - ✅ Date/time functions: date, datetime, timestamp
 
 ### Bolt Handshake Compatibility for `cypher-shell`
