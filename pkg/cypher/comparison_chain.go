@@ -113,13 +113,14 @@ func splitComparisonChain(expression string) ([]string, []string, bool) {
 }
 
 func scanComparisonChain(expression string) (comparisonChainScan, bool) {
-	// The < and > of a type (x IS :: LIST<INTEGER>, #838) are not
-	// comparisons; the scan reads a copy of the same length with types
-	// blanked, and operands are still cut from the caller's text.
-	expression = maskTypePredicateTypes(expression)
 	if scan, ok, needsComplexScan := scanPlainComparisonChain(expression); !needsComplexScan {
 		return scan, ok
 	}
+	// The < and > of a type (x IS :: LIST<INTEGER>, #838) are not
+	// comparisons: the plain scan hands text with ':' or LIST< / ARRAY< /
+	// ANY< here, and this scan reads a copy of the same length with types
+	// blanked; operands are still cut from the caller's text.
+	expression = maskTypePredicateTypes(expression)
 
 	var scan comparisonChainScan
 	operandStart := 0
@@ -266,7 +267,7 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 	operandStart := 0
 	for index := 0; index < len(expression); index++ {
 		switch expression[index] {
-		case '\'', '"', '`', '(', ')', '[', ']', '{', '}':
+		case '\'', '"', '`', '(', ')', '[', ']', '{', '}', ':':
 			return comparisonChainScan{}, false, true
 		case '/':
 			if index+1 < len(expression) && (expression[index+1] == '/' || expression[index+1] == '*') {
@@ -278,6 +279,9 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 		case '<':
 			if index+1 < len(expression) && expression[index+1] == '-' {
 				continue
+			}
+			if index > 0 && isIdentByte(expression[index-1]) && typeConstructorBefore(expression, index) {
+				return comparisonChainScan{}, false, true
 			}
 			operatorLength = 1
 			if index+1 < len(expression) && (expression[index+1] == '>' || expression[index+1] == '=') {
@@ -331,6 +335,20 @@ func operandMayContainCase(operand string) bool {
 		if operand[i]|0x20 == 'c' && operand[i+1]|0x20 == 'a' && operand[i+2]|0x20 == 's' && operand[i+3]|0x20 == 'e' {
 			return true
 		}
+	}
+	return false
+}
+
+// typeConstructorBefore reports whether LIST, ARRAY or ANY ends right before
+// position index (LIST<INTEGER> in a type predicate, #838).
+func typeConstructorBefore(expression string, index int) bool {
+	start := index
+	for start > 0 && isIdentByte(expression[start-1]) {
+		start--
+	}
+	switch upperASCII(expression[start:index]) {
+	case "LIST", "ARRAY", "ANY":
+		return true
 	}
 	return false
 }
