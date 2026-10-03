@@ -65,6 +65,9 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
+	if err := e.prepareSchemaTransaction(); err != nil {
+		return nil, err
+	}
 	resumeWrites, err := pauseAsyncWritesForSchemaDDL(e.storage)
 	defer resumeWrites()
 	if err != nil {
@@ -79,6 +82,8 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		run = e.executeCreateConstraint
 	} else if strings.Contains(upper, "DROP CONSTRAINT") {
 		run = e.executeDropConstraint
+	} else if startsWithKeywords(cypher, "DROP", "INDEX") {
+		run = e.executeDropIndex
 	} else if strings.Contains(upper, "CREATE FULLTEXT INDEX") {
 		run = e.executeCreateFulltextIndex
 	} else if strings.Contains(upper, "CREATE VECTOR INDEX") {
@@ -95,6 +100,11 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		return nil, localizedError(localization.CypherSchemaUnknownCommand(cypher), nil)
 	}
 	result, err := e.countSchemaChanges(ctx, cypher, run)
+	if err == nil {
+		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+			err = wrapper.tx.StageSchemaChanges()
+		}
+	}
 	if err != nil && startsWithKeywords(cypher, "CREATE", "CONSTRAINT") {
 		var violation *storage.ConstraintViolationError
 		if errors.As(err, &violation) {
@@ -611,10 +621,12 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 	// Tear down the matching in-memory vector data after the schema entry
 	// is gone so concurrent reads can't see a half-dropped index.
 	if droppedVectorIndex != nil {
-		if e.searchService != nil && droppedVectorIndex.Property != "" {
-			e.searchService.RemovePropertyVectorIndex(droppedVectorIndex.Property)
-		}
-		e.unregisterVectorSpace(name)
+		e.afterSchemaCommit(func() {
+			if e.searchService != nil && droppedVectorIndex.Property != "" {
+				e.searchService.RemovePropertyVectorIndex(droppedVectorIndex.Property)
+			}
+			e.unregisterVectorSpace(name)
+		})
 	}
 
 	// Invalidate query cache — cached SHOW INDEXES results are now stale.
@@ -2493,7 +2505,9 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 	// directly from relationship properties and schema metadata.
 	// registerVectorSpace is node-vector specific; keep relationship indexes out.
 	if !parsed.isRelationship && (e.searchService == nil || e.searchService.VectorEnabled()) {
-		e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
+		e.afterSchemaCommit(func() {
+			e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
+		})
 	}
 
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil

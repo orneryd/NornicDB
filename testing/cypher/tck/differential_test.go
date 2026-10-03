@@ -15,7 +15,122 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/stretchr/testify/require"
 )
+
+func TestGh531_BoltSchemaTransactionLifetime(t *testing.T) {
+	referenceURI := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI")
+	if referenceURI == "" {
+		t.Skip("set NORNICDB_NEO4J_REFERENCE_URI for schema transaction comparison")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	nornic, shutdown := startConformanceServer(t)
+	defer shutdown()
+	reference, err := neo4j.NewDriverWithContext(referenceURI, neo4j.NoAuth())
+	require.NoError(t, err)
+	defer reference.Close(context.Background())
+	require.NoError(t, waitForReference(ctx, reference))
+	for _, backend := range []struct {
+		name, database string
+		driver         neo4j.DriverWithContext
+	}{{"nornicdb", "nornic", nornic}, {"neo4j", "neo4j", reference}} {
+		t.Run(backend.name, func(t *testing.T) {
+			session := backend.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: backend.database})
+			defer session.Close(ctx)
+			run := func(t *testing.T, statement string, tx neo4j.ExplicitTransaction) ([][]any, error) {
+				t.Helper()
+				var result neo4j.ResultWithContext
+				var err error
+				if tx == nil {
+					result, err = session.Run(ctx, statement, nil)
+				} else {
+					result, err = tx.Run(ctx, statement, nil)
+				}
+				if err != nil {
+					return nil, err
+				}
+				records, err := result.Collect(ctx)
+				rows := make([][]any, 0, len(records))
+				for _, record := range records {
+					rows = append(rows, record.Values)
+				}
+				return rows, err
+			}
+			for _, schema := range []struct{ name, create, drop, show string }{
+				{"range", "CREATE RANGE INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON (n.id)", "DROP INDEX gh531_tx_index", "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name"},
+				{"text", "CREATE TEXT INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON (n.id)", "DROP INDEX gh531_tx_index", "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name"},
+				{"point", "CREATE POINT INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON (n.id)", "DROP INDEX gh531_tx_index", "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name"},
+				{"fulltext", "CREATE FULLTEXT INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON EACH [n.id]", "DROP INDEX gh531_tx_index", "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name"},
+				{"vector", "CREATE VECTOR INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", "DROP INDEX gh531_tx_index", "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name"},
+				{"unique", "CREATE CONSTRAINT gh531_tx_unique FOR (n:Gh531SchemaTX) REQUIRE n.id IS UNIQUE", "DROP CONSTRAINT gh531_tx_unique", "SHOW CONSTRAINTS YIELD name WHERE name = 'gh531_tx_unique' RETURN name"},
+			} {
+				for _, dropping := range []bool{false, true} {
+					for _, commit := range []bool{false, true} {
+						t.Run(fmt.Sprintf("%s/drop=%v/commit=%v", schema.name, dropping, commit), func(t *testing.T) {
+							resetDifferentialBackend(t, ctx, newDifferentialBackend(t, backend.driver, backend.database, AutocommitMode), backend.name)
+							_, err := run(t, "CREATE (:Gh531SchemaTX {id: 'seed'})", nil)
+							require.NoError(t, err)
+							statement := schema.create
+							if dropping {
+								_, err = run(t, schema.create, nil)
+								require.NoError(t, err)
+								statement = schema.drop
+							}
+							transaction, err := session.BeginTransaction(ctx)
+							require.NoError(t, err)
+							defer transaction.Close(ctx)
+							_, err = run(t, statement, transaction)
+							require.NoError(t, err)
+							if commit {
+								err = transaction.Commit(ctx)
+							} else {
+								err = transaction.Rollback(ctx)
+							}
+							require.NoError(t, err)
+							rows, err := run(t, schema.show, nil)
+							require.NoError(t, err)
+							wantPresent := dropping != commit
+							require.Equal(t, wantPresent, len(rows) == 1)
+							_, err = run(t, "CALL db.awaitIndexes(30)", nil)
+							require.NoError(t, err)
+							data, err := run(t, "MATCH (n:Gh531SchemaTX {id: 'seed'}) RETURN n.id", nil)
+							require.NoError(t, err)
+							require.Equal(t, [][]any{{"seed"}}, data)
+							t.Logf("ISSUE531_SCHEMA_RESULT backend=%s schema=%s drop=%v commit=%v present=%v data=%v", backend.name, schema.name, dropping, commit, wantPresent, data)
+						})
+					}
+				}
+			}
+			for _, schemaFirst := range []bool{false, true} {
+				t.Run(fmt.Sprintf("mixed/schema_first=%v", schemaFirst), func(t *testing.T) {
+					resetDifferentialBackend(t, ctx, newDifferentialBackend(t, backend.driver, backend.database, AutocommitMode), backend.name)
+					statements := []string{"CREATE (:Gh531SchemaTX {id: 'mixed'})", "CREATE INDEX gh531_tx_index FOR (n:Gh531SchemaTX) ON (n.id)"}
+					if schemaFirst {
+						statements[0], statements[1] = statements[1], statements[0]
+					}
+					transaction, err := session.BeginTransaction(ctx)
+					require.NoError(t, err)
+					defer transaction.Close(ctx)
+					_, err = run(t, statements[0], transaction)
+					require.NoError(t, err)
+					_, err = run(t, statements[1], transaction)
+					var diagnostic *neo4j.Neo4jError
+					require.ErrorAs(t, err, &diagnostic)
+					require.Equal(t, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType", diagnostic.Code)
+					require.Error(t, transaction.Commit(ctx))
+					rows, err := run(t, "SHOW INDEXES YIELD name WHERE name = 'gh531_tx_index' RETURN name", nil)
+					require.NoError(t, err)
+					require.Empty(t, rows)
+					data, err := run(t, "MATCH (n:Gh531SchemaTX) RETURN count(n)", nil)
+					require.NoError(t, err)
+					require.Equal(t, [][]any{{int64(0)}}, data)
+					t.Logf("ISSUE531_SCHEMA_RESULT backend=%s mixed_schema_first=%v code=%s rows=%v data=%v", backend.name, schemaFirst, diagnostic.Code, rows, data)
+				})
+			}
+		})
+	}
+}
 
 type differentialCase struct {
 	Name            string         `json:"name"`

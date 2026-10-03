@@ -58,6 +58,8 @@ type BadgerTransaction struct {
 	knowledgeSchema           *SchemaManager
 	knowledgeSchemaDefinition *SchemaDefinition
 	knowledgeSchemaDirty      bool
+	schemaRuntime             *SchemaManager
+	schemaTransaction         bool
 
 	// Badger's native transaction
 	badgerTx *badger.Txn
@@ -565,7 +567,7 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return "", err
 	}
 
@@ -672,7 +674,7 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 
@@ -1092,7 +1094,7 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 
@@ -1147,7 +1149,7 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 	if err := tx.validateNewEdgeLocked(edge, tx.nodeExists, nil); err != nil {
@@ -1170,7 +1172,7 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 	if len(edges) == 0 {
@@ -1322,7 +1324,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	if edge.ID == "" {
 		return ErrInvalidID
 	}
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
@@ -1470,7 +1472,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
 
@@ -2047,6 +2049,22 @@ func (tx *BadgerTransaction) Commit() error {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
+	var releaseWrite func()
+	var writeErr error
+	if tx.schemaRuntime != nil {
+		releaseWrite, writeErr = tx.engine.beginSchemaWrite()
+	} else {
+		releaseWrite, writeErr = tx.engine.beginWrite()
+	}
+	if writeErr != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return writeErr
+	}
+	defer releaseWrite()
+	if tx.schemaRuntime != nil && tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence != tx.readTS.CommitSequence {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("schema snapshot changed before commit: %w", ErrConflict)
+	}
 
 	// Acquire per-(label, property, value) commit locks for every unique
 	// constraint value touched by this transaction's pending nodes. Held
@@ -2157,13 +2175,6 @@ func (tx *BadgerTransaction) Commit() error {
 	// callbacks) must run against live engine state and the client must be
 	// told the truth. Close waits on this barrier; a commit that arrives
 	// after Close finished fails here without touching Badger.
-	releaseWrite, err := tx.engine.beginWrite()
-	if err != nil {
-		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return err
-	}
-	defer releaseWrite()
-
 	labelCountsLocked := len(tx.pendingLabelCountDeltas) > 0
 	if labelCountsLocked {
 		tx.engine.labelCountWriteMu.Lock()
