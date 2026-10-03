@@ -77,3 +77,24 @@ func BenchmarkFulltextIndexV2RemoveSharedTerm(b *testing.B) {
 		})
 	}
 }
+
+func TestFulltextIndexV2SnapshotDropsRemovedPostings(t *testing.T) {
+	index := NewFulltextIndexV2()
+	index.applyV2Snapshot(bm25V2Snapshot{
+		Documents:  map[string]string{"live": "kept"},
+		DocIDToNum: map[string]uint32{"live": 1},
+		DocNumToID: []string{"", "live"},
+		DocLengths: []uint32{0, 1},
+		TermIndex: map[string]*bm25TermState{
+			"kept":  {Postings: []bm25Posting{{DocNum: 0, TF: 1}, {DocNum: 1, TF: 1}}},
+			"gone":  {Postings: []bm25Posting{{DocNum: 0, TF: 1}}},
+			"stray": {Postings: []bm25Posting{{DocNum: 9, TF: 1}}},
+			"empty": nil,
+		},
+		DocCount: 1,
+	})
+	index.mu.RLock()
+	defer index.mu.RUnlock()
+	require.Len(t, index.termIndex, 1)
+	require.Equal(t, []bm25Posting{{DocNum: 1, TF: 1}}, index.termIndex["kept"].Postings)
+}
