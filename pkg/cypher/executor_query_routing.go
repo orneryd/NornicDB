@@ -816,6 +816,9 @@ func (e *StorageExecutor) validateSyntax(cypher string) error {
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
 func (e *StorageExecutor) validateSyntaxANTLR(cypher string) error {
+	if isKnowledgePolicyDDLStatement(cypher) {
+		return e.validateSyntaxNornic(cypher)
+	}
 	parserError := antlr.Validate(cypher)
 	if parserError == nil {
 		return nil

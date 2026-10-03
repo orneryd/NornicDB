@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -263,6 +264,73 @@ func TestKnowledgePolicyApplyFormattingRoundTrips(t *testing.T) {
 	require.NoError(t, parsePolicyApplyBlock(formatPromotionPolicyApply(policy), &parsedPolicy))
 	assert.Equal(t, policy.OnAccess, parsedPolicy.OnAccess)
 	assert.Equal(t, policy.WhenClauses, parsedPolicy.WhenClauses)
+}
+
+func TestE2E_KnowledgePolicyDDLAcrossParsers(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			exec, ctx := newUnitExecutor(t)
+			require.Equal(t, parser, config.GetParserType())
+			for _, statement := range []string{
+				"CREATE DECAY PROFILE decay OPTIONS { halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED' }",
+				"CREATE PROMOTION PROFILE boost OPTIONS { multiplier: 1.5 }",
+				"CREATE PROMOTION POLICY pg FOR (n:Fact) APPLY { ON ACCESS { SET n.c = 1 } }",
+				"ALTER DECAY PROFILE decay SET OPTIONS { halfLifeSeconds: 7200 }",
+				"ALTER PROMOTION PROFILE boost SET OPTIONS { multiplier: 2.0 }",
+				"ALTER PROMOTION POLICY pg SET OPTIONS { enabled: true } DISABLE",
+				"SHOW DECAY PROFILES",
+				"SHOW PROMOTION PROFILES",
+				"SHOW PROMOTION POLICIES YIELD name, enabled WHERE name = 'pg' RETURN enabled",
+				"DROP PROMOTION POLICY pg",
+				"DROP PROMOTION PROFILE boost",
+				"DROP DECAY PROFILE decay",
+			} {
+				_, err := exec.Execute(ctx, statement, nil)
+				require.NoError(t, err, statement)
+			}
+			_, err := exec.Execute(ctx, "ALTER PROMOTION POLICY pg DISABEL", nil)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestE2E_AlterPromotionPolicyOptionAdmission(t *testing.T) {
+	exec, ctx := newUnitExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE PROMOTION POLICY pg FOR (n:Fact) APPLY { ON ACCESS { SET n.c = 1 } }", nil)
+	require.NoError(t, err)
+	assertEnabled := func(t *testing.T, expected bool) {
+		result, err := exec.Execute(ctx, "SHOW PROMOTION POLICIES YIELD name, enabled WHERE name = 'pg' RETURN enabled", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{expected}}, result.Rows)
+	}
+	for _, options := range []string{
+		"{ nonsense: 5 }",
+		"{ enabled: 'no' }",
+		"{ enabled: null }",
+		"{ enabled: 'no' } ENABLE",
+		"{ enabled: null } DISABLE",
+		"{ enabled: false, nonsense: 5 }",
+	} {
+		t.Run(options, func(t *testing.T) {
+			_, err := exec.Execute(ctx, "ALTER PROMOTION POLICY pg SET OPTIONS "+options, nil)
+			require.Error(t, err)
+			assertEnabled(t, true)
+		})
+	}
+	for _, edit := range []struct {
+		clause  string
+		enabled bool
+	}{
+		{"SET OPTIONS { enabled: true } DISABLE", false},
+		{"SET OPTIONS { enabled: false } ENABLE", true},
+	} {
+		_, err := exec.Execute(ctx, "ALTER PROMOTION POLICY pg "+edit.clause, nil)
+		require.NoError(t, err)
+		assertEnabled(t, edit.enabled)
+	}
 }
 
 func TestE2E_AlterKnowledgePolicyDefinitions(t *testing.T) {

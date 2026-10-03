@@ -1850,6 +1850,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "storageschema.lookup_index_already_exists", Constructor: "StorageSchemaLookupIndexAlreadyExists", Fields: []string{"Pattern"}, PluralForms: []string{"other"}},
 	{ID: "storageschema.missing_relationship_endpoint", Constructor: "StorageSchemaMissingRelationshipEndpoint", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "storageschema.multiplier_non_negative", Constructor: "StorageSchemaMultiplierNonNegative", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "storageschema.option_boolean_required", Constructor: "StorageSchemaOptionBooleanRequired", Fields: []string{"Option"}, PluralForms: []string{"other"}},
 	{ID: "storageschema.promotion_policy_already_exists", Constructor: "StorageSchemaPromotionPolicyAlreadyExists", Fields: []string{"Name"}, PluralForms: []string{"other"}},
 	{ID: "storageschema.promotion_policy_not_found", Constructor: "StorageSchemaPromotionPolicyNotFound", Fields: []string{"Name"}, PluralForms: []string{"other"}},
 	{ID: "storageschema.promotion_profile_already_exists", Constructor: "StorageSchemaPromotionProfileAlreadyExists", Fields: []string{"Name"}, PluralForms: []string{"other"}},

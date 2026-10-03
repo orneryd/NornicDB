@@ -215,9 +215,19 @@ MATCH (n:Memory {id: $id}) RETURN policy(n)
 ALTER PROMOTION PROFILE reinforced SET OPTIONS { multiplier: 1.75 }
 ALTER PROMOTION POLICY reinforce_after_three DISABLE
 ALTER PROMOTION POLICY reinforce_after_three ENABLE
+ALTER PROMOTION POLICY reinforce_after_three SET OPTIONS { enabled: true } DISABLE
 DROP   PROMOTION POLICY IF EXISTS reinforce_after_three
 DROP   PROMOTION PROFILE IF EXISTS reinforced
 ```
+
+`SET OPTIONS` accepts only the boolean `enabled` option. A terminal `ENABLE` or
+`DISABLE` overrides a valid `enabled` option; unknown options, invalid types,
+misspelled clauses, incomplete blocks, and trailing text are rejected without
+changing the policy. CREATE and ALTER policy definitions also reject text after
+their target or APPLY block.
+
+Native decay and promotion commands use the same DDL handler with either
+`NORNICDB_PARSER=nornic` or `NORNICDB_PARSER=antlr`.
 
 Drop the policy before the profile if both are going away — dropping a profile that policies still reference produces a validation error.
 

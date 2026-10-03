@@ -677,6 +677,31 @@ func TestCreatePromotionPolicy_MissingProfileRef(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestAlterPromotionPolicyValidatesOptionsAtomically(t *testing.T) {
+	empty := &SchemaManager{}
+	require.Error(t, empty.AlterPromotionPolicy("missing", nil))
+	sm := NewSchemaManager()
+	require.Error(t, sm.AlterPromotionPolicy("missing", nil))
+	require.NoError(t, sm.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
+		Name: "policy", TargetLabels: []string{"Fact"}, Enabled: true,
+	}))
+	require.Error(t, sm.AlterPromotionPolicy("missing", nil))
+	for _, updates := range []map[string]interface{}{
+		{"nonsense": 5},
+		{"enabled": "no"},
+		{"enabled": nil},
+		{"enabled": false, "nonsense": 5},
+	} {
+		require.Error(t, sm.AlterPromotionPolicy("policy", updates))
+		policies := sm.ShowPromotionPolicies()
+		require.Len(t, policies, 1)
+		require.True(t, policies[0].Enabled)
+	}
+	require.NoError(t, sm.AlterPromotionPolicy("policy", nil))
+	require.NoError(t, sm.AlterPromotionPolicy("policy", map[string]interface{}{"enabled": false}))
+	require.False(t, sm.ShowPromotionPolicies()[0].Enabled)
+}
+
 func TestAlterPromotionPolicyDefinition_ReplacesDefinitionAtomically(t *testing.T) {
 	sm := NewSchemaManager()
 	require.NoError(t, sm.CreatePromotionProfile(validPromoProfile("replacement_profile")))

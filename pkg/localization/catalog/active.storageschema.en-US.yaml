@@ -124,6 +124,9 @@
 - id: storageschema.unknown_option
   description: Unknown knowledge policy option. Option is an untranslated field identifier.
   other: 'unknown option: "{{.Option}}"'
+- id: storageschema.option_boolean_required
+  description: A boolean knowledge policy option received a value of another type.
+  other: 'option "{{.Option}}" must be a boolean'
 - id: storageschema.constraint_contract_already_exists
   description: Duplicate constraint contract. Name is an untranslated contract identifier.
   other: 'constraint contract "{{.Name}}" already exists'

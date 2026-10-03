@@ -124,6 +124,9 @@
 - id: storageschema.unknown_option
   description: Expanded pseudo-locale unknown policy option.
   other: '[!! unknown option: "{{.Option}}" !!]'
+- id: storageschema.option_boolean_required
+  description: Expanded pseudo-locale boolean policy option validation.
+  other: '[!! option "{{.Option}}" must be a boolean !!]'
 - id: storageschema.constraint_contract_already_exists
   description: Expanded pseudo-locale duplicate constraint contract.
   other: '[!! constraint contract "{{.Name}}" already exists !!]'

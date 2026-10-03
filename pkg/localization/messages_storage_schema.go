@@ -48,6 +48,7 @@ const (
 	MessageStorageSchemaMultiplierNonNegative               MessageID = "storageschema.multiplier_non_negative"
 	MessageStorageSchemaScoreCapOutOfRange                  MessageID = "storageschema.score_cap_out_of_range"
 	MessageStorageSchemaUnknownOption                       MessageID = "storageschema.unknown_option"
+	MessageStorageSchemaOptionBooleanRequired               MessageID = "storageschema.option_boolean_required"
 	MessageStorageSchemaConstraintContractAlreadyExists     MessageID = "storageschema.constraint_contract_already_exists"
 	MessageStorageSchemaConstraintContractNameConflict      MessageID = "storageschema.constraint_contract_name_conflict"
 	MessageStorageSchemaScanNodesFailed                     MessageID = "storageschema.scan_nodes_failed"
@@ -241,6 +242,13 @@ func StorageSchemaScoreCapOutOfRange(value float64) Message {
 
 func StorageSchemaUnknownOption(option string) Message {
 	return storageSchemaMessage(MessageStorageSchemaUnknownOption, "unknown option: "+strconv.Quote(option), map[string]any{"Option": option})
+}
+
+// StorageSchemaOptionBooleanRequired reports a non-boolean option value.
+// For example, StorageSchemaOptionBooleanRequired("enabled") identifies an
+// enabled option that must be supplied as true or false.
+func StorageSchemaOptionBooleanRequired(option string) Message {
+	return storageSchemaMessage(MessageStorageSchemaOptionBooleanRequired, "option "+strconv.Quote(option)+" must be a boolean", map[string]any{"Option": option})
 }
 
 func StorageSchemaConstraintContractAlreadyExists(name string) Message {

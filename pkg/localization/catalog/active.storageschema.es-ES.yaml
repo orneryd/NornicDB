@@ -124,6 +124,9 @@
 - id: storageschema.unknown_option
   description: Opción de política desconocida. Option no se traduce.
   other: 'opción desconocida: "{{.Option}}"'
+- id: storageschema.option_boolean_required
+  description: Una opción booleana recibió un valor de otro tipo. Option no se traduce.
+  other: 'la opción "{{.Option}}" debe ser un booleano'
 - id: storageschema.constraint_contract_already_exists
   description: Contrato de restricciones duplicado. Name no se traduce.
   other: 'el contrato de restricciones "{{.Name}}" ya existe'

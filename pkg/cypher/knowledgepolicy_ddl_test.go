@@ -883,6 +883,30 @@ func TestParseDDL_OnAccess_QueryContextVarsInExpression(t *testing.T) {
 
 // ── ALTER PROMOTION POLICY ──────────────────────────────────────────────────
 
+func TestParseDDL_AlterPromotionPolicyRejectsUnconsumedClauses(t *testing.T) {
+	_, _, err := ParseKnowledgePolicyDDL("ALTER PROMOTION POLICY")
+	require.Error(t, err)
+	for _, suffix := range []string{
+		"DISABEL",
+		"FROBNICATE",
+		"SET",
+		"SET ENABLE",
+		"SET OPTION { enabled: false }",
+		"SET OPTIONS {",
+		"FOR (n:Fact) APPLY {",
+		"FOR (n:Fact) GARBAGE",
+		"FOR (n:Fact) APPLY { ON ACCESS { SET n.c = 1 } } GARBAGE",
+		"ENABLE GARBAGE",
+		"SET OPTIONS { enabled: true } trailing words",
+		"ENABLE DISABLE",
+	} {
+		t.Run(suffix, func(t *testing.T) {
+			_, _, err := ParseKnowledgePolicyDDL("ALTER PROMOTION POLICY pg " + suffix)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestParseDDL_AlterPromotionPolicy_Enable(t *testing.T) {
 	stmt := `ALTER PROMOTION POLICY fact_promo ENABLE`
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Allocation-free keyword scanning helpers for DDL parsing.
@@ -244,6 +245,19 @@ type DropPromotionPolicyCmd struct {
 }
 
 type ShowPromotionPoliciesCmd struct{}
+
+func isKnowledgePolicyDDLStatement(statement string) bool {
+	for _, operation := range []string{"CREATE", "ALTER", "DROP"} {
+		if startsWithKeywords(statement, operation, "DECAY PROFILE") ||
+			startsWithKeywords(statement, operation, "PROMOTION PROFILE") ||
+			startsWithKeywords(statement, operation, "PROMOTION POLICY") {
+			return true
+		}
+	}
+	return startsWithKeywords(statement, "SHOW", "DECAY PROFILES") ||
+		startsWithKeywords(statement, "SHOW", "PROMOTION PROFILES") ||
+		startsWithKeywords(statement, "SHOW", "PROMOTION POLICIES")
+}
 
 // ParseKnowledgePolicyDDL attempts to parse a knowledge-layer DDL statement.
 // Returns (command, true, nil) on success, (nil, false, nil) if the input
@@ -1015,11 +1029,14 @@ func parsePromotionPolicyDefinition(name, s string, i int) (knowledgepolicy.Prom
 		if k < 0 {
 			return policy, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "APPLY"), nil)
 		}
-		_ = k
+		i = k
 
 		if err := parsePolicyApplyBlock(body, &policy); err != nil {
 			return policy, err
 		}
+	}
+	if kpSkipSpaces(s, i) != len(s) {
+		return policy, localizedError(localization.CypherKnowledgePolicyExpectedAfter("end of statement", "PROMOTION POLICY "+name), nil)
 	}
 
 	return policy, nil
@@ -1254,19 +1271,25 @@ func parseAlterPromotionPolicy(s string, i int) (interface{}, bool, error) {
 	if parsed, next, ok, err := kpParseSetOptions(s, i); err != nil {
 		return nil, false, err
 	} else if ok {
-		i = next
-		if parsed != nil {
-			updates = parsed
+		if parsed == nil {
+			return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("OPTIONS { ... }", "SET"), nil)
 		}
+		if err := storage.ValidatePromotionPolicyOptions(parsed); err != nil {
+			return nil, false, err
+		}
+		i = kpSkipSpaces(s, next)
+		updates = parsed
 	}
 
 	if j := kpMatchKeywordAt(s, i, "ENABLE"); j > 0 {
 		updates["enabled"] = true
 		i = j
-	}
-	if j := kpMatchKeywordAt(s, i, "DISABLE"); j > 0 {
+	} else if j := kpMatchKeywordAt(s, i, "DISABLE"); j > 0 {
 		updates["enabled"] = false
 		i = j
+	}
+	if kpSkipSpaces(s, i) != len(s) {
+		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("end of statement", "ALTER PROMOTION POLICY "+name), nil)
 	}
 
 	return &AlterPromotionPolicyCmd{Name: name, Updates: updates}, true, nil

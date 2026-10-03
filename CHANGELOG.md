@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reject malformed promotion-policy clauses, unconsumed definition suffixes,
+  unknown options, and non-boolean enabled values before schema mutation.
+  Apply terminal ENABLE/DISABLE flags after validating SET OPTIONS. Route native
+  knowledge-policy DDL consistently with either parser backend (#531).
+
 - Replace placeholder `db.stats` rows with bounded, shared query collection,
   real invocation summaries, live graph/token/meta retrieval, canonical
   section/configuration contracts, and uncached lifecycle results (#530).

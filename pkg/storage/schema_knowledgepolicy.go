@@ -313,7 +313,23 @@ func (sm *SchemaManager) DropPromotionPolicy(name string, ifExists ...bool) erro
 	return sm.finishKnowledgePolicyMutationLocked()
 }
 
+// ValidatePromotionPolicyOptions accepts only a boolean enabled option.
+// For example, ValidatePromotionPolicyOptions(map[string]interface{}{"enabled": false})
+// succeeds, while unknown options and non-boolean enabled values return errors.
+func ValidatePromotionPolicyOptions(updates map[string]interface{}) error {
+	for key, value := range updates {
+		if key != "enabled" {
+			return localizedError(localization.StorageSchemaUnknownOption(key), nil)
+		}
+		if _, ok := value.(bool); !ok {
+			return localizedError(localization.StorageSchemaOptionBooleanRequired(key), nil)
+		}
+	}
+	return nil
+}
+
 // AlterPromotionPolicy updates an existing promotion policy.
+// Invalid options are rejected before changing the policy or persisting schema.
 func (sm *SchemaManager) AlterPromotionPolicy(name string, updates map[string]interface{}) error {
 	sm.mu.Lock()
 
@@ -327,6 +343,10 @@ func (sm *SchemaManager) AlterPromotionPolicy(name string, updates map[string]in
 	}
 
 	policy := sm.promotionPolicies[name]
+	if err := ValidatePromotionPolicyOptions(updates); err != nil {
+		sm.mu.Unlock()
+		return err
+	}
 	if v, ok := updates["enabled"]; ok {
 		if b, ok := v.(bool); ok {
 			policy.Enabled = b
