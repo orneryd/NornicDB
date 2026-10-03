@@ -7,7 +7,10 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) tryFastCompoundOptionalMatchCount(initialNodes []*storage.Node, source nodePatternInfo, rel optionalRelPattern, restOfQuery string) (*ExecuteResult, bool, error) {
+// tryFastCompoundOptionalMatchCount answers the shape below from relationship
+// counts. loadInitialNodes is called only once the query has that shape, so
+// callers that have not collected the seed yet pay nothing for other queries.
+func (e *StorageExecutor) tryFastCompoundOptionalMatchCount(loadInitialNodes func() ([]*storage.Node, error), source nodePatternInfo, rel optionalRelPattern, restOfQuery string) (*ExecuteResult, bool, error) {
 	// Fast-path the common:
 	//   MATCH (p:Product)
 	//   OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)
@@ -15,7 +18,7 @@ func (e *StorageExecutor) tryFastCompoundOptionalMatchCount(initialNodes []*stor
 	//   ORDER BY orderCount DESC
 	//
 	// This avoids a per-node GetIncomingEdges scan and avoids constructing joinedRows.
-	if strings.TrimSpace(source.variable) == "" || len(initialNodes) == 0 {
+	if strings.TrimSpace(source.variable) == "" {
 		return nil, false, nil
 	}
 	if rel.direction != "in" || rel.relType == "" || rel.targetVar == "" {
@@ -51,6 +54,14 @@ func (e *StorageExecutor) tryFastCompoundOptionalMatchCount(initialNodes []*stor
 
 	// Ensure the relType matches the query's semantic shape; keep this narrow.
 	if upperASCII(rel.relType) != "ORDERS" {
+		return nil, false, nil
+	}
+
+	initialNodes, err := loadInitialNodes()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(initialNodes) == 0 {
 		return nil, false, nil
 	}
 

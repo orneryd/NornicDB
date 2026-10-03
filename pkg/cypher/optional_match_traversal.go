@@ -256,12 +256,13 @@ func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Contex
 		}
 		if !strings.Contains(initialPattern, "-[") {
 			source := e.parseNodePattern(ctx, initialPattern)
-			initialNodes, collectErr := e.collectOptionalMatchInitialNodes(ctx, source, whereClause, "", nil)
-			if collectErr != nil {
-				return nil, collectErr
-			}
 			rel := e.parseOptionalRelPattern(ctx, optionalClauses[0].pattern)
-			if result, handled, fastErr := e.tryFastCompoundOptionalMatchCount(initialNodes, source, rel, restOfQuery); handled || fastErr != nil {
+			// The seed is collected only when the query has the fast count's
+			// shape; otherwise the MATCH below binds it (#821).
+			loadInitialNodes := func() ([]*storage.Node, error) {
+				return e.collectOptionalMatchInitialNodes(ctx, source, whereClause, "", nil)
+			}
+			if result, handled, fastErr := e.tryFastCompoundOptionalMatchCount(loadInitialNodes, source, rel, restOfQuery); handled || fastErr != nil {
 				return result, fastErr
 			}
 		}

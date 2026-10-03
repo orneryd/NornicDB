@@ -3175,7 +3175,7 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 
 	// Fast path: OPTIONAL MATCH incoming count aggregation (Northwind-style).
 	// Avoid building joinedRows and per-node edge scans.
-	if res, ok, err := e.tryFastCompoundOptionalMatchCount(initialNodes, nodePattern, relPattern, restOfQuery); ok || err != nil {
+	if res, ok, err := e.tryFastCompoundOptionalMatchCount(func() ([]*storage.Node, error) { return initialNodes, nil }, nodePattern, relPattern, restOfQuery); ok || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -3309,24 +3309,19 @@ func (e *StorageExecutor) collectOptionalMatchInitialNodes(
 	}
 
 	if !usedPropertyIndex {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
+		// The pattern's inline properties ({id: $id}) go to the shared
+		// collector, which probes a property index covering them instead of
+		// streaming the label (#821) and filters them with Cypher equality.
+		nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, "", "", -1)
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	// Filter by pattern properties if any.
-	if len(nodePattern.properties) > 0 {
+	} else if len(nodePattern.properties) > 0 {
+		// Candidates from a WHERE index still have to match the pattern's
+		// inline properties.
 		filtered := make([]*storage.Node, 0, len(nodes))
 		for _, node := range nodes {
-			match := true
-			for k, v := range nodePattern.properties {
-				if node.Properties[k] != v {
-					match = false
-					break
-				}
-			}
-			if match {
+			if e.nodeMatchesProps(node, nodePattern.properties) {
 				filtered = append(filtered, node)
 			}
 		}

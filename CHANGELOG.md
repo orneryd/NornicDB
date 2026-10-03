@@ -233,6 +233,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   term's posting list, and a list is compacted once half of it is dead.
   Updating or deleting N nodes that share a property value no longer takes
   time quadratic in N (#826).
+- Seed `MATCH (n:Label {prop: $value}) OPTIONAL MATCH ...` from the property
+  index instead of streaming the whole label, and stop collecting that seed
+  when no fast path needs it. An indexed string, boolean or number that no
+  node holds now answers from the index in MATCH, OPTIONAL MATCH and MERGE
+  instead of falling back to a label or full node scan (#821).
 - Preserve locally bound iterators in nested list predicates, including
   same-kind `all`, `any`, `none`, and `single` calls (#774, #775).
 - Route `CREATE TEXT INDEX` and `CREATE POINT INDEX` through schema execution
