@@ -68,3 +68,45 @@ func TestAddConstraint_NameTakenByContract(t *testing.T) {
 	require.Error(t, sm.AddPropertyTypeConstraint("taken", "Doc", "id", PropertyTypeString))
 	require.Empty(t, sm.GetAllConstraints())
 }
+
+// A CREATE CONSTRAINT ... IF NOT EXISTS that finds the constraint present
+// neither persists nor snapshots the schema (#823); a real addition
+// persists once.
+func TestConstraintAdders_IfNotExistsNoOpPersistsNothing(t *testing.T) {
+	sm := NewSchemaManager()
+	persisted := 0
+	sm.SetPersister(func(*SchemaDefinition) error { persisted++; return nil })
+
+	require.NoError(t, sm.AddUniqueConstraint("u", "Doc", "id", true))
+	require.NoError(t, sm.AddConstraint(Constraint{Name: "k", Type: ConstraintNodeKey, Label: "Item", Properties: []string{"sku"}}, true))
+	require.NoError(t, sm.AddPropertyTypeConstraintWithOptions("t", "Doc", "n", PropertyTypeInteger, PropertyTypeConstraintOptions{IfNotExists: true}))
+	require.Equal(t, 3, persisted)
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, sm.AddUniqueConstraint("u", "Doc", "id", true))
+		require.NoError(t, sm.AddConstraint(Constraint{Name: "k", Type: ConstraintNodeKey, Label: "Item", Properties: []string{"sku"}}, true))
+		require.NoError(t, sm.AddPropertyTypeConstraintWithOptions("t", "Doc", "n", PropertyTypeInteger, PropertyTypeConstraintOptions{IfNotExists: true}))
+	}
+	require.Equal(t, 3, persisted)
+	require.Len(t, sm.GetAllConstraints(), 2)
+}
+
+func TestSameConstraintSchema(t *testing.T) {
+	base := Constraint{Type: ConstraintUnique, Label: "Doc", Properties: []string{"a", "b"}}
+	require.True(t, sameConstraintSchema(base, Constraint{Type: ConstraintNodeKey, Label: "Doc", Properties: []string{"b", "a"}}))
+	require.False(t, sameConstraintSchema(base, Constraint{Type: ConstraintUnique, Label: "Doc", Properties: []string{"a", "a"}}))
+	require.False(t, sameConstraintSchema(base, Constraint{Type: ConstraintUnique, Label: "Doc", Properties: []string{"a"}}))
+	require.False(t, sameConstraintSchema(base, Constraint{Type: ConstraintUnique, Label: "Other", Properties: []string{"a", "b"}}))
+	require.False(t, sameConstraintSchema(base, Constraint{Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "Doc", Properties: []string{"a", "b"}}))
+	policy := Constraint{Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "L", SourceLabel: "A", TargetLabel: "B", PolicyMode: "ALLOWED"}
+	require.True(t, sameConstraintSchema(policy, policy))
+	other := policy
+	other.PolicyMode = "DISALLOWED"
+	require.False(t, sameConstraintSchema(policy, other))
+	require.False(t, sameConstraintSchema(policy, Constraint{Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "L"}))
+	card := Constraint{Type: ConstraintCardinality, EntityType: ConstraintEntityRelationship, Label: "L", Direction: "OUTGOING", MaxCount: 1}
+	inbound := card
+	inbound.Direction = "INCOMING"
+	require.False(t, sameConstraintSchema(card, inbound))
+	require.True(t, sameConstraintSchema(card, Constraint{Type: ConstraintCardinality, EntityType: ConstraintEntityRelationship, Label: "L", Direction: "OUTGOING", MaxCount: 5}))
+}
