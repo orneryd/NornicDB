@@ -238,6 +238,16 @@ changing the stored profile. `scope` can be set during creation or alteration.
 Profile and policy statements accept one optional trailing semicolon. Additional
 text after an OPTIONS or APPLY block is rejected rather than silently ignored.
 
+CREATE PROMOTION POLICY requires an explicit `FOR` target pattern. Use `FOR (n)`
+for an unlabeled-node target; node and relationship targets remain supported.
+Native CREATE declarations are schema operations, not graph entity writes.
+
+Native profile/policy changes are transaction-local. SHOW statements in the same
+transaction see staged definitions; other transactions see committed definitions.
+COMMIT publishes the persisted native snapshot and ROLLBACK discards it. Concurrent
+changes to the same database's schema can conflict instead of overwriting each
+other. These metadata-only mutations do not increase entity-operation counters.
+
 Drop the policy before the profile if both are going away — dropping a profile that policies still reference produces a validation error.
 
 ## Gotchas

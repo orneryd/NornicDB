@@ -54,7 +54,10 @@ type BadgerTransaction struct {
 	// share this namespace; mixed writes return ErrCrossNamespaceTransaction.
 	// Per-database MVCC counters and per-namespace lifecycle registries depend
 	// on this invariant — without it, two namespaces' versions could collide.
-	namespace string
+	namespace                 string
+	knowledgeSchema           *SchemaManager
+	knowledgeSchemaDefinition *SchemaDefinition
+	knowledgeSchemaDirty      bool
 
 	// Badger's native transaction
 	badgerTx *badger.Txn
@@ -2033,7 +2036,13 @@ func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includeP
 // Explicit transactions get strict ACID durability with immediate fsync.
 func (tx *BadgerTransaction) Commit() error {
 	tx.mu.Lock()
-	defer tx.mu.Unlock()
+	var knowledgePolicyChanged func()
+	defer func() {
+		tx.mu.Unlock()
+		if knowledgePolicyChanged != nil {
+			knowledgePolicyChanged()
+		}
+	}()
 
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
@@ -2175,6 +2184,7 @@ func (tx *BadgerTransaction) Commit() error {
 		tx.closeLocked(TxStatusRolledBack, false, nil)
 		return normalizeTransactionCommitError(err)
 	}
+	knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
 	runCommitTailHook()
 
 	// Label counts are derived metadata, not part of the user transaction's

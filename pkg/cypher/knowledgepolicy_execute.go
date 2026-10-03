@@ -21,6 +21,21 @@ func (e *StorageExecutor) executeKnowledgePolicyDDL(ctx context.Context, cypher 
 	}
 
 	schema := e.storage.GetSchema()
+	var transaction *storage.BadgerTransaction
+	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+		transaction = wrapper.tx
+	} else if e.txContext != nil && e.txContext.active {
+		transaction, _ = e.txContext.tx.(*storage.BadgerTransaction)
+	}
+	if transaction != nil {
+		if err := transaction.SetNamespace(e.currentDatabaseName()); err != nil {
+			return nil, err
+		}
+		schema, err = transaction.KnowledgePolicySchema()
+		if err != nil {
+			return nil, err
+		}
+	}
 	if schema == nil {
 		return nil, localizedError(localization.CypherKnowledgePolicySchemaManagerUnavailable(), nil)
 	}

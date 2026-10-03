@@ -178,6 +178,7 @@ APPLY {
 		}`,
 		`CREATE PROMOTION POLICY memory_episode_consolidation
 FOR (n:MemoryEpisode)
+APPLY {
 ON ACCESS {
   SET n.accessCount = coalesce(n.accessCount, 0) + 1
   SET n.lastAccessedAt = timestamp()
@@ -185,35 +186,34 @@ ON ACCESS {
     WHEN n.lastAccessedAt IS NULL THEN []
     ELSE coalesce(n.accessIntervals, []) + [timestamp() - n.lastAccessedAt]
   END
-  SET n.crossSessionAccessRate = CASE
+	WITH KALMAN {} SET n.crossSessionAccessRate = CASE
     WHEN n.lastSessionId IS NULL OR n.lastSessionId <> $_session THEN coalesce(n.crossSessionAccessRate, 0)
     ELSE coalesce(n.crossSessionAccessRate, 0)
-  END WITH KALMAN AUTO
+	END
   SET n.lastSessionId = $_session
 }
-APPLY {
-  WHEN n.accessCount >= 3 THEN PROFILE 'memory_reinforced'
-  WHEN n.accessCount >= 5 AND n.sourceAgreement >= 0.80 THEN PROFILE 'consolidation_candidate'
+	WHEN n.accessCount >= 3 APPLY PROFILE 'memory_reinforced'
+	WHEN n.accessCount >= 5 AND n.sourceAgreement >= 0.80 APPLY PROFILE 'consolidation_candidate'
 }`,
 		`CREATE PROMOTION POLICY wisdom_directive_stability
 FOR (n:WisdomDirective)
+APPLY {
 ON ACCESS {
   SET n.evaluationCount = coalesce(n.evaluationCount, 0) + 1
   SET n.lastEvaluatedAt = timestamp()
 }
-APPLY {
-  WHEN n.evidenceCount < 3 THEN PROFILE 'wisdom_provisional'
-  WHEN n.evidenceCount >= 3 AND n.contradictionRate < 0.20 THEN PROFILE 'wisdom_established'
-  WHEN n.evidenceCount >= 10 AND n.contradictionRate < 0.05 AND n.crossSessionSupport >= 3 THEN PROFILE 'wisdom_canonical'
+	WHEN n.evidenceCount < 3 APPLY PROFILE 'wisdom_provisional'
+	WHEN n.evidenceCount >= 3 AND n.contradictionRate < 0.20 APPLY PROFILE 'wisdom_established'
+	WHEN n.evidenceCount >= 10 AND n.contradictionRate < 0.05 AND n.crossSessionSupport >= 3 APPLY PROFILE 'wisdom_canonical'
 }`,
 		`CREATE PROMOTION POLICY evidence_traversal_tiering
 FOR ()-[r:EVIDENCES]-()
+APPLY {
 ON ACCESS {
   SET r.traversalCount = coalesce(r.traversalCount, 0) + 1
   SET r.lastTraversedAt = timestamp()
 }
-APPLY {
-  WHEN r.traversalCount >= 5 THEN PROFILE 'reinforced_evidence'
+	WHEN r.traversalCount >= 5 APPLY PROFILE 'reinforced_evidence'
 }`,
 	}
 }

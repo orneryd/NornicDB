@@ -32,7 +32,22 @@ func TestKnowledgePolicyBootstrapBranches(t *testing.T) {
 	require.NotEmpty(t, bundles)
 	require.NotEmpty(t, bindings)
 	require.NotEmpty(t, provider.schemas["nornic"].ShowPromotionProfiles())
-	require.NotEmpty(t, provider.schemas["nornic"].ShowPromotionPolicies())
+	policies := provider.schemas["nornic"].ShowPromotionPolicies()
+	require.Len(t, policies, 3)
+	expected := map[string]struct{ mutations, whenClauses int }{
+		"memory_episode_consolidation": {5, 2},
+		"wisdom_directive_stability":   {2, 3},
+		"evidence_traversal_tiering":   {2, 1},
+	}
+	for _, policy := range policies {
+		require.Contains(t, expected, policy.Name)
+		require.NotNil(t, policy.OnAccess)
+		require.Len(t, policy.OnAccess.Mutations, expected[policy.Name].mutations)
+		require.Len(t, policy.WhenClauses, expected[policy.Name].whenClauses)
+		if policy.Name == "memory_episode_consolidation" {
+			require.NotNil(t, policy.OnAccess.Mutations[3].Kalman)
+		}
+	}
 	require.False(t, knowledgePolicySchemaEmpty(provider.schemas["nornic"]))
 
 	require.NoError(t, maybeBootstrapDefaultKnowledgePolicy(provider, "custom"))

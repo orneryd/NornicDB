@@ -883,6 +883,35 @@ func TestParseDDL_OnAccess_QueryContextVarsInExpression(t *testing.T) {
 
 // ── ALTER PROMOTION POLICY ──────────────────────────────────────────────────
 
+func TestParseDDL_CreatePromotionPolicyRequiresFor(t *testing.T) {
+	for _, statement := range []string{
+		"CREATE PROMOTION POLICY nofor",
+		"CREATE PROMOTION POLICY nofor APPLY { ON ACCESS { SET n.c = 1 } }",
+		"CREATE PROMOTION POLICY IF NOT EXISTS nofor APPLY { ON ACCESS { SET n.c = 1 } }",
+		"CREATE PROMOTION POLICY nofor IF NOT EXISTS APPLY { ON ACCESS { SET n.c = 1 } }",
+	} {
+		t.Run(statement, func(t *testing.T) {
+			_, _, err := ParseKnowledgePolicyDDL(statement)
+			require.Error(t, err, statement)
+		})
+	}
+}
+
+func TestParseDDL_KnowledgePolicyForRequiresTarget(t *testing.T) {
+	for _, statement := range []string{
+		"CREATE PROMOTION POLICY p FOR",
+		"CREATE PROMOTION POLICY p FOR APPLY { ON ACCESS { SET n.c = 1 } }",
+		"ALTER PROMOTION POLICY p FOR",
+		"CREATE DECAY PROFILE d FOR",
+		"ALTER DECAY PROFILE d FOR",
+	} {
+		t.Run(statement, func(t *testing.T) {
+			_, _, err := ParseKnowledgePolicyDDL(statement)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestParseDDL_KnowledgeProfileRejectsTrailingText(t *testing.T) {
 	for _, statement := range []string{
 		"CREATE DECAY PROFILE d OPTIONS { halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED' } GARBAGE",

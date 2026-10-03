@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Compile default knowledge-policy bootstrap declarations with canonical APPLY,
+  ON ACCESS, WHEN APPLY PROFILE, and prefix Kalman syntax, retaining their actual
+  access mutations and promotion clauses instead of silently ignoring them (#531).
+
+- Require explicit native promotion-policy targets and reject targetless FOR
+  clauses. Classify native profile/policy CREATE declarations as DDL, preserving
+  undirected relationship targets. Stage native definitions in the database
+  transaction, publish only persisted snapshots after commit, and discard them
+  on rollback; schema-only autocommit no longer looks like an empty transaction
+  (#531).
+
 - Reject unconsumed text after native decay/promotion option and binding blocks,
   using a shared end-of-statement check that preserves one optional semicolon
   terminator for valid profile and policy statements (#531).

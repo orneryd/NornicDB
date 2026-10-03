@@ -519,7 +519,7 @@ func parseForTarget(s string, i int, binding knowledgepolicy.DecayProfileBinding
 	i = kpSkipSpaces(s, i)
 
 	if i >= len(s) || s[i] != '(' {
-		return binding, i, nil
+		return binding, i, localizedError(localization.CypherKnowledgePolicyExpectedAfter("target pattern", "FOR"), nil)
 	}
 
 	parenStart := i
@@ -1037,6 +1037,9 @@ func parseCreatePromotionPolicy(s string, i int) (interface{}, bool, error) {
 		}
 	}
 
+	if kpMatchKeywordAt(s, i, "FOR") < 0 {
+		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("FOR", "CREATE PROMOTION POLICY "+name), nil)
+	}
 	policy, err := parsePromotionPolicyDefinition(name, s, i)
 	if err != nil {
 		return nil, false, err

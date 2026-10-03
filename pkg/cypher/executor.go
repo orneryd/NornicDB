@@ -1927,7 +1927,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// A write-shaped query can legitimately match no mutation targets. Committing
 	// an empty Badger transaction still performs store-wide validation work, so
 	// roll it back after the match has completed instead.
-	if tx.OperationCount() == 0 {
+	if tx.OperationCount() == 0 && !tx.HasKnowledgePolicyChanges() {
 		_ = tx.Rollback()
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, "no mutations")

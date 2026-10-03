@@ -266,6 +266,59 @@ func TestKnowledgePolicyApplyFormattingRoundTrips(t *testing.T) {
 	assert.Equal(t, policy.WhenClauses, parsedPolicy.WhenClauses)
 }
 
+func TestE2E_KnowledgePolicyTargetAdmissionAcrossParsers(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			exec, ctx := newUnitExecutor(t)
+			require.Equal(t, parser, config.GetParserType())
+			for _, statement := range []string{
+				"CREATE PROMOTION POLICY nofor",
+				"CREATE PROMOTION POLICY nofor APPLY { ON ACCESS { SET n.c = 1 } }",
+				"CREATE PROMOTION POLICY IF NOT EXISTS nofor APPLY { ON ACCESS { SET n.c = 1 } }",
+				"CREATE PROMOTION POLICY nofor IF NOT EXISTS APPLY { ON ACCESS { SET n.c = 1 } }",
+				"CREATE PROMOTION POLICY p FOR",
+				"CREATE PROMOTION POLICY p FOR APPLY { ON ACCESS { SET n.c = 1 } }",
+				"ALTER PROMOTION POLICY p FOR",
+				"CREATE DECAY PROFILE d FOR",
+				"ALTER DECAY PROFILE d FOR",
+			} {
+				_, err := exec.Execute(ctx, statement, nil)
+				require.ErrorContains(t, err, "after", statement)
+			}
+			result, err := exec.Execute(ctx, "SHOW PROMOTION POLICIES", nil)
+			require.NoError(t, err)
+			require.Empty(t, result.Rows)
+			for _, statement := range []string{
+				"CREATE PROMOTION POLICY node_target FOR (n:Fact) APPLY { ON ACCESS { SET n.c = 1 } }",
+				"CREATE PROMOTION POLICY edge_target FOR ()-[r:REFERENCES]-() APPLY { ON ACCESS { SET r.c = 1 } }",
+				"CREATE PROMOTION POLICY wildcard_target FOR (n) APPLY { ON ACCESS { SET n.c = 1 } }",
+				"CREATE PROMOTION POLICY IF NOT EXISTS wildcard_target FOR (n) APPLY { ON ACCESS { SET n.c = 1 } }",
+				"CREATE PROMOTION POLICY wildcard_target IF NOT EXISTS FOR (n) APPLY { ON ACCESS { SET n.c = 1 } }",
+			} {
+				_, err := exec.Execute(ctx, statement, nil)
+				require.NoError(t, err, statement)
+			}
+			result, err = exec.Execute(ctx, "SHOW PROMOTION POLICIES", nil)
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 3)
+			for _, statement := range []string{
+				"BEGIN",
+				"CREATE PROMOTION POLICY rolled_back FOR (n:Fact) APPLY { ON ACCESS { SET n.c = 1 } }",
+				"ROLLBACK",
+			} {
+				_, err := exec.Execute(ctx, statement, nil)
+				require.NoError(t, err, statement)
+			}
+			result, err = exec.Execute(ctx, "SHOW PROMOTION POLICIES", nil)
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 3)
+		})
+	}
+}
+
 func TestE2E_KnowledgeProfileTrailingAdmissionAcrossParsers(t *testing.T) {
 	for _, parser := range []string{"nornic", "antlr"} {
 		t.Run(parser, func(t *testing.T) {

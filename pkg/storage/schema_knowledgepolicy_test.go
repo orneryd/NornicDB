@@ -2,9 +2,11 @@ package storage
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -675,6 +677,142 @@ func TestCreatePromotionPolicy_MissingProfileRef(t *testing.T) {
 	err := sm.CreatePromotionPolicy(policy)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestKnowledgePolicySchemaTransactionErrorBoundaries(t *testing.T) {
+	for _, boundary := range []string{"namespace", "corrupt", "read", "write", "serialize"} {
+		t.Run(boundary, func(t *testing.T) {
+			engine, err := NewBadgerEngineInMemory()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = engine.Close() })
+			if boundary == "corrupt" {
+				require.NoError(t, engine.db.Update(func(transaction *badger.Txn) error {
+					return transaction.Set(schemaKey("native"), []byte("{"))
+				}))
+			}
+			transaction, err := engine.BeginTransaction()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = transaction.Rollback() })
+			if boundary != "namespace" {
+				require.NoError(t, transaction.SetNamespace("native"))
+			}
+			if boundary == "read" {
+				transaction.badgerTx.Discard()
+			}
+			view, err := transaction.KnowledgePolicySchema()
+			if boundary == "namespace" || boundary == "corrupt" || boundary == "read" {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			if boundary == "write" {
+				transaction.badgerTx.Discard()
+			}
+			profile := validPromoProfile("invalid")
+			if boundary == "serialize" {
+				profile.Multiplier = math.NaN()
+			}
+			require.Error(t, view.CreatePromotionProfile(profile))
+			require.False(t, transaction.HasKnowledgePolicyChanges())
+			require.Empty(t, engine.GetSchemaForNamespace("native").ShowPromotionProfiles())
+		})
+	}
+}
+
+func TestKnowledgePolicySchemaPublishesPersistedSnapshot(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	transaction, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transaction.Rollback() })
+	require.NoError(t, transaction.SetNamespace("native"))
+	view, err := transaction.KnowledgePolicySchema()
+	require.NoError(t, err)
+	require.NoError(t, view.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
+		Name: "valid", TargetLabels: []string{"Fact"}, Enabled: true,
+	}))
+	invalid := validPromoProfile("invalid")
+	invalid.Multiplier = math.NaN()
+	require.Error(t, view.CreatePromotionProfile(invalid))
+	require.NoError(t, transaction.Commit())
+	committed := engine.GetSchemaForNamespace("native")
+	require.Len(t, committed.ShowPromotionPolicies(), 1)
+	require.Empty(t, committed.ShowPromotionProfiles())
+}
+
+func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
+	directory := t.TempDir()
+	engine, err := NewBadgerEngine(directory)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	committed := engine.GetSchemaForNamespace("native")
+	require.NoError(t, committed.CreatePromotionProfile(validPromoProfile("boost")))
+	begin := func(namespace string) *BadgerTransaction {
+		transaction, err := engine.BeginTransaction()
+		require.NoError(t, err)
+		require.NoError(t, transaction.SetNamespace(namespace))
+		t.Cleanup(func() { _ = transaction.Rollback() })
+		return transaction
+	}
+	first, second := begin("native"), begin("native")
+	firstView, err := first.KnowledgePolicySchema()
+	require.NoError(t, err)
+	repeatedView, err := first.KnowledgePolicySchema()
+	require.NoError(t, err)
+	require.Same(t, firstView, repeatedView)
+	secondView, err := second.KnowledgePolicySchema()
+	require.NoError(t, err)
+	require.False(t, first.HasKnowledgePolicyChanges())
+	require.NoError(t, firstView.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
+		Name: "first", TargetLabels: []string{"Fact"}, Enabled: true,
+	}))
+	require.True(t, first.HasKnowledgePolicyChanges())
+	require.Equal(t, 0, first.OperationCount())
+	require.Empty(t, committed.ShowPromotionPolicies())
+	require.Empty(t, secondView.ShowPromotionPolicies())
+	require.NoError(t, secondView.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
+		Name: "second", TargetLabels: []string{"Fact"}, Enabled: true,
+	}))
+	hookCalled, hookUnlocked := false, false
+	committed.SetKnowledgePolicyChangedHook(func() {
+		hookCalled = true
+		hookUnlocked = first.mu.TryLock()
+		if hookUnlocked {
+			first.mu.Unlock()
+		}
+	})
+	require.NoError(t, first.Commit())
+	require.True(t, hookCalled)
+	require.True(t, hookUnlocked)
+	require.Error(t, second.Commit())
+	require.Len(t, committed.ShowPromotionPolicies(), 1)
+	require.Equal(t, "first", committed.ShowPromotionPolicies()[0].Name)
+	_, err = first.KnowledgePolicySchema()
+	require.Error(t, err)
+	require.Error(t, firstView.AlterPromotionPolicy("first", map[string]interface{}{"enabled": false}))
+	require.True(t, committed.ShowPromotionPolicies()[0].Enabled)
+	rolledBack := begin("native")
+	rollbackView, err := rolledBack.KnowledgePolicySchema()
+	require.NoError(t, err)
+	require.NoError(t, rollbackView.AlterPromotionPolicy("first", map[string]interface{}{"enabled": false}))
+	require.NoError(t, rolledBack.Rollback())
+	require.True(t, committed.ShowPromotionPolicies()[0].Enabled)
+	other := begin("other")
+	otherView, err := other.KnowledgePolicySchema()
+	require.NoError(t, err)
+	require.Empty(t, otherView.ShowPromotionPolicies())
+	require.NoError(t, otherView.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
+		Name: "other", TargetLabels: []string{"Fact"}, Enabled: true,
+	}))
+	require.NoError(t, other.Commit())
+	require.Len(t, committed.ShowPromotionPolicies(), 1)
+	require.NoError(t, engine.Close())
+	reopened, err := NewBadgerEngine(directory)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	require.Equal(t, "first", reopened.GetSchemaForNamespace("native").ShowPromotionPolicies()[0].Name)
+	require.Equal(t, "other", reopened.GetSchemaForNamespace("other").ShowPromotionPolicies()[0].Name)
 }
 
 func TestApplyPromotionProfileOptions(t *testing.T) {

@@ -78,6 +78,9 @@ func (e *StorageExecutor) validateCreateSemanticScopes(cypher string) error {
 
 func isCreateSchemaOrAdministrationCommand(cypher string) bool {
 	return isSystemCommandNoGraph(cypher) || isCreateProcedureCommand(cypher) ||
+		startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") ||
+		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") ||
+		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") ||
 		startsWithKeywords(cypher, "CREATE", "CONSTRAINT") ||
 		startsWithKeywords(cypher, "CREATE", "INDEX") ||
 		startsWithKeywords(cypher, "CREATE", "RANGE INDEX") ||
