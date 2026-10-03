@@ -34,14 +34,24 @@ func (registry *queryStatisticsRegistry) forDatabase(name string) *queryStatisti
 	if collector := registry.collectors[name]; collector != nil {
 		return collector
 	}
-	collector := &queryStatisticsCollector{registry: registry}
+	// Query collection is on from the start, as in Neo4j 5.26: a fresh
+	// database reports "collecting" and records every query until
+	// db.stats.stop('QUERIES').
+	collector := &queryStatisticsCollector{registry: registry, generation: 1}
+	collector.active.Store(true)
 	registry.collectors[name] = collector
 	return collector
 }
 
 type queryStatisticsRecord struct {
-	invocations                    []map[string]interface{}
+	invocations                    []queryStatisticsInvocation
 	count, total, minimum, maximum int64
+}
+
+// queryStatisticsInvocation is one recorded execution; db.stats.retrieve
+// renders it as an invocation map.
+type queryStatisticsInvocation struct {
+	elapsedUs, startMillis int64
 }
 
 // ShareQueryStatisticsFrom shares a database's collector with a fresh executor.
@@ -62,7 +72,7 @@ func (e *StorageExecutor) ShareQueryStatisticsFrom(source *StorageExecutor) {
 }
 
 func (collector *queryStatisticsCollector) start(query string, now time.Time) uint64 {
-	if collector == nil || !collector.active.Load() || len(query) > 65536 || strings.Contains(strings.ToLower(query), "db.stats.") {
+	if collector == nil || !collector.active.Load() || len(query) > 65536 || containsFold(query, "db.stats.") {
 		return 0
 	}
 	collector.mu.Lock()
@@ -110,11 +120,7 @@ func (collector *queryStatisticsCollector) record(generation uint64, query strin
 	if len(invocations) == 100 {
 		invocations = invocations[1:]
 	}
-	record.invocations = append(invocations, map[string]interface{}{
-		"elapsedCompileTimeInUs":   nil,
-		"elapsedExecutionTimeInUs": duration.Microseconds(),
-		"startTimestampMillis":     started.UnixMilli(),
-	})
+	record.invocations = append(invocations, queryStatisticsInvocation{elapsedUs: elapsed, startMillis: started.UnixMilli()})
 }
 
 func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string, arguments []interface{}) (*ExecuteResult, error) {
@@ -185,6 +191,10 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 		collector.active.Store(false)
 		result.Rows = [][]interface{}{{section, true, "Collection stopped."}}
 	case "clear":
+		if collector.active.Load() {
+			result.Rows = [][]interface{}{{section, false, "Collected data cannot be cleared while collecting."}}
+			return result, nil
+		}
 		collector.generation++
 		collector.queries = nil
 		collector.order = nil
@@ -211,11 +221,11 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 			copies := make([]interface{}, 0)
 			for _, invocation := range invocations {
 				if int64(len(copies)) < maximum {
-					copy := make(map[string]interface{}, len(invocation))
-					for key, value := range invocation {
-						copy[key] = value
-					}
-					copies = append(copies, copy)
+					copies = append(copies, map[string]interface{}{
+						"elapsedCompileTimeInUs":   nil,
+						"elapsedExecutionTimeInUs": invocation.elapsedUs,
+						"startTimestampMillis":     invocation.startMillis,
+					})
 				}
 			}
 			result.Rows = append(result.Rows, []interface{}{section, map[string]interface{}{
