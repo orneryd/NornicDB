@@ -195,7 +195,7 @@ func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
 }
 
 // pointInPolygon uses the ray casting algorithm to determine if a point is inside a polygon.
-// The polygon is defined by a list of point maps (with x,y or latitude,longitude coordinates).
+// The polygon is defined by a list of points, or maps with x,y or latitude,longitude coordinates.
 // Returns true if the point is inside or on the boundary of the polygon.
 func pointInPolygon(px, py float64, polygonPoints []interface{}) bool {
 	if len(polygonPoints) < 3 {
@@ -205,7 +205,7 @@ func pointInPolygon(px, py float64, polygonPoints []interface{}) bool {
 	// Extract coordinates from polygon points
 	coords := make([][2]float64, 0, len(polygonPoints))
 	for _, p := range polygonPoints {
-		pm, ok := p.(map[string]interface{})
+		pm, ok := spatialMap(p)
 		if !ok {
 			return false
 		}
