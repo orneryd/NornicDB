@@ -599,8 +599,11 @@ selected database. See [multi-database](../user-guides/multi-database.md).
 ### Statistics Representation
 
 `db.stats.collect`, `clear`, `status`, `stop`, and `retrieve` expose the shared
-section/configuration and result contracts. Query collection is opt-in and
-shared by transaction-scoped executors of a database. Duration limits expire
+section/configuration and result contracts. As in Neo4j 5.26, query collection
+is on when a database starts (`db.stats.status()` reports `collecting`) until
+`db.stats.stop('QUERIES')`, and `db.stats.clear('QUERIES')` returns `false` with
+"Collected data cannot be cleared while collecting." until collection stops.
+Collection is shared by transaction-scoped executors of a database. Duration limits expire
 without a background daemon. Repeated collection preserves the active session;
 zero or omitted duration means no deadline. Statistics calls bypass result caches.
 
