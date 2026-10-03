@@ -23,7 +23,7 @@ func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -101,7 +101,7 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 		}
 
 		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
@@ -148,7 +148,7 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -234,7 +234,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjected(label string, properties []st
 	nowNanos := DecayScoringTime()
 	return b.withView(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -322,7 +322,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -384,7 +384,7 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 0))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -438,7 +438,7 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := edgeTypeIndexPrefix(edgeType)
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		// Collect edge IDs from index. Keys now carry an 8-byte edge
@@ -843,7 +843,7 @@ func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID) []*Edge {
 // revisit a small set of edges thousands of times per request) into
 // memory-bound work after the first encounter.
 func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64) ([]*Edge, []EdgeID) {
-	it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 
 	var edges []*Edge
@@ -1042,9 +1042,8 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType 
 		}
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = prefix
-		opts.PrefetchValues = true
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -1085,7 +1084,7 @@ func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID
 	err := b.withView(func(txn *badger.Txn) error {
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {

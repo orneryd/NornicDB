@@ -70,7 +70,7 @@ func (b *BadgerEngine) collectNodeLabelCountsByPrefix(keyPrefix []byte) (int64, 
 	counts := make(map[namespaceLabel]int64)
 	var nodes int64
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(keyPrefix, 64))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(keyPrefix); it.Next() {
 			nodes++
@@ -285,7 +285,7 @@ func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
 	needle := []byte(normalizeCountLabel(label))
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(labelCountPrefix(), 64))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(labelCountPrefix()))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
@@ -331,7 +331,7 @@ func (b *BadgerEngine) labelCountReady() (bool, error) {
 func (b *BadgerEngine) loadPersistedLabelCounts() (map[string]int64, error) {
 	persisted := make(map[string]int64)
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(labelCountPrefix(), 64))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(labelCountPrefix()))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
@@ -360,7 +360,7 @@ func (b *BadgerEngine) loadPersistedLabelCounts() (map[string]int64, error) {
 func (b *BadgerEngine) collectAuthoritativeLabelCounts() (map[string]int64, error) {
 	counts := make(map[string]int64)
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues([]byte{prefixNode}, 128))
+		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
@@ -405,7 +405,7 @@ func sameLabelCounts(actual, persisted map[string]int64) bool {
 func (b *BadgerEngine) rebuildLabelCounts(counts map[string]int64) error {
 	return b.withUpdate(func(txn *badger.Txn) error {
 		prefix := labelCountPrefix()
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
 			key := it.Item().KeyCopy(nil)
 			if err := txn.Delete(key); err != nil {

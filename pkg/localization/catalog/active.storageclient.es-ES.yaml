@@ -28,8 +28,6 @@
   other: "no se pudieron eliminar los fragmentos de incrustación anteriores: {{.Cause}}"
 - id: storage.client.node.embedding_chunk_store_failed
   other: "no se pudo almacenar el fragmento de incrustación {{.ChunkIndex}}: {{.Cause}}"
-- id: storage.client.node.embedding_payload_budget_exceeded
-  other: "no se pudo almacenar la carga de incrustación del fragmento {{.ChunkIndex}}: la entrada supera el presupuesto de escritura por transacción"
 - id: storage.client.edge.encode_failed
   other: "no se pudo codificar la relación: {{.Cause}}"
 - id: storage.client.receipt.transaction_id_required

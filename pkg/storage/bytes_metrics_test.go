@@ -68,7 +68,7 @@ func setupSweeperEnv(t *testing.T, interval time.Duration) (*BadgerEngine, *prom
 	probe := storageProbeAdapter{be: be}
 	bag := observability.NewStorageMetrics(reg, false, probe)
 
-	sweeper := NewBytesMetricsSweeper(bag, be.db, nil /* search */, interval)
+	sweeper := NewBytesMetricsSweeper(bag, be.DB(), nil /* search */, interval)
 	return be, reg, bag, sweeper
 }
 

@@ -55,6 +55,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -129,7 +130,7 @@ func withParams(ctx context.Context, params map[string]interface{}) context.Cont
 			return ctx
 		}
 	}
-	return context.WithValue(ctx, paramsKey, params)
+	return withQueryParams(ctx, params)
 }
 
 // mapsEqualShallow does pointer-identity comparison on the same map header.
@@ -881,4 +882,78 @@ func formatCypherFloatLiteral(value float64, bitSize int) string {
 		literal += ".0"
 	}
 	return literal
+}
+
+// paramRowsKey is the context key of a query's parameters as row values;
+// see withQueryParams.
+type paramRowsKeyType struct{}
+
+var paramRowsKey = paramRowsKeyType{}
+
+// queryParamsContext carries a query's parameters (paramsKey) and the
+// cache of their row values (paramRowsKey), computed on first use. It is
+// one context layer, so attaching parameters costs the single allocation
+// context.WithValue did.
+type queryParamsContext struct {
+	context.Context
+	params map[string]interface{}
+	once   sync.Once
+	rows   map[string]interface{}
+}
+
+// Value answers paramsKey and paramRowsKey and defers every other key to
+// the parent context.
+func (c *queryParamsContext) Value(key any) any {
+	switch key {
+	case paramsKey:
+		return c.params
+	case paramRowsKey:
+		return c
+	}
+	return c.Context.Value(key)
+}
+
+// withQueryParams attaches a query's parameters to ctx, together with a
+// cache of their row values (parameterRowValues). Every row and every
+// expression evaluation of the query binds the same "$name" values, and
+// converting a parameter walks all of it: converted per evaluation, a
+// 500-row $rows list made UNWIND $rows CREATE quadratic (#823).
+func withQueryParams(ctx context.Context, params map[string]interface{}) context.Context {
+	return &queryParamsContext{Context: ctx, params: params}
+}
+
+// parameterRowValues returns the context's parameters as row values,
+// keyed "$name" (parameterRowValue of each). Each parameter map attached
+// with withQueryParams is converted once; the result is shared and must
+// not be modified.
+func parameterRowValues(ctx context.Context) map[string]interface{} {
+	params := getParamsFromContext(ctx)
+	if len(params) == 0 {
+		return nil
+	}
+	if cache, ok := ctx.Value(paramRowsKey).(*queryParamsContext); ok && sameParameterMap(cache.params, params) {
+		cache.once.Do(func() { cache.rows = parameterRowsOf(params) })
+		return cache.rows
+	}
+	return parameterRowsOf(params)
+}
+
+func parameterRowsOf(params map[string]interface{}) map[string]interface{} {
+	rows := make(map[string]interface{}, len(params))
+	for name, value := range params {
+		rows["$"+name] = parameterRowValue(value)
+	}
+	return rows
+}
+
+// sameParameterMap reports whether a and b are the same map.
+func sameParameterMap(a, b map[string]interface{}) bool {
+	return reflect.ValueOf(a).UnsafePointer() == reflect.ValueOf(b).UnsafePointer()
+}
+
+// bindParameterRow adds the context's parameters to row as "$name" values.
+func bindParameterRow(ctx context.Context, row pipelineRow) {
+	for name, value := range parameterRowValues(ctx) {
+		row[name] = value
+	}
 }

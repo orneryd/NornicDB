@@ -9,33 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNamespaceForNodeIDs_Table(t *testing.T) {
-	tests := []struct {
-		name    string
-		ids     []NodeID
-		wantNS  string
-		wantErr string
-	}{
-		{name: "single namespace", ids: []NodeID{"acme:n1", "acme:n2"}, wantNS: "acme"},
-		{name: "ignores empty IDs", ids: []NodeID{"", "acme:n1", ""}, wantNS: "acme"},
-		{name: "mixed namespaces", ids: []NodeID{"acme:n1", "globex:n2"}, wantErr: "multiple namespaces"},
-		{name: "unprefixed ID", ids: []NodeID{"n1"}, wantErr: "must be prefixed with namespace"},
-		{name: "no usable IDs", ids: []NodeID{"", ""}, wantErr: "no usable IDs"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			ns, err := namespaceForNodeIDs(tc.ids)
-			if tc.wantErr != "" {
-				require.Error(t, err)
-				require.Contains(t, err.Error(), tc.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, tc.wantNS, ns)
-		})
-	}
-}
-
 func TestNamespaceForEdgeIDs_Table(t *testing.T) {
 	tests := []struct {
 		name    string

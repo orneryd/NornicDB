@@ -104,3 +104,10 @@ func TestGh726_CloseWaitsForInFlightBulkDeleteNotification(t *testing.T) {
 	require.NoError(t, deleteErr)
 	require.Equal(t, int64(1), notifications.Load(), "the in-flight dispatch ran before Close returned")
 }
+
+func TestEnsureNamespaceMVCC_ClosedEngineReturnsClosed(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	require.NoError(t, engine.Close())
+	require.ErrorIs(t, engine.EnsureNamespaceMVCC("nornic"), ErrStorageClosed)
+}

@@ -209,8 +209,7 @@ func (b *BadgerEngine) temporalHistoryNodeAsOfInTxn(txn *badger.Txn, target temp
 	prefix := temporalHistoryPrefix(target.desc)
 	seek := append(append([]byte{}, prefix...), encodeTemporalSortTime(asOf)...)
 	seek = append(seek, 0xFF)
-	opts := badger.DefaultIteratorOptions
-	opts.PrefetchValues = false
+	opts := badgerIteratorOptions()
 	opts.Prefix = prefix
 	opts.Reverse = true
 	it := txn.NewIterator(opts)
@@ -241,8 +240,7 @@ func (b *BadgerEngine) temporalAdjacentNodesInTxn(txn *badger.Txn, target tempor
 	encodedStart := encodeTemporalSortTime(start)
 	seekPrev := append(append([]byte{}, prefix...), encodedStart...)
 	seekPrev = append(seekPrev, 0xFF)
-	prevOpts := badger.DefaultIteratorOptions
-	prevOpts.PrefetchValues = false
+	prevOpts := badgerIteratorOptions()
 	prevOpts.Prefix = prefix
 	prevOpts.Reverse = true
 	prevIt := txn.NewIterator(prevOpts)
@@ -263,8 +261,7 @@ func (b *BadgerEngine) temporalAdjacentNodesInTxn(txn *badger.Txn, target tempor
 		}
 	}
 	seekNext := append(append([]byte{}, prefix...), encodedStart...)
-	forwardOpts := badger.DefaultIteratorOptions
-	forwardOpts.PrefetchValues = false
+	forwardOpts := badgerIteratorOptions()
 	forwardOpts.Prefix = prefix
 	forwardIt := txn.NewIterator(forwardOpts)
 	defer forwardIt.Close()
@@ -542,8 +539,7 @@ func (b *BadgerEngine) clearBadgerPrefix(ctx context.Context, prefix byte) error
 	defer wb.Cancel()
 	prefixBytes := []byte{prefix}
 	err := b.withView(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
+		opts := badgerIteratorOptions()
 		opts.Prefix = prefixBytes
 		it := txn.NewIterator(opts)
 		defer it.Close()
@@ -801,7 +797,10 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 	return targets, nil
 }
 
-func (tx *BadgerTransaction) refreshTemporalCurrentPointers(targets map[string]temporalRefreshTarget) error {
+// refreshTemporalCurrentPointers recomputes the current-version pointer of
+// every temporal key the commit touched, writing through the commit writer w
+// (see Commit); each pointer is its own unit.
+func (tx *BadgerTransaction) refreshTemporalCurrentPointers(w *batchWriter, targets map[string]temporalRefreshTarget) error {
 	now := time.Now().UTC()
 	exclude := make(map[NodeID]struct{}, util.SafePreallocSum(len(tx.deletedNodes), len(tx.pendingNodes)))
 	for nodeID := range tx.deletedNodes {
@@ -811,9 +810,6 @@ func (tx *BadgerTransaction) refreshTemporalCurrentPointers(targets map[string]t
 		exclude[nodeID] = struct{}{}
 	}
 	for _, target := range targets {
-		if err := tx.engine.refreshTemporalCurrentPointerInTxn(tx.badgerTx, target, now, exclude); err != nil {
-			return err
-		}
 		var bestPendingID NodeID
 		var bestPendingStart time.Time
 		for _, node := range tx.pendingNodes {
@@ -835,11 +831,16 @@ func (tx *BadgerTransaction) refreshTemporalCurrentPointers(targets map[string]t
 				bestPendingStart = start
 			}
 		}
-		if bestPendingID != "" {
-			currentKey := temporalCurrentKey(target.desc)
-			if err := tx.badgerTx.Set(currentKey, []byte(bestPendingID)); err != nil {
+		if err := w.write(func(txn *badger.Txn) error {
+			if err := tx.engine.refreshTemporalCurrentPointerInTxn(txn, target, now, exclude); err != nil {
 				return err
 			}
+			if bestPendingID == "" {
+				return nil
+			}
+			return txn.Set(temporalCurrentKey(target.desc), []byte(bestPendingID))
+		}); err != nil {
+			return err
 		}
 	}
 	return nil

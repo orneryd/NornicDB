@@ -122,7 +122,7 @@ func TestBadgerEngine_DeleteByPrefix_RemovesNumericHistoryAndDictionary(t *testi
 		require.ErrorIs(t, err, badger.ErrKeyNotFound)
 		for _, kind := range []byte{prefixMVCCNode, prefixMVCCNodeHead, prefixMVCCOutgoingAdj, prefixMVCCIncomingAdj} {
 			prefix := append([]byte{kind}, encodeNumID(nodeNum)...)
-			it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 			it.Rewind()
 			require.False(t, it.ValidForPrefix(prefix))
 			it.Close()
@@ -136,13 +136,13 @@ func TestBadgerEngine_DeleteByPrefix_RemovesNumericHistoryAndDictionary(t *testi
 		}
 		for _, kind := range []byte{prefixMVCCEdge, prefixMVCCEdgeHead} {
 			prefix := append([]byte{kind}, encodeNumID(edgeNum)...)
-			it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 			it.Rewind()
 			require.False(t, it.ValidForPrefix(prefix))
 			it.Close()
 		}
 		for _, family := range badgerKeyFamilies {
-			it := txn.NewIterator(badgerIterOptsKeyOnly([]byte{family.prefix}))
+			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{family.prefix}))
 			for it.Rewind(); it.ValidForPrefix([]byte{family.prefix}); it.Next() {
 				require.False(t, namespaceOwnsBadgerKey(it.Item().Key(), []byte("drop:"), "drop", true,
 					map[uint64]struct{}{nodeNum: {}}, map[uint64]struct{}{edgeNum: {}}))

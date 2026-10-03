@@ -68,7 +68,7 @@ func (b *BadgerEngine) ScanPendingDeindexWorkItems() ([]*DeindexWorkItem, error)
 	var items []*DeindexWorkItem
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixDeindexWorkItem}
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = prefix
 		it := txn.NewIterator(opts)
 		defer it.Close()

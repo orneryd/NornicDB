@@ -58,7 +58,7 @@ func (b *BadgerEngine) repairArchivedEdgeAdjacency() error {
 		var lastKey []byte
 		reachedEnd := true
 		err := b.withView(func(txn *badger.Txn) error {
-			options := badger.DefaultIteratorOptions
+			options := badgerIteratorOptions()
 			options.Prefix = []byte{prefixMVCCEdge}
 			iterator := txn.NewIterator(options)
 			defer iterator.Close()

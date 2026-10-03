@@ -53,7 +53,7 @@ func TestBadgerMVCC_MaterializeCommit_VariantBranches(t *testing.T) {
 			{Type: OpDeleteEdge, EdgeID: "test:missing-edge-del-head", OldEdge: &Edge{ID: "test:missing-edge-del-head", StartNode: "test:a", EndNode: "test:b", Type: "R"}},
 			{Type: OpDeleteEdge, EdgeID: "test:tomb-edge", OldEdge: &Edge{ID: "test:tomb-edge", StartNode: "test:a", EndNode: "test:b", Type: "R"}},
 		}
-		return engine.materializeMVCCCommitInTxn(txn, v, ops)
+		return engine.materializeMVCCCommit(singleBatchWriter(txn), v, ops)
 	}))
 
 	_, err = engine.GetNodeCurrentHead("test:c-fresh")
@@ -96,13 +96,13 @@ func TestBadgerMVCC_MaterializeCommit_HeadDecodeErrorsOnDeletePaths(t *testing.T
 
 	err = engine.withUpdate(func(txn *badger.Txn) error {
 		ops := []Operation{{Type: OpDeleteNode, NodeID: "test:n-bad", OldNode: &Node{ID: "test:n-bad", Labels: []string{"N"}}}}
-		return engine.materializeMVCCCommitInTxn(txn, v, ops)
+		return engine.materializeMVCCCommit(singleBatchWriter(txn), v, ops)
 	})
 	require.Error(t, err)
 
 	err = engine.withUpdate(func(txn *badger.Txn) error {
 		ops := []Operation{{Type: OpDeleteEdge, EdgeID: "test:e-bad", OldEdge: &Edge{ID: "test:e-bad", StartNode: "test:n-bad", EndNode: "test:n2-bad", Type: "R"}}}
-		return engine.materializeMVCCCommitInTxn(txn, v, ops)
+		return engine.materializeMVCCCommit(singleBatchWriter(txn), v, ops)
 	})
 	require.Error(t, err)
 }
@@ -118,18 +118,18 @@ func TestBadgerMVCC_MaterializeCommit_ReadOnlyTxnWriteFailures(t *testing.T) {
 	require.NoError(t, err)
 
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(4 * time.Second), CommitSequence: 7001}
-	readTxn := engine.db.NewTransaction(false)
+	readTxn := engine.db.testTxn(false)
 	defer readTxn.Discard()
 
-	err = engine.materializeMVCCCommitInTxn(readTxn, v, []Operation{{Type: OpCreateEdge, Edge: &Edge{ID: "test:ro-create", StartNode: "test:ro-a", EndNode: "test:ro-b", Type: "R"}, FreshID: true}})
+	err = engine.materializeMVCCCommit(singleBatchWriter(readTxn), v, []Operation{{Type: OpCreateEdge, Edge: &Edge{ID: "test:ro-create", StartNode: "test:ro-a", EndNode: "test:ro-b", Type: "R"}, FreshID: true}})
 	require.Error(t, err)
 
-	err = engine.materializeMVCCCommitInTxn(readTxn, v, []Operation{{Type: OpUpdateEdge, Edge: &Edge{ID: "test:ro-edge", StartNode: "test:ro-a", EndNode: "test:ro-c", Type: "R"}, OldEdge: oldEdge}})
+	err = engine.materializeMVCCCommit(singleBatchWriter(readTxn), v, []Operation{{Type: OpUpdateEdge, Edge: &Edge{ID: "test:ro-edge", StartNode: "test:ro-a", EndNode: "test:ro-c", Type: "R"}, OldEdge: oldEdge}})
 	require.Error(t, err)
 
-	err = engine.materializeMVCCCommitInTxn(readTxn, v, []Operation{{Type: OpDeleteEdge, EdgeID: "test:ro-edge", OldEdge: oldEdge}})
+	err = engine.materializeMVCCCommit(singleBatchWriter(readTxn), v, []Operation{{Type: OpDeleteEdge, EdgeID: "test:ro-edge", OldEdge: oldEdge}})
 	require.Error(t, err)
 
-	err = engine.materializeMVCCCommitInTxn(readTxn, v, []Operation{{Type: OpDeleteNode, NodeID: "test:ro-b", OldNode: &Node{ID: "test:ro-b", Labels: []string{"N"}}, DeletedEdgeIDs: []EdgeID{"test:ro-edge"}}})
+	err = engine.materializeMVCCCommit(singleBatchWriter(readTxn), v, []Operation{{Type: OpDeleteNode, NodeID: "test:ro-b", OldNode: &Node{ID: "test:ro-b", Labels: []string{"N"}}, DeletedEdgeIDs: []EdgeID{"test:ro-edge"}}})
 	require.Error(t, err)
 }

@@ -1008,7 +1008,7 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 		return count
 	}
 
-	t.Run("deleteEmbeddingChunksBatched removes all chunks across batches", func(t *testing.T) {
+	t.Run("replaceSeparateEmbeddingChunks with no embeddings removes every chunk", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("chunk-delete"))
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
@@ -1024,7 +1024,7 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 			return nil
 		}))
 		require.Equal(t, 260, countChunks(t, engine, nodeID))
-		require.NoError(t, engine.deleteEmbeddingChunksBatched(nodeID))
+		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, nil))
 		require.Equal(t, 0, countChunks(t, engine, nodeID))
 	})
 

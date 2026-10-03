@@ -51,7 +51,12 @@ type propertyKeyDictionary struct {
 	// cannot ride the user txn).
 	txnMu             sync.Mutex
 	txnCounters       map[*badger.Txn]map[string]uint64
-	txnPendingForward map[*badger.Txn][]propKeyPersistEntry
+	txnPendingForward map[*badger.Txn]map[propKeyName]uint64
+}
+
+// propKeyName is a property name within a namespace.
+type propKeyName struct {
+	namespace, name string
 }
 
 func newPropertyKeyDictionary() *propertyKeyDictionary {
@@ -61,7 +66,7 @@ func newPropertyKeyDictionary() *propertyKeyDictionary {
 		persisted:         make(map[string]map[string]bool),
 		nextID:            make(map[string]*atomic.Uint64),
 		txnCounters:       make(map[*badger.Txn]map[string]uint64),
-		txnPendingForward: make(map[*badger.Txn][]propKeyPersistEntry),
+		txnPendingForward: make(map[*badger.Txn]map[propKeyName]uint64),
 	}
 }
 
@@ -178,25 +183,21 @@ func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespac
 
 // recordTxnPendingPersist stages a (namespace, name, id) tuple on the
 // txn so the user's commit can later flush them via flushTxnCounters
-// (which now drains BOTH the per-namespace counter high-water marks
-// AND the staged forward/reverse entries) and persist them in a fresh
-// badger transaction via persistTxnCounters.
+// (which drains BOTH the per-namespace counter high-water marks AND the
+// staged forward/reverse entries) and persist them out of the user
+// transaction (persistTxnCounters, commitWriter.commitTokens). Staging is
+// keyed by name: a statement that introduces many property names, or
+// uses an unpersisted one on many rows, stages each name once in constant
+// time (#703).
 func (d *propertyKeyDictionary) recordTxnPendingPersist(txn *badger.Txn, namespace, name string, id uint64) {
 	d.txnMu.Lock()
 	defer d.txnMu.Unlock()
-	if d.txnPendingForward == nil {
-		d.txnPendingForward = make(map[*badger.Txn][]propKeyPersistEntry)
+	pending := d.txnPendingForward[txn]
+	if pending == nil {
+		pending = make(map[propKeyName]uint64)
+		d.txnPendingForward[txn] = pending
 	}
-	for _, entry := range d.txnPendingForward[txn] {
-		if entry.namespace == namespace && entry.name == name && entry.id == id {
-			return
-		}
-	}
-	d.txnPendingForward[txn] = append(d.txnPendingForward[txn], propKeyPersistEntry{
-		namespace: namespace,
-		name:      name,
-		id:        id,
-	})
+	pending[propKeyName{namespace: namespace, name: name}] = id
 }
 
 type propKeyPersistEntry struct {
@@ -273,49 +274,77 @@ func (d *propertyKeyDictionary) flushTxnCounters(txn *badger.Txn) propKeyTxnDrai
 		}
 	}
 	if hasPending && len(pending) > 0 {
-		out.pending = pending
+		out.pending = make([]propKeyPersistEntry, 0, len(pending))
+		for key, id := range pending {
+			out.pending = append(out.pending, propKeyPersistEntry{namespace: key.namespace, name: key.name, id: id})
+		}
 	}
 	return out
 }
 
 // persistTxnCounters writes the staged forward/reverse entries and
-// per-namespace counter keys in a fresh badger transaction.
-func (d *propertyKeyDictionary) persistTxnCounters(db *badger.DB, drain propKeyTxnDrain) error {
-	if len(drain.counters) == 0 && len(drain.pending) == 0 {
+// per-namespace counter keys out of the user transaction, as ordinary
+// commits of as many batches as they need.
+func (d *propertyKeyDictionary) persistTxnCounters(db *managedBadgerDB, drain propKeyTxnDrain) error {
+	if drain.empty() {
 		return nil
 	}
-	if db == nil {
-		return fmt.Errorf("property key dictionary persistence requires an open database")
+	w := &batchWriter{to: db}
+	defer w.discard()
+	err := drain.writeTo(w)
+	if err == nil {
+		err = w.flush()
 	}
-	if err := db.Update(func(txn *badger.Txn) error {
-		var idBuf [binary.MaxVarintLen64]byte
-		for _, entry := range drain.pending {
-			n := binary.PutUvarint(idBuf[:], entry.id)
-			if err := txn.Set(propKeyForwardKey(entry.namespace, entry.name), append([]byte(nil), idBuf[:n]...)); err != nil {
-				return err
-			}
-			if err := txn.Set(propKeyReverseKey(entry.namespace, entry.id), []byte(entry.name)); err != nil {
-				return err
-			}
-		}
-		var buf [binary.MaxVarintLen64]byte
-		for namespace, max := range drain.counters {
-			n := binary.PutUvarint(buf[:], max)
-			if err := txn.Set(propKeyCounterKey(namespace), append([]byte(nil), buf[:n]...)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
+	if err != nil {
 		return err
 	}
+	d.markPersisted(drain)
+	return nil
+}
+
+// empty reports whether the drain holds nothing to persist.
+func (drain propKeyTxnDrain) empty() bool {
+	return len(drain.counters) == 0 && len(drain.pending) == 0
+}
+
+// writeTo writes the drained tokens and counter high-water marks through
+// w, one unit per token and per counter, so any number of them fits: a
+// statement introducing more property names than one Badger batch holds
+// commits like any other large statement (#703).
+func (drain propKeyTxnDrain) writeTo(w *batchWriter) error {
+	units := make([]func(txn *badger.Txn) error, 0, len(drain.pending)+len(drain.counters))
+	for _, entry := range drain.pending {
+		forward := propKeyForwardKey(entry.namespace, entry.name)
+		id := binary.AppendUvarint(nil, entry.id)
+		reverse := propKeyReverseKey(entry.namespace, entry.id)
+		name := []byte(entry.name)
+		units = append(units, func(txn *badger.Txn) error {
+			if err := txn.Set(forward, id); err != nil {
+				return err
+			}
+			return txn.Set(reverse, name)
+		})
+	}
+	for namespace, max := range drain.counters {
+		key, value := propKeyCounterKey(namespace), binary.AppendUvarint(nil, max)
+		units = append(units, func(txn *badger.Txn) error { return txn.Set(key, value) })
+	}
+	for _, unit := range units {
+		if err := w.write(unit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// markPersisted records the drained tokens as durable.
+func (d *propertyKeyDictionary) markPersisted(drain propKeyTxnDrain) {
 	d.mu.Lock()
 	for _, entry := range drain.pending {
 		d.ensureNamespace(entry.namespace)
 		d.persisted[entry.namespace][entry.name] = true
 	}
 	d.mu.Unlock()
-	return nil
 }
 
 // discardTxnCounters drops staged counter state for a rolled-back txn.
@@ -329,13 +358,12 @@ func (d *propertyKeyDictionary) discardTxnCounters(txn *badger.Txn) {
 
 // loadFromBadger hydrates the in-memory dictionary from persisted
 // forward, reverse, and counter keys. Called once on engine open.
-func (d *propertyKeyDictionary) loadFromBadger(db *badger.DB) error {
+func (d *propertyKeyDictionary) loadFromBadger(db badgerKV) error {
 	return db.View(func(txn *badger.Txn) error {
 		// Forward map.
 		{
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = []byte{prefixPropKeyForward}
-			opts.PrefetchValues = true
 			it := txn.NewIterator(opts)
 			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
 				item := it.Item()
@@ -365,9 +393,8 @@ func (d *propertyKeyDictionary) loadFromBadger(db *badger.DB) error {
 		}
 		// Counters.
 		{
-			opts := badger.DefaultIteratorOptions
+			opts := badgerIteratorOptions()
 			opts.Prefix = []byte{prefixPropKeyCounter}
-			opts.PrefetchValues = true
 			it := txn.NewIterator(opts)
 			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
 				item := it.Item()
@@ -463,4 +490,17 @@ func (b *BadgerEngine) PropKeyDictCounters() map[string]uint64 {
 	}
 	b.propKeyDict.mu.RUnlock()
 	return out
+}
+
+// isPropertyKeyDictionaryKey reports whether key is a property-key token
+// or counter record.
+func isPropertyKeyDictionaryKey(key []byte) bool {
+	if len(key) == 0 {
+		return false
+	}
+	switch key[0] {
+	case prefixPropKeyForward, prefixPropKeyReverse, prefixPropKeyCounter:
+		return true
+	}
+	return false
 }

@@ -667,13 +667,13 @@ func TestTransaction_ConfigSettersAndSkipCreateHelpers(t *testing.T) {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
 
-	if shouldSkipCreateExistenceCheck(NodeID("test:550e8400-e29b-41d4-a716-446655440000")) != true {
+	if shouldSkipCreateExistenceCheck("test:550e8400-e29b-41d4-a716-446655440000") != true {
 		t.Error("Expected UUID-prefixed node ID to skip existence check")
 	}
-	if shouldSkipCreateExistenceCheck(NodeID(prefixTestID("non-uuid"))) {
+	if shouldSkipCreateExistenceCheck(prefixTestID("non-uuid")) {
 		t.Error("Expected non-UUID node ID not to skip existence check")
 	}
-	if shouldSkipCreateExistenceCheck(NodeID("missingprefix")) {
+	if shouldSkipCreateExistenceCheck("missingprefix") {
 		t.Error("Expected non-prefixed node ID not to skip existence check")
 	}
 }
@@ -1166,7 +1166,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		tx.bufferSet(dropKey, []byte("value"))
 		tx.bufferDelete(dropKey)
 
-		require.NoError(t, tx.flushBufferedWrites())
+		require.NoError(t, tx.flushBufferedWrites(singleBatchWriter(tx.badgerTx)))
 		require.Empty(t, tx.pendingWrites)
 		require.Empty(t, tx.pendingDeletes)
 
@@ -1189,7 +1189,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		defer tx.Rollback()
 
 		tx.bufferDelete([]byte{})
-		err = tx.flushBufferedWrites()
+		err = tx.flushBufferedWrites(singleBatchWriter(tx.badgerTx))
 		require.Error(t, err)
 	})
 
