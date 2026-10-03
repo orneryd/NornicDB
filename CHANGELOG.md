@@ -248,6 +248,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when no fast path needs it. An indexed string, boolean or number that no
   node holds now answers from the index in MATCH, OPTIONAL MATCH and MERGE
   instead of falling back to a label or full node scan (#821).
+- Answer label counts through the async write buffer from the stored per-label
+  counters plus the unflushed writes instead of reading every node of the label.
+  `MATCH (n:Label) RETURN count(n)` and the coverage check of label-less
+  property lookups no longer grow with the label (#843).
 - Preserve locally bound iterators in nested list predicates, including
   same-kind `all`, `any`, `none`, and `single` calls (#774, #775).
 - Route `CREATE TEXT INDEX` and `CREATE POINT INDEX` through schema execution
