@@ -356,7 +356,7 @@ func TestPipelineAggregateSourceFailureDoesNotReturnPartialGroups(t *testing.T) 
 				}
 				return false
 			}
-			groups, resolved := executor.pipelineAggregateGroups(ctx, source, projections)
+			groups, resolved := executor.pipelineAggregateGroups(ctx, source, projections, false)
 			require.False(t, resolved)
 			require.Nil(t, groups)
 			if canceled {

@@ -578,7 +578,7 @@ func (e *StorageExecutor) executeUnwindCallInTransactions(ctx context.Context, v
 			batchParams[key] = value
 		}
 		batchParams["__call_in_tx_items"] = items[start:end]
-		batchResult, err := e.executeWithImplicitTransaction(context.WithValue(ctx, paramsKey, batchParams), batchQuery, upperBatchQuery)
+		batchResult, err := e.executeWithImplicitTransaction(withQueryParams(ctx, batchParams), batchQuery, upperBatchQuery)
 		if err != nil {
 			return nil, localizedError(localization.CypherSubqueriesTransactionBatchFailed(variable, start/batchSize+1, err), err)
 		}

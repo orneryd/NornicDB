@@ -370,3 +370,57 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 	}
 	return source, len(plans), true
 }
+
+// projectionExpressionCache holds projectionExpressions results by clause.
+var projectionExpressionCache = newBoundedCache[string, []string](4096)
+
+// projectionExpressions returns the projected expressions of a projection
+// clause given as text with its keyword: the items of RETURN or WITH, after
+// DISTINCT and before any WHERE, ORDER BY, SKIP or LIMIT ("*" projects
+// nothing), or UNWIND's list expression. The row validators
+// (validatePipelineProjectionValues, validatePipelinePercentileArguments)
+// all read projections through it, so they agree on what a projection is.
+// Results are cached by clause text: the streaming aggregation validates
+// every row on its own, and parsing the clause per row and per validator
+// doubled nested-aggregation time (#823). The returned slice is shared.
+func projectionExpressions(clause, keyword string) []string {
+	key := keyword + "\x00" + clause
+	if cached, ok := projectionExpressionCache.get(key); ok {
+		return cached
+	}
+	expressions := parseProjectionExpressions(clause, keyword)
+	projectionExpressionCache.put(key, expressions)
+	return expressions
+}
+
+func parseProjectionExpressions(clause, keyword string) []string {
+	body := strings.TrimSpace(clause)
+	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
+		return nil
+	}
+	body = strings.TrimSpace(body[len(keyword):])
+	if strings.EqualFold(keyword, "UNWIND") {
+		if asIndex := topLevelKeywordIndex(body, "AS"); asIndex > 0 {
+			return []string{strings.TrimSpace(body[:asIndex])}
+		}
+		return nil
+	}
+	body, _ = cutDistinct(body)
+	end := len(body)
+	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
+		if index := topLevelKeywordIndex(body, suffix); index >= 0 && index < end {
+			end = index
+		}
+	}
+	body = strings.TrimSpace(body[:end])
+	if body == "" || body == "*" {
+		return nil
+	}
+	items := splitTopLevelComma(body)
+	expressions := make([]string, 0, len(items))
+	for _, item := range items {
+		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+		expressions = append(expressions, expression)
+	}
+	return expressions
+}

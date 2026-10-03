@@ -570,9 +570,7 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 func (e *StorageExecutor) parameterRow(ctx context.Context) pipelineRow {
 	params := getParamsFromContext(ctx)
 	row := make(pipelineRow, len(params))
-	for name, value := range params {
-		row["$"+name] = parameterRowValue(value)
-	}
+	bindParameterRow(ctx, row)
 	return row
 }
 

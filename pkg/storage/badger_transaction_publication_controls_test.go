@@ -66,13 +66,13 @@ func stageReservedPublication(t *testing.T, peer *BadgerTransaction) {
 	version, err := peer.engine.allocateMVCCVersion(peer.badgerTx, peer.namespace, time.Now())
 	require.NoError(t, err)
 	peer.CommitVersion = version
-	require.NoError(t, peer.engine.materializeMVCCCommitInTxn(peer.badgerTx, version, peer.operations))
-	require.NoError(t, peer.flushBufferedWrites())
+	require.NoError(t, peer.engine.materializeMVCCCommit(singleBatchWriter(peer.badgerTx), version, peer.operations))
+	require.NoError(t, peer.flushBufferedWrites(singleBatchWriter(peer.badgerTx)))
 }
 
 func publishReservedPublication(t *testing.T, peer *BadgerTransaction) {
 	t.Helper()
-	require.NoError(t, peer.badgerTx.Commit())
+	require.NoError(t, peer.engine.db.commit(peer.badgerTx))
 	peer.mu.Lock()
 	peer.closeLocked(TxStatusCommitted, false, nil)
 	peer.mu.Unlock()

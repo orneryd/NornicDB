@@ -50,7 +50,7 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 			{Type: OpCreateNode, Node: &Node{ID: "test:n-new", Labels: []string{"L"}}, FreshID: false},
 			{Type: OpCreateEdge, Edge: &Edge{ID: "test:e-new", StartNode: "test:n1", EndNode: "test:n2", Type: "R"}, FreshID: false},
 		}
-		return engine.materializeMVCCCommitInTxn(txn, version, ops)
+		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
 	})
 	require.NoError(t, err)
 
@@ -71,7 +71,7 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 		ops := []Operation{
 			{Type: OpUpdateNode, Node: &Node{ID: "test:n1", Labels: []string{"L"}}, OldNode: &Node{ID: "test:n1", Labels: []string{"L"}}},
 		}
-		return engine.materializeMVCCCommitInTxn(txn, version, ops)
+		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
 	})
 	require.Error(t, err)
 
@@ -79,7 +79,7 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 		ops := []Operation{
 			{Type: OpUpdateEdge, Edge: &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R"}, OldEdge: &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R"}},
 		}
-		return engine.materializeMVCCCommitInTxn(txn, version, ops)
+		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
 	})
 	require.Error(t, err)
 }

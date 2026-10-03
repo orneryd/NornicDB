@@ -135,7 +135,7 @@ func (b *BadgerEngine) EdgeCountByType(edgeType string) (int64, error) {
 	needle := []byte(normalizeCountEdgeType(edgeType))
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(edgeTypeCountPrefix(), 64))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(edgeTypeCountPrefix()))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
@@ -219,7 +219,7 @@ func loadPersistedEdgeTypeCountsSnapshot(txn *badger.Txn) (*edgeTypeCountSnapsho
 		endLabels:   make(map[namespaceEdgeTypeLabel]int64),
 	}
 	loadPrefix := func(prefix []byte, visit func(namespace, label, edgeType string, count int64)) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 64))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
@@ -243,7 +243,7 @@ func loadPersistedEdgeTypeCountsSnapshot(txn *badger.Txn) (*edgeTypeCountSnapsho
 		return nil
 	}
 	loadPair := func(prefix []byte, target map[namespaceEdgeTypeLabel]int64) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 64))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
@@ -328,7 +328,7 @@ func (b *BadgerEngine) collectAuthoritativeEdgeTypeCountsSnapshot() (*edgeTypeCo
 		endLabels:   make(map[namespaceEdgeTypeLabel]int64),
 	}
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues([]byte{prefixEdge}, 64))
+		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEdge}))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
@@ -395,7 +395,7 @@ func (b *BadgerEngine) rebuildEdgeTypeCountsSnapshot(snap *edgeTypeCountSnapshot
 	return b.withUpdate(func(txn *badger.Txn) error {
 		prefixes := [][]byte{edgeTypeCountPrefix(), edgeTypeStartLabelCountPrefix(), edgeTypeEndLabelCountPrefix()}
 		for _, prefix := range prefixes {
-			it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 			for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
 				key := it.Item().KeyCopy(nil)
 				if err := txn.Delete(key); err != nil {
@@ -537,7 +537,7 @@ func (b *BadgerEngine) collectEdgeTypeCountsByPrefixSnapshot(keyPrefix []byte) (
 	startLabels := make(map[namespaceEdgeTypeLabel]int64)
 	endLabels := make(map[namespaceEdgeTypeLabel]int64)
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(keyPrefix, 64))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(keyPrefix); it.Next() {
 			key := it.Item().Key()
@@ -715,7 +715,7 @@ func (b *BadgerEngine) sumEdgeTypeLabelCountAcrossNamespaces(sub byte, label, ed
 	}
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 64))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
@@ -856,7 +856,7 @@ func (b *BadgerEngine) incidentEdgeTypesInTxn(txn *badger.Txn, prefix []byte) (m
 		return nil, nil
 	}
 	types := make(map[string]int64)
-	it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 	for it.Rewind(); it.Valid(); it.Next() {
 		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
@@ -963,7 +963,7 @@ func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing b
 		prefix = tx.engine.incomingIndexPrefixString(nodeID)
 	}
 	if prefix != nil {
-		it := tx.badgerTx.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := tx.badgerTx.NewIterator(badgerPrefixIteratorOptions(prefix))
 		for it.Rewind(); it.Valid(); it.Next() {
 			edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
 			if !ok {

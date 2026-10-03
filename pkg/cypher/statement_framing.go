@@ -18,6 +18,10 @@ func (e *StorageExecutor) validateStatementFraming(cypher string) error {
 		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
 			"Can't specify multiple conflicting values for execution mode"))
 	}
+	// Only a statement with the word UNION in it can have UNION branches.
+	if findKeywordIndex(cypher, "UNION") < 0 {
+		return nil
+	}
 	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
 		hasFinish, hasColumns := false, false
 		for _, branch := range branches {

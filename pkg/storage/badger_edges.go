@@ -555,12 +555,11 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 	// Archive the old body at the current head's version so snapshot
 	// reads at that version still see the edge after the primary key
 	// goes away. No-op if no head exists yet.
-	if head, headErr := b.loadEdgeMVCCHeadInTxn(txn, id); headErr == nil && !head.Tombstoned {
-		if err := b.archiveEdgeBodyInTxn(txn, id, edge, head.Version); err != nil {
-			return err
-		}
-	} else if headErr != nil && headErr != ErrNotFound {
-		return headErr
+	head, headErr := b.loadEdgeMVCCHeadInTxn(txn, id)
+	if err := archiveAtLiveHead(head, headErr, func(atVersion MVCCVersion) error {
+		return b.archiveEdgeBodyInTxn(txn, id, edge, atVersion)
+	}); err != nil {
+		return err
 	}
 
 	// Delete indexes. Lookup-based because the num IDs already exist for
@@ -600,7 +599,7 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	// CRITICAL: Delete separately stored embeddings FIRST, before checking if node exists.
 	// This ensures embeddings are cleaned up even if the node record is missing or corrupted.
 	embPrefix := embeddingPrefix(id)
-	opts := badger.DefaultIteratorOptions
+	opts := badgerIteratorOptions()
 	opts.Prefix = embPrefix
 	it := txn.NewIterator(opts)
 	defer it.Close()
@@ -635,12 +634,11 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	// Archive the node body at the current head's version BEFORE we
 	// delete the primary key. This preserves snapshot reads at versions
 	// <= head.Version.
-	if head, headErr := b.loadNodeMVCCHeadInTxn(txn, id); headErr == nil && !head.Tombstoned {
-		if err := b.archiveNodeBodyInTxn(txn, id, deletedNode, head.Version); err != nil {
-			return 0, nil, nil, nil, err
-		}
-	} else if headErr != nil && headErr != ErrNotFound {
-		return 0, nil, nil, nil, headErr
+	head, headErr := b.loadNodeMVCCHeadInTxn(txn, id)
+	if err := archiveAtLiveHead(head, headErr, func(atVersion MVCCVersion) error {
+		return b.archiveNodeBodyInTxn(txn, id, deletedNode, atVersion)
+	}); err != nil {
+		return 0, nil, nil, nil, err
 	}
 
 	// Delete label indexes

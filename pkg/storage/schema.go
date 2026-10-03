@@ -219,58 +219,75 @@ func NewSchemaManager() *SchemaManager {
 	}
 }
 
-func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate bool) error {
+// addConstraintLocked admits c (admitConstraintLocked) and applies it when
+// admitted; added is false for an IF NOT EXISTS that finds it present.
+func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate bool) (added bool, err error) {
+	added, err = sm.admitConstraintLocked(c, silentOnDuplicate)
+	if added {
+		sm.applyConstraintLocked(c)
+	}
+	return added, err
+}
+
+// admitConstraintLocked checks c against the schema without changing it:
+// an error for a conflict, false for an equivalent constraint under IF NOT
+// EXISTS, true when c is to be added.
+func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate bool) (bool, error) {
 	if _, exists := sm.constraintContracts[c.Name]; exists {
-		return newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(c.Name))
+		return false, newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(c.Name))
 	}
 	if existing, exists := sm.constraints[c.Name]; exists {
-		if constraintSchemaKey(existing) == constraintSchemaKey(c) && existing.Type == c.Type {
+		if sameConstraintSchema(existing, c) && existing.Type == c.Type {
 			if c.Type == ConstraintDomain && !allowedValuesEqual(existing.AllowedValues, c.AllowedValues) {
-				return localizedError(localization.StorageSchemaConstraintDifferentAllowedValues(c.Name), nil)
+				return false, localizedError(localization.StorageSchemaConstraintDifferentAllowedValues(c.Name), nil)
 			}
 			if c.Type == ConstraintCardinality && existing.MaxCount != c.MaxCount {
-				return localizedError(localization.StorageSchemaConstraintDifferentMaxCount(c.Name, existing.MaxCount, c.MaxCount), nil)
+				return false, localizedError(localization.StorageSchemaConstraintDifferentMaxCount(c.Name, existing.MaxCount, c.MaxCount), nil)
 			}
 			if silentOnDuplicate {
-				return nil
+				return false, nil
 			}
-			return newSchemaAdmissionError("EquivalentSchemaRuleAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(c.Name))
+			return false, newSchemaAdmissionError("EquivalentSchemaRuleAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(c.Name))
 		}
-		return newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintDifferentSchemaOrType(c.Name))
+		return false, newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintDifferentSchemaOrType(c.Name))
 	}
 
-	newKey := constraintSchemaKey(c)
 	for _, existing := range sm.constraints {
-		existKey := constraintSchemaKey(existing)
-		if existKey != newKey {
+		if !sameConstraintSchema(existing, c) {
 			if c.Type == ConstraintPolicy && existing.Type == ConstraintPolicy &&
 				c.Label == existing.Label &&
 				c.SourceLabel == existing.SourceLabel && c.TargetLabel == existing.TargetLabel &&
 				c.PolicyMode != existing.PolicyMode {
-				return localizedError(localization.StorageSchemaConflictingPolicy(c.SourceLabel, c.Label, c.TargetLabel, existing.Name), nil)
+				return false, localizedError(localization.StorageSchemaConflictingPolicy(c.SourceLabel, c.Label, c.TargetLabel, existing.Name), nil)
 			}
 			continue
 		}
 		if existing.Type == c.Type {
 			if c.Type == ConstraintDomain && !allowedValuesEqual(existing.AllowedValues, c.AllowedValues) {
-				return localizedError(localization.StorageSchemaConflictingDomainConstraint(existing.Name), nil)
+				return false, localizedError(localization.StorageSchemaConflictingDomainConstraint(existing.Name), nil)
 			}
 			if c.Type == ConstraintCardinality && existing.MaxCount != c.MaxCount {
-				return localizedError(localization.StorageSchemaConflictingCardinalityConstraint(existing.Name, existing.Direction, existing.Label, existing.MaxCount, c.MaxCount), nil)
+				return false, localizedError(localization.StorageSchemaConflictingCardinalityConstraint(existing.Name, existing.Direction, existing.Label, existing.MaxCount, c.MaxCount), nil)
 			}
 			if silentOnDuplicate {
-				return nil
+				return false, nil
 			}
-			return newSchemaAdmissionError("ConstraintAlreadyExists", localization.StorageSchemaEquivalentConstraintAlreadyExists(existing.Name))
+			return false, newSchemaAdmissionError("ConstraintAlreadyExists", localization.StorageSchemaEquivalentConstraintAlreadyExists(existing.Name))
 		}
 		if (c.Type == ConstraintUnique && existing.Type == ConstraintRelationshipKey) ||
 			(c.Type == ConstraintRelationshipKey && existing.Type == ConstraintUnique) ||
 			(c.Type == ConstraintUnique && existing.Type == ConstraintNodeKey) ||
 			(c.Type == ConstraintNodeKey && existing.Type == ConstraintUnique) {
-			return localizedError(localization.StorageSchemaConflictingConstraintAlreadyExists(existing.Name), nil)
+			return false, localizedError(localization.StorageSchemaConflictingConstraintAlreadyExists(existing.Name), nil)
 		}
 	}
 
+	return true, nil
+}
+
+// applyConstraintLocked adds c, which admitConstraintLocked admitted, with
+// its owned index and unique-value tracking.
+func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 	// An index-backed constraint owns an index of its own name, for nodes and
 	// relationships alike, as in Neo4j.
 	if c.OwnedIndex == "" && (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey || c.Type == ConstraintRelationshipKey) {
@@ -309,8 +326,6 @@ func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate boo
 			}
 		}
 	}
-
-	return nil
 }
 
 // SetPersister sets an optional persistence hook for schema changes.
@@ -534,26 +549,41 @@ func (sm *SchemaManager) AddUniqueConstraint(name, label, property string, ifNot
 	defer sm.mu.Unlock()
 
 	silent := len(ifNotExists) > 0 && ifNotExists[0]
-	snapshot := sm.exportDefinitionLocked()
 	constraint := Constraint{
 		Name:       name,
 		Label:      label,
 		Properties: []string{property},
 		Type:       ConstraintUnique,
 	}
-	if err := sm.addConstraintLocked(constraint, silent); err != nil {
+	return sm.addSchemaRuleLocked(
+		func() (bool, error) { return sm.admitConstraintLocked(constraint, silent) },
+		func() { sm.applyConstraintLocked(constraint) },
+	)
+}
+
+// addSchemaRuleLocked adds a constraint: admit checks it against the
+// schema without changing it, and only when admit accepts it does the
+// adder take the rollback snapshot, apply the change and persist the
+// schema; if persisting fails, the in-memory schema returns to the
+// snapshot. An IF NOT EXISTS that finds the constraint already present
+// costs the check alone, as an existing index does for the index adders
+// (#823: every repeated CREATE CONSTRAINT ... IF NOT EXISTS exported and
+// rewrote the whole schema).
+func (sm *SchemaManager) addSchemaRuleLocked(admit func() (bool, error), apply func()) error {
+	add, err := admit()
+	if err != nil || !add {
 		return err
 	}
-
-	// Persist schema if configured. If persistence fails, roll back the in-memory change.
-	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
-			sm.replaceFromDefinitionLocked(snapshot)
-			return err
-		}
+	if sm.persist == nil {
+		apply()
+		return nil
 	}
-
+	snapshot := sm.exportDefinitionLocked()
+	apply()
+	if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
+		sm.replaceFromDefinitionLocked(snapshot)
+		return err
+	}
 	return nil
 }
 
@@ -584,7 +614,6 @@ func (sm *SchemaManager) AddPropertyTypeConstraintWithOptions(name, label, prope
 func (sm *SchemaManager) addPropertyTypeConstraint(name, label, property string, expectedType PropertyType, entityType ConstraintEntityType, ifNotExists bool) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	snapshot := sm.exportDefinitionLocked()
 	ptc := PropertyTypeConstraint{
 		Name:         name,
 		EntityType:   entityType,
@@ -592,33 +621,34 @@ func (sm *SchemaManager) addPropertyTypeConstraint(name, label, property string,
 		Property:     property,
 		ExpectedType: expectedType,
 	}
-	if err := sm.addPropertyTypeConstraintValueLocked(ptc, ifNotExists); err != nil {
-		return err
-	}
-
-	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
-			sm.replaceFromDefinitionLocked(snapshot)
-			return err
-		}
-	}
-
-	return nil
+	return sm.addSchemaRuleLocked(
+		func() (bool, error) { return sm.admitPropertyTypeConstraintLocked(ptc, ifNotExists) },
+		func() { sm.propertyTypeConstraints[ptc.Name] = ptc },
+	)
 }
 
-func (sm *SchemaManager) addPropertyTypeConstraintValueLocked(ptc PropertyTypeConstraint, ifNotExists bool) error {
+// addPropertyTypeConstraintValueLocked admits ptc and adds it when admitted.
+func (sm *SchemaManager) addPropertyTypeConstraintValueLocked(ptc PropertyTypeConstraint, ifNotExists bool) (added bool, err error) {
+	added, err = sm.admitPropertyTypeConstraintLocked(ptc, ifNotExists)
+	if added {
+		sm.propertyTypeConstraints[ptc.Name] = ptc
+	}
+	return added, err
+}
+
+// admitPropertyTypeConstraintLocked checks ptc against the schema without
+// changing it (see admitConstraintLocked).
+func (sm *SchemaManager) admitPropertyTypeConstraintLocked(ptc PropertyTypeConstraint, ifNotExists bool) (bool, error) {
 	if _, exists := sm.propertyTypeConstraints[ptc.Name]; exists {
 		if ifNotExists {
-			return nil
+			return false, nil
 		}
-		return localizedError(localization.StorageSchemaConstraintAlreadyExists(ptc.Name), nil)
+		return false, localizedError(localization.StorageSchemaConstraintAlreadyExists(ptc.Name), nil)
 	}
 	if _, exists := sm.constraintContracts[ptc.Name]; exists {
-		return localizedError(localization.StorageSchemaConstraintAlreadyExists(ptc.Name), nil)
+		return false, localizedError(localization.StorageSchemaConstraintAlreadyExists(ptc.Name), nil)
 	}
-	sm.propertyTypeConstraints[ptc.Name] = ptc
-	return nil
+	return true, nil
 }
 
 // CheckUniqueConstraint checks if a value violates a unique constraint.
@@ -1650,22 +1680,46 @@ func (sm *SchemaManager) GetAllConstraints() []Constraint {
 	return result
 }
 
-// constraintSchemaKey returns a key that identifies the "schema" of a constraint
-// (entity type + label + sorted properties). Two constraints with the same schema key
-// target the same storage schema.
-func constraintSchemaKey(c Constraint) string {
-	props := make([]string, len(c.Properties))
-	copy(props, c.Properties)
-	sort.Strings(props)
-	base := fmt.Sprintf("%s:%s:%s", c.EffectiveEntityType(), c.Label, strings.Join(props, ","))
-	// Policy constraints are further scoped by source/target labels and direction
-	if c.Type == ConstraintPolicy {
-		return fmt.Sprintf("%s:%s->%s:%s", base, c.SourceLabel, c.TargetLabel, c.PolicyMode)
+// sameConstraintSchema reports whether a and b constrain the same schema:
+// entity type, label (or relationship type) and set of properties, plus a
+// relationship policy's endpoints and mode or a cardinality constraint's
+// direction. It allocates nothing; admitting a constraint compares it with
+// every existing one (#823).
+func sameConstraintSchema(a, b Constraint) bool {
+	if a.EffectiveEntityType() != b.EffectiveEntityType() || a.Label != b.Label || !samePropertySet(a.Properties, b.Properties) {
+		return false
 	}
-	if c.Type == ConstraintCardinality {
-		return fmt.Sprintf("%s:%s", base, c.Direction)
+	switch {
+	case a.Type == ConstraintPolicy || b.Type == ConstraintPolicy:
+		return a.Type == b.Type && a.SourceLabel == b.SourceLabel && a.TargetLabel == b.TargetLabel && a.PolicyMode == b.PolicyMode
+	case a.Type == ConstraintCardinality || b.Type == ConstraintCardinality:
+		return a.Type == b.Type && a.Direction == b.Direction
 	}
-	return base
+	return true
+}
+
+// samePropertySet reports whether a and b hold the same property names, in
+// any order.
+func samePropertySet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, name := range a {
+		if countName(a, name) != countName(b, name) {
+			return false
+		}
+	}
+	return true
+}
+
+func countName(names []string, name string) int {
+	count := 0
+	for _, candidate := range names {
+		if candidate == name {
+			count++
+		}
+	}
+	return count
 }
 
 // allowedValuesEqual checks whether two AllowedValues lists contain the same values (order-insensitive).
@@ -1704,20 +1758,10 @@ func (sm *SchemaManager) AddConstraint(c Constraint, ifNotExists ...bool) error 
 	defer sm.mu.Unlock()
 
 	silentOnDuplicate := len(ifNotExists) > 0 && ifNotExists[0]
-	snapshot := sm.exportDefinitionLocked()
-	if err := sm.addConstraintLocked(c, silentOnDuplicate); err != nil {
-		return err
-	}
-
-	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
-			sm.replaceFromDefinitionLocked(snapshot)
-			return err
-		}
-	}
-
-	return nil
+	return sm.addSchemaRuleLocked(
+		func() (bool, error) { return sm.admitConstraintLocked(c, silentOnDuplicate) },
+		func() { sm.applyConstraintLocked(c) },
+	)
 }
 
 // DropIndex removes an index (by name) from the schema.
@@ -2261,29 +2305,33 @@ func (sm *SchemaManager) PropertyIndexTopK(label, property string, limit int, de
 	if limit <= 0 {
 		return nil
 	}
-	return sm.orderedPropertyIndexIDs(label, property, descending, limit)
+	ids, _ := sm.orderedPropertyIndexIDs(label, property, descending, limit, nil)
+	return ids
 }
 
 // PropertyIndexAllNonNil returns all node IDs from the property index in key order,
 // excluding nil keys, merged with the pending writes.
 func (sm *SchemaManager) PropertyIndexAllNonNil(label, property string, descending bool) []NodeID {
-	return sm.orderedPropertyIndexIDs(label, property, descending, -1)
+	ids, _ := sm.orderedPropertyIndexIDs(label, property, descending, -1, nil)
+	return ids
 }
 
 // orderedPropertyIndexIDs is the one ordered scan of a property index
-// (orderedIDsLocked); limit < 0 lists all.
-func (sm *SchemaManager) orderedPropertyIndexIDs(label, property string, descending bool, limit int) []NodeID {
+// (orderedIDsLocked), merged with the pending writes; limit < 0 lists all,
+// and keep, when set, selects the index values listed. exists is false when
+// the label and property have no index.
+func (sm *SchemaManager) orderedPropertyIndexIDs(label, property string, descending bool, limit int, keep func(key interface{}) bool) (ids []NodeID, exists bool) {
 	sm.mu.RLock()
 	idx, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
 	sm.mu.RUnlock()
 	if !exists || idx == nil {
-		return nil
+		return nil, false
 	}
 	view, source := sm.beginPendingRead()
 	defer endPendingRead(source)
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	return idx.orderedIDsLocked(view, property, descending, limit)
+	return idx.orderedIDsLocked(view, property, descending, limit, keep), true
 }
 
 // sortedKeysLocked returns non-nil index keys in ascending order.

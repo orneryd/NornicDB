@@ -65,7 +65,7 @@ func (b *BadgerEngine) edgeBetweenIndexReady() (bool, error) {
 func (b *BadgerEngine) hasAnyStoredEdges() (bool, error) {
 	var hasEdges bool
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsKeyOnly([]byte{prefixEdge}))
+		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEdge}))
 		defer it.Close()
 		it.Rewind()
 		hasEdges = it.ValidForPrefix([]byte{prefixEdge})
@@ -180,7 +180,7 @@ func (b *BadgerEngine) rebuildEdgeBetweenIndex(ctx context.Context) (int, error)
 		}
 		done := false
 		err := b.withUpdate(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerIterOptsPrefetchValues([]byte{prefixEdge}, 100))
+			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEdge}))
 			defer it.Close()
 			start := cursor
 			if len(start) == 0 {

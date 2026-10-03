@@ -34,23 +34,38 @@ type SerializerMigrationStats struct {
 // msgpack since this engine version, so on a fresh database this is a
 // no-op.
 func MigrateBadgerToMsgpack(dataDir string, opts SerializerMigrationOptions) (SerializerMigrationStats, error) {
-	db, err := badger.Open(badger.DefaultOptions(dataDir).WithLogger(nil))
+	// Opened the way the engine opens it, so a large commit a crash
+	// interrupted is rolled back before any body is scanned.
+	db, err := openManagedBadger(badger.DefaultOptions(dataDir).WithLogger(nil))
 	if err != nil {
 		return SerializerMigrationStats{DataDir: dataDir}, fmt.Errorf("open badger: %w", err)
 	}
 	defer db.Close()
 
-	return MigrateBadgerToMsgpackWithDB(db, dataDir, opts)
+	return migrateBadgerToMsgpack(db, func() migrationBatch { return db.NewWriteBatch() }, dataDir, opts)
 }
 
 // MigrateBadgerToMsgpackWithDB is MigrateBadgerToMsgpack against an
-// already-open *badger.DB. Used by tests and offline tooling.
+// already-open *badger.DB opened in Badger's default (unmanaged) mode. Used
+// by tests and offline tooling.
 func MigrateBadgerToMsgpackWithDB(db *badger.DB, dataDir string, opts SerializerMigrationOptions) (SerializerMigrationStats, error) {
-	stats := SerializerMigrationStats{DataDir: dataDir}
-
 	if db == nil {
-		return stats, fmt.Errorf("nil badger db")
+		return SerializerMigrationStats{DataDir: dataDir}, fmt.Errorf("nil badger db")
 	}
+	return migrateBadgerToMsgpack(db, func() migrationBatch { return db.NewWriteBatch() }, dataDir, opts)
+}
+
+// migrationBatch is the batched writer the migration rewrites bodies with:
+// Badger's WriteBatch on an unmanaged handle, managedWriteBatch on the
+// engine's managed one.
+type migrationBatch interface {
+	Set(key, value []byte) error
+	Flush() error
+	Cancel()
+}
+
+func migrateBadgerToMsgpack(db badgerKV, newBatch func() migrationBatch, dataDir string, opts SerializerMigrationOptions) (SerializerMigrationStats, error) {
+	stats := SerializerMigrationStats{DataDir: dataDir}
 
 	if opts.BatchSize <= 0 {
 		opts.BatchSize = 1000
@@ -65,7 +80,7 @@ func MigrateBadgerToMsgpackWithDB(db *badger.DB, dataDir string, opts Serializer
 		return stats, nil
 	}
 
-	converted, skipped, scanned, err := migratePrefixToMsgpack(db, prefixNode, "node", func(data []byte) (any, error) {
+	converted, skipped, scanned, err := migratePrefixToMsgpack(db, newBatch, prefixNode, "node", func(data []byte) (any, error) {
 		return decodeNodeV1(data)
 	}, func(v any) ([]byte, error) {
 		node := v.(*Node)
@@ -103,7 +118,7 @@ func MigrateBadgerToMsgpackWithDB(db *badger.DB, dataDir string, opts Serializer
 		}
 		return decodeEdge(data)
 	}
-	converted, skipped, scanned, err = migratePrefixToMsgpack(db, prefixEdge, "edge", edgeDecoder, func(v any) ([]byte, error) {
+	converted, skipped, scanned, err = migratePrefixToMsgpack(db, newBatch, prefixEdge, "edge", edgeDecoder, func(v any) ([]byte, error) {
 		edge := v.(*Edge)
 		return encodeValue(edge)
 	}, opts)
@@ -114,7 +129,7 @@ func MigrateBadgerToMsgpackWithDB(db *badger.DB, dataDir string, opts Serializer
 	stats.SkippedExisting += skipped
 	stats.TotalScanned += scanned
 
-	converted, skipped, scanned, err = migratePrefixToMsgpack(db, prefixEmbedding, "embedding", func(data []byte) (any, error) {
+	converted, skipped, scanned, err = migratePrefixToMsgpack(db, newBatch, prefixEmbedding, "embedding", func(data []byte) (any, error) {
 		return decodeEmbedding(data)
 	}, func(v any) ([]byte, error) {
 		emb := v.([]float32)
@@ -130,16 +145,16 @@ func MigrateBadgerToMsgpackWithDB(db *badger.DB, dataDir string, opts Serializer
 	return stats, nil
 }
 
-func migratePrefixToMsgpack(db *badger.DB, prefix byte, kind string, decode func([]byte) (any, error), encode func(any) ([]byte, error), opts SerializerMigrationOptions) (int, int, int, error) {
+func migratePrefixToMsgpack(db badgerKV, newBatch func() migrationBatch, prefix byte, kind string, decode func([]byte) (any, error), encode func(any) ([]byte, error), opts SerializerMigrationOptions) (int, int, int, error) {
 	converted := 0
 	skipped := 0
 	scanned := 0
 
-	var batch *badger.WriteBatch
+	var batch migrationBatch
 	var batchCount int
 
 	if !opts.DryRun {
-		batch = db.NewWriteBatch()
+		batch = newBatch()
 		defer batch.Cancel()
 	}
 
@@ -151,14 +166,13 @@ func migratePrefixToMsgpack(db *badger.DB, prefix byte, kind string, decode func
 			return err
 		}
 		batch.Cancel()
-		batch = db.NewWriteBatch()
+		batch = newBatch()
 		batchCount = 0
 		return nil
 	}
 
 	err := db.View(func(txn *badger.Txn) error {
-		iterOpts := badger.DefaultIteratorOptions
-		iterOpts.PrefetchValues = true
+		iterOpts := badgerIteratorOptions()
 		iterOpts.Prefix = []byte{prefix}
 		it := txn.NewIterator(iterOpts)
 		defer it.Close()

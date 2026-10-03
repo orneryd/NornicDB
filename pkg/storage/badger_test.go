@@ -1846,7 +1846,7 @@ func countEdgeBetweenSetEntries(t *testing.T, engine *BadgerEngine, startID, end
 	count := 0
 	prefix := edgeBetweenIndexPrefix(startNum, endNum)
 	err := engine.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
 			count++

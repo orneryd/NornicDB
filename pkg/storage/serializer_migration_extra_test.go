@@ -40,6 +40,7 @@ func TestMigratePrefixToMsgpack_ErrorAndSkipBranches(t *testing.T) {
 
 	_, _, _, err := migratePrefixToMsgpack(
 		db,
+		func() migrationBatch { return db.NewWriteBatch() },
 		prefixNode,
 		"node",
 		func(data []byte) (any, error) { return decodeNodeV1(data) },
@@ -56,6 +57,7 @@ func TestMigratePrefixToMsgpack_ErrorAndSkipBranches(t *testing.T) {
 
 	converted, skipped, scanned, err := migratePrefixToMsgpack(
 		db,
+		func() migrationBatch { return db.NewWriteBatch() },
 		prefixEdge,
 		"edge",
 		func(data []byte) (any, error) { return decodeEdge(data) },

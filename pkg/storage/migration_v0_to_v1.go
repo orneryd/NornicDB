@@ -70,8 +70,7 @@ func (b *BadgerEngine) migrateV0ToV1() error {
 	}
 
 	err := b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
+		opts := badgerIteratorOptions()
 		opts.Prefix = []byte{prefixNode}
 		it := txn.NewIterator(opts)
 		defer it.Close()

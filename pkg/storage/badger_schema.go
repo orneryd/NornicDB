@@ -25,9 +25,8 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 
 	// Phase 1: read + decode schema definitions.
 	if err := b.withView(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = []byte{prefixSchema}
-		opts.PrefetchValues = true
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -186,9 +185,8 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 	prefix = append(prefix, ':')
 
 	if err := b.withView(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
+		opts := badgerIteratorOptions()
 		opts.Prefix = prefix
-		opts.PrefetchValues = true
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
