@@ -1858,7 +1858,14 @@
     "no_effects": true
   },
   {
-    "name": "GH530 statistics clear result",
+    "name": "GH530 statistics clear while collecting",
+    "setup": ["CALL db.stats.collect('QUERIES')"],
+    "query": "CALL db.stats.clear('QUERIES')",
+    "no_effects": true
+  },
+  {
+    "name": "GH530 statistics clear after stop",
+    "setup": ["CALL db.stats.stop('QUERIES')"],
     "query": "CALL db.stats.clear('QUERIES')",
     "no_effects": true
   },
