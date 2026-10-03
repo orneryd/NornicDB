@@ -68,6 +68,12 @@ func loadEntries(path string) []entry {
 	return entries
 }
 
+// rewriteRegistry points every literal non-APOC registerBuiltInProcedure
+// registration at its localized metadata and fails when one has no metadata
+// entry. Procedures registered through ProcedureSpec helpers read their
+// metadata by name themselves; that every metadata entry is registered is
+// checked against the live registry by
+// pkg/cypher TestEveryProcedureMetadataEntryIsRegistered.
 func rewriteRegistry(path string, entries []entry) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
@@ -76,7 +82,6 @@ func rewriteRegistry(path string, entries []entry) {
 	for _, item := range entries {
 		metadata[item.Name] = struct{}{}
 	}
-	found := make(map[string]struct{}, len(entries))
 	ast.Inspect(file, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) < 3 {
@@ -102,7 +107,6 @@ func rewriteRegistry(path string, entries []entry) {
 		if _, exists := metadata[name]; !exists {
 			fatalf("non-APOC procedure %s is missing metadata", name)
 		}
-		found[name] = struct{}{}
 		function.Name = "registerBuiltInProcedure"
 		call.Args[2] = &ast.CallExpr{
 			Fun:  &ast.SelectorExpr{X: ast.NewIdent("localization"), Sel: ast.NewIdent("CypherProcedureMetadata")},
@@ -110,13 +114,6 @@ func rewriteRegistry(path string, entries []entry) {
 		}
 		return true
 	})
-	if len(found) != len(entries) {
-		for _, item := range entries {
-			if _, exists := found[item.Name]; !exists {
-				fatalf("metadata procedure %s has no registration", item.Name)
-			}
-		}
-	}
 	var output bytes.Buffer
 	fatalIf(format.Node(&output, fset, file))
 	fatalIf(os.WriteFile(path, output.Bytes(), 0o644))
