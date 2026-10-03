@@ -151,9 +151,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restore write-path performance: convert query parameters into row values
   once per query instead of once per expression evaluation (bare `UNWIND
   $rows CREATE` and relationship `MERGE` batches were quadratic), validate
-  streamed aggregation rows once with one cached projection parse, and skip
-  persisting the schema for a `CREATE CONSTRAINT ... IF NOT EXISTS` that
-  finds the constraint already present (#823).
+  streamed aggregation rows once with one cached projection parse, check a
+  `CREATE CONSTRAINT ... IF NOT EXISTS` before snapshotting or persisting the
+  schema, let a pipeline `MERGE` that scanned the label and found no node
+  create without scanning it again, and skip the text checks a repeated
+  statement already passed (#823).
 - Preserve locally bound iterators in nested list predicates, including
   same-kind `all`, `any`, `none`, and `single` calls (#774, #775).
 - Route `CREATE TEXT INDEX` and `CREATE POINT INDEX` through schema execution
