@@ -333,11 +333,25 @@ func TestDbStatsQueryCollectionLifecycle(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
-	_, err := exec.Execute(ctx, "CALL db.stats.clear('QUERIES')", nil)
-	require.NoError(t, err)
+	// As in Neo4j 5.26, collection is on from the start and its data cannot
+	// be cleared until it stops.
 	result, err := exec.Execute(ctx, "CALL db.stats.status()", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"section", "status", "data"}, result.Columns)
+	require.Equal(t, "collecting", result.Rows[0][1])
+	result, err = exec.Execute(ctx, "CALL db.stats.collect('QUERIES')", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"QUERIES", true, "Collection is already ongoing."}}, result.Rows)
+	result, err = exec.Execute(ctx, "CALL db.stats.clear('QUERIES')", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"QUERIES", false, "Collected data cannot be cleared while collecting."}}, result.Rows)
+	_, err = exec.Execute(ctx, "CALL db.stats.stop('QUERIES')", nil)
+	require.NoError(t, err)
+	result, err = exec.Execute(ctx, "CALL db.stats.clear('QUERIES')", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"QUERIES", true, "Data cleared."}}, result.Rows)
+	result, err = exec.Execute(ctx, "CALL db.stats.status()", nil)
+	require.NoError(t, err)
 	require.Equal(t, "idle", result.Rows[0][1])
 	_, err = exec.Execute(ctx, "CALL db.stats.collect('QUERIES')", nil)
 	require.NoError(t, err)
@@ -467,6 +481,9 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 	require.Equal(t, int64(1), data["invocations"].([]interface{})[0].(map[string]interface{})["elapsedExecutionTimeInUs"])
 	started := time.Now()
 	generation := exec.queryStatistics.start("RETURN stale", started)
+	// A query that started before stop and clear is not recorded after them.
+	_, err = exec.callQueryStatistics(ctx, "stop", nil)
+	require.NoError(t, err)
 	_, err = exec.callQueryStatistics(ctx, "clear", nil)
 	require.NoError(t, err)
 	exec.queryStatistics.record(generation, "RETURN stale", started, time.Microsecond, true)
@@ -491,9 +508,16 @@ func TestDbStatsSharedCollectorNamespaceIsolation(t *testing.T) {
 		executor.ShareQueryStatisticsFrom(owner)
 	}
 	ctx := context.Background()
-	_, err := producer.Execute(ctx, "CALL db.stats.collect('QUERIES')", nil)
+	for _, statement := range []string{"CALL db.stats.stop('QUERIES')", "CALL db.stats.clear('QUERIES')", "CALL db.stats.collect('QUERIES')"} {
+		_, err := producer.Execute(ctx, statement, nil)
+		require.NoError(t, err)
+	}
+	_, err := other.Execute(ctx, "CALL db.stats.stop('QUERIES')", nil)
 	require.NoError(t, err)
-	result, err := other.Execute(ctx, "CALL db.stats.status()", nil)
+	result, err := consumer.Execute(ctx, "CALL db.stats.status()", nil)
+	require.NoError(t, err)
+	require.Equal(t, "collecting", result.Rows[0][1], "stopping another database's collection leaves this one running")
+	result, err = other.Execute(ctx, "CALL db.stats.status()", nil)
 	require.NoError(t, err)
 	require.Equal(t, "idle", result.Rows[0][1])
 	_, err = producer.Execute(ctx, "RETURN 530 AS sharedValue", nil)
@@ -580,6 +604,11 @@ func TestCallDbStatsClear(t *testing.T) {
 	}
 
 	require.Equal(t, []string{"section", "success", "message"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"QUERIES", false, "Collected data cannot be cleared while collecting."}}, result.Rows)
+	_, err = exec.Execute(ctx, `CALL db.stats.stop()`, nil)
+	require.NoError(t, err)
+	result, err = exec.Execute(ctx, `CALL db.stats.clear()`, nil)
+	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"QUERIES", true, "Data cleared."}}, result.Rows)
 
 	if len(result.Rows) != 1 {
