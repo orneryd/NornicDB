@@ -184,6 +184,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer requires every procedure to be registered by a literal
   `registerBuiltInProcedure` call; a test checks that every metadata entry is
   registered with its localized description in the live registry (#530).
+- Delete an entity once when a transaction deletes it more than once: a
+  repeated delete of a node or relationship, or of a relationship its node
+  already took, changes nothing, so statement statistics and stored counts
+  match Neo4j (`count(r)` returned -2 after deleting two relationships
+  twice) (#827).
 - Preserve locally bound iterators in nested list predicates, including
   same-kind `all`, `any`, `none`, and `single` calls (#774, #775).
 - Route `CREATE TEXT INDEX` and `CREATE POINT INDEX` through schema execution
