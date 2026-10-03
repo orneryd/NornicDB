@@ -211,6 +211,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computed values are evaluated before the index lookup instead of being
   looked up as their own text, and list values are filed in property indexes.
   A uniqueness constraint now rejects a duplicate list, as in Neo4j (#844).
+- Compare node-pattern properties with Cypher equality in `MATCH`, `OPTIONAL
+  MATCH` and `MERGE`: `(n {n: 1.0})` matches a stored `1`, `(n {tags: [1, 2]})`
+  a stored integer list and `(n {d: date(...)})` a stored date, in auto-commit
+  and explicit transactions. `MERGE` with such values matched nothing and
+  created a duplicate node (#846).
 - Collect query statistics from database start, as Neo4j 5.26 does:
   `db.stats.status()` reports `collecting` until `db.stats.stop('QUERIES')`,
   and `db.stats.clear('QUERIES')` answers `false`, "Collected data cannot be

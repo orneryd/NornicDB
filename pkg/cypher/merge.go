@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,13 +51,7 @@ func mergeNodeMatches(node *storage.Node, labels []string, props map[string]inte
 	if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
 		return false
 	}
-	for key, val := range props {
-		nodeVal, ok := node.Properties[key]
-		if !ok || !reflect.DeepEqual(canonicalUnwindMergeValue(nodeVal), canonicalUnwindMergeValue(val)) {
-			return false
-		}
-	}
-	return true
+	return nodePropertiesMatch(node, props)
 }
 
 func mergeNodeMatchesAnyLabel(node *storage.Node, labels []string, props map[string]interface{}) bool {
@@ -68,13 +61,7 @@ func mergeNodeMatchesAnyLabel(node *storage.Node, labels []string, props map[str
 	if len(labels) > 0 && !mergeNodeHasAnyLabel(node, labels) {
 		return false
 	}
-	for key, val := range props {
-		nodeVal, ok := node.Properties[key]
-		if !ok || !reflect.DeepEqual(canonicalUnwindMergeValue(nodeVal), canonicalUnwindMergeValue(val)) {
-			return false
-		}
-	}
-	return true
+	return nodePropertiesMatch(node, props)
 }
 
 func mergeCreateConflict(err error) bool {
