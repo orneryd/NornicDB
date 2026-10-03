@@ -267,7 +267,8 @@ var typeGrammarWords = map[string]bool{
 // expression, so scanners that look for variables (expressionFreeVariables)
 // do not read type names (INTEGER, LIST<STRING>) as variables (#838).
 func maskTypePredicateTypes(expression string) string {
-	if !strings.Contains(expression, "::") && !containsFold(expression, "TYPED") {
+	// Zero-allocation fast path: comparison scans call this per row.
+	if strings.IndexByte(expression, ':') < 0 && indexASCIIFold(expression, "typed") < 0 {
 		return expression
 	}
 	masked := []byte(expression)

@@ -58,3 +58,53 @@ func TestTypePredicateTypesAreNotVariables(t *testing.T) {
 	require.Equal(t, []string{"x", "y"}, expressionFreeVariables("x IS TYPED TIME WITH TIME ZONE AND y IS NOT TYPED ANY<INT> NOT NULL"))
 	require.Equal(t, "plain", maskTypePredicateTypes("plain"))
 }
+
+func TestTypePredicateEdgeCases(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+	for expression, want := range map[string]interface{}{
+		"null IS :: ANY<INTEGER | FLOAT> NOT NULL": false,
+		"null IS :: ANY<INTEGER | FLOAT>":          true,
+		"1 IS :: ANY<INTEGER | FLOAT> NOT NULL":    true,
+		"[1, 'a'] IS :: LIST":                      true,
+		"1 IS :: LIST<INTEGER>":                    false,
+		"'a::b'":                                   "a::b",
+		"2 < 1 IS :: INTEGER":                      nil,
+		"1 = 1 IS :: BOOLEAN":                      false,
+		"1 + 1 IS :: INTEGER":                      true,
+		"NOT 1 IS :: STRING":                       true,
+		"true AND 1 IS :: STRING":                  false,
+		"1 IS :: INTEGER = true":                   true,
+		"[1] IS :: LIST<INTEGER> = true":           true,
+	} {
+		result, err := exec.Execute(ctx, "RETURN "+expression+" AS v", nil)
+		if assert.NoError(t, err, expression) {
+			assert.Equal(t, [][]interface{}{{want}}, result.Rows, expression)
+		}
+	}
+	for _, expression := range []string{"1 IS :: FOO", "1 IS :: LIST<INTEGER", "1 IS :: LIST<FOO>", "1 IS :: FOO<INTEGER>", "1 IS :: INTEGER | FOO"} {
+		_, err := exec.Execute(ctx, "RETURN "+expression+" AS v", nil)
+		assert.Error(t, err, expression)
+	}
+	_, err := exec.Execute(ctx, "CREATE (:T838e {v: 1})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (n:T838e) WHERE n.v IS :: FOO RETURN n", nil)
+	require.Error(t, err)
+
+	require.Equal(t, "x           ", maskTypePredicateTypes("x :: INTEGER"))
+	require.False(t, isOperatorWith("RETURN 1 AS time WITH 1 AS y RETURN y", len("RETURN 1 AS time ")))
+	require.True(t, isOperatorWith("RETURN x IS :: TIME WITH TIME ZONE", len("RETURN x IS :: TIME ")))
+}
+
+func TestTypePredicateSplittingAndRowValueErrors(t *testing.T) {
+	_, _, _, ok, err := splitTypePredicate("'a::b'")
+	require.False(t, ok)
+	require.NoError(t, err)
+	require.Equal(t, "x    ", maskTypePredicateTypes("x :: "))
+
+	e := setupTestExecutor(t)
+	_, _, err = e.evaluateRowValue("1 IS :: FOO", pipelineRow{})
+	require.Error(t, err)
+	_, ok, err = e.evaluateRowValue("missing.v IS :: INTEGER", pipelineRow{})
+	require.False(t, ok && err == nil, "an operand without a value is not a result")
+}
