@@ -56,3 +56,24 @@ func TestRepeatedStatementValidation(t *testing.T) {
 		}
 	}
 }
+
+// Every read binds parameters as the same row values: a typed list inside a
+// map parameter compares the same in a row read and a fused count (#823).
+func TestNestedTypedListParameterBindsAlike(t *testing.T) {
+	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Item {v: 'a'}), (:Item {v: 'b'}), (:Item {v: 'c'})", nil)
+	require.NoError(t, err)
+	params := map[string]interface{}{"p": map[string]interface{}{"vals": []string{"a", "b"}}}
+	for _, tc := range []struct {
+		query string
+		want  [][]interface{}
+	}{
+		{"MATCH (n:Item) WHERE n.v IN $p.vals RETURN n.v ORDER BY n.v", [][]interface{}{{"a"}, {"b"}}},
+		{"MATCH (n:Item) WHERE n.v IN $p.vals RETURN count(n)", [][]interface{}{{int64(2)}}},
+	} {
+		result, err := exec.Execute(ctx, tc.query, params)
+		require.NoError(t, err, tc.query)
+		require.Equal(t, tc.want, result.Rows, tc.query)
+	}
+}

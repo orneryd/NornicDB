@@ -2187,9 +2187,7 @@ func callTailRow(ctx context.Context, seed *ExecuteResult, row []interface{}) pi
 			values[col] = row[i]
 		}
 	}
-	for name, value := range params {
-		values["$"+name] = value
-	}
+	bindParameterRow(ctx, values)
 	return values
 }
 
