@@ -620,6 +620,16 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		return result, true, nil
 	}
 
+	if operand, negated, spec, isTypePredicate, err := splitTypePredicate(expr); isTypePredicate {
+		if err != nil {
+			return nil, false, err
+		}
+		value, ok, err := e.evaluateRowValue(operand, values)
+		if err != nil || !ok {
+			return nil, false, err
+		}
+		return evaluateTypePredicate(value, negated, spec), true, nil
+	}
 	for _, predicate := range []struct {
 		suffix  string
 		notNull bool
@@ -1862,6 +1872,14 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 	if left, right, ok := splitByOperatorWithOptions(expression, " IN ", true, true); ok {
 		membership, known := e.rowPredicateMembership(ctx, left, right, values)
 		return known && membership == true
+	}
+	if operand, negated, spec, isTypePredicate, err := splitTypePredicate(expression); isTypePredicate {
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return false
+		}
+		value, ok := e.rowPredicateOperand(ctx, operand, values)
+		return ok && evaluateTypePredicate(value, negated, spec)
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
 		if hasSuffixFoldASCII(expression, operator) {

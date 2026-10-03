@@ -126,6 +126,11 @@ func isWithKeyword(keyword string) bool {
 // a comma, an operator symbol, or a '.' (property key), so that WITH is a
 // clause: UNWIND [1] AS starts WITH starts RETURN starts.
 func isOperatorWith(s string, pos int) bool {
+	// The WITH of the type names TIME WITH TIME ZONE and TIMESTAMP WITH TIME
+	// ZONE (type predicates, #838) is not a clause.
+	if (prevWordEqualsIgnoreCase(s, pos, "TIME") || prevWordEqualsIgnoreCase(s, pos, "TIMESTAMP")) && followedByTimeZone(s, pos+len("WITH")) {
+		return true
+	}
 	var wordStart int
 	switch {
 	case prevWordEqualsIgnoreCase(s, pos, "STARTS"):
@@ -1623,4 +1628,17 @@ func skipCypherQuotedText(query string, start int, quote byte) int {
 		return index + 1
 	}
 	return len(query)
+}
+
+// followedByTimeZone reports whether the words TIME ZONE follow position pos.
+func followedByTimeZone(s string, pos int) bool {
+	for _, word := range []string{"TIME", "ZONE"} {
+		pos = skipSpaces(s, pos)
+		if pos+len(word) > len(s) || !strings.EqualFold(s[pos:pos+len(word)], word) ||
+			(pos+len(word) < len(s) && isIdentByte(s[pos+len(word)])) {
+			return false
+		}
+		pos += len(word)
+	}
+	return true
 }
