@@ -1102,6 +1102,11 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
 		return err
 	}
+	// A node this transaction already deleted is gone, as a read of it
+	// reports: deleting it again changes nothing (#827).
+	if _, deleted := tx.deletedNodes[nodeID]; deleted {
+		return ErrNotFound
+	}
 
 	// Capture old node state for constraint bookkeeping (e.g., unique value unregister).
 	var oldNode *Node
@@ -1479,6 +1484,11 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 	}
 	if err := tx.pinNamespaceFromIDLocked(string(edgeID)); err != nil {
 		return err
+	}
+	// A relationship this transaction already deleted, itself or with its
+	// node, is gone: deleting it again changes nothing (#827).
+	if _, deleted := tx.deletedEdges[edgeID]; deleted {
+		return ErrNotFound
 	}
 
 	// Get edge to delete its indexes
