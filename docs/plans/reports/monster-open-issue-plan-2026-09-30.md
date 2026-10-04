@@ -626,3 +626,41 @@ Incoming Graphify commits are preserved and the isolated snapshot is advanced
 to their main revision before publication. No running installation was managed.
 This closes the special reproduction, not the remaining #713/#728/#754 family
 acceptance; #547 remains excluded.
+
+### Shared Plain Multi-MATCH Projection: 2026-10-04
+
+Plain `executeMultiMatch` now passes complete binding rows to the existing
+shared RETURN projector. Remove the unreachable private aggregate reducer and
+manual projection, ordering and integer-only pagination tail. Aggregate
+production and its existing numeric compatibility contract are unchanged.
+
+The initial direct regression passed literal SKIP/LIMIT but returned all four
+rows for parameterized and arithmetic windows instead of rows 1 and 2. All
+eight direct/public controls now pass: literal, parameter and arithmetic
+windows, DISTINCT, hidden sort keys, parameter projection, empty matches and
+LIMIT 0. A ninth control checks ArithmeticError propagation. Direct tests must
+supply the normal statement failure context and inspect structured status;
+public Execute may return empty column metadata alongside an error, whereas
+the direct projector returns nil. No runtime change was needed for that test
+contract correction. The new adapter retains query statistics.
+
+Eight appended corpus cases preserve the protected original prefix. Pinned
+Neo4j 5.26.30 comparisons pass on both actual parsers and transaction modes:
+942 Bolt and 952 HTTP per parser, 3,788 total. Both official ratchets pass
+7,794 outcomes with zero gaps, setup blockers or harness errors using the
+pinned timezone archive. Isolated repository correctness, scoped vet and
+diagnostics pass; final focused tests pass under race instrumentation in both
+parsers. Every statement in the new plain adapter is covered; this is not a
+whole-function or whole-package coverage claim.
+
+The snapshot was advanced to incoming UI commit `668494a5`. Its first full
+run encountered the previously observed bare Badger `Assert failed` while an
+in-memory concurrency test was active. That test passed 20 isolated runs;
+the active test name does not establish the assertion's source. A fresh full
+integrated repository run passed. The assertion remains unexplained, not fixed
+or proven unrelated by this increment; no test was removed.
+
+No performance measurement or running-installation changes were made.
+Unrelated matcher whitespace and concurrent UI edits are excluded. Publish
+this increment with `Refs #713`; broader #713/#728/#754 acceptance remains
+open and #547 remains excluded.

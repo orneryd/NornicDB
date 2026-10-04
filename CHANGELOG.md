@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Route plain multi-MATCH RETURN through shared projection planning, including
+  parameterized/arithmetic pagination, DISTINCT, hidden sort keys and typed
+  projection errors. Remove the superseded reducer and pagination tail (#713).
+
 - Keep bound parameter-map values out of MATCH WHERE expression text. Preserve
   typed indexed lookups and full-row filtering for dynamic-key quantifiers,
   preventing source-body strings from being interpreted as arithmetic (#728).

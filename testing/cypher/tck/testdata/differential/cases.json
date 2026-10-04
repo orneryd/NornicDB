@@ -2336,5 +2336,57 @@
         }
       }]
     }
+  },
+  {
+    "name": "issue713 multi match literal projection window",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value SKIP 1 LIMIT 2",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match parameter projection window",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value SKIP $skip LIMIT $limit",
+    "parameters": {"skip": 1, "limit": 2},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match arithmetic projection window",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value SKIP $skip + 1 LIMIT $limit - 1",
+    "parameters": {"skip": 0, "limit": 3},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match distinct projection window",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN DISTINCT n.x % 2 AS value ORDER BY value SKIP $skip LIMIT $limit",
+    "parameters": {"skip": 0, "limit": 2},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match hidden projection sort key",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x % 2 AS value ORDER BY n.x DESC SKIP 1 LIMIT 2",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match bound parameter projection",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x + $offset AS value ORDER BY value SKIP 1 LIMIT 2",
+    "parameters": {"offset": 10},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match empty projection columns",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Missing) RETURN n.x AS value ORDER BY value",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match zero limit projection columns",
+    "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value LIMIT 0",
+    "no_effects": true
   }
 ]

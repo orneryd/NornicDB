@@ -364,11 +364,10 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		return nil, localizedError(localization.CypherTransactionsMultipleMatchExpected(), nil)
 	}
 	hasAggregation := false
-	isAggFlags := make([]bool, len(returnItems))
-	for index, item := range returnItems {
-		isAggFlags[index] = len(findAggregateSpans(item.expr)) > 0
-		if isAggFlags[index] {
+	for _, item := range returnItems {
+		if len(findAggregateSpans(item.expr)) > 0 {
 			hasAggregation = true
+			break
 		}
 	}
 
@@ -461,177 +460,16 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		return e.applyResultModifiers(ctx, result, modifiers)
 	}
 
-	if hasAggregation {
-		// Group binding ROW INDICES (not bindings themselves) by
-		// non-aggregated columns, so relAt(idx) stays available for
-		// aggregation functions applied over a relationship variable
-		// (e.g. count(rel), collect(rel.evidence_source)).
-		groups := make(map[string][]int)
-		groupKeys := make(map[string][]interface{})
-
-		for idx, b := range bindings {
-			// Build group key from non-aggregated columns
-			keyParts := make([]interface{}, 0)
-			for i, item := range returnItems {
-				if !isAggFlags[i] {
-					val := e.resolveBindingItemWithRelationships(ctx, item, b, relAt(idx))
-					keyParts = append(keyParts, val)
-				}
-			}
-			key := fmt.Sprintf("%v", keyParts)
-			groups[key] = append(groups[key], idx)
-			if _, exists := groupKeys[key]; !exists {
-				groupKeys[key] = keyParts
-			}
-		}
-
-		// Build result rows with aggregations
-		for key, groupIdxs := range groups {
-			row := make([]interface{}, len(returnItems))
-			keyIdx := 0
-
-			for i, item := range returnItems {
-				if !isAggFlags[i] {
-					// Non-aggregated column - use group key value
-					row[i] = groupKeys[key][keyIdx]
-					keyIdx++
-					continue
-				}
-
-				// Aggregation function (whitespace-tolerant)
-				inner := extractFuncInner(item.expr)
-				switch {
-				case isAggregateFuncName(item.expr, "count"):
-					if inner == "*" {
-						row[i] = int64(len(groupIdxs))
-					} else {
-						count := int64(0)
-						for _, idx := range groupIdxs {
-							val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
-							if val != nil {
-								count++
-							}
-						}
-						row[i] = count
-					}
-
-				case isAggregateFuncName(item.expr, "sum"):
-					sum := float64(0)
-					for _, idx := range groupIdxs {
-						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
-						if num, ok := toFloat64(val); ok {
-							sum += num
-						}
-					}
-					row[i] = sum
-
-				case isAggregateFuncName(item.expr, "avg"):
-					sum := float64(0)
-					count := 0
-					for _, idx := range groupIdxs {
-						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
-						if num, ok := toFloat64(val); ok {
-							sum += num
-							count++
-						}
-					}
-					if count > 0 {
-						row[i] = sum / float64(count)
-					} else {
-						row[i] = nil
-					}
-
-				case isAggregateFuncName(item.expr, "min"):
-					var minVal interface{}
-					for _, idx := range groupIdxs {
-						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
-						if val != nil && (minVal == nil || e.compareOrderValues(val, minVal) < 0) {
-							minVal = val
-						}
-					}
-					row[i] = minVal
-
-				case isAggregateFuncName(item.expr, "max"):
-					var maxVal interface{}
-					for _, idx := range groupIdxs {
-						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
-						if val != nil && (maxVal == nil || e.compareOrderValues(val, maxVal) > 0) {
-							maxVal = val
-						}
-					}
-					row[i] = maxVal
-
-				case isAggregateFuncName(item.expr, "collect"):
-					var collected []interface{}
-					for _, idx := range groupIdxs {
-						val := e.resolveBindingItemWithRelationships(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
-						collected = append(collected, val)
-					}
-					row[i] = collected
-				}
-			}
-			result.Rows = append(result.Rows, row)
-		}
-	} else {
-		// Non-aggregation - process each binding directly
-		for idx, b := range bindings {
-			row := make([]interface{}, len(returnItems))
-			for i, item := range returnItems {
-				row[i] = e.resolveBindingItemWithRelationships(ctx, item, b, relAt(idx))
-			}
-			result.Rows = append(result.Rows, row)
-		}
+	rows := make([]pipelineRow, len(bindings))
+	for index, nodes := range bindings {
+		rows[index] = pipelineRowFromTraversalOptionalRow(traversalOptRow{nodes: nodes, values: relAt(index)})
 	}
-
-	// Apply ORDER BY, SKIP, LIMIT (whitespace-tolerant)
-	orderByIdx := findKeywordIndex(cypher, "ORDER")
-	if orderByIdx > 0 {
-		orderStart := orderByIdx + 5
-		for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
-			orderStart++
-		}
-		if orderStart+2 <= len(cypher) && strings.EqualFold(cypher[orderStart:orderStart+2], "BY") {
-			orderStart += 2
-		}
-		orderPart := cypher[orderStart:]
-		endIdx := len(orderPart)
-		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
-				endIdx = idx
-			}
-		}
-		orderExpr := strings.TrimSpace(orderPart[:endIdx])
-		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderExpr)
+	projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+returnPart)
+	if err != nil {
+		return nil, err
 	}
-
-	// BUG FIX: SKIP/LIMIT were parsed nowhere in this function despite the
-	// comment above claiming otherwise — a multi-MATCH query with
-	// `... ORDER BY ... LIMIT N` silently ignored LIMIT and returned every
-	// row. Apply SKIP then LIMIT the same way the single-MATCH path does
-	// (see executeMatch's early SKIP/LIMIT parse in match.go), after ORDER
-	// BY has already run above.
-	if skipIdx := findKeywordIndex(cypher, "SKIP"); skipIdx > 0 {
-		skipPart := strings.TrimSpace(cypher[skipIdx+4:])
-		if fields := strings.Fields(skipPart); len(fields) > 0 {
-			if skip, err := strconv.Atoi(fields[0]); err == nil && skip > 0 {
-				if skip >= len(result.Rows) {
-					result.Rows = [][]interface{}{}
-				} else {
-					result.Rows = result.Rows[skip:]
-				}
-			}
-		}
-	}
-	if limitIdx := findKeywordIndex(cypher, "LIMIT"); limitIdx > 0 {
-		limitPart := strings.TrimSpace(cypher[limitIdx+5:])
-		if fields := strings.Fields(limitPart); len(fields) > 0 {
-			if limit, err := strconv.Atoi(fields[0]); err == nil && limit >= 0 && limit < len(result.Rows) {
-				result.Rows = result.Rows[:limit]
-			}
-		}
-	}
-
-	return result, nil
+	projected.Stats = result.Stats
+	return projected, nil
 }
 
 // lastKeywordIndexBefore returns the last occurrence of keyword before endIdx.

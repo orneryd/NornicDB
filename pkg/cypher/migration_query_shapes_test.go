@@ -10,6 +10,87 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGh713MultiMatchProjectionWindows(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		window string
+		params map[string]interface{}
+	}{
+		{"literal", "SKIP 1 LIMIT 2", nil},
+		{"parameters", "SKIP $skip LIMIT $limit", map[string]interface{}{"skip": int64(1), "limit": int64(2)}},
+		{"arithmetic", "SKIP $skip + 1 LIMIT $limit - 1", map[string]interface{}{"skip": int64(0), "limit": int64(3)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor, ctx := newUnitExecutor(t)
+			_, err := executor.Execute(ctx, "CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})", nil)
+			require.NoError(t, err)
+			query := "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value " + test.window
+			public, err := executor.Execute(ctx, query, test.params)
+			require.NoError(t, err)
+			require.Equal(t, []string{"value"}, public.Columns)
+			require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}}, public.Rows)
+			directCtx := context.WithValue(ctx, paramsKey, test.params)
+			direct, err := executor.executeMultiMatch(directCtx, query)
+			require.NoError(t, err)
+			require.Equal(t, public.Columns, direct.Columns)
+			require.Equal(t, public.Rows, direct.Rows)
+		})
+	}
+}
+
+func TestGh713MultiMatchProjectionRows(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		query  string
+		params map[string]interface{}
+		rows   [][]interface{}
+	}{
+		{"distinct", "MATCH (a:Anchor) MATCH (n:Value) RETURN DISTINCT n.x % 2 AS value ORDER BY value SKIP $skip LIMIT $limit", map[string]interface{}{"skip": int64(0), "limit": int64(2)}, [][]interface{}{{int64(0)}, {int64(1)}}},
+		{"hidden sort key", "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x % 2 AS value ORDER BY n.x DESC SKIP 1 LIMIT 2", nil, [][]interface{}{{int64(0)}, {int64(1)}}},
+		{"parameter projection", "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x + $offset AS value ORDER BY value SKIP 1 LIMIT 2", map[string]interface{}{"offset": int64(10)}, [][]interface{}{{int64(11)}, {int64(12)}}},
+		{"empty match", "MATCH (a:Anchor) MATCH (n:Missing) RETURN n.x AS value ORDER BY value", nil, nil},
+		{"zero limit", "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value LIMIT 0", nil, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor, ctx := newUnitExecutor(t)
+			_, err := executor.Execute(ctx, "CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})", nil)
+			require.NoError(t, err)
+			public, err := executor.Execute(ctx, test.query, test.params)
+			require.NoError(t, err)
+			require.Equal(t, []string{"value"}, public.Columns)
+			require.Len(t, public.Rows, len(test.rows))
+			if len(test.rows) > 0 {
+				require.Equal(t, test.rows, public.Rows)
+			}
+			direct, err := executor.executeMultiMatch(context.WithValue(ctx, paramsKey, test.params), test.query)
+			require.NoError(t, err)
+			require.Equal(t, public.Columns, direct.Columns)
+			require.Len(t, direct.Rows, len(test.rows))
+			if len(test.rows) > 0 {
+				require.Equal(t, test.rows, direct.Rows)
+			}
+			require.NotNil(t, direct.Stats)
+		})
+	}
+}
+
+func TestGh713MultiMatchProjectionFailure(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	_, err := executor.Execute(ctx, "CREATE (:Anchor), (:Value {x: 1})", nil)
+	require.NoError(t, err)
+	query := "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x / 0 AS value"
+	result, err := executor.Execute(ctx, query, nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
+	require.NotNil(t, result)
+	require.Equal(t, []string{"value"}, result.Columns)
+	require.Empty(t, result.Rows)
+	result, err = executor.executeMultiMatch(withExpressionFailures(ctx), query)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
+	require.Nil(t, result)
+}
+
 const exactBoltCreateTranslatedQueryShape = `
 MATCH (o:OriginalText)
 WHERE o.textKey128 = $textKey128 OR ($textKey IS NOT NULL AND o.textKey = $textKey)
