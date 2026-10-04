@@ -22,11 +22,11 @@ const (
 	MessageCypherMatchingReturnAfterWithRequired                  MessageID = "cyphermatching.return_after_with_required"
 	MessageCypherMatchingSkipParseFailed                          MessageID = "cyphermatching.skip_parse_failed"
 	MessageCypherMatchingLimitParseFailed                         MessageID = "cyphermatching.limit_parse_failed"
-	MessageCypherMatchingShortestPathQueryExpected                MessageID = "cyphermatching.shortest_path_query_expected"
-	MessageCypherMatchingShortestPathSyntaxInvalid                MessageID = "cyphermatching.shortest_path_syntax_invalid"
 	MessageCypherMatchingPathPatternInvalid                       MessageID = "cyphermatching.path_pattern_invalid"
-	MessageCypherMatchingShortestPathStartVariableUnresolved      MessageID = "cyphermatching.shortest_path_start_variable_unresolved"
-	MessageCypherMatchingShortestPathEndVariableUnresolved        MessageID = "cyphermatching.shortest_path_end_variable_unresolved"
+	MessageCypherMatchingShortestPathMinimalLength                MessageID = "cyphermatching.shortest_path_minimal_length"
+	MessageCypherMatchingShortestPathCommonEndNodes               MessageID = "cyphermatching.shortest_path_common_end_nodes"
+	MessageCypherMatchingShortestPathUnboundNodes                 MessageID = "cyphermatching.shortest_path_unbound_nodes"
+	MessageCypherMatchingShortestPathRelationshipProperties       MessageID = "cyphermatching.shortest_path_relationship_properties"
 	MessageCypherMatchingOptionalMatchNodeEndpointMissing         MessageID = "cyphermatching.optional_match_node_endpoint_missing"
 	MessageCypherMatchingOptionalMatchNodeEndpointUnterminated    MessageID = "cyphermatching.optional_match_node_endpoint_unterminated"
 	MessageCypherMatchingOptionalMatchTargetEndpointMissing       MessageID = "cyphermatching.optional_match_target_endpoint_missing"
@@ -41,8 +41,8 @@ const (
 	MessageCypherMatchingVariableLengthTypeExpression             MessageID = "cyphermatching.variable_length_type_expression"
 	MessageCypherMatchingLabelExpressionInWritePattern            MessageID = "cyphermatching.label_expression_in_write_pattern"
 	MessageCypherMatchingRelationshipTypeExpressionInWritePattern MessageID = "cyphermatching.relationship_type_expression_in_write_pattern"
-	MessageCypherMatchingSingleRelationshipTypeRequired          MessageID = "cyphermatching.single_relationship_type_required"
-	MessageCypherMatchingIsNotOperandInvalid                     MessageID = "cyphermatching.is_not_operand_invalid"
+	MessageCypherMatchingSingleRelationshipTypeRequired           MessageID = "cyphermatching.single_relationship_type_required"
+	MessageCypherMatchingIsNotOperandInvalid                      MessageID = "cyphermatching.is_not_operand_invalid"
 )
 
 func cypherMatchingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -118,26 +118,33 @@ func CypherMatchingLimitParseFailed() Message {
 	return cypherMatchingMessage(MessageCypherMatchingLimitParseFailed, "failed to parse LIMIT clause", nil)
 }
 
-func CypherMatchingShortestPathQueryExpected() Message {
-	return cypherMatchingMessage(MessageCypherMatchingShortestPathQueryExpected, "not a shortest path query", nil)
-}
-
-func CypherMatchingShortestPathSyntaxInvalid() Message {
-	return cypherMatchingMessage(MessageCypherMatchingShortestPathSyntaxInvalid, "invalid shortestPath syntax", nil)
-}
-
 func CypherMatchingPathPatternInvalid(pattern string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingPathPatternInvalid, "invalid path pattern: "+pattern, map[string]any{"Pattern": pattern})
 }
 
-func CypherMatchingShortestPathStartVariableUnresolved(variable string) Message {
-	quoted := strconv.Quote(variable)
-	return cypherMatchingMessage(MessageCypherMatchingShortestPathStartVariableUnresolved, "shortestPath: could not resolve start variable "+quoted+" from preceding MATCH clause", map[string]any{"Variable": quoted})
+// CypherMatchingShortestPathMinimalLength is Neo4j's error for a
+// shortestPath or allShortestPaths pattern whose minimum length is above 1.
+func CypherMatchingShortestPathMinimalLength(function string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingShortestPathMinimalLength, function+"(...) does not support a minimal length different from 0 or 1", map[string]any{"Function": function})
 }
 
-func CypherMatchingShortestPathEndVariableUnresolved(variable string) Message {
-	quoted := strconv.Quote(variable)
-	return cypherMatchingMessage(MessageCypherMatchingShortestPathEndVariableUnresolved, "shortestPath: could not resolve end variable "+quoted+" from preceding MATCH clause", map[string]any{"Variable": quoted})
+// CypherMatchingShortestPathUnboundNodes is Neo4j's error for a
+// shortestPath or allShortestPaths expression with an endpoint that isn't a
+// bound variable.
+func CypherMatchingShortestPathUnboundNodes(function string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingShortestPathUnboundNodes, "A "+function+"(...) requires bound nodes when not part of a MATCH clause.", map[string]any{"Function": function})
+}
+
+// CypherMatchingShortestPathRelationshipProperties is Neo4j's error for
+// relationship properties in a shortestPath or allShortestPaths pattern.
+func CypherMatchingShortestPathRelationshipProperties(function, properties string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingShortestPathRelationshipProperties, function+"(...) contains properties "+properties+". This is currently not supported.", map[string]any{"Function": function, "Properties": properties})
+}
+
+// CypherMatchingShortestPathCommonEndNodes is Neo4j's error for a
+// shortestPath search whose start and end are the same node.
+func CypherMatchingShortestPathCommonEndNodes() Message {
+	return cypherMatchingMessage(MessageCypherMatchingShortestPathCommonEndNodes, "The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you perform a shortestPath search after a cartesian product that might have the same start and end nodes for some of the rows passed to shortestPath. If you would rather not experience this exception, and can accept the possibility of missing results for those rows, disable this in the Neo4j configuration by setting `dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the shortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern expression followed by ordering by path length and limiting to one result.", nil)
 }
 
 func CypherMatchingOptionalMatchNodeEndpointMissing(pattern string) Message {
@@ -207,7 +214,6 @@ func CypherMatchingLabelExpressionInWritePattern(clause string) Message {
 func CypherMatchingRelationshipTypeExpressionInWritePattern(clause string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingRelationshipTypeExpressionInWritePattern, "Relationship type expressions in patterns are not allowed in a "+clause+" clause, but only in a MATCH clause", map[string]any{"Clause": clause})
 }
-
 
 // CypherMatchingIsNotOperandInvalid is Neo4j's SyntaxError for n IS NOT <label>: IS NOT takes NULL, a type or a normal form, not a label expression (#860).
 func CypherMatchingIsNotOperandInvalid(input string) Message {

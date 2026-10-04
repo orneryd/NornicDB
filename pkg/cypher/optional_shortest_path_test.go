@@ -212,12 +212,20 @@ func TestBug721ShortestPathAsValue(t *testing.T) {
 
 // TestBug581OptionalShortestPathKeepsErrors exercises the no-swallow rule:
 // malformed traversal patterns inside OPTIONAL MATCH must raise, never come
-// back as a fabricated {result: null} row.
+// back as a fabricated {result: null} row. A single-relationship pattern is a
+// shortestPath of length 1, as in Neo4j 5.26.30 (#863).
 func TestBug581OptionalShortestPathKeepsErrors(t *testing.T) {
 	exec := newOptionalShortestPathExecutor(t)
 	ctx := context.Background()
 	setupOptionalShortestPathGraph(t, exec, ctx)
 
-	_, err := exec.Execute(ctx, "OPTIONAL MATCH p = shortestPath((a:ZSP {id: 1})-->(c:ZSP {id: 3})) RETURN length(p) AS l", nil)
+	_, err := exec.Execute(ctx, "OPTIONAL MATCH p = shortestPath((a:ZSP {id: 1})-[*]->(c:ZSP {id: 3}) RETURN length(p) AS l", nil)
 	require.Error(t, err)
+
+	result, err := exec.Execute(ctx, "OPTIONAL MATCH p = shortestPath((a:ZSP {id: 1})-->(c:ZSP {id: 3})) RETURN length(p) AS l", nil)
+	require.NoError(t, err)
+	requireRowsEqual(t, result, []string{"l"}, [][]interface{}{{nil}})
+	result, err = exec.Execute(ctx, "OPTIONAL MATCH p = shortestPath((a:ZSP {id: 1})-->(c:ZSP {id: 2})) RETURN length(p) AS l", nil)
+	require.NoError(t, err)
+	requireRowsEqual(t, result, []string{"l"}, [][]interface{}{{int64(1)}})
 }

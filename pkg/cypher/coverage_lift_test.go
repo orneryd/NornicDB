@@ -531,13 +531,11 @@ func TestCoverageLiftShortestPathAndShellParserHelpers(t *testing.T) {
 	assert.Equal(t, "shortestPath", funcName)
 	assert.Equal(t, "(a)-[:KNOWS*]->(b)", inner)
 	assert.Greater(t, idx, 0)
-	assert.Equal(t, "p", extractShortestPathPathVariable("MATCH p = shortestPath((a)-->(b)) RETURN p", idx))
 
 	funcName, inner, idx, ok = extractShortestPathCall("MATCH p = allShortestPaths((a)-[*]->(b)) RETURN p")
 	require.True(t, ok)
 	assert.Equal(t, "allShortestPaths", funcName)
 	assert.Equal(t, "(a)-[*]->(b)", inner)
-	assert.Equal(t, "p", extractShortestPathPathVariable("MATCH p = allShortestPaths((a)-[*]->(b)) RETURN p", idx))
 
 	funcName, inner, idx, ok = extractShortestPathCall("MATCH (n) RETURN notshortestPath(n)")
 	assert.False(t, ok)
@@ -550,11 +548,6 @@ func TestCoverageLiftShortestPathAndShellParserHelpers(t *testing.T) {
 	assert.Equal(t, "shortestPath", funcName)
 	assert.Empty(t, inner)
 	assert.Greater(t, idx, 0)
-	assert.Empty(t, extractShortestPathPathVariable("MATCH (a) RETURN shortestPath((a)-->(b))", idx))
-	previousQuery := "MATCH (a) RETURN 1 MATCH p = shortestPath((a)-->(b)) RETURN p"
-	_, _, previousIdx, ok := extractShortestPathCall(previousQuery)
-	require.True(t, ok)
-	assert.Equal(t, "(a) RETURN 1", extractPreviousMatchClause(previousQuery, previousIdx))
 
 	command, consumed, ok := consumeShellMapCommand(":params {name: 'Ada // not comment', note: \"brace } inside\", nested: {x: 1 /* ok */}};\nMATCH (n) RETURN n")
 	require.True(t, ok)

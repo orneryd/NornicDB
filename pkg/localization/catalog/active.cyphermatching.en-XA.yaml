@@ -46,21 +46,21 @@
 - id: cyphermatching.limit_parse_failed
   description: Expanded pseudo-locale LIMIT parse failure.
   other: "[!! failed to parse LIMIT clause !!]"
-- id: cyphermatching.shortest_path_query_expected
-  description: Expanded pseudo-locale expected shortest-path query.
-  other: "[!! not a shortest path query !!]"
-- id: cyphermatching.shortest_path_syntax_invalid
-  description: Expanded pseudo-locale invalid shortestPath syntax.
-  other: "[!! invalid shortestPath syntax !!]"
 - id: cyphermatching.path_pattern_invalid
   description: Expanded pseudo-locale invalid path pattern.
   other: "[!! invalid path pattern: {{.Pattern}} !!]"
-- id: cyphermatching.shortest_path_start_variable_unresolved
-  description: Expanded pseudo-locale unresolved shortestPath start variable.
-  other: "[!! shortestPath: could not resolve start variable {{.Variable}} from preceding MATCH clause !!]"
-- id: cyphermatching.shortest_path_end_variable_unresolved
-  description: Expanded pseudo-locale unresolved shortestPath end variable.
-  other: "[!! shortestPath: could not resolve end variable {{.Variable}} from preceding MATCH clause !!]"
+- id: cyphermatching.shortest_path_minimal_length
+  description: "Expanded pseudo-locale shortestPath minimal length."
+  other: "[!! {{.Function}}(...) does not support a minimal length different from 0 or 1 !!]"
+- id: cyphermatching.shortest_path_common_end_nodes
+  description: "Expanded pseudo-locale shortestPath common end nodes."
+  other: "[!! The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you perform a shortestPath search after a cartesian product that might have the same start and end nodes for some of the rows passed to shortestPath. If you would rather not experience this exception, and can accept the possibility of missing results for those rows, disable this in the Neo4j configuration by setting `dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the shortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern expression followed by ordering by path length and limiting to one result. !!]"
+- id: cyphermatching.shortest_path_unbound_nodes
+  description: "Expanded pseudo-locale shortestPath unbound nodes."
+  other: "[!! A {{.Function}}(...) requires bound nodes when not part of a MATCH clause. !!]"
+- id: cyphermatching.shortest_path_relationship_properties
+  description: "Expanded pseudo-locale shortestPath relationship properties."
+  other: "[!! {{.Function}}(...) contains properties {{.Properties}}. This is currently not supported. !!]"
 - id: cyphermatching.optional_match_node_endpoint_missing
   description: Expanded pseudo-locale missing optional node endpoint.
   other: "[!! optional match pattern {{.Pattern}} has no node endpoint !!]"

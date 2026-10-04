@@ -28,11 +28,6 @@ func TestCypherMatchingLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 		requireCypherMatchingLocalizedError(t, err, localization.MessageCypherMatchingMatchPatternRequired, "MATCH clause requires a pattern")
 	})
 
-	t.Run("shortest path validation", func(t *testing.T) {
-		_, err := exec.parseShortestPathQuery(context.Background(), "MATCH (n) RETURN n")
-		requireCypherMatchingLocalizedError(t, err, localization.MessageCypherMatchingShortestPathQueryExpected, "not a shortest path query")
-	})
-
 	t.Run("optional endpoint validation", func(t *testing.T) {
 		_, err := exec.parseOptionalClauseEndpoints(context.Background(), "-[r]->")
 		requireCypherMatchingLocalizedError(t, err, localization.MessageCypherMatchingOptionalMatchNodeEndpointMissing, `optional match pattern "-[r]->" has no node endpoint`)
@@ -74,11 +69,7 @@ func TestCypherMatchingDescriptorsPreserveExactEnglish(t *testing.T) {
 		{localization.CypherMatchingReturnAfterWithRequired(), "RETURN clause required after WITH"},
 		{localization.CypherMatchingSkipParseFailed(), "failed to parse SKIP clause"},
 		{localization.CypherMatchingLimitParseFailed(), "failed to parse LIMIT clause"},
-		{localization.CypherMatchingShortestPathQueryExpected(), "not a shortest path query"},
-		{localization.CypherMatchingShortestPathSyntaxInvalid(), "invalid shortestPath syntax"},
 		{localization.CypherMatchingPathPatternInvalid("(a)-[r"), "invalid path pattern: (a)-[r"},
-		{localization.CypherMatchingShortestPathStartVariableUnresolved("a"), `shortestPath: could not resolve start variable "a" from preceding MATCH clause`},
-		{localization.CypherMatchingShortestPathEndVariableUnresolved("b"), `shortestPath: could not resolve end variable "b" from preceding MATCH clause`},
 		{localization.CypherMatchingOptionalMatchNodeEndpointMissing("-[r]->(b)"), `optional match pattern "-[r]->(b)" has no node endpoint`},
 		{localization.CypherMatchingOptionalMatchNodeEndpointUnterminated("(a-[r]->(b)"), `optional match pattern "(a-[r]->(b)" has an unterminated node endpoint`},
 		{localization.CypherMatchingOptionalMatchTargetEndpointMissing("(a)-[r]->"), `optional match pattern "(a)-[r]->" has no target endpoint`},

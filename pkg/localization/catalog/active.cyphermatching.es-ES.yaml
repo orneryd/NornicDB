@@ -46,21 +46,21 @@
 - id: cyphermatching.limit_parse_failed
   description: Error al analizar LIMIT. LIMIT no se traduce.
   other: no se pudo analizar la cláusula LIMIT
-- id: cyphermatching.shortest_path_query_expected
-  description: La consulta no contiene una función de ruta más corta.
-  other: no es una consulta de ruta más corta
-- id: cyphermatching.shortest_path_syntax_invalid
-  description: Sintaxis de shortestPath no válida. El nombre de función no se traduce.
-  other: sintaxis de shortestPath no válida
 - id: cyphermatching.path_pattern_invalid
   description: Patrón de ruta más corta no válido. Pattern no se traduce.
   other: "patrón de ruta no válido: {{.Pattern}}"
-- id: cyphermatching.shortest_path_start_variable_unresolved
-  description: No se puede resolver la variable inicial de shortestPath. Variable conserva las comillas de Go.
-  other: "shortestPath: no se pudo resolver la variable inicial {{.Variable}} de la cláusula MATCH anterior"
-- id: cyphermatching.shortest_path_end_variable_unresolved
-  description: No se puede resolver la variable final de shortestPath. Variable conserva las comillas de Go.
-  other: "shortestPath: no se pudo resolver la variable final {{.Variable}} de la cláusula MATCH anterior"
+- id: cyphermatching.shortest_path_minimal_length
+  description: "Longitud mínima de shortestPath o allShortestPaths mayor que 1. Function es el nombre de la función."
+  other: "{{.Function}}(...) no admite una longitud mínima distinta de 0 o 1"
+- id: cyphermatching.shortest_path_common_end_nodes
+  description: "Búsqueda shortestPath cuyo nodo inicial y final son el mismo (texto de Neo4j)."
+  other: "El algoritmo de camino más corto no funciona cuando los nodos inicial y final son el mismo. Esto puede ocurrir si se busca un shortestPath tras un producto cartesiano que puede tener el mismo nodo inicial y final en algunas de las filas pasadas a shortestPath. Si prefiere no ver esta excepción y puede aceptar que falten resultados para esas filas, desactívela en la configuración de Neo4j estableciendo `dbms.cypher.forbid_shortestpath_common_nodes` en false. Si no puede aceptar que falten resultados y necesita el shortestPath entre dos nodos comunes, reescriba la consulta con un patrón Cypher de longitud variable estándar, ordenado por la longitud del camino y limitado a un resultado."
+- id: cyphermatching.shortest_path_unbound_nodes
+  description: "Expresión shortestPath o allShortestPaths con un extremo que no es una variable enlazada. Function es el nombre de la función."
+  other: "Un {{.Function}}(...) requiere nodos enlazados cuando no forma parte de una cláusula MATCH."
+- id: cyphermatching.shortest_path_relationship_properties
+  description: "Propiedades de relación en un patrón shortestPath o allShortestPaths. Function es el nombre de la función; Properties es el mapa tal como se escribió."
+  other: "{{.Function}}(...) contiene propiedades {{.Properties}}. Esto no se admite actualmente."
 - id: cyphermatching.optional_match_node_endpoint_missing
   description: Al patrón OPTIONAL MATCH le falta el primer nodo. Pattern conserva las comillas de Go.
   other: "el patrón de coincidencia opcional {{.Pattern}} no tiene un nodo inicial"
