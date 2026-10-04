@@ -102,3 +102,11 @@ func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 		})
 	}
 }
+
+// markRecentlyProcessed starts the wait on a worker whose map wasn't made yet.
+func TestEmbedWorkerMarkRecentlyProcessedStartsTheWait(t *testing.T) {
+	worker := &EmbedWorker{}
+	worker.markRecentlyProcessed("node")
+	require.True(t, worker.wasRecentlyProcessed("node"))
+	require.False(t, worker.wasRecentlyProcessed("other"))
+}
