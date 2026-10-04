@@ -70,10 +70,14 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 		}
 
 		db.ensurePendingFlush(entry)
-		time.Sleep(20 * time.Millisecond)
+		// The timer's callback clears pendingFlushTimer when it runs (#880).
+		require.Eventually(t, func() bool {
+			entry.pendingFlushMu.Lock()
+			defer entry.pendingFlushMu.Unlock()
+			return entry.pendingFlushTimer == nil
+		}, 10*time.Second, time.Millisecond)
 		entry.pendingFlushMu.Lock()
 		require.True(t, entry.pendingFlushRunning)
-		require.Nil(t, entry.pendingFlushTimer)
 		entry.pendingFlushMu.Unlock()
 	})
 
@@ -92,10 +96,13 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 		}
 
 		db.ensurePendingFlush(entry)
-		time.Sleep(25 * time.Millisecond)
-		entry.pendingFlushMu.Lock()
-		require.False(t, entry.pendingFlushRunning)
-		entry.pendingFlushMu.Unlock()
+		// Wait until the timer has fired and the refused task has reset
+		// pendingFlushRunning; before the timer fires it is false too (#880).
+		require.Eventually(t, func() bool {
+			entry.pendingFlushMu.Lock()
+			defer entry.pendingFlushMu.Unlock()
+			return entry.pendingFlushTimer == nil && !entry.pendingFlushRunning
+		}, 10*time.Second, time.Millisecond)
 	})
 }
 
