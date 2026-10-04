@@ -403,7 +403,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		return rowPredicatePart{}, false
 	}
 	upper := upperASCII(text)
-	for _, keyword := range []string{" NOT IN ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ", "=~", "EXISTS", "COUNT", "COLLECT"} {
+	for _, keyword := range []string{" NOT IN ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ", "=~"} {
 		if strings.Contains(upper, keyword) {
 			return rowPredicatePart{}, false
 		}

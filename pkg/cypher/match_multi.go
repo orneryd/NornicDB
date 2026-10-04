@@ -2074,73 +2074,11 @@ func (e *StorageExecutor) executeCartesianAggregation(
 
 // evaluateWhereForContext evaluates a WHERE clause against a node context
 func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClause string, nodes map[string]*storage.Node) bool {
-	clause := strings.TrimSpace(whereClause)
-	if clause == "" {
+	if strings.TrimSpace(whereClause) == "" {
 		return true
 	}
-	// Handle top-level conjunction/disjunction explicitly so each side can use
-	// the single-variable WHERE evaluator (supports relationship predicates).
-	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
-		left := strings.TrimSpace(clause[:orIdx])
-		right := strings.TrimSpace(clause[orIdx+4:])
-		return e.evaluateWhereForContext(ctx, left, nodes) || e.evaluateWhereForContext(ctx, right, nodes)
-	}
-	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left := strings.TrimSpace(clause[:andIdx])
-		right := strings.TrimSpace(clause[andIdx+5:])
-		return e.evaluateWhereForContext(ctx, left, nodes) && e.evaluateWhereForContext(ctx, right, nodes)
-	}
-	// NOT binds tighter than AND / OR, so it is handled after the top-level
-	// split: NOT a AND b is (NOT a) AND b, not NOT (a AND b).
-	if hasPrefixFold(clause, "NOT ") {
-		if truth, ok := inPredicateTruth(clause[4:], func(expr string) interface{} {
-			return e.evaluateExpressionWithContext(ctx, expr, nodes, nil)
-		}); ok {
-			return truth == truthFalse
-		}
-		return !e.evaluateWhereForContext(ctx, strings.TrimSpace(clause[4:]), nodes)
-	}
-
-	if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, clause, nodes); recognized {
-		return matches
-	}
-
-	if predicate, ok := e.getCompiledBindingWhereIfSupported(ctx, clause); ok {
-		return predicate(binding(nodes), getParamsFromContext(ctx))
-	}
-
-	// If this clause references exactly one bound variable, route through
-	// evaluateWhere to preserve semantics like NOT (n)-[:TYPE]->().
-	referenced := ""
-	for varName := range nodes {
-		if strings.Contains(clause, "("+varName+")") ||
-			strings.Contains(clause, "("+varName+":") ||
-			strings.Contains(clause, varName+".") ||
-			strings.HasPrefix(clause, varName+")") ||
-			strings.HasPrefix(clause, varName+":") {
-			if referenced != "" && referenced != varName {
-				referenced = "__multi__"
-				break
-			}
-			referenced = varName
-		}
-	}
-	if referenced != "" && referenced != "__multi__" {
-		if node := nodes[referenced]; node != nil {
-			return e.evaluateWhere(ctx, node, referenced, clause)
-		}
-	}
-
-	// Fallback: evaluate the clause through the shared row predicate
-	// evaluator (#728 convergence): operator parsing is whitespace-independent
-	// and integer arithmetic is exact, so the residual filter always agrees
-	// with the cartesian join planner above (a.id=b.id+2 filters the same as
-	// a.id = b.id + 2).
-	values := make(map[string]interface{}, len(nodes))
-	for name, node := range nodes {
-		values[name] = node
-	}
-	return e.evaluateRowPredicate(ctx, clause, values)
+	predicate := e.newBindingFilterPredicate(ctx, whereClause, nil)
+	return predicate.matches(binding(nodes), nil)
 }
 
 // evaluateBoundRelationshipPattern evaluates a WHERE pattern against the

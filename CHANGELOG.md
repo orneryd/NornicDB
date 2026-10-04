@@ -71,12 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written by earlier versions keep working through the record; decay
   filtering keeps the full read (#911).
 
-- Keep a node's full-text document when it is re-indexed with the same
-  searchable text, for example when only its embedding changes: the text is
-  no longer removed, analyzed twice and added back. Re-indexing such a node
-  takes about a sixth of the time. The default searchable text lists a node's
-  other properties in key order, so the same node always yields the same text
-  (#911).
+- Route cartesian node-context WHERE predicates through shared typed admission
+  instead of manual boolean negation and the private binding compiler. Preserve
+  null truth and arithmetic failures under NOT, and admit ordinary `count`,
+  `collect`, and `exists` property names as compiled scalar operands (#728).
+
 - Preserve tabs, newlines and carriage returns inside quoted WHERE literals and
   identifiers when normalizing clause whitespace. Binding admission shares the
   pipeline normalizer and the central quoted-text scanner (#728).
@@ -338,6 +337,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Include the corresponding golang.org/x/{crypto,sync,sys,text}, Google IAM
   and genproto companion updates. Regenerate Go/npm lockfiles together and
   retain exact SHA pins for the Docker actions.
+
+- Read only the properties a statement uses when it scans a label. A `MATCH`
+  on a label decoded every node in full, embeddings included, even when the
+  rest of the statement read one or two properties. When every later clause
+  only reads and the node is used only as `n.property`, the scan now reads
+  just those; returning or passing on the whole node, `RETURN *`, a later
+  pattern, any write or a temporal viewport keeps the full read. Grouped
+  counts, sorts and filters over 40,000 nodes take 6–30% less time (#911).
+  A keyword-named variable followed by a property access (`where.id`) is
+  now seen as a reference by the statement checks.
+
+- Keep a node's full-text document when it is re-indexed with the same
+  searchable text, for example when only its embedding changes: the text is
+  no longer removed, analyzed twice and added back. Re-indexing such a node
+  takes about a sixth of the time. The default searchable text lists a node's
+  other properties in key order, so the same node always yields the same text
+  (#911).
 
 ### Fixed
 

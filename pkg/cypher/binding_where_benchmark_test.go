@@ -106,6 +106,30 @@ func BenchmarkBindingWherePipelineHandlers(b *testing.B) {
 	}
 }
 
+func BenchmarkGh728ContextWhere(b *testing.B) {
+	exec := &StorageExecutor{}
+	ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"offset": int64(1), "minimum": int64(0)}))
+	nodes := map[string]*storage.Node{"n": {ID: "node", Properties: map[string]interface{}{"name": "node", "count": int64(1024)}}}
+	for _, workload := range []struct{ name, clause string }{
+		{"comparison", "n.count >= 0"},
+		{"arithmetic", "size(n.name) + n.count >= 0"},
+		{"parameters", "n.count + $offset >= $minimum"},
+	} {
+		b.Run(workload.name, func(b *testing.B) {
+			if !exec.evaluateWhereForContext(ctx, workload.clause, nodes) {
+				b.Fatal("context predicate must accept the row")
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				if !exec.evaluateWhereForContext(ctx, workload.clause, nodes) {
+					b.Fatal("context predicate changed its result")
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkGh728SharedComparisonHandlers(b *testing.B) {
 	exec := &StorageExecutor{}
 	ctx := context.Background()
