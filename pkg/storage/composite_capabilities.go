@@ -11,6 +11,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -497,33 +498,6 @@ func (c *CompositeEngine) IterateNodes(fn func(*Node) bool) error {
 	return nil
 }
 
-func (c *CompositeEngine) UpdateNodeEmbedding(node *Node) error {
-	if node == nil {
-		return ErrInvalidData
-	}
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		existing, err := engine.GetNode(node.ID)
-		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				continue
-			}
-			return err
-		}
-		if updater, ok := engine.(EmbeddingUpdater); ok {
-			return updater.UpdateNodeEmbedding(node)
-		}
-		copy := *existing
-		copy.ChunkEmbeddings = node.ChunkEmbeddings
-		copy.EmbedMeta = node.EmbedMeta
-		return engine.UpdateNode(&copy)
-	}
-	return ErrNotFound
-}
-
 // UpdateNodeEmbeddingSidecar routes the embedding-only sidecar write to the
 // constituent holding the node, without touching any node record.
 func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
@@ -541,13 +515,11 @@ func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 			}
 			return err
 		}
-		if sidecar, ok := engine.(EmbeddingSidecarUpdater); ok {
-			return sidecar.UpdateNodeEmbeddingSidecar(node)
+		sidecar, ok := engine.(EmbeddingSidecarUpdater)
+		if !ok {
+			return fmt.Errorf("storage engine %T does not support embedding sidecar writes", engine)
 		}
-		if updater, ok := engine.(EmbeddingUpdater); ok {
-			return updater.UpdateNodeEmbedding(node)
-		}
-		return engine.UpdateNode(node)
+		return sidecar.UpdateNodeEmbeddingSidecar(node)
 	}
 	return ErrNotFound
 }

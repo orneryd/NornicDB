@@ -458,18 +458,14 @@ func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []s
 			return retried, err
 		}
 		embeddingutil.InvalidateManagedEmbeddings(node)
-		var updateErr error
-		if sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater); ok {
-			// Clearing the embedding state deletes the sidecar records (meta
-			// and chunk keys) so the node can be re-embedded cleanly.
-			updateErr = sidecar.UpdateNodeEmbeddingSidecar(node)
-		} else if updater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
-			updateErr = updater.UpdateNodeEmbedding(node)
-		} else {
-			updateErr = ew.storage.UpdateNode(node)
+		sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
+		if !ok {
+			return retried, fmt.Errorf("storage engine %T does not support embedding sidecar writes", ew.storage)
 		}
-		if updateErr != nil {
-			return retried, updateErr
+		// Clearing the embedding state deletes the sidecar records (meta
+		// and chunk keys) so the node can be re-embedded cleanly.
+		if err := sidecar.UpdateNodeEmbeddingSidecar(node); err != nil {
+			return retried, err
 		}
 		ew.addNodeToPendingEmbeddings(node.ID)
 		retried++
@@ -1189,42 +1185,27 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]fl
 	}
 
 	// The worker writes ONLY the embedding key space (chunk vectors plus the
-	// metadata sidecar record): no node-record transaction, no MVCC version,
-	// no UpdatedAt bump, and no key a business write touches — a concurrent
-	// incoming change can never conflict with this writeback. The sidecar's
-	// content stamp is the claimed node's UpdatedAt, so a body change after
-	// the claim makes the sidecar stale and readers ignore it until the
+	// metadata record): no node-record transaction, no MVCC version, no
+	// UpdatedAt bump, and no key a business write touches — a concurrent
+	// incoming change can never conflict with this writeback. The metadata
+	// record's content stamp is the claimed node's UpdatedAt, so a body change
+	// after the claim makes the record stale and readers ignore it until the
 	// worker re-embeds the new content.
-	var updateErr error
-	if sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater); ok {
-		updateErr = sidecar.UpdateNodeEmbeddingSidecar(node)
-		if updateErr == storage.ErrNotFound {
-			// Node was deleted - remove from pending index and skip.
-			fmt.Printf("⚠️  Node %s was deleted before embedding could be saved - skipping\n", node.ID)
-			ew.markNodeEmbedded(node.ID)
-			return false // Skip this node, try next one
-		}
-	} else if embedUpdater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
-		// Legacy writeback: storage engines without the sidecar key space.
-		updateErr = embedUpdater.UpdateNodeEmbedding(node)
-		if updateErr == storage.ErrNotFound {
-			// Node was deleted - remove from pending index and skip.
-			fmt.Printf("⚠️  Node %s was deleted - skipping update to prevent orphaned node\n", node.ID)
-			ew.markNodeEmbedded(node.ID)
-			return false
-		}
-	} else {
-		// Fallback: UpdateNode has upsert behavior which can create orphaned nodes.
-		// This should only happen if the storage engine doesn't support UpdateNodeEmbedding.
-		// For safety, we've already verified the node exists above.
-		updateErr = ew.storage.UpdateNode(node)
+	sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
+	if !ok {
+		fmt.Printf("⚠️  Storage engine %T does not support embedding sidecar writes; re-queuing node %s\n", ew.storage, node.ID)
+		ew.addNodeToPendingEmbeddings(node.ID)
+		ew.failed.Add(1)
+		return true
+	}
+	updateErr := sidecar.UpdateNodeEmbeddingSidecar(node)
+	if updateErr == storage.ErrNotFound {
+		// Node was deleted - remove from pending index and skip.
+		fmt.Printf("⚠️  Node %s was deleted before embedding could be saved - skipping\n", node.ID)
+		ew.markNodeEmbedded(node.ID)
+		return false // Skip this node, try next one
 	}
 	if updateErr != nil {
-		// If update failed because node doesn't exist, skip it (already claimed, don't re-queue)
-		if updateErr == storage.ErrNotFound {
-			fmt.Printf("⚠️  Node no longer exists - skipping update to prevent orphaned node\n")
-			return false
-		}
 		fmt.Printf("⚠️  Failed to update node embedding state: %s; re-queuing for retry\n", compactWorkerError(updateErr, 300))
 		ew.addNodeToPendingEmbeddings(node.ID) // Re-queue so another worker can retry
 		ew.failed.Add(1)
@@ -1412,15 +1393,13 @@ func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr e
 	node.EmbedMeta["embedding_error"] = compactWorkerError(embedErr, 300)
 	node.EmbedMeta["embedding_failed_at"] = time.Now().UTC().Format(time.RFC3339)
 
-	var updateErr error
-	if sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater); ok {
-		updateErr = sidecar.UpdateNodeEmbeddingSidecar(node)
-	} else if updater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
-		updateErr = updater.UpdateNodeEmbedding(node)
-	} else {
-		updateErr = ew.storage.UpdateNode(node)
+	sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
+	if !ok {
+		fmt.Printf("⚠️  Storage engine %T does not support embedding sidecar writes; re-queuing node %s\n", ew.storage, nodeID)
+		ew.addNodeToPendingEmbeddings(nodeID)
+		return
 	}
-	if updateErr != nil {
+	if updateErr := sidecar.UpdateNodeEmbeddingSidecar(node); updateErr != nil {
 		fmt.Printf("⚠️  Failed to persist permanent embedding failure for node %s: %s; re-queuing\n", nodeID, compactWorkerError(updateErr, 300))
 		ew.addNodeToPendingEmbeddings(nodeID)
 		return

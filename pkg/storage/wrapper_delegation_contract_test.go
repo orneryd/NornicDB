@@ -45,7 +45,7 @@ type delegationContractEngine interface {
 	NodeIterator
 	EdgesBetweenMatcher
 	EmbeddingCountProvider
-	EmbeddingUpdater
+	EmbeddingSidecarUpdater
 	NamespaceLister
 	NamespaceSchemaProvider
 	PrefixStatsEngine
@@ -294,9 +294,9 @@ func (s *delegationSpyEngine) PendingEmbeddingsCount() int {
 	return s.MemoryEngine.PendingEmbeddingsCount()
 }
 
-func (s *delegationSpyEngine) UpdateNodeEmbedding(node *Node) error {
-	s.record("UpdateNodeEmbedding")
-	return s.MemoryEngine.UpdateNodeEmbedding(node)
+func (s *delegationSpyEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	s.record("UpdateNodeEmbeddingSidecar")
+	return s.MemoryEngine.UpdateNodeEmbeddingSidecar(node)
 }
 
 func (s *delegationSpyEngine) ListNamespaces() []string {
@@ -771,16 +771,16 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			check("IterateNodes", nil)
 			_ = engine.PendingEmbeddingsCount()
 			check("PendingEmbeddingsCount", nil)
-			// UpdateNodeEmbedding is deliberately staged by AsyncEngine (GH-448):
-			// the write lands in the inner engine on flush. Assert the error is
-			// handled and the updated embeddings become visible through the stack.
-			require.NoError(t, engine.UpdateNodeEmbedding(&Node{ID: id("n1"), ChunkEmbeddings: [][]float32{{0.3, 0.4}}}))
-			assertNoNotImplemented(t, stack, "UpdateNodeEmbedding", nil)
+			// The sidecar writeback never stages a node body: it lands in the
+			// embedding key space immediately and must be visible through the
+			// stack (a flush is still run to settle async staging of the create).
+			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(&Node{ID: id("n1"), ChunkEmbeddings: [][]float32{{0.3, 0.4}}, EmbedMeta: map[string]any{"chunk_count": 1}}))
+			assertNoNotImplemented(t, stack, "UpdateNodeEmbeddingSidecar", nil)
 			flushDelegationStack(t, engine)
 			updated, err := engine.GetNode(id("n1"))
 			require.NoError(t, err)
 			require.NotNil(t, updated)
-			require.NotEmptyf(t, updated.ChunkEmbeddings, "%s.UpdateNodeEmbedding must persist embeddings through the stack", stack)
+			require.NotEmptyf(t, updated.ChunkEmbeddings, "%s.UpdateNodeEmbeddingSidecar must persist embeddings through the stack", stack)
 			_ = engine.ListNamespaces()
 			check("ListNamespaces", nil)
 			_ = engine.GetSchemaForNamespace("tenant")

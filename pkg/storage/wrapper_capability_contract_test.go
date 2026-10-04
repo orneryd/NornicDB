@@ -140,13 +140,13 @@ func TestWrapperCapabilityParity_NamespacedMaintenanceForwards(t *testing.T) {
 	})
 
 	t.Run("embedding update rejects missing and persists existing", func(t *testing.T) {
-		require.ErrorIs(t, nsA.UpdateNodeEmbedding(&Node{ID: "missing", ChunkEmbeddings: [][]float32{{0.1}}}), ErrNotFound)
+		require.ErrorIs(t, nsA.UpdateNodeEmbeddingSidecar(&Node{ID: "missing", ChunkEmbeddings: [][]float32{{0.1}}}), ErrNotFound)
 
 		node, err := nsA.GetNode("n-0")
 		require.NoError(t, err)
 		node.ChunkEmbeddings = [][]float32{{0.2, 0.3}}
-		node.EmbedMeta = map[string]any{"embedded": true}
-		require.NoError(t, nsA.UpdateNodeEmbedding(node))
+		node.EmbedMeta = map[string]any{"embedded": true, "chunk_count": 1}
+		require.NoError(t, nsA.UpdateNodeEmbeddingSidecar(node))
 
 		readback, err := nsA.GetNode("n-0")
 		require.NoError(t, err)

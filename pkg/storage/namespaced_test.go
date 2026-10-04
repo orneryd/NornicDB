@@ -955,7 +955,14 @@ func TestNamespacedEngine_AsyncStagedPendingEmbeddingsCount(t *testing.T) {
 	require.NoError(t, tenant.UpdateNode(staged))
 	require.Equal(t, 1, tenant.PendingEmbeddingsCount())
 	staged.ChunkEmbeddings = [][]float32{{0.1, 0.2}}
-	require.NoError(t, tenant.UpdateNodeEmbedding(staged))
+	staged.EmbedMeta = map[string]any{"chunk_count": 1}
+	// The sidecar write passes through to the underlying engine: the node is
+	// still staged in the async cache, so the writeback reports ErrNotFound and
+	// the node stays pending until the flush makes it visible.
+	require.ErrorIs(t, tenant.UpdateNodeEmbeddingSidecar(staged), ErrNotFound)
+	require.Equal(t, 1, tenant.PendingEmbeddingsCount())
+	require.NoError(t, async.Flush())
+	require.NoError(t, tenant.UpdateNodeEmbeddingSidecar(staged))
 	require.Zero(t, tenant.PendingEmbeddingsCount())
 
 	require.NoError(t, tenant.DeleteNode("staged"))

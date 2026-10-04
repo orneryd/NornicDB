@@ -32,11 +32,9 @@ type EmbeddingCountProvider interface {
 	PendingEmbeddingsCount() int
 }
 
-// EmbeddingUpdater updates only the embedding of an existing node, never
-// creating an orphan (returns ErrNotFound when the node does not exist).
-type EmbeddingUpdater interface {
-	UpdateNodeEmbedding(node *Node) error
-}
+// EmbeddingUpdater is removed: the worker's only writeback is the embedding
+// sidecar (EmbeddingSidecarUpdater below, declared in
+// badger_embedding_sidecar.go). Engines without it cannot write embeddings.
 
 // Compile-time capability assertions: every production wrapper must expose the
 // same optional capabilities as the inner engine. MemoryEngine satisfies these
@@ -57,11 +55,6 @@ var (
 	_ EmbeddingCountProvider        = (*AsyncEngine)(nil)
 	_ EmbeddingCountProvider        = (*NamespacedEngine)(nil)
 	_ EmbeddingCountProvider        = (*MemoryEngine)(nil)
-	_ EmbeddingUpdater              = (*BadgerEngine)(nil)
-	_ EmbeddingUpdater              = (*WALEngine)(nil)
-	_ EmbeddingUpdater              = (*AsyncEngine)(nil)
-	_ EmbeddingUpdater              = (*NamespacedEngine)(nil)
-	_ EmbeddingUpdater              = (*MemoryEngine)(nil)
 	_ EmbeddingSidecarUpdater       = (*BadgerEngine)(nil)
 	_ EmbeddingSidecarUpdater       = (*WALEngine)(nil)
 	_ EmbeddingSidecarUpdater       = (*AsyncEngine)(nil)
@@ -115,7 +108,7 @@ var (
 	_ NodeProjectionReader          = (*CompositeEngine)(nil)
 	_ NodeIterator                  = (*CompositeEngine)(nil)
 	_ EmbeddingCountProvider        = (*CompositeEngine)(nil)
-	_ EmbeddingUpdater              = (*CompositeEngine)(nil)
+	_ EmbeddingSidecarUpdater       = (*CompositeEngine)(nil)
 	_ NamespaceLister               = (*CompositeEngine)(nil)
 	_ NamespaceSchemaProvider       = (*CompositeEngine)(nil)
 	_ StartupMaintenanceStateEngine = (*CompositeEngine)(nil)

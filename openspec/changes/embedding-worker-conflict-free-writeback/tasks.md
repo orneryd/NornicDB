@@ -140,6 +140,14 @@ The worker's writeback becomes an **embedding-only write**:
   -cpu=1`): sidecar writeback 10.2–10.4 µs/op, 9,142 B/op, 122 allocs vs
   legacy node-record writeback 13.3–13.8 µs/op, 13,854 B/op, 139 allocs —
   the sidecar is ~24% faster and ~34% lighter in this shape.
+- [x] 11. No legacy writeback retained: the node-record `UpdateNodeEmbedding`
+  method, the `EmbeddingUpdater` capability, and every worker/wrapper
+  fallback are removed. The sidecar updater is the only embedding writeback;
+  an engine without it is a deterministic error (`storage engine %T does not
+  support embedding sidecar writes`), never a silent degradation to a
+  node-record write. The only remaining legacy branch is the READ path's
+  body-flag hydration, which serves pre-existing stored data and `WITH
+  EMBEDDING` inline embeddings.
 
 ## Acceptance criteria
 

@@ -25,10 +25,10 @@ func TestBadgerEngine_NodeAndEdgeInputValidationBranches(t *testing.T) {
 	_, err = engine.GetNode("")
 	require.ErrorIs(t, err, ErrInvalidID)
 
-	require.ErrorIs(t, engine.UpdateNodeEmbedding(nil), ErrInvalidData)
-	require.ErrorIs(t, engine.UpdateNodeEmbedding(&Node{}), ErrInvalidID)
-	require.Error(t, engine.UpdateNodeEmbedding(&Node{ID: "unprefixed"}))
-	require.ErrorIs(t, engine.UpdateNodeEmbedding(&Node{ID: "test:missing"}), ErrNotFound)
+	require.ErrorIs(t, engine.UpdateNodeEmbeddingSidecar(nil), ErrInvalidData)
+	require.ErrorIs(t, engine.UpdateNodeEmbeddingSidecar(&Node{}), ErrInvalidID)
+	require.Error(t, engine.UpdateNodeEmbeddingSidecar(&Node{ID: "unprefixed"}))
+	require.ErrorIs(t, engine.UpdateNodeEmbeddingSidecar(&Node{ID: "test:missing"}), ErrNotFound)
 
 	require.ErrorIs(t, engine.DeleteNode(""), ErrInvalidID)
 	require.NoError(t, engine.BulkDeleteNodes(nil))
