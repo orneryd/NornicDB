@@ -9,11 +9,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+var internalSpanStartOptions = []trace.SpanStartOption{trace.WithSpanKind(trace.SpanKindInternal)}
+
 // startExecuteSpan begins the top-level nornicdb.cypher.execute span. The
 // returned context carries the span; callers must defer span.End().
 func startExecuteSpan(ctx context.Context, opType string, query string) (context.Context, trace.Span) {
 	ctx, span := otel.Tracer("nornicdb/cypher").Start(ctx, "nornicdb.cypher.execute",
-		trace.WithSpanKind(trace.SpanKindInternal),
+		internalSpanStartOptions[0],
 		trace.WithAttributes(
 			attribute.String("cypher.op_type", opType),
 			attribute.String("cypher.query", truncateQuery(query, 512)),
@@ -25,18 +27,14 @@ func startExecuteSpan(ctx context.Context, opType string, query string) (context
 // startPlanSpan begins the nornicdb.cypher.plan child span around the
 // query analysis/planning phase.
 func startPlanSpan(ctx context.Context) (context.Context, trace.Span) {
-	ctx, span := otel.Tracer("nornicdb/cypher").Start(ctx, "nornicdb.cypher.plan",
-		trace.WithSpanKind(trace.SpanKindInternal),
-	)
+	ctx, span := otel.Tracer("nornicdb/cypher").Start(ctx, "nornicdb.cypher.plan", internalSpanStartOptions...)
 	return ctx, span
 }
 
 // startOperatorSpan begins a nornicdb.cypher.exec.<op> span for PROFILE mode.
 func startOperatorSpan(ctx context.Context, op *PlanOperator) (context.Context, trace.Span) {
 	name := "nornicdb.cypher.exec." + op.OperatorType
-	ctx, span := otel.Tracer("nornicdb/cypher").Start(ctx, name,
-		trace.WithSpanKind(trace.SpanKindInternal),
-	)
+	ctx, span := otel.Tracer("nornicdb/cypher").Start(ctx, name, internalSpanStartOptions...)
 	return ctx, span
 }
 

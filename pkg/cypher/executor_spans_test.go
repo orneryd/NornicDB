@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -48,6 +49,7 @@ func TestExecuteSpan_ReadQuery(t *testing.T) {
 			found = true
 			attrs := spanAttrs(s)
 			assert.Contains(t, attrs, "cypher.query")
+			assert.Equal(t, "internal", s.SpanKind.String())
 			assert.Equal(t, "read", attrs["cypher.op_type"])
 			break
 		}
@@ -69,6 +71,7 @@ func TestExecuteSpan_PlanSpanEmitted(t *testing.T) {
 			found = true
 			attrs := spanAttrs(s)
 			assert.Contains(t, attrs, "cypher.op_type")
+			assert.Equal(t, "internal", s.SpanKind.String())
 			break
 		}
 	}
@@ -137,6 +140,43 @@ func TestTracedEngine_EmitsStorageSpans(t *testing.T) {
 		}
 	}
 	assert.True(t, storageSpan, "TRC-17: storage operation must emit a nornicdb.storage.* span")
+}
+
+func TestExecuteSpanConcurrentOptions(t *testing.T) {
+	exporter, teardown := spanSetup(t)
+	defer teardown()
+	const workers = 32
+	var workersDone sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		workersDone.Add(1)
+		go func() {
+			defer workersDone.Done()
+			parentContext, parent := otel.Tracer("test").Start(context.Background(), "parent")
+			executeContext, execute := startExecuteSpan(parentContext, "read", "RETURN 1")
+			planContext, plan := startPlanSpan(executeContext)
+			_, operator := startOperatorSpan(planContext, &PlanOperator{OperatorType: "RETURN"})
+			assert.Equal(t, parent.SpanContext().TraceID(), execute.SpanContext().TraceID())
+			assert.Equal(t, execute.SpanContext().TraceID(), plan.SpanContext().TraceID())
+			assert.Equal(t, plan.SpanContext().TraceID(), operator.SpanContext().TraceID())
+			endOperatorSpan(operator, 1)
+			plan.End()
+			execute.End()
+			parent.End()
+		}()
+	}
+	workersDone.Wait()
+	spans := exporter.GetSpans()
+	require.Len(t, spans, workers*4)
+	for _, span := range spans {
+		assert.Equal(t, "internal", span.SpanKind.String())
+		if span.Name == "nornicdb.cypher.execute" {
+			assert.Equal(t, "RETURN 1", spanAttrs(span)["cypher.query"])
+			assert.Equal(t, "read", spanAttrs(span)["cypher.op_type"])
+		}
+		if span.Name == "nornicdb.cypher.exec.RETURN" {
+			assert.Equal(t, "1", spanAttrs(span)["rows"])
+		}
+	}
 }
 
 func spanAttrs(s tracetest.SpanStub) map[string]string {
