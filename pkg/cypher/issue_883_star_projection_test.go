@@ -127,3 +127,19 @@ func TestIssue883StarWithItems(t *testing.T) {
 		})
 	}
 }
+
+func TestIssue883ReturnColumnHelpers(t *testing.T) {
+	clauses := []pipelineClause{{kind: pipelineClauseWith, text: "WITH 1 AS a"}, {kind: pipelineClauseReturn, text: "RETURN a"}}
+	require.Equal(t, "", pipelineOriginalReturnText(clauses, 0))
+	require.Equal(t, "", pipelineOriginalReturnText(clauses, 2))
+	require.Equal(t, "RETURN a", pipelineOriginalReturnText(clauses, 1))
+
+	// Without the statement's own text the columns stay as executed.
+	final := &ExecuteResult{Columns: []string{"a"}, Rows: [][]interface{}{{int64(1)}}}
+	pipelineNameReturnColumns(final, "RETURN a", "", nil)
+	require.Equal(t, []string{"a"}, final.Columns)
+
+	require.Equal(t, "a", projectionVariableText("a"))
+	require.Equal(t, "`x y`", projectionVariableText("x y"))
+	require.Equal(t, "`a``b`", projectionVariableText("a`b"))
+}
