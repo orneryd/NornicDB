@@ -17,30 +17,20 @@ func splitTopLevelComma(input string) []string {
 
 	var parts []string
 	start := 0
-	inSingle := false
-	inDouble := false
 	depth := 0
 
 	for i := 0; i < len(input); i++ {
 		switch input[i] {
-		case '\'':
-			if !inDouble && !isBackslashEscaped(input, i) {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle && !isBackslashEscaped(input, i) {
-				inDouble = !inDouble
-			}
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(input, i, input[i]) - 1
 		case '(', '[', '{':
-			if !inSingle && !inDouble {
-				depth++
-			}
+			depth++
 		case ')', ']', '}':
-			if !inSingle && !inDouble && depth > 0 {
+			if depth > 0 {
 				depth--
 			}
 		case ',':
-			if !inSingle && !inDouble && depth == 0 {
+			if depth == 0 {
 				parts = append(parts, strings.TrimSpace(input[start:i]))
 				start = i + 1
 			}

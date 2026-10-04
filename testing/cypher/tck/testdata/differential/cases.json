@@ -2583,5 +2583,35 @@
     "name": "issue713 simple MATCH zero limit quoted column",
     "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
     "query": "MATCH (n:LimitNode) RETURN n AS `node value` LIMIT 0"
+  },
+  {
+    "name": "issue713 quoted comma standalone projection",
+    "query": "RETURN 1 AS `left,right`",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 quoted comma CALL projection",
+    "query": "CALL { RETURN 1 AS `left,right` } RETURN `left,right`",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 quoted comma correlated CALL projection",
+    "query": "UNWIND [1, 2] AS value CALL { WITH value RETURN value AS `left,right` } RETURN `left,right` ORDER BY `left,right`",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 escaped string CALL projection",
+    "query": "CALL { RETURN 'escaped\\', comma' AS value } RETURN value",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 DISTINCT CALL tail canonical column",
+    "query": "CALL { RETURN 1 AS value UNION ALL RETURN 1 AS value } RETURN DISTINCT value",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 quoted comma empty CALL columns",
+    "query": "CALL { MATCH (n:Missing) RETURN n AS `left,right` } RETURN `left,right`",
+    "no_effects": true
   }
 ]

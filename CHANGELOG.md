@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Compile CALL-tail columns from shared RETURN metadata and delegate RETURN
+  splitting to the shared quote-aware comma scanner, preserving backtick names,
+  escaped strings, DISTINCT columns and cached-plan immutability (#713).
+
 - Use shared typed pagination and canonical projection columns in the simple
   MATCH/LIMIT fast path. Evaluate complete arithmetic/parameter limits without
   truncating tokens, preserving quoted aliases and streaming contracts (#713).

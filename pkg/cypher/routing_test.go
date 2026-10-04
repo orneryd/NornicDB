@@ -20,6 +20,89 @@ import (
 // 2. Relationship deletion wasn't being detected properly in executeDelete
 // =============================================================================
 
+func TestGh713QuotedProjectionRoutes(t *testing.T) {
+	for _, route := range []string{"autocommit", "explicit transaction"} {
+		for _, test := range []struct {
+			query   string
+			columns []string
+			rows    [][]interface{}
+		}{
+			{"RETURN 1 AS `left,right`", []string{"left,right"}, [][]interface{}{{int64(1)}}},
+			{"CALL { RETURN 1 AS `left,right` } RETURN `left,right`", []string{"left,right"}, [][]interface{}{{int64(1)}}},
+			{"UNWIND [1, 2] AS value CALL { WITH value RETURN value AS `left,right` } RETURN `left,right` ORDER BY `left,right`", []string{"left,right"}, [][]interface{}{{int64(1)}, {int64(2)}}},
+			{"CALL { RETURN 'escaped\\', comma' AS value } RETURN value", []string{"value"}, [][]interface{}{{"escaped', comma"}}},
+			{"CALL { RETURN 1 AS value UNION ALL RETURN 1 AS value } RETURN DISTINCT value", []string{"value"}, [][]interface{}{{int64(1)}}},
+			{"CALL { MATCH (n:Missing) RETURN n AS `left,right` } RETURN `left,right`", []string{"left,right"}, [][]interface{}{}},
+		} {
+			t.Run(route+"/"+test.query, func(t *testing.T) {
+				exec, ctx := newUnitExecutor(t)
+				if route == "explicit transaction" {
+					_, err := exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+				}
+				result, err := exec.Execute(ctx, test.query, nil)
+				require.NoError(t, err)
+				require.Equal(t, test.columns, result.Columns)
+				require.Equal(t, test.rows, result.Rows)
+				if route == "explicit transaction" {
+					_, err = exec.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+				}
+				stored, err := exec.Execute(ctx, "MATCH (n) RETURN count(n) AS total", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(0)}}, stored.Rows)
+			})
+		}
+	}
+}
+
+func TestGh713CallTailColumnsUseSharedReturnPlan(t *testing.T) {
+	for _, test := range []struct {
+		clause  string
+		columns []string
+	}{
+		{"RETURN", nil},
+		{"RETURN *", []string{"*"}},
+		{"CALL { RETURN 2 AS ignored }", nil},
+		{"CALL { RETURN 2 AS ignored } RETURN ignored AS value ORDER BY value LIMIT 1", []string{"value"}},
+		{"RETURN DISTINCT value", []string{"value"}},
+		{"RETURN DISTINCT $value", []string{"$value"}},
+		{"RETURN 1 AS `left,right`", []string{"left,right"}},
+		{"RETURN 1 AS `a``b`", []string{"a`b"}},
+		{"RETURN [1, 2] AS list, {value: 3} AS map", []string{"list", "map"}},
+		{"RETURN count(*) AS total ORDER BY total SKIP 0 LIMIT 1", []string{"total"}},
+	} {
+		t.Run(test.clause, func(t *testing.T) {
+			require.Equal(t, test.columns, expectedReturnColumnsFromTail(test.clause))
+		})
+	}
+	columns := expectedReturnColumnsFromTail("RETURN 1 AS value")
+	columns[0] = "changed"
+	require.Equal(t, []string{"value"}, expectedReturnColumnsFromTail("RETURN 1 AS value"))
+}
+
+func TestGh713ProjectionSplittersShareQuotedLexing(t *testing.T) {
+	for _, splitter := range []struct {
+		name  string
+		split func(string) []string
+	}{
+		{"RETURN", splitReturnExpressions},
+		{"shared", splitTopLevelComma},
+	} {
+		for _, projection := range []string{
+			"`left,right`", "`a``b,c`", "'escaped\\', comma'", "func([1, 2], {value: 3})",
+		} {
+			t.Run(splitter.name+"/"+projection, func(t *testing.T) {
+				parts := splitter.split(projection + ", value")
+				for index := range parts {
+					parts[index] = strings.TrimSpace(parts[index])
+				}
+				require.Equal(t, []string{projection, "value"}, parts)
+			})
+		}
+	}
+}
+
 // TestDeleteRouting_SimpleNode tests basic node deletion routing
 func TestDeleteRouting_SimpleNode(t *testing.T) {
 	query := "MATCH (n:Person) DELETE n"

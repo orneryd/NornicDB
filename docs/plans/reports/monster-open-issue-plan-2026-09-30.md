@@ -939,3 +939,35 @@ focused cache tests and fresh full repository correctness pass on the final base
 
 Publish with `Refs #713`; broader projection/WHERE/CI-TestKit acceptance remains
 open, #547 excluded. No benchmark or running-installation change.
+
+### Shared Projection Lexing And CALL Columns: 2026-10-04
+
+The old RETURN splitter duplicates comma lexing and misses backtick names and
+escaped string quotes. CALL-tail column discovery independently rebuilds names,
+retaining DISTINCT in unaliased columns and splitting quoted comma aliases.
+Eight direct regressions fail on the untouched 7d519a4a production baseline.
+Twelve public autocommit/explicit controls already pass there; they remain exact
+row/column/no-write controls rather than claimed public regressions.
+
+The RETURN splitter now delegates to shared splitting; the shared scanner uses
+skipCypherQuotedText for strings, escaped/doubled quotes and backtick identifiers.
+CALL column discovery compiles shared RETURN metadata and clones its columns,
+retaining empty/star contracts and avoiding mutation of immutable cached plans.
+Nested, escaped-backslash, multi-byte and empty-middle-part fixtures remain.
+Read-only Graphify identifies traversal/import CALL users; current source
+corroborates those callers and confirms metadata no longer privately reparses.
+
+Six appended issue-linked reference cases enforce zero effects and preserve the
+original prefix. Both actual parsers pass 1,026 Bolt and 1,036 HTTP comparisons
+across both modes (4,124 total) against pinned Neo4j 5.26.30. Both official
+ratchets pass 7,794 outcomes/parser, zero gaps/blockers/harness errors. Isolated
+repository correctness, both-parser caller races and scoped vet pass. Focused
+shared/RETURN splitter coverage is 100%; metadata discovery is 90%, not a
+whole-package claim. Prior 7d519a4a CI, Conformance and Docs succeed.
+
+Owner audit: standalone RETURN, DELETE RETURN, optional variable-map RETURN and
+compiled CALL plan execution already delegate to shared projection APIs. The
+traversal row evaluator still retains a graph-evaluator fallback; that is a
+separate remaining acceptance item, not declared converged by this publication.
+Publish with `Refs #713`; #713/#728/#754 remain open, #547 excluded. No benchmark
+or user-installation changes.

@@ -749,55 +749,7 @@ func firstTopLevelModifierIndex(clause string) int {
 // splitReturnExpressions splits RETURN expressions by comma while preserving
 // nested parentheses, lists, and map literals.
 func splitReturnExpressions(clause string) []string {
-	var parts []string
-	var current strings.Builder
-	parenDepth := 0
-	bracketDepth := 0
-	braceDepth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for _, ch := range clause {
-		switch {
-		case (ch == '\'' || ch == '"') && !inQuote:
-			inQuote = true
-			quoteChar = ch
-			current.WriteRune(ch)
-		case ch == quoteChar && inQuote:
-			inQuote = false
-			quoteChar = 0
-			current.WriteRune(ch)
-		case ch == '(' && !inQuote:
-			parenDepth++
-			current.WriteRune(ch)
-		case ch == ')' && !inQuote:
-			parenDepth--
-			current.WriteRune(ch)
-		case ch == '[' && !inQuote:
-			bracketDepth++
-			current.WriteRune(ch)
-		case ch == ']' && !inQuote:
-			bracketDepth--
-			current.WriteRune(ch)
-		case ch == '{' && !inQuote:
-			braceDepth++
-			current.WriteRune(ch)
-		case ch == '}' && !inQuote:
-			braceDepth--
-			current.WriteRune(ch)
-		case ch == ',' && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && !inQuote:
-			parts = append(parts, current.String())
-			current.Reset()
-		default:
-			current.WriteRune(ch)
-		}
-	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
-	}
-
-	return parts
+	return splitTopLevelComma(clause)
 }
 
 // validateSyntax performs syntax validation.

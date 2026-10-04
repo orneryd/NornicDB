@@ -295,37 +295,14 @@ func expectedReturnColumnsFromTail(tail string) []string {
 	if retIdx == -1 {
 		return nil
 	}
-	returnPart := strings.TrimSpace(trimmed[retIdx+len("RETURN"):])
-	if returnPart == "" {
+	plan := returnProjectionPlanFor(trimmed[retIdx:])
+	if !plan.valid {
 		return nil
 	}
-	end := len(returnPart)
-	for _, kw := range []string{"ORDER", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(returnPart, kw); idx != -1 && idx < end {
-			end = idx
-		}
+	if plan.star {
+		return []string{"*"}
 	}
-	returnExpr := strings.TrimSpace(returnPart[:end])
-	if returnExpr == "" {
-		return nil
-	}
-	items := splitReturnExpressions(returnExpr)
-	cols := make([]string, 0, len(items))
-	for _, item := range items {
-		expr := strings.TrimSpace(item)
-		if expr == "" {
-			continue
-		}
-		if asIdx := projectionAliasIndex(expr); asIdx >= 0 {
-			alias := normalizeProjectionColumnName(expr[asIdx+len("AS"):])
-			if alias != "" {
-				cols = append(cols, alias)
-				continue
-			}
-		}
-		cols = append(cols, expr)
-	}
-	return cols
+	return append([]string(nil), plan.columns...)
 }
 
 func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, error) {
