@@ -111,7 +111,11 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 	rest := data[consumed:]
 
 	reader := bytes.NewReader(rest)
-	dec := msgpack.NewDecoder(reader)
+	// Pooled: a scan decodes this once per node, and a new decoder per node
+	// was a large part of the per-node cost (#824).
+	dec := msgpack.GetDecoder()
+	dec.Reset(reader)
+	defer msgpack.PutDecoder(dec)
 	outSize := int(count)
 	if include != nil && len(include) < outSize {
 		outSize = len(include)

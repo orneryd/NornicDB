@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"errors"
 	"context"
 	"fmt"
 	"strconv"
@@ -1358,6 +1359,37 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 
 	var nodes []*storage.Node
 	var err error
+
+	// A label-less property match reads every node (#824): decode only the
+	// pattern's properties, let the engine skip a node that fails them before
+	// decoding the rest of it, and read the whole node only for a match. The
+	// node then passes the same filters as on the full scan.
+	if len(labels) == 0 && len(properties) > 0 && strings.TrimSpace(whereClause) == "" {
+		keys := make([]string, 0, len(properties))
+		for key := range properties {
+			keys = append(keys, key)
+		}
+		matches := func(props map[string]interface{}) bool {
+			return e.nodeMatchesProps(&storage.Node{Properties: props}, properties)
+		}
+		err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches}, func(projected *storage.Node) error {
+			if projected == nil || !matches(projected.Properties) {
+				return nil
+			}
+			node, err := store.GetNode(projected.ID)
+			if errors.Is(err, storage.ErrNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			return collect(node)
+		})
+		if err != nil && err != storage.ErrIterationStopped {
+			return nil, err
+		}
+		return collected, nil
+	}
 
 	// Streaming is the shared scan primitive for the converged executor. Apply
 	// every residual filter in the visitor so both bounded and unbounded scans

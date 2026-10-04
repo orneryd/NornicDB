@@ -216,6 +216,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a stored integer list and `(n {d: date(...)})` a stored date, in auto-commit
   and explicit transactions. `MERGE` with such values matched nothing and
   created a duplicate node (#846).
+- Scan a property match without a label (`MATCH (n {id: $id})`) at a fraction
+  of the per-node cost: only the pattern's properties are decoded, a node that
+  fails them is skipped before the rest of it is decoded, and the whole node is
+  read only for a match. Inside a transaction the node scan this uses listed no
+  nodes at all; it now reads the transaction's view of every node (#824).
 - Collect query statistics from database start, as Neo4j 5.26 does:
   `db.stats.status()` reports `collecting` until `db.stats.stop('QUERIES')`,
   and `db.stats.clear('QUERIES')` answers `false`, "Collected data cannot be
