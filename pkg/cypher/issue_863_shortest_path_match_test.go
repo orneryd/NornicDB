@@ -75,6 +75,16 @@ func TestIssue863ShortestPathMatchIsAPipelineStep(t *testing.T) {
 				{"MATCH (a {id:'c1'}), (b {id:'d1'}) RETURN length(shortestPath((a)-[*]-(b:Document))) AS l", [][]interface{}{{int64(1)}}},
 				{"MATCH (a {id:'c1'}), (b {id:'u'}) RETURN shortestPath((a)-[*]-(b:Document)) AS p", [][]interface{}{{nil}}},
 				{"MATCH (a {id:'c1'}), (b {id:'d1'}) RETURN size(allShortestPaths((a)-[*]-(b))) AS l", [][]interface{}{{int64(1)}}},
+				{"MATCH (a {id:'c1'}), (b {id:'d1'}) WHERE length(shortestPath((a)-[*]-(b))) = 1 RETURN b.id", [][]interface{}{{"d1"}}},
+				{"MATCH (a {id:'c1'}), (b {id:'d1'}) WITH a, b WHERE shortestPath((a)-[*]-(b)) IS NOT NULL RETURN b.id", [][]interface{}{{"d1"}}},
+				{"MATCH (a {id:'c1'}), (b) WHERE b.id IN ['d1','u'] AND shortestPath((a)-[*]-(b)) IS NULL RETURN b.id", [][]interface{}{{"u"}}},
+				// The shortestPath part of a comma-separated pattern.
+				{"MATCH (a {id:'c1'}), shortestPath((a)-[*]-(b:Document)) RETURN b.id", [][]interface{}{{"d1"}}},
+				{"MATCH (a {id:'c1'}), (b:Document), p = shortestPath((a)-[*]-(b)) RETURN b.id", [][]interface{}{{"d1"}}},
+				{"MATCH p = shortestPath((a {id:'c1'})-[*]-(b:Document)), (c {id:'u'}) RETURN b.id, c.id", [][]interface{}{{"d1", "u"}}},
+				{"MATCH (a {id:'c1'}) OPTIONAL MATCH (c {id:'u'}), p = shortestPath((a)-[*]-(b:Document)) RETURN c.id, b.id", [][]interface{}{{"u", "d1"}}},
+				{"MATCH (a {id:'c1'}) OPTIONAL MATCH (c {id:'zz'}), p = shortestPath((a)-[*]-(b:Document)) RETURN c.id, b.id", [][]interface{}{{nil, nil}}},
+				{"MATCH ()-[:S]->(), p = shortestPath((a {id:'c1'})-[*]-(b:Document)) RETURN b.id", [][]interface{}{{"d1"}}},
 			} {
 				rows, err := run(tc.query)
 				require.NoError(t, err, tc.query)
@@ -90,6 +100,10 @@ func TestIssue863ShortestPathMatchIsAPipelineStep(t *testing.T) {
 				{"MATCH (a {id:'c1'}) RETURN shortestPath((a)-[*]-(a)) AS p", shortestPathCommonEndNodesPrefix},
 				{"MATCH p = shortestPath((a {id:'c1'})-[*2..]-(b:Document)) RETURN count(*)", "shortestPath(...) does not support a minimal length different from 0 or 1"},
 				{"MATCH (a {id:'c1'}) RETURN length(shortestPath((a)-[*2..]-(a))) AS l", "shortestPath(...) does not support a minimal length different from 0 or 1"},
+				{"MATCH (a {id:'c1'}) OPTIONAL MATCH p = shortestPath((a)-[*2..]-(b)) RETURN p", "shortestPath(...) does not support a minimal length different from 0 or 1"},
+				{"MATCH p = shortestPath((a {id:'c1'})-->(b)-->(c)) RETURN p", "shortestPath(...) requires a pattern containing a single relationship"},
+				{"MATCH p = allShortestPaths((a {id:'c1'})) RETURN p", "allShortestPaths(...) requires a pattern containing a single relationship"},
+				{"MATCH (a {id:'c1'}), (b) WHERE shortestPath((a)-[*]-(:Document)) IS NULL RETURN b", "A shortestPath(...) requires bound nodes when not part of a MATCH clause."},
 				{"MATCH p = shortestPath((a {id:'x'})-[:T* {ok:true}]-(b {id:'y'})) RETURN length(p)", "shortestPath(...) contains properties {ok:true}. This is currently not supported."},
 				{"MATCH (a {id:'x'}), (b {id:'y'}) RETURN shortestPath((a)-[* {ok:true}]-(b))", "shortestPath(...) contains properties {ok:true}. This is currently not supported."},
 				{"MATCH (a {id:'c1'}) RETURN length(shortestPath((a)-[*]-(:Document))) AS l", "A shortestPath(...) requires bound nodes when not part of a MATCH clause."},

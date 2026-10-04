@@ -54,13 +54,16 @@
   other: "[!! {{.Function}}(...) does not support a minimal length different from 0 or 1 !!]"
 - id: cyphermatching.shortest_path_common_end_nodes
   description: "Expanded pseudo-locale shortestPath common end nodes."
-  other: "[!! The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you perform a shortestPath search after a cartesian product that might have the same start and end nodes for some of the rows passed to shortestPath. If you would rather not experience this exception, and can accept the possibility of missing results for those rows, disable this in the Neo4j configuration by setting `dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the shortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern expression followed by ordering by path length and limiting to one result. !!]"
+  other: "[!! The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you\nperform a shortestPath search after a cartesian product that might have the same start and end nodes for some\nof the rows passed to shortestPath. If you would rather not experience this exception, and can accept the\npossibility of missing results for those rows, disable this in the Neo4j configuration by setting\n`dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the\nshortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern\nexpression followed by ordering by path length and limiting to one result. !!]"
 - id: cyphermatching.shortest_path_unbound_nodes
   description: "Expanded pseudo-locale shortestPath unbound nodes."
   other: "[!! A {{.Function}}(...) requires bound nodes when not part of a MATCH clause. !!]"
 - id: cyphermatching.shortest_path_relationship_properties
   description: "Expanded pseudo-locale shortestPath relationship properties."
   other: "[!! {{.Function}}(...) contains properties {{.Properties}}. This is currently not supported. !!]"
+- id: cyphermatching.shortest_path_single_relationship
+  description: "Expanded pseudo-locale shortestPath single relationship."
+  other: "[!! {{.Function}}(...) requires a pattern containing a single relationship !!]"
 - id: cyphermatching.optional_match_node_endpoint_missing
   description: Expanded pseudo-locale missing optional node endpoint.
   other: "[!! optional match pattern {{.Pattern}} has no node endpoint !!]"

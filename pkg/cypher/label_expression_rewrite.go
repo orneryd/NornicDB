@@ -71,7 +71,7 @@ func (m labelPatternMode) clause() string {
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
 func desugarLabelExpressions(query string) (string, *queryRewrite, error) {
-	if !mayUseLabelExpressions(query) {
+	if !mayUseLabelExpressions(query) && indexASCIIFold(query, "shortestpath") < 0 {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query}
@@ -623,6 +623,9 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			j := i
 			for j < end && isIdentByte(q[j]) {
 				j++
+			}
+			if err := shortestPathExpressionError(q, i, j, end); err != nil {
+				return err
 			}
 			if err := r.labelTest(j, end); err != nil {
 				return err

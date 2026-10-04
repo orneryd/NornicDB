@@ -16,6 +16,10 @@ import (
 // BY, LIMIT, aggregation and later clauses apply to its rows as Neo4j's do.
 type shortestPathMatch struct {
 	findAll bool
+	// others are the clause's other comma-separated patterns, matched first;
+	// othersVariables are the variables they bind.
+	others          string
+	othersVariables []string
 	// startPattern and endPattern are the endpoint node patterns as written,
 	// with a generated variable for an anonymous endpoint.
 	startPattern, endPattern   string
@@ -30,8 +34,8 @@ type shortestPathMatch struct {
 }
 
 // parseShortestPathMatch reads the body of a MATCH clause (after MATCH or
-// OPTIONAL MATCH). ok is false when the clause is not a single shortestPath
-// or allShortestPaths pattern.
+// OPTIONAL MATCH). ok is false when no comma-separated part of its pattern is
+// a shortestPath or allShortestPaths call.
 func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body string) (*shortestPathMatch, bool, error) {
 	if indexASCIIFold(body, "shortestpath") < 0 {
 		return nil, false, nil
@@ -42,30 +46,37 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		where = strings.TrimSpace(pattern[index+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:index])
 	}
-	if len(splitTopLevelComma(pattern)) != 1 {
+	var call, pathVariable string
+	var others []string
+	for _, part := range splitTopLevelComma(pattern) {
+		part = strings.TrimSpace(part)
+		variable := extractPathAssignmentVariable(part)
+		candidate := part
+		if variable != "" {
+			candidate = strings.TrimSpace(part[strings.Index(part, "=")+1:])
+		}
+		if _, _, funcIdx, ok := extractShortestPathCall(candidate); call == "" && ok && funcIdx == 0 &&
+			findMatchingParen(candidate, strings.IndexByte(candidate, '(')) == len(candidate)-1 {
+			call, pathVariable = candidate, variable
+			continue
+		}
+		others = append(others, part)
+	}
+	if call == "" {
 		return nil, false, nil
 	}
-	pathVariable := extractPathAssignmentVariable(pattern)
-	call := pattern
-	if pathVariable != "" {
-		call = strings.TrimSpace(pattern[strings.Index(pattern, "=")+1:])
-	}
-	funcName, inner, funcIdx, ok := extractShortestPathCall(call)
-	if !ok || funcIdx != 0 || findMatchingParen(call, strings.IndexByte(call, '(')) != len(call)-1 {
-		return nil, false, nil
-	}
+	funcName, inner, _, _ := extractShortestPathCall(call)
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(inner)
-	if !ok {
-		return nil, false, nil
-	}
 	traversal := e.parseTraversalPattern(ctx, inner)
-	if traversal == nil || traversal.IsChained {
-		return nil, false, nil
+	if !ok || traversal == nil || traversal.IsChained {
+		return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathSingleRelationship",
+			localization.CypherMatchingShortestPathSingleRelationship(funcName))
 	}
 	if err := shortestPathPatternError(funcName, inner, traversal); err != nil {
 		return nil, true, err
 	}
 	m := &shortestPathMatch{
+		others:        strings.Join(others, ", "),
 		findAll:       strings.EqualFold(funcName, "allShortestPaths"),
 		startPattern:  startPattern,
 		endPattern:    endPattern,
@@ -102,6 +113,13 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	m.endpointWhere = strings.Join(endpointTerms, " AND ")
 	m.pathWhere = strings.Join(pathTerms, " AND ")
+	for _, part := range others {
+		m.othersVariables = append(m.othersVariables, extractNodeVariables(part)...)
+		m.othersVariables = append(m.othersVariables, extractRelationshipVariables(part)...)
+		if variable := extractPathAssignmentVariable(part); variable != "" {
+			m.othersVariables = append(m.othersVariables, variable)
+		}
+	}
 	return m, true, nil
 }
 
@@ -129,29 +147,59 @@ func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatc
 	return nil
 }
 
+// shortestPathExpressionError is Neo4j's SyntaxError for a shortestPath or
+// allShortestPaths call in an expression (query[wordStart:wordEnd] is the
+// function name) with an anonymous endpoint: outside a MATCH pattern both
+// endpoints must be bound variables. The statement rewrite checks every
+// expression with it, so the statement fails whether or not a row reaches
+// the call.
+func shortestPathExpressionError(query string, wordStart, wordEnd, end int) error {
+	name := query[wordStart:wordEnd]
+	if !equalFoldASCII(name, "shortestPath") && !equalFoldASCII(name, "allShortestPaths") {
+		return nil
+	}
+	open := skipASCIISpaces(query, wordEnd, end)
+	if open >= end || query[open] != '(' {
+		return nil
+	}
+	close := findMatchingParen(query[:end], open)
+	if close < 0 {
+		return nil
+	}
+	startPattern, endPattern, ok := shortestPathEndpointPatterns(query[open+1 : close])
+	if !ok {
+		return nil
+	}
+	for _, endpoint := range []string{startPattern, endPattern} {
+		if _, _, named := scanSymbolicName(endpoint, skipASCIISpaces(endpoint, 1, len(endpoint))); !named {
+			function := "shortestPath"
+			if equalFoldASCII(name, "allShortestPaths") {
+				function = "allShortestPaths"
+			}
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathUnboundNodes",
+				localization.CypherMatchingShortestPathUnboundNodes(function))
+		}
+	}
+	return nil
+}
+
 // shortestPathEndpointPatterns splits (start)-[rel]-(end) into its two node
-// patterns; ok is false for any other shape.
+// patterns; ok is false for any other shape (no relationship, or more than
+// one).
 func shortestPathEndpointPatterns(pattern string) (string, string, bool) {
 	pattern = strings.TrimSpace(pattern)
-	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
-		return "", "", false
-	}
-	startEnd := findMatchingParen(pattern, 0)
-	if startEnd < 0 {
-		return "", "", false
+	startEnd := -1
+	if strings.HasPrefix(pattern, "(") {
+		startEnd = findMatchingParen(pattern, 0)
 	}
 	rest := startEnd + 1
-	if open := strings.IndexByte(pattern[rest:], '['); open >= 0 {
+	if open := strings.IndexByte(pattern[rest:], '['); startEnd >= 0 && open >= 0 {
 		if close := findMatchingBracket(pattern, rest+open); close > 0 {
 			rest = close + 1
 		}
 	}
-	endOpen := strings.IndexByte(pattern[rest:], '(')
-	if endOpen < 0 {
-		return "", "", false
-	}
-	endOpen += rest
-	if findMatchingParen(pattern, endOpen) != len(pattern)-1 {
+	endOpen := rest + strings.IndexByte(pattern[rest:], '(')
+	if startEnd < 0 || endOpen < rest || findMatchingParen(pattern, endOpen) != len(pattern)-1 {
 		return "", "", false
 	}
 	return pattern[:startEnd+1], pattern[endOpen:], true
@@ -164,17 +212,25 @@ func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, ro
 	relationship := m.traversal.Relationship.Variable
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		pairs, err := e.shortestPathEndpointPairs(ctx, m, row)
-		if err != nil {
-			return nil, err
+		bases := []pipelineRow{row}
+		if m.others != "" {
+			var err error
+			if bases, err = e.pipelineMatchRows(ctx, row, "MATCH "+m.others); err != nil {
+				return nil, err
+			}
+		}
+		var pairs []pipelineRow
+		for _, base := range bases {
+			found, err := e.shortestPathEndpointPairs(ctx, m, base)
+			if err != nil {
+				return nil, err
+			}
+			pairs = append(pairs, found...)
 		}
 		found := 0
 		for _, pair := range pairs {
 			start, _ := pair[m.startVariable].(*storage.Node)
 			end, _ := pair[m.endVariable].(*storage.Node)
-			if start == nil || end == nil {
-				continue
-			}
 			paths, err := e.shortestPathsBetween(ctx, m, start, end, pair)
 			if err != nil {
 				return nil, err
@@ -197,7 +253,7 @@ func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, ro
 			for name, value := range row {
 				bound[name] = value
 			}
-			for _, name := range []string{m.startVariable, m.endVariable, m.pathVariable, relationship} {
+			for _, name := range append([]string{m.startVariable, m.endVariable, m.pathVariable, relationship}, m.othersVariables...) {
 				if _, exists := bound[name]; !exists && name != "" {
 					bound[name] = nil
 				}
@@ -231,11 +287,18 @@ func (e *StorageExecutor) shortestPathEndpointPairs(ctx context.Context, m *shor
 	if m.endpointWhere != "" {
 		clause += " WHERE " + m.endpointWhere
 	}
-	pairs, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{row}, clause)
+	return e.pipelineMatchRows(ctx, row, clause)
+}
+
+// pipelineMatchRows runs a MATCH clause for one row, for a step that
+// matches part of its own pattern; a clause shape the pipeline can't run is
+// an invalid pattern.
+func (e *StorageExecutor) pipelineMatchRows(ctx context.Context, row pipelineRow, clause string) ([]pipelineRow, error) {
+	rows, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{row}, clause)
 	if err == nil && !handled {
-		err = localizedError(localization.CypherMatchingPathPatternInvalid(m.startPattern+"-"+m.endPattern), nil)
+		err = localizedError(localization.CypherMatchingPathPatternInvalid(strings.TrimSpace(clause[len("MATCH"):])), nil)
 	}
-	return pairs, err
+	return rows, err
 }
 
 // shortestPathsBetween returns the shortest path (all of them for

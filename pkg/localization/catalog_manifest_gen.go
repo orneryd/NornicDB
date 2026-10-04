@@ -439,6 +439,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphermatching.shortest_path_common_end_nodes", Constructor: "CypherMatchingShortestPathCommonEndNodes", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.shortest_path_minimal_length", Constructor: "CypherMatchingShortestPathMinimalLength", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.shortest_path_relationship_properties", Constructor: "CypherMatchingShortestPathRelationshipProperties", Fields: []string{"Function", "Properties"}, PluralForms: []string{"other"}},
+	{ID: "cyphermatching.shortest_path_single_relationship", Constructor: "CypherMatchingShortestPathSingleRelationship", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.shortest_path_unbound_nodes", Constructor: "CypherMatchingShortestPathUnboundNodes", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.single_relationship_type_required", Constructor: "CypherMatchingSingleRelationshipTypeRequired", Fields: []string{"Clause"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.skip_parse_failed", Constructor: "CypherMatchingSkipParseFailed", Fields: []string{}, PluralForms: []string{"other"}},
