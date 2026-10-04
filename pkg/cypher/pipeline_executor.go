@@ -1337,34 +1337,17 @@ func normalizePipelineWhitespace(query string) string {
 	}
 	var normalized strings.Builder
 	normalized.Grow(len(query))
-	quote := byte(0)
 	spacePending := false
 	for index := 0; index < len(query); index++ {
 		character := query[index]
-		if quote != 0 {
-			normalized.WriteByte(character)
-			if character == '\\' && quote != '`' && index+1 < len(query) {
-				index++
-				normalized.WriteByte(query[index])
-				continue
-			}
-			if character == quote {
-				if quote == '`' && index+1 < len(query) && query[index+1] == '`' {
-					index++
-					normalized.WriteByte(query[index])
-					continue
-				}
-				quote = 0
-			}
-			continue
-		}
 		if character == '\'' || character == '"' || character == '`' {
 			if spacePending && normalized.Len() > 0 {
 				normalized.WriteByte(' ')
 			}
 			spacePending = false
-			quote = character
-			normalized.WriteByte(character)
+			end := skipCypherQuotedText(query, index, character)
+			normalized.WriteString(query[index:end])
+			index = end - 1
 			continue
 		}
 		if isWhitespace(character) {

@@ -221,11 +221,7 @@ func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClau
 }
 
 func normalizeBindingWhereClause(whereClause string) string {
-	clause := strings.TrimSpace(whereClause)
-	clause = strings.ReplaceAll(clause, "\r", " ")
-	clause = strings.ReplaceAll(clause, "\n", " ")
-	clause = strings.ReplaceAll(clause, "\t", " ")
-	return clause
+	return normalizePipelineWhitespace(whereClause)
 }
 
 func (e *StorageExecutor) compileBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {

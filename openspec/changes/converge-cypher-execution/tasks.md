@@ -194,6 +194,15 @@ Unhandled queries must fail like Neo4j fails them, through the converged pipelin
 
 ## Shared Predicate Plan Increment (#728, 2026-10-04)
 
+- [x] Follow-up to merged #891: reproduce quoted-whitespace corruption in
+	binding admission and reuse the pipeline normalizer with the shared quote
+	scanner. `TestGh728BindingFilterPreservesQuotedWhitespace` and
+	`TestGh728WhereNormalizationPreservesQuotedText` pass under both-parser race
+	checks; multiline direct multi-MATCH still passes. Both normalizers have 100%
+	focused statement coverage. Six-sample M2 Max controls: join 74.286 -> 73.574
+	us, arithmetic 70.853 -> 69.700 us, both 9472 B/op and one result allocation;
+	timings are within observed variation, not a claimed additional speedup.
+
 - [x] Reproduce parameter-list freshness/concurrent prepared-index failures and
 	the two-allocation parameterized WITH arithmetic path; repair shared admission
 	and scope handling with permanent `TestGh728SharedMembership*` and
