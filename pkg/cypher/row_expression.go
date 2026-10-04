@@ -876,6 +876,15 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			}
 			return nil, false, nil
 		}
+		// -n of the most negative integer is Neo4j's long overflow, not null
+		// (#893).
+		negated, handled, err := numericArithmetic('-', int64(0), value)
+		if err != nil {
+			return nil, false, err
+		}
+		if handled {
+			return negated, true, nil
+		}
 		return e.subtract(int64(0), value), true, nil
 	}
 
@@ -985,7 +994,7 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 	if comparison, temporal := compareTemporalOrdering(left, right); temporal {
 		return comparison, true
 	}
-	if comparison, integers := compareCypherIntegers(left, right); integers {
+	if comparison, exact := compareCypherNumbersExactly(left, right); exact {
 		return comparison, true
 	}
 	leftNumber, leftIsNumber := strictNumericValue(left)

@@ -3699,7 +3699,7 @@ func compareValuesForSort(a, b interface{}) int {
 		}
 		return compareOrderedInts(len(aList), len(bList))
 	}
-	if comparison, integers := compareCypherIntegers(a, b); integers {
+	if comparison, exact := compareCypherNumbersExactly(a, b); exact {
 		return comparison
 	}
 	if aNumber, ok := strictNumericValue(a); ok {

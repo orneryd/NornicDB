@@ -74,11 +74,14 @@ func TestIndexedOrderExactIntegers(t *testing.T) {
 	}
 }
 
-func TestIndexedOrderMixedNumericWidening(t *testing.T) {
+// An integer and a float compare by their exact values, with or without an
+// index, as Neo4j 5.26.30 compares them: 9007199254740993 is greater than
+// 9007199254740992.0 and not equal to it (#893).
+func TestIndexedOrderMixedNumericExact(t *testing.T) {
 	const integer int64 = 9007199254740993
 	const rounded float64 = 9007199254740992
-	require.Zero(t, compareValuesForSort(integer, rounded))
-	require.Zero(t, compareValuesForSort(rounded, integer))
+	require.Equal(t, 1, compareValuesForSort(integer, rounded))
+	require.Equal(t, -1, compareValuesForSort(rounded, integer))
 	for _, transaction := range []bool{false, true} {
 		t.Run(fmt.Sprintf("tx=%t", transaction), func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "mixed-order")
@@ -106,16 +109,16 @@ func TestIndexedOrderMixedNumericWidening(t *testing.T) {
 					require.NoError(t, err)
 				})
 			}
-			for _, parameter := range []interface{}{integer, rounded} {
+			for parameter, want := range map[interface{}]string{integer: "a-integer", rounded: "z-float"} {
 				result, err := exec.Execute(ctx, "MATCH (n:MixedOrder) WHERE n.rank = $value RETURN n.name ORDER BY n.name ASC", map[string]interface{}{"value": parameter})
 				require.NoError(t, err)
-				require.Equal(t, [][]interface{}{{"a-integer"}, {"z-float"}}, result.Rows)
+				require.Equal(t, [][]interface{}{{want}}, result.Rows)
 			}
-			for _, direction := range []string{"ASC", "DESC"} {
+			for direction, want := range map[string]string{"ASC": "z-float", "DESC": "a-integer"} {
 				query := "MATCH (n:MixedOrder) WHERE n.rank IS NOT NULL RETURN n.name ORDER BY n.rank " + direction + ", n.name ASC LIMIT 1"
 				result, err := exec.Execute(ctx, query, nil)
 				require.NoError(t, err)
-				require.Equal(t, [][]interface{}{{"a-integer"}}, result.Rows)
+				require.Equal(t, [][]interface{}{{want}}, result.Rows, direction)
 			}
 		})
 	}

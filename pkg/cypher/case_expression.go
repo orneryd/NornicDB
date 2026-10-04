@@ -573,8 +573,8 @@ func compareWithOperator(left, right interface{}, op string) bool {
 		}
 	}
 
-	// Try numeric comparison: integers exactly, everything else as float64.
-	if comparison, integers := compareCypherIntegers(left, right); integers {
+	// Try numeric comparison: an integer exactly, two floats as float64.
+	if comparison, exact := compareCypherNumbersExactly(left, right); exact {
 		switch op {
 		case "<":
 			return comparison < 0

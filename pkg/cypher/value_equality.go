@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"cmp"
+	"math"
 	"reflect"
 )
 
@@ -88,6 +89,9 @@ func cypherNumericEquality(left, right interface{}) (bool, bool) {
 			return rightSigned >= 0 && leftUnsigned == uint64(rightSigned), true
 		}
 	}
+	if comparison, exact := compareCypherNumbersExactly(left, right); exact {
+		return comparison == 0, true
+	}
 	leftNumber, leftIsNumber := strictNumericValue(left)
 	rightNumber, rightIsNumber := strictNumericValue(right)
 	if !leftIsNumber && !rightIsNumber {
@@ -99,11 +103,77 @@ func cypherNumericEquality(left, right interface{}) (bool, bool) {
 	return leftNumber == rightNumber, true
 }
 
+// compareCypherNumbersExactly orders two numbers by their exact values when
+// one of them is an integer: two integers (above 2^53 too, and mixed
+// signed/unsigned) and an integer against a float, as Neo4j compares stored
+// values: 9007199254740993 > 9007199254740992.0 (#540, #893). ok is false
+// for two floats and for NaN; callers then use their float64 comparison.
+// Ordering operators, ORDER BY, CASE comparisons and numeric equality all go
+// through this so they agree.
+func compareCypherNumbersExactly(left, right interface{}) (comparison int, ok bool) {
+	if comparison, ok := compareCypherIntegers(left, right); ok {
+		return comparison, true
+	}
+	if number, isFloat := cypherFloatValue(right); isFloat {
+		return compareIntegerWithFloat(left, number)
+	}
+	if number, isFloat := cypherFloatValue(left); isFloat {
+		comparison, ok := compareIntegerWithFloat(right, number)
+		return -comparison, ok
+	}
+	return 0, false
+}
+
+// cypherFloatValue returns a float32 or float64 value as a float64.
+func cypherFloatValue(value interface{}) (float64, bool) {
+	switch number := value.(type) {
+	case float64:
+		return number, true
+	case float32:
+		return float64(number), true
+	default:
+		return 0, false
+	}
+}
+
+// compareIntegerWithFloat orders an integer against a float by their exact
+// values. ok is false when integer isn't an integer or number is NaN.
+func compareIntegerWithFloat(integer interface{}, number float64) (comparison int, ok bool) {
+	if math.IsNaN(number) {
+		return 0, false
+	}
+	whole := math.Trunc(number)
+	fraction := cmp.Compare(0, number-whole) // the float's side of a tie
+	if signed, isSigned := cypherSignedInteger(integer); isSigned {
+		switch {
+		case number >= 0x1p63:
+			return -1, true
+		case number < -0x1p63:
+			return 1, true
+		}
+		if comparison := cmp.Compare(signed, int64(whole)); comparison != 0 {
+			return comparison, true
+		}
+		return fraction, true
+	}
+	if unsigned, isUnsigned := cypherUnsignedInteger(integer); isUnsigned {
+		switch {
+		case number < 0:
+			return 1, true
+		case number >= 0x1p64:
+			return -1, true
+		}
+		if comparison := cmp.Compare(unsigned, uint64(whole)); comparison != 0 {
+			return comparison, true
+		}
+		return fraction, true
+	}
+	return 0, false
+}
+
 // compareCypherIntegers orders two integer values exactly, including values
 // above 2^53 (where float64 can no longer tell neighbours apart) and mixed
-// signed/unsigned values. ok is false unless both values are integers; callers
-// then fall back to their float64 comparison. Ordering operators, ORDER BY and
-// CASE comparisons all go through this so they agree with numeric equality.
+// signed/unsigned values. ok is false unless both values are integers.
 func compareCypherIntegers(left, right interface{}) (comparison int, ok bool) {
 	leftSigned, leftIsSigned := cypherSignedInteger(left)
 	leftUnsigned, leftIsUnsigned := cypherUnsignedInteger(left)
