@@ -156,9 +156,8 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("decoding tokenized properties: key %d id varint: %w", i, err)
 		}
-		if _, err := d.reader.Seek(int64(offset+n), 0); err != nil {
-			return false, fmt.Errorf("decoding tokenized properties: advance past key %d: %w", i, err)
-		}
+		// The value follows the token; offsets stay relative to rest.
+		d.reader.Reset(rest[offset+n:])
 		property, wanted := d.tokens[token]
 		if !wanted {
 			if err := dec.Skip(); err != nil {

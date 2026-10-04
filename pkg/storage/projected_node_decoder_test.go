@@ -154,6 +154,7 @@ func TestProjectedNodeDecoderPropertyStringEquals(t *testing.T) {
 		"a:time":  {"id": time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)},
 		"a:list":  {"id": []string{"k1"}},
 		"a:none":  {"name": "k1"},
+		"a:empty": {},
 		"b:hit":   {"id": "k1"},
 		"b:other": {"id": "k2"},
 	} {
@@ -172,9 +173,9 @@ func TestProjectedNodeDecoderPropertyStringEquals(t *testing.T) {
 	equals := func(text string) StreamNodesOptions {
 		return StreamNodesOptions{Projection: []string{"id", "name"}, PropertyStringEquals: map[string]string{"id": text}}
 	}
-	require.Equal(t, []string{"a:hit", "a:none", "b:hit"}, stream(equals("k1")))
-	require.Equal(t, []string{"a:long", "a:none"}, stream(equals(long)))
-	require.Equal(t, []string{"a:none"}, stream(equals("7")))
+	require.Equal(t, []string{"a:empty", "a:hit", "a:none", "b:hit"}, stream(equals("k1")))
+	require.Equal(t, []string{"a:empty", "a:long", "a:none"}, stream(equals(long)))
+	require.Equal(t, []string{"a:empty", "a:none"}, stream(equals("7")))
 	withFilter := equals("k1")
 	withFilter.PropertyFilter = func(props map[string]interface{}) bool { return props["id"] != nil }
 	require.Equal(t, []string{"a:hit", "b:hit"}, stream(withFilter))
@@ -196,4 +197,12 @@ func TestProjectedNodeDecoderPropertyStringEquals(t *testing.T) {
 	require.Zero(t, testing.AllocsPerRun(100, func() {
 		_, _ = decoder.decode(key, body)
 	}), "a node rejected by its bytes allocates nothing")
+
+	// A body without a property list has nothing to reject.
+	propsLen, n := binary.Uvarint(body[1:])
+	bare := append([]byte{nodeFormatTokenizedV1, 0x00}, body[1+n+int(propsLen):]...)
+	node, err = decoder.decode(key, bare)
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	require.Empty(t, node.Properties)
 }
