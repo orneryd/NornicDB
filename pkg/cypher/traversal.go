@@ -1639,7 +1639,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 		}
 	}
 	if startNodes == nil {
-		startNodes, _ = e.loadNodesWithTemporalViewport(ctx, match.StartNode.labels)
+		startNodes, _ = e.loadPatternNodes(ctx, match.StartNode.labels, match.StartNode.properties)
 	}
 
 	// Filter by properties
@@ -2836,12 +2836,9 @@ func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathCon
 	if nodePattern.variable == "" && len(nodePattern.labels) == 0 && len(nodePattern.properties) == 0 {
 		return false
 	}
-	nodes, err := e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
+	nodes, err := e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
 	if err != nil {
 		return false
-	}
-	if len(nodePattern.properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
 	}
 	for _, node := range nodes {
 		inner := outer

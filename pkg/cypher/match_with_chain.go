@@ -173,16 +173,9 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 
 	var nodes []*storage.Node
 	var err error
-	if len(pattern.labels) > 0 {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, pattern.labels)
-	} else {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
-	}
+	nodes, err = e.loadPatternNodes(ctx, pattern.labels, pattern.properties)
 	if err != nil {
 		return nil, "", err
-	}
-	if len(pattern.properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, pattern.properties)
 	}
 	if whereClause != "" {
 		nodes = e.filterNodesByWhereClause(ctx, nodes, whereClause, pattern.variable)

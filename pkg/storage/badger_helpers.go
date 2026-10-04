@@ -1073,47 +1073,35 @@ func (b *BadgerEngine) decodeNode(namespace string, data []byte) (*Node, error) 
 	return b.decodeNodeProjected(namespace, data, nil)
 }
 
+// decodeNodeProjected decodes a V2 node body with only the included
+// properties (all of them when include is nil). A scan that tests properties
+// before keeping a node uses projectedNodeDecoder instead (#857).
 func (b *BadgerEngine) decodeNodeProjected(namespace string, data []byte, include map[string]struct{}) (*Node, error) {
-	node, _, err := b.decodeNodeFiltered(namespace, data, include, nil)
-	return node, err
-}
-
-// decodeNodeFiltered decodes the included properties first. When filter is
-// set and rejects them, it returns keep == false without decoding the rest of
-// the node: a scan that tests one property pays for that property, not for
-// every node's labels and metadata (#824).
-func (b *BadgerEngine) decodeNodeFiltered(namespace string, data []byte, include map[string]struct{}, filter func(map[string]interface{}) bool) (node *Node, keep bool, err error) {
 	if len(data) < 1 {
-		return nil, false, fmt.Errorf("node body empty")
+		return nil, fmt.Errorf("node body empty")
 	}
 	if data[0] != nodeFormatTokenizedV1 {
-		return nil, false, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
+		return nil, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
 	}
 	rest := data[1:]
 	propsLen, n := binary.Uvarint(rest)
 	if n <= 0 {
-		return nil, false, fmt.Errorf("node body: malformed properties length varint")
+		return nil, fmt.Errorf("node body: malformed properties length varint")
 	}
 	rest = rest[n:]
 	if uint64(len(rest)) < propsLen {
-		return nil, false, fmt.Errorf("node body: properties payload truncated")
+		return nil, fmt.Errorf("node body: properties payload truncated")
 	}
-	propsBytes := rest[:propsLen]
-	bodyBytes := rest[propsLen:]
-
-	props, err := b.decodeTokenizedPropertiesProjected(namespace, propsBytes, include)
+	props, err := b.decodeTokenizedPropertiesProjected(namespace, rest[:propsLen], include)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if filter != nil && !filter(props) {
-		return nil, false, nil
-	}
-	node = &Node{}
-	if err := decodeValue(bodyBytes, node); err != nil {
-		return nil, false, err
+	node := &Node{}
+	if err := decodeValue(rest[propsLen:], node); err != nil {
+		return nil, err
 	}
 	node.Properties = props
-	return node, true, nil
+	return node, nil
 }
 
 // decodeNodeWithEmbeddings deserializes a Node and loads separately stored embeddings from transaction.
