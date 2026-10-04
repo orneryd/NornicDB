@@ -4141,7 +4141,7 @@ func pipelineWildcardColumns(rows []pipelineRow) []string {
 	seen := make(map[string]struct{})
 	for _, row := range rows {
 		for column := range row {
-			if strings.HasPrefix(column, "$") {
+			if strings.HasPrefix(column, "$") || isGeneratedVariable(column) {
 				continue
 			}
 			seen[column] = struct{}{}
@@ -4158,7 +4158,7 @@ func pipelineWildcardColumns(rows []pipelineRow) []string {
 func pipelineScopeColumns(scope map[string]struct{}) []string {
 	columns := make([]string, 0, len(scope))
 	for column := range scope {
-		if !strings.HasPrefix(column, "$") {
+		if !strings.HasPrefix(column, "$") && !isGeneratedVariable(column) {
 			columns = append(columns, column)
 		}
 	}

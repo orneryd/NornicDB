@@ -46,17 +46,24 @@ func TestWithWhereIsLabelTest(t *testing.T) {
 
 func TestParseWithWhereLabelTest(t *testing.T) {
 	t.Run("single label", func(t *testing.T) {
-		variable, labels, ok := parseWithWhereLabelTest("n:Workload")
+		variable, expr, ok := parseWithWhereLabelTest("n:Workload")
 		require.True(t, ok)
 		assert.Equal(t, "n", variable)
-		assert.Equal(t, []string{"Workload"}, labels)
+		assert.Equal(t, labelExpressionOfNames([]string{"Workload"}), expr)
 	})
 
 	t.Run("conjunction keeps every label", func(t *testing.T) {
-		variable, labels, ok := parseWithWhereLabelTest("node:A:B:C")
+		variable, expr, ok := parseWithWhereLabelTest("node:A:B:C")
 		require.True(t, ok)
 		assert.Equal(t, "node", variable)
-		assert.Equal(t, []string{"A", "B", "C"}, labels)
+		assert.Equal(t, labelExpressionOfNames([]string{"A", "B", "C"}), expr)
+	})
+
+	t.Run("label expression (#860)", func(t *testing.T) {
+		variable, expr, ok := parseWithWhereLabelTest("n:A|!B")
+		require.True(t, ok)
+		assert.Equal(t, "n", variable)
+		assert.Equal(t, "A|!B", expr.String())
 	})
 
 	t.Run("rejects a non-label predicate", func(t *testing.T) {
@@ -95,10 +102,10 @@ func TestEntityLabelAndTypePredicate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, entityHasAllLabelsOrTypesPredicate(tc.value, tc.required))
+			assert.Equal(t, tc.want, entityHasAllLabelsOrTypesPredicate(tc.value, labelExpressionOfNames(tc.required)))
 		})
 	}
-	assert.Nil(t, entityHasAllLabelsOrTypes(nil, []string{"Workload"}), "a null binding projects as null")
+	assert.Nil(t, entityHasAllLabelsOrTypes(nil, labelExpressionOfNames([]string{"Workload"})), "a null binding projects as null")
 }
 
 func TestWithWhereNeedsFullEvaluator(t *testing.T) {

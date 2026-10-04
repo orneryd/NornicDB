@@ -82,3 +82,30 @@
 - id: cyphermatching.function_parameters_insufficient
   description: Expanded pseudo-locale insufficient function parameters.
   other: "[!! insufficient parameters for function '{{.Function}}' !!]"
+- id: cyphermatching.label_expression_mixed_colon
+  description: Expanded pseudo-locale label expression mixed colon.
+  other: "[!! Mixing label expression symbols ('|', '&', '!', and '%') with colon (':') between labels is not allowed. Please only use one set of symbols. This expression could be expressed as :{{.Expression}}. !!]"
+- id: cyphermatching.label_expression_mixed_is
+  description: Expanded pseudo-locale label expression mixed is.
+  other: "[!! Mixing the IS keyword with colon (':') between labels is not allowed. This expression could be expressed as IS {{.Expression}}. !!]"
+- id: cyphermatching.relationship_type_colon_disjunction
+  description: Expanded pseudo-locale relationship type colon disjunction.
+  other: "[!! The semantics of using colon in the separation of alternative relationship types in conjunction with\nthe use of variable binding, inlined property predicates, or variable length is no longer supported.\nPlease separate the relationships types using `:{{.Expression}}` instead. !!]"
+- id: cyphermatching.relationship_type_colon_conjunction
+  description: Expanded pseudo-locale relationship type colon conjunction.
+  other: "[!! Relationship types in a relationship type expressions may not be combined using ':' !!]"
+- id: cyphermatching.variable_length_type_expression
+  description: Expanded pseudo-locale variable length type expression.
+  other: "[!! Variable length relationships must not use relationship type expressions. !!]"
+- id: cyphermatching.label_expression_in_write_pattern
+  description: Expanded pseudo-locale label expression in write pattern.
+  other: "[!! Label expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause and in expressions !!]"
+- id: cyphermatching.relationship_type_expression_in_write_pattern
+  description: Expanded pseudo-locale relationship type expression in write pattern.
+  other: "[!! Relationship type expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause !!]"
+- id: cyphermatching.is_not_operand_invalid
+  description: Expanded pseudo-locale is not operand invalid.
+  other: "[!! Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED' !!]"
+- id: cyphermatching.single_relationship_type_required
+  description: Expanded pseudo-locale single relationship type required.
+  other: "[!! A single relationship type must be specified for {{.Clause}} !!]"

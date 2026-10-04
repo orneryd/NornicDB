@@ -413,20 +413,13 @@ func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition strin
 		return false
 	}
 
-	// Handle label check: n:Label (returns true if node has the label)
-	if colonIdx := strings.Index(condition, ":"); colonIdx > 0 {
-		variable := strings.TrimSpace(condition[:colonIdx])
-		label := strings.TrimSpace(condition[colonIdx+1:])
-		// Check if this is a simple variable:Label pattern (no operators)
-		if len(variable) > 0 && len(label) > 0 && !strings.ContainsAny(variable, " .(") && !strings.ContainsAny(label, " .(") {
-			if node, ok := nodes[variable]; ok {
-				for _, l := range node.Labels {
-					if l == label {
-						return true
-					}
-				}
-				return false
-			}
+	// Handle label check: n:Label, n:A:B, n:A|B (the shared label test, #860).
+	if variable, expr, ok := parseWithWhereLabelTest(condition); ok {
+		if node, bound := nodes[variable]; bound {
+			return entityHasAllLabelsOrTypesPredicate(node, expr)
+		}
+		if rel, bound := rels[variable]; bound {
+			return entityHasAllLabelsOrTypesPredicate(rel, expr)
 		}
 	}
 

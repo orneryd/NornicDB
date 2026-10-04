@@ -11,7 +11,8 @@ func validateExpressionOperandCompleteness(expression string) error {
 		}
 		expression = strings.TrimSpace(inner)
 	}
-	if expression == "" || (expression != "*" && strings.ContainsAny(expression[len(expression)-1:], "+-*/%^")) {
+	last := len(expression) - 1
+	if expression == "" || (expression != "*" && strings.ContainsAny(expression[last:], "+-*/%^") && !labelWildcardAt(expression, last)) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: expected an expression after operator")
 	}
 	return nil

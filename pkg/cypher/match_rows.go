@@ -182,7 +182,6 @@ func (e *StorageExecutor) evaluateMatchWhereCondition(ctx context.Context, where
 	return e.evaluateMatchRowPredicate(ctx, whereClause, values)
 }
 
-
 // withWhereNeedsFullEvaluator reports whether a WITH-attached WHERE predicate
 // has to go through the general expression evaluator rather than this
 // function's operator splitting. Function calls break the split because the
@@ -202,24 +201,29 @@ func withWhereNeedsFullEvaluator(whereClause string) bool {
 	return withWhereIsLabelTest(whereClause)
 }
 
-// parseWithWhereLabelTest splits a bare label test such as `n:Workload` or
-// `n:A:B` into its variable and required labels. Label tests carry no
-// comparison operator, so operator splitting never sees them, and the general
-// expression evaluator does not accept the `var:Label` form either -- it has to
-// be evaluated here.
-func parseWithWhereLabelTest(whereClause string) (string, []string, bool) {
+// parseWithWhereLabelTest splits a bare label test such as `n:Workload`,
+// `n:A:B` or the label expression `n:A|B` (#860) into its variable and label
+// expression. Label tests carry no comparison operator, so operator splitting
+// never sees them, and the general expression evaluator does not accept the
+// `var:Label` form either -- it has to be evaluated here.
+func parseWithWhereLabelTest(whereClause string) (string, *labelExpression, bool) {
 	if !withWhereIsLabelTest(whereClause) {
 		return "", nil, false
 	}
 	variable, chain, _ := splitNodeHead(strings.TrimSpace(whereClause))
-	return variable, labelChainNames(chain), true
+	if hasLabelExpressionOperator(chain) {
+		expr, _ := parseLabelExpression(chain)
+		return variable, expr, true
+	}
+	return variable, labelExpressionOfNames(labelChainNames(chain)), true
 }
 
 // entityHasAllLabelsOrTypes evaluates Cypher's colon predicate for a graph
-// entity. Nodes test labels and relationships test their single relationship
-// type. A null binding produces null so projections preserve Cypher's
-// three-valued semantics; predicate callers coerce that null to false.
-func entityHasAllLabelsOrTypes(value interface{}, required []string) interface{} {
+// entity: nodes test their labels against the label expression and
+// relationships test their single type as their one label (r:A|B, #860). A
+// null binding produces null so projections preserve Cypher's three-valued
+// semantics; predicate callers coerce that null to false.
+func entityHasAllLabelsOrTypes(value interface{}, expr *labelExpression) interface{} {
 	if value == nil {
 		return nil
 	}
@@ -228,29 +232,12 @@ func entityHasAllLabelsOrTypes(value interface{}, required []string) interface{}
 		if entity == nil {
 			return nil
 		}
-		for _, want := range required {
-			found := false
-			for _, have := range entity.Labels {
-				if have == want {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-		}
-		return true
+		return expr.matches(entity.Labels)
 	case *storage.Edge:
 		if entity == nil {
 			return nil
 		}
-		for _, want := range required {
-			if entity.Type != want {
-				return false
-			}
-		}
-		return true
+		return expr.matches([]string{entity.Type})
 	default:
 		return false
 	}
@@ -258,8 +245,8 @@ func entityHasAllLabelsOrTypes(value interface{}, required []string) interface{}
 
 // entityHasAllLabelsOrTypesPredicate applies WHERE's truthiness to a colon
 // predicate. In WHERE, both null and false reject the row.
-func entityHasAllLabelsOrTypesPredicate(value interface{}, required []string) bool {
-	matched, _ := entityHasAllLabelsOrTypes(value, required).(bool)
+func entityHasAllLabelsOrTypesPredicate(value interface{}, expr *labelExpression) bool {
+	matched, _ := entityHasAllLabelsOrTypes(value, expr).(bool)
 	return matched
 }
 
@@ -271,6 +258,10 @@ func withWhereIsLabelTest(whereClause string) bool {
 	variable, chain, hasLabels := splitNodeHead(trimmed)
 	if !hasLabels || !isWithWhereIdentifier(variable) {
 		return false
+	}
+	if hasLabelExpressionOperator(chain) {
+		_, ok := parseLabelExpression(chain)
+		return ok
 	}
 	valid := true
 	wellFormed := eachChainLabel(chain, func(name string, quoted bool) {
@@ -334,36 +325,29 @@ func substituteWithWhereLabelTests(whereClause string, values map[string]interfa
 			continue
 		}
 		variable := whereClause[i:j]
-		labels := []string{}
+		// One or more :<label expression> segments right after the variable
+		// (n:A, n:A:B, n:A|B, n:!A; #860). A space after the colon is not a
+		// label test (a map entry such as {name: x}).
+		var parts []*labelExpression
 		k := j
-		for k < len(whereClause) && whereClause[k] == ':' {
-			k++
-			if k < len(whereClause) && whereClause[k] == '`' {
-				name, end, ok := scanQuotedName(whereClause, k)
-				if !ok || name == "" {
-					labels = nil
-					break
-				}
-				labels = append(labels, name)
-				k = end
-				continue
-			}
-			start := k
-			for k < len(whereClause) && isWithWhereIdentPart(whereClause[k]) {
-				k++
-			}
-			if start == k {
-				labels = nil
+		for k+1 < len(whereClause) && whereClause[k] == ':' && !isASCIISpace(whereClause[k+1]) {
+			expr, end, ok := parseLabelExpressionPrefix(whereClause[k+1:])
+			if !ok {
 				break
 			}
-			labels = append(labels, whereClause[start:k])
+			parts = append(parts, expr)
+			k += 1 + end
 		}
-		if len(labels) == 0 {
+		if len(parts) == 0 {
 			out.WriteString(whereClause[i:j])
 			i = j
 			continue
 		}
-		if entityHasAllLabelsOrTypesPredicate(values[variable], labels) {
+		expr := parts[0]
+		if len(parts) > 1 {
+			expr = &labelExpression{kind: labelExpressionAnd, operands: parts}
+		}
+		if entityHasAllLabelsOrTypesPredicate(values[variable], expr) {
 			out.WriteString("true")
 		} else {
 			out.WriteString("false")

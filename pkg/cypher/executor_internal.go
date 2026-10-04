@@ -27,6 +27,10 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if config.IsCypherQueryNormalizationEnabled() {
 		cypher, _ = canonicalizeQueryText(cypher)
 	}
+	cypher, _, err := desugarLabelExpressions(cypher)
+	if err != nil {
+		return nil, err
+	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if err := e.validateStatementFraming(cypher); err != nil {

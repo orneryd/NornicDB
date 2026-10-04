@@ -43,6 +43,9 @@ func splitPatternComprehension(expr string) (string, string, bool) {
 		case '}':
 			braceDepth--
 		case '|':
+			if labelExpressionBarAt(expr, 1, i) {
+				continue // m:A|B in the WHERE (#860)
+			}
 			if parenDepth == 0 && bracketDepth == 1 && braceDepth == 0 {
 				pattern := strings.TrimSpace(expr[1:i])
 				projection := strings.TrimSpace(expr[i+1 : len(expr)-1])

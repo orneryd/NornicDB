@@ -744,6 +744,9 @@ func (sc *SmartQueryCache) evictOldestLRU() {
 // extractLabelsFromQuery extracts node labels and relationship type tokens from
 // a Cypher query string. It scans for label/type tokens like :Label,
 // :Label:AnotherLabel, and :TYPE_A|TYPE_B while skipping quoted string content.
+// A label expression that matches entities without a listed label (:!A, :%,
+// :A|!B, a parenthesised group) makes it return nil: the result depends on
+// every write, as an unlabelled query's does (#860).
 func extractLabelsFromQuery(cypher string) []string {
 	seen := make(map[string]struct{})
 	var labels []string
@@ -787,6 +790,9 @@ func extractLabelsFromQuery(cypher string) []string {
 			continue
 		}
 		first := cypher[start]
+		if labelExpressionWidensMatch(first) {
+			return nil
+		}
 		if first < 'A' || first > 'Z' {
 			continue
 		}
@@ -822,6 +828,9 @@ func extractLabelsFromQuery(cypher string) []string {
 				break
 			}
 			first := cypher[j]
+			if labelExpressionWidensMatch(first) {
+				return nil
+			}
 			if first < 'A' || first > 'Z' {
 				break
 			}
@@ -1204,4 +1213,11 @@ func (e *StorageExecutor) promoteNodeLookupCacheTo(dst *StorageExecutor) {
 		dst.nodeLookupCache[k] = v
 	}
 	dstMu.Unlock()
+}
+
+// labelExpressionWidensMatch reports whether a label expression term that
+// starts with c can match an entity without any label the query names (!,
+// %, or a group).
+func labelExpressionWidensMatch(c byte) bool {
+	return c == '!' || c == '%' || c == '('
 }

@@ -229,7 +229,10 @@ func validateMergeRelationshipShape(pattern string) error {
 		)
 	}
 	typeDeclaration := strings.TrimSpace(declaration[colon+1:])
-	if typeDeclaration == "" || strings.Contains(typeDeclaration, "|") || strings.Contains(typeDeclaration, ":") {
+	if strings.Contains(typeDeclaration, "|") {
+		return singleRelationshipTypeError("MERGE")
+	}
+	if typeDeclaration == "" || strings.Contains(typeDeclaration, ":") {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"NoSingleRelationshipType",
