@@ -3813,34 +3813,34 @@ func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Conte
 	return state.result(ctx, e)
 }
 
-func pipelineAggregateNumber(value interface{}) (float64, bool, bool) {
+func pipelineAggregateNumber(value interface{}) (float64, int64, bool, bool) {
 	switch number := value.(type) {
 	case int:
-		return float64(number), true, true
+		return float64(number), int64(number), true, true
 	case int8:
-		return float64(number), true, true
+		return float64(number), int64(number), true, true
 	case int16:
-		return float64(number), true, true
+		return float64(number), int64(number), true, true
 	case int32:
-		return float64(number), true, true
+		return float64(number), int64(number), true, true
 	case int64:
-		return float64(number), true, true
+		return float64(number), number, true, true
 	case uint:
-		return float64(number), true, true
+		return float64(number), int64(number), true, true
 	case uint8:
-		return float64(number), true, true
+		return float64(number), int64(number), true, true
 	case uint16:
-		return float64(number), true, true
+		return float64(number), int64(number), true, true
 	case uint32:
-		return float64(number), true, true
+		return float64(number), int64(number), true, true
 	case uint64:
-		return float64(number), true, true
+		return float64(number), int64(number), true, true
 	case float32:
-		return float64(number), false, true
+		return float64(number), 0, false, true
 	case float64:
-		return number, false, true
+		return number, 0, false, true
 	default:
-		return 0, false, false
+		return 0, 0, false, false
 	}
 }
 
@@ -3916,14 +3916,31 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 		// Semantic validation rejects an empty item (RETURN 1,,2).
 		// Same alias parsing as WITH (parseProjectionExprAlias, #547).
 		expr, alias := parseProjectionExprAlias(strings.TrimSpace(rawItem))
-		aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
-		if !isAggr && pipelineExpressionContainsAggregate(expr) {
-			isAggr = true
-			aggregateExpr = expr
+		plan.addProjection(expr, alias)
+	}
+	plan.valid = len(plan.projections) > 0
+	return plan
+}
+
+func (plan *returnProjectionPlan) addProjection(expr, alias string) {
+	aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
+	if !isAggr && pipelineExpressionContainsAggregate(expr) {
+		isAggr = true
+		aggregateExpr = expr
+	}
+	plan.hasAggregate = plan.hasAggregate || isAggr
+	plan.projections = append(plan.projections, returnProjection{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct})
+	plan.columns = append(plan.columns, alias)
+}
+
+func returnProjectionPlanFromItems(items []returnItem) *returnProjectionPlan {
+	plan := &returnProjectionPlan{}
+	for _, item := range items {
+		alias := item.alias
+		if alias == "" {
+			alias = item.expr
 		}
-		plan.hasAggregate = plan.hasAggregate || isAggr
-		plan.projections = append(plan.projections, returnProjection{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct})
-		plan.columns = append(plan.columns, alias)
+		plan.addProjection(item.expr, alias)
 	}
 	plan.valid = len(plan.projections) > 0
 	return plan
@@ -3944,7 +3961,10 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 }
 
 func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) (*ExecuteResult, bool) {
-	plan := returnProjectionPlanFor(clause)
+	return e.pipelineApplyReturnPlan(ctx, rows, returnProjectionPlanFor(clause), source, rowsValidated)
+}
+
+func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pipelineRow, plan *returnProjectionPlan, source pipelineRowSource, rowsValidated bool) (*ExecuteResult, bool) {
 	if !plan.valid {
 		return nil, false
 	}

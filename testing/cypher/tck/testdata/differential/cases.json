@@ -2279,5 +2279,42 @@
     "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN count() + 1 AS c",
     "expected_code": "Neo.ClientError.Statement.SyntaxError",
     "no_effects": true
+  },
+  {
+    "name": "issue713 traversal continuous percentile projection",
+    "setup": ["CREATE (a:Anchor), (n1:Value {x: 1}), (n2:Value {x: 3}), (a)-[:HAS]->(n1), (a)-[:HAS]->(n2)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(n:Value) RETURN percentileCont(n.x, 0.5) + 0 AS median",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal discrete percentile projection",
+    "setup": ["CREATE (a:Anchor), (n1:Value {x: 1}), (n2:Value {x: 3}), (a)-[:HAS]->(n1), (a)-[:HAS]->(n2)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(n:Value) RETURN percentileDisc(n.x, 0.5) + 0 AS median",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 cartesian exact integer sum projection",
+    "setup": ["CREATE (:Anchor), (:Value {x: 9007199254740993}), (:Value {x: 1})"],
+    "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN toString(sum(n.x)) AS exactTotal",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal exact integer sum projection",
+    "setup": ["CREATE (a:Anchor), (n1:Value {x: 9007199254740993}), (n2:Value {x: 1}), (a)-[:HAS]->(n1), (a)-[:HAS]->(n2)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(n:Value) RETURN toString(sum(n.x)) AS exactTotal",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 call aggregate retains named path bindings",
+    "setup": ["CREATE (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}), (c:Person {name: 'Charlie'}), (a)-[:FRIEND]->(b), (b)-[:COLLEAGUE]->(c)"],
+    "query": "MATCH (seed:Person {name: 'Alice'}) CALL { WITH seed MATCH path = (seed)-[r*1..2]-(connected) RETURN collect(DISTINCT {name: connected.name, rel: type(head(r)), labels: labels(connected), distance: length(path)}) AS neighbors } RETURN neighbors",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 multi match aggregate parameter row bindings",
+    "setup": ["CREATE (o:OriginalText {pagePath: '/benefits/page'}), (t:TranslatedText {language: 'es', isReviewed: false}), (o)-[:TRANSLATES_TO]->(t)"],
+    "query": "MATCH (t:TranslatedText) WHERE t.language = $language AND t.isReviewed = false MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t) WHERE o.pagePath STARTS WITH $pagePath RETURN count(t) AS translations",
+    "parameters": {"language": "es", "pagePath": "/benefits"},
+    "no_effects": true
   }
 ]

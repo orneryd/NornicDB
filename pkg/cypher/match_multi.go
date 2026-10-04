@@ -1,8 +1,8 @@
 package cypher
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -363,10 +363,12 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 	if len(matchClauses) < 2 {
 		return nil, localizedError(localization.CypherTransactionsMultipleMatchExpected(), nil)
 	}
-	pathVariables := make([]string, 0)
-	for _, clause := range matchClauses {
-		if variable := extractPathAssignmentVariable(clause); variable != "" {
-			pathVariables = append(pathVariables, variable)
+	hasAggregation := false
+	isAggFlags := make([]bool, len(returnItems))
+	for index, item := range returnItems {
+		isAggFlags[index] = len(findAggregateSpans(item.expr)) > 0
+		if isAggFlags[index] {
+			hasAggregation = true
 		}
 	}
 
@@ -375,16 +377,16 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 	// bound by a clause (e.g. "rel" in `(s)-[rel]->(x)`); see the binding
 	// type's doc comment for why relationships aren't stored inside binding
 	// itself.
-	bindings, relBindings := e.executeFirstMatch(ctx, matchClauses[0])
-
-	// Execute subsequent MATCH clauses with bindings
-	for i := 1; i < len(matchClauses); i++ {
-		bindings, relBindings = e.executeChainedMatch(ctx, matchClauses[i], bindings, relBindings)
-	}
-
-	// Apply WHERE filter if present
-	if whereClause != "" {
-		bindings, relBindings = e.filterBindingsByWhereWithRels(ctx, bindings, relBindings, whereClause, getParamsFromContext(ctx))
+	var bindings []binding
+	var relBindings []relationshipBinding
+	if !hasAggregation {
+		bindings, relBindings = e.executeFirstMatch(ctx, matchClauses[0])
+		for index := 1; index < len(matchClauses); index++ {
+			bindings, relBindings = e.executeChainedMatch(ctx, matchClauses[index], bindings, relBindings)
+		}
+		if whereClause != "" {
+			bindings, relBindings = e.filterBindingsByWhereWithRels(ctx, bindings, relBindings, whereClause, getParamsFromContext(ctx))
+		}
 	}
 
 	// Build result from bindings
@@ -402,16 +404,6 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		}
 	}
 
-	// Check if this is an aggregation query (whitespace-tolerant)
-	hasAggregation := false
-	isAggFlags := make([]bool, len(returnItems))
-	for i, item := range returnItems {
-		isAggFlags[i] = len(findAggregateSpans(item.expr)) > 0
-		if isAggFlags[i] {
-			hasAggregation = true
-		}
-	}
-
 	// relAt returns the relationship-binding map for row idx, or nil when
 	// relBindings is shorter than bindings (e.g. rows added before any
 	// relationship variable existed).
@@ -422,17 +414,31 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		return nil
 	}
 	if hasAggregation {
-		aggregateRows := make([]traversalOptRow, 0, len(bindings))
-		for idx, nodeBindings := range bindings {
-			values := make(map[string]interface{}, len(pathVariables))
-			for _, variable := range pathVariables {
-				values[variable] = true
+		rows := []pipelineRow{{}}
+		bindParameterRow(ctx, rows[0])
+		for _, clause := range matchClauses {
+			expanded, handled, err := e.pipelineApplyMatch(ctx, rows, "MATCH "+clause)
+			if err != nil {
+				return nil, err
 			}
-			aggregateRows = append(aggregateRows, traversalOptRow{
-				nodes:  map[string]*storage.Node(nodeBindings),
-				rels:   edgeRelationshipBindings(relAt(idx)),
-				values: values,
-			})
+			if !handled {
+				return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "could not bind aggregate MATCH pattern")
+			}
+			rows = expanded
+		}
+		if whereClause != "" {
+			filtered, handled := e.pipelineApplyWith(ctx, rows, "WITH * WHERE "+whereClause)
+			if !handled {
+				if failure := getExpressionFailure(ctx); failure != nil {
+					return nil, failure
+				}
+				return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "could not evaluate aggregate MATCH predicate")
+			}
+			rows = filtered
+		}
+		aggregateRows := make([]traversalOptRow, len(rows))
+		for index, row := range rows {
+			aggregateRows[index] = traversalOptRow{values: row}
 		}
 		aggregated, err := e.aggregateTraversalOptionalRows(ctx, aggregateRows, returnItems)
 		if err != nil {

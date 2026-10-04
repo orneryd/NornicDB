@@ -21,7 +21,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 			return nil, false
 		}
 		var numeric bool
-		percentile, _, numeric = pipelineAggregateNumber(value)
+		percentile, _, _, numeric = pipelineAggregateNumber(value)
 		if !numeric || math.IsNaN(percentile) || percentile < 0 || percentile > 1 {
 			return nil, false
 		}
@@ -41,7 +41,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 		if value == nil {
 			continue
 		}
-		numeric, _, valid := pipelineAggregateNumber(value)
+		numeric, _, _, valid := pipelineAggregateNumber(value)
 		if !valid {
 			return nil, false
 		}
@@ -90,7 +90,7 @@ func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelin
 			if !resolved {
 				continue
 			}
-			percentile, _, numeric := pipelineAggregateNumber(value)
+			percentile, _, _, numeric := pipelineAggregateNumber(value)
 			if !numeric || math.IsNaN(percentile) || percentile < 0 || percentile > 1 {
 				return newSemanticError(
 					"Neo.ClientError.Statement.ArgumentError",

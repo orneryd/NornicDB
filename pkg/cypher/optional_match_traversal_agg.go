@@ -30,7 +30,6 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // traversalAggFnNames are the aggregate functions the traversal pipeline
@@ -118,17 +117,6 @@ func findAggregateSpans(expr string) []aggregateSpan {
 	return spans
 }
 
-// traversalItemsContainAggregate reports whether any RETURN item contains an
-// aggregate call (whether or not the whole item is one).
-func traversalItemsContainAggregate(items []returnItem) bool {
-	for _, item := range items {
-		if len(findAggregateSpans(item.expr)) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // parseTraversalAggregateCall parses one whole aggregate call such as
 // "count(DISTINCT f.path)". The only rejected form is an empty argument list,
 // which Neo4j itself rejects at compile time.
@@ -162,211 +150,27 @@ func parseTraversalAggregateCall(expr string) (traversalAggSpec, error) {
 	return spec, nil
 }
 
-// traversalAggItem is one classified RETURN item.
-type traversalAggItem struct {
-	grouping  bool
-	spec      *traversalAggSpec // whole-item aggregate
-	rewritten string            // mixed item: expr with spans replaced by placeholders
-	specs     []traversalAggSpec
-	compiled  []compiledTraversalProjection // per-spec inner projections
-	groupFn   compiledTraversalProjection   // grouping item projection
-}
-
 // traversalAggPlaceholder returns the synthetic variable name substituted for
 // the n-th aggregate span of a mixed item (isolateAggregation's x1/x2 rewrite).
 func traversalAggPlaceholder(n int) string {
 	return fmt.Sprintf("__nornic_agg_%d", n)
 }
 
-// classifyTraversalAggItems splits RETURN items into grouping keys, whole
-// aggregates, and mixed expressions, pre-compiling every per-row projection.
-func (e *StorageExecutor) classifyTraversalAggItems(ctx context.Context, items []returnItem) ([]traversalAggItem, error) {
-	classified := make([]traversalAggItem, len(items))
-	for i, item := range items {
-		expr := strings.TrimSpace(item.expr)
-		spans := findAggregateSpans(expr)
-		switch {
-		case len(spans) == 0:
-			classified[i] = traversalAggItem{grouping: true, groupFn: e.compileTraversalProjection(ctx, expr)}
-		case len(spans) == 1 && spans[0].start == 0 && spans[0].end == len(expr):
-			spec, err := parseTraversalAggregateCall(expr)
-			if err != nil {
-				return nil, err
-			}
-			ti := traversalAggItem{spec: &spec}
-			if !spec.star {
-				ti.compiled = []compiledTraversalProjection{e.compileTraversalProjection(ctx, spec.inner)}
-			}
-			classified[i] = ti
-		default:
-			// Mixed expression: isolate each aggregate span (isolateAggregation).
-			var sb strings.Builder
-			var specs []traversalAggSpec
-			var compiled []compiledTraversalProjection
-			last := 0
-			for n, span := range spans {
-				spec, err := parseTraversalAggregateCall(expr[span.start:span.end])
-				if err != nil {
-					return nil, err
-				}
-				sb.WriteString(expr[last:span.start])
-				sb.WriteString(traversalAggPlaceholder(n))
-				last = span.end
-				specs = append(specs, spec)
-				if spec.star {
-					compiled = append(compiled, nil)
-				} else {
-					compiled = append(compiled, e.compileTraversalProjection(ctx, spec.inner))
-				}
-			}
-			sb.WriteString(expr[last:])
-			classified[i] = traversalAggItem{rewritten: sb.String(), specs: specs, compiled: compiled}
-		}
-	}
-	return classified, nil
-}
-
-// traversalAggAccum accumulates one aggregate call's values within one group.
-type traversalAggAccum struct {
-	values []interface{}
-	seen   map[string]bool
-}
-
-func (a *traversalAggAccum) add(v interface{}, distinct bool) {
-	if v == nil {
-		return // Cypher aggregates skip nulls
-	}
-	if distinct {
-		if a.seen == nil {
-			a.seen = make(map[string]bool)
-		}
-		key := joinedValueKey(v)
-		if a.seen[key] {
-			return
-		}
-		a.seen[key] = true
-	}
-	a.values = append(a.values, v)
-}
-
-// traversalAggGroup accumulates one implicit group.
-type traversalAggGroup struct {
-	groupVals []interface{}         // evaluated grouping values by item index
-	accums    [][]traversalAggAccum // per item, per aggregate span
-	rowCount  int64
-}
-
 // aggregateTraversalOptionalRows evaluates a RETURN projection containing
 // aggregates over the joined rows, grouping by the non-aggregate items.
 func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, rows []traversalOptRow, items []returnItem) ([][]interface{}, error) {
-	classified, err := e.classifyTraversalAggItems(ctx, items)
-	if err != nil {
-		return nil, err
+	bindings := make([]pipelineRow, len(rows))
+	for index, row := range rows {
+		bindings[index] = pipelineRowFromTraversalOptionalRow(row)
 	}
-	hasGroupKeys := false
-	for _, ti := range classified {
-		if ti.grouping {
-			hasGroupKeys = true
-		}
+	plan := returnProjectionPlanFromItems(items)
+	if result, ok := e.pipelineApplyReturnPlan(ctx, bindings, plan, pipelineRowsSource(bindings), false); ok {
+		return result.Rows, nil
 	}
-
-	groups := make(map[string]*traversalAggGroup)
-	var order []string
-	for _, row := range rows {
-		keyParts := make([]string, 0, len(items))
-		groupVals := make([]interface{}, len(items))
-		for i, ti := range classified {
-			if !ti.grouping {
-				continue
-			}
-			v := ti.groupFn(row)
-			groupVals[i] = v
-			keyParts = append(keyParts, joinedValueKey(v))
-		}
-		key := strings.Join(keyParts, "|")
-		group := groups[key]
-		if group == nil {
-			group = &traversalAggGroup{groupVals: groupVals, accums: make([][]traversalAggAccum, len(items))}
-			for i, ti := range classified {
-				switch {
-				case ti.spec != nil:
-					group.accums[i] = make([]traversalAggAccum, 1)
-				case ti.rewritten != "":
-					group.accums[i] = make([]traversalAggAccum, len(ti.specs))
-				}
-			}
-			groups[key] = group
-			order = append(order, key)
-		}
-		group.rowCount++
-		for i, ti := range classified {
-			switch {
-			case ti.spec != nil:
-				if !ti.spec.star {
-					group.accums[i][0].add(ti.compiled[0](row), ti.spec.distinct)
-				}
-			case ti.rewritten != "":
-				for n, spec := range ti.specs {
-					if spec.star {
-						continue
-					}
-					group.accums[i][n].add(ti.compiled[n](row), spec.distinct)
-				}
-			}
-		}
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, failure
 	}
-
-	if len(groups) == 0 {
-		if hasGroupKeys {
-			return [][]interface{}{}, nil
-		}
-		// Aggregation over an empty ungrouped input: one row of identities
-		// (NonGroupingAggTable semantics).
-		out := make([]interface{}, len(items))
-		for i, ti := range classified {
-			switch {
-			case ti.spec != nil:
-				out[i] = e.finalizeTraversalAggregate(*ti.spec, nil, 0)
-			case ti.rewritten != "":
-				out[i] = e.evaluateMixedAggregate(ctx, ti, nil, 0)
-			}
-		}
-		return [][]interface{}{out}, nil
-	}
-
-	outRows := make([][]interface{}, 0, len(groups))
-	for _, key := range order {
-		group := groups[key]
-		outRow := make([]interface{}, len(items))
-		for i, ti := range classified {
-			switch {
-			case ti.grouping:
-				outRow[i] = group.groupVals[i]
-			case ti.spec != nil:
-				outRow[i] = e.finalizeTraversalAggregate(*ti.spec, group.accums[i][0].values, group.rowCount)
-			default:
-				outRow[i] = e.evaluateMixedAggregate(ctx, ti, group.accums[i], group.rowCount)
-			}
-		}
-		outRows = append(outRows, outRow)
-	}
-	return outRows, nil
-}
-
-// evaluateMixedAggregate finalizes each aggregate span of a mixed item, then
-// evaluates the rewritten outer expression with the results bound as values
-// (valueBindings) — the runtime equivalent of isolateAggregation's
-// WITH x1, x2 ... rewrite.
-func (e *StorageExecutor) evaluateMixedAggregate(ctx context.Context, ti traversalAggItem, accums []traversalAggAccum, rowCount int64) interface{} {
-	values := valueBindingsLayer(ctx, len(ti.specs))
-	for n, spec := range ti.specs {
-		var vals []interface{}
-		if accums != nil {
-			vals = accums[n].values
-		}
-		values[traversalAggPlaceholder(n)] = e.finalizeTraversalAggregate(spec, vals, rowCount)
-	}
-	return e.evaluateExpressionWithContext(withValueBindings(ctx, values), ti.rewritten, map[string]*storage.Node{}, nil)
+	return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "could not parse aggregate projection")
 }
 
 // finalizeTraversalAggregate reduces one aggregate call's accumulated

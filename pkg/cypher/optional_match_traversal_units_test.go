@@ -9,6 +9,7 @@ package cypher
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -20,6 +21,81 @@ func newUnitExecutor(t *testing.T) (*StorageExecutor, context.Context) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
 	return NewStorageExecutor(ns), context.Background()
+}
+
+func TestGh713AggregateNumberRejectsNonNumeric(t *testing.T) {
+	for _, value := range []interface{}{nil, true, "4", []interface{}{int64(4)}} {
+		floating, integer, integral, valid := pipelineAggregateNumber(value)
+		require.Zero(t, floating, "%T", value)
+		require.Zero(t, integer, "%T", value)
+		require.False(t, integral, "%T", value)
+		require.False(t, valid, "%T", value)
+	}
+}
+
+func TestGh713SharedAggregateAdapterBoundaries(t *testing.T) {
+	t.Run("empty projection rejected", func(t *testing.T) {
+		executor, ctx := newUnitExecutor(t)
+		rows, err := executor.aggregateTraversalOptionalRows(ctx, nil, nil)
+		require.Nil(t, rows)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	})
+	t.Run("unaliased aggregate", func(t *testing.T) {
+		executor, ctx := newUnitExecutor(t)
+		items := []returnItem{{expr: "count(*)"}}
+		plan := returnProjectionPlanFromItems(items)
+		require.True(t, plan.valid)
+		require.Equal(t, []string{"count(*)"}, plan.columns)
+		rows, err := executor.aggregateTraversalOptionalRows(ctx, []traversalOptRow{{values: map[string]interface{}{}}}, items)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(1)}}, rows)
+	})
+	t.Run("expression failure preserved", func(t *testing.T) {
+		executor, ctx := newUnitExecutor(t)
+		ctx = withExpressionFailureSlot(ctx)
+		failure := newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "invalid aggregate input")
+		recordExpressionFailure(ctx, failure)
+		rows, err := executor.aggregateTraversalOptionalRows(ctx, nil, nil)
+		require.Nil(t, rows)
+		require.ErrorIs(t, err, failure)
+	})
+}
+
+func TestGh713PipelineSumNumericTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		values   []interface{}
+		distinct bool
+		want     interface{}
+	}{
+		{"int", []interface{}{int(4), int(5)}, false, int64(9)},
+		{"int8", []interface{}{int8(4), int8(5)}, false, int64(9)},
+		{"int16", []interface{}{int16(4), int16(5)}, false, int64(9)},
+		{"int32", []interface{}{int32(4), int32(5)}, false, int64(9)},
+		{"int64", []interface{}{int64(4), int64(5)}, false, int64(9)},
+		{"uint", []interface{}{uint(4), uint(5)}, false, int64(9)},
+		{"uint8", []interface{}{uint8(4), uint8(5)}, false, int64(9)},
+		{"uint16", []interface{}{uint16(4), uint16(5)}, false, int64(9)},
+		{"uint32", []interface{}{uint32(4), uint32(5)}, false, int64(9)},
+		{"uint64", []interface{}{uint64(4), uint64(5)}, false, int64(9)},
+		{"large signed", []interface{}{int64(9007199254740993), int64(1)}, false, int64(9007199254740994)},
+		{"large unsigned", []interface{}{uint64(9007199254740993), uint64(1)}, false, int64(9007199254740994)},
+		{"float first", []interface{}{float64(0.5), int32(4)}, false, float64(4.5)},
+		{"float last", []interface{}{int16(4), float32(0.5)}, false, float64(4.5)},
+		{"distinct and null", []interface{}{nil, int64(9007199254740993), int64(9007199254740993), int64(1)}, true, int64(9007199254740994)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			state := pipelineAggregateState{name: "sum", expression: "value", distinct: test.distinct}
+			for _, value := range test.values {
+				require.True(t, state.add(ctx, exec, pipelineRow{"value": value}))
+			}
+			actual, ok := state.result(ctx, exec)
+			require.True(t, ok)
+			require.Equal(t, test.want, actual)
+		})
+	}
 }
 
 func TestExtractRelationshipVariables_Shapes(t *testing.T) {
@@ -250,13 +326,18 @@ func TestParseTraversalAggregateCall_Forms(t *testing.T) {
 }
 
 func TestTraversalAggAccum_NullAndDistinct(t *testing.T) {
-	var a traversalAggAccum
-	a.add(nil, false)
-	require.Empty(t, a.values, "aggregates skip nulls")
-	a.add("x", true)
-	a.add("x", true)
-	a.add("y", true)
-	require.Len(t, a.values, 2, "DISTINCT deduplicates")
+	executor, ctx := newUnitExecutor(t)
+	state := pipelineAggregateState{name: "collect", expression: "value", distinct: true}
+	require.True(t, state.add(ctx, executor, pipelineRow{"value": nil}))
+	values, ok := state.result(ctx, executor)
+	require.True(t, ok)
+	require.Empty(t, values, "aggregates skip nulls")
+	for _, value := range []string{"x", "x", "y"} {
+		require.True(t, state.add(ctx, executor, pipelineRow{"value": value}))
+	}
+	values, ok = state.result(ctx, executor)
+	require.True(t, ok)
+	require.Equal(t, []interface{}{"x", "y"}, values, "DISTINCT deduplicates")
 }
 
 func TestFinalizeTraversalAggregate_AllFunctions(t *testing.T) {
@@ -583,6 +664,37 @@ func TestTraversalAggregate_EmptyArgumentErrors(t *testing.T) {
 	`, nil)
 	require.Error(t, err, "empty argument inside a mixed expression is rejected the same way")
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+}
+
+func TestGh713TraversalAggregatePlannerParity(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		values []int64
+		expr   string
+		want   interface{}
+	}{
+		{"continuous percentile", []int64{1, 3}, "percentileCont(n.x, 0.5)", float64(2)},
+		{"discrete percentile", []int64{1, 3}, "percentileDisc(n.x, 0.5)", int64(1)},
+		{"exact integer sum", []int64{9007199254740993, 1}, "sum(n.x)", int64(9007199254740994)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor, ctx := newUnitExecutor(t)
+			rows := make([]traversalOptRow, 0, len(test.values))
+			bindings := make([]pipelineRow, 0, len(test.values))
+			for index, value := range test.values {
+				row := traversalOptRow{nodes: map[string]*storage.Node{"n": {ID: storage.NodeID("row-" + strconv.Itoa(index)), Properties: map[string]interface{}{"x": value}}}}
+				rows = append(rows, row)
+				bindings = append(bindings, pipelineRowFromTraversalOptionalRow(row))
+			}
+			items := executor.parseReturnItems(test.expr + " AS value")
+			shared, err := executor.projectMergeReturn(ctx, bindings, "RETURN "+test.expr+" AS value")
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{test.want}}, shared.Rows)
+			legacy, err := executor.aggregateTraversalOptionalRows(ctx, rows, items)
+			require.NoError(t, err)
+			require.Equal(t, shared.Rows, legacy)
+		})
+	}
 }
 
 func TestTraversalOptionalProjectionWithoutReturn(t *testing.T) {

@@ -383,7 +383,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			rows := make([]traversalOptRow, 0, len(paths))
 			for _, path := range paths {
 				pathContext := e.buildPathContext(path, matches)
-				rows = append(rows, traversalOptRow{nodes: pathContext.nodes, rels: pathContext.rels})
+				rows = append(rows, traversalOptRow{values: e.pathContextValues(pathContext)})
 			}
 			aggregated, err := e.aggregateTraversalOptionalRows(ctx, rows, returnItems)
 			if err != nil {

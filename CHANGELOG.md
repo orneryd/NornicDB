@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Share traversal aggregate RETURN planning and multi-MATCH aggregate bindings,
+  preserving parameters, named paths and relationship lists. Use shared
+  percentile collectors and retain exact integer SUM values above 2^53 (#713).
+
 - Serialize compound schema admission, mutation, counters and transaction
   staging across executors sharing a schema manager. Concurrent ordinary,
   procedure-backed and constraint creators cannot publish conflicting names;

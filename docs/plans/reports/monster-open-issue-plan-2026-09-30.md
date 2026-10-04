@@ -550,3 +550,42 @@ sequence now passes locally. Focused localization races and graph neighborhood
 direction endpoint tests pass. No generated manifest change or test removal is
 needed; existing runtime direction validation is unchanged. This repairs the
 observed build gate, not the remaining #754 TestKit/CI acceptance items.
+
+### Shared Traversal Aggregate Planner: 2026-10-04
+
+Traversal aggregate projection now adapts complete bindings into the shared
+parsed RETURN plan instead of running a private aggregate classifier/reducer.
+Multi-MATCH aggregation also enters the shared MATCH/WHERE producer with seeded
+parameters, retaining named paths and variable-length relationship lists.
+Path-producing traversal projection retains the existing complete path values.
+
+Regression-first checks exposed private percentile calls returning null and a
+shared SUM float round-trip losing integer precision above 2^53. Continuous and
+discrete percentiles now share the established collector; SUM retains exact
+integer values across all ten accepted integer types, with float transitions,
+DISTINCT and null controls. Two existing CALL tests used invalid `type(r)` on a
+relationship list; they now use `type(head(r))` and assert all five neighbors,
+relationship types, labels and the one/two-hop distance distribution.
+
+Remove the production-dead classifier, grouping accumulator and mixed-expression
+finalizer. The accumulator test now asserts shared null/DISTINCT collection,
+including values and order. No test functions are removed. Scanner/placeholder
+helpers still serve production; private parser/finalizer contract helpers remain
+until their remaining controls are migrated. This is not full #713 completion.
+
+Six appended corpus cases preserve the protected prefix. Final pinned reference
+matrices pass 924 Bolt and 934 HTTP comparisons per actual parser: 3,716 total.
+Both official Make-target ratchets pass 7,794 outcomes, zero gaps, setup blockers
+or harness errors, using the pinned temporal archive. Repository correctness,
+full Cypher correctness, focused races, scoped vet and editor diagnostics pass.
+Adapter, numeric decoder, item-plan builder and projection classifier each have
+100% measured coverage; extracted shared execution has 93.5%. Whole Cypher
+coverage is 86.7%, not a claim of meeting the whole-package coverage target.
+
+The first earlier repository run exited on a bare Badger `Assert failed` without
+an owning test. Subsequent full Cypher and repository reruns, including the final
+cleanup tree, pass. Its cause remains unexplained and is not credited as fixed.
+Interrupted checks are not credited; ANTLR HTTP and ratchet reruns completed.
+Main was pulled before publication; unrelated Graphify changes are excluded.
+No local installation was managed and no performance measurement is made.
+#713/#728/#754 remain open; #530/#531 are closed and #547 remains excluded.

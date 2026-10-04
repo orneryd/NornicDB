@@ -230,14 +230,14 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 	case "collect":
 		state.values = append(state.values, value)
 	case "sum", "avg", "stdev", "stdevp":
-		numeric, integer, valid := pipelineAggregateNumber(value)
+		numeric, exactInteger, integer, valid := pipelineAggregateNumber(value)
 		if !valid {
 			return true
 		}
 		state.count++
 		if state.name == "sum" {
 			if integer && !state.hasFloat {
-				state.integerTotal += int64(numeric)
+				state.integerTotal += exactInteger
 			} else {
 				if !state.hasFloat {
 					state.floatingTotal = float64(state.integerTotal)

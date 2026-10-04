@@ -61,7 +61,7 @@ func TestGraphTraversalWithCallSubquery(t *testing.T) {
 			WITH seed
 			MATCH path = (seed)-[r*1..2]-(connected)
 			RETURN seed, collect(DISTINCT {
-				rel: type(r),
+				rel: type(head(r)),
 				node: connected,
 				labels: labels(connected),
 				distance: length(path)
@@ -99,8 +99,20 @@ func TestGraphTraversalWithCallSubquery(t *testing.T) {
 		// Distance 2: charlie (via bob), frank (via eve) (2 nodes)
 		// Total expected: 5 distinct neighbors
 		if neighborsList, ok := neighbors.([]interface{}); ok {
-			assert.GreaterOrEqual(t, len(neighborsList), 3, "Should have at least 3 neighbors (1-hop)")
+			require.Len(t, neighborsList, 5)
+			distances := make(map[int64]int)
+			for _, neighbor := range neighborsList {
+				values, ok := neighbor.(map[string]interface{})
+				require.True(t, ok)
+				require.NotNil(t, values["node"])
+				assert.Contains(t, []string{"FRIEND", "COLLEAGUE", "KNOWS"}, values["rel"])
+				assert.Equal(t, []interface{}{"Person"}, values["labels"])
+				distances[toInt64(values["distance"])]++
+			}
+			assert.Equal(t, map[int64]int{1: 3, 2: 2}, distances)
 			t.Logf("Found %d neighbors", len(neighborsList))
+		} else {
+			t.Fatalf("unexpected neighbors type %T", neighbors)
 		}
 	}
 }
@@ -139,7 +151,7 @@ func TestGraphTraversalWithInternalID(t *testing.T) {
 			WITH seed
 			MATCH path = (seed)-[r*1..2]-(connected)
 			RETURN seed, collect(DISTINCT {
-				rel: type(r),
+				rel: type(head(r)),
 				node: connected,
 				labels: labels(connected),
 				distance: length(path)
