@@ -1442,9 +1442,10 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 
 	// Apply WHERE clause to filter combinations
 	if whereClause != "" {
+		predicate := e.newBindingFilterPredicate(ctx, whereClause, nil)
 		var filtered []map[string]*storage.Node
 		for _, match := range allMatches {
-			if e.evaluateWhereForContext(ctx, whereClause, match) {
+			if predicate.matches(binding(match), nil) {
 				filtered = append(filtered, match)
 			}
 		}

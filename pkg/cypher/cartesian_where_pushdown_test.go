@@ -39,6 +39,73 @@ func BenchmarkCartesianMatchEqualityJoin(b *testing.B) {
 	}
 }
 
+func BenchmarkGh728CartesianPreparedMembership(b *testing.B) {
+	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-membership-bench")
+	b.Cleanup(func() { require.NoError(b, store.Close()) })
+	for index := 0; index < 32; index++ {
+		key := "key-" + strconv.Itoa(index)
+		for _, side := range []string{"Left", "Right"} {
+			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
+			require.NoError(b, err)
+		}
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	query := "MATCH (a:PreparedLeft), (b:PreparedRight) WHERE a.key IN $keys OR b.key IN $keys RETURN a.key AS key"
+	patterns := []string{"(a:PreparedLeft)", "(b:PreparedRight)"}
+	whereIndex := findKeywordIndex(query, "WHERE")
+	returnIndex := findKeywordIndex(query, "RETURN")
+	items := []returnItem{{expr: "a.key", alias: "key"}}
+	for _, length := range []int{64, 4096} {
+		b.Run("keys="+strconv.Itoa(length), func(b *testing.B) {
+			keys := make([]interface{}, length)
+			for index := range keys {
+				keys[index] = "key-" + strconv.Itoa(index)
+			}
+			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"keys": keys}))
+			apply := func() {
+				result, err := exec.executeCartesianProductMatch(ctx, query, "", patterns, whereIndex, returnIndex, items, false, false, &ExecuteResult{Columns: []string{"key"}})
+				if err != nil || len(result.Rows) != 1024 {
+					b.Fatalf("expected 1024 rows, got result=%v err=%v", result, err)
+				}
+			}
+			apply()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				apply()
+			}
+			b.StopTimer()
+		})
+	}
+}
+
+func TestGh728CartesianMembershipParameterFreshness(t *testing.T) {
+	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-membership-test")
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	for _, key := range []string{"key-1", "key-2"} {
+		for _, side := range []string{"Left", "Right"} {
+			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
+			require.NoError(t, err)
+		}
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	query := "MATCH (a:PreparedLeft), (b:PreparedRight) WHERE a.key IN $keys OR b.key IN $keys RETURN a.key AS left, b.key AS right"
+	keys := []interface{}{"key-1"}
+	ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"keys": keys}))
+	apply := func() [][]interface{} {
+		result, err := exec.executeCartesianProductMatch(ctx, query, "", []string{"(a:PreparedLeft)", "(b:PreparedRight)"}, findKeywordIndex(query, "WHERE"), findKeywordIndex(query, "RETURN"), []returnItem{{expr: "a.key", alias: "left"}, {expr: "b.key", alias: "right"}}, false, false, &ExecuteResult{Columns: []string{"left", "right"}})
+		require.NoError(t, err)
+		require.NoError(t, getExpressionFailure(ctx))
+		return result.Rows
+	}
+	want := [][]interface{}{{"key-1", "key-1"}, {"key-1", "key-2"}, {"key-2", "key-1"}}
+	require.ElementsMatch(t, want, apply())
+	keys[0] = "no-match"
+	require.Empty(t, apply())
+	keys[0] = "key-1"
+	require.ElementsMatch(t, want, apply())
+}
+
 func TestCartesianWherePushdown_InAndEqualityJoin(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	exec := NewStorageExecutor(store)
