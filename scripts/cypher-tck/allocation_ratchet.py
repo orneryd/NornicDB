@@ -3,6 +3,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
 import statistics
 import subprocess
 import sys
@@ -16,6 +17,7 @@ WORKLOADS = {
         "BenchmarkExecuteReturn_NoBindings",
         "BenchmarkExecuteReturn_BoundValues",
         "BenchmarkExecuteInternal_ScalarParameter",
+        "BenchmarkExecute_ScalarParameter",
         "BenchmarkFilterBindingsByWhere_CompiledJoin",
         "BenchmarkFilterBindingsByWhere_SharedExpressionPlan",
     ),
@@ -125,6 +127,14 @@ def compare_allocations(base, head, exceptions, tolerance_percent=0.0):
     return failures
 
 
+def install_public_execute_fixture(checkout):
+    source = Path(__file__).parent / "fixtures/public_execute_bench_test.go"
+    target = checkout / "pkg/cypher/allocation_ratchet_execute_bench_test.go"
+    if target.exists() and target.read_bytes() != source.read_bytes():
+        raise ValueError(f"refusing to overwrite unrelated benchmark: {target}")
+    shutil.copyfile(source, target)
+
+
 def run_benchmarks(checkout, flavor, artifacts, parser, operations, samples):
     results = {}
     environment = dict(os.environ, NORNICDB_PARSER=parser)
@@ -153,6 +163,20 @@ def run_benchmarks(checkout, flavor, artifacts, parser, operations, samples):
 
 
 class AllocationRatchetTests(unittest.TestCase):
+    def test_public_execute_fixture_is_identical_and_preserves_unrelated_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory)
+            target = checkout / "pkg/cypher/allocation_ratchet_execute_bench_test.go"
+            target.parent.mkdir(parents=True)
+            install_public_execute_fixture(checkout)
+            self.assertIn("exec.Execute(ctx, query, params)", target.read_text())
+            self.assertIn("NewStorageExecutorWithQueryCachePolicy(store, 0, 0)", target.read_text())
+            install_public_execute_fixture(checkout)
+            target.write_text("unrelated fixture")
+            with self.assertRaises(ValueError):
+                install_public_execute_fixture(checkout)
+            self.assertEqual(target.read_text(), "unrelated fixture")
+
     def test_baseline_parent_is_resolved_in_head_checkout(self):
         commit = "a" * 40
         for reference in ("", "0" * 40):
@@ -214,11 +238,11 @@ class AllocationRatchetTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, output, "")
 
         with tempfile.TemporaryDirectory() as directory, patch("subprocess.run", side_effect=complete) as run:
-            results = run_benchmarks(Path(directory), "head", Path(directory), "antlr", 1000, 1)
+            results = run_benchmarks(Path(directory), "head", Path(directory), "nornic", 1000, 1)
             self.assertEqual(len(results), sum(map(len, WORKLOADS.values())))
             self.assertTrue(all(result["B/op"] == 8 for result in results.values()))
             self.assertEqual(run.call_count, 2 * len(WORKLOADS))
-            self.assertTrue(all(call.kwargs["env"]["NORNICDB_PARSER"] == "antlr" for call in run.call_args_list))
+            self.assertTrue(all(call.kwargs["env"]["NORNICDB_PARSER"] == "nornic" for call in run.call_args_list))
 
     def test_parse_and_complete_coverage(self):
         event = {"Action": "output", "Output": "BenchmarkSample-1 100 4 ns/op 8 B/op 2 allocs/op\n"}
@@ -271,7 +295,7 @@ def main():
     parser.add_argument("--base", type=Path)
     parser.add_argument("--head", type=Path)
     parser.add_argument("--artifacts", type=Path)
-    parser.add_argument("--parser", choices=("nornic", "antlr"), default="nornic")
+    parser.add_argument("--parser", choices=("nornic",), default="nornic")
     parser.add_argument("--operations", type=int, default=1000)
     parser.add_argument("--samples", type=int, default=5)
     parser.add_argument("--tolerance-bytes-pct", type=float, default=1.0,
@@ -289,6 +313,8 @@ def main():
         parser.error("positive operations/samples and base, head, artifacts paths are required")
     artifacts = arguments.artifacts.resolve()
     artifacts.mkdir(parents=True, exist_ok=True)
+    for checkout in (arguments.base.resolve(), arguments.head.resolve()):
+        install_public_execute_fixture(checkout)
     base = run_benchmarks(arguments.base.resolve(), "base", artifacts, arguments.parser, arguments.operations, arguments.samples)
     head = run_benchmarks(arguments.head.resolve(), "head", artifacts, arguments.parser, arguments.operations, arguments.samples)
     exception_path = arguments.head / "scripts/cypher-tck/allocation-exceptions.json"

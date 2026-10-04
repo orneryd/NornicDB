@@ -20,10 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evaluation. Binding filters and complete WITH plans read native scopes without
   per-row parameter copies; membership indexes validate list contents once per
   invocation and preserve concurrent prepared views (#728).
-- Compare six fixed-count benchmark workloads under both parsers in CI, gating
+- Compare seven fixed-count benchmark workloads under the Nornic parser in CI, gating
   allocation medians while reporting timing separately. Preserve raw samples
   and separate CPU profiles, resolve baseline commit hashes before checkout,
-  and warm/stop the Badger cache-hit benchmark outside measurement (#754).
+  and warm/stop the Badger cache-hit benchmark outside measurement. Include
+  cache-disabled public Execute with an identical fixture on both revisions;
+  exclude ANTLR from allocation checks, not parser correctness checks (#754).
 
 - Seek a single-property uniqueness or node key constraint's own index for
   equality and IN predicates, as an index created with CREATE INDEX is used,
