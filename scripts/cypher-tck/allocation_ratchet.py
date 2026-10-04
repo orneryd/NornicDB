@@ -128,7 +128,7 @@ def compare_allocations(base, head, exceptions, tolerance_percent=0.0):
 
 
 def install_public_execute_fixture(checkout):
-    source = Path(__file__).parent / "fixtures/public_execute_bench_test.go"
+    source = Path(__file__).parent / "testdata/public_execute_bench_test.go"
     target = checkout / "pkg/cypher/allocation_ratchet_execute_bench_test.go"
     if target.exists() and target.read_bytes() != source.read_bytes():
         raise ValueError(f"refusing to overwrite unrelated benchmark: {target}")
