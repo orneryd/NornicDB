@@ -48,9 +48,10 @@ through the vector search APIs.
 Re-running the importer is an incremental sync, not a re-import:
 
 - new nodes and edges are created;
-- existing nodes and edges are rewritten **only when their content hash
-  changes** (`props_hash`), so unchanged records are never touched and the
-  embedding worker has nothing to re-embed on repeat runs;
+- existing nodes are rewritten **only when their content hash changes**
+  (`props_hash`), so unchanged nodes are never touched and the embedding
+  worker has nothing to re-embed on repeat runs; edges are re-written in
+  place by MERGE (they carry no embeddings, so this is cheap);
 - stale nodes and edges that disappeared from the graph are deleted, scoped
   to importer-managed labels so unrelated data in the database is never
   touched;

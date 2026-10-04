@@ -116,14 +116,11 @@ class GraphifyLocalTest(unittest.TestCase):
         edge_merge = [(query, params) for query, params in queries
                       if "MERGE (a)-[r:CALLS]" in query]
         self.assertIn(("UNWIND $rows AS row MATCH (a:Code {id: row.src}), (b:Entity {id: row.tgt}) "
-                       "MERGE (a)-[r:CALLS]->(b) ON CREATE SET r += row.props",
+                       "MERGE (a)-[r:CALLS]->(b) SET r += row.props",
                        {"rows": [{"src": "source", "tgt": "implicit", "props": edge_props}]}), edge_merge)
-        edge_update = [params for query, params in queries
-                       if "MATCH (a:Code {id: row.src})-[r:CALLS]->" in query
-                       and "r.props_hash <> row.props_hash" in query]
-        self.assertEqual(len(edge_update), 1)
-        self.assertEqual(edge_update[0]["rows"], [{"src": "source", "tgt": "implicit",
-                                                    "props": edge_props}])
+        self.assertFalse(any("MATCH (a:Code {id: row.src})-[r:CALLS]->" in q
+                             for q, _ in queries),
+                         "edge writes must stay on the single MERGE fast path")
 
     def test_import_sync_deletes_stale_nodes_and_edges(self):
         graph = {
@@ -174,9 +171,8 @@ class GraphifyLocalTest(unittest.TestCase):
             with patch("scripts.graphify_local.GraphDatabase.driver", return_value=driver):
                 import_graph(path, "bolt://127.0.0.1:7687", "admin", "test", 10)
         update_queries = [q for q, _ in driver.connection.queries if "props_hash <> row.props_hash" in q]
-        self.assertEqual(len(update_queries), 2)  # one for nodes, one for edges
+        self.assertEqual(len(update_queries), 1)  # nodes only; edges use the single MERGE fast path
         self.assertIn("n.props_hash IS NULL OR n.props_hash", update_queries[0])
-        self.assertIn("r.props_hash IS NULL OR r.props_hash", update_queries[1])
         for q, _ in driver.connection.queries:
             self.assertNotIn("n.updated_at < row.updated_at", q)
             self.assertNotIn("all(k IN keys(row.props)", q)

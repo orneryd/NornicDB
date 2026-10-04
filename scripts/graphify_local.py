@@ -360,7 +360,7 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", dat
     edge_batches = defaultdict(list)
     indexed_labels = set()
     node_count = edge_count = bodied_count = skipped_count = 0
-    updated_nodes = updated_edges = 0
+    updated_nodes = 0
     symbols = collect_symbol_lines(graph_path)
     line_cache = {}
     state_cache = {}
@@ -422,25 +422,17 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", dat
                 rows.clear()
 
             def write_edges(source_label, target_label, relation, rows):
-                nonlocal updated_edges
-                # Create missing edges with their properties.
+                # Edges are written in a single MERGE: the engine's batched
+                # UNWIND-MERGE fast path handles this shape, and re-running
+                # rewrites edge props in place. Edges carry no embeddings, so
+                # an unconditional SET has no re-embedding cost (unlike nodes,
+                # which stay hash-guarded).
                 run_retry(
                     f"UNWIND $rows AS row "
                     f"MATCH (a:{source_label} {{id: row.src}}), (b:{target_label} {{id: row.tgt}}) "
-                    f"MERGE (a)-[r:{relation}]->(b) ON CREATE SET r += row.props",
+                    f"MERGE (a)-[r:{relation}]->(b) SET r += row.props",
                     rows=rows,
                 ).consume()
-                # Gentle update: rewrite only edges whose content hash changed.
-                result = run_retry(
-                    f"UNWIND $rows AS row "
-                    f"MATCH (a:{source_label} {{id: row.src}})-[r:{relation}]->"
-                    f"(b:{target_label} {{id: row.tgt}}) "
-                    f"WHERE r.props_hash IS NULL OR r.props_hash <> row.props_hash "
-                    f"SET r += row.props RETURN count(r) AS updated",
-                    rows=rows,
-                )
-                record = result.single()
-                updated_edges += record.get("updated", 0) if record else 0
                 rows.clear()
 
             for data in graph_items(graph_path, "nodes"):
@@ -570,8 +562,8 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", dat
                     )
 
             print(
-                f"Updated {updated_nodes} existing nodes and {updated_edges} "
-                f"existing edges; everything else was left untouched", flush=True,
+                f"Updated {updated_nodes} existing nodes; "
+                f"everything else was left untouched", flush=True,
             )
 
     print(f"Imported {node_count} nodes and {edge_count} edges into {uri}")

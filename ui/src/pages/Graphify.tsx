@@ -950,18 +950,13 @@ export function Graphify() {
       }
       for (const group of linkGroups.values()) {
         for (const batch of chunk(group.rows, 2000)) {
+          // Single MERGE keeps edge writes on the engine's batched
+          // UNWIND-MERGE fast path. Edges carry no embeddings, so in-place
+          // rewrites are cheap (nodes stay hash-guarded).
           await api.executeCypherOnDatabase(
             name,
             `UNWIND $rows AS row MATCH (a:${group.sl} {id: row.src}), (b:${group.tl} {id: row.tgt}) ` +
-              `MERGE (a)-[r:${group.rel}]->(b) ON CREATE SET r += row.props`,
-            { rows: batch },
-          );
-          // Gentle edge update: only rewrite edges whose content hash changed.
-          await api.executeCypherOnDatabase(
-            name,
-            `UNWIND $rows AS row MATCH (a:${group.sl} {id: row.src})-[r:${group.rel}]->(b:${group.tl} {id: row.tgt}) ` +
-              `WHERE r.props_hash IS NULL OR r.props_hash <> row.props_hash ` +
-              `SET r += row.props`,
+              `MERGE (a)-[r:${group.rel}]->(b) SET r += row.props`,
             { rows: batch },
           );
           done += batch.length;
