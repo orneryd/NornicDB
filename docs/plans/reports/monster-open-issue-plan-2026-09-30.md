@@ -1001,3 +1001,39 @@ whole-package claim. No benchmark or running-installation changes.
 Publish with `Refs #713`; include both owner-staged documentation files unchanged.
 Remaining structural WHERE/projection and CI-TestKit acceptance stays open;
 #547 excluded.
+
+### Shared Post-SET UNWIND Projection: 2026-10-04
+
+The post-SET UNWIND adapter independently evaluated RETURN expressions without
+binding the unwound value and did not apply aggregation or windows. Three direct
+arithmetic/group/window regressions fail before repair. Replace that loop with
+shared pipelineApplyUnwind and projectMergeReturn calls, preserving syntax
+guards, incoming node/scalar bindings, typed failures and caller mutation stats.
+Nine direct/public value controls plus two direct failure controls pass on both
+actual parsers. Public controls prove SET changes score from zero to seven.
+
+Pinned Neo4j EXPLAIN confirms WITH is required between SET and UNWIND. The new
+public controls use that boundary; their baseline success is not misreported as
+a public regression. Older bare SET/UNWIND permutation fixtures are retained and
+pass under nornic, but their invalid syntax causes antlr rejection, so no broader
+antlr legacy-fixture pass is claimed. Repository correctness exposed an old
+ghost.prop raw-text expectation; retain it as a typed SyntaxError control while
+keeping all original valid scalar/node/parameter projection assertions.
+
+Three appended reference cases compare rows, columns and written graph while
+preserving the protected prefix. Integrated async-count fix 21c8872d; fresh
+repository correctness passes. Both parsers pass 1,038 Bolt + 1,048 HTTP
+comparisons across both modes (4,172 total) and official 7,794-outcome ratchets
+with zero gaps/blockers/harness errors. Final async/projection races, scoped vet
+and diagnostics pass. Focused adapter coverage is 93.8%, not a package claim.
+Read-only Graphify records the executeSet caller and private evaluator edges;
+current source confirms those edges are replaced by shared pipeline delegation.
+
+Prior bf585b2d includes both owner-staged documentation files and has successful
+CI/Conformance. Docs Pages failed on 28 relative source-code links outside the
+documentation tree in the plan. Change only those link targets to existing
+repository-style GitHub URLs; assert all 28 files exist. The proposed design is
+unchanged, and the exact strict MkDocs build now passes in a temporary environment.
+
+Publish with `Refs #713`; #713/#728/#754 remain open, #547 excluded. No
+benchmark/profile/performance-equivalence or running-installation changes.

@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Delegate post-SET UNWIND projection to shared UNWIND and RETURN execution,
+  preserving mutation statistics, typed failures, grouping and windows (#713).
+- Make projected-entity plan source links usable in the strict documentation
+  build without changing the proposed design.
+
 - Retire the traversal projection graph-evaluator fallback. Use the shared typed
   failure boundary for unresolved expressions, preserving null entity bindings
   and transactional rollback instead of projecting raw query text (#713).

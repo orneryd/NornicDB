@@ -1216,73 +1216,27 @@ func (e *StorageExecutor) executeSetTrailingUnwind(ctx context.Context, trailing
 	}
 
 	unwindVar := strings.TrimSpace(afterAs[:returnIdx])
-	if fields := strings.Fields(unwindVar); len(fields) > 0 {
-		unwindVar = fields[0]
-	}
 	if unwindVar == "" {
 		return nil, localizedError(localization.CypherMutationsUnwindASVariableNonEmpty(), nil)
 	}
 
-	returnClause := strings.TrimSpace(afterAs[returnIdx+6:])
-	returnItems := e.parseReturnItems(returnClause)
-	result.Columns = make([]string, len(returnItems))
-	for i, item := range returnItems {
-		if item.alias != "" {
-			result.Columns[i] = item.alias
-		} else {
-			result.Columns[i] = item.expr
-		}
-	}
-
-	colIndex := make(map[string]int, len(matchResult.Columns))
-	for i, col := range matchResult.Columns {
-		colIndex[col] = i
-	}
-
+	ctx = withExpressionFailureSlot(ctx)
+	rows := make([]pipelineRow, 0, len(matchResult.Rows))
 	for _, row := range matchResult.Rows {
-		nodeVars := make(map[string]*storage.Node, len(matchResult.Columns))
-		for i, col := range matchResult.Columns {
-			if i < len(row) {
-				if node, ok := row[i].(*storage.Node); ok && node != nil {
-					nodeVars[col] = node
-				}
-			}
-		}
-
-		listVal := e.resolveUnwindValueFromExpr(ctx, unwindExpr, nodeVars)
-		items := coerceToUnwindItems(listVal)
-		for _, itemVal := range items {
-			newRow := make([]interface{}, len(returnItems))
-			for i, ret := range returnItems {
-				expr := strings.TrimSpace(ret.expr)
-				switch {
-				case expr == unwindVar:
-					newRow[i] = itemVal
-				case strings.Contains(expr, "."):
-					parts := strings.SplitN(expr, ".", 2)
-					if len(parts) == 2 {
-						if node, ok := nodeVars[parts[0]]; ok && node != nil {
-							newRow[i] = node.Properties[parts[1]]
-							break
-						}
-					}
-					newRow[i] = e.evaluateExpressionWithContext(ctx, expr, nodeVars, make(map[string]*storage.Edge))
-				default:
-					if idx, ok := colIndex[expr]; ok && idx < len(row) {
-						newRow[i] = row[idx]
-						break
-					}
-					if node, ok := nodeVars[expr]; ok {
-						newRow[i] = node
-						break
-					}
-					newRow[i] = e.evaluateExpressionWithContext(ctx, expr, nodeVars, make(map[string]*storage.Edge))
-				}
-			}
-			result.Rows = append(result.Rows, newRow)
-		}
+		rows = append(rows, pipelineRow(buildRowValueMap(matchResult.Columns, row)))
 	}
-
+	unwindClause := "UNWIND " + unwindExpr + " AS " + unwindVar
+	rows, ok := e.pipelineApplyUnwind(ctx, rows, unwindClause)
+	if !ok {
+		_, _, err := pipelineDecline(ctx, true, unwindClause)
+		return nil, err
+	}
+	projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+strings.TrimSpace(afterAs[returnIdx+6:]))
+	if err != nil {
+		return nil, err
+	}
+	result.Columns = projected.Columns
+	result.Rows = projected.Rows
 	return result, nil
 }
 

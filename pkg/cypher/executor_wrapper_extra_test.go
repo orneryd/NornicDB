@@ -345,12 +345,12 @@ func TestExecuteSetTrailingUnwind_ErrorAndProjectionBranches(t *testing.T) {
 	})
 	ok, err := exec.executeSetTrailingUnwind(
 		ctxWithParams,
-		"UNWIND ($vals) AS item RETURN item, n.name, x, n, toUpper(n.name), ghost.prop",
+		"UNWIND ($vals) AS item RETURN item, n.name, x, n, toUpper(n.name)",
 		matchResult,
 		&ExecuteResult{},
 	)
 	require.NoError(t, err)
-	require.Equal(t, []string{"item", "n.name", "x", "n", "toUpper(n.name)", "ghost.prop"}, ok.Columns)
+	require.Equal(t, []string{"item", "n.name", "x", "n", "toUpper(n.name)"}, ok.Columns)
 	require.Len(t, ok.Rows, 2)
 
 	assert.Equal(t, int64(10), ok.Rows[0][0])
@@ -358,14 +358,21 @@ func TestExecuteSetTrailingUnwind_ErrorAndProjectionBranches(t *testing.T) {
 	assert.Equal(t, int64(7), ok.Rows[0][2])
 	assert.Equal(t, node, ok.Rows[0][3])
 	assert.Equal(t, "ALICE", ok.Rows[0][4])
-	assert.Equal(t, "ghost.prop", ok.Rows[0][5])
 
 	assert.Equal(t, int64(20), ok.Rows[1][0])
 	assert.Equal(t, "alice", ok.Rows[1][1])
 	assert.Equal(t, int64(7), ok.Rows[1][2])
 	assert.Equal(t, node, ok.Rows[1][3])
 	assert.Equal(t, "ALICE", ok.Rows[1][4])
-	assert.Equal(t, "ghost.prop", ok.Rows[1][5])
+
+	failed, err := exec.executeSetTrailingUnwind(
+		withExpressionFailureSlot(ctxWithParams),
+		"UNWIND ($vals) AS item RETURN ghost.prop",
+		matchResult,
+		&ExecuteResult{},
+	)
+	require.Nil(t, failed)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 }
 
 func TestTryAsyncCreateNodeBatch_Branches(t *testing.T) {

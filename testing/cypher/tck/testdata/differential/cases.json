@@ -2634,5 +2634,20 @@
     "setup": ["CREATE (:ProjectionSeed {id: 1})-[:LINK]->(:ProjectionTarget {id: 2})"],
     "query": "MATCH (n:ProjectionSeed)-[:LINK]->(target) OPTIONAL MATCH (target)-[:NONE]->(missing) RETURN missing.name AS value",
     "no_effects": true
+  },
+  {
+    "name": "issue713 SET WITH UNWIND arithmetic window",
+    "setup": ["CREATE (:SetUnwindProjection {score: 0})"],
+    "query": "MATCH (n:SetUnwindProjection) SET n.score = 7 WITH n UNWIND [1,2] AS x RETURN x + 1 AS next ORDER BY next DESC LIMIT 1"
+  },
+  {
+    "name": "issue713 SET WITH UNWIND grouped count",
+    "setup": ["CREATE (:SetUnwindProjection {score: 0})"],
+    "query": "MATCH (n:SetUnwindProjection) SET n.score = 7 WITH n UNWIND [1,2,2] AS x RETURN x, count(*) AS c ORDER BY x"
+  },
+  {
+    "name": "issue713 SET WITH UNWIND quoted window",
+    "setup": ["CREATE (:SetUnwindProjection {score: 0})"],
+    "query": "MATCH (n:SetUnwindProjection) SET n.score = 7 WITH n UNWIND [1,2] AS x RETURN n.score + x AS `score value` ORDER BY `score value` DESC SKIP 1 LIMIT 1"
   }
 ]

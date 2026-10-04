@@ -63,20 +63,20 @@ locations are navigation evidence, not a substitute for the implementation.
 
 | Surface | Existing implementation | Design implication |
 |---|---|---|
-| Node projection | [ProjectedNodeReader and projected stream interfaces](../../pkg/storage/types.go) | Preserve nil/full versus empty/no-properties compatibility |
-| Stream options | [StreamNodesOptions and scan kernel](../../pkg/storage/badger_stats.go) | Extend the shared reader rather than adding a parallel scan stack |
-| Scan decoder | [projectedNodeDecoder](../../pkg/storage/projected_node_decoder.go) | Already resolves tokens per namespace and reuses scratch state; use as baseline/fallback |
-| Property values | [Property codec](../../pkg/storage/property_codec.go) | Preserve strict types and stored temporal-value handling |
-| Node encoding | [encodeNodeInTxn](../../pkg/storage/badger_helpers.go) | Existing property list and metadata body remain readable |
-| Edge projection | [EdgesBetweenMatcher](../../pkg/storage/edges_between_stream.go) | Existing projected candidate matching and whole-edge return contract must remain |
-| Edge header | [Compact edge codec](../../pkg/storage/edge_compact.go) | Endpoints, type, and metadata have an existing compact representation |
-| Async reads | [AsyncEngine](../../pkg/storage/async_engine.go): `GetNode`, `GetEdge`, `StreamNodesWithOptions`, and `StreamNodesByLabelProjected`; [light node reads](../../pkg/storage/async_engine_node_reads.go) | Existing node/edge caches and deletion sets already shadow persisted state |
-| Transaction reads | [BadgerTransaction](../../pkg/storage/badger_transaction.go): `GetNode`, `GetEdge`, projected streams, and pending merge helpers | Existing own-write/deletion overlays already sit above pinned physical snapshots and logical version selection |
-| Property-index candidates | [MergePendingPropertyMatches](../../pkg/storage/badger_transaction_pending_index.go) | Existing pending-property index replaces rewritten/deleted committed candidates and adds own matches |
-| Projected relationship candidates | [MatchEdgesBetween wrappers](../../pkg/storage/edges_between_stream.go) | Async and transaction wrappers already merge edge replacements/deletes; preserve and validate committed snapshot routing |
-| Snapshot admission | [beginTransactionSnapshot](../../pkg/cypher/transaction_admission.go), [Cypher transaction setup](../../pkg/cypher/transaction.go), and `FlushBeforeSnapshot` in [AsyncEngine](../../pkg/storage/async_engine.go) | Existing admission flushes acknowledged writes and opens the snapshot under a short-lived guard |
-| Atomic publication | [commitWriter](../../pkg/storage/badger_commit_writer.go) | Directory/payload publication must participate in ordinary and large atomic commits |
-| Cleanup | [DeleteByPrefix](../../pkg/storage/badger_backup.go) | New key families must be included in database deletion |
+| Node projection | [ProjectedNodeReader and projected stream interfaces](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/types.go) | Preserve nil/full versus empty/no-properties compatibility |
+| Stream options | [StreamNodesOptions and scan kernel](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_stats.go) | Extend the shared reader rather than adding a parallel scan stack |
+| Scan decoder | [projectedNodeDecoder](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/projected_node_decoder.go) | Already resolves tokens per namespace and reuses scratch state; use as baseline/fallback |
+| Property values | [Property codec](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/property_codec.go) | Preserve strict types and stored temporal-value handling |
+| Node encoding | [encodeNodeInTxn](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_helpers.go) | Existing property list and metadata body remain readable |
+| Edge projection | [EdgesBetweenMatcher](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/edges_between_stream.go) | Existing projected candidate matching and whole-edge return contract must remain |
+| Edge header | [Compact edge codec](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/edge_compact.go) | Endpoints, type, and metadata have an existing compact representation |
+| Async reads | [AsyncEngine](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/async_engine.go): `GetNode`, `GetEdge`, `StreamNodesWithOptions`, and `StreamNodesByLabelProjected`; [light node reads](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/async_engine_node_reads.go) | Existing node/edge caches and deletion sets already shadow persisted state |
+| Transaction reads | [BadgerTransaction](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_transaction.go): `GetNode`, `GetEdge`, projected streams, and pending merge helpers | Existing own-write/deletion overlays already sit above pinned physical snapshots and logical version selection |
+| Property-index candidates | [MergePendingPropertyMatches](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_transaction_pending_index.go) | Existing pending-property index replaces rewritten/deleted committed candidates and adds own matches |
+| Projected relationship candidates | [MatchEdgesBetween wrappers](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/edges_between_stream.go) | Async and transaction wrappers already merge edge replacements/deletes; preserve and validate committed snapshot routing |
+| Snapshot admission | [beginTransactionSnapshot](https://github.com/orneryd/NornicDB/blob/main/pkg/cypher/transaction_admission.go), [Cypher transaction setup](https://github.com/orneryd/NornicDB/blob/main/pkg/cypher/transaction.go), and `FlushBeforeSnapshot` in [AsyncEngine](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/async_engine.go) | Existing admission flushes acknowledged writes and opens the snapshot under a short-lived guard |
+| Atomic publication | [commitWriter](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_commit_writer.go) | Directory/payload publication must participate in ordinary and large atomic commits |
+| Cleanup | [DeleteByPrefix](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_backup.go) | New key families must be included in database deletion |
 
 Projected streaming currently selects properties for decoding, but it is not
 constant-time byte access to an arbitrary property: the existing tokenized
@@ -312,13 +312,13 @@ not later peer writes from the live async cache.
 
 | Layer | Verified behavior | Existing regression coverage to extend |
 |---|---|---|
-| Async node/edge contents | `GetNode`/`GetEdge` check deletion sets, then caches, then the inner engine | [Async overlay parity test](../../pkg/storage/async_engine_read_overlay_test.go) compares reads before and after flush |
-| Async projected scans | `StreamNodesWithOptions` shadows persisted IDs; `StreamNodesByLabelProjected` projects pending label matches and suppresses overridden IDs | [Async overlay parity test](../../pkg/storage/async_engine_read_overlay_test.go) includes projected label reads, adjacency, edge-between reads, and type counts |
-| Snapshot admission | `beginTransactionSnapshot` calls `FlushBeforeSnapshot`, which flushes and opens the snapshot while holding the flush guard | [Flush/snapshot guard tests](../../pkg/storage/async_engine_count_flush_race_test.go), including `TestAsyncEngineFlushBeforeSnapshotReleasesGuardAfterSnapshotOpens` |
-| Transaction entity reads | `GetNode`/`GetEdge` return not-found for own deletes, copies of own pending replacements, otherwise snapshot-selected committed state | [Transaction read tests](../../pkg/storage/badger_transaction_reads_test.go) include pending/deleted edges and pending node merges |
-| Snapshot selection | `getCommittedNodeLocked`/`getCommittedEdgeLocked` use snapshot views and reject `ErrNotVisibleAtSnapshot` instead of reading latest state | [Snapshot anomaly tests](../../pkg/storage/transaction_snapshot_anomalies_test.go) include traversal across concurrent deletion |
-| Transaction projected scans | Projected label streams and `StreamNodesWithOptions` merge snapshot rows with projected pending nodes and suppress own deletes | [Projected transaction read tests](../../pkg/storage/badger_transaction_reads_test.go) and [transaction stream tests](../../pkg/storage/badger_transaction_stream_nodes_test.go) |
-| Candidate overlays | `MergePendingPropertyMatches` replaces rewritten/deleted index entries; async/transaction `MatchEdgesBetween` overlays edge changes | [Pending-index tests](../../pkg/storage/badger_transaction_pending_index_test.go) and [projected edge matching](../../pkg/storage/edges_between_stream.go) |
+| Async node/edge contents | `GetNode`/`GetEdge` check deletion sets, then caches, then the inner engine | [Async overlay parity test](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/async_engine_read_overlay_test.go) compares reads before and after flush |
+| Async projected scans | `StreamNodesWithOptions` shadows persisted IDs; `StreamNodesByLabelProjected` projects pending label matches and suppresses overridden IDs | [Async overlay parity test](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/async_engine_read_overlay_test.go) includes projected label reads, adjacency, edge-between reads, and type counts |
+| Snapshot admission | `beginTransactionSnapshot` calls `FlushBeforeSnapshot`, which flushes and opens the snapshot while holding the flush guard | [Flush/snapshot guard tests](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/async_engine_count_flush_race_test.go), including `TestAsyncEngineFlushBeforeSnapshotReleasesGuardAfterSnapshotOpens` |
+| Transaction entity reads | `GetNode`/`GetEdge` return not-found for own deletes, copies of own pending replacements, otherwise snapshot-selected committed state | [Transaction read tests](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_transaction_reads_test.go) include pending/deleted edges and pending node merges |
+| Snapshot selection | `getCommittedNodeLocked`/`getCommittedEdgeLocked` use snapshot views and reject `ErrNotVisibleAtSnapshot` instead of reading latest state | [Snapshot anomaly tests](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/transaction_snapshot_anomalies_test.go) include traversal across concurrent deletion |
+| Transaction projected scans | Projected label streams and `StreamNodesWithOptions` merge snapshot rows with projected pending nodes and suppress own deletes | [Projected transaction read tests](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_transaction_reads_test.go) and [transaction stream tests](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_transaction_stream_nodes_test.go) |
+| Candidate overlays | `MergePendingPropertyMatches` replaces rewritten/deleted index entries; async/transaction `MatchEdgesBetween` overlays edge changes | [Pending-index tests](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_transaction_pending_index_test.go) and [projected edge matching](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/edges_between_stream.go) |
 
 These tests are existing source evidence, not a claim that they were rerun for
 this documentation update. They demonstrate intended contracts; byte-map
@@ -584,10 +584,10 @@ revisions retained for snapshots are normal MVCC dependencies, not sidecar copie
 
 ### 10.1 Existing history and scope
 
-[Current MVCC records](../../pkg/storage/badger_mvcc.go) encode complete node/edge
+[Current MVCC records](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/badger_mvcc.go) encode complete node/edge
 snapshots and tombstones, and readers select exact or at-or-before versions.
 Node history currently strips managed embedding vectors through
-`mvccSnapshotNode`; preserve that contract. [Default retention](../../pkg/storage/types.go)
+`mvccSnapshotNode`; preserve that contract. [Default retention](https://github.com/orneryd/NornicDB/blob/main/pkg/storage/types.go)
 is head-only (`MaxVersionsPerKey == 0`), so inverse diffs primarily save space
 when historical retention is enabled. They do not eliminate Badger's own
 physical versions needed by active snapshots.

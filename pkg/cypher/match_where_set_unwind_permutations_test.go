@@ -12,6 +12,77 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGh713SetUnwindUsesSharedProjection(t *testing.T) {
+	for _, route := range []string{"direct", "autocommit", "explicit transaction"} {
+		for _, test := range []struct {
+			name    string
+			tail    string
+			columns []string
+			rows    [][]interface{}
+		}{
+			{"arithmetic window", "UNWIND [1,2] AS x RETURN x + 1 AS next ORDER BY next DESC LIMIT 1", []string{"next"}, [][]interface{}{{int64(3)}}},
+			{"grouped count", "UNWIND [1,2,2] AS x RETURN x, count(*) AS c ORDER BY x", []string{"x", "c"}, [][]interface{}{{int64(1), int64(1)}, {int64(2), int64(2)}}},
+			{"quoted window", "UNWIND [1,2] AS x RETURN n.score + x AS `score value` ORDER BY `score value` DESC SKIP 1 LIMIT 1", []string{"score value"}, [][]interface{}{{int64(8)}}},
+		} {
+			t.Run(route+"/"+test.name, func(t *testing.T) {
+				exec, ctx := newUnitExecutor(t)
+				score := int64(0)
+				if route == "direct" {
+					score = 7
+				}
+				seed, err := exec.Execute(ctx, "CREATE (n:SetUnwindProjection {score: $score}) RETURN n", map[string]interface{}{"score": score})
+				require.NoError(t, err)
+				var result *ExecuteResult
+				if route == "direct" {
+					ctx = withExpressionFailureSlot(ctx)
+					stats := &QueryStats{}
+					result, err = exec.executeSetTrailingUnwind(ctx, test.tail, seed, &ExecuteResult{Stats: stats})
+					require.NoError(t, getExpressionFailure(ctx))
+					if err == nil {
+						require.Same(t, stats, result.Stats)
+					}
+				} else {
+					if route == "explicit transaction" {
+						_, err = exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+					}
+					result, err = exec.Execute(ctx, "MATCH (n:SetUnwindProjection) SET n.score = 7 WITH n "+test.tail, nil)
+					if route == "explicit transaction" && err == nil {
+						_, commitErr := exec.Execute(ctx, "COMMIT", nil)
+						require.NoError(t, commitErr)
+					}
+				}
+				require.NoError(t, err)
+				require.Equal(t, test.columns, result.Columns)
+				require.Equal(t, test.rows, result.Rows)
+				stored, err := exec.Execute(ctx, "MATCH (n:SetUnwindProjection) RETURN n.score AS score, count(*) AS c", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(7), int64(1)}}, stored.Rows)
+			})
+		}
+	}
+}
+
+func TestGh713SetUnwindSharedFailures(t *testing.T) {
+	for _, test := range []struct {
+		tail string
+		code string
+	}{
+		{"UNWIND missing AS x RETURN x", "Neo.ClientError.Statement.SyntaxError"},
+		{"UNWIND [0] AS x RETURN 1 / x", "Neo.ClientError.Statement.ArithmeticError"},
+	} {
+		t.Run(test.tail, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			ctx = withExpressionFailureSlot(ctx)
+			input := &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{nil}}}
+			result, err := exec.executeSetTrailingUnwind(ctx, test.tail, input, &ExecuteResult{Stats: &QueryStats{}})
+			require.Nil(t, result)
+			requireStatusCode(t, err, test.code)
+			requireStatusCode(t, getExpressionFailure(ctx), test.code)
+		})
+	}
+}
+
 func TestMatchWhereSetUnwind_PermutationsAndStyles(t *testing.T) {
 	type testCase struct {
 		name         string
