@@ -81,7 +81,8 @@ func evaluateComparisonChain(
 			if operator == "!=" {
 				operator = "<>"
 			}
-			comparison := compare(left, right, operator)
+			leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right)
+			comparison := compare(leftValue, rightValue, operator)
 			if comparison == nil {
 				hasNull = true
 			} else if matched, ok := comparison.(bool); !ok || !matched {

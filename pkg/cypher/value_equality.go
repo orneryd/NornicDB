@@ -124,6 +124,56 @@ func compareCypherNumbersExactly(left, right interface{}) (comparison int, ok bo
 	return 0, false
 }
 
+// promoteConstantNumbers applies Neo4j's plan-time folding to a comparison
+// whose operands, leftExpr and rightExpr, are both constant numeric
+// expressions (constantNumericComparison): for =, < and > an integer
+// compared with a float is compared as a float, so 9007199254740993 =
+// 9007199254740992.0 is true and 9007199254740993 > 9007199254740992.0 is
+// false. <>, <= and >= of the same literals, and every comparison of values
+// from variables, parameters, properties or functions, compare exactly
+// (compareCypherNumbersExactly, #893). Other values are returned unchanged.
+func promoteConstantNumbers(operator, leftExpr, rightExpr string, left, right interface{}) (interface{}, interface{}) {
+	// The value types are checked first: the text is read only for an
+	// integer compared with a float.
+	_, leftIsFloat := cypherFloatValue(left)
+	_, rightIsFloat := cypherFloatValue(right)
+	if leftIsFloat == rightIsFloat || !constantNumericComparison(operator, leftExpr, rightExpr) {
+		return left, right
+	}
+	return promoteIntegerToFloat(left, right)
+}
+
+// constantNumericComparison reports whether a comparison is one Neo4j folds
+// with float promotion (promoteConstantNumbers): =, < or > of two constant
+// numeric expressions. Plans decide this once, not per row.
+func constantNumericComparison(operator, leftExpr, rightExpr string) bool {
+	switch operator {
+	case "=", "<", ">":
+		return isConstantNumericExpression(leftExpr) && isConstantNumericExpression(rightExpr)
+	}
+	return false
+}
+
+// promoteIntegerToFloat returns an integer compared with a float as a float,
+// for a constant numeric comparison (promoteConstantNumbers).
+func promoteIntegerToFloat(left, right interface{}) (interface{}, interface{}) {
+	_, leftIsFloat := cypherFloatValue(left)
+	_, rightIsFloat := cypherFloatValue(right)
+	if leftIsFloat == rightIsFloat {
+		return left, right
+	}
+	if leftIsFloat {
+		if integer, ok := cypherSignedInteger(right); ok {
+			return left, float64(integer)
+		}
+		return left, right
+	}
+	if integer, ok := cypherSignedInteger(left); ok {
+		return float64(integer), right
+	}
+	return left, right
+}
+
 // cypherFloatValue returns a float32 or float64 value as a float64.
 func cypherFloatValue(value interface{}) (float64, bool) {
 	switch number := value.(type) {

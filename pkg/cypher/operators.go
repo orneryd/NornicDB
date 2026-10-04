@@ -546,6 +546,7 @@ func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr strin
 			if left == nil || right == nil {
 				return nil, true
 			}
+			left, right = promoteConstantNumbers(op.op, leftExpr, rightExpr, left, right)
 			if op.op == "=~" {
 				matched, err := cypherRegexMatch(left, right)
 				if err != nil {

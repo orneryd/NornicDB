@@ -572,6 +572,7 @@ func (e *StorageExecutor) compileBindingComparisonTruth(clause string) (bindingW
 		}
 
 		handler := comparisonEvaluationHandler(op)
+		constantNumbers := constantNumericComparison(op, leftExpr, rightExpr)
 		return func(b binding, params map[string]interface{}) cypherTruth {
 			leftValue, ok := leftResolver(b, params)
 			if !ok {
@@ -580,6 +581,9 @@ func (e *StorageExecutor) compileBindingComparisonTruth(clause string) (bindingW
 			rightValue, ok := rightResolver(b, params)
 			if !ok {
 				return truthUnknown
+			}
+			if constantNumbers {
+				leftValue, rightValue = promoteIntegerToFloat(leftValue, rightValue)
 			}
 			matched, known := handler.evaluate(leftValue, rightValue).(bool)
 			if !known {

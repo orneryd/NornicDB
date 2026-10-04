@@ -265,7 +265,10 @@ type rowPredicatePart struct {
 	left       rowOperand
 	right      rowOperand
 	operator   comparisonEvaluationHandler
-	parts      []rowPredicatePart
+	// constantNumbers marks a comparison of two constant numeric
+	// expressions, compared as Neo4j folds them (promoteConstantNumbers).
+	constantNumbers bool
+	parts           []rowPredicatePart
 	membership *bindingParamMembershipCache
 }
 
@@ -384,7 +387,8 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 				left, leftOK := parseCompiledRowOperand(scan.operand(text, 0))
 				right, rightOK := parseCompiledRowOperand(scan.operand(text, 1))
 				if leftOK && rightOK {
-					return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator)}, true
+					return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator),
+						constantNumbers: constantNumericComparison(operator, scan.operand(text, 0), scan.operand(text, 1))}, true
 				}
 			}
 		}
@@ -437,7 +441,8 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 	if operator == "!=" {
 		operator = "<>"
 	}
-	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator)}, true
+	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator),
+		constantNumbers: constantNumericComparison(operator, operands[0], operands[1])}, true
 }
 
 // planRowLiteralListMembership plans <operand> IN [<literal>, …]: a variable,
@@ -521,7 +526,8 @@ func planRowStringComparison(text string) (rowPredicatePart, bool) {
 		// text.
 		return rowPredicatePart{}, false
 	}
-	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: sides[0], right: sides[1], operator: comparisonEvaluationHandler(operator)}, true
+	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: sides[0], right: sides[1], operator: comparisonEvaluationHandler(operator),
+		constantNumbers: constantNumericComparison(operator, operands[0], operands[1])}, true
 }
 
 // evaluateRowPredicatePlan evaluates a planned predicate for a row.
@@ -630,7 +636,11 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 					return left.integer >= right.integer
 				}
 			}
-			matched, known := part.operator.evaluate(left.materialize(), right.materialize()).(bool)
+			leftValue, rightValue := left.materialize(), right.materialize()
+			if part.constantNumbers {
+				leftValue, rightValue = promoteIntegerToFloat(leftValue, rightValue)
+			}
+			matched, known := part.operator.evaluate(leftValue, rightValue).(bool)
 			return known && matched
 		}
 		left, leftOK := part.left.resolveScope(scope)
@@ -640,6 +650,9 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 		}
 		if left == nil || right == nil {
 			return false
+		}
+		if part.constantNumbers {
+			left, right = promoteIntegerToFloat(left, right)
 		}
 		matched, known := part.operator.evaluate(left, right).(bool)
 		return known && matched
