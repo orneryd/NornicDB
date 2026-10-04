@@ -23,6 +23,101 @@ func newUnitExecutor(t *testing.T) (*StorageExecutor, context.Context) {
 	return NewStorageExecutor(ns), context.Background()
 }
 
+func TestGh713TraversalProjectionUsesSharedFailureBoundary(t *testing.T) {
+	for _, route := range []string{"direct", "compiled"} {
+		for _, test := range []struct {
+			expression string
+			value      interface{}
+			code       string
+		}{
+			{"missing", nil, "Neo.ClientError.Statement.SyntaxError"},
+			{"missingFunction(n)", nil, "Neo.ClientError.Statement.SyntaxError"},
+			{"[, ]", nil, "Neo.ClientError.Statement.SyntaxError"},
+			{"1 / 0", nil, "Neo.ClientError.Statement.ArithmeticError"},
+			{"n.missing", nil, ""},
+			{"m.name", nil, ""},
+			{"r.weight", int64(2), ""},
+			{"r.missing", nil, ""},
+			{"missingRel.weight", nil, ""},
+			{"value + 1", int64(2), ""},
+		} {
+			t.Run(route+"/"+test.expression, func(t *testing.T) {
+				exec, ctx := newUnitExecutor(t)
+				ctx = withExpressionFailureSlot(ctx)
+				row := traversalOptRow{
+					nodes: map[string]*storage.Node{
+						"n": {ID: "n", Properties: map[string]interface{}{"name": "Alice"}},
+						"m": nil,
+					},
+					rels: map[string]*storage.Edge{
+						"r":          {ID: "r", Properties: map[string]interface{}{"weight": int64(2)}},
+						"missingRel": nil,
+					},
+					values: map[string]interface{}{"value": int64(1)},
+				}
+				var value interface{}
+				if route == "compiled" {
+					value = exec.compileTraversalProjection(ctx, test.expression)(row)
+				} else {
+					value = exec.evaluateTraversalRowExpression(ctx, test.expression, row)
+				}
+				require.Equal(t, test.value, value)
+				if test.code == "" {
+					require.NoError(t, getExpressionFailure(ctx))
+				} else {
+					requireStatusCode(t, getExpressionFailure(ctx), test.code)
+				}
+			})
+		}
+	}
+}
+
+func TestGh713TraversalProjectionErrorsPreserveGraph(t *testing.T) {
+	for _, route := range []string{"autocommit", "explicit transaction"} {
+		for _, test := range []struct {
+			projection string
+			code       string
+		}{
+			{"missingFunction(n)", "Neo.ClientError.Statement.SyntaxError"},
+			{"1 / $zero", "Neo.ClientError.Statement.ArithmeticError"},
+			{"missing.name", ""},
+		} {
+			t.Run(route+"/"+test.projection, func(t *testing.T) {
+				exec, ctx := newUnitExecutor(t)
+				_, err := exec.Execute(ctx, "CREATE (:ProjectionSeed {id: 1})-[:LINK]->(:ProjectionTarget {id: 2})", nil)
+				require.NoError(t, err)
+				if route == "explicit transaction" {
+					_, err = exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+				}
+				query := "MATCH (n:ProjectionSeed)-[:LINK]->(target) OPTIONAL MATCH (target)-[:NONE]->(missing) "
+				if test.code != "" {
+					query += "SET n.flag = true "
+				}
+				result, err := exec.Execute(ctx, query+"RETURN "+test.projection+" AS value", map[string]interface{}{"zero": int64(0)})
+				if test.code == "" {
+					require.NoError(t, err)
+					require.Equal(t, []string{"value"}, result.Columns)
+					require.Equal(t, [][]interface{}{{nil}}, result.Rows)
+				} else {
+					requireStatusCode(t, err, test.code)
+				}
+				if route == "explicit transaction" {
+					command := "COMMIT"
+					if test.code != "" {
+						command = "ROLLBACK"
+					}
+					_, err = exec.Execute(ctx, command, nil)
+					require.NoError(t, err)
+				}
+				stored, err := exec.Execute(ctx, "MATCH (n:ProjectionSeed) RETURN n.id AS id, n.flag AS flag", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(1), nil}}, stored.Rows)
+			})
+		}
+	}
+}
+
 func TestGh713AggregateNumberRejectsNonNumeric(t *testing.T) {
 	for _, value := range []interface{}{nil, true, "4", []interface{}{int64(4)}} {
 		floating, integer, integral, valid := pipelineAggregateNumber(value)
@@ -805,11 +900,11 @@ func TestApplyGeneralOptionalClause_EdgeInputs(t *testing.T) {
 
 func TestCompiledVarProjection_UnboundFallsBackToEvaluator(t *testing.T) {
 	exec, ctx := newUnitExecutor(t)
+	ctx = withExpressionFailureSlot(ctx)
 	row := traversalOptRow{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}}
 	compiled := exec.compileTraversalProjection(ctx, "zzz.prop")(row)
-	direct := exec.evaluateExpressionWithContext(ctx, "zzz.prop", row.nodes, row.rels)
-	require.Equal(t, direct, compiled,
-		"an unbound variable projection must produce exactly the full evaluator's result")
+	require.Nil(t, compiled, "an unbound variable projection must not return query text")
+	requireStatusCode(t, getExpressionFailure(ctx), "Neo.ClientError.Statement.SyntaxError")
 }
 
 func TestOptionalMatchProjectionUsesSharedEntityPredicateSemantics(t *testing.T) {

@@ -57,9 +57,8 @@ func (e *StorageExecutor) compileTraversalProjection(ctx context.Context, expr s
 
 // evaluateTraversalRowExpression routes every non-fast-path projection through
 // the shared heterogeneous row evaluator used by the converged pipeline. The
-// graph evaluator remains a compatibility fallback only for expression shapes
-// the row evaluator does not yet recognize; it is not a separate projection
-// implementation.
+// same typed projection failure is recorded when that evaluator declines;
+// unresolved query text is never a projected value.
 func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, expr string, row traversalOptRow) interface{} {
 	values := make(map[string]interface{}, len(row.nodes)+len(row.rels)+len(row.values))
 	for variable, node := range row.nodes {
@@ -82,7 +81,8 @@ func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, ex
 	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, values); ok {
 		return value
 	}
-	return e.evaluateExpressionWithContext(ctx, expr, row.nodes, row.rels)
+	pipelineItemUnevaluable(ctx, expr)
+	return nil
 }
 
 // tryCompileTraversalExpr compiles the supported expression shapes. ok=false

@@ -2613,5 +2613,26 @@
     "name": "issue713 quoted comma empty CALL columns",
     "query": "CALL { MATCH (n:Missing) RETURN n AS `left,right` } RETURN `left,right`",
     "no_effects": true
+  },
+  {
+    "name": "issue713 traversal unknown function preserves graph",
+    "setup": ["CREATE (:ProjectionSeed {id: 1})-[:LINK]->(:ProjectionTarget {id: 2})"],
+    "query": "MATCH (n:ProjectionSeed)-[:LINK]->(target) OPTIONAL MATCH (target)-[:NONE]->(missing) SET n.flag = true RETURN missingFunction(n) AS value",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal arithmetic failure preserves graph",
+    "setup": ["CREATE (:ProjectionSeed {id: 1})-[:LINK]->(:ProjectionTarget {id: 2})"],
+    "query": "MATCH (n:ProjectionSeed)-[:LINK]->(target) OPTIONAL MATCH (target)-[:NONE]->(missing) SET n.flag = true RETURN 1 / $zero AS value",
+    "parameters": {"zero": 0},
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 traversal optional property remains null",
+    "setup": ["CREATE (:ProjectionSeed {id: 1})-[:LINK]->(:ProjectionTarget {id: 2})"],
+    "query": "MATCH (n:ProjectionSeed)-[:LINK]->(target) OPTIONAL MATCH (target)-[:NONE]->(missing) RETURN missing.name AS value",
+    "no_effects": true
   }
 ]

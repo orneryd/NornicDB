@@ -5,6 +5,7 @@
 ## 📚 Documentation
 
 - **[System Design](system-design.md)** - High-level architecture overview
+- **[Projected Entity Byte-Map Plan](../plans/projected-entity-byte-map-plan.md)** - Proposed opaque node/relationship property access, projection contracts, and async snapshot layering
 - **[MVCC Lifecycle and Background Work](mvcc-lifecycle-background-work.md)** - Debounced mutation work, lifecycle scheduling, and query-protection behavior
 - **[Embedding Search](embedding-search.md)** - Embedding storage model and search paths
 - **[Secure Search Continuation](secure-search-continuation.md)** - Cross-protocol qids, ranked continuation, and caching/performance tradeoffs

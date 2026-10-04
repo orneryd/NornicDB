@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Retire the traversal projection graph-evaluator fallback. Use the shared typed
+  failure boundary for unresolved expressions, preserving null entity bindings
+  and transactional rollback instead of projecting raw query text (#713).
+
 - Compile CALL-tail columns from shared RETURN metadata and delegate RETURN
   splitting to the shared quote-aware comma scanner, preserving backtick names,
   escaped strings, DISTINCT columns and cached-plan immutability (#713).

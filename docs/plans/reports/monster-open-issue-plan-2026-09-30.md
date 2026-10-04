@@ -971,3 +971,33 @@ traversal row evaluator still retains a graph-evaluator fallback; that is a
 separate remaining acceptance item, not declared converged by this publication.
 Publish with `Refs #713`; #713/#728/#754 remain open, #547 excluded. No benchmark
 or user-installation changes.
+
+### Shared Traversal Projection Failure Boundary: 2026-10-04
+
+The traversal row projector called the legacy graph evaluator when shared row
+evaluation declined. Six direct/compiled baseline failures show missing bindings
+projecting query text, unknown functions projecting query text and malformed
+lists projecting empty lists rather than typed failures. Remove that outer
+fallback and report failure through the shared projection boundary, preserving
+existing ArithmeticError and valid null entity/property results.
+
+Twenty direct/compiled controls assert exact values and typed status, including
+populated and null relationship bindings and a bound scalar. Six public
+autocommit/explicit controls assert null rows, syntax/arithmetic status and
+unchanged graph readback after rejected writes. Retain the existing unbound
+property fixture with explicit null and SyntaxError assertions; no tests removed.
+Three appended issue-linked reference cases preserve the original corpus prefix.
+
+Fresh validation on current main 1a977d53 includes the incoming bounded-scan,
+label-expression and case-sensitive-name changes. The entire staged patch,
+including the owner's proposed projected-entity byte-map plan and architecture
+link, is copied exactly into an isolated snapshot. Repository correctness, both
+actual parser Bolt/HTTP matrices (1,032 Bolt + 1,042 HTTP comparisons/parser,
+4,148 total), both official 7,794-outcome ratchets with zero
+gaps/blockers/harness errors, focused races, scoped vet and diagnostics pass.
+Both traversal projection functions have 100% focused coverage, not a
+whole-package claim. No benchmark or running-installation changes.
+
+Publish with `Refs #713`; include both owner-staged documentation files unchanged.
+Remaining structural WHERE/projection and CI-TestKit acceptance stays open;
+#547 excluded.
