@@ -220,6 +220,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Route a top-level UNION before the auto-commit async CREATE fast paths: on a
+  server, a UNION whose first branch is a CREATE ran that branch for the whole
+  statement. Mismatched branch columns wrote the node and returned the rest of
+  the text as a column name, and `CREATE … FINISH UNION …` wrote an extra
+  unlabeled node. Both now behave as in Neo4j on every route (#781).
 - Commit statements of any size atomically. A statement whose writes exceed
   one Badger batch (about 15% of the memtable) is written as several hidden
   batches under one reserved run of commit timestamps and becomes visible all
