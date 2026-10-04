@@ -179,7 +179,7 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 	for {
 		var batch []migrationItem
 		err := b.withView(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerIteratorOptions())
+			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
 			defer it.Close()
 			start := cursor
 			if len(start) == 0 {
@@ -264,7 +264,7 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
 	for {
 		var batch []migrationItem
 		err := b.withView(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerIteratorOptions())
+			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEdge}))
 			defer it.Close()
 			start := cursor
 			if len(start) == 0 {

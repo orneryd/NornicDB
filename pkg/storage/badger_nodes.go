@@ -841,8 +841,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 // Returns the count of edges actually deleted for accurate stats tracking.
 // IMPORTANT: The returned count MUST be used to decrement edgeCount after txn commits.
 func (b *BadgerEngine) deleteEdgesWithPrefix(txn *badger.Txn, prefix []byte) (int64, []EdgeID, []*Edge, error) {
-	opts := badgerIteratorOptions()
-	it := txn.NewIterator(opts)
+	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 
 	var edgeIDs []EdgeID

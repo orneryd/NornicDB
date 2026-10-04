@@ -236,6 +236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+<<<<<<< HEAD
 - Stop reallocating the search result cache on every write. Each created,
   updated or deleted node invalidated it by allocating a fresh map sized for
   the whole cache; it now returns at once when the cache is empty and clears
@@ -268,6 +269,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   statement. Mismatched branch columns wrote the node and returned the rest of
   the text as a column name, and `CREATE … FINISH UNION …` wrote an extra
   unlabeled node. Both now behave as in Neo4j on every route (#781).
+
+- Storage range scans read only their own keys. Reverse scans (Badger ignores
+  the prefix bound in reverse) and forward scans without a prefix bound read
+  past their range over deleted keys; after DROP DATABASE, every relationship
+  read of a node in another database walked the dropped database's deleted
+  adjacency keys, and DETACH DELETE of 100,000 nodes went from 6 s to 36
+  minutes. Every range scan is now forward and bounded. Lookups that want the
+  greatest keys first (an MVCC version at or before a read version, temporal
+  history as of a time) find the range's two lowest keys forward and seek in
+  reverse only above them, so Badger's read-ahead stays in the range (#850).
+
 - Commit statements of any size atomically. A statement whose writes exceed
   one Badger batch (about 15% of the memtable) is written as several hidden
   batches under one reserved run of commit timestamps and becomes visible all

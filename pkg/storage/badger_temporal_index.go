@@ -209,30 +209,28 @@ func (b *BadgerEngine) temporalHistoryNodeAsOfInTxn(txn *badger.Txn, target temp
 	prefix := temporalHistoryPrefix(target.desc)
 	seek := append(append([]byte{}, prefix...), encodeTemporalSortTime(asOf)...)
 	seek = append(seek, 0xFF)
-	opts := badgerIteratorOptions()
-	opts.Prefix = prefix
-	opts.Reverse = true
-	it := txn.NewIterator(opts)
-	defer it.Close()
-	for it.Seek(seek); it.ValidForPrefix(prefix); it.Next() {
-		nodeID := extractNodeIDFromTemporalHistoryKey(it.Item().Key(), len(prefix))
+	var found *Node
+	err := descendingPrefixKeys(txn, prefix, seek, func(item *badger.Item) (bool, error) {
+		nodeID := extractNodeIDFromTemporalHistoryKey(item.Key(), len(prefix))
 		if nodeID == "" {
-			continue
+			return true, nil
 		}
 		if exclude != nil {
 			if _, skip := exclude[nodeID]; skip {
-				continue
+				return true, nil
 			}
 		}
 		node, err := b.loadNodeForTemporalTxn(txn, nodeID, withEmbeddings)
 		if err != nil {
-			return nil, err
+			return false, err
 		}
 		if nodeMatchesTemporalLookup(node, target.constraint, target.keyValue, asOf) {
-			return node, nil
+			found = node
+			return false, nil
 		}
-	}
-	return nil, nil
+		return true, nil
+	})
+	return found, err
 }
 
 func (b *BadgerEngine) temporalAdjacentNodesInTxn(txn *badger.Txn, target temporalRefreshTarget, start time.Time, excludeNodeID NodeID) (*Node, *Node, error) {
@@ -240,25 +238,20 @@ func (b *BadgerEngine) temporalAdjacentNodesInTxn(txn *badger.Txn, target tempor
 	encodedStart := encodeTemporalSortTime(start)
 	seekPrev := append(append([]byte{}, prefix...), encodedStart...)
 	seekPrev = append(seekPrev, 0xFF)
-	prevOpts := badgerIteratorOptions()
-	prevOpts.Prefix = prefix
-	prevOpts.Reverse = true
-	prevIt := txn.NewIterator(prevOpts)
-	defer prevIt.Close()
 	var prevNode *Node
-	for prevIt.Seek(seekPrev); prevIt.ValidForPrefix(prefix); prevIt.Next() {
-		nodeID := extractNodeIDFromTemporalHistoryKey(prevIt.Item().Key(), len(prefix))
+	if err := descendingPrefixKeys(txn, prefix, seekPrev, func(item *badger.Item) (bool, error) {
+		nodeID := extractNodeIDFromTemporalHistoryKey(item.Key(), len(prefix))
 		if nodeID == "" || nodeID == excludeNodeID {
-			continue
+			return true, nil
 		}
 		node, err := b.loadNodeForTemporalTxn(txn, nodeID, false)
 		if err != nil {
-			return nil, nil, err
+			return false, err
 		}
-		if node != nil {
-			prevNode = node
-			break
-		}
+		prevNode = node
+		return node == nil, nil
+	}); err != nil {
+		return nil, nil, err
 	}
 	seekNext := append(append([]byte{}, prefix...), encodedStart...)
 	forwardOpts := badgerIteratorOptions()

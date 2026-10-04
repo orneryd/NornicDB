@@ -26,11 +26,10 @@ func (b *BadgerEngine) initializeCounts() error {
 
 	err := b.db.View(func(txn *badger.Txn) error {
 		// Count nodes
-		nodeOpts := badgerIteratorOptions()
-		nodeIt := txn.NewIterator(nodeOpts)
+		nodePrefix := []byte{prefixNode}
+		nodeIt := txn.NewIterator(badgerPrefixIteratorOptions(nodePrefix))
 		defer nodeIt.Close()
 
-		nodePrefix := []byte{prefixNode}
 		for nodeIt.Seek(nodePrefix); nodeIt.ValidForPrefix(nodePrefix); nodeIt.Next() {
 			nodeCount++
 			key := nodeIt.Item().Key()
@@ -43,11 +42,10 @@ func (b *BadgerEngine) initializeCounts() error {
 		}
 
 		// Count edges
-		edgeOpts := badgerIteratorOptions()
-		edgeIt := txn.NewIterator(edgeOpts)
+		edgePrefix := []byte{prefixEdge}
+		edgeIt := txn.NewIterator(badgerPrefixIteratorOptions(edgePrefix))
 		defer edgeIt.Close()
 
-		edgePrefix := []byte{prefixEdge}
 		for edgeIt.Seek(edgePrefix); edgeIt.ValidForPrefix(edgePrefix); edgeIt.Next() {
 			edgeCount++
 			key := edgeIt.Item().Key()
