@@ -46,21 +46,21 @@
 - id: cyphermatching.limit_parse_failed
   description: LIMIT clause parsing failed. LIMIT is untranslated Cypher syntax.
   other: failed to parse LIMIT clause
-- id: cyphermatching.shortest_path_query_expected
-  description: Query does not contain a shortest-path function.
-  other: not a shortest path query
-- id: cyphermatching.shortest_path_syntax_invalid
-  description: Invalid shortestPath syntax. Function name is untranslated.
-  other: invalid shortestPath syntax
 - id: cyphermatching.path_pattern_invalid
   description: Invalid shortest-path pattern. Pattern is untranslated Cypher syntax.
   other: "invalid path pattern: {{.Pattern}}"
-- id: cyphermatching.shortest_path_start_variable_unresolved
-  description: shortestPath start variable cannot be resolved. Variable includes untranslated Go quoting.
-  other: "shortestPath: could not resolve start variable {{.Variable}} from preceding MATCH clause"
-- id: cyphermatching.shortest_path_end_variable_unresolved
-  description: shortestPath end variable cannot be resolved. Variable includes untranslated Go quoting.
-  other: "shortestPath: could not resolve end variable {{.Variable}} from preceding MATCH clause"
+- id: cyphermatching.shortest_path_minimal_length
+  description: "shortestPath or allShortestPaths minimum length above 1. Function is the function name."
+  other: "{{.Function}}(...) does not support a minimal length different from 0 or 1"
+- id: cyphermatching.shortest_path_common_end_nodes
+  description: "shortestPath search whose start and end are the same node (Neo4j text)."
+  other: "The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you perform a shortestPath search after a cartesian product that might have the same start and end nodes for some of the rows passed to shortestPath. If you would rather not experience this exception, and can accept the possibility of missing results for those rows, disable this in the Neo4j configuration by setting `dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the shortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern expression followed by ordering by path length and limiting to one result."
+- id: cyphermatching.shortest_path_unbound_nodes
+  description: "shortestPath or allShortestPaths expression with an endpoint that is not a bound variable. Function is the function name."
+  other: "A {{.Function}}(...) requires bound nodes when not part of a MATCH clause."
+- id: cyphermatching.shortest_path_relationship_properties
+  description: "Relationship properties in a shortestPath or allShortestPaths pattern. Function is the function name; Properties is the property map as written."
+  other: "{{.Function}}(...) contains properties {{.Properties}}. This is currently not supported."
 - id: cyphermatching.optional_match_node_endpoint_missing
   description: OPTIONAL MATCH pattern lacks its first node endpoint. Pattern includes untranslated Go quoting.
   other: "optional match pattern {{.Pattern}} has no node endpoint"

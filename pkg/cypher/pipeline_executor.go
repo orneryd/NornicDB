@@ -116,7 +116,7 @@ func pipelineClausesFor(cypher string) ([]pipelineClause, bool) {
 		return nil, false
 	}
 	for _, clause := range clauses {
-		if clause.kind == pipelineClauseOptionalMatch && strings.Contains(clause.text, "*") {
+		if clause.kind == pipelineClauseOptionalMatch && strings.Contains(clause.text, "*") && indexASCIIFold(clause.text, "shortestpath") < 0 {
 			return nil, false
 		}
 	}
@@ -1249,7 +1249,7 @@ func (e *StorageExecutor) tryExecutePipelineOptionalMatchPlan(ctx context.Contex
 			return nil, false, nil
 		}
 	}
-	if !seenOptional {
+	if !seenOptional || indexASCIIFold(cypher, "shortestpath") >= 0 {
 		return nil, false, nil
 	}
 
@@ -1725,6 +1725,12 @@ func samePropertyValue(a, b interface{}) bool {
 // ---- clause appliers ----
 
 func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, error) {
+	if shortest, ok, err := e.parseShortestPathMatch(ctx, strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return e.pipelineApplyShortestPathMatch(ctx, rows, shortest, true)
+	}
 	optionalClause := splitOptionalMatchClauses(strings.TrimSpace(clause[len("OPTIONAL MATCH"):]))
 	if len(optionalClause) != 1 {
 		return nil, localizedError(localization.CypherCoreOptionalMatchRequired(), nil)
@@ -1810,6 +1816,13 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 
 func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
 	body := pipelineClauseBody(clause, "MATCH")
+	if shortest, ok, err := e.parseShortestPathMatch(ctx, body); ok || err != nil {
+		if err != nil {
+			return nil, true, err
+		}
+		expanded, err := e.pipelineApplyShortestPathMatch(ctx, rows, shortest, false)
+		return expanded, true, err
+	}
 	patternEnd := len(body)
 	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
 		patternEnd = where

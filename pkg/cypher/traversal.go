@@ -59,6 +59,11 @@ type TraversalContext struct {
 	// findPathsCalls counts entries into the recursive search; used to amortise
 	// the ctx.Err() probe (one check per N calls).
 	findPathsCalls int
+	// endNodeID, when set, is the only node a path may end at (a shortestPath
+	// pair, #863).
+	endNodeID storage.NodeID
+	// deepest is the greatest depth the search reached.
+	deepest int
 }
 
 func buildRelTypeSet(relTypes []string) map[string]struct{} {
@@ -1970,19 +1975,26 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 		}
 	}
 
+	ctx := e.newTraversalContext(traversalCtx, startNode, &match.Relationship)
+	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+}
+
+// newTraversalContext is the depth-first search state for relationship
+// pattern rel from startNode: its types, properties, direction and length
+// bounds, the statement's temporal viewport, and traversalCtx for
+// cancellation.
+func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, startNode *storage.Node, rel *RelationshipPattern) *TraversalContext {
 	ctx := &TraversalContext{
-		startNode:        startNode,
-		relTypes:         match.Relationship.Types,
-		relTypeSet:       buildRelTypeSet(match.Relationship.Types),
-		relProperties:    match.Relationship.Properties,
-		direction:        match.Relationship.Direction,
-		minHops:          match.Relationship.MinHops,
-		maxHops:          match.Relationship.MaxHops,
-		usedEdges:        make(map[storage.EdgeID]bool),
-		nodeCache:        make(map[storage.NodeID]*storage.Node),
-		temporalViewport: TemporalViewport{},
-		temporalChecker:  nil,
-		cancelCtx:        traversalCtx,
+		startNode:     startNode,
+		relTypes:      rel.Types,
+		relTypeSet:    buildRelTypeSet(rel.Types),
+		relProperties: rel.Properties,
+		direction:     rel.Direction,
+		minHops:       rel.MinHops,
+		maxHops:       rel.MaxHops,
+		usedEdges:     make(map[storage.EdgeID]bool),
+		nodeCache:     make(map[storage.NodeID]*storage.Node),
+		cancelCtx:     traversalCtx,
 	}
 	if viewport, ok := TemporalViewportFromContext(traversalCtx); ok {
 		ctx.temporalViewport = viewport
@@ -1990,8 +2002,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 			ctx.temporalChecker = checker
 		}
 	}
-
-	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+	return ctx
 }
 
 // loadTraversalEndpointNode resolves a traversal endpoint using the same
@@ -2044,8 +2055,12 @@ func (e *StorageExecutor) findPaths(
 		return results
 	}
 
+	if depth > ctx.deepest {
+		ctx.deepest = depth
+	}
+
 	// Check if current path meets minimum length and endpoint requirements
-	if depth >= ctx.minHops {
+	if depth >= ctx.minHops && (ctx.endNodeID == "" || currentNode.ID == ctx.endNodeID) {
 		if e.matchesEndPattern(currentNode, endPattern) {
 			results = append(results, PathResult{
 				Nodes:         append([]*storage.Node{}, pathNodes...),

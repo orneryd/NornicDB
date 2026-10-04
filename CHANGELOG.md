@@ -265,6 +265,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Run `shortestPath` / `allShortestPaths` MATCH clauses as a pipeline step:
+  endpoint patterns and WHERE select the pairs, LIMIT, ORDER BY, aggregation
+  and WITH apply to the path rows, and path predicates find the shortest path
+  that satisfies them. Common start/end nodes, minimum lengths above 1,
+  relationship properties and unbound endpoints in expressions raise Neo4j's
+  errors (#863).
+
+- Read `b:Label` in the WHERE of a MATCH that joins a bound variable as a
+  label test instead of text (#876).
+
 - Keep an index and a uniqueness constraint on the same label and property
   exclusive, as Neo4j does: creating either over the other fails with Neo4j's
   code and message, and DROP INDEX can't drop the index a constraint owns

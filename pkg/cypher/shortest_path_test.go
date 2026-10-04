@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -321,59 +320,24 @@ func TestShortestPathQueryParsingAndExecutionHelpers(t *testing.T) {
 	_, err = exec.Execute(ctx, `MATCH (b:Node {id: 'B'}), (c:Node {id: 'C'}) CREATE (b)-[:TO]->(c)`, nil)
 	require.NoError(t, err)
 
-	_, err = exec.parseShortestPathQuery(ctx, "MATCH (n) RETURN n")
-	require.Error(t, err)
-	_, err = exec.parseShortestPathQuery(ctx, "MATCH p = shortestPath((a)-[:TO*]-(b) RETURN p")
+	// An unterminated shortestPath call is a syntax error.
+	_, err = exec.Execute(ctx, "MATCH p = shortestPath((a)-[:TO*]-(b) RETURN p", nil)
 	require.Error(t, err)
 
-	parsed, err := exec.parseShortestPathQuery(ctx, `
+	// Endpoints bound by an earlier MATCH, a path predicate and a bound on the
+	// length.
+	result, err := exec.Execute(ctx, `
 		MATCH (start:Node {id: 'A'}), (end:Node {id: 'C'})
 		MATCH p = shortestPath((start)-[:TO*..4]->(end))
 		WHERE length(p) > 0
-		RETURN p
-	`)
+		RETURN length(p), [n IN nodes(p) | n.id]
+	`, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "p", parsed.pathVariable)
-	assert.Equal(t, 4, parsed.maxHops)
-	assert.Contains(t, parsed.whereClause, "length(p) > 0")
-	assert.Equal(t, "p", parsed.returnClause)
-	require.NotNil(t, parsed.startVarBinding)
-	require.NotNil(t, parsed.endVarBinding)
+	require.Equal(t, [][]interface{}{{int64(2), []interface{}{"A", "B", "C"}}}, result.Rows)
 
-	pathResult, err := exec.executeShortestPathQuery(context.Background(), parsed)
+	result, err = exec.Execute(ctx, "MATCH p = shortestPath((:Node {id: 'A'})-[:TO*..1]->(:Node {id: 'C'})) RETURN p", nil)
 	require.NoError(t, err)
-	require.NotEmpty(t, pathResult.Rows)
-
-	direct := &ShortestPathQuery{
-		pathVariable: "p",
-		startNode:    nodePatternInfo{labels: []string{"Node"}, properties: map[string]interface{}{"id": "A"}},
-		endNode:      nodePatternInfo{labels: []string{"Node"}, properties: map[string]interface{}{"id": "C"}},
-		relTypes:     []string{"TO"},
-		direction:    "outgoing",
-		maxHops:      5,
-	}
-	noReturnResult, err := exec.executeShortestPathQuery(context.Background(), direct)
-	require.NoError(t, err)
-	require.Equal(t, []string{"p"}, noReturnResult.Columns)
-	require.NotEmpty(t, noReturnResult.Rows)
-
-	invalidExpr := &ShortestPathQuery{
-		pathVariable: "p",
-		startNode:    nodePatternInfo{labels: []string{"Node"}, properties: map[string]interface{}{"id": "A"}},
-		endNode:      nodePatternInfo{labels: []string{"Node"}, properties: map[string]interface{}{"id": "C"}},
-		relTypes:     []string{"TO"},
-		direction:    "outgoing",
-		maxHops:      5,
-		returnClause: "unknownExpr",
-	}
-	invalidExprRes, err := exec.executeShortestPathQuery(context.Background(), invalidExpr)
-	require.NoError(t, err)
-	require.NotEmpty(t, invalidExprRes.Rows)
-	assert.Nil(t, invalidExprRes.Rows[0][0])
-
-	assert.True(t, isShortestPathQuery("MATCH p = shortestPath((a)-[*]-(b)) RETURN p"))
-	assert.True(t, isShortestPathQuery("MATCH p = allShortestPaths((a)-[*]-(b)) RETURN p"))
-	assert.False(t, isShortestPathQuery("MATCH (n) RETURN n"))
+	require.Empty(t, result.Rows, "the path is longer than the bound")
 }
 
 func TestShortestPathSingleMatchRegression(t *testing.T) {
@@ -391,57 +355,10 @@ func TestShortestPathSingleMatchRegression(t *testing.T) {
 
 	query := "MATCH p = shortestPath((a:Person {name:'Alice'})-[*..3]->(b:Person {name:'Bob'})) RETURN p LIMIT 1"
 
-	assert.Equal(t, "", extractPreviousMatchClause(query, strings.Index(query, "shortestPath")))
-
-	parsed, err := exec.parseShortestPathQuery(ctx, query)
-	require.NoError(t, err)
-	assert.Equal(t, "p", parsed.pathVariable)
-	assert.Equal(t, 3, parsed.maxHops)
-	assert.Nil(t, parsed.startVarBinding)
-	assert.Nil(t, parsed.endVarBinding)
-
 	result, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	path, ok := result.Rows[0][0].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, int64(1), path["length"])
-}
-
-func TestFindNodeByPattern_HelperBranches(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	_, err := store.CreateNode(&storage.Node{
-		ID:         "p1",
-		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"name": "Alice"},
-	})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
-		ID:         "x1",
-		Labels:     []string{"Other"},
-		Properties: map[string]interface{}{"name": "X"},
-	})
-	require.NoError(t, err)
-
-	byLabel := exec.findNodeByPattern(nodePatternInfo{
-		labels:     []string{"Person"},
-		properties: map[string]interface{}{"name": "Alice"},
-	})
-	require.NotNil(t, byLabel)
-	assert.Equal(t, storage.NodeID("p1"), byLabel.ID)
-
-	allNodesPath := exec.findNodeByPattern(nodePatternInfo{
-		properties: map[string]interface{}{"name": "X"},
-	})
-	require.NotNil(t, allNodesPath)
-	assert.Equal(t, storage.NodeID("x1"), allNodesPath.ID)
-
-	notFound := exec.findNodeByPattern(nodePatternInfo{
-		labels:     []string{"Person"},
-		properties: map[string]interface{}{"name": "Missing"},
-	})
-	assert.Nil(t, notFound)
 }

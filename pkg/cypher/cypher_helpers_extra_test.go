@@ -782,12 +782,6 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 		MinBatchSize: 1,
 	}, TemporalViewport{}, nil)
 	require.Len(t, paths, 2)
-
-	// Cover evaluatePathExpression helper.
-	// Sanity to ensure shortest path helper still identifies syntax.
-	assert.True(t, isShortestPathQuery("MATCH p=shortestPath((a)-[*]->(b)) RETURN p"))
-	assert.True(t, isShortestPathQuery("MATCH p=allShortestPaths((a)-[*]->(b)) RETURN p"))
-	assert.False(t, isShortestPathQuery("MATCH (a) RETURN a"))
 }
 
 func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
