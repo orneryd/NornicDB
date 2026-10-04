@@ -150,6 +150,9 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.propertyIndexes) > 0 {
 		def.PropertyIndexes = make([]SchemaPropertyIndexDef, 0, len(sm.propertyIndexes))
 		for _, idx := range sm.propertyIndexes {
+			if idx.OwningConstraint != "" {
+				continue // derived from its constraint
+			}
 			props := make([]string, len(idx.Properties))
 			copy(props, idx.Properties)
 			def.PropertyIndexes = append(def.PropertyIndexes, SchemaPropertyIndexDef{
@@ -412,6 +415,12 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 			Properties: props,
 			values:     make(map[interface{}][]NodeID),
 		}
+	}
+
+	// A constraint's own property index (#875), unless an index of its own
+	// already covers the property.
+	for _, c := range sm.constraints {
+		sm.addConstraintPropertyIndexLocked(c)
 	}
 
 	// Composite indexes.

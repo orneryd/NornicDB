@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Seek a single-property uniqueness or node key constraint's own index for
+  equality and IN predicates, as an index created with CREATE INDEX is used,
+  inside explicit transactions too. A 17,000-node lookup inside a transaction
+  drops from about 72 ms to under 0.4 ms (#875).
+
 - Reuse immutable comparison/null evaluation handlers in compiled binding and
   row predicates, preserving unknown under negation. Skip clock scanning for
   complete cached plans and use allocation-free folded byte-prefix clock
@@ -259,6 +264,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retain exact SHA pins for the Docker actions.
 
 ### Fixed
+
+- Keep an index and a uniqueness constraint on the same label and property
+  exclusive, as Neo4j does: creating either over the other fails with Neo4j's
+  code and message, and DROP INDEX can't drop the index a constraint owns
+  (#884).
 
 - Evaluate the documented decay functions `decayScore()`, `decay()` and
   `policy()` in statements instead of rejecting them as unknown functions, and

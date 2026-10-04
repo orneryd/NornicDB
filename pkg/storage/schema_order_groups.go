@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"fmt"
 	"sort"
 )
 
@@ -17,9 +16,9 @@ import (
 // with the boundary title before choosing the smallest timestamp/ID tuple.
 func (sm *SchemaManager) VisitPropertyIndexGroups(label, property string, descending bool, visit func([]NodeID) bool) bool {
 	sm.mu.RLock()
-	idx := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
+	idx, exists := sm.seekablePropertyIndexLocked(label, property)
 	sm.mu.RUnlock()
-	if idx == nil {
+	if !exists {
 		return false
 	}
 	// Snapshot group membership before invoking callbacks so index mutations

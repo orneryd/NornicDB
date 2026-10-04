@@ -500,7 +500,7 @@ func (sm *SchemaManager) validateBindingTarget(binding *knowledgepolicy.DecayPro
 func (sm *SchemaManager) isPropertyInStructuralIndex(labels []string, property string) bool {
 	for _, label := range labels {
 		key := label + ":" + property
-		if _, ok := sm.propertyIndexes[key]; ok {
+		if idx, ok := sm.propertyIndexes[key]; ok && idx.OwningConstraint == "" {
 			return true
 		}
 		if _, ok := sm.rangeIndexes[key]; ok {

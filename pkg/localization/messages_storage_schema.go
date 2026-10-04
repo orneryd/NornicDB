@@ -63,6 +63,9 @@ const (
 	MessageStorageSchemaUnsupportedConstraintLiteral        MessageID = "storageschema.unsupported_constraint_literal"
 	MessageStorageSchemaLookupIndexAlreadyExists            MessageID = "storageschema.lookup_index_already_exists"
 	MessageStorageSchemaIndexNameAlreadyExists              MessageID = "storageschema.index_name_already_exists"
+	MessageStorageSchemaConstraintOverIndex                 MessageID = "storageschema.constraint_over_index"
+	MessageStorageSchemaIndexBelongsToConstraint            MessageID = "storageschema.index_belongs_to_constraint"
+	MessageStorageSchemaUniquenessConstraintIndexExists     MessageID = "storageschema.uniqueness_constraint_index_exists"
 )
 
 func storageSchemaMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -310,6 +313,24 @@ func StorageSchemaLookupIndexAlreadyExists(pattern string) Message {
 
 // StorageSchemaIndexNameAlreadyExists is Neo4j's message for an index name
 // already in use.
+// StorageSchemaConstraintOverIndex is Neo4j's error for a constraint whose
+// index would duplicate an existing index on label's property (#884).
+func StorageSchemaConstraintOverIndex(label, property string) Message {
+	return storageSchemaMessage(MessageStorageSchemaConstraintOverIndex, "There already exists an index (:"+label+" {"+property+"}). A constraint cannot be created until the index has been dropped.", map[string]any{"Label": label, "Property": property})
+}
+
+// StorageSchemaIndexBelongsToConstraint is Neo4j's error for DROP INDEX of
+// the index a constraint owns (#884).
+func StorageSchemaIndexBelongsToConstraint(constraint string) Message {
+	return storageSchemaMessage(MessageStorageSchemaIndexBelongsToConstraint, "Unable to drop index: Index belongs to constraint: `"+constraint+"`", map[string]any{"Constraint": constraint})
+}
+
+// StorageSchemaUniquenessConstraintIndexExists is Neo4j's error for an index
+// on a property whose uniqueness constraint already owns one (#884).
+func StorageSchemaUniquenessConstraintIndexExists(label, property string) Message {
+	return storageSchemaMessage(MessageStorageSchemaUniquenessConstraintIndexExists, "There is a uniqueness constraint on (:"+label+" {"+property+"}), so an index is already created that matches this.", map[string]any{"Label": label, "Property": property})
+}
+
 func StorageSchemaIndexNameAlreadyExists(name string) Message {
 	return storageSchemaMessage(MessageStorageSchemaIndexNameAlreadyExists, "There already exists an index called '"+name+"'.", map[string]any{"Name": name})
 }

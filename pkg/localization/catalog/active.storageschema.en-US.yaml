@@ -166,6 +166,15 @@
 - id: storageschema.lookup_index_already_exists
   description: Second token lookup index for an entity type. Pattern is untranslated Cypher pattern text.
   other: "There already exists an index {{.Pattern}}."
+- id: storageschema.constraint_over_index
+  description: "Constraint whose index would duplicate an existing index. Label and Property are untranslated identifiers."
+  other: "There already exists an index (:{{.Label}} {{\"{\"}}{{.Property}}{{\"}\"}}). A constraint cannot be created until the index has been dropped."
+- id: storageschema.index_belongs_to_constraint
+  description: "DROP INDEX of a constraint's own index. Constraint is an untranslated identifier."
+  other: "Unable to drop index: Index belongs to constraint: `{{.Constraint}}`"
+- id: storageschema.uniqueness_constraint_index_exists
+  description: "Index on a property whose uniqueness constraint already owns one. Label and Property are untranslated identifiers."
+  other: "There is a uniqueness constraint on (:{{.Label}} {{\"{\"}}{{.Property}}{{\"}\"}}), so an index is already created that matches this."
 - id: storageschema.index_name_already_exists
   description: Index name already in use. Name is an untranslated index identifier.
   other: "There already exists an index called '{{.Name}}'."

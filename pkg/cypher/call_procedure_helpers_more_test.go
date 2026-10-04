@@ -49,7 +49,8 @@ func TestCallDbHelpers_ProceduresAndCounts(t *testing.T) {
 
 	_, err := exec.Execute(ctx, "CREATE (:Person {id:'p1'})-[:KNOWS]->(:Person {id:'p2'})", nil)
 	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE INDEX idx_person_id_cov IF NOT EXISTS FOR (n:Person) ON (n.id)", nil)
+	// An index and a constraint on one property are exclusive, as in Neo4j (#884).
+	_, err = exec.Execute(ctx, "CREATE INDEX idx_person_name_cov IF NOT EXISTS FOR (n:Person) ON (n.name)", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE CONSTRAINT c_person_id_cov IF NOT EXISTS FOR (n:Person) REQUIRE n.id IS UNIQUE", nil)
 	require.NoError(t, err)

@@ -219,7 +219,7 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 			if hasPropertyIndexes {
 				for _, label := range node.Labels {
 					for propName, propValue := range node.Properties {
-						if _, ok := sm.GetPropertyIndex(label, propName); !ok {
+						if !sm.MaintainsPropertyIndex(label, propName) {
 							continue
 						}
 						if err := sm.PropertyIndexInsert(label, propName, node.ID, propValue); err != nil {
@@ -251,6 +251,9 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 		uc.mu.Lock()
 		uc.valuesCacheComplete = true
 		uc.mu.Unlock()
+	}
+	for _, idx := range propertyIndexes {
+		idx.unfilled.Store(false)
 	}
 
 	return nil
