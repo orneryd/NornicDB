@@ -22,6 +22,9 @@ interface GNode {
   x?: number;
   y?: number;
   z?: number;
+  vx?: number;
+  vy?: number;
+  vz?: number;
 }
 
 interface GLink {
@@ -88,6 +91,91 @@ const NEIGHBORHOOD_LIMIT = 20000;
 // the node limit at any depth.
 const CALL_RELATION_TYPES = ["CALLS", "METHOD", "REFERENCES"];
 
+// three-forcegraph's runtime disables DAG layout on a falsy mode, but its
+// typings only accept the DagMode union; route through a null-tolerant cast.
+function setDagMode(fg: GraphifyForceGraph, mode: "td" | null): void {
+  const setter = fg.dagMode as unknown as (m?: string | null) => unknown;
+  setter(mode);
+  fg.dagLevelDistance(72);
+}
+
+// Absolute y targets for a top-down band layout: the root lands at the
+// highest y (top of the scene) and each hop steps one band downward.
+function depthTargets(depths: Map<string, number>, spacing: number): Map<string, number> {
+  let maxDepth = 0;
+  for (const depth of depths.values()) {
+    maxDepth = Math.max(maxDepth, depth);
+  }
+  const targets = new Map<string, number>();
+  for (const [id, depth] of depths) {
+    targets.set(id, (maxDepth - depth) * spacing);
+  }
+  return targets;
+}
+
+// Custom d3-force that keeps nodes in their depth bands along y.
+function layeredYForce(targets: Map<string, number>, strength: number) {
+  let nodes: GNode[] = [];
+  const force = (alpha: number) => {
+    const scale = strength * alpha;
+    for (const node of nodes) {
+      const target = targets.get(node.id);
+      if (target == null) continue;
+      node.vy = (node.vy ?? 0) + (target - (node.y ?? 0)) * scale;
+    }
+  };
+  force.initialize = (initialized: unknown[]) => {
+    nodes = initialized as GNode[];
+  };
+  return force;
+}
+
+// Configure the layout orientation: DAG top-down when acyclic, otherwise
+// a layered y-force keeps the root at the top of the scene.
+function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], rootId: string | null): void {
+  if (isAcyclic(links)) {
+    setDagMode(fg, "td");
+    fg.d3Force("layers", null);
+    // Seed a radial spread by depth so the top-down tree is readable without
+    // a long-running force simulation, then freeze the simulation (the dag
+    // pins fy anyway) for fast, static rendering.
+    const depths = computeDepths(links, rootId ?? undefined);
+    const byDepth = new Map<number, GNode[]>();
+    for (const node of nodes) {
+      const depth = depths.get(node.id) ?? 0;
+      const group = byDepth.get(depth) ?? [];
+      group.push(node);
+      byDepth.set(depth, group);
+    }
+    for (const [depth, group] of byDepth) {
+      group.forEach((node, index) => {
+        const angle = (2 * Math.PI * index) / group.length + depth * 0.35;
+        const radius = 24 + depth * 26;
+        node.x = Math.cos(angle) * radius;
+        node.z = Math.sin(angle) * radius;
+      });
+    }
+    fg.d3AlphaMin(0.9);
+  } else {
+    setDagMode(fg, null);
+    const depths = computeDepths(links, rootId ?? undefined);
+    const targets = depthTargets(depths, 72);
+    for (const node of nodes) {
+      const target = targets.get(node.id);
+      if (target != null) {
+        node.y = target;
+        node.x = (Math.random() - 0.5) * 24;
+        node.z = (Math.random() - 0.5) * 24;
+      }
+    }
+    fg.d3Force("layers", layeredYForce(targets, 0.45) as unknown as (alpha: number) => void);
+    // Settle the banded layout faster than the defaults.
+    fg.d3AlphaDecay(0.05);
+    fg.d3VelocityDecay(0.65);
+    fg.d3AlphaMin(0.001);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -125,6 +213,64 @@ interface Neighbor {
   direction: "in" | "out";
 }
 
+// Kahn's algorithm over the link set: dagMode needs an acyclic graph.
+function isAcyclic(links: GLink[]): boolean {
+  const outDegree = new Map<string, number>();
+  const children = new Map<string, string[]>();
+  const idOf = (end: string | GNode) => (typeof end === "object" ? end.id : end);
+  for (const link of links) {
+    const source = idOf(link.source);
+    const target = idOf(link.target);
+    if (source === target) continue;
+    outDegree.set(source, (outDegree.get(source) ?? 0) + 1);
+    const list = children.get(target) ?? [];
+    list.push(source);
+    children.set(target, list);
+  }
+  const queue: string[] = [];
+  for (const end of new Set<string>(links.flatMap((l) => [idOf(l.source), idOf(l.target)]))) {
+    if ((outDegree.get(end) ?? 0) === 0) queue.push(end);
+  }
+  let visited = 0;
+  while (queue.length > 0) {
+    const current = queue.pop() as string;
+    visited += 1;
+    for (const parent of children.get(current) ?? []) {
+      const next = (outDegree.get(parent) ?? 1) - 1;
+      outDegree.set(parent, next);
+      if (next === 0) queue.push(parent);
+    }
+  }
+  return visited >= new Set<string>(links.flatMap((l) => [idOf(l.source), idOf(l.target)])).size;
+}
+
+// BFS depth from the root along link direction; unreachable nodes get depth 0.
+function computeDepths(links: GLink[], rootId: string | undefined): Map<string, number> {
+  const depths = new Map<string, number>();
+  const idOf = (end: string | GNode) => (typeof end === "object" ? end.id : end);
+  const children = new Map<string, string[]>();
+  for (const link of links) {
+    const source = idOf(link.source);
+    const target = idOf(link.target);
+    const list = children.get(source) ?? [];
+    list.push(target);
+    children.set(source, list);
+  }
+  if (!rootId) return depths;
+  depths.set(rootId, 0);
+  const queue: Array<[string, number]> = [[rootId, 0]];
+  while (queue.length > 0) {
+    const [current, depth] = queue.shift() as [string, number];
+    for (const child of children.get(current) ?? []) {
+      if (!depths.has(child)) {
+        depths.set(child, depth + 1);
+        queue.push([child, depth + 1]);
+      }
+    }
+  }
+  return depths;
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -158,6 +304,11 @@ export function Graphify() {
   const [searchResults, setSearchResults] = useState<Array<{ id: string; label: string; sourceFile?: string; score?: number }>>([]);
   const [similarLoading, setSimilarLoading] = useState(false);
   const [similarCount, setSimilarCount] = useState<number | null>(null);
+  const [panelPos, setPanelPos] = useState<{ left: number; top: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const rootIdRef = useRef<string | null>(null);
 
   // --- Database list -------------------------------------------------------
 
@@ -215,6 +366,10 @@ export function Graphify() {
       .linkOpacity(0.4)
       .linkWidth((l) => (l.highlight ? 1.6 : 0.6))
       .linkColor((l) => (l.highlight ? LINK_HIGHLIGHT : LINK_COLOR))
+      .linkDirectionalArrowLength(3.5)
+      .linkDirectionalArrowRelPos(1)
+      .linkCurvature(0.2)
+      .dagLevelDistance(72)
       .linkDirectionalParticles(0)
       .linkLabel((l) => {
         const s = typeof l.source === "object" ? l.source.label : String(l.source);
@@ -226,7 +381,7 @@ export function Graphify() {
           `${n.label}${n.sourceFile ? ` · ${n.sourceFile}${n.sourceLocation ? ":" + n.sourceLocation : ""}` : ""}`,
       )
       .cooldownTicks(80)
-      .warmupTicks(5)
+      .warmupTicks(0)
       .onNodeClick((node: GNode | null) => {
         if (node) selectNode(node.id);
       });
@@ -279,6 +434,7 @@ export function Graphify() {
     async (id: string) => {
       const node = nodeByIdRef.current.get(id);
       if (!node) return;
+      selectedIdRef.current = id;
       setSelected(node);
       applySelectionVisuals(id);
 
@@ -364,7 +520,7 @@ export function Graphify() {
   // --- Data loading ---------------------------------------------------------
 
   const buildGraph = useCallback(
-    (rawNodes: ArtifactNode[], rawLinks: ArtifactLink[]) => {
+    (rawNodes: ArtifactNode[], rawLinks: ArtifactLink[], rootId: string | null) => {
       const byId = new Map<string, GNode>();
       for (const raw of rawNodes) {
         const id = String(raw.id);
@@ -400,10 +556,21 @@ export function Graphify() {
         tgt.degree += 1;
       }
       nodeByIdRef.current = byId;
-      graphRef.current?.graphData({
-        nodes: Array.from(byId.values()),
-        links,
-      });
+      rootIdRef.current = rootId;
+      const fg = graphRef.current;
+      const nodes = Array.from(byId.values());
+      if (fg) {
+        // Orient the graph top-down: dagMode when acyclic (the root then
+        // lands at the top), otherwise seed positions by depth from the root
+        // and hold them with a layered y-force.
+        orientGraph(fg, links, nodes, rootId);
+      }
+      fg?.graphData({ nodes, links });
+      if (fg && rootId) {
+        // Frame the whole tree once it is laid out; dagMode td keeps the
+        // start node pinned at the top of the scene.
+        fg.zoomToFit(400, 60);
+      }
       setLoadedLinks(links.length);
       setSelected(null);
       setBody(null);
@@ -497,9 +664,21 @@ export function Graphify() {
         target: internalToPublic.get(edge.target) ?? edge.target,
         relation: edge.type,
       }));
-      buildGraph(rawNodes, rawLinks);
+      buildGraph(rawNodes, rawLinks, rootId);
       publicToInternalRef.current = publicToInternal;
       setSource({ kind: "db", name: database });
+      // Retain the selected node (and its detail panel) across re-roots:
+      // the re-rooted neighborhood always contains its new root.
+      const keepId = selectedIdRef.current;
+      if (keepId) {
+        const node = nodeByIdRef.current.get(keepId);
+        if (node) {
+          void selectNode(keepId);
+        } else {
+          selectedIdRef.current = null;
+          setSelected(null);
+        }
+      }
       setStatus(
         `rooted at ${rootLabel} · depth ${depth} · ${rawNodes.length} nodes · ${rawLinks.length} links` +
           (hood.meta?.truncated ? " (truncated)" : ""),
@@ -511,7 +690,7 @@ export function Graphify() {
     } finally {
       setLoading(false);
     }
-  }, [database, customRoot, depth, buildGraph]);
+  }, [database, customRoot, depth, buildGraph, selectNode]);
 
   const onUpload = useCallback(
     async (file: File) => {
@@ -528,7 +707,7 @@ export function Graphify() {
         };
         const rawNodes = parsed.nodes ?? [];
         const rawLinks = parsed.links ?? parsed.edges ?? [];
-        buildGraph(rawNodes, rawLinks);
+        buildGraph(rawNodes, rawLinks, null);
         setSource({ kind: "artifact", name: file.name });
         setStatus(
           `loaded ${rawNodes.length} nodes and ${rawLinks.length} links from ${file.name}`,
@@ -596,6 +775,9 @@ export function Graphify() {
         live.links.push(link);
       }
     }
+    // Keep the top-down orientation valid after new arms are spawned, then
+    // hand the merged data to the renderer once.
+    orientGraph(fg, live.links, live.nodes, rootIdRef.current);
     fg.graphData(live);
     // Re-apply the accessors so node/link color changes (e.g. newly
     // flagged similar nodes) repaint immediately.
@@ -746,6 +928,23 @@ export function Graphify() {
 
   const nodeCount = nodeByIdRef.current.size;
   const selectableDatabases = databases.filter((d) => d !== "system");
+
+  // Dev-only diagnostic hook for orientation checks.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as unknown as {
+      __graphifyPositions?: () => Array<{ id: string; y: number }>;
+    }).__graphifyPositions = () =>
+      Array.from(nodeByIdRef.current.values()).map((n) => ({
+        id: n.id,
+        y: Math.round(n.y ?? 0),
+      }));
+    return () => {
+      delete (window as unknown as {
+        __graphifyPositions?: () => Array<{ id: string; y: number }>;
+      }).__graphifyPositions;
+    };
+  }, []);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#04060c] text-norse-silver font-display">
@@ -912,8 +1111,57 @@ export function Graphify() {
 
       {/* Detail panel (right, below the controls, when a node is selected) */}
       {selected && (
-        <div className="absolute top-[16.5rem] right-4 z-10 w-96 max-w-[calc(100vw-2rem)] rounded-lg border border-purple-500/30 bg-norse-shadow/90 backdrop-blur overflow-y-auto shadow-[0_0_24px_rgba(168,85,247,0.15)]">
-          <div className="sticky top-0 bg-norse-shadow/95 backdrop-blur px-4 py-3 border-b border-norse-rune/60 flex items-start justify-between">
+        <div
+          ref={panelRef}
+          style={
+            panelPos
+              ? {
+                  left: panelPos.left,
+                  top: panelPos.top,
+                  maxHeight: `calc(100vh - ${Math.max(0, panelPos.top)}px - 24px)`,
+                }
+              : undefined
+          }
+          className={`absolute z-10 w-96 max-w-[calc(100vw-2rem)] rounded-lg border border-purple-500/30 bg-norse-shadow/90 backdrop-blur overflow-y-auto shadow-[0_0_24px_rgba(168,85,247,0.15)] ${
+            panelPos ? "" : "top-[16.5rem] right-4 max-h-[calc(100vh-18rem)]"
+          }`}
+        >
+          <div
+            onPointerDown={(e) => {
+              // Ignore drags that start on the close button so its click fires.
+              if ((e.target as HTMLElement).closest("button")) return;
+              const panel = panelRef.current;
+              if (!panel) return;
+              const rect = panel.getBoundingClientRect();
+              dragRef.current = {
+                startX: e.clientX,
+                startY: e.clientY,
+                left: rect.left,
+                top: rect.top,
+              };
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              const drag = dragRef.current;
+              if (!drag) return;
+              const left = Math.min(
+                Math.max(0, drag.left + e.clientX - drag.startX),
+                Math.max(0, window.innerWidth - 160),
+              );
+              const top = Math.min(
+                Math.max(0, drag.top + e.clientY - drag.startY),
+                Math.max(0, window.innerHeight - 160),
+              );
+              setPanelPos({ left, top });
+            }}
+            onPointerUp={() => {
+              dragRef.current = null;
+            }}
+            onPointerCancel={() => {
+              dragRef.current = null;
+            }}
+            className="sticky top-0 z-10 bg-norse-shadow/95 backdrop-blur px-4 py-3 border-b border-norse-rune/60 flex items-start justify-between cursor-grab active:cursor-grabbing touch-none"
+          >
             <div className="min-w-0">
               <div className="text-sm font-semibold text-white truncate">
                 {selected.label}
@@ -924,6 +1172,7 @@ export function Graphify() {
             </div>
             <button
               onClick={() => {
+                selectedIdRef.current = null;
                 setSelected(null);
                 setBody(null);
                 setBodySource(null);
@@ -992,7 +1241,7 @@ export function Graphify() {
                 )}
               </div>
               {body ? (
-                <pre className="mt-1 max-h-96 overflow-auto rounded bg-norse-night/80 border border-norse-rune/50 p-3 text-[11px] leading-snug text-norse-silver whitespace-pre-wrap font-mono">
+                <pre className="mt-1 max-h-[40vh] overflow-auto rounded bg-norse-night/80 border border-norse-rune/50 p-3 text-[11px] leading-snug text-norse-silver whitespace-pre-wrap font-mono">
                   {body}
                 </pre>
               ) : (
