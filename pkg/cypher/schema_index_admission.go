@@ -8,6 +8,10 @@ import (
 )
 
 func (e *StorageExecutor) admitIndexCreation(query, name, kind, label string, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
+	return e.admitIndexCreationForTargets(query, name, kind, []string{label}, properties, entityType)
+}
+
+func (e *StorageExecutor) admitIndexCreationForTargets(query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
 	guarded := keywordIndexFrom(query, "IF NOT EXISTS", 0, defaultKeywordScanOpts()) >= 0
 	for _, item := range e.storage.GetSchema().GetIndexes() {
 		index, ok := item.(map[string]interface{})
@@ -20,15 +24,22 @@ func (e *StorageExecutor) admitIndexCreation(query, name, kind, label string, pr
 			existingKind = "RANGE"
 		}
 		existingEntity, _ := index["entityType"].(string)
+		existingTargets, _ := index["labels"].([]string)
+		if relationshipTypes, ok := index["relationshipTypes"].([]string); ok && len(relationshipTypes) > 0 {
+			existingTargets = relationshipTypes
+			existingEntity = string(storage.ConstraintEntityRelationship)
+		}
 		if existingEntity == "" {
 			existingEntity = string(storage.ConstraintEntityNode)
 		}
-		existingLabel, _ := index["label"].(string)
+		if label, ok := index["label"].(string); ok {
+			existingTargets = []string{label}
+		}
 		existingProperties, _ := index["properties"].([]string)
 		if property, ok := index["property"].(string); ok {
 			existingProperties = []string{property}
 		}
-		equivalent := existingKind == kind && existingLabel == label && existingEntity == string(entityType) && slices.Equal(existingProperties, properties)
+		equivalent := existingKind == kind && existingEntity == string(entityType) && slices.Equal(existingTargets, targets) && slices.Equal(existingProperties, properties)
 		if existingName != name && !equivalent {
 			continue
 		}

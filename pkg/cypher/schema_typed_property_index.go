@@ -29,6 +29,13 @@ func (e *StorageExecutor) executeCreateTypedPropertyIndex(ctx context.Context, c
 	if name == "" {
 		name = fmt.Sprintf("index_%s_%s_%s", lowerASCII(label), lowerASCII(parsed.properties[0]), lowerASCII(string(kind)))
 	}
+	create, err := e.admitIndexCreation(cypher, name, string(kind), label, parsed.properties, entityType)
+	if err != nil {
+		return nil, err
+	}
+	if !create {
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
 	if err := e.storage.GetSchema().AddTypedIndexForEntity(kind, name, label, parsed.properties, entityType); err != nil {
 		return nil, err
 	}

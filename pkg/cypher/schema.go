@@ -2327,6 +2327,20 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 		return nil, err
 	}
 
+	entityType := storage.ConstraintEntityNode
+	targets := []string{parsed.label}
+	if parsed.isRelationship {
+		entityType = storage.ConstraintEntityRelationship
+		targets = parsed.relationshipTypes
+	}
+	create, err := e.admitIndexCreationForTargets(cypher, parsed.indexName, "FULLTEXT", targets, parsed.properties, entityType)
+	if err != nil {
+		return nil, err
+	}
+	if !create {
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
 	if parsed.isRelationship {
 		if err := schema.AddFulltextRelationshipIndex(parsed.indexName, parsed.relationshipTypes, parsed.properties); err != nil {
 			return nil, localizedError(localization.CypherSchemaAddFulltextRelationshipIndexFailed(err), err)

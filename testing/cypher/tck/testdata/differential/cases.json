@@ -2039,5 +2039,63 @@
     "name": "GH837 order across types",
     "query": "UNWIND [1, 'a', true, date('2020-01-01'), [1], {a: 1}, datetime('2020-01-01T00:00Z'), duration('P1D'), localtime('12:00'), point({x: 1, y: 1})] AS v RETURN v ORDER BY v",
     "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext same name equivalent definition",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR (n:Doc) ON EACH [n.title]"],
+    "query": "CREATE FULLTEXT INDEX fdup FOR (n:Doc) ON EACH [n.title]",
+    "expected_code": "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext same name different definition",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR (n:Doc) ON EACH [n.title]"],
+    "query": "CREATE FULLTEXT INDEX fdup FOR (n:Other) ON EACH [n.body]",
+    "expected_code": "Neo.ClientError.Schema.IndexWithNameAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext relationship equivalent ordered schema",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR ()-[r:R1|R2]-() ON EACH [r.title, r.body]"],
+    "query": "CREATE FULLTEXT INDEX other FOR ()-[r:R1|R2]-() ON EACH [r.title, r.body]",
+    "expected_code": "Neo.ClientError.Schema.IndexAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext relationship reversed ordered schema control",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR ()-[r:R1|R2]-() ON EACH [r.title, r.body]"],
+    "query": "CREATE FULLTEXT INDEX other FOR ()-[r:R2|R1]-() ON EACH [r.body, r.title]"
+  },
+  {
+    "name": "issue531 fulltext guarded original metadata",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR (n:Doc) ON EACH [n.title]", "CREATE FULLTEXT INDEX fdup IF NOT EXISTS FOR (n:Other) ON EACH [n.body]"],
+    "query": "SHOW INDEXES YIELD name, entityType, labelsOrTypes, properties WHERE name = 'fdup' RETURN name, entityType, labelsOrTypes, properties",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 text equivalent definition",
+    "setup": ["CREATE TEXT INDEX tdup FOR (n:Doc) ON (n.title)"],
+    "query": "CREATE TEXT INDEX other FOR (n:Doc) ON (n.title)",
+    "expected_code": "Neo.ClientError.Schema.IndexAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 point same name equivalent definition",
+    "setup": ["CREATE POINT INDEX pdup FOR (n:Place) ON (n.location)"],
+    "query": "CREATE POINT INDEX pdup FOR (n:Place) ON (n.location)",
+    "expected_code": "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 point same name different definition",
+    "setup": ["CREATE POINT INDEX pdup FOR (n:Place) ON (n.location)"],
+    "query": "CREATE POINT INDEX pdup FOR (n:OtherPlace) ON (n.position)",
+    "expected_code": "Neo.ClientError.Schema.IndexWithNameAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 fulltext relationship type order only",
+    "setup": ["CREATE FULLTEXT INDEX fdup FOR ()-[r:R1|R2]-() ON EACH [r.title, r.body]"],
+    "query": "CREATE FULLTEXT INDEX other FOR ()-[r:R2|R1]-() ON EACH [r.title, r.body]"
   }
 ]

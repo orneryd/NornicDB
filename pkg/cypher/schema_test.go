@@ -314,9 +314,10 @@ func TestSchemaErrorCases(t *testing.T) {
 			t.Fatalf("failed to create baseline fulltext index: %v", err)
 		}
 		_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Node) ON EACH [n.content]")
-		if err != nil {
-			t.Fatalf("duplicate fulltext index should be idempotent, got error: %v", err)
-		}
+		require.Error(t, err)
+		require.Contains(t, statusText(err), "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists")
+		_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Node) ON EACH [n.content]")
+		require.NoError(t, err)
 
 		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
 		if err != nil {
@@ -1289,9 +1290,10 @@ func TestCreateFulltextIndex_SchemaAndDuplicateErrors(t *testing.T) {
 		t.Fatalf("failed to create baseline fulltext index: %v", err)
 	}
 	_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Doc) ON EACH [n.body]")
-	if err != nil {
-		t.Fatalf("expected conflicting fulltext index to be idempotent, got: %v", err)
-	}
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
+	_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Doc) ON EACH [n.body]")
+	require.NoError(t, err)
 
 	nilSchema := &nilSchemaEngine{Engine: store}
 	execNilSchema := NewStorageExecutor(nilSchema)

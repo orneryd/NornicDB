@@ -18,6 +18,12 @@ func TestMonster531IndexAdmission(t *testing.T) {
 		{"relationship equivalent", "CREATE INDEX idx FOR ()-[r:T]-() ON (r.a)", "CREATE INDEX other FOR ()-[r:T]-() ON (r.a)", "IndexAlreadyExists"},
 		{"range vector name collision", "CREATE INDEX idx FOR (n:T) ON (n.a)", "CREATE VECTOR INDEX idx FOR (n:T) ON (n.a)", "IndexWithNameAlreadyExists"},
 		{"vector range name collision", "CREATE VECTOR INDEX idx FOR (n:T) ON (n.a)", "CREATE INDEX idx FOR (n:T) ON (n.a)", "IndexWithNameAlreadyExists"},
+		{"fulltext equivalent", "CREATE FULLTEXT INDEX idx FOR (n:T) ON EACH [n.a]", "CREATE FULLTEXT INDEX other FOR (n:T) ON EACH [n.a]", "IndexAlreadyExists"},
+		{"fulltext relationship equivalent", "CREATE FULLTEXT INDEX idx FOR ()-[r:T|U]-() ON EACH [r.a, r.b]", "CREATE FULLTEXT INDEX other FOR ()-[r:T|U]-() ON EACH [r.a, r.b]", "IndexAlreadyExists"},
+		{"fulltext text name collision", "CREATE FULLTEXT INDEX idx FOR (n:T) ON EACH [n.a]", "CREATE TEXT INDEX idx FOR (n:T) ON (n.a)", "IndexWithNameAlreadyExists"},
+		{"text equivalent", "CREATE TEXT INDEX idx FOR (n:T) ON (n.a)", "CREATE TEXT INDEX other FOR (n:T) ON (n.a)", "IndexAlreadyExists"},
+		{"point equivalent", "CREATE POINT INDEX idx FOR (n:T) ON (n.a)", "CREATE POINT INDEX other FOR (n:T) ON (n.a)", "IndexAlreadyExists"},
+		{"point conflicting name", "CREATE POINT INDEX idx FOR (n:T) ON (n.a)", "CREATE POINT INDEX idx FOR (n:U) ON (n.b)", "IndexWithNameAlreadyExists"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			executor, store := newTestExecutor(t)
@@ -28,6 +34,10 @@ func TestMonster531IndexAdmission(t *testing.T) {
 			_, err = executor.Execute(ctx, testCase.duplicate, nil)
 			require.Error(t, err)
 			require.Contains(t, statusText(err), "Neo.ClientError.Schema."+testCase.code)
+			require.ElementsMatch(t, before, store.GetSchema().GetIndexes())
+			guarded := strings.Replace(testCase.duplicate, " FOR ", " IF NOT EXISTS FOR ", 1)
+			_, err = executor.Execute(ctx, guarded, nil)
+			require.NoError(t, err)
 			require.ElementsMatch(t, before, store.GetSchema().GetIndexes())
 		})
 	}
