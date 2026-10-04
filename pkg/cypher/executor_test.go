@@ -2178,10 +2178,11 @@ func TestExecuteMatchNoReturn(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// MATCH without RETURN should return matched indicator
-	result, err := exec.Execute(ctx, "MATCH (n:Something)", nil)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
+	// MATCH without RETURN is an incomplete statement: a SyntaxError, as in
+	// Neo4j (#514).
+	_, err := exec.Execute(ctx, "MATCH (n:Something)", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SyntaxError")
 }
 
 func TestSubstituteParams(t *testing.T) {

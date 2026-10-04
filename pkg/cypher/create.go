@@ -5,6 +5,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -55,6 +56,19 @@ func (e *StorageExecutor) createFromPattern(ctx context.Context, cypher string) 
 		pattern = cypher[6:returnIdx]
 	}
 	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		// A bare CREATE has no pattern after it; Neo4j rejects it as a
+		// syntax error and writes nothing (#514).
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			"Invalid input: expected a pattern after CREATE")
+	}
+	if pattern[0] != '(' && !namedPathAssignmentPrefix(pattern) {
+		// Anything after CREATE that does not begin a node pattern or a
+		// named-path assignment (p = (...)) is not a pattern (#514:
+		// `create.go` must not create a node).
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			fmt.Sprintf("Invalid input '%s': expected a pattern after CREATE", truncateQuery(pattern, 40)))
+	}
 
 	createdNodes := make(map[string]*storage.Node)
 	createdEdges := make(map[string]*storage.Edge)
@@ -457,7 +471,94 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	if err := validatePropertyValues(nodePattern.properties); err != nil {
 		return nodePatternInfo{}, err
 	}
+	if err := e.validateNoTextFallthrough(ctx, pattern, nodePattern.properties, nodes, relationships); err != nil {
+		return nodePatternInfo{}, err
+	}
 	return nodePattern, nil
+}
+
+// namedPathAssignmentPrefix reports whether pattern begins a named-path
+// assignment, `p = (` (spaces optional).
+func namedPathAssignmentPrefix(pattern string) bool {
+	i := indexByteOutsideBackticks(pattern, '=')
+	if i <= 0 {
+		return false
+	}
+	name := strings.TrimSpace(pattern[:i])
+	if len(name) >= 2 && name[0] == '`' && name[len(name)-1] == '`' {
+		return strings.TrimSpace(pattern[i+1:]) != ""
+	}
+	if name == "" || !isCypherIdentifierStart(name[0]) {
+		return false
+	}
+	for k := 1; k < len(name); k++ {
+		if !isCypherIdentifierPart(name[k]) {
+			return false
+		}
+	}
+	return strings.TrimSpace(pattern[i+1:]) != ""
+}
+
+// validateNoTextFallthrough rejects a CREATE property map whose value is the
+// expression's own source text: the evaluator's "return as string" fallback
+// fires for expressions it cannot evaluate (an unbound variable, a malformed
+// expression), and Neo4j rejects those as syntax errors instead of storing
+// the query text as data (#514). A quoted string literal never trips this:
+// its stored value differs from the expression text by its quotes. Before
+// rejecting, the expression is re-run through the error-propagating row
+// evaluator with the pattern's bound nodes and relationships in scope: a
+// genuine evaluation failure (1 / 0) keeps its ArithmeticError, and an
+// expression the row evaluator resolves is fine — only a truly unevaluable
+// expression is a syntax error.
+func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern string, properties map[string]interface{}, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) error {
+	open := indexByteOutsideBackticks(pattern, '{')
+	if open < 0 {
+		return nil
+	}
+	close := e.findMatchingBrace(pattern, open)
+	if close < 0 {
+		return nil
+	}
+	for _, pair := range e.splitPropertyPairs(pattern[open+1 : close]) {
+		separator := findTopLevelMapKeyValueSeparator(pair)
+		if separator <= 0 {
+			continue
+		}
+		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+		expression := strings.TrimSpace(pair[separator+1:])
+		if expression == "" {
+			continue
+		}
+		value, ok := properties[key]
+		if !ok {
+			continue
+		}
+		text, isString := value.(string)
+		if !isString || text != expression {
+			continue
+		}
+		if isWholeCypherQuotedString(expression) {
+			continue
+		}
+		values := make(map[string]interface{}, len(nodes)+len(relationships)+len(valueBindingsFromContext(ctx)))
+		for name, value := range valueBindingsFromContext(ctx) {
+			values[name] = value
+		}
+		for name, node := range nodes {
+			values[name] = node.Properties
+		}
+		for name, edge := range relationships {
+			values[name] = edge.Properties
+		}
+		if _, resolved, evalErr := e.evaluateRowValue(expression, values); evalErr != nil {
+			return evalErr
+		} else if resolved {
+			continue
+		}
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			fmt.Sprintf("Invalid input '%s': unknown expression", truncateQuery(expression, 80)))
+	}
+	return nil
 }
 
 func (e *StorageExecutor) resolveCreatePropertyReferences(
