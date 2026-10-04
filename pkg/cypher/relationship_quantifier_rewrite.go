@@ -152,6 +152,30 @@ func arrowEndsAt(query string, start, i int) bool {
 	return query[j-1] == '>' && query[j-2] == '-' || query[j-1] == '-' && (query[j-2] == '-' || query[j-2] == ']')
 }
 
+// blankQuotedText returns s with every quoted text (', " or `, quotes
+// included) replaced by spaces, so a scan for syntax characters can't match
+// inside a string or a backticked name (#879). Indexes are unchanged.
+func blankQuotedText(s string) string {
+	var out []byte
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '\'', '"', '`':
+			if out == nil {
+				out = []byte(s)
+			}
+			end := skipCypherQuotedText(s, i, c)
+			for j := i; j < end && j < len(out); j++ {
+				out[j] = ' '
+			}
+			i = end - 1
+		}
+	}
+	if out == nil {
+		return s
+	}
+	return string(out)
+}
+
 // indexOutsideQuotes is the index of c in s outside quoted text, or -1.
 func indexOutsideQuotes(s string, c byte) int {
 	for i := 0; i < len(s); i++ {

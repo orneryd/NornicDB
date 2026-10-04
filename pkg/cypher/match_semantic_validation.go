@@ -953,12 +953,12 @@ func invalidRelationshipPattern(pattern string) bool {
 		if pattern[index] != '[' {
 			continue
 		}
-		end := strings.IndexByte(pattern[index+1:], ']')
+		end := findMatchingDelimiter(pattern, index, '[', ']')
 		if end < 0 {
 			return true
 		}
-		end += index + 1
-		inner := strings.TrimSpace(pattern[index+1 : end])
+		// Quoted names and values can hold * and .. (#879).
+		inner := strings.TrimSpace(blankQuotedText(pattern[index+1 : end]))
 		star := strings.IndexByte(inner, '*')
 		if strings.Contains(inner, "..") && star < 0 {
 			return true

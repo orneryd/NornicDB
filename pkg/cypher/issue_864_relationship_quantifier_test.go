@@ -52,6 +52,10 @@ func TestIssue864RelationshipQuantifiers(t *testing.T) {
 						{"MATCH (a {id:1}) OPTIONAL MATCH (a)-[:R]->{4}(b) RETURN a.id, b", [][]interface{}{{int64(1), nil}}},
 						{"MATCH (a {id:1}) WHERE EXISTS { (a)-[:R]->{3}() } RETURN a.id", [][]interface{}{{int64(1)}}},
 						{"MATCH (a {id:1}) RETURN COUNT { (a)-[:R]->+() } AS n", [][]interface{}{{int64(3)}}},
+						// A * in a backticked type is part of the name (#879).
+						{"MATCH (a)-[:`R*`]->(b) RETURN count(*) AS c", [][]interface{}{{int64(0)}}},
+						{"MATCH (a)-[:`R*`]->{1,2}(b) RETURN count(*) AS c", [][]interface{}{{int64(0)}}},
+						{"MATCH (a)-[r:`R..S` {w: '*'}]->(b) RETURN count(*) AS c", [][]interface{}{{int64(0)}}},
 					},
 					errors: []struct{ query, message string }{
 						{"MATCH (a)-[:R*]->{1,2}(b) RETURN count(*) AS c", "Variable length relationships cannot be part of a quantified path pattern."},
@@ -98,5 +102,23 @@ func TestIssue864RelationshipQuantifiers(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// relationshipQuantifierAt reads only well-formed quantifiers; anything else
+// after an arrow (a node, a map) is not one.
+func TestRelationshipQuantifierAt(t *testing.T) {
+	for text, want := range map[string]relationshipQuantifier{
+		"+": {min: 1, max: -1, end: 1}, "*": {min: 0, max: -1, end: 1},
+		"{3}": {min: 3, max: 3, end: 3}, "{ 1 , 4 }": {min: 1, max: 4, end: 9},
+		"{2,}": {min: 2, max: -1, end: 4}, "{,5}": {min: 0, max: 5, end: 4},
+	} {
+		got, ok := relationshipQuantifierAt(text, 0, len(text))
+		require.True(t, ok, text)
+		require.Equal(t, want, got, text)
+	}
+	for _, text := range []string{"", "(", "{", "{1", "{}", "{x}", "{-1}", "{1,x}", "{x,1}", "{w: 1}"} {
+		_, ok := relationshipQuantifierAt(text, 0, len(text))
+		require.False(t, ok, text)
 	}
 }
