@@ -214,13 +214,16 @@ func TestBoltDatabaseManagerExecuteWriteUniqueMerge_ProductionWrapperStackWithLo
 		AccessMode:   neo4jdriver.AccessModeWrite,
 		DatabaseName: "nornic",
 	})
+	// The constraint first: its own index serves the uid seeks, and the index
+	// statement after it is a no-op, as in Neo4j. The other order fails with
+	// IndexAlreadyExists (#884).
 	_, err = setup.Run(ctx,
-		"CREATE INDEX nornicdb_terraform_resource_uid_lookup IF NOT EXISTS FOR (n:TerraformResource) ON (n.uid)",
+		"CREATE CONSTRAINT terraform_resource_uid_unique IF NOT EXISTS FOR (n:TerraformResource) REQUIRE n.uid IS UNIQUE",
 		nil,
 	)
 	require.NoError(t, err)
 	_, err = setup.Run(ctx,
-		"CREATE CONSTRAINT terraform_resource_uid_unique IF NOT EXISTS FOR (n:TerraformResource) REQUIRE n.uid IS UNIQUE",
+		"CREATE INDEX nornicdb_terraform_resource_uid_lookup IF NOT EXISTS FOR (n:TerraformResource) ON (n.uid)",
 		nil,
 	)
 	require.NoError(t, err)
@@ -334,13 +337,16 @@ func TestBoltDatabaseManagerMergeExistingNodeAfterLateSchemaBootstrap(t *testing
 		map[string]any{"uid": "late-schema-existing"},
 	)
 	require.NoError(t, err)
+	// The constraint first: its own index serves the uid seeks, and the index
+	// statement after it is a no-op, as in Neo4j. The other order fails with
+	// IndexAlreadyExists (#884).
 	_, err = setup.Run(ctx,
-		"CREATE INDEX nornicdb_terraform_resource_uid_lookup IF NOT EXISTS FOR (n:TerraformResource) ON (n.uid)",
+		"CREATE CONSTRAINT terraform_resource_uid_unique IF NOT EXISTS FOR (n:TerraformResource) REQUIRE n.uid IS UNIQUE",
 		nil,
 	)
 	require.NoError(t, err)
 	_, err = setup.Run(ctx,
-		"CREATE CONSTRAINT terraform_resource_uid_unique IF NOT EXISTS FOR (n:TerraformResource) REQUIRE n.uid IS UNIQUE",
+		"CREATE INDEX nornicdb_terraform_resource_uid_lookup IF NOT EXISTS FOR (n:TerraformResource) ON (n.uid)",
 		nil,
 	)
 	require.NoError(t, err)

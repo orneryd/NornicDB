@@ -92,6 +92,14 @@ func TestGh884IndexAndConstraintOverlap(t *testing.T) {
 		require.Equal(t, "Neo.ClientError.Schema.IndexAlreadyExists: There already exists an index (:U884 {id}). A constraint cannot be created until the index has been dropped.", statusText(err), query)
 	}
 
+	// A node key constraint's index keeps the generic message.
+	_, err = exec.Execute(ctx, "CREATE CONSTRAINT k884 FOR (n:K884) REQUIRE (n.k) IS NODE KEY", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE INDEX i884k FOR (n:K884) ON (n.k)", nil)
+	require.Contains(t, statusText(err), "Neo.ClientError.Schema.ConstraintAlreadyExists")
+	_, err = exec.Execute(ctx, "DROP CONSTRAINT k884", nil)
+	require.NoError(t, err)
+
 	_, err = exec.Execute(ctx, "DROP INDEX c884a", nil)
 	require.Equal(t, "Neo.DatabaseError.Schema.IndexDropFailed: Unable to drop index: Index belongs to constraint: `c884a`", statusText(err))
 
@@ -100,12 +108,30 @@ func TestGh884IndexAndConstraintOverlap(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"c884a"}, {"i884b"}}, result.Rows)
 }
 
+// laterLabelScanErrEngine fails every label scan after the second: the
+// constraint's check of the existing nodes (two scans) passes and its index
+// fill fails.
+type laterLabelScanErrEngine struct {
+	storage.Engine
+	scans int
+}
+
+func (e *laterLabelScanErrEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+	e.scans++
+	if e.scans > 2 {
+		return nil, errors.New("label scan failed")
+	}
+	return e.Engine.GetNodesByLabel(label)
+}
+
 // A constraint whose index can't be filled isn't created.
 func TestGh875ConstraintIndexFillFailureDropsConstraint(t *testing.T) {
 	base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	exec := NewStorageExecutor(&getNodesByLabelErrEngine{Engine: base, label: "Rec", err: errors.New("label scan failed")})
+	engine := &laterLabelScanErrEngine{Engine: base}
+	exec := NewStorageExecutor(engine)
 	_, err := exec.Execute(context.Background(), "CREATE CONSTRAINT rec_uid FOR (n:Rec) REQUIRE n.uid IS UNIQUE", nil)
 	require.ErrorContains(t, err, "label scan failed")
+	require.Equal(t, 3, engine.scans)
 	require.Empty(t, base.GetSchema().GetAllConstraints())
 	require.False(t, base.GetSchema().MaintainsPropertyIndex("Rec", "uid"))
 }
