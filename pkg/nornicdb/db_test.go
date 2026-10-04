@@ -2138,7 +2138,8 @@ func TestRestoreNativeRebuildsLiveSchemaAndSearch(t *testing.T) {
 	source, err := Open(t.TempDir(), config)
 	require.NoError(t, err)
 	require.NoError(t, source.storage.GetSchema().AddUniqueConstraint("doc_key", "Doc", "key"))
-	require.NoError(t, source.storage.GetSchema().AddPropertyIndex("doc_key_index", "Doc", []string{"key"}))
+	// An index of its own on another property: the constraint owns the key's (#884).
+	require.NoError(t, source.storage.GetSchema().AddPropertyIndex("doc_content_index", "Doc", []string{"content"}))
 	_, err = source.storage.CreateNode(&storage.Node{
 		ID: "doc", Labels: []string{"Doc"},
 		Properties:      map[string]interface{}{"key": "k1", "content": "restored"},
