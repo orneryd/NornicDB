@@ -651,10 +651,17 @@ func (c *searchResultCache) SetTTL(ttl time.Duration) {
 	}
 }
 
+// Invalidate drops every cached result. Every indexed node and edge mutation
+// calls it, so it must cost nothing when the cache is already empty:
+// allocating a map of maxSize capacity per call made it 11% of a
+// 100,000-node CREATE (#849). Clearing in place keeps the map's buckets.
 func (c *searchResultCache) Invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries = make(map[string]*searchResultCacheEntry, c.maxSize)
+	if len(c.entries) == 0 {
+		return
+	}
+	clear(c.entries)
 	c.lru.Init()
 	c.retainedBytes = 0
 }
