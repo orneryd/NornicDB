@@ -799,9 +799,7 @@ func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parse
 		return
 	}
 	body := strings.TrimSpace(names.canonical[start:end])
-	if distinct, cut := cutDistinctKeyword(body); cut {
-		body = distinct
-	}
+	body, _ = cutDistinct(body)
 	if strings.HasPrefix(body, "*") && (len(body) == 1 || !isIdentifierPart(body[1])) && topLevelKeywordIndex(body, "UNION") < 0 {
 		sortColumnsByName(result)
 		return
@@ -822,14 +820,6 @@ func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parse
 		}
 		result.Columns[i] = strings.TrimSpace(item.expr)
 	}
-}
-
-// cutDistinctKeyword removes a leading DISTINCT keyword.
-func cutDistinctKeyword(body string) (string, bool) {
-	if startsWithKeywordFold(body, "DISTINCT") {
-		return strings.TrimSpace(body[len("DISTINCT"):]), true
-	}
-	return body, false
 }
 
 func sortColumnsByName(result *ExecuteResult) {

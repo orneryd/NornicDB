@@ -14,20 +14,148 @@ import (
 // it, trimmed. The keyword ends at any character that can't continue an
 // identifier, so DISTINCT{a: 1}, DISTINCT(x) and DISTINCT followed by a
 // newline are DISTINCT, and a name that only starts with it (distinctName) is
-// not. Without the keyword, text is returned trimmed.
+// not. A variable named distinct is a name, not the keyword, when what
+// follows it can't start an expression (distinctFollowsAsName, #894).
+// Without the keyword, text is returned trimmed.
 func cutDistinct(text string) (string, bool) {
 	text = strings.TrimSpace(text)
 	const keyword = "DISTINCT"
 	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || isAlphaNumericByte(text[len(keyword)]) {
 		return text, false
 	}
-	return strings.TrimSpace(text[len(keyword):]), true
+	rest := strings.TrimSpace(text[len(keyword):])
+	if rest == "" || distinctFollowsAsName(rest) {
+		return text, false
+	}
+	return rest, true
+}
+
+// distinctFollowsAsName reports whether rest, the text after a projection's
+// or aggregate's leading word distinct, makes that word a variable. Neo4j
+// reads distinct as the keyword whenever rest can be an expression, so it is
+// a variable only when rest can't start one: a property access, a label
+// (distinct:Q), a separator, a comparison, / % ^ * (not RETURN DISTINCT *, a
+// star projection) or ::, a map projection (distinct{.a}; DISTINCT {a: 1} is
+// a map), AND, OR, XOR, CONTAINS, AS, IS (not IS ::), or a clause
+// (startsWithClauseAfterDistinct: RETURN distinct ORDER BY distinct). Before
+// + - [ ( a number, IN, STARTS, ENDS or a name, distinct is the keyword.
+func distinctFollowsAsName(rest string) bool {
+	switch rest[0] {
+	case '.':
+		return len(rest) == 1 || !isDigitByte(rest[1]) // RETURN DISTINCT .5
+	case ',', ':', '/', '%', '^', '=', '<', '>':
+		return true
+	case '*':
+		after := strings.TrimSpace(rest[1:])
+		return after != "" && after[0] != ',' && !startsWithClauseAfterDistinct(after)
+	case '{':
+		after := strings.TrimSpace(rest[1:])
+		return after != "" && after[0] == '.'
+	}
+	for _, word := range [...]string{"AS", "AND", "OR", "XOR", "CONTAINS"} {
+		if matchKeywordAt(rest, 0, word) {
+			return true
+		}
+	}
+	if matchKeywordAt(rest, 0, "IS") {
+		return !strings.HasPrefix(strings.TrimSpace(rest[len("IS"):]), "::")
+	}
+	return startsWithClauseAfterDistinct(rest)
+}
+
+// startsWithClauseAfterDistinct reports whether text, which follows the word
+// distinct, starts with a clause rather than a name spelled as a clause
+// keyword. As Neo4j reads it, the word is a name when it ends the text or
+// what follows it continues an expression (RETURN DISTINCT order, RETURN
+// DISTINCT skip - 1, RETURN DISTINCT where.x), and a clause otherwise
+// (RETURN distinct SKIP 1, WITH distinct WHERE where = 3). UNION is a clause
+// only as UNION ALL.
+func startsWithClauseAfterDistinct(text string) bool {
+	end := 0
+	for end < len(text) && isIdentByte(text[end]) {
+		end++
+	}
+	if end == 0 || !isNameableClauseKeyword(text[:end]) {
+		return false
+	}
+	rest := strings.TrimSpace(text[end:])
+	if strings.EqualFold(text[:end], "UNION") {
+		return matchKeywordAt(rest, 0, "ALL")
+	}
+	return startsWithClauseAfterName(text)
+}
+
+// startsWithClauseAfterName reports whether text, which follows a name,
+// starts with a clause: a clause keyword that isn't itself a name there. The
+// word is a name when it ends the text, what follows it continues an
+// expression, or a clause follows it (no clause keyword but OPTIONAL and
+// UNION is followed directly by a clause: WITH where WHERE where = 3); ORDER
+// is a clause only as ORDER BY and OPTIONAL only as OPTIONAL MATCH (WITH
+// order ORDER BY order).
+func startsWithClauseAfterName(text string) bool {
+	end := 0
+	for end < len(text) && isIdentByte(text[end]) {
+		end++
+	}
+	if end == 0 || !isNameableClauseKeyword(text[:end]) {
+		return false
+	}
+	rest := strings.TrimSpace(text[end:])
+	switch {
+	case strings.EqualFold(text[:end], "ORDER"):
+		return matchKeywordAt(rest, 0, "BY")
+	case strings.EqualFold(text[:end], "OPTIONAL"):
+		return matchKeywordAt(rest, 0, "MATCH")
+	}
+	if rest == "" || nameContinuesExpression(rest) {
+		return false
+	}
+	return strings.EqualFold(text[:end], "UNION") || !startsWithClauseAfterName(rest)
+}
+
+// nameContinuesExpression reports whether rest, the non-empty text after a
+// name, continues an expression from that name: an operator, a separator, a
+// property access, a subscript, a closing parenthesis, AS or a word
+// operator.
+func nameContinuesExpression(rest string) bool {
+	if strings.IndexByte(".,:/%^=<>*+-[)", rest[0]) >= 0 {
+		return true
+	}
+	if matchKeywordAt(rest, 0, "AS") {
+		// AS introduces an alias only before a name (WHERE as = 3: as is a
+		// variable).
+		alias := strings.TrimSpace(rest[len("AS"):])
+		return alias != "" && (isIdentByte(alias[0]) || alias[0] == '`')
+	}
+	for _, word := range [...]string{"AND", "OR", "XOR", "CONTAINS", "IS", "IN", "STARTS", "ENDS"} {
+		if matchKeywordAt(rest, 0, word) {
+			return true
+		}
+	}
+	return false
 }
 
 // startsWithDistinct reports whether text starts with the DISTINCT keyword
 // (cutDistinct).
 func startsWithDistinct(text string) bool {
 	_, distinct := cutDistinct(text)
+	return distinct
+}
+
+// cutDistinctArgument is cutDistinct for a function's argument list, where
+// a lone distinct is the keyword with no argument: count(distinct) has no
+// argument, as Neo4j reads it, while RETURN distinct returns the variable.
+func cutDistinctArgument(text string) (string, bool) {
+	if strings.EqualFold(strings.TrimSpace(text), "DISTINCT") {
+		return "", true
+	}
+	return cutDistinct(text)
+}
+
+// startsWithDistinctArgument reports whether a function's argument list
+// starts with the DISTINCT keyword (cutDistinctArgument).
+func startsWithDistinctArgument(text string) bool {
+	_, distinct := cutDistinctArgument(text)
 	return distinct
 }
 
@@ -243,14 +371,24 @@ func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
 	}
 	// The word before is a keyword only when it isn't itself a name
 	// (WITH 1 AS set RETURN …: set is an alias, so RETURN is a clause).
-	return !wordIsName(s, i+1)
+	if wordIsName(s, i+1) {
+		return false
+	}
+	if strings.EqualFold(s[i+1:wordEnd], "DISTINCT") {
+		// distinct may be a variable: RETURN distinct ORDER BY distinct (#894).
+		return !startsWithClauseAfterDistinct(s[pos:])
+	}
+	return true
 }
 
 // isDigitByte reports whether b is an ASCII digit.
 func isDigitByte(b byte) bool { return b >= '0' && b <= '9' }
 
 // wordIsName reports whether the word starting at wordStart is in a name
-// position: after AS, or after '.', ':' or '$'.
+// position: after AS, or after '.', ':' or '$'. After a separator, an
+// operator or WITH, RETURN or BY, where an expression starts, a word other
+// than NOT, CASE and DISTINCT is a name too (WITH x, where RETURN where,
+// WITH where WHERE where = 3, RETURN by ORDER BY by; #894).
 func wordIsName(s string, wordStart int) bool {
 	i := lastLiveByte(s, wordStart)
 	if i < 0 {
@@ -259,12 +397,29 @@ func wordIsName(s string, wordStart int) bool {
 	switch s[i] {
 	case '.', ':', '$':
 		return true
+	case ',', '(', '[', '+', '-', '*', '/', '%', '^', '=', '<', '>':
+		return !wordStartsExpression(s[wordStart:])
 	}
 	end := i + 1
 	for i >= 0 && isIdentByte(s[i]) {
 		i--
 	}
-	return strings.EqualFold(s[i+1:end], "AS")
+	// The word before must be the keyword, not a name spelled the same
+	// (WITH 3 AS as WITH as RETURN as, WITH 3 AS with WITH with WHERE …).
+	switch word := s[i+1 : end]; {
+	case strings.EqualFold(word, "AS"):
+		return !wordIsName(s, i+1)
+	case strings.EqualFold(word, "WITH"), strings.EqualFold(word, "RETURN"), strings.EqualFold(word, "BY"):
+		return !wordStartsExpression(s[wordStart:]) && !wordIsName(s, i+1)
+	}
+	return false
+}
+
+// wordStartsExpression reports whether text starts with a keyword that
+// starts an expression or a projection where a name could stand: NOT, CASE
+// or DISTINCT.
+func wordStartsExpression(text string) bool {
+	return matchKeywordAt(text, 0, "NOT") || matchKeywordAt(text, 0, "CASE") || matchKeywordAt(text, 0, "DISTINCT")
 }
 
 // isNameableClauseKeyword reports whether keyword (its first word) starts a
@@ -287,6 +442,8 @@ func isNameableClauseKeyword(keyword string) bool {
 		candidates = nameableClauseKeywords6[:]
 	case 7:
 		candidates = nameableClauseKeywords7[:]
+	case 8:
+		candidates = nameableClauseKeywords8[:]
 	default:
 		return false
 	}
@@ -303,10 +460,11 @@ func isNameableClauseKeyword(keyword string) bool {
 // by length.
 var (
 	nameableClauseKeywords3 = [...]string{"SET"}
-	nameableClauseKeywords4 = [...]string{"WITH", "SKIP"}
-	nameableClauseKeywords5 = [...]string{"MATCH", "MERGE", "UNION", "LIMIT", "ORDER"}
+	nameableClauseKeywords4 = [...]string{"WITH", "SKIP", "CALL"}
+	nameableClauseKeywords5 = [...]string{"MATCH", "MERGE", "UNION", "LIMIT", "ORDER", "WHERE"}
 	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND"}
 	nameableClauseKeywords7 = [...]string{"FOREACH"}
+	nameableClauseKeywords8 = [...]string{"OPTIONAL"}
 )
 
 // prevWordStart returns the start of the word that precedes pos (after

@@ -466,9 +466,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 		}
 		body := strings.TrimSpace(text[len(keyword):])
 		projection, _ := splitWithProjection(body)
-		if startsWithKeywordFold(projection, "DISTINCT") {
-			projection = projection[len("DISTINCT"):]
-		}
+		projection, _ = cutDistinct(projection)
 		if mayContainArithmetic(projection) {
 			for _, item := range splitTopLevelComma(projection) {
 				expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))

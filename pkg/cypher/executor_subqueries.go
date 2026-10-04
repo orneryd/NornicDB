@@ -2513,26 +2513,17 @@ func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, 
 		all bool
 	}
 	seps := make([]sep, 0)
-	inSingle := false
-	inDouble := false
 	depthParen := 0
 	depthBracket := 0
 	depthBrace := 0
 
 	for i := 0; i < len(trimmed); i++ {
 		ch := trimmed[i]
-		if ch == '\'' && !inDouble {
-			inSingle = !inSingle
-			continue
-		}
-		if ch == '"' && !inSingle {
-			inDouble = !inDouble
-			continue
-		}
-		if inSingle || inDouble {
-			continue
-		}
 		switch ch {
+		case '\'', '"', '`':
+			// A string or a backticked name (`union`) holds no UNION.
+			i = skipCypherQuotedText(trimmed, i, ch) - 1
+			continue
 		case '(':
 			depthParen++
 			continue
@@ -2562,7 +2553,8 @@ func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, 
 		if depthParen != 0 || depthBracket != 0 || depthBrace != 0 {
 			continue
 		}
-		if !matchKeywordAt(trimmed, i, "UNION") {
+		// A variable named union is a name, not the operator (#894).
+		if !matchKeywordAt(trimmed, i, "UNION") || clauseKeywordUsedAsName(trimmed, i, i+len("UNION"), "UNION") {
 			continue
 		}
 		j := skipSpaces(trimmed, i+len("UNION"))

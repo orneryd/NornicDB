@@ -92,13 +92,7 @@ func isCreateSchemaOrAdministrationCommand(cypher string) bool {
 }
 
 func projectedBindingScope(input *semanticBindingScope, clause string) *semanticBindingScope {
-	body := strings.TrimSpace(clause[len("WITH"):])
-	for _, keyword := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := findKeywordIndexInContext(body, keyword); index >= 0 {
-			body = strings.TrimSpace(body[:index])
-		}
-	}
-	body, _ = cutDistinct(body)
+	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	output := newSemanticBindingScope()
 	for _, raw := range splitTopLevelComma(body) {
 		expr, alias := parseProjectionExprAlias(strings.TrimSpace(raw))

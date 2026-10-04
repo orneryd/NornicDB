@@ -1393,7 +1393,7 @@ func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectio
 	}
 	// The plan projects row by row: aggregation, DISTINCT and SKIP / LIMIT
 	// expressions (LIMIT 0 + 1) are the pipeline's (executeCallTailPipeline).
-	if hasPrefixFoldASCII(withProjection, "DISTINCT") || hasPrefixFoldASCII(returnProjection, "DISTINCT") ||
+	if startsWithDistinct(withProjection) || startsWithDistinct(returnProjection) ||
 		containsAggregateFunc(withProjection) || containsAggregateFunc(returnProjection) || containsAggregateFunc(orderBy) {
 		return nil
 	}

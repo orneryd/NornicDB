@@ -321,6 +321,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Accept a list index whose type is one of several, such as `r[i + 1]`;
   Neo4j checks it when it runs.
 
+- Accept `where`, `optional`, `union`, `call`, `as` and `distinct` as
+  variable names, as Neo4j does: in node patterns, WITH, UNWIND and RETURN
+  aliases, ORDER BY, WHERE and expressions. A keyword-named variable can be
+  a projection's first or last item before a clause (`WITH where WHERE …`,
+  `WITH x, optional MATCH …`, `RETURN by ORDER BY by`), and `distinct` is a
+  variable wherever Neo4j reads it as one (`RETURN distinct ORDER BY
+  distinct`, `RETURN distinct.id`) and the keyword wherever the rest can be
+  an expression (`RETURN DISTINCT skip - 1`, `count(distinct)` has no
+  argument). One DISTINCT rule now serves every projection and aggregate
+  (#894).
+
 - Re-embed a node whose content changes while the embed worker is embedding
   it. The worker's writeback now lands only while the node still has the
   properties and labels it embedded; before, it stored the old content's

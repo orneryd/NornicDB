@@ -106,7 +106,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 					if err := validateExpressionOperandCompleteness(expression); err != nil {
 						return err
 					}
-					if aliasIndex := topLevelKeywordIndex(item, "AS"); aliasIndex >= 0 {
+					if aliasIndex := projectionAliasIndex(item); aliasIndex >= 0 {
 						alias := strings.TrimSpace(item[aliasIndex+len("AS"):])
 						if simpleSemanticIdentifier(alias) == "" && !(len(alias) >= 2 && alias[0] == '`' && alias[len(alias)-1] == '`') {
 							return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid RETURN alias")
@@ -148,14 +148,8 @@ func emptyProjectionItemError(clause string) error {
 // withProjectionHasEmptyItem reports whether a WITH clause's item list,
 // before its WHERE / ORDER BY / SKIP / LIMIT, has an empty item.
 func withProjectionHasEmptyItem(clause string) bool {
-	body := strings.TrimSpace(clause[len("WITH"):])
-	end := len(body)
-	for _, keyword := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
-			end = index
-		}
-	}
-	return projectionHasEmptyItem(body[:end])
+	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	return projectionHasEmptyItem(body)
 }
 
 // projectionHasEmptyItem reports whether a projection item list has an
@@ -330,7 +324,7 @@ func validateWithProjectionSemantics(cypher string) error {
 			if err := validateExpressionOperandCompleteness(expression); err != nil {
 				return err
 			}
-			explicitAlias := topLevelKeywordIndex(item, "AS") > 0
+			explicitAlias := projectionAliasIndex(item) > 0
 			if !explicitAlias && expression != "*" && simpleSemanticIdentifier(expression) == "" {
 				if containsMalformedCreateClauseToken(expression) {
 					continue

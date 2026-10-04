@@ -224,9 +224,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			return nil
 		}
 		inner := strings.TrimSpace(text[open+1 : closing])
-		if startsWithKeywordFold(inner, "DISTINCT") {
-			inner = strings.TrimSpace(inner[len("DISTINCT"):])
-		}
+		inner, _ = cutDistinctArgument(inner)
 		if strings.EqualFold(name, "trim") {
 			if parameters, fromForm := trimFromArguments(inner); fromForm {
 				for _, expression := range parameters {
@@ -407,15 +405,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 // alias of an expression with a static type keeps that type; WITH * keeps
 // every one.
 func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]string {
-	body := strings.TrimSpace(clause[len("WITH"):])
-	for _, keyword := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
-			body = strings.TrimSpace(body[:index])
-		}
-	}
-	if startsWithKeywordFold(body, "DISTINCT") {
-		body = strings.TrimSpace(body[len("DISTINCT"):])
-	}
+	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	// Only a literal (or an alias of a variable that already has a literal
 	// type) gives a projected value a static type.
 	if len(scope.values) == 0 && !strings.ContainsAny(body, "'\"[{0123456789") && !containsFold(body, "true") && !containsFold(body, "false") {
