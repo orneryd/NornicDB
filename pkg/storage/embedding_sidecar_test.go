@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -215,4 +216,74 @@ func TestEmbeddingSidecar_NotFoundDoesNotCreate(t *testing.T) {
 type EmbeddingFailureLike struct {
 	NodeID NodeID
 	Error  string
+}
+
+// BenchmarkUpdateNodeEmbeddingSidecar measures the worker's new embedding-only
+// writeback in the production shape: a persistent engine and a pool of nodes,
+// each writeback targeting the next node (bounded per-key churn).
+func BenchmarkUpdateNodeEmbeddingSidecar(b *testing.B) {
+	engine := NewMemoryEngine().BadgerEngine
+	defer engine.Close()
+	now := time.Now()
+	const pool = 2000
+	nodes := make([]*Node, pool)
+	for i := 0; i < pool; i++ {
+		node := &Node{
+			ID:         NodeID(fmt.Sprintf("test:bench-sidecar-%d", i)),
+			Labels:     []string{"Doc"},
+			Properties: map[string]any{"content": "hello"},
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		if _, err := engine.CreateNode(node); err != nil {
+			b.Fatal(err)
+		}
+		nodes[i] = node
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		payload := &Node{
+			ID:              nodes[i%pool].ID,
+			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
+			EmbedMeta:       map[string]any{"has_embedding": true, "chunk_count": 1},
+			UpdatedAt:       nodes[i%pool].UpdatedAt,
+		}
+		if err := engine.UpdateNodeEmbeddingSidecar(payload); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkUpdateNodeEmbeddingLegacy measures the previous worker writeback
+// (node-record MVCC update) in the same pool shape, for comparison.
+func BenchmarkUpdateNodeEmbeddingLegacy(b *testing.B) {
+	engine := NewMemoryEngine().BadgerEngine
+	defer engine.Close()
+	now := time.Now()
+	const pool = 2000
+	nodes := make([]*Node, pool)
+	for i := 0; i < pool; i++ {
+		node := &Node{
+			ID:         NodeID(fmt.Sprintf("test:bench-legacy-%d", i)),
+			Labels:     []string{"Doc"},
+			Properties: map[string]any{"content": "hello"},
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		if _, err := engine.CreateNode(node); err != nil {
+			b.Fatal(err)
+		}
+		nodes[i] = node
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		payload := &Node{
+			ID:              nodes[i%pool].ID,
+			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
+			EmbedMeta:       map[string]any{"has_embedding": true, "chunk_count": 1},
+		}
+		if err := engine.UpdateNodeEmbedding(payload); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

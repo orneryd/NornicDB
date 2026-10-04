@@ -116,29 +116,50 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		return fmt.Errorf("failed to encode embedding metadata for node %s: %w", node.ID, err)
 	}
 
-	// Chunk replacement runs first: it deletes EVERY key under the embedding
-	// prefix — the previous metadata record included — and writes the new
-	// chunk vectors atomically (#703). The metadata record is then written at
-	// its reserved chunk index, so a reader in the window between the two
-	// commits sees the new chunks with no metadata (an embedding-free node)
-	// rather than mixed chunk sets.
-	if err := b.replaceSeparateEmbeddingChunks(node.ID, node.ChunkEmbeddings); err != nil {
-		return err
-	}
-	if err := b.withUpdate(func(txn *badger.Txn) error {
-		metaKey := embeddingMetaKey(node.ID)
-		if writeMeta {
-			if err := txn.Set(metaKey, metaBytes); err != nil {
-				return err
-			}
-		} else {
-			if err := txn.Delete(metaKey); err != nil {
-				return err
-			}
+	// One atomic engine write (withUpdateUnits, #703): delete the previous
+	// chunk vectors and metadata record, write the new chunk vectors, write or
+	// delete the metadata record at its reserved chunk index, and remove the
+	// pending-embeddings marker. Readers see the old embedding state or the
+	// new one — never a mix.
+	var units []func(txn *badger.Txn) error
+	if err := b.withView(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badgerPrefixIteratorOptions(embeddingPrefix(node.ID)))
+		defer it.Close()
+		for it.Rewind(); it.ValidForPrefix(embeddingPrefix(node.ID)); it.Next() {
+			key := it.Item().KeyCopy(nil)
+			units = append(units, func(txn *badger.Txn) error { return txn.Delete(key) })
 		}
-		return txn.Delete(pendingEmbedKey(node.ID))
+		return nil
 	}); err != nil {
-		return err
+		return localizedError(localization.StorageClientNodeEmbeddingChunksDeleteFailed(err), err)
+	}
+	for index, emb := range node.ChunkEmbeddings {
+		kvs, err := buildEmbeddingChunkWriteKVs(node.ID, index, emb)
+		if err != nil {
+			return err
+		}
+		chunkIndex := index
+		for _, kv := range kvs {
+			kv := kv
+			units = append(units, func(txn *badger.Txn) error {
+				if err := txn.Set(kv.key, kv.val); err != nil {
+					return localizedError(localization.StorageClientNodeEmbeddingChunkStoreFailed(chunkIndex, err), err)
+				}
+				return nil
+			})
+		}
+	}
+	metaKey := embeddingMetaKey(node.ID)
+	if writeMeta {
+		units = append(units, func(txn *badger.Txn) error { return txn.Set(metaKey, metaBytes) })
+	} else {
+		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
+	}
+	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
+	if len(units) > 0 {
+		if err := b.withUpdateUnits(units); err != nil {
+			return err
+		}
 	}
 
 	// The full-node cache may hold a copy without the new embedding state;
