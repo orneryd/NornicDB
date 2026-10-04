@@ -303,7 +303,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Read `WITH *, items` and `RETURN *, items` as Neo4j does instead of failing
   with "could not evaluate expression: *": the * stands for every variable in
   scope, in name order, except one an item redefines, followed by the items.
-  `RETURN DISTINCT *` is accepted, a `RETURN *` without rows lists the
+  `RETURN DISTINCT *` is accepted, `WITH DISTINCT *` keeps one row per
+  distinct set of variables instead of every row, a `RETURN *` without rows lists the
   variables in scope, and `RETURN *` with no variables gives Neo4j's message
   (#883).
 
