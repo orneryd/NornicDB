@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -53,9 +55,11 @@ func embeddingMetaFromKey(key []byte) (NodeID, bool) {
 
 // EmbeddingSidecarUpdater writes managed embedding state (chunk vectors and
 // embedding metadata) for an existing node WITHOUT touching the node record:
-// no MVCC version, no body rewrite, no UpdatedAt bump. A sidecar write can
-// therefore never conflict with an incoming business write to the node.
-// Returns ErrNotFound when the node does not exist.
+// no MVCC version, no body rewrite, no UpdatedAt bump. node carries the
+// properties and labels the embedding was computed from; the write lands
+// only while the stored node still has them. Returns ErrNotFound when the
+// node does not exist and ErrEmbeddingSourceChanged when it changed since it
+// was read (#889); either way nothing is written.
 type EmbeddingSidecarUpdater interface {
 	UpdateNodeEmbeddingSidecar(node *Node) error
 }
@@ -74,11 +78,15 @@ type EmbeddingFailureStreamer interface {
 //     embedding was generated from
 //   - the pending-embeddings index entry is removed
 //
-// The node record (nodeKey, MVCC head, version history) is never written, so
-// this update cannot conflict with concurrent business writes and creates no
-// MVCC version. The existence check is a plain read; a node deleted between
-// the check and the write leaves only orphaned embedding keys, which the
-// deletion path removes.
+// The node record (nodeKey, MVCC head, version history) is never written and
+// no MVCC version is created. The commit first reads the stored node in its
+// first batch, whose reads Badger conflict-checks before anything is written
+// (commitWriter): when the node is gone the result is ErrNotFound, and when
+// its properties or labels differ from node's the embedding describes old
+// content, so the result is ErrEmbeddingSourceChanged and the pending marker
+// the business write set stays (#889). A business write committing between
+// that read and this commit fails the commit with a conflict, reported as
+// ErrEmbeddingSourceChanged too.
 func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
@@ -93,9 +101,6 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	}
 	if err := b.ensureOpen(); err != nil {
 		return err
-	}
-	if _, err := b.GetNode(node.ID); err != nil {
-		return err // ErrNotFound: deleted, do not create orphans
 	}
 
 	meta := make(map[string]any, util.SafePreallocSum(len(node.EmbedMeta), 1))
@@ -116,23 +121,12 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		return fmt.Errorf("failed to encode embedding metadata for node %s: %w", node.ID, err)
 	}
 
-	// One atomic engine write (withUpdateUnits, #703): delete the previous
-	// chunk vectors and metadata record, write the new chunk vectors, write or
-	// delete the metadata record at its reserved chunk index, and remove the
-	// pending-embeddings marker. Readers see the old embedding state or the
-	// new one — never a mix.
+	// One atomic engine write (#703): check the stored node, then delete the
+	// previous chunk vectors and metadata record, write the new chunk
+	// vectors, write or delete the metadata record at its reserved chunk
+	// index, and remove the pending-embeddings marker. Readers see the old
+	// embedding state or the new one — never a mix.
 	var units []func(txn *badger.Txn) error
-	if err := b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions(embeddingPrefix(node.ID)))
-		defer it.Close()
-		for it.Rewind(); it.ValidForPrefix(embeddingPrefix(node.ID)); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			units = append(units, func(txn *badger.Txn) error { return txn.Delete(key) })
-		}
-		return nil
-	}); err != nil {
-		return localizedError(localization.StorageClientNodeEmbeddingChunksDeleteFailed(err), err)
-	}
 	for index, emb := range node.ChunkEmbeddings {
 		kvs, err := buildEmbeddingChunkWriteKVs(node.ID, index, emb)
 		if err != nil {
@@ -156,10 +150,42 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
 	}
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
-	if len(units) > 0 {
-		if err := b.withUpdateUnits(units); err != nil {
+	err = b.commitEngineWrite(func(cw *commitWriter) error {
+		var previous [][]byte
+		if err := cw.writeOnce(func(txn *badger.Txn) error {
+			if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
+				return err
+			}
+			it := txn.NewIterator(badgerPrefixIteratorOptions(embeddingPrefix(node.ID)))
+			defer it.Close()
+			for it.Rewind(); it.ValidForPrefix(embeddingPrefix(node.ID)); it.Next() {
+				previous = append(previous, it.Item().KeyCopy(nil))
+			}
+			if hook := embeddingSourceCheckedHook.Load(); hook != nil {
+				(*hook)()
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
+		for _, key := range previous {
+			key := key
+			if err := cw.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
+				return localizedError(localization.StorageClientNodeEmbeddingChunksDeleteFailed(err), err)
+			}
+		}
+		for _, unit := range units {
+			if err := cw.write(unit); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, badger.ErrConflict) {
+		return ErrEmbeddingSourceChanged
+	}
+	if err != nil {
+		return err
 	}
 
 	// The full-node cache may hold a copy without the new embedding state;
@@ -170,6 +196,106 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	// notification to the embedding queue keeps its own loop guard).
 	b.notifyNodeUpdated(node)
 	return nil
+}
+
+// embeddingSourceCheckedHook, when set, runs in UpdateNodeEmbeddingSidecar
+// after the stored node was checked and before the commit, so storage tests
+// can land a business write in between (#889).
+var embeddingSourceCheckedHook atomic.Pointer[func()]
+
+// checkEmbeddingSourceInTxn reads the stored node in txn and reports
+// ErrNotFound when it is gone and ErrEmbeddingSourceChanged when its
+// properties or labels differ from embedded's, the copy the embedding was
+// computed from (#889). The read is conflict-tracked by txn.
+func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node) error {
+	item, err := txn.Get(nodeKey(embedded.ID))
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var stored *Node
+	if err := item.Value(func(value []byte) error {
+		var decodeErr error
+		stored, decodeErr = b.decodeNode(namespaceForNodeID(embedded.ID), value)
+		return decodeErr
+	}); err != nil {
+		return err
+	}
+	if !sameEmbeddingSource(stored, embedded) {
+		return ErrEmbeddingSourceChanged
+	}
+	return nil
+}
+
+// sameEmbeddingSource reports whether two copies of a node have the same
+// labels (in any order) and the same properties, comparing values as stored
+// values rather than by Go type: a copy taken from a cache may hold an int or
+// a []string where a decoded one holds an int64 or a []any.
+func sameEmbeddingSource(a, b *Node) bool {
+	if len(a.Labels) != len(b.Labels) || len(a.Properties) != len(b.Properties) {
+		return false
+	}
+	labels := make(map[string]int, len(a.Labels))
+	for _, label := range a.Labels {
+		labels[label]++
+	}
+	for _, label := range b.Labels {
+		if labels[label] == 0 {
+			return false
+		}
+		labels[label]--
+	}
+	for name, value := range a.Properties {
+		other, ok := b.Properties[name]
+		if !ok || !sameStoredValue(value, other) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameStoredValue compares two property values as stored values: numbers by
+// value, lists and maps element by element, times as instants.
+func sameStoredValue(a, b any) bool {
+	if x, ok := numericConstraintValue(a); ok {
+		y, ok := numericConstraintValue(b)
+		return ok && x == y
+	}
+	if x, ok := a.(time.Time); ok {
+		y, ok := b.(time.Time)
+		return ok && x.Equal(y)
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if !va.IsValid() || !vb.IsValid() {
+		return !va.IsValid() && !vb.IsValid()
+	}
+	list := func(v reflect.Value) bool { return v.Kind() == reflect.Slice || v.Kind() == reflect.Array }
+	switch {
+	case list(va) && list(vb):
+		if va.Len() != vb.Len() {
+			return false
+		}
+		for i := 0; i < va.Len(); i++ {
+			if !sameStoredValue(va.Index(i).Interface(), vb.Index(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	case va.Kind() == reflect.Map && vb.Kind() == reflect.Map:
+		if va.Len() != vb.Len() {
+			return false
+		}
+		for _, key := range va.MapKeys() {
+			other := vb.MapIndex(key)
+			if !other.IsValid() || !sameStoredValue(va.MapIndex(key).Interface(), other.Interface()) {
+				return false
+			}
+		}
+		return true
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 // loadEmbeddingSidecar returns the sidecar metadata for nodeID, or

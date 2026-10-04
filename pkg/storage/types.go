@@ -67,6 +67,11 @@ var (
 	ErrInvalidEdge      = errors.New("invalid edge: start or end node not found")
 	ErrStorageClosed    = errors.New("storage closed")
 	ErrIterationStopped = errors.New("iteration stopped") // Sentinel to stop streaming early
+	// ErrEmbeddingSourceChanged is returned by an embedding writeback whose
+	// node changed (properties or labels) after the worker read it: the
+	// embedding describes content the node no longer has, so nothing is
+	// written and the node stays pending for re-embedding (#889).
+	ErrEmbeddingSourceChanged = errors.New("node changed since it was read for embedding")
 	// ErrCrossNamespaceTransaction is returned when a single transaction
 	// attempts to mix writes from multiple namespaces. The transaction layer
 	// pins each transaction to one namespace at the first prefixed write, and

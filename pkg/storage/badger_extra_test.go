@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/assert"
@@ -1026,11 +1027,7 @@ func TestBadgerEngine_UpdateNodeEmbeddingSidecar_LargeThenSmall(t *testing.T) {
 
 	// Now update with small embedding (should go inline, cleaning up separate storage)
 	smallEmb := [][]float32{{0.1, 0.2, 0.3}}
-	updateNode := &Node{
-		ID:              node.ID,
-		ChunkEmbeddings: smallEmb,
-		EmbedMeta:       map[string]any{"chunk_count": 1},
-	}
+	updateNode := embeddingWriteback(t, engine, node.ID, smallEmb, map[string]any{"chunk_count": 1}, time.Time{})
 	err = engine.UpdateNodeEmbeddingSidecar(updateNode)
 	require.NoError(t, err)
 
@@ -1054,11 +1051,7 @@ func TestBadgerEngine_UpdateNodeEmbeddingSidecar_SmallToLarge(t *testing.T) {
 	require.NoError(t, err)
 
 	// Update with large embeddings (triggers replaceSeparateEmbeddingChunks)
-	updateNode := &Node{
-		ID:              node.ID,
-		ChunkEmbeddings: makeLargeChunkEmbeddings(),
-		EmbedMeta:       map[string]any{"chunk_count": 4},
-	}
+	updateNode := embeddingWriteback(t, engine, node.ID, makeLargeChunkEmbeddings(), map[string]any{"chunk_count": 4}, time.Time{})
 	err = engine.UpdateNodeEmbeddingSidecar(updateNode)
 	require.NoError(t, err)
 
