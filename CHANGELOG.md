@@ -240,6 +240,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Count only the requested relationship type in the asynchronous engine's
+  endpoint-label counts (`EdgeCountByStartLabel`, `EdgeCountByEndLabel`).
+  Pending relationships of every type were added to them before a flush, and a
+  pending change of another type's relationship cancelled the requested type's
+  count (#868).
+
 - Label and relationship-type names are case-sensitive, as in Neo4j:
   `:Person`, `:person` and `:PERSON` are three labels (#862). Storage
   lower-cased them in the label index, the relationship-type index, the

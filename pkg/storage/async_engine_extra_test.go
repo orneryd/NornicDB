@@ -2052,3 +2052,39 @@ func TestAsyncEngine_LastWriteTime_NilAndFallback(t *testing.T) {
 
 	assert.True(t, ae.LastWriteTime().IsZero())
 }
+
+// #868: pending relationships adjust a positional label count only for their
+// own type, like the type count.
+func TestAsyncEngineEndpointLabelCountsCountOnlyTheRequestedType(t *testing.T) {
+	base := NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+	_, err := base.CreateNode(&Node{ID: "test:a", Labels: []string{"Person"}})
+	require.NoError(t, err)
+	_, err = base.CreateNode(&Node{ID: "test:b", Labels: []string{"Thing"}})
+	require.NoError(t, err)
+	require.NoError(t, base.CreateEdge(&Edge{ID: "test:stored", StartNode: "test:a", EndNode: "test:b", Type: "OTHER"}))
+	require.NoError(t, base.CreateEdge(&Edge{ID: "test:gone", StartNode: "test:a", EndNode: "test:b", Type: "OTHER"}))
+
+	ae := NewAsyncEngine(base, &AsyncEngineConfig{FlushInterval: time.Hour})
+	t.Cleanup(func() { _ = ae.Close() })
+	require.NoError(t, ae.CreateEdge(&Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
+	// The stored OTHER relationship becomes an R one; the other OTHER one is deleted.
+	require.NoError(t, ae.UpdateEdge(&Edge{ID: "test:stored", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
+	require.NoError(t, ae.DeleteEdge("test:gone"))
+
+	for _, tc := range []struct {
+		edgeType   string
+		start, end int64
+	}{
+		{edgeType: "R", start: 2, end: 2},
+		{edgeType: "OTHER", start: 0, end: 0},
+		{edgeType: "MISSING", start: 0, end: 0},
+	} {
+		start, err := ae.EdgeCountByStartLabel("Person", tc.edgeType)
+		require.NoError(t, err)
+		require.Equal(t, tc.start, start, tc.edgeType)
+		end, err := ae.EdgeCountByEndLabel("Thing", tc.edgeType)
+		require.NoError(t, err)
+		require.Equal(t, tc.end, end, tc.edgeType)
+	}
+}
