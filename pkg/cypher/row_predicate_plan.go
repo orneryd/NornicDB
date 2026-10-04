@@ -27,10 +27,130 @@ const (
 // $parameter (bound in the row as "$name"), or a property chain on a row
 // variable (n.a.b).
 type rowOperand struct {
-	kind     rowOperandKind
-	literal  interface{}
-	variable string
-	chain    string
+	kind           rowOperandKind
+	literal        interface{}
+	variable       string
+	chain          string
+	directProperty bool
+	compiled       *compiledRowOperand
+}
+
+type compiledRowOperand struct {
+	left, right rowOperand
+	operator    byte
+}
+
+type plannedRowValue struct {
+	value     interface{}
+	integer   int64
+	isInteger bool
+}
+
+type compiledRowScope struct {
+	values     map[string]interface{}
+	nodes      binding
+	rels       relationshipBinding
+	parameters map[string]interface{}
+}
+
+func (scope compiledRowScope) lookup(name string) (interface{}, bool) {
+	if len(name) > 1 && name[0] == '$' {
+		if value, ok := scope.parameters[name[1:]]; ok {
+			return value, true
+		}
+	}
+	if scope.values != nil {
+		if value, ok := scope.values[name]; ok {
+			return value, true
+		}
+	}
+	if len(name) > 1 && name[0] == '$' {
+		value, ok := scope.parameters[name[1:]]
+		return value, ok
+	}
+	if node, ok := scope.nodes[name]; ok {
+		if node == nil {
+			return nil, true
+		}
+		return node, true
+	}
+	if edge, ok := scope.rels[name]; ok {
+		if edge == nil {
+			return nil, true
+		}
+		return edge, true
+	}
+	return nil, false
+}
+
+func (scope compiledRowScope) materialize() map[string]interface{} {
+	if scope.nodes == nil && scope.rels == nil && scope.parameters == nil {
+		return scope.values
+	}
+	values := make(map[string]interface{}, len(scope.values)+len(scope.nodes)+len(scope.rels)+len(scope.parameters))
+	for name, value := range scope.values {
+		values[name] = value
+	}
+	for name, value := range scope.nodes {
+		values[name] = value
+	}
+	for name, value := range scope.rels {
+		values[name] = value
+	}
+	for name, value := range scope.parameters {
+		values["$"+name] = value
+	}
+	return values
+}
+
+func (value plannedRowValue) materialize() interface{} {
+	if value.isInteger {
+		return value.integer
+	}
+	return value.value
+}
+
+func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) (plannedRowValue, bool, error) {
+	if operand.compiled == nil {
+		value, ok := operand.resolveScope(scope)
+		if !ok && operand.kind == rowOperandPropertyChain {
+			if base, bound := scope.lookup(operand.variable); bound {
+				return plannedRowValue{}, false, rowPropertyChainTypeError(base, operand.chain)
+			}
+		}
+		integer, isInteger := cypherIntegerOperand(value)
+		return plannedRowValue{value: value, integer: integer, isInteger: isInteger}, ok, nil
+	}
+	left, leftOK, err := operand.compiled.left.evaluate(e, scope)
+	if err != nil || !leftOK {
+		return plannedRowValue{}, leftOK, err
+	}
+	if operand.compiled.operator == 's' {
+		if left.value == nil && !left.isInteger {
+			return plannedRowValue{}, true, nil
+		}
+		integer, ok, err := evaluateCypherSizeInteger(left.materialize())
+		return plannedRowValue{integer: integer, isInteger: ok}, ok, err
+	}
+	right, rightOK, err := operand.compiled.right.evaluate(e, scope)
+	if err != nil || !rightOK {
+		return plannedRowValue{}, rightOK, err
+	}
+	if left.isInteger && right.isInteger {
+		result, ok, err := exactIntegerArithmetic(operand.compiled.operator, left.integer, right.integer)
+		if err != nil {
+			return plannedRowValue{}, false, err
+		}
+		if ok {
+			return plannedRowValue{integer: result, isInteger: true}, true, nil
+		}
+		if operand.compiled.operator == '/' || operand.compiled.operator == '%' {
+			return plannedRowValue{}, false, divisionByZeroError()
+		}
+	}
+	value, ok, err := e.evaluateRowArithmeticValues(operand.compiled.operator, left.materialize(), right.materialize())
+	integer, isInteger := cypherIntegerOperand(value)
+	return plannedRowValue{value: value, integer: integer, isInteger: isInteger}, ok, err
 }
 
 type comparisonEvaluationHandler string
@@ -48,19 +168,25 @@ func (handler nullEvaluationHandler) evaluate(value interface{}) bool {
 // resolve returns the operand's value for the row. ok is false when the row
 // doesn't bind the operand's variable or parameter; the caller then evaluates
 // the part as text, as evaluateRowExpression would resolve it further.
-func (o rowOperand) resolve(values map[string]interface{}) (interface{}, bool) {
+func (o *rowOperand) resolve(values map[string]interface{}) (interface{}, bool) {
+	return o.resolveScope(compiledRowScope{values: values})
+}
+
+func (o *rowOperand) resolveScope(scope compiledRowScope) (interface{}, bool) {
 	switch o.kind {
 	case rowOperandLiteral:
 		return o.literal, true
 	case rowOperandPropertyChain:
-		base, bound := values[o.variable]
+		base, bound := scope.lookup(o.variable)
 		if !bound {
 			return nil, false
 		}
+		if o.directProperty {
+			return rowPropertyValue(base, o.chain)
+		}
 		return evaluateRowPropertyChain(base, o.chain)
 	default:
-		value, bound := values[o.variable]
-		return value, bound
+		return scope.lookup(o.variable)
 	}
 }
 
@@ -84,10 +210,37 @@ func parseRowOperand(text string) (rowOperand, bool) {
 		return rowOperand{}, false
 	}
 	if variable, chain, ok := rowPropertyChainShape(text); ok {
-		return rowOperand{kind: rowOperandPropertyChain, variable: variable, chain: chain}, true
+		return rowOperand{kind: rowOperandPropertyChain, variable: variable, chain: chain, directProperty: isValidIdentifier(chain)}, true
 	}
 	if isValidIdentifier(text) {
 		return rowOperand{kind: rowOperandVariable, variable: text}, true
+	}
+	return rowOperand{}, false
+}
+
+func parseCompiledRowOperand(text string) (rowOperand, bool) {
+	text = strings.TrimSpace(text)
+	if operand, ok := parseRowOperand(text); ok {
+		return operand, true
+	}
+	if inner, enclosed := stripEnclosingExpressionParentheses(text); enclosed {
+		return parseCompiledRowOperand(inner)
+	}
+	for _, tier := range []string{"+-", "*/%", "^"} {
+		if left, right, operator, split := splitRowArithmeticTier(text, tier); split {
+			leftOperand, leftOK := parseCompiledRowOperand(left)
+			rightOperand, rightOK := parseCompiledRowOperand(right)
+			if !leftOK || !rightOK {
+				return rowOperand{}, false
+			}
+			return rowOperand{compiled: &compiledRowOperand{left: leftOperand, right: rightOperand, operator: operator}}, true
+		}
+	}
+	if function, argument, call := parseFunctionCallWS(text); call && equalFoldASCII(function, "size") {
+		operand, ok := parseCompiledRowOperand(argument)
+		if ok {
+			return rowOperand{compiled: &compiledRowOperand{left: operand, operator: 's'}}, true
+		}
 	}
 	return rowOperand{}, false
 }
@@ -107,12 +260,13 @@ const (
 // rowPredicatePart is a node of a planned predicate: an AND or OR of parts, a
 // comparison or null test of simple operands, or text.
 type rowPredicatePart struct {
-	kind     rowPredicatePartKind
-	text     string
-	left     rowOperand
-	right    rowOperand
-	operator comparisonEvaluationHandler
-	parts    []rowPredicatePart
+	kind       rowPredicatePartKind
+	text       string
+	left       rowOperand
+	right      rowOperand
+	operator   comparisonEvaluationHandler
+	parts      []rowPredicatePart
+	membership *bindingParamMembershipCache
 }
 
 // rowPredicatePlan is a planned predicate.
@@ -222,6 +376,19 @@ func planRowPredicatePart(text string) (rowPredicatePart, bool) {
 // of one. A shape one of evaluateRowPredicate's earlier branches handles (NOT,
 // EXISTS, IN, string operators, =~, labels, calls, lists, strings) isn't one.
 func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
+	if !hasPrefixFoldASCII(text, "NOT ") && mayContainArithmetic(text) {
+		if scan, ok := scanComparisonChain(text); ok && scan.count == 1 {
+			span := scan.operator(0)
+			operator := text[span.offset : span.offset+span.length]
+			if operator != "=~" {
+				left, leftOK := parseCompiledRowOperand(scan.operand(text, 0))
+				right, rightOK := parseCompiledRowOperand(scan.operand(text, 1))
+				if leftOK && rightOK {
+					return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator)}, true
+				}
+			}
+		}
+	}
 	if part, ok := planRowLiteralListMembership(text); ok {
 		return part, true
 	}
@@ -243,7 +410,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		if !needleOK || !haystackOK || needle.kind == rowOperandLiteral || haystack.kind == rowOperandLiteral {
 			return rowPredicatePart{}, false
 		}
-		return rowPredicatePart{kind: rowPredicateIn, text: text, left: needle, right: haystack}, true
+		return rowPredicatePart{kind: rowPredicateIn, text: text, left: needle, right: haystack, membership: &bindingParamMembershipCache{length: -1}}, true
 	}
 	for _, test := range []struct {
 		suffix string
@@ -315,7 +482,7 @@ func planRowLiteralListMembership(text string) (rowPredicatePart, bool) {
 			values = append(values, value)
 		}
 	}
-	return rowPredicatePart{kind: rowPredicateIn, text: text, left: needle, right: rowOperand{kind: rowOperandLiteral, literal: values}}, true
+	return rowPredicatePart{kind: rowPredicateIn, text: text, left: needle, right: rowOperand{kind: rowOperandLiteral, literal: values}, membership: &bindingParamMembershipCache{length: -1}}, true
 }
 
 // planRowStringComparison plans a comparison of a simple operand with a
@@ -358,31 +525,118 @@ func planRowStringComparison(text string) (rowPredicatePart, bool) {
 }
 
 // evaluateRowPredicatePlan evaluates a planned predicate for a row.
+type compiledRowMembership struct {
+	part          *rowPredicatePart
+	comparable    map[interface{}]struct{}
+	nonComparable []interface{}
+	hasNull       bool
+}
+
+type compiledRowMemberships struct {
+	inline   [4]compiledRowMembership
+	overflow []compiledRowMembership
+	count    int
+}
+
+func (memberships *compiledRowMemberships) prepare(part *rowPredicatePart, scope compiledRowScope) {
+	if part.membership != nil {
+		if value, ok := part.right.resolveScope(scope); ok {
+			if items, ok := toInterfaceSlice(value); ok {
+				comparable, nonComparable, hasNull := part.membership.getValidated(items)
+				entry := compiledRowMembership{part: part, comparable: comparable, nonComparable: nonComparable, hasNull: hasNull}
+				if memberships.count < len(memberships.inline) {
+					memberships.inline[memberships.count] = entry
+				} else {
+					memberships.overflow = append(memberships.overflow, entry)
+				}
+				memberships.count++
+			}
+		}
+	}
+	for index := range part.parts {
+		memberships.prepare(&part.parts[index], scope)
+	}
+}
+
+func (memberships *compiledRowMemberships) find(part *rowPredicatePart) *compiledRowMembership {
+	if memberships == nil {
+		return nil
+	}
+	for index := 0; index < memberships.count && index < len(memberships.inline); index++ {
+		if memberships.inline[index].part == part {
+			return &memberships.inline[index]
+		}
+	}
+	for index := range memberships.overflow {
+		if memberships.overflow[index].part == part {
+			return &memberships.overflow[index]
+		}
+	}
+	return nil
+}
+
 func (e *StorageExecutor) evaluateRowPredicatePlan(ctx context.Context, plan *rowPredicatePlan, values map[string]interface{}) bool {
 	return e.evaluateRowPredicatePart(ctx, &plan.root, values)
 }
 
 func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *rowPredicatePart, values map[string]interface{}) bool {
+	return e.evaluateRowPredicatePartScope(ctx, part, compiledRowScope{values: values}, nil)
+}
+
+func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) bool {
 	switch part.kind {
 	case rowPredicateAnd:
 		for i := range part.parts {
-			if !e.evaluateRowPredicatePart(ctx, &part.parts[i], values) {
+			if !e.evaluateRowPredicatePartScope(ctx, &part.parts[i], scope, memberships) {
 				return false
 			}
 		}
 		return true
 	case rowPredicateOr:
 		for i := range part.parts {
-			if e.evaluateRowPredicatePart(ctx, &part.parts[i], values) {
+			if e.evaluateRowPredicatePartScope(ctx, &part.parts[i], scope, memberships) {
 				return true
 			}
 		}
 		return false
 	case rowPredicateComparison:
-		left, leftOK := part.left.resolve(values)
-		right, rightOK := part.right.resolve(values)
+		if part.left.compiled != nil || part.right.compiled != nil {
+			left, leftOK, err := part.left.evaluate(e, scope)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return false
+			}
+			right, rightOK, err := part.right.evaluate(e, scope)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return false
+			}
+			if !leftOK || !rightOK {
+				return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
+			}
+			if left.isInteger && right.isInteger {
+				switch part.operator {
+				case "=":
+					return left.integer == right.integer
+				case "<>", "!=":
+					return left.integer != right.integer
+				case "<":
+					return left.integer < right.integer
+				case ">":
+					return left.integer > right.integer
+				case "<=":
+					return left.integer <= right.integer
+				case ">=":
+					return left.integer >= right.integer
+				}
+			}
+			matched, known := part.operator.evaluate(left.materialize(), right.materialize()).(bool)
+			return known && matched
+		}
+		left, leftOK := part.left.resolveScope(scope)
+		right, rightOK := part.right.resolveScope(scope)
 		if !leftOK || !rightOK {
-			return e.evaluateRowPredicateText(ctx, part.text, values)
+			return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
 		}
 		if left == nil || right == nil {
 			return false
@@ -390,22 +644,36 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 		matched, known := part.operator.evaluate(left, right).(bool)
 		return known && matched
 	case rowPredicateIn:
-		needle, needleOK := part.left.resolve(values)
-		haystack, haystackOK := part.right.resolve(values)
+		needle, needleOK := part.left.resolveScope(scope)
+		haystack, haystackOK := part.right.resolveScope(scope)
 		if !needleOK || !haystackOK {
-			return e.evaluateRowPredicateText(ctx, part.text, values)
+			return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
+		}
+		if part.membership != nil {
+			switch needle.(type) {
+			case string, bool:
+				if prepared := memberships.find(part); prepared != nil && len(prepared.nonComparable) == 0 {
+					return membershipTruth(needle, prepared.comparable, nil, prepared.hasNull, e.compareBindingValuesEqual) == truthTrue
+				}
+				if items, ok := toInterfaceSlice(haystack); ok {
+					comparable, nonComparable, hasNull := part.membership.get(items, firstInterfaceElement(items))
+					if len(nonComparable) == 0 {
+						return membershipTruth(needle, comparable, nil, hasNull, e.compareBindingValuesEqual) == truthTrue
+					}
+				}
+			}
 		}
 		member, ok := rowMembershipOfValues(needle, haystack, false)
 		return ok && member == true
 	case rowPredicateIsNull, rowPredicateIsNotNull:
-		value, ok := part.left.resolve(values)
+		value, ok := part.left.resolveScope(scope)
 		if !ok {
-			return e.evaluateRowPredicateText(ctx, part.text, values)
+			return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
 		}
 		return nullEvaluationHandler(part.kind == rowPredicateIsNotNull).evaluate(value)
 	default:
 		// Text parts go through the whole row predicate evaluator: they have
 		// no plan of their own, so this doesn't come back here.
-		return e.evaluateRowPredicateMode(ctx, part.text, values)
+		return e.evaluateRowPredicateMode(ctx, part.text, scope.materialize())
 	}
 }

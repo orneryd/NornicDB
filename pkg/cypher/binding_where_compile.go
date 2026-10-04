@@ -137,17 +137,19 @@ var (
 )
 
 type bindingFilterPredicate struct {
-	compiled   bindingWherePredicate
-	executor   *StorageExecutor
-	ctx        context.Context
-	clause     string
-	parameters map[string]interface{}
-	values     map[string]interface{}
+	plan            *rowPredicatePlan
+	membership      compiledRowMemberships
+	queryParameters map[string]interface{}
+	executor        *StorageExecutor
+	ctx             context.Context
+	clause          string
+	parameters      map[string]interface{}
+	values          map[string]interface{}
 }
 
 func (predicate *bindingFilterPredicate) matches(row binding, params map[string]interface{}) bool {
-	if predicate.compiled != nil {
-		return predicate.compiled(row, params)
+	if predicate.plan != nil {
+		return predicate.executor.evaluateRowPredicatePartScope(predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, parameters: predicate.queryParameters}, &predicate.membership)
 	}
 	for name, node := range row {
 		predicate.values[name] = node
@@ -163,8 +165,8 @@ func (predicate *bindingFilterPredicate) matches(row binding, params map[string]
 }
 
 func (predicate *bindingFilterPredicate) matchesRelationships(row binding, rels relationshipBinding, params map[string]interface{}) bool {
-	if predicate.compiled != nil {
-		return predicate.compiled(bindingWithRelView(row, edgeRelationshipBindings(rels)), params)
+	if predicate.plan != nil {
+		return predicate.executor.evaluateRowPredicatePartScope(predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, rels: rels, parameters: predicate.queryParameters}, &predicate.membership)
 	}
 	for name, value := range rels {
 		predicate.values[name] = value
@@ -179,18 +181,25 @@ func (predicate *bindingFilterPredicate) matchesRelationships(row binding, rels 
 // newBindingFilterPredicate owns scratch for one synchronous filter invocation.
 // Its returned frame must not be cached or shared across goroutines.
 func (e *StorageExecutor) newBindingFilterPredicate(ctx context.Context, whereClause string, params map[string]interface{}) bindingFilterPredicate {
-	if predicate, supported := e.getCompiledBindingWhereIfSupported(ctx, whereClause); supported {
-		return bindingFilterPredicate{compiled: predicate}
-	}
-	if predicate, supported := e.tryCompileExecutorBindingWhere(ctx, whereClause); supported {
-		return bindingFilterPredicate{compiled: predicate}
+	whereClause = normalizeBindingWhereClause(whereClause)
+	if plan := planRowPredicate(whereClause); plan != nil && plan.complete {
+		if params == nil {
+			params = getParamsFromContext(ctx)
+		}
+		predicate := bindingFilterPredicate{executor: e, ctx: ctx, clause: whereClause, plan: plan, queryParameters: params}
+		predicate.membership.prepare(&plan.root, compiledRowScope{parameters: params})
+		return predicate
 	}
 	if params != nil && !sameParameterMap(getParamsFromContext(ctx), params) {
 		ctx = withQueryParams(ctx, params)
 	}
 	parameters := parameterRowValues(ctx)
+	plan := planRowPredicate(whereClause)
+	if plan != nil && !plan.complete {
+		plan = nil
+	}
 	return bindingFilterPredicate{
-		executor: e, ctx: ctx, clause: whereClause, parameters: parameters,
+		executor: e, ctx: ctx, clause: whereClause, parameters: parameters, plan: plan,
 		values: make(map[string]interface{}, len(parameters)+4),
 	}
 }
@@ -702,6 +711,7 @@ type bindingParamMembershipCache struct {
 	sync.RWMutex
 	firstElement  *interface{}
 	length        int
+	snapshot      []interface{}
 	comparable    map[interface{}]struct{}
 	nonComparable []interface{}
 	hasNull       bool
@@ -735,26 +745,31 @@ func paramMembershipTruth[R any, L ~func(R, map[string]interface{}) (interface{}
 }
 
 func (cache *bindingParamMembershipCache) get(items []interface{}, firstElement *interface{}) (map[interface{}]struct{}, []interface{}, bool) {
-	cache.RLock()
-	if cache.length == len(items) && cache.firstElement == firstElement && cache.comparable != nil {
-		comparableSet := cache.comparable
-		nonComparable := cache.nonComparable
-		hasNull := cache.hasNull
-		cache.RUnlock()
-		return comparableSet, nonComparable, hasNull
-	}
-	cache.RUnlock()
+	return cache.getValidated(items)
+}
 
-	comparableSet, nonComparable := buildComparableMembershipIndex(items)
-	hasNull := listHasNull(items)
+func (cache *bindingParamMembershipCache) getValidated(items []interface{}) (map[interface{}]struct{}, []interface{}, bool) {
 	cache.Lock()
-	cache.length = len(items)
-	cache.firstElement = firstElement
-	cache.comparable = comparableSet
-	cache.nonComparable = nonComparable
-	cache.hasNull = hasNull
-	cache.Unlock()
-	return comparableSet, nonComparable, hasNull
+	defer cache.Unlock()
+	unchanged := cache.comparable != nil && len(cache.snapshot) == len(items)
+	if unchanged {
+		for index, item := range items {
+			previous := cache.snapshot[index]
+			if item == nil && previous == nil {
+				continue
+			}
+			if !isComparableValue(item) || !isComparableValue(previous) || previous != item {
+				unchanged = false
+				break
+			}
+		}
+	}
+	if !unchanged {
+		cache.comparable, cache.nonComparable = buildComparableMembershipIndex(items)
+		cache.hasNull = listHasNull(items)
+		cache.snapshot = append(cache.snapshot[:0], items...)
+	}
+	return cache.comparable, cache.nonComparable, cache.hasNull
 }
 
 func firstInterfaceElement(items []interface{}) *interface{} {

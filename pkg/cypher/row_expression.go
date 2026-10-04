@@ -60,6 +60,40 @@ func rowArithmeticResult(op byte, value, left, right interface{}) (interface{}, 
 	return nil, false, nil
 }
 
+func (e *StorageExecutor) evaluateRowArithmeticValues(operator byte, left, right interface{}) (interface{}, bool, error) {
+	switch operator {
+	case '+':
+		if leftText, ok := left.(string); ok {
+			if rightText, ok := right.(string); ok {
+				return leftText + rightText, true, nil
+			}
+		}
+		return rowArithmeticResult(operator, e.add(left, right), left, right)
+	case '-':
+		return rowArithmeticResult(operator, e.subtract(left, right), left, right)
+	case '*':
+		return rowArithmeticResult(operator, e.multiply(left, right), left, right)
+	case '/':
+		return rowArithmeticResult(operator, e.divide(left, right), left, right)
+	case '%':
+		return rowArithmeticResult(operator, e.modulo(left, right), left, right)
+	case '^':
+		if left == nil || right == nil {
+			return nil, true, nil
+		}
+		base, baseOK := toFloat64(left)
+		exponent, exponentOK := toFloat64(right)
+		if !baseOK || !exponentOK {
+			if err := arithmeticError(operator, left, right); err != nil {
+				return nil, false, err
+			}
+			return nil, false, nil
+		}
+		return math.Pow(base, exponent), true, nil
+	}
+	return nil, false, nil
+}
+
 // evaluateRowValue evaluates expr against a row's values. It has three
 // outcomes: a value (ok); ok false with a nil error when the row evaluator
 // doesn't handle the expression; and an error, the statement's error for an
@@ -769,15 +803,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		if !leftOK || !rightOK {
 			return nil, false, nil
 		}
-		if operator == '+' {
-			if leftText, ok := leftValue.(string); ok {
-				if rightText, ok := rightValue.(string); ok {
-					return leftText + rightText, true, nil
-				}
-			}
-			return rowArithmeticResult('+', e.add(leftValue, rightValue), leftValue, rightValue)
-		}
-		return rowArithmeticResult('-', e.subtract(leftValue, rightValue), leftValue, rightValue)
+		return e.evaluateRowArithmeticValues(operator, leftValue, rightValue)
 	}
 
 	if left, right, operator, ok := splitRowArithmeticTier(expr, "*/%"); ok {
@@ -792,17 +818,12 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		if !leftOK || !rightOK {
 			return nil, false, nil
 		}
-		switch operator {
-		case '*':
-			return rowArithmeticResult('*', e.multiply(leftValue, rightValue), leftValue, rightValue)
-		case '/':
+		if operator == '/' {
 			if value, folded := foldedDivisionByZero(left, right, leftValue, rightValue); folded {
 				return value, true, nil
 			}
-			return rowArithmeticResult('/', e.divide(leftValue, rightValue), leftValue, rightValue)
-		default:
-			return rowArithmeticResult('%', e.modulo(leftValue, rightValue), leftValue, rightValue)
 		}
+		return e.evaluateRowArithmeticValues(operator, leftValue, rightValue)
 	}
 
 	if left, right, _, ok := splitRowArithmeticTier(expr, "^"); ok {
@@ -1509,12 +1530,6 @@ func rowPropertyValue(value interface{}, property string) (interface{}, bool) {
 	if value == nil {
 		return nil, true
 	}
-	if propertyValue, temporal, supported := evaluateTemporalProperty(value, property); temporal {
-		return propertyValue, supported
-	}
-	if propertyValue, isPoint, err := evaluatePointProperty(value, property); isPoint {
-		return propertyValue, err == nil
-	}
 	switch typed := value.(type) {
 	case *storage.Node:
 		if typed == nil {
@@ -1533,6 +1548,12 @@ func rowPropertyValue(value interface{}, property string) (interface{}, bool) {
 			return nil, true
 		}
 		return typed.Properties[property], true
+	}
+	if propertyValue, temporal, supported := evaluateTemporalProperty(value, property); temporal {
+		return propertyValue, supported
+	}
+	if propertyValue, isPoint, err := evaluatePointProperty(value, property); isPoint {
+		return propertyValue, err == nil
 	}
 	object, ok := toStringAnyMap(value)
 	if !ok {
@@ -1965,6 +1986,14 @@ func evaluateCypherSize(value interface{}) (interface{}, bool, error) {
 	if value == nil {
 		return nil, true, nil
 	}
+	length, ok, err := evaluateCypherSizeInteger(value)
+	if !ok || err != nil {
+		return nil, ok, err
+	}
+	return length, true, nil
+}
+
+func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
 	if text, isString := value.(string); isString {
 		// RuneCountInString counts code points the way len([]rune(s)) does
 		// (invalid UTF-8 bytes become U+FFFD), without the allocation.
@@ -1973,12 +2002,11 @@ func evaluateCypherSize(value interface{}) (interface{}, bool, error) {
 	valueType := reflect.TypeOf(value)
 	if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
 		if err := sizeArgumentError(value); err != nil {
-			return nil, false, err
+			return 0, false, err
 		}
-		return nil, false, nil
+		return 0, false, nil
 	}
-	items := toAnySlice(value)
-	return int64(len(items)), true, nil
+	return int64(reflect.ValueOf(value).Len()), true, nil
 }
 
 // rowPredicateOperand evaluates an operand of a row predicate. An error is

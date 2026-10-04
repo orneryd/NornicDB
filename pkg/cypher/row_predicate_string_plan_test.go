@@ -47,6 +47,9 @@ func TestRowPredicateStringComparisonIsPlanned(t *testing.T) {
 		"(n.name = 'Ada')",
 		"'a' = 'a'",
 		"'a' < 'b'",
+		"n.name + 'x' = 'Adax'",
+		"n.name = 'Ada' + ''",
+		"n.n - 1 = 'x'",
 	} {
 		plan := planRowPredicate(predicate)
 		require.NotNil(t, plan, predicate)
@@ -62,11 +65,8 @@ func TestRowPredicateStringComparisonIsPlanned(t *testing.T) {
 		"n.name =~ 'A.*'",
 		"NOT n.name = 'Ada'",
 		"toUpper(n.name) = 'ADA'",
-		"n.name + 'x' = 'Adax'",
-		"n.name = 'Ada' + ''",
 		"n:P AND n.name = 'x'",
 		"n.name = 'a' = true",
-		"n.n - 1 = 'x'",
 	} {
 		plan := planRowPredicate(predicate)
 		require.True(t, plan == nil || !plan.complete, predicate)

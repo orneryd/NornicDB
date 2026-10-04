@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -78,6 +79,59 @@ func TestGh728ComparisonHandlerAdmission(t *testing.T) {
 	predicate, supported := exec.compileBindingComparisonTruth("n.present = m.missing")
 	require.True(t, supported)
 	assert.Equal(t, truthUnknown, predicate(binding{"n": &storage.Node{Properties: map[string]interface{}{"present": int64(1)}}}, nil))
+}
+
+func TestGh728SharedArithmeticPredicatePlan(t *testing.T) {
+	clause := "size(n.name) + n.count >= 0"
+	plan := planRowPredicate(clause)
+	require.NotNil(t, plan)
+	require.True(t, plan.complete)
+	for _, test := range []struct {
+		name       string
+		properties map[string]interface{}
+		want       bool
+		code       string
+	}{
+		{"accepted", map[string]interface{}{"name": "node", "count": int64(1)}, true, ""},
+		{"rejected", map[string]interface{}{"name": "node", "count": int64(-5)}, false, ""},
+		{"null function", map[string]interface{}{"count": int64(1)}, false, ""},
+		{"null arithmetic", map[string]interface{}{"name": "node"}, false, ""},
+		{"invalid arithmetic", map[string]interface{}{"name": "node", "count": true}, false, "Neo.ClientError.Statement.TypeError"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := withExpressionFailureSlot(context.Background())
+			row := map[string]interface{}{"n": &storage.Node{ID: "node", Properties: test.properties}}
+			exec := &StorageExecutor{}
+			assert.Equal(t, test.want, exec.evaluateRowPredicate(ctx, clause, row))
+			failure := getExpressionFailure(ctx)
+			if test.code == "" {
+				require.NoError(t, failure)
+			} else {
+				require.Error(t, failure)
+				require.True(t, strings.HasPrefix(statusText(failure), test.code), statusText(failure))
+			}
+		})
+	}
+}
+
+func TestGh728SharedArithmeticPredicateZeroAllocations(t *testing.T) {
+	exec := &StorageExecutor{}
+	ctx := context.Background()
+	clause := "size(n.name) + n.count >= 0"
+	for _, length := range []int{4, 1024} {
+		t.Run(strconv.Itoa(length), func(t *testing.T) {
+			row := map[string]interface{}{"n": &storage.Node{ID: "node", Properties: map[string]interface{}{
+				"name": strings.Repeat("x", length), "count": int64(4096),
+			}}}
+			require.True(t, exec.evaluateRowPredicate(ctx, clause, row))
+			accepted := true
+			allocations := testing.AllocsPerRun(100, func() {
+				accepted = accepted && exec.evaluateRowPredicate(ctx, clause, row)
+			})
+			require.True(t, accepted)
+			require.Zero(t, allocations)
+		})
+	}
 }
 
 func TestGh728BindingWhereUsesSharedTypedPredicate(t *testing.T) {
@@ -198,17 +252,93 @@ func TestGh728BindingFilterAdmissionAndParameterOwnership(t *testing.T) {
 	row := binding{"a": created.Rows[0][0].(*storage.Node), "b": created.Rows[0][1].(*storage.Node)}
 	for _, clause := range []string{"a.age = 30", "(a)-[:LINK]->(b)"} {
 		predicate := exec.newBindingFilterPredicate(ctx, clause, nil)
-		require.NotNil(t, predicate.compiled)
+		if clause == "a.age = 30" {
+			require.NotNil(t, predicate.plan)
+		} else {
+			require.Nil(t, predicate.plan)
+		}
 		require.True(t, predicate.matches(row, nil))
 	}
 	params := map[string]interface{}{"offset": int64(1), "expected": int64(31)}
 	predicate := exec.newBindingFilterPredicate(ctx, "a.age + $offset = $expected", params)
-	require.Nil(t, predicate.compiled)
+	require.NotNil(t, predicate.plan)
 	require.True(t, predicate.matches(row, params))
 	require.False(t, predicate.matches(binding{"a": row["b"]}, params))
-	require.Equal(t, map[string]interface{}{"$offset": int64(1), "$expected": int64(31)}, predicate.values)
+	require.Nil(t, predicate.values)
+	require.Equal(t, params, predicate.queryParameters)
+	require.Equal(t, map[string]interface{}{"offset": int64(1), "expected": int64(31)}, params)
 	require.Len(t, params, 2)
 	require.Len(t, row, 2)
+}
+
+func TestGh728SharedMembershipObservesParameterChanges(t *testing.T) {
+	exec := &StorageExecutor{}
+	row := binding{"n": &storage.Node{ID: "node", Properties: map[string]interface{}{"key": "first"}}}
+	keys := []interface{}{"first"}
+	params := map[string]interface{}{"keys": keys}
+	clause := "n.key IN $keys"
+	require.Len(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, clause, params), 1)
+	keys[0] = "second"
+	require.Empty(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, clause, params))
+	keys[0] = "first"
+	require.Len(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, clause, params), 1)
+}
+
+func TestGh728SharedWithArithmeticParametersZeroAllocations(t *testing.T) {
+	exec := &StorageExecutor{}
+	params := map[string]interface{}{"offset": int64(1024), "minimum": int64(2048)}
+	ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
+	values := map[string]interface{}{"n": &storage.Node{ID: "node", Properties: map[string]interface{}{"count": int64(1024)}}}
+	clause := "n.count + $offset >= $minimum"
+	accepted, err := exec.evaluateWithWhere(ctx, clause, values)
+	require.NoError(t, err)
+	require.True(t, accepted)
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		accepted, err := exec.evaluateWithWhere(ctx, clause, values)
+		if err != nil || !accepted {
+			t.Fatal("shared parameterized arithmetic must accept the row")
+		}
+	}))
+	require.Len(t, values, 1)
+	require.Equal(t, map[string]interface{}{"offset": int64(1024), "minimum": int64(2048)}, params)
+}
+
+func TestGh728SharedPreparedMembershipZeroAllocations(t *testing.T) {
+	exec := &StorageExecutor{}
+	row := binding{"n": &storage.Node{ID: "node", Properties: map[string]interface{}{"key": "first"}}}
+	params := map[string]interface{}{"keys": []interface{}{"first", nil}}
+	predicate := exec.newBindingFilterPredicate(context.Background(), "n.key IN $keys", params)
+	require.True(t, predicate.matches(row, params))
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		if !predicate.matches(row, params) {
+			t.Fatal("prepared membership must keep the row")
+		}
+	}))
+}
+
+func TestGh728SharedMembershipConcurrentParameterScopes(t *testing.T) {
+	exec := &StorageExecutor{}
+	var workers sync.WaitGroup
+	for worker := 0; worker < 16; worker++ {
+		workers.Add(1)
+		go func(worker int) {
+			defer workers.Done()
+			key := strconv.Itoa(worker)
+			row := binding{"n": &storage.Node{ID: storage.NodeID(key), Properties: map[string]interface{}{"key": key}}}
+			keys := []interface{}{key}
+			params := map[string]interface{}{"keys": keys}
+			for iteration := 0; iteration < 16; iteration++ {
+				predicate := exec.newBindingFilterPredicate(context.Background(), "n.key IN $keys", params)
+				keys[0] = "changed"
+				if !predicate.matches(row, params) {
+					t.Error("another invocation changed a prepared index")
+					return
+				}
+				keys[0] = key
+			}
+		}(worker)
+	}
+	workers.Wait()
 }
 
 func TestGh728BindingFilterScopesAreInvocationLocal(t *testing.T) {
