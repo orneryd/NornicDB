@@ -134,6 +134,43 @@ func TestGh728SharedArithmeticPredicateZeroAllocations(t *testing.T) {
 	}
 }
 
+func TestGh728BindingFilterPreservesQuotedWhitespace(t *testing.T) {
+	exec := &StorageExecutor{}
+	for _, separator := range []string{"\t", "\n", "\r"} {
+		t.Run(strconv.Quote(separator), func(t *testing.T) {
+			name := "first" + separator + "second"
+			row := binding{"n": &storage.Node{ID: "node", Properties: map[string]interface{}{"name": name}}}
+			clause := "n.name + '' = '" + name + "'"
+			require.Len(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, clause, nil), 1)
+		})
+	}
+}
+
+func TestGh728WhereNormalizationPreservesQuotedText(t *testing.T) {
+	for _, test := range []struct {
+		name, clause, expected string
+	}{
+		{"plain", "n.name = $name", "n.name = $name"},
+		{"outside", "n.name\t=\r\n$name", "n.name = $name"},
+		{"single quote", "n.name = 'a\tb\nc'", "n.name = 'a\tb\nc'"},
+		{"double quote", "n.name = \"a\tb\"", "n.name = \"a\tb\""},
+		{"escaped quote", "n.name = 'a\\'b\tc'\nAND n.count > 0", "n.name = 'a\\'b\tc' AND n.count > 0"},
+		{"doubled quote", "n.name = 'a''\tb'\nAND n.count > 0", "n.name = 'a''\tb' AND n.count > 0"},
+		{"backticks", "n.`a\tb` = 1\nAND n.count > 0", "n.`a\tb` = 1 AND n.count > 0"},
+		{"doubled backtick", "n.`a``\tb` = 1\tAND n.count > 0", "n.`a``\tb` = 1 AND n.count > 0"},
+		{"unterminated quote", "n.name = 'a\tb", "n.name = 'a\tb"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.expected, normalizeBindingWhereClause(test.clause))
+		})
+	}
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		if normalizeBindingWhereClause("n.name = $name") != "n.name = $name" {
+			t.Fatal("normalization changed plain predicate")
+		}
+	}))
+}
+
 func TestGh728BindingWhereUsesSharedTypedPredicate(t *testing.T) {
 	tests := []struct {
 		name   string
