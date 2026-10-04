@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Make the MERGE-first annotation regression template valid Cypher by carrying
+  node and row scope through WITH before its post-SET MATCH, retaining batch
+  and indexed-lookup assertions under both parsers (#754).
+
 - Compile relationship-batch RETURN fields and columns from the shared projection
   plan, preserving quoted, escaped and inferred names without admitting unsupported
   DISTINCT, aggregation or pagination into the compiled batch path (#713).

@@ -121,6 +121,7 @@ SET n.id = row.entity_id,
     n.target_kind = row.target_kind,
     n.semantic_kind = coalesce(row.semantic_kind, row.entity_type),
     n.evidence_source = row.evidence_source
+WITH n, row
 MATCH (f:File {path: row.file_path})
 MERGE (f)-[:CONTAINS]->(n)`
 

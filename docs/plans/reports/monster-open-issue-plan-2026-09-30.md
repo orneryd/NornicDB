@@ -792,3 +792,23 @@ boundary; current source confirms the new shared-plan delegation.
 
 No running installation was touched. Publish with `Refs #713`; remaining
 #713/#728/#754 acceptance stays open and #547 remains excluded.
+
+### Canonical Node-Template Boundary: 2026-10-04
+
+The MERGE-first annotation test template omitted a WITH boundary between SET
+and a subsequent MATCH. Its full ANTLR test fails identically on prior source,
+independent of the relationship-column compiler. Pinned Neo4j 5.26.30 rejects
+the same phase boundary with "WITH is required between SET and MATCH" and
+accepts the scope-preserving `WITH n, row` form. Temporary reference nodes and
+relationships were removed after verification.
+
+Add only that boundary to the test template. Preserve its actual batch-use,
+unique-schema-lookup and zero-scan assertions. The exact fixture passes under
+both parsers with races enabled; the previously failing expanded ANTLR
+relationship/node-batch selection now passes without exclusions. Fresh isolated
+repository correctness and whitespace checks pass. No runtime implementation,
+assertion or test was removed. Earlier 3,892 reference comparisons and official
+ratchets describe unchanged runtime source, not a new test-only matrix.
+
+Publish with `Refs #754`; complete #713/#728/#754 family acceptance remains open
+and #547 remains excluded. No performance or running-installation change.
