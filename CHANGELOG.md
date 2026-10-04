@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reuse immutable OpenTelemetry span-start options without disabling tracing.
+  Cache-disabled public Execute measures 35 -> 32 allocations/op and saves
+  48 B/op; enabled span attributes, kinds, and concurrent parent contexts remain
+  intact. Matched long-run latency is within noise (#754).
+
 - Archive superseded versions only for other readers or retention. A write
   statement's own transaction counted as a snapshot reader, so every update
   and delete saved a copy of the old version that nobody could read. A
