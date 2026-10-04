@@ -4,8 +4,41 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/language"
+	"gopkg.in/yaml.v3"
 )
+
+func TestGraphDirectionCatalogRendering(t *testing.T) {
+	paths := []string{
+		"catalog/active.graph.en-US.yaml",
+		"catalog/active.graph.es-ES.yaml",
+		"catalog/active.graph.en-XA.yaml",
+	}
+	require.NoError(t, validateCatalogFiles(catalogFS, paths))
+	bundle := i18n.NewBundle(language.AmericanEnglish)
+	bundle.RegisterUnmarshalFunc("yaml", yaml.Unmarshal)
+	for _, path := range paths {
+		_, err := bundle.LoadMessageFileFS(catalogFS, path)
+		require.NoError(t, err)
+	}
+	message := GraphDirectionInvalid()
+	for _, test := range []struct {
+		locale string
+		want   string
+	}{
+		{"en-US", "direction must be one of 'out', 'in' or 'both'"},
+		{"es-ES", "direction debe ser uno de 'out', 'in' o 'both'"},
+		{"en-XA", "[!! direction must be one of 'out', 'in' or 'both' !!]"},
+	} {
+		t.Run(test.locale, func(t *testing.T) {
+			text, err := i18n.NewLocalizer(bundle, test.locale).Localize(&i18n.LocalizeConfig{MessageID: string(message.ID), TemplateData: message.Data})
+			require.NoError(t, err)
+			require.Equal(t, test.want, text)
+		})
+	}
+}
 
 func TestValidateCatalogFiles(t *testing.T) {
 	tests := []struct {

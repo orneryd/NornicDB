@@ -536,3 +536,17 @@ reference matrices. Their static UI build passes with the chunk-size warning.
 No running installation was stopped, started or reconfigured. No benchmark or
 performance claim is made. #713 remains open for the remaining projection and
 column-planning inventory; #728/#754 remain separate and #547 is excluded.
+
+### Localization CI Repair
+
+The published `2007d796` CI build failed catalog generation because the typed
+`graph.direction_invalid` message lacked a source entry. The exact CI command
+reproduced locally. A new catalog regression fails for all three supported
+locales without fallback, then passes after adding the English, Spanish and
+pseudo-locale entries while preserving the out/in/both machine values.
+
+The complete CI localization test, generation, manifest-drift and catalog-check
+sequence now passes locally. Focused localization races and graph neighborhood
+direction endpoint tests pass. No generated manifest change or test removal is
+needed; existing runtime direction validation is unchanged. This repairs the
+observed build gate, not the remaining #754 TestKit/CI acceptance items.
