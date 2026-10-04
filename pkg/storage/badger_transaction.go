@@ -1902,7 +1902,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	if err != nil {
 		if err == ErrIterationStopped && tx.snapshotTx != nil {
 			cacheEndpointNodes := properties == nil && (!tx.engine.decayEnabled || tx.engine.revealAll.Load())
-			tx.storeSnapshotLabelPrefixLocked(cacheKey, completed, cacheEndpointNodes)
+			tx.storeSnapshotLabelPrefixLocked(tx.snapshotTx, cacheKey, completed, cacheEndpointNodes)
 		}
 		return err
 	}

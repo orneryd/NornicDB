@@ -17,7 +17,7 @@ const (
 	maxSnapshotEdgeCacheBytes       = 256 << 10
 )
 
-func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(key string, nodes []*Node, indexNodesByID bool) {
+func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key string, nodes []*Node, indexNodesByID bool) {
 	if len(nodes) == 0 || len(nodes) > maxSnapshotLabelPrefixNodes {
 		return
 	}
@@ -35,6 +35,13 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(key string, nodes []
 		if !ok || nodeBytes > maxSnapshotLabelPrefixBytes-bytes {
 			return
 		}
+		// A node whose embedding state lives in the worker sidecar key space
+		// has a clean body but must be excluded from the snapshot caches
+		// like any other embedded node: cached entries are body-only and
+		// would be served without the sidecar embeddings.
+		if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
+			return
+		}
 		bytes += nodeBytes
 	}
 	previousBytes := tx.snapshotLabelPrefixNodeBytes[key]
@@ -50,14 +57,28 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(key string, nodes []
 	tx.snapshotLabelPrefixBytes += bytes - previousBytes
 	if indexNodesByID {
 		for _, node := range nodes {
-			tx.cacheSnapshotPrefixNodeByIDLocked(node)
+			tx.cacheSnapshotPrefixNodeByIDLocked(txn, node)
 		}
 	}
 }
 
-func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(node *Node) {
+// nodeHasEmbeddingSidecar reports whether nodeID has a worker sidecar
+// metadata record visible in txn. A nil txn (test call sites) skips the probe.
+func (tx *BadgerTransaction) nodeHasEmbeddingSidecar(txn *badger.Txn, nodeID NodeID) bool {
+	if txn == nil {
+		return false
+	}
+	_, err := txn.Get(embeddingMetaKey(nodeID))
+	return err == nil
+}
+
+func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(txn *badger.Txn, node *Node) {
 	nodeBytes, ok := snapshotLabelPrefixNodeBytes(node)
 	if !ok || nodeBytes > maxSnapshotPrefixNodeCacheBytes {
+		return
+	}
+	// Sidecar-bearing nodes must be re-read so embedding hydration runs.
+	if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
 		return
 	}
 	if _, exists := tx.snapshotPrefixNodeByID[node.ID]; exists {

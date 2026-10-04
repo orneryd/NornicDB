@@ -188,6 +188,34 @@ func (n *NamespacedEngine) UpdateNodeEmbedding(node *Node) error {
 	return n.UpdateNode(node)
 }
 
+// UpdateNodeEmbeddingSidecar writes managed embedding state in the dedicated
+// embedding key space without touching the node record.
+func (n *NamespacedEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	if node == nil {
+		return ErrInvalidData
+	}
+	if sidecar, ok := n.inner.(EmbeddingSidecarUpdater); ok {
+		namespaced := copyNode(node)
+		namespaced.ID = n.prefixNodeID(node.ID)
+		return sidecar.UpdateNodeEmbeddingSidecar(namespaced)
+	}
+	return n.UpdateNodeEmbedding(node)
+}
+
+// StreamParkedEmbeddingFailures streams this namespace's sidecar failure
+// records with namespace-stripped IDs.
+func (n *NamespacedEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
+	if streamer, ok := n.inner.(EmbeddingFailureStreamer); ok {
+		count := 0
+		_, err := streamer.StreamParkedEmbeddingFailures(ctx, func(nodeID NodeID, meta map[string]any) error {
+			count++
+			return visit(n.unprefixNodeID(nodeID), meta)
+		})
+		return count, err
+	}
+	return 0, nil
+}
+
 // Event-callback registration with namespace translation: callbacks only fire
 // for this namespace's entities and receive namespace-stripped IDs.
 func (n *NamespacedEngine) OnNodeCreated(callback NodeEventCallback) {

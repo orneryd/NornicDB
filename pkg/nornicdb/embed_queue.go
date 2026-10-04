@@ -458,13 +458,18 @@ func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []s
 			return retried, err
 		}
 		embeddingutil.InvalidateManagedEmbeddings(node)
-		if updater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
-			err = updater.UpdateNodeEmbedding(node)
+		var updateErr error
+		if sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater); ok {
+			// Clearing the embedding state deletes the sidecar records (meta
+			// and chunk keys) so the node can be re-embedded cleanly.
+			updateErr = sidecar.UpdateNodeEmbeddingSidecar(node)
+		} else if updater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
+			updateErr = updater.UpdateNodeEmbedding(node)
 		} else {
-			err = ew.storage.UpdateNode(node)
+			updateErr = ew.storage.UpdateNode(node)
 		}
-		if err != nil {
-			return retried, err
+		if updateErr != nil {
+			return retried, updateErr
 		}
 		ew.addNodeToPendingEmbeddings(node.ID)
 		retried++
@@ -481,6 +486,22 @@ func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []s
 }
 
 func (ew *EmbedWorker) scanParkedEmbeddingFailures(ctx context.Context, visit func(EmbeddingFailure) error) (int, error) {
+	// Prefer the sidecar key-space scan: failure markers live in the
+	// embedding metadata record, not the node body, so no node body is
+	// decoded.
+	if streamer, ok := ew.storage.(storage.EmbeddingFailureStreamer); ok {
+		count := 0
+		_, err := streamer.StreamParkedEmbeddingFailures(ctx, func(nodeID storage.NodeID, meta map[string]any) error {
+			count++
+			failure := EmbeddingFailure{NodeID: nodeID}
+			failure.Error, _ = meta["embedding_error"].(string)
+			failure.FailedAt, _ = meta["embedding_failed_at"].(string)
+			return visit(failure)
+		})
+		return count, err
+	}
+
+	// Legacy body-based scan for storage engines without the sidecar space.
 	count := 0
 	inspect := func(node *storage.Node) error {
 		if node == nil {
@@ -1166,47 +1187,36 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]fl
 	for key, value := range providerMeta {
 		node.EmbedMeta[key] = value
 	}
-	chunkEmbeddingsToSave := node.ChunkEmbeddings
-	embedMetaToSave := make(map[string]any, len(node.EmbedMeta))
-	for key, value := range node.EmbedMeta {
-		embedMetaToSave[key] = value
-	}
 
-	existingNode, err := ew.storage.GetNode(node.ID)
-	if err != nil {
-		// Node was deleted - remove from pending index and skip
-		fmt.Printf("⚠️  Node %s was deleted before embedding could be saved - skipping\n", node.ID)
-		ew.markNodeEmbedded(node.ID)
-		return false // Skip this node, try next one
-	}
-
-	// CRITICAL: Preserve the embeddings we just generated!
-	// Don't overwrite node with existingNode - that would lose the embeddings
-	// Instead, update the existing node's embedding field while preserving other fields
-	node = existingNode                          // Get latest data from storage
-	node.ChunkEmbeddings = chunkEmbeddingsToSave // Restore chunk embeddings (struct field, opaque to users)
-	node.UpdatedAt = time.Now()                  // Update timestamp
-
-	// Restore embedding metadata (in EmbedMeta, not Properties)
-	node.EmbedMeta = embedMetaToSave
-
-	// Save the parent node (either with embedding for single chunk, or metadata for chunked files)
-	// CRITICAL: Use UpdateNodeEmbedding if available (only updates existing nodes, doesn't create)
-	// This prevents creating orphaned nodes when the pending index has stale entries
+	// The worker writes ONLY the embedding key space (chunk vectors plus the
+	// metadata sidecar record): no node-record transaction, no MVCC version,
+	// no UpdatedAt bump, and no key a business write touches — a concurrent
+	// incoming change can never conflict with this writeback. The sidecar's
+	// content stamp is the claimed node's UpdatedAt, so a body change after
+	// the claim makes the sidecar stale and readers ignore it until the
+	// worker re-embeds the new content.
 	var updateErr error
-	if embedUpdater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
-		// UpdateNodeEmbedding only updates existing nodes - returns ErrNotFound if node doesn't exist
+	if sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater); ok {
+		updateErr = sidecar.UpdateNodeEmbeddingSidecar(node)
+		if updateErr == storage.ErrNotFound {
+			// Node was deleted - remove from pending index and skip.
+			fmt.Printf("⚠️  Node %s was deleted before embedding could be saved - skipping\n", node.ID)
+			ew.markNodeEmbedded(node.ID)
+			return false // Skip this node, try next one
+		}
+	} else if embedUpdater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
+		// Legacy writeback: storage engines without the sidecar key space.
 		updateErr = embedUpdater.UpdateNodeEmbedding(node)
 		if updateErr == storage.ErrNotFound {
-			// Node was deleted - remove from pending index and skip
+			// Node was deleted - remove from pending index and skip.
 			fmt.Printf("⚠️  Node %s was deleted - skipping update to prevent orphaned node\n", node.ID)
 			ew.markNodeEmbedded(node.ID)
 			return false
 		}
 	} else {
-		// Fallback: UpdateNode has upsert behavior which can create orphaned nodes
-		// This should only happen if the storage engine doesn't support UpdateNodeEmbedding
-		// For safety, we've already verified the node exists above
+		// Fallback: UpdateNode has upsert behavior which can create orphaned nodes.
+		// This should only happen if the storage engine doesn't support UpdateNodeEmbedding.
+		// For safety, we've already verified the node exists above.
 		updateErr = ew.storage.UpdateNode(node)
 	}
 	if updateErr != nil {
@@ -1403,7 +1413,9 @@ func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr e
 	node.EmbedMeta["embedding_failed_at"] = time.Now().UTC().Format(time.RFC3339)
 
 	var updateErr error
-	if updater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
+	if sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater); ok {
+		updateErr = sidecar.UpdateNodeEmbeddingSidecar(node)
+	} else if updater, ok := ew.storage.(interface{ UpdateNodeEmbedding(*storage.Node) error }); ok {
 		updateErr = updater.UpdateNodeEmbedding(node)
 	} else {
 		updateErr = ew.storage.UpdateNode(node)
