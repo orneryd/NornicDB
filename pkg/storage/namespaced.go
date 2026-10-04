@@ -1120,7 +1120,7 @@ func (n *NamespacedEngine) NodeCountByLabel(label string) (int64, error) {
 				return nil
 			}
 			for _, existingLabel := range node.Labels {
-				if strings.EqualFold(existingLabel, label) {
+				if existingLabel == label {
 					count++
 					break
 				}
@@ -1139,7 +1139,7 @@ func (n *NamespacedEngine) NodeCountByLabel(label string) (int64, error) {
 	}
 	for _, node := range nodes {
 		for _, existingLabel := range node.Labels {
-			if strings.EqualFold(existingLabel, label) {
+			if existingLabel == label {
 				count++
 				break
 			}

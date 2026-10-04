@@ -1825,13 +1825,12 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	if hasPending {
 		seen = make(map[NodeID]struct{}, len(tx.pendingNodes))
 	}
-	normalizedLabel := normalizeLabel(label)
 	matchesLabel := func(node *Node) bool {
 		if node == nil {
 			return false
 		}
 		for _, candidate := range node.Labels {
-			if normalizeLabel(candidate) == normalizedLabel {
+			if candidate == label {
 				return true
 			}
 		}
@@ -1858,7 +1857,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		return invokeVisit(node)
 	}
 
-	cacheKey := normalizeLabel(label)
+	cacheKey := label
 	cache := tx.snapshotLabelNodes
 	if properties != nil {
 		cacheKey = snapshotLabelProjectionKey(label, properties)
@@ -2044,7 +2043,7 @@ func snapshotLabelProjectionKey(label string, properties []string) string {
 	canonical := append([]string(nil), properties...)
 	sort.Strings(canonical)
 	var key strings.Builder
-	key.WriteString(normalizeLabel(label))
+	key.WriteString(label)
 	key.WriteByte(0)
 	for _, property := range canonical {
 		key.WriteString(strconv.Itoa(len(property)))

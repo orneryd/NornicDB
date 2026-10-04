@@ -20,7 +20,7 @@ func (tx *BadgerTransaction) PendingNodeLabelCountDelta(namespace, label string)
 	if namespace == "" || tx.namespace != namespace {
 		return 0, false
 	}
-	return tx.pendingLabelCountDeltas[namespaceLabel{namespace: namespace, label: normalizeCountLabel(label)}], true
+	return tx.pendingLabelCountDeltas[namespaceLabel{namespace: namespace, label: label}], true
 }
 
 // PendingEdgeTypeCountDelta returns what the transaction's staged writes add
@@ -31,5 +31,5 @@ func (tx *BadgerTransaction) PendingEdgeTypeCountDelta(namespace, edgeType strin
 	if namespace == "" || tx.namespace != namespace {
 		return 0, false
 	}
-	return tx.pendingEdgeTypeCountDeltas[namespaceEdgeType{namespace: namespace, edgeType: normalizeCountEdgeType(edgeType)}], true
+	return tx.pendingEdgeTypeCountDeltas[namespaceEdgeType{namespace: namespace, edgeType: edgeType}], true
 }

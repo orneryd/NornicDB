@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -10,11 +9,11 @@ import (
 )
 
 // indexedLabelIDs returns the NodeID set tracked by labelIndex for the given
-// (case-insensitive) label, copied under the read lock for assertion.
+// label (exact case), copied under the read lock for assertion.
 func indexedLabelIDs(ae *AsyncEngine, label string) []NodeID {
 	ae.mu.RLock()
 	defer ae.mu.RUnlock()
-	set := ae.pending.byLabel[strings.ToLower(label)]
+	set := ae.pending.byLabel[label]
 	out := make([]NodeID, 0, len(set))
 	for id := range set {
 		out = append(out, id)
@@ -141,7 +140,8 @@ func TestAsyncEngine_LabelIndex_RebuildOnLabelChange(t *testing.T) {
 	assert.ElementsMatch(t, []NodeID{a}, nodeIDsOf(got))
 }
 
-func TestAsyncEngine_LabelIndex_CaseInsensitive(t *testing.T) {
+// Labels are case-sensitive, as in Neo4j (#862).
+func TestAsyncEngine_LabelIndex_CaseSensitive(t *testing.T) {
 	engine := NewMemoryEngine()
 	defer engine.Close()
 	async := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
@@ -149,9 +149,12 @@ func TestAsyncEngine_LabelIndex_CaseInsensitive(t *testing.T) {
 
 	a := mustCreateNodeWithLabels(t, async, "lix-case-a", "Star")
 
-	for _, q := range []string{"Star", "STAR", "star", "sTaR"} {
+	got, err := async.GetNodesByLabel("Star")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []NodeID{a}, nodeIDsOf(got))
+	for _, q := range []string{"STAR", "star", "sTaR"} {
 		got, err := async.GetNodesByLabel(q)
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []NodeID{a}, nodeIDsOf(got), "label query %q", q)
+		assert.Empty(t, got, "label query %q", q)
 	}
 }

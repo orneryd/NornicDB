@@ -144,7 +144,7 @@ func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parse
 	}
 
 	if name == "" {
-		name = fmt.Sprintf("constraint_%s_contract", lowerASCII(labelOrType))
+		name = fmt.Sprintf("constraint_%s_contract", labelOrType)
 	}
 	return parsedCreateConstraintContractDDL{
 		name:        name,

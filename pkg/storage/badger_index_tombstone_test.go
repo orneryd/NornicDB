@@ -64,7 +64,7 @@ func TestIndexTombstone_LabelIndexSkipsTombstoned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tombstoneKey := eng.labelIndexKeyStringLookup("person", "nornic:hidden")
+	tombstoneKey := eng.labelIndexKeyStringLookup("Person", "nornic:hidden")
 	if tombstoneKey == nil {
 		t.Fatal("missing numID for nornic:hidden")
 	}
@@ -96,7 +96,7 @@ func TestIndexTombstone_RevealAllBypassesTombstone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tombstoneKey := eng.labelIndexKeyStringLookup("person", "nornic:revealed")
+	tombstoneKey := eng.labelIndexKeyStringLookup("Person", "nornic:revealed")
 	if tombstoneKey == nil {
 		t.Fatal("missing numID for nornic:revealed")
 	}
@@ -147,7 +147,7 @@ func TestIndexTombstone_ForEachNodeIDSkipsTombstoned(t *testing.T) {
 		}
 	}
 
-	tombstoneKey := eng.labelIndexKeyStringLookup("item", "nornic:b")
+	tombstoneKey := eng.labelIndexKeyStringLookup("Item", "nornic:b")
 	if tombstoneKey == nil {
 		t.Fatal("missing numID for nornic:b")
 	}

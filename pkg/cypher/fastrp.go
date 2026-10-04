@@ -194,7 +194,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeLabels, relTypes
 		if !matchesLabel {
 			for _, label := range node.Labels {
 				for _, wantLabel := range nodeLabels {
-					if strings.EqualFold(label, wantLabel) {
+					if label == wantLabel {
 						matchesLabel = true
 						break
 					}
@@ -245,7 +245,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeLabels, relTypes
 		matchesType := matchAllTypes
 		if !matchesType {
 			for _, wantType := range relTypes {
-				if strings.EqualFold(edge.Type, wantType) {
+				if edge.Type == wantType {
 					matchesType = true
 					break
 				}

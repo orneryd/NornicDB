@@ -14,7 +14,7 @@ import (
 // Label-index startup backfill.
 //
 // The label index (prefixLabelIndex = 0x03, key shape
-// `[0x03][lowercase(label)][0x00][nodeNumID]`) is the index every
+// `[0x03][label][0x00][nodeNumID]`) is the index every
 // `MATCH (n:Label)` resolves through. Production write paths
 // (CreateNode / BulkCreateNodes / UpdateNode) write the index
 // transactionally with the node body, so on a freshly-created store
@@ -185,93 +185,47 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.dropDerivedPrefixes(prefixLabelIndex); err != nil {
 		return 0, fmt.Errorf("clear label index before rebuild: %w", err)
 	}
-	if err := recoverBadgerClosedPanic(func() error { return b.db.DropPrefix([]byte{prefixLabelIndex}) }); err != nil {
-		return 0, fmt.Errorf("clear label index before rebuild: %w", err)
+	scan := storedRecordScan{
+		prefix:    prefixNode,
+		batchSize: labelIndexRebuildBatchSize,
+		logEvery:  labelIndexRebuildLogEvery,
+		log:       b.log.With("subsystem", "index_rebuild", "index", "label"),
+		message:   "label index backfill progress",
+		unit:      "nodes",
 	}
-
-	idxLog := b.log.With("subsystem", "index_rebuild", "index", "label")
-	processed := 0
-
-	// Rebuild in txn-scoped chunks so each batch's dict allocations +
-	// index writes commit together. Cursors across the node prefix
-	// advance between chunks.
-	var cursor []byte
-	for {
-		if err := ctx.Err(); err != nil {
-			return processed, err
+	processed, err := b.forEachStoredRecordInChunks(ctx, scan, func(txn *badger.Txn, key, val []byte) (int, bool, error) {
+		if len(key) <= 1 {
+			return 0, false, nil
 		}
-		done := false
-		err := b.withUpdate(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
-			defer it.Close()
-			start := cursor
-			if len(start) == 0 {
-				start = []byte{prefixNode}
-			}
-			writes := 0
-			for it.Seek(start); it.ValidForPrefix([]byte{prefixNode}); it.Next() {
-				item := it.Item()
-				key := item.KeyCopy(nil)
-				if len(key) <= 1 {
-					continue
-				}
-				nodeID := NodeID(key[1:])
-				namespace, _, ok := ParseDatabasePrefix(string(nodeID))
-				if !ok {
-					// Nodes without a namespace prefix predate multi-DB
-					// support. Skip — they can't participate in the
-					// per-namespace dict either.
-					continue
-				}
-				if err := item.Value(func(val []byte) error {
-					node, err := b.decodeNode(namespace, val)
-					if err != nil {
-						return fmt.Errorf("decode node %q for label rebuild: %w", nodeID, err)
-					}
-					for _, label := range node.Labels {
-						lblKey, err := b.labelIndexKeyString(txn, label, nodeID)
-						if err != nil {
-							return fmt.Errorf("label key for %q/%q: %w", nodeID, label, err)
-						}
-						if err := txn.Set(lblKey, []byte{}); err != nil {
-							return fmt.Errorf("write label index for %q/%q: %w", nodeID, label, err)
-						}
-						writes++
-					}
-					processed++
-					if processed%labelIndexRebuildLogEvery == 0 {
-						idxLog.Info("label index backfill progress",
-							"nodes", processed,
-						)
-					}
-					return nil
-				}); err != nil {
-					return err
-				}
-				if writes >= labelIndexRebuildBatchSize {
-					it.Next()
-					if it.ValidForPrefix([]byte{prefixNode}) {
-						cursor = append([]byte(nil), it.Item().Key()...)
-					} else {
-						done = true
-					}
-					return nil
-				}
-			}
-			done = true
-			return nil
-		})
+		nodeID := NodeID(key[1:])
+		namespace, _, ok := ParseDatabasePrefix(string(nodeID))
+		if !ok {
+			// Nodes without a namespace prefix predate multi-DB support.
+			// Skip — they can't participate in the per-namespace dict
+			// either.
+			return 0, false, nil
+		}
+		node, err := b.decodeNode(namespace, val)
 		if err != nil {
-			return processed, err
+			return 0, false, fmt.Errorf("decode node %q for label rebuild: %w", nodeID, err)
 		}
-		if done {
-			break
+		for i, label := range node.Labels {
+			lblKey, err := b.labelIndexKeyString(txn, label, nodeID)
+			if err == nil {
+				err = txn.Set(lblKey, []byte{})
+			}
+			if err != nil {
+				return i, false, fmt.Errorf("write label index for %q/%q: %w", nodeID, label, err)
+			}
 		}
+		return len(node.Labels), true, nil
+	})
+	if err != nil {
+		return processed, err
 	}
-
 	if err := ctx.Err(); err != nil {
 		return processed, err
 	}

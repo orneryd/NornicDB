@@ -386,7 +386,7 @@ func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, 
 			continue
 		}
 		idxLabel, _ := idx["label"].(string)
-		if !strings.EqualFold(strings.TrimSpace(idxLabel), label) {
+		if strings.TrimSpace(idxLabel) != label {
 			continue
 		}
 		prop := ""

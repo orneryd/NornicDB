@@ -4,7 +4,6 @@ package storage
 import (
 	"bytes"
 	"fmt"
-	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -20,7 +19,7 @@ import (
 //
 // Key shape:
 //
-//	[prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace..., 0x00, lower(type)] -> uint64 count
+//	[prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace..., 0x00, type] -> uint64 count
 //
 // A typed relationship count is then a single Badger point read (summed across
 // namespaces by EdgeCountByType), never a function of edge cardinality or
@@ -28,16 +27,12 @@ import (
 
 var edgeTypeCountReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaEdgeTypeCountReady}
 
-func normalizeCountEdgeType(edgeType string) string {
-	return strings.ToLower(edgeType)
-}
-
 func edgeTypeCountKey(namespace, edgeType string) []byte {
 	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace), len(edgeType)))
 	key = append(key, prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount)
 	key = append(key, namespace...)
 	key = append(key, 0)
-	key = append(key, normalizeCountEdgeType(edgeType)...)
+	key = append(key, edgeType...)
 	return key
 }
 
@@ -132,7 +127,7 @@ func (b *BadgerEngine) EdgeCountByType(edgeType string) (int64, error) {
 	}
 	b.edgeTypeCountWriteMu.RLock()
 	defer b.edgeTypeCountWriteMu.RUnlock()
-	needle := []byte(normalizeCountEdgeType(edgeType))
+	needle := []byte(edgeType)
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(edgeTypeCountPrefix()))
@@ -345,7 +340,7 @@ func (b *BadgerEngine) collectAuthoritativeEdgeTypeCountsSnapshot() (*edgeTypeCo
 				if decodeErr != nil {
 					return nil // skip undecodable bodies (same as EdgeCount semantics)
 				}
-				edgeType := normalizeCountEdgeType(edge.Type)
+				edgeType := edge.Type
 				if edgeType == "" {
 					return nil
 				}
@@ -358,10 +353,10 @@ func (b *BadgerEngine) collectAuthoritativeEdgeTypeCountsSnapshot() (*edgeTypeCo
 				if endErr != nil {
 					return endErr
 				}
-				for _, label := range uniqueNormalizedLabels(startLabels) {
+				for _, label := range uniqueLabels(startLabels) {
 					snap.startLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType}]++
 				}
-				for _, label := range uniqueNormalizedLabels(endLabels) {
+				for _, label := range uniqueLabels(endLabels) {
 					snap.endLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType}]++
 				}
 				return nil
@@ -486,7 +481,7 @@ func (tx *BadgerTransaction) bufferAdjustEdgeTypeCount(namespace, edgeType strin
 	if delta == 0 || namespace == "" || edgeType == "" {
 		return
 	}
-	key := namespaceEdgeType{namespace: namespace, edgeType: normalizeCountEdgeType(edgeType)}
+	key := namespaceEdgeType{namespace: namespace, edgeType: edgeType}
 	tx.pendingEdgeTypeCountDeltas[key] += delta
 	if tx.pendingEdgeTypeCountDeltas[key] == 0 {
 		delete(tx.pendingEdgeTypeCountDeltas, key)
@@ -557,7 +552,7 @@ func (b *BadgerEngine) collectEdgeTypeCountsByPrefixSnapshot(keyPrefix []byte) (
 				if edge.Type == "" {
 					return nil
 				}
-				counts[namespaceEdgeType{namespace: namespace, edgeType: normalizeCountEdgeType(edge.Type)}]++
+				counts[namespaceEdgeType{namespace: namespace, edgeType: edge.Type}]++
 				startNodeLabels, labelErr := b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
 				if labelErr != nil {
 					return labelErr
@@ -566,11 +561,11 @@ func (b *BadgerEngine) collectEdgeTypeCountsByPrefixSnapshot(keyPrefix []byte) (
 				if labelErr != nil {
 					return labelErr
 				}
-				for _, label := range uniqueNormalizedLabels(startNodeLabels) {
-					startLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: normalizeCountEdgeType(edge.Type)}]++
+				for _, label := range uniqueLabels(startNodeLabels) {
+					startLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edge.Type}]++
 				}
-				for _, label := range uniqueNormalizedLabels(endNodeLabels) {
-					endLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: normalizeCountEdgeType(edge.Type)}]++
+				for _, label := range uniqueLabels(endNodeLabels) {
+					endLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edge.Type}]++
 				}
 				return nil
 			}); err != nil {
@@ -606,9 +601,9 @@ func edgeTypeLabelCountKey(sub byte, namespace, label, edgeType string) []byte {
 	key = append(key, prefixMVCCMeta, sub)
 	key = append(key, namespace...)
 	key = append(key, 0)
-	key = append(key, normalizeCountLabel(label)...)
+	key = append(key, label...)
 	key = append(key, 0)
-	key = append(key, normalizeCountEdgeType(edgeType)...)
+	key = append(key, edgeType...)
 	return key
 }
 
@@ -705,8 +700,8 @@ func (b *BadgerEngine) sumEdgeTypeLabelCountAcrossNamespaces(sub byte, label, ed
 	}
 	b.edgeTypeCountWriteMu.RLock()
 	defer b.edgeTypeCountWriteMu.RUnlock()
-	needleLabel := []byte(normalizeCountLabel(label))
-	needleType := []byte(normalizeCountEdgeType(edgeType))
+	needleLabel := []byte(label)
+	needleType := []byte(edgeType)
 	var prefix []byte
 	if sub == prefixMVCCMetaEdgeTypeStartLabelCount {
 		prefix = edgeTypeStartLabelCountPrefix()
@@ -762,13 +757,13 @@ func (b *BadgerEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error
 // edgePositionalLabelDeltaKeys returns the (namespace, label, type) delta keys
 // an endpoint's labels contribute at one position (start or end).
 func edgePositionalLabelDeltaKeys(namespace, edgeType string, labels []string) []namespaceEdgeTypeLabel {
-	unique := uniqueNormalizedLabels(labels)
+	unique := uniqueLabels(labels)
 	if len(unique) == 0 {
 		return nil
 	}
 	keys := make([]namespaceEdgeTypeLabel, 0, len(unique))
 	for _, label := range unique {
-		keys = append(keys, namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: normalizeCountEdgeType(edgeType)})
+		keys = append(keys, namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType})
 	}
 	return keys
 }
@@ -815,8 +810,8 @@ func nodeLabelChangeDeltas(oldLabels, newLabels []string) (added, removed []stri
 // edges between positional label buckets when the node gains or loses labels.
 // Outgoing edges contribute at the start tier, incoming edges at the end tier.
 func (b *BadgerEngine) adjustEdgeTypeLabelCountsForNodeLabelChangeInTxn(txn *badger.Txn, namespace, nodeID string, added, removed []string) error {
-	addedUnique := uniqueNormalizedLabels(added)
-	removedUnique := uniqueNormalizedLabels(removed)
+	addedUnique := uniqueLabels(added)
+	removedUnique := uniqueLabels(removed)
 	if len(addedUnique) == 0 && len(removedUnique) == 0 {
 		return nil
 	}
@@ -879,7 +874,7 @@ func (b *BadgerEngine) incidentEdgeTypesInTxn(txn *badger.Txn, prefix []byte) (m
 			if decodeErr != nil {
 				return nil // skip undecodable bodies
 			}
-			edgeType := normalizeCountEdgeType(edge.Type)
+			edgeType := edge.Type
 			if edgeType == "" {
 				return nil
 			}
@@ -911,8 +906,8 @@ func (tx *BadgerTransaction) bufferAdjustEdgeTypeLabelCount(sub byte, namespace,
 	key := edgeTypeLabelDelta{
 		sub:       sub,
 		namespace: namespace,
-		label:     normalizeCountLabel(label),
-		edgeType:  normalizeCountEdgeType(edgeType),
+		label:     label,
+		edgeType:  edgeType,
 	}
 	tx.pendingEdgeTypeLabelCountDeltas[key] += delta
 	if tx.pendingEdgeTypeLabelCountDeltas[key] == 0 {
@@ -987,7 +982,7 @@ func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing b
 				it.Close()
 				return nil, err
 			}
-			if t := normalizeCountEdgeType(edge.Type); t != "" {
+			if t := edge.Type; t != "" {
 				types[t]++
 			}
 		}
@@ -1003,7 +998,7 @@ func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing b
 		if !outgoing && edge.EndNode != nodeID {
 			continue
 		}
-		if t := normalizeCountEdgeType(edge.Type); t != "" {
+		if t := edge.Type; t != "" {
 			types[t]++
 		}
 	}
@@ -1014,8 +1009,8 @@ func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing b
 // (label, type) deltas a node's relabel implies across its tx-visible
 // incident edges. The caller must hold tx.mu.
 func (tx *BadgerTransaction) bufferNodeLabelChangeEdgeTypeDeltasLocked(nodeID NodeID, added, removed []string) error {
-	addedUnique := uniqueNormalizedLabels(added)
-	removedUnique := uniqueNormalizedLabels(removed)
+	addedUnique := uniqueLabels(added)
+	removedUnique := uniqueLabels(removed)
 	if len(addedUnique) == 0 && len(removedUnique) == 0 {
 		return nil
 	}

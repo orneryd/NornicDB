@@ -4,7 +4,6 @@ package storage
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -34,7 +33,7 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 
 		for it.Rewind(); it.Valid(); it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(normalizeLabel(label)))
+			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
 			if !ok {
 				continue
 			}
@@ -111,7 +110,7 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 		defer it.Close()
 
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
-		labelLen := len(normalizeLabel(label))
+		labelLen := len(label)
 		for it.Rewind(); it.Valid(); it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
 			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, labelLen)
@@ -165,7 +164,7 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 
 		for it.Rewind(); it.Valid(); it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(normalizeLabel(label)))
+			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
 			if !ok {
 				continue
 			}
@@ -257,7 +256,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 
 		for it.Rewind(); it.Valid(); it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(normalizeLabel(label)))
+			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
 			if !ok {
 				continue
 			}
@@ -435,18 +434,16 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 
 // GetEdgesByType returns all edges of a specific type using the edge type index.
 // This is MUCH faster than AllEdges() for queries like mutual follows.
-// Edge types are matched case-insensitively (Neo4j compatible).
+// Relationship types match exactly, as in Neo4j (#862).
 // Results are cached per type to speed up repeated queries.
 func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	if edgeType == "" {
 		return b.AllEdges() // No type filter = all edges
 	}
 
-	normalizedType := strings.ToLower(edgeType)
-
 	// Check cache first
 	b.edgeTypeCacheMu.RLock()
-	if cached, ok := b.edgeTypeCache[normalizedType]; ok {
+	if cached, ok := b.edgeTypeCache[edgeType]; ok {
 		b.edgeTypeCacheMu.RUnlock()
 		return cached, nil
 	}
@@ -515,7 +512,7 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	if b.edgeTypeCacheMaxTypes > 0 && len(b.edgeTypeCache) > b.edgeTypeCacheMaxTypes {
 		b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
 	}
-	b.edgeTypeCache[normalizedType] = edges
+	b.edgeTypeCache[edgeType] = edges
 	b.edgeTypeCacheMu.Unlock()
 
 	return edges, nil
@@ -535,9 +532,8 @@ func (b *BadgerEngine) InvalidateEdgeTypeCacheForType(edgeType string) {
 	if edgeType == "" {
 		return
 	}
-	normalizedType := strings.ToLower(edgeType)
 	b.edgeTypeCacheMu.Lock()
-	delete(b.edgeTypeCache, normalizedType)
+	delete(b.edgeTypeCache, edgeType)
 	b.edgeTypeCacheMu.Unlock()
 }
 
@@ -1161,7 +1157,7 @@ func edgeMatchesBetween(edge *Edge, startID, endID NodeID, edgeType string) bool
 	if edge == nil || edge.StartNode != startID || edge.EndNode != endID {
 		return false
 	}
-	return edgeType == "" || strings.EqualFold(edge.Type, edgeType)
+	return edgeType == "" || edge.Type == edgeType
 }
 
 // edgeFromTxn loads an edge record while callers iterate a secondary index.

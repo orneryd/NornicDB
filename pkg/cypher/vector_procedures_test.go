@@ -150,7 +150,7 @@ func TestVectorIndexRegistryAndNamedEmbeddings(t *testing.T) {
 
 	stats := exec.GetVectorRegistry().Stats()
 	require.Len(t, stats, 1)
-	assert.Equal(t, "doc", stats[0].Key.Type)
+	assert.Equal(t, "Doc", stats[0].Key.Type)
 	assert.Equal(t, "title", stats[0].Key.VectorName)
 	assert.Equal(t, 3, stats[0].Dimensions)
 	assert.Equal(t, vectorspace.DistanceDot, stats[0].Distance)

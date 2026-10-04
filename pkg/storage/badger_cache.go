@@ -294,9 +294,8 @@ func (b *BadgerEngine) labelCacheGetFirst(label string) (NodeID, bool) {
 	if label == "" {
 		return "", false
 	}
-	normalized := normalizeLabel(label)
 	b.labelFirstNodeCacheMu.RLock()
-	id, ok := b.labelFirstNodeCache[normalized]
+	id, ok := b.labelFirstNodeCache[label]
 	b.labelFirstNodeCacheMu.RUnlock()
 	return id, ok
 }
@@ -305,12 +304,11 @@ func (b *BadgerEngine) labelCacheSetFirst(label string, id NodeID) {
 	if label == "" || id == "" {
 		return
 	}
-	normalized := normalizeLabel(label)
 	b.labelFirstNodeCacheMu.Lock()
 	if b.labelFirstCacheMax > 0 && len(b.labelFirstNodeCache) > b.labelFirstCacheMax {
 		b.labelFirstNodeCache = make(map[string]NodeID, b.labelFirstCacheMax)
 	}
-	b.labelFirstNodeCache[normalized] = id
+	b.labelFirstNodeCache[label] = id
 	b.labelFirstNodeCacheMu.Unlock()
 }
 
@@ -320,9 +318,8 @@ func (b *BadgerEngine) labelCacheInvalidateForNodeLabels(labels []string, nodeID
 	}
 	b.labelFirstNodeCacheMu.Lock()
 	for _, label := range labels {
-		normalized := normalizeLabel(label)
-		if cached, ok := b.labelFirstNodeCache[normalized]; ok && cached == nodeID {
-			delete(b.labelFirstNodeCache, normalized)
+		if cached, ok := b.labelFirstNodeCache[label]; ok && cached == nodeID {
+			delete(b.labelFirstNodeCache, label)
 		}
 	}
 	b.labelFirstNodeCacheMu.Unlock()
@@ -339,17 +336,16 @@ func (b *BadgerEngine) labelCacheInvalidateForRemovedLabels(oldLabels, newLabels
 
 	newSet := make(map[string]struct{}, len(newLabels))
 	for _, label := range newLabels {
-		newSet[normalizeLabel(label)] = struct{}{}
+		newSet[label] = struct{}{}
 	}
 
 	b.labelFirstNodeCacheMu.Lock()
 	for _, label := range oldLabels {
-		normalized := normalizeLabel(label)
-		if _, ok := newSet[normalized]; ok {
+		if _, ok := newSet[label]; ok {
 			continue
 		}
-		if cached, ok := b.labelFirstNodeCache[normalized]; ok && cached == nodeID {
-			delete(b.labelFirstNodeCache, normalized)
+		if cached, ok := b.labelFirstNodeCache[label]; ok && cached == nodeID {
+			delete(b.labelFirstNodeCache, label)
 		}
 	}
 	b.labelFirstNodeCacheMu.Unlock()

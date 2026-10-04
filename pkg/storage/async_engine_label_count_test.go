@@ -56,7 +56,7 @@ func TestAsyncEngineLabelCountsUseStoredCountsAndCachedWrites(t *testing.T) {
 	check := func(step string, all, inA int64) {
 		t.Helper()
 		inner.labelReads = 0
-		count, err := ae.NodeCountByLabel("person")
+		count, err := ae.NodeCountByLabel("Person")
 		require.NoError(t, err)
 		require.Equal(t, all, count, step)
 		count, err = ae.NodeCountByLabelInNamespace("a", "Person")

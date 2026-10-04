@@ -4,7 +4,6 @@ package storage
 import (
 	"encoding/binary"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -231,23 +230,21 @@ func extractMVCCLogicalKeyAndVersion(key []byte) ([]byte, MVCCVersion, error) {
 }
 
 // labelIndexKey creates a key for the label index.
-// Format: prefix + label (lowercase) + 0x00 + nodeNumID (8B big-endian)
-// Labels are normalized to lowercase for case-insensitive matching (Neo4j compatible)
+// Format: prefix + label + 0x00 + nodeNumID (8B big-endian). Labels are
+// case-sensitive, as in Neo4j: :Person and :person are two labels (#862).
 func labelIndexKey(label string, nodeNumID uint64) []byte {
-	normalizedLabel := strings.ToLower(label)
 	key := []byte{prefixLabelIndex}
-	key = append(key, []byte(normalizedLabel)...)
+	key = append(key, []byte(label)...)
 	key = append(key, 0x00) // Separator
 	key = append(key, encodeNumID(nodeNumID)...)
 	return key
 }
 
 // labelIndexPrefix returns the prefix for scanning all nodes with a label.
-// Labels are normalized to lowercase for case-insensitive matching (Neo4j compatible)
+// The label is exact-case (#862).
 func labelIndexPrefix(label string) []byte {
-	normalizedLabel := strings.ToLower(label)
 	key := []byte{prefixLabelIndex}
-	key = append(key, []byte(normalizedLabel)...)
+	key = append(key, []byte(label)...)
 	key = append(key, 0x00)
 	return key
 }
@@ -331,23 +328,21 @@ func mvccIncomingAdjacencyKey(nodeNumID, edgeNumID uint64, version MVCCVersion) 
 }
 
 // edgeTypeIndexKey creates a key for the edge type index.
-// Layout: [prefix][type-lowercased]\x00[edgeNumID 8B]. Type stays as
+// Layout: [prefix][type, exact case]\x00[edgeNumID 8B]. Type stays as
 // string because it has good shared-prefix compression in the LSM.
 func edgeTypeIndexKey(edgeType string, edgeNumID uint64) []byte {
-	normalizedType := strings.ToLower(edgeType)
 	key := []byte{prefixEdgeTypeIndex}
-	key = append(key, []byte(normalizedType)...)
+	key = append(key, []byte(edgeType)...)
 	key = append(key, 0x00) // Separator
 	key = append(key, encodeNumID(edgeNumID)...)
 	return key
 }
 
 // edgeTypeIndexPrefix returns the prefix for scanning all edges of a type.
-// Edge types are normalized to lowercase for case-insensitive matching (Neo4j compatible)
+// Relationship types are exact-case, as in Neo4j (#862).
 func edgeTypeIndexPrefix(edgeType string) []byte {
-	normalizedType := strings.ToLower(edgeType)
 	key := []byte{prefixEdgeTypeIndex}
-	key = append(key, []byte(normalizedType)...)
+	key = append(key, []byte(edgeType)...)
 	key = append(key, 0x00)
 	return key
 }
@@ -366,11 +361,10 @@ func edgeTypeIndexPrefix(edgeType string) []byte {
 // GetEdgeBetween narrow further by type without scanning every outgoing
 // edge from the start node.
 func edgeBetweenIndexKey(startNumID, endNumID uint64, edgeType string, edgeNumID uint64) []byte {
-	normalizedType := strings.ToLower(edgeType)
 	key := []byte{prefixEdgeBetweenIndex}
 	key = append(key, encodeNumID(startNumID)...)
 	key = append(key, encodeNumID(endNumID)...)
-	key = append(key, []byte(normalizedType)...)
+	key = append(key, []byte(edgeType)...)
 	key = append(key, 0x00)
 	key = append(key, encodeNumID(edgeNumID)...)
 	return key
@@ -383,11 +377,10 @@ func edgeBetweenIndexKey(startNumID, endNumID uint64, edgeType string, edgeNumID
 // absent or stale, reads can fall back to the set or legacy outgoing scan and
 // repopulate it. Uses numeric IDs for the same reason edgeBetweenIndexKey does.
 func edgeBetweenHeadKey(startNumID, endNumID uint64, edgeType string) []byte {
-	normalizedType := strings.ToLower(edgeType)
 	key := []byte{prefixEdgeBetweenHead}
 	key = append(key, encodeNumID(startNumID)...)
 	key = append(key, encodeNumID(endNumID)...)
-	key = append(key, []byte(normalizedType)...)
+	key = append(key, []byte(edgeType)...)
 	return key
 }
 
@@ -736,9 +729,8 @@ func edgeBetweenIndexPrefix(startNumID, endNumID uint64) []byte {
 
 // typedEdgeBetweenIndexPrefix returns the prefix for edges of one type between two nodes.
 func typedEdgeBetweenIndexPrefix(startNumID, endNumID uint64, edgeType string) []byte {
-	normalizedType := strings.ToLower(edgeType)
 	key := edgeBetweenIndexPrefix(startNumID, endNumID)
-	key = append(key, []byte(normalizedType)...)
+	key = append(key, []byte(edgeType)...)
 	key = append(key, 0x00)
 	return key
 }

@@ -25,14 +25,7 @@ package storage
 
 import (
 	"fmt"
-	"strings"
 )
-
-// normalizeLabel converts a label to lowercase for case-insensitive matching.
-// This makes NornicDB compatible with Neo4j's case-insensitive label handling.
-func normalizeLabel(label string) string {
-	return strings.ToLower(label)
-}
 
 // MemoryEngine is a thread-safe in-memory graph storage implementation.
 // It wraps BadgerDB's in-memory mode for testing purposes.

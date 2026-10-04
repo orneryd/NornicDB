@@ -13,19 +13,21 @@ func TestBadgerCache_LabelCacheLifecycle_Extra(t *testing.T) {
 
 	// set/get
 	b.labelCacheSetFirst("Person", nid)
-	got, ok := b.labelCacheGetFirst("person")
+	got, ok := b.labelCacheGetFirst("Person")
 	assert.True(t, ok)
 	assert.Equal(t, nid, got)
 
 	// invalidate exact node+label
-	b.labelCacheInvalidateForNodeLabels([]string{"PERSON"}, nid)
 	_, ok = b.labelCacheGetFirst("person")
+	assert.False(t, ok, "labels are case-sensitive (#862)")
+	b.labelCacheInvalidateForNodeLabels([]string{"Person"}, nid)
+	_, ok = b.labelCacheGetFirst("Person")
 	assert.False(t, ok)
 
 	// re-add and invalidate removed labels
 	b.labelCacheSetFirst("Employee", nid)
 	b.labelCacheInvalidateForRemovedLabels([]string{"Employee", "Person"}, []string{"Person"}, nid)
-	_, ok = b.labelCacheGetFirst("employee")
+	_, ok = b.labelCacheGetFirst("Employee")
 	assert.False(t, ok)
 }
 
@@ -45,7 +47,7 @@ func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 	old := &Node{ID: n.ID, Labels: []string{"Person", "Legacy"}, Properties: map[string]interface{}{}}
 	b.labelCacheSetFirst("Legacy", n.ID)
 	b.cacheOnNodeUpdatedWithOldNode(n2, old)
-	_, ok = b.labelCacheGetFirst("legacy")
+	_, ok = b.labelCacheGetFirst("Legacy")
 	assert.False(t, ok)
 
 	b.cacheOnNodeDeleted(n.ID, 0)
@@ -54,12 +56,12 @@ func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 	assert.False(t, ok)
 
 	b.edgeCount.Store(3)
-	b.edgeTypeCache["knows"] = []*Edge{{ID: EdgeID(prefixTestID("edge-del")), Type: "KNOWS"}}
+	b.edgeTypeCache["KNOWS"] = []*Edge{{ID: EdgeID(prefixTestID("edge-del")), Type: "KNOWS"}}
 	b.cacheOnNodeCreated(&Node{ID: NodeID(prefixTestID("tenant_cache:n2")), Labels: []string{"Person"}, Properties: map[string]interface{}{}})
 	beforeEdges := b.edgeCount.Load()
 	b.cacheOnNodeDeleted(NodeID(prefixTestID("tenant_cache:n2")), 2)
 	assert.EqualValues(t, beforeEdges-2, b.edgeCount.Load())
-	_, ok = b.edgeTypeCache["knows"]
+	_, ok = b.edgeTypeCache["KNOWS"]
 	assert.False(t, ok)
 }
 
@@ -68,18 +70,18 @@ func TestBadgerCache_EdgeCreateUpdateDelete_Extra(t *testing.T) {
 	eid := EdgeID(prefixTestID("edge-1"))
 	e := &Edge{ID: eid, Type: "KNOWS"}
 
-	b.edgeTypeCache["knows"] = []*Edge{{ID: eid, Type: "KNOWS"}}
+	b.edgeTypeCache["KNOWS"] = []*Edge{{ID: eid, Type: "KNOWS"}}
 	b.cacheOnEdgeCreated(e)
 	assert.EqualValues(t, 1, b.edgeCount.Load())
-	_, ok := b.edgeTypeCache["knows"]
+	_, ok := b.edgeTypeCache["KNOWS"]
 	assert.False(t, ok)
 
-	b.edgeTypeCache["likes"] = []*Edge{{ID: eid, Type: "LIKES"}}
-	b.edgeTypeCache["hates"] = []*Edge{{ID: eid, Type: "HATES"}}
+	b.edgeTypeCache["LIKES"] = []*Edge{{ID: eid, Type: "LIKES"}}
+	b.edgeTypeCache["HATES"] = []*Edge{{ID: eid, Type: "HATES"}}
 	b.cacheOnEdgeUpdated("LIKES", &Edge{ID: eid, Type: "HATES"})
-	_, ok = b.edgeTypeCache["likes"]
+	_, ok = b.edgeTypeCache["LIKES"]
 	assert.False(t, ok)
-	_, ok = b.edgeTypeCache["hates"]
+	_, ok = b.edgeTypeCache["HATES"]
 	assert.False(t, ok)
 
 	b.cacheOnEdgeDeleted(eid, "KNOWS")

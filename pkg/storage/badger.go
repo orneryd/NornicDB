@@ -87,7 +87,7 @@ const (
 	// verification/rebuild pass at engine open.
 	prefixMVCCMetaLabelCountReady = byte(0x06)
 	// prefixMVCCMetaLabelCount stores one namespace-scoped label count as:
-	//   [prefixMVCCMeta, prefixMVCCMetaLabelCount, namespace bytes..., 0x00, lower(label)] -> uint64 count
+	//   [prefixMVCCMeta, prefixMVCCMetaLabelCount, namespace bytes..., 0x00, label] -> uint64 count
 	prefixMVCCMetaLabelCount = byte(0x07)
 	// prefixMVCCMetaCleanShutdown is present only after the owning DB has
 	// stopped writers, flushed async state, and completed a graceful shutdown.
@@ -100,13 +100,13 @@ const (
 	prefixMVCCMetaEdgeTypeCountReady = byte(0x09)
 	// prefixMVCCMetaEdgeTypeCount stores one namespace-scoped relationship-type
 	// count as:
-	//   [prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace bytes..., 0x00, lower(type)] -> uint64 count
+	//   [prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace bytes..., 0x00, type] -> uint64 count
 	prefixMVCCMetaEdgeTypeCount = byte(0x0A)
 	// prefixMVCCMetaEdgeTypeStartLabelCount / ...EndLabelCount store the
 	// positional namespace-scoped (label, relationship-type) counts Neo4j
 	// answers one-labeled-endpoint shapes from its counts store, e.g.
 	// (s:Label)-[:T]->() and ()-[:T]->(e:Label):
-	//   [prefixMVCCMeta, sub, namespace bytes..., 0x00, lower(label), 0x00, lower(type)] -> uint64 count
+	//   [prefixMVCCMeta, sub, namespace bytes..., 0x00, label, 0x00, type] -> uint64 count
 	// The start tier counts edges whose physical START endpoint carries the
 	// label; the end tier counts edges whose physical END endpoint does.
 	prefixMVCCMetaEdgeTypeStartLabelCount = byte(0x0B)

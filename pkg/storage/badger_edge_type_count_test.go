@@ -35,10 +35,10 @@ func TestEdgeTypeCounts_CreateDeletePaths(t *testing.T) {
 	count, err = engine.EdgeCountByType("LIKES")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
-	// Case-insensitive like GetEdgesByType.
+	// Types are case-sensitive, as in Neo4j (#862).
 	count, err = engine.EdgeCountByType("knows")
 	require.NoError(t, err)
-	require.Equal(t, int64(2), count)
+	require.Equal(t, int64(0), count)
 
 	require.NoError(t, engine.DeleteEdge(EdgeID(prefixTestID("e2"))))
 

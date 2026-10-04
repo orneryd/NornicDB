@@ -1091,7 +1091,7 @@ func TestCoverageLiftSchemaDDLExecutionCompatibilityMatrix(t *testing.T) {
 	}
 
 	runDDL("CREATE CONSTRAINT IF NOT EXISTS FOR ()-[r:MANAGES]->() REQUIRE MAX COUNT 3")
-	cardinality := findConstraint("constraint_manages_max_outgoing_3")
+	cardinality := findConstraint("constraint_MANAGES_max_outgoing_3")
 	assert.Equal(t, storage.ConstraintCardinality, cardinality.Type)
 	assert.Equal(t, storage.ConstraintEntityRelationship, cardinality.EffectiveEntityType())
 	assert.Equal(t, "MANAGES", cardinality.Label)
@@ -1108,7 +1108,7 @@ func TestCoverageLiftSchemaDDLExecutionCompatibilityMatrix(t *testing.T) {
 	require.ErrorContains(t, err, "invalid cardinality require clause")
 
 	runDDL("CREATE CONSTRAINT IF NOT EXISTS FOR (:Employee)-[:MANAGES]->(:Manager) REQUIRE ALLOWED")
-	policy := findConstraint("constraint_employee_manages_manager_allowed")
+	policy := findConstraint("constraint_Employee_MANAGES_Manager_allowed")
 	assert.Equal(t, storage.ConstraintPolicy, policy.Type)
 	assert.Equal(t, storage.ConstraintEntityRelationship, policy.EffectiveEntityType())
 	assert.Equal(t, "MANAGES", policy.Label)
