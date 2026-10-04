@@ -23,11 +23,7 @@ func TestBadgerEngine_WriteEmbeddingChunksBatched_OversizedChunk(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	err = engine.UpdateNodeEmbeddingSidecar(&Node{
-		ID:              nodeID,
-		ChunkEmbeddings: [][]float32{huge},
-		EmbedMeta:       map[string]any{"chunk_count": 1},
-	})
+	err = engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, nodeID, [][]float32{huge}, map[string]any{"chunk_count": 1}, time.Time{}))
 	require.NoError(t, err)
 
 	got, err := engine.GetNode(nodeID)

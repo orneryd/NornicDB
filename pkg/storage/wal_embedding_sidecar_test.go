@@ -39,12 +39,7 @@ func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
 	// flush for nodes that were still staged).
 	require.NoError(t, async.Flush())
 
-	err = engine.UpdateNodeEmbeddingSidecar(&Node{
-		ID:              node.ID,
-		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
-		EmbedMeta:       map[string]any{"has_embedding": true, "chunk_count": 1},
-		UpdatedAt:       now,
-	})
+	err = engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2, 0.3}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now))
 	require.NoError(t, err)
 
 	got, err := engine.GetNode(node.ID)

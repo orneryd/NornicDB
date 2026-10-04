@@ -1186,11 +1186,11 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]fl
 
 	// The worker writes ONLY the embedding key space (chunk vectors plus the
 	// metadata record): no node-record transaction, no MVCC version, no
-	// UpdatedAt bump, and no key a business write touches — a concurrent
-	// incoming change can never conflict with this writeback. The metadata
-	// record's content stamp is the claimed node's UpdatedAt, so a body change
-	// after the claim makes the record stale and readers ignore it until the
-	// worker re-embeds the new content.
+	// UpdatedAt bump. The writeback lands only while the stored node still
+	// has the properties and labels this copy was embedded from; it removes
+	// the pending marker in the same commit, so the worker never removes it
+	// afterwards, where it would drop a marker a later business write set
+	// (#889).
 	sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
 	if !ok {
 		fmt.Printf("⚠️  Storage engine %T does not support embedding sidecar writes; re-queuing node %s\n", ew.storage, node.ID)
@@ -1199,6 +1199,21 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]fl
 		return true
 	}
 	updateErr := sidecar.UpdateNodeEmbeddingSidecar(node)
+	if errors.Is(updateErr, storage.ErrEmbeddingSourceChanged) {
+		// The node changed while it was being embedded: the embedding is of
+		// its old content and was not written. The change left the node
+		// pending; it is embedded again once the recently-processed wait
+		// (which also covers a change still being flushed) has passed (#889).
+		fmt.Printf("🔁 Node %s changed while it was being embedded; re-embedding its new content\n", node.ID)
+		ew.addNodeToPendingEmbeddings(node.ID)
+		ew.mu.Lock()
+		if ew.recentlyProcessed == nil {
+			ew.recentlyProcessed = make(map[string]time.Time)
+		}
+		ew.recentlyProcessed[string(node.ID)] = time.Now()
+		ew.mu.Unlock()
+		return true
+	}
 	if updateErr == storage.ErrNotFound {
 		// Node was deleted - remove from pending index and skip.
 		fmt.Printf("⚠️  Node %s was deleted before embedding could be saved - skipping\n", node.ID)
@@ -1217,8 +1232,6 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]fl
 		ew.onEmbedded(node)
 	}
 
-	// Remove from pending embeddings index (O(1) operation)
-	ew.markNodeEmbedded(node.ID)
 	ew.processed.Add(1)
 	// Track this node as recently processed to prevent re-processing before DB commit is visible
 	ew.mu.Lock()
@@ -1405,7 +1418,7 @@ func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr e
 		return
 	}
 
-	ew.markNodeEmbedded(nodeID)
+	// The writeback removed the pending marker in its own commit (#889).
 	ew.parked.Add(1)
 	fmt.Printf("⛔ Permanent embedding failure for node %s: %s\n", nodeID, compactWorkerError(embedErr, 300))
 }
