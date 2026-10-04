@@ -576,7 +576,7 @@ func TestCypherHelpers_FindNodeByProperties_AndRangeIndex(t *testing.T) {
 
 	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.age)")
 	require.NoError(t, err)
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX FOR (n:Person) ON (n.age)")
+	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX IF NOT EXISTS FOR (n:Person) ON (n.age)")
 	require.NoError(t, err)
 	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_pair FOR (n:Person) ON (n.a, n.b)")
 	require.NoError(t, err)

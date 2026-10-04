@@ -10,6 +10,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMonster531IndexAdmission(t *testing.T) {
+	for _, testCase := range []struct {
+		name, baseline, duplicate, code string
+	}{
+		{"composite equivalent", "CREATE INDEX idx FOR (n:T) ON (n.a, n.b)", "CREATE INDEX other FOR (n:T) ON (n.a, n.b)", "IndexAlreadyExists"},
+		{"relationship equivalent", "CREATE INDEX idx FOR ()-[r:T]-() ON (r.a)", "CREATE INDEX other FOR ()-[r:T]-() ON (r.a)", "IndexAlreadyExists"},
+		{"range vector name collision", "CREATE INDEX idx FOR (n:T) ON (n.a)", "CREATE VECTOR INDEX idx FOR (n:T) ON (n.a)", "IndexWithNameAlreadyExists"},
+		{"vector range name collision", "CREATE VECTOR INDEX idx FOR (n:T) ON (n.a)", "CREATE INDEX idx FOR (n:T) ON (n.a)", "IndexWithNameAlreadyExists"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			executor, store := newTestExecutor(t)
+			ctx := context.Background()
+			_, err := executor.Execute(ctx, testCase.baseline, nil)
+			require.NoError(t, err)
+			before := store.GetSchema().GetIndexes()
+			_, err = executor.Execute(ctx, testCase.duplicate, nil)
+			require.Error(t, err)
+			require.Contains(t, statusText(err), "Neo.ClientError.Schema."+testCase.code)
+			require.ElementsMatch(t, before, store.GetSchema().GetIndexes())
+		})
+	}
+	executor, store := newTestExecutor(t)
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, "CREATE INDEX node_index FOR (n:T) ON (n.a)", nil)
+	require.NoError(t, err)
+	_, err = executor.Execute(ctx, "CREATE INDEX relationship_index FOR ()-[r:T]-() ON (r.a)", nil)
+	require.NoError(t, err)
+	require.Len(t, userIndexes(store.GetSchema().GetIndexes()), 2)
+}
+
 func TestMonster531CompositeNodeUnique(t *testing.T) {
 	for _, query := range []string{
 		"CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE",

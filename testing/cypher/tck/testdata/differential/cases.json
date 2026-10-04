@@ -1927,5 +1927,47 @@
     "name": "GH530 statistics unknown section status",
     "query": "CALL db.stats.collect('S530_INVALID')",
     "no_effects": true
+  },
+  {
+    "name": "issue531 plain index same name equivalent definition",
+    "setup": ["CREATE INDEX dupidx FOR (n:T) ON (n.id)"],
+    "query": "CREATE INDEX dupidx FOR (n:T) ON (n.id)",
+    "expected_code": "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 plain index same name different definition",
+    "setup": ["CREATE INDEX dupidx FOR (n:T) ON (n.id)"],
+    "query": "CREATE INDEX dupidx FOR (n:U) ON (n.x)",
+    "expected_code": "Neo.ClientError.Schema.IndexWithNameAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 plain index different name equivalent definition",
+    "setup": ["CREATE INDEX dupidx FOR (n:T) ON (n.id)"],
+    "query": "CREATE INDEX otheridx FOR (n:T) ON (n.id)",
+    "expected_code": "Neo.ClientError.Schema.IndexAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 vector index same name changed dimensions",
+    "setup": ["CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}"],
+    "query": "CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 8, `vector.similarity_function`: 'cosine'}}",
+    "expected_code": "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 vector index same name different schema",
+    "setup": ["CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}"],
+    "query": "CREATE VECTOR INDEX vdup FOR (n:Z) ON (n.z) OPTIONS {indexConfig: {`vector.dimensions`: 8, `vector.similarity_function`: 'cosine'}}",
+    "expected_code": "Neo.ClientError.Schema.IndexWithNameAlreadyExists",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 guarded duplicate index preserves original metadata",
+    "setup": ["CREATE INDEX dupidx FOR (n:T) ON (n.id)", "CREATE INDEX dupidx IF NOT EXISTS FOR (n:U) ON (n.x)", "CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", "CREATE VECTOR INDEX vdup IF NOT EXISTS FOR (n:Z) ON (n.z) OPTIONS {indexConfig: {`vector.dimensions`: 8, `vector.similarity_function`: 'cosine'}}", "CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"],
+    "query": "SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE name IN ['dupidx', 'vdup', 'dupc'] RETURN name, labelsOrTypes, properties ORDER BY name, labelsOrTypes",
+    "ordered": true,
+    "no_effects": true
   }
 ]

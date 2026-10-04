@@ -323,9 +323,10 @@ func TestSchemaErrorCases(t *testing.T) {
 			t.Fatalf("failed to create baseline vector index: %v", err)
 		}
 		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
-		if err != nil {
-			t.Fatalf("duplicate vector index should be idempotent, got error: %v", err)
-		}
+		require.Error(t, err)
+		require.Contains(t, statusText(err), "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists")
+		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec IF NOT EXISTS FOR (n:Node) ON (n.embedding)")
+		require.NoError(t, err)
 	})
 
 	t.Run("FulltextRelationshipIndexSupportsMultipleTypes", func(t *testing.T) {
@@ -573,7 +574,7 @@ func TestVectorIndexWithDifferentOptions(t *testing.T) {
 		},
 		{
 			name:      "QuotedOptionKeys",
-			query:     `CREATE VECTOR INDEX vec3 FOR (n:Node) ON (n.embedding) OPTIONS {indexConfig: {"vector.dimensions": 384, "vector.similarity_function": "dot"}}`,
+			query:     `CREATE VECTOR INDEX vec3 FOR (n:Node) ON (n.embedding_quoted) OPTIONS {indexConfig: {"vector.dimensions": 384, "vector.similarity_function": "dot"}}`,
 			wantDims:  384,
 			wantSimFn: "dot",
 		},
@@ -954,7 +955,7 @@ func TestCreateIndex_Neo4jCompatibilitySyntax(t *testing.T) {
 		"CREATE INDEX IF NOT EXISTS FOR (n:`base`) ON (n.entity_id)",
 		"CREATE INDEX ON :TestNode(entity_id)",
 		"CREATE INDEX test_idx ON :TestNode(entity_id)",
-		"CREATE RANGE INDEX FOR (n:TestNode) ON (n.entity_id)",
+		"CREATE RANGE INDEX IF NOT EXISTS FOR (n:TestNode) ON (n.entity_id)",
 		"CREATE INDEX IF NOT EXISTS FOR (n:Test) ON n.entity_id",
 		"CREATE INDEX rel_uuid IF NOT EXISTS FOR ()-[r:RELATES_TO]-() ON (r.uuid)",
 		"CREATE INDEX FOR ()<-[r:RELATES_TO]-() ON (r.uuid, r.group_id)",
@@ -1246,9 +1247,10 @@ func TestCreateRangeIndex_ErrorBranches(t *testing.T) {
 		t.Fatalf("failed to create baseline range index: %v", err)
 	}
 	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.score)")
-	if err != nil {
-		t.Fatalf("expected conflicting named range index to be idempotent, got: %v", err)
-	}
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
+	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.score)")
+	require.NoError(t, err)
 
 	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.price)")
 	if err != nil {
@@ -1311,9 +1313,10 @@ func TestCreateVectorIndex_DuplicateErrorBranch(t *testing.T) {
 		t.Fatalf("failed to create baseline vector index: %v", err)
 	}
 	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.altEmbedding)")
-	if err != nil {
-		t.Fatalf("expected conflicting vector index to be idempotent, got: %v", err)
-	}
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
+	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_dup IF NOT EXISTS FOR (n:Doc) ON (n.altEmbedding)")
+	require.NoError(t, err)
 }
 
 // =============================================================================

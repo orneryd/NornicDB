@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reject unguarded duplicate ordinary/range and vector index DDL with schema
+  diagnostic classes for equivalent definitions or conflicting names. Honor
+  `IF NOT EXISTS` without changing stored definitions or registering another
+  vector space; compare entity scope, kind and ordered properties (#531).
+
 - Converge decay bundle CREATE/ALTER option decoding: canonical case-insensitive
   keys, typed numeric zero/one, boolean forms, scope updates, and atomic rejection
   of wrong-typed values. Share validated immutable decay option application with

@@ -349,10 +349,6 @@ func TestCompositeIndexThreeProperties(t *testing.T) {
 
 // TestCompositeIndexWithSpaces tests parsing with various spacing
 func TestCompositeIndexWithSpaces(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
 	testCases := []struct {
@@ -366,6 +362,8 @@ func TestCompositeIndexWithSpaces(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+			exec := NewStorageExecutor(store)
 			_, err := exec.Execute(ctx, tc.query, nil)
 			if err != nil {
 				t.Errorf("Failed to create index with spacing variation: %v", err)

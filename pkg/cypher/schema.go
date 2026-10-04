@@ -711,6 +711,20 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			indexName = fmt.Sprintf("index_%s_%s", lowerASCII(entity), lowerASCII(propsJoined))
 		}
 
+		entityType := storage.ConstraintEntityNode
+		label := parsed.label
+		if parsed.isRelationship {
+			entityType = storage.ConstraintEntityRelationship
+			label = parsed.relationshipType
+		}
+		create, err := e.admitIndexCreation(cypher, indexName, "RANGE", label, parsed.properties, entityType)
+		if err != nil {
+			return nil, err
+		}
+		if !create {
+			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		}
+
 		if parsed.isRelationship {
 			// Relationship property indexes are persisted as relationship-scoped
 			// range metadata (Neo4j-compatible SHOW INDEXES shape).
@@ -2496,6 +2510,13 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 	entityType := storage.ConstraintEntityNode
 	if parsed.isRelationship {
 		entityType = storage.ConstraintEntityRelationship
+	}
+	create, err := e.admitIndexCreation(cypher, indexName, "VECTOR", label, parsed.properties, entityType)
+	if err != nil {
+		return nil, err
+	}
+	if !create {
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 	if err := e.storage.GetSchema().AddVectorIndexForEntity(indexName, label, property, dimensions, similarityFunc, entityType); err != nil {
 		return nil, err

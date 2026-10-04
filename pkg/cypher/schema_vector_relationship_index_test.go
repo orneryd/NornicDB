@@ -18,7 +18,7 @@ func TestCreateVectorIndex_RelationshipSyntaxFormsAccepted(t *testing.T) {
 	_, err := exec.Execute(ctx, q1, nil)
 	require.NoError(t, err)
 
-	q2 := "CREATE VECTOR INDEX rel_emb_idx_dir IF NOT EXISTS FOR ()-[e:RELATES_TO]->() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}"
+	q2 := "CREATE VECTOR INDEX rel_emb_idx_dir IF NOT EXISTS FOR ()-[e:RELATES_TO_DIR]->() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}"
 	_, err = exec.Execute(ctx, q2, nil)
 	require.NoError(t, err)
 
@@ -31,7 +31,7 @@ func TestCreateVectorIndex_RelationshipSyntaxFormsAccepted(t *testing.T) {
 
 	idx2, ok := store.GetSchema().GetVectorIndex("rel_emb_idx_dir")
 	require.True(t, ok)
-	require.Equal(t, "RELATES_TO", idx2.Label)
+	require.Equal(t, "RELATES_TO_DIR", idx2.Label)
 	require.Equal(t, "fact_embedding", idx2.Property)
 }
 
