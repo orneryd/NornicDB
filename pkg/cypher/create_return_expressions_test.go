@@ -15,6 +15,13 @@ import (
 // statements take the async node-batch fast path (tryAsyncCreateNodeBatch).
 func newAsyncStackTestExecutor(t *testing.T) *StorageExecutor {
 	t.Helper()
+	return newAsyncStackExecutor(t)
+}
+
+// newAsyncStackExecutor is the server's storage stack (Badger, WAL, async
+// engine, namespace) for a test or a benchmark.
+func newAsyncStackExecutor(t testing.TB) *StorageExecutor {
+	t.Helper()
 	dir := t.TempDir()
 	badger, err := storage.NewBadgerEngine(dir)
 	require.NoError(t, err)

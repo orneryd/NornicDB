@@ -288,6 +288,14 @@ func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate b
 		}
 	}
 
+	// The constraint's index can't duplicate an index of its own, even under
+	// IF NOT EXISTS: they are different schema rules (#884).
+	if key := constraintPropertyIndexKey(c); key != "" {
+		if idx, exists := sm.propertyIndexes[key]; exists && idx.OwningConstraint == "" {
+			return false, newSchemaAdmissionError("IndexAlreadyExists", localization.StorageSchemaConstraintOverIndex(c.Label, c.Properties[0]))
+		}
+	}
+
 	return true, nil
 }
 
@@ -321,6 +329,8 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 		}
 	}
 
+	sm.addConstraintPropertyIndexLocked(c)
+
 	if c.Type == ConstraintUnique && len(c.Properties) == 1 {
 		uniqueKey := fmt.Sprintf("%s:%s", c.Label, c.Properties[0])
 		if _, exists := sm.uniqueConstraints[uniqueKey]; !exists {
@@ -332,6 +342,94 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 			}
 		}
 	}
+}
+
+// constraintPropertyIndexKey is the property index key ("Label:property") of
+// a constraint that owns a single-property node index (uniqueness or node
+// key), or "".
+func constraintPropertyIndexKey(c Constraint) string {
+	if (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) || len(c.Properties) != 1 || c.EffectiveEntityType() != ConstraintEntityNode {
+		return ""
+	}
+	return c.Label + ":" + c.Properties[0]
+}
+
+// addConstraintPropertyIndexLocked registers the property index a
+// single-property uniqueness or node key constraint owns (#875), so property
+// seeks use it as they use CREATE INDEX's. It starts empty and unfilled, so
+// seeks ignore it until it is filled: by the caller that creates the
+// constraint (cypher's addSchemaConstraint), by the startup rebuild with the
+// other property indexes, or by an import's rebuild. A store from before this
+// index existed may already have an index of its own on the property, which
+// then serves the seeks.
+func (sm *SchemaManager) addConstraintPropertyIndexLocked(c Constraint) {
+	key := constraintPropertyIndexKey(c)
+	if key == "" {
+		return
+	}
+	if _, exists := sm.propertyIndexes[key]; exists {
+		return
+	}
+	name := c.OwnedIndex
+	if name == "" {
+		name = c.Name
+	}
+	sm.propertyIndexes[key] = &PropertyIndex{
+		Name:             name,
+		Label:            c.Label,
+		Properties:       []string{c.Properties[0]},
+		OwningConstraint: c.Name,
+		values:           make(map[interface{}][]NodeID),
+		keysDirty:        true,
+	}
+	sm.propertyIndexes[key].unfilled.Store(true)
+}
+
+// seekablePropertyIndexLocked returns the property index on label's property
+// that seeks may use: one that exists and is filled (#875). The caller holds
+// sm.mu.
+func (sm *SchemaManager) seekablePropertyIndexLocked(label, property string) (*PropertyIndex, bool) {
+	idx, exists := sm.propertyIndexes[label+":"+property]
+	if !exists || idx == nil || idx.unfilled.Load() {
+		return nil, false
+	}
+	return idx, true
+}
+
+// MaintainsPropertyIndex reports whether writes must maintain a property
+// index on label's property, filled or not (#875): node writes and index
+// rebuilds use it, seeks use GetPropertyIndex.
+func (sm *SchemaManager) MaintainsPropertyIndex(label, property string) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	_, exists := sm.propertyIndexes[label+":"+property]
+	return exists
+}
+
+// MarkPropertyIndexesFilled lets seeks use every property index, once a
+// rebuild has filled them all from the stored nodes (#875).
+func (sm *SchemaManager) MarkPropertyIndexesFilled() {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for _, idx := range sm.propertyIndexes {
+		idx.unfilled.Store(false)
+	}
+}
+
+// ConstraintPropertyIndex returns the property index constraint name owns
+// (#875), if it has one.
+func (sm *SchemaManager) ConstraintPropertyIndex(name string) (*PropertyIndex, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	c, exists := sm.constraints[name]
+	if !exists {
+		return nil, false
+	}
+	idx, exists := sm.propertyIndexes[constraintPropertyIndexKey(c)]
+	if !exists || idx.OwningConstraint != name {
+		return nil, false
+	}
+	return idx, true
 }
 
 // SetPersister sets an optional persistence hook for schema changes.
@@ -367,7 +465,19 @@ type PropertyIndex struct {
 	Name       string
 	Label      string
 	Properties []string
-	values     map[interface{}][]NodeID // Property value -> node IDs
+	// OwningConstraint names the uniqueness or node key constraint whose
+	// index this is (#875): its equality and IN seeks use it like any
+	// property index. It is listed, persisted and dropped as the
+	// constraint's RANGE index, not as an index of its own. Empty for an
+	// index created on its own.
+	OwningConstraint string
+	// unfilled is true while a constraint's index doesn't hold the stored
+	// nodes yet (#875). Writes maintain it, but seeks don't use it until a
+	// fill (BackfillPropertyIndex, the startup rebuild or
+	// MarkPropertyIndexesFilled) clears it; until then they scan, as they
+	// did before the constraint had an index.
+	unfilled atomic.Bool
+	values   map[interface{}][]NodeID // Property value -> node IDs
 	// sortedNonNilKeys caches non-nil keys in ascending order.
 	// It is rebuilt lazily when values are mutated.
 	sortedNonNilKeys []interface{}
@@ -1858,7 +1968,11 @@ func (sm *SchemaManager) DropIndex(name string) error {
 		d = dropped{kind: "fulltext", key: name}
 	} else if _, ok := sm.vectorIndexes[name]; ok {
 		d = dropped{kind: "vector", key: name}
-	} else if _, ok := sm.rangeIndexes[name]; ok {
+	} else if ri, ok := sm.rangeIndexes[name]; ok {
+		if ri.OwningConstraint != "" {
+			return &schemaAdmissionError{code: "Neo.DatabaseError.Schema.IndexDropFailed",
+				cause: localizedError(localization.StorageSchemaIndexBelongsToConstraint(ri.OwningConstraint), nil)}
+		}
 		d = dropped{kind: "range", key: name}
 	} else if entityType, ok := sm.dropLookupIndexLocked(name); ok {
 		if sm.persist != nil {
@@ -1871,7 +1985,7 @@ func (sm *SchemaManager) DropIndex(name string) error {
 	} else {
 		// propertyIndexes are keyed by "label:property[0]", so search by name.
 		for key, idx := range sm.propertyIndexes {
-			if idx.Name == name {
+			if idx.Name == name && idx.OwningConstraint == "" {
 				d = dropped{kind: "property", key: key}
 				break
 			}
@@ -1943,10 +2057,19 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 
 	var droppedOwnedIndex *RangeIndex
 	var droppedOwnedIndexName string
+	var droppedPropertyIndex *PropertyIndex
+	var droppedPropertyIndexKey string
 
 	if c, ok := sm.constraints[name]; ok {
 		droppedConstraint = &c
 		delete(sm.constraints, name)
+
+		if key := constraintPropertyIndexKey(c); key != "" {
+			if idx, ok := sm.propertyIndexes[key]; ok && idx.OwningConstraint == name {
+				droppedPropertyIndex, droppedPropertyIndexKey = idx, key
+				delete(sm.propertyIndexes, key)
+			}
+		}
 
 		if c.Type == ConstraintUnique && len(c.Properties) == 1 {
 			droppedUniqueKey = fmt.Sprintf("%s:%s", c.Label, c.Properties[0])
@@ -1981,6 +2104,9 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 				}
 				if droppedOwnedIndex != nil {
 					sm.rangeIndexes[droppedOwnedIndexName] = droppedOwnedIndex
+				}
+				if droppedPropertyIndex != nil {
+					sm.propertyIndexes[droppedPropertyIndexKey] = droppedPropertyIndex
 				}
 			}
 			if droppedTypeConstraint != nil {
@@ -2032,7 +2158,12 @@ func (sm *SchemaManager) SchemaObjectCounts() (indexes, constraints int) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
-	indexes = len(sm.propertyIndexes) + len(sm.compositeIndexes) + len(sm.fulltextIndexes) + len(sm.vectorIndexes)
+	indexes = len(sm.compositeIndexes) + len(sm.fulltextIndexes) + len(sm.vectorIndexes)
+	for _, idx := range sm.propertyIndexes {
+		if idx.OwningConstraint == "" {
+			indexes++
+		}
+	}
 	for _, idx := range sm.rangeIndexes {
 		if idx.OwningConstraint == "" {
 			indexes++
@@ -2050,6 +2181,9 @@ func (sm *SchemaManager) GetIndexes() []interface{} {
 	indexes := make([]interface{}, 0)
 
 	for _, idx := range sm.propertyIndexes {
+		if idx.OwningConstraint != "" {
+			continue // listed as its constraint's RANGE index
+		}
 		indexes = append(indexes, map[string]interface{}{
 			"name":       idx.Name,
 			"type":       "PROPERTY",
@@ -2164,6 +2298,9 @@ func (sm *SchemaManager) GetPropertyIndex(label, property string) (*PropertyInde
 
 	key := fmt.Sprintf("%s:%s", label, property)
 	idx, exists := sm.propertyIndexes[key]
+	if exists && idx.unfilled.Load() {
+		return nil, false // not filled yet (#875): seeks scan
+	}
 	return idx, exists
 }
 
@@ -2213,6 +2350,11 @@ func (sm *SchemaManager) BackfillPropertyIndex(label, property string, values ma
 			return err
 		}
 	}
+	sm.mu.RLock()
+	if idx, exists := sm.propertyIndexes[label+":"+property]; exists {
+		idx.unfilled.Store(false)
+	}
+	sm.mu.RUnlock()
 	return nil
 }
 
@@ -2257,7 +2399,7 @@ func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID Node
 func (sm *SchemaManager) HasPropertyIndex(label, property string) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	_, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
+	_, exists := sm.seekablePropertyIndexLocked(label, property)
 	return exists
 }
 
@@ -2309,6 +2451,12 @@ func (sm *SchemaManager) PropertyIndexLookupAnyLabel(property string, value inte
 		if len(key) == len(suffix) {
 			continue // would mean an empty label, which is impossible — skip
 		}
+		if idx.unfilled.Load() {
+			// A label whose index isn't filled can't be answered from the
+			// indexes; the caller's scan finds its nodes (#875).
+			sm.mu.RUnlock()
+			return nil
+		}
 		indexes = append(indexes, idx)
 	}
 	sm.mu.RUnlock()
@@ -2358,7 +2506,7 @@ func endsWith(s, suffix string) bool {
 // Returns nil if no index exists for the label/property.
 func (sm *SchemaManager) PropertyIndexLookup(label, property string, value interface{}) []NodeID {
 	sm.mu.RLock()
-	idx, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
+	idx, exists := sm.seekablePropertyIndexLocked(label, property)
 	sm.mu.RUnlock()
 
 	if !exists {
@@ -2396,9 +2544,9 @@ func (sm *SchemaManager) PropertyIndexAllNonNil(label, property string, descendi
 // the label and property have no index.
 func (sm *SchemaManager) orderedPropertyIndexIDs(label, property string, descending bool, limit int, keep func(key interface{}) bool) (ids []NodeID, exists bool) {
 	sm.mu.RLock()
-	idx, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
+	idx, exists := sm.seekablePropertyIndexLocked(label, property)
 	sm.mu.RUnlock()
-	if !exists || idx == nil {
+	if !exists {
 		return nil, false
 	}
 	view, source := sm.beginPendingRead()
@@ -2520,6 +2668,9 @@ func (sm *SchemaManager) GetIndexStats() []IndexStats {
 
 	// Property indexes
 	for _, idx := range sm.propertyIndexes {
+		if idx.OwningConstraint != "" {
+			continue // counted as its constraint's RANGE index
+		}
 		idx.mu.RLock()
 		totalEntries := int64(0)
 		for _, ids := range idx.values {

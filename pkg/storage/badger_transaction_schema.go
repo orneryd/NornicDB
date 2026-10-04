@@ -88,6 +88,7 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 			staged.mu.RLock()
 			index.values = cloneSchemaIndexValues(staged.values)
 			index.keysDirty = true
+			index.unfilled.Store(staged.unfilled.Load())
 			staged.mu.RUnlock()
 		}
 	}

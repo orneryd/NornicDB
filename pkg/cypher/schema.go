@@ -252,7 +252,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.storage.GetSchema().AddConstraint(constraint, ifNotExists); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -277,7 +277,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 				return nil, err
 			}
-			if err := e.storage.GetSchema().AddConstraint(constraint, ifNotExists); err != nil {
+			if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 				return nil, err
 			}
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -299,7 +299,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.storage.GetSchema().AddConstraint(constraint, ifNotExists); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -330,7 +330,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.storage.GetSchema().AddConstraint(constraint, ifNotExists); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -353,7 +353,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 				if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 					return nil, err
 				}
-				if err := e.storage.GetSchema().AddConstraint(constraint, ifNotExists); err != nil {
+				if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 					return nil, err
 				}
 				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -373,7 +373,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 				return nil, err
 			}
 			schema := e.storage.GetSchema()
-			if err := schema.AddUniqueConstraint(constraintName, parsed.label, parsed.property, ifNotExists); err != nil {
+			if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 				return nil, err
 			}
 			if err := storage.RefreshUniqueConstraintValuesForEngine(e.storage, schema); err != nil {
@@ -404,7 +404,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 				return nil, err
 			}
-			if err := e.storage.GetSchema().AddConstraint(constraint, ifNotExists); err != nil {
+			if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 				return nil, err
 			}
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -466,7 +466,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.storage.GetSchema().AddConstraint(constraint, ifNotExists); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -492,7 +492,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.storage.GetSchema().AddConstraint(constraint, ifNotExists); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -535,7 +535,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.storage.GetSchema().AddConstraint(constraint, ifNotExists); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -2175,6 +2175,29 @@ func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(cypher string) 
 //   - "n.a, n.b, n.c"        -> ["a", "b", "c"]
 func (e *StorageExecutor) parseIndexProperties(propertiesStr string) []string {
 	return e.parseIndexPropertiesWithMode(propertiesStr, true)
+}
+
+// addSchemaConstraint adds constraint and, when it is a single-property
+// uniqueness or node key constraint, fills the property index it owns from
+// the stored nodes (#875), as addPropertyIndex fills a new index: equality
+// and IN seeks then use it inside transactions as they use an index of its
+// own. A constraint whose fill fails is dropped again, since a half-filled
+// index would make seeks drop rows.
+func (e *StorageExecutor) addSchemaConstraint(constraint storage.Constraint, ifNotExists bool) error {
+	schema := e.storage.GetSchema()
+	_, existed := schema.ConstraintPropertyIndex(constraint.Name)
+	if err := schema.AddConstraint(constraint, ifNotExists); err != nil {
+		return err
+	}
+	index, owned := schema.ConstraintPropertyIndex(constraint.Name)
+	if existed || !owned {
+		return nil
+	}
+	if err := e.backfillPropertyIndex(index.Label, index.Properties); err != nil {
+		_ = schema.DropConstraint(constraint.Name)
+		return err
+	}
+	return nil
 }
 
 // addPropertyIndex creates a property index and, when it didn't exist yet,

@@ -71,9 +71,23 @@ func admitSchemaIndexCreation(schema *storage.SchemaManager, query, name, kind s
 		if owner, ok := index["owningConstraint"].(string); ok && owner != "" {
 			code = "ConstraintAlreadyExists"
 			diagnostic = localization.StorageSchemaConstraintAlreadyExists(owner)
+			if uniqueness, ok := uniquenessConstraintNamed(schema, owner); ok && equivalent && len(uniqueness.Properties) == 1 {
+				// Neo4j's wording for the index a uniqueness constraint owns (#884).
+				diagnostic = localization.StorageSchemaUniquenessConstraintIndexExists(uniqueness.Label, uniqueness.Properties[0])
+			}
 		}
 		message := localizedError(diagnostic, nil)
 		return false, newSemanticError("Neo.ClientError.Schema."+code, code, message.Error())
 	}
 	return true, nil
+}
+
+// uniquenessConstraintNamed returns the uniqueness constraint called name.
+func uniquenessConstraintNamed(schema *storage.SchemaManager, name string) (storage.Constraint, bool) {
+	for _, constraint := range schema.GetAllConstraints() {
+		if constraint.Name == name && constraint.Type == storage.ConstraintUnique {
+			return constraint, true
+		}
+	}
+	return storage.Constraint{}, false
 }

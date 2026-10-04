@@ -166,6 +166,15 @@
 - id: storageschema.lookup_index_already_exists
   description: Expanded pseudo-locale second token lookup index.
   other: "[!! There already exists an index {{.Pattern}}. !!]"
+- id: storageschema.constraint_over_index
+  description: "Expanded pseudo-locale constraint over index."
+  other: "[!! There already exists an index (:{{.Label}} {{\"{\"}}{{.Property}}{{\"}\"}}). A constraint cannot be created until the index has been dropped. !!]"
+- id: storageschema.index_belongs_to_constraint
+  description: "Expanded pseudo-locale index belongs to constraint."
+  other: "[!! Unable to drop index: Index belongs to constraint: `{{.Constraint}}` !!]"
+- id: storageschema.uniqueness_constraint_index_exists
+  description: "Expanded pseudo-locale uniqueness constraint index exists."
+  other: "[!! There is a uniqueness constraint on (:{{.Label}} {{\"{\"}}{{.Property}}{{\"}\"}}), so an index is already created that matches this. !!]"
 - id: storageschema.index_name_already_exists
   description: Expanded pseudo-locale index name already in use.
   other: "[!! There already exists an index called '{{.Name}}'. !!]"

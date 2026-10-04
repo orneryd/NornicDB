@@ -166,6 +166,15 @@
 - id: storageschema.lookup_index_already_exists
   description: Segundo índice de búsqueda de tokens para un tipo de entidad. Pattern no se traduce.
   other: "Ya existe un índice {{.Pattern}}."
+- id: storageschema.constraint_over_index
+  description: "Restricción cuyo índice duplicaría un índice existente. Label y Property son identificadores sin traducir."
+  other: "Ya existe un índice (:{{.Label}} {{\"{\"}}{{.Property}}{{\"}\"}}). No se puede crear una restricción hasta eliminar el índice."
+- id: storageschema.index_belongs_to_constraint
+  description: "DROP INDEX del índice propio de una restricción. Constraint es un identificador sin traducir."
+  other: "No se puede eliminar el índice: el índice pertenece a la restricción: `{{.Constraint}}`"
+- id: storageschema.uniqueness_constraint_index_exists
+  description: "Índice sobre una propiedad cuya restricción de unicidad ya tiene uno. Label y Property son identificadores sin traducir."
+  other: "Hay una restricción de unicidad en (:{{.Label}} {{\"{\"}}{{.Property}}{{\"}\"}}), así que ya existe un índice equivalente."
 - id: storageschema.index_name_already_exists
   description: Nombre de índice ya en uso. Name no se traduce.
   other: "Ya existe un índice llamado '{{.Name}}'."

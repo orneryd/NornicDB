@@ -11,8 +11,8 @@ package storage
 //
 // Rules:
 //   - Walk each label on the node and each property present on the node.
-//   - Consult `GetPropertyIndex(label, property)` to decide whether the
-//     (label, property) pair is indexed.
+//   - Consult `MaintainsPropertyIndex(label, property)` to decide whether
+//     the (label, property) pair is indexed (filled or not, #875).
 //   - Call the schema's Insert / Delete helpers only when an index exists
 //     — the helpers are no-ops for unindexed pairs but an explicit gate
 //     avoids the unnecessary map lookup on every CREATE.
@@ -42,7 +42,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeCreated(node *Node) {
 	}
 	for _, label := range node.Labels {
 		for propName, propValue := range node.Properties {
-			if _, ok := sm.GetPropertyIndex(label, propName); !ok {
+			if !sm.MaintainsPropertyIndex(label, propName) {
 				continue
 			}
 			if err := sm.PropertyIndexInsert(label, propName, node.ID, propValue); err != nil {
@@ -72,7 +72,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeUpdated(node, oldNode *Node)
 	if oldNode != nil {
 		for _, label := range oldNode.Labels {
 			for propName, propValue := range oldNode.Properties {
-				if _, ok := sm.GetPropertyIndex(label, propName); !ok {
+				if !sm.MaintainsPropertyIndex(label, propName) {
 					continue
 				}
 				if err := sm.PropertyIndexDelete(label, propName, oldNode.ID, propValue); err != nil {
@@ -87,7 +87,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeUpdated(node, oldNode *Node)
 
 	for _, label := range node.Labels {
 		for propName, propValue := range node.Properties {
-			if _, ok := sm.GetPropertyIndex(label, propName); !ok {
+			if !sm.MaintainsPropertyIndex(label, propName) {
 				continue
 			}
 			if err := sm.PropertyIndexInsert(label, propName, node.ID, propValue); err != nil {
@@ -141,7 +141,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID,
 	}
 	for _, label := range cached.Labels {
 		for propName, propValue := range cached.Properties {
-			if _, ok := sm.GetPropertyIndex(label, propName); !ok {
+			if !sm.MaintainsPropertyIndex(label, propName) {
 				continue
 			}
 			if err := sm.PropertyIndexDelete(label, propName, id, propValue); err != nil {
