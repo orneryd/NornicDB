@@ -3308,6 +3308,11 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			}
 			out = append(out, projected)
 		}
+		if withDistinct {
+			// WITH DISTINCT * keeps one row per distinct set of the
+			// variables in scope (#883).
+			out = deduplicatePipelineRows(out, pipelineRowColumns(out))
+		}
 		out = e.filterPipelineRows(ctx, out, postWithWhere)
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
 			return nil, false
@@ -3634,6 +3639,23 @@ func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelin
 		}
 	}
 	return filtered
+}
+
+// pipelineRowColumns returns the variables bound in rows, sorted: the
+// columns of WITH *.
+func pipelineRowColumns(rows []pipelineRow) []string {
+	seen := make(map[string]struct{})
+	columns := make([]string, 0)
+	for _, row := range rows {
+		for name := range row {
+			if _, ok := seen[name]; !ok {
+				seen[name] = struct{}{}
+				columns = append(columns, name)
+			}
+		}
+	}
+	sort.Strings(columns)
+	return columns
 }
 
 func deduplicatePipelineRows(rows []pipelineRow, columns []string) []pipelineRow {

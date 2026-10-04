@@ -90,6 +90,12 @@ func TestIssue883StarWithItems(t *testing.T) {
 				{"WITH 1 AS a RETURN DISTINCT *", []string{"a"}, [][]interface{}{{int64(1)}}},
 				{"WITH 1 AS a WITH DISTINCT * RETURN a", []string{"a"}, [][]interface{}{{int64(1)}}},
 				{"UNWIND [1, 1, 2] AS x RETURN DISTINCT *, 1 AS one ORDER BY x", []string{"x", "one"}, [][]interface{}{{int64(1), int64(1)}, {int64(2), int64(1)}}},
+				{"UNWIND [1, 1] AS x WITH DISTINCT * RETURN x", []string{"x"}, [][]interface{}{{int64(1)}}},
+				{"UNWIND [1, 1, 2] AS x UNWIND [1, 1] AS y WITH DISTINCT * RETURN x, y ORDER BY x, y", []string{"x", "y"}, [][]interface{}{{int64(1), int64(1)}, {int64(2), int64(1)}}},
+				{"MATCH (n:Q {id:1}) UNWIND [1, 1] AS x WITH DISTINCT * RETURN n.id AS id, x", []string{"id", "x"}, [][]interface{}{{int64(1), int64(1)}}},
+				{"UNWIND [1, 1, 2] AS x WITH DISTINCT * WHERE x > 0 RETURN x ORDER BY x", []string{"x"}, [][]interface{}{{int64(1)}, {int64(2)}}},
+				{"UNWIND [3, 1, 1, 2] AS x WITH DISTINCT * ORDER BY x LIMIT 2 RETURN x", []string{"x"}, [][]interface{}{{int64(1)}, {int64(2)}}},
+				{"UNWIND [1, 1] AS x WITH DISTINCT * RETURN count(*) AS c", []string{"c"}, [][]interface{}{{int64(1)}}},
 				{"MATCH (z:Nope) RETURN *, 1 AS one", []string{"z", "one"}, [][]interface{}{}},
 				{"MATCH (z:Nope) WITH *, 1 AS one RETURN *", []string{"one", "z"}, [][]interface{}{}},
 			} {
