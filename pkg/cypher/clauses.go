@@ -355,6 +355,10 @@ func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr strin
 		return true, nil
 	}
 	ctx = withExpressionFailureSlot(ctx)
+	if plan := planRowPredicate(expr); plan != nil && plan.complete {
+		accepted := e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{values: boundVars, parameters: getParamsFromContext(ctx)}, nil)
+		return accepted, getExpressionFailure(ctx)
+	}
 	values := boundVars
 	if parameters := parameterRowValues(ctx); len(parameters) > 0 {
 		values = make(map[string]interface{}, len(boundVars)+len(parameters))

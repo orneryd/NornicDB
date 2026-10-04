@@ -164,6 +164,24 @@ Unhandled queries must fail like Neo4j fails them, through the converged pipelin
 - [x] 7.3 Verify snapshot isolation, cancellation, buffer lifetime and performance of existing correct workloads.
 	- Verified by begin-snapshot replay and adjacency consistency regressions, graceful snapshot-expiration cancellation/reader-release coverage, and wrapper tests that retain projected callback nodes/properties after iteration. Bounded-prefix/endpoint/edge cache tests pass under `-race`; the five-shape #487 benchmark matrix is recorded under 7.2.
 
+## Shared Predicate Plan Increment (#728, 2026-10-04)
+
+- [x] Reproduce parameter-list freshness/concurrent prepared-index failures and
+	the two-allocation parameterized WITH arithmetic path; repair shared admission
+	and scope handling with permanent `TestGh728SharedMembership*` and
+	`TestGh728SharedWithArithmeticParametersZeroAllocations` controls.
+- [x] Compile arithmetic/size operands using shared typed arithmetic and property
+	handlers; preserve multiline admission and native binding/relationship scopes.
+	The existing list-review multiline multi-MATCH regression passes after repair.
+- [x] Verify full repository correctness, both 7,794-outcome official TCK
+	ratchets, both-parser focused races, scoped vet and production build.
+- [x] Profile the join regression and remove repeated plain-key parsing and
+	operand copies. Matched c83ac1c8 medians: join 74.001 -> 74.286 us (one
+	allocation); arithmetic 3074.591 -> 70.853 us (2831 -> one allocation).
+- [ ] Complete PR CI and remaining reference/documentation gates; broader WHERE
+	placement/convergence acceptance stays open. Unsupported compiler shapes still
+	use the shared typed interpreter; whole queries are not allocation-free.
+
 ## 8. Retire remaining divergence
 
 - [x] 8.1 Converge non-policy DDL and relevant node/edge kernels with contract tests and benchmarks.

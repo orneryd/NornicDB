@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Compile arithmetic and `size()` predicate operands through shared typed
+  evaluation. Binding filters and complete WITH plans read native scopes without
+  per-row parameter copies; membership indexes validate list contents once per
+  invocation and preserve concurrent prepared views (#728).
+
 - Seek a single-property uniqueness or node key constraint's own index for
   equality and IN predicates, as an index created with CREATE INDEX is used,
   inside explicit transactions too. A 17,000-node lookup inside a transaction

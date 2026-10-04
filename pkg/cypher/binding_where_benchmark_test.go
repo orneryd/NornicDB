@@ -33,7 +33,7 @@ func BenchmarkFilterBindingsByWhere_CompiledJoin(b *testing.B) {
 	b.StopTimer()
 }
 
-func BenchmarkFilterBindingsByWhere_GenericFallback(b *testing.B) {
+func BenchmarkFilterBindingsByWhere_SharedExpressionPlan(b *testing.B) {
 	exec := &StorageExecutor{}
 	bindings := make([]binding, 0, 1024)
 	for i := 0; i < 1024; i++ {
@@ -43,8 +43,8 @@ func BenchmarkFilterBindingsByWhere_GenericFallback(b *testing.B) {
 	}
 	whereClause := "size(n.name) + n.count >= 0"
 	ctx := context.Background()
-	if _, supported := exec.tryCompileBindingWhere(ctx, whereClause); supported {
-		b.Fatal("fallback workload must not use the binding compiler")
+	if plan := planRowPredicate(whereClause); plan == nil || !plan.complete {
+		b.Fatal("workload must use a complete shared expression plan")
 	}
 	if got := len(exec.filterBindingsByWhere(ctx, bindings, whereClause, nil)); got != len(bindings) {
 		b.Fatalf("expected %d bindings, got %d", len(bindings), got)
@@ -61,11 +61,11 @@ func BenchmarkBindingWherePipelineHandlers(b *testing.B) {
 	for _, handler := range []string{"binding", "with"} {
 		for _, count := range []int{1, 32, 1024} {
 			b.Run(handler+"/rows="+strconv.Itoa(count), func(b *testing.B) {
-				exec, _ := newTestExecutor(b)
-				ctx := context.Background()
+				exec := &StorageExecutor{}
+				ctx := withExpressionFailureSlot(context.Background())
 				clause := "size(n.name) + n.count >= 0"
-				if _, supported := exec.tryCompileBindingWhere(ctx, clause); supported {
-					b.Fatal("workload must exercise the shared predicate adapter")
+				if plan := planRowPredicate(clause); plan == nil || !plan.complete {
+					b.Fatal("workload must use a complete shared expression plan")
 				}
 				rows := make([]binding, count)
 				values := make([]map[string]interface{}, count)
