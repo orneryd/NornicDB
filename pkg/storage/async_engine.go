@@ -1028,57 +1028,6 @@ func (ae *AsyncEngine) UpdateNode(node *Node) error {
 	return nil
 }
 
-// UpdateNodeEmbedding updates an existing node with its embedding.
-// Unlike UpdateNode, this MUST NOT create a new node; it returns ErrNotFound
-// if the node does not exist (in cache, in-flight, or in the underlying engine).
-func (ae *AsyncEngine) UpdateNodeEmbedding(node *Node) (err error) {
-	ae.mu.Lock()
-	defer ae.mu.Unlock()
-	defer func() {
-		if err == nil {
-			ae.graphMutationVersions.changed(namespaceForNodeID(node.ID))
-		}
-	}()
-
-	if ae.deleteNodes[node.ID] {
-		return ErrNotFound
-	}
-
-	// Exists in cache (including nodes created/updated but not yet flushed).
-	if _, ok := ae.nodeCache[node.ID]; ok {
-		// Important: do NOT mark this as an update here. If the node is a pending create
-		// (not yet flushed), it must still count as a create for NodeCount/EdgeCount.
-		// GH-448: staged nodes shadow engine-side label-index rows in the scan
-		// merge paths, so the pending view must learn about them here or
-		// committed nodes vanish from label scans until flush.
-		ae.setCachedNodeLocked(node)
-		ae.pendingWrites++
-		return nil
-	}
-
-	// In-flight nodes will exist in the underlying engine after flush; allow update.
-	if ae.inFlightNodes[node.ID] {
-		// This is an update to an existing node (at minimum, it will exist after the in-flight write).
-		// Mark as update so NodeCount doesn't temporarily treat it as a pending create.
-		ae.updateNodes[node.ID] = true
-		ae.setCachedNodeLocked(node)
-		ae.pendingWrites++
-		return nil
-	}
-
-	// Verify existence in underlying engine before accepting the update.
-	if _, err := ae.engine.GetNode(node.ID); err != nil {
-		return ErrNotFound
-	}
-
-	// Node exists in the underlying engine, so this is an update.
-	// Mark as update so NodeCount doesn't temporarily treat it as a pending create.
-	ae.updateNodes[node.ID] = true
-	ae.setCachedNodeLocked(node)
-	ae.pendingWrites++
-	return nil
-}
-
 // UpdateNodeEmbeddingSidecar writes managed embedding state in the dedicated
 // embedding key space on the underlying engine, WITHOUT staging the node body
 // into the async cache: a sidecar write is not a node write, cannot conflict
@@ -1096,13 +1045,11 @@ func (ae *AsyncEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	if deleted {
 		return ErrNotFound
 	}
-	if sidecar, ok := ae.engine.(EmbeddingSidecarUpdater); ok {
-		return sidecar.UpdateNodeEmbeddingSidecar(node)
+	sidecar, ok := ae.engine.(EmbeddingSidecarUpdater)
+	if !ok {
+		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", ae.engine)
 	}
-	if embedUpdater, ok := ae.engine.(interface{ UpdateNodeEmbedding(*Node) error }); ok {
-		return embedUpdater.UpdateNodeEmbedding(node)
-	}
-	return ae.engine.UpdateNode(node)
+	return sidecar.UpdateNodeEmbeddingSidecar(node)
 }
 
 // StreamParkedEmbeddingFailures forwards the sidecar failure scan to the

@@ -10,6 +10,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -170,36 +171,21 @@ func (n *NamespacedEngine) RebuildTemporalIndexes(ctx context.Context) error {
 	return nil
 }
 
-// UpdateNodeEmbedding updates only the embedding of an existing node in this
-// namespace, returning ErrNotFound instead of creating an orphan. Engines
-// without UpdateNodeEmbedding fall back to an existence-checked UpdateNode.
-func (n *NamespacedEngine) UpdateNodeEmbedding(node *Node) error {
-	if node == nil {
-		return ErrInvalidData
-	}
-	if updater, ok := n.inner.(interface{ UpdateNodeEmbedding(*Node) error }); ok {
-		namespaced := copyNode(node)
-		namespaced.ID = n.prefixNodeID(node.ID)
-		return updater.UpdateNodeEmbedding(namespaced)
-	}
-	if _, err := n.GetNode(node.ID); err != nil {
-		return err
-	}
-	return n.UpdateNode(node)
-}
-
 // UpdateNodeEmbeddingSidecar writes managed embedding state in the dedicated
-// embedding key space without touching the node record.
+// embedding key space without touching the node record. Every production
+// inner engine implements EmbeddingSidecarUpdater (compile-time asserted);
+// anything else is reported as an error rather than silently degraded.
 func (n *NamespacedEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	if node == nil {
 		return ErrInvalidData
 	}
-	if sidecar, ok := n.inner.(EmbeddingSidecarUpdater); ok {
-		namespaced := copyNode(node)
-		namespaced.ID = n.prefixNodeID(node.ID)
-		return sidecar.UpdateNodeEmbeddingSidecar(namespaced)
+	sidecar, ok := n.inner.(EmbeddingSidecarUpdater)
+	if !ok {
+		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", n.inner)
 	}
-	return n.UpdateNodeEmbedding(node)
+	namespaced := copyNode(node)
+	namespaced.ID = n.prefixNodeID(node.ID)
+	return sidecar.UpdateNodeEmbeddingSidecar(namespaced)
 }
 
 // StreamParkedEmbeddingFailures streams this namespace's sidecar failure

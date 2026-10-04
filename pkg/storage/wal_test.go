@@ -325,15 +325,16 @@ func (e *walEmbeddingDispatchEngine) UpdateNode(node *Node) error {
 	return e.Engine.UpdateNode(node)
 }
 
-func (e *walEmbeddingDispatchEngine) UpdateNodeEmbedding(node *Node) error {
+func (e *walEmbeddingDispatchEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	e.updateEmbeddingCalls++
 	if e.updateEmbeddingErr != nil {
 		return e.updateEmbeddingErr
 	}
-	if updater, ok := e.Engine.(interface{ UpdateNodeEmbedding(*Node) error }); ok {
-		return updater.UpdateNodeEmbedding(node)
+	sidecar, ok := e.Engine.(EmbeddingSidecarUpdater)
+	if !ok {
+		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", e.Engine)
 	}
-	return nil
+	return sidecar.UpdateNodeEmbeddingSidecar(node)
 }
 
 func (l *walCaptureLogger) Log(level, msg string, fields map[string]any) {
@@ -3242,7 +3243,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = walEngine.UpdateNodeEmbedding(&Node{
+		err = walEngine.UpdateNodeEmbeddingSidecar(&Node{
 			ID:         "tenant_a:embed-node",
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"k": "v2"},
@@ -3252,20 +3253,22 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		assert.Equal(t, 0, dispatch.updateNodeCalls)
 
 		dispatch.updateEmbeddingErr = errors.New("embed dispatch failed")
-		err = walEngine.UpdateNodeEmbedding(&Node{ID: "tenant_a:embed-node", Labels: []string{"Doc"}})
+		err = walEngine.UpdateNodeEmbeddingSidecar(&Node{ID: "tenant_a:embed-node", Labels: []string{"Doc"}})
 		require.ErrorContains(t, err, "embed dispatch failed")
 
+		// No silent legacy fallback: an inner engine without the sidecar
+		// capability is reported, never degraded to a node-record write.
 		fallbackEngine := newWALEngine(t, &exportableOnlyEngine{Engine: base})
-		err = fallbackEngine.UpdateNodeEmbedding(&Node{
+		err = fallbackEngine.UpdateNodeEmbeddingSidecar(&Node{
 			ID:         "tenant_a:embed-node",
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"k": "v3"},
 		})
-		require.NoError(t, err)
+		require.ErrorContains(t, err, "does not support embedding sidecar writes")
 
 		node, err := base.GetNode("tenant_a:embed-node")
 		require.NoError(t, err)
-		require.Equal(t, "v3", node.Properties["k"])
+		require.Equal(t, "v1", node.Properties["k"])
 
 		err = walEngine.BulkCreateNodes([]*Node{
 			{ID: "tenant_a:n1"},

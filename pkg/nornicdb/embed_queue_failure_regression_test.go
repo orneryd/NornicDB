@@ -19,6 +19,10 @@ type orderedEmbeddingQueue struct {
 	pending []storage.NodeID
 }
 
+func (e *orderedEmbeddingQueue) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(node)
+}
+
 type delayedTransientEmbeddingError struct{ delay time.Duration }
 
 type blockingBisectEmbedder struct {

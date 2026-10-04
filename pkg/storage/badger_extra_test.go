@@ -1006,7 +1006,7 @@ func TestTransaction_CreateNode_LargeEmbedding_SeparateStorage(t *testing.T) {
 	assert.Len(t, got.ChunkEmbeddings[0], 4000)
 }
 
-func TestBadgerEngine_UpdateNodeEmbedding_LargeThenSmall(t *testing.T) {
+func TestBadgerEngine_UpdateNodeEmbeddingSidecar_LargeThenSmall(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	// Create node with large embeddings (stored separately)
@@ -1029,8 +1029,9 @@ func TestBadgerEngine_UpdateNodeEmbedding_LargeThenSmall(t *testing.T) {
 	updateNode := &Node{
 		ID:              node.ID,
 		ChunkEmbeddings: smallEmb,
+		EmbedMeta:       map[string]any{"chunk_count": 1},
 	}
-	err = engine.UpdateNodeEmbedding(updateNode)
+	err = engine.UpdateNodeEmbeddingSidecar(updateNode)
 	require.NoError(t, err)
 
 	got, err = engine.GetNode(node.ID)
@@ -1039,7 +1040,7 @@ func TestBadgerEngine_UpdateNodeEmbedding_LargeThenSmall(t *testing.T) {
 	assert.Len(t, got.ChunkEmbeddings[0], 3)
 }
 
-func TestBadgerEngine_UpdateNodeEmbedding_SmallToLarge(t *testing.T) {
+func TestBadgerEngine_UpdateNodeEmbeddingSidecar_SmallToLarge(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	// Create node with small embedding
@@ -1056,49 +1057,15 @@ func TestBadgerEngine_UpdateNodeEmbedding_SmallToLarge(t *testing.T) {
 	updateNode := &Node{
 		ID:              node.ID,
 		ChunkEmbeddings: makeLargeChunkEmbeddings(),
+		EmbedMeta:       map[string]any{"chunk_count": 4},
 	}
-	err = engine.UpdateNodeEmbedding(updateNode)
+	err = engine.UpdateNodeEmbeddingSidecar(updateNode)
 	require.NoError(t, err)
 
 	got, err := engine.GetNode(node.ID)
 	require.NoError(t, err)
 	require.Len(t, got.ChunkEmbeddings, 4)
 	assert.Len(t, got.ChunkEmbeddings[0], 4000)
-}
-
-func TestBadgerEngine_UpdateNodeEmbedding_NotFound(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-
-	err := engine.UpdateNodeEmbedding(&Node{
-		ID:              NodeID(prefixTestID("nonexistent")),
-		ChunkEmbeddings: [][]float32{{0.1}},
-	})
-	assert.ErrorIs(t, err, ErrNotFound)
-}
-
-func TestBadgerEngine_UpdateNodeEmbedding_ClearsEmbedMeta(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-
-	node := &Node{
-		ID:     NodeID(prefixTestID("emb-meta-n1")),
-		Labels: []string{"Document"},
-		EmbedMeta: map[string]any{
-			"embedding_failed": true,
-			"embedding_error":  "test returned 400",
-		},
-	}
-	_, err := engine.CreateNode(node)
-	require.NoError(t, err)
-
-	// A retry clears the failure markers: a nil incoming map must clear the
-	// stored metadata, not leave the old failure flags behind.
-	err = engine.UpdateNodeEmbedding(&Node{ID: node.ID})
-	require.NoError(t, err)
-
-	got, err := engine.GetNode(node.ID)
-	require.NoError(t, err)
-	require.Nil(t, got.EmbedMeta, "UpdateNodeEmbedding with nil EmbedMeta must clear stored embedding metadata")
-	assert.True(t, NodeNeedsEmbedding(got), "cleared node must be embedding-eligible again")
 }
 
 func TestBadgerEngine_UpdateNode_UpsertNewNode(t *testing.T) {
@@ -1164,16 +1131,6 @@ func TestBadgerEngine_UpdateNode_LabelChange(t *testing.T) {
 		}
 	}
 	assert.True(t, found)
-}
-
-func TestBadgerEngine_UpdateNodeEmbedding_Validation(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-
-	err := engine.UpdateNodeEmbedding(nil)
-	assert.ErrorIs(t, err, ErrInvalidData)
-
-	err = engine.UpdateNodeEmbedding(&Node{ID: ""})
-	assert.ErrorIs(t, err, ErrInvalidID)
 }
 
 func TestBadgerEngine_BulkCreateNodes_LargeEmbedding(t *testing.T) {

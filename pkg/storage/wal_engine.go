@@ -585,30 +585,11 @@ func (w *WALEngine) UpdateNode(node *Node) error {
 	return w.engine.UpdateNode(node)
 }
 
-// UpdateNodeEmbedding logs then executes embedding-only node update.
-// Uses OpUpdateEmbedding which is safe to skip during WAL recovery
-// since embeddings can be regenerated automatically.
-func (w *WALEngine) UpdateNodeEmbedding(node *Node) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if config.IsWALEnabled() {
-		dbName := w.databaseFromNode(node)
-		if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log update_embedding: %w", err)
-		}
-	}
-	// Prefer the embedding-only update path on the wrapped engine (e.g., AsyncEngine)
-	// so we don't accidentally treat embedding updates as creates in pending caches.
-	if embedUpdater, ok := w.engine.(interface{ UpdateNodeEmbedding(*Node) error }); ok {
-		return embedUpdater.UpdateNodeEmbedding(node)
-	}
-	return w.engine.UpdateNode(node)
-}
-
-// UpdateNodeEmbeddingSidecar logs the same OpUpdateEmbedding audit record and
+// UpdateNodeEmbeddingSidecar logs the OpUpdateEmbedding audit record and
 // executes the sidecar embedding-only write (embedding key space, never the
-// node record) on the wrapped engine.
+// node record) on the wrapped engine. Every production inner engine implements
+// EmbeddingSidecarUpdater (compile-time asserted); anything else is an
+// invariant violation, reported as an error rather than silently degraded.
 func (w *WALEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
@@ -619,13 +600,11 @@ func (w *WALEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 			return fmt.Errorf("wal: failed to log update_embedding: %w", err)
 		}
 	}
-	if sidecar, ok := w.engine.(EmbeddingSidecarUpdater); ok {
-		return sidecar.UpdateNodeEmbeddingSidecar(node)
+	sidecar, ok := w.engine.(EmbeddingSidecarUpdater)
+	if !ok {
+		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", w.engine)
 	}
-	if embedUpdater, ok := w.engine.(interface{ UpdateNodeEmbedding(*Node) error }); ok {
-		return embedUpdater.UpdateNodeEmbedding(node)
-	}
-	return w.engine.UpdateNode(node)
+	return sidecar.UpdateNodeEmbeddingSidecar(node)
 }
 
 // StreamParkedEmbeddingFailures forwards the sidecar failure scan to the

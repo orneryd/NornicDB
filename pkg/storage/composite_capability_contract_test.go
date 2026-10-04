@@ -145,13 +145,13 @@ func TestCompositeCapabilityParity_AggregatesAndBroadcasts(t *testing.T) {
 	})
 
 	t.Run("embedding update routes and rejects missing", func(t *testing.T) {
-		require.ErrorIs(t, composite.UpdateNodeEmbedding(&Node{ID: "missing"}), ErrNotFound)
+		require.ErrorIs(t, composite.UpdateNodeEmbeddingSidecar(&Node{ID: "missing"}), ErrNotFound)
 
 		node, err := composite.GetNode("n-1")
 		require.NoError(t, err)
 		node.ChunkEmbeddings = [][]float32{{0.1, 0.2}}
-		node.EmbedMeta = map[string]any{"embedded": true}
-		require.NoError(t, composite.UpdateNodeEmbedding(node))
+		node.EmbedMeta = map[string]any{"embedded": true, "chunk_count": 1}
+		require.NoError(t, composite.UpdateNodeEmbeddingSidecar(node))
 
 		readback, err := composite.GetNode("n-1")
 		require.NoError(t, err)

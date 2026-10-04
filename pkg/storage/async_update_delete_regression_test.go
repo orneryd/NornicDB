@@ -201,7 +201,8 @@ func TestAsyncEngine_DeleteQueuedEmbeddingUpdate(t *testing.T) {
 		node, err := engine.GetNode(node.ID)
 		require.NoError(t, err)
 		node.ChunkEmbeddings = [][]float32{{1, 0, 0}}
-		require.NoError(t, engine.UpdateNodeEmbedding(node))
+		node.EmbedMeta = map[string]any{"chunk_count": 1}
+		require.NoError(t, engine.UpdateNodeEmbeddingSidecar(node))
 		require.NoError(t, engine.DeleteNode(node.ID))
 		_, err = engine.GetNode(node.ID)
 		require.ErrorIs(t, err, ErrNotFound)

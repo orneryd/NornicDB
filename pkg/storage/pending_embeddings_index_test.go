@@ -442,7 +442,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
 	})
 
-	t.Run("UpdateNodeEmbedding_only_updates_existing_nodes", func(t *testing.T) {
+	t.Run("UpdateNodeEmbeddingSidecar_only_updates_existing_nodes", func(t *testing.T) {
 		engine := newTestBadgerEngineForPending(t)
 
 		// Create a node without embedding
@@ -461,11 +461,12 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			"embedding_model":      "test-model",
 			"embedding_dimensions": 4,
 			"has_embedding":        true,
+			"chunk_count":          1,
 		}
 
 		// UpdateNodeEmbedding should succeed for existing node
-		err = engine.UpdateNodeEmbedding(node)
-		require.NoError(t, err, "UpdateNodeEmbedding should succeed for existing node")
+		err = engine.UpdateNodeEmbeddingSidecar(node)
+		require.NoError(t, err, "UpdateNodeEmbeddingSidecar should succeed for existing node")
 
 		// Verify embedding was saved
 		updated, err := engine.GetNode(node.ID)
@@ -478,15 +479,15 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			ID:              NodeID(prefixTestID("non-existent")),
 			ChunkEmbeddings: [][]float32{{0.5, 0.6}},
 		}
-		err = engine.UpdateNodeEmbedding(nonExistent)
-		assert.Equal(t, ErrNotFound, err, "UpdateNodeEmbedding should return ErrNotFound for non-existent node")
+		err = engine.UpdateNodeEmbeddingSidecar(nonExistent)
+		assert.Equal(t, ErrNotFound, err, "UpdateNodeEmbeddingSidecar should return ErrNotFound for non-existent node")
 
 		// Verify node was NOT created
 		_, err = engine.GetNode(NodeID(prefixTestID("non-existent")))
 		assert.Equal(t, ErrNotFound, err, "node should not have been created")
 	})
 
-	t.Run("UpdateNodeEmbedding_preserves_other_properties", func(t *testing.T) {
+	t.Run("UpdateNodeEmbeddingSidecar_preserves_other_properties", func(t *testing.T) {
 		engine := newTestBadgerEngineForPending(t)
 
 		// Create a node with properties
@@ -508,9 +509,10 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			"embedding_model":      "test-model",
 			"embedding_dimensions": 3,
 			"has_embedding":        true,
+			"chunk_count":          1,
 		}
 
-		err = engine.UpdateNodeEmbedding(node)
+		err = engine.UpdateNodeEmbeddingSidecar(node)
 		require.NoError(t, err)
 
 		// Verify embedding was updated but other properties preserved
@@ -521,7 +523,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, "Original title", updated.Properties["title"], "non-embedding properties should be preserved")
 	})
 
-	t.Run("UpdateNodeEmbedding_removes_from_pending_index", func(t *testing.T) {
+	t.Run("UpdateNodeEmbeddingSidecar_removes_from_pending_index", func(t *testing.T) {
 		engine := newTestBadgerEngineForPending(t)
 
 		// Create a node without embedding (should be in pending index)
@@ -545,7 +547,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			"has_embedding":        true,
 		}
 
-		err = engine.UpdateNodeEmbedding(node)
+		err = engine.UpdateNodeEmbeddingSidecar(node)
 		require.NoError(t, err)
 
 		// Should be removed from pending index

@@ -32,8 +32,8 @@
       "title": "Auto-commit label scans miss nodes during embedding write-back",
       "fix_step": 3,
       "candidate_tck_family": ["local storage concurrency suite"],
-      "tck_mapping": {"status": "local-only", "scenarios": [], "note": "Background write-back visibility is a storage invariant, not a TCK scenario."},
-      "local_reproductions": ["TestGH448_StagedEmbeddingWritebackKeepsLabelScanComplete"],
+      "tck_mapping": {"status": "local-only", "scenarios": [], "note": "Background write-back visibility is a storage invariant, not a TCK scenario. The worker writeback is now an embedding-only sidecar write (no async body staging), so the original label-scan shadowing window is structurally gone; the remaining reproduction pins persistence across reopen."},
+      "local_reproductions": ["TestGH448_EmbeddingWritebackPersistsAcrossBadgerReopen"],
       "failing_baseline_commit": "1025caa3",
       "fixing_commits": ["3ca7b4ce", "fd05ef8a"],
       "status": "closed"

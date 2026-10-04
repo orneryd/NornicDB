@@ -69,8 +69,8 @@ func (e *sequenceEmbeddingEngine) FindNodeNeedingEmbedding() *storage.Node {
 	return storage.CopyNode(node)
 }
 func (e *sequenceEmbeddingEngine) MarkNodeEmbedded(storage.NodeID) {}
-func (e *sequenceEmbeddingEngine) UpdateNodeEmbedding(node *storage.Node) error {
-	return e.Engine.UpdateNode(node)
+func (e *sequenceEmbeddingEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(node)
 }
 
 func TestEmbedWorkerBatchesNodesThatResolveToTheSameProvider(t *testing.T) {
@@ -1848,7 +1848,7 @@ func (e *queueBranchEngine) AddToPendingEmbeddings(id storage.NodeID) {
 	e.added = append(e.added, id)
 }
 
-func (e *queueBranchEngine) UpdateNodeEmbedding(node *storage.Node) error {
+func (e *queueBranchEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
 	if e.updateEmbeddingErr != nil {
 		return e.updateEmbeddingErr
 	}
