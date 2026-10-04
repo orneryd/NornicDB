@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Use Neo4j-valid quoted vector option keys in the async schema regression,
+  keeping its complete admission and metadata checks valid in both parsers (#754).
+
 - Plan async CREATE RETURN as one shared projection, preserving typed parameters,
   original column names, DISTINCT and pagination. Validate projection before
   publishing the batch so evaluation errors cannot leave created nodes (#713).

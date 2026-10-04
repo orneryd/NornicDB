@@ -120,7 +120,7 @@ func TestBug_SchemaCommandsWithAsyncEngine(t *testing.T) {
 			query: `
 				CREATE VECTOR INDEX node_embedding_index IF NOT EXISTS
 				FOR (n:Node) ON (n.embedding)
-				OPTIONS {indexConfig: {vector.dimensions: 1024}}
+				OPTIONS {indexConfig: {` + "`vector.dimensions`" + `: 1024}}
 			`,
 		},
 	}

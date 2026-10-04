@@ -738,3 +738,24 @@ Graphify's snapshot predates prior CREATE convergence; current source confirms
 the async batch now joins the canonical CREATE/RETURN planner. No running
 installation was touched. Publish with `Refs #713`; remaining #713/#728/#754
 acceptance stays open and #547 remains excluded.
+
+### Async Schema Fixture Syntax: 2026-10-04
+
+The expanded ANTLR safety selection exposed an existing async-schema test whose
+vector index options used the unquoted dotted key `vector.dimensions`. The full
+parent test failed identically on prior published source, independent of the
+async CREATE repair. Pinned Neo4j 5.26.30 also rejects that exact syntax with
+SyntaxError and accepts the backtick-quoted key. The temporary reference index
+was dropped after verification.
+
+Correct only the fixture query. No production parser behavior, assertions,
+subtests or admission coverage changed. The complete async-schema parent test
+passes under both actual parsers with race instrumentation; the expanded ANTLR
+CREATE/schema safety selection now passes without excluding the fixture. Fresh
+isolated repository correctness and whitespace checks pass. The previous CREATE
+reference matrix and official ratchets describe unchanged runtime code, not a
+new run attributed to this test-only correction.
+
+This resolves the independently recorded fixture failure, not the complete
+#754 CI/TestKit family. Publish with `Refs #754`; #713/#728 remain open and
+#547 remains excluded. No performance measurement or running-installation change.
