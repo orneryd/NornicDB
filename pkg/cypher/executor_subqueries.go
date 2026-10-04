@@ -126,12 +126,9 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 		// For pre-CALL WITH/ORDER/LIMIT query shapes, keep manual node correlation.
 		// seedNodesFromOuterMatch appends RETURN <seedVar> and is not equivalent for
 		// WITH-aliased pre-call pipelines.
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
+		nodes, err = e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
 		if err != nil {
 			return nil, localizedError(localization.CypherSubqueriesNodeLoadFailed(err), err)
-		}
-		if len(nodePattern.properties) > 0 {
-			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
 		}
 		if whereClause != "" {
 			whereFilter := e.compileNodeWhereFilter(ctx, nodePattern.variable, whereClause)
@@ -1360,18 +1357,9 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			}
 
 			// Label/property-only fast path.
-			var nodes []*storage.Node
-			var err error
-			if len(np.labels) > 0 {
-				nodes, err = e.loadNodesWithTemporalViewport(ctx, np.labels)
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
-				if err != nil {
-					return nil, err
-				}
+			nodes, err := e.loadPatternNodes(ctx, np.labels, np.properties)
+			if err != nil {
+				return nil, err
 			}
 			if len(np.properties) == 0 {
 				// If a non-indexable WHERE exists, defer to generic executor to preserve semantics.

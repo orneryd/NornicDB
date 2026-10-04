@@ -685,18 +685,10 @@ func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props m
 		return nodes
 	}
 
-	// Create filter function that checks all properties
+	// The node-pattern property test (nodePropertiesMatch) is the one owner
+	// of pattern-property equality.
 	filterFn := func(node *storage.Node) bool {
-		for key, expectedVal := range props {
-			actualVal, exists := node.Properties[key]
-			if !exists {
-				return false
-			}
-			if !e.compareEqual(actualVal, expectedVal) {
-				return false
-			}
-		}
-		return true
+		return nodePropertiesMatch(node, props)
 	}
 
 	// Use parallel filtering for large datasets
@@ -737,18 +729,9 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 	var nodes []*storage.Node
 	var err error
 
-	if len(nodePattern.labels) > 0 {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-	} else {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
-	}
+	nodes, err = e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
 	if err != nil {
 		return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
-	}
-
-	// Apply property filter from MATCH pattern
-	if len(nodePattern.properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
 	}
 
 	// Apply WHERE clause filter if present

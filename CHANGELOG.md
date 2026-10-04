@@ -233,6 +233,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   properties decoded, instead of decoding every node in full. Writes such as
   graphify's `MATCH (a {id: $src}), (b {id: $tgt}) MERGE …` and reads in
   explicit transactions now cost what an auto-commit read does (#824).
+- Make a label-less property scan cheaper per node and use it for more
+  statements. The scan decodes a node's projected properties through one
+  decoder per scan: key tokens are resolved once per database and a rejected
+  node allocates no map, reader or ID (6 → 2 allocations per scanned node).
+  `MATCH (a) WHERE a.id = $id` and relationship patterns that start from a
+  label-less node with properties, such as graphify's stale-edge delete
+  `MATCH (a {id: row.src})-[r]->(b {id: row.tgt})`, now take the projected
+  scan instead of decoding every node (#857).
 
 - Route a top-level UNION before the auto-commit async CREATE fast paths: on a
   server, a UNION whose first branch is a CREATE ran that branch for the whole

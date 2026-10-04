@@ -90,8 +90,15 @@ func filterNodesByRequiredLabels(nodes []*storage.Node, labels []string) []*stor
 }
 
 func (e *StorageExecutor) loadNodesWithTemporalViewport(ctx context.Context, labels []string) ([]*storage.Node, error) {
-	// Traversal seeds use the same label-indexed, viewport-aware streaming
-	// collector as node MATCH. Keeping this adapter avoids a second physical
-	// scan path that materialises GetNodesByLabel inside explicit transactions.
-	return e.collectNodesWithStreaming(ctx, labels, nil, "", "", -1)
+	return e.loadPatternNodes(ctx, labels, nil)
+}
+
+// loadPatternNodes returns the nodes of a node pattern (labels, inline
+// properties) visible in the temporal viewport. Traversal seeds use the same
+// label-indexed, viewport-aware streaming collector as node MATCH, which
+// avoids a second physical scan path that materialises GetNodesByLabel inside
+// explicit transactions. Passing the properties lets a pattern without labels
+// take the projected scan instead of decoding every node (#857).
+func (e *StorageExecutor) loadPatternNodes(ctx context.Context, labels []string, properties map[string]interface{}) ([]*storage.Node, error) {
+	return e.collectNodesWithStreaming(ctx, labels, properties, "", "", -1)
 }

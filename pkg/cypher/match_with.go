@@ -74,10 +74,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	var err error
 
 	loadAll := func() ([]*storage.Node, error) {
-		if len(nodePattern.labels) > 0 {
-			return e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-		}
-		return e.loadNodesWithTemporalViewport(ctx, nil)
+		return e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
 	}
 
 	// Prefer a property-index seed when the WHERE clause carries an equality

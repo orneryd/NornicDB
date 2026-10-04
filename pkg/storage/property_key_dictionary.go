@@ -208,6 +208,15 @@ type propKeyPersistEntry struct {
 
 // lookup returns the property-key name for a given (namespace, id).
 // Read-only — used by the decode path. Returns ("", false) if unknown.
+// lookupID returns the key token of a property name in a namespace, if the
+// name has one.
+func (d *propertyKeyDictionary) lookupID(namespace, name string) (uint64, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	id, ok := d.forward[namespace][name]
+	return id, ok
+}
+
 func (d *propertyKeyDictionary) lookup(namespace string, id uint64) (string, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

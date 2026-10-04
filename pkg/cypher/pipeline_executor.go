@@ -2489,7 +2489,14 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 	if hint.earlyLimit > 0 {
 		streamingWhere = whereClause
 	}
-	nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, streamingWhere, hint.earlyLimit)
+	properties := nodePattern.properties
+	if len(nodePattern.labels) == 0 && streamingWhere == "" {
+		// The rows are filtered by the WHERE afterwards; its top-level
+		// equalities still let a label-less scan skip the nodes that can't
+		// match before decoding them (#857).
+		properties = e.labellessScanRequiredProperties(ctx, properties, nodePattern.variable, whereClause)
+	}
+	nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, properties, nodePattern.variable, streamingWhere, hint.earlyLimit)
 	return nodes, false, err
 }
 

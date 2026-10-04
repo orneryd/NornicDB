@@ -46,17 +46,9 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 	var nodes []*storage.Node
 	var err error
 
-	if len(nodePattern.labels) > 0 {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-	} else {
-		nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
-	}
+	nodes, err = e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
 	if err != nil {
 		return nil, localizedError(localization.CypherTransactionsStorageFailed(err), err)
-	}
-
-	if len(nodePattern.properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
 	}
 
 	if matchWhere != "" {
@@ -697,16 +689,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				continue
 			}
 
-			var nodes []*storage.Node
-			if len(nodePattern.labels) > 0 {
-				nodes, _ = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-			} else {
-				nodes, _ = e.loadNodesWithTemporalViewport(ctx, nil)
-			}
-
-			if len(nodePattern.properties) > 0 {
-				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
-			}
+			nodes, _ := e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
 
 			for _, node := range nodes {
 				b := make(binding)
@@ -1205,16 +1188,23 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	var err error
 
 	// A label-less property match reads every node (#824): decode only the
-	// pattern's properties, let the engine skip a node that fails them before
-	// decoding the rest of it, and read the whole node only for a match. The
-	// node then passes the same filters as on the full scan.
-	if len(labels) == 0 && len(properties) > 0 && strings.TrimSpace(whereClause) == "" {
-		keys := make([]string, 0, len(properties))
-		for key := range properties {
+	// properties a match must have, let the engine skip a node that fails them
+	// before decoding the rest of it, and read the whole node only for a
+	// match. The node then passes the same filters as on the full scan,
+	// including the whole WHERE. The required properties are the pattern's
+	// and the WHERE's top-level equalities on the variable (WHERE n.id = $id,
+	// #857), which every match satisfies.
+	var required map[string]interface{}
+	if len(labels) == 0 {
+		required = e.labellessScanRequiredProperties(ctx, properties, whereVariable, whereClause)
+	}
+	if len(required) > 0 {
+		keys := make([]string, 0, len(required))
+		for key := range required {
 			keys = append(keys, key)
 		}
 		matches := func(props map[string]interface{}) bool {
-			return e.nodeMatchesProps(&storage.Node{Properties: props}, properties)
+			return nodePropertiesMatch(&storage.Node{Properties: props}, required)
 		}
 		err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches}, func(projected *storage.Node) error {
 			if projected == nil || !matches(projected.Properties) {
@@ -1293,6 +1283,33 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	return nodes, nil
 }
 
+// labellessScanRequiredProperties returns the property values every node a
+// label-less scan may match must have: the pattern's properties and the
+// WHERE's top-level equalities between variable.property and a constant
+// (parameter, literal or bound value; parseSimpleIndexedEquality). Over-
+// approximating the WHERE is safe because the caller still evaluates it on
+// every node the scan returns.
+func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, properties map[string]interface{}, variable, whereClause string) map[string]interface{} {
+	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	if clause == "" || strings.TrimSpace(variable) == "" {
+		return properties
+	}
+	required := make(map[string]interface{}, len(properties)+1)
+	for key, value := range properties {
+		required[key] = value
+	}
+	for _, conjunct := range splitTopLevelAndConjuncts(clause) {
+		property, value, ok := e.parseSimpleIndexedEquality(ctx, variable, unwrapOuterParens(strings.TrimSpace(conjunct)))
+		if !ok {
+			continue
+		}
+		if _, exists := required[property]; !exists {
+			required[property] = value
+		}
+	}
+	return required
+}
+
 func shouldHideSystemNodes(engine storage.Engine) bool {
 	// Allow system nodes to be queried when the active database is system.
 	// For all other databases, hide internal nodes (labels starting with "_")
@@ -1366,11 +1383,7 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 			}
 		}
 		if !usedPatternIndex {
-			if len(nodeInfo.labels) > 0 {
-				nodes, err = e.loadNodesWithTemporalViewport(ctx, nodeInfo.labels)
-			} else {
-				nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
-			}
+			nodes, err = e.loadPatternNodes(ctx, nodeInfo.labels, nodeInfo.properties)
 			if err != nil {
 				return nil, localizedError(localization.CypherTransactionsStorageFailed(err), err)
 			}

@@ -646,9 +646,10 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 // from fn ends the scan and is not returned.
 func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, opts StreamNodesOptions, fn func(node *Node) error) error {
 	nowNanos := DecayScoringTime()
-	var include map[string]struct{}
-	if opts.Projection != nil {
-		include = propertyProjectionSet(opts.Projection)
+	// A projected scan decodes through one scan-scoped decoder (#857).
+	var projected *projectedNodeDecoder
+	if opts.Projection != nil && !opts.WithEmbeddings {
+		projected = newProjectedNodeDecoder(b, opts.Projection, opts.PropertyFilter)
 	}
 
 	visit := func(txn *badger.Txn, item *badger.Item) error {
@@ -663,14 +664,16 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 			if len(key) <= 1 {
 				return nil
 			}
+			if projected != nil {
+				var decodeErr error
+				node, decodeErr = projected.decode(key, val)
+				return decodeErr
+			}
 			nodeID := NodeID(key[1:])
 			var decodeErr error
-			switch {
-			case opts.WithEmbeddings:
+			if opts.WithEmbeddings {
 				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-			case opts.Projection != nil:
-				node, _, decodeErr = b.decodeNodeFiltered(namespaceForNodeID(nodeID), val, include, opts.PropertyFilter)
-			default:
+			} else {
 				node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), val)
 			}
 			return decodeErr
