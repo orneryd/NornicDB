@@ -663,6 +663,7 @@ type unwindMergeChainWithAssignment struct {
 
 type unwindMergeChainWithPlan struct {
 	assignments []unwindMergeChainWithAssignment
+	projection  pipelineRowWith
 }
 
 type unwindMergeChainWherePlan struct {
@@ -932,8 +933,9 @@ func parseUnwindWithClause(clause string) (unwindMergeChainWithPlan, bool) {
 	if !projectionPlan.valid || projectionPlan.star || projectionPlan.distinct || projectionPlan.hasAggregate || projectionPlan.modifiers != "" {
 		return unwindMergeChainWithPlan{}, false
 	}
-	plan := unwindMergeChainWithPlan{}
+	plan := unwindMergeChainWithPlan{projection: pipelineRowWith{clause: trimmed}}
 	for _, projection := range projectionPlan.projections {
+		plan.projection.projections = append(plan.projection.projections, pipelineRowProjection{projection.expr, projection.alias})
 		if name := simpleSemanticIdentifier(projection.expr); name != "" && name == projection.alias {
 			continue
 		}
@@ -1650,6 +1652,7 @@ func setRelationshipPropertyIfChanged(edge *storage.Edge, prop string, value int
 }
 
 func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwindVar string, items []interface{}, mutationPart, returnPart string) (*ExecuteResult, bool, error) {
+	ctx = withExpressionFailureSlot(ctx)
 	plan := e.cachedUnwindMergeChainPlan(mutationPart)
 	if !plan.supported {
 		return nil, false, nil
@@ -1744,9 +1747,6 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 			return e.parseValue(ctx, trimmed)
 		}
 		return val
-	}
-	resolveWithValue := func(expr string, values map[string]interface{}) interface{} {
-		return resolveBatchValue(expr, values)
 	}
 	notifyOnce := func(nodeID storage.NodeID) {
 		key := string(nodeID)
@@ -1922,9 +1922,14 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 			}
 
 			if step.with != nil {
-				for _, assignment := range step.with.assignments {
-					rowValues[assignment.alias] = resolveWithValue(assignment.expr, rowValues)
+				projected, accepted, resolved := e.pipelineProjectWithRow(ctx, pipelineRow(rowValues), step.with.projection, nil, nil)
+				if failure := getExpressionFailure(ctx); failure != nil {
+					return failure
 				}
+				if !resolved || !accepted {
+					return nil
+				}
+				rowValues = map[string]interface{}(projected)
 				continue
 			}
 

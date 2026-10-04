@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Execute compiled batch WITH through the shared row projector, so all items
+  read the incoming scope before aliases are published. Preserve shared scope
+  pruning and propagate typed projection errors for transaction rollback (#713).
+
 - Compile UNWIND-batch WITH assignments from shared projection metadata and
   canonical aliases. Reject aggregate, DISTINCT and modifier plans before batch
   writes so grouping and windows stay on the shared pipeline (#713).

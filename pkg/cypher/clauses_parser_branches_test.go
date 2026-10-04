@@ -194,6 +194,63 @@ func TestGh713WithCompilerRoutesAndWriteAdmission(t *testing.T) {
 	}
 }
 
+func TestGh713CompiledWithItemsReadIncomingScope(t *testing.T) {
+	items := []interface{}{map[string]interface{}{"id": "a", "value": int64(1)}}
+	for _, route := range []string{"batch", "autocommit", "explicit transaction"} {
+		for _, projection := range []string{"2 AS x, x AS previous", "x AS previous, 2 AS x"} {
+			t.Run(route+"/"+projection, func(t *testing.T) {
+				exec, ctx := newUnitExecutor(t)
+				mutation := "MERGE (n:ScopeSeed {id: row.id}) WITH n, row, row.value AS x WITH n, row, " + projection +
+					" MERGE (m:ScopeValue {id: row.id}) SET m.value = previous"
+				var err error
+				if route == "batch" {
+					_, supported, batchErr := exec.executeUnwindMergeChainBatch(ctx, "row", items, mutation, "RETURN count(m) AS total")
+					require.True(t, supported)
+					err = batchErr
+				} else {
+					if route == "explicit transaction" {
+						_, err = exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+					}
+					_, err = exec.Execute(ctx, "UNWIND $rows AS row "+mutation+" RETURN count(m) AS total", map[string]interface{}{"rows": items})
+				}
+				require.NoError(t, err)
+				if route == "explicit transaction" {
+					_, err = exec.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+				}
+				stored, err := exec.Execute(ctx, "MATCH (m:ScopeValue) RETURN m.value AS value", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(1)}}, stored.Rows)
+			})
+		}
+	}
+}
+
+func TestGh713CompiledWithFailureRollsBackWrites(t *testing.T) {
+	for _, mode := range []string{"autocommit", "explicit transaction"} {
+		t.Run(mode, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			if mode == "explicit transaction" {
+				_, err := exec.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+			}
+			_, err := exec.Execute(ctx,
+				"UNWIND $rows AS row MERGE (n:ScopeSeed {id: row.id}) WITH n, row, 1 / $zero AS value MERGE (m:ScopeValue {id: row.id}) SET m.value = value RETURN count(m) AS total",
+				map[string]interface{}{"rows": []interface{}{map[string]interface{}{"id": "a"}}, "zero": int64(0)})
+			require.Error(t, err)
+			require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
+			if mode == "explicit transaction" {
+				_, err = exec.Execute(ctx, "ROLLBACK", nil)
+				require.NoError(t, err)
+			}
+			stored, err := exec.Execute(ctx, "MATCH (n) RETURN count(n) AS total", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(0)}}, stored.Rows)
+		})
+	}
+}
+
 func TestGh713CountReturnWindowsPreserveWrites(t *testing.T) {
 	for _, mode := range []string{"autocommit", "explicit transaction"} {
 		for _, test := range []struct {

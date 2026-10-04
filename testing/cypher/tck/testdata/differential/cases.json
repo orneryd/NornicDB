@@ -2535,5 +2535,22 @@
     "name": "issue713 compiled WITH zero limit preserves preceding writes",
     "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH n, row, row.value AS score LIMIT 0 MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
     "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH shadowed alias reads incoming value",
+    "query": "UNWIND $rows AS row MERGE (n:ScopeSeed {id: row.id}) WITH n, row, row.value AS x WITH n, row, 2 AS x, x AS previous MERGE (m:ScopeValue {id: row.id}) SET m.value = previous RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}]}
+  },
+  {
+    "name": "issue713 compiled WITH reversed alias order control",
+    "query": "UNWIND $rows AS row MERGE (n:ScopeSeed {id: row.id}) WITH n, row, row.value AS x WITH n, row, x AS previous, 2 AS x MERGE (m:ScopeValue {id: row.id}) SET m.value = previous RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}]}
+  },
+  {
+    "name": "issue713 compiled WITH arithmetic failure rolls back writes",
+    "query": "UNWIND $rows AS row MERGE (n:ScopeSeed {id: row.id}) WITH n, row, 1 / $zero AS value MERGE (m:ScopeValue {id: row.id}) SET m.value = value RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a"}], "zero": 0},
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
   }
 ]

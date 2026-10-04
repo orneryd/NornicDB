@@ -874,3 +874,30 @@ matrices, both official ratchets and both-parser WITH/UNION/async-CREATE races.
 
 Publish with `Refs #713`; broader projection, WHERE and CI/TestKit acceptance
 remains open, #547 excluded. No performance or running-installation change.
+
+### Compiled WITH Incoming-Scope Evaluation: 2026-10-04
+
+Compiled WITH published each alias into its input map before evaluating the
+next item. `2 AS x, x AS previous` therefore persisted 2 instead of incoming
+x=1. Regression-first tests reproduce the defect on direct batch, public
+autocommit and explicit transactions; reversed item order passes before repair.
+
+Store the compiled shared row-projection leaves and delegate execution to
+`pipelineProjectWithRow`. All items read the incoming row, then the projected
+scope continues to later mutations. Retire the sequential assignment evaluator.
+Use the production failure-slot API and propagate recorded typed errors;
+both public ArithmeticError controls verify complete transaction rollback.
+Standalone package build catches production/test-only helper confusion before
+qualification; that local wiring error was corrected, not published.
+
+Three appended cases preserve the protected corpus prefix and pin both alias
+orders' graph effects plus exact ArithmeticError/zero effects. Both parsers
+pass 1,002 Bolt and 1,012 HTTP comparisons across both modes: 4,028 total
+against pinned Neo4j 5.26.30. Both official ratchets pass 7,794 outcomes/parser,
+zero gaps, setup blockers or harness errors. Fresh isolated repository
+correctness, both-parser compiled-batch races, scoped vet, diagnostics and
+standalone build pass. Prior WITH compiler publication 8e7d775c has successful
+CI, Conformance and Docs checks. No tests are removed.
+
+Publish with `Refs #713`; remaining projection/WHERE/CI-TestKit acceptance stays
+open, #547 excluded. No performance or running-installation claim.
