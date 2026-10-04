@@ -194,6 +194,19 @@ Unhandled queries must fail like Neo4j fails them, through the converged pipelin
 
 ## Shared Predicate Plan Increment (#728, 2026-10-04)
 
+- [x] Continued in PR #897: retire context-WHERE manual AND/OR/NOT routing,
+  single-variable redispatch and the private compiler call. Four null/error
+  negation failures in `TestGh728ContextWherePreservesSharedTruth` reproduce
+  before convergence and pass afterward. Function-name substrings no longer
+  reject scalar property operands; count/collect/exists admission and zero
+  allocations are pinned by `TestGh728ContextWherePropertyNamesZeroAllocations`.
+  Full Cypher correctness, both-parser focused races and vet pass; Graphify's
+  historical context dependency is corroborated against current source. Six
+  matched M2 Max medians: scalar comparison 182.45 -> 104.1 ns; arithmetic
+  14865.5 -> 140.7 ns (3944 -> 0 B, 19 -> 0 allocations); parameter arithmetic
+  7742 -> 118.6 ns (416 -> 0 B, 8 -> 0 allocations). CPU profiles are separate
+  from allocation measurements. Broader WHERE placement acceptance stays open.
+
 - [x] Follow-up to merged #891: reproduce quoted-whitespace corruption in
 	binding admission and reuse the pipeline normalizer with the shared quote
 	scanner. `TestGh728BindingFilterPreservesQuotedWhitespace` and

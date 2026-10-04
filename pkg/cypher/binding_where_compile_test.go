@@ -134,6 +134,56 @@ func TestGh728SharedArithmeticPredicateZeroAllocations(t *testing.T) {
 	}
 }
 
+func TestGh728ContextWherePreservesSharedTruth(t *testing.T) {
+	exec := &StorageExecutor{}
+	nodes := map[string]*storage.Node{"n": {ID: "node", Properties: map[string]interface{}{"count": int64(1)}}}
+	for _, test := range []struct {
+		name, clause, code string
+		want               bool
+	}{
+		{"empty clause", "", "", true},
+		{"null equality negation", "NOT (n.missing = 1)", "", false},
+		{"null inequality negation", "NOT (n.missing <> 1)", "", false},
+		{"null arithmetic negation", "NOT (n.missing + 1 > 0)", "", false},
+		{"null membership negation", "NOT (n.missing IN [1, null])", "", false},
+		{"arithmetic parameters", "n.count + $offset = $expected", "", true},
+		{"arithmetic failure negation", "NOT (n.count / 0 > 0)", "Neo.ClientError.Statement.ArithmeticError", false},
+		{"non boolean", "1", "Neo.ClientError.Statement.TypeError", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"offset": int64(1), "expected": int64(2)}))
+			require.Equal(t, test.want, exec.evaluateWhereForContext(ctx, test.clause, nodes))
+			failure := getExpressionFailure(ctx)
+			if test.code == "" {
+				require.NoError(t, failure)
+			} else {
+				require.Error(t, failure)
+				require.True(t, strings.HasPrefix(statusText(failure), test.code), statusText(failure))
+			}
+		})
+	}
+}
+
+func TestGh728ContextWherePropertyNamesZeroAllocations(t *testing.T) {
+	exec := &StorageExecutor{}
+	ctx := context.Background()
+	nodes := map[string]*storage.Node{"n": {ID: "node", Properties: map[string]interface{}{"count": int64(1), "collect": int64(1), "exists": int64(1)}}}
+	for _, name := range []string{"count", "collect", "exists"} {
+		t.Run(name, func(t *testing.T) {
+			clause := "n." + name + " >= 0"
+			plan := planRowPredicate(clause)
+			require.NotNil(t, plan)
+			require.True(t, plan.complete)
+			require.True(t, exec.evaluateWhereForContext(ctx, clause, nodes))
+			require.Zero(t, testing.AllocsPerRun(100, func() {
+				if !exec.evaluateWhereForContext(ctx, clause, nodes) {
+					t.Fatal("property name must not be mistaken for a function")
+				}
+			}))
+		})
+	}
+}
+
 func TestGh728BindingFilterPreservesQuotedWhitespace(t *testing.T) {
 	exec := &StorageExecutor{}
 	for _, separator := range []string{"\t", "\n", "\r"} {
