@@ -317,13 +317,30 @@ func (w *transactionStorageWrapper) StreamNodesByLabelProjected(label string, pr
 }
 
 // StreamNodesWithOptions satisfies the storage.Engine streaming contract on the
-// transaction view. Reads route through the transaction's merged node view
-// (pending writes included), with prefix scope and projection applied per node.
-// It reads every node: GetNodesByLabel("") listed only nodes with an empty
-// label, so the stream visited nothing inside a transaction (#824).
+// transaction view: the transaction's snapshot overlaid with its pending
+// writes, streamed by BadgerTransaction.StreamNodesWithOptions with the
+// caller's projection, PropertyFilter and prefix (within this wrapper's
+// namespace). Materialising AllNodes here decoded every node in full for a
+// label-less match inside a transaction (#824).
 func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, fn func(*storage.Node) error) error {
 	if fn == nil {
 		return storage.ErrInvalidData
+	}
+	if w.tx != nil {
+		physical := opts
+		if w.namespace != "" {
+			physical.Prefix = w.namespace + w.separator + opts.Prefix
+		}
+		return w.tx.StreamNodesWithOptions(ctx, physical, func(node *storage.Node) error {
+			if w.namespace == "" {
+				return fn(node)
+			}
+			// Streamed nodes are read-only for the caller, as in
+			// StreamNodesByLabelProjected: strip the ID prefix on a shallow copy.
+			out := *node
+			out.ID = w.unprefixNodeID(out.ID)
+			return fn(&out)
+		})
 	}
 	nodes, err := w.AllNodes()
 	if err != nil {

@@ -5,6 +5,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1919,6 +1920,118 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
 	}
 	return tx.streamPendingLabelNodesLocked(matchesLabel, seen, properties, invokeVisit)
+}
+
+// StreamNodesWithOptions streams the transaction's view of every node (its
+// snapshot overlaid with its own pending writes) with the engine scan's
+// options: prefix, projection, PropertyFilter, embeddings and decay. Committed
+// nodes are streamed from the pinned snapshot and never materialised as a
+// population: AllNodes did, so a property match without a label inside a
+// transaction, which includes every write statement, decoded every node in
+// full (#824). A transaction built without a pinned snapshot reads the
+// committed view its other reads take (getAllCommittedNodesLocked). Pending
+// writes replace their committed versions and are not filtered (callers test
+// every node they receive); ErrIterationStopped from visit ends the stream.
+func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, visit func(*Node) error) error {
+	if visit == nil {
+		return ErrInvalidData
+	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return err
+	}
+	stopped := false
+	invokeVisit := func(node *Node) error {
+		tx.mu.Unlock()
+		err := visit(node)
+		tx.mu.Lock()
+		if err == ErrIterationStopped {
+			stopped = true
+		}
+		return err
+	}
+	inScope := func(id NodeID) bool {
+		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
+	}
+	readPending := func(node *Node) *Node {
+		if opts.Projection != nil {
+			return projectCachedNodeForRead(node, opts.Projection)
+		}
+		return copyNode(node)
+	}
+
+	hasPending := len(tx.pendingNodes) > 0 || len(tx.deletedNodes) > 0
+	var seen map[NodeID]struct{}
+	if hasPending {
+		seen = make(map[NodeID]struct{}, len(tx.pendingNodes))
+	}
+	emitCommitted := func(node *Node) error {
+		if hasPending {
+			if _, deleted := tx.deletedNodes[node.ID]; deleted {
+				return nil
+			}
+			if pending, exists := tx.pendingNodes[node.ID]; exists {
+				seen[node.ID] = struct{}{}
+				return invokeVisit(readPending(pending))
+			}
+		}
+		return invokeVisit(node)
+	}
+
+	var err error
+	if tx.snapshotTx != nil {
+		err = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
+			return tx.engine.streamNodesWithOptionsInTxn(ctx, txn, opts, emitCommitted)
+		})
+	} else {
+		err = tx.streamCommittedNodesLocked(opts, inScope, emitCommitted)
+	}
+	if stopped || err == ErrIterationStopped {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// Pending and deleted nodes are disjoint: CreateNode clears a deletion.
+	for id, node := range tx.pendingNodes {
+		if _, emitted := seen[id]; emitted || !inScope(id) {
+			continue
+		}
+		if err := invokeVisit(readPending(node)); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// streamCommittedNodesLocked is the committed side of StreamNodesWithOptions
+// for a transaction built without a pinned physical snapshot: the committed
+// view the transaction's other reads take (getAllCommittedNodesLocked),
+// scoped, projected and filtered after decoding.
+func (tx *BadgerTransaction) streamCommittedNodesLocked(opts StreamNodesOptions, inScope func(NodeID) bool, emit func(*Node) error) error {
+	nodes, err := tx.getAllCommittedNodesLocked()
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if !inScope(node.ID) {
+			continue
+		}
+		if opts.Projection != nil {
+			node = projectCachedNodeForRead(node, opts.Projection)
+		}
+		if opts.PropertyFilter != nil && !opts.PropertyFilter(node.Properties) {
+			continue
+		}
+		if err := emit(node); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // A long-lived explicit transaction may execute many unrelated projections.

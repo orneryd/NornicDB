@@ -635,6 +635,16 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	return b.withView(func(txn *badger.Txn) error {
+		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, fn)
+	})
+}
+
+// streamNodesWithOptionsInTxn is StreamNodesWithOptions over one read
+// transaction: the engine's current view, or a transaction's pinned physical
+// snapshot (BadgerTransaction.StreamNodesWithOptions, #824). ErrIterationStopped
+// from fn ends the scan and is not returned.
+func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, opts StreamNodesOptions, fn func(node *Node) error) error {
 	nowNanos := DecayScoringTime()
 	var include map[string]struct{}
 	if opts.Projection != nil {
@@ -683,24 +693,10 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		return nil
 	}
 
-	return b.withView(func(txn *badger.Txn) error {
-		if opts.Prefix == "" {
-			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
-			defer it.Close()
-			for it.Rewind(); it.Valid(); it.Next() {
-				if err := visit(txn, it.Item()); err != nil {
-					if err == ErrIterationStopped {
-						return nil // Normal stop
-					}
-					return err
-				}
-			}
-			return nil
-		}
-		seekPrefix := append([]byte{prefixNode}, []byte(opts.Prefix)...)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(seekPrefix))
+	if opts.Prefix == "" {
+		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
 		defer it.Close()
-		for it.Seek(seekPrefix); it.ValidForPrefix(seekPrefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			if err := visit(txn, it.Item()); err != nil {
 				if err == ErrIterationStopped {
 					return nil // Normal stop
@@ -709,7 +705,19 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			}
 		}
 		return nil
-	})
+	}
+	seekPrefix := append([]byte{prefixNode}, []byte(opts.Prefix)...)
+	it := txn.NewIterator(badgerPrefixIteratorOptions(seekPrefix))
+	defer it.Close()
+	for it.Seek(seekPrefix); it.ValidForPrefix(seekPrefix); it.Next() {
+		if err := visit(txn, it.Item()); err != nil {
+			if err == ErrIterationStopped {
+				return nil // Normal stop
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // StreamNodes implements StreamingEngine.StreamNodes for memory-efficient iteration.

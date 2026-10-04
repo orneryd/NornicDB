@@ -228,6 +228,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stream a label-less property match inside a transaction, which includes every
+  write statement, from the transaction's snapshot with only the matched
+  properties decoded, instead of decoding every node in full. Writes such as
+  graphify's `MATCH (a {id: $src}), (b {id: $tgt}) MERGE …` and reads in
+  explicit transactions now cost what an auto-commit read does (#824).
+
 - Route a top-level UNION before the auto-commit async CREATE fast paths: on a
   server, a UNION whose first branch is a CREATE ran that branch for the whole
   statement. Mismatched branch columns wrote the node and returned the rest of
