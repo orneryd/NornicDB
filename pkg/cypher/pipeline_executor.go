@@ -247,7 +247,10 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 		for _, p := range findAllTopLevelPipelineKeywordPositions(cypher, k.name) {
 			if k.kind == pipelineClauseMatch {
 				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
-				if strings.HasSuffix(preceding, "OPTIONAL") {
+				// OPTIONAL MATCH is one clause, unless optional is a variable
+				// (WITH x, optional MATCH (n), #894).
+				if end := len(strings.TrimRight(cypher[:p], " \t\n\r")); strings.HasSuffix(preceding, "OPTIONAL") &&
+					!clauseKeywordUsedAsName(cypher, end-len("OPTIONAL"), end, "OPTIONAL") {
 					continue
 				}
 				if strings.HasSuffix(preceding, "ON") {
@@ -3253,7 +3256,9 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		}
 		return out, true
 	}
-	body := pipelineClauseBody(clause, "WITH")
+	// The clause is scanned with its keyword, which tells a keyword-named
+	// first item from a clause (WITH with WHERE with = 3, #894).
+	body := strings.TrimSpace(clause)
 	orderTerms := parseOrderByTerms(body)
 	withSkip, withLimit := 0, -1
 	if skipIndex := topLevelKeywordIndex(body, "SKIP"); skipIndex >= 0 {
@@ -3289,7 +3294,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		}
 	}
 	withDistinct := false
-	body, withDistinct = cutDistinct(body)
+	body, withDistinct = cutDistinct(pipelineClauseBody(body, "WITH"))
 	if strings.TrimSpace(body) == "*" {
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
@@ -3737,7 +3742,7 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 	}
 	name = lowerASCII(strings.TrimSpace(expr[:open]))
 	inner = strings.TrimSpace(extractFuncInner(expr))
-	inner, distinct = cutDistinct(inner)
+	inner, distinct = cutDistinctArgument(inner)
 	if inner == "" {
 		return "", "", false, false
 	}
@@ -3942,14 +3947,15 @@ func returnProjectionPlanFor(clause string) *returnProjectionPlan {
 }
 
 func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
-	body := pipelineClauseBody(clause, "RETURN")
+	// The clause is scanned with its keyword, which tells a keyword-named
+	// first item from a clause (RETURN by ORDER BY by, #894).
+	body := strings.TrimSpace(clause)
 	modifierStart := len(body)
 	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
 		modifierStart = cut
 	}
 	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
-	body = strings.TrimSpace(body[:modifierStart])
-	body, plan.distinct = cutDistinct(body)
+	body, plan.distinct = cutDistinct(pipelineClauseBody(body[:modifierStart], "RETURN"))
 	items := splitTopLevelComma(body)
 	if len(items) > 0 && strings.TrimSpace(items[0]) == "*" {
 		plan.valid, plan.star = true, true

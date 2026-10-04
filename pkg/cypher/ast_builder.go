@@ -1031,7 +1031,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 			fc := &ASTFunctionCall{Name: funcName}
 
 			// Check for DISTINCT
-			argsText, fc.Distinct = cutDistinct(argsText)
+			argsText, fc.Distinct = cutDistinctArgument(argsText)
 
 			args := splitOutsideBrackets(argsText, ',')
 			for _, arg := range args {

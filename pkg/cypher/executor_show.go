@@ -632,8 +632,8 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 func showReturnStarAsYielded(returnClause, yielded string) string {
 	rest := strings.TrimSpace(returnClause[len("RETURN"):])
 	prefix := "RETURN "
-	if startsWithKeywordFold(rest, "DISTINCT") {
-		rest = strings.TrimSpace(rest[len("DISTINCT"):])
+	if body, distinct := cutDistinct(rest); distinct {
+		rest = body
 		prefix = "RETURN DISTINCT "
 	}
 	if !strings.HasPrefix(rest, "*") {

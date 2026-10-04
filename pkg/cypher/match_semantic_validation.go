@@ -775,14 +775,9 @@ func projectionItemTermError(expression string) error {
 // alias, as written, is not one name (WITH n AS return n: the n after the
 // alias is "Invalid input"). A backtick-quoted alias is one name.
 func projectionAliasError(item string) error {
-	as := -1
-	for from := 0; ; {
-		index := keywordIndexFrom(item, "AS", from, defaultKeywordScanOpts())
-		if index < 0 {
-			break
-		}
-		as, from = index, index+len("AS")
-	}
+	// The alias follows the item's own AS (projectionAliasIndex), so an alias
+	// named as is a name (WITH n AS as, #894).
+	as := projectionAliasIndex(item)
 	if as < 0 {
 		return nil
 	}
@@ -828,13 +823,7 @@ func splitWithProjection(clause string) (projection, rest string) {
 }
 
 func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSemanticScope {
-	body := strings.TrimSpace(clause[len("WITH"):])
-	for _, keyword := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
-			body = strings.TrimSpace(body[:index])
-		}
-	}
-	body, _ = cutDistinct(body)
+	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 
 	output := make(matchSemanticScope)
 	for _, raw := range splitTopLevelComma(body) {

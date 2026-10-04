@@ -343,9 +343,9 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 			for _, ae := range aggregateExprs {
 				inner := extractFuncInner(ae.expr)
 				switch {
-				case isAggregateFuncName(ae.expr, "count") && startsWithDistinct(inner):
+				case isAggregateFuncName(ae.expr, "count") && startsWithDistinctArgument(inner):
 					// COUNT(DISTINCT ...) - extract after DISTINCT
-					distinctInner, _ := cutDistinct(inner)
+					distinctInner, _ := cutDistinctArgument(inner)
 					seen := make(map[string]bool)
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
@@ -440,9 +440,9 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					}
 					values[ae.alias] = maxVal
 
-				case isAggregateFuncName(ae.expr, "collect") && startsWithDistinct(inner):
+				case isAggregateFuncName(ae.expr, "collect") && startsWithDistinctArgument(inner):
 					// COLLECT(DISTINCT ...) - extract after DISTINCT
-					distinctInner, _ := cutDistinct(inner)
+					distinctInner, _ := cutDistinctArgument(inner)
 					seen := make(map[string]bool)
 					var collected []interface{}
 					for _, p := range groupPaths {
@@ -581,7 +581,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 
 				if isAggregateFuncName(item.expr, "collect") {
 					// Handle COLLECT (with or without DISTINCT)
-					collectExpr, isDistinct := cutDistinct(inner)
+					collectExpr, isDistinct := cutDistinctArgument(inner)
 
 					seen := make(map[string]bool)
 					var collected []interface{}

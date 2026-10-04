@@ -16,8 +16,13 @@ type pipelineRowWith struct {
 }
 
 func parsePipelineRowWith(clause string) (pipelineRowWith, bool) {
-	body := pipelineClauseBody(clause, "WITH")
-	for _, modifier := range []string{"DISTINCT", "ORDER BY", "SKIP", "LIMIT"} {
+	// The clause is scanned with its keyword, which tells a keyword-named
+	// first item from a clause (WITH with WHERE with = 3, #894).
+	body := strings.TrimSpace(clause)
+	if startsWithDistinct(pipelineClauseBody(body, "WITH")) {
+		return pipelineRowWith{}, false
+	}
+	for _, modifier := range []string{"ORDER BY", "SKIP", "LIMIT"} {
 		if topLevelKeywordIndex(body, modifier) >= 0 {
 			return pipelineRowWith{}, false
 		}
@@ -27,6 +32,7 @@ func parsePipelineRowWith(clause string) (pipelineRowWith, bool) {
 		plan.where = strings.TrimSpace(body[index+len("WHERE"):])
 		body = strings.TrimSpace(body[:index])
 	}
+	body = pipelineClauseBody(body, "WITH")
 	items := splitTopLevelComma(body)
 	// WITH *, items keeps every variable and adds the items (#883).
 	plan.star = len(items) > 0 && strings.TrimSpace(items[0]) == "*"
@@ -401,21 +407,14 @@ func parseProjectionExpressions(clause, keyword string) []string {
 	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
 		return nil
 	}
-	body = strings.TrimSpace(body[len(keyword):])
 	if strings.EqualFold(keyword, "UNWIND") {
+		body = strings.TrimSpace(body[len(keyword):])
 		if asIndex := topLevelKeywordIndex(body, "AS"); asIndex > 0 {
 			return []string{strings.TrimSpace(body[:asIndex])}
 		}
 		return nil
 	}
-	body, _ = cutDistinct(body)
-	end := len(body)
-	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, suffix); index >= 0 && index < end {
-			end = index
-		}
-	}
-	body = strings.TrimSpace(body[:end])
+	body, _ = projectionSemanticBodyAndTail(body, keyword)
 	if body == "" || body == "*" {
 		return nil
 	}

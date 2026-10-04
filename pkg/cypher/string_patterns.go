@@ -343,7 +343,7 @@ func ParseAggregation(expr string) *AggregationResult {
 		return result
 	}
 
-	content, result.Distinct = cutDistinct(content)
+	content, result.Distinct = cutDistinctArgument(content)
 
 	// Parse variable.property or just variable
 	dotIdx := strings.Index(content, ".")

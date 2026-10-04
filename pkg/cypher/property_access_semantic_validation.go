@@ -165,17 +165,18 @@ func projectionSemanticBody(clause, keyword string) string {
 }
 
 // projectionSemanticBodyAndTail splits a WITH / RETURN clause into its
-// projection items and the WHERE / ORDER BY / SKIP / LIMIT that follow.
+// projection items (after DISTINCT) and the WHERE / ORDER BY / SKIP / LIMIT
+// that follow. The clause is scanned with its keyword, which tells a
+// keyword-named first item from a clause (WITH where WHERE where = 3, #894).
 func projectionSemanticBodyAndTail(clause, keyword string) (string, string) {
-	body := strings.TrimSpace(clause[len(keyword):])
-	body, _ = cutDistinct(body)
-	end := len(body)
+	end := len(clause)
 	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, suffix); index >= 0 && index < end {
+		if index := topLevelKeywordIndex(clause, suffix); index >= len(keyword) && index < end {
 			end = index
 		}
 	}
-	return strings.TrimSpace(body[:end]), body[end:]
+	body, _ := cutDistinct(clause[len(keyword):end])
+	return body, clause[end:]
 }
 
 // propertyAccessExpressionType is the static type of a projected or unwound

@@ -293,9 +293,9 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 			for _, ae := range aggregateExprs {
 				inner := extractFuncInner(ae.expr)
 				switch {
-				case isAggregateFuncName(ae.expr, "count") && startsWithDistinct(inner):
+				case isAggregateFuncName(ae.expr, "count") && startsWithDistinctArgument(inner):
 					// COUNT(DISTINCT ...) - extract after DISTINCT
-					distinctInner, _ := cutDistinct(inner)
+					distinctInner, _ := cutDistinctArgument(inner)
 					seen := make(map[string]bool)
 					for _, n := range groupNodes {
 						nodeMap := map[string]*storage.Node{nodePattern.variable: n}
@@ -373,9 +373,9 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 						values[ae.alias] = sumInt
 					}
 
-				case isAggregateFuncName(ae.expr, "collect") && startsWithDistinct(inner):
+				case isAggregateFuncName(ae.expr, "collect") && startsWithDistinctArgument(inner):
 					// COLLECT(DISTINCT ...) - extract after DISTINCT
-					distinctInner, _ := cutDistinct(inner)
+					distinctInner, _ := cutDistinctArgument(inner)
 					seen := make(map[string]bool)
 					var collected []interface{}
 					for _, n := range groupNodes {
@@ -625,9 +625,9 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 			inner := extractFuncInner(item.expr)
 
 			switch {
-			case isAggregateFuncName(item.expr, "count") && startsWithDistinct(inner):
+			case isAggregateFuncName(item.expr, "count") && startsWithDistinctArgument(inner):
 				// COUNT(DISTINCT variable) - extract after DISTINCT
-				distinctInner, _ := cutDistinct(inner)
+				distinctInner, _ := cutDistinctArgument(inner)
 				seen := make(map[interface{}]bool)
 				for _, cr := range computedRows {
 					if val, ok := resolveInnerForRow(cr, distinctInner); ok {
