@@ -284,6 +284,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boolean, temporal value or point is Neo4j's TypeError naming the value
   (`got: Long(1)`); a statically typed argument keeps the SyntaxError (#893).
 
+- Accept a WHERE inside a node or relationship pattern, as Neo4j 5 does:
+  `(a:Q WHERE a.id > 2)`, `-[r:R WHERE r.w > 1]->`. It filters as if it were
+  in the clause's WHERE; on a quantified relationship (`-[r WHERE …]->{1,2}`)
+  it applies to each relationship. It is Neo4j's SyntaxError on a `*`
+  variable-length relationship and in CREATE or MERGE. `WHERE (true)` is a
+  parenthesised literal, not a node pattern (#878).
+
 - Read a `*` or `..` inside a backticked relationship type or a quoted
   property value as part of it, not as a variable length (#879).
 

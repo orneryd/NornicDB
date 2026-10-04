@@ -105,10 +105,9 @@ func (r *labelExpressionRewriter) quantifiedRelationship(open, close, at int, qu
 		return labelExpressionSyntaxError(localization.CypherMatchingQuantifiedPathInWritePattern(mode.clause()))
 	}
 	q := r.query
-	inner := q[open+1 : close]
 	insert := close
-	if where := topLevelKeywordIndex(inner, "WHERE"); where >= 0 {
-		insert = open + 1 + where
+	if where := elementWhereIndex(q, open, close); where >= 0 {
+		insert = where
 	}
 	if brace := indexOutsideQuotes(q[open+1:insert], '{'); brace >= 0 {
 		insert = open + 1 + brace

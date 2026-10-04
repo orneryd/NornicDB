@@ -431,6 +431,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphermatching.optional_match_target_endpoint_unterminated", Constructor: "CypherMatchingOptionalMatchTargetEndpointUnterminated", Fields: []string{"Pattern"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.order_by_parse_failed", Constructor: "CypherMatchingOrderByParseFailed", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.path_pattern_invalid", Constructor: "CypherMatchingPathPatternInvalid", Fields: []string{"Pattern"}, PluralForms: []string{"other"}},
+	{ID: "cyphermatching.pattern_predicate_in_write_pattern", Constructor: "CypherMatchingPatternPredicateInWritePattern", Fields: []string{"Clause", "Element"}, PluralForms: []string{"other"}},
+	{ID: "cyphermatching.pattern_predicate_variable_length", Constructor: "CypherMatchingPatternPredicateVariableLength", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.quantified_path_in_write_pattern", Constructor: "CypherMatchingQuantifiedPathInWritePattern", Fields: []string{"Clause"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.quantifier_in_expression_pattern", Constructor: "CypherMatchingQuantifierInExpressionPattern", Fields: []string{"Token"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.relationship_type_colon_conjunction", Constructor: "CypherMatchingRelationshipTypeColonConjunction", Fields: []string{}, PluralForms: []string{"other"}},

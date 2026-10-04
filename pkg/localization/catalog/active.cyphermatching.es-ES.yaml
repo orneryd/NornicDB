@@ -115,6 +115,12 @@
 - id: cyphermatching.relationship_type_expression_in_write_pattern
   description: Un patrón de relación de CREATE o MERGE usa !, & o %. Clause es una palabra clave de Cypher y no se traduce.
   other: "Las expresiones de tipos de relación en patrones no se permiten en una cláusula {{.Clause}}, solo en una cláusula MATCH"
+- id: cyphermatching.pattern_predicate_in_write_pattern
+  description: "WHERE propio de un patrón de nodo o relación en CREATE o MERGE. Element es Node o Relationship; Clause es la cláusula."
+  other: "Los predicados de patrón de {{.Element}} no se permiten en una cláusula {{.Clause}}, solo en una cláusula MATCH o dentro de una comprensión de patrones"
+- id: cyphermatching.pattern_predicate_variable_length
+  description: "WHERE dentro de un patrón de relación de longitud variable."
+  other: "Los predicados de patrón de relación no se admiten en relaciones de longitud variable."
 - id: cyphermatching.is_not_operand_invalid
   description: IS NOT va seguido de una etiqueta. Input es texto Cypher y no se traduce.
   other: "Entrada no válida '{{.Input}}': se esperaba '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' o 'TYPED'"

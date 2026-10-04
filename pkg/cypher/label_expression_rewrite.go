@@ -71,7 +71,7 @@ func (m labelPatternMode) clause() string {
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
 func desugarLabelExpressions(query string) (string, *queryRewrite, error) {
-	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && indexASCIIFold(query, "shortestpath") < 0 {
+	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) && indexASCIIFold(query, "shortestpath") < 0 {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query}
@@ -96,6 +96,39 @@ func desugarLabelExpressions(query string) (string, *queryRewrite, error) {
 	out.WriteString(query[last:])
 	rewrite.canonical = out.String()
 	return rewrite.canonical, rewrite, nil
+}
+
+// mayUsePatternPredicate reports whether query may hold a pattern element's
+// own WHERE (#878): a WHERE right inside ( or [ that isn't a function's
+// argument list (all(x IN l WHERE …)) and has no IN before it (a list
+// comprehension or list predicate). It never answers false for one.
+func mayUsePatternPredicate(query string) bool {
+	var openers []int
+	for i := 0; i < len(query); i++ {
+		switch c := query[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(query, i, c) - 1
+		case '(', '[', '{':
+			openers = append(openers, i)
+		case ')', ']', '}':
+			if len(openers) > 0 {
+				openers = openers[:len(openers)-1]
+			}
+		case 'W', 'w':
+			if len(openers) == 0 || !matchKeywordAt(query, i, "WHERE") {
+				continue
+			}
+			open := openers[len(openers)-1]
+			if query[open] == '{' || query[open] == '(' && open > 0 && isIdentByte(query[open-1]) {
+				continue
+			}
+			if topLevelKeywordIndex(query[open+1:i], "IN") >= 0 {
+				continue
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // mayUseLabelExpressions reports whether query may hold a label expression:
@@ -462,8 +495,8 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 }
 
 // element rewrites the node (or relationship) pattern query[open:close+1]:
-// its variable, then : or IS and a label chain. quantified marks a
-// relationship followed by a quantifier (#864).
+// its variable, then : or IS and a label chain, and its own WHERE (#878).
+// quantified marks a relationship followed by a quantifier (#864).
 func (r *labelExpressionRewriter) element(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
 	q := r.query
 	i := skipASCIISpaces(q, open+1, close)
@@ -471,6 +504,12 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 	if written, end, ok := scanSymbolicName(q[:close], i); ok && !(strings.EqualFold(written, "IS") && end < close && isASCIISpace(q[end])) {
 		variable, variableEnd = written, end
 		i = skipASCIISpaces(q, end, close)
+	}
+	if where := elementWhereIndex(q, open, close); where >= 0 {
+		if err := r.elementWhere(open, where, close, variable, relationship, quantified, mode, predicates); err != nil {
+			return err
+		}
+		close = trimRightIndex(q, open+1, where)
 	}
 	if i >= close {
 		return nil
@@ -513,6 +552,50 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 	variable = r.elementVariable(open, variable)
 	r.edit(chainStart, chainEnd, labelChainText(chain.expr.requiredLabels()))
 	*predicates = append(*predicates, variable+":"+chain.expr.String())
+	return nil
+}
+
+// elementWhereIndex is the index of the WHERE that starts the pattern
+// element query[open:close+1]'s own predicate (#878), or -1. The element's
+// variable comes first, so a variable named where isn't the keyword.
+func elementWhereIndex(q string, open, close int) int {
+	i := skipASCIISpaces(q, open+1, close)
+	if _, end, ok := scanSymbolicName(q[:close], i); ok {
+		i = end
+	}
+	if where := topLevelKeywordIndex(q[i:close], "WHERE"); where >= 0 {
+		return i + where
+	}
+	return -1
+}
+
+// elementWhere moves the predicate of a pattern element's own WHERE
+// (query[where:close], close being the element's ] or )) to the clause's
+// WHERE, as Neo4j defines it (#878): on a quantified relationship it applies
+// to each of the relationships, written all(r IN r WHERE …) so the predicate
+// reads the iteration variable under the relationship's own name. Neo4j
+// rejects the predicate on a * variable-length relationship and in CREATE or
+// MERGE.
+func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable string, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
+	q := r.query
+	element := "Node"
+	if relationship {
+		element = "Relationship"
+	}
+	if mode != labelPatternMatch {
+		return labelExpressionSyntaxError(localization.CypherMatchingPatternPredicateInWritePattern(element, mode.clause()))
+	}
+	if relationship && indexOutsideQuotes(q[open+1:where], '*') >= 0 {
+		return labelExpressionSyntaxError(localization.CypherMatchingPatternPredicateVariableLength())
+	}
+	predicate := strings.TrimSpace(q[where+len("WHERE") : close])
+	r.edit(where, close, "")
+	if quantified {
+		variable = r.elementVariable(open, variable)
+		*predicates = append(*predicates, "all("+variable+" IN "+variable+" WHERE "+predicate+")")
+		return nil
+	}
+	*predicates = append(*predicates, "("+predicate+")")
 	return nil
 }
 

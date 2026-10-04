@@ -544,10 +544,22 @@ func (e *StorageExecutor) validateMatchWhereSimpleOperands(scope matchSemanticSc
 	return nil
 }
 
+// isBooleanOrNullLiteral reports whether word is true, false or null, in any
+// case.
+func isBooleanOrNullLiteral(word string) bool {
+	switch upperASCII(word) {
+	case "TRUE", "FALSE", "NULL":
+		return true
+	}
+	return false
+}
+
 func (e *StorageExecutor) validateWherePatternExpressionScope(scope matchSemanticScope, expression string) error {
 	expression = strings.TrimSpace(expression)
 	if inner, enclosed := stripEnclosingExpressionParentheses(expression); enclosed {
-		if variable := simpleSemanticIdentifier(inner); variable != "" {
+		// (true), (false) and (null) are parenthesised literals, not node
+		// patterns (#878 writes an element's own predicate in parentheses).
+		if variable := simpleSemanticIdentifier(inner); variable != "" && !isBooleanOrNullLiteral(variable) {
 			if _, inScope := scope[variable]; !inScope {
 				if _, externallyBound := e.fabricRecordBindings[variable]; !externallyBound {
 					return createUndefinedVariableError(variable)
