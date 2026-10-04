@@ -300,6 +300,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quantifier on a variable-length relationship, in CREATE or MERGE, or in a
   pattern predicate or comprehension is a SyntaxError, as in Neo4j (#864).
 
+- Read `WITH *, items` and `RETURN *, items` as Neo4j does instead of failing
+  with "could not evaluate expression: *": the * stands for every variable in
+  scope, in name order, except one an item redefines, followed by the items.
+  `RETURN DISTINCT *` is accepted, a `RETURN *` without rows lists the
+  variables in scope, and `RETURN *` with no variables gives Neo4j's message
+  (#883).
+
 - Re-embed a node whose content changes while the embed worker is embedding
   it. The worker's writeback now lands only while the node still has the
   properties and labels it embedded; before, it stored the old content's

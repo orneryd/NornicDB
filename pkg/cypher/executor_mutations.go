@@ -1734,7 +1734,12 @@ func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
 	}
 	plan := returnProjectionPlanFor("RETURN " + returnPart)
 	if plan.star {
-		return []returnItem{{expr: "*"}}
+		items := []returnItem{{expr: "*"}}
+		for _, item := range plan.starItems {
+			expr, alias := parseProjectionExprAlias(item)
+			items = append(items, returnItem{expr: expr, alias: alias})
+		}
+		return items
 	}
 	items := make([]returnItem, 0, len(plan.projections))
 	for _, projection := range plan.projections {

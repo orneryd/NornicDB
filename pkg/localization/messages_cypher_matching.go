@@ -49,6 +49,7 @@ const (
 	MessageCypherMatchingPatternPredicateInWritePattern           MessageID = "cyphermatching.pattern_predicate_in_write_pattern"
 	MessageCypherMatchingPatternPredicateVariableLength           MessageID = "cyphermatching.pattern_predicate_variable_length"
 	MessageCypherMatchingIsNotOperandInvalid                      MessageID = "cyphermatching.is_not_operand_invalid"
+	MessageCypherMatchingReturnStarNoVariables                    MessageID = "cyphermatching.return_star_no_variables"
 )
 
 func cypherMatchingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -258,6 +259,12 @@ func CypherMatchingPatternPredicateInWritePattern(element, clause string) Messag
 // WHERE inside a variable-length relationship pattern (#878).
 func CypherMatchingPatternPredicateVariableLength() Message {
 	return cypherMatchingMessage(MessageCypherMatchingPatternPredicateVariableLength, "Relationship pattern predicates are not supported for variable-length relationships.", nil)
+}
+
+// CypherMatchingReturnStarNoVariables is Neo4j's SyntaxError for RETURN *
+// with no variable in scope.
+func CypherMatchingReturnStarNoVariables() Message {
+	return cypherMatchingMessage(MessageCypherMatchingReturnStarNoVariables, "RETURN * is not allowed when there are no variables in scope", nil)
 }
 
 func CypherMatchingIsNotOperandInvalid(input string) Message {

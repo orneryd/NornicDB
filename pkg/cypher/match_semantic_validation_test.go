@@ -192,8 +192,13 @@ func TestMandatoryMatchDropsNullOptionalBinding(t *testing.T) {
 func requireMatchSemanticDetail(t *testing.T, err error, detail string) {
 	t.Helper()
 	require.Error(t, err)
-	var semanticError *SemanticError
-	require.True(t, errors.As(err, &semanticError))
-	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code)
-	require.Equal(t, detail, semanticError.Detail)
+	// The Bolt layer reads code and detail through these interfaces, which
+	// semantic and localized classified errors both implement.
+	var classified interface {
+		BoltErrorCode() string
+		BoltErrorDetail() string
+	}
+	require.True(t, errors.As(err, &classified))
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
+	require.Equal(t, detail, classified.BoltErrorDetail())
 }
