@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -778,6 +779,12 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 // unresolved and evaluateRowExpressionWithContext records err.
 func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
 	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
+	// Keep the statement's clock for the functions that read it (decay, #866).
+	if statement, ok := values[temporalRowContextKey].(context.Context); ok {
+		if instant, ok := statement.Value(temporalStatementTimeKey{}).(time.Time); ok {
+			ctx = context.WithValue(ctx, temporalStatementTimeKey{}, instant)
+		}
+	}
 	value := e.evaluateExpressionFromValuesContext(ctx, expr, values)
 	return value, getExpressionFailure(ctx)
 }

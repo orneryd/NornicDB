@@ -229,7 +229,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	for name, value := range parameterRowValues(ctx) {
 		bind(name, value)
 	}
-	if containsTemporalClockCall(expr) {
+	if containsStatementClockCall(expr) {
 		bind(temporalRowContextKey, ctx)
 	}
 	if extended != nil {

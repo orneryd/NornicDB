@@ -1714,6 +1714,7 @@ func (e *StorageExecutor) evaluateMatchRowPredicate(ctx context.Context, express
 }
 
 func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expression string, values map[string]interface{}) bool {
+	values = rowValuesWithStatementContext(ctx, expression, values)
 	// A predicate already planned as complete is evaluated from its plan:
 	// the scans below look for forms it doesn't have, and run once per row.
 	if plan, cached := rowPredicatePlans.get(expression); cached && plan != nil && plan.complete {
@@ -1725,6 +1726,23 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 		}
 	}
 	return e.evaluateRowPredicateParts(ctx, expression, values)
+}
+
+// rowValuesWithStatementContext returns a row predicate's values with the
+// statement context bound (temporalRowContextKey) when the predicate reads the
+// statement's clock, as evaluateRowExpressionWithContext binds it for a
+// projection: every clock call of one statement then reads one instant
+// (#872). values itself is not modified.
+func rowValuesWithStatementContext(ctx context.Context, expression string, values map[string]interface{}) map[string]interface{} {
+	if _, bound := values[temporalRowContextKey]; bound || !containsStatementClockCall(expression) {
+		return values
+	}
+	extended := make(map[string]interface{}, len(values)+1)
+	for key, value := range values {
+		extended[key] = value
+	}
+	extended[temporalRowContextKey] = ctx
+	return extended
 }
 
 // evaluateRowPredicateParts is evaluateRowPredicate for a predicate whose CASE

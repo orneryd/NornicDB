@@ -71,12 +71,16 @@ func (e *StorageExecutor) resolveEntityForDecay(
 	return resolvedEntity{}, false
 }
 
-func (e *StorageExecutor) getDecayContext() (be *storage.BadgerEngine, nowNanos int64, ok bool) {
+// getDecayContext returns the Badger engine that scores decay and the scoring
+// time: the statement's clock (the instant datetime.statement() reads), so
+// every decay function of one statement scores at one instant (#866). Outside
+// a statement it is the current time.
+func (e *StorageExecutor) getDecayContext(ctx context.Context) (be *storage.BadgerEngine, nowNanos int64, ok bool) {
 	be = unwrapBadgerEngine(e.storage)
 	if be == nil {
 		return nil, 0, false
 	}
-	return be, storage.DecayScoringTime(), true
+	return be, e.temporalClockTime(ctx, "statement").UnixNano(), true
 }
 
 func (e *StorageExecutor) logDecayMismatchOnce() {
@@ -108,7 +112,7 @@ func (e *StorageExecutor) evalDecayScore(
 		return 1.0
 	}
 
-	be, nowNanos, ok := e.getDecayContext()
+	be, nowNanos, ok := e.getDecayContext(ctx)
 	if !ok {
 		return 1.0
 	}
@@ -171,7 +175,7 @@ func (e *StorageExecutor) evalDecay(
 		return decayDisabledMap(localization.CypherKnowledgePolicyReasonEntityNotFound().Fallback)
 	}
 
-	be, nowNanos, ok := e.getDecayContext()
+	be, nowNanos, ok := e.getDecayContext(ctx)
 	if !ok {
 		return decayDisabledMap(localization.CypherKnowledgePolicyReasonNoBadgerEngine().Fallback)
 	}
@@ -233,7 +237,7 @@ func (e *StorageExecutor) evalPolicy(
 		return minimalPolicyMap("")
 	}
 
-	be, _, ok := e.getDecayContext()
+	be, _, ok := e.getDecayContext(ctx)
 	if !ok {
 		return minimalPolicyMap(ent.entityID)
 	}

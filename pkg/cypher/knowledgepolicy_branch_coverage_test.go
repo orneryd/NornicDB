@@ -260,7 +260,7 @@ func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
 	_, ok = exec.resolveEntityForDecay("missing", nil, nil)
 	require.False(t, ok)
 
-	be, nowNanos, ok := exec.getDecayContext()
+	be, nowNanos, ok := exec.getDecayContext(context.Background())
 	require.False(t, ok)
 	require.Nil(t, be)
 	require.Zero(t, nowNanos)
