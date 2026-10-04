@@ -19,6 +19,9 @@
 	- Verified (#521): `scripts/graphify_divergence.py` streams Graphify 0.9.69 graphs and compares sorted component/label candidate keys using one filter. `docs/plans/reports/graphify-local-candidates.md` records commands, graph hashes and eight-component counts for clean source revisions `994b3a68` and `23d7666f`: 42 historical groups, 38 current, 33 retained, nine old-only, five current-only. Both analyzer tests pass; the comparison CLI reproduces the counts. The original `graphify/analyze.py` and per-component graphs are not tracked, so their source-similarity ranking is not equated with this new ledger; candidate disposition remains under 8.4.
 	- Baseline (#521, Apple M2 Max): `go test ./pkg/cypher ./testing/cypher/tck -cover` passes, with 87.3% and 68.2% statement coverage respectively (recorded for later improvement, not a blocker per owner direction). `go test ./pkg/cypher -run '^$' -bench '^BenchmarkStatementRouting/(autocommit|explicit_tx)/simple_match_limit$' -benchmem -cpu=1 -count=3`: autocommit 17,767–17,992 ns/op, 11,207 B/op, 162–163 allocs/op; explicit tx 11,451–11,551 ns/op, 5,634 B/op, 90 allocs/op. These are workload-specific snapshot figures, not a before/after comparison against the older per-component report.
 
+- [x] 1.9 Complete #530 SHOW/CALL family acceptance under the approved native metadata policy.
+	- Implementation `d7f67a1d` passes CI, Cypher Conformance and Docs Pages, with 3,604 pinned Bolt/HTTP comparisons, 141 reference function signatures, 28 shared procedure definitions and three token comparisons. The existing report records the original/latest acceptance and truthful native backend representations. #713/#728/#754 retain independent gates; #547 is excluded. No running local installation was changed.
+
 ## 2. Share execution context and lexical contracts
 
 - [x] 2.1 Extract common preparation while retaining public/internal cache, limits and transaction differences.

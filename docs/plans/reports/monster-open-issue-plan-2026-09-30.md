@@ -439,3 +439,30 @@ regression tests. Those edits were not reverted, included or credited as tested.
 No test function was removed by this batch; the fixture workaround was replaced
 with stronger assertions. #530 remains open pending its final family decision;
 #713/#728/#754 retain separate gates and #547 remains excluded.
+
+### Final SHOW Family Acceptance
+
+The #530 acceptance decision now covers its original CALL/YIELD aggregation,
+empty-input aggregation, projection/filter/window and row-carrying cases, and
+the reporter's latest SHOW inventory addendum. Composite-after-single-property
+and multi-label fulltext metadata are fixed by #531 and retained in the stronger
+SHOW recreation fixture. Missing reference function listings and shared metadata
+are covered by the passing 141-signature inventory comparison; procedure metadata
+has 28 shared-definition and three token comparisons. The historical localization
+generation and active-collector clear regressions no longer reproduce.
+
+The approved native policy remains explicit: truthful product/database/user
+identity, localized metadata and additional native inventory/constraint columns;
+native POINT scan metadata does not advertise nonexistent spatial acceleration
+bounds, and store metadata does not invent Neo4j's record-aligned format. These
+are documented backend representations, not claims of literal Neo4j value parity.
+The decision does not close projection/WHERE architecture convergence or #547.
+
+Published implementation `d7f67a1d233fa4897f0f59e74a5f8c9e6bf9ac54` has green
+GitHub [CI](https://github.com/orneryd/NornicDB/actions/runs/37177106250),
+[Cypher Conformance](https://github.com/orneryd/NornicDB/actions/runs/37177106209)
+and [Docs Pages](https://github.com/orneryd/NornicDB/actions/runs/37177106256).
+Its tested source also passes repository correctness, focused races, vet,
+catalog generation and 3,604 pinned Bolt/HTTP comparisons. Only graphify scripts
+and documentation are currently uncommitted; production code compiles. No local
+installation or running service was changed for this acceptance decision.
