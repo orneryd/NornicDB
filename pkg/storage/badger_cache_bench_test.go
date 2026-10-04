@@ -31,6 +31,9 @@ func BenchmarkBadger_GetNode_CacheHit(b *testing.B) {
 	if _, err := engine.CreateNode(node); err != nil {
 		b.Fatal(err)
 	}
+	if _, err := engine.GetNode(node.ID); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -39,6 +42,7 @@ func BenchmarkBadger_GetNode_CacheHit(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+	b.StopTimer()
 }
 
 func BenchmarkBadger_GetEdgesByType_CacheHit(b *testing.B) {

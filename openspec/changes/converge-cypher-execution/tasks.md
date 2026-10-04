@@ -155,6 +155,28 @@ Unhandled queries must fail like Neo4j fails them, through the converged pipelin
 - [x] 6.4 Preserve write/read barriers and prohibit LIMIT from skipping required writes, sorting or grouping.
 	- Verified (#521): `TestWriteReturnBarrierAcrossTransactionModes` pins all three CREATEs before ORDER BY/LIMIT, count grouping before LIMIT, and all three SETs before RETURN LIMIT 0; persisted readback agrees in autocommit and after explicit COMMIT. Cypher package passes, and the matrix passes twice under `-race`.
 
+## Allocation CI Increment (#754, 2026-10-04)
+
+- [x] Add six-workload, both-parser allocation comparison with exact sample and
+	operation counts, successful-package completion, historical benchmark aliases
+	and reasoned explicit ceiling validation. Report timing without gating it.
+- [x] Separate measured samples from CPU-profile diagnostics and upload all raw
+	samples, stderr, test binaries, profiles and comparison reports in CI.
+- [x] Reproduce missing baseline-resolution behavior in self-tests; resolve
+	dispatch parents and explicit refs to verified SHA values before checkout.
+	Eight runner self-tests, real parent/full-SHA probes and actionlint pass.
+- [x] Run native/ANTLR live comparisons and identical-source controls at 1,000
+	operations and five samples per workload, all without allocation exceptions.
+	Scalar/control allocations stay unchanged; Badger's 7,915 -> 496 B/op and
+	five -> four allocations correct its warm-up/teardown fixture, not runtime.
+- [x] Observe the allocation matrix on hosted CI; broader #754/TestKit acceptance
+       remains open. The hosted ANTLR run gated `ScalarParameter` at 6,187 ->
+       6,188 B/op against an identical cypher source (rebase-only head), so B/op
+       ceilings now carry a 1% noise tolerance while allocs/op counts and explicit
+       exception ceilings stay exact; nine runner self-tests pass. Recorded local
+       runtime comparisons use c83ac1c8; the PR is based on updated main 52b5dd09.
+       Timing is workload/hardware-specific, not a gate.
+
 ## 7. Stream snapshot reads
 
 - [x] 7.1 Implement projected snapshot-visible iterators including pending mutations and early termination.

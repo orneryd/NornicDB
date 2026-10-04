@@ -24,11 +24,68 @@ on:
       - "go.mod"
       - "go.sum"
   workflow_dispatch:
+    inputs:
+      allocation_base:
+        description: "Allocation baseline ref (defaults to parent for manual runs)"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  allocations:
+    name: Allocation ratchet (${{ matrix.parser }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        parser: [nornic, antlr]
+    steps:
+      - name: Checkout head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: head
+          fetch-depth: 2
+
+      - name: Resolve allocation baseline
+        id: allocation-base
+        env:
+          BASE_REF: ${{ inputs.allocation_base || github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          python3 head/scripts/cypher-tck/allocation_ratchet.py \
+            --resolve-baseline --head head --reference "$BASE_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: base
+          ref: ${{ steps.allocation-base.outputs.sha }}
+          fetch-depth: 2
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.6"
+          cache-dependency-path: head/go.sum
+
+      - name: Verify allocation gate and compare fixed-count workloads
+        run: |
+          python3 head/scripts/cypher-tck/allocation_ratchet.py --self-test
+          python3 head/scripts/cypher-tck/allocation_ratchet.py \
+            --base base --head head --parser ${{ matrix.parser }} \
+            --operations 1000 --samples 5 --tolerance-bytes-pct 1.0 \
+            --artifacts artifacts
+
+      - name: Upload allocation results and CPU profiles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allocations-${{ matrix.parser }}-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+
   conformance:
     name: Cypher conformance
     runs-on: ubuntu-latest
