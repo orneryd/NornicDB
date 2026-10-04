@@ -138,7 +138,7 @@ func TestMonsterIssueBodyReplay(t *testing.T) {
 		"RETURN valueType(1)":                        "INTEGER NOT NULL",
 		"RETURN nullIf(1, 1)":                        nil,
 		"RETURN 9007199254740993 > 9007199254740992": true,
-		"RETURN 9007199254740993 = $v":               true,
+		"RETURN 9007199254740993 = $v":               false, // an integer and a float compare exactly (#893)
 		"UNWIND [9007199254740993, 9007199254740992] AS x WITH x ORDER BY x RETURN collect(x)": []interface{}{int64(9007199254740992), int64(9007199254740993)},
 	} {
 		for _, explicit := range []bool{false, true} {

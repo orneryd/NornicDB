@@ -276,6 +276,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Compare an integer and a float by their exact values everywhere (WHERE,
+  RETURN, ORDER BY, CASE, with or without an index), as Neo4j compares
+  stored values: `9007199254740993 > 9007199254740992.0`. The most negative
+  integer divided by -1 wraps to itself instead of failing, and negating it
+  is Neo4j's long overflow instead of null. `size()` of a stored number,
+  boolean, temporal value or point is Neo4j's TypeError naming the value
+  (`got: Long(1)`); a statically typed argument keeps the SyntaxError (#893).
+
 - Re-embed a node whose content changes while the embed worker is embedding
   it. The worker's writeback now lands only while the node still has the
   properties and labels it embedded; before, it stored the old content's

@@ -83,9 +83,8 @@ func exactIntegerArithmetic(op byte, a, b int64) (result int64, ok bool, err err
 		if b == 0 {
 			return 0, false, nil
 		}
-		if a == math.MinInt64 && b == -1 {
-			return 0, true, longOverflowError()
-		}
+		// MinInt64 / -1 wraps to MinInt64, as in Neo4j (#893); Go's integer
+		// division does the same.
 		result = a / b
 	case '%':
 		if b == 0 {

@@ -3,7 +3,9 @@ package cypher
 import (
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
+	"time"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
@@ -47,7 +49,30 @@ func sizeArgumentError(value interface{}) error {
 	if kind := reflect.TypeOf(value).Kind(); kind == reflect.Slice || kind == reflect.Array {
 		return nil
 	}
-	return typeMismatchError(sizeArgumentTypes, value)
+	// A map, node, relationship or path always has a type Neo4j knows when
+	// it compiles the statement: its SyntaxError. A scalar of the wrong type
+	// that only shows up while the statement runs (a property, an item of a
+	// mixed list) is Neo4j's TypeError, naming the value (#893).
+	if !isRuntimeNumber(value) && !isStorableScalar(value) {
+		return typeMismatchError(sizeArgumentTypes, value)
+	}
+	return &classifiedCypherError{
+		cause:  localizedError(localization.CypherCoreFunctionArgumentInvalid("size", "a String or List", neo4jValueRepr(value)), nil),
+		code:   "Neo.ClientError.Statement.TypeError",
+		detail: "InvalidArgumentType",
+	}
+}
+
+// isStorableScalar reports whether value is a boolean, temporal value or
+// point: a non-number property value.
+func isStorableScalar(value interface{}) bool {
+	switch value.(type) {
+	case bool, CypherDate, *CypherDate, CypherLocalTime, *CypherLocalTime, CypherTime, *CypherTime,
+		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime,
+		CypherDuration, *CypherDuration, CypherPoint, *CypherPoint, time.Time, *time.Time:
+		return true
+	}
+	return false
 }
 
 // typeMismatchFromFunctionError converts a registry TypeMismatchError into

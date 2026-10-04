@@ -72,6 +72,7 @@ const (
 	MessageCypherCoreTemporalTextUnparseable             MessageID = "cyphercore.temporal_text_unparseable"
 	MessageCypherCoreTemporalMapInvalid                  MessageID = "cyphercore.temporal_map_invalid"
 	MessageCypherCoreTemporalCallSignature               MessageID = "cyphercore.temporal_call_signature"
+	MessageCypherCoreFunctionArgumentInvalid             MessageID = "cyphercore.function_argument_invalid"
 )
 
 func cypherCoreMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -353,6 +354,13 @@ func CypherCoreTemporalTextUnparseable(typeName string, quoted string) Message {
 
 func CypherCoreTemporalMapInvalid(typeName string, value string) Message {
 	return cypherCoreMessage(MessageCypherCoreTemporalMapInvalid, "invalid "+typeName+" value: "+value, map[string]any{"Type": typeName, "Value": value})
+}
+
+// CypherCoreFunctionArgumentInvalid is Neo4j's TypeError for a function
+// argument of the wrong type found while the statement runs (#893). Value is
+// Neo4j's rendering of the argument: Long(1), Double(2.500000e+00), ….
+func CypherCoreFunctionArgumentInvalid(function, expected, value string) Message {
+	return cypherCoreMessage(MessageCypherCoreFunctionArgumentInvalid, "Invalid input for function '"+function+"()': Expected "+expected+", got: "+value, map[string]any{"Function": function, "Expected": expected, "Value": value})
 }
 
 func CypherCoreTemporalCallSignature(typeName string, provided string) Message {

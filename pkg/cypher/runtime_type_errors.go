@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -66,7 +67,8 @@ func predicateValueIsTrue(ctx context.Context, value interface{}, expression str
 
 // neo4jValueRepr renders a value the way Neo4j's runtime errors show it:
 // Long(1), Double(1.500000e+00), String("x"), Boolean('true'),
-// LongArray[1, 2], List{Long(1), String("a")}.
+// LongArray[1, 2], List{Long(1), String("a")}; a temporal value or a point
+// as its text (2020-01-02, P1D, point({x: 1.0, y: 2.0, crs: 'cartesian'})).
 func neo4jValueRepr(value interface{}) string {
 	switch v := value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
@@ -116,6 +118,12 @@ func neo4jValueRepr(value interface{}) string {
 			return "List{" + strings.Join(parts, ", ") + "}"
 		}
 		return typeName + "[" + strings.Join(parts, ", ") + "]"
+	}
+	switch value.(type) {
+	case CypherDate, *CypherDate, CypherLocalTime, *CypherLocalTime, CypherTime, *CypherTime,
+		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime,
+		CypherDuration, *CypherDuration, CypherPoint, *CypherPoint, time.Time, *time.Time:
+		return formatCypherValueString(value)
 	}
 	return neo4jValueTypeName(value)
 }

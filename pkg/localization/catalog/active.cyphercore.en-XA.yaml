@@ -170,5 +170,7 @@
   other: "[!! Text cannot be parsed to a {{.Type}}\n{{.Text}}\n ^ !!]"
 - id: cyphercore.temporal_map_invalid
   other: "[!! invalid {{.Type}} value: {{.Value}} !!]"
+- id: cyphercore.function_argument_invalid
+  other: "[!! Invalid input for function '{{.Function}}()': Expected {{.Expected}}, got: {{.Value}} !!]"
 - id: cyphercore.temporal_call_signature
   other: "[!! Invalid call signature for {{.Type}}Function: Provided input was [{{.Provided}}] !!]"

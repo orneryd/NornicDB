@@ -170,5 +170,7 @@
   other: "El texto no se puede convertir en un {{.Type}}\n{{.Text}}\n ^"
 - id: cyphercore.temporal_map_invalid
   other: "valor de {{.Type}} no válido: {{.Value}}"
+- id: cyphercore.function_argument_invalid
+  other: "Entrada no válida para la función '{{.Function}}()': se esperaba {{.Expected}}, se obtuvo: {{.Value}}"
 - id: cyphercore.temporal_call_signature
   other: "Firma de llamada no válida para {{.Type}}Function: la entrada proporcionada fue [{{.Provided}}]"
