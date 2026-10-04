@@ -414,19 +414,6 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 	return out.result, nil
 }
 
-// projectCreatedReturnItem adapts single-item callers to canonical RETURN.
-func (e *StorageExecutor) projectCreatedReturnItem(ctx context.Context, item returnItem, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, createdPaths map[string]PathResult) interface{} {
-	row := e.mergeBindingRow(ctx, createdNodes, createdEdges)
-	for name, path := range createdPaths {
-		row[name] = e.pathToMap(path)
-	}
-	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, "RETURN "+item.expr)
-	if err != nil || len(projected.Rows) == 0 || len(projected.Rows[0]) == 0 {
-		return nil
-	}
-	return projected.Rows[0][0]
-}
-
 // prepareCreateNodePattern parses and validates one CREATE node pattern. It is
 // shared by every CREATE route (createFromPattern and the auto-commit bulk fast
 // path tryAsyncCreateNodeBatch) so they reject the same patterns: malformed

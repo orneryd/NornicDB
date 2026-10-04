@@ -695,3 +695,46 @@ No performance measurement or running-installation changes were made.
 Concurrent UI changes and matcher whitespace remain excluded. This completes
 the obsolete traversal helper retirement, not the remaining #713/#728/#754
 family acceptance. Publish with `Refs #713`; #547 remains excluded.
+
+### Shared Async CREATE RETURN Planning: 2026-10-04
+
+The async node-only CREATE batch path evaluated each RETURN item independently
+and substituted parameter values into the entire query before deriving column
+names. Direct batching and production async autocommit therefore ignored LIMIT
+0 and parameterized SKIP, and renamed an unaliased `$p` column to its value.
+Explicit transactions were the passing controls for all three reproductions.
+
+Delegate the complete original RETURN clause to `projectCreateReturn`, retaining
+typed parameters and canonical column naming. Parameter substitution now affects
+only the CREATE pattern. Evaluate projection before publishing the batch, so an
+ArithmeticError cannot leave created nodes. Remove the now-unused single-item
+adapter and migrate its existing assertions onto whole-clause projection.
+
+Eight column/row cases pass on direct batching, production async autocommit and
+explicit transactions: LIMIT 0, parameter SKIP, DISTINCT, unaliased integer,
+float and map parameters, quoted aliases and grouped collection/count control.
+Persisted readback verifies required writes even when RETURN produces zero rows.
+An additional control pins ArithmeticError and zero persisted nodes in all three
+routes. Existing CREATE expression, parameter-injection and admission tests are
+retained; no tests were removed.
+
+Nine appended reference cases compare columns, rows, errors and graph effects
+against pinned Neo4j 5.26.30. Both actual parsers pass 960 Bolt and 970 HTTP
+comparisons in both transaction modes: 3,860 total. Both official ratchets pass
+7,794 outcomes with zero gaps, setup blockers or harness errors using the pinned
+timezone archive. Isolated repository correctness, CREATE-scoped both-parser
+races, scoped vet, diagnostics and whitespace checks pass. Shared CREATE
+projector coverage is 100%; the existing batch function has 88.7% focused
+coverage. No whole-package or performance-equivalence claim is made.
+
+The broader ANTLR async-schema control fails on the existing unquoted
+`vector.dimensions` map key. Running its complete parent test on the prior
+published source reproduces the identical failure. It remains unchanged and is
+not counted as passing; track its valid-schema admission contract separately
+under #754. The initial baseline attempt selected only one subtest and also
+broke parent fixture assertions; only the complete-parent run supplies evidence.
+
+Graphify's snapshot predates prior CREATE convergence; current source confirms
+the async batch now joins the canonical CREATE/RETURN planner. No running
+installation was touched. Publish with `Refs #713`; remaining #713/#728/#754
+acceptance stays open and #547 remains excluded.

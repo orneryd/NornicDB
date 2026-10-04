@@ -29,6 +29,94 @@ func newAsyncStackTestExecutor(t *testing.T) *StorageExecutor {
 	return NewStorageExecutor(storage.NewNamespacedEngine(async, "test"))
 }
 
+func TestGh713AsyncCreateReturnPlanning(t *testing.T) {
+	for _, route := range []string{"direct batch", "async autocommit", "async explicit transaction"} {
+		for _, test := range []struct {
+			name       string
+			projection string
+			columns    []string
+			rows       [][]interface{}
+		}{
+			{"zero limit", "n.x AS value LIMIT 0", []string{"value"}, nil},
+			{"parameter skip", "n.x AS value SKIP $skip", []string{"value"}, nil},
+			{"distinct", "DISTINCT n.x AS value", []string{"value"}, [][]interface{}{{int64(1)}}},
+			{"parameter column", "$p", []string{"$p"}, [][]interface{}{{int64(7)}}},
+			{"typed float parameter", "$whole", []string{"$whole"}, [][]interface{}{{float64(7)}}},
+			{"parameter map", "$payload", []string{"$payload"}, [][]interface{}{{map[string]interface{}{"value": int64(2)}}}},
+			{"quoted alias", "n.x + $p AS `expr value`", []string{"expr value"}, [][]interface{}{{int64(8)}}},
+			{"aggregation control", "collect(n.x) AS values, count(*) AS total", []string{"values", "total"}, [][]interface{}{{[]interface{}{int64(1)}, int64(1)}}},
+		} {
+			t.Run(route+"/"+test.name, func(t *testing.T) {
+				exec, ctx := newUnitExecutor(t)
+				if route != "direct batch" {
+					exec = newAsyncStackTestExecutor(t)
+				}
+				if route == "async explicit transaction" {
+					_, err := exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+				}
+				params := map[string]interface{}{"p": int64(7), "skip": int64(1), "whole": float64(7), "payload": map[string]interface{}{"value": int64(2)}}
+				query := "CREATE (n:Value {x: 1}) RETURN " + test.projection
+				var result *ExecuteResult
+				var err error
+				if route == "direct batch" {
+					var handled bool
+					result, err, handled = exec.tryAsyncCreateNodeBatch(context.WithValue(ctx, paramsKey, params), query)
+					require.True(t, handled)
+				} else {
+					result, err = exec.Execute(ctx, query, params)
+				}
+				require.NoError(t, err)
+				require.Equal(t, test.columns, result.Columns)
+				require.Len(t, result.Rows, len(test.rows))
+				if len(test.rows) > 0 {
+					require.Equal(t, test.rows, result.Rows)
+				}
+				if route == "async explicit transaction" {
+					_, err := exec.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+				}
+				stored, err := exec.Execute(ctx, "MATCH (n:Value) RETURN count(n) AS count, sum(n.x) AS total", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(1), int64(1)}}, stored.Rows)
+			})
+		}
+	}
+}
+
+func TestGh713AsyncCreateReturnFailureDoesNotPublish(t *testing.T) {
+	for _, route := range []string{"direct batch", "async autocommit", "async explicit transaction"} {
+		t.Run(route, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			if route != "direct batch" {
+				exec = newAsyncStackTestExecutor(t)
+			}
+			if route == "async explicit transaction" {
+				_, err := exec.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+			}
+			query := "CREATE (n:Value {x: 1}) RETURN n.x / 0 AS value"
+			var err error
+			if route == "direct batch" {
+				var handled bool
+				_, err, handled = exec.tryAsyncCreateNodeBatch(withExpressionFailures(ctx), query)
+				require.True(t, handled)
+			} else {
+				_, err = exec.Execute(ctx, query, nil)
+			}
+			require.Error(t, err)
+			require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
+			if route == "async explicit transaction" {
+				_, err = exec.Execute(ctx, "ROLLBACK", nil)
+				require.NoError(t, err)
+			}
+			stored, err := exec.Execute(ctx, "MATCH (n:Value) RETURN count(n) AS count", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(0)}}, stored.Rows)
+		})
+	}
+}
+
 // Every RETURN item after a plain CREATE is evaluated, not only items that
 // reference a created variable, on every CREATE route: executeCreate, the
 // multi-CREATE executor and the auto-commit node-only async fast path (#551).
@@ -77,7 +165,7 @@ func TestCreateReturnEvaluatesEveryItem(t *testing.T) {
 	}
 }
 
-// projectCreatedReturnItem covers every kind of RETURN item after CREATE:
+// projectCreateReturn covers every kind of RETURN item after CREATE:
 // relationship variables, their properties and functions, paths, count() of a
 // null expression, and expressions over several created variables.
 func TestProjectCreatedReturnItemBranches(t *testing.T) {
@@ -102,11 +190,12 @@ func TestProjectCreatedReturnItemBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, [][]interface{}{{int64(1)}}, res.Rows)
 
-	item := returnItem{expr: "x.v", alias: "v"}
 	node := &storage.Node{ID: "n1", Properties: map[string]interface{}{"v": int64(9)}}
-	assert.Equal(t, int64(9), exec.projectCreatedReturnItem(ctx, item, map[string]*storage.Node{"x": node}, nil, nil))
-	assert.Equal(t, int64(3), exec.projectCreatedReturnItem(ctx, returnItem{expr: "1 + 2"}, nil, nil, nil))
-	assert.Equal(t, int64(1), exec.projectCreatedReturnItem(ctx, returnItem{expr: "count(*)"}, nil, nil, nil))
+	query := "CREATE (x) RETURN x.v AS v, 1 + 2 AS sum, count(*) AS count"
+	out := createOutcome{cypher: query, returnIdx: strings.Index(query, "RETURN"), nodes: map[string]*storage.Node{"x": node}, result: &ExecuteResult{}}
+	require.NoError(t, exec.projectCreateReturn(ctx, &out))
+	require.Equal(t, []string{"v", "sum", "count"}, out.result.Columns)
+	require.Equal(t, [][]interface{}{{int64(9), int64(3), int64(1)}}, out.result.Rows)
 }
 
 // MATCH ... CREATE ... RETURN uses the same projection: items over several

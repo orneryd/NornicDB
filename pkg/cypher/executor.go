@@ -1609,16 +1609,16 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 		}
 	}
 
-	// Substitute parameters before parsing so (n:Label $props) becomes (n:Label { ... })
-	// and the label is not mis-parsed as "Label $props".
-	if params := getParamsFromContext(ctx); params != nil {
-		cypher = e.substituteParams(cypher, params)
-	}
-
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 	createPart := cypher
 	if returnIdx > 0 {
 		createPart = strings.TrimSpace(cypher[:returnIdx])
+	}
+
+	// Substitute parameters before parsing so (n:Label $props) becomes (n:Label { ... })
+	// and the label is not mis-parsed as "Label $props".
+	if params := getParamsFromContext(ctx); params != nil {
+		createPart = e.substituteParams(createPart, params)
 	}
 
 	createClauses := SplitByCreate(createPart)
@@ -1682,25 +1682,17 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 		return nil, nil, false
 	}
 
-	if err := e.applyCreatePlan(ctx, &createPlan{nodes: nodes}, result); err != nil {
+	if err := e.projectCreateReturn(ctx, &createOutcome{
+		cypher:    cypher,
+		returnIdx: returnIdx,
+		nodes:     createdNodes,
+		result:    result,
+	}); err != nil {
 		return nil, err, true
 	}
 
-	if returnIdx > 0 {
-		returnPart := strings.TrimSpace(cypher[returnIdx+6:])
-		returnItems := e.parseReturnItems(returnPart)
-
-		result.Columns = make([]string, len(returnItems))
-		row := make([]interface{}, len(returnItems))
-		for i, item := range returnItems {
-			if item.alias != "" {
-				result.Columns[i] = item.alias
-			} else {
-				result.Columns[i] = item.expr
-			}
-			row[i] = e.projectCreatedReturnItem(ctx, item, createdNodes, nil, nil)
-		}
-		result.Rows = [][]interface{}{row}
+	if err := e.applyCreatePlan(ctx, &createPlan{nodes: nodes}, result); err != nil {
+		return nil, err, true
 	}
 
 	return result, nil, true

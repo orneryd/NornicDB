@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Plan async CREATE RETURN as one shared projection, preserving typed parameters,
+  original column names, DISTINCT and pagination. Validate projection before
+  publishing the batch so evaluation errors cannot leave created nodes (#713).
+
 - Retire unused traversal aggregate parsing, finalization, SUM and deviation
   implementations. Preserve their regression assertions on the shared
   aggregate parser and collector, including typed localization identity (#713).

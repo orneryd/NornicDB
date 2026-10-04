@@ -2388,5 +2388,48 @@
     "setup": ["CREATE (:Anchor), (:Value {x: 0}), (:Value {x: 1}), (:Value {x: 2}), (:Value {x: 3})"],
     "query": "MATCH (a:Anchor) MATCH (n:Value) RETURN n.x AS value ORDER BY value LIMIT 0",
     "no_effects": true
+  },
+  {
+    "name": "issue713 create zero limit preserves writes",
+    "query": "CREATE (n:Value {x: 1}) RETURN n.x AS value LIMIT 0"
+  },
+  {
+    "name": "issue713 create parameter skip preserves writes",
+    "query": "CREATE (n:Value {x: 1}) RETURN n.x AS value SKIP $skip",
+    "parameters": {"skip": 1}
+  },
+  {
+    "name": "issue713 create distinct projection",
+    "query": "CREATE (n:Value {x: 1}) RETURN DISTINCT n.x AS value"
+  },
+  {
+    "name": "issue713 create original parameter column name",
+    "query": "CREATE (n:Value {x: 1}) RETURN $p",
+    "parameters": {"p": 7}
+  },
+  {
+    "name": "issue713 create typed float parameter column",
+    "query": "CREATE (n:Value {x: 1}) RETURN $whole",
+    "parameters": {"whole": 7.0}
+  },
+  {
+    "name": "issue713 create typed map parameter column",
+    "query": "CREATE (n:Value {x: 1}) RETURN $payload",
+    "parameters": {"payload": {"value": 2}}
+  },
+  {
+    "name": "issue713 create quoted projection alias",
+    "query": "CREATE (n:Value {x: 1}) RETURN n.x + $p AS `expr value`",
+    "parameters": {"p": 7}
+  },
+  {
+    "name": "issue713 create shared aggregate projection control",
+    "query": "CREATE (n:Value {x: 1}) RETURN collect(n.x) AS values, count(*) AS total"
+  },
+  {
+    "name": "issue713 create projection arithmetic error publishes nothing",
+    "query": "CREATE (n:Value {x: 1}) RETURN n.x / 0 AS value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
   }
 ]
