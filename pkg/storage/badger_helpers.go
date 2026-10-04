@@ -1110,104 +1110,139 @@ func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, no
 // loadNodeEmbeddings hydrates separately stored chunk vectors into a decoded
 // node body. Keeping this separate lets the body cache retain only metadata and
 // properties while preserving full-node read semantics on cache hits.
+//
+// The worker's embedding sidecar (embeddingMetaKey) takes precedence over
+// body-inline embedding state when present and fresh: sidecar metadata
+// replaces EmbedMeta and chunk vectors are hydrated from the embedding key
+// space. A stale sidecar (the body changed after the embedding was generated)
+// is ignored, leaving the node embedding-free so the worker re-embeds the
+// new content.
 func (b *BadgerEngine) loadNodeEmbeddings(txn *badger.Txn, node *Node, nodeID NodeID) (*Node, error) {
-	// Check if embeddings are stored separately (struct flag set during encode)
-	if node.EmbeddingsStoredSeparately {
-		// Use chunk_count from EmbedMeta (set by embed queue) to know how many chunks to load
-		// Handle various integer types (msgpack may decode as different types depending on value size)
-		var chunkCount int
-		switch v := node.EmbedMeta["chunk_count"].(type) {
-		case int:
-			chunkCount = v
-		case int8:
-			chunkCount = int(v)
-		case int16:
-			chunkCount = int(v)
-		case int32:
-			chunkCount = int(v)
-		case int64:
-			chunkCount = int(v)
-		case uint:
-			chunkCount = int(v)
-		case uint8:
-			chunkCount = int(v)
-		case uint16:
-			chunkCount = int(v)
-		case uint32:
-			chunkCount = int(v)
-		case uint64:
-			chunkCount = int(v)
-		case float64:
-			// JSON numbers might be decoded as float64
-			chunkCount = int(v)
-		default:
-			// Try to convert via fmt.Sprintf and strconv if needed
-			if v != nil {
-				// Last resort: try string conversion
-				if str, ok := v.(string); ok {
-					if parsed, err := fmt.Sscanf(str, "%d", &chunkCount); err == nil && parsed == 1 {
-						// Successfully parsed
-					}
-				}
-			}
+	if sidecarMeta, fresh, err := b.loadEmbeddingSidecar(txn, node, nodeID); err != nil {
+		return nil, err
+	} else if fresh {
+		delete(sidecarMeta, embeddingContentUpdatedAtKey) // internal only
+		if len(sidecarMeta) == 0 {
+			sidecarMeta = nil // empty metadata reads as no embedding state
 		}
-		if chunkCount > 0 {
-			node.ChunkEmbeddings = make([][]float32, 0, util.SafePreallocCap(chunkCount))
+		node.EmbedMeta = sidecarMeta
+		node.EmbeddingsStoredSeparately = false
+		if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCountFromMeta(sidecarMeta)); err != nil {
+			return nil, err
+		}
+		return node, nil
+	}
 
-			// Load each chunk embedding
-			for i := 0; i < chunkCount; i++ {
-				embKey := embeddingKey(nodeID, i)
-				item, err := txn.Get(embKey)
-				if err != nil {
-					if err == badger.ErrKeyNotFound {
-						// Missing chunk - continue with what we have
-						continue
-					}
-					return nil, fmt.Errorf("failed to get embedding chunk %d: %w", i, err)
-				}
-
-				var embData []byte
-				if err := item.Value(func(val []byte) error {
-					embData = append([]byte(nil), val...)
-					return nil
-				}); err != nil {
-					return nil, fmt.Errorf("failed to read embedding chunk %d: %w", i, err)
-				}
-
-				emb, err := decodeEmbedding(embData)
-				if err != nil {
-					partCount, sharded := parseEmbeddingShardMarker(embData)
-					if !sharded {
-						return nil, fmt.Errorf("failed to decode embedding chunk %d: %w", i, err)
-					}
-					assembled := make([]byte, 0, util.SafePreallocProduct(partCount, maxEmbeddingValueBytes))
-					for part := 0; part < partCount; part++ {
-						partItem, getErr := txn.Get(embeddingChunkPartKey(nodeID, i, part))
-						if getErr != nil {
-							return nil, fmt.Errorf("failed to get embedding chunk %d part %d: %w", i, part, getErr)
-						}
-						if err := partItem.Value(func(val []byte) error {
-							assembled = append(assembled, val...)
-							return nil
-						}); err != nil {
-							return nil, fmt.Errorf("failed to read embedding chunk %d part %d: %w", i, part, err)
-						}
-					}
-					emb, err = decodeEmbedding(assembled)
-					if err != nil {
-						return nil, fmt.Errorf("failed to decode sharded embedding chunk %d: %w", i, err)
-					}
-				}
-
-				node.ChunkEmbeddings = append(node.ChunkEmbeddings, emb)
+	// Legacy body-flag path: embeddings stored separately during encode.
+	if node.EmbeddingsStoredSeparately {
+		if chunkCount := chunkCountFromMeta(node.EmbedMeta); chunkCount > 0 {
+			if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCount); err != nil {
+				return nil, err
 			}
-
-			// Clear internal storage flag after loading (chunk_count is user-facing, keep it)
 			node.EmbeddingsStoredSeparately = false
 		}
 	}
 
 	return node, nil
+}
+
+// chunkCountFromMeta extracts chunk_count from embedding metadata, tolerating
+// the integer types msgpack/JSON may decode into.
+func chunkCountFromMeta(meta map[string]any) int {
+	if meta == nil {
+		return 0
+	}
+	switch v := meta["chunk_count"].(type) {
+	case int:
+		return v
+	case int8:
+		return int(v)
+	case int16:
+		return int(v)
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case uint:
+		return int(v)
+	case uint8:
+		return int(v)
+	case uint16:
+		return int(v)
+	case uint32:
+		return int(v)
+	case uint64:
+		return int(v)
+	case float64:
+		// JSON numbers might be decoded as float64
+		return int(v)
+	case string:
+		var parsed int
+		if _, err := fmt.Sscanf(v, "%d", &parsed); err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+// loadEmbeddingChunks hydrates chunkCount chunk vectors for nodeID into
+// node.ChunkEmbeddings from the embedding key space. Missing chunks are
+// tolerated (readers see a partial set only while a replacement is in
+// flight).
+func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID NodeID, chunkCount int) error {
+	if chunkCount <= 0 {
+		return nil
+	}
+	node.ChunkEmbeddings = make([][]float32, 0, util.SafePreallocCap(chunkCount))
+
+	// Load each chunk embedding
+	for i := 0; i < chunkCount; i++ {
+		embKey := embeddingKey(nodeID, i)
+		item, err := txn.Get(embKey)
+		if err != nil {
+			if err == badger.ErrKeyNotFound {
+				// Missing chunk - continue with what we have
+				continue
+			}
+			return fmt.Errorf("failed to get embedding chunk %d: %w", i, err)
+		}
+
+		var embData []byte
+		if err := item.Value(func(val []byte) error {
+			embData = append([]byte(nil), val...)
+			return nil
+		}); err != nil {
+			return fmt.Errorf("failed to read embedding chunk %d: %w", i, err)
+		}
+
+		emb, err := decodeEmbedding(embData)
+		if err != nil {
+			partCount, sharded := parseEmbeddingShardMarker(embData)
+			if !sharded {
+				return fmt.Errorf("failed to decode embedding chunk %d: %w", i, err)
+			}
+			assembled := make([]byte, 0, util.SafePreallocProduct(partCount, maxEmbeddingValueBytes))
+			for part := 0; part < partCount; part++ {
+				partItem, getErr := txn.Get(embeddingChunkPartKey(nodeID, i, part))
+				if getErr != nil {
+					return fmt.Errorf("failed to get embedding chunk %d part %d: %w", i, part, getErr)
+				}
+				if err := partItem.Value(func(val []byte) error {
+					assembled = append(assembled, val...)
+					return nil
+				}); err != nil {
+					return fmt.Errorf("failed to read embedding chunk %d part %d: %w", i, part, err)
+				}
+			}
+			emb, err = decodeEmbedding(assembled)
+			if err != nil {
+				return fmt.Errorf("failed to decode sharded embedding chunk %d: %w", i, err)
+			}
+		}
+
+		node.ChunkEmbeddings = append(node.ChunkEmbeddings, emb)
+	}
+	return nil
 }
 
 // encodeEdge serializes an Edge using the active storage serializer.

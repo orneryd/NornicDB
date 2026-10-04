@@ -2412,9 +2412,9 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.NoError(t, err)
 
 		qe := &queueBranchEngine{
-			Engine:           engine,
-			findNode:         &storage.Node{ID: storage.NodeID("n4")},
-			secondGetNodeErr: storage.ErrNotFound,
+			Engine:             engine,
+			findNode:           &storage.Node{ID: storage.NodeID("n4")},
+			updateEmbeddingErr: storage.ErrNotFound,
 		}
 		ew := &EmbedWorker{
 			embedder: newMockEmbedder(),
@@ -2424,6 +2424,9 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			trigger:  make(chan struct{}, 1),
 		}
 
+		// The writeback reports ErrNotFound (the node was deleted after the
+		// claim): the worker marks it embedded and skips it. One mark comes
+		// from the claim itself, the other from the delete-skip.
 		didWork := ew.processNextBatch()
 		require.False(t, didWork)
 		require.Equal(t, []storage.NodeID{"n4", "n4"}, qe.marked)

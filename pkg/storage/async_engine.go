@@ -1079,6 +1079,41 @@ func (ae *AsyncEngine) UpdateNodeEmbedding(node *Node) (err error) {
 	return nil
 }
 
+// UpdateNodeEmbeddingSidecar writes managed embedding state in the dedicated
+// embedding key space on the underlying engine, WITHOUT staging the node body
+// into the async cache: a sidecar write is not a node write, cannot conflict
+// with an incoming business write, and must not force a body flush. A node
+// staged in the cache has its embeddings invalidated by that business write
+// anyway, so readers of the staged copy correctly see it embedding-free until
+// the worker re-embeds after the flush.
+func (ae *AsyncEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	if node == nil {
+		return ErrInvalidData
+	}
+	ae.mu.RLock()
+	deleted := ae.deleteNodes[node.ID]
+	ae.mu.RUnlock()
+	if deleted {
+		return ErrNotFound
+	}
+	if sidecar, ok := ae.engine.(EmbeddingSidecarUpdater); ok {
+		return sidecar.UpdateNodeEmbeddingSidecar(node)
+	}
+	if embedUpdater, ok := ae.engine.(interface{ UpdateNodeEmbedding(*Node) error }); ok {
+		return embedUpdater.UpdateNodeEmbedding(node)
+	}
+	return ae.engine.UpdateNode(node)
+}
+
+// StreamParkedEmbeddingFailures forwards the sidecar failure scan to the
+// underlying engine when it supports sidecar metadata.
+func (ae *AsyncEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
+	if streamer, ok := ae.engine.(EmbeddingFailureStreamer); ok {
+		return streamer.StreamParkedEmbeddingFailures(ctx, visit)
+	}
+	return 0, nil
+}
+
 // DeleteNode marks for deletion and returns immediately.
 // Optimized: if node was created in this transaction (still in cache),
 // just remove it from cache - no need to delete from underlying engine.

@@ -524,6 +524,56 @@ func (c *CompositeEngine) UpdateNodeEmbedding(node *Node) error {
 	return ErrNotFound
 }
 
+// UpdateNodeEmbeddingSidecar routes the embedding-only sidecar write to the
+// constituent holding the node, without touching any node record.
+func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	if node == nil {
+		return ErrInvalidData
+	}
+	for _, alias := range c.getConstituentsForRead() {
+		engine, err := c.getConstituent(alias)
+		if err != nil {
+			continue
+		}
+		if _, err := engine.GetNode(node.ID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return err
+		}
+		if sidecar, ok := engine.(EmbeddingSidecarUpdater); ok {
+			return sidecar.UpdateNodeEmbeddingSidecar(node)
+		}
+		if updater, ok := engine.(EmbeddingUpdater); ok {
+			return updater.UpdateNodeEmbedding(node)
+		}
+		return engine.UpdateNode(node)
+	}
+	return ErrNotFound
+}
+
+// StreamParkedEmbeddingFailures aggregates sidecar failure scans across
+// constituents.
+func (c *CompositeEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
+	total := 0
+	for _, alias := range c.getConstituentsForRead() {
+		engine, err := c.getConstituent(alias)
+		if err != nil {
+			continue
+		}
+		streamer, ok := engine.(EmbeddingFailureStreamer)
+		if !ok {
+			continue
+		}
+		count, err := streamer.StreamParkedEmbeddingFailures(ctx, visit)
+		if err != nil {
+			return total, err
+		}
+		total += count
+	}
+	return total, nil
+}
+
 // --- Aggregate reads and broadcasts.
 
 func (c *CompositeEngine) PendingEmbeddingsCount() int {

@@ -606,6 +606,37 @@ func (w *WALEngine) UpdateNodeEmbedding(node *Node) error {
 	return w.engine.UpdateNode(node)
 }
 
+// UpdateNodeEmbeddingSidecar logs the same OpUpdateEmbedding audit record and
+// executes the sidecar embedding-only write (embedding key space, never the
+// node record) on the wrapped engine.
+func (w *WALEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	w.mutationMu.RLock()
+	defer w.mutationMu.RUnlock()
+
+	if config.IsWALEnabled() {
+		dbName := w.databaseFromNode(node)
+		if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
+			return fmt.Errorf("wal: failed to log update_embedding: %w", err)
+		}
+	}
+	if sidecar, ok := w.engine.(EmbeddingSidecarUpdater); ok {
+		return sidecar.UpdateNodeEmbeddingSidecar(node)
+	}
+	if embedUpdater, ok := w.engine.(interface{ UpdateNodeEmbedding(*Node) error }); ok {
+		return embedUpdater.UpdateNodeEmbedding(node)
+	}
+	return w.engine.UpdateNode(node)
+}
+
+// StreamParkedEmbeddingFailures forwards the sidecar failure scan to the
+// wrapped engine.
+func (w *WALEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
+	if streamer, ok := w.engine.(EmbeddingFailureStreamer); ok {
+		return streamer.StreamParkedEmbeddingFailures(ctx, visit)
+	}
+	return 0, nil
+}
+
 // DeleteNode logs then executes node deletion.
 func (w *WALEngine) DeleteNode(id NodeID) error {
 	w.mutationMu.RLock()

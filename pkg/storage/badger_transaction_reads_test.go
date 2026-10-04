@@ -292,7 +292,7 @@ func TestTxReads_EndpointPrefixNodeCacheIsBounded(t *testing.T) {
 	tx := &BadgerTransaction{}
 	for index := 0; index < maxSnapshotPrefixNodeCacheNodes+5; index++ {
 		node := &Node{ID: NodeID(fmt.Sprintf("test:cached-%03d", index)), Labels: []string{"Person"}}
-		tx.cacheSnapshotPrefixNodeByIDLocked(node)
+		tx.cacheSnapshotPrefixNodeByIDLocked(nil, node)
 	}
 	require.Len(t, tx.snapshotPrefixNodeByID, maxSnapshotPrefixNodeCacheNodes)
 	require.NotContains(t, tx.snapshotPrefixNodeByID, NodeID("test:cached-000"), "oldest entries should be evicted first")
