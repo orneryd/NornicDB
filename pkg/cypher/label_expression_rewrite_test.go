@@ -301,7 +301,7 @@ func TestDesugarLabelExpressionsNestedAndMalformedInput(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"MATCH (n:A|B", "MATCH (n:A|B"},
 		{"MATCH (n)-[r:!R RETURN 1", "MATCH (n)-[r:!R RETURN 1"},
-		{"MATCH (a)-[:R]->{1,3}(b:A|B) RETURN b", "MATCH (a)-[:R]->{1,3}(b) WHERE b:A|B RETURN b"},
+		{"MATCH (a)-[:R]->{1,3}(b:A|B) RETURN b", "MATCH (a)-[:R*1..3]->(b) WHERE b:A|B RETURN b"},
 		{"FOREACH 1 | 2", "FOREACH 1 | 2"},
 		{"FOREACH (x IN [1] | CREATE (:A|B)", "FOREACH (x IN [1] | CREATE (:A|B)"},
 		{"FOREACH (x IN [n IS A] )", "FOREACH (x IN [n:A] )"},

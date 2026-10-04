@@ -39,6 +39,9 @@ const (
 	MessageCypherMatchingLabelExpressionMixedIs                   MessageID = "cyphermatching.label_expression_mixed_is"
 	MessageCypherMatchingRelationshipTypeColonDisjunction         MessageID = "cyphermatching.relationship_type_colon_disjunction"
 	MessageCypherMatchingRelationshipTypeColonConjunction         MessageID = "cyphermatching.relationship_type_colon_conjunction"
+	MessageCypherMatchingQuantifierInExpressionPattern            MessageID = "cyphermatching.quantifier_in_expression_pattern"
+	MessageCypherMatchingQuantifiedPathInWritePattern             MessageID = "cyphermatching.quantified_path_in_write_pattern"
+	MessageCypherMatchingVariableLengthInQuantifiedPath           MessageID = "cyphermatching.variable_length_in_quantified_path"
 	MessageCypherMatchingVariableLengthTypeExpression             MessageID = "cyphermatching.variable_length_type_expression"
 	MessageCypherMatchingLabelExpressionInWritePattern            MessageID = "cyphermatching.label_expression_in_write_pattern"
 	MessageCypherMatchingRelationshipTypeExpressionInWritePattern MessageID = "cyphermatching.relationship_type_expression_in_write_pattern"
@@ -208,6 +211,25 @@ func CypherMatchingRelationshipTypeColonConjunction() Message {
 }
 
 // CypherMatchingVariableLengthTypeExpression is Neo4j's SyntaxError: a variable-length relationship uses a type expression other than alternatives (#860).
+// CypherMatchingQuantifierInExpressionPattern is the SyntaxError for a
+// relationship quantifier (token) in a pattern predicate or comprehension,
+// which Neo4j's grammar doesn't accept there.
+func CypherMatchingQuantifierInExpressionPattern(token string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingQuantifierInExpressionPattern, "Invalid input '"+token+"': a relationship quantifier is allowed only in a MATCH pattern or a subquery", map[string]any{"Token": token})
+}
+
+// CypherMatchingQuantifiedPathInWritePattern is Neo4j's error for a
+// quantified path pattern in CREATE or MERGE (clause).
+func CypherMatchingQuantifiedPathInWritePattern(clause string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingQuantifiedPathInWritePattern, "Quantified path patterns cannot be used in a "+clause+" clause, but only in a MATCH clause.", map[string]any{"Clause": clause})
+}
+
+// CypherMatchingVariableLengthInQuantifiedPath is Neo4j's error for a
+// variable-length relationship with a quantifier.
+func CypherMatchingVariableLengthInQuantifiedPath() Message {
+	return cypherMatchingMessage(MessageCypherMatchingVariableLengthInQuantifiedPath, "Variable length relationships cannot be part of a quantified path pattern.", nil)
+}
+
 func CypherMatchingVariableLengthTypeExpression() Message {
 	return cypherMatchingMessage(MessageCypherMatchingVariableLengthTypeExpression, "Variable length relationships must not use relationship type expressions.", nil)
 }
