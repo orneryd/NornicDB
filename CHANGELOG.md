@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Retire unused traversal aggregate parsing, finalization, SUM and deviation
+  implementations. Preserve their regression assertions on the shared
+  aggregate parser and collector, including typed localization identity (#713).
+
 - Route plain multi-MATCH RETURN through shared projection planning, including
   parameterized/arithmetic pagination, DISTINCT, hidden sort keys and typed
   projection errors. Remove the superseded reducer and pagination tail (#713).

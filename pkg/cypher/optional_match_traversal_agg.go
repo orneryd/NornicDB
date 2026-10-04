@@ -26,10 +26,7 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // traversalAggFnNames are the aggregate functions the traversal pipeline
@@ -37,14 +34,6 @@ import (
 // listed before stdev so prefix scanning matches the longer name first.
 var traversalAggFnNames = []string{
 	"percentilecont", "percentiledisc", "collect", "count", "sum", "avg", "min", "max", "stdevp", "stdev",
-}
-
-// traversalAggSpec is one parsed aggregate call.
-type traversalAggSpec struct {
-	fn       string // lower-case name from traversalAggFnNames
-	inner    string // argument expression text ("" when star)
-	distinct bool
-	star     bool // count(*)
 }
 
 // aggregateSpan is one aggregate call located inside a larger expression.
@@ -117,39 +106,6 @@ func findAggregateSpans(expr string) []aggregateSpan {
 	return spans
 }
 
-// parseTraversalAggregateCall parses one whole aggregate call such as
-// "count(DISTINCT f.path)". The only rejected form is an empty argument list,
-// which Neo4j itself rejects at compile time.
-func parseTraversalAggregateCall(expr string) (traversalAggSpec, error) {
-	spec := traversalAggSpec{}
-	trimmed := strings.TrimSpace(expr)
-	open := strings.Index(trimmed, "(")
-	if open <= 0 || !strings.HasSuffix(trimmed, ")") {
-		return spec, localizedError(localization.CypherMatchingAggregateCallExpected(trimmed), nil)
-	}
-	name := lowerASCII(strings.TrimSpace(trimmed[:open]))
-	for _, fn := range traversalAggFnNames {
-		if name == fn {
-			spec.fn = fn
-			break
-		}
-	}
-	if spec.fn == "" {
-		return spec, localizedError(localization.CypherMatchingAggregateCallExpected(trimmed), nil)
-	}
-	inner := strings.TrimSpace(trimmed[open+1 : len(trimmed)-1])
-	if spec.fn == "count" && inner == "*" {
-		spec.star = true
-		return spec, nil
-	}
-	inner, spec.distinct = cutDistinct(inner)
-	if inner == "" {
-		return spec, localizedError(localization.CypherMatchingFunctionParametersInsufficient(spec.fn), nil)
-	}
-	spec.inner = inner
-	return spec, nil
-}
-
 // traversalAggPlaceholder returns the synthetic variable name substituted for
 // the n-th aggregate span of a mixed item (isolateAggregation's x1/x2 rewrite).
 func traversalAggPlaceholder(n int) string {
@@ -171,112 +127,4 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 		return nil, failure
 	}
 	return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "could not parse aggregate projection")
-}
-
-// finalizeTraversalAggregate reduces one aggregate call's accumulated
-// non-null values (already deduplicated when DISTINCT) into the final value:
-// count(*) counts rows, count(x) counts non-null values, sum of an empty set
-// is 0, avg/min/max of an empty set are null, and stdev/stdevp follow
-// Neo4j's StdevFunction (null on empty, 0.0 for a single value).
-func (e *StorageExecutor) finalizeTraversalAggregate(spec traversalAggSpec, vals []interface{}, rowCount int64) interface{} {
-	switch spec.fn {
-	case "count":
-		if spec.star {
-			return rowCount
-		}
-		return int64(len(vals))
-	case "collect":
-		if vals == nil {
-			return []interface{}{}
-		}
-		return vals
-	case "sum":
-		return sumTraversalAggregateValues(vals)
-	case "avg":
-		if len(vals) == 0 {
-			return nil
-		}
-		total := 0.0
-		for _, v := range vals {
-			f, ok := toFloat64(v)
-			if !ok {
-				return nil
-			}
-			total += f
-		}
-		return total / float64(len(vals))
-	case "min", "max":
-		if len(vals) == 0 {
-			return nil
-		}
-		best := vals[0]
-		for _, v := range vals[1:] {
-			cmp := e.compareOrderValues(v, best)
-			if (spec.fn == "min" && cmp < 0) || (spec.fn == "max" && cmp > 0) {
-				best = v
-			}
-		}
-		return best
-	case "stdev", "stdevp":
-		return stdevTraversalAggregateValues(vals, spec.fn == "stdevp")
-	}
-	return nil
-}
-
-// stdevTraversalAggregateValues implements Neo4j's StdevFunction contract via
-// Welford's online algorithm: null when no numeric values, 0.0 for a single
-// value, sqrt(M2/(n-1)) for the sample deviation, sqrt(M2/n) for population.
-func stdevTraversalAggregateValues(vals []interface{}, population bool) interface{} {
-	count := 0
-	movingAvg := 0.0
-	m2 := 0.0
-	for _, v := range vals {
-		f, ok := toFloat64(v)
-		if !ok {
-			continue
-		}
-		count++
-		next := movingAvg + (f-movingAvg)/float64(count)
-		m2 += (f - movingAvg) * (f - next)
-		movingAvg = next
-	}
-	if count == 0 {
-		return nil
-	}
-	if count < 2 {
-		return 0.0
-	}
-	if population {
-		return math.Sqrt(m2 / float64(count))
-	}
-	return math.Sqrt(m2 / float64(count-1))
-}
-
-// sumTraversalAggregateValues sums values, keeping int64 when every input is
-// an integer (Neo4j-compatible) and falling back to float64 otherwise.
-func sumTraversalAggregateValues(vals []interface{}) interface{} {
-	allInts := true
-	var intSum int64
-	var floatSum float64
-	for _, v := range vals {
-		switch n := v.(type) {
-		case int64:
-			intSum += n
-			floatSum += float64(n)
-		case int:
-			intSum += int64(n)
-			floatSum += float64(n)
-		default:
-			allInts = false
-			f, ok := toFloat64(v)
-			if !ok {
-				return nil
-			}
-			floatSum += f
-		}
-	}
-	if allInts {
-		return intSum
-	}
-	return floatSum
 }

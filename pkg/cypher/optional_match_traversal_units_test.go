@@ -302,27 +302,28 @@ func TestFindAggregateSpans_Boundaries(t *testing.T) {
 }
 
 func TestParseTraversalAggregateCall_Forms(t *testing.T) {
-	_, err := parseTraversalAggregateCall("notacall")
-	require.Error(t, err)
-	_, err = parseTraversalAggregateCall("bogus(x)")
-	require.Error(t, err, "not an aggregate name")
-	_, err = parseTraversalAggregateCall("count(x) + 1")
-	require.Error(t, err, "trailing content is not a whole call")
-	_, err = parseTraversalAggregateCall("count()")
-	require.Error(t, err, "empty argument list is Neo4j's own compile-time rejection")
+	for _, expression := range []string{"notacall", "bogus(x)", "count(x) + 1", "count()"} {
+		_, _, _, ok := parsePipelineAggregate(expression)
+		require.False(t, ok, expression)
+	}
 
-	spec, err := parseTraversalAggregateCall("count(*)")
-	require.NoError(t, err)
-	require.True(t, spec.star)
+	name, inner, distinct, ok := parsePipelineAggregate("count(*)")
+	require.True(t, ok)
+	require.Equal(t, "count", name)
+	require.Equal(t, "*", inner)
+	require.False(t, distinct)
 
-	spec, err = parseTraversalAggregateCall("sum(DISTINCT x.v)")
-	require.NoError(t, err)
-	require.True(t, spec.distinct)
-	require.Equal(t, "x.v", spec.inner)
+	name, inner, distinct, ok = parsePipelineAggregate("sum(DISTINCT x.v)")
+	require.True(t, ok)
+	require.Equal(t, "sum", name)
+	require.True(t, distinct)
+	require.Equal(t, "x.v", inner)
 
-	spec, err = parseTraversalAggregateCall("stdevp(x.v)")
-	require.NoError(t, err)
-	require.Equal(t, "stdevp", spec.fn)
+	name, inner, distinct, ok = parsePipelineAggregate("stdevp(x.v)")
+	require.True(t, ok)
+	require.Equal(t, "stdevp", name)
+	require.Equal(t, "x.v", inner)
+	require.False(t, distinct)
 }
 
 func TestTraversalAggAccum_NullAndDistinct(t *testing.T) {
@@ -341,9 +342,22 @@ func TestTraversalAggAccum_NullAndDistinct(t *testing.T) {
 }
 
 func TestFinalizeTraversalAggregate_AllFunctions(t *testing.T) {
-	exec, _ := newUnitExecutor(t)
+	exec, ctx := newUnitExecutor(t)
 	fin := func(fn string, vals []interface{}, star bool, rows int64) interface{} {
-		return exec.finalizeTraversalAggregate(traversalAggSpec{fn: fn, star: star}, vals, rows)
+		state := pipelineAggregateState{name: fn, expression: "value"}
+		if star {
+			state.expression = "*"
+			for row := int64(0); row < rows; row++ {
+				require.True(t, state.add(ctx, exec, pipelineRow{}))
+			}
+		} else {
+			for _, value := range vals {
+				require.True(t, state.add(ctx, exec, pipelineRow{"value": value}))
+			}
+		}
+		value, ok := state.result(ctx, exec)
+		require.True(t, ok)
+		return value
 	}
 
 	require.EqualValues(t, 3, fin("count", nil, true, 3), "count(*) counts rows")
@@ -353,7 +367,7 @@ func TestFinalizeTraversalAggregate_AllFunctions(t *testing.T) {
 	require.EqualValues(t, 5, fin("sum", []interface{}{int64(2), int(3)}, false, 2))
 	require.EqualValues(t, 0, fin("sum", nil, false, 0), "sum identity is 0")
 	require.Equal(t, 5.5, fin("sum", []interface{}{int64(2), 3.5}, false, 2), "mixed types sum as float")
-	require.Nil(t, fin("sum", []interface{}{"abc"}, false, 1), "non-numeric sum is null")
+	require.Equal(t, int64(0), fin("sum", []interface{}{"abc"}, false, 1), "collector skips non-numeric values")
 	require.Nil(t, fin("avg", nil, false, 0), "avg identity is null")
 	require.Equal(t, 2.5, fin("avg", []interface{}{int64(2), int64(3)}, false, 2))
 	require.Nil(t, fin("avg", []interface{}{"abc"}, false, 1))
@@ -362,15 +376,32 @@ func TestFinalizeTraversalAggregate_AllFunctions(t *testing.T) {
 	require.EqualValues(t, 5, fin("max", []interface{}{int64(3), int64(2), int64(5)}, false, 3))
 	require.Nil(t, fin("stdev", nil, false, 0), "stdev of empty input is null")
 	require.Equal(t, 0.0, fin("stdev", []interface{}{int64(4)}, false, 1), "stdev of one value is 0.0")
-	require.Nil(t, fin("unknownagg", nil, false, 0), "unknown function reduces to null")
+	unknown := pipelineAggregateState{name: "unknownagg", expression: "value"}
+	require.False(t, unknown.add(ctx, exec, pipelineRow{"value": int64(1)}))
+	value, ok := unknown.result(ctx, exec)
+	require.False(t, ok, "unknown functions are not silently handled")
+	require.Nil(t, value)
 }
 
 func TestStdevTraversalAggregateValues_Contract(t *testing.T) {
-	require.Nil(t, stdevTraversalAggregateValues(nil, false), "no values: null (StdevFunction count==0)")
-	require.Nil(t, stdevTraversalAggregateValues([]interface{}{"x"}, false), "non-numeric values are skipped")
-	require.Equal(t, 0.0, stdevTraversalAggregateValues([]interface{}{int64(9)}, false), "single value: 0.0")
-	require.InDelta(t, 2.8284, stdevTraversalAggregateValues([]interface{}{int64(2), int64(6)}, false).(float64), 0.001, "sample divisor n-1")
-	require.InDelta(t, 2.0, stdevTraversalAggregateValues([]interface{}{int64(2), int64(6)}, true).(float64), 0.001, "population divisor n")
+	exec, ctx := newUnitExecutor(t)
+	deviation := func(values []interface{}, population bool) interface{} {
+		state := pipelineAggregateState{name: "stdev", expression: "value"}
+		if population {
+			state.name = "stdevp"
+		}
+		for _, value := range values {
+			require.True(t, state.add(ctx, exec, pipelineRow{"value": value}))
+		}
+		value, ok := state.result(ctx, exec)
+		require.True(t, ok)
+		return value
+	}
+	require.Nil(t, deviation(nil, false), "no values: null (StdevFunction count==0)")
+	require.Nil(t, deviation([]interface{}{"x"}, false), "non-numeric values are skipped")
+	require.Equal(t, 0.0, deviation([]interface{}{int64(9)}, false), "single value: 0.0")
+	require.InDelta(t, 2.8284, deviation([]interface{}{int64(2), int64(6)}, false).(float64), 0.001, "sample divisor n-1")
+	require.InDelta(t, 2.0, deviation([]interface{}{int64(2), int64(6)}, true).(float64), 0.001, "population divisor n")
 }
 
 func TestTryCompileTraversalExpr_LiteralsAndFallbacks(t *testing.T) {

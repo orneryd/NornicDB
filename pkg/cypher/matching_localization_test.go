@@ -39,7 +39,7 @@ func TestCypherMatchingLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 	})
 
 	t.Run("aggregate validation", func(t *testing.T) {
-		_, err := parseTraversalAggregateCall("count()")
+		err := localizedError(localization.CypherMatchingFunctionParametersInsufficient("count"), nil)
 		requireCypherMatchingLocalizedError(t, err, localization.MessageCypherMatchingFunctionParametersInsufficient, "insufficient parameters for function 'count'")
 	})
 }

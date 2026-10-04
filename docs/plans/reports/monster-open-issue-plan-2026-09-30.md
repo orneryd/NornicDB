@@ -664,3 +664,34 @@ No performance measurement or running-installation changes were made.
 Unrelated matcher whitespace and concurrent UI edits are excluded. Publish
 this increment with `Refs #713`; broader #713/#728/#754 acceptance remains
 open and #547 remains excluded.
+
+### Traversal Aggregate Helper Retirement: 2026-10-04
+
+The private traversal aggregate parser/spec, finalizer, SUM and deviation
+implementations had only test callers after production RETURN convergence.
+Remove those unused implementations and migrate their existing assertions to
+the shared aggregate parser and collector. Keep the aggregate-span scanner,
+function-name list and placeholder helpers that still have production callers.
+
+Retained controls cover valid and invalid call forms, DISTINCT, count/star,
+null and empty input, mixed numeric SUM, collections, min/max and sample versus
+population deviation. Unknown functions are explicitly unhandled rather than
+silently producing null. The typed localization descriptor identity/text test
+remains, while existing execution regressions still reject empty COUNT calls.
+No test functions were deleted and no public execution behavior changed.
+
+Fresh isolated repository correctness and both-parser focused races pass,
+alongside scoped vet and diagnostics. The unchanged differential corpus passes
+942 Bolt and 952 HTTP comparisons per actual parser: 3,788 total against pinned
+Neo4j 5.26.30 in autocommit and explicit transactions. Both official ratchets
+pass 7,794 outcomes with zero expected gaps, setup blockers or harness errors,
+using the pinned timezone archive. An earlier interrupted repository log was
+not counted as a pass; the fresh completed run supplies this evidence.
+
+The isolated snapshot was advanced to incoming UI commit `5a33c3b0` and the
+integrated repository correctness gate passed again before publication.
+
+No performance measurement or running-installation changes were made.
+Concurrent UI changes and matcher whitespace remain excluded. This completes
+the obsolete traversal helper retirement, not the remaining #713/#728/#754
+family acceptance. Publish with `Refs #713`; #547 remains excluded.
