@@ -2413,7 +2413,22 @@ func (ae *AsyncEngine) edgeCountOverlayDelta(edgeType string) (int64, map[string
 		return node.Labels
 	}
 
+	// adjust applies one version of a relationship to the counts: +1 for a pending write,
+	// -1 for the stored version it replaces or deletes. Only a relationship
+	// of the requested type counts, in every tier (#868).
 	var typeDelta int64
+	adjust := func(edge *Edge, sign int64) {
+		if edge.Type != edgeType {
+			return
+		}
+		typeDelta += sign
+		for _, l := range uniqueLabels(endpointLabels(edge.StartNode)) {
+			startDeltas[l] += sign
+		}
+		for _, l := range uniqueLabels(endpointLabels(edge.EndNode)) {
+			endDeltas[l] += sign
+		}
+	}
 	seen := make(map[EdgeID]struct{})
 	for id, edge := range pending {
 		if deleted[id] {
@@ -2421,42 +2436,16 @@ func (ae *AsyncEngine) edgeCountOverlayDelta(edgeType string) (int64, map[string
 		}
 		seen[id] = struct{}{}
 		if old, oldErr := ae.engine.GetEdge(id); oldErr == nil && old != nil {
-			if old.Type == edgeType {
-				typeDelta--
-			}
-			for _, l := range uniqueLabels(endpointLabels(old.StartNode)) {
-				startDeltas[l]--
-			}
-			for _, l := range uniqueLabels(endpointLabels(old.EndNode)) {
-				endDeltas[l]--
-			}
+			adjust(old, -1)
 		}
-		if edge.Type == edgeType {
-			typeDelta++
-		}
-		for _, l := range uniqueLabels(endpointLabels(edge.StartNode)) {
-			startDeltas[l]++
-		}
-		for _, l := range uniqueLabels(endpointLabels(edge.EndNode)) {
-			endDeltas[l]++
-		}
+		adjust(edge, 1)
 	}
 	for id := range deleted {
 		if _, ok := seen[id]; ok {
 			continue
 		}
-		old, oldErr := ae.engine.GetEdge(id)
-		if oldErr != nil || old == nil {
-			continue
-		}
-		if old.Type == edgeType {
-			typeDelta--
-		}
-		for _, l := range uniqueLabels(endpointLabels(old.StartNode)) {
-			startDeltas[l]--
-		}
-		for _, l := range uniqueLabels(endpointLabels(old.EndNode)) {
-			endDeltas[l]--
+		if old, oldErr := ae.engine.GetEdge(id); oldErr == nil && old != nil {
+			adjust(old, -1)
 		}
 	}
 	return typeDelta, startDeltas, endDeltas, nil
