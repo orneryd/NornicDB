@@ -245,6 +245,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Evaluate the documented decay functions `decayScore()`, `decay()` and
+  `policy()` in statements instead of rejecting them as unknown functions, and
+  score every decay call of a statement at the statement's time (#871, #866).
+
+- Read one statement instant for every temporal clock call in WHERE, as in
+  RETURN: `WHERE datetime() = datetime()` keeps every row (#872).
+
 - Count only the requested relationship type in the asynchronous engine's
   endpoint-label counts (`EdgeCountByStartLabel`, `EdgeCountByEndLabel`).
   Pending relationships of every type were added to them before a flush, and a

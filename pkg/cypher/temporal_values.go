@@ -170,7 +170,11 @@ type temporalStatementTimeKey struct{}
 
 const temporalRowContextKey = "\x00temporal_context"
 
-func containsTemporalClockCall(expression string) bool {
+// containsStatementClockCall reports a call that reads the statement's clock:
+// a temporal constructor, or a decay function (decayScore, decay), which
+// scores at the statement's time (#866). A row expression with one carries
+// the statement context (temporalRowContextKey).
+func containsStatementClockCall(expression string) bool {
 	for index := 0; index < len(expression); index++ {
 		if expression[index] != '(' {
 			continue
@@ -188,7 +192,7 @@ func containsTemporalClockCall(expression string) bool {
 			name = name[:dot]
 		}
 		switch name {
-		case "date", "datetime", "localdatetime", "time", "localtime":
+		case "date", "datetime", "localdatetime", "time", "localtime", "decayscore", "decay":
 			return true
 		}
 	}
