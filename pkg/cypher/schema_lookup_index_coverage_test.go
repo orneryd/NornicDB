@@ -66,6 +66,41 @@ func TestCreateLookupIndexNamesAndConflicts(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"node`lookup"}}, result.Rows)
 }
 
+func TestMonster531LookupIndexAdmission(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			for _, test := range []struct {
+				name, setup, indexName, pattern, code string
+			}{
+				{"equivalent node lookup", "", storage.DefaultNodeLookupIndexName, "(n) ON EACH labels(n)", "IndexAlreadyExists"},
+				{"lookup name on another entity", "", storage.DefaultNodeLookupIndexName, "()-[r]-() ON EACH type(r)", "IndexAlreadyExists"},
+				{"constraint name", "CREATE CONSTRAINT taken FOR (n:T) REQUIRE n.id IS UNIQUE", "taken", "(n) ON EACH labels(n)", "ConstraintWithNameAlreadyExists"},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+					ctx := context.Background()
+					if test.setup != "" {
+						_, err := exec.Execute(ctx, test.setup, nil)
+						require.NoError(t, err)
+					}
+					before := exec.storage.GetSchema().GetIndexes()
+					_, err := exec.Execute(ctx, "CREATE LOOKUP INDEX "+test.indexName+" FOR "+test.pattern, nil)
+					require.Error(t, err)
+					require.Contains(t, statusText(err), test.code)
+					require.ElementsMatch(t, before, exec.storage.GetSchema().GetIndexes())
+					_, err = exec.Execute(ctx, "CREATE LOOKUP INDEX "+test.indexName+" IF NOT EXISTS FOR "+test.pattern, nil)
+					require.NoError(t, err)
+					require.ElementsMatch(t, before, exec.storage.GetSchema().GetIndexes())
+				})
+			}
+		})
+	}
+}
+
 // TestCreateLookupIndexReportsPersistFailure: a schema that can't be
 // persisted fails CREATE LOOKUP INDEX with the persist error.
 func TestCreateLookupIndexReportsPersistFailure(t *testing.T) {

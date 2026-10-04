@@ -2153,5 +2153,27 @@
     "setup": ["CREATE INDEX shared FOR (n:T) ON (n.id)"],
     "query": "CREATE CONSTRAINT shared IF NOT EXISTS FOR (n:U) REQUIRE n.other IS UNIQUE",
     "no_effects": true
+  },
+  {
+    "name": "issue531 lookup same name equivalent definition",
+    "query": "CREATE LOOKUP INDEX index_343aff4e FOR (n) ON EACH labels(n)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 lookup name on another entity",
+    "query": "CREATE LOOKUP INDEX index_343aff4e FOR ()-[r]-() ON EACH type(r)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 lookup reuses constraint name",
+    "setup": ["CREATE CONSTRAINT taken FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE LOOKUP INDEX taken FOR (n) ON EACH labels(n)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 guarded lookup reuses constraint name",
+    "setup": ["CREATE CONSTRAINT taken FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE LOOKUP INDEX taken IF NOT EXISTS FOR (n) ON EACH labels(n)",
+    "no_effects": true
   }
 ]

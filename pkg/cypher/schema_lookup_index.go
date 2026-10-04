@@ -37,6 +37,11 @@ func (e *StorageExecutor) executeCreateLookupIndex(ctx context.Context, cypher s
 		var localized *localization.LocalizedError
 		if errors.As(err, &localized) {
 			switch localized.Message.ID {
+			case localization.MessageStorageSchemaConstraintAlreadyExists:
+				if ifNotExists {
+					return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+				}
+				return nil, localizedStatusError("Neo.ClientError.Schema.ConstraintWithNameAlreadyExists", "ConstraintWithNameAlreadyExists", localized.Message)
 			case localization.MessageStorageSchemaLookupIndexAlreadyExists:
 				if ifNotExists {
 					return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil

@@ -49,12 +49,17 @@ func (sm *SchemaManager) LookupIndexName(entityType ConstraintEntityType) (strin
 // AddLookupIndex adds the lookup index for entityType named name. There is
 // at most one per entity type; the caller reports an existing one (Neo4j's
 // IndexAlreadyExists). An empty name is the default name.
+// A constraint-owned name fails with ConstraintWithNameAlreadyExists before
+// checking for an existing lookup index.
 func (sm *SchemaManager) AddLookupIndex(name string, entityType ConstraintEntityType) error {
 	if name == "" {
 		name = defaultLookupIndexes()[entityType]
 	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	if _, ok := sm.constraints[name]; ok {
+		return newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(name))
+	}
 	if _, ok := sm.lookupIndexes[entityType]; ok {
 		pattern := "(:<any-labels>)"
 		if entityType == ConstraintEntityRelationship {

@@ -51,6 +51,35 @@ func TestLookupIndexesPersist(t *testing.T) {
 	require.False(t, ok, "a failed persist doesn't add the index")
 }
 
+func TestLookupIndexConstraintNameAdmission(t *testing.T) {
+	for _, constraintType := range []ConstraintType{ConstraintUnique, ConstraintExists} {
+		for _, entityType := range []ConstraintEntityType{ConstraintEntityNode, ConstraintEntityRelationship} {
+			for _, occupied := range []bool{false, true} {
+				t.Run(string(constraintType)+"/"+string(entityType)+map[bool]string{false: "/absent", true: "/occupied"}[occupied], func(t *testing.T) {
+					schema := NewSchemaManager()
+					if !occupied {
+						require.NoError(t, schema.DropIndex(defaultLookupIndexes()[entityType]))
+					}
+					constraint := Constraint{Name: "taken", Type: constraintType, Label: "Doc", Properties: []string{"id"}}
+					require.NoError(t, schema.AddConstraint(constraint))
+					before := schema.GetIndexes()
+					constraintsBefore := schema.GetAllConstraints()
+					persisted := 0
+					schema.SetPersister(func(*SchemaDefinition) error { persisted++; return nil })
+					err := schema.AddLookupIndex("taken", entityType)
+					require.Error(t, err)
+					var classified *schemaAdmissionError
+					require.ErrorAs(t, err, &classified)
+					require.Equal(t, "Neo.ClientError.Schema.ConstraintWithNameAlreadyExists", classified.BoltErrorCode())
+					require.ElementsMatch(t, before, schema.GetIndexes())
+					require.ElementsMatch(t, constraintsBefore, schema.GetAllConstraints())
+					require.Zero(t, persisted)
+				})
+			}
+		}
+	}
+}
+
 var errPersistForTest = errors.New("persist failed")
 
 // nonLookupIndexes is indexes without the token lookup indexes every schema

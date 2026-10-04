@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reserve constraint names under the storage lock for LOOKUP index creation,
+  with reference-compatible `ConstraintWithNameAlreadyExists` and guarded
+  no-op behavior. Preserve LOOKUP-specific `IndexAlreadyExists` precedence
+  and reject without persistence or inventory changes (#531).
+
 - Admit expression type predicates in the strict ANTLR grammar, including
   `IS TYPED`, `IS NOT ::`, shorthand `::`, multiword types, nullable types,
   unions and nested list/array forms. Both parser modes share reference-value
