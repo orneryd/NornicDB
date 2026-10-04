@@ -115,6 +115,12 @@
 - id: cyphermatching.relationship_type_expression_in_write_pattern
   description: Expanded pseudo-locale relationship type expression in write pattern.
   other: "[!! Relationship type expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause !!]"
+- id: cyphermatching.pattern_predicate_in_write_pattern
+  description: "Expanded pseudo-locale pattern predicate in a write pattern."
+  other: "[!! {{.Element}} pattern predicates are not allowed in a {{.Clause}} clause, but only in a MATCH clause or inside a pattern comprehension !!]"
+- id: cyphermatching.pattern_predicate_variable_length
+  description: "Expanded pseudo-locale pattern predicate on a variable-length relationship."
+  other: "[!! Relationship pattern predicates are not supported for variable-length relationships. !!]"
 - id: cyphermatching.is_not_operand_invalid
   description: Expanded pseudo-locale is not operand invalid.
   other: "[!! Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED' !!]"

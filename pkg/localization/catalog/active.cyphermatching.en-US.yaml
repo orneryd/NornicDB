@@ -115,6 +115,12 @@
 - id: cyphermatching.relationship_type_expression_in_write_pattern
   description: A CREATE or MERGE relationship pattern uses !, & or %. Clause is a Cypher keyword and is not translated.
   other: "Relationship type expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause"
+- id: cyphermatching.pattern_predicate_in_write_pattern
+  description: "A node or relationship pattern's own WHERE in CREATE or MERGE. Element is Node or Relationship; Clause is the clause keyword."
+  other: "{{.Element}} pattern predicates are not allowed in a {{.Clause}} clause, but only in a MATCH clause or inside a pattern comprehension"
+- id: cyphermatching.pattern_predicate_variable_length
+  description: "A WHERE inside a variable-length relationship pattern."
+  other: "Relationship pattern predicates are not supported for variable-length relationships."
 - id: cyphermatching.is_not_operand_invalid
   description: IS NOT is followed by a label. Input is Cypher text and is not translated.
   other: "Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED'"
