@@ -39,3 +39,25 @@ func TestCompareCypherNumbersExactly(t *testing.T) {
 		require.Equal(t, tc.comparison, comparison, tc.name)
 	}
 }
+
+func TestPromoteConstantNumbers(t *testing.T) {
+	const big, float = "9007199254740993", "9007199254740992.0"
+	for _, tc := range []struct {
+		name                  string
+		operator, left, right string
+		leftValue, rightValue interface{}
+		wantLeft, wantRight   interface{}
+	}{
+		{"integer = float literal", "=", big, float, int64(9007199254740993), 9007199254740992.0, 9007199254740993.0, 9007199254740992.0},
+		{"float > integer literal", ">", float, big, 9007199254740992.0, int64(9007199254740993), 9007199254740992.0, 9007199254740993.0},
+		{"<> compares exactly", "<>", big, float, int64(9007199254740993), 9007199254740992.0, int64(9007199254740993), 9007199254740992.0},
+		{"a variable compares exactly", "=", "x", float, int64(9007199254740993), 9007199254740992.0, int64(9007199254740993), 9007199254740992.0},
+		{"two integers", "=", "1", "1", int64(1), int64(1), int64(1), int64(1)},
+		{"unsigned against a float", "<", "1", "2.0", uint64(1), 2.0, uint64(1), 2.0},
+		{"float against unsigned", "<", "2.0", "1", 2.0, uint64(1), 2.0, uint64(1)},
+	} {
+		left, right := promoteConstantNumbers(tc.operator, tc.left, tc.right, tc.leftValue, tc.rightValue)
+		require.Equal(t, tc.wantLeft, left, tc.name)
+		require.Equal(t, tc.wantRight, right, tc.name)
+	}
+}

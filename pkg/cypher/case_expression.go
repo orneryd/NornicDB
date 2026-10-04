@@ -300,7 +300,8 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 		// Check each WHEN clause
 		for _, clause := range ce.whenClauses {
 			whenValue := e.evaluateExpressionWithContextFull(ctx, clause.value, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if compareValues(testValue, whenValue) {
+			// CASE x WHEN y compares as x = y does (promoteConstantNumbers).
+			if compareValues(promoteConstantNumbers("=", ce.testExpression, clause.value, testValue, whenValue)) {
 				return e.evaluateExpressionWithContextFull(ctx, clause.result, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			}
 		}
