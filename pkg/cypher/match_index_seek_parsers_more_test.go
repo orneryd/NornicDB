@@ -8,6 +8,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIndexedEqualityResolvesBoundRowValues(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	ctx = withValueBindings(ctx, map[string]interface{}{
+		"key": "bound-key",
+		"row": map[string]interface{}{"props": map[string]interface{}{"key": int64(9007199254740993)}},
+	})
+	for _, test := range []struct {
+		predicate string
+		want      interface{}
+	}{
+		{"n.k = key", "bound-key"},
+		{"key = n.k", "bound-key"},
+		{"n.k = row.props.key", int64(9007199254740993)},
+	} {
+		t.Run(test.predicate, func(t *testing.T) {
+			property, value, admitted := executor.parseSimpleIndexedEquality(ctx, "n", test.predicate)
+			require.True(t, admitted)
+			require.Equal(t, "k", property)
+			require.Equal(t, test.want, value)
+		})
+	}
+	_, _, admitted := executor.parseSimpleIndexedEquality(ctx, "n", "n.k = n.other")
+	require.False(t, admitted)
+}
+
+func TestIndexedWhereKeepsIncomingRowsSeparate(t *testing.T) {
+	for _, expression := range []string{"key", "row.props.key"} {
+		t.Run(expression, func(t *testing.T) {
+			executor := transactionIndexExecutor(t, 3)
+			ctx := context.Background()
+			query := "UNWIND $keys AS key MATCH (n:P) WHERE n.k = key RETURN n.v AS value ORDER BY value LIMIT 2"
+			params := map[string]interface{}{"keys": []interface{}{"k0", "k2"}}
+			if expression == "row.props.key" {
+				query = "UNWIND $rows AS row MATCH (n:P) WHERE n.k = row.props.key RETURN n.v AS value ORDER BY value LIMIT 2"
+				params = map[string]interface{}{"rows": []interface{}{
+					map[string]interface{}{"props": map[string]interface{}{"key": "k0"}},
+					map[string]interface{}{"props": map[string]interface{}{"key": "k2"}},
+				}}
+			}
+			result, err := executor.Execute(ctx, query, params)
+			require.NoError(t, err)
+			require.Equal(t, []string{"value"}, result.Columns)
+			require.Equal(t, [][]interface{}{{int64(0)}, {int64(2)}}, result.Rows)
+		})
+	}
+}
+
 func TestMatchIndexSeek_ParserAdditionalBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "seek_parser_more_cov"))
 	ctx := context.Background()

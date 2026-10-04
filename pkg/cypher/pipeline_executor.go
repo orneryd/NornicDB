@@ -2265,7 +2265,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	template := e.pipelineNodeMatchTemplateFor(clause)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		materializedWhere := e.materializePipelinePredicateExpressions(whereClause, row)
+		materializedWhere := whereClause
 		// The pattern parsed once and its properties evaluated for the row;
 		// the text route for a row the template can't evaluate.
 		nodePattern, templated := template.node(ctx, e, row)
@@ -2289,10 +2289,18 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			}
 			continue
 		}
+		candidateHint := hint
+		for name := range row {
+			if name != nodePattern.variable && referencesVariable(whereClause, name) {
+				cacheKey = ""
+				candidateHint.earlyLimit = -1
+				break
+			}
+		}
 		candidates, cached := candidateCache[cacheKey]
 		if cacheKey == "" || !cached {
 			var err error
-			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, materializedWhere, hint)
+			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, row), nodePattern, materializedWhere, candidateHint)
 			if err != nil {
 				return nil, true, err
 			}

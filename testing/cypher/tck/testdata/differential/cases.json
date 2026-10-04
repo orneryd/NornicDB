@@ -2316,5 +2316,25 @@
     "query": "MATCH (t:TranslatedText) WHERE t.language = $language AND t.isReviewed = false MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t) WHERE o.pagePath STARTS WITH $pagePath RETURN count(t) AS translations",
     "parameters": {"language": "es", "pagePath": "/benefits"},
     "no_effects": true
+  },
+  {
+    "name": "graphify source body parameter keys gentle update",
+    "setup": ["CREATE (:Code {id: 'pkg_math_vector_similarity_cosinesimilarity', label: 'CosineSimilarity()', body: '// short'})"],
+    "query": "UNWIND $rows AS row MATCH (n:Code {id: row.id}) WHERE NOT all(k IN keys(row.props) WHERE k = 'updated_at' OR n[k] = row.props[k]) SET n += row.props RETURN properties(n) AS props",
+    "parameters": {
+      "rows": [{
+        "id": "pkg_math_vector_similarity_cosinesimilarity",
+        "props": {
+          "id": "pkg_math_vector_similarity_cosinesimilarity",
+          "label": "CosineSimilarity()",
+          "file_type": "code",
+          "source_file": "pkg/math/vector/similarity.go",
+          "source_location": "L34",
+          "body_start_line": 34,
+          "updated_at": 1765762184.6631913,
+          "body": "// CosineSimilarity calculates cosine similarity between two float32 vectors.\n// Returns value in range [-1, 1] where 1 = identical, 0 = orthogonal, -1 = opposite.\n//\n// This is the STANDARD implementation for all non-GPU code.\n// Uses float64 accumulation for high precision, even with float32 inputs.\n//\n// Example:\n//\n//\ta := []float32{1.0, 2.0, 3.0}\n//\tb := []float32{4.0, 5.0, 6.0}\n//\tsim := CosineSimilarity(a, b)  // Returns 0.9746318461970762\nfunc CosineSimilarity(a, b []float32) float64 {\n\tif len(a) != len(b) || len(a) == 0 {\n\t\treturn 0\n\t}\n\n\tvar dotProd, normA, normB float64\n\tfor i := range a {\n\t\tdotProd += float64(a[i] * b[i])\n\t\tnormA += float64(a[i] * a[i])\n\t\tnormB += float64(b[i] * b[i])\n\t}\n\n\tif normA == 0 || normB == 0 {\n\t\treturn 0\n\t}\n\n\treturn dotProd / (math.Sqrt(normA) * math.Sqrt(normB))\n}"
+        }
+      }]
+    }
   }
 ]

@@ -12,16 +12,21 @@ import (
 )
 
 // indexSeekConstant evaluates the value side of a predicate an index seek
-// answers. The seek may use the value only when it is a constant of the
-// statement: no row variable, defined by the evaluator (literals, parameters
-// and functions of them, such as toUpper($name) or date('2020-01-02')).
+// answers. The seek may use literals, parameters and values already bound
+// in the incoming scope, including functions and property access over them.
+// Unbound candidate variables are not constants of that incoming scope.
 // Otherwise ok is false and the predicate is left to the row filter. Reading
 // the value with the literal parser looked up a function call as its own
 // text and returned no rows (#844).
 func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (value interface{}, ok bool) {
 	expr = strings.TrimSpace(expr)
-	if expr == "" || len(expressionFreeVariables(expr)) > 0 {
+	if expr == "" {
 		return nil, false
+	}
+	for _, variable := range expressionFreeVariables(expr) {
+		if _, bound := e.boundValue(ctx, variable); !bound {
+			return nil, false
+		}
 	}
 	value, ok = e.evaluateRowExpressionWithContext(ctx, expr, e.fabricRecordBindings)
 	if !ok {

@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Keep bound parameter-map values out of MATCH WHERE expression text. Preserve
+  typed indexed lookups and full-row filtering for dynamic-key quantifiers,
+  preventing source-body strings from being interpreted as arithmetic (#728).
+
 - Share traversal aggregate RETURN planning and multi-MATCH aggregate bindings,
   preserving parameters, named paths and relationship lists. Use shared
   percentile collectors and retain exact integer SUM values above 2^53 (#713).

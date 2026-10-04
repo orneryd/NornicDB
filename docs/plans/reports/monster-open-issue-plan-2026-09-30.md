@@ -589,3 +589,40 @@ Interrupted checks are not credited; ANTLR HTTP and ratchet reruns completed.
 Main was pulled before publication; unrelated Graphify changes are excluded.
 No local installation was managed and no performance measurement is made.
 #713/#728/#754 remain open; #530/#531 are closed and #547 remains excluded.
+
+### Graphify Dynamic-Key WHERE Regression: 2026-10-04
+
+The requested special test freezes the reported 812-byte CosineSimilarity body
+and scalar metadata. It reproduces the exact String-minus-Long error in three
+parameter-map WHERE variants per parser; seven controls pass before repair.
+The failure boundary is predicate value materialization, not a demonstrated
+property-dictionary arithmetic defect. RETURN and static-key controls preserve
+typed values and do not fail.
+
+Initial-node MATCH now retains original WHERE text for complete-row evaluation.
+Index admission recognizes values already bound in the incoming scope, including
+scalar and nested-map operands, while rejecting unbound candidate references.
+Typed scope reaches index lookup; predicates depending on outer rows defer
+node-only early LIMIT filtering and cannot reuse another row's candidate cache.
+Earlier matcher-only experiments were withdrawn after existing tests exposed
+the joined LIMIT and indexed-read requirements; the final repair passes both.
+
+Ten special controls include timestamp-only no-ops, genuine updates, body
+variants, static keys, direct comparison, RETURN and unguarded SET, with exact
+rows, columns and persisted properties. Admission and two-row indexed controls
+retain exact integer values, reversed equality and separate lookup results.
+No tests were removed and the importer/UI hash workaround remains untouched.
+
+One appended reference case retains the same 812-byte payload and checks its
+persisted update and graph effects against pinned Neo4j 5.26.30. The protected
+corpus prefix is unchanged. Final matrices pass 926 Bolt and 936 HTTP comparisons
+per actual parser: 3,724 total. Both official ratchets pass 7,794 outcomes with
+zero gaps, setup blockers or harness errors and the pinned temporal archive.
+Repository correctness, focused races, scoped vet and diagnostics pass. Changed
+resolver coverage is 100%; the existing initial-node matcher has 90.2% focused
+coverage. No whole-package coverage or performance-equivalence claim is made.
+
+Incoming Graphify commits are preserved and the isolated snapshot is advanced
+to their main revision before publication. No running installation was managed.
+This closes the special reproduction, not the remaining #713/#728/#754 family
+acceptance; #547 remains excluded.
