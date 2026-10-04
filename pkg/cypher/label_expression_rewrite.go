@@ -609,24 +609,12 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 	q := r.query
 	for i := start; i < end; i++ {
 		c := q[i]
+		// A pattern predicate or comprehension can't quantify a relationship;
+		// Neo4j allows it only in MATCH and subqueries.
+		if _, quantified := relationshipQuantifierAt(q, i, end); quantified && arrowEndsAt(q, start, i) {
+			return labelExpressionSyntaxError(localization.CypherMatchingQuantifierInExpressionPattern(string(c)))
+		}
 		switch {
-		case (c == '{' || c == '+' || c == '*') && arrowEndsAt(q, start, i):
-			// A pattern predicate or comprehension can't quantify a
-			// relationship; Neo4j allows it only in MATCH and subqueries.
-			if _, ok := relationshipQuantifierAt(q, i, end); ok {
-				return labelExpressionSyntaxError(localization.CypherMatchingQuantifierInExpressionPattern(string(c)))
-			}
-			if c != '{' {
-				continue
-			}
-			close := findMatchingDelimiter(q[:end], i, '{', '}')
-			if close < 0 {
-				return nil
-			}
-			if err := r.expression(i+1, close); err != nil {
-				return err
-			}
-			i = close
 		case c == '\'' || c == '"' || c == '`':
 			i = skipCypherQuotedText(q, i, c) - 1
 		case c == '{':

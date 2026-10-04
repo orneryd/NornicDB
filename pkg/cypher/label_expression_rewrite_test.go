@@ -302,6 +302,13 @@ func TestDesugarLabelExpressionsNestedAndMalformedInput(t *testing.T) {
 		{"MATCH (n:A|B", "MATCH (n:A|B"},
 		{"MATCH (n)-[r:!R RETURN 1", "MATCH (n)-[r:!R RETURN 1"},
 		{"MATCH (a)-[:R]->{1,3}(b:A|B) RETURN b", "MATCH (a)-[:R*1..3]->(b) WHERE b:A|B RETURN b"},
+		// Relationship quantifiers (#864): the length goes before an inline
+		// WHERE or properties; an abbreviated relationship gets brackets.
+		{"MATCH (a)-[r:R WHERE r.w > 1]->{1,2}(b) RETURN b", "MATCH (a)-[r:R*1..2 WHERE r.w > 1]->(b) RETURN b"},
+		{"MATCH (a)-[r:R {w: 1}]->{2,}(b) RETURN b", "MATCH (a)-[r:R*2.. {w: 1}]->(b) RETURN b"},
+		{"MATCH (a)-[:`R*`]->{,2}(b) RETURN b", "MATCH (a)-[:`R*`*0..2]->(b) RETURN b"},
+		{"MATCH (a)<--{2}(b) RETURN b", "MATCH (a)<-[*2..2]-(b) RETURN b"},
+		{"MATCH (a)--*(b) RETURN b", "MATCH (a)-[*0..]-(b) RETURN b"},
 		{"FOREACH 1 | 2", "FOREACH 1 | 2"},
 		{"FOREACH (x IN [1] | CREATE (:A|B)", "FOREACH (x IN [1] | CREATE (:A|B)"},
 		{"FOREACH (x IN [n IS A] )", "FOREACH (x IN [n:A] )"},

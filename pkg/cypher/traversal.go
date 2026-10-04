@@ -125,10 +125,10 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 	if strings.HasPrefix(pattern, "[") && strings.HasSuffix(pattern, "]") {
 		inner := pattern[1 : len(pattern)-1]
 
-		// Check for variable length: [*], [*2], [*1..3], [*2..], [*..5]
-		if strings.Contains(inner, "*") {
+		// Check for variable length: [*], [*2], [*1..3], [*2..], [*..5]. A
+		// * in a backticked type name is part of the name (#879).
+		if varLengthStart := indexOutsideQuotes(inner, '*'); varLengthStart >= 0 {
 			result.VariableLength = true
-			varLengthStart := strings.Index(inner, "*")
 			varLengthEnd := varLengthStart + 1
 			for varLengthEnd < len(inner) {
 				ch := inner[varLengthEnd]
