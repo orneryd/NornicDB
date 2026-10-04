@@ -15,8 +15,75 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGh531_BoltNativeKnowledgeRouting(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		for _, mode := range []TransactionMode{AutocommitMode, ExplicitTransactionMode} {
+			t.Run(parser+"/"+string(mode), func(t *testing.T) {
+				previous := config.GetParserType()
+				config.SetParserType(parser)
+				t.Cleanup(func() { config.SetParserType(previous) })
+				engine, err := storage.NewBadgerEngine(t.TempDir())
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = engine.Close() })
+				driver, shutdown := startConformanceServerWithEngine(t, engine)
+				defer shutdown()
+				require.Equal(t, parser, config.GetParserType())
+				ctx := context.Background()
+				backend := newDifferentialBackend(t, driver, "nornic", mode)
+				for _, query := range []string{
+					"CREATE DECAY PROFILE wire_decay OPTIONS {halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED'}",
+					"CREATE PROMOTION PROFILE wire_boost OPTIONS {multiplier: 1.5, scoreFloor: 0.1, scoreCap: 0.9}",
+					"CREATE PROMOTION POLICY wire_policy FOR (n:Fact) APPLY {ON ACCESS {SET n.c = 1}}",
+				} {
+					_, err := backend.Execute(ctx, query, nil)
+					require.NoError(t, err, query)
+				}
+				for _, query := range []string{
+					"SHOW DECAY PROFILES YIELD name WHERE name = 'wire_decay' RETURN name",
+					"SHOW PROMOTION PROFILES YIELD name WHERE name = 'wire_boost' RETURN name",
+					"SHOW PROMOTION POLICIES YIELD name WHERE name = 'wire_policy' RETURN name",
+				} {
+					result, err := backend.Execute(ctx, query, nil)
+					require.NoError(t, err)
+					require.Len(t, result.Rows, 1)
+				}
+				for _, query := range []string{
+					"ALTER PROMOTION POLICY wire_policy FROBNICATE",
+					"ALTER PROMOTION POLICY wire_policy SET OPTIONS {enabled: 'no'}",
+					"ALTER PROMOTION PROFILE wire_boost SET OPTIONS {scoreFloor: 'abc'}",
+					"CREATE DECAY PROFILE invalid_decay OPTIONS {halfLife: duration('P30D')}",
+				} {
+					_, err := backend.Execute(ctx, query, nil)
+					require.Error(t, err, query)
+				}
+				result, err := backend.Execute(ctx, "SHOW PROMOTION PROFILES YIELD name, multiplier WHERE name = 'wire_boost' RETURN multiplier", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]any{{float64(1.5)}}, result.Rows)
+				result, err = backend.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]any{{int64(0)}}, result.Rows)
+				session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "nornic"})
+				defer session.Close(ctx)
+				transaction, err := session.BeginTransaction(ctx)
+				require.NoError(t, err)
+				defer transaction.Close(ctx)
+				pending, err := transaction.Run(ctx, "CREATE PROMOTION PROFILE rolled_back OPTIONS {multiplier: 1.5}", nil)
+				require.NoError(t, err)
+				_, err = pending.Consume(ctx)
+				require.NoError(t, err)
+				require.NoError(t, transaction.Rollback(ctx))
+				result, err = backend.Execute(ctx, "SHOW PROMOTION PROFILES YIELD name WHERE name = 'rolled_back' RETURN name", nil)
+				require.NoError(t, err)
+				require.Empty(t, result.Rows)
+			})
+		}
+	}
+}
 
 func TestGh531_BoltSchemaTransactionLifetime(t *testing.T) {
 	referenceURI := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI")

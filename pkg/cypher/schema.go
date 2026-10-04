@@ -591,7 +591,7 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 // dropIndexByName removes the named index from the schema and tears down the
 // in-memory data that belongs to it. It is the single drop path for DROP INDEX
 // and the db.index.vector.drop / db.index.fulltext.drop procedures. A missing
-// index is a Neo.ClientError.Schema.IndexDropFailed error unless ifExists is set.
+// index is a Neo.DatabaseError.Schema.IndexDropFailed error unless ifExists is set.
 func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 	// Look up the schema entry BEFORE dropping it so we can also tear down
 	// any in-memory index data the schema entry was the only handle for.
@@ -613,7 +613,7 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 			if ifExists {
 				return nil
 			}
-			return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex", err.Error())
+			return newSemanticError("Neo.DatabaseError.Schema.IndexDropFailed", "MissingIndex", err.Error())
 		}
 		return err
 	}
@@ -678,7 +678,7 @@ func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher stri
 			if ifExists {
 				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 			}
-			return nil, newSemanticError("Neo.ClientError.Schema.ConstraintDropFailed", "MissingConstraint", err.Error())
+			return nil, newSemanticError("Neo.DatabaseError.Schema.ConstraintDropFailed", "MissingConstraint", err.Error())
 		}
 		return nil, err
 	}
@@ -1152,6 +1152,7 @@ func parseVectorOptions(optionsClause string, defaultDimensions int, defaultSimi
 type parsedCreateFulltextIndexDDL struct {
 	indexName         string
 	label             string
+	labels            []string
 	relationshipTypes []string
 	properties        []string
 	isRelationship    bool
@@ -1268,6 +1269,18 @@ func (e *StorageExecutor) parseCreateFulltextIndexDDL(cypher string) (parsedCrea
 	if err != nil {
 		return parsedCreateFulltextIndexDDL{}, err
 	}
+	var labels []string
+	if !isRelationship {
+		pattern := strings.TrimSpace(q[forEnd:onPos])
+		if inside, _, ok := extractParenSection(pattern); ok {
+			pattern = inside
+		}
+		_, targets, _ := strings.Cut(pattern, ":")
+		labels, err = parseFulltextRelationshipTypes(targets)
+		if err != nil {
+			return parsedCreateFulltextIndexDDL{}, err
+		}
+	}
 
 	propsSegment, tail, err := extractFulltextPropertiesSegment(q[onEnd:])
 	if err != nil {
@@ -1285,6 +1298,7 @@ func (e *StorageExecutor) parseCreateFulltextIndexDDL(cypher string) (parsedCrea
 	return parsedCreateFulltextIndexDDL{
 		indexName:         name,
 		label:             label,
+		labels:            labels,
 		relationshipTypes: relationshipTypes,
 		properties:        properties,
 		isRelationship:    isRelationship,
@@ -2166,6 +2180,9 @@ func (e *StorageExecutor) parseIndexProperties(propertiesStr string) []string {
 // hold every node with the value, so a half-filled one would drop rows.
 func (e *StorageExecutor) addPropertyIndex(name, label string, properties []string) error {
 	schema := e.storage.GetSchema()
+	if len(properties) > 1 {
+		return schema.AddRangeIndexForEntity(name, label, properties, storage.ConstraintEntityNode)
+	}
 	existed := len(properties) > 0 && schema.HasPropertyIndex(label, properties[0])
 	if err := schema.AddPropertyIndex(name, label, properties); err != nil {
 		return err
@@ -2328,7 +2345,7 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 	}
 
 	entityType := storage.ConstraintEntityNode
-	targets := []string{parsed.label}
+	targets := parsed.labels
 	if parsed.isRelationship {
 		entityType = storage.ConstraintEntityRelationship
 		targets = parsed.relationshipTypes
@@ -2348,7 +2365,7 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 
-	if err := schema.AddFulltextIndex(parsed.indexName, []string{parsed.label}, parsed.properties); err != nil {
+	if err := schema.AddFulltextIndex(parsed.indexName, parsed.labels, parsed.properties); err != nil {
 		return nil, localizedError(localization.CypherSchemaAddFulltextIndexFailed(err), err)
 	}
 

@@ -19,11 +19,89 @@ import (
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/pkg/bolt"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGh531_HTTPNativeKnowledgeRouting(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		for _, mode := range []string{"autocommit", "commit", "rollback"} {
+			t.Run(parser+"/"+mode, func(t *testing.T) {
+				server, authenticator := setupTestServer(t)
+				previous := config.GetParserType()
+				config.SetParserType(parser)
+				t.Cleanup(func() { config.SetParserType(previous) })
+				require.Equal(t, parser, config.GetParserType())
+				token := "Bearer " + getAuthToken(t, authenticator, "admin")
+				request := func(method, endpoint string, queries ...string) TransactionResponse {
+					t.Helper()
+					statements := make([]map[string]any, 0, len(queries))
+					for _, query := range queries {
+						statements = append(statements, map[string]any{"statement": query})
+					}
+					response := makeRequest(t, server, method, endpoint, map[string]any{"statements": statements}, token)
+					require.Contains(t, []int{http.StatusOK, http.StatusCreated}, response.Code)
+					var result TransactionResponse
+					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+					return result
+				}
+				endpoint := "/db/nornic/tx/commit"
+				if mode != "autocommit" {
+					endpoint = "/db/nornic/tx"
+				}
+				created := request(http.MethodPost, endpoint,
+					"CREATE DECAY PROFILE wire_decay OPTIONS {halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED'}",
+					"CREATE PROMOTION PROFILE wire_boost OPTIONS {multiplier: 1.5, scoreFloor: 0.1, scoreCap: 0.9}",
+					"CREATE PROMOTION POLICY wire_policy FOR (n:Fact) APPLY {ON ACCESS {SET n.c = 1}}")
+				require.Empty(t, created.Errors)
+				if mode != "autocommit" {
+					require.NotEmpty(t, created.Commit)
+					if mode == "commit" {
+						require.Empty(t, request(http.MethodPost, created.Commit).Errors)
+					} else {
+						require.Empty(t, request(http.MethodDelete, strings.TrimSuffix(created.Commit, "/commit")).Errors)
+					}
+				}
+				for _, query := range []string{
+					"SHOW DECAY PROFILES YIELD name WHERE name = 'wire_decay' RETURN name",
+					"SHOW PROMOTION PROFILES YIELD name WHERE name = 'wire_boost' RETURN name",
+					"SHOW PROMOTION POLICIES YIELD name WHERE name = 'wire_policy' RETURN name",
+				} {
+					shown := request(http.MethodPost, "/db/nornic/tx/commit", query)
+					require.Empty(t, shown.Errors)
+					require.Len(t, shown.Results, 1)
+					if mode == "rollback" {
+						require.Empty(t, shown.Results[0].Data)
+					} else {
+						require.Len(t, shown.Results[0].Data, 1)
+					}
+				}
+				if mode != "rollback" {
+					for _, query := range []string{
+						"ALTER PROMOTION POLICY wire_policy FROBNICATE",
+						"ALTER PROMOTION POLICY wire_policy SET OPTIONS {enabled: 'no'}",
+						"ALTER PROMOTION PROFILE wire_boost SET OPTIONS {scoreFloor: 'abc'}",
+						"CREATE DECAY PROFILE invalid_decay OPTIONS {halfLife: duration('P30D')}",
+					} {
+						require.NotEmpty(t, request(http.MethodPost, "/db/nornic/tx/commit", query).Errors)
+					}
+					shown := request(http.MethodPost, "/db/nornic/tx/commit", "SHOW PROMOTION PROFILES YIELD name, multiplier WHERE name = 'wire_boost' RETURN multiplier")
+					require.Empty(t, shown.Errors)
+					require.Equal(t, []any{float64(1.5)}, shown.Results[0].Data[0].Row)
+					shown = request(http.MethodPost, "/db/nornic/tx/commit", "SHOW PROMOTION POLICIES YIELD name, enabled WHERE name = 'wire_policy' RETURN enabled")
+					require.Empty(t, shown.Errors)
+					require.Equal(t, []any{true}, shown.Results[0].Data[0].Row)
+				}
+				nodes := request(http.MethodPost, "/db/nornic/tx/commit", "MATCH (n) RETURN count(n)")
+				require.Empty(t, nodes.Errors)
+				require.Equal(t, []any{float64(0)}, nodes.Results[0].Data[0].Row)
+			})
+		}
+	}
+}
 
 func TestGh775_HTTPTypedNodeIndexRouting(t *testing.T) {
 	for _, testCase := range []struct {

@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 type updateErrorEngine struct {
@@ -66,6 +68,41 @@ func TestCompositeIndex(t *testing.T) {
 
 	if !found {
 		t.Error("Composite index not found in schema")
+	}
+}
+
+func TestMonster531CompositeAfterSinglePropertyIndex(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+			ctx := context.Background()
+			for _, query := range []string{
+				"CREATE (:P {a: 1, b: 2})",
+				"CREATE INDEX ix_a FOR (n:P) ON (n.a)",
+				"CREATE INDEX ix_ab FOR (n:P) ON (n.a, n.b)",
+			} {
+				_, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err)
+			}
+			result, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, properties WHERE name IN ['ix_a', 'ix_ab'] RETURN name, properties ORDER BY name", nil)
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 2)
+			require.Equal(t, "ix_a", result.Rows[0][0])
+			require.Equal(t, "ix_ab", result.Rows[1][0])
+			require.ElementsMatch(t, []string{"a", "b"}, result.Rows[1][1])
+			index, exists := exec.storage.GetSchema().GetRangeIndex("ix_ab")
+			require.True(t, exists)
+			require.Equal(t, []string{"a", "b"}, index.Properties)
+			_, err = exec.Execute(ctx, "CREATE (:P {a: 3, b: 4})", nil)
+			require.NoError(t, err)
+			result, err = exec.Execute(ctx, "MATCH (n:P) RETURN n.a, n.b ORDER BY n.a", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(1), int64(2)}, {int64(3), int64(4)}}, result.Rows)
+		})
 	}
 }
 

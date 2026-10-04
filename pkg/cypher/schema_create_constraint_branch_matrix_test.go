@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -63,6 +64,75 @@ func TestMonster531ConstraintBackingIndexAdmission(t *testing.T) {
 	_, err = executor.Execute(ctx, "CREATE INDEX other IF NOT EXISTS FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, before, store.GetSchema().GetIndexes())
+}
+
+func TestMonster531FulltextLabelUnion(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+			ctx := context.Background()
+			for _, query := range []string{
+				"CREATE (:FtA {t: 'hello one'}), (:FtB {t: 'hello two'})",
+				"CREATE FULLTEXT INDEX ft2l FOR (n:FtA|FtB) ON EACH [n.t]",
+			} {
+				_, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err)
+			}
+			index, exists := exec.storage.GetSchema().GetFulltextIndex("ft2l")
+			require.True(t, exists)
+			require.Equal(t, []string{"FtA", "FtB"}, index.Labels)
+			result, err := exec.Execute(ctx, "CALL db.index.fulltext.queryNodes('ft2l', 'hello') YIELD node RETURN node.t AS text ORDER BY text", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"hello one"}, {"hello two"}}, result.Rows)
+		})
+	}
+}
+
+func TestMonster531FulltextTargetAdmission(t *testing.T) {
+	for _, test := range []struct {
+		pattern string
+		labels  []string
+	}{
+		{"`FtA`|`FtB`", []string{"FtA", "FtB"}},
+		{"`FtA|FtB`", []string{"FtA|FtB"}},
+		{"`Ft``A`|FtB", []string{"Ft`A", "FtB"}},
+		{"FtA|", nil},
+		{"FtA||FtB", nil},
+	} {
+		t.Run(test.pattern, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+			parsed, err := exec.parseCreateFulltextIndexDDL("CREATE FULLTEXT INDEX ft FOR (n:" + test.pattern + ") ON EACH [n.t]")
+			if test.labels == nil {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, test.labels, parsed.labels)
+			}
+		})
+	}
+}
+
+func TestMonster531MissingConstraintDropClass(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "DROP CONSTRAINT mykey", nil)
+			require.Error(t, err)
+			require.Contains(t, statusText(err), "Neo.DatabaseError.Schema.ConstraintDropFailed")
+			require.Empty(t, exec.storage.GetSchema().GetAllConstraints())
+			_, err = exec.Execute(ctx, "DROP CONSTRAINT mykey IF EXISTS", nil)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestMonster531NonBackingConstraintIndexName(t *testing.T) {

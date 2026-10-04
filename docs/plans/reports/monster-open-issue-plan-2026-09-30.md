@@ -320,3 +320,64 @@ both quote styles with literal newlines, post-index parameter/member access
 - #530, #531, #713, #728, #547 and #754 retain the acceptance criteria listed
   above. #775 remains separate/unmerged. Community licensing and Enterprise
   composites are not silently treated as reference-tested native behavior.
+
+## Schema Acceptance: 2026-10-03
+
+This update supersedes the earlier #531 residual status. Work is published
+directly on main under the user's current instructions; #547 remains excluded.
+The latest reported behaviors are repaired, but shared procedure/name admission
+and concurrent creation still require the final family audit before closure.
+Native inventory, truthful backend representations, localization, and free
+Enterprise-equivalent constraints are approved policy differences. In particular,
+native NODE KEY support is retained, not misreported as Community equivalence.
+
+Published progress includes native option/target/suffix validation and durable
+schema transaction staging (`d8116ef0`, `e8f7597c`, `b43a87e0`, `ca4e2d2b`,
+`79b74029`, `67cbff64`, `74584cf3`), ordinary/vector/fulltext/typed duplicate
+admission (`977fbb4a`, `104f3dc0`), reciprocal constraint/index names and the
+incoming ANTLR type-predicate regression (`2967e967`), and locked LOOKUP name
+admission (`3b6fc1e8`). Issue comments contain their individual matrices.
+
+The reporter's latest replay on `e5de57d7` identified three remaining standard
+DDL defects. Each now has fail-before/pass-after regression coverage:
+
+- A multi-property node index sharing its first property with a single-property
+  index now uses the existing durable ordered RANGE representation. Both appear
+  in SHOW; subsequent graph writes remain query-visible. No new cache or
+  optimized composite-query claim is made.
+- Fulltext node label unions use the existing quote-aware ordered target decoder.
+  Two-label inventory and retrieval match the reference; quoted literal pipes,
+  escaped backticks, and malformed unions have native controls.
+- Missing constraint drops use the observed database-error class. A neighboring
+  missing-index probe exposed another raw class mismatch hidden by the generic
+  type/phase comparison; it is also repaired. Both corpus cases now require their
+  exact `Neo.DatabaseError.Schema.*DropFailed` codes.
+
+Native-only public-route tests cover both actual runtime parsers: HTTP
+autocommit/explicit commit/rollback and real-driver Bolt autocommit/explicit
+transactions with persistent-schema rollback. Profiles and policies persist,
+the multiplier remains 1.5, invalid clauses/options reject without changing
+stored values, and profile DDL creates no phantom graph nodes. Embedded and
+storage tests retain broader option, target, suffix, conflict, mixing, lifecycle,
+namespace, and persistence controls. These are native evidence, not fabricated
+Neo4j comparisons.
+
+Final gates for this acceptance batch:
+
+- Pinned Neo4j 5.26.30: Bolt 890 comparisons per parser, HTTP 900 per parser,
+  total 3,580; both transaction modes, rows/columns, errors and graph effects.
+- Ordinary/procedure schema lifetime and transaction mixing: 32 Bolt plus 12
+  HTTP comparisons per parser, 88 additional comparisons.
+- Full repository correctness excludes performance-named tests. Focused native
+  policy/schema/wire races, touched-package vet, diagnostics and whitespace pass.
+  No benchmark, timing comparison or allocation claim is made.
+- New target-union parsing and multi-property routing statements are exercised;
+  the shared union decoder has 100% coverage. Whole legacy helper coverage is
+  lower and is not represented as 90%+ package coverage.
+
+The fixed original 116-case prefix is unchanged. No new failures are waived or
+silently treated as native policy. Broader raw-code enforcement, CI/TestKit,
+projection and WHERE convergence remain separate #754/#713/#728 acceptance work;
+#530 still requires its final family audit. Earlier intermittent cached-property
+map panic in unchanged AsyncEngine iteration is recorded in issue evidence and
+is not claimed repaired by this schema work.

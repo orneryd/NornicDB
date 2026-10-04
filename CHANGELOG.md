@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Store multi-property node indexes as durable ordered RANGE definitions rather
+  than colliding with an existing first-property index. Decode fulltext node
+  label unions with the shared quote-aware target parser, preserving quoted
+  literal pipes, and return the database-error class for missing index/constraint
+  drops. Cover native profile/policy DDL, invalid options, zero phantom nodes,
+  commit and rollback through public HTTP and Bolt routes in both parsers (#531).
+
 - Reserve constraint names under the storage lock for LOOKUP index creation,
   with reference-compatible `ConstraintWithNameAlreadyExists` and guarded
   no-op behavior. Preserve LOOKUP-specific `IndexAlreadyExists` precedence

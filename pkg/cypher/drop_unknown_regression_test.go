@@ -31,8 +31,8 @@ func TestDropMissingSchemaObjectClassification(t *testing.T) {
 		statement string
 		code      string
 	}{
-		{"DROP INDEX does_not_exist", "Neo.ClientError.Schema.IndexDropFailed"},
-		{"DROP CONSTRAINT does_not_exist", "Neo.ClientError.Schema.ConstraintDropFailed"},
+		{"DROP INDEX does_not_exist", "Neo.DatabaseError.Schema.IndexDropFailed"},
+		{"DROP CONSTRAINT does_not_exist", "Neo.DatabaseError.Schema.ConstraintDropFailed"},
 	} {
 		t.Run(testCase.statement, func(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
