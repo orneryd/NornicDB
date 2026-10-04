@@ -113,67 +113,55 @@ function depthTargets(depths: Map<string, number>, spacing: number): Map<string,
   return targets;
 }
 
-// Custom d3-force that keeps nodes in their depth bands along y.
-function layeredYForce(targets: Map<string, number>, strength: number) {
-  let nodes: GNode[] = [];
-  const force = (alpha: number) => {
-    const scale = strength * alpha;
-    for (const node of nodes) {
-      const target = targets.get(node.id);
-      if (target == null) continue;
-      node.vy = (node.vy ?? 0) + (target - (node.y ?? 0)) * scale;
-    }
-  };
-  force.initialize = (initialized: unknown[]) => {
-    nodes = initialized as GNode[];
-  };
-  return force;
-}
-
-// Configure the layout orientation: DAG top-down when acyclic, otherwise
-// a layered y-force keeps the root at the top of the scene.
+// Configure the layout orientation: bands are measured as hops from the
+// chosen root along the call/reference links, so only the starting symbol
+// sits at the top level (never an artifact of file structure or of which
+// nodes happen to have no incoming edges).
 function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], rootId: string | null): void {
-  if (isAcyclic(links)) {
-    setDagMode(fg, "td");
-    fg.d3Force("layers", null);
-    // Seed a radial spread by depth so the top-down tree is readable without
-    // a long-running force simulation, then freeze the simulation (the dag
-    // pins fy anyway) for fast, static rendering.
-    const depths = computeDepths(links, rootId ?? undefined);
-    const byDepth = new Map<number, GNode[]>();
-    for (const node of nodes) {
-      const depth = depths.get(node.id) ?? 0;
-      const group = byDepth.get(depth) ?? [];
-      group.push(node);
-      byDepth.set(depth, group);
-    }
-    for (const [depth, group] of byDepth) {
-      group.forEach((node, index) => {
-        const angle = (2 * Math.PI * index) / group.length + depth * 0.35;
-        const radius = 24 + depth * 26;
-        node.x = Math.cos(angle) * radius;
-        node.z = Math.sin(angle) * radius;
-      });
-    }
-    fg.d3AlphaMin(0.9);
-  } else {
-    setDagMode(fg, null);
-    const depths = computeDepths(links, rootId ?? undefined);
-    const targets = depthTargets(depths, 72);
-    for (const node of nodes) {
-      const target = targets.get(node.id);
-      if (target != null) {
-        node.y = target;
-        node.x = (Math.random() - 0.5) * 24;
-        node.z = (Math.random() - 0.5) * 24;
-      }
-    }
-    fg.d3Force("layers", layeredYForce(targets, 0.45) as unknown as (alpha: number) => void);
-    // Settle the banded layout faster than the defaults.
-    fg.d3AlphaDecay(0.05);
-    fg.d3VelocityDecay(0.65);
-    fg.d3AlphaMin(0.001);
+  // dagMode derives levels from link direction (every zero-indegree node
+  // lands at the top), so it stays off; this layout owns the bands.
+  setDagMode(fg, null);
+  fg.d3Force("layers", null);
+  const depths = computeDepths(links, rootId ?? undefined);
+  // Unreachable clusters (possible when test files are shown) go below the
+  // deepest reachable band instead of sharing the root's top level.
+  let maxDepth = 0;
+  for (const depth of depths.values()) {
+    maxDepth = Math.max(maxDepth, depth);
   }
+  const effective = new Map<string, number>();
+  for (const node of nodes) {
+    effective.set(node.id, depths.get(node.id) ?? maxDepth + 1);
+  }
+  const targets = depthTargets(effective, 72);
+  // Seed each band with a radial spread so the tree is readable without a
+  // long-running force simulation, then freeze for fast static rendering.
+  const byDepth = new Map<number, GNode[]>();
+  for (const node of nodes) {
+    const depth = effective.get(node.id) ?? 0;
+    const group = byDepth.get(depth) ?? [];
+    group.push(node);
+    byDepth.set(depth, group);
+  }
+  for (const [depth, group] of byDepth) {
+    group.forEach((node, index) => {
+      const angle = (2 * Math.PI * index) / group.length + depth * 0.35;
+      const radius = 24 + depth * 26;
+      node.x = Math.cos(angle) * radius;
+      node.z = Math.sin(angle) * radius;
+      node.y = targets.get(node.id) ?? 0;
+    });
+  }
+  if (import.meta.env.DEV) {
+    (window as unknown as Record<string, unknown>).__graphifyDebug = {
+      rootId,
+      maxDepth,
+      topBand: nodes
+        .filter((node) => (node.y ?? -1) >= (targets.get(rootId ?? "") ?? 0) - 0.5)
+        .map((node) => ({ id: node.id, label: node.label, y: node.y })),
+    };
+  }
+  fg.d3AlphaMin(0.9);
 }
 
 // ---------------------------------------------------------------------------
@@ -274,37 +262,6 @@ interface Neighbor {
   direction: "in" | "out";
 }
 
-// Kahn's algorithm over the link set: dagMode needs an acyclic graph.
-function isAcyclic(links: GLink[]): boolean {
-  const outDegree = new Map<string, number>();
-  const children = new Map<string, string[]>();
-  const idOf = (end: string | GNode) => (typeof end === "object" ? end.id : end);
-  for (const link of links) {
-    const source = idOf(link.source);
-    const target = idOf(link.target);
-    if (source === target) continue;
-    outDegree.set(source, (outDegree.get(source) ?? 0) + 1);
-    const list = children.get(target) ?? [];
-    list.push(source);
-    children.set(target, list);
-  }
-  const queue: string[] = [];
-  for (const end of new Set<string>(links.flatMap((l) => [idOf(l.source), idOf(l.target)]))) {
-    if ((outDegree.get(end) ?? 0) === 0) queue.push(end);
-  }
-  let visited = 0;
-  while (queue.length > 0) {
-    const current = queue.pop() as string;
-    visited += 1;
-    for (const parent of children.get(current) ?? []) {
-      const next = (outDegree.get(parent) ?? 1) - 1;
-      outDegree.set(parent, next);
-      if (next === 0) queue.push(parent);
-    }
-  }
-  return visited >= new Set<string>(links.flatMap((l) => [idOf(l.source), idOf(l.target)])).size;
-}
-
 // BFS depth from the root along link direction; unreachable nodes get depth 0.
 function computeDepths(links: GLink[], rootId: string | undefined): Map<string, number> {
   const depths = new Map<string, number>();
@@ -348,8 +305,12 @@ export function Graphify() {
   const [databases, setDatabases] = useState<string[]>([]);
   const [database, setDatabase] = useState<string>("");
   const [customRoot, setCustomRoot] = useState<{ id: string; label: string } | null>(null);
+  // Mirror of customRoot for stale-closure-free reads inside
+  // loadFromDatabase: handlers update it synchronously before scheduling the
+  // reload, so the fetch always sees the root that was just chosen.
+  const customRootRef = useRef<{ id: string; label: string } | null>(null);
   const [depth, setDepth] = useState<number>(DEFAULT_DEPTH);
-  const [hideTests, setHideTests] = useState(false);
+  const [showTests, setShowTests] = useState(false);
   const [source, setSource] = useState<LoadSource | null>(null);
   const [status, setStatus] = useState<string>(
     "select a database and load the graphify tree",
@@ -413,17 +374,17 @@ export function Graphify() {
 
   // Reload the tree when the test-file filter flips (skip the initial
   // render; the Load tree button drives the first fetch).
-  const hideTestsFirstRenderRef = useRef(true);
+  const showTestsFirstRenderRef = useRef(true);
   useEffect(() => {
-    if (hideTestsFirstRenderRef.current) {
-      hideTestsFirstRenderRef.current = false;
+    if (showTestsFirstRenderRef.current) {
+      showTestsFirstRenderRef.current = false;
       return;
     }
     if (database && !loading) {
       void loadFromDatabase();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hideTests]);
+  }, [showTests]);
 
   // --- Graph init (once) ---------------------------------------------------
 
@@ -673,8 +634,8 @@ export function Graphify() {
       // Rooted neighborhood: resolve the entry node (the main entry of the
       // graphify graph, or the symbol last chosen with "start graph from
       // this symbol"), then walk its neighborhood at the configured depth.
-      let rootId = customRoot?.id ?? null;
-      let rootLabel = customRoot?.label ?? "main()";
+      let rootId = customRootRef.current?.id ?? null;
+      let rootLabel = customRootRef.current?.label ?? "main()";
       if (!rootId) {
         setStatus("resolving main entry...");
         try {
@@ -771,39 +732,59 @@ export function Graphify() {
         target: internalToPublic.get(edge.target) ?? edge.target,
         relation: edge.type,
       }));
-      // Filter out test-file nodes (and their edges) when requested. The
-      // root stays visible so a re-root into test code never empties the
-      // graph.
+      // Test-file nodes (and their edges) are filtered out unless "show test
+      // files" is checked. The root stays visible so a re-root into test code
+      // never empties the graph. Nodes and clusters left unconnected by the
+      // removed test links (orphans) are pruned too.
       let visibleNodes = rawNodes;
       let visibleLinks = rawLinks;
-      if (hideTests) {
+      if (!showTests) {
         const visible = new Set<string>([rootId]);
         for (const node of rawNodes) {
           if (!isTestSource(node.source_file)) visible.add(node.id);
         }
-        visibleNodes = rawNodes.filter((node) => visible.has(node.id));
-        visibleLinks = rawLinks.filter(
+        const links = rawLinks.filter(
           (link) => visible.has(link.source) && visible.has(link.target),
+        );
+        // Keep only the root's connected component of the remaining graph.
+        const adjacency = new Map<string, string[]>();
+        for (const node of rawNodes) {
+          if (visible.has(node.id)) adjacency.set(node.id, []);
+        }
+        for (const link of links) {
+          adjacency.get(link.source)?.push(link.target);
+          adjacency.get(link.target)?.push(link.source);
+        }
+        const reachable = new Set<string>();
+        const stack = [rootId];
+        while (stack.length > 0) {
+          const current = stack.pop();
+          if (current === undefined || reachable.has(current)) continue;
+          reachable.add(current);
+          for (const next of adjacency.get(current) ?? []) stack.push(next);
+        }
+        visibleNodes = rawNodes.filter((node) => reachable.has(node.id));
+        visibleLinks = links.filter(
+          (link) => reachable.has(link.source) && reachable.has(link.target),
         );
       }
       buildGraph(visibleNodes, visibleLinks, rootId);
       publicToInternalRef.current = publicToInternal;
       setSource({ kind: "db", name: dbName });
-      // Retain the selected node (and its detail panel) across re-roots:
-      // the re-rooted neighborhood always contains its new root.
-      const keepId = selectedIdRef.current;
-      if (keepId) {
-        const node = nodeByIdRef.current.get(keepId);
-        if (node) {
-          void selectNode(keepId);
-        } else {
-          selectedIdRef.current = null;
-          setSelected(null);
-        }
+      // Auto-select the root (or the newly chosen re-root symbol) so its
+      // details pane opens immediately after every (re)load.
+      const focusId = customRootRef.current?.id ?? rootId;
+      const focusNode = nodeByIdRef.current.get(focusId);
+      if (focusNode) {
+        selectedIdRef.current = focusId;
+        void selectNode(focusId);
+      } else {
+        selectedIdRef.current = null;
+        setSelected(null);
       }
       setStatus(
         `rooted at ${rootLabel} · depth ${depth} · ${visibleNodes.length} nodes · ${visibleLinks.length} links` +
-          (hideTests ? " · tests hidden" : "") +
+          (!showTests ? " · tests hidden" : " · tests shown") +
           (hood.meta?.truncated ? " (truncated)" : ""),
       );
     } catch (err) {
@@ -813,7 +794,7 @@ export function Graphify() {
     } finally {
       setLoading(false);
     }
-  }, [database, customRoot, depth, hideTests, buildGraph, selectNode]);
+  }, [database, customRoot, depth, showTests, buildGraph, selectNode]);
 
   const ingestArtifact = useCallback(async () => {
     if (!uploadFile) return;
@@ -1077,6 +1058,7 @@ export function Graphify() {
       const names = await api.listDatabaseNames();
       setDatabases(names);
       setDatabase(name);
+      customRootRef.current = null;
       setCustomRoot(null);
       setUploadOpen(false);
       setUploadFile(null);
@@ -1394,14 +1376,15 @@ export function Graphify() {
           <label className="flex items-center gap-1 text-xs text-norse-silver/80 select-none cursor-pointer">
             <input
               type="checkbox"
-              checked={hideTests}
-              onChange={(e) => setHideTests(e.target.checked)}
+              checked={showTests}
+              onChange={(e) => setShowTests(e.target.checked)}
               className="mr-0.5"
             />
-            hide test files
+            show test files
           </label>
           <button
             onClick={() => {
+              customRootRef.current = null;
               setCustomRoot(null);
               setTimeout(() => void loadFromDatabase(), 0);
             }}
@@ -1712,7 +1695,9 @@ export function Graphify() {
             {database && (
               <button
                 onClick={() => {
-                  setCustomRoot({ id: selected.id, label: selected.label });
+                  const root = { id: selected.id, label: selected.label };
+                  customRootRef.current = root;
+                  setCustomRoot(root);
                   setTimeout(() => void loadFromDatabase(), 0);
                 }}
                 disabled={loading}
