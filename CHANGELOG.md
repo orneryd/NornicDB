@@ -265,6 +265,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Re-embed a node whose content changes while the embed worker is embedding
+  it. The worker's writeback now lands only while the node still has the
+  properties and labels it embedded; before, it stored the old content's
+  embedding as the new content's (after a Cypher SET, or an update keeping
+  the node's update time) or dropped the node from the pending queue so it
+  was never embedded again. Embeddings written before this fix can be wrong
+  for nodes edited while they were being embedded, and those nodes can't be
+  told apart afterwards: re-embed the database to be sure (#889).
+
 - Run `shortestPath` / `allShortestPaths` MATCH clauses as a pipeline step:
   endpoint patterns and WHERE select the pairs, LIMIT, ORDER BY, aggregation
   and WITH apply to the path rows, and path predicates find the shortest path
