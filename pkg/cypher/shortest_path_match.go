@@ -16,9 +16,9 @@ import (
 // BY, LIMIT, aggregation and later clauses apply to its rows as Neo4j's do.
 type shortestPathMatch struct {
 	findAll bool
-	// others are the clause's other comma-separated patterns, matched first;
-	// othersVariables are the variables they bind.
-	others          string
+	// others are the clause's other comma-separated patterns, matched first
+	// one at a time; othersVariables are the variables they bind.
+	others          []string
 	othersVariables []string
 	// startPattern and endPattern are the endpoint node patterns as written,
 	// with a generated variable for an anonymous endpoint.
@@ -76,7 +76,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		return nil, true, err
 	}
 	m := &shortestPathMatch{
-		others:        strings.Join(others, ", "),
+		others:        others,
 		findAll:       strings.EqualFold(funcName, "allShortestPaths"),
 		startPattern:  startPattern,
 		endPattern:    endPattern,
@@ -166,16 +166,17 @@ func shortestPathExpressionError(query string, wordStart, wordEnd, end int) erro
 	if close < 0 {
 		return nil
 	}
+	function := "shortestPath"
+	if equalFoldASCII(name, "allShortestPaths") {
+		function = "allShortestPaths"
+	}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(query[open+1 : close])
 	if !ok {
-		return nil
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathSingleRelationship",
+			localization.CypherMatchingShortestPathSingleRelationship(function))
 	}
 	for _, endpoint := range []string{startPattern, endPattern} {
 		if _, _, named := scanSymbolicName(endpoint, skipASCIISpaces(endpoint, 1, len(endpoint))); !named {
-			function := "shortestPath"
-			if equalFoldASCII(name, "allShortestPaths") {
-				function = "allShortestPaths"
-			}
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathUnboundNodes",
 				localization.CypherMatchingShortestPathUnboundNodes(function))
 		}
@@ -213,11 +214,16 @@ func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, ro
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
 		bases := []pipelineRow{row}
-		if m.others != "" {
-			var err error
-			if bases, err = e.pipelineMatchRows(ctx, row, "MATCH "+m.others); err != nil {
-				return nil, err
+		for _, part := range m.others {
+			var next []pipelineRow
+			for _, base := range bases {
+				matched, err := e.pipelineMatchRows(ctx, base, "MATCH "+part)
+				if err != nil {
+					return nil, err
+				}
+				next = append(next, matched...)
 			}
+			bases = next
 		}
 		var pairs []pipelineRow
 		for _, base := range bases {

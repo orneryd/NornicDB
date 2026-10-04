@@ -12,6 +12,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,6 +86,10 @@ func TestIssue863ShortestPathMatchIsAPipelineStep(t *testing.T) {
 				{"MATCH (a {id:'c1'}) OPTIONAL MATCH (c {id:'u'}), p = shortestPath((a)-[*]-(b:Document)) RETURN c.id, b.id", [][]interface{}{{"u", "d1"}}},
 				{"MATCH (a {id:'c1'}) OPTIONAL MATCH (c {id:'zz'}), p = shortestPath((a)-[*]-(b:Document)) RETURN c.id, b.id", [][]interface{}{{nil, nil}}},
 				{"MATCH ()-[:S]->(), p = shortestPath((a {id:'c1'})-[*]-(b:Document)) RETURN b.id", [][]interface{}{{"d1"}}},
+				{"MATCH ()-[:S]->(), ()-[:R]->(), p = shortestPath((a {id:'c1'})-[*]-(b:Document)) RETURN b.id", [][]interface{}{{"d1"}}},
+				{"MATCH (a {id:'c1'}) OPTIONAL MATCH q = (c {id:'zz'})-->(d), p = shortestPath((a)-[*]-(b:Document)) RETURN q, d, b", [][]interface{}{{nil, nil, nil}}},
+				{"MATCH (a {id:'c1'}), (b {id:'d1'}) MATCH p = shortestPath((a)-[*]-(b)) WHERE a.id = 'zz' RETURN p", nil},
+				{"WITH 1 AS shortestPath RETURN shortestPath", [][]interface{}{{int64(1)}}},
 			} {
 				rows, err := run(tc.query)
 				require.NoError(t, err, tc.query)
@@ -103,6 +108,10 @@ func TestIssue863ShortestPathMatchIsAPipelineStep(t *testing.T) {
 				{"MATCH (a {id:'c1'}) OPTIONAL MATCH p = shortestPath((a)-[*2..]-(b)) RETURN p", "shortestPath(...) does not support a minimal length different from 0 or 1"},
 				{"MATCH p = shortestPath((a {id:'c1'})-->(b)-->(c)) RETURN p", "shortestPath(...) requires a pattern containing a single relationship"},
 				{"MATCH p = allShortestPaths((a {id:'c1'})) RETURN p", "allShortestPaths(...) requires a pattern containing a single relationship"},
+				{"MATCH (a {id:'c1'}) RETURN shortestPath((a)) AS p", "shortestPath(...) requires a pattern containing a single relationship"},
+				{"MATCH (c {id: 1/0}), p = shortestPath((a {id:'c1'})-[*]-(b:Document)) RETURN b.id", "/ by zero"},
+				{"MATCH p = shortestPath((a {id:'c1'})-[*]-(b {id: 1/0})) RETURN b.id", "/ by zero"},
+				{"MATCH (a {id:'c1'}), (b {id:'d1'}) MATCH p = shortestPath((a)-[*]-(b)) WHERE a.id = 1/0 RETURN p", "/ by zero"},
 				{"MATCH (a {id:'c1'}), (b) WHERE shortestPath((a)-[*]-(:Document)) IS NULL RETURN b", "A shortestPath(...) requires bound nodes when not part of a MATCH clause."},
 				{"MATCH p = shortestPath((a {id:'x'})-[:T* {ok:true}]-(b {id:'y'})) RETURN length(p)", "shortestPath(...) contains properties {ok:true}. This is currently not supported."},
 				{"MATCH (a {id:'x'}), (b {id:'y'}) RETURN shortestPath((a)-[* {ok:true}]-(b))", "shortestPath(...) contains properties {ok:true}. This is currently not supported."},
@@ -149,4 +158,41 @@ func TestIssue876LabelTestsInMultiPatternWhere(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The general value evaluator, a cancelled predicate search, and the pipeline
+// helper's unsupported clause shape, which statements don't reach.
+func TestIssue863ShortestPathEvaluatorBranches(t *testing.T) {
+	exec := newAsyncStackTestExecutor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, issue863Graph, nil)
+	require.NoError(t, err)
+	res, err := exec.Execute(ctx, "MATCH (a {id:'x'}), (b {id:'y'}) RETURN a, b", nil)
+	require.NoError(t, err)
+	a, b := res.Rows[0][0].(*storage.Node), res.Rows[0][1].(*storage.Node)
+	nodes := map[string]*storage.Node{"a": a, "b": b}
+
+	path, ok := exec.evaluateExpressionWithContext(ctx, "shortestPath((a)-[*]-(b))", nodes, nil).(map[string]interface{})
+	require.True(t, ok)
+	require.EqualValues(t, 1, path["length"])
+	failing := withExpressionFailureSlot(ctx)
+	require.Nil(t, exec.evaluateExpressionWithContext(failing, "shortestPath((a)-[*2..]-(b))", nodes, nil))
+	require.ErrorContains(t, getExpressionFailure(failing), "minimal length")
+
+	m, ok, err := exec.parseShortestPathMatch(ctx, "p = shortestPath((a)-[*]-(b)) WHERE length(p) > 1")
+	require.NoError(t, err)
+	require.True(t, ok)
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = exec.shortestPathsBetween(cancelled, m, a, b, pipelineRow{"a": a, "b": b})
+	require.ErrorIs(t, err, context.Canceled)
+
+	_, err = exec.pipelineMatchRows(ctx, pipelineRow{}, "MATCH x")
+	require.ErrorContains(t, err, "invalid path pattern")
+	m.others = []string{"x"}
+	_, err = exec.pipelineApplyShortestPathMatch(ctx, []pipelineRow{{}}, m, false)
+	require.ErrorContains(t, err, "invalid path pattern")
+
+	unclosed := "RETURN shortestPath((a)-->(b)"
+	require.NoError(t, shortestPathExpressionError(unclosed, len("RETURN "), len("RETURN shortestPath"), len(unclosed)))
 }
