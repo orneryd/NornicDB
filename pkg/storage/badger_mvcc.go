@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -433,31 +434,44 @@ func (b *BadgerEngine) getEdgeVisibleAtInTxn(txn *badger.Txn, id EdgeID, version
 	return edge, nil
 }
 
+// collectVisibleAdjacencyEdgeIDsInTxn lists the edges in one node's MVCC
+// adjacency prefix whose latest record at or before version is live, newest
+// edge first. Keys are [prefix][edgeNum][version], ascending, so a forward
+// scan bounded to the prefix meets each edge's versions oldest first and the
+// last one at or before version decides. (A reverse scan read past the prefix
+// over deleted keys; see badgerPrefixIteratorOptions.)
 func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(txn *badger.Txn, prefix []byte, version MVCCVersion) ([]EdgeID, error) {
 	if len(prefix) == 0 {
 		return nil, nil
 	}
-	seek := append(append([]byte{}, prefix...), bytes.Repeat([]byte{0xFF}, 24)...)
-	seen := make(map[uint64]struct{})
 	edgeIDs := make([]EdgeID, 0)
-	opts := badgerIteratorOptions()
-	opts.Prefix = prefix
-	opts.Reverse = true
-	it := txn.NewIterator(opts)
+	var (
+		edgeNum uint64
+		have    bool // edgeNum has a record at or before version
+		live    bool // and the latest such record is not a tombstone
+	)
+	flush := func() {
+		if !have || !live {
+			return
+		}
+		if edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum); ok && edgeID != "" {
+			edgeIDs = append(edgeIDs, edgeID)
+		}
+	}
+	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
-	for it.Seek(seek); it.ValidForPrefix(prefix); it.Next() {
-		key := append([]byte(nil), it.Item().Key()...)
-		edgeNum, recordVersion, err := extractEdgeNumIDAndMVCCVersionFromAdjacencyKey(key)
+	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		keyEdgeNum, recordVersion, err := extractEdgeNumIDAndMVCCVersionFromAdjacencyKey(it.Item().Key())
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := seen[edgeNum]; ok {
-			continue
+		if keyEdgeNum != edgeNum {
+			flush()
+			edgeNum, have = keyEdgeNum, false
 		}
 		if recordVersion.Compare(version) > 0 {
 			continue
 		}
-		seen[edgeNum] = struct{}{}
 		var record mvccAdjacencyRecord
 		if err := it.Item().Value(func(val []byte) error {
 			var decodeErr error
@@ -466,14 +480,10 @@ func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(txn *badger.Txn, pref
 		}); err != nil {
 			return nil, err
 		}
-		if record.Tombstoned {
-			continue
-		}
-		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
-		if ok && edgeID != "" {
-			edgeIDs = append(edgeIDs, edgeID)
-		}
+		have, live = true, !record.Tombstoned
 	}
+	flush()
+	slices.Reverse(edgeIDs)
 	return edgeIDs, nil
 }
 
@@ -980,9 +990,12 @@ func (b *BadgerEngine) loadNodeMVCCRecordAtOrBeforeInTxn(txn *badger.Txn, id Nod
 }
 
 // loadMVCCRecordAtOrBeforeInTxn reads one entity kind's MVCC record at or
-// before a version within txn, via a reverse prefix scan. The record type
-// parameter and the plain decode function keep the instantiation
-// allocation-free; the marker keyer selects the node or edge keyspace.
+// before a version within txn: the greatest version key of the entity's
+// prefix at or below the version, found by descendingPrefixKeys (a plain
+// reverse seek read past the prefix when fewer than two versions lay at or
+// below the target). The record type parameter and the plain decode function
+// keep the instantiation allocation-free; the marker keyer selects the node
+// or edge keyspace.
 func loadMVCCRecordAtOrBeforeInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn *badger.Txn, id string, version MVCCVersion, decode func([]byte) (R, error)) (R, MVCCVersion, error) {
 	var zero R
 	var keyer K
@@ -990,30 +1003,30 @@ func loadMVCCRecordAtOrBeforeInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, t
 	if prefix == nil {
 		return zero, MVCCVersion{}, ErrNotFound
 	}
-	seek := append(append([]byte{}, prefix...), encodeMVCCSortVersion(version)...)
-	opts := badgerIteratorOptions()
-	opts.Prefix = prefix
-	opts.Reverse = true
-	it := txn.NewIterator(opts)
-	defer it.Close()
-	it.Seek(seek)
-	if it.ValidForPrefix(prefix) {
-		key := append([]byte(nil), it.Item().Key()...)
-		parsedVersion, err := extractMVCCVersionFromKey(key)
-		if err != nil {
-			return zero, MVCCVersion{}, err
+	upper := append(append([]byte{}, prefix...), encodeMVCCSortVersion(version)...)
+	var (
+		record        R
+		parsedVersion MVCCVersion
+		found         bool
+	)
+	err := descendingPrefixKeys(txn, prefix, upper, func(item *badger.Item) (bool, error) {
+		found = true
+		var err error
+		if parsedVersion, err = extractMVCCVersionFromKey(item.Key()); err != nil {
+			return false, err
 		}
-		var record R
-		if err := it.Item().Value(func(val []byte) error {
-			var decodeErr error
-			record, decodeErr = decode(val)
-			return decodeErr
-		}); err != nil {
-			return zero, MVCCVersion{}, err
-		}
-		return record, parsedVersion, nil
+		return false, item.Value(func(val []byte) error {
+			record, err = decode(val)
+			return err
+		})
+	})
+	if err != nil {
+		return zero, MVCCVersion{}, err
 	}
-	return zero, MVCCVersion{}, ErrNotFound
+	if !found {
+		return zero, MVCCVersion{}, ErrNotFound
+	}
+	return record, parsedVersion, nil
 }
 
 func (b *BadgerEngine) loadEdgeMVCCRecordAtOrBeforeInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) (mvccEdgeRecord, MVCCVersion, error) {

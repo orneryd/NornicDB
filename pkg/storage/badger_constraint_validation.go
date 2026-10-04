@@ -250,9 +250,7 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 	}
 
 	prefix := labelIndexPrefix(label)
-	opts := badgerIteratorOptions()
-
-	iter := txn.NewIterator(opts)
+	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
 	labelLen := len(strings.ToLower(label))
@@ -308,9 +306,7 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 
 func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, label string, properties []string, values []interface{}, excludeNodeID NodeID) error {
 	prefix := labelIndexPrefix(label)
-	opts := badgerIteratorOptions()
-
-	iter := txn.NewIterator(opts)
+	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
 	labelLen := len(strings.ToLower(label))
@@ -372,9 +368,7 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 
 func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namespace, label, keyProp, startProp, endProp string, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
 	prefix := labelIndexPrefix(label)
-	opts := badgerIteratorOptions()
-
-	iter := txn.NewIterator(opts)
+	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
 	labelLen := len(strings.ToLower(label))
@@ -625,9 +619,7 @@ func checkEdgeExistence(edge *Edge, c Constraint) error {
 func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c Constraint, namespace string, excludeEdgeID EdgeID) error {
 	// Scan via edge type index
 	prefix := edgeTypeIndexPrefix(edge.Type)
-	opts := badgerIteratorOptions()
-
-	iter := txn.NewIterator(opts)
+	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
 	nsPrefix := namespace + ":"
@@ -766,9 +758,7 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 
 	// Scan via edge type index
 	prefix := edgeTypeIndexPrefix(edge.Type)
-	opts := badgerIteratorOptions()
-
-	iter := txn.NewIterator(opts)
+	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
 	nsPrefix := namespace + ":"
@@ -858,8 +848,7 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 	count := 0
 	nsPrefix := namespace + ":"
 
-	opts := badgerIteratorOptions()
-	iter := txn.NewIterator(opts)
+	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
@@ -1031,8 +1020,7 @@ func (b *BadgerEngine) validatePolicyForAdjacentEdgesInTxn(txn *badger.Txn, node
 // validates policy constraints. isOutgoing indicates whether the node is the source (true)
 // or target (false) of the edges.
 func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, prefix []byte, node *Node, isOutgoing bool, schema *SchemaManager, namespace string) error {
-	opts := badgerIteratorOptions()
-	iter := txn.NewIterator(opts)
+	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
 	nsPrefix := namespace + ":"
