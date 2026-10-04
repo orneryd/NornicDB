@@ -1763,7 +1763,10 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 			return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 		}
 		engines := e.resolveImplicitTxEngines()
-		if engines.asyncEngine != nil {
+		// The async CREATE routes handle a single query; a top-level UNION
+		// whose first branch is a CREATE goes to the UNION executor in the
+		// implicit transaction below (#781).
+		if _, union := topLevelUnion(cypher, upperQuery); engines.asyncEngine != nil && !union {
 			if result, err, handled := e.tryAsyncCreateNodeBatch(ctx, cypher); handled {
 				return result, err
 			}

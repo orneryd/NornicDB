@@ -195,6 +195,21 @@ func isShowConstraintContractsCommand(cypher string) bool {
 	return startsWithKeywords(cypher, "SHOW", "CONSTRAINT CONTRACTS")
 }
 
+// topLevelUnion reports whether cypher composes complete single queries with
+// UNION at its top level, and whether it is UNION ALL. Such a statement is a
+// UNION before it is anything else: every route sends it to executeUnion
+// before a handler for its first clause can take the leading branch for the
+// whole statement, including the auto-commit async CREATE fast paths (#781).
+// The substring guard keeps other queries off the structural scanner, which
+// tells top-level separators from nested subqueries.
+func topLevelUnion(cypher, upperQuery string) (unionAll, union bool) {
+	if !strings.Contains(upperQuery, "UNION") {
+		return false, false
+	}
+	branches, unionAll, _, ok := parseTopLevelUnionBranches(cypher)
+	return unionAll, ok && len(branches) > 1
+}
+
 // executeWithoutTransaction executes query without transaction wrapping (original path).
 func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (result *ExecuteResult, err error) {
 	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.storage, hasRevealCall(cypher))
@@ -208,13 +223,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		}
 	}()
 	// A top-level UNION composes complete single queries. Route it before any
-	// handler can consume the leading MATCH, RETURN, or UNWIND branch. The
-	// inexpensive substring guard keeps non-UNION queries off the structural
-	// scanner used to distinguish top-level separators from nested subqueries.
-	if strings.Contains(upperQuery, "UNION") {
-		if branches, unionAll, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
-			return e.executeUnion(ctx, cypher, unionAll)
-		}
+	// handler can consume the leading MATCH, RETURN, or UNWIND branch.
+	if unionAll, union := topLevelUnion(cypher, upperQuery); union {
+		return e.executeUnion(ctx, cypher, unionAll)
 	}
 	if strings.Contains(upperQuery, "CALL") {
 		if callIndex := firstTopLevelCallSubquery(cypher); callIndex >= 0 {
