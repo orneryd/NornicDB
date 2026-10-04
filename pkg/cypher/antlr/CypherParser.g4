@@ -102,8 +102,15 @@ schemaCommand
     | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? parenExpressionChain? (OPTIONS mapLit)?
     | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
     | DROP CONSTRAINT name? (IF EXISTS)?
-    | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE (expression | parenExpressionChain) (IS UNIQUE | IS NOT NULL_W | IS NODE KEY | IS COLON COLON propertyTypeName | IS TYPED propertyTypeName) (OPTIONS mapLit)?
-    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | NODE KEY | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS mapLit)?
+    | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintRequirement (OPTIONS mapLit)?
+    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | (NODE | RELATIONSHIP) KEY | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS mapLit)?
+    ;
+
+constraintRequirement
+    : (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | (NODE | RELATIONSHIP) KEY | COLON COLON propertyTypeName | TYPED propertyTypeName | TEMPORAL NO OVERLAP)
+    | expression IN listLit
+    | MAX COUNT integerLit
+    | ALLOWED
     ;
 
 propertyTypeName
@@ -369,7 +376,7 @@ expressionType
     ;
 
 expressionTypePart
-    : (ID | ANY | NODE | POINT | NULL_W) (ID | WITH)* (LT expressionType GT)? (NOT NULL_W)?
+    : (ID | ANY | NODE | RELATIONSHIP | POINT | NULL_W) (ID | WITH)* (LT expressionType GT)? (NOT NULL_W)?
     ;
 
 propertyOrLabelExpression
@@ -630,6 +637,11 @@ symbol
     | SHOW
     | OPTIONS
     | NODE
+    | RELATIONSHIP
+    | TEMPORAL
+    | NO
+    | OVERLAP
+    | ALLOWED
     | KEY
     | ASSERT
     | ROWS

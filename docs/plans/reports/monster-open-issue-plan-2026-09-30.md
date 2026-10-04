@@ -407,3 +407,35 @@ the approved free Enterprise-equivalent policy difference. It does not claim
 #547 structural cleanup, optimized composite caches, full-repository race
 coverage, or repair of the unrelated cached-property iterator panic. The other
 original families retain their own completion gates.
+
+### SHOW Round-Trip Parser Audit
+
+The latest #530 reporter's composite and multi-label fulltext defects are fixed
+by the published #531 work. The existing SHOW recreation fixture now uses the
+reported shapes rather than avoiding a composite index's already-indexed first
+property. It also checks native POINT metadata and runs under both actual parsers.
+
+The expanded fixture reproduced strict ANTLR rejection of RELATIONSHIP KEY.
+Explicit grammar productions now admit relationship keys and the documented
+temporal, domain, cardinality and relationship-policy constraints. Their SHOW
+createStatement values recreate equivalent metadata under both parsers. New
+keyword tokens remain usable as schema names, and RELATIONSHIP type predicates
+retain admission. There is no permissive parser fallback.
+
+Current pinned-reference inventory checks pass all 141 function signatures,
+28 shared procedure definitions and three token-procedure comparisons. Normal
+`go generate ./pkg/localization` succeeds without catalog drift. The live corpus
+confirms statistics clearing rejects active collection and succeeds after stop.
+Native POINT scan metadata has no spatial acceleration bounds; database store
+metadata does not fabricate Neo4j's record-aligned format. These are native
+backend representation differences, not literal reference-value matches.
+
+This batch passes full repository correctness excluding performance-named
+tests, focused parser races, owning-package vet and whitespace checks. The live
+matrix passes 896 Bolt and 906 HTTP comparisons per parser, 3,604 total.
+Validation used a detached copy of committed main plus this batch: concurrent
+shared-checkout edits had unresolved storage symbols and removed unrelated
+regression tests. Those edits were not reverted, included or credited as tested.
+No test function was removed by this batch; the fixture workaround was replaced
+with stronger assertions. #530 remains open pending its final family decision;
+#713/#728/#754 retain separate gates and #547 remains excluded.

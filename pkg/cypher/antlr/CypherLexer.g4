@@ -177,6 +177,11 @@ ASSERT     : 'ASSERT';
 TYPED      : 'TYPED';
 KEY        : 'KEY';
 NODE       : 'NODE';
+RELATIONSHIP: 'RELATIONSHIP';
+TEMPORAL   : 'TEMPORAL';
+NO         : 'NO';
+OVERLAP    : 'OVERLAP';
+ALLOWED    : 'ALLOWED';
 SHORTESTPATH: 'shortestPath';
 ALLSHORTESTPATHS: 'allShortestPaths';
 

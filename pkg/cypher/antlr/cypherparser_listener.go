@@ -40,6 +40,9 @@ type CypherParserListener interface {
 	// EnterSchemaCommand is called when entering the schemaCommand production.
 	EnterSchemaCommand(c *SchemaCommandContext)
 
+	// EnterConstraintRequirement is called when entering the constraintRequirement production.
+	EnterConstraintRequirement(c *ConstraintRequirementContext)
+
 	// EnterPropertyTypeName is called when entering the propertyTypeName production.
 	EnterPropertyTypeName(c *PropertyTypeNameContext)
 
@@ -381,6 +384,9 @@ type CypherParserListener interface {
 
 	// ExitSchemaCommand is called when exiting the schemaCommand production.
 	ExitSchemaCommand(c *SchemaCommandContext)
+
+	// ExitConstraintRequirement is called when exiting the constraintRequirement production.
+	ExitConstraintRequirement(c *ConstraintRequirementContext)
 
 	// ExitPropertyTypeName is called when exiting the propertyTypeName production.
 	ExitPropertyTypeName(c *PropertyTypeNameContext)

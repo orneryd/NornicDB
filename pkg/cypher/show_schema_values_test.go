@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,11 +19,10 @@ func TestShowSchemaValuesMatchNeo4j(t *testing.T) {
 	ctx := context.Background()
 	for _, ddl := range []string{
 		"CREATE INDEX s_range FOR (n:S) ON (n.a)",
-		// Not on (n.a, …): a composite index whose first property already has
-		// an index isn't created (#531 section).
-		"CREATE INDEX s_comp FOR (n:S) ON (n.c, n.d)",
+		"CREATE INDEX s_comp FOR (n:S) ON (n.a, n.b)",
 		"CREATE INDEX s_rel FOR ()-[r:SR]-() ON (r.a)",
-		"CREATE FULLTEXT INDEX s_ft FOR (n:S) ON EACH [n.t, n.u]",
+		"CREATE FULLTEXT INDEX s_ft FOR (n:S|S2) ON EACH [n.t, n.u]",
+		"CREATE POINT INDEX s_point FOR (n:S) ON (n.location)",
 		"CREATE VECTOR INDEX s_vec FOR (n:S) ON (n.v) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}",
 		"CREATE CONSTRAINT s_uniq FOR (n:SC) REQUIRE n.y IS UNIQUE",
 		"CREATE CONSTRAINT s_relu FOR ()-[r:SR]-() REQUIRE r.k IS UNIQUE",
@@ -60,9 +60,10 @@ func TestShowSchemaValuesMatchNeo4j(t *testing.T) {
 	range1 := map[string]interface{}{"indexConfig": map[string]interface{}{}, "indexProvider": "range-1.0"}
 	for name, want := range map[string]map[string]interface{}{
 		"s_range": {"type": "RANGE", "indexProvider": "range-1.0", "options": range1, "createStatement": "CREATE RANGE INDEX `s_range` FOR (n:`S`) ON (n.`a`)"},
-		"s_comp":  {"type": "RANGE", "createStatement": "CREATE RANGE INDEX `s_comp` FOR (n:`S`) ON (n.`c`, n.`d`)"},
+		"s_comp":  {"type": "RANGE", "properties": []string{"a", "b"}, "createStatement": "CREATE RANGE INDEX `s_comp` FOR (n:`S`) ON (n.`a`, n.`b`)"},
 		"s_rel":   {"type": "RANGE", "entityType": "RELATIONSHIP", "createStatement": "CREATE RANGE INDEX `s_rel` FOR ()-[r:`SR`]-() ON (r.`a`)"},
-		"s_ft":    {"type": "FULLTEXT", "indexProvider": "fulltext-1.0", "createStatement": "CREATE FULLTEXT INDEX `s_ft` FOR (n:`S`) ON EACH [n.`t`, n.`u`]"},
+		"s_ft":    {"type": "FULLTEXT", "labelsOrTypes": []string{"S", "S2"}, "indexProvider": "fulltext-1.0", "createStatement": "CREATE FULLTEXT INDEX `s_ft` FOR (n:`S`|`S2`) ON EACH [n.`t`, n.`u`]"},
+		"s_point": {"type": "POINT", "options": showIndexOptions("point-1.0", nil), "createStatement": "CREATE POINT INDEX `s_point` FOR (n:`S`) ON (n.`location`)"},
 		"s_vec": {"type": "VECTOR", "indexProvider": "vector-2.0",
 			"options":         map[string]interface{}{"indexConfig": map[string]interface{}{"vector.dimensions": int64(4), "vector.similarity_function": "COSINE"}, "indexProvider": "vector-2.0"},
 			"createStatement": "CREATE VECTOR INDEX `s_vec` FOR (n:`S`) ON (n.`v`) OPTIONS {indexConfig: {`vector.dimensions`: 4,`vector.similarity_function`: 'COSINE'}}"},
@@ -143,6 +144,18 @@ func TestShowSchemaValuesMatchNeo4j(t *testing.T) {
 				assert.Equal(t, before[column], after[column], "%s %s", name, column)
 			}
 		}
+	}
+}
+
+func TestShowSchemaValuesParserModes(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			TestShowSchemaValuesMatchNeo4j(t)
+		})
 	}
 }
 
