@@ -8,6 +8,7 @@ package cypher
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -138,4 +139,50 @@ func TestIssue857MatchWithCallProcedureLoadsPatternNodes(t *testing.T) {
 	res, err = exec.executeMatchWithCallProcedure(ctx, "MATCH (n {id: 'c1'}) WITH n CALL db.labels() YIELD label RETURN label")
 	require.NoError(t, err)
 	require.Empty(t, res.Rows, "no node matches the pattern")
+}
+
+// A label-less match on a string compares the stored bytes (#857): only a
+// stored string with exactly those characters matches, as in Neo4j 5.26.30;
+// an integer, a list, a date, another case or a longer string does not.
+func TestIssue857LabellessStringMatchComparesExactly(t *testing.T) {
+	long := strings.Repeat("k", 300)
+	for _, mode := range []string{"auto-commit", "explicit transaction"} {
+		t.Run(mode, func(t *testing.T) {
+			exec := newAsyncStackTestExecutor(t)
+			ctx := context.Background()
+			run := func(q string, params map[string]interface{}) [][]interface{} {
+				t.Helper()
+				if mode == "explicit transaction" {
+					_, err := exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					defer func() {
+						_, err := exec.Execute(ctx, "COMMIT", nil)
+						require.NoError(t, err)
+					}()
+				}
+				res, err := exec.Execute(ctx, q, params)
+				require.NoError(t, err, q)
+				return res.Rows
+			}
+			run(`CREATE ({id: 'n7', name: 'hit'}), ({id: 'N7'}), ({id: 'n7x'}), ({id: 7}), ({id: ['n7']}),
+				({id: date('2020-01-01')}), ({name: 'n7'}), ({id: ''}), ({id: $long}), ({id: $long + 'x'})`, map[string]interface{}{"long": long})
+			for _, tc := range []struct {
+				query  string
+				params map[string]interface{}
+				count  int64
+			}{
+				{"MATCH (a {id: 'n7'}) RETURN count(a)", nil, 1},
+				{"MATCH (a) WHERE a.id = $id RETURN count(a)", map[string]interface{}{"id": "n7"}, 1},
+				{"MATCH (a {id: $id}) RETURN count(a)", map[string]interface{}{"id": long}, 1},
+				{"MATCH (a {id: ''}) RETURN count(a)", nil, 1},
+				{"MATCH (a {id: '7'}) RETURN count(a)", nil, 0},
+				{"MATCH (a {id: 7}) RETURN count(a)", nil, 1},
+				{"MATCH (a {id: '2020-01-01'}) RETURN count(a)", nil, 0},
+				{"MATCH (a {id: 'n7', name: 'hit'}) RETURN count(a)", nil, 1},
+				{"MATCH (a {id: 'n7', name: 'miss'}) RETURN count(a)", nil, 0},
+			} {
+				require.Equal(t, [][]interface{}{{tc.count}}, run(tc.query, tc.params), tc.query)
+			}
+		})
+	}
 }

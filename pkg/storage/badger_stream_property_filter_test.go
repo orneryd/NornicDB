@@ -49,7 +49,7 @@ func TestDecodeNodeRejectsMalformedBodies(t *testing.T) {
 	engine, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	scan := newProjectedNodeDecoder(engine, []string{"id"}, nil)
+	scan := newProjectedNodeDecoder(engine, StreamNodesOptions{Projection: []string{"id"}})
 	for name, data := range map[string][]byte{
 		"empty":          {},
 		"format byte":    {0x01},
