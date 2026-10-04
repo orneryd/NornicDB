@@ -194,6 +194,18 @@ Unhandled queries must fail like Neo4j fails them, through the converged pipelin
 
 ## Shared Predicate Plan Increment (#728, 2026-10-04)
 
+- [x] Continued in PR #897: prepare cartesian shared WHERE admission once before
+	its residual candidate loop. CPU profiling placed 93.7% of baseline sampled
+	time in repeated membership validation. A fresh isolated fixture pins exact
+	OR-membership cardinality and same-backing-slice mutation between invocations;
+	full Cypher correctness, both-parser focused races and vet pass. Matched
+	six-sample 1024-row medians: 64-key list 1545.046 -> 326.361 us; 4096-key list
+	67268.088 -> 378.344 us. The short-list control retains 452258 B/op and 3620
+	allocations; slight extra allocation drift in the longer baseline is not
+	attributed as a runtime allocation improvement. Whole cartesian execution
+	still allocates combinations and result rows; profiles are separate from
+	allocation measurement. Other candidate-loop placement remains open.
+
 - [x] Continued in PR #897: retire context-WHERE manual AND/OR/NOT routing,
   single-variable redispatch and the private compiler call. Four null/error
   negation failures in `TestGh728ContextWherePreservesSharedTruth` reproduce

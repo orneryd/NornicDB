@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the next version. History for one-property updates takes about a
   quarter of the space (#911).
 
+- Prepare shared cartesian WHERE membership indexes once per filter invocation
+  instead of once per candidate combination, preserving parameter-list freshness
+  between invocations and avoiding repeated content validation (#728).
+
+- Route cartesian node-context WHERE predicates through shared typed admission
+  instead of manual boolean negation and the private binding compiler. Preserve
+  null truth and arithmetic failures under NOT, and admit ordinary `count`,
+  `collect`, and `exists` property names as compiled scalar operands (#728).
+
 - Read only the properties a statement uses when it scans a label. A `MATCH`
   on a label decoded every node in full, embeddings included, even when the
   rest of the statement read one or two properties. When every later clause
@@ -70,11 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relationship record. Every write of the record rewrites the copy. Entries
   written by earlier versions keep working through the record; decay
   filtering keeps the full read (#911).
-
-- Route cartesian node-context WHERE predicates through shared typed admission
-  instead of manual boolean negation and the private binding compiler. Preserve
-  null truth and arithmetic failures under NOT, and admit ordinary `count`,
-  `collect`, and `exists` property names as compiled scalar operands (#728).
 
 - Preserve tabs, newlines and carriage returns inside quoted WHERE literals and
   identifiers when normalizing clause whitespace. Binding admission shares the
