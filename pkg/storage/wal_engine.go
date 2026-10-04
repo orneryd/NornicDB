@@ -853,6 +853,26 @@ func (w *WALEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	return w.engine.GetFirstNodeByLabel(label)
 }
 
+// GetNodesByLabelInScope delegates a scoped label read (ScopedLabelNodeReader).
+func (w *WALEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
+	return getNodesByLabelInScope(w.engine, scope, label)
+}
+
+// GetFirstNodeByLabelInScope delegates a scoped first-node read (ScopedLabelNodeReader).
+func (w *WALEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
+	return getFirstNodeByLabelInScope(w.engine, scope, label)
+}
+
+// StreamNodesByLabelProjectedInScope delegates a scoped projected label scan (ScopedLabelNodeReader).
+func (w *WALEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
+	return streamNodesByLabelProjectedInScope(w.engine, scope, label, properties, visit)
+}
+
+// GetNodesByLabelVisibleAtInScope delegates a scoped snapshot label read (ScopedLabelNodeReader).
+func (w *WALEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
+	return getNodesByLabelVisibleAtInScope(w.engine, scope, label, version)
+}
+
 // BatchGetNodes delegates to underlying engine.
 func (w *WALEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 	return w.engine.BatchGetNodes(ids)

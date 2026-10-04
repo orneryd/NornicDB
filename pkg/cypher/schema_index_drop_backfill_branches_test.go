@@ -21,6 +21,13 @@ func (e *getNodesByLabelErrorEngine) GetNodesByLabel(label string) ([]*storage.N
 	return e.MemoryEngine.GetNodesByLabel(label)
 }
 
+// The database wrapper delegates label reads through the scoped methods
+// (storage.ScopedLabelNodeReader); without these overrides the embedded
+// engine's ones would bypass the fake.
+func (e *getNodesByLabelErrorEngine) GetNodesByLabelInScope(_, label string) ([]*storage.Node, error) {
+	return e.GetNodesByLabel(label)
+}
+
 func TestSchema_CreateIndexBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "schema_index_cov")

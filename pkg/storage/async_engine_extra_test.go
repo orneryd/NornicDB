@@ -97,6 +97,13 @@ func (e *labelQueryErrorEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	return e.MemoryEngine.GetNodesByLabel(label)
 }
 
+// The wrappers delegate label reads through the scoped method
+// (ScopedLabelNodeReader); without this override the embedded engine's one
+// would bypass the fake.
+func (e *labelQueryErrorEngine) GetNodesByLabelInScope(_, label string) ([]*Node, error) {
+	return e.GetNodesByLabel(label)
+}
+
 func (e *nonStreamingCountEngine) AllNodes() ([]*Node, error) {
 	if e.allNodesErr != nil {
 		return nil, e.allNodesErr

@@ -109,10 +109,16 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 }
 
 func (b *BadgerEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
-	return b.getNodesByLabelVisibleAtWithView(label, version, b.withView)
+	return b.getNodesByLabelVisibleAtWithView("", label, version, b.withView)
 }
 
-func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
+// GetNodesByLabelVisibleAtInScope is GetNodesByLabelVisibleAt within one
+// database (ScopedLabelNodeReader).
+func (b *BadgerEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
+	return b.getNodesByLabelVisibleAtWithView(scope, label, version, b.withView)
+}
+
+func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
@@ -121,7 +127,7 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(label string, version MV
 	var nodes []*Node
 	normalizedLabel := normalizeLabel(label)
 	err = view(func(txn *badger.Txn) error {
-		return b.iterateNodesVisibleAtInTxn(txn, version, func(node *Node) error {
+		return b.iterateNodesVisibleAtInScopeInTxn(txn, scope, version, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
@@ -151,9 +157,9 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(label string, version MV
 // same physical Badger snapshot used by an explicit transaction. The label
 // index in that snapshot already represents membership at BEGIN, so work is
 // proportional to the matching label rather than every stored node.
-func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
+func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
 	nodes := make([]*Node, 0)
-	err := b.streamNodesByLabelVisibleAtSnapshotWithView(label, version, view, nil, func(node *Node) error {
+	err := b.streamNodesByLabelVisibleAtSnapshotWithView(scope, label, version, view, nil, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	})
@@ -168,6 +174,7 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(label string, ve
 // it preserves early termination and never materialises nodes the caller does
 // not consume.
 func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
+	scope string,
 	label string,
 	version MVCCVersion,
 	view func(func(*badger.Txn) error) error,
@@ -195,7 +202,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 				continue
 			}
 			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" {
+			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) {
 				continue
 			}
 			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version)
@@ -222,20 +229,14 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	})
 }
 
-// streamNodesByLabelFromPhysicalSnapshot visits the node bodies represented by
-// a pinned Badger read transaction. Because both the label index and node key
-// are read from the same immutable physical snapshot, no per-candidate logical
-// MVCC-head lookup is required.
-func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshot(
-	label string,
-	view func(func(*badger.Txn) error) error,
-	properties []string,
-	visit func(*Node) error,
-) error {
-	return b.streamNodesByLabelFromPhysicalSnapshotAfter(label, view, properties, "", visit)
-}
-
+// streamNodesByLabelFromPhysicalSnapshotAfter visits the node bodies of a
+// label represented by a pinned Badger read transaction, in label-index
+// order after afterNodeID ("" from the start), within scope ("" every
+// database). Because both the label index and node key are read from the same
+// immutable physical snapshot, no per-candidate logical MVCC-head lookup is
+// required.
 func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
+	scope string,
 	label string,
 	view func(func(*badger.Txn) error) error,
 	properties []string,
@@ -272,7 +273,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 				continue
 			}
 			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
+			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
 				continue
 			}
 			item, getErr := txn.Get(nodeKey(nodeID))

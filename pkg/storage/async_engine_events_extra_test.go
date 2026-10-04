@@ -214,6 +214,13 @@ func (e *asyncOptionalDelegationEngine) GetNodesByLabelVisibleAt(label string, v
 	return e.nodesVisible, nil
 }
 
+// The wrappers delegate label reads through the scoped method
+// (ScopedLabelNodeReader); without this override the embedded engine's one
+// would bypass the fake.
+func (e *asyncOptionalDelegationEngine) GetNodesByLabelVisibleAtInScope(_, label string, version MVCCVersion) ([]*Node, error) {
+	return e.GetNodesByLabelVisibleAt(label, version)
+}
+
 func (e *asyncOptionalDelegationEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	return e.edgesVisible, nil
 }
