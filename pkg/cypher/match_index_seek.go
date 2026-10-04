@@ -358,6 +358,13 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 // It returns (nodes, true, nil) when index planning was used (including empty matches),
 // and (nil, false, nil) when the predicate is not eligible for index lookup.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+	return e.tryCollectNodesFromPropertyIndexAnyOf(ctx, nodePattern, whereClause, nil)
+}
+
+// tryCollectNodesFromPropertyIndexAnyOf is tryCollectNodesFromPropertyIndex
+// for a node that must carry one of anyOf (a WHERE label disjunction, #858;
+// nil when there is none): see seekCandidateLabels.
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) ([]*storage.Node, bool, error) {
 	property, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereClause)
 	if !ok {
 		return nil, false, nil
@@ -368,7 +375,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, 
 		return nil, false, nil
 	}
 
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, property)
+	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
@@ -395,7 +402,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, 
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
 			continue
 		}
 		actual, exists := node.Properties[property]
@@ -423,6 +430,17 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	return e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, whereClause, params, nil)
+}
+
+// tryCollectNodesFromPropertyIndexInAnyOf is tryCollectNodesFromPropertyIndexIn
+// for a node that must carry one of anyOf (see seekCandidateLabels).
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
+	nodePattern nodePatternInfo,
+	whereClause string,
+	params map[string]interface{},
+	anyOf []string,
+) ([]*storage.Node, bool, error) {
 	property, listValues, ok := e.parseSimpleIndexedInParam(nodePattern.variable, whereClause, params)
 	if !ok {
 		return nil, false, nil
@@ -432,7 +450,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 	if schema == nil {
 		return nil, false, nil
 	}
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, property)
+	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
@@ -460,7 +478,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -477,6 +495,18 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 	nodePattern nodePatternInfo,
 	whereClause string,
 ) ([]*storage.Node, bool, error) {
+	return e.tryCollectNodesFromPropertyIndexInLiteralAnyOf(ctx, nodePattern, whereClause, nil)
+}
+
+// tryCollectNodesFromPropertyIndexInLiteralAnyOf is
+// tryCollectNodesFromPropertyIndexInLiteral for a node that must carry one of
+// anyOf (see seekCandidateLabels).
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
+	ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+	anyOf []string,
+) ([]*storage.Node, bool, error) {
 	property, listValues, ok := e.parseSimpleIndexedInLiteral(ctx, nodePattern.variable, whereClause)
 	if !ok {
 		return nil, false, nil
@@ -486,7 +516,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 	if schema == nil {
 		return nil, false, nil
 	}
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, property)
+	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
@@ -514,7 +544,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -559,16 +589,20 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 
 	// 2) Conjunction: any recognized IN-list conjunct is safe to use as a
 	// pruning seek (see over-fetch-only argument in the doc comment above).
+	// A label disjunction among the conjuncts names the labels a match must
+	// carry, for a pattern without labels (#858).
 	if findTopLevelKeyword(clause, " AND ") > 0 {
-		for _, raw := range splitTopLevelAndConjuncts(clause) {
+		conjuncts := splitTopLevelAndConjuncts(clause)
+		anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
+		for _, raw := range conjuncts {
 			term := unwrapOuterParens(strings.TrimSpace(raw))
 			if term == "" {
 				continue
 			}
-			if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(nodePattern, term, params); used || err != nil {
+			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, term, params, anyOf); used || err != nil {
 				return nodes, used, err
 			}
-			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, term); used || err != nil {
+			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteralAnyOf(ctx, nodePattern, term, anyOf); used || err != nil {
 				return nodes, used, err
 			}
 		}
@@ -608,14 +642,18 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 
 	// 2) Conjunction: any equality conjunct on an indexed property is safe
 	// to use as a pruning seek (see over-fetch-only argument in the doc
-	// comment above).
+	// comment above). A label disjunction among the conjuncts
+	// (n.id = $id AND (n:A OR n:B)) names the labels a match must carry, for
+	// a pattern without labels (#858).
 	if findTopLevelKeyword(clause, " AND ") > 0 {
-		for _, raw := range splitTopLevelAndConjuncts(clause) {
+		conjuncts := splitTopLevelAndConjuncts(clause)
+		anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
+		for _, raw := range conjuncts {
 			term := unwrapOuterParens(strings.TrimSpace(raw))
 			if term == "" {
 				continue
 			}
-			if nodes, used, err := e.tryCollectNodesFromPropertyIndex(ctx, nodePattern, term); used || err != nil {
+			if nodes, used, err := e.tryCollectNodesFromPropertyIndexAnyOf(ctx, nodePattern, term, anyOf); used || err != nil {
 				return nodes, used, err
 			}
 		}
@@ -1095,6 +1133,94 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 		return nil
 	}
 	return out
+}
+
+// seekCandidateLabels returns the labels whose property indexes on property
+// list every node a seek may return, and the label disjunction the candidates
+// must satisfy (nil when none applies).
+//
+// A pattern with labels uses its indexed labels (indexCandidateLabels). A
+// pattern without labels whose WHERE requires one of anyOf (n:A OR n:B, #858)
+// uses those labels when every one of them has an index on property: any node
+// the WHERE can match carries one of them, so the union of their index
+// entries lists it, and Neo4j plans the same predicate as one index seek per
+// label. When one of them has no index, the indexes can miss a match and the
+// label-less route decides (labellessPropertyIndexUsable).
+func (e *StorageExecutor) seekCandidateLabels(schema *storage.SchemaManager, patternLabels []string, property string, anyOf []string) ([]string, []string) {
+	if len(patternLabels) == 0 && len(anyOf) > 0 {
+		indexed := true
+		for _, label := range anyOf {
+			if _, exists := schema.GetPropertyIndex(label, property); !exists {
+				indexed = false
+				break
+			}
+		}
+		if indexed {
+			return anyOf, anyOf
+		}
+	}
+	return e.indexCandidateLabels(schema, patternLabels, property), nil
+}
+
+// seekCandidateHasLabels reports whether a node an index listed still carries
+// the pattern's labels and one of anyOf (when set): an index can list a node
+// that has since lost the label.
+func seekCandidateHasLabels(node *storage.Node, patternLabels, anyOf []string) bool {
+	if len(patternLabels) > 0 && !mergeNodeHasLabels(node, patternLabels) {
+		return false
+	}
+	return len(anyOf) == 0 || nodeHasAnyLabel(node, anyOf)
+}
+
+// whereLabelDisjunctionConjunct returns the labels of the first conjunct that
+// is a label disjunction on variable (whereLabelDisjunction), or nil.
+func whereLabelDisjunctionConjunct(variable string, conjuncts []string) []string {
+	for _, conjunct := range conjuncts {
+		if labels, ok := whereLabelDisjunction(variable, conjunct); ok {
+			return labels
+		}
+	}
+	return nil
+}
+
+// whereLabelDisjunction parses a WHERE term that requires variable to carry
+// one of a set of labels: v:A, v:A OR v:B …, or the label expression v:A|B,
+// with labels plain or backtick-quoted. A conjunction of labels (v:A:B) or any
+// other term is not one.
+func whereLabelDisjunction(variable, term string) ([]string, bool) {
+	want, ok := isOneSymbolicName(variable)
+	if !ok {
+		return nil, false
+	}
+	var labels []string
+	for _, alternative := range splitTopLevelOrTerms(unwrapOuterParens(strings.TrimSpace(term))) {
+		alternative = unwrapOuterParens(strings.TrimSpace(alternative))
+		written, end, ok := scanSymbolicName(alternative, 0)
+		if !ok || symbolicNameValue(written) != want {
+			return nil, false
+		}
+		rest := strings.TrimSpace(alternative[end:])
+		if !strings.HasPrefix(rest, ":") {
+			return nil, false
+		}
+		names := strings.TrimSpace(rest[1:])
+		for {
+			written, end, ok := scanSymbolicName(names, 0)
+			if !ok {
+				return nil, false
+			}
+			labels = append(labels, symbolicNameValue(written))
+			names = strings.TrimSpace(names[end:])
+			if names == "" {
+				break
+			}
+			if names[0] != '|' {
+				return nil, false
+			}
+			names = strings.TrimSpace(names[1:])
+		}
+	}
+	return labels, len(labels) > 0
 }
 
 func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variable, whereClause string) (property string, value interface{}, ok bool) {
