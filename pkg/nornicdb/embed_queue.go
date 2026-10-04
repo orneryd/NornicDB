@@ -1206,12 +1206,7 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]fl
 		// (which also covers a change still being flushed) has passed (#889).
 		fmt.Printf("🔁 Node %s changed while it was being embedded; re-embedding its new content\n", node.ID)
 		ew.addNodeToPendingEmbeddings(node.ID)
-		ew.mu.Lock()
-		if ew.recentlyProcessed == nil {
-			ew.recentlyProcessed = make(map[string]time.Time)
-		}
-		ew.recentlyProcessed[string(node.ID)] = time.Now()
-		ew.mu.Unlock()
+		ew.markRecentlyProcessed(node.ID)
 		return true
 	}
 	if updateErr == storage.ErrNotFound {
@@ -1234,12 +1229,7 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]fl
 
 	ew.processed.Add(1)
 	// Track this node as recently processed to prevent re-processing before DB commit is visible
-	ew.mu.Lock()
-	if ew.recentlyProcessed == nil {
-		ew.recentlyProcessed = make(map[string]time.Time)
-	}
-	ew.recentlyProcessed[string(node.ID)] = time.Now()
-	ew.mu.Unlock()
+	ew.markRecentlyProcessed(node.ID)
 
 	// Log success with appropriate message
 	if len(node.ChunkEmbeddings) > 0 {
@@ -1382,6 +1372,18 @@ func retryDelay(err error) (time.Duration, bool) {
 		return delayed.RetryDelay(), true
 	}
 	return 0, false
+}
+
+// markRecentlyProcessed starts the node's recently-processed wait
+// (wasRecentlyProcessed): the worker skips the node until a write it made, or
+// a change it is waiting for, is visible.
+func (ew *EmbedWorker) markRecentlyProcessed(nodeID storage.NodeID) {
+	ew.mu.Lock()
+	defer ew.mu.Unlock()
+	if ew.recentlyProcessed == nil {
+		ew.recentlyProcessed = make(map[string]time.Time)
+	}
+	ew.recentlyProcessed[string(nodeID)] = time.Now()
 }
 
 // markNodeEmbeddingFailed records a permanent provider failure outside user

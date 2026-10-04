@@ -151,7 +151,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	}
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
 	err = b.commitEngineWrite(func(cw *commitWriter) error {
-		var previous [][]byte
+		var writes []func(txn *badger.Txn) error
 		if err := cw.writeOnce(func(txn *badger.Txn) error {
 			if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
 				return err
@@ -159,7 +159,8 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(embeddingPrefix(node.ID)))
 			defer it.Close()
 			for it.Rewind(); it.ValidForPrefix(embeddingPrefix(node.ID)); it.Next() {
-				previous = append(previous, it.Item().KeyCopy(nil))
+				key := it.Item().KeyCopy(nil)
+				writes = append(writes, func(txn *badger.Txn) error { return txn.Delete(key) })
 			}
 			if hook := embeddingSourceCheckedHook.Load(); hook != nil {
 				(*hook)()
@@ -168,13 +169,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		}); err != nil {
 			return err
 		}
-		for _, key := range previous {
-			key := key
-			if err := cw.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
-				return localizedError(localization.StorageClientNodeEmbeddingChunksDeleteFailed(err), err)
-			}
-		}
-		for _, unit := range units {
+		for _, unit := range append(writes, units...) {
 			if err := cw.write(unit); err != nil {
 				return err
 			}
@@ -212,15 +207,15 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		return ErrNotFound
 	}
-	if err != nil {
-		return err
-	}
 	var stored *Node
-	if err := item.Value(func(value []byte) error {
-		var decodeErr error
-		stored, decodeErr = b.decodeNode(namespaceForNodeID(embedded.ID), value)
-		return decodeErr
-	}); err != nil {
+	if err == nil {
+		err = item.Value(func(value []byte) error {
+			var decodeErr error
+			stored, decodeErr = b.decodeNode(namespaceForNodeID(embedded.ID), value)
+			return decodeErr
+		})
+	}
+	if err != nil {
 		return err
 	}
 	if !sameEmbeddingSource(stored, embedded) {
