@@ -33,6 +33,18 @@ type rowOperand struct {
 	chain    string
 }
 
+type comparisonEvaluationHandler string
+
+func (handler comparisonEvaluationHandler) evaluate(left, right interface{}) interface{} {
+	return compareCypherPredicateValue(left, right, string(handler))
+}
+
+type nullEvaluationHandler bool
+
+func (handler nullEvaluationHandler) evaluate(value interface{}) bool {
+	return (value != nil) == bool(handler)
+}
+
 // resolve returns the operand's value for the row. ok is false when the row
 // doesn't bind the operand's variable or parameter; the caller then evaluates
 // the part as text, as evaluateRowExpression would resolve it further.
@@ -99,7 +111,7 @@ type rowPredicatePart struct {
 	text     string
 	left     rowOperand
 	right    rowOperand
-	operator string
+	operator comparisonEvaluationHandler
 	parts    []rowPredicatePart
 }
 
@@ -258,7 +270,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 	if operator == "!=" {
 		operator = "<>"
 	}
-	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: operator}, true
+	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator)}, true
 }
 
 // planRowLiteralListMembership plans <operand> IN [<literal>, …]: a variable,
@@ -342,7 +354,7 @@ func planRowStringComparison(text string) (rowPredicatePart, bool) {
 		// text.
 		return rowPredicatePart{}, false
 	}
-	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: sides[0], right: sides[1], operator: operator}, true
+	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: sides[0], right: sides[1], operator: comparisonEvaluationHandler(operator)}, true
 }
 
 // evaluateRowPredicatePlan evaluates a planned predicate for a row.
@@ -372,12 +384,10 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 		if !leftOK || !rightOK {
 			return e.evaluateRowPredicateText(ctx, part.text, values)
 		}
-		// A null operand makes the comparison null, which doesn't hold, as in
-		// evaluateComparisonChain.
 		if left == nil || right == nil {
 			return false
 		}
-		matched, known := compareCypherPredicateValue(left, right, part.operator).(bool)
+		matched, known := part.operator.evaluate(left, right).(bool)
 		return known && matched
 	case rowPredicateIn:
 		needle, needleOK := part.left.resolve(values)
@@ -392,10 +402,7 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 		if !ok {
 			return e.evaluateRowPredicateText(ctx, part.text, values)
 		}
-		if part.kind == rowPredicateIsNull {
-			return value == nil
-		}
-		return value != nil
+		return nullEvaluationHandler(part.kind == rowPredicateIsNotNull).evaluate(value)
 	default:
 		// Text parts go through the whole row predicate evaluator: they have
 		// no plan of their own, so this doesn't come back here.

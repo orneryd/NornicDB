@@ -90,7 +90,7 @@ func (p bindingWherePlan) truthValue(b binding, params map[string]interface{}) c
 }
 
 func (p bindingWherePlan) asPredicate() bindingWherePredicate {
-	if p.truth == nil {
+	if p.predicate != nil {
 		return p.predicate
 	}
 	truth := p.truth
@@ -341,7 +341,10 @@ func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClau
 				return leftPredicate(b, params) || rightPredicate(b, params)
 			}}, true
 		}
-		return bindingWherePlan{truth: func(b binding, params map[string]interface{}) cypherTruth {
+		leftPredicate, rightPredicate := left.asPredicate(), right.asPredicate()
+		return bindingWherePlan{predicate: func(b binding, params map[string]interface{}) bool {
+			return leftPredicate(b, params) || rightPredicate(b, params)
+		}, truth: func(b binding, params map[string]interface{}) cypherTruth {
 			return truthOrLazy(left.truthValue(b, params), func() cypherTruth {
 				return right.truthValue(b, params)
 			})
@@ -359,7 +362,10 @@ func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClau
 				return leftPredicate(b, params) && rightPredicate(b, params)
 			}}, true
 		}
-		return bindingWherePlan{truth: func(b binding, params map[string]interface{}) cypherTruth {
+		leftPredicate, rightPredicate := left.asPredicate(), right.asPredicate()
+		return bindingWherePlan{predicate: func(b binding, params map[string]interface{}) bool {
+			return leftPredicate(b, params) && rightPredicate(b, params)
+		}, truth: func(b binding, params map[string]interface{}) cypherTruth {
 			return truthAndLazy(left.truthValue(b, params), func() cypherTruth {
 				return right.truthValue(b, params)
 			})
@@ -403,8 +409,8 @@ func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClau
 	if truth, ok := e.compileBindingInPredicate(clause, " NOT IN ", true); ok {
 		return bindingWherePlan{truth: truth}, true
 	}
-	if predicate, ok := e.compileBindingComparisonPredicate(clause); ok {
-		return bindingWherePlan{predicate: predicate}, true
+	if truth, ok := e.compileBindingComparisonTruth(clause); ok {
+		return bindingWherePlan{truth: truth}, true
 	}
 	return bindingWherePlan{}, false
 }
@@ -462,8 +468,8 @@ func (e *StorageExecutor) tryCompileBindingWhereTruth(ctx context.Context, where
 		return truth, true
 	}
 
-	if predicate, ok := e.compileBindingComparisonPredicate(clause); ok {
-		return liftBindingPredicate(predicate), true
+	if truth, ok := e.compileBindingComparisonTruth(clause); ok {
+		return truth, true
 	}
 
 	return nil, false
@@ -527,19 +533,14 @@ func (e *StorageExecutor) compileBindingNullPredicate(clause, op string, expectN
 	if !ok {
 		return nil, false
 	}
+	handler := nullEvaluationHandler(expectNotNull)
 	return func(b binding, params map[string]interface{}) bool {
-		value, ok := resolver(b, params)
-		if !ok {
-			return !expectNotNull
-		}
-		if expectNotNull {
-			return value != nil
-		}
-		return value == nil
+		value, _ := resolver(b, params)
+		return handler.evaluate(value)
 	}, true
 }
 
-func (e *StorageExecutor) compileBindingComparisonPredicate(clause string) (bindingWherePredicate, bool) {
+func (e *StorageExecutor) compileBindingComparisonTruth(clause string) (bindingWhereTruth, bool) {
 	for _, op := range []string{"<>", "!=", ">=", "<=", "=", ">", "<"} {
 		idx := findTopLevelKeyword(clause, op)
 		if idx <= 0 {
@@ -552,29 +553,6 @@ func (e *StorageExecutor) compileBindingComparisonPredicate(clause string) (bind
 			return nil, false
 		}
 
-		leftIsNodeRef := isValidIdentifier(leftExpr)
-		rightIsNodeRef := isValidIdentifier(rightExpr)
-		if leftIsNodeRef && rightIsNodeRef {
-			leftKey := leftExpr
-			rightKey := rightExpr
-			return func(b binding, params map[string]interface{}) bool {
-				_ = params
-				leftNode := b[leftKey]
-				rightNode := b[rightKey]
-				if leftNode == nil || rightNode == nil {
-					return false
-				}
-				switch op {
-				case "=":
-					return leftNode.ID == rightNode.ID
-				case "<>", "!=":
-					return leftNode.ID != rightNode.ID
-				default:
-					return e.compareNodeIDs(string(leftNode.ID), string(rightNode.ID), op)
-				}
-			}, true
-		}
-
 		leftResolver, ok := e.compileBindingValueResolver(leftExpr)
 		if !ok {
 			return nil, false
@@ -584,31 +562,21 @@ func (e *StorageExecutor) compileBindingComparisonPredicate(clause string) (bind
 			return nil, false
 		}
 
-		return func(b binding, params map[string]interface{}) bool {
+		handler := comparisonEvaluationHandler(op)
+		return func(b binding, params map[string]interface{}) cypherTruth {
 			leftValue, ok := leftResolver(b, params)
 			if !ok {
-				return false
+				return truthUnknown
 			}
 			rightValue, ok := rightResolver(b, params)
 			if !ok {
-				return false
+				return truthUnknown
 			}
-			switch op {
-			case "=":
-				return e.compareBindingValuesEqual(leftValue, rightValue)
-			case "<>", "!=":
-				return !e.compareBindingValuesEqual(leftValue, rightValue)
-			case ">":
-				return e.compareGreater(leftValue, rightValue)
-			case ">=":
-				return e.compareGreater(leftValue, rightValue) || e.compareBindingValuesEqual(leftValue, rightValue)
-			case "<":
-				return e.compareLess(leftValue, rightValue)
-			case "<=":
-				return e.compareLess(leftValue, rightValue) || e.compareBindingValuesEqual(leftValue, rightValue)
-			default:
-				return false
+			matched, known := handler.evaluate(leftValue, rightValue).(bool)
+			if !known {
+				return truthUnknown
 			}
+			return truthOf(matched)
 		}, true
 	}
 	return nil, false

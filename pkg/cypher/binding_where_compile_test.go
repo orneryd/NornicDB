@@ -11,6 +11,75 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGh728CompiledComparisonHandlersPreserveUnknown(t *testing.T) {
+	exec := &StorageExecutor{}
+	node := &storage.Node{ID: "node", Properties: map[string]interface{}{"present": int64(1)}}
+	for _, test := range []struct {
+		clause string
+		want   bool
+	}{
+		{"NOT n.missing = 1", false},
+		{"NOT n.missing <> 1", false},
+		{"NOT n.missing > 1", false},
+		{"NOT (n.missing = 1 OR n.present = 2)", false},
+		{"NOT (n.missing = 1 AND n.present = 1)", false},
+		{"NOT (n.missing = 1 AND n.present = 2)", true},
+		{"n.missing = 1 OR n.present = 1", true},
+		{"NOT n.present = 2", true},
+		{"n.present = 1", true},
+	} {
+		t.Run(test.clause, func(t *testing.T) {
+			ctx := withExpressionFailureSlot(context.Background())
+			predicate, supported := exec.tryCompileBindingWhere(ctx, test.clause)
+			require.True(t, supported)
+			assert.Equal(t, test.want, exec.evaluateRowPredicate(ctx, test.clause, map[string]interface{}{"n": node}))
+			assert.Equal(t, test.want, predicate(binding{"n": node}, nil))
+			require.NoError(t, getExpressionFailure(ctx))
+		})
+	}
+}
+
+func TestGh728SharedComparisonHandlerTypedValues(t *testing.T) {
+	for _, test := range []struct {
+		name, operator string
+		left, right    interface{}
+		want           interface{}
+	}{
+		{"null equality", "=", nil, int64(1), nil},
+		{"null inequality", "<>", nil, int64(1), nil},
+		{"string equality", "=", "same", "same", true},
+		{"string inequality", "!=", "left", "right", true},
+		{"bool equality", "=", true, false, false},
+		{"bool inequality", "<>", true, false, true},
+		{"large integer", "=", int64(9007199254740993), int64(9007199254740992), false},
+		{"mixed numeric", "=", int64(1), float64(1), true},
+		{"ordered numeric", "<=", int64(1), float64(2), true},
+		{"nested unknown", "=", []interface{}{nil}, []interface{}{nil}, nil},
+		{"nested unequal", "<>", []interface{}{int64(1)}, []interface{}{int64(2)}, true},
+		{"node identity", "=", &storage.Node{ID: "same"}, &storage.Node{ID: "same", Properties: map[string]interface{}{"x": int64(1)}}, true},
+		{"edge identity", "=", &storage.Edge{ID: "same"}, &storage.Edge{ID: "same", Type: "LINK"}, true},
+		{"different edges", "<>", &storage.Edge{ID: "left"}, &storage.Edge{ID: "right"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, comparisonEvaluationHandler(test.operator).evaluate(test.left, test.right))
+		})
+	}
+}
+
+func TestGh728ComparisonHandlerAdmission(t *testing.T) {
+	exec := &StorageExecutor{}
+	for _, clause := range []string{"", "n.x >", "> n.x", "n.x ?? n.y", "n.x + 1 = 1", "n.x = n.y + 1"} {
+		t.Run(clause, func(t *testing.T) {
+			predicate, supported := exec.compileBindingComparisonTruth(clause)
+			require.False(t, supported)
+			require.Nil(t, predicate)
+		})
+	}
+	predicate, supported := exec.compileBindingComparisonTruth("n.present = m.missing")
+	require.True(t, supported)
+	assert.Equal(t, truthUnknown, predicate(binding{"n": &storage.Node{Properties: map[string]interface{}{"present": int64(1)}}}, nil))
+}
+
 func TestGh728BindingWhereUsesSharedTypedPredicate(t *testing.T) {
 	tests := []struct {
 		name   string

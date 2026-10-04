@@ -2708,5 +2708,22 @@
     "query": "MATCH (a:WhereScratch) MATCH (a)-[r:LINK]->(b) WHERE type(r) = 'LINK' AND r.age + 1 = $expected RETURN a.name, type(r)",
     "parameters": {"expected":42},
     "no_effects": true
+  },
+  {
+    "name": "issue728 compiled comparison unknown under negation",
+    "setup": ["CREATE (:HandlerNull {present:1}), (:HandlerPeer {present:1})"],
+    "query": "MATCH (n:HandlerNull) MATCH (m:HandlerPeer) WHERE NOT (n.missing = 1 OR m.present = 2) RETURN n.present, m.present",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 compiled comparison false dominates unknown",
+    "setup": ["CREATE (:HandlerNull {present:1}), (:HandlerPeer {present:1})"],
+    "query": "MATCH (n:HandlerNull) MATCH (m:HandlerPeer) WHERE NOT (n.missing = 1 AND m.present = 2) RETURN n.present, m.present",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 folded statement clock evaluation",
+    "query": "RETURN DATETIME.statement() = datetime.statement() AS same",
+    "no_effects": true
   }
 ]

@@ -62,6 +62,53 @@ func TestGh728TopLevelOperatorUsesSharedQuoteScanner(t *testing.T) {
 	})
 }
 
+func TestGh728StatementClockPrefixScan(t *testing.T) {
+	for _, test := range []struct {
+		expression string
+		want       bool
+	}{
+		{"SIZE(n.name) + ABS(n.count) + COALESCE(n.count, 0)", false},
+		{"date()", true},
+		{"DaTeTiMe.statement ()", true},
+		{"LOCALDATETIME.transaction()", true},
+		{"TiMe.realtime()", true},
+		{"LOCALTIME ()", true},
+		{"DeCaYScore(n)", true},
+		{"DECAY (n)", true},
+		{"datetimey() + timezone() + localtimex()", false},
+		{"apoc.date() + my.datetime()", false},
+		{"(1 + 2) + ()", false},
+		{"x.datetime + y.time", false},
+		{"DATEDIFF(n.created, n.updated)", false},
+	} {
+		t.Run(test.expression, func(t *testing.T) {
+			require.Equal(t, test.want, containsStatementClockCall(test.expression))
+		})
+	}
+}
+
+func BenchmarkGh728StatementClockPrefixScan(b *testing.B) {
+	for _, test := range []struct {
+		name, expression string
+		want             bool
+	}{
+		{"lowercase", "size(n.name) + abs(n.count) + coalesce(n.count, 0)", false},
+		{"uppercase", "SIZE(n.name) + ABS(n.count) + COALESCE(n.count, 0)", false},
+		{"clock", "size(n.name) + DATETIME.statement ()", true},
+		{"qualified", "apoc.date(n.created) + my.datetime(n.updated)", false},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				if got := containsStatementClockCall(test.expression); got != test.want {
+					b.Fatalf("expected clock detection %t, got %t", test.want, got)
+				}
+			}
+		})
+	}
+}
+
 func TestGh728ArithmeticTierBitsetAndSharedQuotes(t *testing.T) {
 	for _, test := range []struct {
 		expr, operators, left, right string

@@ -9,7 +9,7 @@ import (
 )
 
 func BenchmarkFilterBindingsByWhere_CompiledJoin(b *testing.B) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := &StorageExecutor{}
 	bindings := make([]binding, 0, 1024)
 	for i := 0; i < 1024; i++ {
 		key := "k" + strconv.Itoa(i%32)
@@ -34,7 +34,7 @@ func BenchmarkFilterBindingsByWhere_CompiledJoin(b *testing.B) {
 }
 
 func BenchmarkFilterBindingsByWhere_GenericFallback(b *testing.B) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := &StorageExecutor{}
 	bindings := make([]binding, 0, 1024)
 	for i := 0; i < 1024; i++ {
 		bindings = append(bindings, binding{
@@ -104,4 +104,25 @@ func BenchmarkBindingWherePipelineHandlers(b *testing.B) {
 			})
 		}
 	}
+}
+
+func BenchmarkGh728SharedComparisonHandlers(b *testing.B) {
+	exec := &StorageExecutor{}
+	ctx := context.Background()
+	clause := "n.value >= $floor AND n.value < $limit"
+	row := map[string]interface{}{
+		"n":      &storage.Node{ID: "node", Properties: map[string]interface{}{"value": int64(3)}},
+		"$floor": int64(1), "$limit": int64(5),
+	}
+	if !exec.evaluateRowPredicate(ctx, clause, row) {
+		b.Fatal("comparison must accept the row")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if !exec.evaluateRowPredicate(ctx, clause, row) {
+			b.Fatal("comparison must accept the row")
+		}
+	}
+	b.StopTimer()
 }

@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reuse immutable comparison/null evaluation handlers in compiled binding and
+  row predicates, preserving unknown under negation. Skip clock scanning for
+  complete cached plans and use allocation-free folded byte-prefix clock
+  detection instead of per-call lowercasing (#728).
+
 - Unify binding and WITH predicates through shared typed row evaluation, with
   invocation-local scratch and native relationship scopes. Reuse shared quote
   scanning and allocation-free operator bitsets/prefix gates; preserve null

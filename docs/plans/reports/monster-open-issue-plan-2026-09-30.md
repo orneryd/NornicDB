@@ -1100,3 +1100,59 @@ unpublished allocation-gate changes are preserved.
 Publish with `Refs #728`; remaining WHERE/projection, allocation CI/TestKit and
 main-pipeline handler acceptance stays open. #547 excluded; no live service
 management or ingestion performed.
+
+### Shared Predicate Handlers and Clock Prefix Scanning: 2026-10-04
+
+Reuse immutable comparison and null evaluation handlers between binding
+compilation and typed row plans. Remove the binding compiler's private
+comparison execution and the now-unreferenced boolean adapter. Five direct
+compiled failures reproduce unknown becoming false under NOT; shared row
+controls pass before repair. Preserve unknown through AND/OR/NOT, with final
+WHERE checks still using fast boolean composition. Independent controls cover
+native node/edge identity, exact large integers, mixed numerics, nested nulls,
+missing operands and safe compilation declines. Existing typed-error and
+rollback controls remain passing. String/membership and graph-dependent
+admission are not claimed completely converged by this increment.
+
+CPU profiles identify avoidable statement-clock detection even for complete
+cached predicate plans; admit these plans before scanning. The detector's
+lowercase copy allocated for uppercase function identifiers. Replace it with
+an ASCII-folded first-byte gate and existing allocation-free ASCII comparison,
+retaining qualification and clock-family detection. Keep scratch local to each
+invocation; no shared mutable buffer or pool is introduced. Read-only Graphify
+compiler neighbors were corroborated against current source; no ingestion or
+running installation was changed.
+
+Same source baseline 36681c99 plus identical benchmark fixtures, Apple M2 Max,
+darwin/arm64, Go 1.26.6, tags noui,nolocalllm, cpu=1, count=6, CPU-profiled.
+Row/clock checks use 1,000,000 fixed iterations; join uses 1,000 iterations.
+
+| Workload | Median ns/op Base -> Head | Approx ops/sec Base -> Head | Allocs/op Base -> Head |
+| --- | --- | --- | --- |
+| Shared row comparison | 163.8 -> 143.7 | 6.11M -> 6.96M | 0 -> 0 |
+| Compiled 1,024-row join | 73,706 -> 73,668 | 13,567 -> 13,574 | 1 -> 1 |
+| Lowercase non-clock scan | 57.01 -> 46.57 | 17.54M -> 21.47M | 0 -> 0 |
+| Uppercase non-clock scan | 128.15 -> 40.39 | 7.80M -> 24.76M | 3 -> 0 |
+| Clock call scan | 113.10 -> 48.55 | 8.84M -> 20.60M | 1 -> 0 |
+| Qualified non-clock scan | 51.00 -> 42.28 | 19.61M -> 23.65M | 0 -> 0 |
+
+Row and clock checks are now all 0 B/op. Compiled join remains 9,472 B/op
+at the median, with timing inside its baseline sample range. An initial
+runtime truth-conversion wrapper regressed these controls and was replaced;
+only the non-degrading final form is retained. No database-wide gain is claimed.
+Binding-only benchmarks now use a bare executor: the old Badger-backed fixture
+leaked background workers between samples. This removes measurement noise,
+not runtime storage allocations; workload inputs and measured handlers remain
+unchanged. Separate allocation-runner/profile and Badger benchmark work stays
+outside this publication.
+
+Isolated repository correctness, scoped vet and production build pass. Both
+actual parsers pass 1,068 Bolt + 1,078 HTTP comparisons each (4,292 total),
+including the three appended protected-prefix cases, against pinned Neo4j
+5.26.30. Both official timezone-pinned TCK ratchets pass 7,794 outcomes with
+zero gaps, blockers or harness errors. Both-parser focused races pass. New
+comparison/null handlers and clock detector have 100% focused coverage;
+comparison compilation has 96.3%. Focused package coverage is 23.1%, not a
+whole-package coverage claim. Previous 36681c99 CI, Conformance and Docs are
+observed green. Publish with `Refs #728`; #713/#728/#754 remain open and #547
+is excluded.

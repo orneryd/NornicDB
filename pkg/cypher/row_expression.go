@@ -1084,6 +1084,24 @@ func compareCypherPredicateValue(left, right interface{}, operator string) inter
 		}
 	}
 	if operator == "=" || operator == "<>" || operator == "!=" {
+		var equalScalar, comparableScalar bool
+		switch actual := left.(type) {
+		case string:
+			if expected, ok := right.(string); ok {
+				equalScalar, comparableScalar = actual == expected, true
+			}
+		case int64:
+			if expected, ok := right.(int64); ok {
+				equalScalar, comparableScalar = actual == expected, true
+			}
+		case bool:
+			if expected, ok := right.(bool); ok {
+				equalScalar, comparableScalar = actual == expected, true
+			}
+		}
+		if comparableScalar {
+			return equalScalar == (operator == "=")
+		}
 		equal := cypherEquality(left, right)
 		matched, known := equal.(bool)
 		if !known {
@@ -1709,12 +1727,12 @@ func (e *StorageExecutor) evaluateMatchRowPredicate(ctx context.Context, express
 }
 
 func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expression string, values map[string]interface{}) bool {
-	values = rowValuesWithStatementContext(ctx, expression, values)
 	// A predicate already planned as complete is evaluated from its plan:
 	// the scans below look for forms it doesn't have, and run once per row.
 	if plan, cached := rowPredicatePlans.get(expression); cached && plan != nil && plan.complete {
 		return e.evaluateRowPredicatePlan(ctx, plan, values)
 	}
+	values = rowValuesWithStatementContext(ctx, expression, values)
 	if mayContainCaseKeyword(expression) {
 		if spans := caseBlockSpans(expression); len(spans) > 0 {
 			return e.evaluateRowPredicateWithCASEBound(ctx, expression, spans, values)

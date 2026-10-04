@@ -187,13 +187,26 @@ func containsStatementClockCall(expression string) bool {
 		for start > 0 && (isIdentByte(expression[start-1]) || expression[start-1] == '.') {
 			start--
 		}
-		name := lowerASCII(expression[start:end])
+		name := expression[start:end]
 		if dot := strings.IndexByte(name, '.'); dot >= 0 {
 			name = name[:dot]
 		}
-		switch name {
-		case "date", "datetime", "localdatetime", "time", "localtime", "decayscore", "decay":
-			return true
+		if name == "" {
+			continue
+		}
+		switch name[0] | 0x20 {
+		case 'd':
+			if equalFoldASCII(name, "date") || equalFoldASCII(name, "datetime") || equalFoldASCII(name, "decay") || equalFoldASCII(name, "decayscore") {
+				return true
+			}
+		case 'l':
+			if equalFoldASCII(name, "localdatetime") || equalFoldASCII(name, "localtime") {
+				return true
+			}
+		case 't':
+			if equalFoldASCII(name, "time") {
+				return true
+			}
 		}
 	}
 	return false
