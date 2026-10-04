@@ -202,6 +202,16 @@ function graphifyLabel(fileType: string | undefined): string {
   return label || "Entity";
 }
 
+function isTestSource(sourceFile: string | undefined): boolean {
+  const path = String(sourceFile ?? "").toLowerCase();
+  if (!path) return false;
+  const name = path.split("/").pop() ?? "";
+  if (name.endsWith("_test.go") || name.startsWith("test_")) return true;
+  if (/\.(test|spec)\.(js|jsx|ts|tsx|mjs|cjs)$/.test(name)) return true;
+  if (/(^|\/)(test|tests|testing|spec|specs)(\/|$)/.test(path)) return true;
+  return false;
+}
+
 function fileColor(fileType: string): string {
   return FILE_TYPE_COLORS[fileType.toLowerCase()] ?? DEFAULT_NODE_COLOR;
 }
@@ -339,6 +349,7 @@ export function Graphify() {
   const [database, setDatabase] = useState<string>("");
   const [customRoot, setCustomRoot] = useState<{ id: string; label: string } | null>(null);
   const [depth, setDepth] = useState<number>(DEFAULT_DEPTH);
+  const [hideTests, setHideTests] = useState(false);
   const [source, setSource] = useState<LoadSource | null>(null);
   const [status, setStatus] = useState<string>(
     "select a database and load the graphify tree",
@@ -376,15 +387,17 @@ export function Graphify() {
         const names = await api.listDatabaseNames();
         if (cancelled) return;
         setDatabases(names);
-        if (!names.includes("graphify")) {
+        if (names.includes("nornicdbcode")) {
+          setDatabase("nornicdbcode");
+        } else if (names.includes("graphify")) {
+          setDatabase("graphify");
+        } else {
           setDatabase(names[0] ?? "");
           if (names.length > 0) {
             setStatus(
-              "database 'graphify' not found — run scripts/graphify_local.py first, then load",
+              "database 'nornicdbcode' not found — run scripts/graphify_local.py first, then load",
             );
           }
-        } else {
-          setDatabase("graphify");
         }
       } catch (err) {
         if (cancelled) return;
@@ -397,6 +410,20 @@ export function Graphify() {
       cancelled = true;
     };
   }, []);
+
+  // Reload the tree when the test-file filter flips (skip the initial
+  // render; the Load tree button drives the first fetch).
+  const hideTestsFirstRenderRef = useRef(true);
+  useEffect(() => {
+    if (hideTestsFirstRenderRef.current) {
+      hideTestsFirstRenderRef.current = false;
+      return;
+    }
+    if (database && !loading) {
+      void loadFromDatabase();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hideTests]);
 
   // --- Graph init (once) ---------------------------------------------------
 
@@ -744,7 +771,22 @@ export function Graphify() {
         target: internalToPublic.get(edge.target) ?? edge.target,
         relation: edge.type,
       }));
-      buildGraph(rawNodes, rawLinks, rootId);
+      // Filter out test-file nodes (and their edges) when requested. The
+      // root stays visible so a re-root into test code never empties the
+      // graph.
+      let visibleNodes = rawNodes;
+      let visibleLinks = rawLinks;
+      if (hideTests) {
+        const visible = new Set<string>([rootId]);
+        for (const node of rawNodes) {
+          if (!isTestSource(node.source_file)) visible.add(node.id);
+        }
+        visibleNodes = rawNodes.filter((node) => visible.has(node.id));
+        visibleLinks = rawLinks.filter(
+          (link) => visible.has(link.source) && visible.has(link.target),
+        );
+      }
+      buildGraph(visibleNodes, visibleLinks, rootId);
       publicToInternalRef.current = publicToInternal;
       setSource({ kind: "db", name: dbName });
       // Retain the selected node (and its detail panel) across re-roots:
@@ -760,7 +802,8 @@ export function Graphify() {
         }
       }
       setStatus(
-        `rooted at ${rootLabel} · depth ${depth} · ${rawNodes.length} nodes · ${rawLinks.length} links` +
+        `rooted at ${rootLabel} · depth ${depth} · ${visibleNodes.length} nodes · ${visibleLinks.length} links` +
+          (hideTests ? " · tests hidden" : "") +
           (hood.meta?.truncated ? " (truncated)" : ""),
       );
     } catch (err) {
@@ -770,7 +813,7 @@ export function Graphify() {
     } finally {
       setLoading(false);
     }
-  }, [database, customRoot, depth, buildGraph, selectNode]);
+  }, [database, customRoot, depth, hideTests, buildGraph, selectNode]);
 
   const ingestArtifact = useCallback(async () => {
     if (!uploadFile) return;
@@ -1347,6 +1390,15 @@ export function Graphify() {
               }}
               className="w-14 rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver focus:outline-none focus:border-sky-400"
             />
+          </label>
+          <label className="flex items-center gap-1 text-xs text-norse-silver/80 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hideTests}
+              onChange={(e) => setHideTests(e.target.checked)}
+              className="mr-0.5"
+            />
+            hide test files
           </label>
           <button
             onClick={() => {
