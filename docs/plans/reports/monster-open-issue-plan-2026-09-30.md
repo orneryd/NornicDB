@@ -497,3 +497,42 @@ This removes one incorrect full projection shortcut; it does not establish
 that every RETURN/WITH producer uses one projection planner. #713 remains open,
 as do the separate #728/#754 gates. #547 is still excluded. Graphify ingestion,
 its UI edits and the user's local installation remain untouched.
+
+### Traversal OPTIONAL RETURN Planner Convergence
+
+`projectTraversalOptionalRows` is now a thin binding-row adapter to the existing
+shared RETURN planner. Its private projection, aggregate dispatch, ordering and
+pagination implementation and `applyTraversalReturnModifiers` are removed.
+Read-only Graphify inspection recorded the latter's sole caller as the private
+projector. Aggregate helpers still used by other producers are retained for
+their own convergence checks, not silently deleted.
+
+Public execution already handled expression pagination correctly. The direct
+traversal fallback failed all eight initial parameter/arithmetic controls in
+both parsers. Delegating fixes those results. Missing node and relationship
+pointers are normalized to Cypher null at the binding boundary: otherwise the
+shared count collector counted typed nil pointers as values. Seven controls per
+parser compare public and fallback rows/columns, including missing-entity nulls,
+zero counts and a matched node/relationship count. Existing indexed-seed
+zero-scan and neighboring OPTIONAL MATCH tests remain intact.
+
+The complete repository gate caught an implementation-specific `count()` error
+message assertion. It now checks the pinned structured SyntaxError class, and
+both plain and mixed empty-COUNT rejection controls remain. Six appended wire
+cases preserve the protected corpus prefix; the empty-COUNT cases pin the exact
+raw code. No test function was removed in this batch.
+
+Final observed checks: 912 Bolt and 922 HTTP comparisons per parser, 3,668 total;
+7,794 official ratchet outcomes per parser with zero gaps, setup blockers or
+harness errors; full repository correctness excluding performance-named tests;
+focused races, vet, editor diagnostics and whitespace. Both changed production
+functions have 100% focused statement coverage. The official Make target uses
+the repository's pinned temporal archive; an initial run using Go's archive
+failed two historical-timezone cases and is not credited as a passing gate.
+
+Validation used an isolated copy of the five-file patch, then advanced to local
+main's incoming graphify commits and reran repository correctness and all four
+reference matrices. Their static UI build passes with the chunk-size warning.
+No running installation was stopped, started or reconfigured. No benchmark or
+performance claim is made. #713 remains open for the remaining projection and
+column-planning inventory; #728/#754 remain separate and #547 is excluded.

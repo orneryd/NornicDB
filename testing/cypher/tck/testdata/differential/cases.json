@@ -2238,5 +2238,46 @@
     "setup": ["CREATE (p:Product {productName: 'A'}), (:Product {productName: 'B'}), (o1:Order), (o2:Order), (c1:Customer), (c2:Customer), (c3:Customer), (o1)-[:ORDERS]->(p), (o2)-[:ORDERS]->(p), (c1)-[:ORDERS]->(p), (c2)-[:ORDERS]->(p), (c3)-[:ORDERS]->(p)"],
     "query": "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS orderCount ORDER BY orderCount DESC",
     "no_effects": true
+  },
+  {
+    "name": "issue713 optional aggregate expression pagination",
+    "setup": ["CREATE (a:Anchor), (p1:Product {productName: 'A'}), (p2:Product {productName: 'B'}), (p3:Product {productName: 'C'}), (a)-[:HAS]->(p1), (a)-[:HAS]->(p2), (a)-[:HAS]->(p3)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName AS name, count(o) AS nodes, count(r) AS relationships ORDER BY name SKIP $skip LIMIT 0 + $take",
+    "parameters": {"skip": 1, "take": 1},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional plain arithmetic pagination",
+    "setup": ["CREATE (a:Anchor), (p1:Product {productName: 'A'}), (p2:Product {productName: 'B'}), (p3:Product {productName: 'C'}), (a)-[:HAS]->(p1), (a)-[:HAS]->(p2), (a)-[:HAS]->(p3)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName AS name ORDER BY name SKIP 0 + 1 LIMIT 0 + 1",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional missing entity null pagination",
+    "setup": ["CREATE (a:Anchor), (p1:Product {productName: 'A'}), (p2:Product {productName: 'B'}), (p3:Product {productName: 'C'}), (a)-[:HAS]->(p1), (a)-[:HAS]->(p2), (a)-[:HAS]->(p3)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName AS name, o IS NULL AS nodeMissing, r IS NULL AS relationshipMissing ORDER BY name SKIP $skip LIMIT $take",
+    "parameters": {"skip": 1, "take": 1},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional matched entity count pagination",
+    "setup": ["CREATE (a:Anchor), (p1:Product {productName: 'A'}), (p2:Product {productName: 'B'}), (p3:Product {productName: 'C'}), (a)-[:HAS]->(p1), (a)-[:HAS]->(p2), (a)-[:HAS]->(p3), (:Order)-[:ORDERS]->(p2)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName AS name, count(o) AS nodes, count(r) AS relationships ORDER BY name SKIP $skip LIMIT $take",
+    "parameters": {"skip": 1, "take": 1},
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional empty count argument rejected",
+    "setup": ["CREATE (a:Anchor)-[:HAS]->(:Product)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN count() AS c",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional empty count expression rejected",
+    "setup": ["CREATE (a:Anchor)-[:HAS]->(:Product)"],
+    "query": "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN count() + 1 AS c",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
   }
 ]

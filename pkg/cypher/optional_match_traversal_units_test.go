@@ -574,7 +574,7 @@ func TestTraversalAggregate_EmptyArgumentErrors(t *testing.T) {
 		RETURN count() AS c
 	`, nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "insufficient parameters")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	_, err = exec.Execute(ctx, `
 		MATCH (e:OMClass {uid:"cls:ServiceDog"})-[rel:INHERITS]->(target)
@@ -582,6 +582,15 @@ func TestTraversalAggregate_EmptyArgumentErrors(t *testing.T) {
 		RETURN count() + 1 AS c
 	`, nil)
 	require.Error(t, err, "empty argument inside a mixed expression is rejected the same way")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+}
+
+func TestTraversalOptionalProjectionWithoutReturn(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.projectTraversalOptionalRows(ctx, nil, "")
+	require.NoError(t, err)
+	require.Empty(t, result.Columns)
+	require.Empty(t, result.Rows)
 }
 
 func TestExtractRelationshipVariables_Whitespace(t *testing.T) {

@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -434,84 +433,11 @@ func (e *StorageExecutor) projectTraversalOptionalRows(ctx context.Context, rows
 	if returnIdx < 0 {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
-	returnClause := strings.TrimSpace(restOfQuery[returnIdx+len("RETURN"):])
-	items := e.parseReturnItems(stripTrailingReturnClauses(returnClause))
-
-	result := &ExecuteResult{Columns: make([]string, len(items))}
-	for i, item := range items {
-		if item.alias != "" {
-			result.Columns[i] = item.alias
-		} else {
-			result.Columns[i] = item.expr
-		}
+	bindings := make([]pipelineRow, len(rows))
+	for index, row := range rows {
+		bindings[index] = pipelineRowFromTraversalOptionalRow(row)
 	}
-
-	if traversalItemsContainAggregate(items) {
-		aggRows, err := e.aggregateTraversalOptionalRows(ctx, rows, items)
-		if err != nil {
-			return nil, err
-		}
-		result.Rows = aggRows
-		e.applyTraversalReturnModifiers(result, returnClause)
-		return result, nil
-	}
-
-	// Compile each projection item once; per row only the compiled closures
-	// run. Keep the complete pre-projection row beside the projected row so
-	// ORDER BY can evaluate any in-scope expression without exposing hidden
-	// columns or re-running graph traversal.
-	projectors := make([]compiledTraversalProjection, len(items))
-	for i, item := range items {
-		projectors[i] = e.compileTraversalProjection(ctx, item.expr)
-	}
-	orderTerms := parseOrderByTerms(returnClause)
-	if len(orderTerms) == 0 {
-		result.Rows = make([][]interface{}, 0, len(rows))
-		for _, row := range rows {
-			outRow := make([]interface{}, len(items))
-			for i := range items {
-				outRow[i] = projectors[i](row)
-			}
-			result.Rows = append(result.Rows, outRow)
-		}
-		e.applyTraversalReturnModifiers(result, returnClause)
-		return result, nil
-	}
-	projectedRows := make([]pipelineRow, 0, len(rows))
-	orderScopes := make([]pipelineRow, 0, len(rows))
-	for _, row := range rows {
-		projected := make(pipelineRow, len(items))
-		scope := pipelineRowFromTraversalOptionalRow(row)
-		for i, item := range items {
-			value := projectors[i](row)
-			projected[result.Columns[i]] = value
-			scope[item.expr] = value
-			scope[result.Columns[i]] = value
-		}
-		projectedRows = append(projectedRows, projected)
-		orderScopes = append(orderScopes, scope)
-	}
-	if !e.orderPipelineRowsWithScopes(ctx, projectedRows, orderScopes, orderTerms) {
-		return nil, localizedError(localization.CypherMatchingOrderByParseFailed(), nil)
-	}
-	skip := 0
-	if value, ok := e.parseIntModifier(ctx, returnClause, "SKIP"); ok {
-		skip = value
-	}
-	limit := -1
-	if value, ok := e.parseIntModifier(ctx, returnClause, "LIMIT"); ok {
-		limit = value
-	}
-	projectedRows = applyPipelineWindow(projectedRows, skip, limit)
-	result.Rows = make([][]interface{}, 0, len(projectedRows))
-	for _, projected := range projectedRows {
-		outRow := make([]interface{}, len(result.Columns))
-		for index, column := range result.Columns {
-			outRow[index] = projected[column]
-		}
-		result.Rows = append(result.Rows, outRow)
-	}
-	return result, nil
+	return e.projectMergeReturn(ctx, bindings, restOfQuery[returnIdx:])
 }
 
 // isSimpleTraversalIdentifier reports whether s is a bare Cypher identifier
@@ -594,50 +520,4 @@ func fastTraversalExprValue(expr string, row traversalOptRow) (interface{}, bool
 		return value, true
 	}
 	return nil, false
-}
-
-// applyTraversalReturnModifiers applies ORDER BY, SKIP, and LIMIT from the
-// RETURN clause tail, mirroring buildJoinedResult's handling.
-func (e *StorageExecutor) applyTraversalReturnModifiers(result *ExecuteResult, returnClause string) {
-	if orderByIdx := findMultiWordKeywordIndex(returnClause, "ORDER", "BY"); orderByIdx >= 0 {
-		orderPart := returnClause[orderByIdx:]
-		if mIdx := findKeywordIndex(orderPart, "BY"); mIdx >= 0 {
-			orderPart = orderPart[mIdx+len("BY"):]
-		}
-		endIdx := len(orderPart)
-		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
-				endIdx = idx
-			}
-		}
-		result.Rows = e.orderResultRows(result.Rows, result.Columns, strings.TrimSpace(orderPart[:endIdx]))
-	}
-
-	skip := 0
-	if skipIdx := findKeywordIndex(returnClause, "SKIP"); skipIdx >= 0 {
-		if fields := strings.Fields(returnClause[skipIdx+len("SKIP"):]); len(fields) > 0 {
-			if s, err := strconv.Atoi(fields[0]); err == nil {
-				skip = s
-			}
-		}
-	}
-	limit := -1
-	if limitIdx := findKeywordIndex(returnClause, "LIMIT"); limitIdx >= 0 {
-		if fields := strings.Fields(returnClause[limitIdx+len("LIMIT"):]); len(fields) > 0 {
-			if l, err := strconv.Atoi(fields[0]); err == nil {
-				limit = l
-			}
-		}
-	}
-	if skip > 0 || limit >= 0 {
-		start := skip
-		if start > len(result.Rows) {
-			start = len(result.Rows)
-		}
-		end := len(result.Rows)
-		if limit >= 0 && start+limit < end {
-			end = start + limit
-		}
-		result.Rows = result.Rows[start:end]
-	}
 }

@@ -211,10 +211,18 @@ func nodePatternPropertyExpressions(group string) map[string]string {
 func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
 	scope := make(pipelineRow, len(row.nodes)+len(row.rels)+len(row.values))
 	for name, node := range row.nodes {
-		scope[name] = node
+		if node == nil {
+			scope[name] = nil
+		} else {
+			scope[name] = node
+		}
 	}
 	for name, relationship := range row.rels {
-		scope[name] = relationship
+		if relationship == nil {
+			scope[name] = nil
+		} else {
+			scope[name] = relationship
+		}
 	}
 	for name, value := range row.values {
 		scope[name] = value

@@ -37,6 +37,57 @@ func TestGh713OptionalCountGroupsProjectedNamesAndFiltersLabels(t *testing.T) {
 	}
 }
 
+func TestGh713OptionalProjectionExpressionPagination(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			executor, ctx := newUnitExecutor(t)
+			_, err := executor.Execute(ctx, "CREATE (a:Anchor), (p1:Product {productName: 'A'}), (p2:Product {productName: 'B'}), (p3:Product {productName: 'C'}), (a)-[:HAS]->(p1), (a)-[:HAS]->(p2), (a)-[:HAS]->(p3)", nil)
+			require.NoError(t, err)
+			for _, test := range []struct {
+				name string
+				tail string
+				want [][]interface{}
+			}{
+				{"aggregate parameters", "RETURN p.productName AS name, count(o) AS c ORDER BY name SKIP $skip LIMIT $take", [][]interface{}{{"B", int64(0)}}},
+				{"aggregate arithmetic", "RETURN p.productName AS name, count(o) AS c ORDER BY name SKIP 0 + 1 LIMIT 0 + 1", [][]interface{}{{"B", int64(0)}}},
+				{"missing relationship count", "RETURN p.productName AS name, count(r) AS c ORDER BY name SKIP $skip LIMIT $take", [][]interface{}{{"B", int64(0)}}},
+				{"missing entity nulls", "RETURN p.productName AS name, o IS NULL AS nodeMissing, r IS NULL AS relationshipMissing ORDER BY name SKIP $skip LIMIT $take", [][]interface{}{{"B", true, true}}},
+				{"plain parameters", "RETURN 'hit' AS value SKIP $skip LIMIT $take", [][]interface{}{{"hit"}}},
+				{"plain arithmetic", "RETURN 'hit' AS value SKIP 0 + 1 LIMIT 0 + 1", [][]interface{}{{"hit"}}},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					query := "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) " + test.tail
+					params := map[string]interface{}{"skip": int64(1), "take": int64(1)}
+					result, err := executor.Execute(ctx, query, params)
+					require.NoError(t, err)
+					require.Equal(t, test.want, result.Rows)
+					fallback, err := executor.executeTraversalSeededOptionalMatch(withParams(ctx, params), "(a:Anchor)-[:HAS]->(p:Product)", "(a:Anchor)-[:HAS]->(p:Product)", "OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)", test.tail)
+					require.NoError(t, err)
+					require.Equal(t, result.Columns, fallback.Columns)
+					require.Equal(t, test.want, fallback.Rows)
+				})
+			}
+			t.Run("matched entity counts", func(t *testing.T) {
+				_, err := executor.Execute(ctx, "MATCH (p:Product {productName: 'B'}) CREATE (:Order)-[:ORDERS]->(p)", nil)
+				require.NoError(t, err)
+				tail := "RETURN p.productName AS name, count(o) AS nodes, count(r) AS relationships ORDER BY name SKIP $skip LIMIT $take"
+				params := map[string]interface{}{"skip": int64(1), "take": int64(1)}
+				result, err := executor.Execute(ctx, "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) "+tail, params)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{"B", int64(1), int64(1)}}, result.Rows)
+				fallback, err := executor.executeTraversalSeededOptionalMatch(withParams(ctx, params), "(a:Anchor)-[:HAS]->(p:Product)", "(a:Anchor)-[:HAS]->(p:Product)", "OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)", tail)
+				require.NoError(t, err)
+				require.Equal(t, result.Columns, fallback.Columns)
+				require.Equal(t, result.Rows, fallback.Rows)
+			})
+		})
+	}
+}
+
 // TestCompoundMatchOptionalMatch_OrderStatusPharmacy tests the exact query shape used by
 // FormatOrderStatusContext: MATCH (n:OrderStatus) WHERE n.userId = $ AND NOT (n)-[:SUPERSEDED_BY]->()
 // OPTIONAL MATCH (n)-[:FILLED_AT]->(ph:Pharmacy) RETURN n.orderId, ..., ph.id, ph.name ORDER BY n.orderId
