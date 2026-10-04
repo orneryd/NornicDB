@@ -206,6 +206,57 @@ function fileColor(fileType: string): string {
   return FILE_TYPE_COLORS[fileType.toLowerCase()] ?? DEFAULT_NODE_COLOR;
 }
 
+function chunk<T>(items: T[], size: number): T[][] {
+  const batches: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    batches.push(items.slice(i, i + size));
+  }
+  return batches;
+}
+
+function sanitizeRelation(relation: string): string {
+  const cleaned = relation
+    .toUpperCase()
+    .replace(/\s/g, "_")
+    .replace(/-/g, "_")
+    .replace(/[^A-Z0-9_]/g, "_");
+  return cleaned || "RELATED_TO";
+}
+
+function contentHash(props: Record<string, unknown>): string {
+  // FNV-1a 64-bit over the canonical JSON of string-valued properties,
+  // matching scripts/graphify_local.py exactly (sorted keys, only string
+  // values, updated_at/props_hash excluded) so the upload dialog and the
+  // importer agree on whether a node or edge changed.
+  const parts: string[] = [];
+  for (const key of Object.keys(props).sort()) {
+    if (key === "updated_at" || key === "props_hash") continue;
+    const value = props[key];
+    if (typeof value === "string") {
+      parts.push(JSON.stringify(key) + ":" + JSON.stringify(value));
+    }
+  }
+  const canonical = "{" + parts.join(",") + "}";
+  let digest = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(canonical)) {
+    digest ^= BigInt(byte);
+    digest = (digest * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return digest.toString(16).padStart(16, "0");
+}
+
+function validateUploadDatabaseName(name: string, existing: string[], allowExisting = false): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return "database name is required";
+  if (trimmed.includes(":")) return "database name cannot contain ':'";
+  if (trimmed.startsWith("_")) return "database name cannot start with '_'";
+  if (existing.includes(trimmed)) {
+    if (allowExisting) return null;
+    return `database '${trimmed}' already exists — check "update existing" to sync it, or choose a different name`;
+  }
+  return null;
+}
+
 interface Neighbor {
   id: string;
   label: string;
@@ -305,6 +356,12 @@ export function Graphify() {
   const [similarLoading, setSimilarLoading] = useState(false);
   const [similarCount, setSimilarCount] = useState<number | null>(null);
   const [panelPos, setPanelPos] = useState<{ left: number; top: number } | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadDbName, setUploadDbName] = useState("");
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ label: string; percent: number } | null>(null);
+  const [updateExisting, setUpdateExisting] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null);
   const selectedIdRef = useRef<string | null>(null);
@@ -580,8 +637,9 @@ export function Graphify() {
     [],
   );
 
-  const loadFromDatabase = useCallback(async () => {
-    if (!database) return;
+  const loadFromDatabase = useCallback(async (dbNameOverride?: string) => {
+    const dbName = dbNameOverride ?? database;
+    if (!dbName) return;
     setLoading(true);
     setError(null);
     try {
@@ -594,7 +652,7 @@ export function Graphify() {
         setStatus("resolving main entry...");
         try {
           const mainResp = await api.executeCypherOnDatabase(
-            database,
+            dbName,
             MAIN_ENTRY_QUERY,
           );
           const mainRows = rowsFromCypher(mainResp);
@@ -604,16 +662,38 @@ export function Graphify() {
         }
       }
       setStatus(
-        `walking ${rootLabel} neighborhood at depth ${depth} in '${database}'...`,
+        `walking ${rootLabel} neighborhood at depth ${depth} in '${dbName}'...`,
       );
       // The neighborhood endpoint seeds by internal id(n), not by the
       // graphify id property; resolve the seed first.
-      const eidResp = await api.executeCypherOnDatabase(
-        database,
+      let eidResp = await api.executeCypherOnDatabase(
+        dbName,
         `MATCH (n {id: $graphifyId}) RETURN id(n) AS internalId LIMIT 1`,
         { graphifyId: rootId },
       );
-      const eidRows = rowsFromCypher(eidResp);
+      let eidRows = rowsFromCypher(eidResp);
+      if (eidRows[0]?.internalId == null) {
+        // Artifacts without the canonical main() entry: root at the first
+        // node in the database instead.
+        const anyResp = await api.executeCypherOnDatabase(
+          dbName,
+          `MATCH (n) WHERE n.id IS NOT NULL RETURN n.id AS id, n.label AS label LIMIT 1`,
+        );
+        const anyRows = rowsFromCypher(anyResp);
+        if (anyRows[0]?.id != null) {
+          rootId = String(anyRows[0].id);
+          rootLabel =
+            anyRows[0].label != null
+              ? String(anyRows[0].label)
+              : rootLabel;
+          eidResp = await api.executeCypherOnDatabase(
+            dbName,
+            `MATCH (n {id: $graphifyId}) RETURN id(n) AS internalId LIMIT 1`,
+            { graphifyId: rootId },
+          );
+          eidRows = rowsFromCypher(eidResp);
+        }
+      }
       const seedInternalId =
         eidRows[0]?.internalId != null
           ? String(eidRows[0].internalId)
@@ -624,7 +704,7 @@ export function Graphify() {
         limit: NEIGHBORHOOD_LIMIT,
         relationshipTypes: CALL_RELATION_TYPES,
         direction: "both",
-        database,
+        database: dbName,
       });
       // Payload node ids are internal ids; keep the graphify id property as
       // the public node identity and translate the edge endpoints.
@@ -666,7 +746,7 @@ export function Graphify() {
       }));
       buildGraph(rawNodes, rawLinks, rootId);
       publicToInternalRef.current = publicToInternal;
-      setSource({ kind: "db", name: database });
+      setSource({ kind: "db", name: dbName });
       // Retain the selected node (and its detail panel) across re-roots:
       // the re-rooted neighborhood always contains its new root.
       const keepId = selectedIdRef.current;
@@ -685,43 +765,295 @@ export function Graphify() {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(`Failed to load '${database}': ${message}`);
+      setError(`Failed to load '${dbName}': ${message}`);
       setStatus("load failed");
     } finally {
       setLoading(false);
     }
   }, [database, customRoot, depth, buildGraph, selectNode]);
 
-  const onUpload = useCallback(
-    async (file: File) => {
-      setLoading(true);
-      setError(null);
-      setStatus(`parsing ${file.name}...`);
-      try {
-        const text = await file.text();
-        setStatus(`indexing ${file.name}...`);
-        const parsed = JSON.parse(text) as {
-          nodes?: ArtifactNode[];
-          links?: ArtifactLink[];
-          edges?: ArtifactLink[];
-        };
-        const rawNodes = parsed.nodes ?? [];
-        const rawLinks = parsed.links ?? parsed.edges ?? [];
-        buildGraph(rawNodes, rawLinks, null);
-        setSource({ kind: "artifact", name: file.name });
-        setStatus(
-          `loaded ${rawNodes.length} nodes and ${rawLinks.length} links from ${file.name}`,
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        setError(`Failed to parse artifact: ${message}`);
-        setStatus("upload failed");
-      } finally {
-        setLoading(false);
+  const ingestArtifact = useCallback(async () => {
+    if (!uploadFile) return;
+    const name = uploadDbName.trim();
+    const validationError = validateUploadDatabaseName(name, databases, updateExisting);
+    if (validationError) {
+      setUploadError(validationError);
+      return;
+    }
+    setUploadError(null);
+    setError(null);
+    setLoading(true);
+    const report = (label: string, percent: number) => {
+      setStatus(label);
+      setUploadProgress({ label, percent });
+    };
+    try {
+      report("parsing artifact...", 2);
+      const parsed = JSON.parse(await uploadFile.text()) as {
+        nodes?: ArtifactNode[];
+        links?: ArtifactLink[];
+        edges?: ArtifactLink[];
+      };
+      const artifactNodes = parsed.nodes ?? [];
+      const rawLinks = parsed.links ?? parsed.edges ?? [];
+      const idToFileType = new Map<string, string>();
+      const known = new Set<string>();
+      for (const node of artifactNodes) {
+        const id = String(node.id);
+        known.add(id);
+        idToFileType.set(id, String(node.file_type ?? "Entity"));
       }
-    },
-    [buildGraph],
-  );
+      const missing = new Set<string>();
+      for (const link of rawLinks) {
+        if (!known.has(String(link.source))) missing.add(String(link.source));
+        if (!known.has(String(link.target))) missing.add(String(link.target));
+      }
+      const total = artifactNodes.length + missing.size + rawLinks.length || 1;
+      let done = 0;
+
+      report(`ensuring database '${name}'...`, 4);
+      const existing = await api.listDatabaseNames();
+      if (!existing.includes(name)) {
+        await api.createDatabase(name);
+      }
+
+      // Group nodes by label; create the id indexes before the first MERGE.
+      const byLabel = new Map<string, ArtifactNode[]>();
+      for (const node of artifactNodes) {
+        const label = graphifyLabel(node.file_type);
+        const group = byLabel.get(label) ?? [];
+        group.push(node);
+        byLabel.set(label, group);
+      }
+      const labels = new Set(byLabel.keys());
+      if (missing.size > 0) labels.add("Entity");
+      for (const label of labels) {
+        await api.executeCypherOnDatabase(
+          name,
+          `CREATE INDEX graphify_${label.toLowerCase()}_id IF NOT EXISTS FOR (n:${label}) ON (n.id)`,
+        );
+      }
+
+      const scalar = (data: Record<string, unknown>): Record<string, unknown> =>
+        Object.fromEntries(
+          Object.entries(data).filter(
+            ([key, value]) =>
+              !key.startsWith("_") &&
+              (typeof value === "string" ||
+                typeof value === "number" ||
+                typeof value === "boolean"),
+          ),
+        );
+
+      for (const [label, group] of byLabel) {
+        for (const batch of chunk(group, 2000)) {
+          const rows = batch.map((node) => {
+            const props: Record<string, unknown> = {
+              ...scalar(node as unknown as Record<string, unknown>),
+              id: String(node.id),
+              updated_at:
+                typeof node.updated_at === "number"
+                  ? node.updated_at
+                  : Date.now() / 1000,
+            };
+            if (typeof node.body === "string") {
+              props.body = node.body;
+            }
+            props.props_hash = contentHash(props);
+            return { id: String(node.id), props };
+          });
+          // Create missing nodes with their full properties...
+          await api.executeCypherOnDatabase(
+            name,
+            `UNWIND $rows AS row MERGE (n:${label} {id: row.id}) ON CREATE SET n += row.props`,
+            { rows },
+          );
+          // ...then gently update only nodes whose content hash differs from
+          // the artifact copy, so unchanged nodes are never rewritten (and
+          // never re-embedded).
+          await api.executeCypherOnDatabase(
+            name,
+            `UNWIND $rows AS row MATCH (n:${label} {id: row.id}) ` +
+              `WHERE n.props_hash IS NULL OR n.props_hash <> row.props_hash ` +
+              `SET n += row.props`,
+            { rows },
+          );
+          done += batch.length;
+          report(
+            `ingesting nodes ${Math.min(done, artifactNodes.length)}/${artifactNodes.length}`,
+            5 + Math.round((85 * done) / total),
+          );
+        }
+      }
+
+      if (missing.size > 0) {
+        const rows = Array.from(missing).map((id) => {
+          const props: Record<string, unknown> = {
+            id,
+            updated_at: Date.now() / 1000,
+          };
+          props.props_hash = contentHash(props);
+          return { id, props };
+        });
+        await api.executeCypherOnDatabase(
+          name,
+          `UNWIND $rows AS row MERGE (n:Entity {id: row.id}) ON CREATE SET n += row.props`,
+          { rows },
+        );
+        await api.executeCypherOnDatabase(
+          name,
+          `UNWIND $rows AS row MATCH (n:Entity {id: row.id}) ` +
+            `WHERE n.props_hash IS NULL OR n.props_hash <> row.props_hash ` +
+            `SET n += row.props`,
+          { rows },
+        );
+        done += rows.length;
+      }
+
+      // Group links by (source label, target label, relation) and ingest.
+      const linkGroups = new Map<
+        string,
+        { sl: string; tl: string; rel: string; rows: Array<{ src: string; tgt: string; props: Record<string, unknown> }> }
+      >();
+      for (const link of rawLinks) {
+        const sl = graphifyLabel(idToFileType.get(String(link.source)));
+        const tl = graphifyLabel(idToFileType.get(String(link.target)));
+        const rel = sanitizeRelation(String(link.relation ?? "RELATED_TO"));
+        const key = `${sl}|${tl}|${rel}`;
+        const group = linkGroups.get(key) ?? { sl, tl, rel, rows: [] };
+        const props: Record<string, unknown> = {};
+        for (const [propKey, value] of Object.entries(
+          link as unknown as Record<string, unknown>,
+        )) {
+          if (
+            propKey === "source" ||
+            propKey === "target" ||
+            propKey.startsWith("_")
+          ) {
+            continue;
+          }
+          if (
+            typeof value === "string" ||
+            typeof value === "number" ||
+            typeof value === "boolean"
+          ) {
+            props[propKey] = value;
+          }
+        }
+        props.props_hash = contentHash(props);
+        group.rows.push({
+          src: String(link.source),
+          tgt: String(link.target),
+          props,
+        });
+        linkGroups.set(key, group);
+      }
+      for (const group of linkGroups.values()) {
+        for (const batch of chunk(group.rows, 2000)) {
+          await api.executeCypherOnDatabase(
+            name,
+            `UNWIND $rows AS row MATCH (a:${group.sl} {id: row.src}), (b:${group.tl} {id: row.tgt}) ` +
+              `MERGE (a)-[r:${group.rel}]->(b) ON CREATE SET r += row.props`,
+            { rows: batch },
+          );
+          // Gentle edge update: only rewrite edges whose content hash changed.
+          await api.executeCypherOnDatabase(
+            name,
+            `UNWIND $rows AS row MATCH (a:${group.sl} {id: row.src})-[r:${group.rel}]->(b:${group.tl} {id: row.tgt}) ` +
+              `WHERE r.props_hash IS NULL OR r.props_hash <> row.props_hash ` +
+              `SET r += row.props`,
+            { rows: batch },
+          );
+          done += batch.length;
+          report(
+            `ingesting links ${Math.min(done - artifactNodes.length - missing.size, rawLinks.length)}/${rawLinks.length}`,
+            5 + Math.round((85 * done) / total),
+          );
+        }
+      }
+
+      // Incremental sync: delete stale edges and nodes that no longer
+      // appear in the artifact, scoped to importer-managed labels.
+      report("syncing deletions...", 92);
+      const managedLabels = Array.from(labels);
+      if (managedLabels.length > 0) {
+        const labelClause = managedLabels.map((label) => `n:${label}`).join(" OR ");
+        const incomingIds = new Set<string>([...known, ...missing]);
+        const existingResp = await api.executeCypherOnDatabase(
+          name,
+          `MATCH (n) WHERE n.id IS NOT NULL AND (${labelClause}) RETURN n.id AS id`,
+        );
+        const existingIds = new Set(
+          rowsFromCypher(existingResp).map((row) => String(row.id)),
+        );
+        const staleIds = Array.from(existingIds).filter((id) => !incomingIds.has(id));
+
+        const incomingEdges = new Set<string>(
+          rawLinks.map((link) => {
+            const rel = sanitizeRelation(String(link.relation ?? "RELATED_TO"));
+            return `${String(link.source)}|${String(link.target)}|${rel}`;
+          }),
+        );
+        // Only relationships between importer-managed nodes are candidates;
+        // edges touching unrelated data are never considered stale.
+        const aClause = managedLabels.map((label) => `a:${label}`).join(" OR ");
+        const bClause = managedLabels.map((label) => `b:${label}`).join(" OR ");
+        const edgesResp = await api.executeCypherOnDatabase(
+          name,
+          `MATCH (a)-[r]->(b) WHERE a.id IS NOT NULL AND b.id IS NOT NULL ` +
+            `AND (${aClause}) AND (${bClause}) ` +
+            `RETURN a.id AS src, b.id AS tgt, type(r) AS rel`,
+        );
+        const staleEdges = rowsFromCypher(edgesResp)
+          .map((row) => ({
+            src: String(row.src),
+            tgt: String(row.tgt),
+            rel: String(row.rel),
+          }))
+          .filter((edge) => !incomingEdges.has(`${edge.src}|${edge.tgt}|${edge.rel}`));
+
+        for (const batch of chunk(staleEdges, 1000)) {
+          await api.executeCypherOnDatabase(
+            name,
+            `UNWIND $rows AS row MATCH (a {id: row.src})-[r]->(b {id: row.tgt}) ` +
+              `WHERE type(r) = row.rel DELETE r`,
+            { rows: batch.map((edge) => ({ src: edge.src, tgt: edge.tgt, rel: edge.rel })) },
+          );
+        }
+        for (const batch of chunk(staleIds, 1000)) {
+          await api.executeCypherOnDatabase(
+            name,
+            `UNWIND $ids AS id MATCH (n) WHERE n.id = id AND (${labelClause}) DETACH DELETE n`,
+            { ids: batch },
+          );
+        }
+        if (staleIds.length > 0 || staleEdges.length > 0) {
+          report(
+            `sync removed ${staleIds.length} stale nodes and ${staleEdges.length} stale edges`,
+            94,
+          );
+        }
+      }
+
+      report("ingestion complete — loading tree...", 96);
+      const names = await api.listDatabaseNames();
+      setDatabases(names);
+      setDatabase(name);
+      setCustomRoot(null);
+      setUploadOpen(false);
+      setUploadFile(null);
+      setUploadProgress(null);
+      // Automatically load the database exactly like the Load tree button.
+      await loadFromDatabase(name);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Ingestion failed: ${message}`);
+      setStatus("ingestion failed");
+      setUploadProgress(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [uploadFile, uploadDbName, databases, updateExisting, loadFromDatabase]);
 
   // --- Search ---------------------------------------------------------------
 
@@ -1035,19 +1367,19 @@ export function Graphify() {
         </div>
 
         <div className="mt-2 flex items-center gap-2">
-          <label className="flex-1 text-center rounded border border-dashed border-norse-rune bg-norse-night/60 px-2 py-1.5 text-xs text-norse-silver/70 hover:border-sky-400 cursor-pointer">
+          <button
+            onClick={() => {
+              setUploadOpen(true);
+              setUploadError(null);
+              setUploadProgress(null);
+              if (!uploadDbName.trim()) {
+                setUploadDbName("nornicdbcode");
+              }
+            }}
+            className="flex-1 text-center rounded border border-dashed border-norse-rune bg-norse-night/60 px-2 py-1.5 text-xs text-norse-silver/70 hover:border-sky-400 cursor-pointer"
+          >
             upload graphify artifact
-            <input
-              type="file"
-              accept=".json,application/json"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void onUpload(file);
-                e.target.value = "";
-              }}
-            />
-          </label>
+          </button>
         </div>
 
         <div className="mt-2 text-[10px] text-norse-silver/50 font-mono leading-snug">
@@ -1056,6 +1388,124 @@ export function Graphify() {
           to zoom · right-drag to pan
         </div>
       </div>
+
+      {/* Upload dialog */}
+      {uploadOpen && (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/60">
+          <div className="w-96 rounded-lg border border-sky-500/40 bg-norse-shadow/95 backdrop-blur p-4 shadow-[0_0_24px_rgba(56,189,248,0.2)]">
+            <div className="text-xs uppercase tracking-[0.25em] text-sky-300">
+              Ingest graphify artifact
+            </div>
+            <label className="mt-3 block cursor-pointer rounded border border-dashed border-norse-rune bg-norse-night/60 px-3 py-2 text-xs text-norse-silver/70 hover:border-sky-400">
+              {uploadFile ? uploadFile.name : "choose graph.json artifact"}
+              <input
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setUploadFile(file);
+                    setUploadDbName((previous) => {
+                      const derived =
+                        previous ||
+                        file.name
+                          .replace(/\.json$/i, "")
+                          .replace(/[^A-Za-z0-9_]/g, "");
+                      setUploadError(
+                        validateUploadDatabaseName(derived, databases, updateExisting),
+                      );
+                      return derived;
+                    });
+                  }
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <div className="mt-3">
+              <label className="text-[10px] uppercase tracking-[0.2em] text-norse-silver/50">
+                database name
+              </label>
+              <input
+                type="text"
+                value={uploadDbName}
+                onChange={(e) => {
+                  setUploadDbName(e.target.value);
+                  setUploadError(
+                    validateUploadDatabaseName(e.target.value, databases, updateExisting),
+                  );
+                }}
+                className={`mt-1 w-full rounded border bg-norse-night px-2 py-1.5 text-xs text-norse-silver focus:outline-none ${
+                  uploadError
+                    ? "border-red-500"
+                    : "border-norse-rune focus:border-sky-400"
+                }`}
+              />
+              {uploadError && (
+                <div className="mt-1 text-[11px] text-red-400">{uploadError}</div>
+              )}
+              {databases.includes(uploadDbName.trim()) && (
+                <label className="mt-2 flex items-start gap-2 text-xs text-norse-silver/80">
+                  <input
+                    type="checkbox"
+                    checked={updateExisting}
+                    onChange={(e) => {
+                      setUpdateExisting(e.target.checked);
+                      setUploadError(
+                        validateUploadDatabaseName(
+                          uploadDbName,
+                          databases,
+                          e.target.checked,
+                        ),
+                      );
+                    }}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    update existing database — sync creates new nodes, updates
+                    changed ones, and deletes stale nodes/edges without
+                    dropping unrelated data
+                  </span>
+                </label>
+              )}
+            </div>
+            {uploadProgress && (
+              <div className="mt-3">
+                <div className="h-1.5 rounded-full bg-norse-rune/50 overflow-hidden">
+                  <div
+                    className="h-full bg-sky-400 transition-all duration-200"
+                    style={{ width: `${Math.min(100, Math.max(0, uploadProgress.percent))}%` }}
+                  />
+                </div>
+                <div className="mt-1 text-[10px] text-norse-silver/60 font-mono truncate">
+                  {uploadProgress.label}
+                </div>
+              </div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  if (!loading) {
+                    setUploadOpen(false);
+                    setUploadError(null);
+                  }
+                }}
+                disabled={loading}
+                className="rounded border border-norse-rune bg-norse-night px-3 py-1.5 text-xs text-norse-silver/80 hover:border-sky-400 disabled:opacity-40"
+              >
+                cancel
+              </button>
+              <button
+                onClick={() => void ingestArtifact()}
+                disabled={!uploadFile || !!uploadError || loading}
+                className="rounded bg-sky-500/90 hover:bg-sky-400 text-slate-950 text-xs font-semibold px-3 py-1.5 disabled:opacity-40"
+              >
+                {loading ? "ingesting…" : "ingest into database"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Search (top-center) */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 w-72">
@@ -1099,6 +1549,14 @@ export function Graphify() {
         <div className="flex-1 min-w-0 text-xs text-norse-silver/80 truncate font-mono">
           {status}
         </div>
+        {uploadProgress && (
+          <div className="w-44 h-1.5 rounded-full bg-norse-rune/50 overflow-hidden shrink-0" title={uploadProgress.label}>
+            <div
+              className="h-full bg-sky-400 transition-all duration-200"
+              style={{ width: `${Math.min(100, Math.max(0, uploadProgress.percent))}%` }}
+            />
+          </div>
+        )}
         {error && (
           <button
             onClick={() => setError(null)}

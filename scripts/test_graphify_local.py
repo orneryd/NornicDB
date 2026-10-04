@@ -11,6 +11,8 @@ from scripts.graphify_local import (
     collect_symbol_lines,
     comment_mask,
     comment_style,
+    content_hash,
+    emit_enriched_graph,
     import_graph,
     main,
     node_label,
@@ -24,6 +26,7 @@ class RecordingSession:
     def __init__(self):
         self.queries = []
         self.records = []
+        self.record_sets = []
         self.database = None
 
     def __enter__(self):
@@ -39,7 +42,12 @@ class RecordingSession:
     def consume(self):
         return None
 
+    def single(self):
+        return None
+
     def __iter__(self):
+        if self.record_sets:
+            return iter(self.record_sets.pop(0))
         return iter(self.records)
 
 
@@ -80,14 +88,105 @@ class GraphifyLocalTest(unittest.TestCase):
                 import_graph(path, "bolt://127.0.0.1:7687", "admin", "test", 1)
 
         queries = driver.connection.queries
-        self.assertIn(("UNWIND $rows AS row MERGE (n:Code {id: row.id}) SET n += row.props",
-                       {"rows": [{"id": "source", "props": {"id": "source", "file_type": "code", "label": "Source"}}]}), queries)
-        self.assertIn(("UNWIND $rows AS row MERGE (n:Entity {id: row.id}) SET n += row.props",
-                       {"rows": [{"id": "implicit", "props": {"id": "implicit"}}]}), queries)
+        code_merge = [params for query, params in queries
+                      if query.startswith("UNWIND $rows AS row MERGE (n:Code {id: row.id}) ON CREATE")]
+        self.assertEqual(len(code_merge), 1)
+        self.assertEqual([row["id"] for row in code_merge[0]["rows"]], ["source"])
+        self.assertEqual(code_merge[0]["rows"][0]["props"]["label"], "Source")
+        self.assertEqual(code_merge[0]["rows"][0]["props"]["file_type"], "code")
+        self.assertIn("updated_at", code_merge[0]["rows"][0]["props"])
+        self.assertEqual(code_merge[0]["rows"][0]["props"]["label"], "Source")
+        self.assertEqual(code_merge[0]["rows"][0]["props"]["file_type"], "code")
+        self.assertIn("updated_at", code_merge[0]["rows"][0]["props"])
+        self.assertEqual(
+            code_merge[0]["rows"][0]["props"]["props_hash"],
+            content_hash({"id": "source", "label": "Source", "file_type": "code"}),
+        )
+        code_update = [params for query, params in queries
+                       if "MATCH (n:Code {id: row.id})" in query and "props_hash" in query]
+        self.assertEqual(len(code_update), 1)
+        self.assertEqual([row["id"] for row in code_update[0]["rows"]], ["source"])
+        self.assertIn("n.props_hash <> row.props_hash",
+                      [q for q, _ in queries if "props_hash" in q][0])
+        entity_merge = [params for query, params in queries
+                        if query.startswith("UNWIND $rows AS row MERGE (n:Entity {id: row.id}) ON CREATE")]
+        self.assertEqual([row["id"] for row in entity_merge[0]["rows"]], ["implicit"])
+        edge_props = {"relation": "calls", "confidence": "EXTRACTED",
+                      "props_hash": content_hash({"relation": "calls", "confidence": "EXTRACTED"})}
+        edge_merge = [(query, params) for query, params in queries
+                      if "MERGE (a)-[r:CALLS]" in query]
         self.assertIn(("UNWIND $rows AS row MATCH (a:Code {id: row.src}), (b:Entity {id: row.tgt}) "
-                       "MERGE (a)-[r:CALLS]->(b) SET r += row.props",
-                       {"rows": [{"src": "source", "tgt": "implicit", "props": {
-                           "relation": "calls", "confidence": "EXTRACTED"}}]}), queries)
+                       "MERGE (a)-[r:CALLS]->(b) ON CREATE SET r += row.props",
+                       {"rows": [{"src": "source", "tgt": "implicit", "props": edge_props}]}), edge_merge)
+        edge_update = [params for query, params in queries
+                       if "MATCH (a:Code {id: row.src})-[r:CALLS]->" in query
+                       and "r.props_hash <> row.props_hash" in query]
+        self.assertEqual(len(edge_update), 1)
+        self.assertEqual(edge_update[0]["rows"], [{"src": "source", "tgt": "implicit",
+                                                    "props": edge_props}])
+
+    def test_import_sync_deletes_stale_nodes_and_edges(self):
+        graph = {
+            "nodes": [
+                {"id": "a", "file_type": "code"},
+                {"id": "b", "file_type": "code"},
+            ],
+            "links": [{"source": "a", "target": "b", "relation": "calls"}],
+        }
+        driver = RecordingDriver()
+        driver.connection.record_sets = [
+            [],  # SHOW DATABASES during ensure_database
+            [{"id": "a"}, {"id": "b"}, {"id": "stale-node"}],
+            [
+                {"src": "a", "tgt": "b", "rel": "CALLS"},
+                {"src": "a", "tgt": "stale-node", "rel": "CALLS"},
+            ],
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.json"
+            path.write_text(json.dumps(graph), encoding="utf-8")
+            with patch("scripts.graphify_local.GraphDatabase.driver", return_value=driver):
+                import_graph(path, "bolt://127.0.0.1:7687", "admin", "test", 10)
+
+        queries = driver.connection.queries
+        delete_nodes = [params for query, params in queries if "DETACH DELETE n" in query]
+        self.assertEqual(len(delete_nodes), 1)
+        self.assertEqual(delete_nodes[0]["ids"], ["stale-node"])
+        delete_edges = [params for query, params in queries
+                        if "MATCH (a {id: row.src})-[r]->(b {id: row.tgt})" in query]
+        self.assertEqual(len(delete_edges), 1)
+        self.assertEqual(delete_edges[0]["rows"],
+                         [{"src": "a", "tgt": "stale-node", "rel": "CALLS"}])
+        edge_fetch = [q for q, _ in queries if "RETURN a.id AS src, b.id AS tgt, type(r) AS rel" in q]
+        self.assertEqual(len(edge_fetch), 1)
+        self.assertIn("AND (a:Code) AND (b:Code)", edge_fetch[0])
+        self.assertNotIn("n.updated_at < row.updated_at", " ".join(q for q, _ in queries))
+
+    def test_import_gentle_updates_never_rewrite_unchanged_nodes(self):
+        graph = {
+            "nodes": [{"id": "a", "file_type": "code"}],
+            "links": [{"source": "a", "target": "a", "relation": "calls"}],
+        }
+        driver = RecordingDriver()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.json"
+            path.write_text(json.dumps(graph), encoding="utf-8")
+            with patch("scripts.graphify_local.GraphDatabase.driver", return_value=driver):
+                import_graph(path, "bolt://127.0.0.1:7687", "admin", "test", 10)
+        update_queries = [q for q, _ in driver.connection.queries if "props_hash <> row.props_hash" in q]
+        self.assertEqual(len(update_queries), 2)  # one for nodes, one for edges
+        self.assertIn("n.props_hash IS NULL OR n.props_hash", update_queries[0])
+        self.assertIn("r.props_hash IS NULL OR r.props_hash", update_queries[1])
+        for q, _ in driver.connection.queries:
+            self.assertNotIn("n.updated_at < row.updated_at", q)
+            self.assertNotIn("all(k IN keys(row.props)", q)
+
+    def test_content_hash_is_stable_and_ignores_metadata(self):
+        self.assertEqual(content_hash({"a": "1", "b": "2"}), "be9380e87280e5d5")
+        self.assertEqual(content_hash({"b": "2", "a": "1", "updated_at": 9.9, "props_hash": "zz"}),
+                         content_hash({"a": "1", "b": "2"}))
+        self.assertEqual(content_hash({"id": "n", "count": 3, "flag": True, "none": None}),
+                         content_hash({"id": "n"}))
 
     def test_import_flushes_full_and_partial_batches(self):
         graph = {
@@ -108,8 +207,8 @@ class GraphifyLocalTest(unittest.TestCase):
         queries = driver.connection.queries
         self.assertEqual([len(params["rows"]) for query, params in queries if "MERGE (n:Code" in query], [2, 1])
         self.assertEqual([len(params["rows"]) for query, params in queries if "MERGE (n:Entity" in query], [2])
-        self.assertEqual([len(params["rows"]) for query, params in queries if "[r:CALLS]" in query], [2])
-        self.assertEqual([len(params["rows"]) for query, params in queries if "[r:IMPORTS]" in query], [1])
+        self.assertEqual([len(params["rows"]) for query, params in queries if "MERGE (a)-[r:CALLS]" in query], [2])
+        self.assertEqual([len(params["rows"]) for query, params in queries if "MERGE (a)-[r:IMPORTS]" in query], [1])
         self.assertEqual(sum("CREATE INDEX graphify_" in query for query, _ in queries), 2)
         # Indexes must be created before the first MERGE for their label so
         # id lookups never fall back to full-label scans.
@@ -140,7 +239,7 @@ class GraphifyLocalTest(unittest.TestCase):
 
         output.assert_any_call("Imported 10000 edges", flush=True)
         self.assertEqual(sum(len(params["rows"]) for query, params in driver.connection.queries
-                             if "[r:CALLS]" in query), 10000)
+                             if "MERGE (a)-[r:CALLS]" in query), 10000)
 
     def test_import_uses_links_key_and_writes_bodies(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -162,16 +261,17 @@ class GraphifyLocalTest(unittest.TestCase):
                 import_graph(graph_path, "bolt://localhost:7687", "admin", "password", 10, str(root))
 
         queries = driver.connection.queries
-        self.assertIn(("CREATE DATABASE `graphify`", {}), queries)
+        self.assertIn(("CREATE DATABASE `nornicdbcode`", {}), queries)
         self.assertIn("SHOW DATABASES", [q for q, _ in queries][0])
-        self.assertEqual(driver.connection.database, "graphify")
+        self.assertEqual(driver.connection.database, "nornicdbcode")
         node_rows = {row["id"]: row["props"]
                      for query, params in queries if "MERGE (n:" in query
                      for row in params["rows"]}
         self.assertIn("// Doc for A.", node_rows["a"]["body"])
         self.assertTrue(node_rows["a"]["body"].rstrip().endswith("}"))
         self.assertEqual(node_rows["b"]["body"], "func B() {}")
-        self.assertEqual(sum(len(params["rows"]) for query, params in queries if "[r:CALLS]" in query), 1)
+        self.assertEqual(sum(len(params["rows"]) for query, params in queries
+                             if "MERGE (a)-[r:CALLS]" in query), 1)
 
     def test_cli_rejects_invalid_inputs_and_forwards_options(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -187,12 +287,25 @@ class GraphifyLocalTest(unittest.TestCase):
                  patch.dict("os.environ", {"NEO4J_PASSWORD": "test"}), \
                  patch("scripts.graphify_local.import_graph") as importer:
                 main()
-                importer.assert_called_once_with(graph, "bolt://localhost:7687", "admin", "test", 2, ".", "graphify")
+                importer.assert_called_once_with(graph, "bolt://localhost:7687", "admin", "test", 2, ".", "nornicdbcode", sync=True)
             with patch("sys.argv", ["graphify_local.py", "--graph", str(graph)]), \
                  patch.dict("os.environ", {}, clear=True), \
                  patch("scripts.graphify_local.import_graph") as importer:
                 main()
-                importer.assert_called_once_with(graph, "bolt://localhost:7687", "admin", "password", 2000, ".", "graphify")
+                importer.assert_called_once_with(graph, "bolt://localhost:7687", "admin", "password", 2000, ".", "nornicdbcode", sync=True)
+
+    def test_import_empty_graph_never_deletes(self):
+        graph = {"nodes": [], "edges": []}
+        driver = RecordingDriver()
+        driver.connection.records = [{"name": "neo4j"}, {"name": "nornicdbcode"}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.json"
+            path.write_text(json.dumps(graph), encoding="utf-8")
+            with patch("scripts.graphify_local.GraphDatabase.driver", return_value=driver):
+                import_graph(path, "bolt://127.0.0.1:7687", "admin", "test", 10, ".", "nornicdbcode")
+        for query, _ in driver.connection.queries:
+            self.assertNotIn("DETACH DELETE", query)
+            self.assertNotIn("DELETE r", query)
 
     def test_import_skips_create_when_database_exists(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -214,6 +327,39 @@ class GraphifyLocalTest(unittest.TestCase):
         self.assertIsNone(parse_location("17"))
         self.assertIsNone(parse_location("Lx"))
         self.assertIsNone(parse_location(None))
+
+    def test_emit_enriched_graph_embeds_bodies_and_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "demo.go").write_text("// Doc for A.\nfunc A() {}\n\nfunc B() {}\n", encoding="utf-8")
+            graph = {
+                "nodes": [
+                    {"id": "a", "label": "A()", "file_type": "code",
+                     "source_file": "demo.go", "source_location": "L2"},
+                    {"id": "b", "label": "B()", "file_type": "code",
+                     "source_file": "demo.go", "source_location": "L4"},
+                ],
+                "links": [{"source": "a", "target": "b", "relation": "calls"}],
+                "directed": False,
+            }
+            graph_path = root / "graph.json"
+            graph_path.write_text(json.dumps(graph), encoding="utf-8")
+            out_path = root / "enriched.json"
+            emit_enriched_graph(graph_path, out_path, str(root))
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            by_id = {n["id"]: n for n in data["nodes"]}
+            self.assertIn("// Doc for A.", by_id["a"]["body"])
+            self.assertTrue(by_id["a"]["body"].rstrip().endswith("}"))
+            self.assertEqual(by_id["b"]["body"], "func B() {}")
+            self.assertEqual(data["links"], graph["links"])
+            # CLI: --out-graph skips ingestion entirely.
+            with patch("sys.argv", ["graphify_local.py", "--graph", str(graph_path),
+                                    "--out-graph", str(out_path), "--repo-root", str(root)]), \
+                 patch("scripts.graphify_local.emit_enriched_graph") as emitter, \
+                 patch("scripts.graphify_local.import_graph") as importer:
+                main()
+                emitter.assert_called_once()
+                importer.assert_not_called()
 
     def test_comment_style_and_mask(self):
         self.assertEqual(comment_style("main.py"), "hash")

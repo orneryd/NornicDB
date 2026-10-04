@@ -16,13 +16,16 @@ own ``graphify`` database, created automatically when missing.
 """
 
 import argparse
+import json
 import os
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
 
 import ijson
 from neo4j import GraphDatabase
+from neo4j.exceptions import TransientError
 
 # File suffixes whose line comments use "#".
 HASH_COMMENT_SUFFIXES = {
@@ -37,7 +40,34 @@ DASH_COMMENT_SUFFIXES = {".sql"}
 NO_LOOKBACK_SUFFIXES = {".md", ".mdx", ".html", ".xml", ".json", ".csv", ".txt"}
 
 MAX_LOOKBACK_LINES = 200
-MAX_BODY_CHARS = 500_000  # hard cap on any single body (server chunks it anyway)
+
+
+def content_hash(props):
+    """FNV-1a 64-bit over the canonical JSON of string-valued properties.
+
+    Stable across the importer and the UI upload dialog (same canonical
+    form), so both tools agree on whether a node or edge changed. Only
+    string values are hashed — they are what the embedding worker turns
+    into text. ``updated_at`` and ``props_hash`` themselves are metadata
+    and excluded.
+    """
+    parts = []
+    for key in sorted(props):
+        if key in ("updated_at", "props_hash"):
+            continue
+        value = props[key]
+        if isinstance(value, str):
+            parts.append(
+                json.dumps(key, ensure_ascii=False)
+                + ":"
+                + json.dumps(value, ensure_ascii=False)
+            )
+    canonical = "{" + ",".join(parts) + "}"
+    digest = 0xCBF29CE484222325
+    for byte in canonical.encode("utf-8"):
+        digest ^= byte
+        digest = (digest * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"{digest:016x}"
 
 
 def graph_items(path, key):
@@ -222,7 +252,7 @@ def body_for_node(repo_root, data, symbols, line_cache, state_cache):
         lines = read_file_lines(repo_root, source_file, line_cache)
         if lines is None:
             return None
-        return "\n".join(lines)[:MAX_BODY_CHARS]
+        return "\n".join(lines)
     if node_is_file_container(data) or node_is_filename_container(data):
         return None
     start_line = parse_location(data.get("source_location"))
@@ -232,7 +262,7 @@ def body_for_node(repo_root, data, symbols, line_cache, state_cache):
         lines = read_file_lines(repo_root, source_file, line_cache)
         if lines is None:
             return None
-        return "\n".join(lines)[:MAX_BODY_CHARS]
+        return "\n".join(lines)
     lines = read_file_lines(repo_root, source_file, line_cache)
     if lines is None or start_line > len(lines):
         return None
@@ -250,7 +280,7 @@ def body_for_node(repo_root, data, symbols, line_cache, state_cache):
     if end_line < begin:
         end_line = start_line
     body = "\n".join(lines[begin - 1:end_line])
-    return body.lstrip("\n")[:MAX_BODY_CHARS]
+    return body.lstrip("\n")
 
 
 def ensure_database(driver, database):
@@ -265,51 +295,163 @@ def ensure_database(driver, database):
             session.run(f"CREATE DATABASE `{database}`").consume()
 
 
-def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", database="graphify"):
+def emit_enriched_graph(graph_path, out_path, repo_root):
+    """Write graph.json with full `body` properties embedded on every node.
+
+    Produces a self-contained artifact that the /graphify UI upload dialog can
+    ingest without access to the repository files. Loading the whole graph into
+    memory is intentional: the export is for scoped fixtures and enriched
+    artifacts, not a streaming pipeline.
+    """
+    with graph_path.open("rb") as graph_file:
+        data = json.load(graph_file)
+    symbols = collect_symbol_lines(graph_path)
+    line_cache, state_cache = {}, {}
+    mtimes = manifest_mtimes(graph_path)
+    bodied = 0
+    for node in data.get("nodes", []):
+        body = body_for_node(repo_root, node, symbols, line_cache, state_cache)
+        if body:
+            node["body"] = body
+            bodied += 1
+        node["updated_at"] = updated_at_for(node, repo_root, mtimes)
+    with out_path.open("w", encoding="utf-8") as out_file:
+        json.dump(data, out_file, ensure_ascii=False)
+    print(
+        f"Wrote enriched graph to {out_path} "
+        f"({len(data.get('nodes', []))} nodes, {bodied} with bodies)"
+    )
+
+
+def manifest_mtimes(graph_path):
+    """Map source_file -> recorded mtime from graphify's manifest, if present."""
+    manifest = graph_path.parent / "manifest.json"
+    mtimes = {}
+    if manifest.is_file():
+        try:
+            with manifest.open("rb") as manifest_file:
+                for path, info in json.load(manifest_file).items():
+                    if isinstance(info, dict) and info.get("mtime") is not None:
+                        mtimes[path] = info["mtime"]
+        except (OSError, ValueError):
+            pass
+    return mtimes
+
+
+def updated_at_for(data, repo_root, mtimes):
+    """Best-effort modification time for a node's source file.
+
+    Falls back to the current time when unknown, so first-time ingests and
+    raw artifacts without a manifest still populate every node.
+    """
+    source_file = data.get("source_file")
+    mtime = mtimes.get(source_file) if source_file else None
+    if mtime is None and source_file:
+        try:
+            mtime = (Path(repo_root) / source_file).stat().st_mtime
+        except OSError:
+            mtime = None
+    return mtime if mtime is not None else time.time()
+
+
+def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", database="nornicdbcode", sync=True):
     labels = {}
     node_batches = defaultdict(list)
     edge_batches = defaultdict(list)
     indexed_labels = set()
     node_count = edge_count = bodied_count = skipped_count = 0
+    updated_nodes = updated_edges = 0
     symbols = collect_symbol_lines(graph_path)
     line_cache = {}
     state_cache = {}
+    mtimes = manifest_mtimes(graph_path)
 
     with GraphDatabase.driver(uri, auth=(user, password)) as driver:
         ensure_database(driver, database)
         with driver.session(database=database) as session:
+            def run_retry(query, **params):
+                """Run a query, retrying transient MVCC conflicts.
+
+                NornicDB's embedding worker rewrites node properties
+                concurrently with ingestion, so commits can fail with
+                ``Neo.TransientError.Transaction.Outdated``. Bounded
+                exponential-backoff retries make ingestion resilient to that
+                without changing any semantics.
+                """
+                delay = 0.05
+                for attempt in range(12):
+                    try:
+                        return session.run(query, **params)
+                    except TransientError:
+                        if attempt == 11:
+                            raise
+                        time.sleep(delay)
+                        delay = min(delay * 2, 1.0)
+
             def ensure_index(label):
                 if label in indexed_labels:
                     return
                 # Indexes are created before the first write so MERGE lookups
                 # never fall back to full-label scans.
-                session.run(
+                run_retry(
                     f"CREATE INDEX graphify_{label.lower()}_id IF NOT EXISTS FOR (n:{label}) ON (n.id)"
                 ).consume()
                 indexed_labels.add(label)
 
             def write_nodes(label, rows):
+                nonlocal updated_nodes
                 ensure_index(label)
-                session.run(
-                    f"UNWIND $rows AS row MERGE (n:{label} {{id: row.id}}) SET n += row.props",
+                # Create missing nodes with their full properties.
+                run_retry(
+                    f"UNWIND $rows AS row MERGE (n:{label} {{id: row.id}}) "
+                    f"ON CREATE SET n += row.props",
                     rows=rows,
                 ).consume()
+                # Gentle update: rewrite only nodes whose content hash
+                # differs from the artifact copy. Unchanged nodes are never
+                # touched, so the embedding worker has nothing to re-embed
+                # on repeat runs.
+                result = run_retry(
+                    f"UNWIND $rows AS row MATCH (n:{label} {{id: row.id}}) "
+                    f"WHERE n.props_hash IS NULL OR n.props_hash <> row.props_hash "
+                    f"SET n += row.props RETURN count(n) AS updated",
+                    rows=rows,
+                )
+                record = result.single()
+                updated_nodes += record.get("updated", 0) if record else 0
                 rows.clear()
 
             def write_edges(source_label, target_label, relation, rows):
-                session.run(
+                nonlocal updated_edges
+                # Create missing edges with their properties.
+                run_retry(
                     f"UNWIND $rows AS row "
                     f"MATCH (a:{source_label} {{id: row.src}}), (b:{target_label} {{id: row.tgt}}) "
-                    f"MERGE (a)-[r:{relation}]->(b) SET r += row.props",
+                    f"MERGE (a)-[r:{relation}]->(b) ON CREATE SET r += row.props",
                     rows=rows,
                 ).consume()
+                # Gentle update: rewrite only edges whose content hash changed.
+                result = run_retry(
+                    f"UNWIND $rows AS row "
+                    f"MATCH (a:{source_label} {{id: row.src}})-[r:{relation}]->"
+                    f"(b:{target_label} {{id: row.tgt}}) "
+                    f"WHERE r.props_hash IS NULL OR r.props_hash <> row.props_hash "
+                    f"SET r += row.props RETURN count(r) AS updated",
+                    rows=rows,
+                )
+                record = result.single()
+                updated_edges += record.get("updated", 0) if record else 0
                 rows.clear()
 
             for data in graph_items(graph_path, "nodes"):
                 label = node_label(data)
                 node_id = data["id"]
                 labels[node_id] = label
-                props = {**scalar_properties(data), "id": node_id}
+                props = {
+                    **scalar_properties(data),
+                    "id": node_id,
+                    "updated_at": updated_at_for(data, repo_root, mtimes),
+                }
                 body = body_for_node(repo_root, data, symbols, line_cache, state_cache)
                 if body:
                     props["body"] = body
@@ -317,6 +459,7 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", dat
                     bodied_count += 1
                 else:
                     skipped_count += 1
+                props["props_hash"] = content_hash(props)
                 rows = node_batches[label]
                 rows.append({"id": node_id, "props": props})
                 node_count += 1
@@ -333,7 +476,9 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", dat
                     if node_id not in labels:
                         labels[node_id] = "Entity"
                         rows = node_batches["Entity"]
-                        rows.append({"id": node_id, "props": {"id": node_id}})
+                        props = {"id": node_id, "updated_at": time.time()}
+                        props["props_hash"] = content_hash(props)
+                        rows.append({"id": node_id, "props": props})
                         node_count += 1
                         if len(rows) >= batch_size:
                             write_nodes("Entity", rows)
@@ -344,7 +489,9 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", dat
                         if node_id not in labels:
                             labels[node_id] = "Entity"
                             rows = node_batches["Entity"]
-                            rows.append({"id": node_id, "props": {"id": node_id}})
+                            props = {"id": node_id, "updated_at": time.time()}
+                            props["props_hash"] = content_hash(props)
+                            rows.append({"id": node_id, "props": props})
                             node_count += 1
                             if len(rows) >= batch_size:
                                 write_nodes("Entity", rows)
@@ -356,13 +503,17 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", dat
             print(f"Imported {node_count} nodes "
                   f"({bodied_count} with full source bodies, {skipped_count} without)", flush=True)
 
+            incoming_edges = set()
             for data in graph_items(graph_path, link_key):
                 source = data["source"]
                 target = data["target"]
                 source_label, target_label = labels[source], labels[target]
                 relation = relationship_type(data)
+                incoming_edges.add((source, target, relation))
                 rows = edge_batches[(source_label, target_label, relation)]
-                rows.append({"src": source, "tgt": target, "props": scalar_properties(data, edge=True)})
+                edge_props = scalar_properties(data, edge=True)
+                edge_props["props_hash"] = content_hash(edge_props)
+                rows.append({"src": source, "tgt": target, "props": edge_props})
                 edge_count += 1
                 if len(rows) >= batch_size:
                     write_edges(source_label, target_label, relation, rows)
@@ -372,6 +523,56 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root=".", dat
             for (source_label, target_label, relation), rows in edge_batches.items():
                 if rows:
                     write_edges(source_label, target_label, relation, rows)
+
+            # Incremental sync: delete stale edges and nodes that no longer
+            # appear in the artifact. Scoped to importer-managed labels so
+            # unrelated data in the database is never touched.
+            if sync and labels:
+                managed_labels = sorted(set(labels.values()))
+                label_clause = " OR ".join(
+                    f"n:{label}" for label in managed_labels
+                )
+                existing_ids = set()
+                for record in run_retry(
+                    f"MATCH (n) WHERE n.id IS NOT NULL AND ({label_clause}) RETURN n.id AS id"
+                ):
+                    existing_ids.add(record.get("id"))
+                stale_ids = [node_id for node_id in existing_ids if node_id not in labels]
+                for batch in (stale_ids[i:i + batch_size] for i in range(0, len(stale_ids), batch_size)):
+                    run_retry(
+                        f"UNWIND $ids AS id MATCH (n) WHERE n.id = id AND ({label_clause}) DETACH DELETE n",
+                        ids=batch,
+                    ).consume()
+
+                # Only relationships between importer-managed nodes are
+                # candidates; edges touching unrelated data are never
+                # considered stale.
+                a_clause = " OR ".join(f"a:{label}" for label in managed_labels)
+                b_clause = " OR ".join(f"b:{label}" for label in managed_labels)
+                existing_edges = set()
+                for record in run_retry(
+                    f"MATCH (a)-[r]->(b) WHERE a.id IS NOT NULL AND b.id IS NOT NULL "
+                    f"AND ({a_clause}) AND ({b_clause}) "
+                    f"RETURN a.id AS src, b.id AS tgt, type(r) AS rel"
+                ):
+                    existing_edges.add((record.get("src"), record.get("tgt"), record.get("rel")))
+                stale_edges = [edge for edge in existing_edges if edge not in incoming_edges]
+                for batch in (stale_edges[i:i + batch_size] for i in range(0, len(stale_edges), batch_size)):
+                    run_retry(
+                        "UNWIND $rows AS row MATCH (a {id: row.src})-[r]->(b {id: row.tgt}) "
+                        "WHERE type(r) = row.rel DELETE r",
+                        rows=[{"src": src, "tgt": tgt, "rel": rel} for src, tgt, rel in batch],
+                    ).consume()
+                if stale_ids or stale_edges:
+                    print(
+                        f"Sync: removed {len(stale_ids)} stale nodes and "
+                        f"{len(stale_edges)} stale edges", flush=True,
+                    )
+
+            print(
+                f"Updated {updated_nodes} existing nodes and {updated_edges} "
+                f"existing edges; everything else was left untouched", flush=True,
+            )
 
     print(f"Imported {node_count} nodes and {edge_count} edges into {uri}")
 
@@ -387,15 +588,22 @@ def main():
     parser.add_argument("--batch-size", type=int, default=2000)
     parser.add_argument("--repo-root", default=".",
                         help="repository root for resolving graph source_file paths (default: .)")
-    parser.add_argument("--database", default="graphify",
-                        help="target NornicDB database, created if missing (default: graphify)")
+    parser.add_argument("--database", default="nornicdbcode",
+                        help="target NornicDB database, created if missing (default: nornicdbcode)")
+    parser.add_argument("--no-sync", action="store_true",
+                        help="skip deleting stale nodes and edges that disappeared from the graph")
+    parser.add_argument("--out-graph", type=Path, default=None,
+                        help="write an enriched graph.json (bodies embedded) to this path and skip ingestion")
     args = parser.parse_args()
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
     if not args.graph.is_file():
         parser.error(f"graph not found: {args.graph}")
+    if args.out_graph is not None:
+        emit_enriched_graph(args.graph, args.out_graph, args.repo_root)
+        return
     import_graph(args.graph, args.uri, args.user, args.password, args.batch_size,
-                 args.repo_root, args.database)
+                 args.repo_root, args.database, sync=not args.no_sync)
 
 
 if __name__ == "__main__":
