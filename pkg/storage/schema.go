@@ -253,6 +253,10 @@ func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate b
 		return false, newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintDifferentSchemaOrType(c.Name))
 	}
 
+	if sm.indexNameTakenLocked(c.Name) {
+		return false, newSchemaAdmissionError("IndexWithNameAlreadyExists", localization.StorageSchemaIndexNameAlreadyExists(c.Name))
+	}
+
 	for _, existing := range sm.constraints {
 		if !sameConstraintSchema(existing, c) {
 			if c.Type == ConstraintPolicy && existing.Type == ConstraintPolicy &&

@@ -337,7 +337,7 @@ unaryAddSubExpression
     ;
 
 atomicExpression
-    : propertyOrLabelExpression (stringExpression | listExpression | nullExpression)*
+    : propertyOrLabelExpression (stringExpression | listExpression | nullExpression | typePredicate)*
     ;
 
 listExpression
@@ -357,6 +357,19 @@ stringExpPrefix
 
 nullExpression
     : IS NOT? NULL_W
+    ;
+
+typePredicate
+    : IS NOT? (COLON COLON | TYPED) expressionType
+    | COLON COLON expressionType
+    ;
+
+expressionType
+    : expressionTypePart (STICK expressionTypePart)*
+    ;
+
+expressionTypePart
+    : (ID | ANY | NODE | POINT | NULL_W) (ID | WITH)* (LT expressionType GT)? (NOT NULL_W)?
     ;
 
 propertyOrLabelExpression

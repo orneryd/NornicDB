@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Admit expression type predicates in the strict ANTLR grammar, including
+  `IS TYPED`, `IS NOT ::`, shorthand `::`, multiword types, nullable types,
+  unions and nested list/array forms. Both parser modes share reference-value
+  and invalid-type regressions (#838).
+
+- Reserve shared index/constraint names before schema mutation, including native
+  constraints without backing indexes. Report constraint-owned index conflicts
+  with constraint schema classes. An index-side `IF NOT EXISTS` is a no-op;
+  a constraint reusing an index name still fails, including guarded creation
+  (#531).
+
 - Reject unguarded duplicate ordinary/range, vector, fulltext, TEXT and POINT
   index DDL with schema diagnostic classes for equivalent definitions or
   conflicting names. Honor

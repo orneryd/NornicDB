@@ -2123,5 +2123,35 @@
     "setup": ["UNWIND [1, 'a', 2.5, null] AS x CREATE (:T838 {v: x, i: 1})"],
     "query": "MATCH (n:T838) RETURN count(CASE WHEN n.v IS :: INTEGER | FLOAT THEN 1 END) AS numeric, count(CASE WHEN n.v IS NOT :: STRING THEN 1 END) AS notString, count(CASE WHEN n.v IS :: STRING THEN 1 END) AS stringOrNull",
     "no_effects": true
+  },
+  {
+    "name": "issue531 index reuses constraint name",
+    "setup": ["CREATE CONSTRAINT shared FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE INDEX shared FOR (n:U) ON (n.other)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 guarded index reuses constraint name",
+    "setup": ["CREATE CONSTRAINT shared FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE INDEX shared IF NOT EXISTS FOR (n:U) ON (n.other)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 constraint reuses index name",
+    "setup": ["CREATE INDEX shared FOR (n:T) ON (n.id)"],
+    "query": "CREATE CONSTRAINT shared FOR (n:U) REQUIRE n.other IS UNIQUE",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 index overlaps constraint backing schema",
+    "setup": ["CREATE CONSTRAINT shared FOR (n:T) REQUIRE n.id IS UNIQUE"],
+    "query": "CREATE INDEX other FOR (n:T) ON (n.id)",
+    "no_effects": true
+  },
+  {
+    "name": "issue531 guarded constraint reuses index name",
+    "setup": ["CREATE INDEX shared FOR (n:T) ON (n.id)"],
+    "query": "CREATE CONSTRAINT shared IF NOT EXISTS FOR (n:U) REQUIRE n.other IS UNIQUE",
+    "no_effects": true
   }
 ]

@@ -211,6 +211,15 @@ type CypherParserListener interface {
 	// EnterNullExpression is called when entering the nullExpression production.
 	EnterNullExpression(c *NullExpressionContext)
 
+	// EnterTypePredicate is called when entering the typePredicate production.
+	EnterTypePredicate(c *TypePredicateContext)
+
+	// EnterExpressionType is called when entering the expressionType production.
+	EnterExpressionType(c *ExpressionTypeContext)
+
+	// EnterExpressionTypePart is called when entering the expressionTypePart production.
+	EnterExpressionTypePart(c *ExpressionTypePartContext)
+
 	// EnterPropertyOrLabelExpression is called when entering the propertyOrLabelExpression production.
 	EnterPropertyOrLabelExpression(c *PropertyOrLabelExpressionContext)
 
@@ -543,6 +552,15 @@ type CypherParserListener interface {
 
 	// ExitNullExpression is called when exiting the nullExpression production.
 	ExitNullExpression(c *NullExpressionContext)
+
+	// ExitTypePredicate is called when exiting the typePredicate production.
+	ExitTypePredicate(c *TypePredicateContext)
+
+	// ExitExpressionType is called when exiting the expressionType production.
+	ExitExpressionType(c *ExpressionTypeContext)
+
+	// ExitExpressionTypePart is called when exiting the expressionTypePart production.
+	ExitExpressionTypePart(c *ExpressionTypePartContext)
 
 	// ExitPropertyOrLabelExpression is called when exiting the propertyOrLabelExpression production.
 	ExitPropertyOrLabelExpression(c *PropertyOrLabelExpressionContext)

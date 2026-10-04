@@ -428,6 +428,24 @@ func (s *BaseCypherParserListener) EnterNullExpression(ctx *NullExpressionContex
 // ExitNullExpression is called when production nullExpression is exited.
 func (s *BaseCypherParserListener) ExitNullExpression(ctx *NullExpressionContext) {}
 
+// EnterTypePredicate is called when production typePredicate is entered.
+func (s *BaseCypherParserListener) EnterTypePredicate(ctx *TypePredicateContext) {}
+
+// ExitTypePredicate is called when production typePredicate is exited.
+func (s *BaseCypherParserListener) ExitTypePredicate(ctx *TypePredicateContext) {}
+
+// EnterExpressionType is called when production expressionType is entered.
+func (s *BaseCypherParserListener) EnterExpressionType(ctx *ExpressionTypeContext) {}
+
+// ExitExpressionType is called when production expressionType is exited.
+func (s *BaseCypherParserListener) ExitExpressionType(ctx *ExpressionTypeContext) {}
+
+// EnterExpressionTypePart is called when production expressionTypePart is entered.
+func (s *BaseCypherParserListener) EnterExpressionTypePart(ctx *ExpressionTypePartContext) {}
+
+// ExitExpressionTypePart is called when production expressionTypePart is exited.
+func (s *BaseCypherParserListener) ExitExpressionTypePart(ctx *ExpressionTypePartContext) {}
+
 // EnterPropertyOrLabelExpression is called when production propertyOrLabelExpression is entered.
 func (s *BaseCypherParserListener) EnterPropertyOrLabelExpression(ctx *PropertyOrLabelExpressionContext) {
 }

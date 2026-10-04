@@ -59,6 +59,54 @@ func TestAddConstraint_ConflictsAndEquivalents(t *testing.T) {
 	}
 }
 
+func TestAddConstraint_NameTakenByIndex(t *testing.T) {
+	for name, setup := range map[string]func(*SchemaManager) error{
+		"property": func(schema *SchemaManager) error { return schema.AddPropertyIndex("taken", "Doc", []string{"id"}) },
+		"composite": func(schema *SchemaManager) error {
+			return schema.AddPropertyIndex("taken", "Doc", []string{"id", "tenant"})
+		},
+		"range": func(schema *SchemaManager) error {
+			return schema.AddRangeIndexForEntity("taken", "Doc", []string{"id"}, ConstraintEntityNode)
+		},
+		"fulltext": func(schema *SchemaManager) error {
+			return schema.AddFulltextIndex("taken", []string{"Doc"}, []string{"id"})
+		},
+		"vector": func(schema *SchemaManager) error {
+			return schema.AddVectorIndexForEntity("taken", "Doc", "id", 3, "cosine", ConstraintEntityNode)
+		},
+		"text": func(schema *SchemaManager) error {
+			return schema.AddTypedIndexForEntity(IndexKindText, "taken", "Doc", []string{"id"}, ConstraintEntityNode)
+		},
+		"point": func(schema *SchemaManager) error {
+			return schema.AddTypedIndexForEntity(IndexKindPoint, "taken", "Doc", []string{"id"}, ConstraintEntityNode)
+		},
+		"lookup": func(schema *SchemaManager) error {
+			if err := schema.DropIndex(defaultLookupIndexes()[ConstraintEntityNode]); err != nil {
+				return err
+			}
+			return schema.AddLookupIndex("taken", ConstraintEntityNode)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			schema := NewSchemaManager()
+			require.NoError(t, setup(schema))
+			before := schema.GetIndexes()
+			persisted := 0
+			schema.SetPersister(func(*SchemaDefinition) error { persisted++; return nil })
+			for _, guarded := range []bool{false, true} {
+				err := schema.AddConstraint(Constraint{Name: "taken", Type: ConstraintUnique, Label: "Other", Properties: []string{"id"}}, guarded)
+				require.Error(t, err)
+				var classified *schemaAdmissionError
+				require.ErrorAs(t, err, &classified)
+				require.Equal(t, "Neo.ClientError.Schema.IndexWithNameAlreadyExists", classified.BoltErrorCode())
+				require.Empty(t, schema.GetAllConstraints())
+				require.ElementsMatch(t, before, schema.GetIndexes())
+			}
+			require.Zero(t, persisted)
+		})
+	}
+}
+
 // A constraint name taken by a constraint contract cannot name another
 // constraint.
 func TestAddConstraint_NameTakenByContract(t *testing.T) {

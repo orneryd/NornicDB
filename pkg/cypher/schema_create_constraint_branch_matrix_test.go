@@ -50,6 +50,38 @@ func TestMonster531IndexAdmission(t *testing.T) {
 	require.Len(t, userIndexes(store.GetSchema().GetIndexes()), 2)
 }
 
+func TestMonster531ConstraintBackingIndexAdmission(t *testing.T) {
+	executor, store := newTestExecutor(t)
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, "CREATE CONSTRAINT backing FOR (n:Doc) REQUIRE n.id IS UNIQUE", nil)
+	require.NoError(t, err)
+	before := store.GetSchema().GetIndexes()
+	_, err = executor.Execute(ctx, "CREATE INDEX other FOR (n:Doc) ON (n.id)", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Schema.ConstraintAlreadyExists")
+	require.ElementsMatch(t, before, store.GetSchema().GetIndexes())
+	_, err = executor.Execute(ctx, "CREATE INDEX other IF NOT EXISTS FOR (n:Doc) ON (n.id)", nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, before, store.GetSchema().GetIndexes())
+}
+
+func TestMonster531NonBackingConstraintIndexName(t *testing.T) {
+	executor, store := newTestExecutor(t)
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, "CREATE CONSTRAINT taken FOR (n:Doc) REQUIRE n.id IS NOT NULL", nil)
+	require.NoError(t, err)
+	beforeIndexes := store.GetSchema().GetIndexes()
+	beforeConstraints := store.GetSchema().GetAllConstraints()
+	_, err = executor.Execute(ctx, "CREATE INDEX taken FOR (n:Other) ON (n.value)", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Schema.ConstraintWithNameAlreadyExists")
+	require.ElementsMatch(t, beforeIndexes, store.GetSchema().GetIndexes())
+	require.Equal(t, beforeConstraints, store.GetSchema().GetAllConstraints())
+	_, err = executor.Execute(ctx, "CREATE INDEX taken IF NOT EXISTS FOR (n:Other) ON (n.value)", nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, beforeIndexes, store.GetSchema().GetIndexes())
+}
+
 func TestMonster531CompositeNodeUnique(t *testing.T) {
 	for _, query := range []string{
 		"CREATE CONSTRAINT cu1 FOR (n:CU) REQUIRE (n.a, n.b) IS UNIQUE",

@@ -4,11 +4,25 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // Expected values are Neo4j 5.26.30's (#838).
+func TestTypePredicateParserModes(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			t.Run("reference values and filters", TestTypePredicatesMatchNeo4j)
+			t.Run("edge cases and invalid types", TestTypePredicateEdgeCases)
+		})
+	}
+}
+
 func TestTypePredicatesMatchNeo4j(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	ctx := context.Background()

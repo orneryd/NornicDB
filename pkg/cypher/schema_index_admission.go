@@ -13,6 +13,16 @@ func (e *StorageExecutor) admitIndexCreation(query, name, kind, label string, pr
 
 func (e *StorageExecutor) admitIndexCreationForTargets(query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
 	guarded := keywordIndexFrom(query, "IF NOT EXISTS", 0, defaultKeywordScanOpts()) >= 0
+	for _, constraint := range e.storage.GetSchema().GetAllConstraints() {
+		if constraint.Name != name {
+			continue
+		}
+		if guarded {
+			return false, nil
+		}
+		message := localizedError(localization.StorageSchemaConstraintAlreadyExists(name), nil)
+		return false, newSemanticError("Neo.ClientError.Schema.ConstraintWithNameAlreadyExists", "ConstraintWithNameAlreadyExists", message.Error())
+	}
 	for _, item := range e.storage.GetSchema().GetIndexes() {
 		index, ok := item.(map[string]interface{})
 		if !ok {
@@ -53,7 +63,12 @@ func (e *StorageExecutor) admitIndexCreationForTargets(query, name, kind string,
 				code = "EquivalentSchemaRuleAlreadyExists"
 			}
 		}
-		message := localizedError(localization.StorageSchemaIndexNameAlreadyExists(existingName), nil)
+		diagnostic := localization.StorageSchemaIndexNameAlreadyExists(existingName)
+		if owner, ok := index["owningConstraint"].(string); ok && owner != "" {
+			code = "ConstraintAlreadyExists"
+			diagnostic = localization.StorageSchemaConstraintAlreadyExists(owner)
+		}
+		message := localizedError(diagnostic, nil)
 		return false, newSemanticError("Neo.ClientError.Schema."+code, code, message.Error())
 	}
 	return true, nil
