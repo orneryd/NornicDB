@@ -901,3 +901,41 @@ CI, Conformance and Docs checks. No tests are removed.
 
 Publish with `Refs #713`; remaining projection/WHERE/CI-TestKit acceptance stays
 open, #547 excluded. No performance or running-installation claim.
+
+### Simple MATCH Complete Window Planning: 2026-10-04
+
+The simple MATCH/LIMIT route independently split aliases by whitespace and read
+only the first LIMIT token. Regression-first tests reproduce LIMIT 1 + 1 returning
+one row on direct batch, autocommit and explicit transactions. Direct parameter,
+quoted-space, escaped-name and quoted-zero-limit controls also fail; public quoted
+and parameter cases already pass through the general pipeline.
+
+Compile the single-node projection and canonical column from the shared RETURN
+plan. Evaluate the complete LIMIT expression through shared typed pagination.
+Use shared quote-aware comment stripping to retain the existing commented-literal
+streaming contracts. Keep early bounded scans and strict richer-shape declines.
+Eighteen direct/public controls verify columns, row counts, valid distinct nodes
+and unchanged graph state. Compiler and invalid-window controls prevent admitting
+DISTINCT, aggregates, multiple items, malformed aliases, wrong binding case,
+negative/fractional/missing limits or a truncated malformed tail. Existing
+streaming-only, alias and WHERE-boundary assertions remain unchanged.
+
+Six appended reference cases use a two-node fixture and LIMIT 2/0, avoiding
+comparison of arbitrary unordered subsets. The protected prefix remains intact.
+Both actual parsers pass 1,014 Bolt + 1,024 HTTP comparisons across both modes,
+4,076 total against pinned Neo4j 5.26.30. Both official ratchets pass 7,794
+outcomes/parser with zero gaps, setup blockers or harness errors. Fresh isolated
+repository correctness, both-parser focused races, scoped vet and diagnostics
+pass. Final focused column compiler and fast-path coverage is 100% and 91.4%,
+not a whole-package claim. Read-only Graphify identifies the sole private column
+compiler caller; current source confirms shared projection/pagination delegation.
+Prior evaluator publication a53e9ea7 has successful CI, Conformance and Docs.
+
+Integrated incoming main through 39299545 (#824/#857/#858), preserving its
+transaction streaming and label-index changes. All repository, reference,
+both-parser ratchet/race and scoped vet gates pass again on that base.
+Then integrated a807dab5 (#849), preserving its independent search-cache fix;
+focused cache tests and fresh full repository correctness pass on the final base.
+
+Publish with `Refs #713`; broader projection/WHERE/CI-TestKit acceptance remains
+open, #547 excluded. No benchmark or running-installation change.

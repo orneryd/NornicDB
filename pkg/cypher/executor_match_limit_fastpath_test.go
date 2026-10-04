@@ -54,6 +54,88 @@ func (c *countingStreamingEngine) GetNodesByLabel(label string) ([]*storage.Node
 	return c.Engine.GetNodesByLabel(label)
 }
 
+func TestGh713SimpleMatchLimitUsesSharedProjectionAndPagination(t *testing.T) {
+	for _, route := range []string{"direct", "autocommit", "explicit transaction"} {
+		for _, test := range []struct {
+			projection string
+			limit      string
+			column     string
+			rows       int
+		}{
+			{"n", "2", "n", 2},
+			{"n", "1 + 1", "n", 2},
+			{"n", "$limit", "n", 2},
+			{"n AS `node value`", "2", "node value", 2},
+			{"n AS `a``b`", "2", "a`b", 2},
+			{"n AS `node value`", "0", "node value", 0},
+		} {
+			t.Run(route+"/"+test.projection+"/"+test.limit, func(t *testing.T) {
+				exec, ctx := newUnitExecutor(t)
+				_, err := exec.Execute(ctx, "CREATE (:LimitNode {id: 'a'}), (:LimitNode {id: 'b'}), (:LimitNode {id: 'c'})", nil)
+				require.NoError(t, err)
+				query := "MATCH (n:LimitNode) RETURN " + test.projection + " LIMIT " + test.limit
+				params := map[string]interface{}{"limit": int64(2)}
+				var result *ExecuteResult
+				if route == "direct" {
+					var handled bool
+					result, handled = exec.tryFastPathSimpleMatchReturnLimit(withQueryParams(ctx, params), query, upperASCII(query))
+					require.True(t, handled)
+				} else {
+					if route == "explicit transaction" {
+						_, err = exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+					}
+					result, err = exec.Execute(ctx, query, params)
+					require.NoError(t, err)
+					if route == "explicit transaction" {
+						_, err = exec.Execute(ctx, "COMMIT", nil)
+						require.NoError(t, err)
+					}
+				}
+				require.Equal(t, []string{test.column}, result.Columns)
+				require.Len(t, result.Rows, test.rows)
+				seen := make(map[storage.NodeID]bool)
+				for _, row := range result.Rows {
+					require.Len(t, row, 1)
+					node, ok := row[0].(*storage.Node)
+					require.True(t, ok)
+					require.Contains(t, []string{"a", "b", "c"}, node.Properties["id"])
+					require.False(t, seen[node.ID])
+					seen[node.ID] = true
+				}
+				stored, err := exec.Execute(ctx, "MATCH (n:LimitNode) RETURN count(n) AS total", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(3)}}, stored.Rows)
+			})
+		}
+	}
+}
+
+func TestGh713SimpleNodeCompilerDeclinesUnsupportedPlans(t *testing.T) {
+	for _, projection := range []string{
+		"", "*", "DISTINCT n", "count(n)", "n, n AS other",
+		"n LIMIT 1", "n AS", "n.id", "N", "m AS node",
+	} {
+		t.Run(projection, func(t *testing.T) {
+			column, handled := parseSimpleReturnVariable(projection, "n")
+			require.False(t, handled)
+			require.Empty(t, column)
+		})
+	}
+}
+
+func TestGh713SimpleMatchLimitDeclinesInvalidCompleteWindows(t *testing.T) {
+	for _, limit := range []string{"-1", "1.5", "$missing", "1 garbage"} {
+		t.Run(limit, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			query := "MATCH (n) RETURN n LIMIT " + limit
+			result, handled := exec.tryFastPathSimpleMatchReturnLimit(ctx, query, upperASCII(query))
+			require.False(t, handled)
+			require.Nil(t, result)
+		})
+	}
+}
+
 func TestSimpleMatchLimitFastPath_UsesStreamingOnly(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")

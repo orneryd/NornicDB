@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strconv"
 	"strings"
 )
 
@@ -50,13 +49,9 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return nil, false
 	}
 
-	limitPart := strings.TrimSpace(trimmed[limitIdx+len("LIMIT"):])
-	limitFields := strings.Fields(limitPart)
-	if len(limitFields) == 0 {
-		return nil, false
-	}
-	limit, err := strconv.Atoi(limitFields[0])
-	if err != nil || limit < 0 {
+	limitExpression := StripComments(pipelinePaginationExpression(trimmed[returnIdx:], "LIMIT"))
+	limit, ok := e.evaluatePipelinePagination(ctx, limitExpression, nil)
+	if !ok {
 		return nil, false
 	}
 
@@ -108,21 +103,12 @@ func parseSimpleMatchSingleNodePattern(pattern string) (string, []string, bool) 
 }
 
 func parseSimpleReturnVariable(returnPart string, varName string) (string, bool) {
-	fields := strings.Fields(strings.TrimSpace(returnPart))
-	if len(fields) == 0 {
+	plan := returnProjectionPlanFor("RETURN " + strings.TrimSpace(returnPart))
+	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
-	if !strings.EqualFold(fields[0], varName) {
+	if simpleSemanticIdentifier(plan.projections[0].expr) != varName {
 		return "", false
 	}
-	if len(fields) == 1 {
-		return varName, true
-	}
-	if len(fields) == 3 && strings.EqualFold(fields[1], "AS") {
-		alias := strings.TrimSpace(fields[2])
-		if alias != "" {
-			return alias, true
-		}
-	}
-	return "", false
+	return plan.columns[0], true
 }

@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Use shared typed pagination and canonical projection columns in the simple
+  MATCH/LIMIT fast path. Evaluate complete arithmetic/parameter limits without
+  truncating tokens, preserving quoted aliases and streaming contracts (#713).
+
 - Execute compiled batch WITH through the shared row projector, so all items
   read the incoming scope before aliases are published. Preserve shared scope
   pruning and propagate typed projection errors for transaction rollback (#713).

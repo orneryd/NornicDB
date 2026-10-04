@@ -2552,5 +2552,36 @@
     "parameters": {"rows": [{"id": "a"}], "zero": 0},
     "expected_code": "Neo.ClientError.Statement.ArithmeticError",
     "no_effects": true
+  },
+  {
+    "name": "issue713 simple MATCH literal limit control",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n LIMIT 2"
+  },
+  {
+    "name": "issue713 simple MATCH complete arithmetic limit",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n LIMIT 1 + 1"
+  },
+  {
+    "name": "issue713 simple MATCH parameter limit",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n LIMIT $limit",
+    "parameters": {"limit": 2}
+  },
+  {
+    "name": "issue713 simple MATCH quoted column",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n AS `node value` LIMIT 2"
+  },
+  {
+    "name": "issue713 simple MATCH escaped column",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n AS `a``b` LIMIT 2"
+  },
+  {
+    "name": "issue713 simple MATCH zero limit quoted column",
+    "setup": ["CREATE (:LimitNode {id: 1}), (:LimitNode {id: 2})"],
+    "query": "MATCH (n:LimitNode) RETURN n AS `node value` LIMIT 0"
   }
 ]
