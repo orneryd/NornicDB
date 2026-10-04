@@ -228,6 +228,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stop reallocating the search result cache on every write. Each created,
+  updated or deleted node invalidated it by allocating a fresh map sized for
+  the whole cache; it now returns at once when the cache is empty and clears
+  in place otherwise. A 100,000-node CREATE is about 20% faster, a bulk SET
+  or DETACH DELETE about 14% (#849).
+
 - Seek the label indexes for an equality combined with a disjunction of labels
   on a node pattern without labels, `MATCH (n) WHERE n.id = $id AND (n:A OR
   n:B)` (also `n:A|B` and `IN` lists), when every label in the disjunction has

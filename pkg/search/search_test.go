@@ -4704,3 +4704,22 @@ func TestFilterByProperties_NoFilterPreservesAllResults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, resp.Results, 5)
 }
+
+// Invalidate on an empty cache changes nothing and allocates nothing; on a
+// populated cache it drops every entry and the retained byte count (#849).
+func TestSearchResultCacheInvalidate(t *testing.T) {
+	cache := newSearchResultCache(8, time.Minute)
+	require.Zero(t, testing.AllocsPerRun(100, cache.Invalidate))
+
+	cache.Put("a", &SearchResponse{Query: "a"})
+	cache.Put("b", &SearchResponse{Query: "b"})
+	require.NotNil(t, cache.Get("a"))
+	cache.Invalidate()
+	require.Nil(t, cache.Get("a"))
+	require.Nil(t, cache.Get("b"))
+	require.Zero(t, cache.retainedBytes)
+	require.Zero(t, cache.lru.Len())
+
+	cache.Put("c", &SearchResponse{Query: "c"})
+	require.NotNil(t, cache.Get("c"), "the cache keeps working after an invalidation")
+}
