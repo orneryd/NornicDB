@@ -72,14 +72,97 @@ func TestParseUnwindMergeRelationshipClause_Branches(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestGh713CountCompilersUseSharedProjectionPlans(t *testing.T) {
+	for _, compiler := range []struct {
+		name  string
+		parse func(string) (string, bool)
+	}{
+		{"merge count", func(clause string) (string, bool) { return parseSimpleCountReturn(clause, "n") }},
+		{"unwind count", parseUnwindBatchCountReturn},
+	} {
+		t.Run(compiler.name, func(t *testing.T) {
+			for _, clause := range []string{
+				"RETURN count(n) AS total", "RETURN count(n) AS `node total`",
+				"RETURN count(n) AS `a``b`", "RETURN count(n)",
+			} {
+				t.Run(clause, func(t *testing.T) {
+					alias, ok := compiler.parse(clause)
+					require.True(t, ok)
+					require.Equal(t, returnProjectionPlanFor(clause).columns[0], alias)
+				})
+			}
+			for _, clause := range []string{
+				"RETURN count(n) AS total LIMIT 0", "RETURN count(n) AS total SKIP 1",
+				"RETURN count(n) AS total ORDER BY total", "RETURN DISTINCT count(n) AS total",
+				"RETURN count(DISTINCT n) AS total", "RETURN count(n) AS",
+				"RETURN *", "RETURN count(n), count(n) AS second",
+				"RETURN avg(n) AS total", "RETURN count() AS total",
+				"RETURN count(n) + 1 AS total", "RETURN count(n) AS ``",
+				"RETURN count(n.value) AS total",
+			} {
+				t.Run("decline "+clause, func(t *testing.T) {
+					_, ok := compiler.parse(clause)
+					require.False(t, ok)
+				})
+			}
+		})
+	}
+}
+
+func TestGh713CountReturnWindowsPreserveWrites(t *testing.T) {
+	for _, mode := range []string{"autocommit", "explicit transaction"} {
+		for _, test := range []struct {
+			projection string
+			rows       [][]interface{}
+		}{
+			{"count(n) AS total", [][]interface{}{{int64(2)}}},
+			{"count(n) AS `node total`", [][]interface{}{{int64(2)}}},
+			{"count(n) AS `a``b`", [][]interface{}{{int64(2)}}},
+			{"count(n)", [][]interface{}{{int64(2)}}},
+			{"count(n) AS total LIMIT 0", nil},
+			{"count(n) AS total SKIP $skip", nil},
+			{"count(n) AS total ORDER BY total LIMIT 1", [][]interface{}{{int64(2)}}},
+			{"count(DISTINCT n) AS total", [][]interface{}{{int64(2)}}},
+		} {
+			t.Run(mode+"/"+test.projection, func(t *testing.T) {
+				exec, ctx := newUnitExecutor(t)
+				_, err := exec.Execute(ctx, "CREATE CONSTRAINT compiled_count_unique FOR (n:Counted) REQUIRE n.id IS UNIQUE", nil)
+				require.NoError(t, err)
+				if mode == "explicit transaction" {
+					_, err := exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+				}
+				params := map[string]interface{}{
+					"rows": []map[string]interface{}{{"id": "a", "value": int64(1)}, {"id": "b", "value": int64(2)}},
+					"skip": int64(1),
+				}
+				result, err := exec.Execute(ctx, "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN "+test.projection, params)
+				require.NoError(t, err)
+				require.Equal(t, returnProjectionPlanFor("RETURN "+test.projection).columns, result.Columns)
+				require.Len(t, result.Rows, len(test.rows))
+				if len(test.rows) > 0 {
+					require.Equal(t, test.rows, result.Rows)
+				}
+				if mode == "explicit transaction" {
+					_, err := exec.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+				}
+				stored, err := exec.Execute(ctx, "MATCH (n:Counted) RETURN n.id AS id, n.value AS value ORDER BY id", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{"a", int64(1)}, {"b", int64(2)}}, stored.Rows)
+			})
+		}
+	}
+}
+
 func TestParseSimpleCountAndBatchReturn_Branches(t *testing.T) {
 	alias, ok := parseSimpleCountReturn("RETURN count(n) AS cnt", "n")
 	require.True(t, ok)
 	require.Equal(t, "cnt", alias)
 
 	alias, ok = parseSimpleCountReturn("RETURN count(n) AS", "n")
-	require.True(t, ok)
-	require.Equal(t, "count(n)", alias)
+	require.False(t, ok)
+	require.Empty(t, alias)
 
 	_, ok = parseSimpleCountReturn("RETURN count(m) AS cnt", "n")
 	require.False(t, ok)

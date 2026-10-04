@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Compile count-only batch RETURN from shared projection metadata and canonical
+  column names. Decline modifiers and unsupported projections before writes,
+  retaining pagination and DISTINCT on the shared pipeline (#713).
+
 - Make the MERGE-first annotation regression template valid Cypher by carrying
   node and row scope through WITH before its post-SET MATCH, retaining batch
   and indexed-lookup assertions under both parsers (#754).

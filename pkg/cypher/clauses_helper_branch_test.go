@@ -82,8 +82,9 @@ func TestParseSimpleCountReturnAndRelClause(t *testing.T) {
 
 	_, ok = parseSimpleCountReturn("RETURN count(m) AS total", "n")
 	require.False(t, ok)
-	_, ok = parseSimpleCountReturn("RETURN count(n)", "n")
-	require.False(t, ok)
+	alias, ok = parseSimpleCountReturn("RETURN count(n)", "n")
+	require.True(t, ok)
+	require.Equal(t, "count(n)", alias)
 
 	rel, ok := parseUnwindMergeRelationshipClause("MERGE (a)-[r:KNOWS]->(b)")
 	require.True(t, ok)

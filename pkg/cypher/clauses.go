@@ -1001,21 +1001,15 @@ func parseSimpleCountReturn(returnPart, mergeVar string) (alias string, ok bool)
 	if !startsWithKeywordFold(r, "RETURN") {
 		return "", false
 	}
-	body := strings.TrimSpace(r[len("RETURN "):])
-	asIdx := findKeywordIndexInContext(body, "AS")
-	if asIdx <= 0 {
+	plan := returnProjectionPlanFor(r)
+	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
-	expr := strings.TrimSpace(body[:asIdx])
-	alias = strings.TrimSpace(body[asIdx+2:])
-	expected := "count(" + mergeVar + ")"
-	if !strings.EqualFold(expr, expected) {
+	projection := plan.projections[0]
+	if projection.aggregateName != "count" || projection.distinct || simpleSemanticIdentifier(projection.aggregateExpr) != mergeVar {
 		return "", false
 	}
-	if alias == "" {
-		alias = "count(" + mergeVar + ")"
-	}
-	return alias, true
+	return plan.columns[0], true
 }
 
 func parseUnwindBatchCountReturn(returnPart string) (alias string, ok bool) {
@@ -1026,26 +1020,18 @@ func parseUnwindBatchCountReturn(returnPart string) (alias string, ok bool) {
 	if !startsWithKeywordFold(r, "RETURN") {
 		return "", false
 	}
-	body := strings.TrimSpace(r[len("RETURN"):])
-	asIdx := findKeywordIndexInContext(body, "AS")
-	expr := body
-	alias = body
-	if asIdx > 0 {
-		expr = strings.TrimSpace(body[:asIdx])
-		alias = strings.TrimSpace(body[asIdx+2:])
-	}
-	if alias == "" {
+	plan := returnProjectionPlanFor(r)
+	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
-	upperExpr := upperASCII(strings.ReplaceAll(expr, " ", ""))
-	if !strings.HasPrefix(upperExpr, "COUNT(") || !strings.HasSuffix(upperExpr, ")") {
+	projection := plan.projections[0]
+	if projection.aggregateName != "count" || projection.distinct {
 		return "", false
 	}
-	inner := strings.TrimSpace(expr[len("count(") : len(expr)-1])
-	if inner != "*" && !isSimpleIdentifier(inner) {
+	if projection.aggregateExpr != "*" && simpleSemanticIdentifier(projection.aggregateExpr) == "" {
 		return "", false
 	}
-	return alias, true
+	return plan.columns[0], true
 }
 
 func countResultRows(result *ExecuteResult) int64 {

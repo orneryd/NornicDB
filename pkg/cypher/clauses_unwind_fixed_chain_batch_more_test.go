@@ -99,8 +99,14 @@ func TestExecuteUnwindFixedChainLinkBatch_MalformedShapesMoreBranches(t *testing
 	}
 
 	for i, rest := range cases {
-		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+		result, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
 		require.NoError(t, err, "case %d", i)
+		if i == 1 {
+			require.True(t, supported)
+			require.Equal(t, []string{"count(o)"}, result.Columns)
+			require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+			continue
+		}
 		require.False(t, supported, "case %d", i)
 	}
 

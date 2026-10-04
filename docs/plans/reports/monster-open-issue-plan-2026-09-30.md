@@ -812,3 +812,33 @@ ratchets describe unchanged runtime source, not a new test-only matrix.
 
 Publish with `Refs #754`; complete #713/#728/#754 family acceptance remains open
 and #547 remains excluded. No performance or running-installation change.
+
+### Compiled Count RETURN Planning: 2026-10-04
+
+Both count-only batch compilers now read aggregate metadata and canonical columns
+from the cached shared RETURN plan. Independent AS parsing retained raw backticks,
+rejected unaliased merge counts, admitted malformed aliases and swallowed windows
+into column names. Regression-first compiler controls reproduce those failures;
+ordinary aliases are passing controls. Keep compiled count extraction and existing
+no-RETURN behavior. Decline windows, DISTINCT, multi-item, nested, non-count,
+complex-argument and malformed plans before batch writes so the shared pipeline
+owns their semantics.
+
+Sixteen public autocommit/explicit-transaction checks pin columns, count rows and
+exact persisted MERGE/SET values, including LIMIT 0 and parameter SKIP. The full
+repository check exposed an old fixed-chain decline expectation for valid
+unaliased count(o). Retain that test case with exact canonical-column and zero
+count assertions; malformed-shape and error tests remain unchanged.
+
+Nine appended corpus cases preserve the protected prefix. Both actual parsers
+pass 986 Bolt and 996 HTTP comparisons across both transaction modes: 3,964
+total against pinned Neo4j 5.26.30. The malformed-alias case pins SyntaxError
+and zero effects. Both official ratchets pass 7,794 outcomes/parser with zero
+gaps, setup blockers or harness errors. Final isolated repository correctness,
+both-parser focused races, scoped vet and diagnostics pass. Compiler coverage
+is 100% and 92.9%, not a whole-package claim. Prior relationship-column and
+annotation-fixture publications now have successful CI, Conformance and Docs.
+
+Publish with `Refs #713`; remaining projection, WHERE and CI/TestKit acceptance
+is not closed by this increment. #547 stays excluded. Preserve unrelated matcher
+whitespace. No benchmark, performance-equivalence or running-installation claim.
