@@ -621,6 +621,12 @@ type StreamNodesOptions struct {
 	// (#824). It is a hint: an engine may ignore it, and pending writes are
 	// not filtered, so the caller still tests every node it receives.
 	PropertyFilter func(properties map[string]interface{}) bool
+	// PropertyStringEquals, for projected properties, lets the engine skip a
+	// node whose stored value of a property is not that string by comparing
+	// the stored bytes, without decoding the node (#857). A stored string
+	// equals a Cypher string exactly when its bytes do, and a value of any
+	// other type never equals a string. Like PropertyFilter it is a hint.
+	PropertyStringEquals map[string]string
 }
 
 // StreamNodesWithOptions iterates nodes one at a time without materializing
@@ -647,7 +653,7 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 	// A projected scan decodes through one scan-scoped decoder (#857).
 	var projected *projectedNodeDecoder
 	if opts.Projection != nil && !opts.WithEmbeddings {
-		projected = newProjectedNodeDecoder(b, opts.Projection, opts.PropertyFilter)
+		projected = newProjectedNodeDecoder(b, opts)
 	}
 
 	visit := func(txn *badger.Txn, item *badger.Item) error {

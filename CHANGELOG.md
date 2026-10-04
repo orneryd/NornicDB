@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Compare a label-less property match's string with the stored bytes during the
+  node scan, skipping a non-matching node without decoding its properties, and
+  reuse one property decoder per scan. A 20,000-node scan takes about half as
+  long and allocates per match instead of per node (#857).
+
 - Delegate post-SET UNWIND projection to shared UNWIND and RETURN execution,
   preserving mutation statistics, typed failures, grouping and windows (#713).
 - Make projected-entity plan source links usable in the strict documentation

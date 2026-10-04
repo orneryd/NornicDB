@@ -1190,23 +1190,31 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	// A label-less property match reads every node (#824): decode only the
 	// properties a match must have, let the engine skip a node that fails them
 	// before decoding the rest of it, and read the whole node only for a
-	// match. The node then passes the same filters as on the full scan,
-	// including the whole WHERE. The required properties are the pattern's
-	// and the WHERE's top-level equalities on the variable (WHERE n.id = $id,
-	// #857), which every match satisfies.
+	// match. A required string is compared with the stored bytes, so a node
+	// without it is skipped undecoded (#857). The node then passes the same
+	// filters as on the full scan, including the whole WHERE. The required
+	// properties are the pattern's and the WHERE's top-level equalities on
+	// the variable (WHERE n.id = $id, #857), which every match satisfies.
 	var required map[string]interface{}
 	if len(labels) == 0 {
 		required = e.labellessScanRequiredProperties(ctx, properties, whereVariable, whereClause)
 	}
 	if len(required) > 0 {
 		keys := make([]string, 0, len(required))
-		for key := range required {
+		var stringEquals map[string]string
+		for key, value := range required {
 			keys = append(keys, key)
+			if text, ok := value.(string); ok {
+				if stringEquals == nil {
+					stringEquals = make(map[string]string, len(required))
+				}
+				stringEquals[key] = text
+			}
 		}
 		matches := func(props map[string]interface{}) bool {
 			return nodePropertiesMatch(&storage.Node{Properties: props}, required)
 		}
-		err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches}, func(projected *storage.Node) error {
+		err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches, PropertyStringEquals: stringEquals}, func(projected *storage.Node) error {
 			if projected == nil || !matches(projected.Properties) {
 				return nil
 			}
