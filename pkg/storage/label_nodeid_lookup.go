@@ -3,7 +3,7 @@ package storage
 // LabelNodeIDLookupEngine is an optional interface for engines that can return
 // node IDs for a label without decoding full nodes.
 //
-// Implementations must treat labels case-insensitively (Neo4j compatible).
+// Labels match exactly: names are case-sensitive, as in Neo4j (#862).
 // The visit function should return true to continue iteration, false to stop.
 type LabelNodeIDLookupEngine interface {
 	ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error

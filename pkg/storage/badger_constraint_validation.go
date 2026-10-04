@@ -253,7 +253,7 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
-	labelLen := len(strings.ToLower(label))
+	labelLen := len(label)
 	nsPrefix := namespace + ":"
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
 		key := iter.Item().KeyCopy(nil)
@@ -309,7 +309,7 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
-	labelLen := len(strings.ToLower(label))
+	labelLen := len(label)
 	nsPrefix := namespace + ":"
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
 		key := iter.Item().KeyCopy(nil)
@@ -371,7 +371,7 @@ func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namesp
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
-	labelLen := len(strings.ToLower(label))
+	labelLen := len(label)
 	nsPrefix := namespace + ":"
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
 		key := iter.Item().KeyCopy(nil)

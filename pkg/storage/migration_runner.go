@@ -64,6 +64,7 @@ func (e *ErrStorageUpgradeRequired) Error() string {
 //	V1 → V2: eager rewrite of every node and edge body to the tokenized
 //	         property-key codec; bumps the version after a clean pass.
 //	V2 → V3: restore current versioned adjacency omitted by older bulk writes.
+//	V3 → V4: exact-case label and relationship-type keys (#862).
 //
 // Sets engine.storageVersion to the post-migration version so the
 // encode path can deterministically pick codecs from it.
@@ -158,6 +159,16 @@ func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
 		currentVersion = storageVersionEdgeAdjacencyV3
 		if b.log != nil {
 			b.log.Info("migration arm v2→v3 complete", "duration_ms", time.Since(armStart).Milliseconds())
+		}
+	}
+	if currentVersion < storageVersionLabelCaseV4 {
+		armStart := time.Now()
+		if err := b.migrateV3ToV4(); err != nil {
+			return fmt.Errorf("migration v3→v4 failed: %w", err)
+		}
+		currentVersion = storageVersionLabelCaseV4
+		if b.log != nil {
+			b.log.Info("migration arm v3→v4 complete", "duration_ms", time.Since(armStart).Milliseconds())
 		}
 	}
 

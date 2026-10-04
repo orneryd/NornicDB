@@ -329,7 +329,7 @@ func TestCompositeIndexUnnamed(t *testing.T) {
 				if props[0] == "firstName" && props[1] == "lastName" {
 					found = true
 					// Check auto-generated name (should be lowercase)
-					if name != "index_person_firstname_lastname" {
+					if name != "index_Person_firstName_lastName" {
 						t.Errorf("Unexpected auto-generated name: %s", name)
 					}
 					break

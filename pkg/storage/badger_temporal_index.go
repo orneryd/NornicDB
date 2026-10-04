@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -59,7 +58,7 @@ func temporalConstraintsForLabels(schema *SchemaManager, labels []string) []Cons
 func makeTemporalDescriptor(namespace string, c Constraint, keyValue interface{}) temporalIndexDescriptor {
 	return temporalIndexDescriptor{
 		namespace: namespace,
-		label:     strings.ToLower(c.Label),
+		label:     c.Label,
 		keyProp:   c.Properties[0],
 		startProp: c.Properties[1],
 		endProp:   c.Properties[2],

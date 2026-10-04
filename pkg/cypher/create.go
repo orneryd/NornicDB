@@ -2379,7 +2379,7 @@ func hasRelationshipOfType(store storage.Engine, startID, endID storage.NodeID, 
 		return false, err
 	}
 	for _, edge := range edges {
-		if edge != nil && strings.EqualFold(edge.Type, edgeType) {
+		if edge != nil && edge.Type == edgeType {
 			return true, nil
 		}
 	}

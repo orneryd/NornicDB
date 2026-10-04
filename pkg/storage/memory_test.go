@@ -631,30 +631,24 @@ func TestMemoryEngine_GetNodesByLabel(t *testing.T) {
 		assert.ErrorIs(t, err, ErrStorageClosed)
 	})
 
-	t.Run("case insensitive matching (Neo4j compatible)", func(t *testing.T) {
+	t.Run("labels are case-sensitive, as in Neo4j (#862)", func(t *testing.T) {
 		engine := NewMemoryEngine()
-		// Create node with PascalCase label
 		_, err := engine.CreateNode(&Node{
 			ID:     NodeID(prefixTestID("node-1")),
 			Labels: []string{"Person"},
 		})
 		require.NoError(t, err)
 
-		// Query with different cases - all should match
-		lowercase, err := engine.GetNodesByLabel("person")
+		exact, err := engine.GetNodesByLabel("Person")
 		require.NoError(t, err)
-		assert.Len(t, lowercase, 1, "lowercase 'person' should match 'Person'")
+		require.Len(t, exact, 1)
+		assert.Equal(t, prefixTestID("node-1"), string(exact[0].ID))
 
-		uppercase, err := engine.GetNodesByLabel("PERSON")
-		require.NoError(t, err)
-		assert.Len(t, uppercase, 1, "uppercase 'PERSON' should match 'Person'")
-
-		mixedcase, err := engine.GetNodesByLabel("PeRsOn")
-		require.NoError(t, err)
-		assert.Len(t, mixedcase, 1, "mixed case 'PeRsOn' should match 'Person'")
-
-		// Verify same node is returned
-		assert.Equal(t, prefixTestID("node-1"), string(lowercase[0].ID))
+		for _, other := range []string{"person", "PERSON", "PeRsOn"} {
+			nodes, err := engine.GetNodesByLabel(other)
+			require.NoError(t, err)
+			assert.Empty(t, nodes, "%q is another label", other)
+		}
 	})
 }
 

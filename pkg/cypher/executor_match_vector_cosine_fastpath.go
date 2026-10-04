@@ -1417,7 +1417,7 @@ func findCosineVectorIndexName(schema *storage.SchemaManager, label string, prop
 			continue
 		}
 		idxLabel, _ := idx["label"].(string)
-		if !strings.EqualFold(strings.TrimSpace(idxLabel), strings.TrimSpace(label)) {
+		if strings.TrimSpace(idxLabel) != strings.TrimSpace(label) {
 			continue
 		}
 		idxProp, _ := idx["property"].(string)

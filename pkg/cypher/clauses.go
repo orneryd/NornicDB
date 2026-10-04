@@ -2358,7 +2358,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 				out.propName = propName
 				out.rowField = rowField
 			}
-			if !strings.EqualFold(out.label, label) || !strings.EqualFold(out.propName, propName) || !strings.EqualFold(out.rowField, rowField) {
+			if out.label != label || out.propName != propName || out.rowField != rowField {
 				return hopSpec{}, false
 			}
 			lowerVar := lowerASCII(varName)
@@ -2402,7 +2402,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		if relType == "" {
 			relType = rel
 		}
-		if !strings.EqualFold(rel, relType) {
+		if rel != relType {
 			return nil, false, nil
 		}
 		if prev, exists := nextByFrom[from]; exists && prev != to {

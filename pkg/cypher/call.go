@@ -1005,7 +1005,7 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		if !ok || relationship == nil {
 			continue
 		}
-		if plan.relType != "" && !strings.EqualFold(relationship.Type, plan.relType) {
+		if plan.relType != "" && relationship.Type != plan.relType {
 			continue
 		}
 		expected, _ := e.evaluateRowExpressionWithContext(ctx, plan.propertyExpr, values)

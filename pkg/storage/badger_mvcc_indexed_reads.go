@@ -2,7 +2,6 @@ package storage
 
 import (
 	"bytes"
-	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -125,16 +124,15 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, ver
 	}
 	defer deregister()
 	var nodes []*Node
-	normalizedLabel := normalizeLabel(label)
 	err = view(func(txn *badger.Txn) error {
 		return b.iterateNodesVisibleAtInScopeInTxn(txn, scope, version, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
-			if normalizedLabel != "" {
+			if label != "" {
 				matched := false
 				for _, existing := range node.Labels {
-					if normalizeLabel(existing) == normalizedLabel {
+					if existing == label {
 						matched = true
 						break
 					}
@@ -190,14 +188,13 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	}
 	defer deregister()
 
-	normalizedLabel := normalizeLabel(label)
 	return view(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(normalizedLabel)
+		prefix := labelIndexPrefix(label)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().Key()
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(key, len(normalizedLabel))
+			nodeNum, ok := extractNodeNumIDFromLabelIndex(key, len(label))
 			if !ok {
 				continue
 			}
@@ -214,7 +211,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 			}
 			matched := false
 			for _, existing := range node.Labels {
-				if normalizeLabel(existing) == normalizedLabel {
+				if existing == label {
 					matched = true
 					break
 				}
@@ -246,11 +243,10 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	if visit == nil {
 		return ErrInvalidData
 	}
-	normalizedLabel := normalizeLabel(label)
 	include := propertyProjectionSet(properties)
 	nowNanos := DecayScoringTime()
 	return view(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(normalizedLabel)
+		prefix := labelIndexPrefix(label)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		if afterNodeID == "" {
@@ -260,7 +256,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			if !ok {
 				return ErrNotFound
 			}
-			cursor := labelIndexKey(normalizedLabel, nodeNum)
+			cursor := labelIndexKey(label, nodeNum)
 			it.Seek(cursor)
 			if it.ValidForPrefix(prefix) && bytes.Equal(it.Item().Key(), cursor) {
 				it.Next()
@@ -268,7 +264,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 		}
 		for ; it.ValidForPrefix(prefix); it.Next() {
 			indexKey := it.Item().Key()
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(normalizedLabel))
+			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
 			if !ok {
 				continue
 			}
@@ -318,7 +314,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			}
 			matched := false
 			for _, existing := range node.Labels {
-				if normalizeLabel(existing) == normalizedLabel {
+				if existing == label {
 					matched = true
 					break
 				}
@@ -340,13 +336,12 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVers
 	}
 	defer deregister()
 	var edges []*Edge
-	normalizedType := strings.ToLower(edgeType)
 	err = b.withView(func(txn *badger.Txn) error {
 		return b.iterateEdgesVisibleAtInTxn(txn, version, func(edge *Edge) error {
 			if edge == nil {
 				return nil
 			}
-			if normalizedType != "" && strings.ToLower(edge.Type) != normalizedType {
+			if edgeType != "" && edge.Type != edgeType {
 				return nil
 			}
 			edges = append(edges, edge)
@@ -370,10 +365,9 @@ func (b *BadgerEngine) getEdgesByTypeVisibleAtSnapshotWithView(edgeType string, 
 	}
 	defer deregister()
 
-	normalizedType := strings.ToLower(edgeType)
 	edges := make([]*Edge, 0)
 	err = view(func(txn *badger.Txn) error {
-		if normalizedType == "" {
+		if edgeType == "" {
 			return b.iterateEdgesVisibleAtInTxn(txn, version, func(edge *Edge) error {
 				edges = append(edges, edge)
 				return nil
@@ -398,7 +392,7 @@ func (b *BadgerEngine) getEdgesByTypeVisibleAtSnapshotWithView(edgeType string, 
 			if getErr != nil {
 				return getErr
 			}
-			if edge != nil && strings.ToLower(edge.Type) == normalizedType {
+			if edge != nil && edge.Type == edgeType {
 				edges = append(edges, edge)
 			}
 		}

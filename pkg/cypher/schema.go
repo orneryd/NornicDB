@@ -239,7 +239,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_node_key", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
+			constraintName = fmt.Sprintf("constraint_%s_%s_node_key", parsed.label, strings.Join(parsed.properties, "_"))
 		}
 
 		constraint := storage.Constraint{
@@ -265,7 +265,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			}
 			constraintName := parsed.name
 			if constraintName == "" {
-				constraintName = fmt.Sprintf("constraint_%s_%s_temporal", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
+				constraintName = fmt.Sprintf("constraint_%s_%s_temporal", parsed.label, strings.Join(parsed.properties, "_"))
 			}
 			constraint := storage.Constraint{
 				Name:       constraintName,
@@ -288,7 +288,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_temporal", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
+			constraintName = fmt.Sprintf("constraint_%s_%s_temporal", parsed.label, strings.Join(parsed.properties, "_"))
 		}
 		constraint := storage.Constraint{
 			Name:       constraintName,
@@ -315,7 +315,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_domain", lowerASCII(parsed.label), lowerASCII(parsed.property))
+			constraintName = fmt.Sprintf("constraint_%s_%s_domain", parsed.label, parsed.property)
 		}
 		constraint := storage.Constraint{
 			Name:          constraintName,
@@ -341,7 +341,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if parsed.isRelationship {
 				constraintName := parsed.name
 				if constraintName == "" {
-					constraintName = fmt.Sprintf("constraint_%s_%s_unique", lowerASCII(parsed.label), lowerASCII(parsed.property))
+					constraintName = fmt.Sprintf("constraint_%s_%s_unique", parsed.label, parsed.property)
 				}
 				constraint := storage.Constraint{
 					Name:       constraintName,
@@ -361,7 +361,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 
 			constraintName := parsed.name
 			if constraintName == "" {
-				constraintName = fmt.Sprintf("constraint_%s_%s", lowerASCII(parsed.label), lowerASCII(parsed.property))
+				constraintName = fmt.Sprintf("constraint_%s_%s", parsed.label, parsed.property)
 			}
 			constraint := storage.Constraint{
 				Name:       constraintName,
@@ -387,9 +387,9 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if constraintName == "" {
 				suffix := "exists"
 				if parsed.isRelationship {
-					constraintName = fmt.Sprintf("constraint_%s_%s_%s", lowerASCII(parsed.label), lowerASCII(parsed.property), suffix)
+					constraintName = fmt.Sprintf("constraint_%s_%s_%s", parsed.label, parsed.property, suffix)
 				} else {
-					constraintName = fmt.Sprintf("constraint_%s_%s_%s", lowerASCII(parsed.label), lowerASCII(parsed.property), suffix)
+					constraintName = fmt.Sprintf("constraint_%s_%s_%s", parsed.label, parsed.property, suffix)
 				}
 			}
 			constraint := storage.Constraint{
@@ -414,7 +414,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	if parsed, err := e.parseCreateConstraintTypeDDL(cypher); err == nil {
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_type", lowerASCII(parsed.label), lowerASCII(parsed.property))
+			constraintName = fmt.Sprintf("constraint_%s_%s_type", parsed.label, parsed.property)
 		}
 		ptc := storage.PropertyTypeConstraint{
 			Name:         constraintName,
@@ -453,7 +453,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if parsed.direction == "INCOMING" {
 				directionSuffix = "incoming"
 			}
-			constraintName = fmt.Sprintf("constraint_%s_max_%s_%d", lowerASCII(parsed.relType), directionSuffix, parsed.maxCount)
+			constraintName = fmt.Sprintf("constraint_%s_max_%s_%d", parsed.relType, directionSuffix, parsed.maxCount)
 		}
 		constraint := storage.Constraint{
 			Name:       constraintName,
@@ -478,7 +478,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	if parsed, err := e.parseCreateConstraintPolicyDDL(cypher); err == nil {
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_%s_%s", lowerASCII(parsed.sourceLabel), lowerASCII(parsed.relType), lowerASCII(parsed.targetLabel), lowerASCII(parsed.policyMode))
+			constraintName = fmt.Sprintf("constraint_%s_%s_%s_%s", parsed.sourceLabel, parsed.relType, parsed.targetLabel, lowerASCII(parsed.policyMode))
 		}
 		constraint := storage.Constraint{
 			Name:        constraintName,
@@ -522,13 +522,13 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			constraint.Type = storage.ConstraintRelationshipKey
 			constraint.Name = parsed.name
 			if constraint.Name == "" {
-				constraint.Name = fmt.Sprintf("constraint_%s_%s_rel_key", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
+				constraint.Name = fmt.Sprintf("constraint_%s_%s_rel_key", parsed.label, strings.Join(parsed.properties, "_"))
 			}
 		} else {
 			constraint.Type = storage.ConstraintUnique
 			constraint.Name = parsed.name
 			if constraint.Name == "" {
-				constraint.Name = fmt.Sprintf("constraint_%s_%s_unique", lowerASCII(parsed.label), lowerASCII(strings.Join(parsed.properties, "_")))
+				constraint.Name = fmt.Sprintf("constraint_%s_%s_unique", parsed.label, strings.Join(parsed.properties, "_"))
 			}
 		}
 
@@ -712,7 +712,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			if parsed.isRelationship {
 				entity = parsed.relationshipType
 			}
-			indexName = fmt.Sprintf("index_%s_%s", lowerASCII(entity), lowerASCII(propsJoined))
+			indexName = fmt.Sprintf("index_%s_%s", entity, propsJoined)
 		}
 
 		entityType := storage.ConstraintEntityNode
@@ -755,7 +755,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 		indexName := parsed.indexName
 		if indexName == "" {
 			propsJoined := strings.Join(parsed.properties, "_")
-			indexName = fmt.Sprintf("index_%s_%s", lowerASCII(parsed.label), lowerASCII(propsJoined))
+			indexName = fmt.Sprintf("index_%s_%s", parsed.label, propsJoined)
 		}
 		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
 			return nil, err

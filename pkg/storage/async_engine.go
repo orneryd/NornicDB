@@ -1359,8 +1359,6 @@ func (ae *AsyncEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 		return nil
 	}
 
-	normalLabel := strings.ToLower(label)
-
 	ae.mu.RLock()
 	deletedIDs := make(map[NodeID]bool, len(ae.deleteNodes))
 	for id := range ae.deleteNodes {
@@ -1368,8 +1366,8 @@ func (ae *AsyncEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 	}
 	// The pending view lists every cached node under its labels, so it is
 	// the whole cache side of the listing.
-	cachedIDs := make([]NodeID, 0, len(ae.pending.byLabel[normalLabel]))
-	for id := range ae.pending.byLabel[normalLabel] {
+	cachedIDs := make([]NodeID, 0, len(ae.pending.byLabel[label]))
+	for id := range ae.pending.byLabel[label] {
 		if !deletedIDs[id] {
 			cachedIDs = append(cachedIDs, id)
 		}
@@ -1423,7 +1421,7 @@ func (ae *AsyncEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 }
 
 // GetNodesByLabel checks cache and merges with engine results.
-// Uses case-insensitive label matching for Neo4j compatibility.
+// Labels match exactly: names are case-sensitive, as in Neo4j (#862).
 // Snapshots cache state quickly, then releases lock before engine I/O.
 // GetFirstNodeByLabel returns the first node with the specified label.
 // Optimized for MATCH...LIMIT 1 patterns - uses label index for O(1) lookup.
@@ -1436,7 +1434,6 @@ func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 // engine read is scoped.
 func (ae *AsyncEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
 	ae.mu.RLock()
-	normalLabel := strings.ToLower(label)
 	deletedIDs := make(map[NodeID]bool, len(ae.deleteNodes))
 	overriddenIDs := make(map[NodeID]bool, len(ae.nodeCache))
 	for id := range ae.deleteNodes {
@@ -1449,7 +1446,7 @@ func (ae *AsyncEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 			continue
 		}
 		for _, l := range node.Labels {
-			if strings.EqualFold(l, label) {
+			if l == label {
 				scannedMatch = node
 				break
 			}
@@ -1460,7 +1457,7 @@ func (ae *AsyncEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 	}
 
 	// Use label index for O(1) lookup instead of scanning entire cache
-	if nodeIDs := ae.pending.byLabel[normalLabel]; len(nodeIDs) > 0 {
+	if nodeIDs := ae.pending.byLabel[label]; len(nodeIDs) > 0 {
 		for id := range nodeIDs {
 			if !ae.deleteNodes[id] && nodeIDInScope(id, scope) {
 				if node := ae.nodeCache[id]; node != nil {
@@ -1505,9 +1502,8 @@ func (ae *AsyncEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 	// label index itself accumulated stale IDs across flushes, so even O(1)
 	// readers walked through old entries.
 	ae.mu.RLock()
-	normalLabel := strings.ToLower(label)
 	var cachedNodes []*Node
-	if ids := ae.pending.byLabel[normalLabel]; len(ids) > 0 {
+	if ids := ae.pending.byLabel[label]; len(ids) > 0 {
 		cachedNodes = make([]*Node, 0, len(ids))
 		for id := range ids {
 			if ae.deleteNodes[id] || !nodeIDInScope(id, scope) {
@@ -1552,7 +1548,7 @@ func (ae *AsyncEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 			continue
 		}
 		if cached, overridden := ae.nodeCache[node.ID]; overridden {
-			if cached != nil && nodeHasLabelFold(cached, label) {
+			if cached != nil && hasLabel(cached.Labels, label) {
 				result = append(result, cached)
 				seenIDs[node.ID] = true
 			}
@@ -1562,17 +1558,6 @@ func (ae *AsyncEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 	}
 	ae.mu.RUnlock()
 	return result, nil
-}
-
-// nodeHasLabelFold reports whether node has label, ignoring case as the
-// pending label index does.
-func nodeHasLabelFold(node *Node, label string) bool {
-	for _, nodeLabel := range node.Labels {
-		if strings.EqualFold(nodeLabel, label) {
-			return true
-		}
-	}
-	return false
 }
 
 // StreamNodesByLabelProjected merges projected pending writes with the underlying label scan.
@@ -1599,7 +1584,7 @@ func (ae *AsyncEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		overridden[id] = struct{}{}
 	}
 	var cached []*Node
-	for id := range ae.pending.byLabel[strings.ToLower(label)] {
+	for id := range ae.pending.byLabel[label] {
 		if _, deleted := ae.deleteNodes[id]; deleted || !nodeIDInScope(id, scope) {
 			continue
 		}
@@ -1785,7 +1770,6 @@ func (ae *AsyncEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	}
 
 	ae.mu.RLock()
-	normalizedType := strings.ToLower(edgeType)
 	cachedEdges := make([]*Edge, 0)
 	deletedIDs := make(map[EdgeID]bool)
 	overriddenIDs := make(map[EdgeID]bool, len(ae.edgeCache))
@@ -1795,7 +1779,7 @@ func (ae *AsyncEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	}
 	for id, edge := range ae.edgeCache {
 		overriddenIDs[id] = true
-		if strings.ToLower(edge.Type) == normalizedType {
+		if edge.Type == edgeType {
 			cachedEdges = append(cachedEdges, edge)
 		}
 	}
@@ -2029,7 +2013,7 @@ func (ae *AsyncEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *E
 		if edge == nil {
 			continue
 		}
-		if edgeType == "" || strings.EqualFold(edge.Type, edgeType) {
+		if edgeType == "" || edge.Type == edgeType {
 			return edge
 		}
 	}
@@ -2320,7 +2304,7 @@ func (ae *AsyncEngine) nodeCountByLabelOverlay(label, idPrefix string, storedCou
 		if err != nil {
 			return false, err
 		}
-		return stored != nil && nodeHasLabelFold(stored, label), nil
+		return stored != nil && hasLabel(stored.Labels, label), nil
 	}
 	for id, node := range cached {
 		had, err := storedHasLabel(id)
@@ -2330,7 +2314,7 @@ func (ae *AsyncEngine) nodeCountByLabelOverlay(label, idPrefix string, storedCou
 		if had {
 			count--
 		}
-		if node != nil && nodeHasLabelFold(node, label) {
+		if node != nil && hasLabel(node.Labels, label) {
 			count++
 		}
 	}
@@ -2382,7 +2366,7 @@ func (ae *AsyncEngine) EdgeCountByStartLabel(label, edgeType string) (int64, err
 	if err != nil {
 		return 0, err
 	}
-	return base + startDeltas[strings.ToLower(label)], nil
+	return base + startDeltas[label], nil
 }
 
 func (ae *AsyncEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
@@ -2394,14 +2378,13 @@ func (ae *AsyncEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error
 	if err != nil {
 		return 0, err
 	}
-	return base + endDeltas[strings.ToLower(label)], nil
+	return base + endDeltas[label], nil
 }
 
 // edgeCountOverlayDelta computes the signed deltas between the committed
 // engine counters and the async pending overlay for one edge type: the type
 // tier plus the positional start/end label tiers (issue #638).
 func (ae *AsyncEngine) edgeCountOverlayDelta(edgeType string) (int64, map[string]int64, map[string]int64, error) {
-	normalized := strings.ToLower(edgeType)
 	startDeltas := make(map[string]int64)
 	endDeltas := make(map[string]int64)
 
@@ -2438,23 +2421,23 @@ func (ae *AsyncEngine) edgeCountOverlayDelta(edgeType string) (int64, map[string
 		}
 		seen[id] = struct{}{}
 		if old, oldErr := ae.engine.GetEdge(id); oldErr == nil && old != nil {
-			if strings.ToLower(old.Type) == normalized {
+			if old.Type == edgeType {
 				typeDelta--
 			}
-			for _, l := range uniqueNormalizedLabels(endpointLabels(old.StartNode)) {
+			for _, l := range uniqueLabels(endpointLabels(old.StartNode)) {
 				startDeltas[l]--
 			}
-			for _, l := range uniqueNormalizedLabels(endpointLabels(old.EndNode)) {
+			for _, l := range uniqueLabels(endpointLabels(old.EndNode)) {
 				endDeltas[l]--
 			}
 		}
-		if strings.ToLower(edge.Type) == normalized {
+		if edge.Type == edgeType {
 			typeDelta++
 		}
-		for _, l := range uniqueNormalizedLabels(endpointLabels(edge.StartNode)) {
+		for _, l := range uniqueLabels(endpointLabels(edge.StartNode)) {
 			startDeltas[l]++
 		}
-		for _, l := range uniqueNormalizedLabels(endpointLabels(edge.EndNode)) {
+		for _, l := range uniqueLabels(endpointLabels(edge.EndNode)) {
 			endDeltas[l]++
 		}
 	}
@@ -2466,13 +2449,13 @@ func (ae *AsyncEngine) edgeCountOverlayDelta(edgeType string) (int64, map[string
 		if oldErr != nil || old == nil {
 			continue
 		}
-		if strings.ToLower(old.Type) == normalized {
+		if old.Type == edgeType {
 			typeDelta--
 		}
-		for _, l := range uniqueNormalizedLabels(endpointLabels(old.StartNode)) {
+		for _, l := range uniqueLabels(endpointLabels(old.StartNode)) {
 			startDeltas[l]--
 		}
-		for _, l := range uniqueNormalizedLabels(endpointLabels(old.EndNode)) {
+		for _, l := range uniqueLabels(endpointLabels(old.EndNode)) {
 			endDeltas[l]--
 		}
 	}

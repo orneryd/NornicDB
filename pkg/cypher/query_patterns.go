@@ -226,7 +226,7 @@ func detectMutualRelationship(ctx context.Context, query string, info *PatternIn
 	if len(first.Relationship.Types) == 0 || len(second.Relationship.Types) == 0 {
 		return false
 	}
-	if !strings.EqualFold(first.Relationship.Types[0], second.Relationship.Types[0]) {
+	if first.Relationship.Types[0] != second.Relationship.Types[0] {
 		return false
 	}
 

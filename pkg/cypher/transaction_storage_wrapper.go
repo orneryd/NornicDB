@@ -911,7 +911,7 @@ func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(label, edgeType
 			continue
 		}
 		for _, nodeLabel := range node.Labels {
-			if strings.EqualFold(nodeLabel, label) {
+			if nodeLabel == label {
 				count++
 				break
 			}

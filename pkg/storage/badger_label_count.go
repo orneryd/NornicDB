@@ -12,16 +12,12 @@ import (
 
 var labelCountReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaLabelCountReady}
 
-func normalizeCountLabel(label string) string {
-	return strings.ToLower(label)
-}
-
 func labelCountKey(namespace, label string) []byte {
 	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace), len(label)))
 	key = append(key, prefixMVCCMeta, prefixMVCCMetaLabelCount)
 	key = append(key, namespace...)
 	key = append(key, 0)
-	key = append(key, normalizeCountLabel(label)...)
+	key = append(key, label...)
 	return key
 }
 
@@ -85,19 +81,18 @@ func (b *BadgerEngine) collectNodeLabelCountsByPrefix(keyPrefix []byte) (int64, 
 					return decodeErr
 				}
 				for index, label := range labels {
-					normalized := normalizeCountLabel(label)
-					if normalized == "" {
+					if label == "" {
 						continue
 					}
 					duplicate := false
 					for previous := 0; previous < index; previous++ {
-						if strings.EqualFold(labels[previous], label) {
+						if labels[previous] == label {
 							duplicate = true
 							break
 						}
 					}
 					if !duplicate {
-						counts[namespaceLabel{namespace: namespace, label: normalized}]++
+						counts[namespaceLabel{namespace: namespace, label: label}]++
 					}
 				}
 				return nil
@@ -136,29 +131,28 @@ func decodeDerivedCount(val []byte) (int64, error) {
 	return int64(binary.BigEndian.Uint64(val)), nil
 }
 
-func uniqueNormalizedLabels(labels []string) []string {
+func uniqueLabels(labels []string) []string {
 	if len(labels) == 0 {
 		return nil
 	}
 	seen := make(map[string]struct{}, len(labels))
 	unique := make([]string, 0, len(labels))
 	for _, label := range labels {
-		normalized := normalizeCountLabel(label)
-		if normalized == "" {
+		if label == "" {
 			continue
 		}
-		if _, ok := seen[normalized]; ok {
+		if _, ok := seen[label]; ok {
 			continue
 		}
-		seen[normalized] = struct{}{}
-		unique = append(unique, normalized)
+		seen[label] = struct{}{}
+		unique = append(unique, label)
 	}
 	return unique
 }
 
 func labelSet(labels []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(labels))
-	for _, label := range uniqueNormalizedLabels(labels) {
+	for _, label := range uniqueLabels(labels) {
 		set[label] = struct{}{}
 	}
 	return set
@@ -282,7 +276,7 @@ func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
 	}
 	b.labelCountWriteMu.RLock()
 	defer b.labelCountWriteMu.RUnlock()
-	needle := []byte(normalizeCountLabel(label))
+	needle := []byte(label)
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(labelCountPrefix()))
@@ -377,7 +371,7 @@ func (b *BadgerEngine) collectAuthoritativeLabelCounts() (map[string]int64, erro
 				if decodeErr != nil {
 					return fmt.Errorf("decode node %q for label counts: %w", nodeID, decodeErr)
 				}
-				for _, label := range uniqueNormalizedLabels(node.Labels) {
+				for _, label := range uniqueLabels(node.Labels) {
 					counts[namespace+"\x00"+label]++
 				}
 				return nil
@@ -453,7 +447,7 @@ func (tx *BadgerTransaction) bufferAdjustLabelCount(namespace, label string, del
 	if delta == 0 || namespace == "" || label == "" {
 		return
 	}
-	key := namespaceLabel{namespace: namespace, label: normalizeCountLabel(label)}
+	key := namespaceLabel{namespace: namespace, label: label}
 	tx.pendingLabelCountDeltas[key] += delta
 	if tx.pendingLabelCountDeltas[key] == 0 {
 		delete(tx.pendingLabelCountDeltas, key)

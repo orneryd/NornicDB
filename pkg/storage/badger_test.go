@@ -1753,7 +1753,8 @@ func TestKeyEncoding(t *testing.T) {
 		key := edgeBetweenIndexKey(42, 43, "KNOWS", 100)
 		assert.Equal(t, prefixEdgeBetweenIndex, key[0])
 		assert.True(t, hasBytePrefix(key, edgeBetweenIndexPrefix(42, 43)))
-		assert.True(t, hasBytePrefix(key, typedEdgeBetweenIndexPrefix(42, 43, "knows")))
+		assert.True(t, hasBytePrefix(key, typedEdgeBetweenIndexPrefix(42, 43, "KNOWS")))
+		assert.False(t, hasBytePrefix(key, typedEdgeBetweenIndexPrefix(42, 43, "knows")), "types are case-sensitive (#862)")
 
 		headKey := edgeBetweenHeadKey(42, 43, "KNOWS")
 		assert.Equal(t, prefixEdgeBetweenHead, headKey[0])

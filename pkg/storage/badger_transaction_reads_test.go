@@ -314,7 +314,7 @@ func TestTxReads_GetNodeUsesUnprojectedSnapshotPrefix(t *testing.T) {
 	require.ErrorIs(t, err, ErrIterationStopped)
 	require.Len(t, tx.snapshotPrefixNodeByID, 1)
 
-	first := tx.snapshotLabelPrefixNodes["person"][0]
+	first := tx.snapshotLabelPrefixNodes["Person"][0]
 	got, err := tx.GetNode(first.ID)
 	require.NoError(t, err)
 	require.Equal(t, first, got)

@@ -83,7 +83,7 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, relType, weigh
 		}
 		edges, _ := e.storage.GetOutgoingEdges(current.nodeID)
 		for _, edge := range edges {
-			if relType != "" && !strings.EqualFold(edge.Type, relType) {
+			if relType != "" && edge.Type != relType {
 				continue
 			}
 			neighbor := edge.EndNode
@@ -175,7 +175,7 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, relType, weightPr
 		visited[current.nodeID] = true
 		edges, _ := e.storage.GetOutgoingEdges(current.nodeID)
 		for _, edge := range edges {
-			if relType != "" && !strings.EqualFold(edge.Type, relType) {
+			if relType != "" && edge.Type != relType {
 				continue
 			}
 			neighbor := edge.EndNode
@@ -234,7 +234,7 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, relT
 		defer func() { visited[current] = false }()
 		edges, _ := e.storage.GetOutgoingEdges(current)
 		for _, edge := range edges {
-			if relType != "" && !strings.EqualFold(edge.Type, relType) {
+			if relType != "" && edge.Type != relType {
 				continue
 			}
 			neighbor := edge.EndNode
@@ -472,7 +472,7 @@ func (e *StorageExecutor) getNeighborsTohop(startID storage.NodeID, relType stri
 		for _, nodeID := range current {
 			edges := e.getNodeEdges(nodeID)
 			for _, edge := range edges {
-				if relType != "" && !strings.EqualFold(edge.Type, relType) {
+				if relType != "" && edge.Type != relType {
 					continue
 				}
 				neighbor := edge.EndNode
@@ -526,7 +526,7 @@ func (e *StorageExecutor) getNeighborsByhop(startID storage.NodeID, relType stri
 		for _, nodeID := range current {
 			edges := e.getNodeEdges(nodeID)
 			for _, edge := range edges {
-				if relType != "" && !strings.EqualFold(edge.Type, relType) {
+				if relType != "" && edge.Type != relType {
 					continue
 				}
 				neighbor := edge.EndNode

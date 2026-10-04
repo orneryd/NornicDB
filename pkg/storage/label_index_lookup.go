@@ -7,7 +7,7 @@ package storage
 // `(n:Label)` semantics while avoiding per-node GetNode/BatchGetNodes overhead.
 type LabelIndexEngine interface {
 	// HasLabelBatch returns a map of node IDs that have the given label.
-	// Implementations should treat labels case-insensitively (Neo4j compatible).
+	// Labels match exactly: names are case-sensitive, as in Neo4j (#862).
 	// Missing nodes are treated as not having the label.
 	HasLabelBatch(ids []NodeID, label string) (map[NodeID]bool, error)
 }

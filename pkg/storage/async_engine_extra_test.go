@@ -691,8 +691,8 @@ func TestAsyncEngine_DeleteHelpers_CachedInflightAndIdempotent(t *testing.T) {
 		ae.mu.RLock()
 		_, createdInCache := ae.nodeCache[createdID]
 		_, updatedInCache := ae.nodeCache[updatedID]
-		_, createdInIndex := ae.pending.byLabel["temp"][createdID]
-		_, updatedInIndex := ae.pending.byLabel["temp"][updatedID]
+		_, createdInIndex := ae.pending.byLabel["Temp"][createdID]
+		_, updatedInIndex := ae.pending.byLabel["Temp"][updatedID]
 		ae.mu.RUnlock()
 
 		assert.False(t, createdInCache)
@@ -799,7 +799,7 @@ func TestAsyncEngine_CreateAndUpdateNodeHelpers(t *testing.T) {
 		ae.mu.RLock()
 		assert.False(t, ae.deleteNodes[id])
 		assert.True(t, ae.updateNodes[id])
-		assert.True(t, ae.pending.byLabel["recreated"][id])
+		assert.True(t, ae.pending.byLabel["Recreated"][id])
 		ae.mu.RUnlock()
 
 		_, err = ae.CreateNode(&Node{
@@ -1253,7 +1253,7 @@ func TestAsyncEngine_GetEdgesByType_WithData(t *testing.T) {
 		t.Cleanup(func() { _ = ae.Close() })
 
 		require.NoError(t, ae.CreateEdge(&Edge{ID: "test:cached-related", StartNode: "test:a", EndNode: "test:b", Type: "RELATED"}))
-		edges, err := ae.GetEdgesByType("related")
+		edges, err := ae.GetEdgesByType("RELATED")
 		require.NoError(t, err)
 		require.Len(t, edges, 1)
 		assert.Equal(t, EdgeID("test:cached-related"), edges[0].ID)
@@ -1303,7 +1303,7 @@ func TestAsyncEngine_ForEachNodeIDByLabel_MergesCacheAndEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	seen := map[NodeID]bool{}
-	err = ae.ForEachNodeIDByLabel("testlabel", func(id NodeID) bool {
+	err = ae.ForEachNodeIDByLabel("TestLabel", func(id NodeID) bool {
 		seen[id] = true
 		return true
 	})
@@ -1312,7 +1312,7 @@ func TestAsyncEngine_ForEachNodeIDByLabel_MergesCacheAndEngine(t *testing.T) {
 	assert.True(t, seen[cacheNode.ID], "cached node should be visited")
 
 	// Nil callback is a no-op path.
-	require.NoError(t, ae.ForEachNodeIDByLabel("testlabel", nil))
+	require.NoError(t, ae.ForEachNodeIDByLabel("TestLabel", nil))
 
 	t.Run("stops early when callback returns false", func(t *testing.T) {
 		engine := &lookupEngine{
@@ -1346,7 +1346,7 @@ func TestAsyncEngine_ForEachNodeIDByLabel_MergesCacheAndEngine(t *testing.T) {
 		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
 		t.Cleanup(func() { _ = ae.Close() })
 
-		err := ae.ForEachNodeIDByLabel("testlabel", func(id NodeID) bool { return true })
+		err := ae.ForEachNodeIDByLabel("TestLabel", func(id NodeID) bool { return true })
 		require.ErrorContains(t, err, "lookup failed")
 	})
 
@@ -1369,7 +1369,7 @@ func TestAsyncEngine_ForEachNodeIDByLabel_MergesCacheAndEngine(t *testing.T) {
 		ae.mu.Unlock()
 
 		var seen []NodeID
-		err = ae.ForEachNodeIDByLabel("merge", func(id NodeID) bool {
+		err = ae.ForEachNodeIDByLabel("Merge", func(id NodeID) bool {
 			seen = append(seen, id)
 			return true
 		})
@@ -1378,7 +1378,9 @@ func TestAsyncEngine_ForEachNodeIDByLabel_MergesCacheAndEngine(t *testing.T) {
 	})
 }
 
-func TestAsyncEngine_GetFirstAndGetNodesByLabel_CaseInsensitive(t *testing.T) {
+// Labels are case-sensitive, as in Neo4j (#862): another spelling finds
+// nothing, on the cached and the engine path.
+func TestAsyncEngine_GetFirstAndGetNodesByLabel_CaseSensitive(t *testing.T) {
 	ae := newAsyncTestEngine(t)
 
 	// Cached first-hit path.
@@ -1390,10 +1392,13 @@ func TestAsyncEngine_GetFirstAndGetNodesByLabel_CaseInsensitive(t *testing.T) {
 	_, err := ae.CreateNode(cacheNode)
 	require.NoError(t, err)
 
-	first, err := ae.GetFirstNodeByLabel("mixedcase")
+	first, err := ae.GetFirstNodeByLabel("MiXeDCaSe")
 	require.NoError(t, err)
 	require.NotNil(t, first)
 	assert.Equal(t, cacheNode.ID, first.ID)
+	first, err = ae.GetFirstNodeByLabel("mixedcase")
+	require.NoError(t, err)
+	assert.Nil(t, first)
 
 	// Engine fallback path.
 	require.NoError(t, ae.Flush())
@@ -1405,14 +1410,20 @@ func TestAsyncEngine_GetFirstAndGetNodesByLabel_CaseInsensitive(t *testing.T) {
 	_, err = ae.GetInnerEngine().CreateNode(engineOnly)
 	require.NoError(t, err)
 
-	first, err = ae.GetFirstNodeByLabel("engineonly")
+	first, err = ae.GetFirstNodeByLabel("EngineOnly")
 	require.NoError(t, err)
 	require.NotNil(t, first)
 	assert.Equal(t, engineOnly.ID, first.ID)
+	first, err = ae.GetFirstNodeByLabel("engineonly")
+	require.NoError(t, err)
+	assert.Nil(t, first)
 
-	nodes, err := ae.GetNodesByLabel("mixedcase")
+	nodes, err := ae.GetNodesByLabel("MiXeDCaSe")
 	require.NoError(t, err)
 	assert.NotEmpty(t, nodes)
+	nodes, err = ae.GetNodesByLabel("mixedcase")
+	require.NoError(t, err)
+	assert.Empty(t, nodes)
 
 	t.Run("get first falls back to GetNodesByLabel and empty results", func(t *testing.T) {
 		base := NewMemoryEngine()
@@ -1515,16 +1526,16 @@ func TestAsyncEngine_GetFirstAndGetNodesByLabel_CaseInsensitive(t *testing.T) {
 		updated.Properties = map[string]interface{}{"name": "after"}
 		require.NoError(t, ae.UpdateNode(updated))
 
-		oldNodes, err := ae.GetNodesByLabel("oldlabel")
+		oldNodes, err := ae.GetNodesByLabel("OldLabel")
 		require.NoError(t, err)
 		assert.Empty(t, oldNodes)
 
-		newNodes, err := ae.GetNodesByLabel("newlabel")
+		newNodes, err := ae.GetNodesByLabel("NewLabel")
 		require.NoError(t, err)
 		require.Len(t, newNodes, 1)
 		assert.Equal(t, updated.ID, newNodes[0].ID)
 
-		first, err := ae.GetFirstNodeByLabel("newlabel")
+		first, err := ae.GetFirstNodeByLabel("NewLabel")
 		require.NoError(t, err)
 		require.NotNil(t, first)
 		assert.Equal(t, updated.ID, first.ID)

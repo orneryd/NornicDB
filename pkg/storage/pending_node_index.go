@@ -3,7 +3,6 @@ package storage
 import (
 	"slices"
 	"sort"
-	"strings"
 )
 
 // pendingNodeIndex indexes the nodes an AsyncEngine holds in its write
@@ -24,7 +23,7 @@ import (
 // AsyncEngine.nodeCache: every cache write goes through replace, and every
 // cache removal through remove.
 type pendingNodeIndex struct {
-	// byLabel: lower-cased label → pending node IDs (label scans).
+	// byLabel: label (exact case) → pending node IDs (label scans).
 	byLabel map[string]map[NodeID]bool
 	// tracked: label (as stored) → properties indexed by value.
 	tracked map[string]map[string]struct{}
@@ -68,11 +67,10 @@ func (p *pendingNodeIndex) add(node *Node) {
 		return
 	}
 	for _, label := range node.Labels {
-		normalLabel := strings.ToLower(label)
-		ids := p.byLabel[normalLabel]
+		ids := p.byLabel[label]
 		if ids == nil {
 			ids = make(map[NodeID]bool)
-			p.byLabel[normalLabel] = ids
+			p.byLabel[label] = ids
 		}
 		ids[node.ID] = true
 		for property := range p.tracked[label] {
@@ -107,11 +105,10 @@ func (p *pendingNodeIndex) remove(node *Node) {
 		return
 	}
 	for _, label := range node.Labels {
-		normalLabel := strings.ToLower(label)
-		if ids := p.byLabel[normalLabel]; ids != nil {
+		if ids := p.byLabel[label]; ids != nil {
 			delete(ids, node.ID)
 			if len(ids) == 0 {
-				delete(p.byLabel, normalLabel)
+				delete(p.byLabel, label)
 			}
 		}
 		for property := range p.tracked[label] {
@@ -186,7 +183,7 @@ func (p *pendingNodeIndex) track(label, property string, cached func(NodeID) *No
 		return
 	}
 	properties[property] = struct{}{}
-	for id := range p.byLabel[strings.ToLower(label)] {
+	for id := range p.byLabel[label] {
 		if node := cached(id); node != nil && hasLabel(node.Labels, label) {
 			p.addValue(node, label, property)
 		}

@@ -296,8 +296,8 @@ func (ctx *IndexHintContext) HasIndexHint(variable, label, property string) bool
 	hints := ctx.HintsByVar[variable]
 	for _, hint := range hints {
 		if hint.Type == HintIndex &&
-			strings.EqualFold(hint.Label, label) &&
-			strings.EqualFold(hint.Property, property) {
+			hint.Label == label &&
+			hint.Property == property {
 			return true
 		}
 	}
@@ -312,7 +312,7 @@ func (ctx *IndexHintContext) ShouldForceScan(variable, label string) bool {
 
 	hints := ctx.HintsByVar[variable]
 	for _, hint := range hints {
-		if hint.Type == HintScan && strings.EqualFold(hint.Label, label) {
+		if hint.Type == HintScan && hint.Label == label {
 			return true
 		}
 	}
@@ -400,7 +400,7 @@ func ValidateIndexHints(schema *storage.SchemaManager, hints []IndexHint) error 
 			label, _ := m["label"].(string)
 			props, _ := m["properties"].([]string)
 			if len(props) > 0 {
-				key := fmt.Sprintf("%s:%s", lowerASCII(label), lowerASCII(props[0]))
+				key := fmt.Sprintf("%s:%s", label, props[0])
 				indexMap[key] = true
 			}
 		}
@@ -408,7 +408,7 @@ func ValidateIndexHints(schema *storage.SchemaManager, hints []IndexHint) error 
 
 	for _, hint := range hints {
 		if hint.Type == HintIndex {
-			key := fmt.Sprintf("%s:%s", lowerASCII(hint.Label), lowerASCII(hint.Property))
+			key := fmt.Sprintf("%s:%s", hint.Label, hint.Property)
 			if !indexMap[key] {
 				// Neo4j returns a specific error for missing indexes
 				return localizedError(localization.CypherCoreIndexHintNotFound(hint.String(), hint.Label, hint.Property), nil)

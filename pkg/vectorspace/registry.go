@@ -64,13 +64,14 @@ type VectorSpaceKey struct {
 
 // Canonical returns a normalized copy of the key:
 //   - trims whitespace
-//   - lowercases identifiers
+//   - lowercases the database name; the type (a label) and the vector name (a
+//     property) keep their case, as Neo4j's names are case-sensitive (#862)
 //   - defaults vectorName to "default" when empty
 //   - defaults distance to cosine when empty
 //   - validates dimensions > 0 and distance support
 func (k VectorSpaceKey) Canonical() (VectorSpaceKey, error) {
 	db := normalizeIdentifier(k.DB)
-	typ := normalizeIdentifier(k.Type)
+	typ := strings.TrimSpace(k.Type)
 	if db == "" || typ == "" {
 		return VectorSpaceKey{}, fmt.Errorf("vector space key requires db and type")
 	}
@@ -78,7 +79,7 @@ func (k VectorSpaceKey) Canonical() (VectorSpaceKey, error) {
 		return VectorSpaceKey{}, fmt.Errorf("vector space dimensions must be > 0")
 	}
 
-	name := normalizeIdentifier(k.VectorName)
+	name := strings.TrimSpace(k.VectorName)
 	if name == "" {
 		name = DefaultVectorName
 	}

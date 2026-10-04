@@ -1144,7 +1144,7 @@ func TestCypherHelpers_VectorRegistryRegisterUnregister(t *testing.T) {
 	key, ok := exec.vectorIndexSpaces["idx_cov"]
 	require.True(t, ok)
 	assert.Equal(t, "tenant_cov", key.DB)
-	assert.Equal(t, "person", key.Type)
+	assert.Equal(t, "Person", key.Type)
 	assert.Equal(t, vectorspace.DefaultVectorName, key.VectorName)
 	assert.Equal(t, vectorspace.DistanceCosine, key.Distance)
 

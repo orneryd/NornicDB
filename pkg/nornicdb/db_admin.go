@@ -1214,7 +1214,7 @@ func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string
 		return localizedError(localization.NornicDBCoreSchemaManagerNotInitialized(), nil)
 	}
 
-	indexName := fmt.Sprintf("idx_%s_%s", strings.ToLower(label), strings.ToLower(property))
+	indexName := fmt.Sprintf("idx_%s_%s", label, property)
 
 	switch strings.ToLower(indexType) {
 	case "property", "btree":

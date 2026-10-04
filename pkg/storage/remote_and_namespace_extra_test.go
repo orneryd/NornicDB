@@ -157,9 +157,10 @@ func TestNamespacedExtraLifecycleLabelAndAccessBranches(t *testing.T) {
 	_, err = base.CreateNode(&Node{ID: "other:n3", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
-	count, err := ns.NodeCountByLabel("PERSON")
+	// tenant:n2 is :person, another label (#862).
+	count, err := ns.NodeCountByLabel("Person")
 	require.NoError(t, err)
-	require.EqualValues(t, 2, count)
+	require.EqualValues(t, 1, count)
 
 	require.NoError(t, ns.SetLifecycleSchedule(2*time.Minute))
 	require.Equal(t, 2*time.Minute, recorder.scheduledInterval)

@@ -1387,9 +1387,13 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		require.NoError(t, err)
 		_, err = streamTenantB.CreateNode(&Node{ID: "three", Labels: []string{"Person"}})
 		require.NoError(t, err)
+		// :Person and :person are two labels (#862).
+		count, err = streamTenantA.NodeCountByLabel("Person")
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, count)
 		count, err = streamTenantA.NodeCountByLabel("PERSON")
 		require.NoError(t, err)
-		assert.EqualValues(t, 2, count)
+		assert.EqualValues(t, 0, count)
 
 		wantStreamErr := errors.New("stream count failed")
 		streamInner.streamNodeErr = wantStreamErr
@@ -1405,7 +1409,7 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		require.NoError(t, err)
 		_, err = allNodesTenantB.CreateNode(&Node{ID: "two", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		count, err = allNodesTenantA.NodeCountByLabel("person")
+		count, err = allNodesTenantA.NodeCountByLabel("Person")
 		require.NoError(t, err)
 		assert.EqualValues(t, 1, count)
 

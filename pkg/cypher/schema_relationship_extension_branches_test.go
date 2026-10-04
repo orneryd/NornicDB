@@ -43,7 +43,7 @@ func TestCreateConstraint_RelationshipCardinalityAndPolicyBranches(t *testing.T)
 	require.Equal(t, "OUTGOING", c.Direction)
 	require.Equal(t, 2, c.MaxCount)
 
-	c = byName["constraint_likes_max_outgoing_3"]
+	c = byName["constraint_LIKES_max_outgoing_3"]
 	require.Equal(t, storage.ConstraintCardinality, c.Type)
 	require.Equal(t, "LIKES", c.Label)
 	require.Equal(t, "OUTGOING", c.Direction)
@@ -54,7 +54,7 @@ func TestCreateConstraint_RelationshipCardinalityAndPolicyBranches(t *testing.T)
 	require.Equal(t, "INCOMING", c.Direction)
 	require.Equal(t, 4, c.MaxCount)
 
-	c = byName["constraint_mentors_max_incoming_5"]
+	c = byName["constraint_MENTORS_max_incoming_5"]
 	require.Equal(t, storage.ConstraintCardinality, c.Type)
 	require.Equal(t, "INCOMING", c.Direction)
 	require.Equal(t, 5, c.MaxCount)
@@ -66,7 +66,7 @@ func TestCreateConstraint_RelationshipCardinalityAndPolicyBranches(t *testing.T)
 	require.Equal(t, "Doc", c.TargetLabel)
 	require.Equal(t, "ALLOWED", c.PolicyMode)
 
-	c = byName["constraint_team_can_edit_doc_allowed"]
+	c = byName["constraint_Team_CAN_EDIT_Doc_allowed"]
 	require.Equal(t, storage.ConstraintPolicy, c.Type)
 	require.Equal(t, "ALLOWED", c.PolicyMode)
 	require.Equal(t, "Team", c.SourceLabel)
@@ -78,7 +78,7 @@ func TestCreateConstraint_RelationshipCardinalityAndPolicyBranches(t *testing.T)
 	require.Equal(t, "User", c.SourceLabel)
 	require.Equal(t, "Secret", c.TargetLabel)
 
-	c = byName["constraint_team_cannot_edit_secret_disallowed"]
+	c = byName["constraint_Team_CANNOT_EDIT_Secret_disallowed"]
 	require.Equal(t, storage.ConstraintPolicy, c.Type)
 	require.Equal(t, "DISALLOWED", c.PolicyMode)
 }

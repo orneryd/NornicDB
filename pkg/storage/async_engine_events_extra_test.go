@@ -381,12 +381,16 @@ func TestAsyncEngine_AdjacentAndLabelCountBranches(t *testing.T) {
 	require.ElementsMatch(t, []EdgeID{"tenant:cache-out", "tenant:base-out"}, []EdgeID{out[0].ID, out[1].ID})
 	require.ElementsMatch(t, []EdgeID{"tenant:cache-in", "tenant:base-in"}, []EdgeID{in[0].ID, in[1].ID})
 
+	// tenant:cached is :person, another label (#862).
 	count, err := ae.NodeCountByLabel("Person")
 	require.NoError(t, err)
-	require.EqualValues(t, 3, count)
+	require.EqualValues(t, 2, count)
 	count, err = ae.NodeCountByLabelInNamespace("tenant", "Person")
 	require.NoError(t, err)
-	require.EqualValues(t, 2, count)
+	require.EqualValues(t, 1, count)
+	count, err = ae.NodeCountByLabelInNamespace("tenant", "person")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, count)
 	ae.RecordMaterializedAccess("tenant:cached")
 
 	fallback := &adjacentFallbackEngine{Engine: NewMemoryEngine(), outErr: errors.New("out failed")}

@@ -27,7 +27,7 @@ func (e *StorageExecutor) executeCreateTypedPropertyIndex(ctx context.Context, c
 	}
 	name := parsed.indexName
 	if name == "" {
-		name = fmt.Sprintf("index_%s_%s_%s", lowerASCII(label), lowerASCII(parsed.properties[0]), lowerASCII(string(kind)))
+		name = fmt.Sprintf("index_%s_%s_%s", label, parsed.properties[0], lowerASCII(string(kind)))
 	}
 	create, err := e.admitIndexCreation(cypher, name, string(kind), label, parsed.properties, entityType)
 	if err != nil {

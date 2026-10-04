@@ -44,9 +44,9 @@ func TestAsyncEngine_LowCoverageHelpers(t *testing.T) {
 	ae.pending.add(nil)
 	ae.pending.remove(nil)
 	ae.setCachedNodeLocked(&Node{ID: "n1", Labels: []string{"Person", "Human"}})
-	require.NotEmpty(t, ae.pending.byLabel["person"])
+	require.NotEmpty(t, ae.pending.byLabel["Person"])
 	ae.removeCachedNodeLocked("n1")
-	require.Empty(t, ae.pending.byLabel["person"])
+	require.Empty(t, ae.pending.byLabel["Person"])
 	ae.mu.Unlock()
 
 	// mergeAsyncEdges excludes nil/deleted/overridden edges.
