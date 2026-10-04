@@ -1486,9 +1486,20 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 		// own text; that is no list value, so the result is unknown.
 		return nil
 	}
+	// The predicate sees the path variables too (r[i], nodes(p)[i], #882),
+	// converted once for every item.
+	var pathValues map[string]interface{}
+	if len(paths) > 0 {
+		pathValues = make(map[string]interface{}, len(paths))
+		for name, path := range paths {
+			if path != nil {
+				pathValues[name] = e.pathContextRowValue(path)
+			}
+		}
+	}
 	fold := quantifierFold{function: function}
 	for _, item := range coerceToUnwindItems(list) {
-		result, _ := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels)
+		result, _ := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels, pathValues)
 		if value, decided := fold.add(result); decided {
 			return value
 		}
@@ -1503,8 +1514,12 @@ func (e *StorageExecutor) evaluateQuantifierPredicate(
 	item interface{},
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
+	pathValues map[string]interface{},
 ) (interface{}, bool) {
-	values := make(map[string]interface{}, len(nodes)+len(rels)+1)
+	values := make(map[string]interface{}, len(pathValues)+len(nodes)+len(rels)+1)
+	for name, value := range pathValues {
+		values[name] = value
+	}
 	for name, node := range nodes {
 		values[name] = node
 	}

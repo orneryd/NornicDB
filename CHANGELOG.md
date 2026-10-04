@@ -308,6 +308,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows lists the variables in scope. The error for `RETURN *` with no
   variables in scope is localized (#883).
 
+- Give a list predicate's condition the path variables in a traversal's
+  WHERE: `all(i IN range(0, size(r)-1) WHERE r[i].w < 3)` and
+  `nodes(p)[i]` were null there, so every row was dropped. A variable-length
+  relationship variable is its list of relationships wherever a path context
+  is turned into row values (#882).
+
+- Run a variable-length OPTIONAL MATCH through the pipeline: the single-hop
+  OPTIONAL MATCH handler bound the relationship variable to one relationship,
+  so `size(r)` failed with a type mismatch.
+
+- Accept a list index whose type is one of several, such as `r[i + 1]`;
+  Neo4j checks it when it runs.
+
 - Re-embed a node whose content changes while the embed worker is embedding
   it. The worker's writeback now lands only while the node still has the
   properties and labels it embedded; before, it stored the old content's

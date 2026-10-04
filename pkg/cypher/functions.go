@@ -372,19 +372,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 	}
 	if paths != nil {
 		if pathResult, ok := paths[expr]; ok && pathResult != nil {
-			if pathResult.Nodes == nil {
-				values := make([]interface{}, len(pathResult.Relationships))
-				for index, relationship := range pathResult.Relationships {
-					values[index] = relationship
-				}
-				return values, true
-			}
-			return map[string]interface{}{
-				"_pathResult": pathResult,
-				"length":      pathResult.Length,
-				"nodes":       pathResult.Nodes,
-				"rels":        pathResult.Relationships,
-			}, true
+			return pathContextEntryValue(pathResult), true
 		}
 	}
 

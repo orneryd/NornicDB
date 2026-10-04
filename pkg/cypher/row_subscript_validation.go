@@ -47,7 +47,9 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 		if strings.Contains(key, "..") {
 			continue
 		}
-		if typeName := scope.staticExpressionType(key); typeName != "" && typeName != expectedKeyType {
+		// A key whose type is one of several (r[i + 1]) is checked when it
+		// runs, as in Neo4j (#882).
+		if typeName := scope.staticExpressionType(key); typeName != "" && !containsString(staticTypeChoices(typeName), expectedKeyType) {
 			return typeNameMismatchError(expectedKeyType, typeName)
 		}
 	}
