@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -24,6 +25,40 @@ func countTestTokens(text string) (int, error) {
 
 func chunkTestText(text string, maxTokens, overlap int) ([]string, error) {
 	return textchunk.ChunkByTokenCount(text, maxTokens, overlap, countTestTokens)
+}
+
+func TestMonster531ProcedureIndexAdmission(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			for _, test := range []struct {
+				name, setup, query string
+			}{
+				{"node vector", "CREATE VECTOR INDEX taken FOR (n:V) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3}}", "CALL db.index.vector.createNodeIndex('taken', 'V', 'e', 8, 'cosine')"},
+				{"relationship vector", "CREATE VECTOR INDEX taken FOR ()-[r:V]-() ON (r.e) OPTIONS {indexConfig: {`vector.dimensions`: 3}}", "CALL db.index.vector.createRelationshipIndex('taken', 'V', 'e', 8, 'cosine')"},
+				{"node fulltext", "CREATE FULLTEXT INDEX taken FOR (n:V) ON EACH [n.t]", "CALL db.index.fulltext.createNodeIndex('taken', ['V'], ['t'])"},
+				{"relationship fulltext", "CREATE FULLTEXT INDEX taken FOR ()-[r:V]-() ON EACH [r.t]", "CALL db.index.fulltext.createRelationshipIndex('taken', ['V'], ['t'])"},
+				{"cross-kind name", "CREATE INDEX taken FOR (n:T) ON (n.id)", "CALL db.index.vector.createNodeIndex('taken', 'V', 'e', 3, 'cosine')"},
+				{"constraint name", "CREATE CONSTRAINT taken FOR (n:T) REQUIRE n.id IS NOT NULL", "CALL db.index.vector.createNodeIndex('taken', 'V', 'e', 3, 'cosine')"},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+					ctx := context.Background()
+					_, err := exec.Execute(ctx, test.setup, nil)
+					require.NoError(t, err)
+					before := exec.storage.GetSchema().GetIndexes()
+					constraintsBefore := exec.storage.GetSchema().GetAllConstraints()
+					_, err = exec.Execute(ctx, test.query, nil)
+					require.Error(t, err)
+					require.ElementsMatch(t, before, exec.storage.GetSchema().GetIndexes())
+					require.ElementsMatch(t, constraintsBefore, exec.storage.GetSchema().GetAllConstraints())
+				})
+			}
+		})
+	}
 }
 
 func TestCallDbIndexVectorCreateNodeIndex(t *testing.T) {

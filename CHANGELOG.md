@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Share DDL index admission with all four procedure-backed vector/fulltext
+  creators against their actual transaction schema view. Reject equivalent
+  definitions and cross-kind/constraint name collisions before persistence
+  or vector-space registration; retain legacy node-vector ProcedureCallFailed
+  wrapping and native creator outputs (#531).
+
 - Store multi-property node indexes as durable ordered RANGE definitions rather
   than colliding with an existing first-property index. Decode fulltext node
   label unions with the shared quote-aware target parser, preserving quoted

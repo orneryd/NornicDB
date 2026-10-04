@@ -748,6 +748,9 @@ func (e *StorageExecutor) callDbIndexVectorCreateNodeIndexArguments(ctx context.
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
 	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{label}, []string{property}, storage.ConstraintEntityNode); err != nil {
+			return err
+		}
 		return schema.AddVectorIndexForEntity(indexName, label, property, int(dimension), similarity, storage.ConstraintEntityNode)
 	})
 	if err != nil {
@@ -800,6 +803,9 @@ func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.C
 	// Create vector index on relationships using schema manager
 	// Use relationship type as "label" for index naming
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{relType}, []string{property}, storage.ConstraintEntityRelationship); err != nil {
+			return err
+		}
 		return schema.AddVectorIndexForEntity(indexName, relType, property, dimension, similarity, storage.ConstraintEntityRelationship)
 	})
 	if err != nil {
@@ -843,6 +849,9 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 
 	// Create fulltext index using schema manager
 	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode); err != nil {
+			return err
+		}
 		return schema.AddFulltextIndex(indexName, labels, properties)
 	})
 	if err != nil {
@@ -886,6 +895,9 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 
 	// Create fulltext index using schema manager
 	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship); err != nil {
+			return err
+		}
 		return schema.AddFulltextRelationshipIndex(indexName, relTypes, properties)
 	})
 	if err != nil {

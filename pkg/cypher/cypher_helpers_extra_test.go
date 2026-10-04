@@ -903,7 +903,7 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		"CALL gds.fastRP.stream('g_cov')",
 		"CALL gds.fastRP.stats('g_cov')",
 		"CALL db.index.vector.queryNodes('idx', 2, [0.1,0.2])",
-		"CALL db.index.vector.createNodeIndex('idx_cov','L1','embedding',2,'cosine')",
+		"CALL db.index.vector.createNodeIndex('idx_cov','L1','embedding_cov',2,'cosine')",
 		"CALL db.index.vector.createRelationshipIndex('idx_cov_rel','KNOWS','embedding',2,'cosine')",
 		"CALL db.index.fulltext.createNodeIndex('idx_txt_cov',['L1'],['name'])",
 		"CALL db.index.fulltext.createRelationshipIndex('idx_rel_cov',['KNOWS'],['text'])",

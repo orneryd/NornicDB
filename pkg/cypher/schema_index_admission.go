@@ -12,8 +12,12 @@ func (e *StorageExecutor) admitIndexCreation(query, name, kind, label string, pr
 }
 
 func (e *StorageExecutor) admitIndexCreationForTargets(query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
+	return admitSchemaIndexCreation(e.storage.GetSchema(), query, name, kind, targets, properties, entityType)
+}
+
+func admitSchemaIndexCreation(schema *storage.SchemaManager, query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
 	guarded := keywordIndexFrom(query, "IF NOT EXISTS", 0, defaultKeywordScanOpts()) >= 0
-	for _, constraint := range e.storage.GetSchema().GetAllConstraints() {
+	for _, constraint := range schema.GetAllConstraints() {
 		if constraint.Name != name {
 			continue
 		}
@@ -23,7 +27,7 @@ func (e *StorageExecutor) admitIndexCreationForTargets(query, name, kind string,
 		message := localizedError(localization.StorageSchemaConstraintAlreadyExists(name), nil)
 		return false, newSemanticError("Neo.ClientError.Schema.ConstraintWithNameAlreadyExists", "ConstraintWithNameAlreadyExists", message.Error())
 	}
-	for _, item := range e.storage.GetSchema().GetIndexes() {
+	for _, item := range schema.GetIndexes() {
 		index, ok := item.(map[string]interface{})
 		if !ok {
 			continue
