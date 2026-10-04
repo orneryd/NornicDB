@@ -27,22 +27,25 @@ func parsePipelineRowWith(clause string) (pipelineRowWith, bool) {
 		plan.where = strings.TrimSpace(body[index+len("WHERE"):])
 		body = strings.TrimSpace(body[:index])
 	}
-	plan.star = strings.TrimSpace(body) == "*"
-	if !plan.star {
-		for _, item := range splitTopLevelComma(body) {
-			item = strings.TrimSpace(item)
-			if item == "" || item == "{}" {
-				continue
-			}
-			expression, alias := parseProjectionExprAlias(item)
-			if expression == "" || alias == "" || pipelineExpressionContainsAggregate(expression) {
-				return pipelineRowWith{}, false
-			}
-			plan.projections = append(plan.projections, pipelineRowProjection{expression, alias})
+	items := splitTopLevelComma(body)
+	// WITH *, items keeps every variable and adds the items (#883).
+	plan.star = len(items) > 0 && strings.TrimSpace(items[0]) == "*"
+	if plan.star {
+		items = items[1:]
+	}
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" || item == "{}" {
+			continue
 		}
-		if len(plan.projections) == 0 {
+		expression, alias := parseProjectionExprAlias(item)
+		if expression == "" || alias == "" || pipelineExpressionContainsAggregate(expression) {
 			return pipelineRowWith{}, false
 		}
+		plan.projections = append(plan.projections, pipelineRowProjection{expression, alias})
+	}
+	if len(plan.projections) == 0 && (!plan.star || len(items) > 0) {
+		return pipelineRowWith{}, false
 	}
 	return plan, true
 }

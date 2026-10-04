@@ -100,7 +100,8 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				if projectionHasEmptyItem(body[:end]) {
 					return emptyProjectionItemError("RETURN")
 				}
-				for _, item := range splitTopLevelComma(strings.TrimSpace(body[:end])) {
+				items, _ := cutDistinct(strings.TrimSpace(body[:end]))
+				for _, item := range splitTopLevelComma(items) {
 					expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
 					if err := validateExpressionOperandCompleteness(expression); err != nil {
 						return err

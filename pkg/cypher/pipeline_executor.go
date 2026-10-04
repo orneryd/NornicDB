@@ -794,26 +794,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			source = nil
 			if !ok {
 				if failure := getExpressionFailure(ctx); failure != nil && final != nil {
-					if len(final.Columns) == 0 && pipelineClauseBody(clause.text, "RETURN") == "*" {
-						final.Columns = pipelineScopeColumns(scope)
-					}
-					if idx < len(originalClauses) && originalClauses[idx].kind == pipelineClauseReturn {
-						if columns := pipelineReturnSourceColumns(originalClauses[idx].text); len(columns) == len(final.Columns) {
-							final.Columns = columns
-						}
-					}
+					pipelineNameReturnColumns(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
 					return final, true, failure
 				}
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			if len(final.Columns) == 0 && pipelineClauseBody(clause.text, "RETURN") == "*" {
-				final.Columns = pipelineScopeColumns(scope)
-			}
-			if idx < len(originalClauses) && originalClauses[idx].kind == pipelineClauseReturn {
-				if columns := pipelineReturnSourceColumns(originalClauses[idx].text); len(columns) == len(final.Columns) {
-					final.Columns = columns
-				}
-			}
+			pipelineNameReturnColumns(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
 			result.Columns = final.Columns
 			result.Rows = final.Rows
 			// RETURN is always last.
@@ -915,6 +901,10 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 		return nil, false, nil
 	}
 	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	if len(items) > 1 && items[0].expr == "*" {
+		// RETURN *, items: the general projection writes the * out (#883).
+		return nil, false, nil
+	}
 	if len(items) != 1 {
 		return nil, false, nil
 	}
@@ -964,6 +954,10 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	}
 
 	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	if len(items) > 1 && items[0].expr == "*" {
+		// RETURN *, items: the general projection writes the * out (#883).
+		return nil, false, nil
+	}
 	hint := e.pipelineMatchHint(clauses[1:])
 	boundedSimpleProjection := whereClause == "" && hint.earlyLimit > 0 && pipelineSimpleNodeProjections(items, nodePattern.variable)
 	countColumn, filteredCount := pipelineSingleNodeCountProjection(items, nodePattern.variable)
@@ -3324,6 +3318,10 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	if len(items) == 0 {
 		return rows, true
 	}
+	if strings.TrimSpace(items[0]) == "*" {
+		// WITH *, items: the * is every variable in scope (#883).
+		items = starProjectionItems(pipelineWildcardColumns(rows), items[1:])
+	}
 
 	type withProjection struct {
 		expr          string
@@ -3890,8 +3888,11 @@ type returnProjection struct {
 // depends only on the clause text, so it is parsed once per text
 // (returnProjectionPlanFor). valid is false when the clause has no items.
 type returnProjectionPlan struct {
-	valid        bool
-	star         bool
+	valid bool
+	star  bool
+	// starItems are the items after a leading * (RETURN *, x AS y, #883);
+	// the * stands for every variable in scope, in name order.
+	starItems    []string
 	distinct     bool
 	modifiers    string
 	projections  []returnProjection
@@ -3936,11 +3937,15 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
 	body = strings.TrimSpace(body[:modifierStart])
 	body, plan.distinct = cutDistinct(body)
-	if body == "*" {
+	items := splitTopLevelComma(body)
+	if len(items) > 0 && strings.TrimSpace(items[0]) == "*" {
 		plan.valid, plan.star = true, true
+		for _, item := range items[1:] {
+			plan.starItems = append(plan.starItems, strings.TrimSpace(item))
+		}
 		return plan
 	}
-	for _, rawItem := range splitTopLevelComma(body) {
+	for _, rawItem := range items {
 		// Semantic validation rejects an empty item (RETURN 1,,2).
 		// Same alias parsing as WITH (parseProjectionExprAlias, #547).
 		expr, alias := parseProjectionExprAlias(strings.TrimSpace(rawItem))
@@ -3948,6 +3953,73 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 	}
 	plan.valid = len(plan.projections) > 0
 	return plan
+}
+
+// withStarExpanded is the plan of RETURN *, items with the * written out
+// (starProjectionItems, #883).
+func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProjectionPlan {
+	expanded := &returnProjectionPlan{valid: true, distinct: plan.distinct, modifiers: plan.modifiers}
+	for _, item := range starProjectionItems(columns, plan.starItems) {
+		expanded.addProjection(parseProjectionExprAlias(item))
+	}
+	return expanded
+}
+
+// pipelineOriginalReturnText is the text the statement gave the RETURN
+// clause at idx, before rewrites, or "".
+func pipelineOriginalReturnText(originalClauses []pipelineClause, idx int) string {
+	if idx < len(originalClauses) && originalClauses[idx].kind == pipelineClauseReturn {
+		return originalClauses[idx].text
+	}
+	return ""
+}
+
+// pipelineNameReturnColumns names final's columns. A RETURN * (with or
+// without more items) that produced no rows lists the variables in scope, as
+// Neo4j does, since no row carries them (#883). Otherwise the columns take
+// the statement's own item texts (original), which rewrites may have changed.
+func pipelineNameReturnColumns(final *ExecuteResult, clause, original string, scope map[string]struct{}) {
+	if plan := returnProjectionPlanFor(clause); plan.star {
+		if len(final.Rows) == 0 {
+			final.Columns = plan.withStarExpanded(pipelineScopeColumns(scope)).columns
+		}
+		return
+	}
+	if original == "" {
+		return
+	}
+	if columns := pipelineReturnSourceColumns(original); len(columns) == len(final.Columns) {
+		final.Columns = columns
+	}
+}
+
+// starProjectionItems writes out the * of `WITH *, items` or
+// `RETURN *, items` (#883), as Neo4j orders the columns: each of columns, in
+// the given (name) order, as a variable item, except a column one of items
+// names (`RETURN *, a + 1 AS a` has the one column a), then items.
+func starProjectionItems(columns, items []string) []string {
+	named := make(map[string]bool, len(items))
+	for _, item := range items {
+		_, alias := parseProjectionExprAlias(item)
+		named[alias] = true
+	}
+	out := make([]string, 0, len(columns)+len(items))
+	for _, column := range columns {
+		if !named[column] {
+			variable := projectionVariableText(column)
+			out = append(out, variable+" AS "+variable)
+		}
+	}
+	return append(out, items...)
+}
+
+// projectionVariableText is a variable as an expression: backtick-quoted when
+// it isn't a plain identifier.
+func projectionVariableText(name string) string {
+	if isSimpleIdentifier(name) && !strings.Contains(name, "`") {
+		return name
+	}
+	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }
 
 func (plan *returnProjectionPlan) addProjection(expr, alias string) {
@@ -3997,6 +4069,9 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		return nil, false
 	}
 	modifiers, returnDistinct := plan.modifiers, plan.distinct
+	if plan.star && len(plan.starItems) > 0 {
+		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpanded(pipelineWildcardColumns(rows)), source, rowsValidated)
+	}
 	if plan.star {
 		columns := pipelineWildcardColumns(rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}

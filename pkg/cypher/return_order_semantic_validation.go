@@ -22,8 +22,15 @@ func validateReturnOrderBySemanticScope(clause string) error {
 	complexReferences := make(map[string]struct{})
 	projectedAggregates := make(map[string]struct{})
 	hasProjectionAggregate := false
+	// star: a * item projects every variable in scope, so ORDER BY may use
+	// any of them (RETURN DISTINCT *, x AS y ORDER BY z, #883).
+	star := false
 	for _, item := range splitTopLevelComma(projectionBody) {
 		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
+		if expression == "*" {
+			star = true
+			continue
+		}
 		if alias != "" && alias != expression {
 			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
 		}
@@ -84,7 +91,7 @@ func validateReturnOrderBySemanticScope(clause string) error {
 				continue
 			}
 			baseReference := strings.SplitN(reference, ".", 2)[0]
-			if _, projectedEntity := directExpressions[baseReference]; projectedEntity {
+			if _, projectedEntity := directExpressions[baseReference]; projectedEntity || star {
 				continue
 			}
 			if hasOrderAggregate {

@@ -338,11 +338,11 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 		}
 		if expression == "*" {
 			if len(scope) == 0 {
-				return newSemanticError(
-					"Neo.ClientError.Statement.SyntaxError",
-					"NoVariablesInScope",
-					"RETURN * requires at least one variable in scope",
-				)
+				return &classifiedCypherError{
+					cause:  localizedError(localization.CypherMatchingReturnStarNoVariables(), nil),
+					code:   "Neo.ClientError.Statement.SyntaxError",
+					detail: "NoVariablesInScope",
+				}
 			}
 			continue
 		}
