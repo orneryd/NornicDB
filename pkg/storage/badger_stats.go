@@ -618,6 +618,11 @@ type StreamNodesOptions struct {
 	ApplyDecayFilter bool
 	// StripEmbeddings removes inline/legacy embedding payloads from results.
 	StripEmbeddings bool
+	// PropertyFilter, with a Projection, lets the engine skip a node whose
+	// projected properties it rejects before decoding the rest of the node
+	// (#824). It is a hint: an engine may ignore it, and pending writes are
+	// not filtered, so the caller still tests every node it receives.
+	PropertyFilter func(properties map[string]interface{}) bool
 }
 
 // StreamNodesWithOptions iterates nodes one at a time without materializing
@@ -654,7 +659,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			case opts.WithEmbeddings:
 				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 			case opts.Projection != nil:
-				node, decodeErr = b.decodeNodeProjected(namespaceForNodeID(nodeID), val, include)
+				node, _, decodeErr = b.decodeNodeFiltered(namespaceForNodeID(nodeID), val, include, opts.PropertyFilter)
 			default:
 				node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), val)
 			}

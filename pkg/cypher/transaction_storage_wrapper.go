@@ -319,11 +319,13 @@ func (w *transactionStorageWrapper) StreamNodesByLabelProjected(label string, pr
 // StreamNodesWithOptions satisfies the storage.Engine streaming contract on the
 // transaction view. Reads route through the transaction's merged node view
 // (pending writes included), with prefix scope and projection applied per node.
+// It reads every node: GetNodesByLabel("") listed only nodes with an empty
+// label, so the stream visited nothing inside a transaction (#824).
 func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, fn func(*storage.Node) error) error {
 	if fn == nil {
 		return storage.ErrInvalidData
 	}
-	nodes, err := w.GetNodesByLabel("")
+	nodes, err := w.AllNodes()
 	if err != nil {
 		return err
 	}
