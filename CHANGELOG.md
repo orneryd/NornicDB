@@ -228,6 +228,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Seek the label indexes for an equality combined with a disjunction of labels
+  on a node pattern without labels, `MATCH (n) WHERE n.id = $id AND (n:A OR
+  n:B)` (also `n:A|B` and `IN` lists), when every label in the disjunction has
+  an index on the property, as Neo4j does with one index seek per label. It
+  scanned every node per row: graphify's incremental-sync stale-node delete
+  took 0.2 s per id on 40,000 nodes (#858).
+
 - Stream a label-less property match inside a transaction, which includes every
   write statement, from the transaction's snapshot with only the matched
   properties decoded, instead of decoding every node in full. Writes such as
