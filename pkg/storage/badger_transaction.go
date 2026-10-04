@@ -1891,11 +1891,12 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		return emitCommitted(node)
 	}
 	if tx.snapshotTx != nil {
-		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfter(label, tx.withSnapshotViewLocked, properties, afterNodeID, streamVisit)
+		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfter(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, afterNodeID, streamVisit)
 	} else if tx.readTS.IsZero() {
-		err = tx.engine.StreamNodesByLabelProjected(label, properties, streamVisit)
+		err = tx.engine.StreamNodesByLabelProjectedInScope(tx.labelScanScopeLocked(), label, properties, streamVisit)
 	} else {
 		err = tx.engine.streamNodesByLabelVisibleAtSnapshotWithView(
+			tx.labelScanScopeLocked(),
 			label, tx.readTS, tx.withSnapshotViewLocked, properties, streamVisit,
 		)
 	}
@@ -2774,9 +2775,21 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 
 func (tx *BadgerTransaction) getNodesByLabelLocked(label string) ([]*Node, error) {
 	if tx.readTS.IsZero() {
-		return tx.engine.GetNodesByLabel(label)
+		return tx.engine.GetNodesByLabelInScope(tx.labelScanScopeLocked(), label)
 	}
-	return tx.engine.getNodesByLabelVisibleAtSnapshotWithView(label, tx.readTS, tx.withSnapshotViewLocked)
+	return tx.engine.getNodesByLabelVisibleAtSnapshotWithView(tx.labelScanScopeLocked(), label, tx.readTS, tx.withSnapshotViewLocked)
+}
+
+// labelScanScopeLocked is the node ID prefix of the database the transaction
+// is pinned to, or "" before it is pinned. A pinned transaction reads and
+// writes only its own database, so its label scans skip other databases'
+// label-index entries before reading their nodes (#851); callers still
+// filter what they receive by database.
+func (tx *BadgerTransaction) labelScanScopeLocked() string {
+	if tx.namespace == "" {
+		return ""
+	}
+	return tx.namespace + ":"
 }
 
 // committedConstraintNodesLocked returns the committed nodes with label that

@@ -154,6 +154,12 @@ func (n *NamespacedEngine) unprefixEdgeID(id EdgeID) EdgeID {
 	return id
 }
 
+// nodeScope is this namespace's node ID prefix, the scope of its label reads
+// (ScopedLabelNodeReader).
+func (n *NamespacedEngine) nodeScope() string {
+	return n.namespace + n.separator
+}
+
 // hasNodePrefix checks if an ID belongs to this namespace.
 func (n *NamespacedEngine) hasNodePrefix(id NodeID) bool {
 	return strings.HasPrefix(string(id), n.namespace+n.separator)
@@ -325,11 +331,7 @@ func (n *NamespacedEngine) StreamNodesByLabelProjected(label string, properties 
 	if visit == nil {
 		return ErrInvalidData
 	}
-	reader, ok := n.inner.(ProjectedLabelNodeReader)
-	if !ok {
-		return ErrNotImplemented
-	}
-	return reader.StreamNodesByLabelProjected(label, properties, func(node *Node) error {
+	return streamNodesByLabelProjectedInScope(n.inner, n.nodeScope(), label, properties, func(node *Node) error {
 		if node == nil || !n.hasNodePrefix(node.ID) {
 			return nil
 		}
@@ -440,8 +442,9 @@ func (n *NamespacedEngine) DeleteEdge(id EdgeID) error {
 // ============================================================================
 
 func (n *NamespacedEngine) GetNodesByLabel(label string) ([]*Node, error) {
-	// Get all nodes with label, then filter to our namespace
-	allNodes, err := n.inner.GetNodesByLabel(label)
+	// The scoped read skips other databases' nodes when the inner engine
+	// supports it; the filter below covers engines that do not (#851).
+	allNodes, err := getNodesByLabelInScope(n.inner, n.nodeScope(), label)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +463,7 @@ func (n *NamespacedEngine) GetNodesByLabel(label string) ([]*Node, error) {
 
 func (n *NamespacedEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	// Fast path: delegate to inner engine's first-node lookup, then filter namespace.
-	if node, err := n.inner.GetFirstNodeByLabel(label); err == nil && node != nil {
+	if node, err := getFirstNodeByLabelInScope(n.inner, n.nodeScope(), label); err == nil && node != nil {
 		if n.hasNodePrefix(node.ID) {
 			return n.toUserNode(node), nil
 		}
@@ -633,11 +636,7 @@ func (n *NamespacedEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 
 // GetNodesByLabelVisibleAt resolves snapshot-visible label queries within the namespace.
 func (n *NamespacedEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
-	provider, ok := n.inner.(MVCCIndexedVisibilityEngine)
-	if !ok {
-		return nil, ErrNotImplemented
-	}
-	allNodes, err := provider.GetNodesByLabelVisibleAt(label, version)
+	allNodes, err := getNodesByLabelVisibleAtInScope(n.inner, n.nodeScope(), label, version)
 	if err != nil {
 		return nil, err
 	}

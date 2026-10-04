@@ -19,6 +19,12 @@ const edgeBetweenSelfHealMaxEdges = 64
 // GetFirstNodeByLabel returns the first node with the specified label.
 // This is optimized for MATCH...LIMIT 1 patterns - stops after first match.
 func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
+	return b.GetFirstNodeByLabelInScope("", label)
+}
+
+// GetFirstNodeByLabelInScope is GetFirstNodeByLabel within one database
+// (ScopedLabelNodeReader).
+func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
 	var node *Node
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
@@ -33,7 +39,7 @@ func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 				continue
 			}
 			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" {
+			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) {
 				continue
 			}
 
@@ -141,6 +147,12 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 
 // GetNodesByLabel returns all nodes with the specified label.
 func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
+	return b.GetNodesByLabelInScope("", label)
+}
+
+// GetNodesByLabelInScope is GetNodesByLabel within one database
+// (ScopedLabelNodeReader).
+func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
 	// Single-pass: iterate label index and fetch nodes in same transaction
 	// This reduces transaction overhead compared to two-phase approach
 	var nodes []*Node
@@ -158,7 +170,7 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 				continue
 			}
 			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" {
+			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) {
 				continue
 			}
 
@@ -221,6 +233,12 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 // StreamNodesByLabelProjected iterates label-matching nodes in a single read
 // transaction while decoding only the requested user properties.
 func (b *BadgerEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
+	return b.StreamNodesByLabelProjectedInScope("", label, properties, visit)
+}
+
+// StreamNodesByLabelProjectedInScope is StreamNodesByLabelProjected within
+// one database (ScopedLabelNodeReader).
+func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -244,7 +262,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjected(label string, properties []st
 				continue
 			}
 			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
+			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
 				continue
 			}
 

@@ -236,7 +236,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-<<<<<<< HEAD
 - Stop reallocating the search result cache on every write. Each created,
   updated or deleted node invalidated it by allocating a fresh map sized for
   the whole cache; it now returns at once when the cache is empty and clears
@@ -279,6 +278,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   greatest keys first (an MVCC version at or before a read version, temporal
   history as of a time) find the range's two lowest keys forward and seek in
   reverse only above them, so Badger's read-ahead stays in the range (#850).
+
+- Read a label's nodes in one database only. The label index is shared by
+  every database, and a label scan loaded and decoded the label's nodes in all
+  of them before the database filter dropped the others: a 1,000-node scan
+  took 190 times longer with 100,000 nodes of the label in another database.
+  Label reads now skip other databases' index entries before reading their
+  nodes, on every engine layer and inside transactions (#851).
 
 - Commit statements of any size atomically. A statement whose writes exceed
   one Badger batch (about 15% of the memtable) is written as several hidden

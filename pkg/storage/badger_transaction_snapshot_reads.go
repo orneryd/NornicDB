@@ -221,7 +221,7 @@ func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
 	if tx.readTS.IsZero() {
 		return tx.engine.AllNodes()
 	}
-	return tx.engine.getNodesByLabelVisibleAtWithView("", tx.readTS, tx.withSnapshotViewLocked)
+	return tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
 }
 
 // EdgeDirection selects which adjacency side an adjacency read resolves. It is

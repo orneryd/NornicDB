@@ -318,6 +318,13 @@ func (e *namespacedMVCCVisibleEngine) GetNodesByLabelVisibleAt(label string, ver
 	return e.nodes, nil
 }
 
+// The wrappers delegate label reads through the scoped method
+// (ScopedLabelNodeReader); without this override the embedded engine's one
+// would bypass the fake.
+func (e *namespacedMVCCVisibleEngine) GetNodesByLabelVisibleAtInScope(_, label string, version MVCCVersion) ([]*Node, error) {
+	return e.GetNodesByLabelVisibleAt(label, version)
+}
+
 func (e *namespacedMVCCVisibleEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	e.lastOutgoingNodeID = nodeID
 	if e.outgoingErr != nil {

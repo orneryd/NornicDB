@@ -41,6 +41,17 @@ func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjected(label string, prop
 	return e.MemoryEngine.StreamNodesByLabelProjected(label, properties, visit)
 }
 
+// The database wrapper delegates label reads through the scoped methods
+// (storage.ScopedLabelNodeReader); without these overrides the embedded
+// engine's ones would bypass the fake.
+func (e *seedLabelBehaviorEngine) GetNodesByLabelInScope(_, label string) ([]*storage.Node, error) {
+	return e.GetNodesByLabel(label)
+}
+
+func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjectedInScope(_, label string, properties []string, visit func(*storage.Node) error) error {
+	return e.StreamNodesByLabelProjected(label, properties, visit)
+}
+
 func TestSeedNodesFromOuterMatch_ErrorAndNilBranches(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })

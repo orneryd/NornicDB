@@ -125,10 +125,12 @@ func (ae *AsyncEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, 
 
 // GetNodesByLabelVisibleAt delegates snapshot-visible label queries to the wrapped engine when supported.
 func (ae *AsyncEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
-	if provider, ok := ae.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
-	}
-	return nil, ErrNotImplemented
+	return ae.GetNodesByLabelVisibleAtInScope("", label, version)
+}
+
+// GetNodesByLabelVisibleAtInScope delegates a scoped snapshot label read (ScopedLabelNodeReader).
+func (ae *AsyncEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
+	return getNodesByLabelVisibleAtInScope(ae.engine, scope, label, version)
 }
 
 // GetOutgoingEdgesVisibleAt delegates snapshot-visible outgoing adjacency queries to the wrapped engine when supported.

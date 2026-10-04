@@ -1313,6 +1313,13 @@ func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Nod
 }
 
 func (b *BadgerEngine) iterateNodesVisibleAtInTxn(txn *badger.Txn, version MVCCVersion, yield func(*Node) error) error {
+	return b.iterateNodesVisibleAtInScopeInTxn(txn, "", version, yield)
+}
+
+// iterateNodesVisibleAtInScopeInTxn is iterateNodesVisibleAtInTxn over one
+// database's nodes: a head of another database is skipped before its value is
+// read (#851).
+func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error) error {
 	// Post-refactor: we walk the head keyspace (the definitive list of
 	// live node IDs) and resolve each ID to a body. If the request is at
 	// or after the current head version and the entity is live, the body
@@ -1332,7 +1339,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 		}
 		nodeNum := binary.BigEndian.Uint64(key[1:])
 		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-		if !ok {
+		if !ok || !nodeIDInScope(nodeID, scope) {
 			continue
 		}
 		var head MVCCHead

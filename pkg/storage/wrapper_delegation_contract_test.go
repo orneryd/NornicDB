@@ -142,6 +142,28 @@ func (s *delegationSpyEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	return s.MemoryEngine.GetFirstNodeByLabel(label)
 }
 
+// The scoped label reads (ScopedLabelNodeReader, #851) are how the wrappers
+// delegate the label reads above; they record under the same names.
+func (s *delegationSpyEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
+	s.record("GetNodesByLabel")
+	return s.MemoryEngine.GetNodesByLabelInScope(scope, label)
+}
+
+func (s *delegationSpyEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
+	s.record("GetFirstNodeByLabel")
+	return s.MemoryEngine.GetFirstNodeByLabelInScope(scope, label)
+}
+
+func (s *delegationSpyEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
+	s.record("StreamNodesByLabelProjected")
+	return s.MemoryEngine.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
+}
+
+func (s *delegationSpyEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
+	s.record("GetNodesByLabelVisibleAt")
+	return s.MemoryEngine.GetNodesByLabelVisibleAtInScope(scope, label, version)
+}
+
 func (s *delegationSpyEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	s.record("GetOutgoingEdges")
 	return s.MemoryEngine.GetOutgoingEdges(nodeID)

@@ -1428,6 +1428,13 @@ func (ae *AsyncEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 // GetFirstNodeByLabel returns the first node with the specified label.
 // Optimized for MATCH...LIMIT 1 patterns - uses label index for O(1) lookup.
 func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
+	return ae.GetFirstNodeByLabelInScope("", label)
+}
+
+// GetFirstNodeByLabelInScope is GetFirstNodeByLabel within one database
+// (ScopedLabelNodeReader): pending nodes outside the scope are skipped and the
+// engine read is scoped.
+func (ae *AsyncEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
 	ae.mu.RLock()
 	normalLabel := strings.ToLower(label)
 	deletedIDs := make(map[NodeID]bool, len(ae.deleteNodes))
@@ -1438,7 +1445,7 @@ func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	var scannedMatch *Node
 	for id, node := range ae.nodeCache {
 		overriddenIDs[id] = true
-		if node == nil || deletedIDs[id] {
+		if node == nil || deletedIDs[id] || !nodeIDInScope(id, scope) {
 			continue
 		}
 		for _, l := range node.Labels {
@@ -1455,7 +1462,7 @@ func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	// Use label index for O(1) lookup instead of scanning entire cache
 	if nodeIDs := ae.pending.byLabel[normalLabel]; len(nodeIDs) > 0 {
 		for id := range nodeIDs {
-			if !ae.deleteNodes[id] {
+			if !ae.deleteNodes[id] && nodeIDInScope(id, scope) {
 				if node := ae.nodeCache[id]; node != nil {
 					ae.mu.RUnlock()
 					return node, nil
@@ -1469,7 +1476,7 @@ func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 		return scannedMatch, nil
 	}
 
-	first, err := ae.engine.GetFirstNodeByLabel(label)
+	first, err := getFirstNodeByLabelInScope(ae.engine, scope, label)
 	if err != nil {
 		return nil, err
 	}
@@ -1477,7 +1484,7 @@ func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 		return first, nil
 	}
 
-	nodes, err := ae.GetNodesByLabel(label)
+	nodes, err := ae.GetNodesByLabelInScope(scope, label)
 	if err != nil || len(nodes) == 0 {
 		return nil, err
 	}
@@ -1485,6 +1492,13 @@ func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 }
 
 func (ae *AsyncEngine) GetNodesByLabel(label string) ([]*Node, error) {
+	return ae.GetNodesByLabelInScope("", label)
+}
+
+// GetNodesByLabelInScope is GetNodesByLabel within one database
+// (ScopedLabelNodeReader): pending nodes outside the scope are skipped and the
+// engine read is scoped.
+func (ae *AsyncEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
 	// Use the pending view's label index over nodeCache instead of
 	// scanning every cached node. Before this, every label-scoped read paid
 	// O(len(nodeCache)) — and prior to the FlushWithResult cleanup fix the
@@ -1496,7 +1510,7 @@ func (ae *AsyncEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	if ids := ae.pending.byLabel[normalLabel]; len(ids) > 0 {
 		cachedNodes = make([]*Node, 0, len(ids))
 		for id := range ids {
-			if ae.deleteNodes[id] {
+			if ae.deleteNodes[id] || !nodeIDInScope(id, scope) {
 				continue
 			}
 			node := ae.nodeCache[id]
@@ -1509,7 +1523,7 @@ func (ae *AsyncEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	ae.mu.RUnlock()
 
 	// Get from engine WITHOUT lock (I/O can be slow)
-	engineNodes, err := ae.engine.GetNodesByLabel(label)
+	engineNodes, err := getNodesByLabelInScope(ae.engine, scope, label)
 	if err != nil {
 		return nil, err
 	}
@@ -1563,11 +1577,17 @@ func nodeHasLabelFold(node *Node, label string) bool {
 
 // StreamNodesByLabelProjected merges projected pending writes with the underlying label scan.
 func (ae *AsyncEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
+	return ae.StreamNodesByLabelProjectedInScope("", label, properties, visit)
+}
+
+// StreamNodesByLabelProjectedInScope is StreamNodesByLabelProjected within
+// one database (ScopedLabelNodeReader): pending nodes outside the scope are
+// skipped and the engine scan is scoped.
+func (ae *AsyncEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
-	reader, ok := ae.engine.(ProjectedLabelNodeReader)
-	if !ok {
+	if _, ok := ae.engine.(ProjectedLabelNodeReader); !ok {
 		return ErrNotImplemented
 	}
 	ae.mu.RLock()
@@ -1580,7 +1600,7 @@ func (ae *AsyncEngine) StreamNodesByLabelProjected(label string, properties []st
 	}
 	var cached []*Node
 	for id := range ae.pending.byLabel[strings.ToLower(label)] {
-		if _, deleted := ae.deleteNodes[id]; deleted {
+		if _, deleted := ae.deleteNodes[id]; deleted || !nodeIDInScope(id, scope) {
 			continue
 		}
 		if node := ae.nodeCache[id]; node != nil {
@@ -1603,7 +1623,7 @@ func (ae *AsyncEngine) StreamNodesByLabelProjected(label string, properties []st
 		}
 		return visit(node)
 	}
-	return reader.StreamNodesByLabelProjected(label, properties, forward)
+	return streamNodesByLabelProjectedInScope(ae.engine, scope, label, properties, forward)
 }
 
 // BatchGetNodes fetches multiple nodes, checking cache first then engine.
