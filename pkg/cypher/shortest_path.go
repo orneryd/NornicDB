@@ -11,7 +11,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -65,46 +64,41 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 
 // evaluateShortestPathValue evaluates shortestPath(...) / allShortestPaths(...)
 // in expression position for one row. As in Neo4j, both endpoints must be
-// variables bound by the row: an anonymous endpoint is a SyntaxError, and the
-// labels and properties written on a bound endpoint filter it. The search is
-// the MATCH clause's (shortestPathsBetween, #863). handled=false lets the
-// ordinary evaluator report its own error when the argument is not a
-// traversal pattern.
-func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcName, pattern string, nodes map[string]*storage.Node) (interface{}, bool) {
+// variables bound by the row (the statement rewrite rejects an anonymous one,
+// shortestPathExpressionError), and the labels and properties written on a
+// bound endpoint filter it. The search is
+// the MATCH clause's (shortestPathsBetween, #863). The value evaluator and
+// the row evaluator (WHERE) both call it. handled=false lets the ordinary
+// evaluator report its own error when the argument is not a traversal
+// pattern.
+func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcName, pattern string, nodes map[string]*storage.Node) (interface{}, bool, error) {
 	match := e.parseTraversalPattern(ctx, pattern)
 	if match == nil {
-		return nil, false
-	}
-	if match.StartNode.variable == "" || match.EndNode.variable == "" {
-		recordExpressionFailure(ctx, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathUnboundNodes",
-			localization.CypherMatchingShortestPathUnboundNodes(funcName)))
-		return nil, true
+		return nil, false, nil
 	}
 	if err := shortestPathPatternError(funcName, pattern, match); err != nil {
-		recordExpressionFailure(ctx, err)
-		return nil, true
+		return nil, true, err
 	}
 	findAll := strings.EqualFold(funcName, "allShortestPaths")
 	start, end := nodes[match.StartNode.variable], nodes[match.EndNode.variable]
 	if start == nil || end == nil || !e.matchesEndPattern(start, &match.StartNode) || !e.matchesEndPattern(end, &match.EndNode) {
-		return nil, true
+		return nil, true, nil
 	}
 	paths, err := e.shortestPathsBetween(ctx, &shortestPathMatch{findAll: findAll, traversal: match}, start, end, nil)
 	if err != nil {
-		recordExpressionFailure(ctx, err)
-		return nil, true
+		return nil, true, err
 	}
 	if findAll {
 		values := make([]interface{}, 0, len(paths))
 		for _, path := range paths {
 			values = append(values, e.pathToMap(path))
 		}
-		return values, true
+		return values, true, nil
 	}
 	if len(paths) == 0 {
-		return nil, true
+		return nil, true, nil
 	}
-	return e.pathToMap(paths[0]), true
+	return e.pathToMap(paths[0]), true, nil
 }
 
 func nodeToValue(n *storage.Node) interface{} {

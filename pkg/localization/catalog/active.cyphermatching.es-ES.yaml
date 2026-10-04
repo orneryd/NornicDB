@@ -61,6 +61,9 @@
 - id: cyphermatching.shortest_path_relationship_properties
   description: "Propiedades de relación en un patrón shortestPath o allShortestPaths. Function es el nombre de la función; Properties es el mapa tal como se escribió."
   other: "{{.Function}}(...) contiene propiedades {{.Properties}}. Esto no se admite actualmente."
+- id: cyphermatching.shortest_path_single_relationship
+  description: "Patrón shortestPath o allShortestPaths sin exactamente una relación. Function es el nombre de la función."
+  other: "{{.Function}}(...) requiere un patrón con una sola relación"
 - id: cyphermatching.optional_match_node_endpoint_missing
   description: Al patrón OPTIONAL MATCH le falta el primer nodo. Pattern conserva las comillas de Go.
   other: "el patrón de coincidencia opcional {{.Pattern}} no tiene un nodo inicial"

@@ -54,13 +54,16 @@
   other: "{{.Function}}(...) does not support a minimal length different from 0 or 1"
 - id: cyphermatching.shortest_path_common_end_nodes
   description: "shortestPath search whose start and end are the same node (Neo4j text)."
-  other: "The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you perform a shortestPath search after a cartesian product that might have the same start and end nodes for some of the rows passed to shortestPath. If you would rather not experience this exception, and can accept the possibility of missing results for those rows, disable this in the Neo4j configuration by setting `dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the shortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern expression followed by ordering by path length and limiting to one result."
+  other: "The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you\nperform a shortestPath search after a cartesian product that might have the same start and end nodes for some\nof the rows passed to shortestPath. If you would rather not experience this exception, and can accept the\npossibility of missing results for those rows, disable this in the Neo4j configuration by setting\n`dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the\nshortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern\nexpression followed by ordering by path length and limiting to one result."
 - id: cyphermatching.shortest_path_unbound_nodes
   description: "shortestPath or allShortestPaths expression with an endpoint that is not a bound variable. Function is the function name."
   other: "A {{.Function}}(...) requires bound nodes when not part of a MATCH clause."
 - id: cyphermatching.shortest_path_relationship_properties
   description: "Relationship properties in a shortestPath or allShortestPaths pattern. Function is the function name; Properties is the property map as written."
   other: "{{.Function}}(...) contains properties {{.Properties}}. This is currently not supported."
+- id: cyphermatching.shortest_path_single_relationship
+  description: "shortestPath or allShortestPaths pattern without exactly one relationship. Function is the function name."
+  other: "{{.Function}}(...) requires a pattern containing a single relationship"
 - id: cyphermatching.optional_match_node_endpoint_missing
   description: OPTIONAL MATCH pattern lacks its first node endpoint. Pattern includes untranslated Go quoting.
   other: "optional match pattern {{.Pattern}} has no node endpoint"

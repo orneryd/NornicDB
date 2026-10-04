@@ -230,6 +230,19 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		switch lowerASCII(function) {
 		case "graph.names", "graph.propertiesbyname", "graph.byname", "graph.byelementid":
 			return e.evaluateRowGraphFunction(function, argument, values)
+		case "shortestpath", "allshortestpaths":
+			nodes := make(map[string]*storage.Node, len(values))
+			for name, value := range values {
+				if node, ok := value.(*storage.Node); ok {
+					nodes[name] = node
+				}
+			}
+			search, _ := values[temporalRowContextKey].(context.Context)
+			if search == nil {
+				search = context.Background()
+			}
+			value, handled, err := e.evaluateShortestPathValue(search, function, argument, nodes)
+			return value, handled, err
 		case "reduce":
 			return e.evaluateRowReduce(argument, values)
 		case "coalesce":

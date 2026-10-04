@@ -25,6 +25,7 @@ const (
 	MessageCypherMatchingPathPatternInvalid                       MessageID = "cyphermatching.path_pattern_invalid"
 	MessageCypherMatchingShortestPathMinimalLength                MessageID = "cyphermatching.shortest_path_minimal_length"
 	MessageCypherMatchingShortestPathCommonEndNodes               MessageID = "cyphermatching.shortest_path_common_end_nodes"
+	MessageCypherMatchingShortestPathSingleRelationship           MessageID = "cyphermatching.shortest_path_single_relationship"
 	MessageCypherMatchingShortestPathUnboundNodes                 MessageID = "cyphermatching.shortest_path_unbound_nodes"
 	MessageCypherMatchingShortestPathRelationshipProperties       MessageID = "cyphermatching.shortest_path_relationship_properties"
 	MessageCypherMatchingOptionalMatchNodeEndpointMissing         MessageID = "cyphermatching.optional_match_node_endpoint_missing"
@@ -128,6 +129,12 @@ func CypherMatchingShortestPathMinimalLength(function string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingShortestPathMinimalLength, function+"(...) does not support a minimal length different from 0 or 1", map[string]any{"Function": function})
 }
 
+// CypherMatchingShortestPathSingleRelationship is Neo4j's error for a
+// shortestPath or allShortestPaths pattern without exactly one relationship.
+func CypherMatchingShortestPathSingleRelationship(function string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingShortestPathSingleRelationship, function+"(...) requires a pattern containing a single relationship", map[string]any{"Function": function})
+}
+
 // CypherMatchingShortestPathUnboundNodes is Neo4j's error for a
 // shortestPath or allShortestPaths expression with an endpoint that isn't a
 // bound variable.
@@ -144,7 +151,7 @@ func CypherMatchingShortestPathRelationshipProperties(function, properties strin
 // CypherMatchingShortestPathCommonEndNodes is Neo4j's error for a
 // shortestPath search whose start and end are the same node.
 func CypherMatchingShortestPathCommonEndNodes() Message {
-	return cypherMatchingMessage(MessageCypherMatchingShortestPathCommonEndNodes, "The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you perform a shortestPath search after a cartesian product that might have the same start and end nodes for some of the rows passed to shortestPath. If you would rather not experience this exception, and can accept the possibility of missing results for those rows, disable this in the Neo4j configuration by setting `dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the shortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern expression followed by ordering by path length and limiting to one result.", nil)
+	return cypherMatchingMessage(MessageCypherMatchingShortestPathCommonEndNodes, "The shortest path algorithm does not work when the start and end nodes are the same. This can happen if you\nperform a shortestPath search after a cartesian product that might have the same start and end nodes for some\nof the rows passed to shortestPath. If you would rather not experience this exception, and can accept the\npossibility of missing results for those rows, disable this in the Neo4j configuration by setting\n`dbms.cypher.forbid_shortestpath_common_nodes` to false. If you cannot accept missing results, and really want the\nshortestPath between two common nodes, then re-write the query using a standard Cypher variable length pattern\nexpression followed by ordering by path length and limiting to one result.", nil)
 }
 
 func CypherMatchingOptionalMatchNodeEndpointMissing(pattern string) Message {

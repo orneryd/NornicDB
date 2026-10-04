@@ -88,7 +88,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		if equalFoldASCII(head[:len("shortestPath")], "shortestpath") || equalFoldASCII(head, "allshortestpaths") {
 			if name, inner, ok := parseFunctionCallWS(expr); ok &&
 				(strings.EqualFold(name, "shortestPath") || strings.EqualFold(name, "allShortestPaths")) {
-				if value, handled := e.evaluateShortestPathValue(ctx, name, inner, nodes); handled {
+				if value, handled, err := e.evaluateShortestPathValue(ctx, name, inner, nodes); handled {
+					if err != nil {
+						recordExpressionFailure(ctx, err)
+					}
 					return value
 				}
 			}
