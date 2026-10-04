@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -129,4 +130,33 @@ func TestSameEmbeddingSource(t *testing.T) {
 		require.Equal(t, tc.same, sameEmbeddingSource(tc.a, tc.b), tc.name)
 		require.Equal(t, tc.same, sameEmbeddingSource(tc.b, tc.a), tc.name)
 	}
+}
+
+// A stored node that can't be read is the writeback's error, and a write that
+// fails leaves nothing behind (#889).
+func TestEmbeddingSidecar_SourceReadAndWriteFailures(t *testing.T) {
+	t.Run("undecodable stored node", func(t *testing.T) {
+		b := newSidecarTestBadger(t)
+		writeRawValue(t, b, nodeKey("test:corrupt"), []byte{0xFF, 0x00})
+		err := b.UpdateNodeEmbeddingSidecar(&Node{ID: "test:corrupt", ChunkEmbeddings: [][]float32{{0.1}}})
+		require.Error(t, err)
+		require.NotErrorIs(t, err, ErrEmbeddingSourceChanged)
+	})
+	t.Run("chunk write fails", func(t *testing.T) {
+		b, _ := createTestBadgerEngineOnDisk(t)
+		t.Cleanup(func() { _ = b.Close() })
+		// The node key fits Badger's key limit; its embedding chunk keys,
+		// five bytes longer, don't.
+		node := &Node{ID: NodeID("test:" + strings.Repeat("k", 65000-len("test:")-2)), Labels: []string{"Doc"}, Properties: map[string]any{"title": "v1"}}
+		writeRawNode(t, b, node)
+		payload := CopyNode(node)
+		payload.ChunkEmbeddings = [][]float32{{0.1}}
+		payload.EmbedMeta = map[string]any{"has_embedding": true}
+		require.Error(t, b.UpdateNodeEmbeddingSidecar(payload))
+		require.NoError(t, b.withView(func(txn *badger.Txn) error {
+			_, err := txn.Get(embeddingMetaKey(node.ID))
+			require.ErrorIs(t, err, badger.ErrKeyNotFound)
+			return nil
+		}))
+	})
 }
