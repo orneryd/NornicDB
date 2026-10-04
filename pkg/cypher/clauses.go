@@ -928,26 +928,19 @@ func parseUnwindWithClause(clause string) (unwindMergeChainWithPlan, bool) {
 	if body == "" {
 		return unwindMergeChainWithPlan{}, false
 	}
-	parts := splitTopLevelComma(body)
+	projectionPlan := returnProjectionPlanFor("RETURN " + body)
+	if !projectionPlan.valid || projectionPlan.star || projectionPlan.distinct || projectionPlan.hasAggregate || projectionPlan.modifiers != "" {
+		return unwindMergeChainWithPlan{}, false
+	}
 	plan := unwindMergeChainWithPlan{}
-	for _, part := range parts {
-		item := strings.TrimSpace(part)
-		if item == "" {
+	for _, projection := range projectionPlan.projections {
+		if name := simpleSemanticIdentifier(projection.expr); name != "" && name == projection.alias {
 			continue
 		}
-		if isSimpleIdentifier(item) {
-			continue
-		}
-		asIdx := findKeywordIndexInContext(item, "AS")
-		if asIdx <= 0 {
+		if projection.expr == "" || !isSimpleIdentifier(projection.alias) {
 			return unwindMergeChainWithPlan{}, false
 		}
-		expr := strings.TrimSpace(item[:asIdx])
-		alias := strings.TrimSpace(item[asIdx+2:])
-		if expr == "" || !isSimpleIdentifier(alias) {
-			return unwindMergeChainWithPlan{}, false
-		}
-		plan.assignments = append(plan.assignments, unwindMergeChainWithAssignment{alias: alias, expr: expr})
+		plan.assignments = append(plan.assignments, unwindMergeChainWithAssignment{alias: projection.alias, expr: projection.expr})
 	}
 	return plan, true
 }

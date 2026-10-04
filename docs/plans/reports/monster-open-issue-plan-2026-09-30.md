@@ -842,3 +842,35 @@ annotation-fixture publications now have successful CI, Conformance and Docs.
 Publish with `Refs #713`; remaining projection, WHERE and CI/TestKit acceptance
 is not closed by this increment. #547 stays excluded. Preserve unrelated matcher
 whitespace. No benchmark, performance-equivalence or running-installation claim.
+
+### Compiled WITH Projection Admission: 2026-10-04
+
+The batch WITH parser had independent AS splitting and admitted aggregate
+expressions to its per-row assignment evaluator. It now consumes cached shared
+projection metadata and canonical aliases, retaining safe compiled assignments
+while declining aggregate, DISTINCT, star and modifier plans before writes.
+Two canonical quoted-name controls and four aggregate declines fail before the
+repair; ordinary aliases and existing modifier declines are passing controls.
+
+Six direct-batch/autocommit/explicit-transaction cases verify exact count columns,
+rows and persisted ordinary/quoted-alias values. Four direct unsupported-plan
+controls verify nil results, safe decline and zero persisted nodes. Existing
+compiler/parser tests remain. Read-only Graphify shows the old private alias
+boundary; current source confirms shared metadata and pre-mutation admission.
+
+Five appended reference cases preserve the protected prefix and compare graph
+effects for aliases, aggregate grouping, DISTINCT and the WITH LIMIT 0 barrier.
+Both actual parsers pass 996 Bolt + 1,006 HTTP comparisons across both modes,
+4,004 total against pinned Neo4j 5.26.30. Official ratchets pass 7,794 outcomes
+per parser, zero gaps/setup blockers/harness errors. Fresh isolated repository
+correctness, both-parser compiled-batch races, scoped vet and diagnostics pass.
+Focused compiler coverage is 94.1%, not a whole-package claim. The preceding
+count publication 80181c89 has successful CI, Conformance and Docs checks.
+
+Incoming main afc0ba4f fixes async CREATE/UNION routing. Fast-forward both main
+and the isolated snapshot, preserving incoming code and all user changes/stashes.
+The integrated tree again passes repository correctness, all four reference
+matrices, both official ratchets and both-parser WITH/UNION/async-CREATE races.
+
+Publish with `Refs #713`; broader projection, WHERE and CI/TestKit acceptance
+remains open, #547 excluded. No performance or running-installation change.

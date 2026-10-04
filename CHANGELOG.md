@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Compile UNWIND-batch WITH assignments from shared projection metadata and
+  canonical aliases. Reject aggregate, DISTINCT and modifier plans before batch
+  writes so grouping and windows stay on the shared pipeline (#713).
+
 - Compile count-only batch RETURN from shared projection metadata and canonical
   column names. Decline modifiers and unsupported projections before writes,
   retaining pagination and DISTINCT on the shared pipeline (#713).

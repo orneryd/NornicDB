@@ -109,6 +109,91 @@ func TestGh713CountCompilersUseSharedProjectionPlans(t *testing.T) {
 	}
 }
 
+func TestGh713WithCompilerUsesSharedProjectionPlan(t *testing.T) {
+	for _, clause := range []string{
+		"WITH n, row.k AS k", "WITH n, row.k AS `k`",
+		"WITH `n`, row.k AS `k`",
+	} {
+		t.Run(clause, func(t *testing.T) {
+			compiled, ok := parseUnwindWithClause(clause)
+			require.True(t, ok)
+			require.Len(t, compiled.assignments, 1)
+			shared := returnProjectionPlanFor("RETURN" + clause[len("WITH"):])
+			require.Equal(t, shared.projections[1].expr, compiled.assignments[0].expr)
+			require.Equal(t, shared.columns[1], compiled.assignments[0].alias)
+		})
+	}
+	for _, clause := range []string{
+		"WITH count(n) AS total", "WITH count(DISTINCT n) AS total",
+		"WITH count(n) + 1 AS total", "WITH collect(n) AS nodes",
+		"WITH DISTINCT n", "WITH n AS node ORDER BY node",
+		"WITH n AS node LIMIT 0", "WITH n AS node SKIP 1",
+		"WITH *", "WITH n AS", "WITH row.k", "WITH",
+	} {
+		t.Run("decline "+clause, func(t *testing.T) {
+			_, ok := parseUnwindWithClause(clause)
+			require.False(t, ok)
+		})
+	}
+}
+
+func TestGh713WithCompilerRoutesAndWriteAdmission(t *testing.T) {
+	items := []interface{}{
+		map[string]interface{}{"id": "a", "value": int64(1)},
+		map[string]interface{}{"id": "b", "value": int64(2)},
+	}
+	for _, route := range []string{"batch", "autocommit", "explicit transaction"} {
+		for _, alias := range []string{"score", "`score`"} {
+			t.Run(route+"/"+alias, func(t *testing.T) {
+				exec, ctx := newUnitExecutor(t)
+				mutation := "MERGE (n:WithSeed {id: row.id}) WITH n, row, row.value AS " + alias +
+					" MERGE (m:WithValue {id: row.id}) SET m.score = score"
+				rest := mutation + " RETURN count(m) AS total"
+				var result *ExecuteResult
+				var err error
+				if route == "batch" {
+					var supported bool
+					result, supported, err = exec.executeUnwindMergeChainBatch(ctx, "row", items, mutation, "RETURN count(m) AS total")
+					require.True(t, supported)
+				} else {
+					if route == "explicit transaction" {
+						_, err = exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+					}
+					result, err = exec.Execute(ctx, "UNWIND $rows AS row "+rest, map[string]interface{}{"rows": items})
+				}
+				require.NoError(t, err)
+				require.Equal(t, []string{"total"}, result.Columns)
+				require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+				if route == "explicit transaction" {
+					_, err = exec.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+				}
+				stored, err := exec.Execute(ctx, "MATCH (m:WithValue) RETURN m.id AS id, m.score AS score ORDER BY id", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{"a", int64(1)}, {"b", int64(2)}}, stored.Rows)
+			})
+		}
+	}
+	for _, projection := range []string{
+		"n, row, count(n) AS score", "n, row, collect(n) AS score",
+		"DISTINCT n, row, row.value AS score", "n, row, row.value AS score LIMIT 0",
+	} {
+		t.Run("decline before writes/"+projection, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			mutation := "MERGE (n:WithSeed {id: row.id}) WITH " + projection +
+				" MERGE (m:WithValue {id: row.id}) SET m.score = score"
+			result, supported, err := exec.executeUnwindMergeChainBatch(ctx, "row", items, mutation, "RETURN count(m) AS total")
+			require.NoError(t, err)
+			require.False(t, supported)
+			require.Nil(t, result)
+			stored, err := exec.Execute(ctx, "MATCH (n) RETURN count(n) AS total", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(0)}}, stored.Rows)
+		})
+	}
+}
+
 func TestGh713CountReturnWindowsPreserveWrites(t *testing.T) {
 	for _, mode := range []string{"autocommit", "explicit transaction"} {
 		for _, test := range []struct {

@@ -2510,5 +2510,30 @@
     "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]},
     "expected_code": "Neo.ClientError.Statement.SyntaxError",
     "no_effects": true
+  },
+  {
+    "name": "issue713 compiled WITH ordinary alias persists values",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH n, row, row.value AS score MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH quoted alias persists values",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH n, row, row.value AS `score` MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH aggregate uses shared grouping",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH n, row, count(n) AS score MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH DISTINCT uses shared projection",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH DISTINCT n, row, row.value AS score MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
+  },
+  {
+    "name": "issue713 compiled WITH zero limit preserves preceding writes",
+    "query": "UNWIND $rows AS row MERGE (n:WithSeed {id: row.id}) WITH n, row, row.value AS score LIMIT 0 MERGE (m:WithValue {id: row.id}) SET m.score = score RETURN count(m) AS total",
+    "parameters": {"rows": [{"id": "a", "value": 1}, {"id": "b", "value": 2}]}
   }
 ]
