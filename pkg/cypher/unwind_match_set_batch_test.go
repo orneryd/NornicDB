@@ -13,8 +13,9 @@ func TestUnwindMatchSetBatch_UsesIndexedLookupWithoutCreatingMissingNodes(t *tes
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	schema := store.GetSchema()
 	require.NotNil(t, schema)
+	// The constraint owns the uid index (#875); an index of its own on the
+	// same property is what Neo4j rejects (#884).
 	require.NoError(t, schema.AddUniqueConstraint("unique_function_uid", "Function", "uid"))
-	require.NoError(t, schema.AddPropertyIndex("idx_function_uid", "Function", []string{"uid"}))
 
 	existingID, err := store.CreateNode(&storage.Node{
 		ID:     "fn-1",
@@ -25,7 +26,7 @@ func TestUnwindMatchSetBatch_UsesIndexedLookupWithoutCreatingMissingNodes(t *tes
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, schema.PropertyIndexInsert("Function", "uid", existingID, "content-entity:e_1"))
+	require.NoError(t, schema.BackfillPropertyIndex("Function", "uid", map[storage.NodeID]interface{}{existingID: "content-entity:e_1"}))
 
 	exec := NewStorageExecutor(&noScanMergeLookupEngine{Engine: store})
 	_, err = exec.Execute(context.Background(), `
