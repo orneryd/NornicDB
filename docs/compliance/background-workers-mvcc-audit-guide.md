@@ -20,9 +20,12 @@ Those workers can write back to storage after the original application write has
 That means:
 
 - one business record can have more than one MVCC version over time
-- a later version may add derived data such as embeddings
-- the later worker write is separate from the original user or application write
-- snapshot readers may see a pre-embedding version or a post-embedding version depending on the requested point in time
+- derived data such as embeddings may be added later in a separate, dedicated
+  key space without creating a new node version
+- the later worker write is separate from the original user or application
+  write
+- snapshot readers may see a pre-embedding state or a post-embedding state
+  depending on the requested point in time
 
 For audit purposes, the main point is simple:
 
@@ -59,8 +62,9 @@ flowchart TD
   A2[Does not create a new business-data version by itself]
 
   B[Background work that writes back to a node]
-  B1[Creates a later stored version]
-  B2[Is visible to MVCC history]
+  B1[May create a later stored version]
+  B2[Is visible to MVCC history — the embedding worker is the exception: its
+  writeback lands in the embedding key space and creates no node version]
 
   A --> A1
   A --> A2
@@ -87,7 +91,7 @@ flowchart LR
   B[2. Node is marked as needing embedding]
   C[3. Worker picks it up later]
   D[4. Worker generates embedding data]
-  E[5. Worker writes a newer version of that same node]
+  E[5. Worker writes embedding state in the embedding key space]
   F[6. Search becomes able to use the new embedding]
 
   A --> B --> C --> D --> E --> F
@@ -97,34 +101,47 @@ flowchart LR
 
 MVCC means the database can keep a version history of a record over time.
 
-For the embedding worker, the practical effect is:
+The embedding worker's writeback is an **embedding-only write**: it stores
+chunk vectors and embedding metadata in the dedicated embedding key space and
+never rewrites the node record. For the embedding worker, the practical
+effect is:
 
-- the original node version is committed first
-- the worker later writes another committed version of the same node
-- the newer version includes embedding-related fields and a new update timestamp
+- the original node version is committed first and is never touched again by
+  the worker
+- the worker's writeback creates **no new MVCC node version** and does not
+  change the node's business fields or `UpdatedAt`
+- the embedding state (vectors, model, dimensions, timestamps, failure
+  markers) lives in a metadata record alongside the chunk vectors, stamped
+  with the node content generation it was computed from
 
 Timeline:
 
 ```mermaid
 flowchart LR
     V1[Version V1<br/>Node exists<br/>No embedding yet]
-    V2[Version V2<br/>Same node<br/>Embedding data added<br/>Embedding metadata added<br/>UpdatedAt changed]
+    EM[Embedding key space<br/>Chunk vectors + metadata record<br/>No MVCC node version]
 
-    V1 --> V2
+    V1 --> EM
 ```
 
-This separation is important because it means the database does not pretend that the embedding existed at the time of the original business write.
+This separation is important because it means the database does not pretend
+that the embedding existed at the time of the original business write, and a
+concurrent business write can never conflict with the worker's writeback.
 
 ## What An Auditor Should Conclude
 
 The correct interpretation is:
 
-- the later embedding write is a derived-data update
+- the embedding writeback is a derived-data update
 - it is not the original business event
-- it is a real stored state change once committed
-- it can appear in later MVCC-visible versions of the node
+- it never rewrites the node record or its MVCC history
+- any later business write to the node invalidates the worker's embedding
+  state (the existing node-write path removes every key in the embedding key
+  space for that node), and the node is re-embedded afterwards
 
-This is usually acceptable if the reviewer understands that embeddings are derivative artifacts used for search and retrieval, not the primary source record.
+This is usually acceptable if the reviewer understands that embeddings are
+derivative artifacts used for search and retrieval, not the primary source
+record.
 
 ## Snapshot Read Implications
 
@@ -138,7 +155,7 @@ Example:
 flowchart TD
     T1[T1: Application creates node]
     T2[T2: Auditor asks for snapshot at T1]
-    T3[T3: Embedding worker writes a newer version]
+    T3[T3: Embedding worker writes embedding state]
     T4[T4: Operator asks for latest state]
     R1[Snapshot at T1 returns node without embedding]
     R2[Latest at T4 returns node with embedding]
@@ -148,7 +165,8 @@ flowchart TD
     T4 --> R2
 ```
 
-That is normal MVCC behavior.
+That is normal MVCC behavior: the node record has one version, and readers
+see the embedding state before or after the worker's writeback, never a mix.
 
 ## Search And Readiness Implications
 
@@ -166,7 +184,7 @@ State model:
 flowchart LR
   A[Written<br/>Business write done]
   B[Queued<br/>Pending for worker run]
-  C[Embedded<br/>New node version]
+  C[Embedded<br/>Embedding key space updated]
   D[Indexed<br/>Search index sync catches up]
   E[Searchable<br/>Vector queries can return it]
 
@@ -191,7 +209,7 @@ NornicDB currently treats embedding updates as derived and regenerable.
 
 That has two consequences:
 
-1. They are real persisted MVCC updates once committed.
+1. They are real persisted updates in the embedding key space once committed.
 2. They are not yet first-class, human-friendly audit events in the same way as user login, policy change, or explicit data export events.
 
 In practical terms, the current system is strong enough to explain and reconstruct behavior, but it is not yet optimized for auditor-friendly event tracing of each embedding lifecycle step.
