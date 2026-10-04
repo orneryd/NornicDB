@@ -33,6 +33,10 @@ type graphRequest struct {
 	RelationshipTypes []string `json:"relationship_types,omitempty"`
 	AsOf              string   `json:"as_of,omitempty"`
 	CompareTo         string   `json:"compare_to,omitempty"`
+	// Direction controls the neighborhood walk edge direction:
+	// "out" (follow outgoing edges only), "in" (incoming only) or
+	// "both" (default, preserves the historical undirected behavior).
+	Direction string `json:"direction,omitempty"`
 }
 
 type graphNodePayload struct {
@@ -125,6 +129,14 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 	if req.Depth <= 0 {
 		req.Depth = 1
 	}
+	direction := strings.TrimSpace(strings.ToLower(req.Direction))
+	if direction == "" {
+		direction = "both"
+	}
+	if direction != "out" && direction != "in" && direction != "both" {
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.GraphDirectionInvalid(), ErrBadRequest)
+		return
+	}
 	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes)
 	dbName, engine, err := s.resolveGraphStorage(r)
 	if err != nil {
@@ -132,7 +144,7 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	collection, err := s.collectLatestNeighborhood(r.Context(), engine, req.NodeIDs, req.Depth, req.Limit, filterSet)
+	collection, err := s.collectLatestNeighborhood(r.Context(), engine, req.NodeIDs, req.Depth, req.Limit, direction, filterSet)
 	if err != nil {
 		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
@@ -498,7 +510,7 @@ func (c graphCollection) payload(meta graphMetaPayload) graphPayload {
 	return graphPayload{Nodes: nodes, Edges: edges, Meta: meta}
 }
 
-func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.Engine, seedIDs []string, depth, limit int, filters graphFilterSet) (graphCollection, error) {
+func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.Engine, seedIDs []string, depth, limit int, direction string, filters graphFilterSet) (graphCollection, error) {
 	collection := newGraphCollection()
 	type queueEntry struct {
 		nodeID string
@@ -544,7 +556,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 			continue
 		}
 
-		edges, err := graphEdgesForNode(ctx, engine, storage.NodeID(current.nodeID))
+		edges, err := graphEdgesForNode(ctx, engine, storage.NodeID(current.nodeID), direction)
 		if err != nil {
 			return collection, err
 		}
@@ -625,7 +637,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 		current := queue[0]
 		queue = queue[1:]
 
-		edges, err := graphEdgesForNode(ctx, engine, storage.NodeID(current))
+		edges, err := graphEdgesForNode(ctx, engine, storage.NodeID(current), "both")
 		if err != nil {
 			return graphCollection{}, err
 		}
@@ -909,24 +921,37 @@ func cloneInterfaceMap(input map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
 	}
-	outgoing, err := engine.GetOutgoingEdges(nodeID)
-	if err != nil {
-		return nil, err
+	var outgoing []*storage.Edge
+	var incoming []*storage.Edge
+	if direction != "in" {
+		var err error
+		outgoing, err = engine.GetOutgoingEdges(nodeID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if direction != "out" {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		var err error
+		incoming, err = engine.GetIncomingEdges(nodeID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-	}
-	incoming, err := engine.GetIncomingEdges(nodeID)
-	if err != nil {
-		return nil, err
 	}
 	edges := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
 	seen := make(map[string]struct{}, len(outgoing)+len(incoming))

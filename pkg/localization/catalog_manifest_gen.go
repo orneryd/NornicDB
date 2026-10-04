@@ -961,6 +961,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "gdpr.own_data_export_only", Constructor: "GDPROwnDataExportOnly", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "graph.database_access_denied", Constructor: "GraphDatabaseAccessDenied", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "graph.diff_node_limit_exceeded", Constructor: "DiffGraphNodeLimitExceeded", Fields: []string{"Maximum"}, PluralForms: []string{"other"}},
+	{ID: "graph.direction_invalid", Constructor: "GraphDirectionInvalid", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "graph.historical_neighborhood_route", Constructor: "HistoricalNeighborhoodRoute", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "graph.historical_path_route", Constructor: "HistoricalPathRoute", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "graph.path_node_ids_required", Constructor: "PathNodeIDsRequired", Fields: []string{}, PluralForms: []string{"other"}},

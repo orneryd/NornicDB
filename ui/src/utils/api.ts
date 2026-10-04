@@ -913,6 +913,70 @@ class NornicDBClient {
     return await res.json();
   }
 
+  // searchNodes runs the hybrid RRF search (vector + BM25 fused by
+  // reciprocal rank) through /nornicdb/search and normalizes the flat
+  // response items into the same SearchResult shape as /nornicdb/similar.
+  async searchNodes(
+    query: string,
+    limit: number = 10,
+    database?: string,
+  ): Promise<SearchResult[]> {
+    const res = await fetch(joinBasePath(BASE_PATH, "/nornicdb/search"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        query,
+        limit,
+        database: database != null && database !== "" ? database : undefined,
+      }),
+    });
+    if (!res.ok) {
+      if (res.status === 503) {
+        throw new Error("Search is warming up. Please try again in a moment.");
+      }
+      const message = await this.parseErrorMessage(
+        res,
+        `Search failed (${res.status})`,
+      );
+      throw new Error(message);
+    }
+    const payload = await res.json();
+    const raw: unknown[] = Array.isArray(payload)
+      ? payload
+      : payload.results ?? [];
+    return raw.map((item: unknown) => {
+      const flat = item as {
+        id?: string;
+        nodeId?: string;
+        labels?: string[];
+        title?: string;
+        properties?: Record<string, unknown>;
+        score?: number;
+        rrf_score?: number;
+        vector_rank?: number;
+        bm25_rank?: number;
+        node?: { id: string; labels: string[]; properties: Record<string, unknown> };
+      };
+      const properties = flat.properties ?? flat.node?.properties ?? {};
+      return {
+        node: {
+          id:
+            properties.id != null
+              ? String(properties.id)
+              : flat.node?.id ?? flat.nodeId ?? flat.id ?? "",
+          labels: flat.labels ?? flat.node?.labels ?? [],
+          properties,
+          created_at: "",
+        },
+        score: flat.score ?? 0,
+        rrf_score: flat.rrf_score,
+        vector_rank: flat.vector_rank,
+        bm25_rank: flat.bm25_rank,
+      };
+    });
+  }
+
   async executeCypher(
     statement: string,
     parameters?: Record<string, unknown>,
@@ -937,6 +1001,7 @@ class NornicDBClient {
     limit?: number;
     labels?: string[];
     relationshipTypes?: string[];
+    direction?: "out" | "in" | "both";
     database?: string;
   }): Promise<GraphNeighborhoodResponse> {
     const dbName = await this.getResolvedDatabaseName(options.database);
@@ -955,6 +1020,7 @@ class NornicDBClient {
           limit: options.limit,
           labels: options.labels,
           relationship_types: options.relationshipTypes,
+          direction: options.direction,
         }),
       },
     );

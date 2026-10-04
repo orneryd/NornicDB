@@ -570,7 +570,7 @@ func TestGraphEdgesForNode_RespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := graphEdgesForNode(ctx, engine, storage.NodeID("any"))
+	_, err := graphEdgesForNode(ctx, engine, storage.NodeID("any"), "both")
 	require.Error(t, err)
 	require.Equal(t, context.Canceled, err)
 }
@@ -583,10 +583,34 @@ func TestGraphEdgesForNode_DedupesOutgoingAndIncoming(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "self-loop", StartNode: "self", EndNode: "self", Type: "LOOPS"}))
 
-	edges, err := graphEdgesForNode(context.Background(), engine, "self")
+	edges, err := graphEdgesForNode(context.Background(), engine, "self", "both")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, storage.EdgeID("self-loop"), edges[0].ID)
+}
+
+func TestGraphEdgesForNode_DirectionFiltering(t *testing.T) {
+	server, _ := setupTestServer(t)
+	engine := getDefaultStorage(t, server)
+
+	for _, id := range []storage.NodeID{"self", "out-neighbor", "in-neighbor"} {
+		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Node"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "out-edge", StartNode: "self", EndNode: "out-neighbor", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "in-edge", StartNode: "in-neighbor", EndNode: "self", Type: "CALLS"}))
+
+	outEdges, err := graphEdgesForNode(context.Background(), engine, "self", "out")
+	require.NoError(t, err)
+	require.Equal(t, []storage.EdgeID{"out-edge"}, []storage.EdgeID{outEdges[0].ID})
+
+	inEdges, err := graphEdgesForNode(context.Background(), engine, "self", "in")
+	require.NoError(t, err)
+	require.Equal(t, []storage.EdgeID{"in-edge"}, []storage.EdgeID{inEdges[0].ID})
+
+	both, err := graphEdgesForNode(context.Background(), engine, "self", "both")
+	require.NoError(t, err)
+	require.Len(t, both, 2)
 }
 
 func TestGraphEdgesForNode_ErrorAndFilterBranches(t *testing.T) {
@@ -595,7 +619,7 @@ func TestGraphEdgesForNode_ErrorAndFilterBranches(t *testing.T) {
 		engine := &graphEdgesStubEngine{Engine: storage.NewMemoryEngine(), outErr: wantErr}
 		t.Cleanup(func() { _ = engine.Close() })
 
-		_, err := graphEdgesForNode(context.Background(), engine, "n1")
+		_, err := graphEdgesForNode(context.Background(), engine, "n1", "both")
 		require.ErrorIs(t, err, wantErr)
 		require.Zero(t, engine.incomingCalls)
 	})
@@ -605,7 +629,7 @@ func TestGraphEdgesForNode_ErrorAndFilterBranches(t *testing.T) {
 		engine := &graphEdgesStubEngine{Engine: storage.NewMemoryEngine(), cancel: cancel}
 		t.Cleanup(func() { _ = engine.Close() })
 
-		_, err := graphEdgesForNode(ctx, engine, "n1")
+		_, err := graphEdgesForNode(ctx, engine, "n1", "both")
 		require.ErrorIs(t, err, context.Canceled)
 		require.Zero(t, engine.incomingCalls)
 	})
@@ -615,7 +639,7 @@ func TestGraphEdgesForNode_ErrorAndFilterBranches(t *testing.T) {
 		engine := &graphEdgesStubEngine{Engine: storage.NewMemoryEngine(), inErr: wantErr}
 		t.Cleanup(func() { _ = engine.Close() })
 
-		_, err := graphEdgesForNode(context.Background(), engine, "n1")
+		_, err := graphEdgesForNode(context.Background(), engine, "n1", "both")
 		require.ErrorIs(t, err, wantErr)
 		require.Equal(t, 1, engine.incomingCalls)
 	})
@@ -630,7 +654,7 @@ func TestGraphEdgesForNode_ErrorAndFilterBranches(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = engine.Close() })
 
-		edges, err := graphEdgesForNode(context.Background(), engine, "n1")
+		edges, err := graphEdgesForNode(context.Background(), engine, "n1", "both")
 		require.NoError(t, err)
 		require.Equal(t, []storage.EdgeID{"shared", "incoming"}, []storage.EdgeID{edges[0].ID, edges[1].ID})
 	})
@@ -970,7 +994,7 @@ func TestCollectLatestNeighborhood_CanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = server.collectLatestNeighborhood(ctx, engine, []string{"a"}, 1, 10, newGraphFilterSet(nil, nil))
+	_, err = server.collectLatestNeighborhood(ctx, engine, []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -1001,8 +1025,7 @@ func TestCollectLatestNeighborhood_SeedAndFilterBranches(t *testing.T) {
 		engine,
 		[]string{"", "seed", "seed", "missing-seed"},
 		1,
-		0,
-		newGraphFilterSet([]string{"Person"}, []string{"KNOWS"}),
+		0, "both", newGraphFilterSet([]string{"Person"}, []string{"KNOWS"}),
 	)
 	require.NoError(t, err)
 	require.False(t, collection.truncated)
@@ -1029,7 +1052,7 @@ func TestCollectLatestNeighborhood_TruncatesSeedListAndPropagatesEdgeError(t *te
 			"b": {ID: "b", Labels: []string{"Node"}},
 		},
 	}
-	collection, err := server.collectLatestNeighborhood(context.Background(), engine, []string{"a", "b"}, 1, 1, newGraphFilterSet(nil, nil))
+	collection, err := server.collectLatestNeighborhood(context.Background(), engine, []string{"a", "b"}, 1, 1, "both", newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.True(t, collection.truncated)
 	require.Contains(t, collection.nodes, "a")
@@ -1040,7 +1063,7 @@ func TestCollectLatestNeighborhood_TruncatesSeedListAndPropagatesEdgeError(t *te
 		graphEdgesStubEngine: &graphEdgesStubEngine{Engine: base, outErr: wantErr},
 		nodes:                map[storage.NodeID]*storage.Node{"a": {ID: "a", Labels: []string{"Node"}}},
 	}
-	_, err = server.collectLatestNeighborhood(context.Background(), errorEngine, []string{"a"}, 1, 10, newGraphFilterSet(nil, nil))
+	_, err = server.collectLatestNeighborhood(context.Background(), errorEngine, []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, wantErr)
 }
 
@@ -1247,7 +1270,7 @@ func TestCollectLatestNeighborhood_CancelledDuringEdgeIteration(t *testing.T) {
 		},
 	}
 
-	_, err := server.collectLatestNeighborhood(ctx, engine, []string{"a"}, 1, 10, newGraphFilterSet(nil, nil))
+	_, err := server.collectLatestNeighborhood(ctx, engine, []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -1358,7 +1381,7 @@ func TestGraphVersionAndEdgeIterationCancellationBranches(t *testing.T) {
 		cancel:   cancelOut,
 	}
 	t.Cleanup(func() { _ = engineOut.Close() })
-	_, err = graphEdgesForNode(ctxOut, engineOut, "a")
+	_, err = graphEdgesForNode(ctxOut, engineOut, "a", "both")
 	require.ErrorIs(t, err, context.Canceled)
 
 	ctxIn, cancelIn := context.WithCancel(context.Background())
@@ -1369,7 +1392,7 @@ func TestGraphVersionAndEdgeIterationCancellationBranches(t *testing.T) {
 		cancel:   cancelIn,
 	}
 	t.Cleanup(func() { _ = engineIn.Close() })
-	_, err = graphEdgesForNode(ctxIn, engineIn, "a")
+	_, err = graphEdgesForNode(ctxIn, engineIn, "a", "both")
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -1403,7 +1426,7 @@ func TestCollectLatestNeighborhood_TruncatesWhenNewNeighborExceedsLimit(t *testi
 			"b": {ID: "b", Labels: []string{"Node"}},
 		},
 	}
-	collection, err := server.collectLatestNeighborhood(context.Background(), engine, []string{"a"}, 1, 1, newGraphFilterSet(nil, nil))
+	collection, err := server.collectLatestNeighborhood(context.Background(), engine, []string{"a"}, 1, 1, "both", newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.True(t, collection.truncated)
 	require.Contains(t, collection.nodes, "a")
@@ -1465,7 +1488,7 @@ func TestGraphEdgesForNode_OutgoingDuplicateAndLoopCancellationBranches(t *testi
 			{ID: "e1", StartNode: "a", EndNode: "b", Type: "REL"},
 		},
 	}
-	edges, err := graphEdgesForNode(context.Background(), dupEngine, "a")
+	edges, err := graphEdgesForNode(context.Background(), dupEngine, "a", "both")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 
@@ -1475,7 +1498,7 @@ func TestGraphEdgesForNode_OutgoingDuplicateAndLoopCancellationBranches(t *testi
 		outgoing: []*storage.Edge{{ID: "o1", StartNode: "a", EndNode: "b", Type: "REL"}},
 		cancelIn: cancelOut,
 	}
-	_, err = graphEdgesForNode(ctxOut, outCancel, "a")
+	_, err = graphEdgesForNode(ctxOut, outCancel, "a", "both")
 	require.ErrorIs(t, err, context.Canceled)
 
 	ctxIn, cancelIn := context.WithCancel(context.Background())
@@ -1485,7 +1508,7 @@ func TestGraphEdgesForNode_OutgoingDuplicateAndLoopCancellationBranches(t *testi
 		incoming: []*storage.Edge{{ID: "i1", StartNode: "b", EndNode: "a", Type: "REL"}},
 		cancelIn: cancelIn,
 	}
-	_, err = graphEdgesForNode(ctxIn, inCancel, "a")
+	_, err = graphEdgesForNode(ctxIn, inCancel, "a", "both")
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -1535,6 +1558,6 @@ func TestCollectLatestNeighborhood_CanceledInsideEdgeLoop(t *testing.T) {
 		},
 	}
 
-	_, err := server.collectLatestNeighborhood(ctx, engine, []string{"a"}, 1, 10, newGraphFilterSet(nil, nil))
+	_, err := server.collectLatestNeighborhood(ctx, engine, []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, context.Canceled)
 }

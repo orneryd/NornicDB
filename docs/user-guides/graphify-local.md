@@ -25,16 +25,34 @@ external service:
 
 To refresh the graph after changing code, run `graphify update . --no-cluster`
 (using `"$(uv tool dir --bin)/graphify"` if it is not on `PATH`). Then push the
-updated graph to NornicDB. Set `NEO4J_PASSWORD` in the terminal without writing
-it to this repository; the import is idempotent and accepts `--batch-size`.
+updated graph to NornicDB. The import is idempotent and accepts `--batch-size`:
 
 ```sh
-NEO4J_PASSWORD=your-local-password "$(uv tool dir)/graphifyy/bin/python" \
+"$(uv tool dir)/graphifyy/bin/python" \
   scripts/graphify_local.py --graph graphify-out/graph.json
 ```
 
-The importer matches Graphify's node IDs, labels, relationship types, and scalar
-properties, including implicit edge endpoints. It groups writes into bounded
-`UNWIND` batches because Graphify's stock Neo4j exporter sends one Bolt query
-per node and edge. Re-running `MERGE` updates existing records. Only code is
-indexed: docs and PDFs are skipped, so no LLM/API key is required.
+The importer targets `bolt://localhost:7687` (the Bolt port; `7474` is the
+HTTP/UI port) with `admin` / `password` by default (override with `--uri`,
+`--user`, `--password`, or `NEO4J_PASSWORD`). The graph is imported into its
+own `graphify` database, created automatically when missing. Every symbol node
+also receives a full, untruncated `body` property: the complete source span
+re-read from the repository files, including the comment block directly above
+the symbol and all comments within it. NornicDB's managed embedding worker
+includes every string property in the embedding text, so ingested bodies are
+automatically embedded and searchable through the vector search APIs.
+
+Browse the result at the `/graphify` route of the web UI: it loads the tree
+rooted at `cmd/nornicdb/main.go` `main()` at a configurable depth (default 3),
+walks the call neighborhood outward, re-roots from any clicked symbol, runs
+hybrid RRF search from the search box, and spawns vector-similar symbols as a
+pink "similar" arm off any clicked node.
+
+The importer matches Graphify's node IDs, labels, relationship types, and
+scalar properties, including implicit edge endpoints. It reads the `links`
+array emitted by Graphify >=0.9.69 (`edges` fallback for older graphs), creates
+per-label `id` indexes before the first write so MERGE lookups never scan, and
+groups writes into bounded `UNWIND` batches (default 2000) because Graphify's
+stock Neo4j exporter sends one Bolt query per node and edge. Re-running
+`MERGE` updates existing records. Only code is indexed: docs and PDFs are
+skipped, so no LLM/API key is required.

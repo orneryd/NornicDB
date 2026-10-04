@@ -7,6 +7,7 @@ const (
 	MessagePathNodeIDsRequired         MessageID = "graph.path_node_ids_required"
 	MessageHistoricalPathRoute         MessageID = "graph.historical_path_route"
 	MessageGraphDatabaseAccessDenied   MessageID = "graph.database_access_denied"
+	MessageGraphDirectionInvalid       MessageID = "graph.direction_invalid"
 	MessageTemporalNodeLimit           MessageID = "graph.temporal_node_limit_exceeded"
 	MessageDiffNodeLimit               MessageID = "graph.diff_node_limit_exceeded"
 )
@@ -29,6 +30,11 @@ func HistoricalPathRoute() Message {
 // GraphDatabaseAccessDenied identifies denied access where the database name must not be disclosed.
 func GraphDatabaseAccessDenied() Message {
 	return Message{ID: MessageGraphDatabaseAccessDenied, Fallback: "Access to the requested database is not allowed."}
+}
+
+// GraphDirectionInvalid identifies an unsupported neighborhood direction value.
+func GraphDirectionInvalid() Message {
+	return Message{ID: MessageGraphDirectionInvalid, Fallback: "direction must be one of 'out', 'in' or 'both'"}
 }
 
 func TemporalGraphNodeLimitExceeded(maximum int) Message {

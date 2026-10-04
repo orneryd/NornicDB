@@ -84,6 +84,9 @@ function nodeShimPlugin(): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const basePath = normalizeViteBasePath(env.VITE_BASE_PATH);
+  // Standalone dev runs can point the proxy at any local NornicDB HTTP
+  // port, e.g. VITE_PROXY_TARGET=http://localhost:7474 npm run dev.
+  const proxyTarget = env.VITE_PROXY_TARGET || "http://localhost:7475";
 
   return {
     plugins: [neo4jBrowserChannelPlugin(), nodeShimPlugin(), react()],
@@ -97,24 +100,24 @@ export default defineConfig(({ mode }) => {
       proxy: {
         // Proxy API requests to NornicDB server
         "/api": {
-          target: "http://localhost:7475",
+          target: proxyTarget,
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, ""),
         },
         "/db": {
-          target: "http://localhost:7475",
+          target: proxyTarget,
           changeOrigin: true,
         },
         "/auth": {
-          target: "http://localhost:7475",
+          target: proxyTarget,
           changeOrigin: true,
         },
         "/nornicdb": {
-          target: "http://localhost:7475",
+          target: proxyTarget,
           changeOrigin: true,
         },
         "/admin": {
-          target: "http://localhost:7475",
+          target: proxyTarget,
           changeOrigin: true,
         },
       },

@@ -1,15 +1,30 @@
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.graphify_local import import_graph, main, node_label, relationship_type, scalar_properties
+from scripts.graphify_local import (
+    body_for_node,
+    body_span,
+    collect_symbol_lines,
+    comment_mask,
+    comment_style,
+    import_graph,
+    main,
+    node_label,
+    parse_location,
+    relationship_type,
+    scalar_properties,
+)
 
 
 class RecordingSession:
     def __init__(self):
         self.queries = []
+        self.records = []
+        self.database = None
 
     def __enter__(self):
         return self
@@ -24,6 +39,9 @@ class RecordingSession:
     def consume(self):
         return None
 
+    def __iter__(self):
+        return iter(self.records)
+
 
 class RecordingDriver:
     def __init__(self):
@@ -35,7 +53,8 @@ class RecordingDriver:
     def __exit__(self, *args):
         return False
 
-    def session(self):
+    def session(self, **kwargs):
+        self.connection.database = kwargs.get("database")
         return self.connection
 
 
@@ -92,6 +111,19 @@ class GraphifyLocalTest(unittest.TestCase):
         self.assertEqual([len(params["rows"]) for query, params in queries if "[r:CALLS]" in query], [2])
         self.assertEqual([len(params["rows"]) for query, params in queries if "[r:IMPORTS]" in query], [1])
         self.assertEqual(sum("CREATE INDEX graphify_" in query for query, _ in queries), 2)
+        # Indexes must be created before the first MERGE for their label so
+        # id lookups never fall back to full-label scans.
+        index_positions = {re.search(r"FOR \(n:(\w+)\)", query).group(1): position
+                          for position, (query, _) in enumerate(queries)
+                          if "CREATE INDEX graphify_" in query}
+        merge_positions = {}
+        for position, (query, _) in enumerate(queries):
+            if "MERGE (n:" in query:
+                label = query.split("MERGE (n:")[1].split(" ")[0]
+                merge_positions.setdefault(label, position)
+        for label, merge_position in merge_positions.items():
+            self.assertLess(index_positions[label], merge_position,
+                            f"index for {label} must precede its first MERGE")
 
     def test_import_reports_large_progress(self):
         driver = RecordingDriver()
@@ -110,6 +142,37 @@ class GraphifyLocalTest(unittest.TestCase):
         self.assertEqual(sum(len(params["rows"]) for query, params in driver.connection.queries
                              if "[r:CALLS]" in query), 10000)
 
+    def test_import_uses_links_key_and_writes_bodies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "demo.go").write_text("// Doc for A.\nfunc A() {}\n\nfunc B() {}\n", encoding="utf-8")
+            graph = {
+                "nodes": [
+                    {"id": "a", "label": "A()", "file_type": "code",
+                     "source_file": "demo.go", "source_location": "L2"},
+                    {"id": "b", "label": "B()", "file_type": "code",
+                     "source_file": "demo.go", "source_location": "L4"},
+                ],
+                "links": [{"source": "a", "target": "b", "relation": "calls", "confidence": "EXTRACTED"}],
+            }
+            graph_path = root / "graph.json"
+            graph_path.write_text(json.dumps(graph), encoding="utf-8")
+            driver = RecordingDriver()
+            with patch("scripts.graphify_local.GraphDatabase.driver", return_value=driver):
+                import_graph(graph_path, "bolt://localhost:7687", "admin", "password", 10, str(root))
+
+        queries = driver.connection.queries
+        self.assertIn(("CREATE DATABASE `graphify`", {}), queries)
+        self.assertIn("SHOW DATABASES", [q for q, _ in queries][0])
+        self.assertEqual(driver.connection.database, "graphify")
+        node_rows = {row["id"]: row["props"]
+                     for query, params in queries if "MERGE (n:" in query
+                     for row in params["rows"]}
+        self.assertIn("// Doc for A.", node_rows["a"]["body"])
+        self.assertTrue(node_rows["a"]["body"].rstrip().endswith("}"))
+        self.assertEqual(node_rows["b"]["body"], "func B() {}")
+        self.assertEqual(sum(len(params["rows"]) for query, params in queries if "[r:CALLS]" in query), 1)
+
     def test_cli_rejects_invalid_inputs_and_forwards_options(self):
         with tempfile.TemporaryDirectory() as directory:
             graph = Path(directory) / "graph.json"
@@ -120,15 +183,203 @@ class GraphifyLocalTest(unittest.TestCase):
             with patch("sys.argv", ["graphify_local.py", "--graph", str(graph) + ".missing"]), \
                  self.assertRaises(SystemExit):
                 main()
-            with patch("sys.argv", ["graphify_local.py", "--graph", str(graph)]), \
-                 patch.dict("os.environ", {"NEO4J_PASSWORD": ""}), \
-                 self.assertRaises(SystemExit):
-                main()
             with patch("sys.argv", ["graphify_local.py", "--graph", str(graph), "--batch-size", "2"]), \
                  patch.dict("os.environ", {"NEO4J_PASSWORD": "test"}), \
                  patch("scripts.graphify_local.import_graph") as importer:
                 main()
-                importer.assert_called_once_with(graph, "bolt://127.0.0.1:7687", "admin", "test", 2)
+                importer.assert_called_once_with(graph, "bolt://localhost:7687", "admin", "test", 2, ".", "graphify")
+            with patch("sys.argv", ["graphify_local.py", "--graph", str(graph)]), \
+                 patch.dict("os.environ", {}, clear=True), \
+                 patch("scripts.graphify_local.import_graph") as importer:
+                main()
+                importer.assert_called_once_with(graph, "bolt://localhost:7687", "admin", "password", 2000, ".", "graphify")
+
+    def test_import_skips_create_when_database_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            graph_path = root / "graph.json"
+            graph_path.write_text('{"nodes":[],"links":[]}', encoding="utf-8")
+            driver = RecordingDriver()
+            driver.connection.records = [{"name": "neo4j"}, {"name": "graphify"}]
+            with patch("scripts.graphify_local.GraphDatabase.driver", return_value=driver):
+                import_graph(graph_path, "bolt://localhost:7687", "admin", "password", 10, str(root), "graphify")
+        self.assertFalse(any("CREATE DATABASE" in q for q, _ in driver.connection.queries),
+                         "existing database must not be recreated")
+        self.assertEqual(driver.connection.database, "graphify")
+
+    def test_parse_location(self):
+        self.assertEqual(parse_location("L17"), 17)
+        self.assertEqual(parse_location("L1"), 1)
+        self.assertIsNone(parse_location(""))
+        self.assertIsNone(parse_location("17"))
+        self.assertIsNone(parse_location("Lx"))
+        self.assertIsNone(parse_location(None))
+
+    def test_comment_style_and_mask(self):
+        self.assertEqual(comment_style("main.py"), "hash")
+        self.assertEqual(comment_style("run.sh"), "hash")
+        self.assertEqual(comment_style("Dockerfile"), "hash")
+        self.assertEqual(comment_style("query.sql"), "dash")
+        self.assertEqual(comment_style("main.go"), "c")
+        lines = [
+            "// leading",
+            "/* block",
+            " * continuation",
+            " */",
+            "package demo",
+            "// trailing",
+            "var x = 1",
+        ]
+        self.assertEqual(comment_mask(lines, "c"), [True, True, True, True, False, True, False])
+        self.assertEqual(comment_mask(["# one", "x = 1", "# two"], "hash"), [True, False, True])
+        self.assertEqual(comment_mask(["-- note", "SELECT 1"], "dash"), [True, False])
+
+    def test_body_span_attaches_comment_block_above(self):
+        lines = [
+            "// Copyright 2026",
+            "package demo",
+            "",
+            "import \"fmt\"",
+            "",
+            "// Compute adds one.",
+            "//",
+            "// More detail.",
+            "func Compute(x int) int {",
+            "\treturn x + 1",
+            "}",
+        ]
+        mask = comment_mask(lines, "c")
+        # Doc block above Compute: lines 6-8, with one blank line (5) between.
+        self.assertEqual(body_span(lines, 9, mask, "c"), 5)
+        # The package clause adopts the file's license header directly above it
+        # (this never affects symbol bodies: package/import code separates them).
+        self.assertEqual(body_span(lines, 2, mask, "c"), 1)
+        self.assertIsNone(body_span(lines, 9, mask, "none"))
+
+    def test_body_span_stops_at_double_blank_and_code(self):
+        lines = [
+            "// header block",
+            "//",
+            "",
+            "",
+            "// detached doc",
+            "func A() {}",
+        ]
+        mask = comment_mask(lines, "c")
+        # Two blank lines separate the header block from the doc comment; the
+        # walk tolerates one blank (line 4) but stops at the second (line 3).
+        self.assertEqual(body_span(lines, 6, mask, "c"), 4)
+        lines = [
+            "# doc for f",
+            "import os",
+            "",
+            "def f(): pass",
+        ]
+        mask = comment_mask(lines, "hash")
+        self.assertIsNone(body_span(lines, 4, mask, "hash"))
+
+    def test_body_for_node_full_symbol_bodies(self):
+        go_source = """// Package demo does things.
+package demo
+
+import "fmt"
+
+// Compute adds one.
+//
+// More detail.
+func Compute(x int) int {
+\t// inside comment
+\treturn x + 1
+}
+
+// Other is second.
+func Other() {}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "pkg" / "demo").mkdir(parents=True)
+            (root / "pkg" / "demo" / "demo.go").write_text(go_source, encoding="utf-8")
+            graph = {
+                "nodes": [
+                    {"id": "container", "label": "demo.go", "file_type": "code",
+                     "source_file": "pkg/demo/demo.go", "source_location": "L1"},
+                    {"id": "compute", "label": "Compute()", "file_type": "code",
+                     "source_file": "pkg/demo/demo.go", "source_location": "L9"},
+                    {"id": "other", "label": "Other()", "file_type": "code",
+                     "source_file": "pkg/demo/demo.go", "source_location": "L15"},
+                    {"id": "missing", "label": "Gone()", "file_type": "code",
+                     "source_file": "pkg/demo/absent.go", "source_location": "L1"},
+                ],
+                "edges": [],
+            }
+            graph_path = root / "graph.json"
+            graph_path.write_text(json.dumps(graph), encoding="utf-8")
+            symbols = collect_symbol_lines(graph_path)
+            cache = {}
+            state_cache = {}
+            by_id = {n["id"]: n for n in graph["nodes"]}
+
+            container_body = body_for_node(root, by_id["container"], symbols, cache, state_cache)
+            self.assertIsNone(container_body, "file container nodes should not carry a whole-file body")
+
+            compute_body = body_for_node(root, by_id["compute"], symbols, cache, state_cache)
+            self.assertIsNotNone(compute_body)
+            # Full, untruncated body including the doc comments above and the
+            # comment inside — but stopping before Other()'s own doc comment.
+            self.assertIn("// Compute adds one.", compute_body)
+            self.assertIn("// More detail.", compute_body)
+            self.assertIn("// inside comment", compute_body)
+            self.assertIn("return x + 1", compute_body)
+            self.assertNotIn("// Other is second.", compute_body)
+            self.assertTrue(compute_body.rstrip().endswith("}"))
+
+            other_body = body_for_node(root, by_id["other"], symbols, cache, state_cache)
+            self.assertEqual(other_body, "// Other is second.\nfunc Other() {}")
+
+            self.assertIsNone(body_for_node(root, by_id["missing"], symbols, cache, state_cache))
+
+    def test_body_for_node_pages_and_headings(self):
+        markdown = """# Title
+
+Intro paragraph.
+
+## Section One
+
+Section body.
+
+## Section Two
+
+More body.
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "doc.md").write_text(markdown, encoding="utf-8")
+            graph = {
+                "nodes": [
+                    {"id": "page", "label": "doc.md", "file_type": "document", "node_kind": "page",
+                     "source_file": "doc.md", "source_location": "L1"},
+                    {"id": "h1", "label": "Section One", "file_type": "document", "node_kind": "heading",
+                     "source_file": "doc.md", "source_location": "L5"},
+                    {"id": "h2", "label": "Section Two", "file_type": "document", "node_kind": "heading",
+                     "source_file": "doc.md", "source_location": "L9"},
+                ],
+                "edges": [],
+            }
+            graph_path = root / "graph.json"
+            graph_path.write_text(json.dumps(graph), encoding="utf-8")
+            symbols = collect_symbol_lines(graph_path)
+            cache = {}
+            state_cache = {}
+            by_id = {n["id"]: n for n in graph["nodes"]}
+            page_body = body_for_node(root, by_id["page"], symbols, cache, state_cache)
+            self.assertEqual(page_body, markdown.rstrip("\n"))
+            h1_body = body_for_node(root, by_id["h1"], symbols, cache, state_cache)
+            self.assertIn("## Section One", h1_body)
+            self.assertIn("Section body.", h1_body)
+            self.assertNotIn("## Section Two", h1_body)
+            h2_body = body_for_node(root, by_id["h2"], symbols, cache, state_cache)
+            self.assertIn("## Section Two", h2_body)
+            self.assertIn("More body.", h2_body)
 
 
 if __name__ == "__main__":
