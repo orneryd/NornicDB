@@ -552,7 +552,7 @@ func expandTraversalWildcardReturnItems(items []returnItem, match *TraversalMatc
 	}
 	names := make(map[string]struct{})
 	bind := func(name string) {
-		if name = strings.TrimSpace(name); name != "" {
+		if name = strings.TrimSpace(name); name != "" && !isGeneratedVariable(name) {
 			names[name] = struct{}{}
 		}
 	}
@@ -2682,6 +2682,9 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 	}
 
 	if variable, labels, ok := parseWithWhereLabelTest(whereClause); ok {
+		if rel, isRel := pathCtx.rels[variable]; isRel {
+			return entityHasAllLabelsOrTypesPredicate(rel, labels) // r:R tests the type (#860)
+		}
 		return entityHasAllLabelsOrTypesPredicate(pathCtx.nodes[variable], labels)
 	}
 

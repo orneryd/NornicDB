@@ -82,3 +82,30 @@
 - id: cyphermatching.function_parameters_insufficient
   description: La función de agregado tiene pocos parámetros. Function no se traduce.
   other: "parámetros insuficientes para la función '{{.Function}}'"
+- id: cyphermatching.label_expression_mixed_colon
+  description: Una cadena de etiquetas separadas por dos puntos también usa símbolos de expresión de etiquetas. Expression es texto Cypher y no se traduce.
+  other: "No se permite mezclar los símbolos de expresión de etiquetas ('|', '&', '!' y '%') con los dos puntos (':') entre etiquetas. Use un solo conjunto de símbolos. Esta expresión podría escribirse como :{{.Expression}}."
+- id: cyphermatching.label_expression_mixed_is
+  description: Una expresión de etiquetas IS también usa dos puntos entre etiquetas. IS y Expression son texto Cypher y no se traducen.
+  other: "No se permite mezclar la palabra clave IS con los dos puntos (':') entre etiquetas. Esta expresión podría escribirse como IS {{.Expression}}."
+- id: cyphermatching.relationship_type_colon_disjunction
+  description: "El separador antiguo |: en una relación con variable, propiedades o longitud. Expression es texto Cypher y no se traduce."
+  other: "Ya no se admite separar tipos de relación alternativos con dos puntos junto con\nuna variable, predicados de propiedades en línea o longitud variable.\nSepare los tipos de relación con `:{{.Expression}}`."
+- id: cyphermatching.relationship_type_colon_conjunction
+  description: Un patrón de relación separa tipos con dos puntos.
+  other: "Los tipos de relación de una expresión de tipos de relación no se pueden combinar con ':'"
+- id: cyphermatching.variable_length_type_expression
+  description: Una relación de longitud variable usa una expresión de tipos distinta de alternativas.
+  other: "Las relaciones de longitud variable no deben usar expresiones de tipos de relación."
+- id: cyphermatching.label_expression_in_write_pattern
+  description: Un patrón de nodo de CREATE o MERGE usa |, ! o %. Clause es una palabra clave de Cypher y no se traduce.
+  other: "Las expresiones de etiquetas en patrones no se permiten en una cláusula {{.Clause}}, solo en una cláusula MATCH y en expresiones"
+- id: cyphermatching.relationship_type_expression_in_write_pattern
+  description: Un patrón de relación de CREATE o MERGE usa !, & o %. Clause es una palabra clave de Cypher y no se traduce.
+  other: "Las expresiones de tipos de relación en patrones no se permiten en una cláusula {{.Clause}}, solo en una cláusula MATCH"
+- id: cyphermatching.is_not_operand_invalid
+  description: IS NOT va seguido de una etiqueta. Input es texto Cypher y no se traduce.
+  other: "Entrada no válida '{{.Input}}': se esperaba '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' o 'TYPED'"
+- id: cyphermatching.single_relationship_type_required
+  description: Un patrón de relación de CREATE o MERGE enumera tipos alternativos. Clause es una palabra clave de Cypher y no se traduce.
+  other: "Se debe especificar un único tipo de relación para {{.Clause}}"

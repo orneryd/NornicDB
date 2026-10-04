@@ -788,7 +788,13 @@ func parseUnwindNodePatternClauseInternal(clause string, keyword string, allowAl
 		return "", nil, nil, false, false
 	}
 	parenEnd := findMatchingParen(rest, 0)
-	if parenEnd < 0 || strings.TrimSpace(rest[parenEnd+1:]) != "" {
+	if parenEnd < 0 {
+		return "", nil, nil, false, false
+	}
+	// MATCH (v {…}) WHERE v:A|B is the form the label-expression rewrite
+	// gives MATCH (v:A|B {…}) (#860); a lookup reads its alternatives.
+	where := strings.TrimSpace(rest[parenEnd+1:])
+	if where != "" && (!allowAlternatives || !startsWithKeywordFold(where, "WHERE")) {
 		return "", nil, nil, false, false
 	}
 	nodePattern := strings.TrimSpace(rest[1:parenEnd])
@@ -807,7 +813,7 @@ func parseUnwindNodePatternClauseInternal(clause string, keyword string, allowAl
 		return "", nil, nil, false, false
 	}
 	parts := strings.Split(head, ":")
-	if len(parts) < 2 {
+	if len(parts) < 2 && where == "" || len(parts) >= 2 && where != "" {
 		return "", nil, nil, false, false
 	}
 	mergeVar := strings.TrimSpace(parts[0])
@@ -816,6 +822,18 @@ func parseUnwindNodePatternClauseInternal(clause string, keyword string, allowAl
 	}
 	labels := make([]string, 0, len(parts)-1)
 	anyLabel := false
+	if where != "" {
+		variable, chain, hasLabels := splitNodeHead(strings.TrimSpace(where[len("WHERE"):]))
+		expr, ok := parseLabelExpression(chain)
+		if !hasLabels || variable != mergeVar || !ok {
+			return "", nil, nil, false, false
+		}
+		alternatives, ok := expr.alternatives()
+		if !ok {
+			return "", nil, nil, false, false
+		}
+		labels, anyLabel = alternatives, len(alternatives) > 1
+	}
 	for i := 1; i < len(parts); i++ {
 		label := strings.TrimSpace(parts[i])
 		if strings.Contains(label, "|") {
@@ -1307,7 +1325,14 @@ func parseUnwindMergeChainPattern(mutationPart string) unwindMergeChainPlan {
 	for i := 0; i < len(clauses); i++ {
 		clause := clauses[i]
 		if !startsWithKeywordFold(clause, "MERGE") {
-			if lookupPlan, ok := parseUnwindLookupClause(clause); ok {
+			lookupPlan, ok := parseUnwindLookupClause(clause)
+			if !ok && i+1 < len(clauses) && startsWithKeywordFold(clauses[i+1], "WHERE") {
+				// MATCH (v {…}) WHERE v:A|B, the rewritten MATCH (v:A|B {…}) (#860).
+				if lookupPlan, ok = parseUnwindLookupClause(clause + " " + clauses[i+1]); ok {
+					i++
+				}
+			}
+			if ok {
 				for i+1 < len(clauses) && startsWithKeywordFold(clauses[i+1], "SET") {
 					parsed, ok := parseUnwindSimpleSetAssignments(strings.TrimSpace(clauses[i+1][len("SET"):]), lookupPlan.varName)
 					if !ok {

@@ -189,7 +189,11 @@ func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
 			return true
 		case '/':
 			return true
-		case '+', '-', '%', '^', '=', '<', '>', ',', '(', '[':
+		case '%':
+			// n:% (any label, #860) ends an operand; a remainder operator
+			// follows one.
+			return !labelWildcardAt(s, i)
+		case '+', '-', '^', '=', '<', '>', ',', '(', '[':
 			return true
 		}
 	}
@@ -326,6 +330,14 @@ func prevWordStart(s string, pos int) int {
 // would land inside a preceding comment and read the comment's last word as
 // code (RETURN 1 // WITH\nWITH … read the comment's WITH as the previous
 // word).
+// labelWildcardAt reports whether the % at s[i] is the label expression
+// wildcard (n:%, n:A|%, n:!%, n:(%)) rather than the remainder operator, which
+// always follows an operand.
+func labelWildcardAt(s string, i int) bool {
+	j := lastLiveByte(s, i)
+	return j >= 0 && strings.IndexByte(":|&!(", s[j]) >= 0
+}
+
 func lastLiveByte(s string, pos int) int {
 	if pos <= 0 {
 		return -1
@@ -1008,6 +1020,10 @@ type queryRewrite struct {
 	original  string
 	canonical string
 	edits     []queryTextEdit
+	// verbatimColumns: a column whose text the client wrote is kept as is.
+	// The label-expression rewrite inserts predicates, in which a short
+	// column name (r) can occur last (#860).
+	verbatimColumns bool
 }
 
 // queryWhitespaceAt returns the length of the whitespace character at
@@ -1376,7 +1392,7 @@ func (r *queryRewrite) touches(start, end int) bool {
 // canonical statement (its last occurrence: the final RETURN names the
 // columns); text itself when it isn't one or holds no replacement.
 func (r *queryRewrite) originalText(text string) string {
-	if text == "" {
+	if text == "" || r.verbatimColumns && strings.Contains(r.original, text) {
 		return text
 	}
 	start := strings.LastIndex(r.canonical, text)

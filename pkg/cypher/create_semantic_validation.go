@@ -241,7 +241,10 @@ func validateCreateRelationshipShape(pattern string) error {
 		)
 	}
 	typeDeclaration := strings.TrimSpace(declaration[colon+1:])
-	if typeDeclaration == "" || strings.Contains(typeDeclaration, "|") || strings.Contains(typeDeclaration, ":") {
+	if strings.Contains(typeDeclaration, "|") {
+		return singleRelationshipTypeError("CREATE")
+	}
+	if typeDeclaration == "" || strings.Contains(typeDeclaration, ":") {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"NoSingleRelationshipType",
@@ -436,4 +439,11 @@ func simpleCreatePropertyReference(expression string) (string, bool) {
 		return root, true
 	}
 	return "", false
+}
+
+// singleRelationshipTypeError is Neo4j's error for alternative types
+// ([:R|S]) in a CREATE or MERGE relationship.
+func singleRelationshipTypeError(clause string) error {
+	message := localization.CypherMatchingSingleRelationshipTypeRequired(clause)
+	return localizedError(message, newSemanticError("Neo.ClientError.Statement.SyntaxError", "NoSingleRelationshipType", message.Fallback))
 }

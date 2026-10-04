@@ -258,6 +258,18 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
 	}
 
+	// Label expressions in patterns become the label forms and WHERE
+	// predicates every route reads, once, here; the result's columns and
+	// errors are mapped back (#860).
+	desugared, labelRewrite, err := desugarLabelExpressions(cypher)
+	if err != nil {
+		return nil, err
+	}
+	if labelRewrite != nil {
+		cypher = desugared
+		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+	}
+
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if e.shouldUseFabricPlanner(cypher) {

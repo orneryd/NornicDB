@@ -82,3 +82,30 @@
 - id: cyphermatching.function_parameters_insufficient
   description: Aggregate function has too few parameters. Function is an untranslated machine name.
   other: "insufficient parameters for function '{{.Function}}'"
+- id: cyphermatching.label_expression_mixed_colon
+  description: A colon-separated label chain also uses label expression symbols. Expression is Cypher text and is not translated.
+  other: "Mixing label expression symbols ('|', '&', '!', and '%') with colon (':') between labels is not allowed. Please only use one set of symbols. This expression could be expressed as :{{.Expression}}."
+- id: cyphermatching.label_expression_mixed_is
+  description: An IS label expression also uses colons between labels. IS and Expression are Cypher text and are not translated.
+  other: "Mixing the IS keyword with colon (':') between labels is not allowed. This expression could be expressed as IS {{.Expression}}."
+- id: cyphermatching.relationship_type_colon_disjunction
+  description: "The legacy |: separator on a relationship with a variable, properties or a length. Expression is Cypher text and is not translated."
+  other: "The semantics of using colon in the separation of alternative relationship types in conjunction with\nthe use of variable binding, inlined property predicates, or variable length is no longer supported.\nPlease separate the relationships types using `:{{.Expression}}` instead."
+- id: cyphermatching.relationship_type_colon_conjunction
+  description: A relationship pattern lists types separated by colons.
+  other: "Relationship types in a relationship type expressions may not be combined using ':'"
+- id: cyphermatching.variable_length_type_expression
+  description: A variable-length relationship uses a type expression other than alternatives.
+  other: "Variable length relationships must not use relationship type expressions."
+- id: cyphermatching.label_expression_in_write_pattern
+  description: A CREATE or MERGE node pattern uses |, ! or %. Clause is a Cypher keyword and is not translated.
+  other: "Label expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause and in expressions"
+- id: cyphermatching.relationship_type_expression_in_write_pattern
+  description: A CREATE or MERGE relationship pattern uses !, & or %. Clause is a Cypher keyword and is not translated.
+  other: "Relationship type expressions in patterns are not allowed in a {{.Clause}} clause, but only in a MATCH clause"
+- id: cyphermatching.is_not_operand_invalid
+  description: IS NOT is followed by a label. Input is Cypher text and is not translated.
+  other: "Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED'"
+- id: cyphermatching.single_relationship_type_required
+  description: A CREATE or MERGE relationship pattern lists alternative types. Clause is a Cypher keyword and is not translated.
+  other: "A single relationship type must be specified for {{.Clause}}"

@@ -236,6 +236,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Label expressions (`n:A|B`, `n:A&B`, `n:!A`, `n:%`, groups, and GQL's
+  `n IS A`) in MATCH patterns, relationship patterns (`[r:!R]`, `[:R&S]`),
+  WHERE and RETURN, pattern predicates, pattern comprehensions and
+  EXISTS / COUNT / COLLECT bodies return Neo4j's rows; they matched nothing
+  before. A statement's label expressions are rewritten once, before it is
+  routed, into the label forms and WHERE predicates every route evaluates.
+  CREATE and MERGE accept `&` and `IS`, and the forms Neo4j rejects (colons
+  mixed with expression symbols, `R|:S` with a variable, `[:R:S]`, type
+  expressions on variable-length relationships, `n IS NOT A`, other label
+  expressions in CREATE and MERGE) are SyntaxErrors with Neo4j's messages
+  (#860).
+
 - Stop reallocating the search result cache on every write. Each created,
   updated or deleted node invalidated it by allocating a fresh map sized for
   the whole cache; it now returns at once when the cache is empty and clears
