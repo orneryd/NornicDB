@@ -759,3 +759,36 @@ new run attributed to this test-only correction.
 This resolves the independently recorded fixture failure, not the complete
 #754 CI/TestKit family. Publish with `Refs #754`; #713/#728 remain open and
 #547 remains excluded. No performance measurement or running-installation change.
+
+### Compiled Relationship-Batch Columns: 2026-10-04
+
+The relationship-batch RETURN compiler independently split AS and admitted only
+simple explicit aliases. Compile its row-field expressions and column names from
+the cached shared RETURN plan instead. Keep the row-field extractor and builder
+as compiled leaves; reject star, DISTINCT, aggregation and modifier plans rather
+than silently bypassing their semantics.
+
+The ordinary explicit alias is the passing control. Quoted, escaped-backtick and
+inferred expression columns fail the old compiler/shared-projector parity check
+and pass after convergence. Decline controls retain malformed aliases, wrong
+bindings, computed expressions and unsupported plan forms. Four end-to-end cases
+assert actual batch use, exact columns/rows, repeated-MERGE idempotence and stored
+relationship/vector values. Existing indexed lookup and identity tests remain.
+
+Four appended reference cases preserve the protected corpus prefix. Both actual
+parsers pass 968 Bolt and 978 HTTP comparisons in autocommit and explicit
+transactions: 3,892 total against pinned Neo4j 5.26.30. Official ratchets pass
+7,794 outcomes/parser with zero gaps, setup blockers or harness errors using the
+pinned timezone archive. Isolated repository correctness, changed-slice races in
+both parsers, scoped vet and diagnostics pass. Compiler and row builder both have
+100% focused coverage; no whole-package or performance-equivalence claim.
+
+The broader ANTLR node-batch annotation test fails at EOF on its existing
+SET-to-MATCH template. Its exact full test fails identically on prior published
+source without this compiler change. It remains unchanged and is not counted as
+passing; track its clause-boundary contract separately under #754. No test was
+deleted. Graphify's older dependency snapshot identifies the private alias
+boundary; current source confirms the new shared-plan delegation.
+
+No running installation was touched. Publish with `Refs #713`; remaining
+#713/#728/#754 acceptance stays open and #547 remains excluded.

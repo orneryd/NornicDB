@@ -2431,5 +2431,29 @@
     "query": "CREATE (n:Value {x: 1}) RETURN n.x / 0 AS value",
     "expected_code": "Neo.ClientError.Statement.ArithmeticError",
     "no_effects": true
+  },
+  {
+    "name": "issue713 compiled relationship batch ordinary column",
+    "setup": ["CREATE (:Service {key:'svc-a'}), (:Topic {key:'topic-b'}), (:Tenant {key:'tenant-c'})"],
+    "query": "UNWIND $rows AS row MATCH (source:Service {key: row.source_key}) MATCH (target:Topic {key: row.target_key}) MATCH (tenant:Tenant {key: row.tenant}) MERGE (source)-[rel:PUBLISHES {uuid: row.uuid, tenant: row.tenant}]->(target) SET rel = row WITH rel, row CALL db.create.setRelationshipVectorProperty(rel, 'embedding', row.embedding) RETURN row.uuid AS uuid",
+    "parameters": {"rows": [{"source_key": "svc-a", "target_key": "topic-b", "tenant": "tenant-c", "uuid": "edge-1", "fact": "stored", "embedding": [1.0, 0.0, 0.0]}]}
+  },
+  {
+    "name": "issue713 compiled relationship batch quoted column",
+    "setup": ["CREATE (:Service {key:'svc-a'}), (:Topic {key:'topic-b'}), (:Tenant {key:'tenant-c'})"],
+    "query": "UNWIND $rows AS row MATCH (source:Service {key: row.source_key}) MATCH (target:Topic {key: row.target_key}) MATCH (tenant:Tenant {key: row.tenant}) MERGE (source)-[rel:PUBLISHES {uuid: row.uuid, tenant: row.tenant}]->(target) SET rel = row WITH rel, row CALL db.create.setRelationshipVectorProperty(rel, 'embedding', row.embedding) RETURN row.uuid AS `edge id`",
+    "parameters": {"rows": [{"source_key": "svc-a", "target_key": "topic-b", "tenant": "tenant-c", "uuid": "edge-1", "fact": "stored", "embedding": [1.0, 0.0, 0.0]}]}
+  },
+  {
+    "name": "issue713 compiled relationship batch escaped column",
+    "setup": ["CREATE (:Service {key:'svc-a'}), (:Topic {key:'topic-b'}), (:Tenant {key:'tenant-c'})"],
+    "query": "UNWIND $rows AS row MATCH (source:Service {key: row.source_key}) MATCH (target:Topic {key: row.target_key}) MATCH (tenant:Tenant {key: row.tenant}) MERGE (source)-[rel:PUBLISHES {uuid: row.uuid, tenant: row.tenant}]->(target) SET rel = row WITH rel, row CALL db.create.setRelationshipVectorProperty(rel, 'embedding', row.embedding) RETURN row.uuid AS `a``b`",
+    "parameters": {"rows": [{"source_key": "svc-a", "target_key": "topic-b", "tenant": "tenant-c", "uuid": "edge-1", "fact": "stored", "embedding": [1.0, 0.0, 0.0]}]}
+  },
+  {
+    "name": "issue713 compiled relationship batch inferred column",
+    "setup": ["CREATE (:Service {key:'svc-a'}), (:Topic {key:'topic-b'}), (:Tenant {key:'tenant-c'})"],
+    "query": "UNWIND $rows AS row MATCH (source:Service {key: row.source_key}) MATCH (target:Topic {key: row.target_key}) MATCH (tenant:Tenant {key: row.tenant}) MERGE (source)-[rel:PUBLISHES {uuid: row.uuid, tenant: row.tenant}]->(target) SET rel = row WITH rel, row CALL db.create.setRelationshipVectorProperty(rel, 'embedding', row.embedding) RETURN row.uuid",
+    "parameters": {"rows": [{"source_key": "svc-a", "target_key": "topic-b", "tenant": "tenant-c", "uuid": "edge-1", "fact": "stored", "embedding": [1.0, 0.0, 0.0]}]}
   }
 ]

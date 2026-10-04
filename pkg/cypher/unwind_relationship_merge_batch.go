@@ -482,24 +482,17 @@ func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationsh
 }
 
 func parseRelationshipBatchReturn(returnPart, unwindVar string) ([]rowFieldReturnSpec, bool) {
-	parts := splitTopLevelComma(returnPart)
-	if len(parts) == 0 {
+	plan := returnProjectionPlanFor("RETURN " + returnPart)
+	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" {
 		return nil, false
 	}
-	returns := make([]rowFieldReturnSpec, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		asIdx := findKeywordIndexInContext(part, "AS")
-		if asIdx < 0 {
+	returns := make([]rowFieldReturnSpec, 0, len(plan.projections))
+	for index, projection := range plan.projections {
+		rowField, ok := parseRelationshipBatchRowFieldExpr(projection.expr, unwindVar)
+		if !ok || plan.columns[index] == "" {
 			return nil, false
 		}
-		expr := strings.TrimSpace(part[:asIdx])
-		alias := strings.TrimSpace(part[asIdx+len("AS"):])
-		rowField, ok := parseRelationshipBatchRowFieldExpr(expr, unwindVar)
-		if !ok || !isSimpleIdentifier(alias) {
-			return nil, false
-		}
-		returns = append(returns, rowFieldReturnSpec{rowField: rowField, alias: alias})
+		returns = append(returns, rowFieldReturnSpec{rowField: rowField, alias: plan.columns[index]})
 	}
 	return returns, true
 }

@@ -221,6 +221,81 @@ func TestUnwindMergeChainBatch_ContainmentEdgeOnly(t *testing.T) {
 		"no scan fallback justified when both unique constraints are present")
 }
 
+func TestGh713RelationshipBatchReturnUsesSharedColumns(t *testing.T) {
+	for _, clause := range []string{
+		"row.source AS source, row.target AS target",
+		"row.source AS `source value`",
+		"row.source AS `a``b`",
+		"row.source, row.target",
+	} {
+		t.Run(clause, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			row := map[string]interface{}{"source": "a", "target": "b"}
+			shared, err := exec.projectMergeReturn(ctx, []pipelineRow{{"row": row}}, "RETURN "+clause)
+			require.NoError(t, err)
+			compiled, ok := parseRelationshipBatchReturn(clause, "row")
+			require.True(t, ok)
+			columns := make([]string, len(compiled))
+			for index, projection := range compiled {
+				columns[index] = projection.alias
+			}
+			require.Equal(t, shared.Columns, columns)
+			require.Equal(t, shared.Rows, [][]interface{}{buildRelationshipBatchReturnRow(row, compiled)})
+		})
+	}
+	for _, clause := range []string{
+		"", "*", "DISTINCT row.source AS source", "count(*) AS count",
+		"row.source AS source ORDER BY source", "row.source AS source SKIP 1",
+		"row.source AS source LIMIT 1", "row.source + 1 AS source",
+		"row.source AS", "other.source AS source",
+	} {
+		t.Run("decline "+clause, func(t *testing.T) {
+			_, ok := parseRelationshipBatchReturn(clause, "row")
+			require.False(t, ok)
+		})
+	}
+}
+
+func TestGh713RelationshipBatchProjectedColumnRoutes(t *testing.T) {
+	for _, test := range []struct {
+		projection string
+		column     string
+	}{
+		{"row.uuid AS uuid", "uuid"},
+		{"row.uuid AS `edge id`", "edge id"},
+		{"row.uuid AS `a``b`", "a`b"},
+		{"row.uuid", "row.uuid"},
+	} {
+		t.Run(test.projection, func(t *testing.T) {
+			exec, ctx := newUnitExecutor(t)
+			_, err := exec.Execute(ctx, "CREATE (:Service {key:'svc-a'}), (:Topic {key:'topic-b'}), (:Tenant {key:'tenant-c'})", nil)
+			require.NoError(t, err)
+			query := `UNWIND $rows AS row
+MATCH (source:Service {key: row.source_key})
+MATCH (target:Topic {key: row.target_key})
+MATCH (tenant:Tenant {key: row.tenant})
+MERGE (source)-[rel:PUBLISHES {uuid: row.uuid, tenant: row.tenant}]->(target)
+SET rel = row
+WITH rel, row CALL db.create.setRelationshipVectorProperty(rel, "embedding", row.embedding)
+RETURN ` + test.projection
+			params := map[string]interface{}{"rows": []map[string]interface{}{{
+				"source_key": "svc-a", "target_key": "topic-b", "tenant": "tenant-c",
+				"uuid": "edge-1", "fact": "stored", "embedding": []float64{1, 0, 0},
+			}}}
+			for run := 0; run < 2; run++ {
+				result, err := exec.Execute(ctx, query, params)
+				require.NoError(t, err)
+				require.Equal(t, []string{test.column}, result.Columns)
+				require.Equal(t, [][]interface{}{{"edge-1"}}, result.Rows)
+				require.True(t, exec.LastHotPathTrace().UnwindRelationshipMergeBatch)
+			}
+			stored, err := exec.Execute(ctx, "MATCH (:Service)-[rel:PUBLISHES]->(:Topic) RETURN count(rel) AS count, collect(rel.fact) AS facts, collect(rel.embedding) AS vectors", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(1), []interface{}{"stored"}, []interface{}{[]float64{1, 0, 0}}}}, stored.Rows)
+		})
+	}
+}
+
 func TestUnwindRelationshipMergeBatch_NArityMatchAndRowReplace(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")

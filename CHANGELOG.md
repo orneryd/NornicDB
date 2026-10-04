@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Compile relationship-batch RETURN fields and columns from the shared projection
+  plan, preserving quoted, escaped and inferred names without admitting unsupported
+  DISTINCT, aggregation or pagination into the compiled batch path (#713).
+
 - Use Neo4j-valid quoted vector option keys in the async schema regression,
   keeping its complete admission and metadata checks valid in both parsers (#754).
 
