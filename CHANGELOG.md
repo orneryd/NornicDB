@@ -284,6 +284,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boolean, temporal value or point is Neo4j's TypeError naming the value
   (`got: Long(1)`); a statically typed argument keeps the SyntaxError (#893).
 
+- Match a quantified relationship (`-[:R]->{1,3}`, `-->+`, `<-[r]-*`) as the
+  variable-length relationship with those bounds instead of a single
+  relationship; a type expression on it applies to each relationship. A
+  quantifier on a variable-length relationship, in CREATE or MERGE, or in a
+  pattern predicate or comprehension is a SyntaxError, as in Neo4j (#864).
+
 - Re-embed a node whose content changes while the embed worker is embedding
   it. The worker's writeback now lands only while the node still has the
   properties and labels it embedded; before, it stored the old content's

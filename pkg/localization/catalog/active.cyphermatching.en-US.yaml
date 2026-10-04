@@ -64,6 +64,15 @@
 - id: cyphermatching.shortest_path_single_relationship
   description: "shortestPath or allShortestPaths pattern without exactly one relationship. Function is the function name."
   other: "{{.Function}}(...) requires a pattern containing a single relationship"
+- id: cyphermatching.quantified_path_in_write_pattern
+  description: "Quantified path pattern in CREATE or MERGE. Clause is the clause keyword."
+  other: "Quantified path patterns cannot be used in a {{.Clause}} clause, but only in a MATCH clause."
+- id: cyphermatching.variable_length_in_quantified_path
+  description: "Variable-length relationship with a quantifier."
+  other: "Variable length relationships cannot be part of a quantified path pattern."
+- id: cyphermatching.quantifier_in_expression_pattern
+  description: "Relationship quantifier in a pattern predicate or pattern comprehension. Token is the quantifier character."
+  other: "Invalid input '{{.Token}}': a relationship quantifier is allowed only in a MATCH pattern or a subquery"
 - id: cyphermatching.optional_match_node_endpoint_missing
   description: OPTIONAL MATCH pattern lacks its first node endpoint. Pattern includes untranslated Go quoting.
   other: "optional match pattern {{.Pattern}} has no node endpoint"

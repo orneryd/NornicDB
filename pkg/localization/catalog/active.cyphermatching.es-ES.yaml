@@ -64,6 +64,15 @@
 - id: cyphermatching.shortest_path_single_relationship
   description: "Patrón shortestPath o allShortestPaths sin exactamente una relación. Function es el nombre de la función."
   other: "{{.Function}}(...) requiere un patrón con una sola relación"
+- id: cyphermatching.quantified_path_in_write_pattern
+  description: "Patrón de camino cuantificado en CREATE o MERGE. Clause es la palabra clave de la cláusula."
+  other: "Los patrones de camino cuantificados no se pueden usar en una cláusula {{.Clause}}, solo en una cláusula MATCH."
+- id: cyphermatching.variable_length_in_quantified_path
+  description: "Relación de longitud variable con un cuantificador."
+  other: "Las relaciones de longitud variable no pueden formar parte de un patrón de camino cuantificado."
+- id: cyphermatching.quantifier_in_expression_pattern
+  description: "Cuantificador de relación en un predicado o comprensión de patrón. Token es el carácter del cuantificador."
+  other: "Entrada no válida '{{.Token}}': un cuantificador de relación solo se admite en un patrón MATCH o en una subconsulta"
 - id: cyphermatching.optional_match_node_endpoint_missing
   description: Al patrón OPTIONAL MATCH le falta el primer nodo. Pattern conserva las comillas de Go.
   other: "el patrón de coincidencia opcional {{.Pattern}} no tiene un nodo inicial"

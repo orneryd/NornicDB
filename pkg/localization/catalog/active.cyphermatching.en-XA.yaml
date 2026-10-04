@@ -64,6 +64,15 @@
 - id: cyphermatching.shortest_path_single_relationship
   description: "Expanded pseudo-locale shortestPath single relationship."
   other: "[!! {{.Function}}(...) requires a pattern containing a single relationship !!]"
+- id: cyphermatching.quantified_path_in_write_pattern
+  description: "Expanded pseudo-locale quantified path in a write pattern."
+  other: "[!! Quantified path patterns cannot be used in a {{.Clause}} clause, but only in a MATCH clause. !!]"
+- id: cyphermatching.variable_length_in_quantified_path
+  description: "Expanded pseudo-locale variable-length relationship in a quantified path."
+  other: "[!! Variable length relationships cannot be part of a quantified path pattern. !!]"
+- id: cyphermatching.quantifier_in_expression_pattern
+  description: "Expanded pseudo-locale quantifier in an expression pattern."
+  other: "[!! Invalid input '{{.Token}}': a relationship quantifier is allowed only in a MATCH pattern or a subquery !!]"
 - id: cyphermatching.optional_match_node_endpoint_missing
   description: Expanded pseudo-locale missing optional node endpoint.
   other: "[!! optional match pattern {{.Pattern}} has no node endpoint !!]"

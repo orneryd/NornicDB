@@ -71,7 +71,7 @@ func (m labelPatternMode) clause() string {
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
 func desugarLabelExpressions(query string) (string, *queryRewrite, error) {
-	if !mayUseLabelExpressions(query) && indexASCIIFold(query, "shortestpath") < 0 {
+	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && indexASCIIFold(query, "shortestpath") < 0 {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query}
@@ -422,27 +422,49 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				if err := r.patternElements(i+1, close, mode, predicates); err != nil {
 					return err
 				}
-			} else if err := r.element(i, close, false, mode, predicates); err != nil {
+			} else if err := r.element(i, close, false, false, mode, predicates); err != nil {
 				return err
 			}
 			i = close
 		case '[':
+			open := i
 			close := findMatchingDelimiter(q[:end], i, '[', ']')
 			if close < 0 {
 				return nil
 			}
-			if err := r.element(i, close, true, mode, predicates); err != nil {
+			quantifier, at, quantified := quantifierAfterArrow(q, close, end)
+			if err := r.element(open, close, true, quantified, mode, predicates); err != nil {
 				return err
 			}
 			i = close
+			if quantified {
+				if err := r.quantifiedRelationship(open, close, at, quantifier, mode); err != nil {
+					return err
+				}
+				i = quantifier.end - 1
+			}
+		case '-', '<':
+			// An abbreviated relationship (--, -->, <--) may be quantified.
+			arrowEnd := arrowRunEnd(q, i, end)
+			if next := skipASCIISpaces(q, arrowEnd, end); next < end && q[next] != '[' {
+				if quantifier, ok := relationshipQuantifierAt(q, next, end); ok {
+					if err := r.quantifiedArrow(i, arrowEnd, next, quantifier, mode); err != nil {
+						return err
+					}
+					i = quantifier.end - 1
+					continue
+				}
+			}
+			i = arrowEnd - 1
 		}
 	}
 	return nil
 }
 
 // element rewrites the node (or relationship) pattern query[open:close+1]:
-// its variable, then : or IS and a label chain.
-func (r *labelExpressionRewriter) element(open, close int, relationship bool, mode labelPatternMode, predicates *[]string) error {
+// its variable, then : or IS and a label chain. quantified marks a
+// relationship followed by a quantifier (#864).
+func (r *labelExpressionRewriter) element(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
 	q := r.query
 	i := skipASCIISpaces(q, open+1, close)
 	variable, variableEnd := "", i
@@ -470,7 +492,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship bool, mo
 	chainEnd := textStart + chain.end
 	rest := skipASCIISpaces(q, chainEnd, close)
 	if relationship {
-		return r.relationshipElement(open, chainStart, chainEnd, rest, close, variable, viaIS, chain, mode, predicates)
+		return r.relationshipElement(open, chainStart, chainEnd, rest, close, variable, viaIS, chain, quantified, mode, predicates)
 	}
 	if viaIS && chain.colons {
 		return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedIs(chain.expr.String()))
@@ -496,8 +518,9 @@ func (r *labelExpressionRewriter) element(open, close int, relationship bool, mo
 
 // relationshipElement rewrites a relationship pattern's type chain
 // (query[chainStart:chainEnd]; rest is where the length or properties
-// start).
-func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd, rest, close int, variable string, viaIS bool, chain labelChain, mode labelPatternMode, predicates *[]string) error {
+// start). A quantified relationship's type expression applies to each of its
+// relationships (#864).
+func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd, rest, close int, variable string, viaIS bool, chain labelChain, quantified bool, mode labelPatternMode, predicates *[]string) error {
 	q := r.query
 	if chain.colons {
 		return labelExpressionSyntaxError(localization.CypherMatchingRelationshipTypeColonConjunction())
@@ -506,7 +529,7 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 	alternatives, plain := chain.expr.alternatives()
 	if chain.barColons {
 		hasProperties := strings.IndexByte(q[rest:close], '{') >= 0
-		if variable != "" || variableLength || hasProperties {
+		if variable != "" || variableLength || quantified || hasProperties {
 			return labelExpressionSyntaxError(localization.CypherMatchingRelationshipTypeColonDisjunction(chain.expr.String()))
 		}
 	}
@@ -537,6 +560,11 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 	}
 	variable = r.elementVariable(open, variable)
 	r.edit(chainStart, chainEnd, kept)
+	if quantified {
+		each := r.variable()
+		*predicates = append(*predicates, "all("+each+" IN "+variable+" WHERE "+each+":"+chain.expr.String()+")")
+		return nil
+	}
 	*predicates = append(*predicates, variable+":"+chain.expr.String())
 	return nil
 }
@@ -582,6 +610,23 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 	for i := start; i < end; i++ {
 		c := q[i]
 		switch {
+		case (c == '{' || c == '+' || c == '*') && arrowEndsAt(q, start, i):
+			// A pattern predicate or comprehension can't quantify a
+			// relationship; Neo4j allows it only in MATCH and subqueries.
+			if _, ok := relationshipQuantifierAt(q, i, end); ok {
+				return labelExpressionSyntaxError(localization.CypherMatchingQuantifierInExpressionPattern(string(c)))
+			}
+			if c != '{' {
+				continue
+			}
+			close := findMatchingDelimiter(q[:end], i, '{', '}')
+			if close < 0 {
+				return nil
+			}
+			if err := r.expression(i+1, close); err != nil {
+				return err
+			}
+			i = close
 		case c == '\'' || c == '"' || c == '`':
 			i = skipCypherQuotedText(q, i, c) - 1
 		case c == '{':
