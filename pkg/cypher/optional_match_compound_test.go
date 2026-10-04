@@ -5,9 +5,37 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGh713OptionalCountGroupsProjectedNamesAndFiltersLabels(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			require.Equal(t, parser, config.GetParserType())
+			for _, products := range []int{1, 2} {
+				t.Run(fmt.Sprintf("products_%d", products), func(t *testing.T) {
+					executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh713"))
+					ctx := context.Background()
+					_, err := executor.Execute(ctx, "CREATE (:Product {productName: 'B'})", nil)
+					require.NoError(t, err)
+					for product := 0; product < products; product++ {
+						_, err = executor.Execute(ctx, "CREATE (p:Product {productName: 'A'}), (o:Order), (c:Customer), (o)-[:ORDERS]->(p), (c)-[:ORDERS]->(p)", nil)
+						require.NoError(t, err)
+					}
+					result, err := executor.Execute(ctx, "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS orderCount ORDER BY orderCount DESC", nil)
+					require.NoError(t, err)
+					require.Equal(t, []string{"p.productName", "orderCount"}, result.Columns)
+					require.Equal(t, [][]interface{}{{"A", int64(products)}, {"B", int64(0)}}, result.Rows)
+				})
+			}
+		})
+	}
+}
 
 // TestCompoundMatchOptionalMatch_OrderStatusPharmacy tests the exact query shape used by
 // FormatOrderStatusContext: MATCH (n:OrderStatus) WHERE n.userId = $ AND NOT (n)-[:SUPERSEDED_BY]->()

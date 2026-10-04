@@ -4,8 +4,7 @@ package cypher
 // by OPTIONAL MATCH streamed the whole :Person label to collect the seed,
 // although a property index covers id (the same plain MATCH used the index).
 // The seed collector now probes the index for the pattern's inline
-// properties, and the traversal-seeded route collects the seed only for the
-// fast count that needs it.
+// properties, and the traversal-seeded route uses the same indexed MATCH seed.
 
 import (
 	"context"
@@ -21,9 +20,13 @@ import (
 type labelStreamCountingEngine struct {
 	*storage.NamespacedEngine
 	nodesVisited int64
+	scanErr      error
 }
 
 func (s *labelStreamCountingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+	if s.scanErr != nil {
+		return s.scanErr
+	}
 	return s.NamespacedEngine.StreamNodesByLabelProjected(label, properties, func(node *storage.Node) error {
 		s.nodesVisited++
 		return visit(node)
@@ -141,22 +144,21 @@ func TestIssue821OptionalMatchSeedFiltersWhereIndexCandidatesByPatternProperties
 	}
 }
 
-func TestFastCompoundOptionalMatchCountLoadsSeedOnlyForItsShape(t *testing.T) {
-	exec, _ := newUnitExecutor(t)
-	loads := 0
-	failing := func() ([]*storage.Node, error) {
-		loads++
-		return nil, errors.New("seed lookup failed")
+func TestOptionalMatchSharedRoutePropagatesSeedLookupErrors(t *testing.T) {
+	seedError := errors.New("seed lookup failed")
+	executor := NewStorageExecutor(&labelStreamCountingEngine{
+		NamespacedEngine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"),
+		scanErr:          seedError,
+	})
+	for _, query := range []string{
+		"MATCH (p:ErrSeed) OPTIONAL MATCH (p)<-[:KNOWS]-(f) RETURN p.id, count(f)",
+		"MATCH (p:ErrSeed) OPTIONAL MATCH (p)<-[:ORDERS]-(f) RETURN p.productName, count(f)",
+		"MATCH (p:ErrSeed) OPTIONAL MATCH (p)<-[:ORDERS]-(f) WITH p RETURN p.productName",
+	} {
+		t.Run(query, func(t *testing.T) {
+			result, err := executor.Execute(context.Background(), query, nil)
+			require.ErrorIs(t, err, seedError)
+			require.Nil(t, result)
+		})
 	}
-	rel := optionalRelPattern{direction: "in", relType: "KNOWS", targetVar: "f"}
-	_, handled, err := exec.tryFastCompoundOptionalMatchCount(failing, nodePatternInfo{variable: "p"}, rel, "RETURN p.id, count(f)")
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Zero(t, loads, "the seed must not be collected for another shape")
-
-	rel.relType = "ORDERS"
-	_, handled, err = exec.tryFastCompoundOptionalMatchCount(failing, nodePatternInfo{variable: "p"}, rel, "RETURN p.productName, count(f)")
-	require.EqualError(t, err, "seed lookup failed")
-	require.False(t, handled)
-	require.Equal(t, 1, loads)
 }

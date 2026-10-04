@@ -2226,5 +2226,17 @@
     "query": "CALL db.index.vector.createNodeIndex('taken', 'V', 'e', 3, 'cosine')",
     "expected_code": "Neo.ClientError.Procedure.ProcedureCallFailed",
     "no_effects": true
+  },
+  {
+    "name": "issue713 optional count groups projected product names",
+    "setup": ["CREATE (p1:Product {productName: 'A'}), (p2:Product {productName: 'A'}), (:Product {productName: 'B'}), (o1:Order), (o2:Order), (o1)-[:ORDERS]->(p1), (o2)-[:ORDERS]->(p2)"],
+    "query": "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS orderCount ORDER BY orderCount DESC",
+    "no_effects": true
+  },
+  {
+    "name": "issue713 optional count filters incoming source label",
+    "setup": ["CREATE (p:Product {productName: 'A'}), (:Product {productName: 'B'}), (o1:Order), (o2:Order), (c1:Customer), (c2:Customer), (c3:Customer), (o1)-[:ORDERS]->(p), (o2)-[:ORDERS]->(p), (c1)-[:ORDERS]->(p), (c2)-[:ORDERS]->(p), (c3)-[:ORDERS]->(p)"],
+    "query": "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS orderCount ORDER BY orderCount DESC",
+    "no_effects": true
   }
 ]

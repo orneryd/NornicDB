@@ -3243,44 +3243,12 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 	assert.Empty(t, res.Rows)
 }
 
-func fixedInitialNodes(nodes []*storage.Node) func() ([]*storage.Node, error) {
-	return func() ([]*storage.Node, error) { return nodes, nil }
-}
-
-func TestCypherHelpers_TryFastCompoundOptionalMatchCount_Branches(t *testing.T) {
+func TestCypherHelpers_OptionalMatchCountSharedRoute(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
-
-	// Rejection branches.
-	res, ok, err := exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nil), nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"}, "RETURN p.productName, count(o)")
-	require.NoError(t, err)
-	assert.False(t, ok)
-	assert.Nil(t, res)
-
-	nodes := []*storage.Node{{ID: "p0", Properties: map[string]interface{}{"productName": "X"}}}
-	res, ok, err = exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nodes), nodePatternInfo{variable: ""}, optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"}, "RETURN p.productName, count(o)")
-	require.NoError(t, err)
-	assert.False(t, ok)
-	assert.Nil(t, res)
-
-	res, ok, err = exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nodes), nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "out", relType: "ORDERS", targetVar: "o"}, "RETURN p.productName, count(o)")
-	require.NoError(t, err)
-	assert.False(t, ok)
-	assert.Nil(t, res)
-
-	res, ok, err = exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nodes), nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "in", relType: "LIKES", targetVar: "o"}, "RETURN p.productName, count(o)")
-	require.NoError(t, err)
-	assert.False(t, ok)
-	assert.Nil(t, res)
-
-	res, ok, err = exec.tryFastCompoundOptionalMatchCount(fixedInitialNodes(nodes), nodePatternInfo{variable: "p"}, optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"}, "WITH p RETURN p")
-	require.NoError(t, err)
-	assert.False(t, ok)
-	assert.Nil(t, res)
-
-	// Happy path with ORDER BY/SKIP/LIMIT.
-	_, err = eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "A"}})
+	ctx := context.Background()
+	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "A"}})
 	require.NoError(t, err)
 	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "B"}})
 	require.NoError(t, err)
@@ -3296,24 +3264,25 @@ func TestCypherHelpers_TryFastCompoundOptionalMatchCount_Branches(t *testing.T) 
 	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e2", StartNode: "o2", EndNode: "p1", Type: "ORDERS"}))
 	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e3", StartNode: "o3", EndNode: "p2", Type: "ORDERS"}))
 
-	initial := []*storage.Node{
-		{ID: "p1", Properties: map[string]interface{}{"productName": "A"}},
-		{ID: "p2", Properties: map[string]interface{}{"productName": "B"}},
-		{ID: "p3", Properties: map[string]interface{}{"productName": "C"}},
+	for _, test := range []struct {
+		name    string
+		query   string
+		columns []string
+		rows    [][]interface{}
+	}{
+		{"empty seed", "MATCH (p:Product) WHERE p.productName = 'missing' OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS orderCount", []string{"p.productName", "orderCount"}, [][]interface{}{}},
+		{"outgoing", "MATCH (p:Product) OPTIONAL MATCH (p)-[r:ORDERS]->(o:Order) RETURN p.productName, count(o) AS orderCount ORDER BY p.productName", []string{"p.productName", "orderCount"}, [][]interface{}{{"A", int64(0)}, {"B", int64(0)}, {"C", int64(0)}}},
+		{"other relationship", "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:LIKES]-(o:Order) RETURN p.productName, count(o) AS orderCount ORDER BY p.productName", []string{"p.productName", "orderCount"}, [][]interface{}{{"A", int64(0)}, {"B", int64(0)}, {"C", int64(0)}}},
+		{"with tail", "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) WITH p, count(o) AS orderCount RETURN p.productName, orderCount ORDER BY p.productName", []string{"p.productName", "orderCount"}, [][]interface{}{{"A", int64(2)}, {"B", int64(1)}, {"C", int64(0)}}},
+		{"pagination", "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS orderCount ORDER BY orderCount DESC SKIP 1 LIMIT 1", []string{"p.productName", "orderCount"}, [][]interface{}{{"B", int64(1)}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := exec.Execute(ctx, test.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, test.columns, result.Columns)
+			require.Equal(t, test.rows, result.Rows)
+		})
 	}
-	res, ok, err = exec.tryFastCompoundOptionalMatchCount(
-		fixedInitialNodes(initial),
-		nodePatternInfo{variable: "p"},
-		optionalRelPattern{direction: "in", relType: "ORDERS", targetVar: "o"},
-		"RETURN p.productName, count(o) AS orderCount ORDER BY orderCount DESC SKIP 1 LIMIT 1",
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, []string{"p.productName", "orderCount"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	// Counts are A=2, B=1, C=0 => after SKIP 1 LIMIT 1 => B.
-	assert.Equal(t, "B", res.Rows[0][0])
-	assert.Equal(t, int64(1), res.Rows[0][1])
 }
 
 func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {

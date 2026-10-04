@@ -466,3 +466,34 @@ Its tested source also passes repository correctness, focused races, vet,
 catalog generation and 3,604 pinned Bolt/HTTP comparisons. Only graphify scripts
 and documentation are currently uncommitted; production code compiles. No local
 installation or running service was changed for this acceptance decision.
+
+### OPTIONAL Count Projection Convergence
+
+The latest #713 replay reproduced two wrong-result cases in both actual parsers:
+products sharing a projected name returned separate rows, and incoming ORDERS
+edges from Customer sources were counted despite an Order label in the pattern.
+Both entry points to `tryFastCompoundOptionalMatchCount` are removed, along with
+its private item parsing, projection, ordering and integer-only pagination.
+The existing shared OPTIONAL matcher and aggregation path now apply label
+filtering and grouping; no new counter or fallback was added.
+
+The old helper tests were migrated rather than discarded. Shared-route controls
+retain empty input, outgoing and alternate relationships, WITH tails, and
+ORDER BY/SKIP/LIMIT assertions. A replacement error test injects faults at the
+actual projected-label scan and checks wrapped error propagation. #821's
+indexed-seed tests still require zero node scans. The obsolete lazy-loader
+callback check is not retained as an API contract after deleting that helper.
+Read-only Graphify inspection identified its separate scanning/pagination
+dependencies; a source reference check confirms no remaining calls.
+
+Two appended reference cases preserve the original corpus prefix. Both
+transaction modes and parsers pass 900 Bolt and 910 HTTP comparisons per
+parser, 3,620 total, including the exact new label and grouping controls.
+Both official ratchets pass all 7,794 outcomes per parser. Repository
+correctness excluding performance-named tests, focused races, vet and editor
+diagnostics pass. No benchmark or performance-equivalence claim is made.
+
+This removes one incorrect full projection shortcut; it does not establish
+that every RETURN/WITH producer uses one projection planner. #713 remains open,
+as do the separate #728/#754 gates. #547 is still excluded. Graphify ingestion,
+its UI edits and the user's local installation remain untouched.
