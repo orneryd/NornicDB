@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -193,15 +194,17 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
-	// A statement whose last clause is UNWIND has nothing after it — Neo4j
-	// rejects it. This is a whole-statement rule, not part of
-	// validateSyntaxNornic: fabric fragments legitimately end in UNWIND when
-	// the surrounding statement continues in another fragment. A FINISH
-	// terminator is itself the clause that follows UNWIND, so a
-	// FINISH-terminated statement is exempt.
-	if !finishTerminated && lastTopLevelClauseWord(cypher) == "UNWIND" {
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			"Invalid input: UNWIND must be followed by a clause")
+	// Knowledge-policy DDL that cannot be parsed (a missing profile or policy
+	// name, a missing OPTIONS block) is a syntax error on every route, the
+	// auto-commit and HTTP routes included (#514).
+	if isKnowledgePolicyDDLStatement(cypher) {
+		if _, _, err := ParseKnowledgePolicyDDL(cypher); err != nil {
+			return nil, &classifiedCypherError{
+				cause:  err,
+				code:   "Neo.ClientError.Statement.SyntaxError",
+				detail: "UnexpectedSyntax",
+			}
+		}
 	}
 	if finishTerminated {
 		defer func() {
@@ -467,6 +470,39 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		e.observeQuery("parse_error", false /* observeDuration */, slowStart)
 		execSpan.SetAttributes(attribute.String("cypher.op_type", "parse_error"))
 		return nil, err
+	}
+	// A statement whose last clause is a reading clause (UNWIND, MATCH,
+	// OPTIONAL MATCH, WITH) has nothing after it — Neo4j rejects it. This is
+	// a whole-statement rule that runs after syntax validation, so malformed
+	// text keeps the parser's own syntax error; fabric fragments legitimately
+	// end in UNWIND when the surrounding statement continues in another
+	// fragment, and a FINISH terminator is itself the clause that follows, so
+	// both are exempt.
+	if !finishTerminated {
+		last := lastTopLevelClauseWord(cypher)
+		// `WITH EMBEDDING` is a NornicDB execution option, not a WITH
+		// projection: a statement that ends with it is complete. Only exempt
+		// it when the text before the trailer is itself a complete statement.
+		if last == "WITH" {
+			if scope, ok := stripWithEmbeddingSuffix(cypher); ok {
+				switch lastTopLevelClauseWord(scope) {
+				case "", "UNWIND", "MATCH", "OPTIONAL", "WITH", "CALL":
+				default:
+					last = ""
+				}
+			}
+		}
+		switch last {
+		case "UNWIND", "MATCH", "OPTIONAL", "WITH":
+			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				fmt.Sprintf("Invalid input: %s must be followed by a clause", last))
+		}
+		// A bare CALL has no procedure or subquery after it; the statement is
+		// incomplete, not a lookup of a procedure named 'CALL' (#514).
+		if strings.EqualFold(cypher, "CALL") {
+			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				"Invalid input: CALL must be followed by a procedure name or subquery")
+		}
 	}
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
 	// scopes are those of the statement without it.

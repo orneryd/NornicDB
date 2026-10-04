@@ -42,14 +42,14 @@ func TestCreatePropertyValues_ResolveBoundLoopVariables(t *testing.T) {
 	require.Len(t, nodes, 1)
 	require.EqualValues(t, 9, nodes[0].Properties["id"])
 
-	// An unbound bare identifier keeps its historical behavior (literal
-	// string) — the binding path only fires when the name is actually in
-	// scope.
+	// An unbound bare identifier is an unevaluable expression: a SyntaxError
+	// with nothing written, as in Neo4j (#514). The historical literal-string
+	// fallback stored the query text as data.
 	res, err = exec.executeInternal(ctx, "CREATE (:UnboundRef {k: x})", nil)
-	require.NoError(t, err)
-	require.NotNil(t, res)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SyntaxError")
+	require.Nil(t, res)
 	nodes, err = engine.GetNodesByLabel("UnboundRef")
 	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.EqualValues(t, "x", nodes[0].Properties["k"])
+	require.Empty(t, nodes)
 }

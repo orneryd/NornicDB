@@ -459,12 +459,14 @@ func TestTraversalProjection_LiteralAndComplexItems(t *testing.T) {
 // without RETURN produces an empty result rather than an error.
 func TestTraversalOptionalMatch_NoReturnClause(t *testing.T) {
 	exec, ctx := newOptProjExecutor(t)
-	res, err := exec.Execute(ctx, `
+	_, err := exec.Execute(ctx, `
 		MATCH (e:OMClass {uid:"cls:ServiceDog"})-[rel:INHERITS]->(target)
 		OPTIONAL MATCH (target)<-[:CONTAINS]-(tf:OMFile)
 	`, nil)
-	require.NoError(t, err)
-	require.Empty(t, res.Rows)
+	// An OPTIONAL MATCH with nothing after it is an incomplete statement:
+	// a SyntaxError, as in Neo4j (#514).
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SyntaxError")
 }
 
 // TestTraversalOptionalMatch_EmptySeed: an empty primary MATCH yields zero

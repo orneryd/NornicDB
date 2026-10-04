@@ -264,10 +264,100 @@ func lastTopLevelClauseWord(s string) string {
 			keyword := validatorClauseKeywords[keywordIndex]
 			if matchKeywordAt(s, i, keyword) &&
 				!clauseKeywordUsedAsName(s, i, i+len(keyword), keyword) {
+				// A WITH inside an expression is not a clause start:
+				// `x STARTS WITH 'a'`, `x ENDS WITH 'a'` and the type
+				// predicate `IS :: TIME WITH TIME ZONE`. A real WITH clause
+				// cannot follow STARTS/ENDS or precede TIME ZONE.
+				if keyword == "WITH" && isExpressionWith(s, i, i+len(keyword)) {
+					continue
+				}
 				last = keyword
 				break
 			}
 		}
 	}
 	return last
+}
+
+// isExpressionWith reports whether the top-level word WITH at s[start:end] is
+// part of an expression rather than a clause: it follows STARTS or ENDS
+// (comments and whitespace may sit between), or it is followed by TIME ZONE.
+func isExpressionWith(s string, start, end int) bool {
+	if previous := previousSignificantWord(s, start); strings.EqualFold(previous, "STARTS") || strings.EqualFold(previous, "ENDS") {
+		return true
+	}
+	next := nextSignificantWords(s, end)
+	return strings.EqualFold(next[0], "TIME") && strings.EqualFold(next[1], "ZONE")
+}
+
+// previousSignificantWord returns the word immediately before position i,
+// skipping whitespace and comments, or "".
+func previousSignificantWord(s string, i int) string {
+	j := i
+	for {
+		for j > 0 && isWhitespace(s[j-1]) {
+			j--
+		}
+		if j >= 2 && s[j-2] == '*' && s[j-1] == '/' {
+			open := strings.LastIndex(s[:j-1], "/*")
+			if open < 0 {
+				return ""
+			}
+			j = open
+			continue
+		}
+		if j >= 2 && s[j-2] == '/' && s[j-1] == '/' {
+			line := strings.LastIndex(s[:j], "\n")
+			if line >= 0 {
+				j = line
+				continue
+			}
+			return ""
+		}
+		break
+	}
+	end := j
+	for j > 0 && isIdentCharByte(s[j-1]) {
+		j--
+	}
+	if j == end {
+		return ""
+	}
+	return s[j:end]
+}
+
+// nextSignificantWords returns the two words that follow position j, skipping
+// whitespace and comments; missing words are "".
+func nextSignificantWords(s string, j int) [2]string {
+	var result [2]string
+	read := func() string {
+		for {
+			for j < len(s) && isWhitespace(s[j]) {
+				j++
+			}
+			if j+1 < len(s) && s[j] == '/' && s[j+1] == '*' {
+				if close := strings.Index(s[j+2:], "*/"); close >= 0 {
+					j += 2 + close + 2
+					continue
+				}
+				return ""
+			}
+			if j+1 < len(s) && s[j] == '/' && s[j+1] == '/' {
+				if nl := strings.IndexAny(s[j:], "\r\n"); nl >= 0 {
+					j += nl
+					continue
+				}
+				return ""
+			}
+			break
+		}
+		start := j
+		for j < len(s) && isIdentCharByte(s[j]) {
+			j++
+		}
+		return s[start:j]
+	}
+	result[0] = read()
+	result[1] = read()
+	return result
 }
