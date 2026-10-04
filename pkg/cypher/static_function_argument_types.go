@@ -138,11 +138,18 @@ func lookupStaticFunctionArguments(name string) ([]staticArgumentType, bool) {
 // accepts reports whether an argument of static type typeName fits. Neo4j
 // coerces an Integer where a Float is expected, so that is accepted too; an
 // unknown type ("") always is.
+// staticTypeChoices splits a static type that names several possible types
+// ("Float, Integer, String or List<T>", the type of 1 + x for an unknown x)
+// into them; a single type is itself.
+func staticTypeChoices(typeName string) []string {
+	return strings.Split(strings.ReplaceAll(typeName, " or ", ", "), ", ")
+}
+
 func (argument staticArgumentType) accepts(typeName string) bool {
 	if typeName == "" {
 		return true
 	}
-	if choices := strings.Split(strings.ReplaceAll(typeName, " or ", ", "), ", "); len(choices) > 1 {
+	if choices := staticTypeChoices(typeName); len(choices) > 1 {
 		for _, choice := range choices {
 			if argument.accepts(choice) {
 				return true

@@ -111,16 +111,7 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 // pipelineClausesFor splits a statement, or the clauses after a CALL …
 // YIELD, into pipeline clauses when every clause is one the pipeline runs.
 func pipelineClausesFor(cypher string) ([]pipelineClause, bool) {
-	clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher)
-	if !ok {
-		return nil, false
-	}
-	for _, clause := range clauses {
-		if clause.kind == pipelineClauseOptionalMatch && strings.Contains(clause.text, "*") && indexASCIIFold(clause.text, "shortestpath") < 0 {
-			return nil, false
-		}
-	}
-	return clauses, true
+	return splitPipelineClausesAllowingProcedureCalls(cypher)
 }
 
 // splitUnwindBody splits an UNWIND clause's body (after UNWIND) at its

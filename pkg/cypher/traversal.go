@@ -2212,10 +2212,52 @@ func (e *StorageExecutor) pathContextValues(pathCtx PathContext) map[string]inte
 	}
 	for name, path := range pathCtx.paths {
 		if path != nil {
-			values[name] = e.pathToMap(*path)
+			values[name] = e.pathContextRowValue(path)
 		}
 	}
 	return values
+}
+
+// relationshipOnlyPath reports whether a path context entry is a
+// variable-length relationship variable: the context keeps it as a
+// PathResult holding only the relationships.
+func relationshipOnlyPath(path *PathResult) bool {
+	return len(path.Nodes) == 0
+}
+
+// relationshipListValue is a variable-length relationship variable's Cypher
+// value: its relationships in path order.
+func relationshipListValue(relationships []*storage.Edge) []interface{} {
+	values := make([]interface{}, len(relationships))
+	for index, relationship := range relationships {
+		values[index] = relationship
+	}
+	return values
+}
+
+// pathContextEntryValue is a path context entry's value for the path-context
+// expression evaluator: a variable-length relationship variable is its list
+// of relationships, a named path the evaluator's path map.
+func pathContextEntryValue(path *PathResult) interface{} {
+	if relationshipOnlyPath(path) {
+		return relationshipListValue(path.Relationships)
+	}
+	return map[string]interface{}{
+		"_pathResult": path,
+		"length":      path.Length,
+		"nodes":       path.Nodes,
+		"rels":        path.Relationships,
+	}
+}
+
+// pathContextRowValue is a path context entry's value for the row
+// evaluator: a variable-length relationship variable is its list of
+// relationships, a named path the pipeline's path map (#882).
+func (e *StorageExecutor) pathContextRowValue(path *PathResult) interface{} {
+	if relationshipOnlyPath(path) {
+		return relationshipListValue(path.Relationships)
+	}
+	return e.pathToMap(*path)
 }
 
 // buildPathContext creates a context for evaluating expressions over a path
