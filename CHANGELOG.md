@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Unify binding and WITH predicates through shared typed row evaluation, with
+  invocation-local scratch and native relationship scopes. Reuse shared quote
+  scanning and allocation-free operator bitsets/prefix gates; preserve null
+  truth, typed errors, rollback and compiled filtering contracts (#728).
+
 - Compare a label-less property match's string with the stored bytes during the
   node scan, skipping a non-matching node without decoding its properties, and
   reuse one property decoder per scan. A 20,000-node scan takes about half as

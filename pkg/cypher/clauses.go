@@ -348,56 +348,25 @@ func normalizeInterfaceMap(input map[interface{}]interface{}) map[string]interfa
 	return output
 }
 
-// evaluateWithWhere evaluates a WHERE expression against WITH-bound
-// variables. *storage.Node / *storage.Edge bindings flow through the
-// typed maps so label predicates (entity:Memory), property access
-// (entity.name), and built-in functions (labels(entity), type(rel))
-// resolve via the expression evaluator's normal path. Scalar bindings
-// are substituted as Cypher literals before evaluation, matching the
-// behavior of bare $param references.
-//
-// Returns true when the predicate evaluates true, false otherwise.
-// A non-boolean result (e.g., null) is treated as false — Cypher's
-// three-valued-logic short-circuit.
+// evaluateWithWhere evaluates typed WITH bindings through the shared row predicate.
 func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr string, boundVars map[string]interface{}) (bool, error) {
 	expr := strings.TrimSpace(whereExpr)
 	if expr == "" {
 		return true, nil
 	}
-
-	nodes := make(map[string]*storage.Node)
-	rels := make(map[string]*storage.Edge)
-	for varName, varVal := range boundVars {
-		switch v := varVal.(type) {
-		case *storage.Node:
-			if v != nil {
-				nodes[varName] = v
-			}
-		case *storage.Edge:
-			if v != nil {
-				rels[varName] = v
-			}
-		default:
-			switch v := varVal.(type) {
-			case map[string]interface{}:
-				expr = expandMapMemberAccess(expr, varName, v)
-				expr = replaceIdentifierOutsideQuotes(expr, varName, mapToCypherLiteral(v))
-			case map[interface{}]interface{}:
-				norm := normalizeInterfaceMap(v)
-				expr = expandMapMemberAccess(expr, varName, norm)
-				expr = replaceIdentifierOutsideQuotes(expr, varName, mapToCypherLiteral(norm))
-			default:
-				expr = replaceIdentifierOutsideQuotes(expr, varName, valueToCypherLiteral(varVal))
-			}
+	ctx = withExpressionFailureSlot(ctx)
+	values := boundVars
+	if parameters := parameterRowValues(ctx); len(parameters) > 0 {
+		values = make(map[string]interface{}, len(boundVars)+len(parameters))
+		for name, value := range boundVars {
+			values[name] = value
+		}
+		for name, value := range parameters {
+			values[name] = value
 		}
 	}
-
-	result := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-	truth, err := predicateTruthFromValue(result)
-	if err != nil {
-		return false, err
-	}
-	return truth == truthTrue, nil
+	accepted := e.evaluateRowPredicate(ctx, expr, values)
+	return accepted, getExpressionFailure(ctx)
 }
 
 // aggregateFnNames lists the aggregating function names recognized

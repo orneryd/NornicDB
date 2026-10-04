@@ -1037,3 +1037,66 @@ unchanged, and the exact strict MkDocs build now passes in a temporary environme
 
 Publish with `Refs #713`; #713/#728/#754 remain open, #547 excluded. No
 benchmark/profile/performance-equivalence or running-installation changes.
+
+### Shared WHERE Scratch and Lexical Scanning: 2026-10-04
+
+Read-only NornicDB discovery and Graphify caller analysis identify generic
+binding WHERE and WITH as separate evaluator paths; current source corroborates
+the stale graph locations. Ten baseline controls fail for arithmetic, typed map
+parameters and null negation, while the shared evaluator controls pass. WITH
+also fails to return a recorded ArithmeticError. Delegate both adapters to the
+shared typed row predicate, preserving original parameter values rather than
+substituting query text.
+
+Use one invocation-local scratch frame per generic filter, shared by node and
+relationship handlers, never globally cached or shared across goroutines. Retain
+compiled property views but give generic predicates actual typed relationships.
+Two direct type(r) controls reproduce lost native relationship type before this
+boundary repair. Assert aligned results, unchanged input maps/cached parameters
+and concurrent invocation isolation. WITH reuses incoming rows when no parameter
+merge is needed and explicitly returns expression failures.
+
+CPU profiles identify repeated operator scanning. Reuse the shared escaped/
+backtick quote skipper, add an ASCII-letter-only bitwise first-byte gate, and
+use a stack-local 256-bit arithmetic candidate set. Six lexical baseline failures
+cover escaped/backtick quoting and empty operators; public escaped arithmetic
+exposes the separate row arithmetic scanner. Preserve UTF-8 byte indexes, unary
+signs, exponent signs, bracket/brace nesting, punctuation and CASE behavior.
+
+Same-runtime baseline/head at b57424dd on Apple M2 Max, darwin/arm64, Go 1.26.6,
+noui,nolocalllm, cpu=1, benchtime=100x, count=6, CPU-profiled per run:
+
+| Handler / Rows | Nornic Latency Base -> Head | Approx Ops/sec Base -> Head | Allocs/op Base -> Head |
+| --- | --- | --- | --- |
+| Binding / 1 | 10.371 us -> 4.485 us | 96,423 -> 222,965 | 16 -> 10 |
+| Binding / 32 | 238.67 us -> 95.97 us | 4,190 -> 10,420 | 140 -> 72 |
+| Binding / 1,024 | 7.476 ms -> 2.996 ms | 134 -> 334 | 5,673 -> 2,836 |
+| WITH / 1 | 6.966 us -> 2.913 us | 143,554 -> 343,289 | 6 -> 4 |
+| WITH / 32 | 222.75 us -> 92.49 us | 4,489 -> 10,812 | 192 -> 128 |
+| WITH / 1,024 | 6.841 ms -> 2.958 ms | 146 -> 338 | 7,707 -> 4,876 |
+
+All six latency reductions are significant (p=0.002); byte medians also decrease,
+including one-row binding 544 -> 528 B/op, larger binding about 79% lower,
+and WITH about 72% lower. Antlr reduces binding latency 55-60% and WITH 56-58%,
+with the same small/medium allocation counts and comparable large counts.
+Compiled control remains 1 alloc/op, 9,472 B/op and unchanged within timing
+variance (nornic p=0.937; antlr p=1.000). Scanner microbenchmarks at 100,000x,
+count=6 remain 0 B/op and 0 allocs/op: short 99.75 -> 80.77 ns, long
+2.076 -> 1.663 us, quoted 5.915 -> 1.361 us, all p=0.002. Arithmetic bitset
+adds 4-7% medium/large improvement over shared scratch with no measured small
+regression. These are workload-scoped results, not database-wide speed claims.
+
+Final isolated repository correctness passes on b57424dd; integrate the later
+8beacec5 pending-flush test-only fix and run its focused gate. Both actual
+parsers pass 1,056 Bolt + 1,066 HTTP comparisons across both transaction modes
+(4,244 total), against pinned Neo4j 5.26.30. Nine appended cases preserve the
+protected corpus prefix and compare errors and graph effects, including failed
+write rollback and native edge types. Both official ratchets pass all 7,794
+outcomes with zero gaps, blockers or harness errors. Both-parser races, scoped
+vet, standalone production build and 100% changed-helper coverage pass; no
+whole-package coverage claim. Owner's separate OpenSpec branch/draft and
+unpublished allocation-gate changes are preserved.
+
+Publish with `Refs #728`; remaining WHERE/projection, allocation CI/TestKit and
+main-pipeline handler acceptance stays open. #547 excluded; no live service
+management or ingestion performed.

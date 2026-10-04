@@ -136,6 +136,65 @@ var (
 	compiledSupportedBindingWhereTruthCache = newBoundedCache[string, bindingWhereTruth](4096)
 )
 
+type bindingFilterPredicate struct {
+	compiled   bindingWherePredicate
+	executor   *StorageExecutor
+	ctx        context.Context
+	clause     string
+	parameters map[string]interface{}
+	values     map[string]interface{}
+}
+
+func (predicate *bindingFilterPredicate) matches(row binding, params map[string]interface{}) bool {
+	if predicate.compiled != nil {
+		return predicate.compiled(row, params)
+	}
+	for name, node := range row {
+		predicate.values[name] = node
+	}
+	for name, value := range predicate.parameters {
+		predicate.values[name] = value
+	}
+	accepted := predicate.executor.evaluateMatchRowPredicate(predicate.ctx, predicate.clause, predicate.values)
+	for name := range row {
+		delete(predicate.values, name)
+	}
+	return accepted
+}
+
+func (predicate *bindingFilterPredicate) matchesRelationships(row binding, rels relationshipBinding, params map[string]interface{}) bool {
+	if predicate.compiled != nil {
+		return predicate.compiled(bindingWithRelView(row, edgeRelationshipBindings(rels)), params)
+	}
+	for name, value := range rels {
+		predicate.values[name] = value
+	}
+	accepted := predicate.matches(row, params)
+	for name := range rels {
+		delete(predicate.values, name)
+	}
+	return accepted
+}
+
+// newBindingFilterPredicate owns scratch for one synchronous filter invocation.
+// Its returned frame must not be cached or shared across goroutines.
+func (e *StorageExecutor) newBindingFilterPredicate(ctx context.Context, whereClause string, params map[string]interface{}) bindingFilterPredicate {
+	if predicate, supported := e.getCompiledBindingWhereIfSupported(ctx, whereClause); supported {
+		return bindingFilterPredicate{compiled: predicate}
+	}
+	if predicate, supported := e.tryCompileExecutorBindingWhere(ctx, whereClause); supported {
+		return bindingFilterPredicate{compiled: predicate}
+	}
+	if params != nil && !sameParameterMap(getParamsFromContext(ctx), params) {
+		ctx = withQueryParams(ctx, params)
+	}
+	parameters := parameterRowValues(ctx)
+	return bindingFilterPredicate{
+		executor: e, ctx: ctx, clause: whereClause, parameters: parameters,
+		values: make(map[string]interface{}, len(parameters)+4),
+	}
+}
+
 func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {
 	key := normalizeBindingWhereClause(whereClause)
 	if predicate, ok := compiledBindingWhereCache.get(key); ok {
@@ -850,100 +909,6 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b bin
 	if clause == "" {
 		return true
 	}
-	clause = strings.ReplaceAll(clause, "\n", " ")
-	clause = strings.ReplaceAll(clause, "\r", " ")
-	clause = strings.ReplaceAll(clause, "\t", " ")
-	upper := upperASCII(clause)
-
-	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
-		left := strings.TrimSpace(clause[:orIdx])
-		right := strings.TrimSpace(clause[orIdx+4:])
-		return e.evaluateBindingWhere(ctx, b, left, params) || e.evaluateBindingWhere(ctx, b, right, params)
-	}
-	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left := strings.TrimSpace(clause[:andIdx])
-		right := strings.TrimSpace(clause[andIdx+5:])
-		return e.evaluateBindingWhere(ctx, b, left, params) && e.evaluateBindingWhere(ctx, b, right, params)
-	}
-	if strings.HasPrefix(upper, "NOT ") {
-		if truth, ok := inPredicateTruth(clause[4:], func(expr string) interface{} {
-			return e.evaluateExpressionWithContext(ctx, expr, map[string]*storage.Node(b), nil)
-		}); ok {
-			return truth == truthFalse
-		}
-		return !e.evaluateBindingWhere(ctx, b, clause[4:], params)
-	}
-	if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, clause, map[string]*storage.Node(b)); recognized {
-		return matches
-	}
-
-	for _, pred := range []string{" STARTS WITH ", " ENDS WITH ", " CONTAINS "} {
-		if findTopLevelKeyword(clause, pred) > 0 {
-			return e.evaluateBindingExpressionAsBoolean(ctx, b, clause, params)
-		}
-	}
-
-	if strings.Contains(clause, "<>") || strings.Contains(clause, "!=") {
-		op := "<>"
-		opIdx := strings.Index(clause, "<>")
-		if opIdx == -1 {
-			op = "!="
-			opIdx = strings.Index(clause, "!=")
-		}
-		left := strings.TrimSpace(clause[:opIdx])
-		right := strings.TrimSpace(clause[opIdx+len(op):])
-		if !strings.Contains(left, ".") && !strings.Contains(right, ".") {
-			leftNode := b[left]
-			rightNode := b[right]
-			if leftNode != nil && rightNode != nil {
-				return leftNode.ID != rightNode.ID
-			}
-		}
-	}
-
-	for _, op := range []string{"<>", "!=", ">=", "<=", "=", ">", "<"} {
-		if idx := strings.Index(clause, op); idx > 0 {
-			left := strings.TrimSpace(clause[:idx])
-			right := strings.TrimSpace(clause[idx+len(op):])
-
-			if dotIdx := strings.Index(left, "."); dotIdx > 0 {
-				varName := left[:dotIdx]
-				propName := left[dotIdx+1:]
-
-				if node := b[varName]; node != nil {
-					actualVal := node.Properties[propName]
-					expectedVal := e.resolveBindingFallbackValue(ctx, right, b, params)
-
-					switch op {
-					case "=":
-						return e.compareEqual(actualVal, expectedVal)
-					case "<>", "!=":
-						return !e.compareEqual(actualVal, expectedVal)
-					case ">":
-						return e.compareGreater(actualVal, expectedVal)
-					case ">=":
-						return e.compareGreater(actualVal, expectedVal) || e.compareEqual(actualVal, expectedVal)
-					case "<":
-						return e.compareLess(actualVal, expectedVal)
-					case "<=":
-						return e.compareLess(actualVal, expectedVal) || e.compareEqual(actualVal, expectedVal)
-					}
-				}
-			} else {
-				leftNode := b[left]
-				rightNode := b[right]
-				if leftNode != nil && rightNode != nil {
-					switch op {
-					case "=":
-						return leftNode.ID == rightNode.ID
-					case "<>", "!=":
-						return leftNode.ID != rightNode.ID
-					}
-				}
-			}
-		}
-	}
-
 	return e.evaluateBindingExpressionAsBoolean(ctx, b, clause, params)
 }
 
@@ -969,9 +934,15 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context,
 }
 
 func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
-	resolved := e.substituteParams(expr, params)
-	result := e.evaluateExpressionWithContext(ctx, resolved, b, nil)
-	return predicateValueIsTrue(ctx, result, expr)
+	if params != nil && !sameParameterMap(getParamsFromContext(ctx), params) {
+		ctx = withQueryParams(ctx, params)
+	}
+	values := make(map[string]interface{}, len(b)+len(params))
+	for name, node := range b {
+		values[name] = node
+	}
+	bindParameterRow(ctx, pipelineRow(values))
+	return e.evaluateMatchRowPredicate(ctx, expr, values)
 }
 
 func (e *StorageExecutor) compareNodeIDs(leftID, rightID string, op string) bool {

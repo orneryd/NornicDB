@@ -818,11 +818,11 @@ func edgeRelationshipBindings(bindings relationshipBinding) map[string]*storage.
 // variable. See filterBindingsByWhereWithRels for the relationship-aware
 // variant used by executeMultiMatch.
 func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []binding, whereClause string, params map[string]interface{}) []binding {
-	compiled := e.getCompiledBindingWhere(ctx, whereClause)
+	compiled := e.newBindingFilterPredicate(ctx, whereClause, params)
 	result := make([]binding, 0, len(bindings))
 
 	for _, b := range bindings {
-		if compiled(b, params) {
+		if compiled.matches(b, params) {
 			result = append(result, b)
 		}
 	}
@@ -842,7 +842,7 @@ func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []
 // *storage.Edge values (needed for RETURN/DELETE) are returned separately
 // and never replaced by the view.
 func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []relationshipBinding, whereClause string, params map[string]interface{}) ([]binding, []relationshipBinding) {
-	compiled := e.getCompiledBindingWhere(ctx, whereClause)
+	compiled := e.newBindingFilterPredicate(ctx, whereClause, params)
 	resultBindings := make([]binding, 0, len(bindings))
 	resultRels := make([]relationshipBinding, 0, len(bindings))
 
@@ -851,7 +851,7 @@ func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bin
 		if i < len(relBindings) {
 			rels = relBindings[i]
 		}
-		if compiled(bindingWithRelView(b, edgeRelationshipBindings(rels)), params) {
+		if compiled.matchesRelationships(b, rels, params) {
 			resultBindings = append(resultBindings, b)
 			resultRels = append(resultRels, rels)
 		}
@@ -888,14 +888,6 @@ func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
 
 // evaluateBindingWhere evaluates WHERE clause against a binding
 func (e *StorageExecutor) evaluateBindingWhere(ctx context.Context, b binding, whereClause string, params map[string]interface{}) bool {
-	// Thread the explicit params map onto ctx so the recursive expression
-	// evaluator can resolve $param refs to their typed values via
-	// resolveDirectParamRef. Without this, the evaluator only sees what's
-	// already in ctx — and callers (tests, internal binding compiles) often
-	// provide params as an explicit argument instead of via ctx.
-	if params != nil {
-		ctx = withParams(ctx, params)
-	}
 	return e.evaluateBindingWhereGeneric(ctx, b, whereClause, params)
 }
 

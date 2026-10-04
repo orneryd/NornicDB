@@ -885,23 +885,18 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 // tier contains different operators.
 func splitRowArithmeticTier(expr, operators string) (left, right string, operator byte, ok bool) {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
-	quote := byte(0)
+	var operatorMask [4]uint64
+	for _, candidate := range operators {
+		if candidate < 256 {
+			operatorMask[candidate>>6] |= uint64(1) << (candidate & 63)
+		}
+	}
 	operatorIndex := -1
 	for index := 0; index < len(expr); index++ {
 		current := expr[index]
-		if quote != 0 {
-			if current == quote {
-				if index+1 < len(expr) && expr[index+1] == quote {
-					index++
-					continue
-				}
-				quote = 0
-			}
-			continue
-		}
 		switch current {
 		case '\'', '"', '`':
-			quote = current
+			index = skipCypherQuotedText(expr, index, current) - 1
 			continue
 		case '(':
 			parenDepth++
@@ -922,7 +917,7 @@ func splitRowArithmeticTier(expr, operators string) (left, right string, operato
 			braceDepth--
 			continue
 		}
-		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 || !strings.ContainsRune(operators, rune(current)) {
+		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 || operatorMask[current>>6]&(uint64(1)<<(current&63)) == 0 {
 			continue
 		}
 		if (current == '+' || current == '-') && rowArithmeticSignIsUnary(expr, index) {

@@ -21,12 +21,16 @@ func BenchmarkFilterBindingsByWhere_CompiledJoin(b *testing.B) {
 	params := map[string]interface{}{"keys": []interface{}{"k1", "k2", "k3", "k4"}}
 	whereClause := "o.joinKey IN $keys AND t.joinKey = o.joinKey AND o.status IS NOT NULL AND t.status IS NOT NULL"
 	ctx := context.Background()
+	if got := len(exec.filterBindingsByWhere(ctx, bindings, whereClause, params)); got != 128 {
+		b.Fatalf("expected 128 bindings, got %d", got)
+	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = exec.filterBindingsByWhere(ctx, bindings, whereClause, params)
 	}
+	b.StopTimer()
 }
 
 func BenchmarkFilterBindingsByWhere_GenericFallback(b *testing.B) {
@@ -37,11 +41,67 @@ func BenchmarkFilterBindingsByWhere_GenericFallback(b *testing.B) {
 			"n": &storage.Node{ID: storage.NodeID("n-" + strconv.Itoa(i)), Properties: map[string]interface{}{"name": "node-" + strconv.Itoa(i), "count": int64(i)}},
 		})
 	}
-	whereClause := "size(n.name) > 0"
+	whereClause := "size(n.name) + n.count >= 0"
 	ctx := context.Background()
+	if _, supported := exec.tryCompileBindingWhere(ctx, whereClause); supported {
+		b.Fatal("fallback workload must not use the binding compiler")
+	}
+	if got := len(exec.filterBindingsByWhere(ctx, bindings, whereClause, nil)); got != len(bindings) {
+		b.Fatalf("expected %d bindings, got %d", len(bindings), got)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = exec.filterBindingsByWhere(ctx, bindings, whereClause, nil)
+	}
+	b.StopTimer()
+}
+
+func BenchmarkBindingWherePipelineHandlers(b *testing.B) {
+	for _, handler := range []string{"binding", "with"} {
+		for _, count := range []int{1, 32, 1024} {
+			b.Run(handler+"/rows="+strconv.Itoa(count), func(b *testing.B) {
+				exec, _ := newTestExecutor(b)
+				ctx := context.Background()
+				clause := "size(n.name) + n.count >= 0"
+				if _, supported := exec.tryCompileBindingWhere(ctx, clause); supported {
+					b.Fatal("workload must exercise the shared predicate adapter")
+				}
+				rows := make([]binding, count)
+				values := make([]map[string]interface{}, count)
+				for index := range rows {
+					node := &storage.Node{ID: "node", Properties: map[string]interface{}{"name": "node", "count": int64(index)}}
+					rows[index] = binding{"n": node}
+					values[index] = map[string]interface{}{"n": node}
+				}
+				apply := func() int {
+					if handler == "binding" {
+						return len(exec.filterBindingsByWhere(ctx, rows, clause, nil))
+					}
+					accepted := 0
+					for _, row := range values {
+						keep, err := exec.evaluateWithWhere(ctx, clause, row)
+						if err != nil {
+							b.Fatal(err)
+						}
+						if keep {
+							accepted++
+						}
+					}
+					return accepted
+				}
+				if got := apply(); got != count {
+					b.Fatalf("expected %d rows, got %d", count, got)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for iteration := 0; iteration < b.N; iteration++ {
+					if got := apply(); got != count {
+						b.Fatalf("expected %d rows, got %d", count, got)
+					}
+				}
+				b.StopTimer()
+			})
+		}
 	}
 }

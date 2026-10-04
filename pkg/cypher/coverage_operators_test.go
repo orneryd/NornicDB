@@ -24,6 +24,89 @@ import (
 // lookups when the expression actually references nodes or relationships.
 // ----------------------------------------------------------------------------
 
+func TestGh728TopLevelOperatorUsesSharedQuoteScanner(t *testing.T) {
+	tests := []struct {
+		name, expr, op string
+		fold, brackets bool
+		want           int
+	}{
+		{name: "backtick property", expr: "n.`a+b` + 1", op: "+", want: strings.LastIndex("n.`a+b` + 1", "+")},
+		{name: "escaped backtick", expr: "n.`a``+b` + 1", op: "+", want: strings.LastIndex("n.`a``+b` + 1", "+")},
+		{name: "escaped single quote", expr: `'a\' + b' + 1`, op: "+", want: strings.LastIndex(`'a\' + b' + 1`, "+")},
+		{name: "escaped double quote", expr: `"a\" + b" + 1`, op: "+", want: strings.LastIndex(`"a\" + b" + 1`, "+")},
+		{name: "doubled quote", expr: `'a'' + b' + 1`, op: "+", want: strings.LastIndex(`'a'' + b' + 1`, "+")},
+		{name: "utf8 byte index", expr: "\u540d\u524d.\u6570 + 1", op: "+", want: strings.LastIndex("\u540d\u524d.\u6570 + 1", "+")},
+		{name: "bracket isolation", expr: "[1 + 2] + 3", op: "+", brackets: true, want: strings.LastIndex("[1 + 2] + 3", "+")},
+		{name: "bracket option", expr: "[1 + 2] + 3", op: "+", want: strings.Index("[1 + 2] + 3", "+")},
+		{name: "folded keyword", expr: "a And b", op: " AND ", fold: true, want: 1},
+		{name: "folded letter prefix", expr: "a And b", op: "AND", fold: true, want: 2},
+		{name: "folded lowercase prefix", expr: "a AND b", op: "and", fold: true, want: 2},
+		{name: "single letter prefix", expr: "a", op: "A", fold: true, want: 0},
+		{name: "parenthesis isolation", expr: "(1 + 2) + 3", op: "+", want: strings.LastIndex("(1 + 2) + 3", "+")},
+		{name: "brace isolation", expr: "{x:1 + 2} + 3", op: "+", brackets: true, want: strings.LastIndex("{x:1 + 2} + 3", "+")},
+		{name: "case sensitive keyword", expr: "a And b", op: " AND ", want: -1},
+		{name: "punctuation must not fold", expr: "n.x ~ 1", op: "^", fold: true, want: -1},
+		{name: "compound comparison", expr: "n.age >= 3", op: "=", want: -1},
+		{name: "regex comparison", expr: "n.name =~ 'a'", op: "=", want: -1},
+		{name: "unterminated quoted name", expr: "n.`a+b + 1", op: "+", want: -1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, findTopLevelOperator(test.expr, test.op, test.fold, test.brackets))
+		})
+	}
+	t.Run("empty operator", func(t *testing.T) {
+		require.NotPanics(t, func() {
+			require.Equal(t, -1, findTopLevelOperator("", "", false, true))
+		})
+	})
+}
+
+func TestGh728ArithmeticTierBitsetAndSharedQuotes(t *testing.T) {
+	for _, test := range []struct {
+		expr, operators, left, right string
+		operator                     byte
+		ok                           bool
+	}{
+		{expr: "'a\\' + b' + 'z'", operators: "+-", left: "'a\\' + b'", right: "'z'", operator: '+', ok: true},
+		{expr: "n.`a+b` + 1", operators: "+-", left: "n.`a+b`", right: "1", operator: '+', ok: true},
+		{expr: "[1+2][0] + {x:3}.x", operators: "+-", left: "[1+2][0]", right: "{x:3}.x", operator: '+', ok: true},
+		{expr: "(1+2) ^ 3", operators: "^", left: "(1+2)", right: "3", operator: '^', ok: true},
+		{expr: "1e-3 + -2", operators: "+-", left: "1e-3", right: "-2", operator: '+', ok: true},
+		{expr: "-1", operators: "+-"},
+		{expr: "n.x", operators: ""},
+		{expr: "a + b", operators: "+\u540d", left: "a", right: "b", operator: '+', ok: true},
+		{expr: string([]byte{'a', 0xff, 'b'}), operators: "\u00ff", left: "a", right: "b", operator: 0xff, ok: true},
+	} {
+		t.Run(test.expr, func(t *testing.T) {
+			left, right, operator, ok := splitRowArithmeticTier(test.expr, test.operators)
+			require.Equal(t, test.ok, ok)
+			require.Equal(t, test.left, left)
+			require.Equal(t, test.right, right)
+			require.Equal(t, test.operator, operator)
+		})
+	}
+}
+
+func BenchmarkTopLevelOperatorPipelineScan(b *testing.B) {
+	for _, workload := range []struct{ name, expr, op string }{
+		{"short", "size(n.name) + n.count >= 0", ">="},
+		{"long", strings.Repeat("n.name + ", 64) + "n.count >= 0", ">="},
+		{"quoted", "n.name = '" + strings.Repeat("letters AND words ", 128) + "' AND true", " AND "},
+	} {
+		b.Run(workload.name, func(b *testing.B) {
+			want := strings.LastIndex(workload.expr, workload.op)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				if got := findTopLevelOperator(workload.expr, workload.op, true, true); got != want {
+					b.Fatalf("expected byte %d, got %d", want, got)
+				}
+			}
+		})
+	}
+}
+
 func freshExecutorForOperators(t *testing.T) *StorageExecutor {
 	t.Helper()
 	base := storage.NewMemoryEngine()

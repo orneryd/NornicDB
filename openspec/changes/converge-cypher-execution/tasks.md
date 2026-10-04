@@ -1,5 +1,7 @@
 ## 1. Establish TCK and issue baseline
 
+- [x] Measured WHERE convergence (2026-10-04, #728): retire generic binding operator splitting and WITH text substitution; use shared typed predicates. Reuse invocation-local scratch, preserve compiled property views and native generic relationship types, and share quote scanning with ASCII prefix/256-bit arithmetic candidate gates. Regression-first direct/compiled/shared/WITH, public rollback/readback, concurrent ownership and lexical boundary controls pass; nine appended pinned cases preserve the corpus prefix. Both parsers pass 1,056 Bolt + 1,066 HTTP comparisons (4,244 total), 7,794 official outcomes each, races, repository correctness, scoped vet/build and 100% changed-helper coverage. Same-base Apple M2 Max fixed-count/profiled benchmarks show lower latency/allocations at 1/32/1,024 rows and unchanged compiled control within variance. Allocation CI/TestKit and broader handler acceptance remain open; #547 excluded.
+
 - [x] 1.1 Pin official TCK revision/checksum/license and record the complete feature/scenario/step inventory.
 - [x] 1.2 Implement Go step bindings, typed result/error comparison and observable side-effect checks with negative-control tests.
 - [x] 1.3 Run fresh-fixture autocommit and explicit-transaction scenarios over the production Bolt server; consume results and verify transaction completion.

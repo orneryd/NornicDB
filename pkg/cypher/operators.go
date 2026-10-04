@@ -123,40 +123,39 @@ func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
 }
 
 func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) int {
-	if len(expr) < len(op) {
+	if len(op) == 0 || len(expr) < len(op) {
 		return -1
 	}
 
-	inQuote := false
-	quoteChar := rune(0)
+	prefix := op[0]
+	var foldMask byte
+	if caseInsensitive && (prefix >= 'A' && prefix <= 'Z' || prefix >= 'a' && prefix <= 'z') {
+		foldMask = 0x20
+		prefix |= foldMask
+	}
 	parenDepth := 0
 	bracketDepth := 0
 	braceDepth := 0
 
 	for i := 0; i <= len(expr)-len(op); i++ {
-		c := rune(expr[i])
+		c := expr[i]
 		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-		case c == '(' && !inQuote:
+		case c == '\'' || c == '"' || c == '`':
+			i = skipCypherQuotedText(expr, i, c) - 1
+		case c == '(':
 			parenDepth++
-		case c == ')' && !inQuote:
+		case c == ')':
 			parenDepth--
-		case trackBrackets && c == '[' && !inQuote:
+		case trackBrackets && c == '[':
 			bracketDepth++
-		case trackBrackets && c == ']' && !inQuote:
+		case trackBrackets && c == ']':
 			bracketDepth--
-		case trackBrackets && c == '{' && !inQuote:
+		case trackBrackets && c == '{':
 			braceDepth++
-		case trackBrackets && c == '}' && !inQuote:
+		case trackBrackets && c == '}':
 			braceDepth--
-		case !inQuote && parenDepth == 0 && (!trackBrackets || (bracketDepth == 0 && braceDepth == 0)):
-			if operatorMatchesAt(expr, op, i, caseInsensitive) {
+		case parenDepth == 0 && (!trackBrackets || (bracketDepth == 0 && braceDepth == 0)):
+			if c|foldMask == prefix && (len(op) == 1 || operatorMatchesAt(expr, op, i, caseInsensitive)) {
 				if op == "=" {
 					if i > 0 && (expr[i-1] == '<' || expr[i-1] == '>' || expr[i-1] == '!') {
 						continue

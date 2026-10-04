@@ -2649,5 +2649,64 @@
     "name": "issue713 SET WITH UNWIND quoted window",
     "setup": ["CREATE (:SetUnwindProjection {score: 0})"],
     "query": "MATCH (n:SetUnwindProjection) SET n.score = 7 WITH n UNWIND [1,2] AS x RETURN n.score + x AS `score value` ORDER BY `score value` DESC SKIP 1 LIMIT 1"
+  },
+  {
+    "name": "issue728 shared binding arithmetic parameters",
+    "setup": ["CREATE (:WhereScratch {age:30, name:'alice=admin'}), (:WhereScratch {age:20, name:'bob'}), (:WhereScratch {name:'missing'})"],
+    "query": "MATCH (n:WhereScratch) WHERE n.age + $offset = $expected RETURN n.name",
+    "parameters": {"offset":1, "expected":31},
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared null negation",
+    "setup": ["CREATE (:WhereScratch {age:30}), (:WhereScratch {age:20})"],
+    "query": "MATCH (n:WhereScratch) WHERE NOT (n.missing + 1 = 0 OR false) RETURN n.age",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared WITH typed map predicate",
+    "setup": ["CREATE (:WhereScratch {age:30, name:'alice=admin'}), (:WhereScratch {age:20, name:'bob'})"],
+    "query": "MATCH (n:WhereScratch) WITH n WHERE all(k IN keys($props) WHERE n[k] = $props[k]) RETURN n.name",
+    "parameters": {"props":{"age":30, "name":"alice=admin"}},
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared WITH arithmetic failure rolls back",
+    "setup": ["CREATE (:WhereScratch {age:30}), (:WhereScratch {age:20})"],
+    "query": "MATCH (n:WhereScratch) SET n.flag = true WITH n WHERE 1 / $zero > 0 RETURN n.age",
+    "parameters": {"zero":0},
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared quoted property arithmetic",
+    "setup": ["CREATE (:WhereScratch {`a+b`:3, name:'quoted'})"],
+    "query": "MATCH (n:WhereScratch) WHERE n.`a+b` + 1 = 4 RETURN n.name",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared escaped literal arithmetic",
+    "query": "RETURN 'a\\' + b' + 'z' AS value",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared relationship property arithmetic",
+    "setup": ["CREATE (:WhereScratch {name:'first'})-[:LINK {age:41}]->(:WhereScratch {name:'second'})"],
+    "query": "MATCH (a:WhereScratch) MATCH (a)-[r:LINK]->(b) WHERE r.age + 1 = $expected RETURN a.name, type(r)",
+    "parameters": {"expected":42},
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared native relationship type predicate",
+    "setup": ["CREATE (:WhereScratch {name:'first'})-[:LINK {age:41}]->(:WhereScratch {name:'second'})"],
+    "query": "MATCH (a:WhereScratch) MATCH (a)-[r:LINK]->(b) WHERE type(r) = 'LINK' RETURN a.name, type(r)",
+    "no_effects": true
+  },
+  {
+    "name": "issue728 shared native relationship type arithmetic",
+    "setup": ["CREATE (:WhereScratch {name:'first'})-[:LINK {age:41}]->(:WhereScratch {name:'second'})"],
+    "query": "MATCH (a:WhereScratch) MATCH (a)-[r:LINK]->(b) WHERE type(r) = 'LINK' AND r.age + 1 = $expected RETURN a.name, type(r)",
+    "parameters": {"expected":42},
+    "no_effects": true
   }
 ]
