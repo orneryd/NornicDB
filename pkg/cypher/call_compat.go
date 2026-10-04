@@ -751,7 +751,13 @@ func (e *StorageExecutor) callDbIndexVectorCreateNodeIndexArguments(ctx context.
 		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{label}, []string{property}, storage.ConstraintEntityNode); err != nil {
 			return err
 		}
-		return schema.AddVectorIndexForEntity(indexName, label, property, int(dimension), similarity, storage.ConstraintEntityNode)
+		if err := schema.AddVectorIndexForEntity(indexName, label, property, int(dimension), similarity, storage.ConstraintEntityNode); err != nil {
+			return err
+		}
+		e.afterSchemaCommit(ctx, func() {
+			e.registerVectorSpace(indexName, label, property, int(dimension), similarity)
+		})
+		return nil
 	})
 	if err != nil {
 		return nil, &classifiedCypherError{
@@ -759,9 +765,6 @@ func (e *StorageExecutor) callDbIndexVectorCreateNodeIndexArguments(ctx context.
 			code:  "Neo.ClientError.Procedure.ProcedureCallFailed", detail: "ProcedureCallFailed",
 		}
 	}
-	e.afterSchemaCommit(ctx, func() {
-		e.registerVectorSpace(indexName, label, property, int(dimension), similarity)
-	})
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 

@@ -92,6 +92,18 @@ func (sm *SchemaManager) dropLookupIndexLocked(name string) (ConstraintEntityTyp
 	return "", false
 }
 
+// LockSchemaMutation serializes admission, mutation and counters for a compound
+// schema operation across callers sharing this manager. Individual schema APIs
+// retain their own locks and can be called while this lock is held.
+//
+//	release := schema.LockSchemaMutation()
+//	defer release()
+//	// Validate the name, then call schema.AddLookupIndex or another schema API.
+func (sm *SchemaManager) LockSchemaMutation() func() {
+	sm.schemaMutationMu.Lock()
+	return sm.schemaMutationMu.Unlock
+}
+
 // indexNameTakenLocked reports whether an index of any kind is named name.
 func (sm *SchemaManager) indexNameTakenLocked(name string) bool {
 	if _, ok := sm.compositeIndexes[name]; ok {

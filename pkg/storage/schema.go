@@ -85,6 +85,7 @@ type SchemaManager struct {
 	uniqueConstraintCommitLocksMu sync.Mutex
 	uniqueConstraintCommitLocks   map[uniqueConstraintLockKey]*uniqueConstraintCommitLock
 	uniqueConstraintCommitOrder   uint64
+	schemaMutationMu              sync.Mutex
 
 	// Constraints
 	uniqueConstraints       map[string]*UniqueConstraint      // key: "Label:property"

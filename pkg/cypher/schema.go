@@ -68,6 +68,10 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	if err := e.prepareSchemaTransaction(ctx); err != nil {
 		return nil, err
 	}
+	if schema := e.storage.GetSchema(); schema != nil {
+		release := schema.LockSchemaMutation()
+		defer release()
+	}
 	resumeWrites, err := pauseAsyncWritesForSchemaDDL(e.storage)
 	defer resumeWrites()
 	if err != nil {

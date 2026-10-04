@@ -325,8 +325,8 @@ both quote styles with literal newlines, post-index parameter/member access
 
 This update supersedes the earlier #531 residual status. Work is published
 directly on main under the user's current instructions; #547 remains excluded.
-The latest reported behaviors are repaired, but shared procedure/name admission
-and concurrent creation still require the final family audit before closure.
+The latest reported behaviors, shared procedure/name admission and concurrent
+creation are covered by the final family audit below.
 Native inventory, truthful backend representations, localization, and free
 Enterprise-equivalent constraints are approved policy differences. In particular,
 native NODE KEY support is retained, not misreported as Community equivalence.
@@ -381,3 +381,29 @@ projection and WHERE convergence remain separate #754/#713/#728 acceptance work;
 #530 still requires its final family audit. Earlier intermittent cached-property
 map panic in unchanged AsyncEngine iteration is recorded in issue evidence and
 is not claimed repaired by this schema work.
+
+### Final Shared Admission Audit
+
+Procedure-backed creation now shares DDL admission against the actual mutation
+schema view (`2d0af20d`). Legacy node-vector duplicate definitions and
+index/constraint name collisions have exact ProcedureCallFailed reference
+controls. All four native vector/fulltext creators have unchanged-inventory
+duplicate controls. The complete live corpus is 896 Bolt and 906 HTTP
+comparisons per parser, 3,604 total; native procedure extensions are validated
+separately rather than compared with absent Neo4j procedures.
+
+A final concurrent same-name test reproduced four successful creators for one
+name. A schema-manager compound-operation lock now serializes ordinary DDL and
+procedure admission through mutation, counters and transaction staging.
+Correctness controls cover plain creators (one winner), guarded creators (all
+successful with one definition), and competing ordinary/vector-procedure/UNIQUE
+creators (one winner). The expanded control passes race detection. Vector runtime
+registration stays inside successful mutation; explicit transactions still defer
+it until commit.
+
+The #531 acceptance decision covers the original and consolidated reported
+behaviors, including native profile/policy routing and validation. NODE KEY is
+the approved free Enterprise-equivalent policy difference. It does not claim
+#547 structural cleanup, optimized composite caches, full-repository race
+coverage, or repair of the unrelated cached-property iterator panic. The other
+original families retain their own completion gates.

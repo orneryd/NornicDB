@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -64,6 +65,64 @@ func TestMonster531ConstraintBackingIndexAdmission(t *testing.T) {
 	_, err = executor.Execute(ctx, "CREATE INDEX other IF NOT EXISTS FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, before, store.GetSchema().GetIndexes())
+}
+
+func TestMonster531ConcurrentIndexNameAdmission(t *testing.T) {
+	for _, mode := range []string{"plain", "guarded", "mixed"} {
+		t.Run(mode, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+			const creators = 32
+			start := make(chan struct{})
+			outcomes := make(chan error, creators)
+			for creator := 0; creator < creators; creator++ {
+				exec := NewStorageExecutor(store)
+				guard := ""
+				if mode == "guarded" {
+					guard = " IF NOT EXISTS"
+				}
+				query := fmt.Sprintf("CREATE INDEX shared_concurrent%s FOR (n:Concurrent%d) ON (n.id)", guard, creator)
+				if mode == "mixed" {
+					switch creator % 3 {
+					case 1:
+						query = fmt.Sprintf("CALL db.index.vector.createNodeIndex('shared_concurrent', 'Concurrent%d', 'e', 3, 'cosine')", creator)
+					case 2:
+						query = fmt.Sprintf("CREATE CONSTRAINT shared_concurrent FOR (n:Concurrent%d) REQUIRE n.id IS UNIQUE", creator)
+					}
+				}
+				go func() {
+					<-start
+					_, err := exec.Execute(context.Background(), query, nil)
+					outcomes <- err
+				}()
+			}
+			close(start)
+			succeeded := 0
+			errors := make([]error, 0, creators)
+			for creator := 0; creator < creators; creator++ {
+				if err := <-outcomes; err == nil {
+					succeeded++
+				} else {
+					errors = append(errors, err)
+				}
+			}
+			if mode == "guarded" {
+				require.Equal(t, creators, succeeded)
+			} else {
+				require.Equal(t, 1, succeeded)
+				for _, err := range errors {
+					require.True(t, strings.Contains(statusText(err), "AlreadyExists") || strings.Contains(statusText(err), "ProcedureCallFailed"), err)
+				}
+			}
+			definitions := 0
+			for _, item := range store.GetSchema().GetIndexes() {
+				index := item.(map[string]interface{})
+				if index["name"] == "shared_concurrent" {
+					definitions++
+				}
+			}
+			require.Equal(t, 1, definitions)
+		})
+	}
 }
 
 func TestMonster531FulltextLabelUnion(t *testing.T) {

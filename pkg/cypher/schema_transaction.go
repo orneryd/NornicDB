@@ -43,7 +43,10 @@ func (e *StorageExecutor) mutateSchema(ctx context.Context, mutation func(*stora
 	if err := e.prepareSchemaTransaction(ctx); err != nil {
 		return err
 	}
-	if err := mutation(e.getStorage(ctx).GetSchema()); err != nil {
+	schema := e.getStorage(ctx).GetSchema()
+	release := schema.LockSchemaMutation()
+	defer release()
+	if err := mutation(schema); err != nil {
 		return err
 	}
 	if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {

@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Serialize compound schema admission, mutation, counters and transaction
+  staging across executors sharing a schema manager. Concurrent ordinary,
+  procedure-backed and constraint creators cannot publish conflicting names;
+  guarded creation remains a no-op. Keep vector registration inside the
+  successful mutation boundary and explicit commit actions deferred (#531).
+
 - Share DDL index admission with all four procedure-backed vector/fulltext
   creators against their actual transaction schema view. Reject equivalent
   definitions and cross-kind/constraint name collisions before persistence
