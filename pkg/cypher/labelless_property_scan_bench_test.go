@@ -36,6 +36,33 @@ func setupLabellessPropertyScanBench(b *testing.B, nodes int) (*StorageExecutor,
 	return exec, ctx
 }
 
+// BenchmarkLabellessPropertyScanInTransaction: the same read inside BEGIN …
+// COMMIT goes through the transaction view's scan (#824).
+func BenchmarkLabellessPropertyScanInTransaction(b *testing.B) {
+	for _, nodes := range []int{5000, 20000} {
+		exec, ctx := setupLabellessPropertyScanBench(b, nodes)
+		b.Run(fmt.Sprintf("labelless_hit_tx/n=%d", nodes), func(b *testing.B) {
+			params := map[string]interface{}{"id": "n7"}
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := exec.Execute(ctx, "BEGIN", nil); err != nil {
+					b.Fatal(err)
+				}
+				result, err := exec.Execute(ctx, "MATCH (a {id: $id}) RETURN a.id", params)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := exec.Execute(ctx, "COMMIT", nil); err != nil {
+					b.Fatal(err)
+				}
+				if len(result.Rows) != 1 {
+					b.Fatalf("rows = %v", result.Rows)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkLabellessPropertyScan(b *testing.B) {
 	for _, nodes := range []int{5000, 20000} {
 		exec, ctx := setupLabellessPropertyScanBench(b, nodes)
@@ -43,6 +70,9 @@ func BenchmarkLabellessPropertyScan(b *testing.B) {
 			{"labelless_hit", "MATCH (a {id: $id}) RETURN a.id"},
 			{"labelless_miss", "MATCH (a {id: $missing}) RETURN a.id"},
 			{"labelled_unindexed", "MATCH (a:Code {name: $name}) RETURN a.id"},
+			// A write runs in an implicit transaction: the transaction view's
+			// scan (#824).
+			{"labelless_write", "MATCH (a {id: $id}) SET a.touched = true RETURN a.id"},
 		} {
 			b.Run(fmt.Sprintf("%s/n=%d", tc.name, nodes), func(b *testing.B) {
 				params := map[string]interface{}{"id": "n7", "missing": "none", "name": "node 7"}
