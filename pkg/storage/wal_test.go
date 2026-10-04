@@ -3243,10 +3243,11 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		})
 		require.NoError(t, err)
 
+		// The writeback carries the node it embedded (#889).
 		err = walEngine.UpdateNodeEmbeddingSidecar(&Node{
 			ID:         "tenant_a:embed-node",
 			Labels:     []string{"Doc"},
-			Properties: map[string]any{"k": "v2"},
+			Properties: map[string]any{"k": "v1"},
 		})
 		require.NoError(t, err)
 		assert.Equal(t, 1, dispatch.updateEmbeddingCalls)

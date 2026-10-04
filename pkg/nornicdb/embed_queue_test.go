@@ -2263,7 +2263,9 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Equal(t, 1, emb.callCount, "non-retryable errors must not consume the retry budget")
 		require.Equal(t, int64(1), ew.failed.Load())
 		require.Empty(t, qe.added, "permanent errors must not be requeued")
-		require.Equal(t, []storage.NodeID{node.ID, node.ID}, qe.marked, "claim and terminal failure both remove pending work")
+		// The claim removes the pending work; the terminal failure's writeback
+		// removes it again in its own commit, not by a separate call (#889).
+		require.Equal(t, []storage.NodeID{node.ID}, qe.marked, "the claim removes pending work")
 		require.NotNil(t, qe.updatedEmbedding)
 		require.Equal(t, true, qe.updatedEmbedding.EmbedMeta["embedding_failed"])
 		require.Equal(t, false, qe.updatedEmbedding.EmbedMeta["has_embedding"])

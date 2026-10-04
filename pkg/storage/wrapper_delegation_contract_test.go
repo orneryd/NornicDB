@@ -774,7 +774,7 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			// The sidecar writeback never stages a node body: it lands in the
 			// embedding key space immediately and must be visible through the
 			// stack (a flush is still run to settle async staging of the create).
-			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(&Node{ID: id("n1"), ChunkEmbeddings: [][]float32{{0.3, 0.4}}, EmbedMeta: map[string]any{"chunk_count": 1}}))
+			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, id("n1"), [][]float32{{0.3, 0.4}}, map[string]any{"chunk_count": 1}, time.Time{})))
 			assertNoNotImplemented(t, stack, "UpdateNodeEmbeddingSidecar", nil)
 			flushDelegationStack(t, engine)
 			updated, err := engine.GetNode(id("n1"))
