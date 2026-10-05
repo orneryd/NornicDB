@@ -451,10 +451,13 @@ func semanticExpressionReferences(expression string) []string {
 			continue
 		}
 		normalized := normalizeProjectionColumnName(name)
-		if name[0] != '`' && isSemanticLiteralWord(normalized) {
+		propertyAccess := cursor < len(expression) && expression[cursor] == '.'
+		// A keyword-named variable (where.id, #894) is still a variable when
+		// a property access follows it; a keyword is never followed by '.'.
+		if name[0] != '`' && !propertyAccess && isSemanticLiteralWord(normalized) {
 			continue
 		}
-		if cursor < len(expression) && expression[cursor] == '.' {
+		if propertyAccess {
 			property, propertyEnd, propertyOK := scanSymbolicName(expression, cursor+1)
 			if propertyOK {
 				normalized += "." + normalizePropertyKey(property)
