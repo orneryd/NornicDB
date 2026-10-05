@@ -3428,10 +3428,17 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		}
 
 		out := make([]pipelineRow, 0, len(groups))
-		orderScopes := make([]pipelineRow, 0, len(groups))
+		needsOrderScopes := len(orderTerms) > 0 || postWithWhere != "" || withDistinct || windowedWhere != ""
+		var orderScopes []pipelineRow
+		if needsOrderScopes {
+			orderScopes = make([]pipelineRow, 0, len(groups))
+		}
 		for _, group := range groups {
 			newRow := pipelineRow{}
-			projectedExpressions := make(pipelineRow, len(projections))
+			var projectedExpressions pipelineRow
+			if needsOrderScopes {
+				projectedExpressions = make(pipelineRow, len(projections))
+			}
 			for name, value := range group.first {
 				if strings.HasPrefix(name, "$") {
 					newRow[name] = value
@@ -3444,7 +3451,13 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 					return nil, false
 				}
 				newRow[projection.alias] = value
-				projectedExpressions[projection.expr] = value
+				if needsOrderScopes {
+					projectedExpressions[projection.expr] = value
+				}
+			}
+			if !needsOrderScopes {
+				out = append(out, newRow)
+				continue
 			}
 			orderScope := make(pipelineRow, len(group.first)+len(projectedExpressions)+len(newRow))
 			for name, value := range group.first {
