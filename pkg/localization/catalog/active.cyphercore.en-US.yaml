@@ -136,6 +136,18 @@
   other: "Type mismatch: expected List<T> but was {{.Type}}"
 - id: cyphercore.list_parameter_type_mismatch
   other: "Type mismatch for parameter '{{.Parameter}}': expected List<T> but was {{.Type}}"
+- id: cyphercore.list_coercion_to_boolean
+  other: "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead."
+- id: cyphercore.list_index_type_mismatch
+  other: "Type mismatch: list index must be given as Integer, but was {{.Type}}"
+- id: cyphercore.regex_pattern_type_mismatch
+  other: "Type mismatch: a regular expression pattern must be a String, but was {{.Value}}"
+- id: cyphercore.duration_arithmetic_overflow
+  other: "Duration arithmetic overflows: {{.Duration}} {{.Operator}} {{.Operand}}"
+- id: cyphercore.map_key_type_mismatch
+  other: "Type mismatch: map key must be given as String, but was {{.Type}}"
+- id: cyphercore.entity_property_key_type_mismatch
+  other: "Type mismatch: node or relationship property key must be given as String, but was {{.Type}}"
 - id: cyphercore.function_argument_count
   other: "{{.Function}}() expects {{.Expected}} argument(s), got {{.Got}}"
 - id: cyphercore.trim_character_length

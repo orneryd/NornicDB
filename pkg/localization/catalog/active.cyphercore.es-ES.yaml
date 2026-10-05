@@ -136,6 +136,18 @@
   other: "Tipo no coincidente: se esperaba List<T> pero era {{.Type}}"
 - id: cyphercore.list_parameter_type_mismatch
   other: "Tipo no coincidente para el parámetro '{{.Parameter}}': se esperaba List<T> pero era {{.Type}}"
+- id: cyphercore.list_coercion_to_boolean
+  other: "No se permite convertir una lista en booleano. Use `NOT isEmpty(...)` en su lugar."
+- id: cyphercore.list_index_type_mismatch
+  other: "Tipo no coincidente: el índice de lista debe ser Integer, pero era {{.Type}}"
+- id: cyphercore.regex_pattern_type_mismatch
+  other: "Tipo no coincidente: el patrón de una expresión regular debe ser String, pero era {{.Value}}"
+- id: cyphercore.duration_arithmetic_overflow
+  other: "La aritmética de duraciones desborda: {{.Duration}} {{.Operator}} {{.Operand}}"
+- id: cyphercore.map_key_type_mismatch
+  other: "Tipo no coincidente: la clave del mapa debe ser String, pero era {{.Type}}"
+- id: cyphercore.entity_property_key_type_mismatch
+  other: "Tipo no coincidente: la clave de propiedad de un nodo o relación debe ser String, pero era {{.Type}}"
 - id: cyphercore.function_argument_count
   other: "{{.Function}}() espera {{.Expected}} argumento(s), recibió {{.Got}}"
 - id: cyphercore.trim_character_length

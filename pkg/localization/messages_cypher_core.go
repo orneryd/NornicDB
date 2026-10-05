@@ -54,6 +54,12 @@ const (
 	MessageCypherCoreInvalidInputExpectedExpression      MessageID = "cyphercore.invalid_input_expected_expression"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
 	MessageCypherCoreListParameterTypeMismatch           MessageID = "cyphercore.list_parameter_type_mismatch"
+	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
+	MessageCypherCoreListIndexTypeMismatch               MessageID = "cyphercore.list_index_type_mismatch"
+	MessageCypherCoreMapKeyTypeMismatch                  MessageID = "cyphercore.map_key_type_mismatch"
+	MessageCypherCoreEntityPropertyKeyTypeMismatch       MessageID = "cyphercore.entity_property_key_type_mismatch"
+	MessageCypherCoreRegexPatternTypeMismatch            MessageID = "cyphercore.regex_pattern_type_mismatch"
+	MessageCypherCoreDurationArithmeticOverflow          MessageID = "cyphercore.duration_arithmetic_overflow"
 	MessageCypherCoreFunctionArgumentCount               MessageID = "cyphercore.function_argument_count"
 	MessageCypherCoreTrimCharacterLength                 MessageID = "cyphercore.trim_character_length"
 	MessageCypherCoreNormalizeFormInvalid                MessageID = "cyphercore.normalize_form_invalid"
@@ -286,6 +292,37 @@ func CypherCoreListOperandTypeMismatch(typeName string) Message {
 
 func CypherCoreListParameterTypeMismatch(parameter string, typeName string) Message {
 	return cypherCoreMessage(MessageCypherCoreListParameterTypeMismatch, "Type mismatch for parameter '"+parameter+"': expected List<T> but was "+typeName, map[string]any{"Parameter": parameter, "Type": typeName})
+}
+
+func CypherCoreListCoercionToBoolean() Message {
+	return cypherCoreMessage(MessageCypherCoreListCoercionToBoolean, "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead.", nil)
+}
+
+func CypherCoreListIndexTypeMismatch(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreListIndexTypeMismatch, "Type mismatch: list index must be given as Integer, but was "+typeName, map[string]any{"Type": typeName})
+}
+
+// CypherCoreRegexPatternTypeMismatch is the runtime TypeError of
+// text =~ pattern for a string text and a pattern that isn't a string;
+// value is the pattern rendered as Neo4j renders values (Long(1)).
+func CypherCoreRegexPatternTypeMismatch(value string) Message {
+	return cypherCoreMessage(MessageCypherCoreRegexPatternTypeMismatch, "Type mismatch: a regular expression pattern must be a String, but was "+value, map[string]any{"Value": value})
+}
+
+// CypherCoreDurationArithmeticOverflow is the ArgumentError of a duration
+// multiplied or divided (operator) by a number (operand, rendered as Neo4j
+// renders values) whose result doesn't fit a duration.
+func CypherCoreDurationArithmeticOverflow(duration, operator, operand string) Message {
+	return cypherCoreMessage(MessageCypherCoreDurationArithmeticOverflow, "Duration arithmetic overflows: "+duration+" "+operator+" "+operand,
+		map[string]any{"Duration": duration, "Operator": operator, "Operand": operand})
+}
+
+func CypherCoreMapKeyTypeMismatch(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreMapKeyTypeMismatch, "Type mismatch: map key must be given as String, but was "+typeName, map[string]any{"Type": typeName})
+}
+
+func CypherCoreEntityPropertyKeyTypeMismatch(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreEntityPropertyKeyTypeMismatch, "Type mismatch: node or relationship property key must be given as String, but was "+typeName, map[string]any{"Type": typeName})
 }
 
 func CypherCoreFunctionArgumentCount(function string, want string, got int) Message {
