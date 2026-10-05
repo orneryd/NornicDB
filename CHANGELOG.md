@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Delegate non-aggregate cartesian RETURN, DISTINCT, ordering and expression
+  pagination to the shared projector. Stream simple projections through an
+  invocation-local borrowed scope; retain owned rows for window/order/wildcard
+  modifiers. Preserve the supplied result buffer and stats, propagate typed
+  projection/window failures, and avoid context copies for local values (#713).
+
 - Reuse immutable OpenTelemetry span-start options without disabling tracing.
   Cache-disabled public Execute measures 35 -> 32 allocations/op and saves
   48 B/op; enabled span attributes, kinds, and concurrent parent contexts remain

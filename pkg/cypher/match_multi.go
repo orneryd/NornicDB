@@ -1457,84 +1457,40 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 		return e.executeCartesianAggregation(ctx, allMatches, returnItems, result)
 	}
 
-	// Build result rows from cartesian product
-	for _, match := range allMatches {
-		row := make([]interface{}, len(returnItems))
-		for i, item := range returnItems {
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, match, nil)
-		}
-		result.Rows = append(result.Rows, row)
-	}
-
-	// Apply DISTINCT if needed
-	if distinct {
-		seen := make(map[string]bool)
-		var uniqueRows [][]interface{}
-		for _, row := range result.Rows {
-			key := fmt.Sprintf("%v", row)
-			if !seen[key] {
-				seen[key] = true
-				uniqueRows = append(uniqueRows, row)
-			}
-		}
-		result.Rows = uniqueRows
-	}
-
-	// Apply ORDER BY
-	orderByIdx := findKeywordIndex(cypher, "ORDER")
-	if orderByIdx > 0 {
-		orderStart := orderByIdx + 5
-		for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
-			orderStart++
-		}
-		if orderStart+2 <= len(cypher) && upperASCII(cypher[orderStart:orderStart+2]) == "BY" {
-			orderStart += 2
-			for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
-				orderStart++
-			}
-		}
-		orderEnd := len(cypher)
-		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := findKeywordIndex(cypher[orderStart:], kw); idx >= 0 {
-				if orderStart+idx < orderEnd {
-					orderEnd = orderStart + idx
-				}
-			}
-		}
-		orderExpr := strings.TrimSpace(cypher[orderStart:orderEnd])
-		if orderExpr != "" {
-			result.Rows = e.orderResultRows(result.Rows, result.Columns, orderExpr)
+	var variables []string
+	if len(allMatches) > 0 {
+		variables = make([]string, 0, len(allMatches[0]))
+		for name := range allMatches[0] {
+			variables = append(variables, name)
 		}
 	}
-
-	// Apply SKIP
-	skipIdx := findKeywordIndex(cypher, "SKIP")
-	if skipIdx > 0 {
-		skipPart := strings.TrimSpace(cypher[skipIdx+4:])
-		if fields := strings.Fields(skipPart); len(fields) > 0 {
-			if s, err := strconv.Atoi(fields[0]); err == nil && s > 0 {
-				if s < len(result.Rows) {
-					result.Rows = result.Rows[s:]
+	source := func(yield func(pipelineRow) bool) bool {
+		values := make(pipelineRow, len(variables))
+		for _, match := range allMatches {
+			for _, name := range variables {
+				node := match[name]
+				if node == nil {
+					values[name] = nil
 				} else {
-					result.Rows = [][]interface{}{}
+					values[name] = node
 				}
 			}
-		}
-	}
-
-	// Apply LIMIT
-	limitIdx := findKeywordIndex(cypher, "LIMIT")
-	if limitIdx > 0 {
-		limitPart := strings.TrimSpace(cypher[limitIdx+5:])
-		if fields := strings.Fields(limitPart); len(fields) > 0 {
-			if l, err := strconv.Atoi(fields[0]); err == nil && l >= 0 {
-				if l < len(result.Rows) {
-					result.Rows = result.Rows[:l]
-				}
+			if !yield(values) {
+				break
 			}
 		}
+		return true
 	}
-
+	returnClause := cypher[returnIdx:]
+	if distinct && !startsWithKeywordFold(strings.TrimSpace(returnClause[len("RETURN"):]), "DISTINCT") {
+		returnClause = "RETURN DISTINCT " + strings.TrimSpace(returnClause[len("RETURN"):])
+	}
+	projected, err := e.projectMergeReturnSource(ctx, nil, returnClause, source)
+	if err != nil {
+		return nil, err
+	}
+	projected.Stats = result.Stats
+	*result = *projected
 	return result, nil
 }
 

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -104,6 +105,141 @@ func TestGh728CartesianMembershipParameterFreshness(t *testing.T) {
 	require.Empty(t, apply())
 	keys[0] = "key-1"
 	require.ElementsMatch(t, want, apply())
+}
+
+func TestGh713LocalProjectionAvoidsContextCopies(t *testing.T) {
+	exec := &StorageExecutor{}
+	node := &storage.Node{ID: "local-node", Properties: map[string]interface{}{"key": "local-key"}}
+	outer := &storage.Node{ID: "outer-node", Properties: map[string]interface{}{"key": "outer-key"}}
+	ctx := withQueryParams(withValueBindings(context.Background(), map[string]interface{}{"a": outer, "extra": int64(9)}), map[string]interface{}{"unused": int64(1), "shadow": int64(4)})
+	values := pipelineRow{"a": node, "$shadow": int64(7)}
+	for _, test := range []struct {
+		expression string
+		want       interface{}
+	}{
+		{"a", node},
+		{"a.key", "local-key"},
+		{"$shadow", int64(7)},
+	} {
+		t.Run(test.expression, func(t *testing.T) {
+			allocations := testing.AllocsPerRun(1000, func() {
+				value, evaluated := exec.evaluateRowExpressionWithContext(ctx, test.expression, values)
+				if !evaluated || value != test.want {
+					t.Fatalf("got %v (%v), want %v", value, evaluated, test.want)
+				}
+			})
+			require.Zero(t, allocations)
+		})
+	}
+	for _, expression := range []string{"extra", "$unused"} {
+		value, evaluated := exec.evaluateRowExpressionWithContext(ctx, expression, values)
+		require.True(t, evaluated)
+		if expression == "extra" {
+			require.Equal(t, int64(9), value)
+		} else {
+			require.Equal(t, int64(1), value)
+		}
+	}
+	require.Equal(t, pipelineRow{"a": node, "$shadow": int64(7)}, values)
+}
+
+func TestGh713SharedReturnBorrowedSourceOwnership(t *testing.T) {
+	exec := &StorageExecutor{}
+	for _, test := range []struct {
+		clause string
+		rows   [][]interface{}
+		code   string
+	}{
+		{"RETURN value AS value", [][]interface{}{{int64(3)}, {int64(1)}, {int64(2)}}, ""},
+		{"RETURN *", [][]interface{}{{int64(3)}, {int64(1)}, {int64(2)}}, ""},
+		{"RETURN value AS value ORDER BY value SKIP 1 LIMIT 1", [][]interface{}{{int64(2)}}, ""},
+		{"RETURN DISTINCT value AS value ORDER BY value", [][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}}, ""},
+		{"RETURN value / 0 AS value", nil, "Neo.ClientError.Statement.ArithmeticError"},
+		{"RETURN missing AS value", nil, "Neo.ClientError.Statement.SyntaxError"},
+	} {
+		t.Run(test.clause, func(t *testing.T) {
+			ctx := withExpressionFailureSlot(context.Background())
+			values := pipelineRow{}
+			yielded := 0
+			source := func(yield func(pipelineRow) bool) bool {
+				for _, value := range []int64{3, 1, 2, 3} {
+					values["value"] = value
+					yielded++
+					if !yield(values) {
+						break
+					}
+				}
+				values["value"] = int64(99)
+				return true
+			}
+			result, err := exec.projectMergeReturnSource(ctx, nil, test.clause, source)
+			if test.code != "" {
+				require.Error(t, err)
+				require.True(t, strings.HasPrefix(statusText(err), test.code), statusText(err))
+				require.Equal(t, 1, yielded)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, getExpressionFailure(ctx))
+			require.Equal(t, []string{"value"}, result.Columns)
+			want := test.rows
+			if test.clause == "RETURN value AS value" || test.clause == "RETURN *" {
+				want = append(append([][]interface{}{}, want...), []interface{}{int64(3)})
+			}
+			require.Equal(t, want, result.Rows)
+			require.Equal(t, 4, yielded)
+		})
+	}
+	for _, clause := range []string{"RETURN value", "RETURN *"} {
+		ctx := withExpressionFailureSlot(context.Background())
+		result, handled := exec.pipelineApplyReturnSource(ctx, nil, clause, func(func(pipelineRow) bool) bool { return false }, false)
+		require.False(t, handled)
+		require.Nil(t, result)
+	}
+}
+
+func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
+	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-projection-test")
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	for _, key := range []string{"key-1", "key-2"} {
+		for _, side := range []string{"Left", "Right"} {
+			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"key": key}})
+			require.NoError(t, err)
+		}
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	for _, test := range []struct {
+		name, tail, code string
+		columns          []string
+		rows             [][]interface{}
+	}{
+		{"literal window", "RETURN a.key AS left, b.key AS right ORDER BY left, right SKIP 1 LIMIT 1", "", []string{"left", "right"}, [][]interface{}{{"key-1", "key-2"}}},
+		{"arithmetic window", "RETURN a.key AS left, b.key AS right ORDER BY left, right SKIP 1 + 1 LIMIT 1 + 1", "", []string{"left", "right"}, [][]interface{}{{"key-2", "key-1"}, {"key-2", "key-2"}}},
+		{"parameter window", "RETURN a.key AS left, b.key AS right ORDER BY left, right SKIP $skip LIMIT $limit", "", []string{"left", "right"}, [][]interface{}{{"key-2", "key-1"}}},
+		{"parameter zero", "RETURN a.key AS `left key` LIMIT $zero", "", []string{"left key"}, [][]interface{}{}},
+		{"projection failure", "RETURN 1 / 0 AS value", "Neo.ClientError.Statement.ArithmeticError", nil, nil},
+		{"window failure", "RETURN a.key AS left LIMIT 1 / 0", "Neo.ClientError.Statement.ArithmeticError", nil, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			query := "MATCH (a:ProjectionLeft), (b:ProjectionRight) " + test.tail
+			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"skip": int64(2), "limit": int64(1), "zero": int64(0)}))
+			items := exec.parseReturnItems(test.tail[len("RETURN "):])
+			stats := &QueryStats{}
+			buffer := &ExecuteResult{Columns: test.columns, Stats: stats}
+			result, err := exec.executeCartesianProductMatch(ctx, query, "", []string{"(a:ProjectionLeft)", "(b:ProjectionRight)"}, -1, findKeywordIndex(query, "RETURN"), items, false, false, buffer)
+			if test.code != "" {
+				require.Error(t, err)
+				require.True(t, strings.HasPrefix(statusText(err), test.code), statusText(err))
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, getExpressionFailure(ctx))
+			require.Same(t, buffer, result)
+			require.Equal(t, test.columns, result.Columns)
+			require.Equal(t, test.rows, result.Rows)
+			require.Same(t, stats, result.Stats)
+		})
+	}
 }
 
 func TestCartesianWherePushdown_InAndEqualityJoin(t *testing.T) {
