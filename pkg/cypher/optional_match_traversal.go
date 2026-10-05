@@ -386,7 +386,7 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 		}
 
 		matched := false
-		for _, rel := range e.findOptionalRelatedNodes(ctx, seed, clause.pattern, pattern) {
+		for _, rel := range e.findRelatedNodes(seed, pattern) {
 			if srcBound && tgtBound {
 				if rel.node == nil || tgtNode == nil || rel.node.ID != tgtNode.ID {
 					continue
