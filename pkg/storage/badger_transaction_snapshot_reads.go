@@ -316,19 +316,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 		}
 	}
 	if tx.snapshotDeregister != nil {
-		cache := &tx.snapshotOutgoingAdjacency
-		if direction == Incoming {
-			cache = &tx.snapshotIncomingAdjacency
-		}
-		edgeIDs, cached := cache.load(nodeID)
-		edges, snapshotEdgeIDs, err := tx.readSnapshotAdjacentEdgesLocked(nodeID, direction, edgeIDs, cached)
-		if err != nil {
-			return nil, err
-		}
-		if !cached {
-			cache.store(nodeID, snapshotEdgeIDs)
-		}
-		return edges, nil
+		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false)
 	}
 	switch direction {
 	case Outgoing:
@@ -346,7 +334,30 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 	}
 }
 
-func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, edgeIDs []EdgeID, cached bool) ([]*Edge, []EdgeID, error) {
+// readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships at the
+// pinned snapshot, reusing and filling the per-transaction adjacency cache.
+func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]*Edge, error) {
+	cache := &tx.snapshotOutgoingAdjacency
+	if direction == Incoming {
+		cache = &tx.snapshotIncomingAdjacency
+	}
+	edgeIDs, cached := cache.load(nodeID)
+	edges, snapshotEdgeIDs, err := tx.readSnapshotAdjacentEdgesLocked(nodeID, direction, edgeIDs, cached, headersOnly)
+	if err != nil {
+		return nil, err
+	}
+	if !cached {
+		cache.store(nodeID, snapshotEdgeIDs)
+	}
+	return edges, nil
+}
+
+// readSnapshotAdjacentEdgesLocked returns nodeID's relationships visible at
+// the snapshot. With headersOnly, a relationship whose adjacency entry value
+// carries its type and other end is listed from that value when its MVCC head
+// in the snapshot view is live and not newer than the read version, so no
+// later change can differ from it; otherwise its snapshot record is read.
+func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, edgeIDs []EdgeID, cached, headersOnly bool) ([]*Edge, []EdgeID, error) {
 	edges := make([]*Edge, 0, len(edgeIDs))
 	err := tx.withSnapshotViewLocked(func(snapshot *badger.Txn) error {
 		var err error
@@ -366,11 +377,17 @@ func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, dire
 			}
 			edges = make([]*Edge, 0, len(edgeIDs))
 		}
+		var headers map[EdgeID]*Edge
+		if headersOnly {
+			headers = tx.engine.adjacencyHeadersInTxn(snapshot, nodeID, direction)
+		}
 		for _, edgeID := range edgeIDs {
 			var edge *Edge
 			decayStable := !tx.engine.decayEnabled || tx.engine.revealAll.Load()
 			if cachedEdge, ok := tx.snapshotEdgeByID[edgeID]; ok && decayStable {
 				edge = copyEdge(cachedEdge)
+			} else if header := tx.snapshotHeaderLocked(snapshot, headers, edgeID); header != nil {
+				edge = header
 			} else {
 				var edgeErr error
 				edge, edgeErr = tx.engine.getEdgeVisibleAtInTxn(snapshot, edgeID, tx.readTS)
@@ -394,6 +411,60 @@ func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, dire
 		return nil
 	})
 	return edges, edgeIDs, err
+}
+
+// OutgoingEdgeHeaders implements EdgeHeaderReader at the transaction's
+// snapshot, with its own writes merged as GetOutgoingEdges merges them.
+func (tx *BadgerTransaction) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	return tx.edgeHeaders(nodeID, Outgoing)
+}
+
+// IncomingEdgeHeaders implements EdgeHeaderReader at the transaction's
+// snapshot, with its own writes merged as GetIncomingEdges merges them.
+func (tx *BadgerTransaction) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	return tx.edgeHeaders(nodeID, Incoming)
+}
+
+// edgeHeaders lists the snapshot's relationships of nodeID as
+// getCommittedAdjacentEdgesLocked does, taking each one's type and other end
+// from its adjacency entry value where it can. It declines without a pinned
+// snapshot and under decay filtering.
+func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection) ([]*Edge, bool, error) {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return nil, true, err
+	}
+	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
+		return nil, true, err
+	}
+	if tx.readTS.IsZero() || tx.snapshotDeregister == nil || tx.engine.decayEnabled && !tx.engine.revealAll.Load() {
+		return nil, false, nil
+	}
+	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, true)
+	if err != nil {
+		return nil, true, err
+	}
+	return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+		if direction == Outgoing {
+			return edge.StartNode == nodeID
+		}
+		return edge.EndNode == nodeID
+	}), true, nil
+}
+
+// snapshotHeaderLocked returns edgeID's header from headers when its MVCC head
+// in snapshot is live and not newer than the read version, else nil.
+func (tx *BadgerTransaction) snapshotHeaderLocked(snapshot *badger.Txn, headers map[EdgeID]*Edge, edgeID EdgeID) *Edge {
+	header, ok := headers[edgeID]
+	if !ok {
+		return nil
+	}
+	head, err := tx.engine.loadEdgeMVCCHeadInTxn(snapshot, edgeID)
+	if err != nil || head.Tombstoned || tx.readTS.Compare(head.Version) < 0 {
+		return nil
+	}
+	return header
 }
 
 // withSnapshotViewLocked keeps every snapshot read on the same physical Badger

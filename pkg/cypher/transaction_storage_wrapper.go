@@ -448,6 +448,25 @@ func (w *transactionStorageWrapper) GetOutgoingEdges(nodeID storage.NodeID) ([]*
 	return w.toUserEdges(edges), nil
 }
 
+// OutgoingEdgeHeaders lists the transaction's relationship headers in its
+// namespace.
+func (w *transactionStorageWrapper) OutgoingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
+	return w.userEdgeHeaders(w.tx.OutgoingEdgeHeaders(w.prefixNodeID(nodeID)))
+}
+
+// IncomingEdgeHeaders lists the transaction's relationship headers in its
+// namespace.
+func (w *transactionStorageWrapper) IncomingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
+	return w.userEdgeHeaders(w.tx.IncomingEdgeHeaders(w.prefixNodeID(nodeID)))
+}
+
+func (w *transactionStorageWrapper) userEdgeHeaders(edges []*storage.Edge, answered bool, err error) ([]*storage.Edge, bool, error) {
+	if err != nil || !answered || w.namespace == "" {
+		return edges, answered, err
+	}
+	return w.toUserEdges(edges), true, nil
+}
+
 func (w *transactionStorageWrapper) GetIncomingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if w.namespace == "" {
 		return w.tx.GetIncomingEdges(nodeID)

@@ -1065,6 +1065,45 @@ func (b *BadgerEngine) decodeAdjacencyHeader(edgeID EdgeID, value []byte) *Edge 
 	return edge
 }
 
+// adjacencyHeadersInTxn reads nodeID's adjacency entries in direction from
+// txn and returns the relationships their values describe
+// (decodeAdjacencyHeader), keyed by ID. Entries without a usable value, or
+// naming a relationship the dictionary doesn't know, are left out for the
+// caller to read.
+func (b *BadgerEngine) adjacencyHeadersInTxn(txn *badger.Txn, nodeID NodeID, direction EdgeDirection) map[EdgeID]*Edge {
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil
+	}
+	prefix := outgoingIndexPrefix(nodeNum)
+	if direction == Incoming {
+		prefix = incomingIndexPrefix(nodeNum)
+	}
+	headers := make(map[EdgeID]*Edge)
+	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	defer it.Close()
+	for it.Rewind(); it.Valid(); it.Next() {
+		item := it.Item()
+		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(item.Key())
+		if !ok {
+			continue
+		}
+		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if !ok {
+			continue
+		}
+		var header *Edge
+		_ = item.Value(func(value []byte) error {
+			header = b.decodeAdjacencyHeader(edgeID, value)
+			return nil
+		})
+		if header != nil {
+			headers[edgeID] = header
+		}
+	}
+	return headers
+}
+
 // readIndexedEdgeInTxn returns the relationship an adjacency entry names: the
 // cached one, else its stored record, which is then cached. ok is false when
 // the record is missing or can't be decoded.
