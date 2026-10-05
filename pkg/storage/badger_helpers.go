@@ -459,6 +459,51 @@ func (b *BadgerEngine) deleteEdgeBetweenHeadIfMatchesInTxn(txn *badger.Txn, edge
 	return txn.Delete(key)
 }
 
+// adjacencyValueV1 marks an adjacency entry value that carries the
+// relationship's other endpoint and type (adjacencyEntryValue).
+const adjacencyValueV1 = byte(0x01)
+
+// adjacencyEntryValue is the value of an outgoing or incoming adjacency
+// entry: [0x01][the other endpoint's num ID, 8 bytes][relationship type].
+// It lets a traversal learn a relationship's type and other end without
+// reading the relationship record (EdgeHeaderReader). Entries written before
+// it have an empty value; readers then read the record.
+func adjacencyEntryValue(otherNodeNum uint64, edgeType string) []byte {
+	value := make([]byte, 0, 1+8+len(edgeType))
+	value = append(value, adjacencyValueV1)
+	value = append(value, encodeNumID(otherNodeNum)...)
+	return append(value, edgeType...)
+}
+
+// decodeAdjacencyEntryValue reads adjacencyEntryValue; ok is false for an
+// empty or unrecognized value.
+func decodeAdjacencyEntryValue(value []byte) (otherNodeNum uint64, edgeType string, ok bool) {
+	if len(value) < 9 || value[0] != adjacencyValueV1 {
+		return 0, "", false
+	}
+	return binary.BigEndian.Uint64(value[1:9]), string(value[9:]), true
+}
+
+// edgeAdjacencyEntries resolves edge's outgoing and incoming adjacency keys
+// and their values through the ID dictionary, allocating num IDs when
+// missing; write paths pass their txn so the allocation persists.
+func (b *BadgerEngine) edgeAdjacencyEntries(txn kvWriter, edge *Edge) (outKey, outValue, inKey, inValue []byte, err error) {
+	startNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.StartNode)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	endNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.EndNode)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edge.ID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	return outgoingIndexKey(startNum, edgeNum), adjacencyEntryValue(endNum, edge.Type),
+		incomingIndexKey(endNum, edgeNum), adjacencyEntryValue(startNum, edge.Type), nil
+}
+
 // outgoingIndexKeyString resolves the node/edge string IDs via the dict
 // (allocating num IDs if missing) and returns the compact-keyed key.
 // Callers on write paths pass a txn so the allocation persists.

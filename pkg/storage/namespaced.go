@@ -538,6 +538,42 @@ func (n *NamespacedEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	return filtered, nil
 }
 
+// OutgoingEdgeHeaders forwards with the namespace applied, as
+// GetOutgoingEdges does.
+func (n *NamespacedEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	return n.edgeHeaders(nodeID, true)
+}
+
+// IncomingEdgeHeaders is the incoming-side OutgoingEdgeHeaders.
+func (n *NamespacedEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	return n.edgeHeaders(nodeID, false)
+}
+
+func (n *NamespacedEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+	reader, ok := n.inner.(EdgeHeaderReader)
+	if !ok {
+		return nil, false, nil
+	}
+	var edges []*Edge
+	var answered bool
+	var err error
+	if outgoing {
+		edges, answered, err = reader.OutgoingEdgeHeaders(n.prefixNodeID(nodeID))
+	} else {
+		edges, answered, err = reader.IncomingEdgeHeaders(n.prefixNodeID(nodeID))
+	}
+	if !answered || err != nil {
+		return nil, answered, err
+	}
+	filtered := make([]*Edge, 0, len(edges))
+	for _, edge := range edges {
+		if n.hasEdgePrefix(edge.ID) {
+			filtered = append(filtered, n.toUserEdge(edge))
+		}
+	}
+	return filtered, true, nil
+}
+
 func (n *NamespacedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	// Always prefix the ID (user-facing API always receives unprefixed IDs)
 	namespacedID := n.prefixNodeID(nodeID)

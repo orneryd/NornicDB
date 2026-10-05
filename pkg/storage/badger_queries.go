@@ -1009,6 +1009,91 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 	return edges, ids
 }
 
+// OutgoingEdgeHeaders implements EdgeHeaderReader from the outgoing adjacency
+// entries' values (adjacencyEntryValue); an entry written before they carried
+// the type and other end is answered from the relationship record.
+func (b *BadgerEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	return b.edgeHeaders(nodeID, true)
+}
+
+// IncomingEdgeHeaders is the incoming-side OutgoingEdgeHeaders.
+func (b *BadgerEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	return b.edgeHeaders(nodeID, false)
+}
+
+func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+	if nodeID == "" {
+		return nil, true, ErrInvalidID
+	}
+	if b.decayEnabled && !b.revealAll.Load() {
+		return nil, false, nil
+	}
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil, true, nil
+	}
+	prefix := incomingIndexPrefix(nodeNum)
+	if outgoing {
+		prefix = outgoingIndexPrefix(nodeNum)
+	}
+	var edges []*Edge
+	err := b.withView(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			edgeNum, ok := extractEdgeNumIDFromOutgoingKey(item.Key())
+			if !ok {
+				continue
+			}
+			edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+			if !ok {
+				continue
+			}
+			var otherNum uint64
+			var edgeType string
+			var carried bool
+			if err := item.Value(func(value []byte) error {
+				otherNum, edgeType, carried = decodeAdjacencyEntryValue(value)
+				return nil
+			}); err != nil {
+				return err
+			}
+			if carried {
+				otherID, ok := b.idDict.lookupNodeIDByNum(otherNum)
+				if !ok {
+					continue
+				}
+				edge := &Edge{ID: edgeID, Type: edgeType, StartNode: nodeID, EndNode: otherID}
+				if !outgoing {
+					edge.StartNode, edge.EndNode = otherID, nodeID
+				}
+				edges = append(edges, edge)
+				continue
+			}
+			if cached, ok := b.cacheLoadEdge(edgeID); ok {
+				edges = append(edges, cached)
+				continue
+			}
+			record, err := txn.Get(edgeKey(edgeID))
+			if err != nil {
+				continue
+			}
+			if err := record.Value(func(value []byte) error {
+				edge, decodeErr := b.decodeEdgeBodyByID(value, edgeID)
+				if decodeErr == nil {
+					edges = append(edges, edge)
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return edges, true, err
+}
+
 // GetIncomingEdges returns all edges where the given node is the target.
 func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	if nodeID == "" {

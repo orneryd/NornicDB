@@ -67,6 +67,9 @@ type TraversalContext struct {
 	// endpointsNeedOnlyExist is set when nothing in the statement reads the
 	// nodes the traversal reaches (traversalEndpointsNeedOnlyExist).
 	endpointsNeedOnlyExist bool
+	// relationshipsNeedOnlyHeaders is set when nothing in the statement reads
+	// the relationships' properties (traversalRelationshipsNeedOnlyHeaders).
+	relationshipsNeedOnlyHeaders bool
 }
 
 // traversalEndpointsNeedOnlyExist reports whether the nodes a traversal
@@ -77,6 +80,42 @@ type TraversalContext struct {
 func traversalEndpointsNeedOnlyExist(match *TraversalMatch) bool {
 	return !match.IsChained && match.PathVariable == "" && match.EndNode.variable == "" &&
 		len(match.EndNode.labels) == 0 && len(match.EndNode.properties) == 0
+}
+
+// traversalRelationshipsNeedOnlyHeaders reports whether a traversal needs
+// its relationships only for their ID, type and endpoints: the relationship
+// is anonymous with no property map and no path variable exposes it. The
+// traversal then lists them through storage.EdgeHeaderReader, which can
+// answer without reading the relationship records.
+func traversalRelationshipsNeedOnlyHeaders(match *TraversalMatch) bool {
+	return !match.IsChained && match.PathVariable == "" && match.Relationship.Variable == "" && len(match.Relationship.Properties) == 0
+}
+
+// traversalEdges lists the relationships a traversal step expands from node
+// in direction ("outgoing" or "incoming"): headers when the statement needs
+// no relationship properties and storage can list them, full relationships
+// otherwise.
+func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.NodeID, outgoing bool) []*storage.Edge {
+	if reader, ok := e.storage.(storage.EdgeHeaderReader); ok && ctx.relationshipsNeedOnlyHeaders {
+		var edges []*storage.Edge
+		var answered bool
+		var err error
+		if outgoing {
+			edges, answered, err = reader.OutgoingEdgeHeaders(nodeID)
+		} else {
+			edges, answered, err = reader.IncomingEdgeHeaders(nodeID)
+		}
+		if answered && err == nil {
+			return edges
+		}
+	}
+	var edges []*storage.Edge
+	if outgoing {
+		edges, _ = e.storage.GetOutgoingEdges(nodeID)
+	} else {
+		edges, _ = e.storage.GetIncomingEdges(nodeID)
+	}
+	return edges
 }
 
 func buildRelTypeSet(relTypes []string) map[string]struct{} {
@@ -1761,20 +1800,21 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			ctxLimit = remaining
 		}
 		traversalCtx := &TraversalContext{
-			startNode:        startNode,
-			relTypes:         match.Relationship.Types,
-			relTypeSet:       buildRelTypeSet(match.Relationship.Types),
-			relProperties:    match.Relationship.Properties,
-			direction:        match.Relationship.Direction,
-			minHops:          match.Relationship.MinHops,
-			maxHops:          match.Relationship.MaxHops,
-			usedEdges:              make(map[storage.EdgeID]bool),
-			nodeCache:              make(map[storage.NodeID]*storage.Node),
-			limit:                  ctxLimit,
-			temporalViewport:       viewport,
-			temporalChecker:        checker,
-			cancelCtx:              ctx,
-			endpointsNeedOnlyExist: traversalEndpointsNeedOnlyExist(match),
+			startNode:                    startNode,
+			relTypes:                     match.Relationship.Types,
+			relTypeSet:                   buildRelTypeSet(match.Relationship.Types),
+			relProperties:                match.Relationship.Properties,
+			direction:                    match.Relationship.Direction,
+			minHops:                      match.Relationship.MinHops,
+			maxHops:                      match.Relationship.MaxHops,
+			usedEdges:                    make(map[storage.EdgeID]bool),
+			nodeCache:                    make(map[storage.NodeID]*storage.Node),
+			limit:                        ctxLimit,
+			temporalViewport:             viewport,
+			temporalChecker:              checker,
+			cancelCtx:                    ctx,
+			endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
+			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 		}
 
 		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
@@ -1829,19 +1869,20 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 				}
 				// Each goroutine gets its own traversal state (no shared state)
 				traversalCtx := &TraversalContext{
-					startNode:        startNode,
-					relTypes:         match.Relationship.Types,
-					relTypeSet:       buildRelTypeSet(match.Relationship.Types),
-					relProperties:    match.Relationship.Properties,
-					direction:        match.Relationship.Direction,
-					minHops:          match.Relationship.MinHops,
-					maxHops:          match.Relationship.MaxHops,
-					usedEdges:              make(map[storage.EdgeID]bool),
-					nodeCache:              make(map[storage.NodeID]*storage.Node),
-					temporalViewport:       viewport,
-					temporalChecker:        checker,
-					cancelCtx:              ctx,
-					endpointsNeedOnlyExist: traversalEndpointsNeedOnlyExist(match),
+					startNode:                    startNode,
+					relTypes:                     match.Relationship.Types,
+					relTypeSet:                   buildRelTypeSet(match.Relationship.Types),
+					relProperties:                match.Relationship.Properties,
+					direction:                    match.Relationship.Direction,
+					minHops:                      match.Relationship.MinHops,
+					maxHops:                      match.Relationship.MaxHops,
+					usedEdges:                    make(map[storage.EdgeID]bool),
+					nodeCache:                    make(map[storage.NodeID]*storage.Node),
+					temporalViewport:             viewport,
+					temporalChecker:              checker,
+					cancelCtx:                    ctx,
+					endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
+					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 				}
 
 				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
@@ -2111,9 +2152,9 @@ func (e *StorageExecutor) findPaths(
 	var edges []*storage.Edge
 	switch ctx.direction {
 	case "outgoing":
-		edges, _ = e.storage.GetOutgoingEdges(currentNode.ID)
+		edges = e.traversalEdges(ctx, currentNode.ID, true)
 	case "incoming":
-		edges, _ = e.storage.GetIncomingEdges(currentNode.ID)
+		edges = e.traversalEdges(ctx, currentNode.ID, false)
 	case "both":
 		edges, _ = undirectedIncidentEdges(e.storage, currentNode.ID)
 	}

@@ -50,6 +50,11 @@ var (
 	_ RelationshipEndpointChecker   = (*AsyncEngine)(nil)
 	_ RelationshipEndpointChecker   = (*NamespacedEngine)(nil)
 	_ RelationshipEndpointChecker   = (*MemoryEngine)(nil)
+	_ EdgeHeaderReader              = (*BadgerEngine)(nil)
+	_ EdgeHeaderReader              = (*WALEngine)(nil)
+	_ EdgeHeaderReader              = (*AsyncEngine)(nil)
+	_ EdgeHeaderReader              = (*NamespacedEngine)(nil)
+	_ EdgeHeaderReader              = (*MemoryEngine)(nil)
 	_ NodeIterator                  = (*BadgerEngine)(nil)
 	_ NodeIterator                  = (*WALEngine)(nil)
 	_ NodeIterator                  = (*AsyncEngine)(nil)
@@ -200,6 +205,70 @@ func (w *WALEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bo
 		return checker.RelationshipEndpointVisible(id)
 	}
 	return false, false
+}
+
+// OutgoingEdgeHeaders lists the engine's relationship headers merged with the
+// async overlay as GetOutgoingEdges does: staged relationships are included
+// and staged deletes hidden.
+func (ae *AsyncEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	return ae.edgeHeaders(nodeID, true)
+}
+
+// IncomingEdgeHeaders is the incoming-side OutgoingEdgeHeaders.
+func (ae *AsyncEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	return ae.edgeHeaders(nodeID, false)
+}
+
+func (ae *AsyncEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+	reader, ok := ae.engine.(EdgeHeaderReader)
+	if !ok {
+		return nil, false, nil
+	}
+	var engineEdges []*Edge
+	var answered bool
+	var err error
+	if outgoing {
+		engineEdges, answered, err = reader.OutgoingEdgeHeaders(nodeID)
+	} else {
+		engineEdges, answered, err = reader.IncomingEdgeHeaders(nodeID)
+	}
+	if !answered || err != nil {
+		return nil, answered, err
+	}
+	ae.mu.RLock()
+	byNode := ae.cacheEdgesByEnd
+	if outgoing {
+		byNode = ae.cacheEdgesByStart
+	}
+	var cached []*Edge
+	for id := range byNode[nodeID] {
+		if ae.deleteEdges[id] {
+			continue
+		}
+		edge, ok := ae.edgeCache[id]
+		if !ok || edge == nil || (outgoing && edge.StartNode != nodeID) || (!outgoing && edge.EndNode != nodeID) {
+			continue
+		}
+		cached = append(cached, edge)
+	}
+	ae.mu.RUnlock()
+	return mergeAsyncEdges(ae, cached, engineEdges, nodeID, outgoing), true, nil
+}
+
+// OutgoingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.
+func (w *WALEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	if reader, ok := w.engine.(EdgeHeaderReader); ok {
+		return reader.OutgoingEdgeHeaders(nodeID)
+	}
+	return nil, false, nil
+}
+
+// IncomingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.
+func (w *WALEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+	if reader, ok := w.engine.(EdgeHeaderReader); ok {
+		return reader.IncomingEdgeHeaders(nodeID)
+	}
+	return nil, false, nil
 }
 
 // GetNodeProjected forwards the projected read to the underlying engine. WAL

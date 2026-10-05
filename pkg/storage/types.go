@@ -532,6 +532,18 @@ type RelationshipEndpointChecker interface {
 	RelationshipEndpointVisible(id NodeID) (visible, answered bool)
 }
 
+// EdgeHeaderReader is an optional extension interface for traversals that need
+// a node's relationships only for their ID, type and endpoints. The edges it
+// returns carry those fields; Properties may be absent, so a caller that
+// needs a relationship's properties reads it with GetEdge. answered is false
+// when the engine can't list them without reading the records (a read-time
+// filter such as decay can hide a relationship); the caller then uses
+// GetOutgoingEdges / GetIncomingEdges.
+type EdgeHeaderReader interface {
+	OutgoingEdgeHeaders(nodeID NodeID) (edges []*Edge, answered bool, err error)
+	IncomingEdgeHeaders(nodeID NodeID) (edges []*Edge, answered bool, err error)
+}
+
 // NodeWithoutEmbeddingsReader is an optional extension interface for read paths
 // that need a node's metadata and user properties but not stored embedding
 // vectors. Implementations must preserve ID, labels, properties, timestamps,
