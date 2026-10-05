@@ -416,10 +416,19 @@ func wordIsName(s string, wordStart int) bool {
 }
 
 // wordStartsExpression reports whether text starts with a keyword that
-// starts an expression or a projection where a name could stand: NOT, CASE
-// or DISTINCT.
+// starts an expression or a projection where a name could stand: DISTINCT,
+// or NOT or CASE unless a clause follows it (WITH case WHERE case = 1: case
+// is a variable).
 func wordStartsExpression(text string) bool {
-	return matchKeywordAt(text, 0, "NOT") || matchKeywordAt(text, 0, "CASE") || matchKeywordAt(text, 0, "DISTINCT")
+	if matchKeywordAt(text, 0, "DISTINCT") {
+		return true
+	}
+	for _, keyword := range [...]string{"NOT", "CASE"} {
+		if matchKeywordAt(text, 0, keyword) {
+			return !startsWithClauseAfterName(strings.TrimSpace(text[len(keyword):]))
+		}
+	}
+	return false
 }
 
 // isNameableClauseKeyword reports whether keyword (its first word) starts a
