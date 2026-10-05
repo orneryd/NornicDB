@@ -291,7 +291,7 @@ func TestGh728_NonBooleanWhere(t *testing.T) {
 	})
 	t.Run("literal_list_rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "MATCH (n:W728) WHERE [1] RETURN n.id", nil)
-		require.ErrorContains(t, err, "SyntaxError")
+		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	})
 	t.Run("with_literal_rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "WITH 1 AS x WHERE x RETURN x", nil)

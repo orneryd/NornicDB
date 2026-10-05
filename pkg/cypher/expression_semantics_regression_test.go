@@ -111,7 +111,6 @@ func TestNonBooleanWhereExpressionsReturnClassifiedErrors(t *testing.T) {
 		wantType string
 	}{
 		{"MATCH (n:NonBooleanWhere) WHERE 1 RETURN n", "Integer"},
-		{"MATCH (n:NonBooleanWhere) WHERE [1] RETURN n", "List"},
 		{"MATCH (n:NonBooleanWhere) WITH 1 AS x WHERE x RETURN x", "Integer"},
 		{"MATCH (n:NonBooleanWhere) WHERE n.id RETURN n", "String"},
 		{"MATCH (n:NonBooleanWhere) WHERE n RETURN n", "Node"},
@@ -135,6 +134,11 @@ func TestNonBooleanWhereExpressionsReturnClassifiedErrors(t *testing.T) {
 			require.ErrorContains(t, err, "Type mismatch: expected Boolean but was "+tc.wantType)
 		})
 	}
+
+	// Neo4j 5.26 rejects a list condition with its own message.
+	_, err = exec.Execute(ctx, "MATCH (n:NonBooleanWhere) WHERE [1] RETURN n", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	require.ErrorContains(t, err, "Coercion of list to boolean is not allowed")
 
 	for query, want := range map[string]int64{
 		"MATCH (n:NonBooleanWhere) WHERE true RETURN count(n) AS c":  1,

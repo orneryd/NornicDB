@@ -1436,7 +1436,7 @@ func TestEvaluateIsNullNonVariablePrefix(t *testing.T) {
 	require.NoError(t, err)
 
 	// IS NULL with expression that doesn't start with n.
-	result, err := exec.Execute(ctx, "MATCH (n:NullNV) WHERE something IS NULL RETURN n", nil)
+	result, err := exec.Execute(ctx, "MATCH (n:NullNV) WITH n, null AS something WHERE something IS NULL RETURN n", nil)
 	require.NoError(t, err)
 	assert.Len(t, result.Rows, 1) // Non-property comparison returns true
 }

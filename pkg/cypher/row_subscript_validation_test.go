@@ -20,10 +20,13 @@ func TestListSubscriptRejectsNonListReceiversAndNonIntegerIndexes(t *testing.T) 
 	for _, query := range queries {
 		_, err := exec.Execute(context.Background(), query, nil)
 		require.Error(t, err)
-		var semanticError *SemanticError
-		require.True(t, errors.As(err, &semanticError))
-		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code, query)
-		require.Equal(t, "InvalidArgumentType", semanticError.Detail)
+		var diagnostic interface {
+			BoltErrorCode() string
+			BoltErrorDetail() string
+		}
+		require.True(t, errors.As(err, &diagnostic))
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", diagnostic.BoltErrorCode(), query)
+		require.Equal(t, "InvalidArgumentType", diagnostic.BoltErrorDetail())
 	}
 }
 
@@ -50,9 +53,9 @@ func TestDirectListSubscriptsUseTheSharedTypedEvaluator(t *testing.T) {
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err)
-		var semanticError *SemanticError
-		require.ErrorAs(t, err, &semanticError)
-		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code, query)
+		var diagnostic interface{ BoltErrorCode() string }
+		require.ErrorAs(t, err, &diagnostic)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", diagnostic.BoltErrorCode(), query)
 	}
 
 	nullSlice, err := exec.Execute(ctx, "RETURN [1, 2, 3][null..2] AS value", nil)
@@ -80,10 +83,13 @@ func TestMapSubscriptPropagatesNullAndClassifiesNonStringKeys(t *testing.T) {
 		"key":   int64(0),
 	})
 	require.Error(t, err)
-	var semanticError *SemanticError
-	require.ErrorAs(t, err, &semanticError)
-	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code)
-	require.Equal(t, "InvalidArgumentType", semanticError.Detail)
+	var diagnostic interface {
+		BoltErrorCode() string
+		BoltErrorDetail() string
+	}
+	require.ErrorAs(t, err, &diagnostic)
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", diagnostic.BoltErrorCode())
+	require.Equal(t, "InvalidArgumentType", diagnostic.BoltErrorDetail())
 }
 
 func TestSizeRejectsPathsAndPatternPredicates(t *testing.T) {

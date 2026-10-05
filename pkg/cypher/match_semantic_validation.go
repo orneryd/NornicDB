@@ -24,17 +24,29 @@ type matchSemanticScope map[string]matchBindingKind
 // validateMatchSemanticScopes applies entity-type rules before physical query
 // routing. MATCH variables may be reused only when their binding kind remains
 // stable; a node name cannot already denote a relationship, path, or scalar.
+// A statement that passes is cached by its text, unless a Fabric APPLY binds
+// variables for it: then the result depends on the bound record.
 func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
-	if e.matchSemanticValidationCache.contains(cypher) {
+	cacheable := len(e.fabricRecordBindings) == 0
+	if cacheable && e.matchSemanticValidationCache.contains(cypher) {
 		return nil
 	}
+	if err := e.validateMatchSemanticScopesUncached(cypher); err != nil {
+		return err
+	}
+	if cacheable {
+		e.matchSemanticValidationCache.add(cypher)
+	}
+	return nil
+}
+
+func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) error {
 	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
 		for _, branch := range branches {
 			if err := e.validateMatchSemanticScopes(branch); err != nil {
 				return err
 			}
 		}
-		e.matchSemanticValidationCache.add(cypher)
 		return nil
 	}
 
@@ -45,7 +57,11 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 	if !ok {
 		return nil
 	}
-	scope := make(matchSemanticScope)
+	scope := make(matchSemanticScope, len(e.fabricRecordBindings))
+	// A Fabric APPLY binds its input record's variables for the statement.
+	for name := range e.fabricRecordBindings {
+		scope[name] = matchBindingUnknown
+	}
 	// valueTypes holds the static types of variables bound to a literal by
 	// WITH … AS or UNWIND, for the function argument checks.
 	var valueTypes map[string]string
@@ -95,7 +111,6 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			// the rest of the statement isn't checked.
 			yield := parseYieldClause(clause.text)
 			if yield == nil || yield.yieldAll {
-				e.matchSemanticValidationCache.add(cypher)
 				return nil
 			}
 			outputTypes := procedureOutputTypes(clause.text)
@@ -116,14 +131,14 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 					valueTypes[name] = typeName
 				}
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
 				return err
 			}
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
 			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
 				return err
 			}
 		case pipelineClauseWith:
@@ -161,7 +176,7 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 					return err
 				}
 			}
-			input := staticTypeScope{kinds: scope, values: valueTypes}
+			input := staticTypeScope{kinds: scope, values: valueTypes, complete: true}
 			if err := validateStaticFunctionVariables(projection, input); err != nil {
 				return err
 			}
@@ -170,14 +185,17 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			}
 			scope = projectMatchSemanticScope(scope, clause.text)
 			valueTypes = projectStaticValueTypes(input, clause.text)
-			if err := validateStaticFunctionVariables(rest, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+			projected := staticTypeScope{kinds: scope, values: valueTypes, complete: true}
+			if err := forEachProjectedTailExpression(projection, rest, func(expression string) error {
+				return validateStaticFunctionVariables(expression, projected)
+			}); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
 			if err := validateUnwindAlias(clause.text); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
 				return err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
@@ -194,16 +212,16 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			if err := validateReturnSemanticScope(scope, clause.text); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
 				return err
 			}
 		case pipelineClauseCreate, pipelineClauseMerge:
 			addMatchPatternBindingKinds(scope, clause.text)
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
 				return err
 			}
 		default:
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
 				return err
 			}
 		}
@@ -214,7 +232,6 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
 			}
 		}
 	}
-	e.matchSemanticValidationCache.add(cypher)
 	return nil
 }
 
@@ -355,7 +372,8 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 				variable = base
 			}
 		}
-		if variable != "" {
+		// null.a is a property of null (null), not of a variable.
+		if variable != "" && !isBooleanOrNullLiteral(variable) {
 			if _, found := scope[variable]; !found {
 				return createUndefinedVariableError(variable)
 			}
@@ -702,7 +720,9 @@ func (e *StorageExecutor) validateStaticClauseTypes(clause pipelineClause, scope
 		if err := validateStaticFunctionVariables(projection, scope); err != nil {
 			return err
 		}
-		if err := validateStaticFunctionVariablesIn(rest, projectedScope); err != nil {
+		if err := forEachProjectedTailExpression(projection, rest, func(expression string) error {
+			return validateStaticFunctionVariablesIn(expression, projectedScope)
+		}); err != nil {
 			return err
 		}
 	} else if err := validateStaticFunctionVariables(clause.text, scope); err != nil {
@@ -740,7 +760,7 @@ func projectionAliasScope(input staticTypeScope, clause string) staticTypeScope 
 	for name, typeName := range projectedValues {
 		values[name] = typeName
 	}
-	return staticTypeScope{kinds: kinds, values: values}
+	return staticTypeScope{kinds: kinds, values: values, complete: input.complete}
 }
 
 // projectionItemTermError is Neo4j's SyntaxError for a projection item that

@@ -3,6 +3,8 @@ package cypher
 import (
 	"math"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 func addTemporalValues(left, right interface{}) (interface{}, bool) {
@@ -33,13 +35,66 @@ func subtractTemporalValues(left, right interface{}) (interface{}, bool) {
 	return applyDurationToTemporal(left, rightDuration, -1)
 }
 
+// scaleTemporalDuration is a duration value times factor (a division passes
+// 1 / divisor). handled is false when value isn't a duration. A result that
+// doesn't fit a duration has no value: durationScaleError reports it.
 func scaleTemporalDuration(value interface{}, factor float64) (interface{}, bool) {
 	duration, ok := asCypherDuration(value)
 	if !ok || math.IsNaN(factor) || math.IsInf(factor, 0) {
 		return nil, false
 	}
 	months, days, seconds, nanos := durationGroups(duration)
-	return approximateDuration(float64(months)*factor, float64(days)*factor, float64(seconds)*factor, float64(nanos)*factor), true
+	scaledMonths, scaledDays, scaledSeconds := float64(months)*factor, float64(days)*factor, float64(seconds)*factor
+	if !durationFits(scaledMonths, scaledDays, scaledSeconds) {
+		return nil, true
+	}
+	return approximateDuration(scaledMonths, scaledDays, scaledSeconds, float64(nanos)*factor), true
+}
+
+// durationFits reports whether a duration of months, days and seconds has a
+// length Neo4j can hold: each part, and their sum with a month as 2,629,746
+// seconds and a day as 86,400, within a 64-bit count of seconds.
+func durationFits(months, days, seconds float64) bool {
+	const limit = float64(math.MaxInt64)
+	monthSeconds, daySeconds := months*2_629_746, days*86_400
+	for _, part := range [...]float64{monthSeconds, daySeconds, seconds, monthSeconds + daySeconds, monthSeconds + daySeconds + seconds} {
+		if math.Abs(part) >= limit {
+			return false
+		}
+	}
+	return true
+}
+
+// durationScaleError is Neo4j's ArgumentError for a duration multiplied or
+// divided by a number whose result doesn't fit a duration
+// (duration('PT1H') * 9007199254740993), or nil.
+func durationScaleError(op byte, left, right interface{}) error {
+	if op != '*' && op != '/' {
+		return nil
+	}
+	duration, durationOK := asCypherDuration(left)
+	operand := right
+	if !durationOK && op == '*' {
+		duration, durationOK = asCypherDuration(right)
+		operand = left
+	}
+	number, numberOK := toFloat64(operand)
+	if !durationOK || !numberOK || math.IsNaN(number) || math.IsInf(number, 0) {
+		return nil
+	}
+	factor := number
+	if op == '/' {
+		if number == 0 {
+			return nil
+		}
+		factor = 1 / number
+	}
+	months, days, seconds, _ := durationGroups(duration)
+	if durationFits(float64(months)*factor, float64(days)*factor, float64(seconds)*factor) {
+		return nil
+	}
+	return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "NumberOutOfRange",
+		localization.CypherCoreDurationArithmeticOverflow(duration.String(), string(op), neo4jValueRepr(operand)))
 }
 
 func asCypherDuration(value interface{}) (*CypherDuration, bool) {
