@@ -1290,6 +1290,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "nornicdbcore.node_id_required", Constructor: "NornicDBCoreNodeIDRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcore.not_found", Constructor: "NornicDBCoreNotFound", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcore.persistent_storage_open_failed", Constructor: "NornicDBCorePersistentStorageOpenFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "nornicdbcore.plugin_load_failed", Constructor: "NornicDBCorePluginLoadFailed", Fields: []string{"Cause", "File"}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcore.query_embedding_dimension_mismatch", Constructor: "NornicDBCoreQueryEmbeddingDimensionMismatch", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcore.query_embedding_dimension_mismatch_for_database", Constructor: "NornicDBCoreQueryDimensionMismatchForDatabase", Fields: []string{"IndexDimensions", "QueryDimensions"}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcore.replication_replicator_create_failed", Constructor: "NornicDBCoreReplicationReplicatorCreateFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},

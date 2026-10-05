@@ -553,14 +553,38 @@ var Plugin TestPlugin
 		require.Len(t, loaded.Functions, 1)
 	})
 
-	t.Run("loadPluginsFromDir tolerates bad plugin files", func(t *testing.T) {
+	t.Run("loadPluginsFromDir reports bad plugin files and loads the rest", func(t *testing.T) {
 		resetPluginTestState()
 
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "bad.so"), []byte("bad"), 0644))
-		require.NoError(t, LoadPluginsFromDir(dir, nil))
+		err := LoadPluginsFromDir(dir, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "plugin bad.so was not loaded")
 		require.True(t, PluginsInitialized())
 		require.Empty(t, ListLoadedPlugins())
+
+		// A good plugin next to the bad one still loads (#867).
+		resetPluginTestState()
+		_ = buildTestPluginSO(t, dir, "good_next_to_bad", `package main
+type TestPlugin struct{}
+func (TestPlugin) Type() string { return "function" }
+func (TestPlugin) Name() string { return "good_next_to_bad" }
+func (TestPlugin) Version() string { return "1.0.0" }
+func (TestPlugin) Functions() map[string]interface{} {
+	return map[string]interface{}{
+		"double": func(x float64) float64 { return x * 2 },
+	}
+}
+var Plugin TestPlugin
+`)
+		err = LoadPluginsFromDir(dir, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "plugin bad.so was not loaded")
+		require.NotContains(t, err.Error(), "good_next_to_bad.so")
+		plugins := ListLoadedPlugins()
+		require.Len(t, plugins, 1)
+		require.Equal(t, "good_next_to_bad", plugins[0].Name)
 	})
 
 	t.Run("LoadPluginsFromDir loads valid function plugin from directory", func(t *testing.T) {

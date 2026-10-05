@@ -70,6 +70,9 @@
 - id: nornicdbcore.backup_parse_failed
   description: Expanded pseudo-locale backup parse wrapper.
   other: "[!! failed to parse backup: {{.Cause}} !!]"
+- id: nornicdbcore.plugin_load_failed
+  description: Expanded pseudo-locale plugin load failure.
+  other: "[!! plugin {{.File}} was not loaded: {{.Cause}} !!]"
 - id: nornicdbcore.restore_node_failed
   description: Expanded pseudo-locale node restore wrapper.
   other: "[!! failed to restore node {{.NodeID}}: {{.Cause}} !!]"

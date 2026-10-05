@@ -70,6 +70,9 @@
 - id: nornicdbcore.backup_parse_failed
   description: Backup deserialization wrapper. Cause is an untranslated diagnostic.
   other: "failed to parse backup: {{.Cause}}"
+- id: nornicdbcore.plugin_load_failed
+  description: Plugin file that failed to load. File and Cause are untranslated diagnostics.
+  other: "plugin {{.File}} was not loaded: {{.Cause}}"
 - id: nornicdbcore.restore_node_failed
   description: Node restore wrapper. NodeID and Cause are untranslated diagnostics.
   other: "failed to restore node {{.NodeID}}: {{.Cause}}"
