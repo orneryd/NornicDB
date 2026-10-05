@@ -123,7 +123,7 @@
   other: "Relationship pattern predicates are not supported for variable-length relationships."
 - id: cyphermatching.return_star_no_variables
   description: "RETURN * with no variable in scope."
-  other: "RETURN * is not allowed when there are no variables in scope"
+  other: "RETURN * requires at least one variable in scope"
 - id: cyphermatching.is_not_operand_invalid
   description: IS NOT is followed by a label. Input is Cypher text and is not translated.
   other: "Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED'"

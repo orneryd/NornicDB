@@ -123,7 +123,7 @@
   other: "[!! Relationship pattern predicates are not supported for variable-length relationships. !!]"
 - id: cyphermatching.return_star_no_variables
   description: "Expanded pseudo-locale RETURN * with no variables."
-  other: "[!! RETURN * is not allowed when there are no variables in scope !!]"
+  other: "[!! RETURN * requires at least one variable in scope !!]"
 - id: cyphermatching.is_not_operand_invalid
   description: Expanded pseudo-locale is not operand invalid.
   other: "[!! Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED' !!]"

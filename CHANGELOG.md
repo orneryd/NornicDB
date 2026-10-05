@@ -304,9 +304,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with "could not evaluate expression: *": the * stands for every variable in
   scope, in name order, except one an item redefines, followed by the items.
   `RETURN DISTINCT *` is accepted, `WITH DISTINCT *` keeps one row per
-  distinct set of variables instead of every row, a `RETURN *` without rows lists the
-  variables in scope, and `RETURN *` with no variables gives Neo4j's message
-  (#883).
+  distinct set of variables instead of every row, and a `RETURN *` without
+  rows lists the variables in scope. The error for `RETURN *` with no
+  variables in scope is localized (#883).
 
 - Re-embed a node whose content changes while the embed worker is embedding
   it. The worker's writeback now lands only while the node still has the

@@ -123,7 +123,7 @@
   other: "Los predicados de patrón de relación no se admiten en relaciones de longitud variable."
 - id: cyphermatching.return_star_no_variables
   description: "RETURN * sin ninguna variable en el ámbito."
-  other: "RETURN * no está permitido cuando no hay variables en el ámbito"
+  other: "RETURN * requiere al menos una variable en el ámbito"
 - id: cyphermatching.is_not_operand_invalid
   description: IS NOT va seguido de una etiqueta. Input es texto Cypher y no se traduce.
   other: "Entrada no válida '{{.Input}}': se esperaba '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' o 'TYPED'"
