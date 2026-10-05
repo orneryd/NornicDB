@@ -85,38 +85,45 @@ func findNodeByProp(t *testing.T, store storage.Engine, label, prop string, valu
 	return nil
 }
 
-func TestMergeTrailingWindowAndApplyContextWindow(t *testing.T) {
-	varName, skip, limit, ok := parseTrailingWithWindow("MATCH (n:Person) WITH n SKIP 1 LIMIT 2")
-	require.True(t, ok)
-	require.Equal(t, "n", varName)
-	require.Equal(t, 1, skip)
-	require.Equal(t, 2, limit)
+func TestCompoundMatchMergeWithWindowPreservesBindings(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		window  string
+		ids     []int64
+		wantErr bool
+	}{
+		{name: "bounded", window: " SKIP 1 LIMIT 2", ids: []int64{3}},
+		{name: "zero", window: " LIMIT 0"},
+		{name: "past_end", window: " SKIP 5 LIMIT 1"},
+		{name: "no_window", ids: []int64{1, 3}},
+		{name: "invalid_limit", window: " LIMIT -1", wantErr: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_window")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE (:WindowSource {id:1})-[:WINDOW_EDGE]->(:WindowEnd {id:1}), (:WindowSource)-[:WINDOW_EDGE]->(:WindowEnd {id:2}), (:WindowSource {id:3})-[:WINDOW_EDGE]->(:WindowEnd {id:3})", nil)
+			require.NoError(t, err)
 
-	_, _, _, ok = parseTrailingWithWindow("MATCH (n:Person) WITH n LIMIT -1")
-	require.False(t, ok)
-	_, _, _, ok = parseTrailingWithWindow("MATCH (n:Person) WITH n")
-	require.False(t, ok)
-
-	n1 := &storage.Node{ID: storage.NodeID("n1")}
-	n2 := &storage.Node{ID: storage.NodeID("n2")}
-	n3 := &storage.Node{ID: storage.NodeID("n3")}
-	contexts := []map[string]*storage.Node{
-		{"n": n1},
-		{"x": n2},
-		{"n": n3},
+			query := "MATCH (n:WindowSource)-[r:WINDOW_EDGE]->(m:WindowEnd) WHERE n.id IS NOT NULL WITH n, r, m ORDER BY n.id" + testCase.window + " MERGE (target:WindowTarget {id:n.id}) RETURN n.id AS id, type(r) AS relationship, m.id AS endpoint ORDER BY id"
+			result, err := exec.Execute(ctx, query, nil)
+			if testCase.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, []string{"id", "relationship", "endpoint"}, result.Columns)
+				require.Len(t, result.Rows, len(testCase.ids))
+				require.EqualValues(t, len(testCase.ids), result.Stats.NodesCreated)
+				for index, id := range testCase.ids {
+					require.Equal(t, []interface{}{id, "WINDOW_EDGE", id}, result.Rows[index])
+				}
+			}
+			targets, err := store.GetNodesByLabel("WindowTarget")
+			require.NoError(t, err)
+			require.Len(t, targets, len(testCase.ids))
+			for _, id := range testCase.ids {
+				require.EqualValues(t, id, findNodeByProp(t, store, "WindowTarget", "id", id).Properties["id"])
+			}
+		})
 	}
-	e3 := &storage.Edge{ID: storage.EdgeID("e3")}
-	relationships := []map[string]*storage.Edge{{}, {}, {"r": e3}}
-	window, windowRelationships := applyContextWindow(contexts, relationships, "n", 1, 2)
-	require.Len(t, window, 1)
-	require.Equal(t, n3, window[0]["n"])
-	// The relationship rows stay aligned with the node rows.
-	require.Equal(t, []map[string]*storage.Edge{{"r": e3}}, windowRelationships)
-
-	empty, emptyRelationships := applyContextWindow(contexts, relationships, "n", 0, 0)
-	require.Nil(t, empty)
-	require.Nil(t, emptyRelationships)
-	past, pastRelationships := applyContextWindow(contexts, relationships, "n", 5, 1)
-	require.Nil(t, past)
-	require.Nil(t, pastRelationships)
 }

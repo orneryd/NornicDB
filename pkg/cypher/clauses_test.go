@@ -9,6 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 // ========================================
@@ -2363,18 +2364,13 @@ func TestExecuteCompoundMatchMergeDirect(t *testing.T) {
 		})
 
 		e := NewStorageExecutor(store)
-		result, err := e.executeCompoundMatchMerge(ctx, "MATCH (s:Source) MERGE (t:Target {name: 'NewTarget'})")
-		if err != nil {
-			t.Fatalf("executeCompoundMatchMerge failed: %v", err)
-		}
-		// Should create a Target node
-		if result.Stats == nil || result.Stats.NodesCreated == 0 {
-			// Check if node was created
-			nodes, _ := store.GetNodesByLabel("Target")
-			if len(nodes) == 0 {
-				t.Log("Note: Target node not created - may need context propagation")
-			}
-		}
+		result, err := e.Execute(ctx, "MATCH (s:Source) MERGE (t:Target {name: 'NewTarget'})", nil)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, result.Stats.NodesCreated)
+		nodes, err := store.GetNodesByLabel("Target")
+		require.NoError(t, err)
+		require.Len(t, nodes, 1)
+		require.Equal(t, "NewTarget", nodes[0].Properties["name"])
 	})
 
 	t.Run("no_match_results_in_empty", func(t *testing.T) {
@@ -2384,40 +2380,41 @@ func TestExecuteCompoundMatchMergeDirect(t *testing.T) {
 		defer store.Close()
 
 		e := NewStorageExecutor(store)
-		result, err := e.executeCompoundMatchMerge(ctx, "MATCH (s:NonExistent) MERGE (t:Target)")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		// With no matches and no OPTIONAL MATCH, should return empty
-		if len(result.Rows) != 0 {
-			t.Logf("Got %d rows (may vary by implementation)", len(result.Rows))
-		}
+		result, err := e.Execute(ctx, "MATCH (s:NonExistent) MERGE (t:Target)", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Rows)
+		require.Zero(t, result.Stats.NodesCreated)
+		nodes, err := store.GetNodesByLabel("Target")
+		require.NoError(t, err)
+		require.Empty(t, nodes)
 	})
 
-	t.Run("invalid_query_no_match", func(t *testing.T) {
+	t.Run("standalone_merge_control", func(t *testing.T) {
 		baseStore := newTestMemoryEngine(t)
 
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 
 		e := NewStorageExecutor(store)
-		_, err := e.executeCompoundMatchMerge(ctx, "MERGE (t:Target)")
-		if err == nil {
-			t.Error("Expected error for query without MATCH")
-		}
+		result, err := e.Execute(ctx, "MERGE (t:Target)", nil)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, result.Stats.NodesCreated)
+		nodes, err := store.GetNodesByLabel("Target")
+		require.NoError(t, err)
+		require.Len(t, nodes, 1)
 	})
 
-	t.Run("invalid_query_no_merge", func(t *testing.T) {
+	t.Run("read_only_match_control", func(t *testing.T) {
 		baseStore := newTestMemoryEngine(t)
 
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 
 		e := NewStorageExecutor(store)
-		_, err := e.executeCompoundMatchMerge(ctx, "MATCH (s:Source) RETURN s")
-		if err == nil {
-			t.Error("Expected error for query without MERGE")
-		}
+		result, err := e.Execute(ctx, "MATCH (s:Source) RETURN s", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Rows)
+		require.Zero(t, result.Stats.NodesCreated)
 	})
 }
 

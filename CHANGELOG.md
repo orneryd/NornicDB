@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Route MATCH/MERGE compositions exclusively through the shared clause pipeline.
+  Remove private compound MATCH/MERGE and MATCH/UNWIND/MERGE handlers and their
+  orphan repeated-MATCH and window helpers. Preserve ON CREATE/ON MATCH actions,
+  matched relationship bindings, row multiplicity, WITH windows and typed
+  failures through public execution with exact persisted-effect checks (#908).
+
 - Route MATCH/CREATE compositions exclusively through the shared clause pipeline
   and remove private MATCH/CREATE handlers and their orphan predicate helpers.
   Share inherited/explicit parameter preparation across public, internal and
