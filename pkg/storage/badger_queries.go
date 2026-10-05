@@ -4,6 +4,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -235,8 +236,19 @@ func (b *BadgerEngine) StreamNodesByLabelProjected(label string, properties []st
 	return b.StreamNodesByLabelProjectedInScope("", label, properties, visit)
 }
 
+// labelScanPointLookups is how many of a label's nodes a scan reads with one
+// record lookup each before it may switch to a single pass over the node
+// records. A scan the caller stops early (LIMIT) stays on point lookups.
+const labelScanPointLookups = 1024
+
 // StreamNodesByLabelProjectedInScope is StreamNodesByLabelProjected within
 // one database (ScopedLabelNodeReader).
+//
+// Nodes are visited in label-index order. The first labelScanPointLookups
+// are fetched with one record lookup each. When more remain and the label is
+// on at least half of the scope's nodes, the rest are read in one pass over
+// the node records, which costs much less than a lookup per node, and are
+// then visited in label-index order as before.
 func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
@@ -249,11 +261,38 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 
 	include := propertyProjectionSet(properties)
 	nowNanos := DecayScoringTime()
+	covers := b.labelCoversScope(scope, label)
 	return b.withView(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
+		decodeValue := func(nodeID NodeID, value []byte) (*Node, error) {
+			if properties == nil {
+				return b.decodeNodeWithEmbeddings(txn, value, nodeID)
+			}
+			return b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
+		}
+		cachedNode := func(nodeID NodeID) (*Node, bool) {
+			b.nodeCacheMu.RLock()
+			cached, ok := b.nodeCache[nodeID]
+			b.nodeCacheMu.RUnlock()
+			if !ok {
+				return nil, false
+			}
+			return projectCachedNodeForRead(cached, properties), true
+		}
+		emit := func(node *Node) error {
+			if node == nil || b.filterNodeByDecay(node, nowNanos) {
+				return nil
+			}
+			return visit(node)
+		}
 
+		type pendingNode struct {
+			id   NodeID
+			node *Node
+		}
+		var pending []pendingNode
+		it := txn.NewIterator(badgerPrefixIteratorOptions(labelIndexPrefix(label)))
+		defer it.Close()
+		lookups := 0
 		for it.Rewind(); it.Valid(); it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
 			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
@@ -264,47 +303,92 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
 				continue
 			}
-
-			b.nodeCacheMu.RLock()
-			cached, cachedOK := b.nodeCache[nodeID]
-			b.nodeCacheMu.RUnlock()
-			if cachedOK {
-				node := projectCachedNodeForRead(cached, properties)
-				if b.filterNodeByDecay(node, nowNanos) {
+			if pending != nil || (covers && lookups >= labelScanPointLookups) {
+				pending = append(pending, pendingNode{id: nodeID})
+				continue
+			}
+			lookups++
+			node, cached := cachedNode(nodeID)
+			if !cached {
+				item, err := txn.Get(nodeKey(nodeID))
+				if err != nil {
 					continue
 				}
-				if err := visit(node); err != nil {
-					return err
-				}
-				continue
-			}
-
-			item, err := txn.Get(nodeKey(nodeID))
-			if err != nil {
-				continue
-			}
-			var node *Node
-			if err := item.Value(func(value []byte) error {
-				if properties == nil {
+				if err := item.Value(func(value []byte) error {
 					var decodeErr error
-					node, decodeErr = b.decodeNodeWithEmbeddings(txn, value, nodeID)
+					node, decodeErr = decodeValue(nodeID, value)
 					return decodeErr
+				}); err != nil {
+					continue
 				}
-				var decodeErr error
-				node, decodeErr = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
-				return decodeErr
-			}); err != nil {
+			}
+			if err := emit(node); err != nil {
+				return err
+			}
+		}
+		if len(pending) == 0 {
+			return nil
+		}
+
+		// One pass over the scope's node records reads the remaining nodes.
+		position := make(map[NodeID]int, len(pending))
+		for index, entry := range pending {
+			if node, cached := cachedNode(entry.id); cached {
+				pending[index].node = node
 				continue
 			}
-			if b.filterNodeByDecay(node, nowNanos) {
-				continue
+			position[entry.id] = index
+		}
+		if len(position) > 0 {
+			prefix := []byte{prefixNode}
+			if scope != "" {
+				prefix = nodeKey(NodeID(scope))
 			}
-			if err := visit(node); err != nil {
+			records := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+			defer records.Close()
+			for records.Rewind(); records.Valid() && len(position) > 0; records.Next() {
+				item := records.Item()
+				index, wanted := position[NodeID(item.Key()[1:])]
+				if !wanted {
+					continue
+				}
+				nodeID := pending[index].id
+				delete(position, nodeID)
+				_ = item.Value(func(value []byte) error {
+					node, err := decodeValue(nodeID, value)
+					if err == nil {
+						pending[index].node = node
+					}
+					return nil
+				})
+			}
+		}
+		for _, entry := range pending {
+			if err := emit(entry.node); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// labelCoversScope reports whether label is on at least half of the nodes in
+// scope ("" is every database), by the stored node and label counts. Above
+// that share a single pass over the node records costs less than a label
+// index walk with one record lookup per node.
+func (b *BadgerEngine) labelCoversScope(scope, label string) bool {
+	var total, labelled int64
+	var err error
+	if scope == "" {
+		total = b.nodeCount.Load()
+		labelled, err = b.NodeCountByLabel(label)
+	} else {
+		if total, err = b.NodeCountByPrefix(scope); err == nil {
+			namespace, _, _ := strings.Cut(scope, ":")
+			labelled, err = b.NodeCountByLabelInNamespace(namespace, label)
+		}
+	}
+	return err == nil && total > 0 && labelled*2 >= total
 }
 
 func projectCachedNodeForRead(node *Node, properties []string) *Node {
