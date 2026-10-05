@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,6 +78,70 @@ type pipelineMatchPhysicalHint struct {
 	orderExpr  string
 	limit      int
 	earlyLimit int
+	// readTail holds the clauses after the MATCH when every one of them only
+	// reads; nil otherwise. A label scan uses it to read only the properties
+	// those clauses use (pipelineLabelScanProjection).
+	readTail []string
+}
+
+// pipelineReadOnlyTail returns the texts of remaining when every clause only
+// reads and the last one is a RETURN, and nil otherwise. Clauses that don't
+// end in RETURN may be one part of a larger statement whose later clauses can
+// use any property. RETURN * and WITH * carry every variable on whole: a CALL
+// subquery runs its outer MATCH as MATCH ... RETURN *.
+func pipelineReadOnlyTail(remaining []pipelineClause) []string {
+	if len(remaining) == 0 || remaining[len(remaining)-1].kind != pipelineClauseReturn {
+		return nil
+	}
+	tail := make([]string, 0, len(remaining))
+	for _, clause := range remaining {
+		switch clause.kind {
+		case pipelineClauseWith, pipelineClauseReturn:
+			keyword := "RETURN"
+			if clause.kind == pipelineClauseWith {
+				keyword = "WITH"
+			}
+			body, _ := cutDistinct(pipelineClauseBody(clause.text, keyword))
+			if strings.HasPrefix(strings.TrimSpace(body), "*") {
+				return nil
+			}
+			tail = append(tail, clause.text)
+		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseUnwind:
+			tail = append(tail, clause.text)
+		default:
+			return nil
+		}
+	}
+	return tail
+}
+
+// pipelineLabelScanProjection returns the properties a label scan for
+// nodePattern must read: those its inline map, its WHERE and the read-only
+// clauses after it use through the pattern's variable. It reports false, and
+// the scan reads whole nodes, when a later clause can write, when the variable
+// is used other than as variable.property (returned, passed on, compared,
+// used in a later pattern), or when a temporal viewport needs the node's own
+// validity properties.
+func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInfo, whereClause string, readTail []string) ([]string, bool) {
+	if len(nodePattern.labels) == 0 || readTail == nil {
+		return nil, false
+	}
+	if _, viewport := TemporalViewportFromContext(ctx); viewport {
+		return nil, false
+	}
+	properties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
+	if properties == nil {
+		return nil, false
+	}
+	for _, text := range readTail {
+		used := pipelineNodePredicateProperties(nodePattern.variable, text, nil)
+		if used == nil {
+			return nil, false
+		}
+		properties = append(properties, used...)
+	}
+	sort.Strings(properties)
+	return slices.Compact(properties), true
 }
 
 // pipelineRow carries bindings across clauses. Values may be *storage.Node,
@@ -567,7 +632,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if input == nil {
 				input = pipelineRowsSource(rows)
 			}
-			matched, supported, err := e.pipelineNodeMatchSource(ctx, input, clause.text)
+			matched, supported, err := e.pipelineNodeMatchSource(ctx, input, clause.text, pipelineReadOnlyTail(clauses[idx+1:]))
 			if err != nil {
 				return nil, true, err
 			}
@@ -1981,7 +2046,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 }
 
 func (e *StorageExecutor) pipelineMatchHint(remaining []pipelineClause) pipelineMatchPhysicalHint {
-	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}
+	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: pipelineReadOnlyTail(remaining)}
 	var terminalReturn string
 	for index, clause := range remaining {
 		if clause.kind != pipelineClauseReturn || index != len(remaining)-1 {
@@ -2497,7 +2562,11 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 		// match before decoding them (#857).
 		properties = e.labellessScanRequiredProperties(ctx, properties, nodePattern.variable, whereClause)
 	}
-	nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, properties, nodePattern.variable, streamingWhere, hint.earlyLimit)
+	projection, projected := pipelineLabelScanProjection(ctx, nodePattern, whereClause, hint.readTail)
+	if !projected {
+		projection = nil
+	}
+	nodes, err = e.collectNodesWithStreamingProjection(ctx, nodePattern.labels, properties, nodePattern.variable, streamingWhere, hint.earlyLimit, projection)
 	return nodes, false, err
 }
 

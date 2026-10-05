@@ -190,10 +190,10 @@ func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []
 	if len(splitTopLevelComma(pipelineClauseBody(clause, "MATCH"))) < 2 {
 		return nil, false, nil
 	}
-	return e.pipelineNodeMatchSource(ctx, pipelineRowsSource(rows), clause)
+	return e.pipelineNodeMatchSource(ctx, pipelineRowsSource(rows), clause, nil)
 }
 
-func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, clause string) (pipelineRowSource, bool, error) {
+func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, clause string, readTail []string) (pipelineRowSource, bool, error) {
 	body := pipelineClauseBody(clause, "MATCH")
 	if topLevelKeywordIndex(body, "WHERE") >= 0 {
 		return nil, false, nil
@@ -254,7 +254,7 @@ func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSour
 				nodes, cached := caches[index][key]
 				if !keyed || !cached {
 					var err error
-					nodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+					nodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: readTail})
 					if err != nil {
 						recordExpressionFailure(ctx, err)
 						valid = false

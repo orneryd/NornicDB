@@ -1032,6 +1032,22 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	whereClause string,
 	limit int,
 ) ([]*storage.Node, error) {
+	return e.collectNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, nil)
+}
+
+// collectNodesWithStreamingProjection is collectNodesWithStreaming whose
+// label scan reads only the projection's user properties; nil reads whole
+// nodes. The caller guarantees nothing else in the statement uses the
+// returned nodes' other properties.
+func (e *StorageExecutor) collectNodesWithStreamingProjection(
+	ctx context.Context,
+	labels []string,
+	properties map[string]interface{},
+	whereVariable string,
+	whereClause string,
+	limit int,
+	projection []string,
+) ([]*storage.Node, error) {
 	store := e.getStorage(ctx)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
 	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
@@ -1132,7 +1148,7 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	// materialising rows, and lets LIMIT stop the storage iterator early.
 	if len(labels) > 0 {
 		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
-			err := reader.StreamNodesByLabelProjected(labels[0], nil, collect)
+			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
 			if err == nil || err == storage.ErrIterationStopped {
 				return collected, nil
 			}
