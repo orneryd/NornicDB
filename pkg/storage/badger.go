@@ -107,6 +107,10 @@ const (
 	// prefixMVCCMetaLargeCommitIntent marks a commit larger than one Badger
 	// batch while its batches are written (see largeCommitIntentKey).
 	prefixMVCCMetaLargeCommitIntent = byte(0x0D)
+	// prefixMVCCMetaDeleteCleanupMarker is a throw-away key the deleted-entry
+	// clean-up writes and then drops, to have Badger compact level 0 (see
+	// deleteCleanupMarkerKey). It never outlives one clean-up.
+	prefixMVCCMetaDeleteCleanupMarker = byte(0x0E)
 )
 
 // maxNodeSize is the maximum size for a node to be stored inline (50KB to leave room for BadgerDB overhead)
@@ -173,7 +177,10 @@ type BadgerEngine struct {
 	// Lock order: writeBarrier before mu; Close stops its background
 	// backfills before taking the barrier so they cannot wait on it.
 	writeBarrier sync.RWMutex
-	inMemory     bool   // True if running in memory-only mode (testing)
+	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
+	// for in-memory engines (see badger_delete_cleanup.go).
+	deleteCleanup *deleteCleanup
+	inMemory      bool   // True if running in memory-only mode (testing)
 	dataDir      string // Captured from BadgerOptions.DataDir; used by migration logging.
 
 	// migrationDidRun is set by RunOnStartMigrations when at least one
@@ -464,6 +471,7 @@ func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
 // notifyNodeDeleted calls the registered callback if set.
 func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
 	b.graphMutationVersions.changed(namespaceForNodeID(nodeID))
+	b.deleteCleanup.recordDelete()
 	b.dispatchNodeDeleted(nodeID)
 }
 
@@ -504,6 +512,7 @@ func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
 // notifyEdgeDeleted calls the registered callback if set.
 func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edgeID))
+	b.deleteCleanup.recordDelete()
 	b.callbackMu.RLock()
 	callback := b.onEdgeDeleted
 	b.callbackMu.RUnlock()
@@ -982,6 +991,9 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to initialize label index: %w", err)
 	}
 
+	if !opts.InMemory {
+		engine.startDeleteCleanup()
+	}
 	return engine, nil
 }
 

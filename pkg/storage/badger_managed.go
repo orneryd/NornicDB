@@ -43,8 +43,9 @@ import (
 //
 // The methods below shadow the *badger.DB methods that panic or read
 // unpublished data in managed mode (View, Update, NewTransaction,
-// NewWriteBatch, NewStream, Backup, Load, GetSequence). Everything else
-// (Size, DropPrefix, Flatten, RunValueLogGC, Sync, Close, ...) is Badger's.
+// NewWriteBatch, NewStream, Backup, Load, GetSequence), and DropPrefix, which
+// fails concurrent writes. Everything else (Size, Flatten, RunValueLogGC,
+// Sync, Close, ...) is Badger's.
 type managedBadgerDB struct {
 	*badger.DB
 	oracle *commitOracle
@@ -172,6 +173,16 @@ func (m *managedBadgerDB) advanceDiscardTs() {
 	if ts, ok := m.oracle.advanceDiscard(); ok {
 		m.DB.SetDiscardTs(ts)
 	}
+}
+
+// DropPrefix drops every key under prefixes. Badger blocks writes while it
+// drops and fails them with ErrBlockedWrites, so the drop holds the commit
+// gate exclusively and commits wait for it instead. The caller must not hold
+// the gate.
+func (m *managedBadgerDB) DropPrefix(prefixes ...[]byte) error {
+	m.commitGate.Lock()
+	defer m.commitGate.Unlock()
+	return m.DB.DropPrefix(prefixes...)
 }
 
 // NewTransaction is not available on the managed handle: a transaction must
