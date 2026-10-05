@@ -953,16 +953,9 @@ func (db *DB) Search(ctx context.Context, query string, labels []string, limit i
 
 	// Full-text search only (no embedding generation)
 	// For hybrid search, call VectorSearch with a pre-computed embedding
-	response, err := svc.Search(ctx, query, nil, opts)
-	if err != nil {
-		// DB API is expected to be usable right after Open() in tests and local usage.
-		// If background BuildIndexes is still running, wait once for it and retry.
-		if errors.Is(err, search.ErrSearchIndexBuilding) {
-			if waitErr := db.ensureSearchIndexesBuilt(ctx, db.defaultDatabaseName()); waitErr == nil {
-				response, err = svc.Search(ctx, query, nil, opts)
-			}
-		}
-	}
+	response, err := db.searchAfterInitialBuild(ctx, func() (*search.SearchResponse, error) {
+		return svc.Search(ctx, query, nil, opts)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1003,15 +996,9 @@ func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEm
 	}
 
 	// Execute RRF hybrid search with the caller's pre-computed embedding
-	response, err := svc.Search(ctx, query, queryEmbedding, opts)
-	if err != nil {
-		// If startup background indexing is still running, wait once and retry.
-		if errors.Is(err, search.ErrSearchIndexBuilding) {
-			if waitErr := db.ensureSearchIndexesBuilt(ctx, db.defaultDatabaseName()); waitErr == nil {
-				response, err = svc.Search(ctx, query, queryEmbedding, opts)
-			}
-		}
-	}
+	response, err := db.searchAfterInitialBuild(ctx, func() (*search.SearchResponse, error) {
+		return svc.Search(ctx, query, queryEmbedding, opts)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1822,4 +1809,19 @@ func (db *DB) anonymizedNodeCopy(node *storage.Node, anonymousID string) *storag
 		delete(nodeCopy.Properties, key)
 	}
 	return nodeCopy
+}
+
+// searchAfterInitialBuild runs search; when the default database's initial
+// search index build is still running (search.ErrSearchIndexBuilding), it
+// waits for that build once and runs search again. DB.Search and
+// DB.HybridSearchWithOptions use it, so the DB API answers searches right
+// after Open instead of failing while the background build runs.
+func (db *DB) searchAfterInitialBuild(ctx context.Context, run func() (*search.SearchResponse, error)) (*search.SearchResponse, error) {
+	response, err := run()
+	if errors.Is(err, search.ErrSearchIndexBuilding) {
+		if waitErr := db.ensureSearchIndexesBuilt(ctx, db.defaultDatabaseName()); waitErr == nil {
+			response, err = run()
+		}
+	}
+	return response, err
 }

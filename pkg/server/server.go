@@ -732,6 +732,13 @@ type Server struct {
 	closed  atomic.Bool
 	started atomic.Pointer[time.Time]
 
+	// embedderRetryInitialBackoff, embedderRetryMaxBackoff and newEmbedder
+	// replace initEmbedderWithRetry's backoff schedule (2s doubling to 5m) and
+	// embedder constructor (embed.NewEmbedder) when set; New leaves them unset.
+	embedderRetryInitialBackoff time.Duration
+	embedderRetryMaxBackoff     time.Duration
+	newEmbedder                 func(*embed.Config) (embed.Embedder, error)
+
 	// Metrics
 	requestCount   atomic.Int64
 	errorCount     atomic.Int64
@@ -1599,93 +1606,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			localization.ServerEmbeddingModelLoadingEvent(embedConfig.Model, embedConfig.Provider,
 				"server starts immediately; embeddings available after model loads"))
 
-		go func() {
-			// Retry forever: exponential backoff to 5m, then fixed 5m interval.
-			const (
-				initialBackoff = 2 * time.Second
-				maxBackoff     = 5 * time.Minute
-			)
-
-			backoff := initialBackoff
-			attempt := 0
-
-			for {
-				if s.closed.Load() {
-					s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryLoopStoppedEvent())
-					return
-				}
-
-				attempt++
-
-				// Use factory function for all providers.
-				embedder, err := embed.NewEmbedder(embedConfig)
-				if err == nil {
-					// Health check: test embedding before enabling.
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					_, healthErr := embedder.Embed(ctx, "health check")
-					cancel()
-					if healthErr != nil {
-						err = fmt.Errorf("health check failed: %w", healthErr)
-					}
-				}
-
-				if err == nil {
-					// Wrap with caching if enabled (default: 10K cache).
-					if config.EmbeddingCacheSize > 0 {
-						embedder = embed.NewCachedEmbedder(embedder, config.EmbeddingCacheSize)
-						s.logEvent(context.Background(), slog.LevelInfo,
-							localization.ServerEmbeddingCacheEnabledEvent(config.EmbeddingCacheSize,
-								embeddingCacheMemoryMB(config.EmbeddingCacheSize, embedConfig.Dimensions)))
-					}
-
-					if embedConfig.Provider == "local" {
-						s.logEvent(context.Background(), slog.LevelInfo,
-							localization.ServerEmbeddingsReadyLocalEvent(embedConfig.Model, embedConfig.Dimensions))
-					} else {
-						s.logEvent(context.Background(), slog.LevelInfo,
-							localization.ServerEmbeddingsReadyRemoteEvent(embedConfig.Provider,
-								embedConfig.APIURL, embedConfig.Model, embedConfig.Dimensions))
-					}
-
-					if mcpServer != nil {
-						mcpServer.SetEmbedder(embedder)
-					}
-					// Share embedder with DB for auto-embed queue.
-					// The embed worker will wait for this to be set before processing.
-					db.SetEmbedder(embedder)
-					// Register as default for per-DB embedder registry (no-op if SetEmbedConfigForDB was not set).
-					db.SetDefaultEmbedConfig(embedConfig)
-					return
-				}
-
-				if embedConfig.Provider == "local" {
-					s.logEvent(context.Background(), slog.LevelWarn,
-						localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, embedConfig.Model, err))
-				} else {
-					s.logEvent(context.Background(), slog.LevelWarn,
-						localization.ServerEmbeddingInitializationAttemptFailedRemoteEvent(attempt,
-							embedConfig.Provider, embedConfig.Model, embedConfig.APIURL, err))
-				}
-
-				if backoff < maxBackoff {
-					s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryingEvent(backoff))
-					if !waitForDurationOrServerClose(s, backoff) {
-						s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryInterruptedEvent())
-						return
-					}
-					backoff *= 2
-					if backoff > maxBackoff {
-						backoff = maxBackoff
-					}
-				} else {
-					s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryIntervalCappedEvent(maxBackoff))
-					if !waitForDurationOrServerClose(s, maxBackoff) {
-						s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryInterruptedEvent())
-						return
-					}
-				}
-			}
-		}()
+		go s.initEmbedderWithRetry(embedConfig, config.EmbeddingCacheSize, mcpServer, db)
 	}
 
 	// Log authentication status
@@ -2180,4 +2101,104 @@ type ServerStats struct {
 	Version        string        `json:"version"`
 	Commit         string        `json:"commit"`
 	BuildTime      string        `json:"build_time"`
+}
+
+// initEmbedderWithRetry creates the embedder from embedConfig and installs it
+// in the MCP server and the database once it passes a health check. It retries
+// forever with exponential backoff up to 5 minutes, then every 5 minutes, and
+// stops when the server closes. New runs it in the background so startup
+// doesn't wait for a local model to load.
+func (s *Server) initEmbedderWithRetry(embedConfig *embed.Config, embeddingCacheSize int, mcpServer *mcp.Server, db *nornicdb.DB) {
+	// Retry forever: exponential backoff to 5m, then fixed 5m interval.
+	initialBackoff, maxBackoff := 2*time.Second, 5*time.Minute
+	if s.embedderRetryInitialBackoff > 0 {
+		initialBackoff = s.embedderRetryInitialBackoff
+	}
+	if s.embedderRetryMaxBackoff > 0 {
+		maxBackoff = s.embedderRetryMaxBackoff
+	}
+	newEmbedder := embed.NewEmbedder
+	if s.newEmbedder != nil {
+		newEmbedder = s.newEmbedder
+	}
+
+	backoff := initialBackoff
+	attempt := 0
+
+	for {
+		if s.closed.Load() {
+			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryLoopStoppedEvent())
+			return
+		}
+
+		attempt++
+
+		// Use factory function for all providers.
+		embedder, err := newEmbedder(embedConfig)
+		if err == nil {
+			// Health check: test embedding before enabling.
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_, healthErr := embedder.Embed(ctx, "health check")
+			cancel()
+			if healthErr != nil {
+				err = fmt.Errorf("health check failed: %w", healthErr)
+			}
+		}
+
+		if err == nil {
+			// Wrap with caching if enabled (default: 10K cache).
+			if embeddingCacheSize > 0 {
+				embedder = embed.NewCachedEmbedder(embedder, embeddingCacheSize)
+				s.logEvent(context.Background(), slog.LevelInfo,
+					localization.ServerEmbeddingCacheEnabledEvent(embeddingCacheSize,
+						embeddingCacheMemoryMB(embeddingCacheSize, embedConfig.Dimensions)))
+			}
+
+			if embedConfig.Provider == "local" {
+				s.logEvent(context.Background(), slog.LevelInfo,
+					localization.ServerEmbeddingsReadyLocalEvent(embedConfig.Model, embedConfig.Dimensions))
+			} else {
+				s.logEvent(context.Background(), slog.LevelInfo,
+					localization.ServerEmbeddingsReadyRemoteEvent(embedConfig.Provider,
+						embedConfig.APIURL, embedConfig.Model, embedConfig.Dimensions))
+			}
+
+			if mcpServer != nil {
+				mcpServer.SetEmbedder(embedder)
+			}
+			// Share embedder with DB for auto-embed queue.
+			// The embed worker will wait for this to be set before processing.
+			db.SetEmbedder(embedder)
+			// Register as default for per-DB embedder registry (no-op if SetEmbedConfigForDB was not set).
+			db.SetDefaultEmbedConfig(embedConfig)
+			return
+		}
+
+		if embedConfig.Provider == "local" {
+			s.logEvent(context.Background(), slog.LevelWarn,
+				localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, embedConfig.Model, err))
+		} else {
+			s.logEvent(context.Background(), slog.LevelWarn,
+				localization.ServerEmbeddingInitializationAttemptFailedRemoteEvent(attempt,
+					embedConfig.Provider, embedConfig.Model, embedConfig.APIURL, err))
+		}
+
+		if backoff < maxBackoff {
+			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryingEvent(backoff))
+			if !waitForDurationOrServerClose(s, backoff) {
+				s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryInterruptedEvent())
+				return
+			}
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		} else {
+			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryIntervalCappedEvent(maxBackoff))
+			if !waitForDurationOrServerClose(s, maxBackoff) {
+				s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryInterruptedEvent())
+				return
+			}
+		}
+	}
 }
