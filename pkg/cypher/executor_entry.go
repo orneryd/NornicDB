@@ -279,7 +279,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if err := e.statementParametersError(ctx, cypher, params); err != nil {
 			return nil, err
 		}
-		mergedParams := e.mergeShellParams(ctx, params)
+		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
 		if mode != ModeNormal {
@@ -382,6 +382,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Merge session-scoped shell parameters with per-call parameters.
 	// Explicit params win over shell params to preserve HTTP/Bolt semantics.
+	params = mergeInheritedQueryParams(ctx, params)
 	params = e.mergeShellParams(ctx, params)
 
 	// Check for transaction control statements and transaction scripts FIRST.

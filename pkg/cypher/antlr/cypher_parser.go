@@ -111,7 +111,7 @@ func cypherparserParserInit() {
 	}
 	staticData.PredictionContextCache = antlr.NewPredictionContextCache()
 	staticData.serializedATN = []int32{
-		4, 1, 165, 1785, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4,
+		4, 1, 165, 1786, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4,
 		7, 4, 2, 5, 7, 5, 2, 6, 7, 6, 2, 7, 7, 7, 2, 8, 7, 8, 2, 9, 7, 9, 2, 10,
 		7, 10, 2, 11, 7, 11, 2, 12, 7, 12, 2, 13, 7, 13, 2, 14, 7, 14, 2, 15, 7,
 		15, 2, 16, 7, 16, 2, 17, 7, 17, 2, 18, 7, 18, 2, 19, 7, 19, 2, 20, 7, 20,
@@ -307,25 +307,25 @@ func cypherparserParserInit() {
 		1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119,
 		1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119,
 		1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119, 1, 119,
-		1, 119, 1, 119, 3, 119, 1781, 8, 119, 1, 120, 1, 120, 1, 120, 0, 0, 121,
-		0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36,
-		38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 64, 66, 68, 70, 72,
-		74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94, 96, 98, 100, 102, 104, 106,
-		108, 110, 112, 114, 116, 118, 120, 122, 124, 126, 128, 130, 132, 134, 136,
-		138, 140, 142, 144, 146, 148, 150, 152, 154, 156, 158, 160, 162, 164, 166,
-		168, 170, 172, 174, 176, 178, 180, 182, 184, 186, 188, 190, 192, 194, 196,
-		198, 200, 202, 204, 206, 208, 210, 212, 214, 216, 218, 220, 222, 224, 226,
-		228, 230, 232, 234, 236, 238, 240, 0, 23, 1, 0, 107, 108, 4, 0, 50, 50,
-		106, 106, 120, 121, 127, 129, 1, 0, 104, 105, 1, 0, 118, 119, 1, 0, 127,
-		129, 1, 0, 145, 146, 1, 0, 135, 136, 2, 0, 51, 52, 56, 57, 2, 0, 54, 54,
-		61, 61, 1, 0, 1, 2, 2, 0, 26, 26, 81, 81, 2, 0, 26, 26, 28, 28, 2, 0, 1,
-		1, 3, 8, 1, 0, 19, 20, 2, 0, 21, 22, 24, 24, 5, 0, 47, 47, 88, 88, 129,
-		129, 145, 146, 157, 157, 2, 0, 72, 72, 157, 157, 1, 0, 152, 153, 1, 0,
-		139, 141, 1, 0, 47, 50, 1, 0, 86, 87, 1, 0, 155, 156, 4, 0, 39, 40, 50,
-		103, 132, 132, 143, 143, 2082, 0, 261, 1, 0, 0, 0, 2, 263, 1, 0, 0, 0,
-		4, 276, 1, 0, 0, 0, 6, 290, 1, 0, 0, 0, 8, 295, 1, 0, 0, 0, 10, 308, 1,
-		0, 0, 0, 12, 320, 1, 0, 0, 0, 14, 322, 1, 0, 0, 0, 16, 448, 1, 0, 0, 0,
-		18, 450, 1, 0, 0, 0, 20, 650, 1, 0, 0, 0, 22, 682, 1, 0, 0, 0, 24, 684,
+		1, 119, 1, 119, 1, 119, 3, 119, 1782, 8, 119, 1, 120, 1, 120, 1, 120, 0,
+		0, 121, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32,
+		34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 64, 66, 68,
+		70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94, 96, 98, 100, 102, 104,
+		106, 108, 110, 112, 114, 116, 118, 120, 122, 124, 126, 128, 130, 132, 134,
+		136, 138, 140, 142, 144, 146, 148, 150, 152, 154, 156, 158, 160, 162, 164,
+		166, 168, 170, 172, 174, 176, 178, 180, 182, 184, 186, 188, 190, 192, 194,
+		196, 198, 200, 202, 204, 206, 208, 210, 212, 214, 216, 218, 220, 222, 224,
+		226, 228, 230, 232, 234, 236, 238, 240, 0, 23, 1, 0, 107, 108, 4, 0, 50,
+		50, 106, 106, 120, 121, 127, 129, 1, 0, 104, 105, 1, 0, 118, 119, 1, 0,
+		127, 129, 1, 0, 145, 146, 1, 0, 135, 136, 2, 0, 51, 52, 56, 57, 2, 0, 54,
+		54, 61, 61, 1, 0, 1, 2, 2, 0, 26, 26, 81, 81, 2, 0, 26, 26, 28, 28, 2,
+		0, 1, 1, 3, 8, 1, 0, 19, 20, 2, 0, 21, 22, 24, 24, 5, 0, 47, 47, 88, 88,
+		129, 129, 145, 146, 157, 157, 2, 0, 72, 72, 157, 157, 1, 0, 152, 153, 1,
+		0, 139, 141, 1, 0, 47, 50, 1, 0, 86, 87, 1, 0, 155, 156, 4, 0, 39, 40,
+		50, 103, 132, 132, 143, 143, 2084, 0, 261, 1, 0, 0, 0, 2, 263, 1, 0, 0,
+		0, 4, 276, 1, 0, 0, 0, 6, 290, 1, 0, 0, 0, 8, 295, 1, 0, 0, 0, 10, 308,
+		1, 0, 0, 0, 12, 320, 1, 0, 0, 0, 14, 322, 1, 0, 0, 0, 16, 448, 1, 0, 0,
+		0, 18, 450, 1, 0, 0, 0, 20, 650, 1, 0, 0, 0, 22, 682, 1, 0, 0, 0, 24, 684,
 		1, 0, 0, 0, 26, 708, 1, 0, 0, 0, 28, 712, 1, 0, 0, 0, 30, 721, 1, 0, 0,
 		0, 32, 723, 1, 0, 0, 0, 34, 744, 1, 0, 0, 0, 36, 756, 1, 0, 0, 0, 38, 768,
 		1, 0, 0, 0, 40, 773, 1, 0, 0, 0, 42, 806, 1, 0, 0, 0, 44, 839, 1, 0, 0,
@@ -358,8 +358,8 @@ func cypherparserParserInit() {
 		1618, 1, 0, 0, 0, 216, 1630, 1, 0, 0, 0, 218, 1632, 1, 0, 0, 0, 220, 1642,
 		1, 0, 0, 0, 222, 1645, 1, 0, 0, 0, 224, 1654, 1, 0, 0, 0, 226, 1656, 1,
 		0, 0, 0, 228, 1658, 1, 0, 0, 0, 230, 1660, 1, 0, 0, 0, 232, 1666, 1, 0,
-		0, 0, 234, 1679, 1, 0, 0, 0, 236, 1685, 1, 0, 0, 0, 238, 1780, 1, 0, 0,
-		0, 240, 1782, 1, 0, 0, 0, 242, 243, 3, 2, 1, 0, 243, 244, 5, 0, 0, 1, 244,
+		0, 0, 234, 1679, 1, 0, 0, 0, 236, 1685, 1, 0, 0, 0, 238, 1781, 1, 0, 0,
+		0, 240, 1783, 1, 0, 0, 0, 242, 243, 3, 2, 1, 0, 243, 244, 5, 0, 0, 1, 244,
 		262, 1, 0, 0, 0, 245, 246, 3, 6, 3, 0, 246, 247, 5, 0, 0, 1, 247, 262,
 		1, 0, 0, 0, 248, 253, 3, 8, 4, 0, 249, 250, 5, 10, 0, 0, 250, 252, 3, 8,
 		4, 0, 251, 249, 1, 0, 0, 0, 252, 255, 1, 0, 0, 0, 253, 251, 1, 0, 0, 0,
@@ -936,90 +936,91 @@ func cypherparserParserInit() {
 		16, 0, 0, 1678, 233, 1, 0, 0, 0, 1679, 1680, 3, 236, 118, 0, 1680, 1681,
 		5, 26, 0, 0, 1681, 1682, 3, 116, 58, 0, 1682, 235, 1, 0, 0, 0, 1683, 1686,
 		3, 238, 119, 0, 1684, 1686, 3, 240, 120, 0, 1685, 1683, 1, 0, 0, 0, 1685,
-		1684, 1, 0, 0, 0, 1686, 237, 1, 0, 0, 0, 1687, 1781, 5, 158, 0, 0, 1688,
-		1781, 5, 157, 0, 0, 1689, 1781, 5, 41, 0, 0, 1690, 1781, 5, 42, 0, 0, 1691,
-		1781, 5, 43, 0, 0, 1692, 1781, 5, 44, 0, 0, 1693, 1781, 5, 45, 0, 0, 1694,
-		1781, 5, 46, 0, 0, 1695, 1781, 5, 37, 0, 0, 1696, 1781, 5, 38, 0, 0, 1697,
-		1781, 5, 39, 0, 0, 1698, 1781, 5, 40, 0, 0, 1699, 1781, 5, 47, 0, 0, 1700,
-		1781, 5, 48, 0, 0, 1701, 1781, 5, 49, 0, 0, 1702, 1781, 5, 104, 0, 0, 1703,
-		1781, 5, 105, 0, 0, 1704, 1781, 5, 89, 0, 0, 1705, 1781, 5, 114, 0, 0,
-		1706, 1781, 5, 115, 0, 0, 1707, 1781, 5, 32, 0, 0, 1708, 1781, 5, 33, 0,
-		0, 1709, 1781, 5, 34, 0, 0, 1710, 1781, 5, 35, 0, 0, 1711, 1781, 5, 103,
-		0, 0, 1712, 1781, 5, 54, 0, 0, 1713, 1781, 5, 106, 0, 0, 1714, 1781, 5,
-		121, 0, 0, 1715, 1781, 5, 122, 0, 0, 1716, 1781, 5, 123, 0, 0, 1717, 1781,
-		5, 124, 0, 0, 1718, 1781, 5, 125, 0, 0, 1719, 1781, 5, 126, 0, 0, 1720,
-		1781, 5, 102, 0, 0, 1721, 1781, 5, 127, 0, 0, 1722, 1781, 5, 128, 0, 0,
-		1723, 1781, 5, 129, 0, 0, 1724, 1781, 5, 136, 0, 0, 1725, 1781, 5, 137,
-		0, 0, 1726, 1781, 5, 138, 0, 0, 1727, 1781, 5, 139, 0, 0, 1728, 1781, 5,
-		140, 0, 0, 1729, 1781, 5, 141, 0, 0, 1730, 1781, 5, 55, 0, 0, 1731, 1781,
-		5, 102, 0, 0, 1732, 1781, 5, 66, 0, 0, 1733, 1781, 5, 69, 0, 0, 1734, 1781,
-		5, 61, 0, 0, 1735, 1781, 5, 62, 0, 0, 1736, 1781, 5, 120, 0, 0, 1737, 1781,
-		5, 116, 0, 0, 1738, 1781, 5, 117, 0, 0, 1739, 1781, 5, 118, 0, 0, 1740,
-		1781, 5, 119, 0, 0, 1741, 1781, 5, 31, 0, 0, 1742, 1781, 5, 107, 0, 0,
-		1743, 1781, 5, 108, 0, 0, 1744, 1781, 5, 59, 0, 0, 1745, 1781, 5, 109,
-		0, 0, 1746, 1781, 5, 110, 0, 0, 1747, 1781, 5, 111, 0, 0, 1748, 1781, 5,
-		112, 0, 0, 1749, 1781, 5, 113, 0, 0, 1750, 1781, 5, 130, 0, 0, 1751, 1781,
-		5, 145, 0, 0, 1752, 1781, 5, 146, 0, 0, 1753, 1781, 5, 147, 0, 0, 1754,
-		1781, 5, 148, 0, 0, 1755, 1781, 5, 149, 0, 0, 1756, 1781, 5, 150, 0, 0,
-		1757, 1781, 5, 151, 0, 0, 1758, 1781, 5, 144, 0, 0, 1759, 1781, 5, 142,
-		0, 0, 1760, 1781, 5, 135, 0, 0, 1761, 1781, 5, 134, 0, 0, 1762, 1781, 5,
-		98, 0, 0, 1763, 1781, 5, 94, 0, 0, 1764, 1781, 5, 95, 0, 0, 1765, 1781,
-		5, 96, 0, 0, 1766, 1781, 5, 97, 0, 0, 1767, 1781, 5, 87, 0, 0, 1768, 1781,
-		5, 86, 0, 0, 1769, 1781, 5, 88, 0, 0, 1770, 1781, 5, 93, 0, 0, 1771, 1781,
-		5, 92, 0, 0, 1772, 1781, 5, 143, 0, 0, 1773, 1781, 5, 132, 0, 0, 1774,
-		1781, 5, 133, 0, 0, 1775, 1781, 5, 131, 0, 0, 1776, 1781, 5, 50, 0, 0,
-		1777, 1781, 5, 152, 0, 0, 1778, 1781, 5, 153, 0, 0, 1779, 1781, 3, 240,
-		120, 0, 1780, 1687, 1, 0, 0, 0, 1780, 1688, 1, 0, 0, 0, 1780, 1689, 1,
-		0, 0, 0, 1780, 1690, 1, 0, 0, 0, 1780, 1691, 1, 0, 0, 0, 1780, 1692, 1,
-		0, 0, 0, 1780, 1693, 1, 0, 0, 0, 1780, 1694, 1, 0, 0, 0, 1780, 1695, 1,
-		0, 0, 0, 1780, 1696, 1, 0, 0, 0, 1780, 1697, 1, 0, 0, 0, 1780, 1698, 1,
-		0, 0, 0, 1780, 1699, 1, 0, 0, 0, 1780, 1700, 1, 0, 0, 0, 1780, 1701, 1,
-		0, 0, 0, 1780, 1702, 1, 0, 0, 0, 1780, 1703, 1, 0, 0, 0, 1780, 1704, 1,
-		0, 0, 0, 1780, 1705, 1, 0, 0, 0, 1780, 1706, 1, 0, 0, 0, 1780, 1707, 1,
-		0, 0, 0, 1780, 1708, 1, 0, 0, 0, 1780, 1709, 1, 0, 0, 0, 1780, 1710, 1,
-		0, 0, 0, 1780, 1711, 1, 0, 0, 0, 1780, 1712, 1, 0, 0, 0, 1780, 1713, 1,
-		0, 0, 0, 1780, 1714, 1, 0, 0, 0, 1780, 1715, 1, 0, 0, 0, 1780, 1716, 1,
-		0, 0, 0, 1780, 1717, 1, 0, 0, 0, 1780, 1718, 1, 0, 0, 0, 1780, 1719, 1,
-		0, 0, 0, 1780, 1720, 1, 0, 0, 0, 1780, 1721, 1, 0, 0, 0, 1780, 1722, 1,
-		0, 0, 0, 1780, 1723, 1, 0, 0, 0, 1780, 1724, 1, 0, 0, 0, 1780, 1725, 1,
-		0, 0, 0, 1780, 1726, 1, 0, 0, 0, 1780, 1727, 1, 0, 0, 0, 1780, 1728, 1,
-		0, 0, 0, 1780, 1729, 1, 0, 0, 0, 1780, 1730, 1, 0, 0, 0, 1780, 1731, 1,
-		0, 0, 0, 1780, 1732, 1, 0, 0, 0, 1780, 1733, 1, 0, 0, 0, 1780, 1734, 1,
-		0, 0, 0, 1780, 1735, 1, 0, 0, 0, 1780, 1736, 1, 0, 0, 0, 1780, 1737, 1,
-		0, 0, 0, 1780, 1738, 1, 0, 0, 0, 1780, 1739, 1, 0, 0, 0, 1780, 1740, 1,
-		0, 0, 0, 1780, 1741, 1, 0, 0, 0, 1780, 1742, 1, 0, 0, 0, 1780, 1743, 1,
-		0, 0, 0, 1780, 1744, 1, 0, 0, 0, 1780, 1745, 1, 0, 0, 0, 1780, 1746, 1,
-		0, 0, 0, 1780, 1747, 1, 0, 0, 0, 1780, 1748, 1, 0, 0, 0, 1780, 1749, 1,
-		0, 0, 0, 1780, 1750, 1, 0, 0, 0, 1780, 1751, 1, 0, 0, 0, 1780, 1752, 1,
-		0, 0, 0, 1780, 1753, 1, 0, 0, 0, 1780, 1754, 1, 0, 0, 0, 1780, 1755, 1,
-		0, 0, 0, 1780, 1756, 1, 0, 0, 0, 1780, 1757, 1, 0, 0, 0, 1780, 1758, 1,
-		0, 0, 0, 1780, 1759, 1, 0, 0, 0, 1780, 1760, 1, 0, 0, 0, 1780, 1761, 1,
-		0, 0, 0, 1780, 1762, 1, 0, 0, 0, 1780, 1763, 1, 0, 0, 0, 1780, 1764, 1,
-		0, 0, 0, 1780, 1765, 1, 0, 0, 0, 1780, 1766, 1, 0, 0, 0, 1780, 1767, 1,
-		0, 0, 0, 1780, 1768, 1, 0, 0, 0, 1780, 1769, 1, 0, 0, 0, 1780, 1770, 1,
-		0, 0, 0, 1780, 1771, 1, 0, 0, 0, 1780, 1772, 1, 0, 0, 0, 1780, 1773, 1,
-		0, 0, 0, 1780, 1774, 1, 0, 0, 0, 1780, 1775, 1, 0, 0, 0, 1780, 1776, 1,
-		0, 0, 0, 1780, 1777, 1, 0, 0, 0, 1780, 1778, 1, 0, 0, 0, 1780, 1779, 1,
-		0, 0, 0, 1781, 239, 1, 0, 0, 0, 1782, 1783, 7, 22, 0, 0, 1783, 241, 1,
-		0, 0, 0, 251, 253, 257, 261, 268, 276, 280, 284, 288, 290, 295, 299, 306,
-		314, 318, 324, 330, 335, 343, 345, 351, 356, 359, 361, 366, 373, 378, 386,
-		396, 401, 407, 415, 426, 430, 446, 448, 455, 461, 465, 469, 473, 478, 483,
-		485, 488, 495, 499, 505, 510, 515, 517, 520, 523, 530, 536, 541, 546, 548,
-		551, 554, 558, 564, 569, 574, 583, 587, 592, 597, 602, 604, 610, 615, 620,
-		623, 626, 631, 644, 648, 650, 654, 670, 682, 687, 690, 694, 698, 702, 704,
-		710, 716, 721, 726, 731, 734, 737, 740, 742, 750, 752, 762, 764, 781, 784,
-		787, 797, 801, 803, 806, 810, 812, 818, 823, 825, 830, 834, 837, 845, 857,
-		861, 864, 867, 871, 877, 883, 887, 896, 902, 909, 912, 915, 917, 921, 923,
-		927, 929, 935, 940, 950, 956, 964, 967, 978, 985, 996, 1003, 1008, 1011,
-		1014, 1017, 1019, 1023, 1032, 1036, 1041, 1050, 1063, 1077, 1086, 1090,
-		1095, 1100, 1108, 1114, 1123, 1130, 1140, 1148, 1156, 1164, 1170, 1177,
-		1181, 1189, 1199, 1207, 1215, 1219, 1229, 1231, 1241, 1245, 1248, 1255,
-		1258, 1268, 1272, 1278, 1283, 1289, 1296, 1303, 1310, 1314, 1321, 1329,
-		1335, 1341, 1344, 1355, 1362, 1366, 1377, 1381, 1384, 1388, 1392, 1395,
-		1398, 1418, 1427, 1430, 1437, 1444, 1452, 1456, 1460, 1464, 1466, 1470,
-		1473, 1476, 1479, 1488, 1496, 1505, 1511, 1514, 1521, 1524, 1530, 1543,
-		1547, 1557, 1563, 1571, 1583, 1588, 1597, 1601, 1621, 1630, 1634, 1638,
-		1640, 1645, 1650, 1654, 1662, 1672, 1675, 1685, 1780,
+		1684, 1, 0, 0, 0, 1686, 237, 1, 0, 0, 0, 1687, 1782, 5, 158, 0, 0, 1688,
+		1782, 5, 157, 0, 0, 1689, 1782, 5, 41, 0, 0, 1690, 1782, 5, 42, 0, 0, 1691,
+		1782, 5, 43, 0, 0, 1692, 1782, 5, 44, 0, 0, 1693, 1782, 5, 45, 0, 0, 1694,
+		1782, 5, 46, 0, 0, 1695, 1782, 5, 37, 0, 0, 1696, 1782, 5, 38, 0, 0, 1697,
+		1782, 5, 39, 0, 0, 1698, 1782, 5, 40, 0, 0, 1699, 1782, 5, 47, 0, 0, 1700,
+		1782, 5, 48, 0, 0, 1701, 1782, 5, 49, 0, 0, 1702, 1782, 5, 104, 0, 0, 1703,
+		1782, 5, 105, 0, 0, 1704, 1782, 5, 89, 0, 0, 1705, 1782, 5, 114, 0, 0,
+		1706, 1782, 5, 115, 0, 0, 1707, 1782, 5, 32, 0, 0, 1708, 1782, 5, 33, 0,
+		0, 1709, 1782, 5, 34, 0, 0, 1710, 1782, 5, 35, 0, 0, 1711, 1782, 5, 36,
+		0, 0, 1712, 1782, 5, 103, 0, 0, 1713, 1782, 5, 54, 0, 0, 1714, 1782, 5,
+		106, 0, 0, 1715, 1782, 5, 121, 0, 0, 1716, 1782, 5, 122, 0, 0, 1717, 1782,
+		5, 123, 0, 0, 1718, 1782, 5, 124, 0, 0, 1719, 1782, 5, 125, 0, 0, 1720,
+		1782, 5, 126, 0, 0, 1721, 1782, 5, 102, 0, 0, 1722, 1782, 5, 127, 0, 0,
+		1723, 1782, 5, 128, 0, 0, 1724, 1782, 5, 129, 0, 0, 1725, 1782, 5, 136,
+		0, 0, 1726, 1782, 5, 137, 0, 0, 1727, 1782, 5, 138, 0, 0, 1728, 1782, 5,
+		139, 0, 0, 1729, 1782, 5, 140, 0, 0, 1730, 1782, 5, 141, 0, 0, 1731, 1782,
+		5, 55, 0, 0, 1732, 1782, 5, 102, 0, 0, 1733, 1782, 5, 66, 0, 0, 1734, 1782,
+		5, 69, 0, 0, 1735, 1782, 5, 61, 0, 0, 1736, 1782, 5, 62, 0, 0, 1737, 1782,
+		5, 120, 0, 0, 1738, 1782, 5, 116, 0, 0, 1739, 1782, 5, 117, 0, 0, 1740,
+		1782, 5, 118, 0, 0, 1741, 1782, 5, 119, 0, 0, 1742, 1782, 5, 31, 0, 0,
+		1743, 1782, 5, 107, 0, 0, 1744, 1782, 5, 108, 0, 0, 1745, 1782, 5, 59,
+		0, 0, 1746, 1782, 5, 109, 0, 0, 1747, 1782, 5, 110, 0, 0, 1748, 1782, 5,
+		111, 0, 0, 1749, 1782, 5, 112, 0, 0, 1750, 1782, 5, 113, 0, 0, 1751, 1782,
+		5, 130, 0, 0, 1752, 1782, 5, 145, 0, 0, 1753, 1782, 5, 146, 0, 0, 1754,
+		1782, 5, 147, 0, 0, 1755, 1782, 5, 148, 0, 0, 1756, 1782, 5, 149, 0, 0,
+		1757, 1782, 5, 150, 0, 0, 1758, 1782, 5, 151, 0, 0, 1759, 1782, 5, 144,
+		0, 0, 1760, 1782, 5, 142, 0, 0, 1761, 1782, 5, 135, 0, 0, 1762, 1782, 5,
+		134, 0, 0, 1763, 1782, 5, 98, 0, 0, 1764, 1782, 5, 94, 0, 0, 1765, 1782,
+		5, 95, 0, 0, 1766, 1782, 5, 96, 0, 0, 1767, 1782, 5, 97, 0, 0, 1768, 1782,
+		5, 87, 0, 0, 1769, 1782, 5, 86, 0, 0, 1770, 1782, 5, 88, 0, 0, 1771, 1782,
+		5, 93, 0, 0, 1772, 1782, 5, 92, 0, 0, 1773, 1782, 5, 143, 0, 0, 1774, 1782,
+		5, 132, 0, 0, 1775, 1782, 5, 133, 0, 0, 1776, 1782, 5, 131, 0, 0, 1777,
+		1782, 5, 50, 0, 0, 1778, 1782, 5, 152, 0, 0, 1779, 1782, 5, 153, 0, 0,
+		1780, 1782, 3, 240, 120, 0, 1781, 1687, 1, 0, 0, 0, 1781, 1688, 1, 0, 0,
+		0, 1781, 1689, 1, 0, 0, 0, 1781, 1690, 1, 0, 0, 0, 1781, 1691, 1, 0, 0,
+		0, 1781, 1692, 1, 0, 0, 0, 1781, 1693, 1, 0, 0, 0, 1781, 1694, 1, 0, 0,
+		0, 1781, 1695, 1, 0, 0, 0, 1781, 1696, 1, 0, 0, 0, 1781, 1697, 1, 0, 0,
+		0, 1781, 1698, 1, 0, 0, 0, 1781, 1699, 1, 0, 0, 0, 1781, 1700, 1, 0, 0,
+		0, 1781, 1701, 1, 0, 0, 0, 1781, 1702, 1, 0, 0, 0, 1781, 1703, 1, 0, 0,
+		0, 1781, 1704, 1, 0, 0, 0, 1781, 1705, 1, 0, 0, 0, 1781, 1706, 1, 0, 0,
+		0, 1781, 1707, 1, 0, 0, 0, 1781, 1708, 1, 0, 0, 0, 1781, 1709, 1, 0, 0,
+		0, 1781, 1710, 1, 0, 0, 0, 1781, 1711, 1, 0, 0, 0, 1781, 1712, 1, 0, 0,
+		0, 1781, 1713, 1, 0, 0, 0, 1781, 1714, 1, 0, 0, 0, 1781, 1715, 1, 0, 0,
+		0, 1781, 1716, 1, 0, 0, 0, 1781, 1717, 1, 0, 0, 0, 1781, 1718, 1, 0, 0,
+		0, 1781, 1719, 1, 0, 0, 0, 1781, 1720, 1, 0, 0, 0, 1781, 1721, 1, 0, 0,
+		0, 1781, 1722, 1, 0, 0, 0, 1781, 1723, 1, 0, 0, 0, 1781, 1724, 1, 0, 0,
+		0, 1781, 1725, 1, 0, 0, 0, 1781, 1726, 1, 0, 0, 0, 1781, 1727, 1, 0, 0,
+		0, 1781, 1728, 1, 0, 0, 0, 1781, 1729, 1, 0, 0, 0, 1781, 1730, 1, 0, 0,
+		0, 1781, 1731, 1, 0, 0, 0, 1781, 1732, 1, 0, 0, 0, 1781, 1733, 1, 0, 0,
+		0, 1781, 1734, 1, 0, 0, 0, 1781, 1735, 1, 0, 0, 0, 1781, 1736, 1, 0, 0,
+		0, 1781, 1737, 1, 0, 0, 0, 1781, 1738, 1, 0, 0, 0, 1781, 1739, 1, 0, 0,
+		0, 1781, 1740, 1, 0, 0, 0, 1781, 1741, 1, 0, 0, 0, 1781, 1742, 1, 0, 0,
+		0, 1781, 1743, 1, 0, 0, 0, 1781, 1744, 1, 0, 0, 0, 1781, 1745, 1, 0, 0,
+		0, 1781, 1746, 1, 0, 0, 0, 1781, 1747, 1, 0, 0, 0, 1781, 1748, 1, 0, 0,
+		0, 1781, 1749, 1, 0, 0, 0, 1781, 1750, 1, 0, 0, 0, 1781, 1751, 1, 0, 0,
+		0, 1781, 1752, 1, 0, 0, 0, 1781, 1753, 1, 0, 0, 0, 1781, 1754, 1, 0, 0,
+		0, 1781, 1755, 1, 0, 0, 0, 1781, 1756, 1, 0, 0, 0, 1781, 1757, 1, 0, 0,
+		0, 1781, 1758, 1, 0, 0, 0, 1781, 1759, 1, 0, 0, 0, 1781, 1760, 1, 0, 0,
+		0, 1781, 1761, 1, 0, 0, 0, 1781, 1762, 1, 0, 0, 0, 1781, 1763, 1, 0, 0,
+		0, 1781, 1764, 1, 0, 0, 0, 1781, 1765, 1, 0, 0, 0, 1781, 1766, 1, 0, 0,
+		0, 1781, 1767, 1, 0, 0, 0, 1781, 1768, 1, 0, 0, 0, 1781, 1769, 1, 0, 0,
+		0, 1781, 1770, 1, 0, 0, 0, 1781, 1771, 1, 0, 0, 0, 1781, 1772, 1, 0, 0,
+		0, 1781, 1773, 1, 0, 0, 0, 1781, 1774, 1, 0, 0, 0, 1781, 1775, 1, 0, 0,
+		0, 1781, 1776, 1, 0, 0, 0, 1781, 1777, 1, 0, 0, 0, 1781, 1778, 1, 0, 0,
+		0, 1781, 1779, 1, 0, 0, 0, 1781, 1780, 1, 0, 0, 0, 1782, 239, 1, 0, 0,
+		0, 1783, 1784, 7, 22, 0, 0, 1784, 241, 1, 0, 0, 0, 251, 253, 257, 261,
+		268, 276, 280, 284, 288, 290, 295, 299, 306, 314, 318, 324, 330, 335, 343,
+		345, 351, 356, 359, 361, 366, 373, 378, 386, 396, 401, 407, 415, 426, 430,
+		446, 448, 455, 461, 465, 469, 473, 478, 483, 485, 488, 495, 499, 505, 510,
+		515, 517, 520, 523, 530, 536, 541, 546, 548, 551, 554, 558, 564, 569, 574,
+		583, 587, 592, 597, 602, 604, 610, 615, 620, 623, 626, 631, 644, 648, 650,
+		654, 670, 682, 687, 690, 694, 698, 702, 704, 710, 716, 721, 726, 731, 734,
+		737, 740, 742, 750, 752, 762, 764, 781, 784, 787, 797, 801, 803, 806, 810,
+		812, 818, 823, 825, 830, 834, 837, 845, 857, 861, 864, 867, 871, 877, 883,
+		887, 896, 902, 909, 912, 915, 917, 921, 923, 927, 929, 935, 940, 950, 956,
+		964, 967, 978, 985, 996, 1003, 1008, 1011, 1014, 1017, 1019, 1023, 1032,
+		1036, 1041, 1050, 1063, 1077, 1086, 1090, 1095, 1100, 1108, 1114, 1123,
+		1130, 1140, 1148, 1156, 1164, 1170, 1177, 1181, 1189, 1199, 1207, 1215,
+		1219, 1229, 1231, 1241, 1245, 1248, 1255, 1258, 1268, 1272, 1278, 1283,
+		1289, 1296, 1303, 1310, 1314, 1321, 1329, 1335, 1341, 1344, 1355, 1362,
+		1366, 1377, 1381, 1384, 1388, 1392, 1395, 1398, 1418, 1427, 1430, 1437,
+		1444, 1452, 1456, 1460, 1464, 1466, 1470, 1473, 1476, 1479, 1488, 1496,
+		1505, 1511, 1514, 1521, 1524, 1530, 1543, 1547, 1557, 1563, 1571, 1583,
+		1588, 1597, 1601, 1621, 1630, 1634, 1638, 1640, 1645, 1650, 1654, 1662,
+		1672, 1675, 1685, 1781,
 	}
 	deserializer := antlr.NewATNDeserializer(nil)
 	staticData.atn = deserializer.Deserialize(staticData.serializedATN)
@@ -1793,7 +1794,7 @@ func (p *CypherParser) ShellCommand() (localctx IShellCommandContext) {
 	}
 	_la = p.GetTokenStream().LA(1)
 
-	for ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-69724364766) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
+	for ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-1004888030) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
 		{
 			p.SetState(265)
 			p.ShellCommandElement()
@@ -3366,7 +3367,7 @@ func (p *CypherParser) ShowCommand() (localctx IShowCommandContext) {
 				}
 			}
 
-		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
+		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserYIELD, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
 			{
 				p.SetState(355)
 				p.YieldItems()
@@ -6740,7 +6741,7 @@ func (p *CypherParser) ConstraintBlock() (localctx IConstraintBlockContext) {
 	}
 	_la = p.GetTokenStream().LA(1)
 
-	if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-69791473664) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
+	if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-1071996928) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
 		p.SetState(687)
 		p.GetErrorHandler().Sync(p)
 		if p.HasError() {
@@ -7570,7 +7571,7 @@ func (p *CypherParser) StandaloneCall() (localctx IStandaloneCallContext) {
 				}
 			}
 
-		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
+		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserYIELD, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
 			{
 				p.SetState(730)
 				p.YieldItems()
@@ -8523,7 +8524,7 @@ func (p *CypherParser) CallSubquery() (localctx ICallSubqueryContext) {
 				}
 			}
 
-		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
+		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserYIELD, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
 			{
 				p.SetState(776)
 				p.Symbol()
@@ -10134,7 +10135,7 @@ func (p *CypherParser) ProjectionItems() (localctx IProjectionItemsContext) {
 			}
 		}
 
-	case CypherParserLPAREN, CypherParserLBRACE, CypherParserLBRACK, CypherParserSUB, CypherParserPLUS, CypherParserDOLLAR, CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserFLOAT, CypherParserINTEGER, CypherParserDIGIT, CypherParserID, CypherParserESC_LITERAL, CypherParserCHAR_LITERAL, CypherParserSTRING_LITERAL:
+	case CypherParserLPAREN, CypherParserLBRACE, CypherParserLBRACK, CypherParserSUB, CypherParserPLUS, CypherParserDOLLAR, CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserYIELD, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserFLOAT, CypherParserINTEGER, CypherParserDIGIT, CypherParserID, CypherParserESC_LITERAL, CypherParserCHAR_LITERAL, CypherParserSTRING_LITERAL:
 		{
 			p.SetState(870)
 			p.ProjectionItem()
@@ -13092,7 +13093,7 @@ func (p *CypherParser) QueryCallSt() (localctx IQueryCallStContext) {
 				}
 			}
 
-		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
+		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserYIELD, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
 			{
 				p.SetState(1007)
 				p.YieldItems()
@@ -13274,7 +13275,7 @@ func (p *CypherParser) ParenExpressionChain() (localctx IParenExpressionChainCon
 	}
 	_la = p.GetTokenStream().LA(1)
 
-	if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-69791473664) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
+	if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-1071996928) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
 		{
 			p.SetState(1022)
 			p.ExpressionChain()
@@ -14628,7 +14629,7 @@ func (p *CypherParser) NodeLabels() (localctx INodeLabelsContext) {
 		}
 
 		switch p.GetTokenStream().LA(1) {
-		case CypherParserLPAREN, CypherParserMOD, CypherParserBANG, CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
+		case CypherParserLPAREN, CypherParserMOD, CypherParserBANG, CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserYIELD, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
 			{
 				p.SetState(1080)
 				p.LabelExpression()
@@ -15253,7 +15254,7 @@ func (p *CypherParser) LabelNegation() (localctx ILabelNegationContext) {
 	}
 
 	switch p.GetTokenStream().LA(1) {
-	case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
+	case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserYIELD, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
 		{
 			p.SetState(1117)
 			p.Name()
@@ -18385,7 +18386,7 @@ func (p *CypherParser) ListExpression() (localctx IListExpressionContext) {
 			}
 			_la = p.GetTokenStream().LA(1)
 
-			if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-69791473664) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
+			if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-1071996928) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
 				{
 					p.SetState(1240)
 					p.Expression()
@@ -18407,7 +18408,7 @@ func (p *CypherParser) ListExpression() (localctx IListExpressionContext) {
 			}
 			_la = p.GetTokenStream().LA(1)
 
-			if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-69791473664) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
+			if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-1071996928) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
 				{
 					p.SetState(1244)
 					p.Expression()
@@ -20107,7 +20108,7 @@ func (p *CypherParser) PatternPart() (localctx IPatternPartContext) {
 		}
 		_la = p.GetTokenStream().LA(1)
 
-		if ((int64((_la-31)) & ^0x3f) == 0 && ((int64(1)<<(_la-31))&-33) != 0) || ((int64((_la-95)) & ^0x3f) == 0 && ((int64(1)<<(_la-95))&-4035225266123964417) != 0) {
+		if ((int64((_la-31)) & ^0x3f) == 0 && ((int64(1)<<(_la-31))&-1) != 0) || ((int64((_la-95)) & ^0x3f) == 0 && ((int64(1)<<(_la-95))&-4035225266123964417) != 0) {
 			{
 				p.SetState(1332)
 				p.Symbol()
@@ -21951,7 +21952,7 @@ func (p *CypherParser) MapProjection() (localctx IMapProjectionContext) {
 	}
 	_la = p.GetTokenStream().LA(1)
 
-	if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-70866958336) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&1677721599) != 0) {
+	if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-2147481600) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&1677721599) != 0) {
 		{
 			p.SetState(1422)
 			p.MapProjectionItem()
@@ -22167,7 +22168,7 @@ func (p *CypherParser) MapProjectionItem() (localctx IMapProjectionItemContext) 
 		}
 
 		switch p.GetTokenStream().LA(1) {
-		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
+		case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserYIELD, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
 			{
 				p.SetState(1435)
 				p.Name()
@@ -23679,7 +23680,7 @@ func (p *CypherParser) FunctionInvocation() (localctx IFunctionInvocationContext
 		}
 		_la = p.GetTokenStream().LA(1)
 
-		if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-69791473664) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
+		if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-1071996928) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
 			{
 				p.SetState(1513)
 				p.ExpressionChain()
@@ -24247,7 +24248,7 @@ func (p *CypherParser) PatternComprehension() (localctx IPatternComprehensionCon
 	}
 	_la = p.GetTokenStream().LA(1)
 
-	if ((int64((_la-31)) & ^0x3f) == 0 && ((int64(1)<<(_la-31))&-33) != 0) || ((int64((_la-95)) & ^0x3f) == 0 && ((int64(1)<<(_la-95))&-4035225266123964417) != 0) {
+	if ((int64((_la-31)) & ^0x3f) == 0 && ((int64(1)<<(_la-31))&-1) != 0) || ((int64((_la-95)) & ^0x3f) == 0 && ((int64(1)<<(_la-95))&-4035225266123964417) != 0) {
 		{
 			p.SetState(1542)
 			p.Lhs()
@@ -25797,7 +25798,7 @@ func (p *CypherParser) Parameter() (localctx IParameterContext) {
 	}
 
 	switch p.GetTokenStream().LA(1) {
-	case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
+	case CypherParserCALL, CypherParserBEGIN, CypherParserCOMMIT, CypherParserROLLBACK, CypherParserTRANSACTION, CypherParserYIELD, CypherParserFILTER, CypherParserEXTRACT, CypherParserREDUCE, CypherParserFOREACH, CypherParserCOUNT, CypherParserSUM, CypherParserAVG, CypherParserMIN, CypherParserMAX, CypherParserCOLLECT, CypherParserANY, CypherParserNONE, CypherParserSINGLE, CypherParserALL, CypherParserASC, CypherParserASCENDING, CypherParserBY, CypherParserCREATE, CypherParserDELETE, CypherParserDESC, CypherParserDESCENDING, CypherParserDETACH, CypherParserEXISTS, CypherParserLIMIT, CypherParserMATCH, CypherParserMERGE, CypherParserON, CypherParserOPTIONAL, CypherParserORDER, CypherParserREMOVE, CypherParserRETURN, CypherParserFINISH, CypherParserSET, CypherParserSKIP_W, CypherParserWHERE, CypherParserWITH, CypherParserUNION, CypherParserUNWIND, CypherParserAND, CypherParserAS, CypherParserCONTAINS, CypherParserDISTINCT, CypherParserENDS, CypherParserIN, CypherParserIS, CypherParserNOT, CypherParserOR, CypherParserSTARTS, CypherParserXOR, CypherParserFALSE, CypherParserTRUE, CypherParserNULL_W, CypherParserCONSTRAINT, CypherParserDO, CypherParserFOR, CypherParserREQUIRE, CypherParserUNIQUE, CypherParserCASE, CypherParserWHEN, CypherParserTHEN, CypherParserELSE, CypherParserEND, CypherParserMANDATORY, CypherParserSCALAR, CypherParserOF, CypherParserADD, CypherParserDROP, CypherParserINDEX, CypherParserINDEXES, CypherParserVECTOR, CypherParserEXPLAIN, CypherParserPROFILE, CypherParserSHOW, CypherParserUSERS, CypherParserUSER, CypherParserCURRENT, CypherParserREPLACE, CypherParserCONSTRAINTS, CypherParserCONTRACTS, CypherParserPROCEDURES, CypherParserFUNCTIONS, CypherParserDATABASE, CypherParserDATABASES, CypherParserFULLTEXT, CypherParserLOOKUP, CypherParserUSE, CypherParserALIAS, CypherParserALIASES, CypherParserCOMPOSITE, CypherParserALTER, CypherParserRANGE_INDEX, CypherParserTEXT, CypherParserPOINT, CypherParserOPTIONS, CypherParserEACH, CypherParserEMBEDDING, CypherParserIF, CypherParserTRANSACTIONS, CypherParserROWS, CypherParserROW, CypherParserTRIM, CypherParserFROM, CypherParserLEADING, CypherParserTRAILING, CypherParserBOTH, CypherParserASSERT, CypherParserTYPED, CypherParserKEY, CypherParserNODE, CypherParserRELATIONSHIP, CypherParserTEMPORAL, CypherParserNO, CypherParserOVERLAP, CypherParserALLOWED, CypherParserDISALLOWED, CypherParserSHORTESTPATH, CypherParserALLSHORTESTPATHS, CypherParserID, CypherParserESC_LITERAL:
 		{
 			p.SetState(1619)
 			p.Name()
@@ -26993,7 +26994,7 @@ func (p *CypherParser) ListLit() (localctx IListLitContext) {
 	}
 	_la = p.GetTokenStream().LA(1)
 
-	if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-69791473664) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
+	if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-1071996928) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&8589934591) != 0) {
 		{
 			p.SetState(1661)
 			p.ExpressionChain()
@@ -27172,7 +27173,7 @@ func (p *CypherParser) MapLit() (localctx IMapLitContext) {
 	}
 	_la = p.GetTokenStream().LA(1)
 
-	if ((int64((_la-31)) & ^0x3f) == 0 && ((int64(1)<<(_la-31))&-33) != 0) || ((int64((_la-95)) & ^0x3f) == 0 && ((int64(1)<<(_la-95))&-4035225266123964417) != 0) {
+	if ((int64((_la-31)) & ^0x3f) == 0 && ((int64(1)<<(_la-31))&-1) != 0) || ((int64((_la-95)) & ^0x3f) == 0 && ((int64(1)<<(_la-95))&-4035225266123964417) != 0) {
 		{
 			p.SetState(1667)
 			p.MapPair()
@@ -27542,6 +27543,7 @@ type ISymbolContext interface {
 	COMMIT() antlr.TerminalNode
 	ROLLBACK() antlr.TerminalNode
 	TRANSACTION() antlr.TerminalNode
+	YIELD() antlr.TerminalNode
 	DROP() antlr.TerminalNode
 	CREATE() antlr.TerminalNode
 	VECTOR() antlr.TerminalNode
@@ -27741,6 +27743,10 @@ func (s *SymbolContext) ROLLBACK() antlr.TerminalNode {
 
 func (s *SymbolContext) TRANSACTION() antlr.TerminalNode {
 	return s.GetToken(CypherParserTRANSACTION, 0)
+}
+
+func (s *SymbolContext) YIELD() antlr.TerminalNode {
+	return s.GetToken(CypherParserYIELD, 0)
 }
 
 func (s *SymbolContext) DROP() antlr.TerminalNode {
@@ -28050,7 +28056,7 @@ func (s *SymbolContext) ExitRule(listener antlr.ParseTreeListener) {
 func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 	localctx = NewSymbolContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 238, CypherParserRULE_symbol)
-	p.SetState(1780)
+	p.SetState(1781)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
@@ -28325,7 +28331,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 25)
 		{
 			p.SetState(1711)
-			p.Match(CypherParserDROP)
+			p.Match(CypherParserYIELD)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28336,7 +28342,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 26)
 		{
 			p.SetState(1712)
-			p.Match(CypherParserCREATE)
+			p.Match(CypherParserDROP)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28347,7 +28353,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 27)
 		{
 			p.SetState(1713)
-			p.Match(CypherParserVECTOR)
+			p.Match(CypherParserCREATE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28358,7 +28364,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 28)
 		{
 			p.SetState(1714)
-			p.Match(CypherParserLOOKUP)
+			p.Match(CypherParserVECTOR)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28369,7 +28375,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 29)
 		{
 			p.SetState(1715)
-			p.Match(CypherParserUSE)
+			p.Match(CypherParserLOOKUP)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28380,7 +28386,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 30)
 		{
 			p.SetState(1716)
-			p.Match(CypherParserALIAS)
+			p.Match(CypherParserUSE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28391,7 +28397,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 31)
 		{
 			p.SetState(1717)
-			p.Match(CypherParserALIASES)
+			p.Match(CypherParserALIAS)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28402,7 +28408,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 32)
 		{
 			p.SetState(1718)
-			p.Match(CypherParserCOMPOSITE)
+			p.Match(CypherParserALIASES)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28413,7 +28419,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 33)
 		{
 			p.SetState(1719)
-			p.Match(CypherParserALTER)
+			p.Match(CypherParserCOMPOSITE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28424,7 +28430,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 34)
 		{
 			p.SetState(1720)
-			p.Match(CypherParserADD)
+			p.Match(CypherParserALTER)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28435,7 +28441,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 35)
 		{
 			p.SetState(1721)
-			p.Match(CypherParserRANGE_INDEX)
+			p.Match(CypherParserADD)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28446,7 +28452,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 36)
 		{
 			p.SetState(1722)
-			p.Match(CypherParserTEXT)
+			p.Match(CypherParserRANGE_INDEX)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28457,7 +28463,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 37)
 		{
 			p.SetState(1723)
-			p.Match(CypherParserPOINT)
+			p.Match(CypherParserTEXT)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28468,7 +28474,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 38)
 		{
 			p.SetState(1724)
-			p.Match(CypherParserROW)
+			p.Match(CypherParserPOINT)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28479,7 +28485,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 39)
 		{
 			p.SetState(1725)
-			p.Match(CypherParserTRIM)
+			p.Match(CypherParserROW)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28490,7 +28496,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 40)
 		{
 			p.SetState(1726)
-			p.Match(CypherParserFROM)
+			p.Match(CypherParserTRIM)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28501,7 +28507,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 41)
 		{
 			p.SetState(1727)
-			p.Match(CypherParserLEADING)
+			p.Match(CypherParserFROM)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28512,7 +28518,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 42)
 		{
 			p.SetState(1728)
-			p.Match(CypherParserTRAILING)
+			p.Match(CypherParserLEADING)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28523,7 +28529,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 43)
 		{
 			p.SetState(1729)
-			p.Match(CypherParserBOTH)
+			p.Match(CypherParserTRAILING)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28534,7 +28540,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 44)
 		{
 			p.SetState(1730)
-			p.Match(CypherParserDELETE)
+			p.Match(CypherParserBOTH)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28545,7 +28551,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 45)
 		{
 			p.SetState(1731)
-			p.Match(CypherParserADD)
+			p.Match(CypherParserDELETE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28556,7 +28562,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 46)
 		{
 			p.SetState(1732)
-			p.Match(CypherParserREMOVE)
+			p.Match(CypherParserADD)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28567,7 +28573,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 47)
 		{
 			p.SetState(1733)
-			p.Match(CypherParserSET)
+			p.Match(CypherParserREMOVE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28578,7 +28584,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 48)
 		{
 			p.SetState(1734)
-			p.Match(CypherParserMATCH)
+			p.Match(CypherParserSET)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28589,7 +28595,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 49)
 		{
 			p.SetState(1735)
-			p.Match(CypherParserMERGE)
+			p.Match(CypherParserMATCH)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28600,7 +28606,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 50)
 		{
 			p.SetState(1736)
-			p.Match(CypherParserFULLTEXT)
+			p.Match(CypherParserMERGE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28611,7 +28617,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 51)
 		{
 			p.SetState(1737)
-			p.Match(CypherParserPROCEDURES)
+			p.Match(CypherParserFULLTEXT)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28622,7 +28628,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 52)
 		{
 			p.SetState(1738)
-			p.Match(CypherParserFUNCTIONS)
+			p.Match(CypherParserPROCEDURES)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28633,7 +28639,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 53)
 		{
 			p.SetState(1739)
-			p.Match(CypherParserDATABASE)
+			p.Match(CypherParserFUNCTIONS)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28644,7 +28650,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 54)
 		{
 			p.SetState(1740)
-			p.Match(CypherParserDATABASES)
+			p.Match(CypherParserDATABASE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28655,7 +28661,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 55)
 		{
 			p.SetState(1741)
-			p.Match(CypherParserCALL)
+			p.Match(CypherParserDATABASES)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28666,7 +28672,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 56)
 		{
 			p.SetState(1742)
-			p.Match(CypherParserEXPLAIN)
+			p.Match(CypherParserCALL)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28677,7 +28683,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 57)
 		{
 			p.SetState(1743)
-			p.Match(CypherParserPROFILE)
+			p.Match(CypherParserEXPLAIN)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28688,7 +28694,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 58)
 		{
 			p.SetState(1744)
-			p.Match(CypherParserEXISTS)
+			p.Match(CypherParserPROFILE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28699,7 +28705,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 59)
 		{
 			p.SetState(1745)
-			p.Match(CypherParserSHOW)
+			p.Match(CypherParserEXISTS)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28710,7 +28716,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 60)
 		{
 			p.SetState(1746)
-			p.Match(CypherParserUSERS)
+			p.Match(CypherParserSHOW)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28721,7 +28727,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 61)
 		{
 			p.SetState(1747)
-			p.Match(CypherParserUSER)
+			p.Match(CypherParserUSERS)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28732,7 +28738,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 62)
 		{
 			p.SetState(1748)
-			p.Match(CypherParserCURRENT)
+			p.Match(CypherParserUSER)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28743,7 +28749,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 63)
 		{
 			p.SetState(1749)
-			p.Match(CypherParserREPLACE)
+			p.Match(CypherParserCURRENT)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28754,7 +28760,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 64)
 		{
 			p.SetState(1750)
-			p.Match(CypherParserOPTIONS)
+			p.Match(CypherParserREPLACE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28765,7 +28771,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 65)
 		{
 			p.SetState(1751)
-			p.Match(CypherParserNODE)
+			p.Match(CypherParserOPTIONS)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28776,7 +28782,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 66)
 		{
 			p.SetState(1752)
-			p.Match(CypherParserRELATIONSHIP)
+			p.Match(CypherParserNODE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28787,7 +28793,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 67)
 		{
 			p.SetState(1753)
-			p.Match(CypherParserTEMPORAL)
+			p.Match(CypherParserRELATIONSHIP)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28798,7 +28804,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 68)
 		{
 			p.SetState(1754)
-			p.Match(CypherParserNO)
+			p.Match(CypherParserTEMPORAL)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28809,7 +28815,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 69)
 		{
 			p.SetState(1755)
-			p.Match(CypherParserOVERLAP)
+			p.Match(CypherParserNO)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28820,7 +28826,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 70)
 		{
 			p.SetState(1756)
-			p.Match(CypherParserALLOWED)
+			p.Match(CypherParserOVERLAP)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28831,7 +28837,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 71)
 		{
 			p.SetState(1757)
-			p.Match(CypherParserDISALLOWED)
+			p.Match(CypherParserALLOWED)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28842,7 +28848,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 72)
 		{
 			p.SetState(1758)
-			p.Match(CypherParserKEY)
+			p.Match(CypherParserDISALLOWED)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28853,7 +28859,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 73)
 		{
 			p.SetState(1759)
-			p.Match(CypherParserASSERT)
+			p.Match(CypherParserKEY)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28864,7 +28870,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 74)
 		{
 			p.SetState(1760)
-			p.Match(CypherParserROWS)
+			p.Match(CypherParserASSERT)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28875,7 +28881,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 75)
 		{
 			p.SetState(1761)
-			p.Match(CypherParserTRANSACTIONS)
+			p.Match(CypherParserROWS)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28886,7 +28892,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 76)
 		{
 			p.SetState(1762)
-			p.Match(CypherParserEND)
+			p.Match(CypherParserTRANSACTIONS)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28897,7 +28903,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 77)
 		{
 			p.SetState(1763)
-			p.Match(CypherParserCASE)
+			p.Match(CypherParserEND)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28908,7 +28914,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 78)
 		{
 			p.SetState(1764)
-			p.Match(CypherParserWHEN)
+			p.Match(CypherParserCASE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28919,7 +28925,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 79)
 		{
 			p.SetState(1765)
-			p.Match(CypherParserTHEN)
+			p.Match(CypherParserWHEN)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28930,7 +28936,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 80)
 		{
 			p.SetState(1766)
-			p.Match(CypherParserELSE)
+			p.Match(CypherParserTHEN)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28941,7 +28947,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 81)
 		{
 			p.SetState(1767)
-			p.Match(CypherParserTRUE)
+			p.Match(CypherParserELSE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28952,7 +28958,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 82)
 		{
 			p.SetState(1768)
-			p.Match(CypherParserFALSE)
+			p.Match(CypherParserTRUE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28963,7 +28969,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 83)
 		{
 			p.SetState(1769)
-			p.Match(CypherParserNULL_W)
+			p.Match(CypherParserFALSE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28974,7 +28980,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 84)
 		{
 			p.SetState(1770)
-			p.Match(CypherParserUNIQUE)
+			p.Match(CypherParserNULL_W)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28985,7 +28991,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 85)
 		{
 			p.SetState(1771)
-			p.Match(CypherParserREQUIRE)
+			p.Match(CypherParserUNIQUE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -28996,7 +29002,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 86)
 		{
 			p.SetState(1772)
-			p.Match(CypherParserTYPED)
+			p.Match(CypherParserREQUIRE)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -29007,7 +29013,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 87)
 		{
 			p.SetState(1773)
-			p.Match(CypherParserEMBEDDING)
+			p.Match(CypherParserTYPED)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -29018,7 +29024,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 88)
 		{
 			p.SetState(1774)
-			p.Match(CypherParserIF)
+			p.Match(CypherParserEMBEDDING)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -29029,7 +29035,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 89)
 		{
 			p.SetState(1775)
-			p.Match(CypherParserEACH)
+			p.Match(CypherParserIF)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -29040,7 +29046,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 90)
 		{
 			p.SetState(1776)
-			p.Match(CypherParserALL)
+			p.Match(CypherParserEACH)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -29051,7 +29057,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 91)
 		{
 			p.SetState(1777)
-			p.Match(CypherParserSHORTESTPATH)
+			p.Match(CypherParserALL)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -29062,7 +29068,7 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 92)
 		{
 			p.SetState(1778)
-			p.Match(CypherParserALLSHORTESTPATHS)
+			p.Match(CypherParserSHORTESTPATH)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
@@ -29073,6 +29079,17 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		p.EnterOuterAlt(localctx, 93)
 		{
 			p.SetState(1779)
+			p.Match(CypherParserALLSHORTESTPATHS)
+			if p.HasError() {
+				// Recognition error - abort rule
+				goto errorExit
+			}
+		}
+
+	case 94:
+		p.EnterOuterAlt(localctx, 94)
+		{
+			p.SetState(1780)
 			p.ReservedWord()
 		}
 
@@ -29456,7 +29473,7 @@ func (p *CypherParser) ReservedWord() (localctx IReservedWordContext) {
 
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(1782)
+		p.SetState(1783)
 		_la = p.GetTokenStream().LA(1)
 
 		if !(((int64((_la-39)) & ^0x3f) == 0 && ((int64(1)<<(_la-39))&-2045) != 0) || ((int64((_la-103)) & ^0x3f) == 0 && ((int64(1)<<(_la-103))&1100048498689) != 0)) {

@@ -8,7 +8,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,27 +107,24 @@ func TestIssue862SchemaOnLabelsThatDifferInCase(t *testing.T) {
 	require.Error(t, err, "the :person constraint holds")
 }
 
-// Relationship-type filters outside MATCH compare exactly too: CREATE's
-// existing-relationship check and the FastRP projection.
+// Relationship-type predicates and the FastRP projection compare exactly too.
 func TestIssue862RelationshipTypeFiltersAreCaseSensitive(t *testing.T) {
-	exec, store := newTestExecutor(t)
+	exec, _ := newTestExecutor(t)
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (a:N {id: 'a'})-[:R]->(b:N {id: 'b'}), (a)-[:r]->(b), (b)-[:R]->(c:N {id: 'c'})", nil)
 	require.NoError(t, err)
-	nodes, err := store.GetNodesByLabel("N")
-	require.NoError(t, err)
-	byID := map[string]storage.NodeID{}
-	for _, node := range nodes {
-		byID[node.Properties["id"].(string)] = node.ID
-	}
 	for edgeType, want := range map[string]bool{"R": true, "r": true, "Rr": false} {
-		exists, err := hasRelationshipOfType(store, byID["a"], byID["b"], edgeType)
+		result, err := exec.Execute(ctx, "MATCH (a:N {id:'a'}), (b:N {id:'b'}) WHERE (a)-[:"+edgeType+"]->(b) RETURN count(*) AS count", nil)
 		require.NoError(t, err)
-		require.Equal(t, want, exists, edgeType)
+		var count int64
+		if want {
+			count = 1
+		}
+		require.Equal(t, [][]interface{}{{count}}, result.Rows, edgeType)
 	}
-	exists, err := hasRelationshipOfType(store, byID["b"], byID["c"], "r")
+	result, err := exec.Execute(ctx, "MATCH (b:N {id:'b'}), (c:N {id:'c'}) WHERE (b)-[:r]->(c) RETURN count(*) AS count", nil)
 	require.NoError(t, err)
-	require.False(t, exists, "only :R joins b and c")
+	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows, "only :R joins b and c")
 
 	upper, err := exec.buildGraphProjection("upper", []string{"N"}, []string{"R"})
 	require.NoError(t, err)

@@ -2775,42 +2775,34 @@ func TestExecuteMatchCreateBlock_AdditionalBranches(t *testing.T) {
 	_, err = store.CreateNode(&storage.Node{ID: "b1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
-	// No CREATE in block: branch returns empty result without error.
-	res, err := exec.executeMatchCreateBlock(ctx, "MATCH (a:Person {name: 'alice'})", map[string]*storage.Node{}, map[string]*storage.Edge{})
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	require.Empty(t, res.Rows)
+	res, err := exec.Execute(ctx, "MATCH (a:Person {name: 'alice'})", nil)
+	require.Error(t, err)
+	require.Nil(t, res)
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 
 	// Relationship creation and edge-property return path.
-	nodeVars := map[string]*storage.Node{}
-	edgeVars := map[string]*storage.Edge{}
-	res, err = exec.executeMatchCreateBlock(
+	res, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name: 'alice'}), (b:Person {name: 'bob'}) CREATE (a)-[r:KNOWS {since: 2020}]->(b) RETURN r.since AS since",
-		nodeVars,
-		edgeVars,
+		"MATCH (a:Person {name: 'alice'}), (b:Person {name: 'bob'}) CREATE (a)-[r:KNOWS {since: 2020}]->(b) RETURN r.since AS since, r", nil,
 	)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, int64(2020), res.Rows[0][0])
-	require.Contains(t, edgeVars, "r")
+	require.IsType(t, &storage.Edge{}, res.Rows[0][1])
 
 	// Unknown variable in SET clause should error deterministically.
-	_, err = exec.executeMatchCreateBlock(
+	_, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name: 'alice'}) CREATE (t:Temp {name:'tmp'}) SET missing.flag = true",
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
+		"MATCH (a:Person {name: 'alice'}) CREATE (t:Temp {name:'tmp'}) SET missing.flag = true", nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown variable in SET clause")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, err.Error(), "missing")
 
 	// CREATE ... WITH ... DELETE ... RETURN count() path.
-	res, err = exec.executeMatchCreateBlock(
+	res, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name: 'alice'}) CREATE (t:TempDel {name:'x'}) WITH t DELETE t RETURN count(t) AS deleted",
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
+		"MATCH (a:Person {name: 'alice'}) CREATE (t:TempDel {name:'x'}) WITH t DELETE t RETURN count(t) AS deleted", nil,
 	)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
@@ -3190,11 +3182,9 @@ func TestCreateDeleteAdditionalNoReturnAndEdgeCleanupBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Direct DELETE-without-WITH/RETURN branch in executeMatchCreateBlock.
-	res, err := exec.executeMatchCreateBlock(
+	res, err := exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}) CREATE (t:Tmp {id:'tmp-no-return'}) DELETE t",
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
+		"MATCH (a:Person {name:'alice'}) CREATE (t:Tmp {id:'tmp-no-return'}) DELETE t", nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, res.Stats)

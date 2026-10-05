@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Route MATCH/CREATE compositions exclusively through the shared clause pipeline
+  and remove private MATCH/CREATE handlers and their orphan predicate helpers.
+  Share inherited/explicit parameter preparation across public, internal and
+  Fabric routes. Bound relationship predicates read the active transaction and
+  propagate storage failures before further writes; WITH predicates distinguish
+  relationship patterns from arithmetic. Preserve structured SET-label syntax
+  errors and accept YIELD as an ANTLR symbolic name (#908, #894).
+
 - Use shared lexical scanners across CALL, CREATE, schema and hint parsing.
   Route MATCH/CREATE/DELETE through real pipeline writes, preserve matched-row
   counts and write errors, and bound row-local WITH windows and MATCH seeds.

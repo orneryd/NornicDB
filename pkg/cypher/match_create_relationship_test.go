@@ -381,18 +381,20 @@ func TestMatchCreateRelationship_CompoundHelpersAndDeleteBranches(t *testing.T) 
 	_, err = exec.Execute(ctx, `CREATE (b:Person {name: 'Bob'})`, nil)
 	require.NoError(t, err)
 
-	t.Run("splitMatchCreateBlocksAndKeywordHelpers", func(t *testing.T) {
+	t.Run("multiMatchCreateBlocksAndKeywordHelpers", func(t *testing.T) {
 		query := `
 			MATCH (a:Person {name: 'Alice'})
 			MATCH (b:Person {name: 'Bob'})
 			CREATE (a)-[:KNOWS]->(b)
+			WITH a, b
 			MATCH (c:Person {name: 'Alice'})
 			CREATE (c)-[:KNOWS]->(b)
+			RETURN count(*) AS count
 		`
-		blocks := exec.splitMatchCreateBlocks(query)
-		require.Len(t, blocks, 2)
-		assert.Contains(t, blocks[0], "CREATE (a)-[:KNOWS]->(b)")
-		assert.Contains(t, blocks[1], "CREATE (c)-[:KNOWS]->(b)")
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+		require.EqualValues(t, 2, result.Stats.RelationshipsCreated)
 
 		positions := findAllKeywordPositions(`MATCH (n {txt: "MATCH"}) RETURN n MATCH (m) RETURN m`, "MATCH")
 		require.Len(t, positions, 2)
@@ -412,7 +414,7 @@ func TestMatchCreateRelationship_CompoundHelpersAndDeleteBranches(t *testing.T) 
 			"name":  "Alice",
 			"props": map[string]interface{}{"since": int64(2024), "weight": float64(0.8)},
 		})
-		res, err := exec.executeCompoundMatchCreate(ctxWithParams, query)
+		res, err := exec.Execute(ctxWithParams, query, nil)
 		require.NoError(t, err)
 		require.Len(t, res.Rows, 1)
 		assert.Equal(t, int64(2024), res.Rows[0][0])
@@ -434,7 +436,7 @@ func TestMatchCreateRelationship_CompoundHelpersAndDeleteBranches(t *testing.T) 
 			DELETE tmp
 			RETURN 'ok' AS status
 		`
-		res, err := exec.executeCompoundMatchCreate(ctx, directDelete)
+		res, err := exec.Execute(ctx, directDelete, nil)
 		require.NoError(t, err)
 		require.Len(t, res.Rows, 1)
 		assert.Equal(t, "ok", res.Rows[0][0])
@@ -451,7 +453,7 @@ func TestMatchCreateRelationship_CompoundHelpersAndDeleteBranches(t *testing.T) 
 			DELETE tmp
 			RETURN 'gone' AS status
 		`
-		withDeleteRes, err := exec.executeCompoundMatchCreate(ctx, withDelete)
+		withDeleteRes, err := exec.Execute(ctx, withDelete, nil)
 		require.NoError(t, err)
 		require.Len(t, withDeleteRes.Rows, 1)
 		assert.Equal(t, "gone", withDeleteRes.Rows[0][0])

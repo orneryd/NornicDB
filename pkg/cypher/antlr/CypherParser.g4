@@ -631,6 +631,7 @@ symbol
     | COMMIT
     | ROLLBACK
     | TRANSACTION
+    | YIELD
     | DROP
     | CREATE
     | VECTOR

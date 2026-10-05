@@ -103,7 +103,11 @@ func parseLabelChain(chain string) ([]string, error) {
 func setLabelChain(chain string) ([]string, error) {
 	names, err := parseLabelChain(chain)
 	if err != nil {
-		return nil, err
+		return nil, &classifiedCypherError{
+			cause:  err,
+			code:   "Neo.ClientError.Statement.SyntaxError",
+			detail: "InvalidLabel",
+		}
 	}
 	return names, nil
 }

@@ -30,11 +30,18 @@ func (e *createMatchErrEngine) AllNodes() ([]*storage.Node, error) {
 	return e.Engine.AllNodes()
 }
 
-func (e *createMatchErrEngine) GetEdgesBetween(startID, endID storage.NodeID) ([]*storage.Edge, error) {
+func (e *createMatchErrEngine) GetOutgoingEdges(startID storage.NodeID) ([]*storage.Edge, error) {
 	if e.edgesBetweenErr != nil {
 		return nil, e.edgesBetweenErr
 	}
-	return e.Engine.GetEdgesBetween(startID, endID)
+	return e.Engine.GetOutgoingEdges(startID)
+}
+
+func (e *createMatchErrEngine) GetIncomingEdges(endID storage.NodeID) ([]*storage.Edge, error) {
+	if e.edgesBetweenErr != nil {
+		return nil, e.edgesBetweenErr
+	}
+	return e.Engine.GetIncomingEdges(endID)
 }
 
 func TestExecuteCompoundMatchCreate_SurfacesMatchLabelLookupError(t *testing.T) {
@@ -52,8 +59,8 @@ func TestExecuteCompoundMatchCreate_SurfacesMatchLabelLookupError(t *testing.T) 
 		labelErrs: map[string]error{"A": lookupErr},
 	})
 
-	_, err = errExec.executeCompoundMatchCreate(context.Background(),
-		"MATCH (a:A),(b:B) WHERE NOT (a)-[:R]->(b) CREATE (a)-[:R]->(b) RETURN count(*) AS n")
+	_, err = errExec.Execute(context.Background(),
+		"MATCH (a:A),(b:B) WHERE NOT (a)-[:R]->(b) CREATE (a)-[:R]->(b) RETURN count(*) AS n", nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, lookupErr)
 }
@@ -65,8 +72,8 @@ func TestExecuteCompoundMatchCreate_SurfacesAllNodesError(t *testing.T) {
 	allErr := errors.New("all nodes failed")
 	errExec := NewStorageExecutor(&createMatchErrEngine{Engine: store, allErr: allErr})
 
-	_, err := errExec.executeCompoundMatchCreate(context.Background(),
-		"MATCH (a),(b) WHERE NOT (a)-[:R]->(b) CREATE (a)-[:R]->(b) RETURN count(*) AS n")
+	_, err := errExec.Execute(context.Background(),
+		"MATCH (a),(b) WHERE NOT (a)-[:R]->(b) CREATE (a)-[:R]->(b) RETURN count(*) AS n", nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, allErr)
 }
@@ -82,16 +89,40 @@ func TestExecuteCompoundMatchCreate_SurfacesRelationshipCheckError(t *testing.T)
 	query := "MATCH (a:A),(b:B) WHERE a.id = 'a1' AND b.id = 'b1' AND NOT (a)-[:R]->(b) CREATE (a)-[:R]->(b) RETURN count(*) AS n"
 
 	okExec := NewStorageExecutor(store)
-	okRes, err := okExec.executeCompoundMatchCreate(context.Background(), query)
+	okRes, err := okExec.Execute(context.Background(), query, nil)
 	require.NoError(t, err)
 	require.NotNil(t, okRes)
 
 	outErr := errors.New("edges-between lookup failed")
 	errExec := NewStorageExecutor(&createMatchErrEngine{Engine: store, edgesBetweenErr: outErr})
 
-	_, err = errExec.executeCompoundMatchCreate(context.Background(), query)
+	_, err = errExec.Execute(context.Background(), query, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, outErr)
+	edges, err := store.GetOutgoingEdges("a1")
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+}
+
+func TestGh908MatchCreatePredicateReadFailureStopsWrites(t *testing.T) {
+	for _, direction := range []string{"(a)-[:R]->(b)", "(a)<-[:R]-(b)", "(a)-[:R]-(b)"} {
+		t.Run(direction, func(t *testing.T) {
+			base := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(base, "predicate_failure")
+			for _, identifier := range []storage.NodeID{"a", "b"} {
+				_, err := store.CreateNode(&storage.Node{ID: identifier, Labels: []string{"Endpoint"}, Properties: map[string]interface{}{"id": string(identifier)}})
+				require.NoError(t, err)
+			}
+			lookupErr := errors.New("predicate adjacency failed")
+			exec := NewStorageExecutor(&createMatchErrEngine{Engine: store, edgesBetweenErr: lookupErr})
+			_, err := exec.Execute(context.Background(),
+				"MATCH (a:Endpoint {id:'a'}), (b:Endpoint {id:'b'}) WHERE NOT "+direction+" CREATE (:Unexpected)", nil)
+			require.ErrorIs(t, err, lookupErr)
+			created, err := store.GetNodesByLabel("Unexpected")
+			require.NoError(t, err)
+			require.Empty(t, created)
+		})
+	}
 }
 
 func TestBuildCombinationsUsingWhereJoin_Branches(t *testing.T) {

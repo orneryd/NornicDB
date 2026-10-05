@@ -24,6 +24,72 @@ func requireSingleValue(t *testing.T, result *ExecuteResult, want interface{}) {
 	require.Equal(t, want, result.Rows[0][0])
 }
 
+func TestGh908PublicMatchCreateInheritedParameters(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:Person {name:'Alice'}), (:Person {name:'Bob'})", nil)
+	require.NoError(t, err)
+	inherited := map[string]interface{}{
+		"name":  "Alice",
+		"props": map[string]interface{}{"since": int64(2024)},
+	}
+	ctx = context.WithValue(ctx, paramsKey, inherited)
+	query := `MATCH (a:Person {name:$name})
+		CREATE (a)-[r:CREATED]->(b:Target)
+		SET r += $props RETURN a.name, r.since`
+	result, err := exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"Alice", int64(2024)}}, result.Rows)
+	result, err = exec.Execute(ctx, query, map[string]interface{}{
+		"name": "Bob", "props": map[string]interface{}{"since": int64(2025)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"Bob", int64(2025)}}, result.Rows)
+	require.Equal(t, "Alice", inherited["name"])
+	require.Equal(t, int64(2024), inherited["props"].(map[string]interface{})["since"])
+}
+
+func TestGh908MatchCreateWithPredicateSeesOwnWrites(t *testing.T) {
+	for _, mode := range []string{"autocommit", "explicit transaction"} {
+		for _, direction := range []struct {
+			name    string
+			create  string
+			pattern string
+		}{
+			{"outgoing", "(a)-[:R]->(b)", "(a)-[:R]->(b)"},
+			{"incoming", "(b)-[:R]->(a)", "(a)<-[:R]-(b)"},
+			{"undirected", "(b)-[:R]->(a)", "(a)-[:R]-(b)"},
+		} {
+			t.Run(mode+"/"+direction.name, func(t *testing.T) {
+				exec, ctx := newConvergenceExecutor(t)
+				_, err := exec.Execute(ctx, "CREATE (:Converge {id:1}), (:Converge {id:2})", nil)
+				require.NoError(t, err)
+				if mode == "explicit transaction" {
+					_, err = exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+				}
+				query := "MATCH (a:Converge {id:1}), (b:Converge {id:2}) CREATE " + direction.create +
+					" WITH a, b WHERE NOT " + direction.pattern + " CREATE (:Unexpected) RETURN count(*) AS count"
+				result, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err)
+				requireSingleValue(t, result, int64(0))
+				require.EqualValues(t, 1, result.Stats.RelationshipsCreated)
+				require.Zero(t, result.Stats.NodesCreated)
+				if mode == "explicit transaction" {
+					_, err = exec.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+				}
+				result, err = exec.Execute(ctx, "MATCH ()-[r:R]->() RETURN count(r)", nil)
+				require.NoError(t, err)
+				requireSingleValue(t, result, int64(1))
+				result, err = exec.Execute(ctx, "MATCH (n:Unexpected) RETURN count(n)", nil)
+				require.NoError(t, err)
+				requireSingleValue(t, result, int64(0))
+			})
+		}
+	}
+}
+
 func TestGh908PooledCreateBindingsStayRowLocal(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	query := `UNWIND $values AS value

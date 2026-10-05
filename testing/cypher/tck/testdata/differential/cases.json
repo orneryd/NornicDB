@@ -2758,5 +2758,42 @@
     "query": "CREATE (n:X) SET n.value = 1 RETURN n.value / 0",
     "expected_code": "Neo.ClientError.Statement.ArithmeticError",
     "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH CREATE SET retains typed parameters",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:$start}), (b:Converge {id:$end}) CREATE (a)-[r:R]->(b) SET r += $props RETURN r.since, r.kind",
+    "parameters": {"start":1, "end":2, "props":{"since":2024, "kind":"shared"}}
+  },
+  {
+    "name": "issue908 MATCH CREATE multiple horizons retain writes",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:1}) MATCH (b:Converge {id:2}) CREATE (a)-[:R]->(b) WITH a, b MATCH (c:Converge {id:1}) CREATE (c)-[:R]->(b) RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 outgoing predicate sees own CREATE",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:1}), (b:Converge {id:2}) CREATE (a)-[:R]->(b) WITH a, b WHERE NOT (a)-[:R]->(b) CREATE (:Unexpected) RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 incoming predicate sees own CREATE",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:1}), (b:Converge {id:2}) CREATE (b)-[:R]->(a) WITH a, b WHERE NOT (a)<-[:R]-(b) CREATE (:Unexpected) RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 undirected predicate sees own CREATE",
+    "setup": ["CREATE (:Converge {id:1}), (:Converge {id:2})"],
+    "query": "MATCH (a:Converge {id:1}), (b:Converge {id:2}) CREATE (b)-[:R]->(a) WITH a, b WHERE NOT (a)-[:R]-(b) CREATE (:Unexpected) RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 shared invalid SET label rejects without effects",
+    "query": "CREATE (n:Converge) SET n: RETURN n",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue894 shared YIELD alias arithmetic",
+    "query": "WITH 3 AS yield RETURN 1 + yield AS value",
+    "no_effects": true
   }
 ]
