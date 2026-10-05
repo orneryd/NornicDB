@@ -1315,9 +1315,16 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 	tx.bufferSet(edgeKey(edge.ID), edgeBytes)
 
 	// Buffer edge indexes. Keys use 8-byte num IDs from the engine dict.
-	if err := tx.bufferSetEdgeAdjacency(edge); err != nil {
-		return err
+	outKey, err := tx.engine.outgoingIndexKeyString(tx.staged(), edge.StartNode, edge.ID)
+	if err != nil {
+		return fmt.Errorf("outgoing index: %w", err)
 	}
+	tx.bufferSet(outKey, tx.engine.adjacencyValueFor(edge.EndNode, edge.Type))
+	inKey, err := tx.engine.incomingIndexKeyString(tx.staged(), edge.EndNode, edge.ID)
+	if err != nil {
+		return fmt.Errorf("incoming index: %w", err)
+	}
+	tx.bufferSet(inKey, tx.engine.adjacencyValueFor(edge.StartNode, edge.Type))
 
 	// Buffer edge type index for GetEdgesByType().
 	// Without this, edges created inside implicit/explicit transactions are invisible
@@ -1425,9 +1432,16 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 			tx.bufferDelete(oldInKey)
 		}
 		tx.bufferDeleteEdgeBetweenIndexes(oldEdge)
-		if err := tx.bufferSetEdgeAdjacency(edge); err != nil {
-			return err
+		newOutKey, err := tx.engine.outgoingIndexKeyString(tx.staged(), edge.StartNode, edge.ID)
+		if err != nil {
+			return fmt.Errorf("outgoing index: %w", err)
 		}
+		tx.bufferSet(newOutKey, tx.engine.adjacencyValueFor(edge.EndNode, edge.Type))
+		newInKey, err := tx.engine.incomingIndexKeyString(tx.staged(), edge.EndNode, edge.ID)
+		if err != nil {
+			return fmt.Errorf("incoming index: %w", err)
+		}
+		tx.bufferSet(newInKey, tx.engine.adjacencyValueFor(edge.StartNode, edge.Type))
 		if err := tx.bufferSetEdgeBetweenIndexes(edge); err != nil {
 			return fmt.Errorf("edge-between index: %w", err)
 		}
@@ -1445,8 +1459,11 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		if oldEdge.StartNode == edge.StartNode && oldEdge.EndNode == edge.EndNode {
 			tx.bufferDeleteEdgeBetweenIndexes(oldEdge)
 			// The adjacency entries carry the type.
-			if err := tx.bufferSetEdgeAdjacency(edge); err != nil {
-				return err
+			if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
+				tx.bufferSet(outKey, tx.engine.adjacencyValueFor(edge.EndNode, edge.Type))
+			}
+			if inKey := tx.engine.incomingIndexKeyStringLookup(edge.EndNode, edge.ID); inKey != nil {
+				tx.bufferSet(inKey, tx.engine.adjacencyValueFor(edge.StartNode, edge.Type))
 			}
 		}
 		if edge.Type != "" {
@@ -3729,18 +3746,6 @@ func (tx *BadgerTransaction) validateEdgeConstraints(edge *Edge) error {
 		}
 	}
 
-	return nil
-}
-
-// bufferSetEdgeAdjacency buffers edge's outgoing and incoming adjacency
-// entries with their values (adjacencyEntryValue).
-func (tx *BadgerTransaction) bufferSetEdgeAdjacency(edge *Edge) error {
-	outKey, outValue, inKey, inValue, err := tx.engine.edgeAdjacencyEntries(tx.staged(), edge)
-	if err != nil {
-		return fmt.Errorf("adjacency index: %w", err)
-	}
-	tx.bufferSet(outKey, outValue)
-	tx.bufferSet(inKey, inValue)
 	return nil
 }
 

@@ -104,14 +104,18 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		if err := txn.Set(edgeKey(edge.ID), data); err != nil {
 			return err
 		}
-		outKey, outValue, inKey, inValue, err := b.edgeAdjacencyEntries(txn, edge)
+		outKey, err := b.outgoingIndexKeyString(txn, edge.StartNode, edge.ID)
 		if err != nil {
 			return err
 		}
-		if err := txn.Set(outKey, outValue); err != nil {
+		if err := txn.Set(outKey, b.adjacencyValueFor(edge.EndNode, edge.Type)); err != nil {
 			return err
 		}
-		if err := txn.Set(inKey, inValue); err != nil {
+		inKey, err := b.incomingIndexKeyString(txn, edge.EndNode, edge.ID)
+		if err != nil {
+			return err
+		}
+		if err := txn.Set(inKey, b.adjacencyValueFor(edge.StartNode, edge.Type)); err != nil {
 			return err
 		}
 		typeKey, err := b.edgeTypeIndexKeyString(txn, edge.Type, edge.ID)
@@ -315,14 +319,18 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 			}
 
 			// Add new indexes (allocate/resolve num IDs for new endpoints)
-			outKey, outValue, inKey, inValue, err := b.edgeAdjacencyEntries(txn, edge)
+			outKey, err := b.outgoingIndexKeyString(txn, edge.StartNode, edge.ID)
 			if err != nil {
 				return err
 			}
-			if err := txn.Set(outKey, outValue); err != nil {
+			if err := txn.Set(outKey, b.adjacencyValueFor(edge.EndNode, edge.Type)); err != nil {
 				return err
 			}
-			if err := txn.Set(inKey, inValue); err != nil {
+			inKey, err := b.incomingIndexKeyString(txn, edge.EndNode, edge.ID)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(inKey, b.adjacencyValueFor(edge.StartNode, edge.Type)); err != nil {
 				return err
 			}
 			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
@@ -351,14 +359,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 					return err
 				}
 				// The adjacency entries carry the type.
-				outKey, outValue, inKey, inValue, err := b.edgeAdjacencyEntries(txn, edge)
-				if err != nil {
-					return err
-				}
-				if err := txn.Set(outKey, outValue); err != nil {
-					return err
-				}
-				if err := txn.Set(inKey, inValue); err != nil {
+				if err := b.setAdjacencyValuesInTxn(txn, edge); err != nil {
 					return err
 				}
 			}
