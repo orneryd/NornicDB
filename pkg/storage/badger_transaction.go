@@ -3677,48 +3677,38 @@ func (tx *BadgerTransaction) validateEdgeConstraints(edge *Edge) error {
 }
 
 // checkEdgeUniqueness checks uniqueness constraints for an edge against pending and committed edges.
-// The namespace parameter filters committed edges (which span all namespaces
-// in the underlying engine) to the transaction's pinned namespace; all
-// pending edges already belong to that namespace by invariant.
+// An edge with a null constrained property never collides. The namespace
+// parameter filters committed edges (which span all namespaces in the
+// underlying engine) to the transaction's pinned namespace; all pending edges
+// already belong to that namespace by invariant.
 func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, namespace string) error {
-	nsPrefix := namespace + ":"
+	values := make([]interface{}, len(c.Properties))
+	for i, prop := range c.Properties {
+		if values[i] = edge.Properties[prop]; values[i] == nil {
+			return nil
+		}
+	}
+	collides := func(other *Edge) error {
+		for i, prop := range c.Properties {
+			otherVal := other.Properties[prop]
+			if otherVal == nil || !compareValues(otherVal, values[i]) {
+				return nil
+			}
+		}
+		if len(c.Properties) == 1 {
+			message := localization.StorageValidationRelationshipUniqueExisting(c.Properties[0], values[0], string(other.ID))
+			return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties, message, nil)
+		}
+		message := localization.StorageValidationRelationshipCompositeExisting(string(other.ID))
+		return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties, message, nil)
+	}
+
 	for id, otherEdge := range tx.pendingEdges {
 		if id == edge.ID || otherEdge.Type != edge.Type {
 			continue
 		}
-		if len(c.Properties) == 1 {
-			prop := c.Properties[0]
-			newVal := edge.Properties[prop]
-			if newVal == nil {
-				return nil
-			}
-			otherVal := otherEdge.Properties[prop]
-			if otherVal != nil && compareValues(otherVal, newVal) {
-				message := localization.StorageValidationRelationshipUniqueExisting(prop, newVal, string(otherEdge.ID))
-				return newLocalizedConstraintViolation(c.Type, edge.Type, []string{prop}, message, nil)
-			}
-		} else {
-			allMatch := true
-			allPresent := true
-			for _, prop := range c.Properties {
-				newVal := edge.Properties[prop]
-				if newVal == nil {
-					allPresent = false
-					break
-				}
-				otherVal := otherEdge.Properties[prop]
-				if otherVal == nil || !compareValues(otherVal, newVal) {
-					allMatch = false
-					break
-				}
-			}
-			if !allPresent {
-				return nil
-			}
-			if allMatch {
-				message := localization.StorageValidationRelationshipCompositeExisting(string(otherEdge.ID))
-				return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties, message, nil)
-			}
+		if err := collides(otherEdge); err != nil {
+			return err
 		}
 	}
 
@@ -3727,6 +3717,7 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 	if err != nil {
 		return nil // If we can't read edges, skip check rather than block
 	}
+	nsPrefix := namespace + ":"
 	for _, existingEdge := range existingEdges {
 		if existingEdge.ID == edge.ID {
 			continue
@@ -3735,39 +3726,8 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 		if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
 			continue
 		}
-		if len(c.Properties) == 1 {
-			prop := c.Properties[0]
-			newVal := edge.Properties[prop]
-			if newVal == nil {
-				return nil
-			}
-			existVal := existingEdge.Properties[prop]
-			if existVal != nil && compareValues(existVal, newVal) {
-				message := localization.StorageValidationRelationshipUniqueExisting(prop, newVal, string(existingEdge.ID))
-				return newLocalizedConstraintViolation(c.Type, edge.Type, []string{prop}, message, nil)
-			}
-		} else {
-			allMatch := true
-			allPresent := true
-			for _, prop := range c.Properties {
-				newVal := edge.Properties[prop]
-				if newVal == nil {
-					allPresent = false
-					break
-				}
-				existVal := existingEdge.Properties[prop]
-				if existVal == nil || !compareValues(existVal, newVal) {
-					allMatch = false
-					break
-				}
-			}
-			if !allPresent {
-				return nil
-			}
-			if allMatch {
-				message := localization.StorageValidationRelationshipCompositeExisting(string(existingEdge.ID))
-				return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties, message, nil)
-			}
+		if err := collides(existingEdge); err != nil {
+			return err
 		}
 	}
 

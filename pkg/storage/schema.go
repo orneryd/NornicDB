@@ -1829,8 +1829,10 @@ func (sm *SchemaManager) GetConstraints() []UniqueConstraint {
 	return constraints
 }
 
-// GetConstraintsForLabels returns all constraints for given labels.
-// Returns constraints from the constraints map, preserving their original types.
+// GetConstraintsForLabels returns all constraints for given labels, ordered
+// by constraint name so validation reports the same violation every time an
+// entity breaks several constraints. Returns constraints from the constraints
+// map, preserving their original types.
 func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -1846,6 +1848,7 @@ func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
 			}
 		}
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 
 	return result
 }
