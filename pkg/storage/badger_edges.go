@@ -268,12 +268,6 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 			return err
 		}
 
-		// Archive the superseded body BEFORE we overwrite the primary
-		// key. No-op when retention policy is head-only.
-		if err := b.archiveEdgeOnUpdateInTxn(txn, edge.ID); err != nil {
-			return err
-		}
-
 		var existing *Edge
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
@@ -377,6 +371,13 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 					return err
 				}
 			}
+		}
+
+		// Archive the superseded body BEFORE we overwrite the primary key;
+		// edge is the state written at version. No-op when no history or
+		// snapshot reader needs it.
+		if err := b.archiveEdgeOnUpdateInTxn(txn, edge.ID, edge, version); err != nil {
+			return err
 		}
 
 		// Store updated edge

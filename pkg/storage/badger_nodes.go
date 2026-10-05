@@ -393,12 +393,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			return err
 		}
 
-		// Node exists - update it. Archive the previous head body into a
-		// version record BEFORE we overwrite the primary key so snapshot
-		// reads at the old version can still resolve it.
-		if err := b.archiveNodeOnUpdateInTxn(txn, node.ID); err != nil {
-			return err
-		}
+		// Node exists - update it.
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
 			existingNode, decodeErr = b.decodeNodeWithEmbeddings(txn, val, node.ID)
@@ -432,6 +427,13 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			if err := txn.Delete(oldLblKey); err != nil {
 				return err
 			}
+		}
+
+		// Archive the previous head body into a version record BEFORE we
+		// overwrite the primary key so snapshot reads at the old version can
+		// still resolve it. node is the state written at version.
+		if err := b.archiveNodeOnUpdateInTxn(txn, node.ID, node, version); err != nil {
+			return err
 		}
 
 		// Serialize and store updated node (may store embeddings separately if too large)

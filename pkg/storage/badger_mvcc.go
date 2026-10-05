@@ -17,11 +17,16 @@ import (
 type mvccNodeRecord struct {
 	Node       *Node
 	Tombstoned bool
+	// undo is set, and Node nil, for an undo record (badger_mvcc_undo.go)
+	// until the loaders resolve it.
+	undo *mvccNodeUndo
 }
 
 type mvccEdgeRecord struct {
 	Edge       *Edge
 	Tombstoned bool
+	// undo is the relationship analogue of mvccNodeRecord.undo.
+	undo *mvccEdgeUndo
 }
 
 type mvccAdjacencyRecord struct {
@@ -33,6 +38,10 @@ func encodeMVCCNodeRecord(node *Node, tombstoned bool) ([]byte, error) {
 }
 
 func decodeMVCCNodeRecord(data []byte) (mvccNodeRecord, error) {
+	if isMVCCUndoRecord(data) {
+		undo, err := decodeMVCCNodeUndo(data)
+		return mvccNodeRecord{undo: undo}, err
+	}
 	var record mvccNodeRecord
 	if err := util.DecodeMsgpackBytes(data, &record); err != nil {
 		return mvccNodeRecord{}, err
@@ -59,6 +68,10 @@ func mvccSnapshotNode(node *Node) *Node {
 }
 
 func decodeMVCCEdgeRecord(data []byte) (mvccEdgeRecord, error) {
+	if isMVCCUndoRecord(data) {
+		undo, err := decodeMVCCEdgeUndo(data)
+		return mvccEdgeRecord{undo: undo}, err
+	}
 	var record mvccEdgeRecord
 	if err := util.DecodeMsgpackBytes(data, &record); err != nil {
 		return mvccEdgeRecord{}, err
@@ -643,7 +656,7 @@ func (b *BadgerEngine) mustArchiveForHistory() bool {
 // CURRENT head body. Historical bodies live at mvccNodeVersionKey(id, v) for
 // each past head version v. A fresh CREATE writes only the primary key + head;
 // UPDATE and DELETE migrate the superseded body here before overwriting.
-func (b *BadgerEngine) archiveNodePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, id NodeID, oldVersion MVCCVersion) error {
+func (b *BadgerEngine) archiveNodePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, id NodeID, oldVersion MVCCVersion, next *Node, nextVersion MVCCVersion) error {
 	if !b.mustArchiveForHistory() {
 		return nil
 	}
@@ -674,12 +687,12 @@ func (b *BadgerEngine) archiveNodePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, i
 	if node == nil {
 		return nil
 	}
-	return b.writeNodeMVCCVersionInTxn(txn, node, oldVersion)
+	return b.archiveNodeUpdateBodyInTxn(txn, id, node, next, oldVersion, nextVersion)
 }
 
 // archiveEdgePrimaryIntoMVCCVersionInTxn is the edge analogue of
 // archiveNodePrimaryIntoMVCCVersionInTxn. See that function's doc for invariant.
-func (b *BadgerEngine) archiveEdgePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, id EdgeID, oldVersion MVCCVersion) error {
+func (b *BadgerEngine) archiveEdgePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, id EdgeID, oldVersion MVCCVersion, next *Edge, nextVersion MVCCVersion) error {
 	if !b.mustArchiveForHistory() {
 		return nil
 	}
@@ -709,14 +722,14 @@ func (b *BadgerEngine) archiveEdgePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, i
 		return nil
 	}
 	edge.ID = id
-	return b.writeEdgeMVCCVersionInTxn(txn, edge, oldVersion)
+	return b.archiveEdgeUpdateBodyInTxn(txn, id, edge, next, oldVersion, nextVersion)
 }
 
 // archiveNodeOnUpdateInTxn archives the current primary-key body (if any) and
 // then writes the new head. Used by update/delete paths. When no prior head
 // exists (fresh insert via upsert), this is equivalent to writing the head.
 // Becomes a pure no-op when retention is disabled.
-func (b *BadgerEngine) archiveNodeOnUpdateInTxn(txn *badger.Txn, id NodeID) error {
+func (b *BadgerEngine) archiveNodeOnUpdateInTxn(txn *badger.Txn, id NodeID, next *Node, nextVersion MVCCVersion) error {
 	if !b.mustArchiveForHistory() {
 		return nil
 	}
@@ -734,11 +747,11 @@ func (b *BadgerEngine) archiveNodeOnUpdateInTxn(txn *badger.Txn, id NodeID) erro
 	if existing.Tombstoned {
 		return nil
 	}
-	return b.archiveNodePrimaryIntoMVCCVersionInTxn(txn, id, existing.Version)
+	return b.archiveNodePrimaryIntoMVCCVersionInTxn(txn, id, existing.Version, next, nextVersion)
 }
 
 // archiveEdgeOnUpdateInTxn is the edge analogue of archiveNodeOnUpdateInTxn.
-func (b *BadgerEngine) archiveEdgeOnUpdateInTxn(txn *badger.Txn, id EdgeID) error {
+func (b *BadgerEngine) archiveEdgeOnUpdateInTxn(txn *badger.Txn, id EdgeID, next *Edge, nextVersion MVCCVersion) error {
 	if !b.mustArchiveForHistory() {
 		return nil
 	}
@@ -756,7 +769,7 @@ func (b *BadgerEngine) archiveEdgeOnUpdateInTxn(txn *badger.Txn, id EdgeID) erro
 	if existing.Tombstoned {
 		return nil
 	}
-	return b.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, id, existing.Version)
+	return b.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, id, existing.Version, next, nextVersion)
 }
 
 // archiveNodeBodyInTxn writes a known node body to mvccNodeVersionKey(id,
@@ -911,8 +924,14 @@ func (b *BadgerEngine) loadEdgeMVCCHeadByNumRawWithPhysicalVersionInTxn(txn *bad
 	return head, physicalVersion, nil
 }
 
+// loadNodeMVCCRecordExactInTxn reads the node version record at version,
+// rebuilding it when it is an undo record (resolveNodeUndoInTxn).
 func (b *BadgerEngine) loadNodeMVCCRecordExactInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (mvccNodeRecord, error) {
-	return loadMVCCRecordExactInTxn[mvccNodeRecord, nodeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCNodeRecord)
+	record, err := loadMVCCRecordExactInTxn[mvccNodeRecord, nodeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCNodeRecord)
+	if err != nil || record.undo == nil {
+		return record, err
+	}
+	return b.resolveNodeUndoInTxn(txn, id, version, record.undo)
 }
 
 // mvccVersionKeyer derives the exact version key and the version prefix for one
@@ -981,12 +1000,25 @@ func loadMVCCRecordExactInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn *b
 	return record, nil
 }
 
+// loadEdgeMVCCRecordExactInTxn is the relationship analogue of
+// loadNodeMVCCRecordExactInTxn.
 func (b *BadgerEngine) loadEdgeMVCCRecordExactInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) (mvccEdgeRecord, error) {
-	return loadMVCCRecordExactInTxn[mvccEdgeRecord, edgeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCEdgeRecord)
+	record, err := loadMVCCRecordExactInTxn[mvccEdgeRecord, edgeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCEdgeRecord)
+	if err != nil || record.undo == nil {
+		return record, err
+	}
+	return b.resolveEdgeUndoInTxn(txn, id, version, record.undo)
 }
 
+// loadNodeMVCCRecordAtOrBeforeInTxn reads the node version record at or
+// before version, rebuilding it when it is an undo record.
 func (b *BadgerEngine) loadNodeMVCCRecordAtOrBeforeInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (mvccNodeRecord, MVCCVersion, error) {
-	return loadMVCCRecordAtOrBeforeInTxn[mvccNodeRecord, nodeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCNodeRecord)
+	record, at, err := loadMVCCRecordAtOrBeforeInTxn[mvccNodeRecord, nodeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCNodeRecord)
+	if err != nil || record.undo == nil {
+		return record, at, err
+	}
+	record, err = b.resolveNodeUndoInTxn(txn, id, at, record.undo)
+	return record, at, err
 }
 
 // loadMVCCRecordAtOrBeforeInTxn reads one entity kind's MVCC record at or
@@ -1029,8 +1061,15 @@ func loadMVCCRecordAtOrBeforeInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, t
 	return record, parsedVersion, nil
 }
 
+// loadEdgeMVCCRecordAtOrBeforeInTxn is the relationship analogue of
+// loadNodeMVCCRecordAtOrBeforeInTxn.
 func (b *BadgerEngine) loadEdgeMVCCRecordAtOrBeforeInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) (mvccEdgeRecord, MVCCVersion, error) {
-	return loadMVCCRecordAtOrBeforeInTxn[mvccEdgeRecord, edgeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCEdgeRecord)
+	record, at, err := loadMVCCRecordAtOrBeforeInTxn[mvccEdgeRecord, edgeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCEdgeRecord)
+	if err != nil || record.undo == nil {
+		return record, at, err
+	}
+	record, err = b.resolveEdgeUndoInTxn(txn, id, at, record.undo)
+	return record, at, err
 }
 
 func (b *BadgerEngine) latestNodeMVCCVersionInTxn(txn *badger.Txn, id NodeID) (mvccNodeRecord, MVCCVersion, error) {
@@ -1515,6 +1554,7 @@ func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 // with any number of relationships fits. A unit repeated in a new batch
 // after it did not fit writes the same keys and values again.
 func (b *BadgerEngine) materializeMVCCCommit(w *batchWriter, version MVCCVersion, operations []Operation) error {
+	states := newCommitStates(operations)
 	// Archive superseded bodies when retention policy demands history OR
 	// when an active snapshot reader needs to resolve the old version —
 	// snapshot isolation must hold regardless of retention config.
@@ -1543,8 +1583,8 @@ func (b *BadgerEngine) materializeMVCCCommit(w *batchWriter, version MVCCVersion
 			}
 			err = w.write(func(txn *badger.Txn) error {
 				var err error
-				if retainsHistory && op.OldNode != nil {
-					err = b.archiveNodeAtCommittedHeadInTxn(txn, op.Node.ID, op.OldNode)
+				if old := states.committedNodes[op.Node.ID]; retainsHistory && old != nil {
+					err = b.archiveNodeUpdateAtCommittedHeadInTxn(txn, op.Node.ID, old, states.finalNodes[op.Node.ID], version)
 				}
 				if err == nil {
 					err = b.writeNodeMVCCHeadInTxn(txn, op.Node.ID, version, false)
@@ -1554,8 +1594,8 @@ func (b *BadgerEngine) materializeMVCCCommit(w *batchWriter, version MVCCVersion
 		case OpDeleteNode:
 			err = w.write(func(txn *badger.Txn) error {
 				var err error
-				if retainsHistory && op.OldNode != nil {
-					err = b.archiveNodeAtCommittedHeadInTxn(txn, op.NodeID, op.OldNode)
+				if old := states.committedNodes[op.NodeID]; retainsHistory && old != nil {
+					err = b.archiveNodeAtCommittedHeadInTxn(txn, op.NodeID, old)
 				}
 				// Tombstone marker (tiny, no body) preserves delete semantics.
 				if err == nil {
@@ -1574,6 +1614,11 @@ func (b *BadgerEngine) materializeMVCCCommit(w *batchWriter, version MVCCVersion
 					edge, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
 					if err == nil {
 						err = b.writeEdgeAdjacencyDeltaInTxn(txn, edge, nil, version)
+					}
+					// The stored record is still the committed version here:
+					// buffered writes are flushed after materialization.
+					if err == nil && retainsHistory {
+						err = b.archiveEdgeAtCommittedHeadInTxn(txn, edgeID, edge)
 					} else if err == ErrNotFound {
 						err = nil
 					}
@@ -1608,8 +1653,8 @@ func (b *BadgerEngine) materializeMVCCCommit(w *batchWriter, version MVCCVersion
 				if op.OldEdge != nil && (op.OldEdge.StartNode != op.Edge.StartNode || op.OldEdge.EndNode != op.Edge.EndNode) {
 					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, op.Edge, version)
 				}
-				if err == nil && retainsHistory && op.OldEdge != nil {
-					err = b.archiveEdgeAtCommittedHeadInTxn(txn, op.Edge.ID, op.OldEdge)
+				if old := states.committedEdges[op.Edge.ID]; err == nil && retainsHistory && old != nil {
+					err = b.archiveEdgeUpdateAtCommittedHeadInTxn(txn, op.Edge.ID, old, states.finalEdges[op.Edge.ID], version)
 				}
 				if err == nil {
 					err = b.writeEdgeMVCCHeadInTxn(txn, op.Edge.ID, version, false)
@@ -1622,8 +1667,8 @@ func (b *BadgerEngine) materializeMVCCCommit(w *batchWriter, version MVCCVersion
 				if op.OldEdge != nil {
 					err = b.writeEdgeAdjacencyTombstoneInTxn(txn, op.OldEdge, version)
 				}
-				if err == nil && retainsHistory && op.OldEdge != nil {
-					err = b.archiveEdgeAtCommittedHeadInTxn(txn, op.EdgeID, op.OldEdge)
+				if old := states.committedEdges[op.EdgeID]; err == nil && retainsHistory && old != nil {
+					err = b.archiveEdgeAtCommittedHeadInTxn(txn, op.EdgeID, old)
 				}
 				// Tombstone marker preserves delete semantics.
 				if err == nil {
@@ -1666,6 +1711,84 @@ func (b *BadgerEngine) archiveNodeAtCommittedHeadInTxn(txn kvWriter, id NodeID, 
 	return archiveAtLiveHead(head, err, func(atVersion MVCCVersion) error {
 		return b.archiveNodeBodyInTxn(txn, id, body, atVersion)
 	})
+}
+
+// archiveNodeUpdateAtCommittedHeadInTxn archives old, the node version an
+// update supersedes, at the node's committed head. next is the node's final
+// state in the commit at nextVersion (nil when the commit deletes it); see
+// archiveNodeUpdateBodyInTxn.
+func (b *BadgerEngine) archiveNodeUpdateAtCommittedHeadInTxn(txn kvWriter, id NodeID, old, next *Node, nextVersion MVCCVersion) error {
+	head, err := b.loadNodeMVCCHead(id)
+	return archiveAtLiveHead(head, err, func(atVersion MVCCVersion) error {
+		return b.archiveNodeUpdateBodyInTxn(txn, id, old, next, atVersion, nextVersion)
+	})
+}
+
+// archiveEdgeUpdateAtCommittedHeadInTxn is the relationship analogue of
+// archiveNodeUpdateAtCommittedHeadInTxn.
+func (b *BadgerEngine) archiveEdgeUpdateAtCommittedHeadInTxn(txn kvWriter, id EdgeID, old, next *Edge, nextVersion MVCCVersion) error {
+	head, err := b.loadEdgeMVCCHead(id)
+	return archiveAtLiveHead(head, err, func(atVersion MVCCVersion) error {
+		return b.archiveEdgeUpdateBodyInTxn(txn, id, old, next, atVersion, nextVersion)
+	})
+}
+
+// commitStates is what a commit's archiving needs about each node and
+// relationship it writes.
+type commitStates struct {
+	// committedNodes and committedEdges hold the state each entity had
+	// before the transaction: the first update's or delete's previous
+	// state. A later operation's previous state is the transaction's own
+	// uncommitted write, which must not be archived as the committed
+	// version.
+	committedNodes map[NodeID]*Node
+	committedEdges map[EdgeID]*Edge
+	// finalNodes and finalEdges hold the state the commit leaves, nil for
+	// one it deletes, so an update archived as an undo record names it.
+	finalNodes map[NodeID]*Node
+	finalEdges map[EdgeID]*Edge
+}
+
+func newCommitStates(operations []Operation) commitStates {
+	states := commitStates{
+		committedNodes: make(map[NodeID]*Node),
+		committedEdges: make(map[EdgeID]*Edge),
+		finalNodes:     make(map[NodeID]*Node),
+		finalEdges:     make(map[EdgeID]*Edge),
+	}
+	committedNode := func(id NodeID, old *Node) {
+		if _, seen := states.committedNodes[id]; !seen {
+			states.committedNodes[id] = old
+		}
+	}
+	committedEdge := func(id EdgeID, old *Edge) {
+		if _, seen := states.committedEdges[id]; !seen {
+			states.committedEdges[id] = old
+		}
+	}
+	for _, op := range operations {
+		switch {
+		case op.Type == OpCreateNode && op.Node != nil:
+			committedNode(op.Node.ID, nil)
+			states.finalNodes[op.Node.ID] = op.Node
+		case op.Type == OpUpdateNode && op.Node != nil:
+			committedNode(op.Node.ID, op.OldNode)
+			states.finalNodes[op.Node.ID] = op.Node
+		case op.Type == OpDeleteNode:
+			committedNode(op.NodeID, op.OldNode)
+			states.finalNodes[op.NodeID] = nil
+		case op.Type == OpCreateEdge && op.Edge != nil:
+			committedEdge(op.Edge.ID, nil)
+			states.finalEdges[op.Edge.ID] = op.Edge
+		case op.Type == OpUpdateEdge && op.Edge != nil:
+			committedEdge(op.Edge.ID, op.OldEdge)
+			states.finalEdges[op.Edge.ID] = op.Edge
+		case op.Type == OpDeleteEdge:
+			committedEdge(op.EdgeID, op.OldEdge)
+			states.finalEdges[op.EdgeID] = nil
+		}
+	}
+	return states
 }
 
 // archiveEdgeAtCommittedHeadInTxn is the edge analogue of

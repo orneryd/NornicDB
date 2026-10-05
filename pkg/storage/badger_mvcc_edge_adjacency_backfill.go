@@ -82,8 +82,14 @@ func (b *BadgerEngine) repairArchivedEdgeAdjacency() error {
 				}); err != nil {
 					return err
 				}
-				if !record.Tombstoned && record.Edge != nil {
-					batch = append(batch, archivedEdgeAdjacency{edge: record.Edge, version: version})
+				// An undo record's metadata carries the endpoints and type the
+				// adjacency needs.
+				edge := record.Edge
+				if record.undo != nil {
+					edge = record.undo.Meta
+				}
+				if !record.Tombstoned && edge != nil {
+					batch = append(batch, archivedEdgeAdjacency{edge: edge, version: version})
 				}
 				lastKey = append(lastKey[:0], key...)
 				if len(batch) >= mvccRebuildScanBatchSize {
