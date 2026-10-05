@@ -1,8 +1,9 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // cypherRegexMatch is Cypher's text =~ pattern, shared by every evaluator
@@ -11,25 +12,25 @@ import (
 //   - the pattern must match the whole string ('Tom' =~ 'o' is false), as
 //     Neo4j's Java Pattern.matches does;
 //   - a null text or pattern gives null;
-//   - a text or pattern that is not a string is Neo4j's
-//     "Type mismatch: expected String but was <type>" SyntaxError;
+//   - a text that is not a string gives null, as in Neo4j at run time
+//     (n.big =~ 'x');
+//   - a string text with a pattern that is not a string is a TypeError
+//     ('x' =~ n.big);
 //   - an invalid pattern is "Invalid Regex: ..." (SemanticError).
+//
+// Operands whose type is known before the statement runs ('x' =~ 1) are
+// rejected earlier with a SyntaxError (validateStaticOperatorTypes).
 func cypherRegexMatch(text, pattern interface{}) (interface{}, error) {
 	if text == nil || pattern == nil {
 		return nil, nil
 	}
 	textString, textOK := text.(string)
+	if !textOK {
+		return nil, nil
+	}
 	patternString, patternOK := pattern.(string)
-	if !textOK || !patternOK {
-		operand := text
-		if textOK {
-			operand = pattern
-		}
-		return nil, newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidArgumentType",
-			fmt.Sprintf("Type mismatch: expected String but was %s", cypherTypeName(operand)),
-		)
+	if !patternOK {
+		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreRegexPatternTypeMismatch(neo4jValueRepr(pattern)))
 	}
 	re, err := GetCachedRegex(anchoredRegexPattern(patternString))
 	if err != nil {

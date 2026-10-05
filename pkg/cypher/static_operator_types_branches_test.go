@@ -66,7 +66,7 @@ func TestStaticOperatorCheckerBranches(t *testing.T) {
 		{expr: "{a: true * 2}", fails: true},
 		{expr: "abs(true * 2)", fails: true},
 		{expr: "[x]", want: "List<T>"},
-		{expr: "CASE WHEN true THEN 1 END", want: ""},
+		{expr: "CASE WHEN true THEN 1 END", want: "Integer"},
 		{expr: "(a)-[:R]->(b)", want: ""},
 	} {
 		got, err := checker.check(tc.expr)

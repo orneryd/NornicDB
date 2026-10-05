@@ -8,9 +8,14 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// validateStaticPropertySubscripts rejects postfix access with incompatible
-// receiver or key types known before execution.
+// validateStaticPropertySubscripts type-checks every subscript in text
+// (receiver[key], receiver[from..to]), wherever it appears, with scope's
+// static types. The rules are staticOperatorChecker.checkPostfix's.
 func validateStaticPropertySubscripts(text string, scope staticTypeScope) error {
+	// The scan reads raw text, local variables included ([x IN l | x[0]]),
+	// so it can't tell an undefined variable.
+	scope.complete = false
+	checker := staticOperatorChecker{scope: scope, params: scope.params}
 	for index := 0; index < len(text); index++ {
 		if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
 			index = skipCypherQuotedText(text, index, text[index]) - 1
@@ -28,29 +33,13 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 			continue
 		}
 		receiver := strings.TrimSpace(text[start:index])
-		base, _, property := rowPropertyChainShape(receiver)
-		receiverType := scope.staticExpressionType(receiver)
-		expectedKeyType := ""
-		switch {
-		case property && (scope.typeOf(base) == "Node" || scope.typeOf(base) == "Relationship"):
-			expectedKeyType = "Integer"
-		case strings.HasPrefix(receiverType, "List<"):
-			expectedKeyType = "Integer"
-		case receiverType == "Map" || receiverType == "Node" || receiverType == "Relationship":
-			expectedKeyType = "String"
-		case receiverType == "String" || receiverType == "Boolean" || receiverType == "Integer" || receiverType == "Float" || receiverType == "Duration" || receiverType == "Date" || receiverType == "Time" || receiverType == "LocalTime" || receiverType == "DateTime" || receiverType == "LocalDateTime":
-			return typeNameMismatchError("List<T>, Map, Node or Relationship", receiverType)
-		default:
+		// A bracket after a keyword (RETURN [..], x IN [..]) opens a list,
+		// not a subscript; true, false and null are values.
+		if !isOperandExpressionText(receiver) || (isCypherKeyword(receiver) && !isBooleanOrNullLiteral(receiver)) {
 			continue
 		}
-		key := strings.TrimSpace(text[index+1 : end])
-		if strings.Contains(key, "..") {
-			continue
-		}
-		// A key whose type is one of several (r[i + 1]) is checked when it
-		// runs, as in Neo4j (#882).
-		if typeName := scope.staticExpressionType(key); typeName != "" && !containsString(staticTypeChoices(typeName), expectedKeyType) {
-			return typeNameMismatchError(expectedKeyType, typeName)
+		if _, err := checker.checkPostfix(receiver, text[index+1:end], true); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -191,6 +180,15 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 	switch expression[end] {
 	case ']':
 		start = matchingRowDelimiterStart(expression, end, '[', ']')
+		// A bracket group after an operator or a comma is a list literal,
+		// the whole receiver (... + [5, 6][1]).
+		before := start - 1
+		for before >= 0 && isASCIIWhitespace(expression[before]) {
+			before--
+		}
+		if before >= 0 && !isRowReceiverIdentifierByte(expression[before]) && !strings.ContainsRune(")]'\"`", rune(expression[before])) {
+			return start
+		}
 		if start > 0 {
 			receiverStart := rowSubscriptReceiverStart(expression, start)
 			if receiverStart >= 0 {

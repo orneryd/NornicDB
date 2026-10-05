@@ -488,6 +488,22 @@ func fnTrim(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return trimCharacters(value, cutset, leading, trailing), nil
 }
 
+// unicodeNormalForm is the normal form a keyword names (NFC, NFD, NFKC or
+// NFKD, in any case), as normalize()'s second argument takes it.
+func unicodeNormalForm(keyword string) (norm.Form, bool) {
+	switch strings.ToUpper(strings.TrimSpace(keyword)) {
+	case "NFC":
+		return norm.NFC, true
+	case "NFD":
+		return norm.NFD, true
+	case "NFKC":
+		return norm.NFKC, true
+	case "NFKD":
+		return norm.NFKD, true
+	}
+	return norm.NFC, false
+}
+
 // fnNormalize is normalize(input [, NFC | NFD | NFKC | NFKD]); the normal
 // form is a keyword, NFC by default.
 func fnNormalize(ctx cypherfn.Context, args []string) (interface{}, error) {
@@ -496,18 +512,12 @@ func fnNormalize(ctx cypherfn.Context, args []string) (interface{}, error) {
 	}
 	form := norm.NFC
 	if len(args) == 2 {
-		switch strings.ToUpper(strings.TrimSpace(args[1])) {
-		case "NFC":
-		case "NFD":
-			form = norm.NFD
-		case "NFKC":
-			form = norm.NFKC
-		case "NFKD":
-			form = norm.NFKD
-		default:
+		named, valid := unicodeNormalForm(args[1])
+		if !valid {
 			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
 				localization.CypherCoreNormalizeFormInvalid(strings.TrimSpace(args[1])))
 		}
+		form = named
 	}
 	values, err := evalArgs(ctx, args[:1])
 	if err != nil {

@@ -74,21 +74,6 @@ func TestCaseExpression_NullAndUndefinedDistinction(t *testing.T) {
 		want  interface{}
 	}{
 		{
-			name:  "undefined identifier IS NULL",
-			query: "RETURN CASE WHEN missing IS NULL THEN 'null' ELSE 'other' END AS r",
-			want:  "null",
-		},
-		{
-			name:  "undefined comparison is null, not truthy",
-			query: "RETURN CASE WHEN missing = 1 THEN 1 ELSE 2 END AS r",
-			want:  int64(2),
-		},
-		{
-			name:  "undefined as bare condition is not truthy",
-			query: "RETURN CASE WHEN missing THEN 1 ELSE 2 END AS r",
-			want:  int64(2),
-		},
-		{
 			name:  "null literal falls through coalesce",
 			query: "RETURN coalesce(null, null, 5) AS r",
 			want:  int64(5),
@@ -105,6 +90,21 @@ func TestCaseExpression_NullAndUndefinedDistinction(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{tc.want}}, res.Rows)
 		})
+	}
+}
+
+// TestCaseExpression_UndefinedVariableIsSyntaxError checks that a CASE
+// condition naming an unbound variable is Neo4j's SyntaxError, not a null.
+func TestCaseExpression_UndefinedVariableIsSyntaxError(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_undefined"))
+	for _, query := range []string{
+		"RETURN CASE WHEN missing IS NULL THEN 'null' ELSE 'other' END AS r",
+		"RETURN CASE WHEN missing = 1 THEN 1 ELSE 2 END AS r",
+		"RETURN CASE WHEN missing THEN 1 ELSE 2 END AS r",
+	} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+		require.ErrorContains(t, err, "missing", query)
 	}
 }
 

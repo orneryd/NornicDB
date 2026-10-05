@@ -278,10 +278,22 @@ func isOperatorExpressionText(text string) bool {
 			return false
 		}
 	}
-	if brace := strings.IndexByte(text, '{'); brace > 0 {
-		if before := strings.TrimSpace(text[:brace]); before != "" && isIdentifierPart(before[len(before)-1]) {
+	// A brace after a variable (n {k: 1}) is a map projection; after a
+	// keyword (t AND {a: 2}) it opens a map literal.
+	for brace := strings.IndexByte(text, '{'); brace > 0; {
+		before := strings.TrimSpace(text[:brace])
+		word := len(before)
+		for word > 0 && isIdentifierPart(before[word-1]) {
+			word--
+		}
+		if word < len(before) && !isCypherKeyword(before[word:]) {
 			return false
 		}
+		next := strings.IndexByte(text[brace+1:], '{')
+		if next < 0 {
+			break
+		}
+		brace += next + 1
 	}
 	return true
 }

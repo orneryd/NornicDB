@@ -244,6 +244,9 @@ func arithmeticError(op byte, left, right interface{}) error {
 	if left == nil || right == nil {
 		return nil
 	}
+	if err := durationScaleError(op, left, right); err != nil {
+		return err
+	}
 	if err := runtimeArithmeticTypeError(op, left, right); err != nil {
 		return err
 	}

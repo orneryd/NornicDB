@@ -24,10 +24,13 @@ func TestBooleanOperatorsRejectStaticallyKnownNonBooleanOperands(t *testing.T) {
 		t.Run(query, func(t *testing.T) {
 			_, err := exec.Execute(context.Background(), query, nil)
 			require.Error(t, err)
-			var semanticError *SemanticError
-			require.True(t, errors.As(err, &semanticError))
-			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semanticError.Code)
-			require.Equal(t, "InvalidArgumentType", semanticError.Detail)
+			var classified interface {
+				BoltErrorCode() string
+				BoltErrorDetail() string
+			}
+			require.True(t, errors.As(err, &classified))
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
+			require.Equal(t, "InvalidArgumentType", classified.BoltErrorDetail())
 		})
 	}
 }

@@ -313,6 +313,20 @@ type staticTypeScope struct {
 	kinds  matchSemanticScope
 	values map[string]string
 	params map[string]interface{}
+	// complete is set when kinds holds every variable the clause can read
+	// (validateMatchSemanticScopes' walk), so an expression naming any
+	// other variable reads an undefined one (Neo4j: "Variable `x` not
+	// defined").
+	complete bool
+}
+
+// bound reports whether variable is bound in scope.
+func (scope staticTypeScope) bound(variable string) bool {
+	if _, bound := scope.kinds[variable]; bound {
+		return true
+	}
+	_, bound := scope.values[variable]
+	return bound
 }
 
 // typeOf is the static type name of variable, or "" when it isn't known.
@@ -408,7 +422,7 @@ func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]st
 	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	// Only a literal (or an alias of a variable that already has a literal
 	// type) gives a projected value a static type.
-	if len(scope.values) == 0 && !strings.ContainsAny(body, "'\"[{0123456789") && !containsFold(body, "true") && !containsFold(body, "false") {
+	if len(scope.values) == 0 && !strings.ContainsAny(body, "'\"[{0123456789(") && !containsFold(body, "true") && !containsFold(body, "false") {
 		return nil
 	}
 	var values map[string]string
@@ -443,6 +457,15 @@ func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]st
 				}
 				values[alias] = typeName
 			}
+			continue
+		}
+		// A computed expression (a function call, arithmetic) keeps the type
+		// the operator check infers for it.
+		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil && operand.known() {
+			if values == nil {
+				values = make(map[string]string)
+			}
+			values[alias] = operand.kind
 		}
 	}
 	return values
