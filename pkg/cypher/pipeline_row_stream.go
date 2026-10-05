@@ -173,6 +173,19 @@ func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []
 	return out, consumed, ok
 }
 
+func (e *StorageExecutor) pipelineProjectReturnRow(ctx context.Context, projections []returnProjection, row pipelineRow) ([]interface{}, bool) {
+	values := make([]interface{}, len(projections))
+	for index, projection := range projections {
+		value, evaluated := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
+		if !evaluated {
+			pipelineItemUnevaluable(ctx, projection.expr)
+			return nil, false
+		}
+		values[index] = value
+	}
+	return values, true
+}
+
 func materializePipelineSource(source pipelineRowSource) ([]pipelineRow, bool) {
 	out := make([]pipelineRow, 0)
 	ok := source(func(row pipelineRow) bool {

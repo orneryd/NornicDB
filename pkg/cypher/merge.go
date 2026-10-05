@@ -2995,12 +2995,18 @@ func (e *StorageExecutor) mergeBindingRow(ctx context.Context, nodes map[string]
 // ORDER BY, SKIP and LIMIT apply over all the statement's rows (#640).
 // returnClause starts with RETURN.
 func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelineRow, returnClause string) (*ExecuteResult, error) {
+	return e.projectMergeReturnSource(ctx, rows, returnClause, pipelineRowsSource(rows))
+}
+
+func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource) (*ExecuteResult, error) {
 	returnClause = strings.TrimSpace(returnClause)
-	if result, ok := e.pipelineApplyReturn(ctx, rows, "RETURN "+strings.TrimSpace(returnClause[len("RETURN"):])); ok {
-		return result, nil
-	}
-	if failure := getExpressionFailure(ctx); failure != nil {
+	priorFailure := getExpressionFailure(ctx)
+	result, handled := e.pipelineApplyReturnSource(ctx, rows, "RETURN "+strings.TrimSpace(returnClause[len("RETURN"):]), source, false)
+	if failure := getExpressionFailure(ctx); failure != nil && (!handled || priorFailure == nil) {
 		return nil, failure
+	}
+	if handled {
+		return result, nil
 	}
 	err := newSemanticError(
 		"Neo.ClientError.Statement.SyntaxError",

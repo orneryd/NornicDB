@@ -4139,6 +4139,13 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	if !plan.valid {
 		return nil, false
 	}
+	if rows == nil && source != nil && (plan.star || (!plan.hasAggregate && (plan.modifiers != "" || plan.distinct))) {
+		var materialized bool
+		rows, materialized = materializePipelineSource(source)
+		if !materialized {
+			return nil, false
+		}
+	}
 	modifiers, returnDistinct := plan.modifiers, plan.distinct
 	if plan.star && len(plan.starItems) > 0 {
 		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpanded(pipelineWildcardColumns(rows)), source, rowsValidated)
@@ -4191,20 +4198,35 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	// result rows: no per-row map or ORDER BY scope is needed.
 	if modifiers == "" && !returnDistinct {
 		result.Rows = make([][]interface{}, 0, len(rows))
-		for _, row := range rows {
-			outRow := make([]interface{}, len(projs))
-			for index, p := range projs {
-				value, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
-				if !ok {
-					pipelineItemUnevaluable(ctx, p.expr)
-					if failure := getExpressionFailure(ctx); failure == nil || newPipelineDispatchOutcome(nil, true, failure).state == pipelineDispatchParseRejected {
-						return nil, false
-					}
-					return result, false
+		failed := false
+		if rows == nil && source != nil {
+			sourceFailed := false
+			if !source(func(row pipelineRow) bool {
+				values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+				sourceFailed = !evaluated
+				if evaluated {
+					result.Rows = append(result.Rows, values)
 				}
-				outRow[index] = value
+				return evaluated
+			}) {
+				return nil, false
 			}
-			result.Rows = append(result.Rows, outRow)
+			failed = sourceFailed
+		} else {
+			for _, row := range rows {
+				values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+				if !evaluated {
+					failed = true
+					break
+				}
+				result.Rows = append(result.Rows, values)
+			}
+		}
+		if failed {
+			if failure := getExpressionFailure(ctx); failure == nil || newPipelineDispatchOutcome(nil, true, failure).state == pipelineDispatchParseRejected {
+				return nil, false
+			}
+			return result, false
 		}
 		return result, true
 	}
