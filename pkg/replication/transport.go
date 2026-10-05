@@ -309,9 +309,12 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-t.closeCh:
-			return nil
 		default:
+		}
+		// Close closes the listener, so a blocked Accept returns and the
+		// loop exits here.
+		if t.closed.Load() {
+			return nil
 		}
 
 		// Set accept deadline for graceful shutdown
@@ -324,10 +327,9 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				continue
 			}
-			if t.closed.Load() {
-				return nil
+			if !t.closed.Load() {
+				t.logPrintf(ctx, slog.LevelError, "[Cluster] Accept error: %v", err)
 			}
-			t.logPrintf(ctx, slog.LevelError, "[Cluster] Accept error: %v", err)
 			continue
 		}
 

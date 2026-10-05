@@ -1697,12 +1697,10 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 	if db.embedderRegistry == nil {
 		db.embedderRegistry = make(map[string]embed.Embedder)
 	}
-	if e, ok := db.embedderRegistry[key]; ok {
-		db.embedderRegistryMu.Unlock()
-		return e, nil
-	}
 	// Only an exact registry key can reuse an embedder: the same model can
-	// require different GPU-layer choices (including CPU-only zero).
+	// require different GPU-layer choices (including CPU-only zero). An entry
+	// another caller added since the lookup above is found by the re-check in
+	// the single-flight section below.
 	db.embedderRegistryMu.Unlock()
 
 	create := db.embedderFactory
