@@ -343,3 +343,83 @@ func TestUndoHistoryEdgeChains(t *testing.T) {
 		return nil
 	}))
 }
+
+// Undo records that can't be encoded or decoded, chains that end at a delete
+// marker, an unreadable record or a missing or unreadable current record,
+// and archive failures in engine updates are all reported.
+func TestUndoHistoryErrorPaths(t *testing.T) {
+	_, err := encodeMVCCUndo(&mvccNodeUndo{Restore: map[string]any{"bad": make(chan int)}})
+	require.Error(t, err)
+	_, err = decodeMVCCNodeRecord([]byte{mvccUndoRecordTag, 0xc1})
+	require.Error(t, err)
+	_, err = decodeMVCCEdgeRecord([]byte{mvccUndoRecordTag, 0xc1})
+	require.Error(t, err)
+
+	eng := createMVCCBadgerEngine(t)
+	for _, id := range []NodeID{"test:a", "test:b"} {
+		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(1)}}))
+	v1 := nodeHeadVersion(t, eng, "test:a")
+	e1 := edgeHeadVersion(t, eng, "test:e")
+	require.NoError(t, eng.UpdateNode(&Node{ID: "test:a", Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, eng.UpdateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(2)}}))
+	v2 := nodeHeadVersion(t, eng, "test:a")
+	e2 := edgeHeadVersion(t, eng, "test:e")
+
+	nodeAt := func() error {
+		return eng.withView(func(txn *badger.Txn) error {
+			_, err := eng.loadNodeMVCCRecordExactInTxn(txn, "test:a", v1)
+			return err
+		})
+	}
+	edgeAt := func() error {
+		return eng.withView(func(txn *badger.Txn) error {
+			_, err := eng.loadEdgeMVCCRecordExactInTxn(txn, "test:e", e1)
+			return err
+		})
+	}
+	set := func(key, value []byte) {
+		t.Helper()
+		require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error { return txn.Set(key, value) }))
+	}
+
+	// The current record at the live head can't be decoded, then is missing.
+	nodeBody := rawVersionRecord(t, eng, nodeKey("test:a"))
+	edgeBody := rawVersionRecord(t, eng, edgeKey("test:e"))
+	set(nodeKey("test:a"), []byte{0xff})
+	set(edgeKey("test:e"), []byte{0xff})
+	require.Error(t, nodeAt())
+	require.Error(t, edgeAt())
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		if err := txn.Delete(nodeKey("test:a")); err != nil {
+			return err
+		}
+		return txn.Delete(edgeKey("test:e"))
+	}))
+	require.ErrorIs(t, nodeAt(), ErrNotFound)
+	require.ErrorIs(t, edgeAt(), ErrNotFound)
+	set(nodeKey("test:a"), nodeBody)
+	set(edgeKey("test:e"), edgeBody)
+
+	// The next version's record is a delete marker, then unreadable.
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		if err := eng.writeNodeMVCCTombstoneInTxn(txn, "test:a", v2); err != nil {
+			return err
+		}
+		return eng.writeEdgeMVCCTombstoneInTxn(txn, "test:e", e2)
+	}))
+	require.ErrorIs(t, nodeAt(), ErrNotFound)
+	require.ErrorIs(t, edgeAt(), ErrNotFound)
+	set(eng.mvccNodeVersionKeyStringLookup("test:a", v2), []byte{0xff})
+	set(eng.mvccEdgeVersionKeyStringLookup("test:e", e2), []byte{0xff})
+	require.Error(t, nodeAt())
+	require.Error(t, edgeAt())
+
+	// An engine update whose archive can't read the version header fails.
+	set(eng.mvccNodeHeadKeyStringLookup("test:b"), []byte{0xff})
+	require.Error(t, eng.UpdateNode(&Node{ID: "test:b", Labels: []string{"N"}, Properties: map[string]any{"v": int64(3)}}))
+	set(eng.mvccEdgeHeadKeyStringLookup("test:e"), []byte{0xff})
+	require.Error(t, eng.UpdateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(3)}}))
+}
