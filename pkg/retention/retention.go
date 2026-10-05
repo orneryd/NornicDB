@@ -104,6 +104,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Errors
@@ -891,7 +893,7 @@ func (m *Manager) CreateErasureRequest(subjectID, subjectEmail string) (*Erasure
 
 	now := time.Now().UTC()
 	req := &ErasureRequest{
-		ID:           fmt.Sprintf("erasure-%d", now.UnixNano()),
+		ID:           "erasure-" + uuid.NewString(),
 		SubjectID:    subjectID,
 		SubjectEmail: subjectEmail,
 		RequestedAt:  now,

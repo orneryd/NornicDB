@@ -90,21 +90,21 @@ func TestManagerOpenErrors(t *testing.T) {
 func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
 	mgr := NewManager(time.Second, newExecutorFactory(t))
 	baseTime := time.Unix(1700000000, 0)
-	mgr.idFunc = func() string { return "tx-1" }
+	mgr.lastID = 41
 	mgr.nowFunc = func() time.Time { return baseTime }
 
 	session, err := mgr.Open(context.Background(), "neo4j")
 	if err != nil {
 		t.Fatalf("open failed: %v", err)
 	}
-	if session.ID != "tx-1" {
+	if session.ID != "42" {
 		t.Fatalf("unexpected session id: %s", session.ID)
 	}
 	if !session.Expires.Equal(baseTime.Add(time.Second)) {
 		t.Fatalf("unexpected expiry: %v", session.Expires)
 	}
 
-	if _, ok := mgr.Get("tx-1"); !ok {
+	if _, ok := mgr.Get("42"); !ok {
 		t.Fatalf("expected session to be retrievable")
 	}
 
@@ -125,11 +125,11 @@ func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
 	if _, err := mgr.CommitAndDelete(context.Background(), session); err != nil {
 		t.Fatalf("commit failed: %v", err)
 	}
-	if _, ok := mgr.Get("tx-1"); ok {
+	if _, ok := mgr.Get("42"); ok {
 		t.Fatalf("expected session deleted after commit")
 	}
 
-	mgr.Delete("tx-1") // no-op path
+	mgr.Delete("42") // no-op path
 }
 
 func TestManagerLifecycle_RollbackAndErrorGuards(t *testing.T) {

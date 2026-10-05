@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/config"
 )
 
@@ -137,7 +138,7 @@ func (s *EdgeMetaStore) Append(ctx context.Context, meta EdgeMeta) error {
 
 	// Generate edge ID if not provided
 	if meta.EdgeID == "" {
-		meta.EdgeID = fmt.Sprintf("edge-%d", time.Now().UnixNano())
+		meta.EdgeID = "edge-" + uuid.NewString()
 	}
 
 	// Create key
