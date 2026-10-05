@@ -331,38 +331,28 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		}
 
 		// One pass over the scope's node records reads the remaining nodes.
-		position := make(map[NodeID]int, len(pending))
+		ids := make([]NodeID, 0, len(pending))
 		for index, entry := range pending {
 			if node, cached := cachedNode(entry.id); cached {
 				pending[index].node = node
 				continue
 			}
-			position[entry.id] = index
+			ids = append(ids, entry.id)
 		}
-		if len(position) > 0 {
-			prefix := []byte{prefixNode}
-			if scope != "" {
-				prefix = nodeKey(NodeID(scope))
-			}
-			records := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-			defer records.Close()
-			for records.Rewind(); records.Valid() && len(position) > 0; records.Next() {
-				item := records.Item()
-				index, wanted := position[NodeID(item.Key()[1:])]
-				if !wanted {
-					continue
+		positions := make(map[NodeID]int, len(pending))
+		for index, entry := range pending {
+			positions[entry.id] = index
+		}
+		_ = readNodeRecordsInOnePass(txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
+			_ = item.Value(func(value []byte) error {
+				node, err := decodeValue(nodeID, value)
+				if err == nil {
+					pending[positions[nodeID]].node = node
 				}
-				nodeID := pending[index].id
-				delete(position, nodeID)
-				_ = item.Value(func(value []byte) error {
-					node, err := decodeValue(nodeID, value)
-					if err == nil {
-						pending[index].node = node
-					}
-					return nil
-				})
-			}
-		}
+				return nil
+			})
+			return nil
+		})
 		for _, entry := range pending {
 			if err := emit(entry.node); err != nil {
 				return err
@@ -370,6 +360,35 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		}
 		return nil
 	})
+}
+
+// readNodeRecordsInOnePass calls read with the stored record of each of ids
+// that exists, walking scope's node records once ("" is every database)
+// instead of looking each record up. read's order is the records' key order;
+// an error from read stops the walk and is returned.
+func readNodeRecordsInOnePass(txn *badger.Txn, scope string, ids []NodeID, read func(NodeID, *badger.Item) error) error {
+	wanted := make(map[NodeID]struct{}, len(ids))
+	for _, id := range ids {
+		wanted[id] = struct{}{}
+	}
+	prefix := []byte{prefixNode}
+	if scope != "" {
+		prefix = nodeKey(NodeID(scope))
+	}
+	records := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	defer records.Close()
+	for records.Rewind(); records.Valid() && len(wanted) > 0; records.Next() {
+		item := records.Item()
+		nodeID := NodeID(item.Key()[1:])
+		if _, ok := wanted[nodeID]; !ok {
+			continue
+		}
+		delete(wanted, nodeID)
+		if err := read(nodeID, item); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // labelCoversScope reports whether label is on at least half of the nodes in
