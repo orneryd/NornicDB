@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Read only the properties a statement uses when it scans a label. A `MATCH`
+  on a label decoded every node in full, embeddings included, even when the
+  rest of the statement read one or two properties. When every later clause
+  only reads and the node is used only as `n.property`, the scan now reads
+  just those; returning or passing on the whole node, `RETURN *`, a later
+  pattern, any write or a temporal viewport keeps the full read. Grouped
+  counts, sorts and filters over 40,000 nodes take 6–30% less time (#911).
+  A keyword-named variable followed by a property access (`where.id`) is
+  now seen as a reference by the statement checks.
+
 - Keep a node's full-text document when it is re-indexed with the same
   searchable text, for example when only its embedding changes: the text is
   no longer removed, analyzed twice and added back. Re-indexing such a node
