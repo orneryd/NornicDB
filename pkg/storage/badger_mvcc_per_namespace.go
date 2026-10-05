@@ -105,31 +105,26 @@ func (b *BadgerEngine) namespaceMVCC(namespace string) (*namespaceMVCCState, err
 		return nil, err
 	}
 
+	// A concurrent caller may have published the namespace's state since the
+	// read check; only the first one is kept and persisted.
 	b.mvccByNamespaceMu.Lock()
-	if existing, ok := b.mvccByNamespace[namespace]; ok {
-		b.mvccByNamespaceMu.Unlock()
-		return existing, nil
+	state, ok = b.mvccByNamespace[namespace]
+	if !ok {
+		if b.mvccByNamespace == nil {
+			b.mvccByNamespace = make(map[string]*namespaceMVCCState)
+		}
+		starting := max(persisted, b.mvccLegacyGlobalSeed, recoveredSeq)
+		state = &namespaceMVCCState{
+			persistKey: mvccNamespaceSequenceKey(namespace),
+		}
+		state.seq.Store(starting)
+		if recoveredHighWater > 0 {
+			state.highWaterNanos.Store(recoveredHighWater)
+		}
+		b.mvccByNamespace[namespace] = state
 	}
-	if b.mvccByNamespace == nil {
-		b.mvccByNamespace = make(map[string]*namespaceMVCCState)
-	}
-	starting := persisted
-	if b.mvccLegacyGlobalSeed > starting {
-		starting = b.mvccLegacyGlobalSeed
-	}
-	if recoveredSeq > starting {
-		starting = recoveredSeq
-	}
-	state = &namespaceMVCCState{
-		persistKey: mvccNamespaceSequenceKey(namespace),
-	}
-	state.seq.Store(starting)
-	if recoveredHighWater > 0 {
-		state.highWaterNanos.Store(recoveredHighWater)
-	}
-	b.mvccByNamespace[namespace] = state
 	b.mvccByNamespaceMu.Unlock()
-	if recoveredSeq > persisted {
+	if !ok && recoveredSeq > persisted {
 		b.persistMVCCSequence(namespace)
 	}
 	return state, nil

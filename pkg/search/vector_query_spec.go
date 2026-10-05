@@ -185,12 +185,7 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 		var score float64
 		switch similarity {
 		case "cosine":
-			score = vector.CosineSimilarity(queryEmbedding, cand.vec)
-			if score > 1.0 {
-				score = 1.0
-			} else if score < -1.0 {
-				score = -1.0
-			}
+			score = clampCosine(vector.CosineSimilarity(queryEmbedding, cand.vec))
 		default:
 			score = cypherVectorSimilarity(similarity, queryEmbedding, cand.vec)
 		}
@@ -484,16 +479,15 @@ func (s *Service) scoreVectorIDDot(normalizedQuery []float32, vecID string) (flo
 		return 0, false
 	}
 
-	score := float64(vector.DotProductSIMD(normalizedQuery, vec))
-	// SIMD float32 accumulation can drift slightly outside cosine bounds.
-	// Clamp to preserve Cypher cosine semantics and avoid dropping boundary hits
-	// (for example, opposite vectors drifting to <-1 on ASC fast-path queries).
-	if score > 1.0 {
-		score = 1.0
-	} else if score < -1.0 {
-		score = -1.0
-	}
-	return score, true
+	return clampCosine(float64(vector.DotProductSIMD(normalizedQuery, vec))), true
+}
+
+// clampCosine keeps a cosine score within [-1, 1]. Float32 accumulation can
+// drift slightly outside those bounds; clamping preserves Cypher cosine
+// semantics and avoids dropping boundary hits (for example, opposite vectors
+// drifting to <-1 on ASC fast-path queries). NaN stays NaN.
+func clampCosine(score float64) float64 {
+	return math.Max(-1, math.Min(1, score))
 }
 
 func cloneStringMap(src map[string]string) map[string]string {
