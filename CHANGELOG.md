@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Route CALL-subquery compositions directly through the shared pipeline, with
+  per-clause procedure/subquery classification and a shared UNION branch merger.
+  Preserve correlated rows, typed distinct values, branch write statistics and
+  terminal expression errors. Reject undeclared imports even on empty input and
+  retire the private MATCH/CALL-subquery executor (#908).
+
 - Make top-level UNWIND, WITH and FOREACH dispatch terminal in the shared
   pipeline. Retire their private entry owners and the duplicate UNWIND CALL
   transaction-batch runner; preserve the shared CALL operator's batch semantics.

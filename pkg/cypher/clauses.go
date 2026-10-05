@@ -2461,6 +2461,12 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
 func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
+	return e.executeUnionBranches(cypher, unionAll, func(query string) (*ExecuteResult, error) {
+		return e.executeInternal(ctx, query, nil)
+	})
+}
+
+func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
 	if !ok || len(queries) < 2 {
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
@@ -2484,7 +2490,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 	seen := make(map[string]bool) // For UNION (distinct) deduplication
 
 	for i, query := range queries {
-		result, err := e.executeInternal(ctx, query, nil)
+		result, err := runBranch(query)
 		if err != nil {
 			return nil, localizedError(localization.CypherResidualUnionBranchFailed(i+1, truncateQuery(query, 50), err), err)
 		}
@@ -2505,6 +2511,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 			combinedResult = &ExecuteResult{
 				Columns: result.Columns,
 				Rows:    make([][]interface{}, 0),
+				Stats:   &QueryStats{},
 			}
 		} else if !reflect.DeepEqual(combinedResult.Columns, result.Columns) {
 			message := fmt.Sprintf(
@@ -2522,6 +2529,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 			)
 		}
 
+		addQueryStats(combinedResult.Stats, result.Stats)
 		// Add rows from this query
 		if unionAll {
 			// UNION ALL - include all rows
@@ -2529,7 +2537,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 		} else {
 			// UNION (distinct) - deduplicate rows
 			for _, row := range result.Rows {
-				key := fmt.Sprintf("%v", row)
+				key := callSubqueryRowDedupKey(row)
 				if !seen[key] {
 					combinedResult.Rows = append(combinedResult.Rows, row)
 					seen[key] = true

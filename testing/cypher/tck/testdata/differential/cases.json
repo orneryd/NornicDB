@@ -2859,5 +2859,42 @@
     "setup": ["CREATE (:MergeBound {id:1})"],
     "query": "MATCH (n:MergeBound {id:1}) WITH n MATCH (n:MergeBound {id:2}) MERGE (:Unexpected) RETURN count(*) AS count",
     "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION correlated distinct rows",
+    "query": "UNWIND [1,2] AS x CALL (x) { RETURN x AS y UNION RETURN x AS y } RETURN x,y ORDER BY x,y",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION ALL correlated duplicate rows",
+    "query": "UNWIND [1,2] AS x CALL (x) { RETURN x AS y UNION ALL RETURN x AS y } RETURN x,y ORDER BY x,y",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION preserves numeric and string values",
+    "query": "CALL { RETURN 1 AS value UNION RETURN '1' AS value } RETURN value",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION ALL preserves branch writes",
+    "query": "UNWIND [1,2] AS x CALL (x) { CREATE (n:CallUnionWrite {value:x,branch:1}) RETURN n.value AS value UNION ALL CREATE (n:CallUnionWrite {value:x,branch:2}) RETURN n.value AS value } RETURN count(*) AS count"
+  },
+  {
+    "name": "issue908 CALL rejects undeclared import with empty outer match",
+    "query": "MATCH (:Person) CALL { WITH seed RETURN seed } RETURN seed",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL rejects terminal bare ORDER BY",
+    "query": "CALL { RETURN 1 AS value } ORDER BY value",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CALL UNION failure prevents later branch writes",
+    "query": "CALL { RETURN 1 / 0 AS value UNION ALL CREATE (n:CallUnionErrorCopy {value:1}) RETURN n.value AS value } RETURN value",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
   }
 ]

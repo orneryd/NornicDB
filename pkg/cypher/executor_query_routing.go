@@ -62,16 +62,8 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeUnion(ctx, cypher, unionAll)
 	}
 	if strings.Contains(upperQuery, "CALL") {
-		if callIndex := firstTopLevelCallSubquery(cypher); callIndex >= 0 {
-			callClause := strings.TrimSpace(cypher[callIndex:])
-			_, _, inTransactions, _ := e.parseCallSubquery(callClause)
-			if !inTransactions && callIndex > 0 {
-				seed, err := e.executeInternal(ctx, strings.TrimSpace(cypher[:callIndex])+" RETURN *", nil)
-				if err != nil {
-					return nil, err
-				}
-				return e.executeChainedCallSubquery(ctx, seed, callClause)
-			}
+		if firstTopLevelCallSubquery(cypher) >= 0 {
+			return e.executeRequiredPipeline(ctx, cypher)
 		}
 	}
 
@@ -85,10 +77,6 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	startsWithMatch := strings.HasPrefix(upperQuery, "MATCH")
 	startsWithCreate := strings.HasPrefix(upperQuery, "CREATE")
 	startsWithMerge := strings.HasPrefix(upperQuery, "MERGE")
-
-	if startsWithMatch && hasSubqueryPattern(cypher, callSubqueryRe) {
-		return e.executeMatchWithCallSubquery(ctx, cypher)
-	}
 
 	if startsWithMatch {
 		callIdx := topLevelKeywordIndex(cypher, "CALL")
@@ -284,12 +272,6 @@ skipMatchCallRoute:
 	case hasDelete || hasDetachDelete:
 		return e.executeDelete(ctx, cypher)
 	case findKeywordIndex(cypher, "CALL") == 0:
-		// A statement that starts with a CALL { } subquery runs as one; a
-		// procedure call runs as a call, with any CALL { } in its tail
-		// (CALL proc() YIELD node CALL { WITH node … }).
-		if startsWithCallSubquery(cypher) {
-			return e.executeCallSubquery(ctx, cypher)
-		}
 		return e.executeCall(ctx, cypher)
 	case findKeywordIndex(cypher, "RETURN") == 0:
 		return e.executeReturn(ctx, cypher)

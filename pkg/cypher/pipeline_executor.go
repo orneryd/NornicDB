@@ -295,15 +295,7 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 	// from context and respect node bindings supplied by the caller.
 	if topLevelKeywordIndex(cypher, "CALL") >= 0 {
 		topLevelCall = true
-		callIndex := topLevelKeywordIndex(cypher, "CALL")
-		callText := strings.TrimSpace(cypher[callIndex:])
-		if startsWithCallSubquery(callText) {
-			keywords = append(keywords, kw{"CALL", pipelineClauseCallSubquery})
-		} else if pipelineProcedureCallsAreClauses(cypher) {
-			keywords = append(keywords, kw{"CALL", pipelineClauseCall})
-		} else {
-			return nil, false, true
-		}
+		keywords = append(keywords, kw{"CALL", pipelineClauseCall})
 	}
 
 	// Collect boundary positions for each supported keyword.
@@ -373,7 +365,15 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 		if text == "" {
 			continue
 		}
-		out = append(out, pipelineClause{kind: b.kind, text: text})
+		kind := b.kind
+		if b.name == "CALL" {
+			if startsWithCallSubquery(text) {
+				kind = pipelineClauseCallSubquery
+			} else if !pipelineProcedureCallsAreClauses(text) {
+				return nil, false, topLevelCall
+			}
+		}
+		out = append(out, pipelineClause{kind: kind, text: text})
 	}
 	return out, true, topLevelCall
 }

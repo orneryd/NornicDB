@@ -8,6 +8,71 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCallUnionPreservesTypedValuesAndWriteStats(t *testing.T) {
+	t.Run("typed distinct values", func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+		result, err := exec.executeRequiredPipeline(context.Background(), "CALL { RETURN 1 AS value UNION RETURN '1' AS value } RETURN value")
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(1)}, {"1"}}, result.Rows)
+		public, err := exec.Execute(context.Background(), "CALL { RETURN 1 AS value UNION RETURN '1' AS value } RETURN value", nil)
+		require.NoError(t, err)
+		require.Equal(t, result.Rows, public.Rows)
+	})
+	t.Run("recorded failure stops later writes", func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+		result, err := exec.executeRequiredPipeline(context.Background(), `CALL {
+			RETURN 1 / 0 AS value
+			UNION ALL
+			CREATE (n:CallUnionErrorCopy {value:1}) RETURN n.value AS value
+		} RETURN value`)
+		require.ErrorContains(t, err, "/ by zero")
+		if result != nil {
+			require.Empty(t, result.Rows)
+		}
+		persisted, err := exec.Execute(context.Background(), "MATCH (n:CallUnionErrorCopy) RETURN count(n) AS count", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(0)}}, persisted.Rows)
+	})
+	t.Run("branch writes", func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+		result, err := exec.Execute(context.Background(), `UNWIND [1, 2] AS x CALL (x) {
+			CREATE (n:CallUnionWrite {value:x, branch:1}) RETURN n.value AS value
+			UNION ALL
+			CREATE (n:CallUnionWrite {value:x, branch:2}) RETURN n.value AS value
+		} RETURN count(*) AS count`, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)
+		require.Equal(t, 4, result.Stats.NodesCreated)
+		persisted, err := exec.Execute(context.Background(), "MATCH (n:CallUnionWrite) RETURN n.value, n.branch ORDER BY n.value, n.branch", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(1), int64(1)}, {int64(1), int64(2)}, {int64(2), int64(1)}, {int64(2), int64(2)}}, persisted.Rows)
+	})
+}
+
+func TestCallUnionRunsInSharedPipeline(t *testing.T) {
+	for _, fixture := range []struct {
+		name      string
+		separator string
+		want      [][]interface{}
+	}{
+		{name: "distinct", separator: "UNION", want: [][]interface{}{{int64(1), int64(1)}, {int64(2), int64(2)}}},
+		{name: "all", separator: "UNION ALL", want: [][]interface{}{{int64(1), int64(1)}, {int64(1), int64(1)}, {int64(2), int64(2)}, {int64(2), int64(2)}}},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+			query := "UNWIND [1, 2] AS x CALL (x) { RETURN x AS y " + fixture.separator + " RETURN x AS y } RETURN x, y ORDER BY x, y"
+			result, err := exec.executeRequiredPipeline(context.Background(), query)
+			require.NoError(t, err)
+			require.Equal(t, []string{"x", "y"}, result.Columns)
+			require.Equal(t, fixture.want, result.Rows)
+			public, err := exec.Execute(context.Background(), query, nil)
+			require.NoError(t, err)
+			require.Equal(t, result.Columns, public.Columns)
+			require.Equal(t, result.Rows, public.Rows)
+		})
+	}
+}
+
 // TestCallSubqueryImportsAnyOuterVariable: a CALL subquery after MATCH sees
 // every variable the MATCH binds, not only its first node, as in Neo4j
 // 5.26 (#648).
