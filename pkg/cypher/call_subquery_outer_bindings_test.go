@@ -8,6 +8,67 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCanonicalTypedProcedureArgumentBoundaries(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	spec := ProcedureSpec{Name: "typed", MinArgs: 1, MaxArgs: 1, Params: []ProcedureParam{{Name: "value", Type: "ANY"}}}
+	for _, query := range []string{"CALL typed()", "CALL typed(count(1))", "CALL typed(missing)", "CALL typed(1 / 0)"} {
+		t.Run(query, func(t *testing.T) {
+			arguments, err := exec.extractBoundProcedureInvocationArguments(context.Background(), spec, query)
+			require.Error(t, err)
+			require.Nil(t, arguments)
+		})
+	}
+	arguments, err := exec.extractBoundProcedureInvocationArguments(withQueryParams(context.Background(), map[string]interface{}{"value": int64(7)}), spec, "CALL typed")
+	require.NoError(t, err)
+	require.Equal(t, []interface{}{int64(7)}, arguments)
+	for _, arguments := range [][]interface{}{nil, {true, int64(1), []float32{1}}, {"index", true, []float32{1}}} {
+		_, err := exec.callVectorQueryArguments(context.Background(), arguments, false)
+		requireSyntaxErrorStatus(t, err, "invalid typed vector arguments")
+	}
+	for _, relationships := range []bool{false, true} {
+		_, err := exec.callVectorQueryArguments(context.Background(), []interface{}{"index", int64(1), "text"}, relationships)
+		require.ErrorContains(t, err, "embedder")
+	}
+}
+
+func TestProcedurePipelinePreservesTypedRowArguments(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	_, err := exec.Execute(context.Background(), "CREATE (a:ProcTyped {name:'a',value:1}), (b:ProcTyped {name:'b',value:2}), (c:ProcTyped {name:'c',value:3}), (a)-[:PROC_TYPED]->(b), (b)-[:PROC_TYPED]->(c)", nil)
+	require.NoError(t, err)
+	ClearUserProcedures()
+	t.Cleanup(ClearUserProcedures)
+	var calls [][]interface{}
+	require.NoError(t, RegisterUserProcedure(
+		ProcedureSpec{Name: "custom.pipeline_entities", Mode: ProcedureModeRead, MinArgs: 3, MaxArgs: 3},
+		func(_ context.Context, _ *StorageExecutor, _ string, arguments []interface{}) (*ExecuteResult, error) {
+			calls = append(calls, arguments)
+			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{arguments[0].(*storage.Node).Properties["name"]}}}, nil
+		},
+	))
+	query := "MATCH (n:ProcTyped)-[r:PROC_TYPED]->(m:ProcTyped) CALL custom.pipeline_entities(n,r,{target:m,values:[n.value,m.value],tag:$tag,parameter:$precision}) YIELD name RETURN name ORDER BY name"
+	params := map[string]interface{}{"tag": "typed", "precision": []float32{0.12345679}}
+	result, err := exec.executeRequiredPipeline(withQueryParams(context.Background(), params), query)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"a"}, {"b"}}, result.Rows)
+	public, err := exec.Execute(context.Background(), query, params)
+	require.NoError(t, err)
+	require.Equal(t, result.Columns, public.Columns)
+	require.Equal(t, result.Rows, public.Rows)
+	require.Len(t, calls, 4)
+	for _, arguments := range calls {
+		require.Len(t, arguments, 3)
+		node := arguments[0].(*storage.Node)
+		edge := arguments[1].(*storage.Edge)
+		payload := arguments[2].(map[string]interface{})
+		target := payload["target"].(*storage.Node)
+		require.Equal(t, node.ID, edge.StartNode)
+		require.Equal(t, target.ID, edge.EndNode)
+		require.Equal(t, []interface{}{node.Properties["value"], target.Properties["value"]}, payload["values"])
+		require.Equal(t, "typed", payload["tag"])
+		require.Equal(t, params["precision"], payload["parameter"])
+	}
+}
+
 func TestCallUnionPreservesTypedValuesAndWriteStats(t *testing.T) {
 	t.Run("typed distinct values", func(t *testing.T) {
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))

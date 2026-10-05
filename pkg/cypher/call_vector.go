@@ -40,7 +40,10 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsVectorQueryParseFailed(err), err)
 	}
+	return e.callDbIndexVectorQueryNodesInput(ctx, indexName, k, input)
+}
 
+func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
 	// Resolve the query vector
 	var queryVector []float32
 
@@ -57,22 +60,20 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 			return nil, localizedError(localization.CypherSpecializedCallsEmbedQueryTextFailed(input.stringQuery, embedErr), embedErr)
 		}
 		queryVector = embedded
-	} else if input.paramName != "" {
+	} else if input.hasValue || input.paramName != "" {
 		// Parameter reference - resolve from context parameters
 		// Parameters should have been substituted by executeCall, but if not, try to resolve here
-		params := getParamsFromContext(ctx)
-		if params == nil {
-			// No parameters provided - return empty result (parameter not resolved)
-			return &ExecuteResult{
-				Columns: []string{"node", "score"},
-				Rows:    [][]interface{}{},
-			}, nil
-		}
-
-		paramValue, exists := params[input.paramName]
-		if !exists {
-			// Parameter not found in provided parameters
-			return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(input.paramName), nil)
+		paramValue := input.value
+		if !input.hasValue {
+			params := getParamsFromContext(ctx)
+			if params == nil {
+				return &ExecuteResult{Columns: []string{"node", "score"}, Rows: [][]interface{}{}}, nil
+			}
+			var exists bool
+			paramValue, exists = params[input.paramName]
+			if !exists {
+				return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(input.paramName), nil)
+			}
 		}
 
 		// Convert parameter value to []float32
@@ -343,6 +344,27 @@ type vectorQueryInput struct {
 	vector      []float32 // Pre-computed vector (from client)
 	stringQuery string    // Text query to embed server-side
 	paramName   string    // Parameter name if using $param
+	value       interface{}
+	hasValue    bool
+}
+
+func (e *StorageExecutor) callVectorQueryArguments(ctx context.Context, args []interface{}, relationships bool) (*ExecuteResult, error) {
+	if len(args) != 3 {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentCount", "vector queries require three arguments")
+	}
+	indexName, validName := args[0].(string)
+	k, validCount := toInt(args[1])
+	if !validName || !validCount {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", "vector queries require a string index name and integer result count")
+	}
+	input := &vectorQueryInput{value: args[2], hasValue: true}
+	if text, ok := args[2].(string); ok {
+		input = &vectorQueryInput{stringQuery: text}
+	}
+	if relationships {
+		return e.callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
+	}
+	return e.callDbIndexVectorQueryNodesInput(ctx, indexName, k, input)
 }
 
 // parseVectorQueryParams extracts indexName, k, and query input from a vector query CALL.

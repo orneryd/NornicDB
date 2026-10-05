@@ -496,7 +496,10 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresVectorQueryParseFailed(err), err)
 	}
+	return e.callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
+}
 
+func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
 	// Resolve the query vector (same logic as queryNodes)
 	var queryVector []float32
 
@@ -513,21 +516,19 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 			return nil, localizedError(localization.CypherProceduresEmbedQueryFailed(input.stringQuery, embedErr), embedErr)
 		}
 		queryVector = embedded
-	} else if input.paramName != "" {
+	} else if input.hasValue || input.paramName != "" {
 		// Parameter reference - resolve from context parameters
-		params := getParamsFromContext(ctx)
-		if params == nil {
-			// No parameters provided - return empty result (parameter not resolved)
-			return &ExecuteResult{
-				Columns: []string{"relationship", "score"},
-				Rows:    [][]interface{}{},
-			}, nil
-		}
-
-		paramValue, exists := params[input.paramName]
-		if !exists {
-			// Parameter not found in provided parameters
-			return nil, localizedError(localization.CypherProceduresParameterNotProvided(input.paramName), nil)
+		paramValue := input.value
+		if !input.hasValue {
+			params := getParamsFromContext(ctx)
+			if params == nil {
+				return &ExecuteResult{Columns: []string{"relationship", "score"}, Rows: [][]interface{}{}}, nil
+			}
+			var exists bool
+			paramValue, exists = params[input.paramName]
+			if !exists {
+				return nil, localizedError(localization.CypherProceduresParameterNotProvided(input.paramName), nil)
+			}
 		}
 
 		// Convert parameter value to []float32

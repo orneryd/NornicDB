@@ -3,8 +3,6 @@ package cypher
 import (
 	"context"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // pipelineProcedureCallsAreClauses reports whether every CALL in the statement
@@ -43,9 +41,8 @@ func pipelineProcedureCallsAreClauses(cypher string) bool {
 // row at once, so aggregation, ORDER BY and SKIP / LIMIT apply to all of
 // them.
 //
-// Write calls without YIELD receive typed row arguments and preserve input
-// rows. Read calls require YIELD; entity arguments that cannot be represented
-// by their procedure implementations cause a decline before any writes.
+// Write calls without YIELD preserve input rows. Read calls require YIELD.
+// Explicit arguments are evaluated as typed values in the canonical invocation.
 func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, []string, bool, error) {
 	yieldIndex := findKeywordIndexInContext(clause, "YIELD")
 	invocation := strings.TrimSpace(clause)
@@ -73,7 +70,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		yieldText = "YIELD " + yieldBody
 	}
 
-	name, arguments, hasArguments := splitProcedureInvocationArguments(invocation)
+	_, arguments, _ := splitProcedureInvocationArguments(invocation)
 	rowDependent := false
 	for _, argument := range arguments {
 		if len(rows) > 0 && argumentUsesRowVariable(argument, rows[0]) {
@@ -89,53 +86,10 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		if err := ctx.Err(); err != nil {
 			return nil, nil, true, err
 		}
-		if yieldIndex < 0 && procedure.Spec.Mode == ProcedureModeWrite {
-			values := make([]interface{}, len(arguments))
-			for index, argument := range arguments {
-				value, resolved := e.evaluateRowExpressionWithContext(ctx, argument, row)
-				if !resolved {
-					pipelineItemUnevaluable(ctx, argument)
-					return nil, nil, true, getExpressionFailure(ctx)
-				}
-				values[index] = value
-			}
-			if _, err := procedure.Handler(ctx, e, invocation, values); err != nil {
-				return nil, nil, true, procedureRuntimeError(procedure.Spec.Name, err)
-			}
-			out = append(out, row)
-			continue
-		}
 		result := shared
 		if result == nil {
-			call := invocation
-			if rowDependent && hasArguments {
-				bound := make([]string, len(arguments))
-				for i, argument := range arguments {
-					if !argumentUsesRowVariable(argument, row) {
-						bound[i] = argument
-						continue
-					}
-					value, evaluated, err := e.evaluateRowValue(argument, row)
-					if err != nil {
-						return nil, nil, true, err
-					}
-					if procedure.Spec.Mode == ProcedureModeWrite {
-						switch entity := value.(type) {
-						case *storage.Node:
-							value = string(entity.ID)
-						case *storage.Edge:
-							value = string(entity.ID)
-						}
-					}
-					if !evaluated || !procedureArgumentLiteralSafe(value) {
-						return nil, nil, false, nil
-					}
-					bound[i] = e.valueToLiteral(value)
-				}
-				call = name + "(" + strings.Join(bound, ", ") + ")"
-			}
 			var err error
-			result, err = e.executeProcedureCall(ctx, "CALL "+strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(call), "CALL"))+" "+yieldText, true)
+			result, err = e.executeProcedureCall(withValueBindings(ctx, row), invocation+" "+yieldText, true)
 			if err != nil {
 				return nil, nil, true, err
 			}
@@ -204,14 +158,4 @@ func argumentUsesRowVariable(argument string, row pipelineRow) bool {
 		}
 	}
 	return false
-}
-
-// procedureArgumentLiteralSafe reports whether a value can be passed to a
-// procedure as literal argument text.
-func procedureArgumentLiteralSafe(value interface{}) bool {
-	switch value.(type) {
-	case *storage.Node, *storage.Edge, storage.Node, storage.Edge:
-		return false
-	}
-	return true
 }

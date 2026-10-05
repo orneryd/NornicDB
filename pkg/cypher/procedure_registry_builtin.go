@@ -106,11 +106,11 @@ func ensureBuiltInProceduresRegistered() {
 
 		registerProcedure(vectorQueryProcedureSpec("db.index.vector.queryNodes", "node", "NODE"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexVectorQueryNodes(ctx, cypher)
+				return e.callVectorQueryArguments(ctx, args, false)
 			})
 		registerProcedure(vectorQueryProcedureSpec("db.index.vector.queryRelationships", "relationship", "RELATIONSHIP"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexVectorQueryRelationships(ctx, cypher)
+				return e.callVectorQueryArguments(ctx, args, true)
 			})
 		registerBuiltInProcedure("db.index.vector.embed", "db.index.vector.embed(text :: STRING) :: (embedding :: LIST<FLOAT>)", localization.CypherProcedureMetadata("db.index.vector.embed"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

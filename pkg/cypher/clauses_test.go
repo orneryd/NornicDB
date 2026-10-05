@@ -863,7 +863,9 @@ func TestCallApocPathSubgraphNodes(t *testing.T) {
 	store.CreateEdge(&storage.Edge{ID: "e2", Type: "KNOWS", StartNode: "bob", EndNode: "carol"})
 
 	// Call subgraph nodes procedure
-	result, err := e.Execute(ctx, "CALL apoc.path.subgraphNodes(start, {maxLevel: 2, relationshipFilter: 'KNOWS'})", nil)
+	_, err := e.Execute(ctx, "CALL apoc.path.subgraphNodes(start, {maxLevel: 2, relationshipFilter: 'KNOWS'})", nil)
+	requireSyntaxErrorStatus(t, err, "standalone CALL does not declare start")
+	result, err := e.Execute(ctx, "CALL apoc.path.subgraphNodes('alice', {maxLevel: 2, relationshipFilter: 'KNOWS'})", nil)
 	if err != nil {
 		t.Fatalf("APOC subgraph query failed: %v", err)
 	}
@@ -871,8 +873,8 @@ func TestCallApocPathSubgraphNodes(t *testing.T) {
 		t.Errorf("Expected columns [node], got %v", result.Columns)
 	}
 	// Should return all 3 nodes since they're all connected
-	if len(result.Rows) < 3 {
-		t.Errorf("Expected at least 3 nodes in subgraph, got %d", len(result.Rows))
+	if len(result.Rows) != 3 {
+		t.Errorf("Expected exactly 3 nodes in subgraph, got %d", len(result.Rows))
 	}
 }
 
