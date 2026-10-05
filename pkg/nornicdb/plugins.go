@@ -18,6 +18,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // PluginType identifies the kind of plugin.
@@ -74,6 +75,13 @@ var errHeimdallContextRequired = errors.New("heimdall plugin requires subsystem 
 // Auto-detects plugin types and registers appropriately:
 //   - Function plugins → Register with APOC/Cypher executor
 //   - Heimdall plugins → Register with Heimdall SubsystemManager
+//
+// A plugin that fails to load doesn't stop the others: every other plugin in
+// the directory still loads, and the failures are returned together, one
+// NornicDBCorePluginLoadFailed per file, after the directory is done. A
+// Heimdall plugin without a subsystem context is skipped, not a failure.
+// Callers treat the returned error as a warning; returning nil after a failed
+// file made a plugin that didn't load look like an empty directory (#867).
 func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) error {
 	if dir == "" {
 		fmt.Printf("   [Plugin Debug] LoadPluginsFromDir called with empty directory\n")
@@ -126,6 +134,7 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 		actions   int
 	}{}
 
+	var failures []error
 	for _, path := range matches {
 		loaded, err := loadPluginFile(path, heimdallCtx)
 		if err != nil {
@@ -144,6 +153,7 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 
 			fmt.Printf("║ ⚠️  %-56s ║\n", filepath.Base(path)+": "+err.Error())
 			stats.failed++
+			failures = append(failures, localizedError(localization.NornicDBCorePluginLoadFailed(filepath.Base(path), err), err))
 			continue
 		}
 
@@ -196,7 +206,7 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
 
 	pluginsInitialized = true
-	return nil
+	return errors.Join(failures...)
 }
 
 // loadPluginFile loads a single .so plugin and auto-detects its type.

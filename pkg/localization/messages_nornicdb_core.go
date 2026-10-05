@@ -58,6 +58,7 @@ const (
 	MessageNornicDBCoreSearchSystemDatabaseUnsupported       MessageID = "nornicdbcore.search_system_database_unsupported"
 	MessageNornicDBCoreSearchBaseStorageUnavailable          MessageID = "nornicdbcore.search_base_storage_unavailable"
 	MessageNornicDBCoreSearchDatabaseNotInitialized          MessageID = "nornicdbcore.search_database_not_initialized"
+	MessageNornicDBCorePluginLoadFailed                      MessageID = "nornicdbcore.plugin_load_failed"
 	MessageNornicDBCoreInferenceBaseStorageUnavailable       MessageID = "nornicdbcore.inference_base_storage_unavailable"
 	MessageNornicDBCoreEmbedBatchFailed                      MessageID = "nornicdbcore.embed_batch_failed"
 	MessageNornicDBCoreEmbeddingCountMismatch                MessageID = "nornicdbcore.embedding_count_mismatch"
@@ -357,6 +358,12 @@ func NornicDBCoreSearchBaseStorageUnavailable() Message {
 // NornicDBCoreSearchDatabaseNotInitialized identifies missing per-database search state.
 func NornicDBCoreSearchDatabaseNotInitialized(database string) Message {
 	return Message{ID: MessageNornicDBCoreSearchDatabaseNotInitialized, Fallback: fmt.Sprintf("search service not initialized for database %q", database), Data: map[string]any{"Database": database}}
+}
+
+// NornicDBCorePluginLoadFailed identifies a plugin file in a plugins directory
+// that could not be loaded; the other plugins in the directory still load.
+func NornicDBCorePluginLoadFailed(file string, cause error) Message {
+	return Message{ID: MessageNornicDBCorePluginLoadFailed, Fallback: fmt.Sprintf("plugin %s was not loaded: %s", file, cause), Data: map[string]any{"File": file, "Cause": cause.Error()}}
 }
 
 // NornicDBCoreInferenceBaseStorageUnavailable identifies inference initialization without base storage.

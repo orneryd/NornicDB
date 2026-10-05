@@ -70,6 +70,9 @@
 - id: nornicdbcore.backup_parse_failed
   description: Error al deserializar una copia de seguridad. Cause no se traduce.
   other: "no se pudo analizar la copia de seguridad: {{.Cause}}"
+- id: nornicdbcore.plugin_load_failed
+  description: Archivo de plugin que no se pudo cargar. File y Cause no se traducen.
+  other: "el plugin {{.File}} no se cargó: {{.Cause}}"
 - id: nornicdbcore.restore_node_failed
   description: Error al restaurar un nodo. NodeID y Cause no se traducen.
   other: "no se pudo restaurar el nodo {{.NodeID}}: {{.Cause}}"
