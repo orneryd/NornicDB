@@ -21,6 +21,8 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	require.NoError(t, err)
 	wal := NewWALEngine(badger, walBacking)
 	async := NewAsyncEngine(wal, &AsyncEngineConfig{FlushInterval: time.Hour})
+	// Closing the async engine closes the WAL file under it (#924).
+	t.Cleanup(func() { _ = async.Close() })
 	namespaced := NewNamespacedEngine(async, "ns")
 
 	_, err = namespaced.CreateNode(&Node{
@@ -195,6 +197,8 @@ func TestWrapperCapabilityParity_EventCallbacksTranslateThroughWrappers(t *testi
 	t.Run("WAL passes events through unchanged", func(t *testing.T) {
 		walBacking, err := NewWAL(t.TempDir(), nil)
 		require.NoError(t, err)
+		// The parent test keeps using badger, so close only the WAL file (#924).
+		t.Cleanup(func() { _ = walBacking.Close() })
 		wal := NewWALEngine(badger, walBacking)
 		var created []NodeID
 		var edges []EdgeID

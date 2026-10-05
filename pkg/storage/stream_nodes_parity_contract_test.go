@@ -40,6 +40,7 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 			t.Cleanup(func() { _ = engine.Close() })
 			wal, err := NewWAL(t.TempDir(), nil)
 			require.NoError(t, err)
+			t.Cleanup(func() { _ = wal.Close() })
 			return NewWALEngine(engine, wal)
 		}},
 		{name: "async", prefix: "db:", count: 3, build: func(t *testing.T) Engine {
