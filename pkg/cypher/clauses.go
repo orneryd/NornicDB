@@ -3159,31 +3159,6 @@ func optionalRelationshipTypeMatches(filter, actual string) bool {
 	return false
 }
 
-func (e *StorageExecutor) findOptionalRelatedNodes(ctx context.Context, sourceNode *storage.Node, patternText string, pattern optionalRelPattern) []optionalRelResult {
-	if strings.Contains(patternText, "*") {
-		traversal := e.parseTraversalPattern(ctx, patternText)
-		if traversal == nil {
-			return nil
-		}
-		paths := e.traverseFromNode(ctx, sourceNode, traversal)
-		results := make([]optionalRelResult, 0, len(paths))
-		for _, path := range paths {
-			if len(path.Nodes) == 0 {
-				continue
-			}
-			node := path.Nodes[len(path.Nodes)-1]
-			var edge *storage.Edge
-			if len(path.Relationships) > 0 {
-				edge = path.Relationships[0]
-			}
-			results = append(results, optionalRelResult{node: node, edge: edge})
-		}
-		return results
-	}
-
-	return e.findRelatedNodes(sourceNode, pattern)
-}
-
 func joinedValueKey(val interface{}) string {
 	switch v := val.(type) {
 	case *storage.Node:
