@@ -110,6 +110,12 @@ type BadgerTransaction struct {
 	// lifetime of this pinned snapshot. Bounded/aborted streams are never
 	// cached, so LIMIT preserves early termination and memory proportionality.
 	snapshotLabelNodes map[string][]*Node
+	// snapshotLabelNodeByID indexes the whole nodes of those completed label
+	// streams by ID, so a write to a node the statement just read from the
+	// snapshot (MATCH (n:L) SET ...) doesn't read the node again
+	// (getCommittedNodeLocked). It holds pointers to nodes the streams already
+	// keep, not copies.
+	snapshotLabelNodeByID map[NodeID]*Node
 	// snapshotProjectedLabelNodes applies the same rule to exact property
 	// projections. Keeping it separate preserves full-node cache reuse while
 	// avoiding a full physical snapshot walk for every repeated projected read.
@@ -328,6 +334,7 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	tx.snapshotLabelPrefixNodeBytes = nil
 	tx.snapshotLabelPrefixBytes = 0
 	tx.snapshotPrefixNodeByID = nil
+	tx.snapshotLabelNodeByID = nil
 	tx.snapshotPrefixNodeBytesByID = nil
 	tx.snapshotPrefixNodeOrder = nil
 	tx.snapshotPrefixNodeBytes = 0
@@ -1912,6 +1919,14 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		}
 		tx.snapshotLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
+		if !tx.engine.decayEnabled || tx.engine.revealAll.Load() {
+			if tx.snapshotLabelNodeByID == nil {
+				tx.snapshotLabelNodeByID = make(map[NodeID]*Node, len(completed))
+			}
+			for _, node := range completed {
+				tx.snapshotLabelNodeByID[node.ID] = node
+			}
+		}
 	} else if len(tx.snapshotProjectedLabelNodes) < maxSnapshotProjectedLabelStreams {
 		if tx.snapshotProjectedLabelNodes == nil {
 			tx.snapshotProjectedLabelNodes = make(map[string][]*Node)
@@ -2628,6 +2643,18 @@ func (tx *BadgerTransaction) OperationCount() int {
 func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error) {
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
 		return copyNode(node), nil
+	}
+	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
+		// Like the prefix cache, a node with worker-sidecar embeddings is
+		// read again so their hydration runs.
+		sidecar := false
+		_ = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
+			sidecar = tx.nodeHasEmbeddingSidecar(txn, nodeID)
+			return nil
+		})
+		if !sidecar {
+			return copyNode(node), nil
+		}
 	}
 	if tx.readTS.IsZero() {
 		return tx.getNodeFromBadgerSnapshotLocked(nodeID)
