@@ -73,8 +73,18 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateDuplicateReturnColumnName(cypher, names); err != nil {
 		return err
 	}
-	if clauses, ok := splitPipelineClauses(cypher); ok {
+	if clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher); ok {
+		pendingUpdate := false
 		for _, clause := range clauses {
+			if pendingUpdate && clause.kind == pipelineClauseCall {
+				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidClauseComposition", "WITH is required between an updating clause and CALL")
+			}
+			switch clause.kind {
+			case pipelineClauseWith:
+				pendingUpdate = false
+			case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
+				pendingUpdate = true
+			}
 			// Subquery bodies are checked as their own statements.
 			if whereIndex := topLevelKeywordIndex(clause.text, "WHERE"); whereIndex >= 0 &&
 				hasUnexpectedIdentifierAfterNumber(maskSubqueryBodies(clause.text[whereIndex+len("WHERE"):])) {

@@ -51,7 +51,7 @@ func TestPipelineProcedureCallPerRow(t *testing.T) {
 }
 
 // TestPipelineApplyProcedureCallEdges: the pipeline's procedure call
-// declines a call without YIELD, rejects aggregate arguments, and fails when
+// rejects a non-void call without YIELD and aggregate arguments, and fails when
 // an argument or the call fails.
 func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 	registerCoverageProcedures(t)
@@ -60,8 +60,8 @@ func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 	rows := []pipelineRow{{"x": int64(1)}}
 
 	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x)")
-	require.NoError(t, err)
-	require.False(t, ok)
+	requireSyntaxErrorStatus(t, err, "non-void procedure without explicit YIELD")
+	require.True(t, ok)
 	require.Nil(t, out)
 
 	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(count(x)) YIELD echoed")
@@ -85,23 +85,18 @@ func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 	require.Equal(t, []pipelineRow{{"x": int64(2), "echoed": int64(2)}}, out)
 }
 
-// TestSplitProcedureInvocationArguments: a call without an argument list,
-// or with an unclosed one, has no arguments.
-func TestSplitProcedureInvocationArguments(t *testing.T) {
-	name, arguments, hasArguments := splitProcedureInvocationArguments("CALL db.labels")
-	require.Equal(t, "CALL db.labels", name)
+func TestExplicitProcedureArgumentTexts_EmptyAndNested(t *testing.T) {
+	arguments := explicitProcedureArgumentTexts("CALL db.labels")
 	require.Nil(t, arguments)
-	require.False(t, hasArguments)
 
-	name, arguments, hasArguments = splitProcedureInvocationArguments("CALL cov.echo(1")
-	require.Equal(t, "CALL cov.echo(1", name)
+	arguments = explicitProcedureArgumentTexts("CALL cov.echo(1")
 	require.Nil(t, arguments)
-	require.False(t, hasArguments)
 
-	name, arguments, hasArguments = splitProcedureInvocationArguments("CALL cov.echo(1, [2, 3])")
-	require.Equal(t, "CALL cov.echo", name)
+	arguments = explicitProcedureArgumentTexts("CALL cov.echo()")
+	require.NotNil(t, arguments)
+	require.Empty(t, arguments)
+	arguments = explicitProcedureArgumentTexts("CALL cov.echo(1, [2, 3])")
 	require.Equal(t, []string{"1", "[2, 3]"}, arguments)
-	require.True(t, hasArguments)
 }
 
 // TestProcedureCallValidationErrors: an aggregate procedure argument and a

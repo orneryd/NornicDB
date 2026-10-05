@@ -455,7 +455,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoWCC(ctx, cypher)
 			})
-		registerBuiltInProcedureLiteral("apoc.neighbors.tohop", "apoc.neighbors.tohop(node :: NODE, relTypes :: STRING, distance :: INTEGER) :: (nodes :: LIST<NODE>)", "Collects neighbors to N hops", ProcedureModeRead, 3, 3, false,
+		registerBuiltInProcedureLiteral("apoc.neighbors.tohop", "apoc.neighbors.tohop(node :: NODE, relTypes :: STRING, distance :: INTEGER) :: (node :: NODE)", "Collects neighbors to N hops", ProcedureModeRead, 3, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocNeighborsTohop(ctx, cypher)
 			})

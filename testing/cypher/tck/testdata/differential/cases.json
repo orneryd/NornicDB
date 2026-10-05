@@ -2896,5 +2896,40 @@
     "query": "CALL { RETURN 1 / 0 AS value UNION ALL CREATE (n:CallUnionErrorCopy {value:1}) RETURN n.value AS value } RETURN value",
     "expected_code": "Neo.ClientError.Statement.ArithmeticError",
     "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH procedure empty input requires explicit outputs",
+    "query": "MATCH (n:ProcedureEmpty) CALL dbms.components()",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH procedure empty input preserves aliases",
+    "query": "MATCH (n:ProcedureEmpty) CALL dbms.components() YIELD name AS component, versions RETURN component, versions",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH procedure empty input validates arity",
+    "query": "MATCH (n:ProcedureEmpty) CALL dbms.components(1) YIELD name RETURN name",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH procedure empty input rejects unknown procedure",
+    "query": "MATCH (n:ProcedureEmpty) CALL db.unknownPipelineProcedure() YIELD value RETURN value",
+    "expected_code": "Neo.ClientError.Procedure.ProcedureNotFound",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH mutation before procedure uses shared routing",
+    "setup": ["CREATE (:ProcedureBefore {value:1})"],
+    "query": "MATCH (n:ProcedureBefore) SET n.value = 2 WITH n CALL dbms.components() YIELD name RETURN n.value AS value"
+  },
+  {
+    "name": "issue908 MATCH mutation requires WITH before procedure",
+    "setup": ["CREATE (:ProcedureBefore {value:1})"],
+    "query": "MATCH (n:ProcedureBefore) SET n.value = 2 CALL dbms.components() YIELD name RETURN n.value AS value",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
   }
 ]

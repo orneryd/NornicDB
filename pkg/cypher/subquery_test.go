@@ -2515,26 +2515,24 @@ func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_Branches(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := exec.executeMatchWithCallProcedure(ctx, "MATCH (n) RETURN n")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "CALL not found")
+	matched, err := exec.Execute(ctx, "MATCH (n) RETURN n", nil)
+	require.NoError(t, err)
+	require.Empty(t, matched.Rows)
 
-	_, err = exec.executeMatchWithCallProcedure(ctx, "CALL db.info()")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "MATCH not found")
+	standalone, err := exec.Execute(ctx, "CALL db.info()", nil)
+	require.NoError(t, err)
+	require.Len(t, standalone.Rows, 1)
 
-	_, err = exec.executeMatchWithCallProcedure(ctx, "MATCH (:Person) CALL db.info()")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "could not parse node pattern")
+	_, err = exec.Execute(ctx, "MATCH (:Person) CALL db.info()", nil)
+	requireSyntaxErrorStatus(t, err, "non-void procedure without YIELD")
 
 	// No matched nodes -> columns from YIELD.
-	emptyYieldRes, err := exec.executeMatchWithCallProcedure(ctx, "MATCH (n:Person {name: 'none'}) CALL db.info() YIELD name RETURN name")
+	emptyYieldRes, err := exec.Execute(ctx, "MATCH (n:Person {name: 'none'}) CALL db.info() YIELD name RETURN name", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"name"}, emptyYieldRes.Columns)
 	assert.Empty(t, emptyYieldRes.Rows)
 
-	// No matched nodes -> vector-query defaults.
-	emptyVectorRes, err := exec.executeMatchWithCallProcedure(ctx, "MATCH (n:Person {name: 'none'}) CALL db.index.vector.queryNodes('idx', 2, n.embedding)")
+	emptyVectorRes, err := exec.Execute(ctx, "MATCH (n:Person {name: 'none'}) CALL db.index.vector.queryNodes('idx', 2, n.embedding) YIELD node, score RETURN node, score", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node", "score"}, emptyVectorRes.Columns)
 	assert.Empty(t, emptyVectorRes.Rows)
@@ -2545,14 +2543,14 @@ func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Matched nodes + failing call path.
-	_, err = exec.executeMatchWithCallProcedure(ctx, "MATCH (n:Person) CALL db.unknownProcedure()")
+	_, err = exec.Execute(ctx, "MATCH (n:Person) CALL db.unknownProcedure()", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to execute CALL")
+	require.Contains(t, statusText(err), "Neo.ClientError.Procedure.ProcedureNotFound")
 
 	// Matched nodes + successful call, results merged across seeds.
-	okRes, err := exec.executeMatchWithCallProcedure(ctx, "MATCH (n:Person) CALL db.info() YIELD name RETURN name")
+	okRes, err := exec.Execute(ctx, "MATCH (n:Person) CALL db.info() YIELD name RETURN name", nil)
 	require.NoError(t, err)
-	require.Len(t, okRes.Rows, 2)
+	require.Equal(t, [][]interface{}{{"test"}, {"test"}}, okRes.Rows)
 }
 
 func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
@@ -3475,9 +3473,10 @@ func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_ParamAndWhereBranches(t *
 
 	// Parameter substitution + WHERE filtering + MATCH without label (AllNodes branch).
 	ctxWithParams := context.WithValue(context.Background(), paramsKey, map[string]interface{}{"name": "alice"})
-	res, err := exec.executeMatchWithCallProcedure(
+	res, err := exec.Execute(
 		ctxWithParams,
 		"MATCH (n) WHERE n.name = $name CALL db.info() YIELD name RETURN name",
+		nil,
 	)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, res.Columns)
@@ -3625,29 +3624,25 @@ func TestExecuteMatchWithCallProcedure_ParseAndExecErrors(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	// Pattern that cannot be parsed into a node variable.
-	_, err := exec.executeMatchWithCallProcedure(ctx, "MATCH () CALL db.info() YIELD name RETURN name")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "could not parse node pattern")
+	anonymous, err := exec.Execute(ctx, "MATCH () CALL db.info() YIELD name RETURN name", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"name"}, anonymous.Columns)
+	require.Empty(t, anonymous.Rows)
 
 	// Valid parsed node, but CALL execution should error for unknown procedure.
 	_, err = exec.Execute(ctx, "CREATE (n:Person {name:'a'})", nil)
 	require.NoError(t, err)
-	_, err = exec.executeMatchWithCallProcedure(ctx, "MATCH (n:Person) CALL db.missingProcedure()")
+	_, err = exec.Execute(ctx, "MATCH (n:Person) CALL db.missingProcedure()", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to execute CALL")
+	require.Contains(t, statusText(err), "Neo.ClientError.Procedure.ProcedureNotFound")
 
-	// No matching rows, no YIELD, non-vector procedure => empty columns branch.
-	emptyRes, err := exec.executeMatchWithCallProcedure(ctx, "MATCH (n:Person {name:'none'}) CALL db.info()")
-	require.NoError(t, err)
-	require.NotNil(t, emptyRes)
-	assert.Empty(t, emptyRes.Columns)
-	assert.Empty(t, emptyRes.Rows)
+	_, err = exec.Execute(ctx, "MATCH (n:Person {name:'none'}) CALL db.info()", nil)
+	requireSyntaxErrorStatus(t, err, "empty input still requires YIELD for non-void procedures")
 
-	// No matching rows + relationship-vector procedure => default relationship columns.
-	emptyRelVectorRes, err := exec.executeMatchWithCallProcedure(
+	emptyRelVectorRes, err := exec.Execute(
 		ctx,
-		"MATCH (n:Person {name:'none'}) CALL db.index.vector.queryRelationships('idx', 2, n.embedding)",
+		"MATCH (n:Person {name:'none'}) CALL db.index.vector.queryRelationships('idx', 2, n.embedding) YIELD relationship, score RETURN relationship, score",
+		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, emptyRelVectorRes)
@@ -3655,9 +3650,10 @@ func TestExecuteMatchWithCallProcedure_ParseAndExecErrors(t *testing.T) {
 	assert.Empty(t, emptyRelVectorRes.Rows)
 
 	// No matching rows + YIELD alias should preserve alias column name.
-	emptyAliasRes, err := exec.executeMatchWithCallProcedure(
+	emptyAliasRes, err := exec.Execute(
 		ctx,
 		"MATCH (n:Person {name:'none'}) CALL db.info() YIELD name AS db_name RETURN db_name",
+		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, emptyAliasRes)
@@ -3699,12 +3695,10 @@ func TestExecuteMatchWithCallProcedure_NodeLookupAndNilResultBranches(t *testing
 			},
 		))
 
-		// This previously hit manual label/all-node scans in executeMatchWithCallProcedure.
-		// It should now execute the outer MATCH via the normal executor and succeed.
-		res, err := exec.executeMatchWithCallProcedure(ctx, "MATCH (p:SystemPrompt) WHERE id(p) = 'sp-1' CALL custom.const() YIELD x RETURN x")
+		res, err := exec.Execute(ctx, "MATCH (p:SystemPrompt) WHERE id(p) = 'sp-1' CALL custom.const() YIELD x RETURN x", nil)
 		require.NoError(t, err)
 		require.NotNil(t, res)
-		require.NotEmpty(t, res.Rows)
+		require.Equal(t, [][]interface{}{{int64(1)}}, res.Rows)
 	})
 
 	t.Run("matched rows but nil call result returns empty result", func(t *testing.T) {
@@ -3730,11 +3724,14 @@ func TestExecuteMatchWithCallProcedure_NodeLookupAndNilResultBranches(t *testing
 			},
 		))
 
-		res, err := exec.executeMatchWithCallProcedure(ctx, "MATCH (n:Person) CALL custom.nil()")
+		res, err := exec.Execute(ctx, "MATCH (n:Person) CALL custom.nil()", nil)
 		require.NoError(t, err)
 		require.NotNil(t, res)
 		assert.Empty(t, res.Columns)
 		assert.Empty(t, res.Rows)
+		retained, err := exec.Execute(ctx, "MATCH (n:Person) CALL custom.nil() RETURN n.name AS name", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"alice"}}, retained.Rows)
 	})
 }
 

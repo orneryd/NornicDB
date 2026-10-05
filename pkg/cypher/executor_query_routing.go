@@ -78,36 +78,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	startsWithCreate := strings.HasPrefix(upperQuery, "CREATE")
 	startsWithMerge := strings.HasPrefix(upperQuery, "MERGE")
 
-	if startsWithMatch {
-		callIdx := topLevelKeywordIndex(cypher, "CALL")
-		if callIdx > 0 {
-			callPart := strings.TrimSpace(cypher[callIdx:])
-			if !isCallSubquery(callPart) {
-				prefix := cypher[:callIdx]
-				hasMutationBeforeCall := findKeywordIndexInContext(prefix, "MERGE") >= 0 ||
-					findKeywordIndexInContext(prefix, "CREATE") >= 0 ||
-					findKeywordIndexInContext(prefix, "SET") >= 0 ||
-					findKeywordIndexInContext(prefix, "DELETE") >= 0 ||
-					findKeywordIndexInContext(prefix, "DETACH DELETE") >= 0 ||
-					findKeywordIndexInContext(prefix, "REMOVE") >= 0
-				if hasMutationBeforeCall {
-					goto skipMatchCallRoute
-				}
-				// The pipeline runs a read-only registered procedure as a clause
-				// over every row, so the YIELD's WHERE sees the row's variables
-				// and later clauses see all rows; it declines other calls.
-				if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-					return outcome.result, outcome.err
-				}
-				if findKeywordIndex(cypher[:callIdx], "WITH") > 0 {
-					return e.executeMatchWithClause(ctx, cypher)
-				}
-				return e.executeMatchWithCallProcedure(ctx, cypher)
-			}
-		}
+	if startsWithMatch && topLevelKeywordIndex(cypher, "CALL") > 0 {
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
-skipMatchCallRoute:
 	if startsWithMerge {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Make MATCH/procedure dispatch terminal through the shared pipeline and retire
+  its private executor. Validate empty-input procedure metadata and arity,
+  preserve per-row DBMS execution, and require WITH between updates and CALL
+  before executing writes (#908).
+
 - Use canonical typed invocation for procedure clauses instead of serializing
   row arguments or calling write handlers separately. Preserve node/relationship
   identity, nested values, parameters and terminal expression errors. Registered

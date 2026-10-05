@@ -242,18 +242,22 @@ func ClearUserProcedures() {
 }
 
 func validateProcedureArgCount(spec ProcedureSpec, args []interface{}) error {
-	if spec.MinArgs > 0 && len(args) < spec.MinArgs {
+	return validateProcedureArgumentCount(spec, len(args))
+}
+
+func validateProcedureArgumentCount(spec ProcedureSpec, count int) error {
+	if spec.MinArgs > 0 && count < spec.MinArgs {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"InvalidNumberOfArguments",
-			fmt.Sprintf("procedure %s requires at least %d arguments, got %d", spec.Name, spec.MinArgs, len(args)),
+			fmt.Sprintf("procedure %s requires at least %d arguments, got %d", spec.Name, spec.MinArgs, count),
 		)
 	}
-	if spec.MaxArgs >= 0 && len(args) > spec.MaxArgs {
+	if spec.MaxArgs >= 0 && count > spec.MaxArgs {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"InvalidNumberOfArguments",
-			fmt.Sprintf("procedure %s accepts at most %d arguments, got %d", spec.Name, spec.MaxArgs, len(args)),
+			fmt.Sprintf("procedure %s accepts at most %d arguments, got %d", spec.Name, spec.MaxArgs, count),
 		)
 	}
 	return nil

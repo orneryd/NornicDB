@@ -8,6 +8,55 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPipelineProcedureEmptyInputContracts(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	_, err := exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL dbms.components()")
+	requireSyntaxErrorStatus(t, err, "non-void procedure requires explicit YIELD inside a query")
+	result, err := exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL dbms.components() YIELD name AS component, versions RETURN component, versions")
+	require.NoError(t, err)
+	require.Equal(t, []string{"component", "versions"}, result.Columns)
+	require.Empty(t, result.Rows)
+	_, err = exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL db.unknownPipelineProcedure() YIELD value RETURN value")
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Procedure.ProcedureNotFound")
+	_, err = exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL dbms.components(1) YIELD name RETURN name")
+	requireSyntaxErrorStatus(t, err, "invalid argument count even on empty input")
+}
+
+func TestPipelineProcedureRequiresWithAfterSet(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:ProcedureBefore {value:1})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (n:ProcedureBefore) SET n.value = 2 CALL dbms.components() YIELD name RETURN n.value AS value", nil)
+	requireSyntaxErrorStatus(t, err, "SET requires WITH before CALL")
+	unchanged, err := exec.Execute(ctx, "MATCH (n:ProcedureBefore) RETURN n.value AS value", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, unchanged.Rows)
+	updated, err := exec.Execute(ctx, "MATCH (n:ProcedureBefore) SET n.value = 2 WITH n CALL dbms.components() YIELD name RETURN n.value AS value", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, updated.Rows)
+}
+
+func TestPipelineDBMSProcedureRunsPerInputRow(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ClearUserProcedures()
+	t.Cleanup(ClearUserProcedures)
+	var calls int64
+	require.NoError(t, RegisterUserProcedure(
+		ProcedureSpec{Name: "custom.dbms_count", Mode: ProcedureModeDBMS, MinArgs: 0, MaxArgs: 0, Returns: []ProcedureColumn{{Name: "value", Type: "INTEGER"}}},
+		func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+			calls++
+			return &ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{calls}}}, nil
+		},
+	))
+	result, err := exec.Execute(context.Background(), "UNWIND [1,2] AS input CALL custom.dbms_count() YIELD value RETURN input, value ORDER BY input", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1), int64(1)}, {int64(2), int64(2)}}, result.Rows)
+	require.Equal(t, int64(2), calls)
+}
+
 func TestCanonicalTypedProcedureArgumentBoundaries(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	spec := ProcedureSpec{Name: "typed", MinArgs: 1, MaxArgs: 1, Params: []ProcedureParam{{Name: "value", Type: "ANY"}}}
