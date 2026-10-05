@@ -53,10 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temporal viewport, labels or properties on the end node, or a path
   variable keep the read. That degree query over 40,000 nodes takes about a
   third less time, in and out of a transaction (#911).
-- Store each relationship's type and other end in its adjacency entries, so
-  a traversal over anonymous relationships (`MATCH (p)-[:KNOWS]->() …`) no
-  longer reads every relationship record. Entries written by earlier versions
-  keep working through the record; decay filtering keeps the full read (#911).
+- Store a copy of each relationship record's compact header (type, endpoints,
+  timestamps, confidence, flags) in its adjacency entries, so a traversal over
+  anonymous relationships (`MATCH (p)-[:KNOWS]->() …`) no longer reads every
+  relationship record. Every write of the record rewrites the copy. Entries
+  written by earlier versions keep working through the record; decay
+  filtering keeps the full read (#911).
 
 - Keep a node's full-text document when it is re-indexed with the same
   searchable text, for example when only its embedding changes: the text is
