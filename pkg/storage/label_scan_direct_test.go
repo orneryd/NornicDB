@@ -39,6 +39,10 @@ func labelScanFixture(t *testing.T, count int) (*BadgerEngine, []NodeID) {
 	require.NoError(t, err)
 	_, err = eng.CreateNode(&Node{ID: "elsewhere:n0", Labels: []string{"Common"}})
 	require.NoError(t, err)
+	// Scans read the stored records, not nodes cached when they were written.
+	eng.nodeCacheMu.Lock()
+	clear(eng.nodeCache)
+	eng.nodeCacheMu.Unlock()
 	return eng, created
 }
 
@@ -121,5 +125,27 @@ func TestStreamNodesByLabelProjectedHidesDeindexedNodes(t *testing.T) {
 	require.Len(t, nodes, count-len(hidden))
 	for _, node := range nodes {
 		require.NotContains(t, hidden, node.ID)
+	}
+}
+
+// A label entry whose node record is unreadable or gone is skipped in both
+// phases of the scan.
+func TestStreamNodesByLabelProjectedSkipsUnreadableRecords(t *testing.T) {
+	const count = labelScanPointLookups + 50
+	eng, created := labelScanFixture(t, count)
+	unreadable, gone := created[0], created[count-1]
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		if err := txn.Set(nodeKey(unreadable), []byte{0xff}); err != nil {
+			return err
+		}
+		return txn.Delete(nodeKey(gone))
+	}))
+	for _, properties := range [][]string{nil, {"i"}} {
+		nodes := streamLabelNodes(t, eng, "test:", "Common", properties)
+		require.Len(t, nodes, count-2)
+		for _, node := range nodes {
+			require.NotEqual(t, unreadable, node.ID)
+			require.NotEqual(t, gone, node.ID)
+		}
 	}
 }
