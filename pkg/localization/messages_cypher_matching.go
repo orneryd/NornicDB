@@ -247,7 +247,6 @@ func CypherMatchingRelationshipTypeExpressionInWritePattern(clause string) Messa
 	return cypherMatchingMessage(MessageCypherMatchingRelationshipTypeExpressionInWritePattern, "Relationship type expressions in patterns are not allowed in a "+clause+" clause, but only in a MATCH clause", map[string]any{"Clause": clause})
 }
 
-// CypherMatchingIsNotOperandInvalid is Neo4j's SyntaxError for n IS NOT <label>: IS NOT takes NULL, a type or a normal form, not a label expression (#860).
 // CypherMatchingPatternPredicateInWritePattern is Neo4j's SyntaxError for a
 // node or relationship pattern's own WHERE in CREATE or MERGE (#878).
 // Element is Node or Relationship.
@@ -261,12 +260,13 @@ func CypherMatchingPatternPredicateVariableLength() Message {
 	return cypherMatchingMessage(MessageCypherMatchingPatternPredicateVariableLength, "Relationship pattern predicates are not supported for variable-length relationships.", nil)
 }
 
-// CypherMatchingReturnStarNoVariables is Neo4j's SyntaxError for RETURN *
-// with no variable in scope.
+// CypherMatchingReturnStarNoVariables is the SyntaxError for RETURN * with
+// no variable in scope (Neo4j's code; NornicDB's wording).
 func CypherMatchingReturnStarNoVariables() Message {
 	return cypherMatchingMessage(MessageCypherMatchingReturnStarNoVariables, "RETURN * requires at least one variable in scope", nil)
 }
 
+// CypherMatchingIsNotOperandInvalid is Neo4j's SyntaxError for n IS NOT <label>: IS NOT takes NULL, a type or a normal form, not a label expression (#860).
 func CypherMatchingIsNotOperandInvalid(input string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingIsNotOperandInvalid, "Invalid input '"+input+"': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED'", map[string]any{"Input": input})
 }
