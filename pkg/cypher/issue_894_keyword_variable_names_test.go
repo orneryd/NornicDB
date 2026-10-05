@@ -306,3 +306,15 @@ func TestIssue894TraversalPathAggregateDistinct(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{"x", "x", "y"}}}, sorted(result.Rows))
 }
+
+// RETURN's own item check reads a keyword-named first item as a name
+// (RETURN union[0]). Answers are Neo4j 5.26.30's.
+func TestIssue894KeywordNamedFirstReturnItem(t *testing.T) {
+	exec := newAsyncStackTestExecutor(t)
+	ctx := context.Background()
+	for _, keyword := range []string{"union", "UNION", "where", "order", "skip", "limit"} {
+		result, err := exec.Execute(ctx, "WITH [1] AS "+keyword+" RETURN "+keyword+"[0] AS v", nil)
+		require.NoError(t, err, keyword)
+		require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows, keyword)
+	}
+}
