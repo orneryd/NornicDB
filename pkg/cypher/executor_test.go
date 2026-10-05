@@ -190,18 +190,18 @@ func TestExecuteNormalizesCypherSyntaxConfusables(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"keep → inside literal"}}, note.Rows)
 }
 
-func TestExecuteCompoundCreateWithDelete_Branches(t *testing.T) {
+func TestCreateDeletePipeline_Branches(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeCompoundCreateWithDelete(ctx, "CREATE (n:Tmp {name:'x'}) RETURN n")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid CREATE...WITH...DELETE")
+	created, err := exec.Execute(ctx, "CREATE (n:Tmp {name:'x'}) RETURN n", nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, created.Stats.NodesCreated)
 
 	// Edge delete branch.
-	res, err := exec.executeCompoundCreateWithDelete(ctx, "CREATE (a:TmpA)-[r:REL]->(b:TmpB) WITH r DELETE r RETURN count(r)")
+	res, err := exec.Execute(ctx, "CREATE (a:TmpA)-[r:REL]->(b:TmpB) WITH r DELETE r RETURN count(r)", nil)
 	require.NoError(t, err)
 	require.NotNil(t, res.Stats)
 	assert.Equal(t, 1, res.Stats.RelationshipsCreated)
@@ -209,23 +209,15 @@ func TestExecuteCompoundCreateWithDelete_Branches(t *testing.T) {
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, int64(1), res.Rows[0][0])
 
-	// Node delete with non-count RETURN branch should return nil placeholder.
-	res, err = exec.executeCompoundCreateWithDelete(ctx, "CREATE (n:TmpNode {name:'y'}) WITH n DELETE n RETURN n.name")
+	_, err = exec.Execute(ctx, "CREATE (n:TmpNode {name:'y'}) WITH n DELETE n RETURN n.name", nil)
+	require.Error(t, err)
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.EntityNotFound")
+	_, err = exec.Execute(ctx, "CREATE (n:TmpNode {name:'z'}) WITH n DELETE missing RETURN count(missing)", nil)
+	require.Error(t, err)
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	nodes, err := store.GetNodesByLabel("TmpNode")
 	require.NoError(t, err)
-	require.NotNil(t, res.Stats)
-	assert.Equal(t, 1, res.Stats.NodesCreated)
-	assert.Equal(t, 1, res.Stats.NodesDeleted)
-	require.Equal(t, []string{"n.name"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	assert.Nil(t, res.Rows[0][0])
-
-	// Delete target missing from created vars/edges should be a no-op for deletion stats.
-	res, err = exec.executeCompoundCreateWithDelete(ctx, "CREATE (n:TmpNode {name:'z'}) WITH n DELETE missing RETURN count(missing)")
-	require.NoError(t, err)
-	require.NotNil(t, res.Stats)
-	assert.Equal(t, 1, res.Stats.NodesCreated)
-	assert.Equal(t, 0, res.Stats.NodesDeleted)
-	assert.Equal(t, int64(1), res.Rows[0][0])
+	require.Empty(t, nodes)
 }
 
 func TestExecuteUnsupportedQuery(t *testing.T) {

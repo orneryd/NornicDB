@@ -10,22 +10,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// splitMultipleCreates splits a query into CREATE, WITH, and RETURN segments.
-func (e *StorageExecutor) splitMultipleCreates(cypher string) []string {
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
-		return nil
-	}
-	segments := make([]string, 0, len(clauses))
-	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseCreate, pipelineClauseWith, pipelineClauseReturn:
-			segments = append(segments, clause.text)
-		}
-	}
-	return segments
-}
-
 // containsString checks if a slice contains a string.
 func containsString(slice []string, s string) bool {
 	for _, item := range slice {

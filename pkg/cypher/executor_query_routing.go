@@ -310,41 +310,22 @@ skipMatchCallRoute:
 		return e.executeMerge(ctx, cypher)
 	}
 
-	var mergeIdx, createIdx, withIdx, deleteIdx, optionalMatchIdx int = -1, -1, -1, -1, -1
+	var mergeIdx, createIdx, withIdx, optionalMatchIdx int = -1, -1, -1, -1
 
 	if startsWithMatch {
 		mergeIdx = findKeywordIndex(cypher, "MERGE")
 		createIdx = findKeywordIndex(cypher, "CREATE")
 		optionalMatchIdx = findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH")
 	} else if startsWithCreate {
-		if clauses, ok := splitPipelineClauses(cypher); ok {
-			if pipelineHasClauseKind(clauses, pipelineClauseMerge) {
-				if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-					return outcome.result, outcome.err
-				}
-			}
-			createCount := 0
-			hasMutationBetweenCreates := false
-			hasRowPipelineClause := false
-			for _, clause := range clauses {
-				if clause.kind == pipelineClauseCreate {
-					createCount++
-				}
-				if clause.kind == pipelineClauseSet || clause.kind == pipelineClauseRemove || clause.kind == pipelineClauseMerge {
-					hasMutationBetweenCreates = true
-				}
-				if clause.kind == pipelineClauseWith || clause.kind == pipelineClauseUnwind || clause.kind == pipelineClauseMatch || clause.kind == pipelineClauseOptionalMatch {
-					hasRowPipelineClause = true
-				}
-			}
-			if createCount > 1 && !hasMutationBetweenCreates && !hasRowPipelineClause {
-				return e.executeMultipleCreates(ctx, cypher)
+		if !isCreateProcedureCommand(cypher) &&
+			!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
+			!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
+			!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
+			if _, ok := canExecuteAsPipeline(cypher); ok {
+				return e.executeRequiredPipeline(ctx, cypher)
 			}
 		}
 		withIdx = findKeywordIndex(cypher, "WITH")
-		if withIdx > 0 {
-			deleteIdx = findKeywordIndex(cypher, "DELETE")
-		}
 	}
 
 	if startsWithMatch && mergeIdx > 0 {
@@ -364,14 +345,8 @@ skipMatchCallRoute:
 		}
 		return e.executeCompoundMatchCreate(ctx, cypher)
 	}
-	if startsWithCreate && withIdx > 0 && deleteIdx > 0 {
-		return e.executeCompoundCreateWithDelete(ctx, cypher)
-	}
 	if startsWithCreate && withIdx > 0 {
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		return e.executeMultipleCreates(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 	if findKeywordIndex(cypher, "UNWIND") == 0 {
 		return e.executeTopLevelUnwind(ctx, cypher)
@@ -408,12 +383,7 @@ skipMatchCallRoute:
 		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
 		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
 		!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
-		if findKeywordIndexInContext(cypher, "MERGE") > 0 {
-			if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-				return outcome.result, outcome.err
-			}
-		}
-		return e.executeCreateSet(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
 	if startsWithKeywords(cypher, "ALTER", "DATABASE") {
@@ -629,6 +599,13 @@ skipMatchCallRoute:
 			detail: "UnexpectedSyntax",
 		}
 	}
+}
+
+func (e *StorageExecutor) executeRequiredPipeline(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
+		return outcome.result, outcome.err
+	}
+	return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "query could not be planned as a clause pipeline")
 }
 
 // executeTopLevelUnwind keeps autocommit and explicit-transaction routing in

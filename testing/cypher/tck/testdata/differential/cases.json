@@ -2725,5 +2725,38 @@
     "name": "issue728 folded statement clock evaluation",
     "query": "RETURN DATETIME.statement() = datetime.statement() AS same",
     "no_effects": true
+  },
+  {
+    "name": "issue908 adjacent CREATE retains DELETE",
+    "query": "CREATE (a:X) CREATE (b:Y) DELETE a"
+  },
+  {
+    "name": "issue908 CREATE WITH filter retains created node",
+    "query": "CREATE (a:X) WITH a WHERE false DELETE a"
+  },
+  {
+    "name": "issue908 CREATE DELETE retains count alias",
+    "query": "CREATE (a:X) WITH a DELETE a RETURN count(*) AS n"
+  },
+  {
+    "name": "issue908 CREATE connected DELETE rejects without effects",
+    "query": "CREATE (a:X)-[r:R]->(b:Y) WITH a DELETE a",
+    "expected_code": "Neo.ClientError.Schema.ConstraintValidationFailed",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 CREATE connected DETACH DELETE control",
+    "query": "CREATE (a:X)-[r:R]->(b:Y) WITH a DETACH DELETE a"
+  },
+  {
+    "name": "issue908 flat CREATE SET uses typed parameters",
+    "query": "CREATE (n:X {value:$value}) SET n.values = $values RETURN n.value, n.values",
+    "parameters": {"value":7, "values":[2,3]}
+  },
+  {
+    "name": "issue908 flat CREATE SET RETURN failure rolls back",
+    "query": "CREATE (n:X) SET n.value = 1 RETURN n.value / 0",
+    "expected_code": "Neo.ClientError.Statement.ArithmeticError",
+    "no_effects": true
   }
 ]

@@ -802,6 +802,128 @@ func TestCommaSeparatedCreateClausesPreserveVariableScope(t *testing.T) {
 	requireSingleValue(t, relationships, int64(2))
 }
 
+func TestGh908CreateCompositionUsesPipeline(t *testing.T) {
+	for _, test := range []struct {
+		name, query      string
+		created, deleted int
+		remainingX       int
+		columns          []string
+		rows             [][]interface{}
+	}{
+		{"multiple creates then delete", "CREATE (a:X) CREATE (b:Y) DELETE a", 2, 1, 0, nil, nil},
+		{"filtered WITH retains created node", "CREATE (a:X) WITH a WHERE false DELETE a", 1, 0, 1, nil, nil},
+		{"delete retains count alias", "CREATE (a:X) WITH a DELETE a RETURN count(*) AS n", 1, 1, 0, []string{"n"}, [][]interface{}{{int64(1)}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			oracle, oracleCtx := newConvergenceExecutor(t)
+			pipeline := oracle.executePipeline(oracleCtx, test.query)
+			require.NoError(t, pipeline.err)
+			require.True(t, pipeline.handled())
+			require.EqualValues(t, test.created, pipeline.result.Stats.NodesCreated)
+			require.EqualValues(t, test.deleted, pipeline.result.Stats.NodesDeleted)
+
+			exec, ctx := newConvergenceExecutor(t)
+			result, err := exec.Execute(ctx, test.query, nil)
+			require.NoError(t, err)
+			require.EqualValues(t, test.created, result.Stats.NodesCreated)
+			require.EqualValues(t, test.deleted, result.Stats.NodesDeleted)
+			nodes, err := exec.storage.GetNodesByLabel("X")
+			require.NoError(t, err)
+			require.Len(t, nodes, test.remainingX)
+			if test.columns != nil {
+				require.Equal(t, test.columns, pipeline.result.Columns)
+				require.Equal(t, test.rows, pipeline.result.Rows)
+				require.Equal(t, test.columns, result.Columns)
+				require.Equal(t, test.rows, result.Rows)
+			}
+		})
+	}
+}
+
+func TestGh908CreateCompositionDeleteSafety(t *testing.T) {
+	for _, detach := range []bool{false, true} {
+		t.Run(fmt.Sprintf("detach=%t", detach), func(t *testing.T) {
+			exec, ctx := newConvergenceExecutor(t)
+			query := "CREATE (a:X)-[:R]->(b:Y) WITH a DELETE a"
+			if detach {
+				query = "CREATE (a:X)-[:R]->(b:Y) WITH a DETACH DELETE a"
+			}
+			result, err := exec.Execute(ctx, query, nil)
+			if detach {
+				require.NoError(t, err)
+				require.Equal(t, 2, result.Stats.NodesCreated)
+				require.Equal(t, 1, result.Stats.NodesDeleted)
+				require.Equal(t, 1, result.Stats.RelationshipsCreated)
+				require.Equal(t, 1, result.Stats.RelationshipsDeleted)
+			} else {
+				require.Error(t, err)
+				require.Contains(t, statusText(err), "Neo.ClientError.Schema.ConstraintValidationFailed")
+			}
+			nodes, err := exec.storage.AllNodes()
+			require.NoError(t, err)
+			if detach {
+				require.Len(t, nodes, 1)
+				require.Equal(t, []string{"Y"}, nodes[0].Labels)
+			} else {
+				require.Empty(t, nodes)
+			}
+			edges, err := exec.storage.AllEdges()
+			require.NoError(t, err)
+			require.Empty(t, edges)
+		})
+	}
+}
+
+func TestGh908RequiredPipelineDeclineHasNoEffects(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	result, err := exec.executeRequiredPipeline(ctx, "CREATE (a:Declined)")
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	nodes, err := exec.storage.AllNodes()
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+}
+
+func TestGh908PipelineCreateCancellationHasNoEffects(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	ctx, cancel := context.WithCancel(ctx)
+	cancel()
+	rows, created, handled, err := exec.pipelineApplyCreateClauses(ctx, []pipelineRow{{}}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (a:Cancelled)"}})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, rows)
+	require.Nil(t, created)
+	require.False(t, handled)
+	nodes, err := exec.storage.AllNodes()
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+}
+
+func TestGh908FlatCreatePlanScopeAndReturnFailure(t *testing.T) {
+	t.Run("inherited Fabric bindings", func(t *testing.T) {
+		exec, ctx := newConvergenceExecutor(t)
+		exec.fabricRecordBindings = map[string]interface{}{"source": int64(7)}
+		outcome := exec.executePipeline(ctx, "CREATE (n:Bound) SET n.value = source RETURN n.value AS value")
+		require.True(t, outcome.handled())
+		require.NoError(t, outcome.err)
+		require.Equal(t, []string{"value"}, outcome.result.Columns)
+		require.Equal(t, [][]interface{}{{int64(7)}}, outcome.result.Rows)
+		nodes, err := exec.storage.GetNodesByLabel("Bound")
+		require.NoError(t, err)
+		require.Len(t, nodes, 1)
+		require.Equal(t, int64(7), nodes[0].Properties["value"])
+	})
+	t.Run("computed RETURN failure rolls back", func(t *testing.T) {
+		exec, ctx := newConvergenceExecutor(t)
+		_, err := exec.Execute(ctx, "CREATE (n:Failed) SET n.value = 1 RETURN n.value / 0", nil)
+		require.Error(t, err)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
+		nodes, err := exec.storage.AllNodes()
+		require.NoError(t, err)
+		require.Empty(t, nodes)
+	})
+}
+
 func BenchmarkSetExecutionPaths(b *testing.B) {
 	const query = "MATCH (node:SetBenchmark) SET node.value = node.value + 1 RETURN node.value AS value"
 	benchmark := func(b *testing.B, execute func(*StorageExecutor, context.Context) error) {

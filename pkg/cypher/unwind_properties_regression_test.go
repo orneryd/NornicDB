@@ -23,9 +23,9 @@ func TestPipelineCreateSkipsUnusedRowLiteral(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))
 	called := 0
-	_, _, handled, err := exec.pipelineApplyCreate(context.Background(), []pipelineRow{
+	_, _, handled, err := exec.pipelineApplyCreateClauses(context.Background(), []pipelineRow{
 		{"unused": countedLiteralStringer{calls: &called}},
-	}, "CREATE (n:MongoRecord)")
+	}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (n:MongoRecord)"}})
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Zero(t, called)
@@ -35,9 +35,9 @@ func TestPipelineCreateSkipsUnusedMapPropertyLiteral(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))
 	called := 0
-	_, _, handled, err := exec.pipelineApplyCreate(context.Background(), []pipelineRow{
+	_, _, handled, err := exec.pipelineApplyCreateClauses(context.Background(), []pipelineRow{
 		{"row": map[string]interface{}{"id": "found", "unused": countedLiteralStringer{calls: &called}}},
-	}, "CREATE (n:MongoRecord {id: row.id})")
+	}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (n:MongoRecord {id: row.id})"}})
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Zero(t, called)

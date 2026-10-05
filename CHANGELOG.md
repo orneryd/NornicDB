@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Route CREATE compositions and CREATE SET through the shared clause pipeline.
+  Retire private multi-CREATE, CREATE/WITH/DELETE and CREATE SET dispatchers;
+  preserve WITH filters, DELETE constraints, result aliases and typed errors.
+  Plan adjacent CREATE clauses atomically, preserve async optimistic metadata,
+  and evaluate flat CREATE/SET parameters without reconstructing query text (#908).
+
 - Adapt eligible large Cartesian COUNT and integer SUM aggregation to workload
   size, expression complexity and available GOMAXPROCS. Dynamically claim chunks
   with worker-local accumulators and deterministic representative/group merging;

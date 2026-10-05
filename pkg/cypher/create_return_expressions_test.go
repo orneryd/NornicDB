@@ -233,9 +233,9 @@ func TestCreateProjectionCanonicalTypedParameters(t *testing.T) {
 			var result *ExecuteResult
 			var err error
 			if strings.Contains(query, "CREATE (m") {
-				result, err = exec.executeMultipleCreates(ctx, query)
+				result, err = exec.Execute(ctx, query, params)
 			} else if strings.Contains(query, " SET ") {
-				result, err = exec.executeCreateSet(ctx, query)
+				result, err = exec.Execute(ctx, query, params)
 			} else {
 				result, err = exec.executeCreate(ctx, query)
 			}
@@ -250,7 +250,7 @@ func TestCreateProjectionCanonicalTypedParameters(t *testing.T) {
 func TestCreateProjectionCanonicalRowsAndPaths(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	ctx := context.Background()
-	result, err := exec.executeMultipleCreates(ctx, "CREATE p = (a:P)-[r:R]->(b:Q) WITH p AS path, a, r, 2 AS scalar CREATE (c:C) RETURN DISTINCT length(path) AS hops, type(r) AS kind, scalar, c LIMIT 1")
+	result, err := exec.Execute(ctx, "CREATE p = (a:P)-[r:R]->(b:Q) WITH p AS path, a, r, 2 AS scalar CREATE (c:C) RETURN DISTINCT length(path) AS hops, type(r) AS kind, scalar, c LIMIT 1", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"hops", "kind", "scalar", "c"}, result.Columns)
 	require.Len(t, result.Rows, 1)
