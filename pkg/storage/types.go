@@ -520,6 +520,18 @@ type ProjectedNodeReader interface {
 	GetNodeProjected(id NodeID, properties []string) (*Node, error)
 }
 
+// RelationshipEndpointChecker is an optional extension interface for
+// traversals that need a relationship's end node only to exist. For a node
+// that a committed relationship visible to the caller points to,
+// RelationshipEndpointVisible reports whether GetNode would return it, without
+// reading it. answered is false when the engine can't tell without reading the
+// node (a read-time filter such as decay can hide it); the caller then reads
+// the node. The answer relies on a committed relationship's endpoints
+// existing: a node with relationships can't be deleted without them.
+type RelationshipEndpointChecker interface {
+	RelationshipEndpointVisible(id NodeID) (visible, answered bool)
+}
+
 // NodeWithoutEmbeddingsReader is an optional extension interface for read paths
 // that need a node's metadata and user properties but not stored embedding
 // vectors. Implementations must preserve ID, labels, properties, timestamps,

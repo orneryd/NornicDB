@@ -214,6 +214,17 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 // metadata are still decoded from the node body. A nil properties slice falls
 // back to the full GetNode path; an empty non-nil slice returns no user
 // properties.
+// RelationshipEndpointVisible implements RelationshipEndpointChecker from the
+// ID dictionary: a deleted node's entry is removed with it. It doesn't answer
+// while decay filtering can hide a node at read time.
+func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
+	if id == "" || b.decayEnabled && !b.revealAll.Load() {
+		return false, false
+	}
+	_, visible = b.idDict.lookupNodeNumID(id)
+	return visible, true
+}
+
 func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID

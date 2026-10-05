@@ -45,6 +45,11 @@ var (
 	_ NodeProjectionReader          = (*AsyncEngine)(nil)
 	_ NodeProjectionReader          = (*NamespacedEngine)(nil)
 	_ NodeProjectionReader          = (*MemoryEngine)(nil)
+	_ RelationshipEndpointChecker   = (*BadgerEngine)(nil)
+	_ RelationshipEndpointChecker   = (*WALEngine)(nil)
+	_ RelationshipEndpointChecker   = (*AsyncEngine)(nil)
+	_ RelationshipEndpointChecker   = (*NamespacedEngine)(nil)
+	_ RelationshipEndpointChecker   = (*MemoryEngine)(nil)
 	_ NodeIterator                  = (*BadgerEngine)(nil)
 	_ NodeIterator                  = (*WALEngine)(nil)
 	_ NodeIterator                  = (*AsyncEngine)(nil)
@@ -169,6 +174,32 @@ func (ae *AsyncEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 		return nil, err
 	}
 	return projectCachedNodeForRead(node, properties), nil
+}
+
+// RelationshipEndpointVisible honors the async overlay as GetNode does: a
+// staged delete hides the node, a staged write shows it, and everything else
+// asks the underlying engine.
+func (ae *AsyncEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
+	ae.mu.RLock()
+	deleted := ae.deleteNodes[id]
+	_, staged := ae.nodeCache[id]
+	ae.mu.RUnlock()
+	if deleted || staged {
+		return staged && !deleted, true
+	}
+	if checker, ok := ae.engine.(RelationshipEndpointChecker); ok {
+		return checker.RelationshipEndpointVisible(id)
+	}
+	return false, false
+}
+
+// RelationshipEndpointVisible forwards to the underlying engine; WAL adds no
+// overlay.
+func (w *WALEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
+	if checker, ok := w.engine.(RelationshipEndpointChecker); ok {
+		return checker.RelationshipEndpointVisible(id)
+	}
+	return false, false
 }
 
 // GetNodeProjected forwards the projected read to the underlying engine. WAL
