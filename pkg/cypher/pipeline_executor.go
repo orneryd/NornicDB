@@ -386,7 +386,6 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 	// Allocated on the first match: most scans find nothing.
 	var positions []int
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
-	inSingle, inDouble := false, false
 	withSearch := isWithKeyword(keyword)
 	if keyword == "" {
 		return positions
@@ -396,22 +395,15 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 	first := asciiUpper(keyword[0])
 	for i := 0; i < len(query); i++ {
 		character := query[i]
-		if character == '\\' && (inSingle || inDouble) {
-			i++
-			continue
-		}
 		switch character {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-			}
-		}
-		if inSingle || inDouble {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(query, i, character) - 1
 			continue
+		case '/':
+			if end := queryCommentEnd(query, i); end >= 0 {
+				i = end - 1
+				continue
+			}
 		}
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && asciiUpper(character) == first &&
 			i+len(keyword) <= len(query) && strings.EqualFold(query[i:i+len(keyword)], keyword) &&
@@ -631,11 +623,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		}
 		switch clause.kind {
 		case pipelineClauseMatch:
+			hint := e.pipelineMatchHint(clauses[idx+1:])
 			input := source
 			if input == nil {
 				input = pipelineRowsSource(rows)
 			}
-			matched, supported, err := e.pipelineNodeMatchSource(ctx, input, clause.text, pipelineReadOnlyTail(clauses[idx+1:]))
+			matched, supported, err := e.pipelineNodeMatchSourceWithHint(ctx, input, clause.text, hint)
 			if err != nil {
 				return nil, true, err
 			}
@@ -652,7 +645,6 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					return pipelineDecline(ctx, wrote, clause.text)
 				}
 			}
-			hint := e.pipelineMatchHint(clauses[idx+1:])
 			newRows, ok, err := e.pipelineApplyMatchWithHint(ctx, rows, clause.text, hint)
 			if err != nil {
 				return nil, true, err
@@ -734,6 +726,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			wrote = true
 		case pipelineClauseWith:
 			if source != nil {
+				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
+					source = windowed
+					scope = pipelineProjectionScope(scope, clause.text)
+					continue
+				}
 				if plan, local := parsePipelineRowWith(clause.text); local {
 					source = e.pipelineWithRowSource(ctx, source, plan)
 					scope = pipelineProjectionScope(scope, clause.text)
@@ -2045,6 +2042,28 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 
 func (e *StorageExecutor) pipelineMatchHint(remaining []pipelineClause) pipelineMatchPhysicalHint {
 	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: pipelineReadOnlyTail(remaining)}
+	if len(remaining) > 0 && remaining[0].kind == pipelineClauseWith {
+		clause := remaining[0].text
+		if topLevelKeywordIndex(clause, "WHERE") >= 0 {
+			return hint
+		}
+		end := len(clause)
+		for _, keyword := range []string{"SKIP", "LIMIT"} {
+			if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
+				end = index
+			}
+		}
+		if _, local := parsePipelineRowWith(clause[:end]); !local {
+			return hint
+		}
+		limit, hasLimit := e.parseIntModifier(context.Background(), clause, "LIMIT")
+		skip, _ := e.parseIntModifier(context.Background(), clause, "SKIP")
+		if !hasLimit || limit <= 0 || skip < 0 || skip > int(^uint(0)>>1)-limit {
+			return hint
+		}
+		hint.limit, hint.earlyLimit = skip+limit, skip+limit
+		return hint
+	}
 	var terminalReturn string
 	for index, clause := range remaining {
 		if clause.kind != pipelineClauseReturn || index != len(remaining)-1 {
@@ -2934,8 +2953,7 @@ func (e *StorageExecutor) pipelineApplyCreateClauses(ctx context.Context, rows [
 func (e *StorageExecutor) pipelineCreateRow(ctx context.Context, row pipelineRow, clauses []pipelineClause, created *ExecuteResult) (pipelineRow, error) {
 	plan := acquireCreatePlan()
 	defer plan.release()
-	nodes := make(map[string]*storage.Node)
-	edges := make(map[string]*storage.Edge)
+	nodes, edges := plan.bindings()
 	newRow := make(pipelineRow, len(row))
 	for name, value := range row {
 		newRow[name] = value

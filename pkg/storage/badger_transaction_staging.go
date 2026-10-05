@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // kvWriter is the write target of the helpers that allocate numeric IDs
@@ -29,6 +30,75 @@ type kvWriter interface {
 type stagedKV BadgerTransaction
 
 func (tx *BadgerTransaction) staged() *stagedKV { return (*stagedKV)(tx) }
+
+func (tx *BadgerTransaction) bufferEdgePhysicalWritesLocked(edge *Edge) error {
+	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.staged(), namespaceForEdgeID(edge.ID), edge)
+	if err != nil {
+		return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
+	}
+	tx.bufferSet(edgeKey(edge.ID), edgeBytes)
+	outKey, err := tx.engine.outgoingIndexKeyString(tx.staged(), edge.StartNode, edge.ID)
+	if err != nil {
+		return fmt.Errorf("outgoing index: %w", err)
+	}
+	header := adjacencyValueFromRecord(edgeBytes)
+	tx.bufferSet(outKey, header)
+	inKey, err := tx.engine.incomingIndexKeyString(tx.staged(), edge.EndNode, edge.ID)
+	if err != nil {
+		return fmt.Errorf("incoming index: %w", err)
+	}
+	tx.bufferSet(inKey, header)
+	typeKey, err := tx.engine.edgeTypeIndexKeyString(tx.staged(), edge.Type, edge.ID)
+	if err != nil {
+		return fmt.Errorf("edge type index: %w", err)
+	}
+	tx.bufferSet(typeKey, []byte{})
+	if err := tx.bufferSetEdgeBetweenIndexes(edge); err != nil {
+		return fmt.Errorf("edge-between index: %w", err)
+	}
+	return nil
+}
+
+func (tx *BadgerTransaction) materializeDeferredEdgeLocked(identifier EdgeID) error {
+	if _, deferred := tx.deferredEdgeWrites[identifier]; !deferred {
+		return nil
+	}
+	if err := tx.bufferEdgePhysicalWritesLocked(tx.pendingEdges[identifier]); err != nil {
+		return err
+	}
+	delete(tx.deferredEdgeWrites, identifier)
+	return nil
+}
+
+func (tx *BadgerTransaction) materializeDeferredEdgesLocked() error {
+	if len(tx.deferredEdgeWrites) == 0 {
+		return nil
+	}
+	for _, operation := range tx.operations {
+		if operation.Type != OpCreateEdge {
+			continue
+		}
+		if err := tx.materializeDeferredEdgeLocked(operation.EdgeID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (tx *BadgerTransaction) physicalOperationsLocked() []Operation {
+	if len(tx.cancelledEdgeWrites) == 0 {
+		return tx.operations
+	}
+	operations := make([]Operation, 0, len(tx.operations))
+	for _, operation := range tx.operations {
+		if _, cancelled := tx.cancelledEdgeWrites[operation.EdgeID]; cancelled &&
+			(operation.Type == OpCreateEdge || operation.Type == OpDeleteEdge) {
+			continue
+		}
+		operations = append(operations, operation)
+	}
+	return operations
+}
 
 // Set stages key = value. Like Badger's Txn.Set, it keeps value without
 // copying it; the caller must not modify it afterwards.

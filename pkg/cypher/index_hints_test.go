@@ -8,6 +8,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSharedLexicalSchemaAndHintQuotedNames(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (n:`Label)part` {`key]part`:7})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE INDEX quoted_lexical FOR (n:`Label)part`) ON (n.`key]part`)", nil)
+	require.NoError(t, err)
+	query := "MATCH (n:`Label)part`) USING INDEX n:`Label)part`(`key]part`) RETURN properties(n) AS value"
+	hints, cleanQuery := ParseIndexHints(query)
+	require.Len(t, hints, 1)
+	require.Equal(t, "Label)part", hints[0].Label)
+	require.Equal(t, []string{"key]part"}, hints[0].Properties)
+	result, err := exec.Execute(ctx, cleanQuery, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"value"}, result.Columns)
+	require.Equal(t, [][]interface{}{{map[string]interface{}{"key]part": int64(7)}}}, result.Rows)
+}
+
 func TestParseIndexHints(t *testing.T) {
 	tests := []struct {
 		name          string

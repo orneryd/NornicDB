@@ -11,20 +11,11 @@ import (
 // the name as written (quotes included; normalizeProjectionColumnName removes
 // them), the offset after it, and whether a name starts there.
 func scanSymbolicName(s string, start int) (string, int, bool) {
-	if start < len(s) && s[start] == '`' {
-		for index := start + 1; index < len(s); index++ {
-			if s[index] != '`' {
-				continue
-			}
-			if index+1 < len(s) && s[index+1] == '`' {
-				index++
-				continue
-			}
-			return s[start : index+1], index + 1, index > start+1
-		}
-		return "", start, false
+	_, end, ok := scanIdentifierToken(s, start)
+	if !ok {
+		return "", end, false
 	}
-	return scanIdentifierToken(s, start)
+	return s[start:end], end, true
 }
 
 // isPatternVariableName reports whether name is exactly one symbolic name,

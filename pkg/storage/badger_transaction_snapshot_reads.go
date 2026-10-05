@@ -56,10 +56,48 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 	tx.snapshotLabelPrefixNodeBytes[key] = bytes
 	tx.snapshotLabelPrefixBytes += bytes - previousBytes
 	if indexNodesByID {
+		if tx.snapshotPrefixNodeByID == nil {
+			tx.snapshotPrefixNodeByID = make(map[NodeID]*Node, len(nodes))
+			tx.snapshotPrefixNodeBytesByID = make(map[NodeID]int, len(nodes))
+		}
 		for _, node := range nodes {
 			tx.cacheSnapshotPrefixNodeByIDLocked(txn, node)
 		}
 	}
+}
+
+func (tx *BadgerTransaction) committedNodeLabelsLocked(identifier NodeID) ([]string, error) {
+	if labels, cached := tx.snapshotNodeLabels[identifier]; cached {
+		return labels, nil
+	}
+	node, err := tx.getCommittedNodeLocked(identifier)
+	if err != nil {
+		return nil, err
+	}
+	return tx.cacheCommittedNodeLabelsLocked(node), nil
+}
+
+func (tx *BadgerTransaction) cacheCommittedNodeLabelsLocked(node *Node) []string {
+	if labels, cached := tx.snapshotNodeLabels[node.ID]; cached {
+		return labels
+	}
+	available := maxSnapshotPrefixNodeCacheBytes - tx.snapshotNodeLabelBytes
+	for _, label := range node.Labels {
+		if len(label) > available {
+			return node.Labels
+		}
+		available -= len(label)
+	}
+	if len(tx.snapshotNodeLabels) < maxSnapshotPrefixNodeCacheNodes {
+		if tx.snapshotNodeLabels == nil {
+			tx.snapshotNodeLabels = make(map[NodeID][]string)
+		}
+		labels := append([]string(nil), node.Labels...)
+		tx.snapshotNodeLabels[node.ID] = labels
+		tx.snapshotNodeLabelBytes = maxSnapshotPrefixNodeCacheBytes - available
+		return labels
+	}
+	return node.Labels
 }
 
 // nodeHasEmbeddingSidecar reports whether nodeID has a worker sidecar

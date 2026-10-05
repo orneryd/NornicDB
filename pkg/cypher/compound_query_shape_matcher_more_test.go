@@ -6,121 +6,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCompoundQueryShapeMatcher_MoreRejectBranches(t *testing.T) {
-	tests := []struct {
-		name   string
-		query  string
-		reason string
-	}{
-		{"bad_left_node", "MATCH n, (b:B) WITH n LIMIT 1 CREATE (n)-[r:REL]->(b) DELETE r", "invalid left"},
-		{"bad_right_node", "MATCH (a:A), b WITH a LIMIT 1 CREATE (a)-[r:REL]->(b) DELETE r", "invalid right"},
-		{"bad_create_clause", "MATCH (a:A), (b:B) WITH a LIMIT 1 CREATE (a)-[:REL]->(b) DELETE r", "invalid CREATE"},
-		{"missing_delete_var", "MATCH (a:A), (b:B) WITH a LIMIT 1 CREATE (a)-[r:REL]->(b) DELETE   ", "missing DELETE"},
-		{"invalid_limit", "MATCH (a:A), (b:B) WITH a LIMIT -1 CREATE (a)-[r:REL]->(b) DELETE r", "invalid LIMIT"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m, ok := matchCompoundCreateDeleteRelShape(tt.query)
-			require.False(t, ok)
-			require.Contains(t, m.Probe.RejectReason, tt.reason)
-		})
-	}
-
-	// Explicitly hit missing top-level comma split and missing LIMIT-literal branches.
-	m, ok := matchCompoundCreateDeleteRelShape("MATCH (a:A) WITH a LIMIT 1 CREATE (a)-[r:REL]->(b) DELETE r")
-	require.False(t, ok)
-	require.Contains(t, m.Probe.RejectReason, "expected two MATCH")
-	m, ok = matchCompoundCreateDeleteRelShape("MATCH (a:A), (b:B) WITH a LIMIT   CREATE (a)-[r:REL]->(b) DELETE r")
-	require.False(t, ok)
-	require.Contains(t, m.Probe.RejectReason, "missing LIMIT")
-
-	propTests := []struct {
-		name   string
-		query  string
-		reason string
-	}{
-		{"bad_match_split", "MATCH (a:A {id:1}) CREATE (a)-[r:R]->(b) DELETE r", "expected two MATCH"},
-		{"bad_left_pattern", "MATCH a, (b:B {id:2}) CREATE (a)-[r:R]->(b) DELETE r", "invalid left"},
-		{"bad_delete", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) DELETE", "missing DELETE"},
-	}
-	for _, tt := range propTests {
-		t.Run(tt.name, func(t *testing.T) {
-			m, ok := matchCompoundPropCreateDeleteRelShape(tt.query)
-			require.False(t, ok)
-			require.Contains(t, m.Probe.RejectReason, tt.reason)
-		})
-	}
-	m, ok = matchCompoundPropCreateDeleteRelShape("MATCH (a:A {id:1}), b CREATE (a)-[r:R]->(b) DELETE r")
-	require.False(t, ok)
-	require.Contains(t, m.Probe.RejectReason, "invalid right")
-
-	countTests := []struct {
-		name   string
-		query  string
-		reason string
-	}{
-		{"missing_with_var", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH   DELETE r RETURN count(r)", "shape not found"}, // DELETE after WITH is a name (#740); the shape is rejected either way
-		{"missing_delete_var", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH r DELETE   RETURN count(r)", "missing DELETE"},
-		{"bad_return_count", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH r DELETE r RETURN r", "not COUNT"},
-		{"missing_count_var", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH r DELETE r RETURN count()", "missing COUNT"},
-	}
-	for _, tt := range countTests {
-		t.Run(tt.name, func(t *testing.T) {
-			m, ok := matchCompoundPropCreateDeleteReturnCountRelShape(tt.query)
-			require.False(t, ok)
-			require.Contains(t, m.Probe.RejectReason, tt.reason)
-		})
-	}
-	m, ok = matchCompoundPropCreateDeleteReturnCountRelShape("MATCH (a:A {id:1}) CREATE (a)-[r:R]->(b) WITH r DELETE r RETURN count(r)")
-	require.False(t, ok)
-	require.Contains(t, m.Probe.RejectReason, "expected two MATCH")
-	m, ok = matchCompoundPropCreateDeleteReturnCountRelShape("MATCH a, (b:B {id:2}) CREATE (a)-[r:R]->(b) WITH r DELETE r RETURN count(r)")
-	require.False(t, ok)
-	require.Contains(t, m.Probe.RejectReason, "invalid left")
-	m, ok = matchCompoundPropCreateDeleteReturnCountRelShape("MATCH (a:A {id:1}), b CREATE (a)-[r:R]->(b) WITH r DELETE r RETURN count(r)")
-	require.False(t, ok)
-	require.Contains(t, m.Probe.RejectReason, "invalid right")
-	m, ok = matchCompoundPropCreateDeleteReturnCountRelShape("MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[:R]->(b) WITH r DELETE r RETURN count(r)")
-	require.False(t, ok)
-	require.Contains(t, m.Probe.RejectReason, "invalid CREATE")
-}
-
 func TestCompoundQueryShapeMatcher_MoreHelperParserBranches(t *testing.T) {
-	// splitTopLevelCommaShape handles bracket depth and empty sides.
-	_, _, ok := splitTopLevelCommaShape(", (b:B)")
-	require.False(t, ok)
-	_, _, ok = splitTopLevelCommaShape("(a:A),")
-	require.False(t, ok)
-	left, right, ok := splitTopLevelCommaShape("(a:A {v:[1,2]}), (b:B {v:'x,y'})")
-	require.True(t, ok)
-	require.Equal(t, "(a:A {v:[1,2]})", left)
-	require.Equal(t, "(b:B {v:'x,y'})", right)
 
-	// parseLabeledNodePattern and property parsing rejects malformed bodies.
-	_, ok = parseLabeledNodePattern("(n:User {id})")
-	require.False(t, ok)
-	_, ok = parseLabeledNodePattern("(n: {id:1})")
-	require.False(t, ok)
-	_, _, ok = parseSinglePropertyAssignment(": 1")
-	require.False(t, ok)
-
-	// parseCreateRelationshipClause rejects missing syntax pieces.
-	_, ok = parseCreateRelationshipClause("CREATE a-[r:R]->(b)")
-	require.False(t, ok)
-	_, ok = parseCreateRelationshipClause("CREATE (a)-[r:R](b)")
-	require.False(t, ok)
-	_, ok = parseCreateRelationshipClause("CREATE (a)-[r:R]->(b) RETURN b")
-	require.False(t, ok)
-	_, ok = parseCreateRelationshipClause("CREATE (a)-[r]->(b)")
-	require.False(t, ok)
-	_, ok = parseCreateRelationshipClause("CREATE (a)-[:R]->(b)")
-	require.False(t, ok)
-	_, ok = parseCreateRelationshipClause("CREATE (a)-[r:R]->")
-	require.False(t, ok)
-
-	// parseBareNodeReference/extract helpers with quotes and malformed delimiters.
-	_, _, ok = parseBareNodeReference("(a b)")
-	require.False(t, ok)
 	inside, rest, ok := extractParenSection("(')')tail")
 	require.True(t, ok)
 	require.Equal(t, "')'", inside)
@@ -135,10 +22,98 @@ func TestCompoundQueryShapeMatcher_MoreHelperParserBranches(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestCompoundQueryShapeMatcher_CountReturnFormattingBranches(t *testing.T) {
-	q := "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:REL]->(b) WITH r DELETE r RETURN \t count(r)  "
-	m, ok := matchCompoundPropCreateDeleteReturnCountRelShape(q)
+func TestSharedDelimiterSectionsUseCypherQuoting(t *testing.T) {
+	for _, test := range []struct {
+		text, inside string
+		open, close  rune
+	}{
+		{"('a\\' ) b')tail", "'a\\' ) b'", '(', ')'},
+		{"[\"a\\\" ] b\"]tail", "\"a\\\" ] b\"", '[', ']'},
+		{"(`name)part`)tail", "`name)part`", '(', ')'},
+		{"[`name]part`]tail", "`name]part`", '[', ']'},
+		{"(a /* ) */ (b))tail", "a /* ) */ (b)", '(', ')'},
+		{"[a /* ] */ [b]]tail", "a /* ] */ [b]", '[', ']'},
+	} {
+		t.Run(test.text, func(t *testing.T) {
+			var inside, rest string
+			var ok bool
+			if test.open == '(' {
+				inside, rest, ok = extractParenSection(test.text)
+				require.Equal(t, len(test.inside)+1, findMatchingCallParen(test.text, 0))
+			} else {
+				inside, rest, ok = extractBracketSection(test.text)
+				require.Equal(t, len(test.inside)+1, findMatchingBracket(test.text, 0))
+			}
+			require.True(t, ok)
+			require.Equal(t, test.inside, inside)
+			require.Equal(t, "tail", rest)
+			require.Equal(t, len(test.inside)+1, findMatchingDelimiter(test.text, 0, test.open, test.close))
+			callInside, callRest, callOK := parseCallTailDelimited("  "+test.text, byte(test.open), byte(test.close))
+			require.True(t, callOK)
+			require.Equal(t, test.inside, callInside)
+			require.Equal(t, rest, callRest)
+		})
+	}
+}
+
+func TestSharedIdentifierTokenSupportsQuotedNames(t *testing.T) {
+	for _, test := range []struct{ text, name, rest string }{
+		{"alpha_2 tail", "alpha_2", " tail"},
+		{"`two words` tail", "two words", " tail"},
+		{"`a``b` tail", "a`b", " tail"},
+		{"`name]part` tail", "name]part", " tail"},
+	} {
+		t.Run(test.text, func(t *testing.T) {
+			name, rest, ok := parseIdentifierToken(test.text)
+			require.True(t, ok)
+			require.Equal(t, test.name, name)
+			require.Equal(t, test.rest, rest)
+			callName, callRest, callOK := parseCallTailIdentifier(test.text)
+			require.True(t, callOK)
+			require.Equal(t, name, callName)
+			require.Equal(t, rest, callRest)
+			written, end, symbolic := scanSymbolicName(test.text, 0)
+			require.True(t, symbolic)
+			require.Equal(t, len(test.text)-len(rest), end)
+			require.Equal(t, test.text[:end], written)
+		})
+	}
+}
+
+func TestSharedLexicalBoundaries(t *testing.T) {
+	for _, text := range []string{"", "1bad", "``", "`unclosed", "`a``"} {
+		name, rest, ok := parseIdentifierToken(text)
+		require.False(t, ok, text)
+		require.Empty(t, name)
+		require.Empty(t, rest)
+	}
+	for _, start := range []int{-1, 0, 2, 3} {
+		name, end, ok := scanIdentifierToken("1a", start)
+		require.False(t, ok)
+		require.Empty(t, name)
+		require.Equal(t, start, end)
+		written, next, symbolic := scanSymbolicName("1a", start)
+		require.False(t, symbolic)
+		require.Empty(t, written)
+		require.Equal(t, start, next)
+	}
+	for _, text := range []string{"", "x", "[", "['unclosed]", "[`unclosed]", "[/* unclosed]", "[[x]"} {
+		inside, rest, ok := extractBracketSection(text)
+		require.False(t, ok, text)
+		require.Empty(t, inside)
+		require.Empty(t, rest)
+	}
+	inside, rest, ok := extractBracketSection("[]tail")
 	require.True(t, ok)
-	require.True(t, m.Probe.Matched)
-	require.Equal(t, "r", m.Captures.String("count_var"))
+	require.Empty(t, inside)
+	require.Equal(t, "tail", rest)
+	for _, start := range []int{-1, 1, 2} {
+		require.Equal(t, -1, findMatchingDelimiter("()", start, '(', ')'))
+	}
+	end, closed := scanCypherQuotedText("'x'", -1, '\'')
+	require.False(t, closed)
+	require.Equal(t, -1, end)
+	end, closed = scanCypherQuotedText("'x'", 1, '\'')
+	require.False(t, closed)
+	require.Equal(t, 1, end)
 }

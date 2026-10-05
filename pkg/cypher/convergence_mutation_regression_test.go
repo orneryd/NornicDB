@@ -24,6 +24,35 @@ func requireSingleValue(t *testing.T, result *ExecuteResult, want interface{}) {
 	require.Equal(t, want, result.Rows[0][0])
 }
 
+func TestGh908PooledCreateBindingsStayRowLocal(t *testing.T) {
+	exec, ctx := newConvergenceExecutor(t)
+	query := `UNWIND $values AS value
+		CREATE (a:Source {id: value}), (b:Target {id: value})
+		CREATE (a)-[r:ROW {id: value}]->(b)
+		RETURN a.id, r.id, b.id ORDER BY a.id`
+	for _, first := range []int64{1, 3} {
+		result, err := exec.Execute(ctx, query, map[string]interface{}{
+			"values": []interface{}{first, first + 1},
+		})
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{
+			{first, first, first},
+			{first + 1, first + 1, first + 1},
+		}, result.Rows)
+		require.EqualValues(t, 4, result.Stats.NodesCreated)
+		require.EqualValues(t, 2, result.Stats.RelationshipsCreated)
+	}
+	result, err := exec.Execute(ctx, `MATCH (a:Source)-[r:ROW]->(b:Target)
+		RETURN a.id, r.id, b.id ORDER BY a.id`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{
+		{int64(1), int64(1), int64(1)},
+		{int64(2), int64(2), int64(2)},
+		{int64(3), int64(3), int64(3)},
+		{int64(4), int64(4), int64(4)},
+	}, result.Rows)
+}
+
 func TestRelationshipSetExpressionsUseRelationshipScope(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
 	_, err := exec.Execute(ctx, "CREATE (:O {id:2}), (:I {sku:'a1'})", nil)
@@ -922,6 +951,54 @@ func TestGh908FlatCreatePlanScopeAndReturnFailure(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, nodes)
 	})
+}
+
+func TestGh908CreateDeleteRelationshipUsesMatchedRows(t *testing.T) {
+	for _, test := range []struct {
+		name, query string
+		writes      int
+		count       bool
+	}{
+		{"zero WITH limit", "MATCH (a:A), (b:B) WITH a, b LIMIT 0 CREATE (a)-[r:R]->(b) DELETE r", 0, false},
+		{"two WITH rows", "MATCH (a:A), (b:B) WITH a, b LIMIT 2 CREATE (a)-[r:R]->(b) DELETE r", 2, false},
+		{"duplicate property endpoints", "MATCH (a:A {id:1}), (b:B {id:2}) CREATE (a)-[r:R]->(b) DELETE r RETURN count(r)", 4, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			exec, ctx := newConvergenceExecutor(t)
+			_, err := exec.Execute(ctx, "CREATE (:A {id:1}), (:A {id:1}), (:B {id:2}), (:B {id:2})", nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(ctx, test.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, test.writes, result.Stats.RelationshipsCreated)
+			require.Equal(t, test.writes, result.Stats.RelationshipsDeleted)
+			if test.count {
+				require.Equal(t, []string{"count(r)"}, result.Columns)
+				require.Equal(t, [][]interface{}{{int64(test.writes)}}, result.Rows)
+			}
+			nodes, err := exec.storage.AllNodes()
+			require.NoError(t, err)
+			require.Len(t, nodes, 4)
+			edges, err := exec.storage.AllEdges()
+			require.NoError(t, err)
+			require.Empty(t, edges)
+		})
+	}
+}
+
+func TestGh908CreateDeleteRelationshipPropagatesWriteFailure(t *testing.T) {
+	base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "rejected-create-delete")
+	exec := NewStorageExecutor(&edgeRejectingEngine{Engine: base})
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Actor), (:Movie)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r:TEMP]->(m) DELETE r", nil)
+	require.ErrorIs(t, err, errEdgeRejected)
+	nodes, err := base.AllNodes()
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+	edges, err := base.AllEdges()
+	require.NoError(t, err)
+	require.Empty(t, edges)
 }
 
 func BenchmarkSetExecutionPaths(b *testing.B) {

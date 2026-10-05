@@ -112,6 +112,9 @@ func (t *pipelineNodeMatchTemplate) node(ctx context.Context, e *StorageExecutor
 	if !t.usable {
 		return nodePatternInfo{}, false
 	}
+	if len(t.properties) == 0 {
+		return nodePatternInfo{variable: t.variable, labels: t.labels, labelErr: t.labelErr}, true
+	}
 	props, ok := e.evaluatePipelineProperties(ctx, t.properties, row)
 	if !ok {
 		return nodePatternInfo{}, false

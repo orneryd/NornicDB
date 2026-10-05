@@ -270,6 +270,22 @@ Unhandled queries must fail like Neo4j fails them, through the converged pipelin
 	placement/convergence acceptance stays open. Unsupported compiler shapes still
 	use the shared typed interpreter; whole queries are not allocation-free.
 
+## Shared Scanner And Mutation Performance Increment (#908, Uncommitted)
+
+- [x] Centralize identifier, quoted-text and delimiter scanners across CALL, CREATE, symbolic names, schema and index-hint parsing; preserve raw symbolic-name spelling and decoded identifier semantics.
+- [x] Remove the synthetic MATCH/CREATE/DELETE shortcut and exercise real relationship writes through the shared pipeline. Public controls cover LIMIT 0/2, all four matched combinations, COUNT, and write rejection.
+- [x] Stream row-local WITH windows, bound MATCH candidate prefixes safely, cache immutable WITH/MATCH/CREATE syntax, allocate alternative candidate maps lazily, and omit empty MATCH property maps.
+- [x] Stage property-free unconstrained transient relationships in the shared transaction owner; retain logical operations/counters and materialize surviving edges in CREATE-operation order. Incoming pattern-comprehension ordering passes ten repetitions.
+- [x] Retain the allocation-saving transaction snapshot-label cache. Size node-prefix lookup maps from the actual bounded prefix, pool CREATE binding maps with cleared references and bounded retention, allocate path maps only for named paths, and reuse compiled CREATE pattern grouping.
+- [x] Add isolated recreated-edge lifecycle and public multi-row/multi-statement CREATE binding controls. Recreated edges clear the deleted marker; reused IDs conservatively bypass transient cancellation. Focused races and both-parser row-isolation controls pass.
+- [x] Full storage and both complete Cypher parser suites pass on the retained increment: 68.050s / 42.139s / 44.571s; package coverage 87.5% / 87.1% / 87.0%, respectively. This does not meet the package-wide 90% target.
+- [x] After lazy path maps and compiled CREATE grouping, the complete Nornic repository run passes (89 test-bearing packages; log /tmp/nornicdb-908-repository-1791208955939.log), touched-package vet and production build pass, and focused ANTLR mutation/scanner/direction controls pass twice under race detection.
+- [ ] Restore historical hot-path throughput before publication. CPU1, 10,000-op profiled samples on Apple M2 Max: published synthetic-shortcut baseline 15.289-15.529 us/op, 62,070-62,071 B/op, 101 allocations; correct shared execution initially 7.403 ms/op, 11,158,778 B/op, 65,463 allocations; retained pooled-binding increment 32.956-35.102 us/op, about 76,040 B/op, 297 allocations. The 60K ops/sec target is not restored.
+	- Final storage-inclusive compiler-overlay comparison (/tmp/nornicdb-908-matched-UtHSD8): baseline 15.261-15.945 us/op, 62,070-62,071 B/op, 101 allocations; retained lazy-path/grouping increment 33.619-34.635 us/op, 75,990-75,992 B/op, 296 allocations. No worktrees or weakened throughput assertions were used.
+- [ ] Complete final repository/race/vet/build, changed-helper coverage, TCK/reference and matched benchmark gates; update CHANGELOG and publish only after required regressions and performance acceptance are resolved.
+- Boundary: ParseIndexHints/ValidateIndexHints have no production consumers. The quoted schema/hint control executes the parser's cleaned query; it does not claim live hint integration or a proven quoted-property evaluator defect.
+- Discarded experiment: a snapshot-timestamp first-index-ID cache added two allocations without measurable gains; it was removed completely. No storage layout/version changes were made.
+
 ## 8. Retire remaining divergence
 
 - [x] 8.1 Converge non-policy DDL and relevant node/edge kernels with contract tests and benchmarks.

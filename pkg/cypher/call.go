@@ -1217,50 +1217,11 @@ func parseCallTailIdentifierAndOptionalType(input string) (variable, label strin
 }
 
 func parseCallTailIdentifier(input string) (string, string, bool) {
-	text := strings.TrimSpace(input)
-	if text == "" || !isIdentifierStart(text[0]) {
-		return "", "", false
-	}
-	i := 1
-	for i < len(text) && isIdentifierPart(text[i]) {
-		i++
-	}
-	return text[:i], text[i:], true
+	return parseIdentifierToken(input)
 }
 
 func parseCallTailDelimited(input string, open, close byte) (inside, rest string, ok bool) {
-	text := strings.TrimSpace(input)
-	if text == "" || text[0] != open {
-		return "", "", false
-	}
-	depth := 0
-	inSingle := false
-	inDouble := false
-	for i := 0; i < len(text); i++ {
-		ch := text[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-		case ch == '\'':
-			inSingle = true
-		case ch == '"':
-			inDouble = true
-		case ch == open:
-			depth++
-		case ch == close:
-			depth--
-			if depth == 0 {
-				return text[1:i], text[i+1:], true
-			}
-		}
-	}
-	return "", "", false
+	return extractDelimitedSection(strings.TrimSpace(input), rune(open), rune(close))
 }
 
 func parseCallTailSinglePropertyMap(input string) (key, expr, rest string, ok bool) {

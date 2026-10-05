@@ -102,10 +102,12 @@ type BadgerTransaction struct {
 	// pendingIndex lists pendingNodes by label and indexed property value,
 	// for property-index lookups made inside the transaction. Nil until the
 	// first such lookup (badger_transaction_pending_index.go).
-	pendingIndex *pendingNodeIndex
-	pendingEdges map[EdgeID]*Edge
-	deletedNodes map[NodeID]struct{}
-	deletedEdges map[EdgeID]struct{}
+	pendingIndex        *pendingNodeIndex
+	pendingEdges        map[EdgeID]*Edge
+	deferredEdgeWrites  map[EdgeID]struct{}
+	cancelledEdgeWrites map[EdgeID]struct{}
+	deletedNodes        map[NodeID]struct{}
+	deletedEdges        map[EdgeID]struct{}
 	// snapshotLabelNodes retains completed, immutable label streams for the
 	// lifetime of this pinned snapshot. Bounded/aborted streams are never
 	// cached, so LIMIT preserves early termination and memory proportionality.
@@ -115,7 +117,9 @@ type BadgerTransaction struct {
 	// snapshot (MATCH (n:L) SET ...) doesn't read the node again
 	// (getCommittedNodeLocked). It holds pointers to nodes the streams already
 	// keep, not copies.
-	snapshotLabelNodeByID map[NodeID]*Node
+	snapshotLabelNodeByID  map[NodeID]*Node
+	snapshotNodeLabels     map[NodeID][]string
+	snapshotNodeLabelBytes int
 	// snapshotProjectedLabelNodes applies the same rule to exact property
 	// projections. Keeping it separate preserves full-node cache reuse while
 	// avoiding a full physical snapshot walk for every repeated projected read.
@@ -335,6 +339,8 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	tx.snapshotLabelPrefixBytes = 0
 	tx.snapshotPrefixNodeByID = nil
 	tx.snapshotLabelNodeByID = nil
+	tx.snapshotNodeLabels = nil
+	tx.snapshotNodeLabelBytes = 0
 	tx.snapshotPrefixNodeBytesByID = nil
 	tx.snapshotPrefixNodeOrder = nil
 	tx.snapshotPrefixNodeBytes = 0
@@ -1140,6 +1146,9 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
 		return ErrNotFound
 	}
+	if err := tx.materializeDeferredEdgesLocked(); err != nil {
+		return err
+	}
 
 	// Capture old node state for constraint bookkeeping (e.g., unique value unregister).
 	var oldNode *Node
@@ -1299,45 +1308,24 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 // counters for its endpoints' labels (as validateNewEdgeLocked returned
 // them), the read-your-writes copy and the create operation.
 func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string) error {
-	// Serialize and buffer write. Compact form allocates endpoint
-	// numIDs via the id dictionary — keeps bodies tight.
-	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.staged(), namespaceForEdgeID(edge.ID), edge)
-	if err != nil {
-		return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
+	delete(tx.cancelledEdgeWrites, edge.ID)
+	_, recreated := tx.deletedEdges[edge.ID]
+	if !recreated && len(edge.Properties) == 0 && !tx.engine.GetSchema().HasWriteRules() {
+		if tx.deferredEdgeWrites == nil {
+			tx.deferredEdgeWrites = make(map[EdgeID]struct{})
+		}
+		tx.deferredEdgeWrites[edge.ID] = struct{}{}
+	} else if err := tx.bufferEdgePhysicalWritesLocked(edge); err != nil {
+		return err
 	}
-	tx.bufferSet(edgeKey(edge.ID), edgeBytes)
-
-	// Buffer edge indexes. Keys use 8-byte num IDs from the engine dict.
-	outKey, err := tx.engine.outgoingIndexKeyString(tx.staged(), edge.StartNode, edge.ID)
-	if err != nil {
-		return fmt.Errorf("outgoing index: %w", err)
-	}
-	header := adjacencyValueFromRecord(edgeBytes)
-	tx.bufferSet(outKey, header)
-	inKey, err := tx.engine.incomingIndexKeyString(tx.staged(), edge.EndNode, edge.ID)
-	if err != nil {
-		return fmt.Errorf("incoming index: %w", err)
-	}
-	tx.bufferSet(inKey, header)
-
-	// Buffer edge type index for GetEdgesByType().
-	// Without this, edges created inside implicit/explicit transactions are invisible
-	// to type-based scans and Cypher fast-paths that rely on the edge-type index.
-	typeKey, err := tx.engine.edgeTypeIndexKeyString(tx.staged(), edge.Type, edge.ID)
-	if err != nil {
-		return fmt.Errorf("edge type index: %w", err)
-	}
-	tx.bufferSet(typeKey, []byte{})
 	// Derived per-type counter follows the index entry (issue #638).
 	tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
 	// Positional (label, type) counters follow the endpoints' tx-visible labels.
 	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, startLabels, endLabels, 1)
-	if err := tx.bufferSetEdgeBetweenIndexes(edge); err != nil {
-		return fmt.Errorf("edge-between index: %w", err)
-	}
 
 	// Track for read-your-writes
 	edgeCopy := copyEdge(edge)
+	delete(tx.deletedEdges, edge.ID)
 	tx.pendingEdges[edge.ID] = edgeCopy
 	tx.operations = append(tx.operations, Operation{
 		Type:      OpCreateEdge,
@@ -1376,6 +1364,9 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		return ErrInvalidID
 	}
 	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
+		return err
+	}
+	if err := tx.materializeDeferredEdgeLocked(edge.ID); err != nil {
 		return err
 	}
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
@@ -1562,22 +1553,25 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 		}
 	}
 
-	// Buffer edge deletion
-	key := edgeKey(edgeID)
-	tx.bufferDelete(key)
-
-	// Buffer index deletions (lookup-only — all num IDs were allocated
-	// at write time).
-	if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edgeID); outKey != nil {
-		tx.bufferDelete(outKey)
+	if _, deferred := tx.deferredEdgeWrites[edgeID]; deferred {
+		delete(tx.deferredEdgeWrites, edgeID)
+		if tx.cancelledEdgeWrites == nil {
+			tx.cancelledEdgeWrites = make(map[EdgeID]struct{})
+		}
+		tx.cancelledEdgeWrites[edgeID] = struct{}{}
+	} else {
+		tx.bufferDelete(edgeKey(edgeID))
+		if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edgeID); outKey != nil {
+			tx.bufferDelete(outKey)
+		}
+		if inKey := tx.engine.incomingIndexKeyStringLookup(edge.EndNode, edgeID); inKey != nil {
+			tx.bufferDelete(inKey)
+		}
+		if typeKey := tx.engine.edgeTypeIndexKeyStringLookup(edge.Type, edgeID); typeKey != nil {
+			tx.bufferDelete(typeKey)
+		}
+		tx.bufferDeleteEdgeBetweenIndexes(edge)
 	}
-	if inKey := tx.engine.incomingIndexKeyStringLookup(edge.EndNode, edgeID); inKey != nil {
-		tx.bufferDelete(inKey)
-	}
-	if typeKey := tx.engine.edgeTypeIndexKeyStringLookup(edge.Type, edgeID); typeKey != nil {
-		tx.bufferDelete(typeKey)
-	}
-	tx.bufferDeleteEdgeBetweenIndexes(edge)
 
 	// Track deletion
 	delete(tx.pendingEdges, edgeID)
@@ -1888,6 +1882,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		if node == nil {
 			return nil
 		}
+		tx.cacheCommittedNodeLabelsLocked(node)
 		if !hasPending {
 			return invokeVisit(node)
 		}
@@ -2350,7 +2345,11 @@ func (tx *BadgerTransaction) Commit() error {
 		)
 	}
 
-	hasWrites := len(tx.operations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0
+	if err := tx.materializeDeferredEdgesLocked(); err != nil {
+		return tx.abortCommitLocked(err)
+	}
+	physicalOperations := tx.physicalOperationsLocked()
+	hasWrites := len(physicalOperations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0
 	var version MVCCVersion
 	if hasWrites {
 		if tx.namespace == "" {
@@ -2383,7 +2382,7 @@ func (tx *BadgerTransaction) Commit() error {
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
 	tx.commitW = cw
 	if hasWrites {
-		if err := tx.engine.materializeMVCCCommit(&cw.batchWriter, version, tx.operations); err != nil {
+		if err := tx.engine.materializeMVCCCommit(&cw.batchWriter, version, physicalOperations); err != nil {
 			return tx.abortCommitLocked(fmt.Errorf("materializing mvcc commit state: %w", err))
 		}
 	}
@@ -2908,11 +2907,11 @@ func (tx *BadgerTransaction) visibleNodeLabelsLocked(nodeID NodeID) ([]string, b
 	if node, exists := tx.pendingNodes[nodeID]; exists {
 		return node.Labels, true
 	}
-	node, err := tx.getCommittedNodeLocked(nodeID)
+	labels, err := tx.committedNodeLabelsLocked(nodeID)
 	if err != nil {
 		return nil, false
 	}
-	return node.Labels, true
+	return labels, true
 }
 
 func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
