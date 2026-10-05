@@ -39,13 +39,13 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 
 	// Exercise archive no-op branches (existing version, missing key, nil body).
 	err = engine.withUpdate(func(txn *badger.Txn) error {
-		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, a, nodeHead.Version))
-		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, a, nodeHead.Version))
-		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, NodeID(prefixTestID("mvcc-arch-missing-node")), nodeHead.Version))
+		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, a, nodeHead.Version, nil, MVCCVersion{}))
+		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, a, nodeHead.Version, nil, MVCCVersion{}))
+		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, NodeID(prefixTestID("mvcc-arch-missing-node")), nodeHead.Version, nil, MVCCVersion{}))
 
-		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, eid, edgeHead.Version))
-		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, eid, edgeHead.Version))
-		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, EdgeID(prefixTestID("mvcc-arch-missing-edge")), edgeHead.Version))
+		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, eid, edgeHead.Version, nil, MVCCVersion{}))
+		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, eid, edgeHead.Version, nil, MVCCVersion{}))
+		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, EdgeID(prefixTestID("mvcc-arch-missing-edge")), edgeHead.Version, nil, MVCCVersion{}))
 
 		require.NoError(t, engine.archiveNodeBodyInTxn(txn, a, nil, nodeHead.Version))
 		require.NoError(t, engine.archiveNodeBodyInTxn(txn, a, nodeBody, nodeHead.Version))
@@ -60,8 +60,8 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 		tombV := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1001}
 		require.NoError(t, engine.writeNodeMVCCHeadInTxn(txn, a, tombV, true))
 		require.NoError(t, engine.writeEdgeMVCCHeadInTxn(txn, eid, tombV, true))
-		require.NoError(t, engine.archiveNodeOnUpdateInTxn(txn, a))
-		require.NoError(t, engine.archiveEdgeOnUpdateInTxn(txn, eid))
+		require.NoError(t, engine.archiveNodeOnUpdateInTxn(txn, a, nil, MVCCVersion{}))
+		require.NoError(t, engine.archiveEdgeOnUpdateInTxn(txn, eid, nil, MVCCVersion{}))
 		return nil
 	})
 	require.NoError(t, err)

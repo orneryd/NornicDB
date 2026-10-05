@@ -289,6 +289,9 @@ func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelet
 	txRead, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	defer txRead.Rollback()
+	// Pin the reader to the namespace, as its first read would, so it is
+	// registered as an active snapshot reader.
+	require.NoError(t, txRead.SetNamespace(namespaceForEdgeID(edgeID)))
 
 	beforeEdge, err := txRead.getCommittedEdgeLocked(edgeID)
 	require.NoError(t, err)

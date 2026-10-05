@@ -927,16 +927,9 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 		}
 	}
 
-	// Archive the node body at its current head version BEFORE we
-	// buffer the primary-key delete. Gated internally on
-	// mustArchiveForHistory — no-op when retention is head-only AND no
-	// snapshot reader needs the pre-delete view.
-	head, headErr := tx.engine.loadNodeMVCCHeadInTxn(tx.badgerTx, nodeID)
-	if err := archiveAtLiveHead(head, headErr, func(atVersion MVCCVersion) error {
-		return tx.engine.archiveNodeBodyInTxn(tx.staged(), nodeID, deletedNode, atVersion)
-	}); err != nil {
-		return 0, nil, err
-	}
+	// The committed body is archived at commit (materializeMVCCCommit), from
+	// the state before the transaction, once the commit knows whether any
+	// other reader or retention needs it.
 
 	// Buffer label index deletions (lookup-only).
 	for _, label := range deletedNode.Labels {
@@ -1111,15 +1104,7 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, delete
 		}
 		edge.ID = edgeID
 
-		// Archive the edge body at its current head version BEFORE we
-		// buffer the primary-key delete. Safe to call unconditionally —
-		// mustArchiveForHistory gates the actual write.
-		head, headErr := tx.engine.loadEdgeMVCCHeadInTxn(tx.badgerTx, edgeID)
-		if err := archiveAtLiveHead(head, headErr, func(atVersion MVCCVersion) error {
-			return tx.engine.archiveEdgeBodyInTxn(tx.staged(), edgeID, edge, atVersion)
-		}); err != nil {
-			return 0, nil, err
-		}
+		// The committed body is archived at commit (materializeMVCCCommit).
 
 		// Buffer edge and index deletions. Lookup-only: these num IDs
 		// must have existed at write time. The shared bookkeeping helper
