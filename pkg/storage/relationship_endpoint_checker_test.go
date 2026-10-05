@@ -18,6 +18,8 @@ func TestRelationshipEndpointVisibleAcrossStack(t *testing.T) {
 	require.NoError(t, err)
 	wal := NewWALEngine(badger, walBacking)
 	async := NewAsyncEngine(wal, &AsyncEngineConfig{FlushInterval: time.Hour})
+	// Closing the async engine closes the WAL file under it (#924).
+	t.Cleanup(func() { _ = async.Close() })
 	namespaced := NewNamespacedEngine(async, "ns")
 
 	_, err = namespaced.CreateNode(&Node{ID: "flushed", Labels: []string{"Doc"}})

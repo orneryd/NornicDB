@@ -104,6 +104,8 @@ func TestEdgeHeadersAcrossStack(t *testing.T) {
 	require.NoError(t, err)
 	wal := NewWALEngine(badger, walBacking)
 	async := NewAsyncEngine(wal, &AsyncEngineConfig{FlushInterval: time.Hour})
+	// Closing the async engine closes the WAL file under it (#924).
+	t.Cleanup(func() { _ = async.Close() })
 	namespaced := NewNamespacedEngine(async, "ns")
 	for _, id := range []NodeID{"a", "b", "c"} {
 		_, err := namespaced.CreateNode(&Node{ID: id, Labels: []string{"N"}})
