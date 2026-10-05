@@ -284,34 +284,33 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 	}
 	// A dangling modifier keyword (RETURN 1 ORDER BY / SKIP / LIMIT) and an
 	// empty projection (RETURN, WITH 1 AS x RETURN) are Neo4j syntax errors.
-	projectionEnd := len(body)
+	// The clause is scanned with its keyword, which tells a keyword-named
+	// first item from a clause (RETURN skip[0], #894).
+	clauseText := strings.TrimSpace(clause)
+	projectionEnd := len(clauseText)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		index := topLevelKeywordIndex(body, keyword)
-		if index < 0 || index >= projectionEnd {
+		index := topLevelKeywordIndex(clauseText, keyword)
+		if index < len("RETURN") || index >= projectionEnd {
 			continue
 		}
-		if strings.TrimSpace(body[index+len(keyword):]) == "" {
+		if strings.TrimSpace(clauseText[index+len(keyword):]) == "" {
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 				localization.CypherCoreInvalidInputExpectedExpression(""))
 		}
 		projectionEnd = index
 	}
-	if projection, _ := cutDistinct(strings.TrimSpace(body[:projectionEnd])); projection == "" {
+	projectionText := strings.TrimSpace(clauseText[len("RETURN"):projectionEnd])
+	body, _ = cutDistinct(projectionText)
+	if body == "" {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			localization.CypherMatchingReturnExpressionRequired())
 	}
-	if orderIndex := topLevelKeywordIndex(body, "ORDER BY"); orderIndex >= 0 {
-		projection := strings.TrimSpace(body[:orderIndex])
-		if err := validateOrderByReferences(scope, projectMatchSemanticScope(scope, "WITH "+projection), strings.TrimSpace(body[orderIndex+len("ORDER BY"):])); err != nil {
+	if orderIndex := topLevelKeywordIndex(clauseText, "ORDER BY"); orderIndex >= len("RETURN") {
+		projection := strings.TrimSpace(clauseText[len("RETURN"):orderIndex])
+		if err := validateOrderByReferences(scope, projectMatchSemanticScope(scope, "WITH "+projection), strings.TrimSpace(clauseText[orderIndex+len("ORDER BY"):])); err != nil {
 			return err
 		}
 	}
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
-			body = strings.TrimSpace(body[:index])
-		}
-	}
-	body, _ = cutDistinct(body)
 	for _, raw := range splitTopLevelComma(body) {
 		expression, _ := parseProjectionExprAlias(strings.TrimSpace(raw))
 		if err := projectionItemTermError(expression); err != nil {

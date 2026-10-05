@@ -88,20 +88,21 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				if err := validateReturnAggregationSemantics(body); err != nil {
 					return err
 				}
-				end := len(body)
-				for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-					if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
+				// The clause is scanned with its keyword, which tells a
+				// keyword-named first item from a clause (RETURN union[0], #894).
+				clauseText := strings.TrimSpace(clause.text)
+				end := len(clauseText)
+				for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT", "UNION"} {
+					if index := topLevelKeywordIndex(clauseText, keyword); index >= len("RETURN") && index < end {
 						end = index
 					}
 				}
-				if index := topLevelKeywordIndex(body, "UNION"); index >= 0 && index < end {
-					end = index
-				}
-				if projectionHasEmptyItem(body[:end]) {
+				items := clauseText[len("RETURN"):end]
+				if projectionHasEmptyItem(items) {
 					return emptyProjectionItemError("RETURN")
 				}
-				items, _ := cutDistinct(strings.TrimSpace(body[:end]))
-				for _, item := range splitTopLevelComma(items) {
+				projectionItems, _ := cutDistinct(strings.TrimSpace(items))
+				for _, item := range splitTopLevelComma(projectionItems) {
 					expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
 					if err := validateExpressionOperandCompleteness(expression); err != nil {
 						return err
