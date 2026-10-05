@@ -49,8 +49,10 @@ func TestBadgerTransaction_ValidateEdgeConstraints_BranchCoverage(t *testing.T) 
 	require.NoError(t, tx.SetNamespace("test"))
 
 	// EXISTS failure branch.
-	err = tx.validateEdgeConstraints(&Edge{ID: "test:e-missing", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{}})
-	require.Error(t, err)
+	err = tx.validateEdgeConstraints(&Edge{ID: "test:e-missing", StartNode: "test:c", EndNode: "test:c", Type: "LINK", Properties: map[string]any{}})
+	var violation *ConstraintViolationError
+	require.ErrorAs(t, err, &violation)
+	require.Equal(t, ConstraintExists, violation.Type)
 
 	// UNIQUE against committed branch.
 	err = tx.validateEdgeConstraints(&Edge{ID: "test:e-dup", StartNode: "test:a", EndNode: "test:c", Type: "LINK", Properties: map[string]any{"token": "dup", "status": "ok", "rank": int64(3)}})
