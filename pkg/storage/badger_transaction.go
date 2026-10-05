@@ -349,6 +349,14 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	tx.pendingEdgeTypeLabelCountDeltas = make(map[edgeTypeLabelDelta]int64)
 	tx.Status = status
 	tx.closedErr = closedErr
+	tx.releaseSnapshotReaderLocked()
+}
+
+// releaseSnapshotReaderLocked ends the transaction's registration as an
+// active snapshot reader. Commit calls it once conflict validation has
+// passed, since nothing after that reads at the snapshot; close calls it
+// otherwise.
+func (tx *BadgerTransaction) releaseSnapshotReaderLocked() {
 	if tx.snapshotDeregister != nil {
 		tx.snapshotDeregister()
 		tx.snapshotDeregister = nil
@@ -2379,6 +2387,12 @@ func (tx *BadgerTransaction) Commit() error {
 	// written (#703). Each new batch becomes tx.badgerTx. Before the commit
 	// turns large it takes the count locks publication needs, ahead of the
 	// exclusive commit gate.
+	// Nothing below reads at the transaction's snapshot, so it stops counting
+	// as an active snapshot reader before the commit's writes. A superseded
+	// version is then archived for other readers (mustArchiveForHistory), not
+	// for this transaction's own registration (#911).
+	tx.releaseSnapshotReaderLocked()
+
 	cw := tx.engine.newCommitWriter(tx.badgerDB, tx.badgerTx)
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
