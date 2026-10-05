@@ -41,8 +41,23 @@ func TestRelationshipEndpointVisibleAcrossStack(t *testing.T) {
 	check(namespaced, "missing", false)
 	check(async, "ns:staged", true)
 	check(wal, "ns:flushed", true)
+	badger.nodeCacheMu.Lock()
+	clear(badger.nodeCache)
+	badger.nodeCacheMu.Unlock()
 	check(badger, "ns:flushed", true)
 	check(badger, "ns:missing", false)
+
+	// A node deleted on the engine is no longer visible, as for GetNode,
+	// whether or not it was cached.
+	_, err = badger.CreateNode(&Node{ID: "ns:gone", Labels: []string{"Doc"}})
+	require.NoError(t, err)
+	_, err = badger.GetNode("ns:gone")
+	require.NoError(t, err)
+	check(badger, "ns:gone", true)
+	require.NoError(t, badger.DeleteNode("ns:gone"))
+	check(badger, "ns:gone", false)
+	_, err = badger.GetNode("ns:gone")
+	require.ErrorIs(t, err, ErrNotFound)
 
 	_, answered := badger.RelationshipEndpointVisible("")
 	require.False(t, answered)
@@ -59,6 +74,12 @@ func TestRelationshipEndpointVisibleAcrossStack(t *testing.T) {
 	plainAsync := NewAsyncEngine(nonCheckingEngine{Engine: badger}, &AsyncEngineConfig{FlushInterval: time.Hour})
 	defer plainAsync.Close()
 	_, answered = plainAsync.RelationshipEndpointVisible("ns:flushed")
+	require.False(t, answered)
+
+	// A closed engine doesn't answer.
+	badger.SetDecayEnabled(false)
+	require.NoError(t, badger.Close())
+	_, answered = badger.RelationshipEndpointVisible("ns:flushed")
 	require.False(t, answered)
 }
 
