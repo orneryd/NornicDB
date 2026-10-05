@@ -760,7 +760,7 @@ func TestExecuteCompoundMatchMerge_OptionalAndContextRelationshipBranches(t *tes
 	require.NoError(t, err)
 
 	// OPTIONAL MATCH with no matches still executes MERGE path.
-	res, err := e.executeCompoundMatchMerge(ctx, "OPTIONAL MATCH (m:Missing) MERGE (t:Target {name:'created'}) RETURN t.name")
+	res, err := e.Execute(ctx, "OPTIONAL MATCH (m:Missing) MERGE (t:Target {name:'created'}) RETURN t.name", nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 
@@ -1562,21 +1562,29 @@ func TestExecuteCompoundMatchMerge_SecondMergeAndErrorBranches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// First MERGE before MATCH forces "find second MERGE after MATCH" branch.
-	res, err := exec.executeCompoundMatchMerge(
+	res, err := exec.Execute(
 		ctx,
-		"MERGE (pre:Scratch {id:'pre'}) MATCH (a:P) MERGE (m:Merged {id:'ok'}) RETURN m",
+		"MERGE (pre:Scratch {id:'pre'}) WITH pre MATCH (a:P) MERGE (m:Merged {id:'ok'}) RETURN m",
+		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, res)
+	require.EqualValues(t, 2, res.Stats.NodesCreated)
+	created, err := store.GetNodesByLabel("Scratch")
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	require.Equal(t, "pre", created[0].Properties["id"])
 
 	// MATCH parse failure path should bubble up deterministic error.
-	_, err = exec.executeCompoundMatchMerge(ctx, "MATCH (a:P MERGE (m:Broken {id:'x'})")
+	_, err = exec.Execute(ctx, "MATCH (a:P MERGE (m:Broken {id:'x'})", nil)
 	require.Error(t, err)
-	assert.Contains(t, strings.ToLower(err.Error()), "match")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	created, err = store.GetNodesByLabel("Broken")
+	require.NoError(t, err)
+	require.Empty(t, created)
 
 	// OPTIONAL MATCH with empty result should still execute MERGE branch.
-	opt, err := exec.executeCompoundMatchMerge(ctx, "OPTIONAL MATCH (a:Missing) MERGE (m:Merged {id:'opt'}) RETURN m")
+	opt, err := exec.Execute(ctx, "OPTIONAL MATCH (a:Missing) MERGE (m:Merged {id:'opt'}) RETURN m", nil)
 	require.NoError(t, err)
 	require.NotNil(t, opt)
 }

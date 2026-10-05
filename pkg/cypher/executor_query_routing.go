@@ -160,15 +160,7 @@ skipMatchCallRoute:
 	}
 
 	if startsWithMatch && mergeIdx > 0 {
-		// The pipeline runs MATCH … MERGE row by row, with the clauses
-		// between them (WITH … ORDER BY … SKIP / LIMIT), SET after the MERGE
-		// and the RETURN over all rows. The compound MATCH … MERGE route
-		// runs the shapes it declines (a MERGE with ON CREATE / ON MATCH and
-		// a SET).
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		return e.executeCompoundMatchMerge(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 	if startsWithMatch && createIdx > 0 {
 		return e.executeRequiredPipeline(ctx, cypher)

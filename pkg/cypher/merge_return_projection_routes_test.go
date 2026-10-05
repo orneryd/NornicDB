@@ -27,7 +27,7 @@ func withExpressionFailures(ctx context.Context) context.Context {
 }
 
 // TestCompoundMatchMergeReturnSeesMatchedBindings: the MATCH … MERGE route
-// (taken for a MERGE with SET) projects its RETURN over every matched row,
+// projects its RETURN over every matched row,
 // with the MATCH's relationship variables bound per row and an unmatched
 // OPTIONAL MATCH's variables null (#640, #713).
 func TestCompoundMatchMergeReturnSeesMatchedBindings(t *testing.T) {
@@ -41,32 +41,37 @@ func TestCompoundMatchMergeReturnSeesMatchedBindings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"R", "S"}}, result.Rows)
 
-	// The compound route itself (a MERGE with ON CREATE / ON MATCH and SET,
-	// which the pipeline declines) binds the relationship per row too.
-	result, err = exec.executeCompoundMatchMerge(ctx, "MATCH (a:A)-[r:R]->(b:B) MERGE (m:M2 {id: a.name}) ON CREATE SET m.c = 1 ON MATCH SET m.d = 1 SET m.x = 1 RETURN a.name AS a, b.name AS b, type(r) AS t ORDER BY a, b")
+	result, err = exec.Execute(ctx, "MATCH (a:A)-[r:R]->(b:B) MERGE (m:M2 {id: a.name}) ON CREATE SET m.c = 1 ON MATCH SET m.d = 1 SET m.x = 1 RETURN a.name AS a, b.name AS b, type(r) AS t ORDER BY a, b", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a1", "b1", "R"}, {"a1", "b2", "R"}, {"a2", "b1", "R"}}, result.Rows)
+	require.EqualValues(t, 2, result.Stats.NodesCreated)
+	readback, err := exec.Execute(ctx, "MATCH (m:M2) RETURN m.id, m.c, m.d, m.x ORDER BY m.id", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"a1", int64(1), int64(1), int64(1)}, {"a2", int64(1), nil, int64(1)}}, readback.Rows)
 
-	result, err = exec.executeCompoundMatchMerge(ctx, "OPTIONAL MATCH (x:Missing)-[q:Q]->(y) MERGE (c:C {id: 1}) RETURN x, q, y, c.id AS id")
+	result, err = exec.Execute(ctx, "OPTIONAL MATCH (x:Missing)-[q:Q]->(y) MERGE (c:C {id: 1}) RETURN x, q, y, c.id AS id", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{nil, nil, nil, int64(1)}}, result.Rows)
 
 	// A MERGE failing for a row (a map property value) fails the
 	// statement, with or without matched rows.
-	_, err = exec.executeCompoundMatchMerge(ctx, "MATCH (a:A) MERGE (d:D {id: {k: 1}}) RETURN d")
+	_, err = exec.Execute(ctx, "MATCH (a:A) MERGE (d:D {id: {k: 1}}) RETURN d", nil)
 	require.Error(t, err)
-	_, err = exec.executeCompoundMatchMerge(ctx, "OPTIONAL MATCH (x:Missing) MERGE (d:D {id: {k: 1}}) RETURN d")
+	_, err = exec.Execute(ctx, "OPTIONAL MATCH (x:Missing) MERGE (d:D {id: {k: 1}}) RETURN d", nil)
 	require.Error(t, err)
 
 	// A MERGE property's expression error is recorded as the statement's
 	// error, which Execute returns.
 	failures := withExpressionFailures(ctx)
-	_, err = exec.executeCompoundMatchMerge(failures, "MATCH (a:A) MERGE (d:D {id: 1 / 0}) RETURN d.id AS id")
-	require.NoError(t, err)
+	_, err = exec.Execute(failures, "MATCH (a:A) MERGE (d:D {id: 1 / 0}) RETURN d.id AS id", nil)
+	require.Error(t, err)
 	require.Error(t, getExpressionFailure(failures))
+	readback, err = exec.Execute(ctx, "MATCH (d:D) RETURN count(d)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, readback.Rows)
 
 	// The RETURN's error is the statement's.
-	_, err = exec.executeCompoundMatchMerge(withExpressionFailures(ctx), "MATCH (a:A) MERGE (m:M {id: 1}) RETURN 1 / 0 AS x")
+	_, err = exec.Execute(withExpressionFailures(ctx), "MATCH (a:A) MERGE (m:M {id: 1}) RETURN 1 / 0 AS x", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 }
@@ -77,17 +82,17 @@ func TestCompoundMatchMergeReturnSeesMatchedBindings(t *testing.T) {
 func TestCompoundMatchUnwindMergeReturnProjectsAllRows(t *testing.T) {
 	exec, ctx := newMergeReturnRouteExecutor(t)
 
-	result, err := exec.executeCompoundMatchMerge(ctx, "MATCH (a:A)-[r:R]->(b:B {name: 'b2'}) UNWIND [1, 2] AS i MERGE (m:U {id: i}) RETURN a.name AS a, type(r) AS t, m.id AS id ORDER BY id")
+	result, err := exec.Execute(ctx, "MATCH (a:A)-[r:R]->(b:B {name: 'b2'}) UNWIND [1, 2] AS i MERGE (m:U {id: i}) RETURN a.name AS a, type(r) AS t, m.id AS id ORDER BY id", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a1", "R", int64(1)}, {"a1", "R", int64(2)}}, result.Rows)
 
-	result, err = exec.executeCompoundMatchMerge(ctx, "MATCH (a:A) UNWIND [1, 2] AS i MERGE (m:U2 {id: i}) RETURN count(*) AS c")
+	result, err = exec.Execute(ctx, "MATCH (a:A) UNWIND [1, 2] AS i MERGE (m:U2 {id: i}) RETURN count(*) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)
 
-	_, err = exec.executeCompoundMatchMerge(ctx, "MATCH (a:A) UNWIND [1] AS i MERGE (d:D {id: {k: i}}) RETURN d")
+	_, err = exec.Execute(ctx, "MATCH (a:A) UNWIND [1] AS i MERGE (d:D {id: {k: i}}) RETURN d", nil)
 	require.Error(t, err)
-	_, err = exec.executeCompoundMatchMerge(withExpressionFailures(ctx), "MATCH (a:A) UNWIND [1] AS i MERGE (m:U3 {id: i}) RETURN 1 / 0 AS x")
+	_, err = exec.Execute(withExpressionFailures(ctx), "MATCH (a:A) UNWIND [1] AS i MERGE (m:U3 {id: i}) RETURN 1 / 0 AS x", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 }
@@ -159,15 +164,15 @@ func TestLegacyRoutesCountDistinct(t *testing.T) {
 func TestCompoundMatchMergeRouteShapes(t *testing.T) {
 	exec, ctx := newMergeReturnRouteExecutor(t)
 
-	result, err := exec.executeCompoundMatchMerge(ctx, "MATCH (a:A) WITH a SKIP 1 LIMIT 1 MERGE (m:W {id: 1}) RETURN count(*) AS c")
+	result, err := exec.Execute(ctx, "MATCH (a:A) WITH a SKIP 1 LIMIT 1 MERGE (m:W {id: 1}) RETURN count(*) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 
-	result, err = exec.executeCompoundMatchMerge(ctx, "MATCH (a:A {name: 'a1'})-[r:R]->(b:B {name: 'b1'}) UNWIND [1] AS i MATCH (c:A) MERGE (m:T1 {id: c.name}) RETURN type(r) AS t, c.name AS c ORDER BY c")
+	result, err = exec.Execute(ctx, "MATCH (a:A {name: 'a1'})-[r:R]->(b:B {name: 'b1'}) UNWIND [1] AS i MATCH (c:A) MERGE (m:T1 {id: c.name}) RETURN type(r) AS t, c.name AS c ORDER BY c", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"R", "a1"}, {"R", "a2"}}, result.Rows)
 
-	result, err = exec.executeCompoundMatchMerge(ctx, "MATCH (a:A {name: 'a2'}) UNWIND [1] AS i MATCH (x:A)-[q:R]->(y:B {name: 'b2'}) MERGE (m:T2 {id: i}) RETURN a.name AS a, type(q) AS t, x.name AS x")
+	result, err = exec.Execute(ctx, "MATCH (a:A {name: 'a2'}) UNWIND [1] AS i MATCH (x:A)-[q:R]->(y:B {name: 'b2'}) MERGE (m:T2 {id: i}) RETURN a.name AS a, type(q) AS t, x.name AS x", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a2", "R", "a1"}}, result.Rows)
 }

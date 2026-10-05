@@ -2795,5 +2795,21 @@
     "name": "issue894 shared YIELD alias arithmetic",
     "query": "WITH 3 AS yield RETURN 1 + yield AS value",
     "no_effects": true
+  },
+  {
+    "name": "issue908 MATCH MERGE ON actions preserve matched rows",
+    "setup": ["CREATE (a1:MergeSource {name:'a1'}), (a2:MergeSource {name:'a2'}), (b1:MergeEnd {name:'b1'}), (b2:MergeEnd {name:'b2'}), (a1)-[:R]->(b1), (a1)-[:R]->(b2), (a2)-[:R]->(b1)"],
+    "query": "MATCH (a:MergeSource)-[r:R]->(b:MergeEnd) MERGE (m:MergeTarget {id:a.name}) ON CREATE SET m.created=1 ON MATCH SET m.seen=1 SET m.touched=1 RETURN a.name AS a, b.name AS b, type(r) AS relationship ORDER BY a, b"
+  },
+  {
+    "name": "issue908 MATCH MERGE window preserves relationship bindings",
+    "setup": ["CREATE (:WindowSource {id:1})-[:WINDOW_EDGE]->(:WindowEnd {id:1}), (:WindowSource)-[:WINDOW_EDGE]->(:WindowEnd {id:2}), (:WindowSource {id:3})-[:WINDOW_EDGE]->(:WindowEnd {id:3})"],
+    "query": "MATCH (n:WindowSource)-[r:WINDOW_EDGE]->(m:WindowEnd) WHERE n.id IS NOT NULL WITH n, r, m ORDER BY n.id SKIP 1 LIMIT 2 MERGE (target:WindowTarget {id:n.id}) RETURN n.id AS id, type(r) AS relationship, m.id AS endpoint ORDER BY id"
+  },
+  {
+    "name": "issue908 MATCH MERGE empty window suppresses writes",
+    "setup": ["CREATE (:WindowSource {id:1})"],
+    "query": "MATCH (n:WindowSource) WITH n LIMIT 0 MERGE (target:WindowTarget {id:n.id}) RETURN target.id AS id",
+    "no_effects": true
   }
 ]
