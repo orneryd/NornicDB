@@ -384,6 +384,11 @@ Unhandled queries must fail like Neo4j fails them, through the converged pipelin
 - [x] Publish the verified foundation on the existing PR #897 branch without worktrees or repeating successful gates before publication. This evidence section is part of that commit.
 - Boundary: this is invocation convergence, not a claim that MATCH/procedure dispatcher retries or executeMatchWithCallProcedure are retired. Read procedures without YIELD, empty-result metadata and remaining built-in typed adapters still need their owning-contract convergence before terminal routing. Other CALL continuation/write/WHERE/pattern owners and issue acceptance remain open. No fresh whole-repository run or current-increment benchmark is claimed; performance tuning remains deferred by owner direction.
 
+### Labeled Property LIMIT Report (Open)
+
+- [x] Add TestLabeledPropertyProjectionLimitReturnsRows for the exact MATCH (n:Label) RETURN n.id LIMIT 2 query, alias and ordered controls. Both parsers return two valid label rows through direct storage and the on-disk Badger/WAL/Async/Namespaced stack, including a warmed empty read, foreign-namespace labels, storage-API writes and async flush.
+- [ ] Reproduce the reported no-row behavior with the affected database/client. Actual label, namespace, stored fixture and transport details are unavailable. No production fix or issue closure is claimed; the added test is a reproduction control, not proof the deployed failure is resolved.
+
 ### Terminal MATCH/Procedure Routing Increment (#908)
 
 - [x] Route MATCH/procedure compositions through executeRequiredPipeline without mutation bypasses or retries. Migrate the private-owner fixtures to public Execute and retire executeMatchWithCallProcedure (211 lines), preserving live substitution helpers. Current source and historical Graphify dependencies were audited.

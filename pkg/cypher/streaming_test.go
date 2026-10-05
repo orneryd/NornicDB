@@ -14,6 +14,55 @@ import (
 
 // TestStreamingOptimization_LimitQuery verifies that LIMIT queries use streaming
 // with early termination instead of loading all nodes into memory.
+func TestLabeledPropertyProjectionLimitReturnsRows(t *testing.T) {
+	for _, fixture := range []struct {
+		name        string
+		newExecutor func(*testing.T) *StorageExecutor
+	}{
+		{"direct", func(t *testing.T) *StorageExecutor {
+			return NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+		}},
+		{"server_stack", newPathReturnServerStackExecutor},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			exec := fixture.newExecutor(t)
+			ctx := context.Background()
+			inner := exec.storage.(*storage.NamespacedEngine).GetInnerEngine()
+			foreign := NewStorageExecutor(storage.NewNamespacedEngine(inner, "aaa"))
+			_, err := foreign.Execute(ctx, "CREATE (:Label {id:99}), (:Label {id:99}), (:Label {id:99})", nil)
+			require.NoError(t, err)
+			empty, err := exec.Execute(ctx, "MATCH (n:Label) RETURN n.id LIMIT 2", nil)
+			require.NoError(t, err)
+			require.Empty(t, empty.Rows)
+			for _, id := range []int64{1, 2, 3} {
+				_, err := exec.storage.CreateNode(&storage.Node{
+					ID:     storage.NodeID(fmt.Sprintf("label-%d", id)),
+					Labels: []string{"Label"}, Properties: map[string]interface{}{"id": id},
+				})
+				require.NoError(t, err)
+			}
+			if async, ok := inner.(*storage.AsyncEngine); ok {
+				require.NoError(t, async.Flush())
+			}
+			for _, query := range []string{
+				"MATCH (n:Label) RETURN n.id LIMIT 2",
+				"MATCH (n:Label) RETURN n.id AS id LIMIT 2",
+				"MATCH (n:Label) RETURN n.id ORDER BY n.id LIMIT 2",
+			} {
+				t.Run(query, func(t *testing.T) {
+					result, err := exec.Execute(ctx, query, nil)
+					require.NoError(t, err)
+					require.Len(t, result.Rows, 2)
+					for _, row := range result.Rows {
+						require.Len(t, row, 1)
+						require.Contains(t, []interface{}{int64(1), int64(2), int64(3)}, row[0])
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestStreamingOptimization_LimitQuery(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 
