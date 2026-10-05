@@ -64,6 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temporal viewport, labels or properties on the end node, or a path
   variable keep the read. That degree query over 40,000 nodes takes about a
   third less time, in and out of a transaction (#911).
+- List relationships from their adjacency entries inside an explicit
+  transaction too. The transaction reads each one's header from the entry when
+  the relationship's version header in its snapshot is live and not newer
+  than the transaction's read version, and its record otherwise; its own
+  writes and deletes merge as before. The degree query over 40,000 nodes in
+  a transaction takes about a quarter less time (#911).
 - Store a copy of each relationship record's compact header (type, endpoints,
   timestamps, confidence, flags) in its adjacency entries, so a traversal over
   anonymous relationships (`MATCH (p)-[:KNOWS]->() …`) no longer reads every
