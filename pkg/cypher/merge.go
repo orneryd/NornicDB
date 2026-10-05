@@ -2998,10 +2998,10 @@ func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelin
 	return e.projectMergeReturnSource(ctx, rows, returnClause, pipelineRowsSource(rows))
 }
 
-func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource) (*ExecuteResult, error) {
+func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
 	returnClause = strings.TrimSpace(returnClause)
 	priorFailure := getExpressionFailure(ctx)
-	result, handled := e.pipelineApplyReturnSource(ctx, rows, "RETURN "+strings.TrimSpace(returnClause[len("RETURN"):]), source, false)
+	result, handled := e.pipelineApplyReturnSource(ctx, rows, "RETURN "+strings.TrimSpace(returnClause[len("RETURN"):]), source, false, preparedGroups...)
 	if failure := getExpressionFailure(ctx); failure != nil && (!handled || priorFailure == nil) {
 		return nil, failure
 	}

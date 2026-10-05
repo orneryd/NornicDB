@@ -102,7 +102,7 @@ func TestE2E_Set_MapPropertyWithColonInQuotedKey(t *testing.T) {
 	exec, ctx := setupE2EExecutor(t)
 
 	// A quoted map key containing ':' parses as one key.
-	_, err := exec.Execute(ctx, "MERGE (n:Test {id: 0}) SET n += {'key:key': 'value'}", nil)
+	_, err := exec.Execute(ctx, "MERGE (n:Test {id: 0}) SET n += {`key:key`: 'value'}", nil)
 	require.NoError(t, err)
 
 	result, err := exec.Execute(ctx, "MATCH (n:Test {id: 0}) RETURN n", nil)
@@ -116,7 +116,7 @@ func TestE2E_Set_MapPropertyWithColonInQuotedKey(t *testing.T) {
 	assert.False(t, malformedKey)
 
 	// A map is not a property value on any SET route (Neo4j TypeError).
-	_, err = exec.Execute(ctx, "MERGE (n:Test {id: 0}) SET n.my_property = {'key:key': 'value'}", nil)
+	_, err = exec.Execute(ctx, "MERGE (n:Test {id: 0}) SET n.my_property = {`key:key`: 'value'}", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "TypeError")
 }

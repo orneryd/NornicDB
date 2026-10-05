@@ -2,8 +2,10 @@ package cypher
 
 import (
 	"context"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -76,6 +78,231 @@ func BenchmarkGh728CartesianPreparedMembership(b *testing.B) {
 				apply()
 			}
 			b.StopTimer()
+		})
+	}
+}
+
+func TestGh713CartesianAdaptiveWorkers(t *testing.T) {
+	for _, test := range []struct{ rows, complexity, cores, workers int }{
+		{0, 1, 12, 1}, {1024, 1, 12, 1}, {65535, 1, 12, 1},
+		{65536, 1, 12, 4}, {65536, 2, 12, 8}, {262144, 1, 12, 12},
+		{1048576, 1, 64, 64}, {1048576, 2, 128, 128}, {65536, 1, 1, 1},
+	} {
+		require.Equal(t, test.workers, cartesianAggregateWorkers(test.rows, test.complexity, test.cores))
+	}
+}
+
+func TestGh713CartesianPartitionEquivalence(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	patterns := []struct {
+		variable string
+		nodes    []*storage.Node
+	}{
+		{"a", []*storage.Node{{ID: "large", Properties: map[string]interface{}{"key": "first", "value": int64(9007199254740993)}}, {ID: "small", Properties: map[string]interface{}{"key": "second", "value": int64(2)}}, {ID: "missing", Properties: map[string]interface{}{"key": "first"}}}},
+		{"b", []*storage.Node{{ID: "one"}, {ID: "two"}}},
+	}
+	for _, clause := range []string{
+		"RETURN count(*) AS total", "RETURN sum(a.value) AS total", "RETURN count(a.value) AS total",
+		"RETURN sum(1) AS total", "RETURN sum(a.value) + count(*) AS total",
+		"RETURN count(*) + coalesce(a.value, 0) AS total",
+		"RETURN a.key AS key, sum(a.value) AS total ORDER BY key SKIP 1 LIMIT 1",
+		"RETURN a.key AS key, count(*) AS total", "RETURN a.key AS key, count(*) AS total LIMIT 0",
+	} {
+		t.Run(clause, func(t *testing.T) {
+			plan := returnProjectionPlanFor(clause)
+			var rows []pipelineRow
+			for _, combination := range exec.buildCartesianProduct(patterns) {
+				values := make(pipelineRow, len(combination))
+				for variable, node := range combination {
+					if node != nil {
+						values[variable] = node
+					} else {
+						values[variable] = nil
+					}
+				}
+				rows = append(rows, values)
+			}
+			expected, err := exec.projectMergeReturnSource(withExpressionFailureSlot(context.Background()), nil, clause, pipelineRowsSource(rows))
+			require.NoError(t, err)
+			if clause == "RETURN sum(a.value) AS total" {
+				require.Equal(t, [][]interface{}{{int64(18014398509481990)}}, expected.Rows)
+			}
+			for _, workers := range []int{1, 2, 4, 8} {
+				ctx := withExpressionFailureSlot(context.Background())
+				groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, plan, workers)
+				require.True(t, handled)
+				require.NoError(t, err)
+				result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
+				require.NoError(t, err)
+				require.Equal(t, expected.Columns, result.Columns)
+				require.Equal(t, expected.Rows, result.Rows)
+			}
+		})
+	}
+	for _, clause := range []string{"RETURN sum(0.5)", "RETURN avg(a.value)", "RETURN collect(a.value)", "RETURN count(DISTINCT a.key)", "RETURN sum(a.value + 1)", "RETURN labels(a), count(*)"} {
+		groups, handled, err := exec.tryCartesianAggregatePartitions(context.Background(), patterns, returnProjectionPlanFor(clause), 4)
+		require.False(t, handled, clause)
+		require.NoError(t, err)
+		require.Nil(t, groups)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
+	require.True(t, handled)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+type cartesianCancelContext struct {
+	context.Context
+	calls atomic.Int64
+}
+
+func (ctx *cartesianCancelContext) Err() error {
+	if ctx.calls.Add(1) >= 10 {
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestGh713CartesianPartitionNullAndCancellation(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	patterns := []struct {
+		variable string
+		nodes    []*storage.Node
+	}{
+		{"a", []*storage.Node{nil, {Properties: map[string]interface{}{"key": "first", "value": int64(3)}}}},
+		{"b", []*storage.Node{{}, {}}},
+		{"c", []*storage.Node{{}, {}}},
+	}
+	for _, clause := range []string{"RETURN count(a.value) AS total", "RETURN sum(a.value) AS total", "RETURN a.key AS key, count(*) AS total"} {
+		for _, workers := range []int{1, 2, 8} {
+			ctx := withExpressionFailureSlot(context.Background())
+			groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(clause), workers)
+			require.True(t, handled)
+			require.NoError(t, err)
+			result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
+			require.NoError(t, err)
+			switch clause {
+			case "RETURN count(a.value) AS total":
+				require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)
+			case "RETURN sum(a.value) AS total":
+				require.Equal(t, [][]interface{}{{int64(12)}}, result.Rows)
+			default:
+				require.Equal(t, [][]interface{}{{nil, int64(4)}, {"first", int64(4)}}, result.Rows)
+			}
+		}
+	}
+	patterns[0].nodes = append(patterns[0].nodes, patterns[0].nodes...)
+	_, handled, err := exec.tryCartesianAggregatePartitions(&cartesianCancelContext{Context: context.Background()}, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
+	require.True(t, handled)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func BenchmarkGh713CartesianPartitionWorkers(b *testing.B) {
+	exec := NewStorageExecutor(newTestMemoryEngine(b))
+	patterns := []struct {
+		variable string
+		nodes    []*storage.Node
+	}{{variable: "a"}, {variable: "b"}}
+	for index := range patterns {
+		for value := 0; value < 512; value++ {
+			patterns[index].nodes = append(patterns[index].nodes, &storage.Node{Properties: map[string]interface{}{"value": int64(value), "key": strconv.Itoa(value % 16)}})
+		}
+	}
+	for _, clause := range []string{"RETURN count(*)", "RETURN sum(a.value)", "RETURN a.key, count(*)"} {
+		for _, mode := range []string{"serial", "adaptive"} {
+			b.Run(clause+"/"+mode, func(b *testing.B) {
+				workers := 0
+				if mode == "serial" {
+					workers = 1
+				}
+				plan := returnProjectionPlanFor(clause)
+				ctx := withExpressionFailureSlot(context.Background())
+				b.ReportAllocs()
+				b.ResetTimer()
+				for iteration := 0; iteration < b.N; iteration++ {
+					groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, plan, workers)
+					if err != nil || !handled || len(groups) == 0 {
+						b.Fatalf("unexpected partitions: %v, %v", groups, err)
+					}
+					var total int64
+					for _, group := range groups {
+						projection := group.projections[len(group.projections)-1]
+						value, ok := projection.states[0].result(ctx, exec)
+						if !ok {
+							b.Fatal("invalid aggregate state")
+						}
+						total += value.(int64)
+					}
+					want := int64(512 * 512)
+					if clause == "RETURN sum(a.value)" {
+						want *= 511
+						want /= 2
+					}
+					if total != want {
+						b.Fatalf("aggregate total %d, want %d", total, want)
+					}
+				}
+				b.StopTimer()
+				b.ReportMetric(float64(runtime.GOMAXPROCS(0)), "cores")
+			})
+		}
+	}
+}
+
+func BenchmarkGh713CartesianParallel(b *testing.B) {
+	for _, size := range []int{32, 512} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-parallel-bench")
+			b.Cleanup(func() { require.NoError(b, store.Close()) })
+			for index := 0; index < size; index++ {
+				for _, side := range []string{"Left", "Right"} {
+					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + strconv.Itoa(index)), Labels: []string{"Parallel" + side}, Properties: map[string]interface{}{"key": "group-" + strconv.Itoa(index%16), "value": int64(index)}})
+					require.NoError(b, err)
+				}
+			}
+			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			for _, test := range []struct {
+				name, clause string
+				rows         int
+				total        int64
+			}{
+				{"count", "RETURN count(*) AS total", 1, int64(size * size)},
+				{"sum", "RETURN sum(a.value) AS total", 1, int64(size * size * (size - 1) / 2)},
+				{"grouped", "RETURN a.key AS key, count(*) AS total", 16, int64(size * size)},
+			} {
+				b.Run(test.name, func(b *testing.B) {
+					ctx := withExpressionFailureSlot(context.Background())
+					query := "MATCH (a:ParallelLeft), (b:ParallelRight) " + test.clause
+					patterns := []string{"(a:ParallelLeft)", "(b:ParallelRight)"}
+					items := exec.parseReturnItems(test.clause[len("RETURN "):])
+					returnIndex := findKeywordIndex(query, "RETURN")
+					apply := func() {
+						result, err := exec.executeCartesianProductMatch(ctx, query, "", patterns, -1, returnIndex, items, true, false, &ExecuteResult{})
+						if err != nil || len(result.Rows) != test.rows {
+							b.Fatalf("unexpected aggregate result: %v, %v", result, err)
+						}
+						var total int64
+						for _, row := range result.Rows {
+							value, ok := row[len(row)-1].(int64)
+							if !ok {
+								b.Fatalf("unexpected aggregate row: %v", row)
+							}
+							total += value
+						}
+						if total != test.total {
+							b.Fatalf("unexpected total: %d", total)
+						}
+					}
+					apply()
+					b.ReportAllocs()
+					b.ResetTimer()
+					for iteration := 0; iteration < b.N; iteration++ {
+						apply()
+					}
+					b.StopTimer()
+				})
+			}
 		})
 	}
 }

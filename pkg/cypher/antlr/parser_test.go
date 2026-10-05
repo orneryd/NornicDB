@@ -130,6 +130,23 @@ func TestANTLRParserBasicQueries(t *testing.T) {
 		{"constraint require options backticks", "CREATE CONSTRAINT `uq order id` IF NOT EXISTS FOR (`n`:`Order`) REQUIRE `n`.`id` IS UNIQUE OPTIONS {indexProvider: 'range-1.0'}"},
 		{"create with embedding return", "CREATE (n:Doc {id:'d1', content:'hello world'}) WITH EMBEDDING RETURN count(n) AS c"},
 		{"create with embedding no return", "CREATE (n:Doc {id:'d2', content:'hello world'}) WITH EMBEDDING"},
+		{"disallowed policy", "CREATE CONSTRAINT forbidden FOR (n:Person)-[r:FORBIDDEN]->(m) REQUIRE DISALLOWED"},
+		{"constraint block", "CREATE CONSTRAINT contract FOR (n:Person) REQUIRE { n.id IS UNIQUE n.age IS :: INTEGER n.status IN ['active'] NOT EXISTS { (n)-[:BAD]->() } }"},
+		{"show contracts", "SHOW CONSTRAINT CONTRACTS"},
+		{"policy words as names", "MATCH (n:DISALLOWED) RETURN n.CONTRACTS AS DISALLOWED"},
+		{"negative node label", "MATCH (n:!Other) RETURN n"},
+		{"label wildcard predicate", "MATCH (n) WHERE n IS % RETURN n"},
+		{"label expression precedence", "MATCH (n IS (A|B)&!C) RETURN n"},
+		{"negative relationship type", "MATCH (a)-[:!R]->(b) RETURN b"},
+		{"relationship quantifier", "MATCH (a)-[r:!S]->{1,2}(b) RETURN count(*)"},
+		{"relationship plus quantifier", "MATCH (a)-[:R]->+(b) RETURN b"},
+		{"escaped backtick label", "MATCH (n:P) SET n:`Quoted``Label` RETURN labels(n)"},
+		{"bare index property", "CREATE INDEX okidx FOR (n:L) ON n.q"},
+		{"replace database", "CREATE OR REPLACE DATABASE db"},
+		{"composite aliases", "CREATE COMPOSITE DATABASE comp ALIAS first FOR DATABASE db1 ALIAS second FOR DATABASE db2"},
+		{"show users", "SHOW USERS YIELD user RETURN user ORDER BY user"},
+		{"show current user", "SHOW CURRENT USER"},
+		{"admin words as identifiers", "MATCH (n:USER) RETURN n.CURRENT AS REPLACE"},
 	}
 
 	for _, tt := range queries {

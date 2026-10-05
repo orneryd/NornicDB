@@ -77,13 +77,14 @@ queryPrefix
 // SHOW commands
 showCommand
         : SHOW ((ALL | FULLTEXT | RANGE_INDEX | TEXT | POINT | VECTOR | LOOKUP)? (INDEXES | INDEX)
-            | CONSTRAINTS | CONSTRAINT | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
-            | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | ALL)
+            | CONSTRAINTS | CONSTRAINT CONTRACTS? | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
+            | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | USERS | CURRENT USER | ALL)
             (YIELD (MULT | yieldItems) returnSt?)?
     ;
 
 administrationCommand
-    : CREATE COMPOSITE? DATABASE name (IF NOT EXISTS)?
+    : CREATE (OR REPLACE)? DATABASE name (IF NOT EXISTS)?
+    | CREATE (OR REPLACE)? COMPOSITE DATABASE name (IF NOT EXISTS)? (ALIAS name FOR DATABASE qualifiedName)*
     | DROP COMPOSITE? DATABASE name (IF EXISTS)?
     | CREATE ALIAS qualifiedName (IF NOT EXISTS)? FOR DATABASE qualifiedName
     | DROP ALIAS qualifiedName (IF EXISTS)? (FOR DATABASE)?
@@ -97,7 +98,7 @@ qualifiedName
 // Schema commands (DROP INDEX, CREATE INDEX, etc.)
 schemaCommand
     : DROP INDEX name? (IF EXISTS)?
-    | CREATE (RANGE_INDEX | TEXT | POINT)? INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? parenExpressionChain? (OPTIONS mapLit)?
+    | CREATE (RANGE_INDEX | TEXT | POINT)? INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS mapLit)?
     | CREATE FULLTEXT INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? EACH? LBRACK expressionChain RBRACK (OPTIONS mapLit)?
     | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? parenExpressionChain? (OPTIONS mapLit)?
     | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
@@ -111,6 +112,12 @@ constraintRequirement
     | expression IN listLit
     | MAX COUNT integerLit
     | ALLOWED
+    | DISALLOWED
+    | constraintBlock
+    ;
+
+constraintBlock
+    : LBRACE ((constraintRequirement | expression) (SEMI? (constraintRequirement | expression))* SEMI?)? RBRACE
     ;
 
 propertyTypeName
@@ -277,7 +284,19 @@ setItem
     ;
 
 nodeLabels
-    : (COLON (name (STICK name)* | DOLLAR LPAREN expression RPAREN))+
+    : ((COLON | IS) (labelExpression | DOLLAR LPAREN expression RPAREN))+
+    ;
+
+labelExpression
+    : labelConjunction (STICK COLON? labelConjunction)*
+    ;
+
+labelConjunction
+    : labelNegation ((AMPERSAND | COLON) labelNegation)*
+    ;
+
+labelNegation
+    : BANG* (name | MOD | LPAREN labelExpression RPAREN)
     ;
 
 createSt
@@ -344,7 +363,11 @@ unaryAddSubExpression
     ;
 
 atomicExpression
-    : propertyOrLabelExpression (stringExpression | listExpression | nullExpression | typePredicate)*
+    : propertyOrLabelExpression (stringExpression | listExpression | nullExpression | typePredicate | labelPredicate)*
+    ;
+
+labelPredicate
+    : IS labelExpression
     ;
 
 listExpression
@@ -380,7 +403,7 @@ expressionTypePart
     ;
 
 propertyOrLabelExpression
-    : propertyExpression nodeLabels?
+    : propertyExpression (COLON labelExpression)*
     ;
 
 propertyExpression
@@ -402,7 +425,14 @@ patternElem
     ;
 
 patternElemChain
-    : relationshipPattern nodePattern
+    : relationshipPattern relationshipQuantifier? nodePattern
+    ;
+
+relationshipQuantifier
+    : PLUS
+    | MULT
+    | LBRACE INTEGER RBRACE
+    | LBRACE INTEGER? COMMA INTEGER? RBRACE
     ;
 
 properties
@@ -457,7 +487,7 @@ relationDetail
     ;
 
 relationshipTypes
-    : COLON name (STICK COLON? name)*
+    : (COLON | IS) labelExpression
     ;
 
 unionSt
@@ -596,6 +626,7 @@ symbol
     | INDEXES
     | CONSTRAINT
     | CONSTRAINTS
+    | CONTRACTS
     | BEGIN
     | COMMIT
     | ROLLBACK
@@ -635,6 +666,10 @@ symbol
     | PROFILE
     | EXISTS
     | SHOW
+    | USERS
+    | USER
+    | CURRENT
+    | REPLACE
     | OPTIONS
     | NODE
     | RELATIONSHIP
@@ -642,6 +677,7 @@ symbol
     | NO
     | OVERLAP
     | ALLOWED
+    | DISALLOWED
     | KEY
     | ASSERT
     | ROWS

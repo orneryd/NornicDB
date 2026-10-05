@@ -43,6 +43,9 @@ type CypherParserListener interface {
 	// EnterConstraintRequirement is called when entering the constraintRequirement production.
 	EnterConstraintRequirement(c *ConstraintRequirementContext)
 
+	// EnterConstraintBlock is called when entering the constraintBlock production.
+	EnterConstraintBlock(c *ConstraintBlockContext)
+
 	// EnterPropertyTypeName is called when entering the propertyTypeName production.
 	EnterPropertyTypeName(c *PropertyTypeNameContext)
 
@@ -157,6 +160,15 @@ type CypherParserListener interface {
 	// EnterNodeLabels is called when entering the nodeLabels production.
 	EnterNodeLabels(c *NodeLabelsContext)
 
+	// EnterLabelExpression is called when entering the labelExpression production.
+	EnterLabelExpression(c *LabelExpressionContext)
+
+	// EnterLabelConjunction is called when entering the labelConjunction production.
+	EnterLabelConjunction(c *LabelConjunctionContext)
+
+	// EnterLabelNegation is called when entering the labelNegation production.
+	EnterLabelNegation(c *LabelNegationContext)
+
 	// EnterCreateSt is called when entering the createSt production.
 	EnterCreateSt(c *CreateStContext)
 
@@ -202,6 +214,9 @@ type CypherParserListener interface {
 	// EnterAtomicExpression is called when entering the atomicExpression production.
 	EnterAtomicExpression(c *AtomicExpressionContext)
 
+	// EnterLabelPredicate is called when entering the labelPredicate production.
+	EnterLabelPredicate(c *LabelPredicateContext)
+
 	// EnterListExpression is called when entering the listExpression production.
 	EnterListExpression(c *ListExpressionContext)
 
@@ -240,6 +255,9 @@ type CypherParserListener interface {
 
 	// EnterPatternElemChain is called when entering the patternElemChain production.
 	EnterPatternElemChain(c *PatternElemChainContext)
+
+	// EnterRelationshipQuantifier is called when entering the relationshipQuantifier production.
+	EnterRelationshipQuantifier(c *RelationshipQuantifierContext)
 
 	// EnterProperties is called when entering the properties production.
 	EnterProperties(c *PropertiesContext)
@@ -388,6 +406,9 @@ type CypherParserListener interface {
 	// ExitConstraintRequirement is called when exiting the constraintRequirement production.
 	ExitConstraintRequirement(c *ConstraintRequirementContext)
 
+	// ExitConstraintBlock is called when exiting the constraintBlock production.
+	ExitConstraintBlock(c *ConstraintBlockContext)
+
 	// ExitPropertyTypeName is called when exiting the propertyTypeName production.
 	ExitPropertyTypeName(c *PropertyTypeNameContext)
 
@@ -502,6 +523,15 @@ type CypherParserListener interface {
 	// ExitNodeLabels is called when exiting the nodeLabels production.
 	ExitNodeLabels(c *NodeLabelsContext)
 
+	// ExitLabelExpression is called when exiting the labelExpression production.
+	ExitLabelExpression(c *LabelExpressionContext)
+
+	// ExitLabelConjunction is called when exiting the labelConjunction production.
+	ExitLabelConjunction(c *LabelConjunctionContext)
+
+	// ExitLabelNegation is called when exiting the labelNegation production.
+	ExitLabelNegation(c *LabelNegationContext)
+
 	// ExitCreateSt is called when exiting the createSt production.
 	ExitCreateSt(c *CreateStContext)
 
@@ -547,6 +577,9 @@ type CypherParserListener interface {
 	// ExitAtomicExpression is called when exiting the atomicExpression production.
 	ExitAtomicExpression(c *AtomicExpressionContext)
 
+	// ExitLabelPredicate is called when exiting the labelPredicate production.
+	ExitLabelPredicate(c *LabelPredicateContext)
+
 	// ExitListExpression is called when exiting the listExpression production.
 	ExitListExpression(c *ListExpressionContext)
 
@@ -585,6 +618,9 @@ type CypherParserListener interface {
 
 	// ExitPatternElemChain is called when exiting the patternElemChain production.
 	ExitPatternElemChain(c *PatternElemChainContext)
+
+	// ExitRelationshipQuantifier is called when exiting the relationshipQuantifier production.
+	ExitRelationshipQuantifier(c *RelationshipQuantifierContext)
 
 	// ExitProperties is called when exiting the properties production.
 	ExitProperties(c *PropertiesContext)

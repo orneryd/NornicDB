@@ -702,6 +702,11 @@ func TestExecuteSetMergeRejectsMalformedInlineMap(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}", nil)
 	require.Error(t, err)
+	result, err := exec.Execute(ctx, "MATCH (n:SetMergeMalformed) RETURN n.a", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil}}, result.Rows)
+	_, err = exec.executeSet(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse properties in SET +=")
 }
 

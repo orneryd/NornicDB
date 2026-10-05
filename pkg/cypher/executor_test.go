@@ -1942,10 +1942,12 @@ func TestExecuteMultipleMatchCreateBlocksWithDifferentCategories(t *testing.T) {
 		CREATE (p1:Product {productID: 1, productName: 'Product1'})
 		CREATE (p1)-[:PART_OF]->(c1)
 		
+		WITH *
 		MATCH (s2:Supplier {supplierID: 2}), (c2:Category {categoryID: 2})
 		CREATE (p2:Product {productID: 2, productName: 'Product2'})
 		CREATE (p2)-[:PART_OF]->(c2)
 		
+		WITH *
 		MATCH (s3:Supplier {supplierID: 3}), (c3:Category {categoryID: 3})
 		CREATE (p3:Product {productID: 3, productName: 'Product3'})
 		CREATE (p3)-[:PART_OF]->(c3)

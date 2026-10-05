@@ -4144,11 +4144,11 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 	return e.pipelineApplyReturnSource(ctx, rows, clause, pipelineRowsSource(rows), false)
 }
 
-func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) (*ExecuteResult, bool) {
-	return e.pipelineApplyReturnPlan(ctx, rows, returnProjectionPlanFor(clause), source, rowsValidated)
+func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
+	return e.pipelineApplyReturnPlan(ctx, rows, returnProjectionPlanFor(clause), source, rowsValidated, preparedGroups...)
 }
 
-func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pipelineRow, plan *returnProjectionPlan, source pipelineRowSource, rowsValidated bool) (*ExecuteResult, bool) {
+func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pipelineRow, plan *returnProjectionPlan, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
 	if !plan.valid {
 		return nil, false
 	}
@@ -4183,9 +4183,15 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	result := &ExecuteResult{Columns: append([]string(nil), plan.columns...)}
 
 	if hasAggregate {
-		groups, ok := e.pipelineAggregateGroups(ctx, source, projs, rowsValidated)
-		if !ok {
-			return nil, false
+		var groups []*pipelineAggregateGroup
+		if len(preparedGroups) > 0 {
+			groups = preparedGroups[0]
+		} else {
+			var ok bool
+			groups, ok = e.pipelineAggregateGroups(ctx, source, projs, rowsValidated)
+			if !ok {
+				return nil, false
+			}
 		}
 
 		for _, group := range groups {

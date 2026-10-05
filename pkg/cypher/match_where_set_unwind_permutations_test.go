@@ -261,7 +261,7 @@ func buildMatchWhereSetUnwindQuery(seed int, style string, multiline, withProps,
 	}
 
 	if !multiline {
-		query := strings.Join([]string{matchClause, whereClause, setClause, unwindClause, returnClause}, " ")
+		query := strings.Join([]string{matchClause, whereClause, setClause, "WITH " + nodeVar, unwindClause, returnClause}, " ")
 		return injectArbitraryWhitespace(query, seed)
 	}
 
@@ -269,6 +269,7 @@ func buildMatchWhereSetUnwindQuery(seed int, style string, multiline, withProps,
 		matchClause,
 		whereClause,
 		setClauseMultiline,
+		"WITH " + nodeVar,
 		unwindClause,
 		returnClause,
 	}, "\n")
@@ -344,7 +345,7 @@ CREATE (other:Person {id: 'p2', name: 'Bob', group: 'B', score: 4, tags: ['z']})
 `, nil)
 	require.NoError(t, err)
 
-	query := "MATCH (n:Person) WHERE n.name = $targetExact SET n.touched = true UNWIND [1, 2, 3] AS item RETURN n.id AS id, item, n.touched AS touched"
+	query := "MATCH (n:Person) WHERE n.name = $targetExact SET n.touched = true WITH n UNWIND [1, 2, 3] AS item RETURN n.id AS id, item, n.touched AS touched"
 	params := map[string]interface{}{
 		"targetExact": "Alice",
 	}
@@ -404,6 +405,7 @@ CREATE (other:Person {id: 'p2', name: 'Bob', group: 'B', score: 4, tags: ['z']})
 				"MATCH (n:Person)",
 				tc.whereBlock,
 				"SET n.touched = true",
+				"WITH n",
 				"UNWIND [1, 2, 3] AS item",
 				"RETURN n.id AS id, item, n.touched AS touched",
 			}, "\n")

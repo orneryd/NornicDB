@@ -1096,6 +1096,11 @@ func TestCoverageLiftSchemaDDLExecutionCompatibilityMatrix(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE CONSTRAINT bad_zero FOR ()-[r:MANAGES]->() REQUIRE MAX COUNT 0", nil)
 	require.ErrorContains(t, err, "positive integer")
 	_, err = exec.Execute(ctx, "CREATE CONSTRAINT bad_text FOR ()-[r:MANAGES]->() REQUIRE MAX COUNT abc", nil)
+	require.Error(t, err)
+	for _, constraint := range store.GetSchema().GetAllConstraints() {
+		require.NotEqual(t, "bad_text", constraint.Name)
+	}
+	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_text FOR ()-[r:MANAGES]->() REQUIRE MAX COUNT abc")
 	require.ErrorContains(t, err, "invalid cardinality require clause")
 
 	runDDL("CREATE CONSTRAINT IF NOT EXISTS FOR (:Employee)-[:MANAGES]->(:Manager) REQUIRE ALLOWED")

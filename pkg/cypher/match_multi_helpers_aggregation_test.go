@@ -271,6 +271,98 @@ func TestGh713MultiMatchAggregateSharedReturn(t *testing.T) {
 	}
 }
 
+func TestGh713MultiMatchBorrowedReturn(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "multi-match-borrowed-return")
+	for _, side := range []string{"Left", "Right"} {
+		for index := 1; index <= 2; index++ {
+			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Borrow" + side}, Properties: map[string]interface{}{"value": int64(index)}})
+			require.NoError(t, err)
+		}
+	}
+	for index := 1; index <= 2; index++ {
+		require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("edge-%d", index)), StartNode: storage.NodeID(fmt.Sprintf("Left-%d", index)), EndNode: storage.NodeID(fmt.Sprintf("Right-%d", index)), Type: "BORROWED"}))
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	params := map[string]interface{}{"skip": int64(1), "limit": int64(2)}
+	for _, test := range []struct {
+		query, code string
+		columns     []string
+		rows        [][]interface{}
+		ordered     bool
+	}{
+		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN a.value AS left, b.value AS right", "", []string{"left", "right"}, [][]interface{}{{int64(1), int64(1)}, {int64(1), int64(2)}, {int64(2), int64(1)}, {int64(2), int64(2)}}, false},
+		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN a.value AS left, b.value AS right ORDER BY left, right SKIP $skip LIMIT $limit", "", []string{"left", "right"}, [][]interface{}{{int64(1), int64(2)}, {int64(2), int64(1)}}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN DISTINCT a.value AS left ORDER BY left", "", []string{"left"}, [][]interface{}{{int64(1)}, {int64(2)}}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN 'count(a)' AS literal, a.value AS left ORDER BY left SKIP 1 LIMIT 1", "", []string{"literal", "left"}, [][]interface{}{{"count(a)", int64(1)}}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN CoUnT (DISTINCT a.value) AS `value count`", "", []string{"value count"}, [][]interface{}{{int64(2)}}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN count(*) + 1 AS total", "", []string{"total"}, [][]interface{}{{int64(5)}}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN a.value AS left LIMIT 0", "", []string{"left"}, [][]interface{}{}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN a.value / 0 AS broken", "Neo.ClientError.Statement.ArithmeticError", nil, nil, false},
+		{"MATCH (a:BorrowLeft)-[r:BORROWED]->(b:BorrowRight) MATCH (c:BorrowRight) RETURN a.value AS left, type(r) AS kind, c.value AS right ORDER BY left, right", "", []string{"left", "kind", "right"}, [][]interface{}{{int64(1), "BORROWED", int64(1)}, {int64(1), "BORROWED", int64(2)}, {int64(2), "BORROWED", int64(1)}, {int64(2), "BORROWED", int64(2)}}, true},
+	} {
+		t.Run(test.query, func(t *testing.T) {
+			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
+			result, err := exec.executeMultiMatch(ctx, test.query)
+			public, publicErr := exec.Execute(context.Background(), test.query, params)
+			if test.code != "" {
+				require.Error(t, err)
+				require.Contains(t, statusText(err), test.code)
+				require.Error(t, publicErr)
+				require.Contains(t, statusText(publicErr), test.code)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, publicErr)
+			require.Equal(t, test.columns, result.Columns)
+			require.Equal(t, test.columns, public.Columns)
+			if test.ordered {
+				require.Equal(t, test.rows, result.Rows)
+				require.Equal(t, test.rows, public.Rows)
+			} else {
+				require.ElementsMatch(t, test.rows, result.Rows)
+				require.ElementsMatch(t, test.rows, public.Rows)
+			}
+		})
+	}
+}
+
+func BenchmarkGh713MultiMatchProjection(b *testing.B) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "multi-match-projection-bench")
+	for index := 0; index < 32; index++ {
+		for _, side := range []string{"Left", "Right"} {
+			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"value": int64(index)}})
+			require.NoError(b, err)
+		}
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	ctx := withExpressionFailureSlot(context.Background())
+	query := "MATCH (a:ProjectionLeft) MATCH (b:ProjectionRight) RETURN a.value + b.value AS total"
+	apply := func() {
+		result, err := exec.executeMultiMatch(ctx, query)
+		if err != nil || len(result.Rows) != 1024 {
+			b.Fatalf("unexpected projection result: %v, %v", result, err)
+		}
+		var total int64
+		for _, row := range result.Rows {
+			value, ok := row[0].(int64)
+			if !ok {
+				b.Fatalf("unexpected projection row: %v", row)
+			}
+			total += value
+		}
+		if total != 31744 {
+			b.Fatalf("unexpected projection total: %d", total)
+		}
+	}
+	apply()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		apply()
+	}
+	b.StopTimer()
+}
+
 func TestGh713AggregatePrefixScanning(t *testing.T) {
 	for _, test := range []struct {
 		expression string

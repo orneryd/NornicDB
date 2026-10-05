@@ -34,6 +34,7 @@ SET cc.tx_id = $tx_id,
     cc.timestamp = datetime($timestamp_iso),
     cc.op_type = $op_type,
     cc.commit_hash = $commit_hash
+WITH cc
 MATCH (cs:CodeState {state_id: $affected_state_id})
 MERGE (cc)-[:IMPACTS]->(cs);
 `), map[string]interface{}{
@@ -56,6 +57,7 @@ SET cc.tx_id = row.tx_id,
     cc.timestamp = datetime(row.timestamp_iso),
     cc.op_type = row.op_type,
     cc.commit_hash = row.commit_hash
+WITH cc, row
 MATCH (cs:CodeState {state_id: row.affected_state_id})
 MERGE (cc)-[:IMPACTS]->(cs);
 `), map[string]interface{}{
@@ -82,6 +84,7 @@ SET cc.tx_id = row.tx_id,
     cc.timestamp = datetime(row.timestamp_iso),
     cc.op_type = row.op_type,
     cc.commit_hash = row.commit_hash
+WITH cc, row
 MATCH (cs:CodeState {code_key: row.affected_code_key, tx_id: row.tx_id})
 MERGE (cc)-[:IMPACTS]->(cs);
 `), map[string]interface{}{

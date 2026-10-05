@@ -1395,7 +1395,10 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 		}
 	}
 
-	seedQuery := strings.TrimSpace(outerPart) + " RETURN " + variable
+	seedQuery := trimmedOuter
+	if topLevelKeywordIndex(seedQuery, "RETURN") < 0 {
+		seedQuery += " RETURN " + variable
+	}
 	outerRes, err := e.executeInternal(ctx, seedQuery, nil)
 	if err != nil {
 		return nil, err

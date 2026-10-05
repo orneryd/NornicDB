@@ -65,6 +65,8 @@ MULT       : '*';
 ESC        : '`';
 COLON      : ':';
 STICK      : '|';
+AMPERSAND  : '&';
+BANG       : '!';
 DOLLAR     : '$';
 
 CALL       : 'CALL';
@@ -146,7 +148,12 @@ VECTOR     : 'VECTOR';
 EXPLAIN    : 'EXPLAIN';
 PROFILE    : 'PROFILE';
 SHOW       : 'SHOW';
+USERS      : 'USERS';
+USER       : 'USER';
+CURRENT    : 'CURRENT';
+REPLACE    : 'REPLACE';
 CONSTRAINTS: 'CONSTRAINTS';
+CONTRACTS  : 'CONTRACTS';
 PROCEDURES : 'PROCEDURES';
 FUNCTIONS  : 'FUNCTIONS';
 DATABASE   : 'DATABASE';
@@ -182,6 +189,7 @@ TEMPORAL   : 'TEMPORAL';
 NO         : 'NO';
 OVERLAP    : 'OVERLAP';
 ALLOWED    : 'ALLOWED';
+DISALLOWED : 'DISALLOWED';
 SHORTESTPATH: 'shortestPath';
 ALLSHORTESTPATHS: 'allShortestPaths';
 
@@ -198,7 +206,7 @@ DIGIT : HexInteger | OctalInteger | [0-9];
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
 
-ESC_LITERAL    : '`' .*? '`';
+ESC_LITERAL    : '`' ('``' | ~'`')* '`';
 // Single-quoted strings can contain any characters except unescaped quotes
 CHAR_LITERAL   : '\'' (~['\\] | EscapeSequence)* '\'';
 // Double-quoted strings can contain any characters except unescaped quotes
