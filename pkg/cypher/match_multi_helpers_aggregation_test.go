@@ -11,6 +11,54 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGh713AggregatePrefixScanning(t *testing.T) {
+	for _, test := range []struct {
+		expression string
+		calls      []string
+	}{
+		{"cOuNt(n)", []string{"cOuNt(n)"}},
+		{"COUNT \t(n)", []string{"COUNT \t(n)"}},
+		{"stdevp(n) + StDeV(n)", []string{"stdevp(n)", "StDeV(n)"}},
+		{"'count(n)' + `SUM` + MAX(n)", []string{"MAX(n)"}},
+		{"[CoUnT(n)] + apoc.coll.sum([1,2])", []string{"CoUnT(n)"}},
+		{"discount(n) + counted(n) + n.count + apoc.count(n)", nil},
+		{"COUNT(n", nil},
+		{"n.NAME + 'COUNT'", nil},
+	} {
+		t.Run(test.expression, func(t *testing.T) {
+			var calls []string
+			for _, span := range findAggregateSpans(test.expression) {
+				calls = append(calls, test.expression[span.start:span.end])
+			}
+			require.Equal(t, test.calls, calls)
+		})
+	}
+	for _, name := range traversalAggFnNames {
+		for _, prefix := range []string{name.lower, name.upper} {
+			expression := prefix + "(n)"
+			spans := findAggregateSpans(expression)
+			require.Equal(t, []aggregateSpan{{start: 0, end: len(expression)}}, spans)
+			require.Empty(t, findAggregateSpans("apoc."+expression))
+		}
+	}
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		if spans := findAggregateSpans("n.NAME + 'COUNT'"); len(spans) != 0 {
+			panic("unexpected aggregate")
+		}
+	}))
+}
+
+func BenchmarkGh713AggregatePrefixScanning(b *testing.B) {
+	for _, expression := range []string{"n.NAME + 'COUNT'", "count(*)", "COUNT(n) + StDeV(n)"} {
+		b.Run(expression, func(b *testing.B) {
+			b.ReportAllocs()
+			for iteration := 0; iteration < b.N; iteration++ {
+				findAggregateSpans(expression)
+			}
+		})
+	}
+}
+
 func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 	t.Run("parse helpers", func(t *testing.T) {
 		v, p, expectNotNull, ok := parseCartesianNullTerm("a.name IS NOT NULL")

@@ -32,8 +32,10 @@ import (
 // traversalAggFnNames are the aggregate functions the traversal pipeline
 // accumulates, matching the executor-wide aggregateFnNames set. stdevp is
 // listed before stdev so prefix scanning matches the longer name first.
-var traversalAggFnNames = []string{
-	"percentilecont", "percentiledisc", "collect", "count", "sum", "avg", "min", "max", "stdevp", "stdev",
+var traversalAggFnNames = []struct{ lower, upper string }{
+	{"percentilecont", "PERCENTILECONT"}, {"percentiledisc", "PERCENTILEDISC"},
+	{"collect", "COLLECT"}, {"count", "COUNT"}, {"sum", "SUM"}, {"avg", "AVG"},
+	{"min", "MIN"}, {"max", "MAX"}, {"stdevp", "STDEVP"}, {"stdev", "STDEV"},
 }
 
 // aggregateSpan is one aggregate call located inside a larger expression.
@@ -47,41 +49,47 @@ type aggregateSpan struct {
 // each span, so aggregates nested inside another aggregate's arguments are
 // not reported separately.
 func findAggregateSpans(expr string) []aggregateSpan {
+	const prefixMask uint32 = 1<<('A'-'A') | 1<<('C'-'A') | 1<<('M'-'A') | 1<<('P'-'A') | 1<<('S'-'A')
 	var spans []aggregateSpan
-	lower := lowerASCII(expr)
 	i := 0
-	for i < len(lower) {
-		c := lower[i]
+	for i < len(expr) {
+		c := expr[i]
 		if c == '\'' || c == '"' || c == '`' {
 			j := i + 1
-			for j < len(lower) && (lower[j] != c || isBackslashEscaped(lower, j)) {
+			for j < len(expr) && (expr[j] != c || isBackslashEscaped(expr, j)) {
 				j++
 			}
 			i = j + 1
 			continue
 		}
+		// A qualified function whose terminal component happens to have an
+		// aggregate name (for example apoc.coll.sum()) is not a Cypher
+		// aggregate. It is evaluated once per row by the same expression path.
+		folded := asciiUpper(c)
+		if folded < 'A' || folded > 'Z' || prefixMask&(uint32(1)<<(folded-'A')) == 0 ||
+			i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
+			i++
+			continue
+		}
 		matched := false
 		for _, fn := range traversalAggFnNames {
-			if !strings.HasPrefix(lower[i:], fn) {
+			if fn.upper[0] != folded {
 				continue
 			}
-			// A qualified function whose terminal component happens to have an
-			// aggregate name (for example apoc.coll.sum()) is not a Cypher
-			// aggregate. It is evaluated once per row by the same expression path.
-			if i > 0 && (isIdentByte(lower[i-1]) || lower[i-1] == '.') {
+			if !strings.HasPrefix(expr[i:], fn.lower) && !startsWithKeywordFold(expr[i:], fn.upper) {
 				continue
 			}
-			j := i + len(fn)
-			for j < len(lower) && isWhitespace(lower[j]) {
+			j := i + len(fn.lower)
+			for j < len(expr) && isWhitespace(expr[j]) {
 				j++
 			}
-			if j >= len(lower) || lower[j] != '(' {
+			if j >= len(expr) || expr[j] != '(' {
 				continue
 			}
 			depth := 0
 			end := -1
-			for k := j; k < len(lower) && end < 0; k++ {
-				switch lower[k] {
+			for k := j; k < len(expr) && end < 0; k++ {
+				switch expr[k] {
 				case '(':
 					depth++
 				case ')':

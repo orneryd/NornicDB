@@ -1452,11 +1452,6 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 		allMatches = filtered
 	}
 
-	// Handle aggregation queries
-	if hasAggregation {
-		return e.executeCartesianAggregation(ctx, allMatches, returnItems, result)
-	}
-
 	var variables []string
 	if len(allMatches) > 0 {
 		variables = make([]string, 0, len(allMatches[0]))
