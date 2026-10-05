@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Clear deleted entries out of the scanned ranges after a mass delete. Badger
+  keeps a delete marker for every deleted node and relationship until a
+  compaction it never runs on a small or idle database, and every scan steps
+  over them: a 40,000-node property lookup went from 13 ms to 55 ms after
+  140,000 nodes were deleted and stayed there. After 50,000 deletes, once
+  deletes have stopped for 30 seconds, the engine has Badger compact them
+  away (0.6 s; commits wait meanwhile), and the lookup takes 8 ms. Dropping a
+  key prefix, which this and `DROP DATABASE` use, now makes commits wait
+  instead of failing them with Badger's blocked-writes error (#911).
 - Log classified Cypher syntax rejections at INFO with a bounded redacted
   statement shape, allowlisted statement class and stable grouping hash.
   JSON logs can be grouped into an optimization backlog without retaining
