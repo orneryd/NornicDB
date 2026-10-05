@@ -80,6 +80,52 @@ func BenchmarkGh728CartesianPreparedMembership(b *testing.B) {
 	}
 }
 
+func BenchmarkGh713CartesianAggregation(b *testing.B) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "cartesian-aggregate-bench")
+	for index := 0; index < 32; index++ {
+		key := "key-" + strconv.Itoa(index)
+		for _, side := range []string{"Left", "Right"} {
+			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": key}})
+			require.NoError(b, err)
+		}
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	for _, test := range []struct {
+		name, clause string
+		rows         int
+		count        int64
+	}{
+		{"count", "RETURN count(*) AS total", 1, 1024},
+		{"grouped", "RETURN a.key AS key, count(*) AS total", 32, 32},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			ctx := withExpressionFailureSlot(context.Background())
+			query := "MATCH (a:AggregateLeft), (b:AggregateRight) " + test.clause
+			patterns := []string{"(a:AggregateLeft)", "(b:AggregateRight)"}
+			items := exec.parseReturnItems(test.clause[len("RETURN "):])
+			returnIndex := findKeywordIndex(query, "RETURN")
+			apply := func() {
+				result, err := exec.executeCartesianProductMatch(ctx, query, "", patterns, -1, returnIndex, items, true, false, &ExecuteResult{})
+				if err != nil || len(result.Rows) != test.rows {
+					b.Fatalf("unexpected aggregate result: %v, %v", result, err)
+				}
+				for _, row := range result.Rows {
+					if row[len(row)-1] != test.count {
+						b.Fatalf("unexpected aggregate row: %v", row)
+					}
+				}
+			}
+			apply()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				apply()
+			}
+			b.StopTimer()
+		})
+	}
+}
+
 func TestGh728CartesianMembershipParameterFreshness(t *testing.T) {
 	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-membership-test")
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -217,6 +263,12 @@ func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
 		{"arithmetic window", "RETURN a.key AS left, b.key AS right ORDER BY left, right SKIP 1 + 1 LIMIT 1 + 1", "", []string{"left", "right"}, [][]interface{}{{"key-2", "key-1"}, {"key-2", "key-2"}}},
 		{"parameter window", "RETURN a.key AS left, b.key AS right ORDER BY left, right SKIP $skip LIMIT $limit", "", []string{"left", "right"}, [][]interface{}{{"key-2", "key-1"}}},
 		{"parameter zero", "RETURN a.key AS `left key` LIMIT $zero", "", []string{"left key"}, [][]interface{}{}},
+		{"aggregate parameter zero", "RETURN count(*) AS total LIMIT $zero", "", []string{"total"}, [][]interface{}{}},
+		{"aggregate count", "RETURN count(*) AS total", "", []string{"total"}, [][]interface{}{{int64(4)}}},
+		{"aggregate distinct", "RETURN count(DISTINCT a.key) AS total", "", []string{"total"}, [][]interface{}{{int64(2)}}},
+		{"aggregate quoted arithmetic", "RETURN count(*) + 1 AS `total count` LIMIT 1", "", []string{"total count"}, [][]interface{}{{int64(5)}}},
+		{"aggregate grouped window", "RETURN a.key AS key, count(*) AS total ORDER BY key SKIP $limit LIMIT $limit", "", []string{"key", "total"}, [][]interface{}{{"key-2", int64(2)}}},
+		{"aggregate window failure", "RETURN count(*) AS total LIMIT 1 / 0", "Neo.ClientError.Statement.ArithmeticError", nil, nil},
 		{"projection failure", "RETURN 1 / 0 AS value", "Neo.ClientError.Statement.ArithmeticError", nil, nil},
 		{"window failure", "RETURN a.key AS left LIMIT 1 / 0", "Neo.ClientError.Statement.ArithmeticError", nil, nil},
 	} {
@@ -226,18 +278,46 @@ func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
 			items := exec.parseReturnItems(test.tail[len("RETURN "):])
 			stats := &QueryStats{}
 			buffer := &ExecuteResult{Columns: test.columns, Stats: stats}
-			result, err := exec.executeCartesianProductMatch(ctx, query, "", []string{"(a:ProjectionLeft)", "(b:ProjectionRight)"}, -1, findKeywordIndex(query, "RETURN"), items, false, false, buffer)
+			result, err := exec.executeCartesianProductMatch(ctx, query, "", []string{"(a:ProjectionLeft)", "(b:ProjectionRight)"}, -1, findKeywordIndex(query, "RETURN"), items, returnProjectionPlanFor(test.tail).hasAggregate, false, buffer)
+			publicResult, publicErr := exec.Execute(context.Background(), query, map[string]interface{}{"skip": int64(2), "limit": int64(1), "zero": int64(0)})
 			if test.code != "" {
 				require.Error(t, err)
 				require.True(t, strings.HasPrefix(statusText(err), test.code), statusText(err))
+				require.Error(t, publicErr)
+				require.True(t, strings.HasPrefix(statusText(publicErr), test.code), statusText(publicErr))
 				return
 			}
 			require.NoError(t, err)
+			require.NoError(t, publicErr)
+			require.Equal(t, test.columns, publicResult.Columns)
+			require.Equal(t, test.rows, publicResult.Rows)
 			require.NoError(t, getExpressionFailure(ctx))
 			require.Same(t, buffer, result)
 			require.Equal(t, test.columns, result.Columns)
 			require.Equal(t, test.rows, result.Rows)
 			require.Same(t, stats, result.Stats)
+		})
+	}
+	for _, test := range []struct {
+		clause string
+		rows   [][]interface{}
+	}{
+		{"RETURN count(*) AS total", [][]interface{}{{int64(0)}}},
+		{"RETURN count(*) AS total LIMIT 0", [][]interface{}{}},
+	} {
+		t.Run("empty "+test.clause, func(t *testing.T) {
+			query := "MATCH (a:ProjectionMissing), (b:ProjectionRight) " + test.clause
+			ctx := withExpressionFailureSlot(context.Background())
+			buffer := &ExecuteResult{Stats: &QueryStats{}}
+			result, err := exec.executeCartesianProductMatch(ctx, query, "", []string{"(a:ProjectionMissing)", "(b:ProjectionRight)"}, -1, findKeywordIndex(query, "RETURN"), exec.parseReturnItems(test.clause[len("RETURN "):]), true, false, buffer)
+			require.NoError(t, err)
+			require.Same(t, buffer, result)
+			require.Equal(t, []string{"total"}, result.Columns)
+			require.Equal(t, test.rows, result.Rows)
+			publicResult, publicErr := exec.Execute(context.Background(), query, nil)
+			require.NoError(t, publicErr)
+			require.Equal(t, result.Columns, publicResult.Columns)
+			require.Equal(t, result.Rows, publicResult.Rows)
 		})
 	}
 }

@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Route cartesian aggregates through shared RETURN so ORDER BY, expression and
+  parameter windows, LIMIT zero, and typed errors apply to aggregate results.
+  Borrowed scopes preserve grouping and empty COUNT semantics while removing
+  per-combination row maps. Add bitset aggregate-prefix admission and shared
+  ASCII folding without allocating normalized copies of expressions (#713).
+
 - Delegate non-aggregate cartesian RETURN, DISTINCT, ordering and expression
   pagination to the shared projector. Stream simple projections through an
   invocation-local borrowed scope; retain owned rows for window/order/wildcard
