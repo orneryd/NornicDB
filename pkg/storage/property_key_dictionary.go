@@ -160,24 +160,22 @@ func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespac
 	}
 	d.mu.RUnlock()
 
+	// A concurrent caller may have allocated the name since the read check.
 	d.mu.Lock()
 	d.ensureNamespace(namespace)
-	if id, ok := d.forward[namespace][name]; ok {
-		persisted := d.persisted[namespace][name]
-		d.mu.Unlock()
-		if !persisted {
-			d.recordTxnPendingPersist(txn, namespace, name, id)
-			d.recordTxnCounterUse(txn, namespace, id)
-		}
-		return id, nil
+	id, ok := d.forward[namespace][name]
+	persisted := ok && d.persisted[namespace][name]
+	if !ok {
+		id = d.nextID[namespace].Add(1)
+		d.forward[namespace][name] = id
+		d.reverse[namespace][id] = name
 	}
-	id := d.nextID[namespace].Add(1)
-	d.forward[namespace][name] = id
-	d.reverse[namespace][id] = name
 	d.mu.Unlock()
 
-	d.recordTxnPendingPersist(txn, namespace, name, id)
-	d.recordTxnCounterUse(txn, namespace, id)
+	if !persisted {
+		d.recordTxnPendingPersist(txn, namespace, name, id)
+		d.recordTxnCounterUse(txn, namespace, id)
+	}
 	return id, nil
 }
 
