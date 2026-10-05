@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Keep a node's full-text document when it is re-indexed with the same
+  searchable text, for example when only its embedding changes: the text is
+  no longer removed, analyzed twice and added back. Re-indexing such a node
+  takes about a sixth of the time. The default searchable text lists a node's
+  other properties in key order, so the same node always yields the same text
+  (#911).
 - Compile arithmetic and `size()` predicate operands through shared typed
   evaluation. Binding filters and complete WITH plans read native scopes without
   per-row parameter copies; membership indexes validate list contents once per
