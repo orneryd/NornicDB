@@ -47,8 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   40,000 nodes take about a fifth less time (#911).
 - Check that a relationship's anonymous end node exists without reading it.
   `MATCH (p:Person)-[:KNOWS]->() RETURN p.id, count(*)` read every end node
-  in full; storage now confirms it exists from the ID dictionary and staged
-  writes, and inside an explicit transaction from the transaction's own
+  in full; storage now checks that its record key exists, or that it is
+  staged, and inside an explicit transaction it uses the transaction's own
   writes and the node's version header at its snapshot. Decay filtering, a
   temporal viewport, labels or properties on the end node, or a path
   variable keep the read. That degree query over 40,000 nodes takes about a
