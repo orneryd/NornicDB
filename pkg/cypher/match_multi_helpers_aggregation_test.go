@@ -11,6 +11,176 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match-with-unwind-return")
+	_, err := store.CreateNode(&storage.Node{ID: "items", Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []interface{}{int64(3), int64(1), int64(2)}}})
+	require.NoError(t, err)
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	params := map[string]interface{}{"skip": int64(1), "limit": int64(1)}
+	for _, test := range []struct {
+		clause, code string
+		columns      []string
+		rows         [][]interface{}
+	}{
+		{"RETURN item AS value ORDER BY value SKIP $skip LIMIT $limit", "", []string{"value"}, [][]interface{}{{int64(2)}}},
+		{"RETURN item + 10 AS value ORDER BY value LIMIT 1", "", []string{"value"}, [][]interface{}{{int64(11)}}},
+		{"RETURN item AS `unwind value` LIMIT 0", "", []string{"unwind value"}, [][]interface{}{}},
+		{"RETURN item AS value LIMIT 1 / 0", "Neo.ClientError.Statement.ArithmeticError", nil, nil},
+		{"WITH item, count(*) AS total RETURN item AS key, total ORDER BY key SKIP $skip LIMIT $limit", "", []string{"key", "total"}, [][]interface{}{{int64(2), int64(1)}}},
+		{"WITH sum(item) AS total RETURN total", "", []string{"total"}, [][]interface{}{{int64(6)}}},
+		{"WITH count(*) AS total RETURN total LIMIT 0", "", []string{"total"}, [][]interface{}{}},
+		{"WITH count(*) AS total RETURN total LIMIT 1 / 0", "Neo.ClientError.Statement.ArithmeticError", nil, nil},
+		{"WITH item AS value RETURN value ORDER BY value", "", []string{"value"}, [][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}}},
+		{"WITH * RETURN item AS value ORDER BY value", "", []string{"value"}, [][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}}},
+		{"WITH item AS value WHERE value > 1 RETURN value ORDER BY value DESC LIMIT 1", "", []string{"value"}, [][]interface{}{{int64(3)}}},
+		{"WITH item, count(*) AS total ORDER BY item SKIP $skip LIMIT $limit RETURN item, total", "", []string{"item", "total"}, [][]interface{}{{int64(2), int64(1)}}},
+		{"WITH item, count(*) AS total WHERE total > 0 RETURN item, total ORDER BY item", "", []string{"item", "total"}, [][]interface{}{{int64(1), int64(1)}, {int64(2), int64(1)}, {int64(3), int64(1)}}},
+		{"WITH DISTINCT item % 2 AS value RETURN value ORDER BY value", "", []string{"value"}, [][]interface{}{{int64(0)}, {int64(1)}}},
+		{"WITH item / 0 AS broken RETURN broken", "Neo.ClientError.Statement.ArithmeticError", nil, nil},
+		{"RETURN count(*) AS total", "", []string{"total"}, [][]interface{}{{int64(3)}}},
+		{"RETURN collect(item) AS values", "", []string{"values"}, [][]interface{}{{[]interface{}{int64(3), int64(1), int64(2)}}}},
+	} {
+		t.Run(test.clause, func(t *testing.T) {
+			query := "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item " + test.clause
+			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
+			result, err := exec.executeMatchWithUnwind(ctx, query)
+			public, publicErr := exec.Execute(context.Background(), query, params)
+			if test.code != "" {
+				require.Error(t, err)
+				require.Contains(t, statusText(err), test.code)
+				require.Error(t, publicErr)
+				require.Contains(t, statusText(publicErr), test.code)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, publicErr)
+			require.Equal(t, test.columns, result.Columns)
+			require.Equal(t, test.rows, result.Rows)
+			require.Equal(t, test.columns, public.Columns)
+			require.Equal(t, test.rows, public.Rows)
+		})
+	}
+	t.Run("WITH function", func(t *testing.T) {
+		query := "MATCH (n:UnwindReturn) WITH n, labels(n) AS items UNWIND items AS item RETURN item AS value"
+		result, err := exec.executeMatchWithUnwind(withExpressionFailureSlot(context.Background()), query)
+		require.NoError(t, err)
+		require.Equal(t, []string{"value"}, result.Columns)
+		require.Equal(t, [][]interface{}{{"UnwindReturn"}}, result.Rows)
+		public, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+		require.Equal(t, result.Columns, public.Columns)
+		require.Equal(t, result.Rows, public.Rows)
+	})
+	t.Run("mixed clause case", func(t *testing.T) {
+		query := "mAtCh (n:UnwindReturn) wItH n, n.items AS items uNwInD items AS item rEtUrN item AS value ORDER BY value SKIP 1 LIMIT 1"
+		result, err := exec.executeMatchWithUnwind(withExpressionFailureSlot(context.Background()), query)
+		require.NoError(t, err)
+		require.Equal(t, []string{"value"}, result.Columns)
+		require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+		public, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+		require.Equal(t, result.Columns, public.Columns)
+		require.Equal(t, result.Rows, public.Rows)
+	})
+	for _, test := range []struct {
+		name  string
+		items interface{}
+		rows  [][]interface{}
+	}{
+		{"scalar", int64(4), [][]interface{}{{int64(4)}}},
+		{"null", nil, [][]interface{}{}},
+		{"empty list", []interface{}{}, [][]interface{}{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(test.name), Labels: []string{"UnwindEdge"}, Properties: map[string]interface{}{"name": test.name, "items": test.items}})
+			require.NoError(t, err)
+			query := "MATCH (n:UnwindEdge) WHERE n.name = $name WITH n.items AS items UNWIND items AS item RETURN item AS value"
+			params := map[string]interface{}{"name": test.name}
+			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
+			result, err := exec.executeMatchWithUnwind(ctx, query)
+			require.NoError(t, err)
+			require.Equal(t, []string{"value"}, result.Columns)
+			require.Equal(t, test.rows, result.Rows)
+			public, err := exec.Execute(context.Background(), query, params)
+			require.NoError(t, err)
+			require.Equal(t, result.Columns, public.Columns)
+			require.Equal(t, test.rows, public.Rows)
+		})
+	}
+}
+
+func BenchmarkGh713MatchWithUnwindReturn(b *testing.B) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "match-with-unwind-return-bench")
+	for index := 0; index < 32; index++ {
+		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("items-%d", index)), Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []string{"one", "two", "three", "four"}}})
+		require.NoError(b, err)
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	for _, test := range []struct {
+		name, clause string
+		rows         int
+	}{
+		{"plain", "RETURN item AS value", 128},
+		{"grouped", "WITH item, count(*) AS total RETURN item AS value, total", 4},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			ctx := withExpressionFailureSlot(context.Background())
+			query := "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item " + test.clause
+			apply := func() {
+				result, err := exec.executeMatchWithUnwind(ctx, query)
+				if err != nil || len(result.Rows) != test.rows {
+					b.Fatalf("unexpected unwind result: %v, %v", result, err)
+				}
+				for _, row := range result.Rows {
+					value, ok := row[0].(string)
+					if !ok || (value != "one" && value != "two" && value != "three" && value != "four") {
+						b.Fatalf("unexpected unwind row: %v", row)
+					}
+					if len(row) == 2 && row[1] != int64(32) {
+						b.Fatalf("unexpected grouped unwind row: %v", row)
+					}
+				}
+			}
+			apply()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				apply()
+			}
+			b.StopTimer()
+		})
+	}
+}
+
+func TestGh713AggregateSingleKeyIdentity(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	for _, test := range []struct {
+		name   string
+		values []interface{}
+	}{
+		{"integer", []interface{}{"int64:1", int64(1)}},
+		{"null", []interface{}{"<nil>:<nil>", nil}},
+		{"empty string", []interface{}{"", nil}},
+		{"node", []interface{}{"node:shared", &storage.Node{ID: "shared"}}},
+		{"edge", []interface{}{"edge:shared", &storage.Edge{ID: "shared"}}},
+		{"quoted strings", []interface{}{"\"quoted\"", "quoted"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rows := []pipelineRow{{"value": test.values[0]}, {"value": test.values[1]}, {"value": test.values[0]}}
+			ctx := withExpressionFailureSlot(context.Background())
+			groups, handled := exec.pipelineAggregateGroups(ctx, pipelineRowsSource(rows), []returnProjection{{expr: "value"}, {expr: "count(*)", isAggr: true}}, false)
+			require.True(t, handled)
+			require.Len(t, groups, 2)
+			for index, group := range groups {
+				require.Equal(t, test.values[index], group.first["value"])
+				count, ok := group.value(ctx, exec, 1)
+				require.True(t, ok)
+				require.Equal(t, []int64{2, 1}[index], count)
+			}
+		})
+	}
+}
+
 func BenchmarkGh713MultiMatchAggregation(b *testing.B) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "multi-match-aggregate-bench")
 	for index := 0; index < 32; index++ {

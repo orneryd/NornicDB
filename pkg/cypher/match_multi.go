@@ -13,12 +13,12 @@ import (
 )
 
 func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
+	ctx = withExpressionFailureSlot(ctx)
 
 	// Find all clause boundaries
 	matchIdx := findKeywordIndex(cypher, "MATCH")
 	withIdx := findKeywordIndex(cypher, "WITH")
-	unwindIdx := findKeywordNotInBrackets(upper, " UNWIND ")
+	unwindIdx := findKeywordNotInBrackets(cypher, " UNWIND ")
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 
 	if matchIdx == -1 || withIdx == -1 || unwindIdx == -1 || returnIdx == -1 {
@@ -29,13 +29,13 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 	matchPart := strings.TrimSpace(cypher[matchIdx+5 : withIdx])
 
 	// Check for WHERE clause in MATCH part
-	matchWhereIdx := findKeywordNotInBrackets(upperASCII(matchPart), " WHERE ")
+	matchWhereIdx := findKeywordNotInBrackets(matchPart, " WHERE ")
 	var matchWhere string
 	var nodePatternPart string
 
 	if matchWhereIdx > 0 {
 		nodePatternPart = strings.TrimSpace(matchPart[:matchWhereIdx])
-		matchWhere = strings.TrimSpace(matchPart[matchWhereIdx+7:])
+		matchWhere = strings.TrimSpace(matchPart[matchWhereIdx+len("WHERE"):])
 	} else {
 		nodePatternPart = matchPart
 	}
@@ -60,13 +60,11 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 	withItems := e.splitWithItems(withSection)
 
 	type nodeWithValues struct {
-		node   *storage.Node
 		values map[string]interface{}
 	}
 	var nodeRows []nodeWithValues
 
 	for _, node := range nodes {
-		nodeMap := map[string]*storage.Node{nodePattern.variable: node}
 		values := make(map[string]interface{})
 
 		for _, item := range withItems {
@@ -91,11 +89,11 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 				propName := expr[len(nodePattern.variable)+1:]
 				values[alias] = node.Properties[propName]
 			} else {
-				values[alias] = e.evaluateExpressionWithContext(ctx, expr, nodeMap, nil)
+				values[alias] = e.evaluateExpressionWithContext(ctx, expr, map[string]*storage.Node{nodePattern.variable: node}, nil)
 			}
 		}
 
-		nodeRows = append(nodeRows, nodeWithValues{node: node, values: values})
+		nodeRows = append(nodeRows, nodeWithValues{values: values})
 	}
 
 	// Step 3: Parse UNWIND clause
@@ -117,166 +115,37 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 		unwindVar = remainder
 	}
 
-	// Step 4: Expand UNWIND - create rows for each item in the list
-	type unwoundRow struct {
-		origNode   *storage.Node
-		origValues map[string]interface{}
-		unwindVar  string
-		unwindVal  interface{}
-	}
-	var unwoundRows []unwoundRow
-
-	for _, nr := range nodeRows {
-		// Get the list to unwind
-		var listToUnwind []interface{}
-
-		if val, ok := nr.values[unwindExpr]; ok {
-			switch v := val.(type) {
-			case []interface{}:
-				listToUnwind = v
-			case []string:
-				listToUnwind = make([]interface{}, len(v))
-				for i, s := range v {
-					listToUnwind[i] = s
+	source := func(yield func(pipelineRow) bool) bool {
+		for _, row := range nodeRows {
+			values := pipelineRow(row.values)
+			items := coerceToUnwindItems(values[unwindExpr])
+			for _, item := range items {
+				values[unwindVar] = item
+				if !yield(values) {
+					return true
 				}
 			}
 		}
-
-		// Empty list = no rows (skip)
-		if len(listToUnwind) == 0 {
-			continue
-		}
-
-		// Create a row for each item
-		for _, item := range listToUnwind {
-			unwoundRows = append(unwoundRows, unwoundRow{
-				origNode:   nr.node,
-				origValues: nr.values,
-				unwindVar:  unwindVar,
-				unwindVal:  item,
-			})
-		}
+		return true
 	}
-
-	// Step 5: Find second WITH clause (between UNWIND and RETURN) for aggregation
-	secondWithIdx := findKeywordNotInBrackets(upper[unwindIdx:], " WITH ")
-	hasSecondWith := secondWithIdx > 0 && unwindIdx+secondWithIdx < returnIdx
-
-	// Parse RETURN clause
-	returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-	returnEnd := len(returnClause)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnClause, keyword); idx >= 0 && idx < returnEnd {
-			returnEnd = idx
-		}
+	secondWithIdx := findKeywordNotInBrackets(cypher[unwindIdx:], " WITH ")
+	if secondWithIdx <= 0 || unwindIdx+secondWithIdx >= returnIdx {
+		return e.projectMergeReturnSource(ctx, nil, cypher[returnIdx:], source)
 	}
-	returnClause = strings.TrimSpace(returnClause[:returnEnd])
-	returnItems := e.parseReturnItems(returnClause)
-
-	result := &ExecuteResult{
-		Columns: make([]string, len(returnItems)),
-		Rows:    [][]interface{}{},
+	withClause := strings.TrimSpace(cypher[unwindIdx+secondWithIdx : returnIdx])
+	var rows []pipelineRow
+	if !pipelineClauseAggregates(pipelineClause{kind: pipelineClauseWith, text: withClause}) {
+		rows, _ = materializePipelineSource(source)
+		source = pipelineRowsSource(rows)
 	}
-
-	for i, item := range returnItems {
-		if item.alias != "" {
-			result.Columns[i] = item.alias
-		} else {
-			result.Columns[i] = item.expr
-		}
+	projected, handled := e.pipelineApplyWithSource(ctx, rows, withClause, source, false)
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, failure
 	}
-
-	if hasSecondWith {
-		// Second WITH clause with aggregation - GROUP BY unwind value
-		secondWithSection := strings.TrimSpace(cypher[unwindIdx+secondWithIdx+5 : returnIdx])
-		secondWithItems := e.splitWithItems(secondWithSection)
-
-		// Group by unwind value
-		groups := make(map[interface{}][]unwoundRow)
-		groupOrder := []interface{}{}
-
-		for _, ur := range unwoundRows {
-			key := ur.unwindVal
-			if _, exists := groups[key]; !exists {
-				groupOrder = append(groupOrder, key)
-			}
-			groups[key] = append(groups[key], ur)
-		}
-
-		// Process each group
-		for _, key := range groupOrder {
-			groupRows := groups[key]
-			row := make([]interface{}, len(returnItems))
-
-			for i, item := range returnItems {
-				upperExpr := upperASCII(item.expr)
-
-				switch {
-				case strings.HasPrefix(upperExpr, "COUNT("):
-					row[i] = int64(len(groupRows))
-				case item.expr == unwindVar || item.expr == "type":
-					// Return the unwind value (group key)
-					row[i] = key
-				default:
-					// Check if it matches a second WITH alias
-					for _, swi := range secondWithItems {
-						swi = strings.TrimSpace(swi)
-						swiUpper := upperASCII(swi)
-						swiAsIdx := strings.Index(swiUpper, " AS ")
-						if swiAsIdx > 0 {
-							swiAlias := strings.TrimSpace(swi[swiAsIdx+4:])
-							if swiAlias == item.expr || item.alias == swiAlias {
-								swiExpr := strings.TrimSpace(swi[:swiAsIdx])
-								if swiExpr == unwindVar {
-									row[i] = key
-								} else if strings.HasPrefix(upperASCII(swiExpr), "COUNT(") {
-									row[i] = int64(len(groupRows))
-								}
-							}
-						}
-					}
-				}
-			}
-
-			result.Rows = append(result.Rows, row)
-		}
-	} else {
-		// No second WITH - just return unwound rows
-		for _, ur := range unwoundRows {
-			row := make([]interface{}, len(returnItems))
-			for i, item := range returnItems {
-				if item.expr == unwindVar {
-					row[i] = ur.unwindVal
-				} else if strings.HasPrefix(item.expr, nodePattern.variable+".") {
-					propName := item.expr[len(nodePattern.variable)+1:]
-					row[i] = ur.origNode.Properties[propName]
-				}
-			}
-			result.Rows = append(result.Rows, row)
-		}
+	if !handled {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidWith", "invalid WITH projection")
 	}
-
-	// Apply ORDER BY
-	orderByIdx := findKeywordIndex(cypher, "ORDER BY")
-	if orderByIdx > 0 {
-		ks, ke := trimKeywordWSBounds("ORDER BY")
-		orderByEnd, ok := keywordMatchAt(cypher, orderByIdx, "ORDER BY", ks, ke)
-		if !ok {
-			return nil, localizedError(localization.CypherTransactionsOrderByParseFailed(), nil)
-		}
-
-		orderPart := cypher[orderByEnd:]
-		endIdx := len(orderPart)
-		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
-				endIdx = idx
-			}
-		}
-		orderExpr := strings.TrimSpace(orderPart[:endIdx])
-		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderExpr)
-	}
-
-	return result, nil
+	return e.projectMergeReturn(ctx, projected, cypher[returnIdx:])
 }
 
 // countKeywordOccurrences counts how many times a keyword appears in the query

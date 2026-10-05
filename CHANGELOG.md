@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Share MATCH/WITH/UNWIND projection, aggregation, ordering and pagination with
+  the existing WITH/RETURN planners. Stream invocation-owned scopes instead of
+  buffering expanded rows; preserve typed errors, scalar/list/null UNWIND,
+  grouped SUM and borrowed-row ownership. Correct MATCH WHERE extraction and
+  reuse folded keyword scanning without normalized statement copies. Avoid
+  unused node contexts and aggregate ordering scopes; keep single string group
+  keys separate from typed keys without regressing numeric grouping (#713, #728).
+
 - Project multi-MATCH aggregates directly through shared RETURN, preserving
   exact integer SUM values above 2^53, floating SUM, grouped windows, and typed
   modifier errors. Remove redundant traversal-row conversion and lossy float

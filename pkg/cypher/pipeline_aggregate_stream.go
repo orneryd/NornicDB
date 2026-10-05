@@ -51,8 +51,12 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 	templates := make([]pipelineAggregateProjection, len(projections))
 	validationClauses := make([]string, 0)
 	allAggregates := len(projections) > 0
+	groupingCount := 0
 	for index, projection := range projections {
 		allAggregates = allAggregates && projection.isAggr
+		if !projection.isAggr {
+			groupingCount++
+		}
 		needsValidation := false
 		var rewritten strings.Builder
 		last := 0
@@ -84,7 +88,10 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		return group
 	}
 	groups := make(map[string]*pipelineAggregateGroup)
-	ordered := make([]*pipelineAggregateGroup, 0)
+	grouping := struct {
+		ordered      []*pipelineAggregateGroup
+		stringGroups map[string]*pipelineAggregateGroup
+	}{ordered: make([]*pipelineAggregateGroup, 0)}
 	valid := true
 	completed := source(func(row pipelineRow) bool {
 		if err := ctx.Err(); err != nil {
@@ -100,8 +107,12 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			}
 		}
 		key := ""
+		lookup := groups
 		if !allAggregates {
-			parts := make([]string, 0, len(projections))
+			var parts []string
+			if groupingCount > 1 {
+				parts = make([]string, 0, len(projections))
+			}
 			for _, projection := range projections {
 				if projection.isAggr {
 					continue
@@ -112,15 +123,29 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 					valid = false
 					return false
 				}
-				parts = append(parts, pipelineValueKey(value))
+				if groupingCount == 1 {
+					if text, ok := value.(string); ok {
+						key = text
+						if grouping.stringGroups == nil {
+							grouping.stringGroups = make(map[string]*pipelineAggregateGroup)
+						}
+						lookup = grouping.stringGroups
+					} else {
+						key = pipelineValueKey(value)
+					}
+				} else {
+					parts = append(parts, pipelineValueKey(value))
+				}
 			}
-			key = strings.Join(parts, "\x1f")
+			if groupingCount > 1 {
+				key = strings.Join(parts, "\x1f")
+			}
 		}
-		group := groups[key]
+		group := lookup[key]
 		if group == nil {
 			group = newGroup(row)
-			groups[key] = group
-			ordered = append(ordered, group)
+			lookup[key] = group
+			grouping.ordered = append(grouping.ordered, group)
 		}
 		for index := range group.projections {
 			for offset := range group.projections[index].states {
@@ -135,10 +160,10 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 	if !completed || !valid {
 		return nil, false
 	}
-	if len(ordered) == 0 && allAggregates {
-		ordered = append(ordered, newGroup(nil))
+	if len(grouping.ordered) == 0 && allAggregates {
+		grouping.ordered = append(grouping.ordered, newGroup(nil))
 	}
-	return ordered, true
+	return grouping.ordered, true
 }
 
 func (group *pipelineAggregateGroup) value(ctx context.Context, executor *StorageExecutor, index int) (interface{}, bool) {
