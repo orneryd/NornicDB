@@ -48,9 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Check that a relationship's anonymous end node exists without reading it.
   `MATCH (p:Person)-[:KNOWS]->() RETURN p.id, count(*)` read every end node
   in full; storage now confirms it exists from the ID dictionary and staged
-  writes. Decay filtering, a temporal viewport, labels or properties on the
-  end node, or a path variable keep the read. That degree query over 40,000
-  nodes takes about a third less time (#911).
+  writes, and inside an explicit transaction from the transaction's own
+  writes and the node's version header at its snapshot. Decay filtering, a
+  temporal viewport, labels or properties on the end node, or a path
+  variable keep the read. That degree query over 40,000 nodes takes about a
+  third less time, in and out of a transaction (#911).
 
 - Keep a node's full-text document when it is re-indexed with the same
   searchable text, for example when only its embedding changes: the text is

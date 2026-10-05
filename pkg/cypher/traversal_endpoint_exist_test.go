@@ -76,3 +76,29 @@ func TestDegreeCountChecksAnonymousEndpointsWithoutReading(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(1), int64(2)}, {int64(1), int64(3)}, {int64(2), int64(3)}}, result.Rows)
 	require.Zero(t, store.checks)
 }
+
+// Inside an explicit transaction the degree count gives the same rows as the
+// full read, counting an end node the transaction created and dropping one it
+// deleted.
+func TestDegreeCountInTransactionChecksEndpoints(t *testing.T) {
+	ctx := context.Background()
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	_, err := exec.Execute(ctx, "CREATE (a:P {id: 1}), (b:P {id: 2}), (c:P {id: 3}) CREATE (a)-[:K]->(b), (a)-[:K]->(c), (b)-[:K]->(c)", nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (a:P {id: 1}) CREATE (a)-[:K]->(:P {id: 4})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (c:P {id: 3}) DETACH DELETE c", nil)
+	require.NoError(t, err)
+	degrees, err := exec.Execute(ctx, "MATCH (p:P)-[:K]->() RETURN p.id AS id, count(*) AS d ORDER BY d DESC, id", nil)
+	require.NoError(t, err)
+	named, err := exec.Execute(ctx, "MATCH (p:P)-[:K]->(q) RETURN p.id AS id, count(q) AS d ORDER BY d DESC, id", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "COMMIT", nil)
+	require.NoError(t, err)
+
+	require.Equal(t, [][]interface{}{{int64(1), int64(2)}}, degrees.Rows)
+	require.Equal(t, named.Rows, degrees.Rows)
+}
