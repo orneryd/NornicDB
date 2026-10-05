@@ -558,7 +558,7 @@ func extractRelationshipType(pattern string) string {
 		if pattern[i] != '[' {
 			continue
 		}
-		inner, _, ok := extractBracketSectionQueryPattern(pattern[i:])
+		inner, _, ok := extractBracketSection(pattern[i:])
 		if !ok {
 			continue
 		}
@@ -583,7 +583,7 @@ func extractRelationshipVariable(pattern string) string {
 		if pattern[i] != '[' {
 			continue
 		}
-		inner, _, ok := extractBracketSectionQueryPattern(pattern[i:])
+		inner, _, ok := extractBracketSection(pattern[i:])
 		if !ok {
 			continue
 		}
@@ -601,66 +601,13 @@ func extractRelationshipVariable(pattern string) string {
 		if inner[0] == '*' {
 			return ""
 		}
-		name, _, ok := parseIdentifierTokenQueryPattern(inner)
+		name, _, ok := parseIdentifierToken(inner)
 		if ok {
 			return name
 		}
 		return ""
 	}
 	return ""
-}
-
-func scanIdentifierToken(s string, start int) (string, int, bool) {
-	if start < 0 || start >= len(s) {
-		return "", start, false
-	}
-	if !isIdentifierStart(s[start]) {
-		return "", start, false
-	}
-	i := start + 1
-	for i < len(s) && isIdentifierPart(s[i]) {
-		i++
-	}
-	return s[start:i], i, true
-}
-
-func isIdentifierStart(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
-}
-
-func isIdentifierPart(c byte) bool {
-	return isIdentifierStart(c) || (c >= '0' && c <= '9')
-}
-
-func parseIdentifierTokenQueryPattern(s string) (string, string, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" || !isIdentifierStart(s[0]) {
-		return "", "", false
-	}
-	i := 1
-	for i < len(s) && isIdentifierPart(s[i]) {
-		i++
-	}
-	return s[:i], s[i:], true
-}
-
-func extractBracketSectionQueryPattern(s string) (inside string, rest string, ok bool) {
-	if !strings.HasPrefix(s, "[") {
-		return "", "", false
-	}
-	depth := 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '[':
-			depth++
-		case ']':
-			depth--
-			if depth == 0 {
-				return s[1:i], s[i+1:], true
-			}
-		}
-	}
-	return "", "", false
 }
 
 // IsOptimizable returns true if the pattern can be optimized

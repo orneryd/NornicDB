@@ -15,7 +15,23 @@ type pipelineRowWith struct {
 	projections   []pipelineRowProjection
 }
 
+type pipelineRowWithParse struct {
+	plan      pipelineRowWith
+	supported bool
+}
+
+var pipelineRowWithPlans = newBoundedCache[string, pipelineRowWithParse](4096)
+
 func parsePipelineRowWith(clause string) (pipelineRowWith, bool) {
+	if parsed, cached := pipelineRowWithPlans.get(clause); cached {
+		return parsed.plan, parsed.supported
+	}
+	plan, supported := compilePipelineRowWith(clause)
+	pipelineRowWithPlans.put(clause, pipelineRowWithParse{plan: plan, supported: supported})
+	return plan, supported
+}
+
+func compilePipelineRowWith(clause string) (pipelineRowWith, bool) {
 	// The clause is scanned with its keyword, which tells a keyword-named
 	// first item from a clause (WITH with WHERE with = 3, #894).
 	body := strings.TrimSpace(clause)
@@ -207,29 +223,45 @@ func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []
 }
 
 func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, clause string, readTail []string) (pipelineRowSource, bool, error) {
+	return e.pipelineNodeMatchSourceWithHint(ctx, inputSource, clause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: readTail})
+}
+
+type pipelineNodeMatchSourcePlan struct {
+	templates      []*pipelineNodeMatchTemplate
+	supported      bool
+	earlyLimitSafe bool
+}
+
+var pipelineNodeMatchSourcePlans = newBoundedCache[string, pipelineNodeMatchSourcePlan](4096)
+
+func (e *StorageExecutor) compilePipelineNodeMatchSource(clause string) pipelineNodeMatchSourcePlan {
+	plan := pipelineNodeMatchSourcePlan{earlyLimitSafe: true}
 	body := pipelineClauseBody(clause, "MATCH")
 	if topLevelKeywordIndex(body, "WHERE") >= 0 {
-		return nil, false, nil
+		return plan
 	}
 	patterns := splitTopLevelComma(body)
 	if len(patterns) == 0 {
-		return nil, false, nil
+		return plan
 	}
 	templates := make([]*pipelineNodeMatchTemplate, len(patterns))
 	variables := make(map[string]struct{}, len(patterns))
 	for index, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)
 		if !strings.HasPrefix(pattern, "(") || findMatchingParen(pattern, 0) != len(pattern)-1 {
-			return nil, false, nil
+			return plan
 		}
 		template := e.pipelineNodeMatchTemplateFor("MATCH " + pattern)
 		if !template.usable {
-			return nil, false, nil
+			return plan
 		}
 		if template.labelErr != nil {
-			return nil, false, nil
+			return plan
 		}
 		templates[index] = template
+		if _, repeated := variables[template.variable]; repeated {
+			plan.earlyLimitSafe = false
+		}
 		variables[template.variable] = struct{}{}
 	}
 	for _, template := range templates {
@@ -237,15 +269,35 @@ func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSour
 			for _, reference := range semanticExpressionReferences(property.expr) {
 				variable := strings.SplitN(reference, ".", 2)[0]
 				if _, dependent := variables[variable]; dependent {
-					return nil, false, nil
+					return plan
 				}
 			}
 		}
 	}
-	caches := make([]map[string][]*storage.Node, len(templates))
-	for index := range caches {
-		caches[index] = make(map[string][]*storage.Node)
+	plan.templates, plan.supported = templates, true
+	return plan
+}
+
+func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, inputSource pipelineRowSource, clause string, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
+	plan, cached := pipelineNodeMatchSourcePlans.get(clause)
+	if !cached {
+		plan = e.compilePipelineNodeMatchSource(clause)
+		pipelineNodeMatchSourcePlans.put(clause, plan)
 	}
+	if !plan.supported {
+		return nil, false, nil
+	}
+	if !plan.earlyLimitSafe {
+		hint.limit, hint.earlyLimit = -1, -1
+	}
+	templates := plan.templates
+	type candidateCache struct {
+		key          string
+		nodes        []*storage.Node
+		initialized  bool
+		alternatives map[string][]*storage.Node
+	}
+	caches := make([]candidateCache, len(templates))
 	return func(yield func(pipelineRow) bool) bool {
 		valid := true
 		completed := inputSource(func(input pipelineRow) bool {
@@ -264,17 +316,28 @@ func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSour
 				}
 				resolved[index] = pattern
 				key, keyed := pipelinePropertiesKey(pattern.properties)
-				nodes, cached := caches[index][key]
+				cache := &caches[index]
+				nodes, cached := cache.nodes, keyed && cache.initialized && cache.key == key
+				if keyed && !cached && cache.alternatives != nil {
+					nodes, cached = cache.alternatives[key]
+				}
 				if !keyed || !cached {
 					var err error
-					nodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: readTail})
+					nodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, pattern, "", hint)
 					if err != nil {
 						recordExpressionFailure(ctx, err)
 						valid = false
 						return false
 					}
 					if keyed {
-						caches[index][key] = nodes
+						if !cache.initialized {
+							cache.key, cache.nodes, cache.initialized = key, nodes, true
+						} else {
+							if cache.alternatives == nil {
+								cache.alternatives = make(map[string][]*storage.Node)
+							}
+							cache.alternatives[key] = nodes
+						}
 					}
 				}
 				candidates[index] = nodes
@@ -342,6 +405,50 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 		})
 		return completed && valid
 	}
+}
+
+func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pipelineRowSource, rows []pipelineRow, clause string) (pipelineRowSource, bool) {
+	end := len(clause)
+	for _, keyword := range []string{"SKIP", "LIMIT"} {
+		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
+			end = index
+		}
+	}
+	if end == len(clause) || topLevelKeywordIndex(clause, "WHERE") >= 0 {
+		return nil, false
+	}
+	plan, ok := parsePipelineRowWith(clause[:end])
+	if !ok {
+		return nil, false
+	}
+	skip, limit := 0, -1
+	if topLevelKeywordIndex(clause, "SKIP") >= 0 {
+		skip, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(clause, "SKIP"), rows)
+		if !ok {
+			return nil, false
+		}
+	}
+	if topLevelKeywordIndex(clause, "LIMIT") >= 0 {
+		limit, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(clause, "LIMIT"), rows)
+		if !ok {
+			return nil, false
+		}
+	}
+	projected := e.pipelineWithRowSource(ctx, input, plan)
+	return func(yield func(pipelineRow) bool) bool {
+		if limit == 0 {
+			return true
+		}
+		seen, kept := 0, 0
+		return projected(func(row pipelineRow) bool {
+			if seen < skip {
+				seen++
+				return true
+			}
+			kept++
+			return yield(row) && (limit < 0 || kept < limit)
+		})
+	}, true
 }
 
 func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {

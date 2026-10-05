@@ -936,14 +936,14 @@ func (tx *BadgerTransaction) nodeLabelsTxVisibleLocked(id NodeID) ([]string, err
 	if node, ok := tx.pendingNodes[id]; ok {
 		return node.Labels, nil
 	}
-	node, err := tx.getCommittedNodeLocked(id)
+	labels, err := tx.committedNodeLabelsLocked(id)
 	if err == ErrNotFound {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return node.Labels, nil
+	return labels, nil
 }
 
 // incidentEdgeTypesTxLocked counts the edge types reachable through one

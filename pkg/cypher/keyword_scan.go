@@ -1809,6 +1809,14 @@ func (r *queryRewrite) restoreValue(value interface{}) (interface{}, bool) {
 // that starts at query[start] (quote): a doubled quote, or a backslash escape
 // in a string, doesn't end it.
 func skipCypherQuotedText(query string, start int, quote byte) int {
+	end, _ := scanCypherQuotedText(query, start, quote)
+	return end
+}
+
+func scanCypherQuotedText(query string, start int, quote byte) (int, bool) {
+	if start < 0 || start >= len(query) || query[start] != quote {
+		return start, false
+	}
 	for index := start + 1; index < len(query); index++ {
 		if query[index] == '\\' && quote != '`' && index+1 < len(query) {
 			index++
@@ -1821,9 +1829,99 @@ func skipCypherQuotedText(query string, start int, quote byte) int {
 			index++
 			continue
 		}
-		return index + 1
+		return index + 1, true
 	}
-	return len(query)
+	return len(query), false
+}
+
+func scanIdentifierToken(text string, start int) (string, int, bool) {
+	if start < 0 || start >= len(text) {
+		return "", start, false
+	}
+	if text[start] == '`' {
+		end, closed := scanCypherQuotedText(text, start, '`')
+		if !closed || end == start+2 {
+			return "", start, false
+		}
+		return strings.ReplaceAll(text[start+1:end-1], "``", "`"), end, true
+	}
+	if !isIdentifierStart(text[start]) {
+		return "", start, false
+	}
+	end := start + 1
+	for end < len(text) && isIdentifierPart(text[end]) {
+		end++
+	}
+	return text[start:end], end, true
+}
+
+func parseIdentifierToken(text string) (string, string, bool) {
+	text = strings.TrimSpace(text)
+	name, end, ok := scanIdentifierToken(text, 0)
+	if !ok {
+		return "", "", false
+	}
+	return name, text[end:], true
+}
+
+func isIdentifierStart(character byte) bool {
+	return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || character == '_'
+}
+
+func isIdentifierPart(character byte) bool {
+	return isIdentifierStart(character) || (character >= '0' && character <= '9')
+}
+
+// findMatchingDelimiter skips Cypher quoted text and comments while matching
+// nested delimiters, returning -1 for invalid offsets or unclosed sections.
+func findMatchingDelimiter(text string, start int, opener, closer rune) int {
+	if start < 0 || start >= len(text) || rune(text[start]) != opener {
+		return -1
+	}
+	depth := 0
+	for index := start; index < len(text); index++ {
+		character := text[index]
+		switch character {
+		case '\'', '"', '`':
+			end, closed := scanCypherQuotedText(text, index, character)
+			if !closed {
+				return -1
+			}
+			index = end - 1
+			continue
+		case '/':
+			if end := queryCommentEnd(text, index); end >= 0 {
+				index = end - 1
+				continue
+			}
+		}
+		switch rune(character) {
+		case opener:
+			depth++
+		case closer:
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func extractDelimitedSection(text string, opener, closer rune) (string, string, bool) {
+	end := findMatchingDelimiter(text, 0, opener, closer)
+	if end < 0 {
+		return "", "", false
+	}
+	return text[1:end], text[end+1:], true
+}
+
+func extractParenSection(text string) (string, string, bool) {
+	return extractDelimitedSection(text, '(', ')')
+}
+
+func extractBracketSection(text string) (string, string, bool) {
+	return extractDelimitedSection(text, '[', ']')
 }
 
 // followedByTimeZone reports whether the words TIME ZONE follow position pos.

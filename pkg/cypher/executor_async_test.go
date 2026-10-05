@@ -725,6 +725,32 @@ func TestBenchmarkMatchCreateDelete_WithBadgerAndFlush(t *testing.T) {
 
 // TestBenchmarkMatchCreateDelete_LargeDataset_Direct tests with 100 actors + 150 movies
 // KEEP THIS TEST - isolates executor performance with realistic data
+func BenchmarkPipelineLimitedCartesianCreateDelete(b *testing.B) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "bench")
+	for index := 0; index < 250; index++ {
+		label := "Actor"
+		if index >= 100 {
+			label = "Movie"
+		}
+		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("limited-%d", index)), Labels: []string{label}})
+		require.NoError(b, err)
+	}
+	executor := NewStorageExecutor(store)
+	ctx := context.Background()
+	query := "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r:TEMP_REL]->(m) DELETE r"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		result, err := executor.Execute(ctx, query, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if result.Stats.RelationshipsCreated != 1 || result.Stats.RelationshipsDeleted != 1 {
+			b.Fatalf("incorrect mutation counts: %+v", result.Stats)
+		}
+	}
+}
+
 func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 

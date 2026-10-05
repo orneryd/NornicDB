@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Use shared lexical scanners across CALL, CREATE, schema and hint parsing.
+  Route MATCH/CREATE/DELETE through real pipeline writes, preserve matched-row
+  counts and write errors, and bound row-local WITH windows and MATCH seeds.
+  Reuse immutable syntax and bounded CREATE bindings; avoid physical writes
+  for cancelled unconstrained transient relationships while preserving logical
+  effects, snapshot isolation, retained-edge order and recreated-ID visibility
+  (#908). Historical hot-path throughput acceptance remains open.
+
 - Route CREATE compositions and CREATE SET through the shared clause pipeline.
   Retire private multi-CREATE, CREATE/WITH/DELETE and CREATE SET dispatchers;
   preserve WITH filters, DELETE constraints, result aliases and typed errors.

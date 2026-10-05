@@ -57,7 +57,7 @@ func TestFastPath_MatchCreateDeleteRel(t *testing.T) {
 	opsPerSec := float64(iterations) / elapsed.Seconds()
 
 	t.Logf("Pattern 1 (WITH LIMIT): %.0f ops/sec", opsPerSec)
-	require.True(t, executor.LastHotPathTrace().CompoundQueryFastPath)
+	require.False(t, executor.LastHotPathTrace().CompoundQueryFastPath)
 
 	assertMinOpsPerSec(t, "Fast-path WITH LIMIT", opsPerSec, 10000)
 }
@@ -102,72 +102,10 @@ func TestFastPath_LDBCPattern(t *testing.T) {
 	opsPerSec := float64(iterations) / elapsed.Seconds()
 
 	t.Logf("Pattern 2 (LDBC property match): %.0f ops/sec", opsPerSec)
-	require.True(t, executor.LastHotPathTrace().CompoundQueryFastPath)
+	require.False(t, executor.LastHotPathTrace().CompoundQueryFastPath)
 
 	// First iteration is slower due to cache miss, subsequent are fast.
 	assertMinOpsPerSec(t, "Fast-path LDBC property match", opsPerSec, 5000)
-}
-
-// TestFastPath_CompoundQueryShapeMatching verifies the structured matcher matches correctly.
-func TestFastPath_CompoundQueryShapeMatching(t *testing.T) {
-	tests := []struct {
-		name     string
-		query    string
-		wantKind ShapeKind
-	}{
-		// Pattern 1: WITH LIMIT
-		{
-			name:     "benchmark pattern exact",
-			query:    "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r:TEMP_REL]->(m) DELETE r",
-			wantKind: shapeKindCompoundCreateDeleteRel,
-		},
-		{
-			name:     "benchmark pattern with spaces",
-			query:    "MATCH (a:Actor),(m:Movie) WITH a,m LIMIT 1 CREATE (a)-[r:T]->(m) DELETE r",
-			wantKind: shapeKindCompoundCreateDeleteRel,
-		},
-		{
-			name:     "benchmark pattern uppercase",
-			query:    "MATCH (A:ACTOR), (M:MOVIE) WITH A, M LIMIT 1 CREATE (A)-[R:REL]->(M) DELETE R",
-			wantKind: shapeKindCompoundCreateDeleteRel,
-		},
-		// Pattern 2: LDBC property match
-		{
-			name:     "LDBC pattern exact",
-			query:    "MATCH (p1:Person {id: 1}), (p2:Person {id: 2}) CREATE (p1)-[r:TEMP_KNOWS]->(p2) DELETE r",
-			wantKind: shapeKindCompoundPropCreateDeleteRel,
-		},
-		{
-			name:     "LDBC pattern with spaces",
-			query:    "MATCH (p1:Person { id: 1 }), (p2:Person { id: 2 }) CREATE (p1)-[r:KNOWS]->(p2) DELETE r",
-			wantKind: shapeKindCompoundPropCreateDeleteRel,
-		},
-		// Non-matching patterns
-		{
-			name:     "LDBC without DELETE",
-			query:    "MATCH (p1:Person {id: 1}), (p2:Person {id: 2}) CREATE (p1)-[r:KNOWS]->(p2)",
-			wantKind: shapeKindUnknown,
-		},
-		{
-			name:     "simple CREATE",
-			query:    "CREATE (n:Test)",
-			wantKind: shapeKindUnknown,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			match, ok := matchCompoundQueryShape(tt.query)
-			if tt.wantKind == shapeKindUnknown {
-				require.False(t, ok)
-				require.Equal(t, shapeKindUnknown, match.Kind)
-				return
-			}
-
-			require.True(t, ok)
-			require.Equal(t, tt.wantKind, match.Kind)
-		})
-	}
 }
 
 func TestFastPath_CreateDeleteRelCount_HelperBranches(t *testing.T) {
@@ -192,13 +130,8 @@ func TestFastPath_CreateDeleteRelCount_HelperBranches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	okRes, ok := executor.executeFastPathCreateDeleteRelCount(
-		"Person", "Person",
-		"id", int64(1),
-		"id", int64(2),
-		"TEMP_REL", "r",
-	)
-	require.True(t, ok)
+	okRes, err := executor.Execute(context.Background(), "MATCH (a:Person {id:1}), (b:Person {id:2}) CREATE (a)-[r:TEMP_REL]->(b) DELETE r RETURN count(r)", nil)
+	require.NoError(t, err)
 	require.NotNil(t, okRes)
 	assert.Equal(t, []string{"count(r)"}, okRes.Columns)
 	require.Len(t, okRes.Rows, 1)
@@ -206,36 +139,28 @@ func TestFastPath_CreateDeleteRelCount_HelperBranches(t *testing.T) {
 	assert.Equal(t, 1, okRes.Stats.RelationshipsCreated)
 	assert.Equal(t, 1, okRes.Stats.RelationshipsDeleted)
 
-	// Missing property-matched endpoint returns not fast-path-applicable.
-	missRes, missOK := executor.executeFastPathCreateDeleteRelCount(
-		"Person", "Person",
-		"id", int64(1),
-		"id", int64(999),
-		"TEMP_REL", "r",
-	)
-	assert.False(t, missOK)
-	assert.Nil(t, missRes)
+	missRes, err := executor.Execute(context.Background(), "MATCH (a:Person {id:1}), (b:Person {id:999}) CREATE (a)-[r:TEMP_REL]->(b) DELETE r RETURN count(r)", nil)
+	require.NoError(t, err)
+	assert.Equal(t, [][]interface{}{{int64(0)}}, missRes.Rows)
+	assert.Zero(t, missRes.Stats.RelationshipsCreated)
+	assert.Zero(t, missRes.Stats.RelationshipsDeleted)
 
 	// Label lookup branch when property filters are absent.
-	labelRes, labelOK := executor.executeFastPathCreateDeleteRelCount(
-		"Person", "Person",
-		"", nil,
-		"", nil,
-		"TEMP_REL", "edgeRef",
-	)
-	require.True(t, labelOK)
+	labelRes, err := executor.Execute(context.Background(), "MATCH (a:Person), (b:Person) CREATE (a)-[edgeRef:TEMP_REL]->(b) DELETE edgeRef RETURN count(edgeRef)", nil)
+	require.NoError(t, err)
 	require.NotNil(t, labelRes)
 	assert.Equal(t, []string{"count(edgeRef)"}, labelRes.Columns)
+	assert.Equal(t, [][]interface{}{{int64(4)}}, labelRes.Rows)
+	assert.Equal(t, 4, labelRes.Stats.RelationshipsCreated)
+	assert.Equal(t, 4, labelRes.Stats.RelationshipsDeleted)
 
-	// Missing label path returns false.
-	noneRes, noneOK := executor.executeFastPathCreateDeleteRelCount(
-		"MissingLabelA", "MissingLabelB",
-		"", nil,
-		"", nil,
-		"TEMP_REL", "r",
-	)
-	assert.False(t, noneOK)
-	assert.Nil(t, noneRes)
+	noneRes, err := executor.Execute(context.Background(), "MATCH (a:MissingLabelA), (b:MissingLabelB) CREATE (a)-[r:TEMP_REL]->(b) DELETE r RETURN count(r)", nil)
+	require.NoError(t, err)
+	assert.Equal(t, [][]interface{}{{int64(0)}}, noneRes.Rows)
+	assert.Zero(t, noneRes.Stats.RelationshipsCreated)
+	edges, err := engine.AllEdges()
+	require.NoError(t, err)
+	require.Empty(t, edges)
 }
 
 func TestFastPath_CreateDeleteRel_HelperBranches(t *testing.T) {
@@ -260,21 +185,24 @@ func TestFastPath_CreateDeleteRel_HelperBranches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	okRes, ok := executor.executeFastPathCreateDeleteRel("Actor", "Movie", "", nil, "", nil, "TEMP")
-	require.True(t, ok)
+	okRes, err := executor.Execute(context.Background(), "MATCH (a:Actor), (m:Movie) CREATE (a)-[r:TEMP]->(m) DELETE r", nil)
+	require.NoError(t, err)
 	require.NotNil(t, okRes)
 	assert.Equal(t, 1, okRes.Stats.RelationshipsCreated)
 	assert.Equal(t, 1, okRes.Stats.RelationshipsDeleted)
 
-	// Property-miss branch.
-	missRes, missOK := executor.executeFastPathCreateDeleteRel("Actor", "Movie", "name", "A", "title", "missing", "TEMP")
-	assert.False(t, missOK)
-	assert.Nil(t, missRes)
+	missRes, err := executor.Execute(context.Background(), "MATCH (a:Actor {name:'A'}), (m:Movie {title:'missing'}) CREATE (a)-[r:TEMP]->(m) DELETE r", nil)
+	require.NoError(t, err)
+	assert.Zero(t, missRes.Stats.RelationshipsCreated)
+	assert.Zero(t, missRes.Stats.RelationshipsDeleted)
 
-	// Missing-label branch.
-	noneRes, noneOK := executor.executeFastPathCreateDeleteRel("NoLabelA", "NoLabelB", "", nil, "", nil, "TEMP")
-	assert.False(t, noneOK)
-	assert.Nil(t, noneRes)
+	noneRes, err := executor.Execute(context.Background(), "MATCH (a:NoLabelA), (b:NoLabelB) CREATE (a)-[r:TEMP]->(b) DELETE r", nil)
+	require.NoError(t, err)
+	assert.Zero(t, noneRes.Stats.RelationshipsCreated)
+	assert.Zero(t, noneRes.Stats.RelationshipsDeleted)
+	edges, err := engine.AllEdges()
+	require.NoError(t, err)
+	require.Empty(t, edges)
 }
 
 // BenchmarkFastPath_WithLimit benchmarks the WITH LIMIT pattern.

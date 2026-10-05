@@ -87,8 +87,10 @@ func (e *StorageExecutor) createFromPattern(ctx context.Context, cypher string) 
 // createPlan is what one CREATE clause writes: every node and relationship,
 // fully parsed, evaluated and validated, in creation order.
 type createPlan struct {
-	nodes []*storage.Node
-	edges []*storage.Edge
+	nodes        []*storage.Node
+	edges        []*storage.Edge
+	nodeBindings map[string]*storage.Node
+	edgeBindings map[string]*storage.Edge
 }
 
 // createPlanPool recycles plans so planning a CREATE allocates nothing in
@@ -102,11 +104,13 @@ func acquireCreatePlan() *createPlan {
 // release clears the plan's references and returns it to the pool; plans
 // that grew unusually large are dropped instead of being kept alive.
 func (p *createPlan) release() {
-	if cap(p.nodes) > 256 || cap(p.edges) > 256 {
+	if cap(p.nodes) > 256 || cap(p.edges) > 256 || len(p.nodeBindings) > 64 || len(p.edgeBindings) > 64 {
 		return
 	}
 	clear(p.nodes)
 	clear(p.edges)
+	clear(p.nodeBindings)
+	clear(p.edgeBindings)
 	p.nodes = p.nodes[:0]
 	p.edges = p.edges[:0]
 	createPlanPool.Put(p)
@@ -147,30 +151,11 @@ func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern str
 // into createdNodes / createdEdges for later patterns and clauses. Adjacent
 // pipeline CREATE clauses share one plan and are published atomically.
 func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) {
-
-	// Split into individual patterns (nodes and relationships)
-	allPatterns := e.splitCreatePatterns(pattern)
-
-	// Separate node patterns from relationship patterns
-	var nodePatterns []string
-	var relPatterns []string
-	for _, p := range allPatterns {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		// Use string-literal-aware checks to avoid matching arrows inside content strings
-		// e.g., 'Data -> Output' should NOT be treated as a relationship
-		if patternHasRelationship(p) {
-			relPatterns = append(relPatterns, p)
-		} else {
-			nodePatterns = append(nodePatterns, p)
-		}
-	}
+	patterns := e.createPatternSplitFor(pattern)
 
 	// First, create all nodes
-	createdPaths := make(map[string]PathResult)
-	for _, nodePatternStr := range nodePatterns {
+	var createdPaths map[string]PathResult
+	for _, nodePatternStr := range patterns.nodes {
 		nodePatternStr = strings.TrimSpace(nodePatternStr)
 		if nodePatternStr == "" {
 			continue
@@ -181,7 +166,7 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 	}
 
 	// Then, create all relationships using variable references or inline node definitions
-	for _, relPatternStr := range relPatterns {
+	for _, relPatternStr := range patterns.relationships {
 		relPatternStr = strings.TrimSpace(relPatternStr)
 		if relPatternStr == "" {
 			continue
@@ -282,6 +267,9 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 		}
 
 		if pathVar != "" {
+			if createdPaths == nil {
+				createdPaths = make(map[string]PathResult)
+			}
 			createdPaths[pathVar] = PathResult{
 				Nodes:         pathNodes,
 				Relationships: pathEdges,
@@ -658,36 +646,31 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 // IMPORTANT: This properly handles content inside string literals (single/double quotes)
 // so that Cypher-like content inside strings is not parsed as relationship patterns.
 func (e *StorageExecutor) splitCreatePatterns(pattern string) []string {
+	return e.createPatternSplitFor(pattern).all
+}
+
+func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 	var patterns []string
 	var current strings.Builder
 	depth := 0
 	inRelationship := false
-	inString := false
-	stringChar := byte(0) // Track which quote character started the string
 	braceDepth := 0
 
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
 
-		// Handle string literal boundaries
-		if (c == '\'' || c == '"') && !isBackslashEscaped(pattern, i) {
-			if !inString {
-				// Starting a string literal
-				inString = true
-				stringChar = c
-			} else if c == stringChar {
-				// Ending the string literal (same quote type)
-				inString = false
-				stringChar = 0
-			}
-			current.WriteByte(c)
+		if c == '\'' || c == '"' || c == '`' {
+			end := skipCypherQuotedText(pattern, i, c)
+			current.WriteString(pattern[i:end])
+			i = end - 1
 			continue
 		}
-
-		// If inside a string literal, add character without parsing
-		if inString {
-			current.WriteByte(c)
-			continue
+		if c == '/' {
+			if end := queryCommentEnd(pattern, i); end >= 0 {
+				current.WriteString(pattern[i:end])
+				i = end - 1
+				continue
+			}
 		}
 
 		// Normal parsing outside string literals
@@ -771,133 +754,6 @@ func (e *StorageExecutor) splitCreatePatterns(pattern string) []string {
 	return patterns
 }
 
-// parseCreateRelPatternWithVars parses patterns like (varA)-[r:TYPE {props}]->(varB)
-// where varA and varB are variable references (not full node definitions)
-// Returns: sourceVar, relContent, targetVar, isReverse, remainder, error
-// remainder is any content after the target node (for chained patterns)
-func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) {
-	pattern = strings.TrimSpace(pattern)
-	findNodeEnd := func(input string, start int) int {
-		depth := 0
-		var quote byte
-		for index := start; index < len(input); index++ {
-			current := input[index]
-			if quote != 0 {
-				if current == '\\' && index+1 < len(input) {
-					index++
-					continue
-				}
-				if current == quote {
-					if index+1 < len(input) && input[index+1] == quote {
-						index++
-						continue
-					}
-					quote = 0
-				}
-				continue
-			}
-			switch current {
-			case '\'', '"':
-				quote = current
-			case '(':
-				depth++
-			case ')':
-				depth--
-				if depth == 0 {
-					return index
-				}
-			}
-		}
-		return -1
-	}
-
-	// Find the first node: (varA)
-	if !strings.HasPrefix(pattern, "(") {
-		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternMustStartNode(), nil)
-	}
-
-	// Find end of first node
-	firstNodeEnd := findNodeEnd(pattern, 0)
-	if firstNodeEnd < 0 {
-		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternUnmatchedParen(), nil)
-	}
-
-	sourceVar := strings.TrimSpace(pattern[1:firstNodeEnd])
-	rest := pattern[firstNodeEnd+1:]
-	rest = strings.TrimSpace(rest) // Remove any whitespace before -[ or <-[
-
-	// Detect direction and find relationship bracket
-	isReverse := false
-	var relStart int
-
-	if strings.HasPrefix(rest, "-[") {
-		relStart = 2 // Skip "-["
-	} else if strings.HasPrefix(rest, "<-[") {
-		isReverse = true
-		relStart = 3 // Skip "<-["
-	} else {
-		return "", "", "", false, "", localizedError(localization.CypherResidualRelationshipConnectorExpected(rest[:min(20, len(rest))]), nil)
-	}
-
-	// Find matching ] considering nested brackets in properties
-	depth := 1
-	relEnd := -1
-	inQuote := false
-	quoteChar := rune(0)
-	for i := relStart; i < len(rest); i++ {
-		c := rune(rest[i])
-		if !inQuote {
-			if c == '\'' || c == '"' {
-				inQuote = true
-				quoteChar = c
-			} else if c == '[' {
-				depth++
-			} else if c == ']' {
-				depth--
-				if depth == 0 {
-					relEnd = i
-					break
-				}
-			}
-		} else if c == quoteChar {
-			if i > 0 && !isBackslashEscaped(rest, i) {
-				inQuote = false
-			}
-		}
-	}
-	if relEnd < 0 {
-		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternUnmatchedBracket(), nil)
-	}
-
-	relContent := rest[relStart:relEnd]
-	afterRel := strings.TrimSpace(rest[relEnd+1:])
-
-	// Now find the second node
-	var secondNodeStart int
-	if isReverse {
-		if !strings.HasPrefix(afterRel, "-(") {
-			return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternForwardExpected(), nil)
-		}
-		secondNodeStart = 2
-	} else {
-		if !strings.HasPrefix(afterRel, "->(") {
-			return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternArrowExpected(), nil)
-		}
-		secondNodeStart = 3
-	}
-
-	// Find end of second node
-	secondNodeEnd := findNodeEnd(afterRel, secondNodeStart-1)
-	if secondNodeEnd < 0 {
-		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternSecondUnmatched(), nil)
-	}
-
-	targetVar := strings.TrimSpace(afterRel[secondNodeStart:secondNodeEnd])
-	remainder := strings.TrimSpace(afterRel[secondNodeEnd+1:])
-
-	return sourceVar, relContent, targetVar, isReverse, remainder, nil
-}
-
 // splitNodePatterns splits a CREATE pattern into individual node patterns
 // (Used for simple node-only patterns and by other parts of the system)
 func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
@@ -905,29 +761,25 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 	var current strings.Builder
 	depth := 0
 	braceDepth := 0
-	inString := false
-	stringChar := byte(0)
 
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
-		if (c == '\'' || c == '"') && !isBackslashEscaped(pattern, i) {
-			if !inString {
-				inString = true
-				stringChar = c
-			} else if c == stringChar {
-				inString = false
-				stringChar = 0
-			}
+		if c == '\'' || c == '"' || c == '`' {
+			end := skipCypherQuotedText(pattern, i, c)
 			if depth > 0 {
-				current.WriteByte(c)
+				current.WriteString(pattern[i:end])
 			}
+			i = end - 1
 			continue
 		}
-		if inString {
-			if depth > 0 {
-				current.WriteByte(c)
+		if c == '/' {
+			if end := queryCommentEnd(pattern, i); end >= 0 {
+				if depth > 0 {
+					current.WriteString(pattern[i:end])
+				}
+				i = end - 1
+				continue
 			}
-			continue
 		}
 		switch c {
 		case '{':
@@ -992,29 +844,7 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 	propsStart := strings.Index(relStr, "{")
 	if propsStart >= 0 {
 		// Find matching }
-		depth := 0
-		propsEnd := -1
-		inQuote := false
-		quoteChar := rune(0)
-		for i := propsStart; i < len(relStr); i++ {
-			c := rune(relStr[i])
-			if !inQuote {
-				if c == '\'' || c == '"' {
-					inQuote = true
-					quoteChar = c
-				} else if c == '{' {
-					depth++
-				} else if c == '}' {
-					depth--
-					if depth == 0 {
-						propsEnd = i
-						break
-					}
-				}
-			} else if c == quoteChar && !isBackslashEscaped(relStr, i) {
-				inQuote = false
-			}
-		}
+		propsEnd := findMatchingDelimiter(relStr, propsStart, '{', '}')
 		if propsEnd > propsStart {
 			relProps = e.parseProperties(ctx, relStr[propsStart:propsEnd+1])
 		}

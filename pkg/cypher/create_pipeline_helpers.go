@@ -10,6 +10,16 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+func (plan *createPlan) bindings() (map[string]*storage.Node, map[string]*storage.Edge) {
+	if plan.nodeBindings == nil {
+		plan.nodeBindings = make(map[string]*storage.Node)
+	}
+	if plan.edgeBindings == nil {
+		plan.edgeBindings = make(map[string]*storage.Edge)
+	}
+	return plan.nodeBindings, plan.edgeBindings
+}
+
 // containsString checks if a slice contains a string.
 func containsString(slice []string, s string) bool {
 	for _, item := range slice {
@@ -255,9 +265,126 @@ func sortNodesByProperty(nodes []*storage.Node, prop string) {
 	}
 }
 
+type createPatternSplit struct {
+	all           []string
+	nodes         []string
+	relationships []string
+}
+
+var createPatternSplits = newBoundedCache[string, createPatternSplit](4096)
+
+func (e *StorageExecutor) createPatternSplitFor(pattern string) createPatternSplit {
+	if split, cached := createPatternSplits.get(pattern); cached {
+		return split
+	}
+	split := createPatternSplit{all: e.scanCreatePatterns(pattern)}
+	for _, fragment := range split.all {
+		fragment = strings.TrimSpace(fragment)
+		if fragment == "" {
+			continue
+		}
+		if patternHasRelationship(fragment) {
+			split.relationships = append(split.relationships, fragment)
+		} else {
+			split.nodes = append(split.nodes, fragment)
+		}
+	}
+	createPatternSplits.put(pattern, split)
+	return split
+}
+
+type createRelationshipSyntax struct {
+	source, relationship, target, remainder string
+	reverse                                 bool
+	err                                     error
+}
+
+var createRelationshipSyntaxPlans = newBoundedCache[string, createRelationshipSyntax](4096)
+
 func getNodeProp(n *storage.Node, prop string) interface{} {
 	if n == nil || n.Properties == nil {
 		return nil
 	}
 	return n.Properties[prop]
+}
+
+// parseCreateRelPatternWithVars parses patterns like (varA)-[r:TYPE {props}]->(varB)
+// where varA and varB are variable references (not full node definitions)
+// Returns: sourceVar, relContent, targetVar, isReverse, remainder, error
+// remainder is any content after the target node (for chained patterns)
+func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) {
+	pattern = strings.TrimSpace(pattern)
+	if plan, cached := createRelationshipSyntaxPlans.get(pattern); cached {
+		return plan.source, plan.relationship, plan.target, plan.reverse, plan.remainder, plan.err
+	}
+	source, relationship, target, reverse, remainder, err := e.scanCreateRelPatternWithVars(pattern)
+	createRelationshipSyntaxPlans.put(pattern, createRelationshipSyntax{source, relationship, target, remainder, reverse, err})
+	return source, relationship, target, reverse, remainder, err
+}
+
+func (e *StorageExecutor) scanCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) {
+	pattern = strings.TrimSpace(pattern)
+	findNodeEnd := findMatchingParen
+
+	// Find the first node: (varA)
+	if !strings.HasPrefix(pattern, "(") {
+		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternMustStartNode(), nil)
+	}
+
+	// Find end of first node
+	firstNodeEnd := findNodeEnd(pattern, 0)
+	if firstNodeEnd < 0 {
+		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternUnmatchedParen(), nil)
+	}
+
+	sourceVar := strings.TrimSpace(pattern[1:firstNodeEnd])
+	rest := pattern[firstNodeEnd+1:]
+	rest = strings.TrimSpace(rest) // Remove any whitespace before -[ or <-[
+
+	// Detect direction and find relationship bracket
+	isReverse := false
+	var relStart int
+
+	if strings.HasPrefix(rest, "-[") {
+		relStart = 2 // Skip "-["
+	} else if strings.HasPrefix(rest, "<-[") {
+		isReverse = true
+		relStart = 3 // Skip "<-["
+	} else {
+		return "", "", "", false, "", localizedError(localization.CypherResidualRelationshipConnectorExpected(rest[:min(20, len(rest))]), nil)
+	}
+
+	// Find matching ] considering nested brackets in properties
+	relEnd := findMatchingBracket(rest, relStart-1)
+	if relEnd < 0 {
+		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternUnmatchedBracket(), nil)
+	}
+
+	relContent := rest[relStart:relEnd]
+	afterRel := strings.TrimSpace(rest[relEnd+1:])
+
+	// Now find the second node
+	var secondNodeStart int
+	if isReverse {
+		if !strings.HasPrefix(afterRel, "-(") {
+			return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternForwardExpected(), nil)
+		}
+		secondNodeStart = 2
+	} else {
+		if !strings.HasPrefix(afterRel, "->(") {
+			return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternArrowExpected(), nil)
+		}
+		secondNodeStart = 3
+	}
+
+	// Find end of second node
+	secondNodeEnd := findNodeEnd(afterRel, secondNodeStart-1)
+	if secondNodeEnd < 0 {
+		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternSecondUnmatched(), nil)
+	}
+
+	targetVar := strings.TrimSpace(afterRel[secondNodeStart:secondNodeEnd])
+	remainder := strings.TrimSpace(afterRel[secondNodeEnd+1:])
+
+	return sourceVar, relContent, targetVar, isReverse, remainder, nil
 }

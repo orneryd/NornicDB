@@ -37,45 +37,7 @@ func extractCallArguments(cypher string) ([]interface{}, error) {
 }
 
 func findMatchingCallParen(s string, open int) int {
-	if open < 0 || open >= len(s) || s[open] != '(' {
-		return -1
-	}
-	depth := 1
-	inQuote := false
-	quoteChar := rune(0)
-	escaped := false
-
-	for i, ch := range s[open+1:] {
-		if inQuote {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if ch == '\\' {
-				escaped = true
-				continue
-			}
-			if ch == quoteChar {
-				inQuote = false
-				quoteChar = 0
-			}
-			continue
-		}
-
-		switch ch {
-		case '\'', '"':
-			inQuote = true
-			quoteChar = ch
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return open + 1 + i
-			}
-		}
-	}
-	return -1
+	return findMatchingDelimiter(s, open, '(', ')')
 }
 
 func splitProcedureTopLevelComma(s string) []string {

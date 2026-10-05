@@ -1602,39 +1602,7 @@ func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context,
 }
 
 func findMatchingBracket(s string, startIdx int) int {
-	if startIdx >= len(s) || s[startIdx] != '[' {
-		return -1
-	}
-
-	depth := 0
-	inQuote := false
-	quoteChar := byte(0)
-
-	for i := startIdx; i < len(s); i++ {
-		c := s[i]
-		if (c == '\'' || c == '"') && !isBackslashEscaped(s, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			continue
-		}
-		if inQuote {
-			continue
-		}
-		if c == '[' {
-			depth++
-		} else if c == ']' {
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-
-	return -1
+	return findMatchingDelimiter(s, startIdx, '[', ']')
 }
 
 // findMatchingParen finds the index of the closing paren that matches the
