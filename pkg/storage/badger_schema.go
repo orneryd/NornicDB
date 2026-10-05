@@ -273,22 +273,20 @@ func (b *BadgerEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 	}
 	b.schemasMu.RUnlock()
 
-	// Lazily create empty schema for new namespaces.
-	sm := NewSchemaManager()
-	sm.SetPersister(func(def *SchemaDefinition) error {
-		return b.persistSchemaDefinition(namespace, def)
-	})
-	sm.SetKnowledgePolicyChangedHook(func() {
-		_ = b.ReconcileDecaySuppression(namespace)
-	})
-
+	// Lazily create empty schema for new namespaces; a concurrent caller may
+	// have created it since the read check.
 	b.schemasMu.Lock()
-	if existing := b.schemas[namespace]; existing != nil {
-		b.schemasMu.Unlock()
-		return existing
+	defer b.schemasMu.Unlock()
+	sm := b.schemas[namespace]
+	if sm == nil {
+		sm = NewSchemaManager()
+		sm.SetPersister(func(def *SchemaDefinition) error {
+			return b.persistSchemaDefinition(namespace, def)
+		})
+		sm.SetKnowledgePolicyChangedHook(func() {
+			_ = b.ReconcileDecaySuppression(namespace)
+		})
+		b.schemas[namespace] = sm
 	}
-	b.schemas[namespace] = sm
-	b.schemasMu.Unlock()
-
 	return sm
 }

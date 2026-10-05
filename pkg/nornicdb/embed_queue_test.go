@@ -2635,3 +2635,32 @@ func TestEmbedWorker_ProcessNextBatch_YieldsUnderForegroundPressure(t *testing.T
 	require.Equal(t, 0, engine.getNodeCalls, "worker should not hit storage while yielding")
 	require.Empty(t, engine.marked, "worker should not mutate pending index while yielding")
 }
+
+// Reset drops a trigger left over from before the reset instead of handing it
+// to the restarted worker, and leaves an empty trigger channel empty.
+func TestEmbedWorker_ResetDrainsPendingTrigger(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	worker := NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{
+		NumWorkers:   1,
+		ScanInterval: time.Hour,
+		BatchDelay:   time.Millisecond,
+		MaxRetries:   1,
+		ChunkSize:    256,
+		ChunkOverlap: 32,
+	})
+	t.Cleanup(worker.Close)
+
+	// Stop the worker goroutine so nothing consumes the trigger before Reset.
+	worker.cancel()
+	worker.wg.Wait()
+	worker.trigger <- struct{}{}
+
+	worker.Reset()
+	require.Zero(t, len(worker.trigger))
+
+	// A reset with nothing pending leaves the channel empty too.
+	worker.cancel()
+	worker.wg.Wait()
+	worker.Reset()
+	require.Zero(t, len(worker.trigger))
+}

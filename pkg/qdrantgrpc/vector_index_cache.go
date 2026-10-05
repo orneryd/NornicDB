@@ -202,13 +202,7 @@ func (v *bruteVectorIndex) search(ctx context.Context, query []float32, limit in
 		q = vector.Normalize(query)
 	}
 
-	type topItem struct {
-		id    string
-		score float64
-	}
-	top := make([]topItem, 0, util.SafePreallocCap(limit, len(v.vectors)))
-	minIdx := 0
-	minVal := float64(0)
+	top := newTopScores(limit, util.SafePreallocCap(limit, len(v.vectors)))
 
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -224,38 +218,50 @@ func (v *bruteVectorIndex) search(ctx context.Context, query []float32, limit in
 		if minScore >= 0 && score < minScore {
 			continue
 		}
-
-		if len(top) < limit {
-			top = append(top, topItem{id: id, score: score})
-			if len(top) == 1 || score < minVal {
-				minVal = score
-				minIdx = len(top) - 1
-			}
-			continue
-		}
-
-		if score <= minVal {
-			continue
-		}
-
-		top[minIdx] = topItem{id: id, score: score}
-		minIdx = 0
-		minVal = top[0].score
-		for i := 1; i < len(top); i++ {
-			if top[i].score < minVal {
-				minVal = top[i].score
-				minIdx = i
-			}
-		}
+		top.offer(id, score)
 	}
 
-	sort.Slice(top, func(i, j int) bool { return top[i].score > top[j].score })
+	return top.sorted()
+}
 
-	out := make([]searchResult, 0, len(top))
-	for _, item := range top {
-		out = append(out, searchResult{ID: item.id, Score: item.score})
+// topScores keeps the limit highest-scoring results offered to it, in a
+// single pass over candidates arriving in any order.
+type topScores struct {
+	limit  int
+	items  []searchResult
+	minIdx int // index of the lowest score kept
+}
+
+func newTopScores(limit, capacity int) *topScores {
+	return &topScores{limit: limit, items: make([]searchResult, 0, capacity)}
+}
+
+// offer keeps the result while there is room, and afterwards only when it
+// beats the lowest score kept, which it then replaces.
+func (t *topScores) offer(id string, score float64) {
+	if len(t.items) < t.limit {
+		t.items = append(t.items, searchResult{ID: id, Score: score})
+		if score < t.items[t.minIdx].Score {
+			t.minIdx = len(t.items) - 1
+		}
+		return
 	}
-	return out
+	if score <= t.items[t.minIdx].Score {
+		return
+	}
+	t.items[t.minIdx] = searchResult{ID: id, Score: score}
+	t.minIdx = 0
+	for i := 1; i < len(t.items); i++ {
+		if t.items[i].Score < t.items[t.minIdx].Score {
+			t.minIdx = i
+		}
+	}
+}
+
+// sorted returns the kept results, highest score first.
+func (t *topScores) sorted() []searchResult {
+	sort.Slice(t.items, func(i, j int) bool { return t.items[i].Score > t.items[j].Score })
+	return t.items
 }
 
 func compactPointID(collection, pointID string) string {
