@@ -264,7 +264,7 @@ func CypherMatchingPatternPredicateVariableLength() Message {
 // CypherMatchingReturnStarNoVariables is Neo4j's SyntaxError for RETURN *
 // with no variable in scope.
 func CypherMatchingReturnStarNoVariables() Message {
-	return cypherMatchingMessage(MessageCypherMatchingReturnStarNoVariables, "RETURN * is not allowed when there are no variables in scope", nil)
+	return cypherMatchingMessage(MessageCypherMatchingReturnStarNoVariables, "RETURN * requires at least one variable in scope", nil)
 }
 
 func CypherMatchingIsNotOperandInvalid(input string) Message {
