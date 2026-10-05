@@ -115,7 +115,7 @@ func TestNodeMutatedCallbackOnMergeCreate(t *testing.T) {
 	mu.Unlock()
 }
 
-// TestNodeMutatedCallbackOnMergeMatch verifies callback is invoked when MERGE matches and persists (so embed queue can re-process on any mutation).
+// TestNodeMutatedCallbackOnMergeMatch distinguishes no-op matches from actual mutations.
 func TestNodeMutatedCallbackOnMergeMatch(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 
@@ -132,22 +132,46 @@ func TestNodeMutatedCallbackOnMergeMatch(t *testing.T) {
 		createdNodeIDs = append(createdNodeIDs, nodeID)
 	})
 
-	// First MERGE creates the node (1 callback)
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), createdNodeIDs...)
+	}
+
 	_, err := exec.Execute(ctx, `MERGE (n:Person {name: 'Alice'})`, nil)
 	require.NoError(t, err)
+	initial := snapshot()
+	require.Len(t, initial, 1)
 
-	mu.Lock()
-	initialCount := len(createdNodeIDs)
-	mu.Unlock()
-	require.Equal(t, 1, initialCount, "first MERGE create should trigger callback once")
+	for _, query := range []string{
+		`MERGE (n:Person {name: 'Alice'})`,
+		`MERGE (n:Person {name: 'Alice'}) ON CREATE SET n.unexpected = true`,
+		`MATCH (n:Person {name: 'Alice'}) WITH n.name AS name MERGE (m:Person {name:name})`,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err)
+		require.Zero(t, result.Stats.NodesCreated)
+		require.Zero(t, result.Stats.PropertiesSet)
+		require.Equal(t, initial, snapshot(), "no-op MERGE must not notify: %s", query)
+	}
 
-	// Second MERGE matches existing; we still notify so embed queue can re-process on any mutation (2 callbacks total).
-	_, err = exec.Execute(ctx, `MERGE (n:Person {name: 'Alice'})`, nil)
+	for index, query := range []string{
+		`MERGE (n:Person {name: 'Alice'}) ON MATCH SET n.seen = true`,
+		`MERGE (n:Person {name: 'Alice'}) SET n.age = 42`,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err)
+		require.Zero(t, result.Stats.NodesCreated)
+		require.EqualValues(t, 1, result.Stats.PropertiesSet)
+		actual := snapshot()
+		require.Len(t, actual, index+2)
+		require.Equal(t, initial[0], actual[len(actual)-1])
+	}
+	stored, err := store.GetNode(storage.NodeID(initial[0]))
 	require.NoError(t, err)
-
-	mu.Lock()
-	assert.Equal(t, 2, len(createdNodeIDs), "MERGE match triggers callback so embeddings can be regenerated on any mutation")
-	mu.Unlock()
+	require.Equal(t, true, stored.Properties["seen"])
+	require.EqualValues(t, 42, stored.Properties["age"])
+	require.NotContains(t, stored.Properties, "unexpected")
 }
 
 // TestNodeMutatedCallbackNotSet verifies no panic when callback is nil

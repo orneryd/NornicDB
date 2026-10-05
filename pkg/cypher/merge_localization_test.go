@@ -26,10 +26,6 @@ func TestCypherMergeLocalizedErrorsHaveTypedIdentityAndExactEnglish(t *testing.T
 
 	_, err := exec.parseSetMergeMapLiteralStrict(context.Background(), "broken")
 	requireCypherMergeLocalizedError(t, err, localization.MessageCypherMergeMapLiteralEnclosureRequired, "map literal must be enclosed in { ... }")
-
-	_, err = exec.executeMerge(context.Background(), "RETURN 1")
-	localizedErr := requireCypherMergeLocalizedError(t, err, localization.MessageCypherMergeClauseNotFound, `MERGE clause not found in query: "RETURN 1"`)
-	require.Equal(t, "RETURN 1", localizedErr.Message.Data["Query"])
 }
 
 func TestCypherMergeLocalizedErrorPreservesCause(t *testing.T) {

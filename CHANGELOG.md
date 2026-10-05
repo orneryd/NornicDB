@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Route standalone and MERGE-first statements terminally through the shared
+  clause pipeline. Retire private standalone, chain, multi-MERGE and segment
+  executors. No-op MERGE matches no longer reindex nodes or queue embeddings;
+  creation and SET mutations still notify. Preserve unbound relationship
+  endpoint creation and idempotent replay in every direction, and reject
+  malformed node patterns instead of clearing them into a fallback (#908).
+
 - Route MATCH/MERGE compositions exclusively through the shared clause pipeline.
   Remove private compound MATCH/MERGE and MATCH/UNWIND/MERGE handlers and their
   orphan repeated-MATCH and window helpers. Preserve ON CREATE/ON MATCH actions,

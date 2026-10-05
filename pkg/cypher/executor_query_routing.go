@@ -121,24 +121,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 
 skipMatchCallRoute:
 	if startsWithMerge {
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		if findKeywordIndexInContext(cypher, "OPTIONAL MATCH") > 0 ||
-			findKeywordIndexInContext(cypher, "WITH") > 0 ||
-			findKeywordIndexInContext(cypher, "WHERE") > 0 ||
-			len(collectTopLevelMergeClauseBoundaries(cypher, []string{"CREATE"})) > 0 {
-			return e.executeMultipleMerges(ctx, cypher)
-		}
-		firstMergeEnd := findKeywordIndex(cypher[5:], ")")
-		if firstMergeEnd > 0 {
-			afterFirstMerge := cypher[5+firstMergeEnd+1:]
-			secondMergeIdx := findKeywordIndex(afterFirstMerge, "MERGE")
-			if secondMergeIdx >= 0 {
-				return e.executeMultipleMerges(ctx, cypher)
-			}
-		}
-		return e.executeMerge(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
 	var mergeIdx, createIdx, withIdx, optionalMatchIdx int = -1, -1, -1, -1
