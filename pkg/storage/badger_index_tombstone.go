@@ -2,23 +2,25 @@ package storage
 
 import (
 	badger "github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
 
 // indexTombstoneKey constructs the tombstone key for an original index key.
-// Format: [0x17][originalKey]. The original prefix byte is preserved so
-// the read path can reconstruct the original key if needed.
+// It uses the canonical AccessMetaStore keyspace, preserving the original key.
 func indexTombstoneKey(originalIndexKey []byte) []byte {
-	key := []byte{prefixIndexTombstone}
-	key = append(key, originalIndexKey...)
-	return key
+	return accessMetaKey(policyIndexMetaIDPrefix + string(originalIndexKey))
 }
 
 // hasIndexTombstone checks whether a tombstone exists for the given original
 // index key within the provided transaction. Cost: one Badger point lookup,
 // rejected in <50ns by bloom filter when no tombstone exists.
 func hasIndexTombstone(txn *badger.Txn, originalIndexKey []byte) bool {
-	_, err := txn.Get(indexTombstoneKey(originalIndexKey))
-	return err == nil
+	entry, err := getAccessMetaInTxn(txn, policyIndexMetaIDPrefix+string(originalIndexKey))
+	return err == nil && entry != nil && entry.IndexTombstone
+}
+
+func putIndexTombstoneInTxn(txn *badger.Txn, originalKey []byte) error {
+	return putAccessMetaInTxn(txn, policyIndexMetaIDPrefix+string(originalKey), &knowledgepolicy.AccessMetaEntry{IndexTombstone: true})
 }
 
 // WriteIndexTombstones writes zero-length presence markers for all given
@@ -29,7 +31,7 @@ func (b *BadgerEngine) WriteIndexTombstones(keys [][]byte) error {
 	}
 	return b.withUpdate(func(txn *badger.Txn) error {
 		for _, k := range keys {
-			if err := txn.Set(indexTombstoneKey(k), []byte{}); err != nil {
+			if err := putIndexTombstoneInTxn(txn, k); err != nil {
 				return err
 			}
 		}

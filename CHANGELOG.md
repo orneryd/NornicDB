@@ -368,11 +368,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asynchronous engine compare names exactly, Cypher's relationship-type and
   label filters (APOC path algorithms, FastRP, count fast paths, index
   hints) do too, and unnamed constraints and indexes on labels or properties
-  that differ only in case get distinct generated names. Storage version 4:
-  the V3-to-V4 upgrade, gated behind `--upgrade-storage`, rebuilds the label,
+  that differ only in case get distinct generated names. The V2-to-V3
+  upgrade, gated behind `--upgrade-storage`, rebuilds the label,
   relationship-type and relationship-between indexes from the stored nodes
   and relationships, moves deindex catalogs and tombstones to the new keys,
-  and has the counts and temporal index rebuilt at startup.
+  and has the counts and temporal index rebuilt at startup. Original Badger
+  relationship prefixes are preserved; policy state uses the existing
+  AccessMetaStore metadata namespace rather than additional key families.
 
 - Label expressions (`n:A|B`, `n:A&B`, `n:!A`, `n:%`, groups, and GQL's
   `n IS A`) in MATCH patterns, relationship patterns (`[r:!R]`, `[:R&S]`),

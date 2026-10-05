@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -10,10 +11,12 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
-// Branches of the #862 rebuild helpers and the v3→v4 migration.
+// Branches of the #862 rebuild helpers used by the v2→v3 migration.
 
 // oversizedName is longer than Badger's maximum key size, so any index key
 // that holds it can't be written.
@@ -203,16 +206,53 @@ func TestRewriteIndexEntryCatalogsBranches(t *testing.T) {
 	require.True(t, sameIndexKeys([][]byte{{1}}, [][]byte{{1}}))
 }
 
-func TestMigrateV3ToV4Errors(t *testing.T) {
+func TestLegacyPolicyMetadataTransferBranches(t *testing.T) {
+	for _, prefix := range []byte{0x11, 0x12, 0x13} {
+		t.Run(fmt.Sprintf("malformed-%02x", prefix), func(t *testing.T) {
+			engine := createTestBadgerEngine(t)
+			key := append([]byte{prefix}, []byte("test:malformed")...)
+			writeRawValue(t, engine, key, []byte{0xC1})
+			require.ErrorContains(t, engine.migrateLegacyPolicyMetadata(context.Background()), "decode legacy")
+			require.NoError(t, engine.withView(func(txn *badger.Txn) error { _, err := txn.Get(key); return err }))
+		})
+	}
+	t.Run("serialized metadata with separator bytes is not a relationship head", func(t *testing.T) {
+		engine := createTestBadgerEngine(t)
+		entityID := "test:entity\x00suffix"
+		entry := &knowledgepolicy.AccessMetaEntry{TargetID: entityID, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 42}}
+		value, err := msgpack.Marshal(entry)
+		require.NoError(t, err)
+		writeRawValue(t, engine, append([]byte{0x11}, []byte(entityID)...), value)
+		require.NoError(t, engine.migrateLegacyPolicyMetadata(context.Background()))
+		got, err := engine.GetAccessMeta(entityID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Equal(t, int64(42), got.Fixed.AccessCount)
+	})
+	t.Run("relationship prefixes in index markers are restored", func(t *testing.T) {
+		engine := createTestBadgerEngine(t)
+		for _, prefix := range []byte{0x18, 0x19, 0x03} {
+			key := []byte{prefix, 1, 2}
+			writeRawValue(t, engine, append([]byte{0x17}, key...), nil)
+		}
+		require.NoError(t, engine.migrateLegacyPolicyMetadata(context.Background()))
+		for _, prefix := range []byte{prefixEdgeBetweenIndex, prefixEdgeBetweenHead, prefixLabelIndex} {
+			require.True(t, hasTombstoneKey(t, engine, []byte{prefix, 1, 2}))
+		}
+		restoreRelationshipPrefix(nil)
+	})
+}
+
+func TestRebuildCaseSensitiveIndexesErrors(t *testing.T) {
 	t.Run("label index", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		writeRawValue(t, engine, nodeKey("test:bad"), []byte{0xFF, 0x00})
-		require.ErrorContains(t, engine.migrateV3ToV4(), "rebuild label index")
+		require.ErrorContains(t, engine.rebuildCaseSensitiveIndexes(), "rebuild label index")
 	})
 	t.Run("edge-type index", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		writeRawValue(t, engine, edgeKey("test:bad"), []byte{0xFF, 0x00})
-		require.ErrorContains(t, engine.migrateV3ToV4(), "rebuild edge-type index")
+		require.ErrorContains(t, engine.rebuildCaseSensitiveIndexes(), "rebuild edge-type index")
 	})
 	t.Run("edge-between index", func(t *testing.T) {
 		engine, _ := createTestBadgerEngineOnDisk(t)
@@ -221,12 +261,12 @@ func TestMigrateV3ToV4Errors(t *testing.T) {
 		// A type-index key (type + 10 bytes) fits Badger's 65,000-byte key
 		// limit; an edge-between key (type + 26 bytes) doesn't.
 		writeRawEdge(t, engine, &Edge{ID: "test:long", StartNode: "test:a", EndNode: "test:a", Type: strings.Repeat("T", 64_985)})
-		require.ErrorContains(t, engine.migrateV3ToV4(), "rebuild edge-between index")
+		require.ErrorContains(t, engine.rebuildCaseSensitiveIndexes(), "rebuild edge-between index")
 	})
 	t.Run("catalogs", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		writeRawValue(t, engine, indexEntryCatalogKey("test:garbage"), []byte{0xC1})
-		require.ErrorContains(t, engine.migrateV3ToV4(), "rewrite index entry catalogs")
+		require.ErrorContains(t, engine.rebuildCaseSensitiveIndexes(), "rewrite index entry catalogs")
 	})
 	t.Run("deindexed tombstone move", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
@@ -255,19 +295,19 @@ func hasTombstoneKey(t *testing.T, engine *BadgerEngine, key []byte) bool {
 	return found
 }
 
-func TestStartupUpgradeFailsOnAFailedV3ToV4Migration(t *testing.T) {
+func TestStartupUpgradeFailsOnAFailedV2ToV3IndexRebuild(t *testing.T) {
 	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger")}
 	engine, err := NewBadgerEngineWithOptions(options)
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: "test:a", Labels: []string{"L"}})
 	require.NoError(t, err)
 	writeRawValue(t, engine, nodeKey("test:bad"), []byte{0xFF, 0x00})
-	require.NoError(t, engine.writeSchemaVersion(storageVersionEdgeAdjacencyV3))
+	require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
 	require.NoError(t, engine.Close())
 
 	options.AllowStorageUpgrade = true
 	_, err = NewBadgerEngineWithOptions(options)
-	require.ErrorContains(t, err, "migration v3→v4 failed")
+	require.ErrorContains(t, err, "migration v2→v3 failed")
 }
 
 // The async engine's endpoint-label counts overlay pending writes by exact

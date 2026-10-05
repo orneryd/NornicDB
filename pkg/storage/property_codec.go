@@ -19,11 +19,7 @@ const (
 	storageVersionV1              = 1
 	storageVersionPropKeyDictV2   = 2
 	storageVersionEdgeAdjacencyV3 = 3
-	// storageVersionLabelCaseV4: label and relationship-type keys and counts
-	// are exact-case (#862).
-	storageVersionLabelCaseV4 = 4
-
-	storageVersionCurrent = storageVersionLabelCaseV4
+	storageVersionCurrent         = storageVersionEdgeAdjacencyV3
 )
 
 // Format-byte tokens for tokenized bodies. Both are reserved so they

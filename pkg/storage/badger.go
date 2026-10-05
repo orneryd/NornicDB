@@ -25,34 +25,27 @@ const maxMVCCCommitSequence = ^uint64(0)
 // Key prefixes for BadgerDB storage organization
 // Using single-byte prefixes for efficiency
 const (
-	prefixNode              = byte(0x01) // nodes:nodeID -> Node
-	prefixEdge              = byte(0x02) // edges:edgeID -> Edge
-	prefixLabelIndex        = byte(0x03) // label:labelName:nodeID -> []byte{}
-	prefixOutgoingIndex     = byte(0x04) // outgoing:nodeID:edgeID -> []byte{}
-	prefixIncomingIndex     = byte(0x05) // incoming:nodeID:edgeID -> []byte{}
-	prefixEdgeTypeIndex     = byte(0x06) // edgetype:type:edgeID -> []byte{} (for fast type lookups)
-	prefixPendingEmbed      = byte(0x07) // pending_embed:nodeID -> []byte{} (nodes needing embedding)
-	prefixEmbedding         = byte(0x08) // embedding:nodeID:chunkIndex -> []float32 (separate storage for large embeddings)
-	prefixSchema            = byte(0x09) // schema:global -> JSON(SchemaDefinition)
-	prefixTemporalIndex     = byte(0x0A) // temporal:namespace:label:keyprops:keyhash:valid_from:nodeID -> []byte{}
-	prefixTemporalHead      = byte(0x0B) // temporal_current:namespace:label:keyprops:keyhash -> nodeID
-	prefixMVCCNode          = byte(0x0C) // mvcc_node:nodeID:version -> Node version payload
-	prefixMVCCEdge          = byte(0x0D) // mvcc_edge:edgeID:version -> Edge version payload
-	prefixMVCCNodeHead      = byte(0x0E) // mvcc_node_head:nodeID -> MVCCHead
-	prefixMVCCEdgeHead      = byte(0x0F) // mvcc_edge_head:edgeID -> MVCCHead
-	prefixMVCCMeta          = byte(0x10) // mvcc_meta:* -> MVCC metadata (sequence, rebuild markers)
-	prefixAccessMeta        = byte(0x11) // accessmeta:entityID -> msgpack(AccessMetaEntry)
-	prefixIndexEntryCatalog = byte(0x12) // idxcat:entityID -> msgpack(IndexEntryCatalog)
-	prefixDeindexWorkItem   = byte(0x13) // deindexwork:workItemID -> msgpack(DeindexWorkItem)
-	prefixDecayProfile      = byte(0x14) // decayprofile:name -> msgpack(DecayProfileDef)
-	prefixPromotionProfile  = byte(0x15) // promoprofile:name -> msgpack(PromotionProfileDef)
-	prefixPromotionPolicy   = byte(0x16) // promopolicy:name -> msgpack(PromotionPolicyDef)
-	prefixIndexTombstone    = byte(0x17) // idxtomb:<original-index-key> -> []byte{} (presence marker)
-	prefixEdgeBetweenIndex  = byte(0x18) // edgebetween_set:start:end:type:edgeID -> []byte{} (all exact relationship lookups)
-	prefixEdgeBetweenHead   = byte(0x19) // edgebetween_head:start:end:type -> edgeID (fast single relationship lookup)
-	prefixMVCCOutgoingAdj   = byte(0x23) // mvcc_outgoing:nodeNum:edgeNum:version -> adjacency membership tombstone/live
-	prefixMVCCIncomingAdj   = byte(0x24) // mvcc_incoming:nodeNum:edgeNum:version -> adjacency membership tombstone/live
-	prefixMVCCPruneFloor    = byte(0x25) // pruned historical floor:kind:numID -> MVCCVersion
+	prefixNode             = byte(0x01) // nodes:nodeID -> Node
+	prefixEdge             = byte(0x02) // edges:edgeID -> Edge
+	prefixLabelIndex       = byte(0x03) // label:labelName:nodeID -> []byte{}
+	prefixOutgoingIndex    = byte(0x04) // outgoing:nodeID:edgeID -> []byte{}
+	prefixIncomingIndex    = byte(0x05) // incoming:nodeID:edgeID -> []byte{}
+	prefixEdgeTypeIndex    = byte(0x06) // edgetype:type:edgeID -> []byte{} (for fast type lookups)
+	prefixPendingEmbed     = byte(0x07) // pending_embed:nodeID -> []byte{} (nodes needing embedding)
+	prefixEmbedding        = byte(0x08) // embedding:nodeID:chunkIndex -> []float32 (separate storage for large embeddings)
+	prefixSchema           = byte(0x09) // schema:global -> JSON(SchemaDefinition)
+	prefixTemporalIndex    = byte(0x0A) // temporal:namespace:label:keyprops:keyhash:valid_from:nodeID -> []byte{}
+	prefixTemporalHead     = byte(0x0B) // temporal_current:namespace:label:keyprops:keyhash -> nodeID
+	prefixMVCCNode         = byte(0x0C) // mvcc_node:nodeID:version -> Node version payload
+	prefixMVCCEdge         = byte(0x0D) // mvcc_edge:edgeID:version -> Edge version payload
+	prefixMVCCNodeHead     = byte(0x0E) // mvcc_node_head:nodeID -> MVCCHead
+	prefixMVCCEdgeHead     = byte(0x0F) // mvcc_edge_head:edgeID -> MVCCHead
+	prefixMVCCMeta         = byte(0x10) // mvcc_meta:* -> MVCC metadata (sequence, rebuild markers)
+	prefixEdgeBetweenIndex = byte(0x11) // edgebetween_set:start:end:type:edgeID -> []byte{} (all exact relationship lookups)
+	prefixEdgeBetweenHead  = byte(0x12) // edgebetween_head:start:end:type -> edgeID (fast single relationship lookup)
+	prefixMVCCOutgoingAdj  = byte(0x23) // mvcc_outgoing:nodeNum:edgeNum:version -> adjacency membership tombstone/live
+	prefixMVCCIncomingAdj  = byte(0x24) // mvcc_incoming:nodeNum:edgeNum:version -> adjacency membership tombstone/live
+	prefixMVCCPruneFloor   = byte(0x25) // pruned historical floor:kind:numID -> MVCCVersion
 )
 
 // prefixMVCCMeta subkeys reserved by storage metadata records.

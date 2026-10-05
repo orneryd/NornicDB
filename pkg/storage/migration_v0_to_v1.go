@@ -38,7 +38,7 @@ func decodeLegacyNode(data []byte) (*legacyNodeForMigration, error) {
 }
 
 // migrateV0ToV1 extracts legacy access state (DecayScore, LastAccessed, AccessCount)
-// from node records into AccessMetaEntry records under prefixAccessMeta.
+// from node records into the canonical AccessMetaStore metadata records.
 // Node bytes are NOT re-serialized — legacy keys are harmlessly ignored on future decodes.
 func (b *BadgerEngine) migrateV0ToV1() error {
 	type pendingEntry struct {

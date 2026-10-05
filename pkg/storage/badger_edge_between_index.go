@@ -14,7 +14,7 @@ import (
 var edgeBetweenIndexReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaEdgeBetweenIndexReady}
 
 const (
-	edgeBetweenIndexRebuildBatchSize = 50_000
+	edgeBetweenIndexRebuildBatchSize = 5_000
 	edgeBetweenIndexRebuildLogEvery  = 100_000
 )
 
@@ -174,7 +174,7 @@ func (b *BadgerEngine) rebuildEdgeBetweenIndex(ctx context.Context) (int, error)
 		if err != nil {
 			return 0, false, fmt.Errorf("decode edge for edge-between index: %w", err)
 		}
-		return 1, true, nil
+		return 2, true, nil
 	})
 	if err != nil {
 		return processed, err

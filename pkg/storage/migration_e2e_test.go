@@ -664,7 +664,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 
 	// Access metadata: v0→v1 lifted DecayScore/AccessCount/
 	// LastAccessed onto AccessMeta records, but ONLY for nodes that
-	// had non-zero access state. Carol had none — no entry expected.
+	// had non-zero access state. Catalog-only records do not report access state.
 	for _, fix := range nodeFixtures {
 		meta, err := eng.GetAccessMeta(string(fix.ID))
 		require.NoError(t, err, "GetAccessMeta(%q)", fix.ID)

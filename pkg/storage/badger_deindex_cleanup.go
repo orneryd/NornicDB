@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	badger "github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 // DeindexCleanupJob periodically drains pending deindex work items,
@@ -138,11 +135,5 @@ func (j *DeindexCleanupJob) retryWorkItem(item *DeindexWorkItem) {
 	if item.RetryCount > 10 {
 		item.Status = "failed"
 	}
-	data, err := msgpack.Marshal(item)
-	if err != nil {
-		return
-	}
-	j.engine.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(deindexWorkItemKey(item.WorkItemID), data)
-	})
+	_ = j.engine.PutDeindexWorkItem(item)
 }

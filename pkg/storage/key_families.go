@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"encoding/binary"
+	"strings"
 )
 
 // badgerKeyFamilies is the inventory for storage accounting and namespace cleanup.
@@ -19,10 +20,7 @@ var badgerKeyFamilies = []struct {
 	{prefixTemporalHead, "index"}, {prefixMVCCNode, "mvcc"},
 	{prefixMVCCEdge, "mvcc"}, {prefixMVCCNodeHead, "mvcc"},
 	{prefixMVCCEdgeHead, "mvcc"}, {prefixMVCCMeta, "metadata"},
-	{prefixAccessMeta, "metadata"}, {prefixIndexEntryCatalog, "index"},
-	{prefixDeindexWorkItem, "metadata"}, {prefixDecayProfile, "metadata"},
-	{prefixPromotionProfile, "metadata"}, {prefixPromotionPolicy, "metadata"},
-	{prefixIndexTombstone, "index"}, {prefixEdgeBetweenIndex, "index"},
+	{prefixEdgeBetweenIndex, "index"},
 	{prefixEdgeBetweenHead, "index"}, {prefixIDDictNodeForward, "metadata"},
 	{prefixIDDictEdgeForward, "metadata"}, {prefixIDDictCounter, "metadata"},
 	{prefixIDDictNodeReverse, "metadata"}, {prefixIDDictEdgeReverse, "metadata"},
@@ -51,8 +49,7 @@ func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNa
 		return ok
 	}
 	switch key[0] {
-	case prefixNode, prefixEdge, prefixPendingEmbed, prefixEmbedding,
-		prefixAccessMeta, prefixIndexEntryCatalog, prefixDeindexWorkItem:
+	case prefixNode, prefixEdge, prefixPendingEmbed, prefixEmbedding:
 		return bytes.HasPrefix(key[1:], prefix)
 	case prefixIDDictNodeForward, prefixIDDictEdgeForward:
 		return bytes.HasPrefix(key[1:], prefix)
@@ -73,11 +70,19 @@ func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNa
 		return hasNode(1) || hasNode(9) || hasEdge(len(key)-8)
 	case prefixEdgeBetweenHead:
 		return hasNode(1) || hasNode(9)
-	case prefixIndexTombstone:
-		return namespaceOwnsBadgerKey(key[1:], prefix, namespace, wholeNamespace, nodes, edges)
 	case prefixTemporalIndex, prefixTemporalHead:
 		return wholeNamespace && bytes.HasPrefix(key[1:], append([]byte(namespace), 0))
 	case prefixMVCCMeta:
+		if bytes.HasPrefix(key, accessMetaKey("")) {
+			entityID := key[len(accessMetaKey("")):]
+			if bytes.HasPrefix(entityID, []byte(policyIndexMetaIDPrefix)) {
+				return namespaceOwnsBadgerKey(entityID[len(policyIndexMetaIDPrefix):], prefix, namespace, wholeNamespace, nodes, edges)
+			}
+			if bytes.HasPrefix(entityID, []byte(policyWorkMetaIDPrefix)) {
+				return strings.HasPrefix(strings.TrimPrefix(string(entityID[len(policyWorkMetaIDPrefix):]), "deindex:"), string(prefix))
+			}
+			return bytes.HasPrefix(entityID, prefix)
+		}
 		return wholeNamespace && len(key) >= 2 && key[1] == prefixMVCCMetaNamespaceSeq && string(key[2:]) == namespace
 	case prefixPropKeyForward, prefixPropKeyReverse, prefixPropKeyCounter:
 		if !wholeNamespace {

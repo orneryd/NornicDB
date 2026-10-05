@@ -1,12 +1,18 @@
 # Default ownership
 
-- @orneryd
+* @orneryd
 
 # Core engine and query/runtime surfaces
 
 /pkg/ @orneryd
 /cmd/ @orneryd
 /apoc/ @orneryd
+
+# Badger layouts, codecs, key construction, migrations, and policy metadata
+
+/pkg/storage/ @orneryd
+/pkg/knowledgepolicy/ @orneryd
+/.github/CODEOWNERS @orneryd
 
 # UI and web assets
 

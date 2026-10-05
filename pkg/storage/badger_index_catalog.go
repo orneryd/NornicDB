@@ -2,7 +2,7 @@ package storage
 
 import (
 	badger "github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
 
 // IndexEntryCatalog tracks the exact secondary-index Badger keys written for
@@ -16,7 +16,7 @@ type IndexEntryCatalog struct {
 }
 
 func indexEntryCatalogKey(entityID string) []byte {
-	return append([]byte{prefixIndexEntryCatalog}, []byte(entityID)...)
+	return accessMetaKey(entityID)
 }
 
 func (b *BadgerEngine) PutIndexEntryCatalog(entityID string, cat *IndexEntryCatalog) error {
@@ -26,46 +26,50 @@ func (b *BadgerEngine) PutIndexEntryCatalog(entityID string, cat *IndexEntryCata
 }
 
 func putIndexEntryCatalogInTxn(txn *badger.Txn, entityID string, cat *IndexEntryCatalog) error {
-	data, err := msgpack.Marshal(cat)
+	entry, err := getAccessMetaInTxn(txn, entityID)
 	if err != nil {
 		return err
 	}
-	return txn.Set(indexEntryCatalogKey(entityID), data)
+	if entry == nil {
+		entry = &knowledgepolicy.AccessMetaEntry{TargetID: cat.TargetID, TargetScope: knowledgepolicy.ScopeType(cat.TargetScope)}
+	}
+	entry.IndexKeys = cat.IndexKeys
+	entry.HasIndexKeys = true
+	entry.Deindexed = cat.Deindexed
+	return putAccessMetaInTxn(txn, entityID, entry)
 }
 
 func (b *BadgerEngine) GetIndexEntryCatalog(entityID string) (*IndexEntryCatalog, error) {
-	var cat IndexEntryCatalog
-	found := false
+	var entry *knowledgepolicy.AccessMetaEntry
 	err := b.withView(func(txn *badger.Txn) error {
-		item, err := txn.Get(indexEntryCatalogKey(entityID))
-		if err == badger.ErrKeyNotFound {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		return item.Value(func(val []byte) error {
-			found = true
-			return msgpack.Unmarshal(val, &cat)
-		})
+		var err error
+		entry, err = getAccessMetaInTxn(txn, entityID)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	if !found {
+	if entry == nil || (!entry.HasIndexKeys && entry.IndexKeys == nil) {
 		return nil, nil
 	}
-	return &cat, nil
+	return &IndexEntryCatalog{TargetID: entry.TargetID, TargetScope: string(entry.TargetScope), IndexKeys: entry.IndexKeys, Deindexed: entry.Deindexed}, nil
 }
 
 func (b *BadgerEngine) DeleteIndexEntryCatalog(entityID string) error {
 	return b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Delete(indexEntryCatalogKey(entityID))
+		return deleteIndexEntryCatalogInTxn(txn, entityID)
 	})
 }
 
 func deleteIndexEntryCatalogInTxn(txn *badger.Txn, entityID string) error {
-	return txn.Delete(indexEntryCatalogKey(entityID))
+	entry, err := getAccessMetaInTxn(txn, entityID)
+	if err != nil || entry == nil {
+		return err
+	}
+	entry.IndexKeys = nil
+	entry.HasIndexKeys = false
+	entry.Deindexed = false
+	return putAccessMetaInTxn(txn, entityID, entry)
 }
 
 // collectNodeIndexKeys returns all secondary-index keys written for a node.

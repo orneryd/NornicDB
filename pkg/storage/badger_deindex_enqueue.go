@@ -194,11 +194,7 @@ func enqueueWorkItemInTxn(txn *badger.Txn, entityID, scope string) error {
 		EnqueuedAt:  time.Now().UnixNano(),
 		Status:      "pending",
 	}
-	data, err := msgpack.Marshal(workItem)
-	if err != nil {
-		return err
-	}
-	return txn.Set(deindexWorkItemKey(workItem.WorkItemID), data)
+	return putDeindexWorkItemInTxn(txn, workItem)
 }
 
 func clearTombstonesForEntityInTxn(txn *badger.Txn, entityID string) error {
@@ -220,11 +216,7 @@ func clearTombstonesForEntityInTxn(txn *badger.Txn, entityID string) error {
 
 	if cat.Deindexed {
 		cat.Deindexed = false
-		data, err := msgpack.Marshal(&cat)
-		if err != nil {
-			return err
-		}
-		if err := txn.Set(indexEntryCatalogKey(entityID), data); err != nil {
+		if err := putIndexEntryCatalogInTxn(txn, entityID, &cat); err != nil {
 			return err
 		}
 	}

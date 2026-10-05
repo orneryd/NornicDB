@@ -43,6 +43,9 @@ func (b *BadgerEngine) migrateV2ToV3() error {
 	if err := b.repairArchivedEdgeAdjacency(); err != nil {
 		return fmt.Errorf("repair archived edge adjacency: %w", err)
 	}
+	if err := b.rebuildCaseSensitiveIndexes(); err != nil {
+		return err
+	}
 	return b.writeSchemaVersion(storageVersionEdgeAdjacencyV3)
 }
 

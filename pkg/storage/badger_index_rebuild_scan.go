@@ -24,7 +24,8 @@ func (b *BadgerEngine) dropDerivedPrefixes(prefixes ...byte) error {
 
 // storedRecordScan describes one index rebuild's scan of stored records.
 type storedRecordScan struct {
-	prefix    byte         // node or edge bodies
+	prefix    byte // node or edge bodies
+	keyPrefix []byte
 	batchSize int          // writes per read-write transaction
 	logEvery  int          // processed records between progress logs
 	log       *slog.Logger // progress log (nil: none)
@@ -40,7 +41,10 @@ type storedRecordScan struct {
 // counts as processed; the scan returns the processed count and logs it
 // every scan.logEvery records.
 func (b *BadgerEngine) forEachStoredRecordInChunks(ctx context.Context, scan storedRecordScan, visit func(txn *badger.Txn, key, value []byte) (writes int, processed bool, err error)) (int, error) {
-	prefix := []byte{scan.prefix}
+	prefix := scan.keyPrefix
+	if len(prefix) == 0 {
+		prefix = []byte{scan.prefix}
+	}
 	processed := 0
 	var cursor []byte
 	for {
@@ -98,7 +102,7 @@ func (b *BadgerEngine) forEachStoredRecordInChunks(ctx context.Context, scan sto
 const edgeTypeIndexRebuildBatchSize = 5000
 
 // rebuildEdgeTypeIndex drops the relationship-type index (prefix 0x06) and
-// writes it again from the stored edges. The v3→v4 migration uses it: older
+// writes it again from the stored edges. The V2-to-V3 upgrade uses it: older
 // stores keyed the index by the lower-cased type (#862).
 func (b *BadgerEngine) rebuildEdgeTypeIndex(ctx context.Context) (int, error) {
 	if ctx == nil {

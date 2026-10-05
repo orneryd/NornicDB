@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestEngine(t *testing.T) *BadgerEngine {
@@ -14,6 +15,66 @@ func newTestEngine(t *testing.T) *BadgerEngine {
 	}
 	t.Cleanup(func() { engine.Close() })
 	return engine
+}
+
+func TestAccessMetaOwnsCatalogAndPreservesConcurrentPolicyState(t *testing.T) {
+	engine := newTestEngine(t)
+	require.Equal(t, accessMetaKey("test:node"), indexEntryCatalogKey("test:node"))
+	node := &Node{ID: "test:node", Labels: []string{"Old"}}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	meta, err := engine.GetAccessMeta(string(node.ID))
+	require.NoError(t, err)
+	require.Nil(t, meta, "catalog writes must not count as ON ACCESS")
+	meta = &knowledgepolicy.AccessMetaEntry{TargetID: string(node.ID), TargetScope: knowledgepolicy.ScopeNode}
+	meta.Fixed.AccessCount = 42
+	meta.Overflow = map[string]interface{}{"custom": int64(7)}
+	require.NoError(t, engine.PutAccessMeta(string(node.ID), meta))
+	stale, err := engine.GetAccessMeta(string(node.ID))
+	require.NoError(t, err)
+	node.Labels = []string{"New"}
+	require.NoError(t, engine.UpdateNode(node))
+	current, err := engine.GetIndexEntryCatalog(string(node.ID))
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	stale.Fixed.AccessCount++
+	require.NoError(t, engine.PutAccessMeta(string(node.ID), stale))
+	got, err := engine.GetIndexEntryCatalog(string(node.ID))
+	require.NoError(t, err)
+	require.Equal(t, current, got)
+	meta, err = engine.GetAccessMeta(string(node.ID))
+	require.NoError(t, err)
+	require.Equal(t, int64(43), meta.Fixed.AccessCount)
+	require.Equal(t, int64(7), meta.Overflow["custom"])
+	require.NoError(t, engine.DeleteIndexEntryCatalog(string(node.ID)))
+	got, err = engine.GetIndexEntryCatalog(string(node.ID))
+	require.NoError(t, err)
+	require.Nil(t, got)
+	meta, err = engine.GetAccessMeta(string(node.ID))
+	require.NoError(t, err)
+	require.NotNil(t, meta)
+	require.Equal(t, int64(43), meta.Fixed.AccessCount)
+}
+
+func TestAccessMetaDeletePreservesCatalogState(t *testing.T) {
+	engine := newTestEngine(t)
+	node := &Node{ID: "test:delete-access", Labels: []string{"Person"}}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	before, err := engine.GetIndexEntryCatalog(string(node.ID))
+	require.NoError(t, err)
+	require.NotNil(t, before)
+	require.NoError(t, engine.PutAccessMeta(string(node.ID), &knowledgepolicy.AccessMetaEntry{
+		TargetID: string(node.ID), TargetScope: knowledgepolicy.ScopeNode,
+		Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 42},
+	}))
+	require.NoError(t, engine.DeleteAccessMeta(string(node.ID)))
+	meta, err := engine.GetAccessMeta(string(node.ID))
+	require.NoError(t, err)
+	require.Nil(t, meta)
+	after, err := engine.GetIndexEntryCatalog(string(node.ID))
+	require.NoError(t, err)
+	require.Equal(t, before, after)
 }
 
 func TestAccessMeta_PutAndGet(t *testing.T) {
