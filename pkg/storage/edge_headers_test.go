@@ -161,7 +161,7 @@ func TestEdgeHeadersAcrossStack(t *testing.T) {
 type nonHeaderEngine struct{ Engine }
 
 // Header listing skips entries it can't resolve and answers an entry without
-// a value from the cached or stored record.
+// a usable value from the cached or stored record.
 func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 	eng := newTestEngine(t)
 	for _, id := range []NodeID{"test:a", "test:b"} {
@@ -171,6 +171,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:gone", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
 	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
+	bNum, _ := eng.idDict.lookupNodeNumID("test:b")
 	cachedNum, _ := eng.idDict.lookupEdgeNumID("test:cached")
 	goneNum, _ := eng.idDict.lookupEdgeNumID("test:gone")
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
@@ -185,14 +186,11 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 		if err := txn.Delete(edgeKey("test:gone")); err != nil {
 			return err
 		}
-		// A malformed key, an unknown relationship, an unknown other end.
+		// A malformed key and an unknown relationship.
 		if err := txn.Set(append(outgoingIndexPrefix(aNum), 1, 2, 3), []byte{}); err != nil {
 			return err
 		}
-		if err := txn.Set(outgoingIndexKey(aNum, 1<<40), adjacencyEntryValue(aNum, "K")); err != nil {
-			return err
-		}
-		return nil
+		return txn.Set(outgoingIndexKey(aNum, 1<<40), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "K"}, aNum, bNum, 0))
 	}))
 	// A relationship with an unreadable record and no value is skipped.
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:corrupt", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
@@ -203,11 +201,12 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 		}
 		return txn.Set(outgoingIndexKey(aNum, corruptNum), []byte{})
 	}))
-	// A relationship whose stored other end the dictionary doesn't know.
+	// A value naming an endpoint the dictionary doesn't know is answered
+	// from the record.
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:odd", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
 	oddNum, _ := eng.idDict.lookupEdgeNumID("test:odd")
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(outgoingIndexKey(aNum, oddNum), adjacencyEntryValue(1<<42, "K"))
+		return txn.Set(outgoingIndexKey(aNum, oddNum), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "X"}, 1<<42, bNum, 0))
 	}))
 	eng.edgeCacheMu.Lock()
 	clear(eng.edgeCache)
@@ -216,27 +215,28 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 	out, answered, err := eng.OutgoingEdgeHeaders("test:a")
 	require.NoError(t, err)
 	require.True(t, answered)
-	require.Equal(t, []string{"test:cached:K:test:a->test:b"}, headerSummary(out))
+	require.Equal(t, []string{"test:cached:K:test:a->test:b", "test:odd:K:test:a->test:b"}, headerSummary(out))
 }
 
-// The adjacency value of an unknown node is empty, and rewriting the values
-// in a transaction that can't write reports the error.
+// A record not in the compact format gives an empty adjacency value, and
+// rewriting the values in a transaction that can't write reports the error.
 func TestAdjacencyValueHelpers(t *testing.T) {
 	eng := newTestEngine(t)
-	require.Empty(t, eng.adjacencyValueFor("test:unknown", "K"))
+	require.Empty(t, adjacencyValueFromRecord([]byte{0xff}))
+	require.Empty(t, adjacencyValueFromRecord(nil))
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}})
 		require.NoError(t, err)
 	}
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
 	require.NoError(t, eng.withView(func(txn *badger.Txn) error {
-		require.Error(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K2"}))
-		require.NoError(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:unknown", StartNode: "test:a", EndNode: "test:b", Type: "K2"}))
+		require.Error(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K2"}, nil))
+		require.NoError(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:unknown", StartNode: "test:a", EndNode: "test:b", Type: "K2"}, nil))
 		return nil
 	}))
 	// Only the incoming entry is known: its write error is reported.
 	require.NoError(t, eng.withView(func(txn *badger.Txn) error {
-		require.Error(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:e", StartNode: "test:unknown", EndNode: "test:b", Type: "K2"}))
+		require.Error(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:e", StartNode: "test:unknown", EndNode: "test:b", Type: "K2"}, nil))
 		return nil
 	}))
 }
@@ -263,4 +263,71 @@ func TestAsyncEdgeHeadersSkipMovedAndDeletedStagedEdges(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, answered)
 	require.Empty(t, headerSummary(out))
+}
+
+// A header listed from an adjacency entry equals the relationship's record
+// without its properties after every kind of write: create, an engine update,
+// a transaction update and a change of the decay suppression flag.
+func TestAdjacencyHeaderMatchesRecord(t *testing.T) {
+	eng := newTestEngine(t)
+	for _, id := range []NodeID{"test:a", "test:b"} {
+		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}})
+		require.NoError(t, err)
+	}
+	same := func(stage string) {
+		t.Helper()
+		record, err := eng.GetEdge("test:e")
+		require.NoError(t, err)
+		record.Properties = nil
+		out, answered, err := eng.OutgoingEdgeHeaders("test:a")
+		require.NoError(t, err)
+		require.True(t, answered)
+		require.Len(t, out, 1, stage)
+		in, _, err := eng.IncomingEdgeHeaders("test:b")
+		require.NoError(t, err)
+		require.Len(t, in, 1, stage)
+		for _, header := range []*Edge{out[0], in[0]} {
+			require.Equal(t, record.ID, header.ID, stage)
+			require.Equal(t, record.Type, header.Type, stage)
+			require.Equal(t, record.StartNode, header.StartNode, stage)
+			require.Equal(t, record.EndNode, header.EndNode, stage)
+			require.True(t, record.CreatedAt.Equal(header.CreatedAt), stage)
+			require.True(t, record.UpdatedAt.Equal(header.UpdatedAt), stage)
+			require.Equal(t, record.Confidence, header.Confidence, stage)
+			require.Equal(t, record.AutoGenerated, header.AutoGenerated, stage)
+			require.Equal(t, record.VisibilitySuppressed, header.VisibilitySuppressed, stage)
+			require.Nil(t, header.Properties, stage)
+		}
+	}
+
+	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K",
+		Confidence: 0.5, AutoGenerated: true, VisibilitySuppressed: true, Properties: map[string]any{"w": int64(1)}}))
+	same("create")
+
+	edge, err := eng.GetEdge("test:e")
+	require.NoError(t, err)
+	edge.Confidence = 0.75
+	edge.Properties = map[string]any{"w": int64(2)}
+	require.NoError(t, eng.UpdateEdge(edge))
+	same("engine update")
+
+	tx, err := eng.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("test"))
+	edge, err = tx.GetEdge("test:e")
+	require.NoError(t, err)
+	edge.Confidence = 0.9
+	edge.AutoGenerated = false
+	require.NoError(t, tx.UpdateEdge(edge))
+	require.NoError(t, tx.Commit())
+	same("transaction update")
+
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		_, err := eng.evaluateEdgeSuppressionInTxn(txn, "test:e")
+		return err
+	}))
+	record, err := eng.GetEdge("test:e")
+	require.NoError(t, err)
+	require.False(t, record.VisibilitySuppressed)
+	same("suppression cleared")
 }

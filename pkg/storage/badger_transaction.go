@@ -1319,12 +1319,13 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 	if err != nil {
 		return fmt.Errorf("outgoing index: %w", err)
 	}
-	tx.bufferSet(outKey, tx.engine.adjacencyValueFor(edge.EndNode, edge.Type))
+	header := adjacencyValueFromRecord(edgeBytes)
+	tx.bufferSet(outKey, header)
 	inKey, err := tx.engine.incomingIndexKeyString(tx.staged(), edge.EndNode, edge.ID)
 	if err != nil {
 		return fmt.Errorf("incoming index: %w", err)
 	}
-	tx.bufferSet(inKey, tx.engine.adjacencyValueFor(edge.StartNode, edge.Type))
+	tx.bufferSet(inKey, header)
 
 	// Buffer edge type index for GetEdgesByType().
 	// Without this, edges created inside implicit/explicit transactions are invisible
@@ -1436,12 +1437,12 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		if err != nil {
 			return fmt.Errorf("outgoing index: %w", err)
 		}
-		tx.bufferSet(newOutKey, tx.engine.adjacencyValueFor(edge.EndNode, edge.Type))
+		tx.bufferSet(newOutKey, []byte{})
 		newInKey, err := tx.engine.incomingIndexKeyString(tx.staged(), edge.EndNode, edge.ID)
 		if err != nil {
 			return fmt.Errorf("incoming index: %w", err)
 		}
-		tx.bufferSet(newInKey, tx.engine.adjacencyValueFor(edge.StartNode, edge.Type))
+		tx.bufferSet(newInKey, []byte{})
 		if err := tx.bufferSetEdgeBetweenIndexes(edge); err != nil {
 			return fmt.Errorf("edge-between index: %w", err)
 		}
@@ -1458,13 +1459,6 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		}
 		if oldEdge.StartNode == edge.StartNode && oldEdge.EndNode == edge.EndNode {
 			tx.bufferDeleteEdgeBetweenIndexes(oldEdge)
-			// The adjacency entries carry the type.
-			if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
-				tx.bufferSet(outKey, tx.engine.adjacencyValueFor(edge.EndNode, edge.Type))
-			}
-			if inKey := tx.engine.incomingIndexKeyStringLookup(edge.EndNode, edge.ID); inKey != nil {
-				tx.bufferSet(inKey, tx.engine.adjacencyValueFor(edge.StartNode, edge.Type))
-			}
 		}
 		if edge.Type != "" {
 			newTypeKey, err := tx.engine.edgeTypeIndexKeyString(tx.staged(), edge.Type, edge.ID)
@@ -1487,6 +1481,14 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 	}
 	tx.bufferSet(edgeKey(edge.ID), edgeBytes)
+	// The adjacency entries carry the record's header.
+	header := adjacencyValueFromRecord(edgeBytes)
+	if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
+		tx.bufferSet(outKey, header)
+	}
+	if inKey := tx.engine.incomingIndexKeyStringLookup(edge.EndNode, edge.ID); inKey != nil {
+		tx.bufferSet(inKey, header)
+	}
 
 	// Track for read-your-writes.
 	edgeCopy := copyEdge(edge)

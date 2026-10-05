@@ -986,8 +986,9 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 }
 
 // OutgoingEdgeHeaders implements EdgeHeaderReader from the outgoing adjacency
-// entries' values (adjacencyEntryValue); an entry written before they carried
-// the type and other end is answered from the relationship record.
+// entries' values, each a copy of the relationship record's compact header
+// (adjacencyValueFromRecord). An entry without one, such as one written
+// before the values existed, is answered from the relationship record.
 func (b *BadgerEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
 	return b.edgeHeaders(nodeID, true)
 }
@@ -1028,23 +1029,13 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 			}
 			// A value that can't be read is treated as absent: the record
 			// answers instead.
-			var otherNum uint64
-			var edgeType string
-			var carried bool
+			var header *Edge
 			_ = item.Value(func(value []byte) error {
-				otherNum, edgeType, carried = decodeAdjacencyEntryValue(value)
+				header = b.decodeAdjacencyHeader(edgeID, value)
 				return nil
 			})
-			if carried {
-				otherID, ok := b.idDict.lookupNodeIDByNum(otherNum)
-				if !ok {
-					continue
-				}
-				edge := &Edge{ID: edgeID, Type: edgeType, StartNode: nodeID, EndNode: otherID}
-				if !outgoing {
-					edge.StartNode, edge.EndNode = otherID, nodeID
-				}
-				edges = append(edges, edge)
+			if header != nil {
+				edges = append(edges, header)
 				continue
 			}
 			if edge, ok := b.readIndexedEdgeInTxn(txn, edgeID); ok {
@@ -1054,6 +1045,24 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		return nil
 	})
 	return edges, true, err
+}
+
+// decodeAdjacencyHeader returns the relationship, without properties, that an
+// adjacency entry value (adjacencyValueFromRecord) describes, or nil when the
+// value is empty, can't be decoded, or names an endpoint the ID dictionary
+// doesn't know.
+func (b *BadgerEngine) decodeAdjacencyHeader(edgeID EdgeID, value []byte) *Edge {
+	edge, startNum, endNum, _, err := decodeEdgeCompactHeader(value, edgeFormatCompactV2)
+	if err != nil {
+		return nil
+	}
+	start, startKnown := b.idDict.lookupNodeIDByNum(startNum)
+	end, endKnown := b.idDict.lookupNodeIDByNum(endNum)
+	if !startKnown || !endKnown {
+		return nil
+	}
+	edge.ID, edge.StartNode, edge.EndNode = edgeID, start, end
+	return edge
 }
 
 // readIndexedEdgeInTxn returns the relationship an adjacency entry names: the
