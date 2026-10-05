@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Archive superseded versions only for other readers or retention. A write
+  statement's own transaction counted as a snapshot reader, so every update
+  and delete saved a copy of the old version that nobody could read. A
+  transaction now stops counting once its conflicts are validated, and all
+  archiving happens at commit. Updating and then deleting 40,000 nodes takes
+  about 15% less time. While retention keeps history, an update archives the
+  old version as an undo record (its metadata plus the properties that
+  differ from the next version) instead of a complete copy; reads rebuild it
+  from the next version (#911).
+
 - Read only the properties a statement uses when it scans a label. A `MATCH`
   on a label decoded every node in full, embeddings included, even when the
   rest of the statement read one or two properties. When every later clause
@@ -325,6 +335,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retain exact SHA pins for the Docker actions.
 
 ### Fixed
+
+- Record the committed version, not a transaction's uncommitted state, as
+  history when a transaction updates a node and then deletes it. With history
+  retention on, reading that version returned values that were never
+  committed (#911).
 
 - Give every explicit HTTP transaction its own ID. IDs were the current time
   in nanoseconds, so two BEGINs in the same clock tick (seen on Windows) got
