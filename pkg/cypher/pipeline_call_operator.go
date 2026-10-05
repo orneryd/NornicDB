@@ -25,8 +25,22 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	if strings.TrimSpace(afterCall) != "" {
 		return nil, nil, false, nil
 	}
-	if topLevelKeywordIndex(body, "UNION") >= 0 {
-		return nil, nil, false, nil
+	if metadata != nil {
+		declared := parseCallSubqueryImportVariables(clause)
+		if declared == nil {
+			leading, _, hasImports, importErr := parseLeadingWithImports(body)
+			if importErr != nil {
+				return nil, nil, true, importErr
+			}
+			if hasImports {
+				declared = leading
+			}
+		}
+		for _, name := range declared {
+			if _, exists := metadata.scope[name]; !exists {
+				return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", "variable "+name+" is not defined")
+			}
+		}
 	}
 	if len(rows) == 0 {
 		if metadata != nil {
@@ -73,15 +87,16 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	write := callSubqueryQueryIsWrite(body)
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
+	_, unionAll, _, isUnion := parseTopLevelUnionBranches(body)
 
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
 		clauses, ok := pipelineClausesFor(body)
-		if !ok {
+		if !ok && !isUnion {
 			return nil, nil, false, nil
 		}
 		stats := &QueryStats{}
 		out := make([]pipelineRow, 0, len(outerRows))
-		hasReturn := pipelineHasClauseKind(clauses, pipelineClauseReturn)
+		hasReturn := isUnion || pipelineHasClauseKind(clauses, pipelineClauseReturn)
 		for _, outer := range outerRows {
 			input := pipelineRow{}
 			bindParameterRow(runCtx, input)
@@ -98,16 +113,38 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					input[name] = value
 				}
 			}
-			scope := make(map[string]struct{}, len(input))
-			for name := range input {
-				if !strings.HasPrefix(name, "$") {
-					scope[name] = struct{}{}
+			runBranch := func(query string) (*ExecuteResult, error) {
+				branchClauses := clauses
+				if isUnion {
+					var planned bool
+					branchClauses, planned = pipelineClausesFor(query)
+					if !planned {
+						return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be planned as a clause pipeline")
+					}
 				}
+				branchInput := make(pipelineRow, len(input))
+				scope := make(map[string]struct{}, len(input))
+				for name, value := range input {
+					branchInput[name] = value
+					if !strings.HasPrefix(name, "$") {
+						scope[name] = struct{}{}
+					}
+				}
+				inner, handled, execErr := runExec.runPipelineClauseRows(withValueBindings(runCtx, branchInput), []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
+				if execErr == nil {
+					execErr = getExpressionFailure(runCtx)
+				}
+				if !handled && execErr == nil {
+					execErr = newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be executed as a clause pipeline")
+				}
+				return inner, execErr
 			}
-			state := &pipelineRowOutput{}
-			inner, handled, execErr := runExec.runPipelineClauseRows(withValueBindings(runCtx, input), []pipelineRow{input}, scope, clauses, clauses, state)
-			if !handled {
-				return out, stats, false, execErr
+			var inner *ExecuteResult
+			var execErr error
+			if isUnion {
+				inner, execErr = runExec.executeUnionBranches(body, unionAll, runBranch)
+			} else {
+				inner, execErr = runBranch(body)
 			}
 			if inner != nil {
 				addQueryStats(stats, inner.Stats)

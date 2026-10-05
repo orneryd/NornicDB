@@ -1553,26 +1553,24 @@ func TestCallSubqueryWithOrderByOnly(t *testing.T) {
 		t.Fatalf("Failed to create test data: %v", err)
 	}
 
-	// CALL {} with ORDER BY applied to inner result
-	result, err := exec.Execute(ctx, `
+	_, err = exec.Execute(ctx, `
 		CALL {
 			MATCH (p:Person)
 			RETURN p.name AS name, p.age AS age
 		}
 		ORDER BY age ASC
 	`, nil)
-	if err != nil {
-		t.Fatalf("CALL subquery with ORDER BY only failed: %v", err)
-	}
-
-	if len(result.Rows) != 3 {
-		t.Errorf("Expected 3 results, got %d", len(result.Rows))
-	}
-
-	// First should be Bob (age 25)
-	if result.Rows[0][0] != "Bob" {
-		t.Errorf("Expected Bob first (youngest), got %v", result.Rows[0][0])
-	}
+	requireSyntaxErrorStatus(t, err, "CALL subquery followed by bare ORDER BY")
+	result, err := exec.Execute(ctx, `
+		CALL {
+			MATCH (p:Person)
+			RETURN p.name AS name, p.age AS age
+		}
+		RETURN name, age ORDER BY age ASC
+	`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"name", "age"}, result.Columns)
+	require.Equal(t, [][]interface{}{{"Bob", int64(25)}, {"Alice", int64(30)}, {"Charlie", int64(35)}}, result.Rows)
 }
 
 // ========================================
@@ -2473,20 +2471,19 @@ func TestSubqueryHelpers_ExecuteMatchWithCallSubquery_Branches(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := exec.executeMatchWithCallSubquery(ctx, "MATCH (n) RETURN n")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "CALL not found")
+	matched, err := exec.Execute(ctx, "MATCH (n) RETURN n", nil)
+	require.NoError(t, err)
+	require.Empty(t, matched.Rows)
 
-	_, err = exec.executeMatchWithCallSubquery(ctx, "CALL { RETURN 1 AS x } RETURN x")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "MATCH not found")
+	standalone, err := exec.Execute(ctx, "CALL { RETURN 1 AS x } RETURN x", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, standalone.Rows)
 
-	_, err = exec.executeMatchWithCallSubquery(ctx, "MATCH (:Person) CALL { WITH seed RETURN seed } RETURN seed")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "could not parse node pattern")
+	_, err = exec.Execute(ctx, "MATCH (:Person) CALL { WITH seed RETURN seed } RETURN seed", nil)
+	requireSyntaxErrorStatus(t, err, "anonymous MATCH does not declare seed")
 
 	// No seed nodes branch.
-	emptyRes, err := exec.executeMatchWithCallSubquery(ctx, "MATCH (seed:Person) WHERE seed.name = 'none' CALL { WITH seed RETURN seed } RETURN seed")
+	emptyRes, err := exec.Execute(ctx, "MATCH (seed:Person) WHERE seed.name = 'none' CALL { WITH seed RETURN seed } RETURN seed", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"seed"}, emptyRes.Columns)
 	assert.Empty(t, emptyRes.Rows)
@@ -2497,20 +2494,19 @@ func TestSubqueryHelpers_ExecuteMatchWithCallSubquery_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty CALL body branch.
-	_, err = exec.executeMatchWithCallSubquery(ctx, "MATCH (seed:Person) CALL { } RETURN seed")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "empty body")
+	_, err = exec.Execute(ctx, "MATCH (seed:Person) CALL { } RETURN seed", nil)
+	requireSyntaxErrorStatus(t, err, "CALL with an empty body")
 
-	// No WITH branch routes through executeCallSubquery.
-	noWithRes, err := exec.executeMatchWithCallSubquery(ctx, "MATCH (seed:Person) CALL { RETURN 1 AS x } RETURN x")
+	noWithRes, err := exec.Execute(ctx, "MATCH (seed:Person) CALL { RETURN 1 AS x } RETURN x", nil)
 	require.NoError(t, err)
-	require.NotEmpty(t, noWithRes.Rows)
-	assert.Equal(t, int64(1), noWithRes.Rows[0][0])
+	require.Equal(t, [][]interface{}{{int64(1)}, {int64(1)}}, noWithRes.Rows)
 
 	// Correlated WITH branch and after-CALL RETURN processing.
-	withRes, err := exec.executeMatchWithCallSubquery(ctx, "MATCH (seed:Person) CALL { WITH seed RETURN seed } RETURN seed")
+	withRes, err := exec.Execute(ctx, "MATCH (seed:Person) CALL { WITH seed RETURN seed } RETURN seed ORDER BY seed.name", nil)
 	require.NoError(t, err)
 	require.Len(t, withRes.Rows, 2)
+	require.Equal(t, "alice", withRes.Rows[0][0].(*storage.Node).Properties["name"])
+	require.Equal(t, "bob", withRes.Rows[1][0].(*storage.Node).Properties["name"])
 }
 
 func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_Branches(t *testing.T) {

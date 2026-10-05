@@ -60,15 +60,17 @@ func TestExecuteMatchWithCallSubquery_ErrorAndHappyPaths(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeMatchWithCallSubquery(ctx, "MATCH (n:Person) RETURN n")
-	require.ErrorContains(t, err, "CALL not found")
+	matched, err := exec.Execute(ctx, "MATCH (n:Person) RETURN n", nil)
+	require.NoError(t, err)
+	require.Empty(t, matched.Rows)
 
-	_, err = exec.executeMatchWithCallSubquery(ctx, "CALL { RETURN 1 AS x } RETURN x")
-	require.ErrorContains(t, err, "MATCH not found before CALL")
+	standalone, err := exec.Execute(ctx, "CALL { RETURN 1 AS x } RETURN x", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, standalone.Rows)
 
 	// No outer seeds should still preserve trailing projection semantics.
-	emptyRes, err := exec.executeMatchWithCallSubquery(ctx,
-		"MATCH (n:Missing) CALL { WITH n RETURN n.name AS name } RETURN name")
+	emptyRes, err := exec.Execute(ctx,
+		"MATCH (n:Missing) CALL { WITH n RETURN n.name AS name } RETURN name", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, emptyRes.Columns)
 	require.Empty(t, emptyRes.Rows)
@@ -78,8 +80,8 @@ func TestExecuteMatchWithCallSubquery_ErrorAndHappyPaths(t *testing.T) {
 	_, err = store.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
-	res, err := exec.executeMatchWithCallSubquery(ctx,
-		"MATCH (n:Person) CALL { WITH n RETURN n.name AS name } RETURN name ORDER BY name")
+	res, err := exec.Execute(ctx,
+		"MATCH (n:Person) CALL { WITH n RETURN n.name AS name } RETURN name ORDER BY name", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, res.Columns)
 	require.Len(t, res.Rows, 2)
