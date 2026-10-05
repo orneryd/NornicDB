@@ -2526,51 +2526,51 @@ func TestCreateSetAndSetMergeBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// executeCreateSet: missing SET
-	_, err := exec.executeCreateSet(ctx, "CREATE (n:Person)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "SET clause not found")
+	created, err := exec.Execute(ctx, "CREATE (n:Person)", nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, created.Stats.NodesCreated)
 
 	// parameter branches
-	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person) SET n.age = $age RETURN n")
+	_, err = exec.Execute(ctx, "CREATE (n:Person) SET n.age = $age RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parameter $age")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.ParameterMissing")
 
 	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"x": int64(1)})
-	_, err = exec.executeCreateSet(ctxWithParams, "CREATE (n:Person) SET n.age = $age RETURN n")
+	_, err = exec.Execute(ctxWithParams, "CREATE (n:Person) SET n.age = $age RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found in provided parameters")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.ParameterMissing")
 
 	// property replacement must use map
-	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person) SET n = 1 RETURN n")
+	_, err = exec.Execute(ctx, "CREATE (n:Person) SET n = 1 RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires a map")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.TypeError")
 
 	// unknown variable branches
-	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person) SET m.age = 1 RETURN n")
+	_, err = exec.Execute(ctx, "CREATE (n:Person) SET m.age = 1 RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown variable in SET clause")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
-	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person)-[r:KNOWS]->(m:Person) SET z += {x:1} RETURN n")
+	_, err = exec.Execute(ctx, "CREATE (n:Person)-[r:KNOWS]->(m:Person) SET z += {x:1} RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown variable in SET clause")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// invalid label name in SET label assignment
-	_, err = exec.executeCreateSet(ctx, "CREATE (n:Person) SET n:bad-label RETURN n")
+	_, err = exec.Execute(ctx, "CREATE (n:Person) SET n:bad-label RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid label name")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// successful node + edge property and merge updates
-	okRes, err := exec.executeCreateSet(
+	okRes, err := exec.Execute(
 		ctx,
 		"CREATE (a:Person {name:'a'})-[r:KNOWS]->(b:Person {name:'b'}) SET a.age = 30, r.weight = 2, a += {city:'X'}, b:Employee RETURN a.age AS aAge, type(r) AS rt",
+		nil,
 	)
 	require.NoError(t, err)
 	require.Len(t, okRes.Rows, 1)
 	assert.EqualValues(t, 30, okRes.Rows[0][0])
 	assert.Equal(t, "KNOWS", okRes.Rows[0][1])
 
-	noReturnRes, err := exec.executeCreateSet(ctx, "CREATE (n:DefaultNode {name:'d'}) SET n.flag = true")
+	noReturnRes, err := exec.Execute(ctx, "CREATE (n:DefaultNode {name:'d'}) SET n.flag = true", nil)
 	require.NoError(t, err)
 	// Without RETURN: no columns and no rows, as in Neo4j (#507, #676).
 	require.Empty(t, noReturnRes.Columns)
@@ -3201,10 +3201,10 @@ func TestCreateDeleteAdditionalNoReturnAndEdgeCleanupBranches(t *testing.T) {
 	assert.Equal(t, 1, res.Stats.NodesCreated)
 	assert.Equal(t, 1, res.Stats.NodesDeleted)
 
-	// executeCompoundCreateWithDelete branch where deleting created node also removes created edge.
-	compound, err := exec.executeCompoundCreateWithDelete(
+	compound, err := exec.Execute(
 		ctx,
-		"CREATE (a:Tmp {id:'edge-a'})-[:REL]->(b:Tmp {id:'edge-b'}) WITH a DELETE a RETURN count(a)",
+		"CREATE (a:Tmp {id:'edge-a'})-[:REL]->(b:Tmp {id:'edge-b'}) WITH a DETACH DELETE a RETURN count(a)",
+		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, compound.Stats)

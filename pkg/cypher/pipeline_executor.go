@@ -510,6 +510,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) pi
 			return newPipelineDispatchOutcome(result, handled, err)
 		}
 	}
+	if result, handled, err := e.tryExecutePipelineCreatePlan(ctx, clauses, originalClauses); handled || err != nil {
+		return newPipelineDispatchOutcome(result, handled, err)
+	}
 	if params != nil {
 		cypher = e.substituteParams(cypher, params)
 		clauses, ok = canExecuteAsPipeline(cypher)
@@ -667,7 +670,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			rows = newRows
 			addPipelinePatternBindings(e, scope, clause.text, "OPTIONAL MATCH")
 		case pipelineClauseCreate:
-			newRows, stats, ok, err := e.pipelineApplyCreate(ctx, rows, clause.text)
+			end := idx + 1
+			for end < len(clauses) && clauses[end].kind == pipelineClauseCreate {
+				end++
+			}
+			newRows, created, ok, err := e.pipelineApplyCreateClauses(ctx, rows, clauses[idx:end])
 			if err != nil {
 				return nil, true, err
 			}
@@ -675,10 +682,14 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			rows = newRows
-			addPipelinePatternBindings(e, scope, clause.text, "CREATE")
-			if stats != nil {
-				addQueryStats(result.Stats, stats)
+			for _, createClause := range clauses[idx:end] {
+				addPipelinePatternBindings(e, scope, createClause.text, "CREATE")
 			}
+			addQueryStats(result.Stats, created.Stats)
+			if created.Metadata != nil {
+				result.Metadata = created.Metadata
+			}
+			idx = end - 1
 			wrote = true
 		case pipelineClauseMerge:
 			newRows, stats, err := e.pipelineApplyMerge(ctx, rows, clause.text)
@@ -2864,110 +2875,104 @@ func pipelineNodeMatchesPattern(node *storage.Node, pattern nodePatternInfo) boo
 	return nodePropertiesMatch(node, pattern.properties)
 }
 
-// pipelineApplyCreate runs CREATE for each binding row, threading pre-bound
-// nodes into the CREATE handler via a synthetic MATCH prefix. Newly-created
-// nodes (by variable name) are captured and added to the output row so later
-// pipeline steps can reference them.
-func (e *StorageExecutor) pipelineApplyCreate(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, bool, error) {
-	stats := &QueryStats{}
-	var out []pipelineRow
+func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clauses, originalClauses []pipelineClause) (*ExecuteResult, bool, error) {
+	end := 0
+	for end < len(clauses) && clauses[end].kind == pipelineClauseCreate {
+		end++
+	}
+	if end == 0 {
+		return nil, false, nil
+	}
+	for index := end; index < len(clauses); index++ {
+		if clauses[index].kind != pipelineClauseSet &&
+			!(clauses[index].kind == pipelineClauseReturn && index == len(clauses)-1) {
+			return nil, false, nil
+		}
+	}
+	initial := pipelineRow{}
+	for name, value := range e.fabricRecordBindings {
+		initial[name] = value
+	}
+	rows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{initial}, clauses[:end])
+	if err != nil {
+		return nil, true, err
+	}
+	for index := end; index < len(clauses); index++ {
+		if clauses[index].kind == pipelineClauseSet {
+			stats, _, err := e.pipelineApplySet(ctx, rows, clauses[index].text)
+			if err != nil {
+				return nil, true, err
+			}
+			addQueryStats(result.Stats, stats)
+			continue
+		}
+		projected, err := e.projectMergeReturn(ctx, rows, originalClauses[index].text)
+		if err != nil {
+			return nil, true, err
+		}
+		result.Columns, result.Rows = projected.Columns, projected.Rows
+	}
+	return result, true, nil
+}
 
+func (e *StorageExecutor) pipelineApplyCreateClauses(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) ([]pipelineRow, *ExecuteResult, bool, error) {
+	created := &ExecuteResult{Stats: &QueryStats{}}
+	var out []pipelineRow
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, false, err
 		}
-		// Substitute scalar bindings (e.g. prodRef.productID → literal) up
-		// front so the CREATE pattern parser sees a concrete value.
-		substituted := e.materializePipelinePropertyExpressions(ctx, clause, row)
-		for name, val := range row {
-			if node, isNode := val.(*storage.Node); isNode {
-				if node != nil {
-					for property, propertyValue := range node.Properties {
-						pattern := name + "." + property
-						if strings.Contains(substituted, pattern) {
-							substituted = strings.ReplaceAll(substituted, pattern, e.valueToLiteral(propertyValue))
-						}
-					}
-				}
-				continue
-			}
-			if edge, isEdge := val.(*storage.Edge); isEdge {
-				if edge != nil {
-					for property, propertyValue := range edge.Properties {
-						pattern := name + "." + property
-						if strings.Contains(substituted, pattern) {
-							substituted = strings.ReplaceAll(substituted, pattern, e.valueToLiteral(propertyValue))
-						}
-					}
-				}
-				continue
-			}
-			if asMap, ok := toStringAnyMap(val); ok {
-				for k, v := range asMap {
-					pattern := name + "." + k
-					if strings.Contains(substituted, pattern) {
-						substituted = strings.ReplaceAll(substituted, pattern, e.valueToLiteral(v))
-					}
-				}
-				continue
-			}
-			if referencesVariable(substituted, name) {
-				substituted = replaceIdentifierOutsideQuotes(substituted, name, e.valueToLiteral(val))
-			}
-		}
-
-		// The row's nodes and relationships are the CREATE's bound variables:
-		// the shared CREATE core reuses them as endpoints and binds every
-		// created node, relationship and named path back into the row, so
-		// later clauses (SET, WITH, RETURN p / length(p)) see this exact
-		// mutation.
-		nodes := make(map[string]*storage.Node)
-		edges := make(map[string]*storage.Edge)
-		for name, val := range row {
-			switch typed := val.(type) {
-			case *storage.Node:
-				if typed != nil {
-					nodes[name] = typed
-				}
-			case *storage.Edge:
-				if typed != nil {
-					edges[name] = typed
-				}
-			}
-		}
-		pattern := strings.TrimSpace(substituted)
-		if startsWithKeywordFold(pattern, "CREATE") {
-			pattern = strings.TrimSpace(pattern[len("CREATE"):])
-		}
-		created := &ExecuteResult{Stats: &QueryStats{}}
-		paths, err := e.createPatternsInScope(ctx, pattern, nodes, edges, created)
+		newRow, err := e.pipelineCreateRow(ctx, row, clauses, created)
 		if err != nil {
-			// A failed property expression is the statement's own error
-			// (ArithmeticError, ...), returned as is like on every other route.
-			if failure := getExpressionFailure(ctx); failure != nil {
-				return nil, nil, true, failure
-			}
-			return nil, nil, true, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
-		}
-		addQueryStats(stats, created.Stats)
-
-		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(nodes)+len(edges), len(paths)))
-		for k, v := range row {
-			newRow[k] = v
-		}
-		for k, n := range nodes {
-			newRow[k] = n
-		}
-		for k, relationship := range edges {
-			newRow[k] = relationship
-		}
-		for k, path := range paths {
-			newRow[k] = e.pathToMap(path)
+			return nil, nil, true, err
 		}
 		out = append(out, newRow)
 	}
+	return out, created, true, nil
+}
 
-	return out, stats, true, nil
+func (e *StorageExecutor) pipelineCreateRow(ctx context.Context, row pipelineRow, clauses []pipelineClause, created *ExecuteResult) (pipelineRow, error) {
+	plan := acquireCreatePlan()
+	defer plan.release()
+	nodes := make(map[string]*storage.Node)
+	edges := make(map[string]*storage.Edge)
+	newRow := make(pipelineRow, len(row))
+	for name, value := range row {
+		newRow[name] = value
+		switch typed := value.(type) {
+		case *storage.Node:
+			if typed != nil {
+				nodes[name] = typed
+			}
+		case *storage.Edge:
+			if typed != nil {
+				edges[name] = typed
+			}
+		}
+	}
+	for _, clause := range clauses {
+		rowCtx := withValueBindings(ctx, newRow)
+		paths, err := e.planCreatePatterns(rowCtx, pipelineClauseBody(clause.text, "CREATE"), nodes, edges, plan)
+		if err != nil {
+			if failure := getExpressionFailure(rowCtx); failure != nil {
+				return nil, failure
+			}
+			return nil, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
+		}
+		for name, node := range nodes {
+			newRow[name] = node
+		}
+		for name, edge := range edges {
+			newRow[name] = edge
+		}
+		for name, path := range paths {
+			newRow[name] = e.pathToMap(path)
+		}
+	}
+	if err := e.applyCreatePlan(ctx, plan, created); err != nil {
+		return nil, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
+	}
+	return newRow, nil
 }
 
 // pipelineApplyMerge executes one MERGE per input row while retaining the row

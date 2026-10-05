@@ -2587,7 +2587,7 @@ func TestCreateHelpers_ResolveOrCreateAndMultipleCreates(t *testing.T) {
 	keys := getKeys(nodeVars)
 	assert.Contains(t, keys, "x")
 
-	res, err := exec.executeMultipleCreates(ctx, "CREATE (a:Person {name:'a'}) WITH a CREATE (b:Person {name:'b'}) CREATE (a)-[r:KNOWS]->(b) RETURN a.name AS aname, b.name AS bname, type(r) AS rt")
+	res, err := exec.Execute(ctx, "CREATE (a:Person {name:'a'}) WITH a CREATE (b:Person {name:'b'}) CREATE (a)-[r:KNOWS]->(b) RETURN a.name AS aname, b.name AS bname, type(r) AS rt", nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, "a", res.Rows[0][0])
@@ -2668,26 +2668,31 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 	assert.Contains(t, err.Error(), "parameter $score")
 }
 
-func TestExecuteCompoundCreateWithDelete_AdditionalBranches(t *testing.T) {
+func TestCreateDeletePipeline_AdditionalBranches(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// Invalid shape must error.
-	_, err := exec.executeCompoundCreateWithDelete(ctx, "CREATE (n:Tmp {id:'x'}) RETURN n")
+	_, err := exec.Execute(ctx, "CREATE (n:Tmp {id:'x'}) WITH DELETE n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid CREATE...WITH...DELETE query")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
-	// Edge delete target branch, non-count RETURN branch should yield nil value.
-	res, err := exec.executeCompoundCreateWithDelete(
+	res, err := exec.Execute(
 		ctx,
 		"CREATE (a:Tmp {id:'a'})-[r:REL]->(b:Tmp {id:'b'}) WITH r DELETE r RETURN r",
+		nil,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.Stats.RelationshipsCreated)
 	assert.Equal(t, 1, res.Stats.RelationshipsDeleted)
 	require.Len(t, res.Rows, 1)
 	require.Len(t, res.Rows[0], 1)
-	assert.Nil(t, res.Rows[0][0])
+	require.IsType(t, &storage.Edge{}, res.Rows[0][0])
+	nodes, err := store.GetNodesByLabel("Tmp")
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+	edges, err := store.AllEdges()
+	require.NoError(t, err)
+	require.Empty(t, edges)
 }
