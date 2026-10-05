@@ -10,18 +10,23 @@ import (
 )
 
 // Per-end-node min and max don't depend on the order relationships are read
-// in: with many end nodes, both a lower and a higher later value occur.
+// in. Relationships are read in ID order, so half the products see 1 then 2
+// and the other half 2 then 1.
 func TestEdgePropertyAggMinMaxIgnoreReadOrder(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	_, err := store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Customer"}})
 	require.NoError(t, err)
-	const products = 32
+	const products = 4
 	for i := 0; i < products; i++ {
 		id := storage.NodeID(fmt.Sprintf("p%02d", i))
 		_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"Product"}, Properties: map[string]interface{}{"name": string(id)}})
 		require.NoError(t, err)
-		for j, rating := range []int64{1, 2} {
+		ratings := []int64{1, 2}
+		if i%2 == 1 {
+			ratings = []int64{2, 1}
+		}
+		for j, rating := range ratings {
 			require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%02d-%d", i, j)), StartNode: "c", EndNode: id, Type: "REVIEWED", Properties: map[string]interface{}{"rating": rating}}))
 		}
 	}
