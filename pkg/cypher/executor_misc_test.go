@@ -2318,7 +2318,7 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, aggRes.Rows, 1)
 	assert.Equal(t, int64(2), aggRes.Rows[0][0])
-	assert.Equal(t, float64(70), aggRes.Rows[0][1])
+	assert.Equal(t, int64(70), aggRes.Rows[0][1])
 	assert.Equal(t, float64(35), aggRes.Rows[0][2])
 	assert.Equal(t, int64(30), aggRes.Rows[0][3])
 	assert.Equal(t, int64(40), aggRes.Rows[0][4])

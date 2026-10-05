@@ -427,29 +427,13 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 			}
 			rows = filtered
 		}
-		aggregateRows := make([]traversalOptRow, len(rows))
-		for index, row := range rows {
-			aggregateRows[index] = traversalOptRow{values: row}
-		}
-		aggregated, err := e.aggregateTraversalOptionalRows(ctx, aggregateRows, returnItems)
+		projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+returnPart)
 		if err != nil {
 			return nil, err
 		}
-		for _, row := range aggregated {
-			for itemIdx, item := range returnItems {
-				if isAggregateFuncName(item.expr, "sum") {
-					if sum, ok := toFloat64(row[itemIdx]); ok {
-						row[itemIdx] = sum
-					}
-				}
-			}
-		}
-		result.Rows = aggregated
-		modifiers := strings.TrimSpace(returnPart[returnEndIdx:])
-		if modifiers == "" {
-			return result, nil
-		}
-		return e.applyResultModifiers(ctx, result, modifiers)
+		projected.Stats = result.Stats
+		*result = *projected
+		return result, nil
 	}
 
 	rows := make([]pipelineRow, len(bindings))
