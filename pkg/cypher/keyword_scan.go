@@ -386,9 +386,10 @@ func isDigitByte(b byte) bool { return b >= '0' && b <= '9' }
 
 // wordIsName reports whether the word starting at wordStart is in a name
 // position: after AS, or after '.', ':' or '$'. After a separator, an
-// operator or WITH, RETURN or BY, where an expression starts, a word other
-// than NOT, CASE and DISTINCT is a name too (WITH x, where RETURN where,
-// WITH where WHERE where = 3, RETURN by ORDER BY by; #894).
+// operator or a keyword an expression follows (WITH, RETURN, BY, WHERE, AND,
+// OR, XOR, NOT, IN), a word other than NOT, CASE and DISTINCT is a name too
+// (WITH x, where RETURN where, WITH where WHERE where = 3, RETURN by ORDER BY
+// by, WHERE x AND not RETURN …; #894).
 func wordIsName(s string, wordStart int) bool {
 	i := lastLiveByte(s, wordStart)
 	if i < 0 {
@@ -409,8 +410,20 @@ func wordIsName(s string, wordStart int) bool {
 	switch word := s[i+1 : end]; {
 	case strings.EqualFold(word, "AS"):
 		return !wordIsName(s, i+1)
-	case strings.EqualFold(word, "WITH"), strings.EqualFold(word, "RETURN"), strings.EqualFold(word, "BY"):
+	case expressionFollowsKeyword(word):
 		return !wordStartsExpression(s[wordStart:]) && !wordIsName(s, i+1)
+	}
+	return false
+}
+
+// expressionFollowsKeyword reports whether word is a keyword an expression
+// follows: a projection (WITH, RETURN, ORDER BY), a predicate (WHERE) or an
+// operand of a boolean or membership operator (AND, OR, XOR, NOT, IN).
+func expressionFollowsKeyword(word string) bool {
+	for _, keyword := range [...]string{"WITH", "RETURN", "BY", "WHERE", "AND", "OR", "XOR", "NOT", "IN"} {
+		if strings.EqualFold(word, keyword) {
+			return true
+		}
 	}
 	return false
 }
