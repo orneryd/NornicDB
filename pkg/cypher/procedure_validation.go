@@ -61,6 +61,38 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 	return validateAndCoerceProcedureArguments(spec, args, nil)
 }
 
+func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
+	ctx = withExpressionFailureSlot(ctx)
+	bindings := valueBindingsFromContext(ctx)
+	texts := explicitProcedureArgumentTexts(callCypher)
+	if texts == nil {
+		return extractProcedureInvocationArguments(ctx, spec, callCypher)
+	}
+	if bindings == nil {
+		bindings = make(map[string]interface{})
+		bindParameterRow(ctx, pipelineRow(bindings))
+	}
+	if err := validateProcedureCallArguments(callCypher); err != nil {
+		return nil, err
+	}
+	args := make([]interface{}, len(texts))
+	if err := validateProcedureArgCount(spec, args); err != nil {
+		return nil, err
+	}
+	for index, text := range texts {
+		value, resolved := e.evaluateRowExpressionWithContext(ctx, text, pipelineRow(bindings))
+		if !resolved {
+			pipelineItemUnevaluable(ctx, text)
+			return nil, getExpressionFailure(ctx)
+		}
+		if err := getExpressionFailure(ctx); err != nil {
+			return nil, err
+		}
+		args[index] = value
+	}
+	return validateAndCoerceProcedureArguments(spec, args, texts)
+}
+
 func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string, hasTail bool) error {
 	if len(spec.Params) == 0 || strings.Contains(callCypher, "(") {
 		return nil

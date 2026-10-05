@@ -2938,7 +2938,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		if err := validateProcedureYieldBindings(yield, hasTail); err != nil {
 			return nil, err
 		}
-		args, err := extractProcedureInvocationArguments(ctx, proc.Spec, callCypher)
+		args, err := e.extractBoundProcedureInvocationArguments(ctx, proc.Spec, callCypher)
 		if err != nil {
 			return nil, err
 		}

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Use canonical typed invocation for procedure clauses instead of serializing
+  row arguments or calling write handlers separately. Preserve node/relationship
+  identity, nested values, parameters and terminal expression errors. Registered
+  vector searches consume resolved inputs through shared search cores (#908).
+
 - Route CALL-subquery compositions directly through the shared pipeline, with
   per-clause procedure/subquery classification and a shared UNION branch merger.
   Preserve correlated rows, typed distinct values, branch write statistics and
