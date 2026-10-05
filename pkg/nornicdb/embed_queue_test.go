@@ -2515,7 +2515,9 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		defer worker.Close()
 		worker.StartWorkers()
 
-		// Worker should be waiting for embedder and not processing yet.
+		// Worker should be waiting for embedder and not processing yet. Let
+		// it wait through one poll interval before the embedder arrives.
+		time.Sleep(1100 * time.Millisecond)
 		require.Equal(t, 0, worker.Stats().Processed)
 
 		worker.SetEmbedder(newMockEmbedder())
