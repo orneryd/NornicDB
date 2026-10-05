@@ -13,19 +13,20 @@ func TestExecuteMatchWithCallProcedure_ErrorAndEmptyPaths(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "subq_call_proc_cov"))
 	ctx := context.Background()
 
-	_, err := exec.executeMatchWithCallProcedure(ctx, "RETURN 1")
-	require.ErrorContains(t, err, "CALL not found")
-
-	_, err = exec.executeMatchWithCallProcedure(ctx, "CALL db.labels()")
-	require.ErrorContains(t, err, "MATCH not found before CALL")
-
-	res, err := exec.executeMatchWithCallProcedure(ctx, "MATCH n CALL db.labels()")
+	standalone, err := exec.Execute(ctx, "RETURN 1", nil)
 	require.NoError(t, err)
-	require.Empty(t, res.Rows)
+	require.Equal(t, [][]interface{}{{int64(1)}}, standalone.Rows)
+
+	labels, err := exec.Execute(ctx, "CALL db.labels()", nil)
+	require.NoError(t, err)
+	require.Empty(t, labels.Rows)
+
+	_, err = exec.Execute(ctx, "MATCH n CALL db.labels()", nil)
+	requireSyntaxErrorStatus(t, err, "malformed MATCH before procedure call")
 
 	// No seed nodes: should return deterministic columns from YIELD.
-	res, err = exec.executeMatchWithCallProcedure(ctx,
-		"MATCH (n:Missing) CALL db.index.vector.queryNodes('idx', 10, n.embedding) YIELD node, score")
+	res, err := exec.Execute(ctx,
+		"MATCH (n:Missing) CALL db.index.vector.queryNodes('idx', 10, n.embedding) YIELD node, score RETURN node, score", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"node", "score"}, res.Columns)
 	require.Empty(t, res.Rows)

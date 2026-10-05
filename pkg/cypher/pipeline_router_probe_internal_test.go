@@ -23,12 +23,17 @@ RETURN m.name AS probeName`
 	require.True(t, ok, "registered CALL procedures and mutation tails use the shared pipeline")
 }
 
-// TestPipelineBailsOnCallInMiddle ensures the splitter's disallow-list
-// catches CALL in the middle of a query too.
-func TestPipelineBailsOnCallInMiddle(t *testing.T) {
+func TestPipelineReportsUnknownCallInMiddle(t *testing.T) {
 	q := `MATCH (n) WITH n CALL foo.bar() YIELD x CREATE (:Y {v: x})`
 	_, ok := canExecuteAsPipeline(q)
-	require.False(t, ok, "pipeline must reject queries with CALL in the middle")
+	require.True(t, ok)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	_, err := exec.executeRequiredPipeline(context.Background(), q)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Procedure.ProcedureNotFound")
+	persisted, err := exec.Execute(context.Background(), "MATCH (n:Y) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, persisted.Rows)
 }
 
 // For debugging regression: check the bare Execute path for the CALL test's

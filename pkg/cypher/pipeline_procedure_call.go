@@ -6,8 +6,8 @@ import (
 )
 
 // pipelineProcedureCallsAreClauses reports whether every CALL in the statement
-// is a top-level call of a registered read or write procedure. CALL subqueries,
-// nested calls, and unregistered procedures are not procedure clauses.
+// is a top-level procedure call. Unknown procedures are admitted so execution
+// can report their classified lookup error even when no rows reach the call.
 func pipelineProcedureCallsAreClauses(cypher string) bool {
 	if !containsFold(cypher, "CALL") || hasCallSubqueryPattern(cypher) {
 		return false
@@ -15,7 +15,7 @@ func pipelineProcedureCallsAreClauses(cypher string) bool {
 	ensureBuiltInProceduresRegistered()
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
 		procedure, found := globalProcedureRegistry.Get(extractProcedureName(cypher[position:]))
-		if !found || (procedure.Spec.Mode != ProcedureModeRead && procedure.Spec.Mode != ProcedureModeWrite) {
+		if found && procedure.Spec.Mode != ProcedureModeRead && procedure.Spec.Mode != ProcedureModeWrite && procedure.Spec.Mode != ProcedureModeDBMS && !(procedure.User && procedure.Spec.Mode == "") {
 			return false
 		}
 	}
@@ -41,7 +41,7 @@ func pipelineProcedureCallsAreClauses(cypher string) bool {
 // row at once, so aggregation, ORDER BY and SKIP / LIMIT apply to all of
 // them.
 //
-// Write calls without YIELD preserve input rows. Read calls require YIELD.
+// Void calls without YIELD preserve input rows; non-void calls require YIELD.
 // Explicit arguments are evaluated as typed values in the canonical invocation.
 func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, []string, bool, error) {
 	yieldIndex := findKeywordIndexInContext(clause, "YIELD")
@@ -50,8 +50,11 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		invocation = strings.TrimSpace(clause[:yieldIndex])
 	}
 	procedure, found := globalProcedureRegistry.Get(extractProcedureName(invocation))
-	if !found || (yieldIndex < 0 && procedure.Spec.Mode != ProcedureModeWrite) {
-		return nil, nil, false, nil
+	if !found {
+		return nil, nil, true, newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", "There is no procedure with the name "+extractProcedureName(invocation)+" registered")
+	}
+	if yieldIndex < 0 && len(procedure.Spec.Returns) > 0 {
+		return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", "procedure calls inside a query must name results explicitly using YIELD")
 	}
 	if err := validateProcedureCallArguments(invocation); err != nil {
 		return nil, nil, true, err
@@ -70,7 +73,12 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		yieldText = "YIELD " + yieldBody
 	}
 
-	_, arguments, _ := splitProcedureInvocationArguments(invocation)
+	arguments := explicitProcedureArgumentTexts(invocation)
+	if arguments != nil {
+		if err := validateProcedureArgumentCount(procedure.Spec, len(arguments)); err != nil {
+			return nil, nil, true, err
+		}
+	}
 	rowDependent := false
 	for _, argument := range arguments {
 		if len(rows) > 0 && argumentUsesRowVariable(argument, rows[0]) {
@@ -80,6 +88,31 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 	}
 
 	var yielded []string
+	if yieldIndex >= 0 {
+		yield := parseYieldClause(clause)
+		if err := validateProcedureYieldBindings(yield, true); err != nil {
+			return nil, nil, true, err
+		}
+		if err := e.validateYieldModifiers(yield, true); err != nil {
+			return nil, nil, true, err
+		}
+		for _, item := range yield.items {
+			name := item.name
+			if item.alias != "" {
+				name = item.alias
+			}
+			yielded = append(yielded, name)
+		}
+		if len(procedure.Spec.Returns) > 0 {
+			columns := make([]string, len(procedure.Spec.Returns))
+			for index, column := range procedure.Spec.Returns {
+				columns[index] = column.Name
+			}
+			if _, err := e.applyYieldFilter(ctx, &ExecuteResult{Columns: columns, Rows: [][]interface{}{}}, &yieldClause{items: yield.items}); err != nil {
+				return nil, nil, true, err
+			}
+		}
+	}
 	var shared *ExecuteResult
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
@@ -93,12 +126,15 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			if err != nil {
 				return nil, nil, true, err
 			}
-			if !rowDependent && procedure.Spec.Mode != ProcedureModeWrite {
+			if !rowDependent && procedure.Spec.Mode == ProcedureModeRead {
 				shared = result
 			}
 		}
 		if yieldIndex < 0 {
 			out = append(out, row)
+			continue
+		}
+		if result == nil {
 			continue
 		}
 		if yielded == nil {
@@ -123,29 +159,6 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		out = append(out, extended...)
 	}
 	return out, yielded, true, nil
-}
-
-// splitProcedureInvocationArguments splits "CALL name(a, b)" into the call
-// target ("CALL name") and its argument expressions. hasArguments is false
-// when the call has no parenthesized argument list.
-func splitProcedureInvocationArguments(invocation string) (name string, arguments []string, hasArguments bool) {
-	open := strings.IndexByte(invocation, '(')
-	if open < 0 {
-		return invocation, nil, false
-	}
-	closing := findMatchingDelimiter(invocation, open, '(', ')')
-	if closing < 0 {
-		return invocation, nil, false
-	}
-	name = strings.TrimSpace(invocation[:open])
-	inner := strings.TrimSpace(invocation[open+1 : closing])
-	if inner == "" {
-		return name, nil, true
-	}
-	for _, argument := range splitTopLevelComma(inner) {
-		arguments = append(arguments, strings.TrimSpace(argument))
-	}
-	return name, arguments, true
 }
 
 // argumentUsesRowVariable reports whether a procedure argument refers to a

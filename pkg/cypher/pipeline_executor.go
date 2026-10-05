@@ -228,8 +228,8 @@ func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
 
 // splitPipelineClausesAllowingProcedureCalls is splitPipelineClauses that also
 // accepts top-level procedure calls (CALL proc(args) YIELD …) as clauses of
-// kind pipelineClauseCall, for the pipeline executor. The semantic
-// validators keep using splitPipelineClauses, which rejects any CALL.
+// kind pipelineClauseCall, for the pipeline executor and call-aware semantic
+// validation. splitPipelineClauses rejects statements with procedure calls.
 func splitPipelineClausesAllowingProcedureCalls(cypher string) ([]pipelineClause, bool) {
 	return cachedPipelineClauses(cypher, true)
 }
