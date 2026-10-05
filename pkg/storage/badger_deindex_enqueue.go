@@ -166,6 +166,9 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 		if err := txn.Set(edgeKey(edgeID), data); err != nil {
 			return false, err
 		}
+		if err := b.setAdjacencyValuesInTxn(txn, edge, data); err != nil {
+			return false, err
+		}
 		if err := enqueueWorkItemInTxn(txn, string(edgeID), "EDGE"); err != nil {
 			return false, err
 		}
@@ -178,6 +181,9 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 			return false, err
 		}
 		if err := txn.Set(edgeKey(edgeID), data); err != nil {
+			return false, err
+		}
+		if err := b.setAdjacencyValuesInTxn(txn, edge, data); err != nil {
 			return false, err
 		}
 		return false, clearTombstonesForEntityInTxn(txn, string(edgeID))

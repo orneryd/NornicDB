@@ -108,14 +108,15 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		if err != nil {
 			return err
 		}
-		if err := txn.Set(outKey, b.adjacencyValueFor(edge.EndNode, edge.Type)); err != nil {
+		header := adjacencyValueFromRecord(data)
+		if err := txn.Set(outKey, header); err != nil {
 			return err
 		}
 		inKey, err := b.incomingIndexKeyString(txn, edge.EndNode, edge.ID)
 		if err != nil {
 			return err
 		}
-		if err := txn.Set(inKey, b.adjacencyValueFor(edge.StartNode, edge.Type)); err != nil {
+		if err := txn.Set(inKey, header); err != nil {
 			return err
 		}
 		typeKey, err := b.edgeTypeIndexKeyString(txn, edge.Type, edge.ID)
@@ -323,14 +324,14 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 			if err != nil {
 				return err
 			}
-			if err := txn.Set(outKey, b.adjacencyValueFor(edge.EndNode, edge.Type)); err != nil {
+			if err := txn.Set(outKey, []byte{}); err != nil {
 				return err
 			}
 			inKey, err := b.incomingIndexKeyString(txn, edge.EndNode, edge.ID)
 			if err != nil {
 				return err
 			}
-			if err := txn.Set(inKey, b.adjacencyValueFor(edge.StartNode, edge.Type)); err != nil {
+			if err := txn.Set(inKey, []byte{}); err != nil {
 				return err
 			}
 			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
@@ -356,10 +357,6 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 			}
 			if existing.StartNode == edge.StartNode && existing.EndNode == edge.EndNode {
 				if err := b.deleteEdgeBetweenIndexesInTxn(txn, existing); err != nil {
-					return err
-				}
-				// The adjacency entries carry the type.
-				if err := b.setAdjacencyValuesInTxn(txn, edge); err != nil {
 					return err
 				}
 			}
@@ -421,6 +418,10 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}
 
 		if err := txn.Set(key, data); err != nil {
+			return err
+		}
+		// The adjacency entries carry the record's header.
+		if err := b.setAdjacencyValuesInTxn(txn, edge, data); err != nil {
 			return err
 		}
 		if err := putIndexEntryCatalogInTxn(txn, string(edge.ID), &IndexEntryCatalog{

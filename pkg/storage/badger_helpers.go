@@ -459,54 +459,32 @@ func (b *BadgerEngine) deleteEdgeBetweenHeadIfMatchesInTxn(txn *badger.Txn, edge
 	return txn.Delete(key)
 }
 
-// adjacencyValueV1 marks an adjacency entry value that carries the
-// relationship's other endpoint and type (adjacencyEntryValue).
-const adjacencyValueV1 = byte(0x01)
-
-// adjacencyEntryValue is the value of an outgoing or incoming adjacency
-// entry: [0x01][the other endpoint's num ID, 8 bytes][relationship type].
-// It lets a traversal learn a relationship's type and other end without
-// reading the relationship record (EdgeHeaderReader). Entries written before
-// it have an empty value; readers then read the record.
-func adjacencyEntryValue(otherNodeNum uint64, edgeType string) []byte {
-	value := make([]byte, 0, 1+8+len(edgeType))
-	value = append(value, adjacencyValueV1)
-	value = append(value, encodeNumID(otherNodeNum)...)
-	return append(value, edgeType...)
-}
-
-// decodeAdjacencyEntryValue reads adjacencyEntryValue; ok is false for an
-// empty or unrecognized value.
-func decodeAdjacencyEntryValue(value []byte) (otherNodeNum uint64, edgeType string, ok bool) {
-	if len(value) < 9 || value[0] != adjacencyValueV1 {
-		return 0, "", false
+// adjacencyValueFromRecord is the value of a relationship's outgoing and
+// incoming adjacency entries: a copy of the compact header its stored record
+// starts with (encodeEdgeCompactHeader: endpoints, type, timestamps,
+// confidence, flags), so a traversal can list the relationship from the
+// entry without reading the record. Every write of the record rewrites the
+// entries with it. A record not in the compact V2 format yields an empty
+// value, which readers answer from the record, as for entries written before
+// the values existed.
+func adjacencyValueFromRecord(record []byte) []byte {
+	if _, _, _, headerEnd, err := decodeEdgeCompactHeader(record, edgeFormatCompactV2); err == nil {
+		return append([]byte(nil), record[:headerEnd]...)
 	}
-	return binary.BigEndian.Uint64(value[1:9]), string(value[9:]), true
+	return []byte{}
 }
 
-// adjacencyValueFor is the adjacency entry value pointing at otherNode for a
-// relationship of edgeType. The write paths resolve both endpoints' num IDs
-// before writing the entries; an unknown node yields an empty value, which
-// readers answer from the relationship record.
-func (b *BadgerEngine) adjacencyValueFor(otherNode NodeID, edgeType string) []byte {
-	otherNum, ok := b.idDict.lookupNodeNumID(otherNode)
-	if !ok {
-		return []byte{}
-	}
-	return adjacencyEntryValue(otherNum, edgeType)
-}
-
-// setAdjacencyValuesInTxn rewrites the values of edge's existing outgoing
-// and incoming adjacency entries, for a type change that keeps the
-// endpoints.
-func (b *BadgerEngine) setAdjacencyValuesInTxn(txn kvWriter, edge *Edge) error {
+// setAdjacencyValuesInTxn writes record's header (adjacencyValueFromRecord)
+// into edge's outgoing and incoming adjacency entries.
+func (b *BadgerEngine) setAdjacencyValuesInTxn(txn kvWriter, edge *Edge, record []byte) error {
+	value := adjacencyValueFromRecord(record)
 	if outKey := b.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
-		if err := txn.Set(outKey, b.adjacencyValueFor(edge.EndNode, edge.Type)); err != nil {
+		if err := txn.Set(outKey, value); err != nil {
 			return err
 		}
 	}
 	if inKey := b.incomingIndexKeyStringLookup(edge.EndNode, edge.ID); inKey != nil {
-		return txn.Set(inKey, b.adjacencyValueFor(edge.StartNode, edge.Type))
+		return txn.Set(inKey, value)
 	}
 	return nil
 }
