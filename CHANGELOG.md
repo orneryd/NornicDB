@@ -45,12 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts, sorts and filters over 40,000 nodes take 6–30% less time (#911).
   A keyword-named variable followed by a property access (`where.id`) is
   now seen as a reference by the statement checks.
-- Read most of a large label in one pass over the node records. A label scan
-  fetched every node record with its own lookup. After the first 1,024
-  nodes, a label on at least half of the database's nodes now has the rest
-  read in one pass, still visited in label-index order, so rows keep their
-  order and a scan stopped early stays cheap. Grouped counts, sorts and
-  filters over 40,000 nodes take 25–35% less time in auto-commit (#911).
 - Reuse a node a transaction's label scan just read when the same statement
   writes it: `MATCH (n:L) SET …` and `DETACH DELETE` read every node again
   before writing it. Nodes with worker-sidecar embeddings, or read with decay

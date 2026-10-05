@@ -245,42 +245,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	}
 	include := propertyProjectionSet(properties)
 	nowNanos := DecayScoringTime()
-	covers := b.labelCoversScope(scope, label)
 	return view(func(txn *badger.Txn) error {
-		// readItem reads one node from its stored record; item.Version keys
-		// the decoded-body cache.
-		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
-			itemVersion := item.Version()
-			if cached, ok := b.cacheLoadNodeBody(nodeID, itemVersion); ok {
-				if properties == nil {
-					return b.loadNodeEmbeddings(txn, cached, nodeID)
-				}
-				return projectCachedNodeForRead(cached, properties), nil
-			}
-			var node *Node
-			err := item.Value(func(value []byte) error {
-				if properties == nil {
-					decoded, decodeErr := b.decodeNode(namespaceForNodeID(nodeID), value)
-					if decodeErr != nil {
-						return decodeErr
-					}
-					b.cacheStoreNodeBody(nodeID, itemVersion, decoded)
-					node, decodeErr = b.loadNodeEmbeddings(txn, decoded, nodeID)
-					return decodeErr
-				}
-				var decodeErr error
-				node, decodeErr = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
-				return decodeErr
-			})
-			return node, err
-		}
-		emit := func(node *Node) error {
-			if node == nil || b.filterNodeByDecay(node, nowNanos) || !hasLabel(node.Labels, label) {
-				return nil
-			}
-			return visit(node)
-		}
-
 		prefix := labelIndexPrefix(label)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -297,8 +262,6 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 				it.Next()
 			}
 		}
-		var pending []NodeID
-		lookups := 0
 		for ; it.ValidForPrefix(prefix); it.Next() {
 			indexKey := it.Item().Key()
 			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
@@ -309,11 +272,6 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
 				continue
 			}
-			if pending != nil || (covers && lookups >= labelScanPointLookups) {
-				pending = append(pending, nodeID)
-				continue
-			}
-			lookups++
 			item, getErr := txn.Get(nodeKey(nodeID))
 			if getErr == badger.ErrKeyNotFound {
 				continue
@@ -321,31 +279,50 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			if getErr != nil {
 				return getErr
 			}
-			node, err := readItem(nodeID, item)
-			if err != nil {
-				return err
+			var node *Node
+			itemVersion := item.Version()
+			if cached, ok := b.cacheLoadNodeBody(nodeID, itemVersion); ok {
+				if properties == nil {
+					node, getErr = b.loadNodeEmbeddings(txn, cached, nodeID)
+					if getErr != nil {
+						return getErr
+					}
+				} else {
+					node = projectCachedNodeForRead(cached, properties)
+				}
 			}
-			if err := emit(node); err != nil {
-				return err
+			if node == nil {
+				if err := item.Value(func(value []byte) error {
+					if properties == nil {
+						decoded, decodeErr := b.decodeNode(namespaceForNodeID(nodeID), value)
+						if decodeErr != nil {
+							return decodeErr
+						}
+						b.cacheStoreNodeBody(nodeID, itemVersion, decoded)
+						node, decodeErr = b.loadNodeEmbeddings(txn, decoded, nodeID)
+						return decodeErr
+					}
+					var decodeErr error
+					node, decodeErr = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
+					return decodeErr
+				}); err != nil {
+					return err
+				}
 			}
-		}
-		if len(pending) == 0 {
-			return nil
-		}
-
-		// The rest are read in one pass over the node records, then visited
-		// in label-index order.
-		nodes := make(map[NodeID]*Node, len(pending))
-		if err := readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
-			node, err := readItem(nodeID, item)
-			nodes[nodeID] = node
-			return err
-		}); err != nil {
-			return err
-		}
-		for _, nodeID := range pending {
-			if err := emit(nodes[nodeID]); err != nil {
-				return err
+			if node == nil || b.filterNodeByDecay(node, nowNanos) {
+				continue
+			}
+			matched := false
+			for _, existing := range node.Labels {
+				if existing == label {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				if err := visit(node); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
