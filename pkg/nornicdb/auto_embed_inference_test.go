@@ -138,4 +138,21 @@ func TestRunInferenceForEmbeddedNode_GuardBranches(t *testing.T) {
 			ChunkEmbeddings: [][]float32{{1, 0, 0}},
 		})
 	})
+
+	t.Run("returns when inference has no suggestions", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Memory.AutoLinksEnabled = true
+		db := &DB{config: cfg, inferenceServices: map[string]*inference.Engine{}}
+
+		engine := inference.New(&inference.Config{SimilarityThreshold: 0.1, SimilarityTopK: 3})
+		searched := false
+		engine.SetSimilaritySearch(func(ctx context.Context, embedding []float32, k int) ([]inference.SimilarityResult, error) {
+			searched = true
+			return nil, nil
+		})
+		db.inferenceServices["tenant"] = engine
+
+		db.runInferenceForEmbeddedNode(&storage.Node{ID: "tenant:n1", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+		require.True(t, searched)
+	})
 }

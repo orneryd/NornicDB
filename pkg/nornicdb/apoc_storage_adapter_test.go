@@ -574,6 +574,11 @@ func TestAPOCStorageAdapter_TraversalMissingNodeBranches(t *testing.T) {
 	require.Equal(t, int64(3), path.Nodes[len(path.Nodes)-1].ID)
 	_, err = adapter.FindShortestPath(1, 3, "LINK", 0)
 	require.ErrorIs(t, err, apocstorage.ErrPathNotFound)
+	// The only DEAD relationship leads to a missing node, so no path exists.
+	engine.edges["12"] = &storage.Edge{ID: "12", StartNode: "1", EndNode: "2", Type: "DEAD"}
+	_, err = adapter.FindShortestPath(1, 3, "DEAD", 2)
+	require.ErrorIs(t, err, apocstorage.ErrPathNotFound)
+	delete(engine.edges, "12")
 
 	_, err = adapter.FindAllPaths(99, 3, "", 1)
 	require.ErrorIs(t, err, apocstorage.ErrNodeNotFound)

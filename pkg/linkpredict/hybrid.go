@@ -2,6 +2,7 @@ package linkpredict
 
 import (
 	"context"
+	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -267,7 +268,7 @@ func (h *HybridScorer) Predict(ctx context.Context, graph Graph, source storage.
 	}
 
 	// Sort by hybrid score
-	sortPredictions(hybridPreds)
+	sort.Slice(hybridPreds, func(i, j int) bool { return hybridPreds[i].Score > hybridPreds[j].Score })
 
 	// Return top K
 	if topK > 0 && len(hybridPreds) > topK {
@@ -355,8 +356,8 @@ func (h *HybridScorer) ensembleTopology(graph Graph, source storage.NodeID, k in
 		})
 	}
 
-	// Sort and return
-	sortTopoPredictions(predictions)
+	// Sort by score descending and return
+	sort.Slice(predictions, func(i, j int) bool { return predictions[i].Score > predictions[j].Score })
 	if len(predictions) > k {
 		predictions = predictions[:k]
 	}
@@ -415,29 +416,6 @@ func (h *HybridScorer) explainPrediction(topoScore, semanticScore float64) strin
 		return "Weak structural connection, strong semantic similarity"
 	default:
 		return "Moderate structural and semantic signals"
-	}
-}
-
-// sortPredictions sorts hybrid predictions by score descending.
-func sortPredictions(predictions []HybridPrediction) {
-	// Simple bubble sort for small lists
-	for i := 0; i < len(predictions); i++ {
-		for j := i + 1; j < len(predictions); j++ {
-			if predictions[j].Score > predictions[i].Score {
-				predictions[i], predictions[j] = predictions[j], predictions[i]
-			}
-		}
-	}
-}
-
-// sortTopoPredictions sorts topology predictions by score descending.
-func sortTopoPredictions(predictions []Prediction) {
-	for i := 0; i < len(predictions); i++ {
-		for j := i + 1; j < len(predictions); j++ {
-			if predictions[j].Score > predictions[i].Score {
-				predictions[i], predictions[j] = predictions[j], predictions[i]
-			}
-		}
 	}
 }
 
