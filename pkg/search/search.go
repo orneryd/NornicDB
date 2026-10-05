@@ -2828,13 +2828,24 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 // indexNodeLocked does the work of IndexNode. Caller must hold s.indexMu.
 // When skipFulltext is true, the fulltext index block is skipped (used when BuildIndexes batches fulltext).
 // When skipFulltext is true, removeNodeLocked is also skipped so we don't remove the doc just added by IndexBatch.
+// A node whose searchable text is already in the fulltext index keeps that
+// document: re-indexing it would analyze the same text twice for no change.
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	nodeIDStr := string(node.ID)
 	shouldIndex, err := s.shouldIndexNode(node)
 	if err != nil {
 		return err
 	}
-	capacityUsage, err := s.checkNodeIndexCapacityLocked(node, skipFulltext)
+	var fulltext nodeFulltext
+	if !skipFulltext {
+		fulltext.text = s.extractSearchableText(node)
+		fulltext.index = s.bm25Enabled.Load()
+		if index := s.fulltext(); index != nil && nodeIDStr != "" && shouldIndex {
+			stored, ok := index.GetDocument(nodeIDStr)
+			fulltext.unchanged = ok && stored == fulltext.text
+		}
+	}
+	capacityUsage, err := s.checkNodeIndexCapacityLocked(node, fulltext)
 	if err != nil {
 		return err
 	}
@@ -2849,11 +2860,11 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 		// we must remove the old vector IDs first, otherwise they become orphaned
 		// in the in-memory index and EmbeddingCount() will drift upward over time.
 		if skipVectorMutation {
-			if s.fulltext() != nil {
+			if s.fulltext() != nil && !fulltext.unchanged {
 				s.fulltext().Remove(nodeIDStr)
 			}
 		} else {
-			s.removeNodeLocked(nodeIDStr)
+			s.removeNodeEntriesLocked(nodeIDStr, !fulltext.unchanged)
 		}
 	}
 	if !shouldIndex {
@@ -3034,11 +3045,8 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	}
 
 	// Add to fulltext index (skipped when BuildIndexes batches fulltext via IndexBatch)
-	if !skipFulltext {
-		text := s.extractSearchableText(node)
-		if text != "" {
-			s.fulltext().Index(string(node.ID), text)
-		}
+	if !skipFulltext && !fulltext.unchanged && fulltext.text != "" {
+		s.fulltext().Index(string(node.ID), fulltext.text)
 	}
 	s.commitNodeIndexCapacityLocked(nodeIDStr, capacityUsage)
 
@@ -3179,6 +3187,12 @@ func (s *Service) storedVectorEqualsLocked(id string, vec []float32) bool {
 // This is used by both RemoveNode (delete path) and IndexNode (update path) to ensure
 // vector IDs never become orphaned when embeddings change shape over time.
 func (s *Service) removeNodeLocked(nodeIDStr string) {
+	s.removeNodeEntriesLocked(nodeIDStr, true)
+}
+
+// removeNodeEntriesLocked removes the node's search entries, keeping its
+// fulltext document when removeFulltext is false. Caller must hold s.indexMu.
+func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool) {
 	if nodeIDStr == "" {
 		return
 	}
@@ -3189,7 +3203,7 @@ func (s *Service) removeNodeLocked(nodeIDStr string) {
 	if s.gpuEmbeddingIndex != nil {
 		_ = s.gpuEmbeddingIndex.Remove(nodeIDStr)
 	}
-	if s.fulltext() != nil {
+	if removeFulltext && s.fulltext() != nil {
 		s.fulltext().Remove(nodeIDStr)
 	}
 
@@ -6825,14 +6839,19 @@ func (s *Service) extractSearchableText(node *storage.Node) string {
 		}
 	}
 
-	// 3. Add ALL other properties (for comprehensive search)
-	for key, val := range node.Properties {
+	// 3. Add ALL other properties (for comprehensive search), in key order so a
+	// node's text is the same every time it is extracted.
+	keys := make([]string, 0, len(node.Properties))
+	for key := range node.Properties {
 		// Skip if already added as priority property
-		if _, ok := searchablePropertiesSet[key]; ok {
-			continue
+		if _, ok := searchablePropertiesSet[key]; !ok {
+			keys = append(keys, key)
 		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
 		// Add property name and value for searchability
-		if str := propertyToString(val); str != "" {
+		if str := propertyToString(node.Properties[key]); str != "" {
 			// Include property name to enable searches like "genre:action"
 			parts = append(parts, key, str)
 		}

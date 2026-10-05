@@ -17,8 +17,16 @@ type indexCapacityUsage struct {
 	vectorMetadata int64
 }
 
-func (s *Service) checkNodeIndexCapacityLocked(node *storage.Node, skipFulltext bool) (indexCapacityUsage, error) {
-	usage := s.estimateNodeIndexCapacityLocked(node, skipFulltext)
+// nodeFulltext is the BM25 text one IndexNode call writes for a node,
+// extracted once and shared by the capacity check and the index update.
+type nodeFulltext struct {
+	index     bool   // the call updates BM25 for this node
+	text      string // the node's searchable text
+	unchanged bool   // the index already holds exactly this text for the node
+}
+
+func (s *Service) checkNodeIndexCapacityLocked(node *storage.Node, fulltext nodeFulltext) (indexCapacityUsage, error) {
+	usage := s.estimateNodeIndexCapacityLocked(node, fulltext)
 	previous := s.indexCapacityByNode[string(node.ID)]
 	checks := []struct {
 		name     string
@@ -41,14 +49,21 @@ func (s *Service) checkNodeIndexCapacityLocked(node *storage.Node, skipFulltext 
 	return usage, nil
 }
 
-func (s *Service) estimateNodeIndexCapacityLocked(node *storage.Node, skipFulltext bool) indexCapacityUsage {
+// estimateNodeIndexCapacityLocked sizes the index entries node needs. Text the
+// index already holds keeps its recorded BM25 size instead of being analyzed
+// again.
+func (s *Service) estimateNodeIndexCapacityLocked(node *storage.Node, fulltext nodeFulltext) indexCapacityUsage {
 	if node == nil {
 		return indexCapacityUsage{}
 	}
 	usage := indexCapacityUsage{}
 	nodeID := string(node.ID)
-	if !skipFulltext && s.bm25Enabled.Load() {
-		text := s.extractSearchableText(node)
+	previous, recorded := s.indexCapacityByNode[nodeID]
+	if fulltext.index && fulltext.unchanged && recorded {
+		usage.bm25Resident = previous.bm25Resident
+		usage.bm25Metadata = previous.bm25Metadata
+	} else if fulltext.index {
+		text := fulltext.text
 		usage.bm25Resident = int64(len(text))
 		if text != "" {
 			usage.bm25Metadata = int64(len(nodeID) + 16)
