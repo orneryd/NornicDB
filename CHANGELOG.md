@@ -282,6 +282,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Give every explicit HTTP transaction its own ID. IDs were the current time
+  in nanoseconds, so two BEGINs in the same clock tick (seen on Windows) got
+  the same commit URL; one client's statements and commit reached the other's
+  transaction, and the other got `TransactionNotFound` or `no active
+  transaction`. IDs now count up from the server's start time. Erasure
+  requests and edge provenance records, which also used the clock as their
+  ID, get random IDs (#915).
+
 - Compare an integer and a float by their exact values everywhere (WHERE,
   RETURN, ORDER BY, CASE, with or without an index), as Neo4j compares
   stored values: `9007199254740993 > 9007199254740992.0`. The most negative
