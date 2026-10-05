@@ -2687,14 +2687,7 @@ func buildIDCaseExpression(nodeVar string, valueByID map[string]interface{}) str
 	for k := range valueByID {
 		ids = append(ids, k)
 	}
-	// simple insertion sort avoids extra imports
-	for i := 1; i < len(ids); i++ {
-		j := i
-		for j > 0 && ids[j] < ids[j-1] {
-			ids[j], ids[j-1] = ids[j-1], ids[j]
-			j--
-		}
-	}
+	sort.Strings(ids)
 	var b strings.Builder
 	b.WriteString("CASE id(")
 	b.WriteString(nodeVar)

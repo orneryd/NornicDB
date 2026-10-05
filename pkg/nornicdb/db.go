@@ -1316,19 +1316,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		//   - built:    indexes were actually constructed
 		//   - skipped:  both flags off → no build ran (no_build)
 		//   - deferred: warming=lazy → build deferred to first query
-		type buildResult struct {
-			dbName  string
-			err     error
-			outcome string // "built" | "skipped" | "deferred"
-		}
-		results := make(chan buildResult, len(dbNames))
+		results := make(chan searchBuildResult, len(dbNames))
 		var buildWg sync.WaitGroup
 		for dbName := range dbNames {
 			buildWg.Add(1)
 			go func(dbName string) {
 				defer buildWg.Done()
 				if ctx.Err() != nil {
-					results <- buildResult{dbName: dbName, err: ctx.Err()}
+					results <- searchBuildResult{dbName: dbName, err: ctx.Err()}
 					return
 				}
 				var storageEngine storage.Engine
@@ -1348,62 +1343,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					log.Printf("🔍 Building BM25 + vector indexes for database %s (bm25=%v vector=%v)...", dbName, bm25On, vectorOn)
 				}
 				_, err := db.EnsureSearchIndexesBuilt(ctx, dbName, storageEngine)
-				results <- buildResult{dbName: dbName, err: err, outcome: outcome}
+				results <- searchBuildResult{dbName: dbName, err: err, outcome: outcome}
 			}(dbName)
 		}
 		go func() {
 			buildWg.Wait()
 			close(results)
 		}()
-		var built, skipped, deferred, failed int
-		for res := range results {
-			if res.err != nil {
-				if ctx.Err() != nil {
-					log.Printf("🔍 Search index build cancelled for db %s (shutdown)", res.dbName)
-					continue
-				}
-				log.Printf("⚠️  Failed to build search indexes for db %s: %v", res.dbName, res.err)
-				failed++
-				continue
-			}
-			switch res.outcome {
-			case "skipped":
-				skipped++
-				if len(dbNames) > 1 {
-					log.Printf("✅ Search disabled for db %s — no build ran", res.dbName)
-				}
-			case "deferred":
-				deferred++
-				if len(dbNames) > 1 {
-					log.Printf("✅ Search warming=lazy for db %s — build deferred to first query", res.dbName)
-				}
-			default:
-				built++
-				if len(dbNames) > 1 {
-					log.Printf("✅ BM25 + vector indexes built for db %s", res.dbName)
-				}
-			}
-		}
-		// Summary line. Only print "indexes ready" when at least one DB actually
-		// built; otherwise the line would be misleading (the user explicitly
-		// disabled or deferred all of them).
-		switch {
-		case len(dbNames) == 1 && built == 1:
-			log.Printf("✅ BM25 + vector search indexes ready (default database)")
-		case built > 0 && (skipped+deferred) > 0:
-			log.Printf("✅ Search lifecycle: %d built, %d skipped (disabled), %d deferred (lazy)", built, skipped, deferred)
-		case built > 0:
-			log.Printf("✅ BM25 + vector search indexes ready for %d database(s)", built)
-		case skipped > 0 && deferred == 0:
-			log.Printf("ℹ️  Search disabled for all %d database(s) — no indexes built", skipped)
-		case deferred > 0 && skipped == 0:
-			log.Printf("ℹ️  Search warming=lazy for all %d database(s) — indexes deferred to first query", deferred)
-		case skipped+deferred > 0:
-			log.Printf("ℹ️  Search lifecycle: %d skipped (disabled), %d deferred (lazy) — no indexes built", skipped, deferred)
-		}
-		if failed > 0 {
-			log.Printf("⚠️  Search index build failed for %d database(s)", failed)
-		}
+		summarizeSearchBuilds(ctx, len(dbNames), results)
 
 		// Run k-means only after all search indexes are built (skip if build was cancelled).
 		if ctx.Err() == nil {
@@ -2552,4 +2499,75 @@ func (db *DB) SetEmbeddingLabelPolicy(dbName string, eligible, excluded []string
 	if badger := unwrapToBadgerEngine(db.baseStorage); badger != nil {
 		badger.SetEmbeddingLabelPolicy(dbName, eligible, excluded)
 	}
+}
+
+// searchBuildResult is one database's outcome of the startup search index
+// build: built, skipped (search disabled) or deferred (warming=lazy), or an
+// error.
+type searchBuildResult struct {
+	dbName  string
+	err     error
+	outcome string // "built" | "skipped" | "deferred"
+}
+
+// searchBuildSummary counts the startup search build's outcomes.
+type searchBuildSummary struct {
+	built, skipped, deferred, failed int
+}
+
+// summarizeSearchBuilds drains the startup search build's results, logs each
+// database's outcome (per database only when there are several) and one
+// summary line, and returns the counts. An error after ctx is canceled is a
+// shutdown, not a failure. It runs in Open's background warmup goroutine.
+func summarizeSearchBuilds(ctx context.Context, dbCount int, results <-chan searchBuildResult) searchBuildSummary {
+	var built, skipped, deferred, failed int
+	for res := range results {
+		if res.err != nil {
+			if ctx.Err() != nil {
+				log.Printf("🔍 Search index build cancelled for db %s (shutdown)", res.dbName)
+				continue
+			}
+			log.Printf("⚠️  Failed to build search indexes for db %s: %v", res.dbName, res.err)
+			failed++
+			continue
+		}
+		switch res.outcome {
+		case "skipped":
+			skipped++
+			if dbCount > 1 {
+				log.Printf("✅ Search disabled for db %s — no build ran", res.dbName)
+			}
+		case "deferred":
+			deferred++
+			if dbCount > 1 {
+				log.Printf("✅ Search warming=lazy for db %s — build deferred to first query", res.dbName)
+			}
+		default:
+			built++
+			if dbCount > 1 {
+				log.Printf("✅ BM25 + vector indexes built for db %s", res.dbName)
+			}
+		}
+	}
+	// Summary line. Only print "indexes ready" when at least one DB actually
+	// built; otherwise the line would be misleading (the user explicitly
+	// disabled or deferred all of them).
+	switch {
+	case dbCount == 1 && built == 1:
+		log.Printf("✅ BM25 + vector search indexes ready (default database)")
+	case built > 0 && (skipped+deferred) > 0:
+		log.Printf("✅ Search lifecycle: %d built, %d skipped (disabled), %d deferred (lazy)", built, skipped, deferred)
+	case built > 0:
+		log.Printf("✅ BM25 + vector search indexes ready for %d database(s)", built)
+	case skipped > 0 && deferred == 0:
+		log.Printf("ℹ️  Search disabled for all %d database(s) — no indexes built", skipped)
+	case deferred > 0 && skipped == 0:
+		log.Printf("ℹ️  Search warming=lazy for all %d database(s) — indexes deferred to first query", deferred)
+	case skipped+deferred > 0:
+		log.Printf("ℹ️  Search lifecycle: %d skipped (disabled), %d deferred (lazy) — no indexes built", skipped, deferred)
+	}
+	if failed > 0 {
+		log.Printf("⚠️  Search index build failed for %d database(s)", failed)
+	}
+	return searchBuildSummary{built: built, skipped: skipped, deferred: deferred, failed: failed}
 }

@@ -767,7 +767,6 @@ type Service struct {
 	hnswIndex           *HNSWIndex
 	hnswMu              sync.RWMutex
 	hnswMaintOnce       sync.Once
-	hnswMaintStop       chan struct{}
 	hnswMaintCancel     context.CancelFunc
 	hnswMaintDone       chan struct{}
 	hnswRebuildInFlight atomic.Bool
@@ -5705,7 +5704,6 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 
 func (s *Service) ensureHNSWMaintenance() {
 	s.hnswMaintOnce.Do(func() {
-		s.hnswMaintStop = make(chan struct{})
 		ctx := s.lifecycleCtx
 		if ctx == nil {
 			ctx = context.Background()
@@ -5734,10 +5732,9 @@ func (s *Service) ensureHNSWMaintenance() {
 						continue
 					}
 					_ = s.maybeRebuildHNSW(ctx, rebuildRatio, maxOverhead, minRebuildInterval)
-				case <-s.hnswMaintStop:
-					cancel()
-					return
 				case <-ctx.Done():
+					// stopHNSWMaintenance and the service's lifecycle
+					// cancel this context; it is the loop's only exit.
 					return
 				}
 			}
@@ -5751,13 +5748,6 @@ func (s *Service) stopHNSWMaintenance() {
 	}
 	if s.hnswMaintCancel != nil {
 		s.hnswMaintCancel()
-	}
-	if s.hnswMaintStop != nil {
-		select {
-		case <-s.hnswMaintStop:
-		default:
-			close(s.hnswMaintStop)
-		}
 	}
 	if s.hnswMaintDone != nil {
 		<-s.hnswMaintDone
