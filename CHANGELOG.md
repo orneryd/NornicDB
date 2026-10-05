@@ -30,10 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and delete saved a copy of the old version that nobody could read. A
   transaction now stops counting once its conflicts are validated, and all
   archiving happens at commit. Updating and then deleting 40,000 nodes takes
-  about 15% less time. While retention keeps history, an update archives the
+  about 20% less time. While retention keeps history, an update archives the
   old version as an undo record (its metadata plus the properties that
   differ from the next version) instead of a complete copy; reads rebuild it
-  from the next version (#911).
+  from the next version. History for one-property updates takes about a
+  quarter of the space (#911).
 
 - Read only the properties a statement uses when it scans a label. A `MATCH`
   on a label decoded every node in full, embeddings included, even when the
