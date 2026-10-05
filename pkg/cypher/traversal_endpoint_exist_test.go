@@ -13,6 +13,7 @@ import (
 type countingEndpointEngine struct {
 	*storage.NamespacedEngine
 	reads, checks int
+	hidden        storage.NodeID
 }
 
 func (e *countingEndpointEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
@@ -22,6 +23,9 @@ func (e *countingEndpointEngine) GetNode(id storage.NodeID) (*storage.Node, erro
 
 func (e *countingEndpointEngine) RelationshipEndpointVisible(id storage.NodeID) (bool, bool) {
 	e.checks++
+	if id == e.hidden {
+		return false, true
+	}
 	return e.NamespacedEngine.RelationshipEndpointVisible(id)
 }
 
@@ -56,6 +60,15 @@ func TestDegreeCountChecksAnonymousEndpointsWithoutReading(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1), int64(2)}, {int64(2), int64(1)}}, result.Rows)
 	require.Equal(t, 3, store.checks)
+
+	// An end node storage reports as not visible doesn't count.
+	cNode, err := exec.Execute(ctx, "MATCH (c:P {id: 3}) RETURN c", nil)
+	require.NoError(t, err)
+	store.hidden = cNode.Rows[0][0].(*storage.Node).ID
+	result, err = exec.Execute(ctx, "MATCH (p:P)-[:K]->() RETURN p.id AS id, count(*) AS degree ORDER BY degree DESC, id", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1), int64(1)}}, result.Rows)
+	store.hidden = ""
 
 	store.reads, store.checks = 0, 0
 	result, err = exec.Execute(ctx, "MATCH (p:P)-[:K]->(q) RETURN p.id AS id, q.id AS q ORDER BY id, q", nil)
