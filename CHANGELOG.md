@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read in one pass, still visited in label-index order, so rows keep their
   order and a scan stopped early stays cheap. Grouped counts, sorts and
   filters over 40,000 nodes take 25–35% less time in auto-commit (#911).
+- Reuse a node a transaction's label scan just read when the same statement
+  writes it: `MATCH (n:L) SET …` and `DETACH DELETE` read every node again
+  before writing it. Nodes with worker-sidecar embeddings, or read with decay
+  filtering on, are still read again. A bulk `SET` and `DETACH DELETE` of
+  40,000 nodes take about a fifth less time (#911).
 
 - Keep a node's full-text document when it is re-indexed with the same
   searchable text, for example when only its embedding changes: the text is
