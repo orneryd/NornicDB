@@ -198,16 +198,8 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		whereClause = strings.TrimSpace(cypher[whereIdx+5 : returnIdx])
 	}
 
-	// Parse RETURN clause
 	returnPart := cypher[returnIdx+6:]
-	returnEndIdx := len(returnPart)
-	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, kw); idx >= 0 && idx < returnEndIdx {
-			returnEndIdx = idx
-		}
-	}
-	returnClause := strings.TrimSpace(returnPart[:returnEndIdx])
-	returnItems := e.parseReturnItems(returnClause)
+	returnPlan := returnProjectionPlanFor(cypher[returnIdx:])
 
 	// Split MATCH clauses
 	matchClauses := splitMatchClauses(cypher, whereIdx, returnIdx)
@@ -224,13 +216,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 	if len(matchClauses) < 2 {
 		return nil, localizedError(localization.CypherTransactionsMultipleMatchExpected(), nil)
 	}
-	hasAggregation := false
-	for _, item := range returnItems {
-		if len(findAggregateSpans(item.expr)) > 0 {
-			hasAggregation = true
-			break
-		}
-	}
+	hasAggregation := returnPlan.hasAggregate
 
 	// Execute first MATCH and get initial bindings. relBindings is
 	// index-aligned with bindings and carries any relationship variable
@@ -249,21 +235,6 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		}
 	}
 
-	// Build result from bindings
-	result := &ExecuteResult{
-		Columns: make([]string, len(returnItems)),
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-
-	for i, item := range returnItems {
-		if item.alias != "" {
-			result.Columns[i] = item.alias
-		} else {
-			result.Columns[i] = item.expr
-		}
-	}
-
 	// relAt returns the relationship-binding map for row idx, or nil when
 	// relBindings is shorter than bindings (e.g. rows added before any
 	// relationship variable existed).
@@ -274,6 +245,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		return nil
 	}
 	if hasAggregation {
+		result := &ExecuteResult{Stats: &QueryStats{}}
 		rows := []pipelineRow{{}}
 		bindParameterRow(ctx, rows[0])
 		for _, clause := range matchClauses {
@@ -305,15 +277,31 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		return result, nil
 	}
 
-	rows := make([]pipelineRow, len(bindings))
-	for index, nodes := range bindings {
-		rows[index] = pipelineRowFromTraversalOptionalRow(traversalOptRow{nodes: nodes, values: relAt(index)})
+	values := make(pipelineRow)
+	source := func(yield func(pipelineRow) bool) bool {
+		for index, nodes := range bindings {
+			clear(values)
+			for name, node := range nodes {
+				if node == nil {
+					values[name] = nil
+				} else {
+					values[name] = node
+				}
+			}
+			for name, value := range relAt(index) {
+				values[name] = value
+			}
+			if !yield(values) {
+				break
+			}
+		}
+		return true
 	}
-	projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+returnPart)
+	projected, err := e.projectMergeReturnSource(ctx, nil, "RETURN "+returnPart, source)
 	if err != nil {
 		return nil, err
 	}
-	projected.Stats = result.Stats
+	projected.Stats = &QueryStats{}
 	return projected, nil
 }
 
@@ -1281,6 +1269,26 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 		patternMatches = e.applyCartesianWherePushdown(ctx, patternMatches, whereClause)
 	}
 
+	returnClause := cypher[returnIdx:]
+	if distinct && !startsWithKeywordFold(strings.TrimSpace(returnClause[len("RETURN"):]), "DISTINCT") {
+		returnClause = "RETURN DISTINCT " + strings.TrimSpace(returnClause[len("RETURN"):])
+	}
+	if hasAggregation && whereClause == "" {
+		groups, handled, err := e.tryCartesianAggregatePartitions(ctx, patternMatches, returnProjectionPlanFor(returnClause), 0)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			projected, err := e.projectMergeReturnSource(ctx, nil, returnClause, nil, groups)
+			if err != nil {
+				return nil, err
+			}
+			projected.Stats = result.Stats
+			*result = *projected
+			return result, nil
+		}
+	}
+
 	// Use an equality join when WHERE provides a supported key; otherwise keep
 	// the general cartesian expansion for predicates the join planner cannot
 	// safely reduce.
@@ -1328,10 +1336,6 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 			}
 		}
 		return true
-	}
-	returnClause := cypher[returnIdx:]
-	if distinct && !startsWithKeywordFold(strings.TrimSpace(returnClause[len("RETURN"):]), "DISTINCT") {
-		returnClause = "RETURN DISTINCT " + strings.TrimSpace(returnClause[len("RETURN"):])
 	}
 	projected, err := e.projectMergeReturnSource(ctx, nil, returnClause, source)
 	if err != nil {

@@ -145,13 +145,17 @@ func TestTracedEngine_EmitsStorageSpans(t *testing.T) {
 func TestExecuteSpanConcurrentOptions(t *testing.T) {
 	exporter, teardown := spanSetup(t)
 	defer teardown()
+	_, unrelated := otel.Tracer("background").Start(context.Background(), "unrelated")
+	unrelated.End()
 	const workers = 32
+	var traceIDs [workers]string
 	var workersDone sync.WaitGroup
 	for worker := 0; worker < workers; worker++ {
 		workersDone.Add(1)
 		go func() {
 			defer workersDone.Done()
 			parentContext, parent := otel.Tracer("test").Start(context.Background(), "parent")
+			traceIDs[worker] = parent.SpanContext().TraceID().String()
 			executeContext, execute := startExecuteSpan(parentContext, "read", "RETURN 1")
 			planContext, plan := startPlanSpan(executeContext)
 			_, operator := startOperatorSpan(planContext, &PlanOperator{OperatorType: "RETURN"})
@@ -165,7 +169,22 @@ func TestExecuteSpanConcurrentOptions(t *testing.T) {
 		}()
 	}
 	workersDone.Wait()
-	spans := exporter.GetSpans()
+	traceCounts := make(map[string]int, workers)
+	for _, traceID := range traceIDs {
+		traceCounts[traceID] = 0
+	}
+	require.Len(t, traceCounts, workers)
+	spans := make([]tracetest.SpanStub, 0, workers*4)
+	for _, span := range exporter.GetSpans() {
+		traceID := span.SpanContext.TraceID().String()
+		if _, owned := traceCounts[traceID]; owned {
+			traceCounts[traceID]++
+			spans = append(spans, span)
+		}
+	}
+	for _, count := range traceCounts {
+		require.Equal(t, 4, count)
+	}
 	require.Len(t, spans, workers*4)
 	for _, span := range spans {
 		assert.Equal(t, "internal", span.SpanKind.String())

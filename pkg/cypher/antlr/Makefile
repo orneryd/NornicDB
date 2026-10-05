@@ -57,6 +57,8 @@ generate: check-java $(ANTLR_JAR)
 	@echo ""
 	@echo "=== Generating Cypher Parser ==="
 	$(JAVA) -jar $(ANTLR_JAR) -Dlanguage=Go -no-visitor -package antlr CypherParser.g4
+	perl -0pi -e 's/\nerrorExit:/\n\tgoto errorExit\n\nerrorExit:/g; s/\n\tgoto errorExit \/\/ Trick[^\n]*//g' cypher_parser.go
+	gofmt -w cypher_lexer.go cypher_parser.go cypherparser_listener.go cypherparser_base_listener.go
 	@echo ""
 	@echo "=== Generation Complete ==="
 	@echo "Generated files:"

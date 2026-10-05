@@ -64,6 +64,11 @@ func TestSeedNodesFromOuterMatch_NonIndexableWhereFallbacks(t *testing.T) {
 	require.Len(t, nodes, 1)
 	require.Equal(t, "e2", nodes[0].Properties["ext"])
 
+	nodes, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Seed) RETURN n ORDER BY n.score DESC LIMIT 1", "n")
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Equal(t, "e2", nodes[0].Properties["ext"])
+
 	// Mismatched correlated variable in fallback projection should surface explicit error.
 	_, err = exec.seedNodesFromOuterMatch(context.Background(), "MATCH (n:Seed) RETURN n", "missing")
 	require.Error(t, err)

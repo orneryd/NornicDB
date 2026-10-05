@@ -3,7 +3,14 @@ package cypher
 import (
 	"context"
 	"math"
+	"runtime"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 type pipelineRowSource func(func(pipelineRow) bool) bool
@@ -164,6 +171,247 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		grouping.ordered = append(grouping.ordered, newGroup(nil))
 	}
 	return grouping.ordered, true
+}
+
+func cartesianAggregateWorkers(rows, complexity, cores int) int {
+	if rows < 65536 || cores <= 1 {
+		return 1
+	}
+	chunk := 16384 / max(1, complexity)
+	return max(1, min(cores, rows/max(256, chunk)))
+}
+
+func cartesianAggregateProperty(expression string, patterns []struct {
+	variable string
+	nodes    []*storage.Node
+}) (int, string, bool) {
+	separator := strings.IndexByte(expression, '.')
+	if separator <= 0 || separator == len(expression)-1 {
+		return 0, "", false
+	}
+	property := expression[separator+1:]
+	for _, character := range property {
+		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_') {
+			return 0, "", false
+		}
+	}
+	for index, pattern := range patterns {
+		if pattern.variable == expression[:separator] {
+			return index, property, true
+		}
+	}
+	return 0, "", false
+}
+
+func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, patterns []struct {
+	variable string
+	nodes    []*storage.Node
+}, plan *returnProjectionPlan, forcedWorkers int) ([]*pipelineAggregateGroup, bool, error) {
+	if !plan.valid || !plan.hasAggregate {
+		return nil, false, nil
+	}
+	rows := 1
+	for _, pattern := range patterns {
+		if len(pattern.nodes) == 0 || rows > int(^uint(0)>>1)/len(pattern.nodes) {
+			return nil, false, nil
+		}
+		rows *= len(pattern.nodes)
+	}
+	if rows < 65536 && forcedWorkers == 0 {
+		return nil, false, nil
+	}
+	for index, pattern := range patterns {
+		for prior := 0; prior < index; prior++ {
+			if pattern.variable == patterns[prior].variable {
+				return nil, false, nil
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, true, err
+	}
+	complexity := 0
+	for _, projection := range plan.projections {
+		if !projection.isAggr {
+			if _, _, ok := cartesianAggregateProperty(projection.expr, patterns); !ok {
+				return nil, false, nil
+			}
+			complexity += 2
+			continue
+		}
+		spans := findAggregateSpans(projection.expr)
+		if len(spans) == 0 {
+			return nil, false, nil
+		}
+		for _, span := range spans {
+			name, expression, distinct, ok := parsePipelineAggregate(projection.expr[span.start:span.end])
+			if !ok || distinct || (name != "count" && name != "sum") {
+				return nil, false, nil
+			}
+			complexity++
+			if name == "count" && expression == "*" {
+				continue
+			}
+			if _, err := strconv.ParseInt(expression, 10, 64); err == nil {
+				continue
+			}
+			patternIndex, property, ok := cartesianAggregateProperty(expression, patterns)
+			if !ok {
+				return nil, false, nil
+			}
+			if name == "sum" {
+				complexity++
+				for _, node := range patterns[patternIndex].nodes {
+					if node == nil || node.Properties[property] == nil {
+						continue
+					}
+					_, _, integer, valid := pipelineAggregateNumber(node.Properties[property])
+					if !valid || !integer {
+						return nil, false, nil
+					}
+				}
+			}
+		}
+	}
+	workers := cartesianAggregateWorkers(rows, complexity, runtime.GOMAXPROCS(0))
+	if forcedWorkers > 0 {
+		workers = min(rows, forcedWorkers)
+	}
+	type partition struct {
+		groups []*pipelineAggregateGroup
+		err    error
+	}
+	jobs := workers
+	if workers > 1 {
+		jobs = min(rows, workers*4)
+	}
+	partitions := make([]partition, workers)
+	var next atomic.Int64
+	run := func(worker int) {
+		workerContext := context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
+		source := func(yield func(pipelineRow) bool) bool {
+			values := make(pipelineRow, len(patterns))
+			for {
+				job := int(next.Add(1) - 1)
+				if job >= jobs {
+					return true
+				}
+				width, remainder := rows/jobs, rows%jobs
+				start := job*width + min(job, remainder)
+				end := start + width
+				if job < remainder {
+					end++
+				}
+				for ordinal := start; ordinal < end; ordinal++ {
+					position := ordinal
+					for index := len(patterns) - 1; index >= 0; index-- {
+						pattern := patterns[index]
+						node := pattern.nodes[position%len(pattern.nodes)]
+						if node == nil {
+							values[pattern.variable] = nil
+						} else {
+							values[pattern.variable] = node
+						}
+						position /= len(pattern.nodes)
+					}
+					if !yield(values) {
+						return true
+					}
+				}
+			}
+		}
+		groups, valid := e.pipelineAggregateGroups(workerContext, source, plan.projections, true)
+		partitions[worker].groups = groups
+		if !valid {
+			partitions[worker].err = getExpressionFailure(workerContext)
+			if partitions[worker].err == nil {
+				partitions[worker].err = newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian aggregate")
+			}
+		}
+	}
+	if workers == 1 {
+		run(0)
+	} else {
+		var wait sync.WaitGroup
+		wait.Add(workers)
+		for worker := 0; worker < workers; worker++ {
+			go func() {
+				defer wait.Done()
+				run(worker)
+			}()
+		}
+		wait.Wait()
+	}
+	if workers == 1 {
+		return partitions[0].groups, true, partitions[0].err
+	}
+	positions := make([]map[*storage.Node]int, len(patterns))
+	for index, pattern := range patterns {
+		positions[index] = make(map[*storage.Node]int, len(pattern.nodes))
+		for position, node := range pattern.nodes {
+			if _, exists := positions[index][node]; !exists {
+				positions[index][node] = position
+			}
+		}
+	}
+	type mergedGroup struct {
+		group   *pipelineAggregateGroup
+		ordinal int
+	}
+	groups := make(map[string]*mergedGroup)
+	var ordered []*mergedGroup
+	for _, partition := range partitions {
+		if partition.err != nil {
+			return nil, true, partition.err
+		}
+		for _, partial := range partition.groups {
+			if len(partial.first) == 0 {
+				continue
+			}
+			ordinal := 0
+			for index, pattern := range patterns {
+				node, _ := partial.first[pattern.variable].(*storage.Node)
+				ordinal = ordinal*len(pattern.nodes) + positions[index][node]
+			}
+			var parts []string
+			for _, projection := range plan.projections {
+				if !projection.isAggr {
+					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, partial.first)
+					if !ok {
+						return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian grouping expression")
+					}
+					parts = append(parts, pipelineValueKey(value))
+				}
+			}
+			key := strings.Join(parts, "\x1f")
+			merged := groups[key]
+			if merged == nil {
+				merged = &mergedGroup{group: partial, ordinal: ordinal}
+				groups[key] = merged
+				ordered = append(ordered, merged)
+				continue
+			}
+			group := merged.group
+			if ordinal < merged.ordinal {
+				merged.ordinal = ordinal
+				group.first = partial.first
+			}
+			for index := range group.projections {
+				for stateIndex := range group.projections[index].states {
+					state := &group.projections[index].states[stateIndex]
+					other := &partial.projections[index].states[stateIndex]
+					state.count += other.count
+					state.integerTotal += other.integerTotal
+				}
+			}
+		}
+	}
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left].ordinal < ordered[right].ordinal })
+	result := make([]*pipelineAggregateGroup, len(ordered))
+	for index, merged := range ordered {
+		result[index] = merged.group
+	}
+	return result, true, nil
 }
 
 func (group *pipelineAggregateGroup) value(ctx context.Context, executor *StorageExecutor, index int) (interface{}, bool) {

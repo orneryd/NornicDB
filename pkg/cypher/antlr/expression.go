@@ -1554,9 +1554,7 @@ func ExtractNodePattern(node INodePatternContext, eval *ExpressionEvaluator) Nod
 
 	// Get labels from NodeLabels AST node
 	if nodeLabels := node.NodeLabels(); nodeLabels != nil {
-		for _, name := range nodeLabels.AllName() {
-			info.Labels = append(info.Labels, name.GetText())
-		}
+		info.Labels = labelExpressionNames(nodeLabels)
 	}
 
 	// Get properties from Properties AST node
@@ -1625,9 +1623,8 @@ func ExtractRelationshipPattern(rel IRelationshipPatternContext, eval *Expressio
 
 		// Get type from RelationshipTypes
 		if types := detail.RelationshipTypes(); types != nil {
-			for _, name := range types.AllName() {
-				info.Type = name.GetText()
-				break // Take first type
+			if names := labelExpressionNames(types); len(names) > 0 {
+				info.Type = names[0]
 			}
 		}
 

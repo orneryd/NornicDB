@@ -92,6 +92,12 @@ func (s *BaseCypherParserListener) EnterConstraintRequirement(ctx *ConstraintReq
 // ExitConstraintRequirement is called when production constraintRequirement is exited.
 func (s *BaseCypherParserListener) ExitConstraintRequirement(ctx *ConstraintRequirementContext) {}
 
+// EnterConstraintBlock is called when production constraintBlock is entered.
+func (s *BaseCypherParserListener) EnterConstraintBlock(ctx *ConstraintBlockContext) {}
+
+// ExitConstraintBlock is called when production constraintBlock is exited.
+func (s *BaseCypherParserListener) ExitConstraintBlock(ctx *ConstraintBlockContext) {}
+
 // EnterPropertyTypeName is called when production propertyTypeName is entered.
 func (s *BaseCypherParserListener) EnterPropertyTypeName(ctx *PropertyTypeNameContext) {}
 
@@ -320,6 +326,24 @@ func (s *BaseCypherParserListener) EnterNodeLabels(ctx *NodeLabelsContext) {}
 // ExitNodeLabels is called when production nodeLabels is exited.
 func (s *BaseCypherParserListener) ExitNodeLabels(ctx *NodeLabelsContext) {}
 
+// EnterLabelExpression is called when production labelExpression is entered.
+func (s *BaseCypherParserListener) EnterLabelExpression(ctx *LabelExpressionContext) {}
+
+// ExitLabelExpression is called when production labelExpression is exited.
+func (s *BaseCypherParserListener) ExitLabelExpression(ctx *LabelExpressionContext) {}
+
+// EnterLabelConjunction is called when production labelConjunction is entered.
+func (s *BaseCypherParserListener) EnterLabelConjunction(ctx *LabelConjunctionContext) {}
+
+// ExitLabelConjunction is called when production labelConjunction is exited.
+func (s *BaseCypherParserListener) ExitLabelConjunction(ctx *LabelConjunctionContext) {}
+
+// EnterLabelNegation is called when production labelNegation is entered.
+func (s *BaseCypherParserListener) EnterLabelNegation(ctx *LabelNegationContext) {}
+
+// ExitLabelNegation is called when production labelNegation is exited.
+func (s *BaseCypherParserListener) ExitLabelNegation(ctx *LabelNegationContext) {}
+
 // EnterCreateSt is called when production createSt is entered.
 func (s *BaseCypherParserListener) EnterCreateSt(ctx *CreateStContext) {}
 
@@ -410,6 +434,12 @@ func (s *BaseCypherParserListener) EnterAtomicExpression(ctx *AtomicExpressionCo
 // ExitAtomicExpression is called when production atomicExpression is exited.
 func (s *BaseCypherParserListener) ExitAtomicExpression(ctx *AtomicExpressionContext) {}
 
+// EnterLabelPredicate is called when production labelPredicate is entered.
+func (s *BaseCypherParserListener) EnterLabelPredicate(ctx *LabelPredicateContext) {}
+
+// ExitLabelPredicate is called when production labelPredicate is exited.
+func (s *BaseCypherParserListener) ExitLabelPredicate(ctx *LabelPredicateContext) {}
+
 // EnterListExpression is called when production listExpression is entered.
 func (s *BaseCypherParserListener) EnterListExpression(ctx *ListExpressionContext) {}
 
@@ -489,6 +519,12 @@ func (s *BaseCypherParserListener) EnterPatternElemChain(ctx *PatternElemChainCo
 
 // ExitPatternElemChain is called when production patternElemChain is exited.
 func (s *BaseCypherParserListener) ExitPatternElemChain(ctx *PatternElemChainContext) {}
+
+// EnterRelationshipQuantifier is called when production relationshipQuantifier is entered.
+func (s *BaseCypherParserListener) EnterRelationshipQuantifier(ctx *RelationshipQuantifierContext) {}
+
+// ExitRelationshipQuantifier is called when production relationshipQuantifier is exited.
+func (s *BaseCypherParserListener) ExitRelationshipQuantifier(ctx *RelationshipQuantifierContext) {}
 
 // EnterProperties is called when production properties is entered.
 func (s *BaseCypherParserListener) EnterProperties(ctx *PropertiesContext) {}

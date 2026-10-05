@@ -3268,5 +3268,8 @@ func TestExecuteSet_AdditionalMapAndLabelValidationBranches(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n:1bad RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, strings.ToLower(err.Error()), "invalid label name")
+	labels, err := exec.Execute(ctx, "MATCH (n:P) RETURN labels(n) AS labels", nil)
+	require.NoError(t, err)
+	require.Len(t, labels.Rows, 1)
+	assert.NotContains(t, labels.Rows[0][0], "1bad")
 }

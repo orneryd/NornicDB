@@ -309,16 +309,23 @@ func (w *queryWalker) EnterPathFunction(ctx *PathFunctionContext) {
 
 // EnterNodeLabels collects node labels for cache invalidation
 func (w *queryWalker) EnterNodeLabels(ctx *NodeLabelsContext) {
-	for _, name := range ctx.AllName() {
-		w.info.Labels = append(w.info.Labels, name.GetText())
-	}
+	w.info.Labels = append(w.info.Labels, labelExpressionNames(ctx)...)
 }
 
 // EnterRelationshipTypes collects relationship types for cache invalidation
 // This is critical - the old regex extracted both node labels AND relationship types
 // for proper cache invalidation (e.g., :KNOWS, :BENCH_REL)
 func (w *queryWalker) EnterRelationshipTypes(ctx *RelationshipTypesContext) {
-	for _, name := range ctx.AllName() {
-		w.info.Labels = append(w.info.Labels, name.GetText())
+	w.info.Labels = append(w.info.Labels, labelExpressionNames(ctx)...)
+}
+
+func labelExpressionNames(tree antlr.Tree) []string {
+	if name, ok := tree.(INameContext); ok {
+		return []string{name.GetText()}
 	}
+	var names []string
+	for _, child := range tree.GetChildren() {
+		names = append(names, labelExpressionNames(child)...)
+	}
+	return names
 }

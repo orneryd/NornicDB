@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Adapt eligible large Cartesian COUNT and integer SUM aggregation to workload
+  size, expression complexity and available GOMAXPROCS. Dynamically claim chunks
+  with worker-local accumulators and deterministic representative/group merging;
+  preserve serial semantics for small, floating, DISTINCT and unsupported shapes.
+  Reuse shared RETURN modifiers and avoid materializing every combination (#713).
+
+- Borrow invocation-local native scopes for non-aggregate multi-MATCH RETURN and
+  reuse cached projection admission/columns instead of allocating a scope per row.
+  Shared consumers retain owned rows when ordering or wildcard projection needs
+  them; preserve relationship values, typed errors and pagination (#713).
+
 - Share MATCH/WITH/UNWIND projection, aggregation, ordering and pagination with
   the existing WITH/RETURN planners. Stream invocation-owned scopes instead of
   buffering expanded rows; preserve typed errors, scalar/list/null UNWIND,
@@ -408,6 +419,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transaction`. IDs now count up from the server's start time. Erasure
   requests and edge provenance records, which also used the clock as their
   ID, get random IDs (#915).
+
+- Complete strict ANTLR admission for DISALLOWED policy constraints, constraint
+  blocks/inventory, label expressions, relationship quantifiers, escaped
+  backticks, bare index properties and supported database/user administration.
+  Preserve IS NULL/type precedence and reproducibly vet-clean parser generation.
+  Correct invalid phase-boundary fixtures without dropping state assertions;
+  preserve existing correlated RETURN rather than appending a second one. Isolate
+  concurrent tracing assertions by owned trace IDs while requiring every
+  parent/operator span (#713, #728, #754).
 
 - Compare an integer and a float by their exact values everywhere (WHERE,
   RETURN, ORDER BY, CASE, with or without an index), as Neo4j compares

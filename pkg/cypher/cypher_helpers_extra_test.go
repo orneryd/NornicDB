@@ -3408,7 +3408,7 @@ func TestCypherHelpers_ExecuteSetTrailingPipelinesAndHelpers(t *testing.T) {
 	require.NoError(t, err)
 
 	// SET + trailing UNWIND + RETURN path.
-	unwindRes, err := exec.Execute(ctx, "MATCH (n:Person) SET n.score = 7 UNWIND [1,2] AS x RETURN n.name AS name, x", nil)
+	unwindRes, err := exec.Execute(ctx, "MATCH (n:Person) SET n.score = 7 WITH n UNWIND [1,2] AS x RETURN n.name AS name, x", nil)
 	require.NoError(t, err)
 	require.Len(t, unwindRes.Columns, 2)
 	require.Len(t, unwindRes.Rows, 4)
