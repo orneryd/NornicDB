@@ -157,6 +157,7 @@ func (b *BadgerEngine) Close() error {
 	// this goroutine holds while it waits for them to stop.
 	b.stopEdgeBetweenIndexBackfill()
 	b.stopLabelIndexBackfill()
+	b.stopDeleteCleanup()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call
