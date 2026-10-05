@@ -297,7 +297,14 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		}
 		return true
 	}
-	projected, err := e.projectMergeReturnSource(ctx, nil, "RETURN "+returnPart, source)
+	if returnPlan.star && len(bindings) == 0 {
+		scope := make(map[string]struct{})
+		for _, clause := range matchClauses {
+			addPipelinePatternBindings(e, scope, "MATCH "+clause, "MATCH")
+		}
+		returnPlan = returnPlan.withStarExpanded(pipelineScopeColumns(scope))
+	}
+	projected, err := e.projectMergeReturnPlan(ctx, nil, "RETURN "+returnPart, returnPlan, source)
 	if err != nil {
 		return nil, err
 	}

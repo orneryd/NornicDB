@@ -849,7 +849,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			final, ok := e.pipelineApplyReturnSource(ctx, rows, clause.text, source, rowsValidated)
+			plan := returnProjectionPlanFor(clause.text)
+			if plan.star && len(rows) == 0 {
+				plan = plan.withStarExpanded(pipelineScopeColumns(scope))
+			}
+			final, ok := e.pipelineApplyReturnPlan(ctx, rows, plan, source, rowsValidated)
 			source = nil
 			if !ok {
 				if failure := getExpressionFailure(ctx); failure != nil && final != nil {

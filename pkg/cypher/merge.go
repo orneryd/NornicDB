@@ -3000,8 +3000,12 @@ func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelin
 
 func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
 	returnClause = strings.TrimSpace(returnClause)
+	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanFor(returnClause), source, preparedGroups...)
+}
+
+func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pipelineRow, returnClause string, plan *returnProjectionPlan, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
 	priorFailure := getExpressionFailure(ctx)
-	result, handled := e.pipelineApplyReturnSource(ctx, rows, "RETURN "+strings.TrimSpace(returnClause[len("RETURN"):]), source, false, preparedGroups...)
+	result, handled := e.pipelineApplyReturnPlan(ctx, rows, plan, source, false, preparedGroups...)
 	if failure := getExpressionFailure(ctx); failure != nil && (!handled || priorFailure == nil) {
 		return nil, failure
 	}

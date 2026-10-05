@@ -297,6 +297,12 @@ func TestGh713MultiMatchBorrowedReturn(t *testing.T) {
 		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN CoUnT (DISTINCT a.value) AS `value count`", "", []string{"value count"}, [][]interface{}{{int64(2)}}, true},
 		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN count(*) + 1 AS total", "", []string{"total"}, [][]interface{}{{int64(5)}}, true},
 		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN a.value AS left LIMIT 0", "", []string{"left"}, [][]interface{}{}, true},
+		{"MATCH (a:Missing) MATCH (b:BorrowRight) RETURN *", "", []string{"a", "b"}, [][]interface{}{}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:Missing) RETURN *", "", []string{"a", "b"}, [][]interface{}{}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:Missing) RETURN *, count(*) AS total", "", []string{"a", "b", "total"}, [][]interface{}{}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:Missing) RETURN *, 1 AS marker", "", []string{"a", "b", "marker"}, [][]interface{}{}, true},
+		{"MATCH (a:BorrowLeft) MATCH (b:Missing) RETURN *, 1 AS a", "", []string{"b", "a"}, [][]interface{}{}, true},
+		{"MATCH (a:BorrowLeft)-[r:BORROWED]->(b:BorrowRight) MATCH (c:Missing) RETURN *", "", []string{"a", "b", "c", "r"}, [][]interface{}{}, true},
 		{"MATCH (a:BorrowLeft) MATCH (b:BorrowRight) RETURN a.value / 0 AS broken", "Neo.ClientError.Statement.ArithmeticError", nil, nil, false},
 		{"MATCH (a:BorrowLeft)-[r:BORROWED]->(b:BorrowRight) MATCH (c:BorrowRight) RETURN a.value AS left, type(r) AS kind, c.value AS right ORDER BY left, right", "", []string{"left", "kind", "right"}, [][]interface{}{{int64(1), "BORROWED", int64(1)}, {int64(1), "BORROWED", int64(2)}, {int64(2), "BORROWED", int64(1)}, {int64(2), "BORROWED", int64(2)}}, true},
 	} {
@@ -315,6 +321,13 @@ func TestGh713MultiMatchBorrowedReturn(t *testing.T) {
 			require.NoError(t, publicErr)
 			require.Equal(t, test.columns, result.Columns)
 			require.Equal(t, test.columns, public.Columns)
+			if len(test.rows) == 0 {
+				pipeline := exec.executePipeline(ctx, test.query)
+				require.NoError(t, pipeline.err)
+				require.True(t, pipeline.handled())
+				require.Equal(t, test.columns, pipeline.result.Columns)
+				require.Empty(t, pipeline.result.Rows)
+			}
 			if test.ordered {
 				require.Equal(t, test.rows, result.Rows)
 				require.Equal(t, test.rows, public.Rows)
