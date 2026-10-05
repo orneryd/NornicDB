@@ -827,14 +827,7 @@ func topKMinScore(scores map[uint32]float64, k int) float64 {
 	}
 	h := make(minScoreHeap, 0, k)
 	for docNum, score := range scores {
-		if len(h) < k {
-			h = pushMinScore(h, scoredDoc{docNum: docNum, score: score}, nil)
-			continue
-		}
-		candidate := scoredDoc{docNum: docNum, score: score}
-		if scoredDocRanksBefore(candidate, h[0], nil) {
-			replaceMinScore(h, candidate, nil)
-		}
+		h = offerScoredDoc(h, scoredDoc{docNum: docNum, score: score}, nil, k)
 	}
 	if len(h) < k {
 		return 0
@@ -857,17 +850,22 @@ func topKFromSparseScores(scores map[uint32]float64, docIDs []string, k int, h m
 		h = h[:0]
 	}
 	for docNum, score := range scores {
-		candidate := scoredDoc{docNum: docNum, score: score}
-		if len(h) < k {
-			h = pushMinScore(h, candidate, docIDs)
-			continue
-		}
-		if len(docIDs) == 0 && scoredDocNumRanksBefore(candidate, h[0]) ||
-			len(docIDs) != 0 && scoredDocRanksBefore(candidate, h[0], docIDs) {
-			replaceMinScore(h, candidate, docIDs)
-		}
+		h = offerScoredDoc(h, scoredDoc{docNum: docNum, score: score}, docIDs, k)
 	}
 	return sortScoreHeapDescending(h, docIDs)
+}
+
+// offerScoredDoc offers candidate to the min-heap h of the k best documents:
+// it is added while h has room, and afterwards replaces the weakest kept
+// document only when it ranks before it.
+func offerScoredDoc(h minScoreHeap, candidate scoredDoc, docIDs []string, k int) minScoreHeap {
+	if len(h) < k {
+		return pushMinScore(h, candidate, docIDs)
+	}
+	if scoredDocRanksBefore(candidate, h[0], docIDs) {
+		replaceMinScore(h, candidate, docIDs)
+	}
+	return h
 }
 
 func topKFromDenseScores(scores []float64, touched []uint32, docIDs []string, ascendingLexicalCandidates bool, k int, h minScoreHeap) []scoredDoc {
