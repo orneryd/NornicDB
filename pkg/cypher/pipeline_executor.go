@@ -157,8 +157,8 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	if !ok {
 		return nil, false
 	}
-	// Must contain at least two clauses.
-	if len(clauses) < 2 && (len(clauses) == 0 || (clauses[0].kind != pipelineClauseForeach && clauses[0].kind != pipelineClauseCallSubquery)) {
+	// Single MERGE, FOREACH and CALL subquery clauses own their seed row.
+	if len(clauses) < 2 && (len(clauses) == 0 || (clauses[0].kind != pipelineClauseMerge && clauses[0].kind != pipelineClauseForeach && clauses[0].kind != pipelineClauseCallSubquery)) {
 		return nil, false
 	}
 	// Standalone CREATE ... RETURN remains one atomic write operator. CREATE

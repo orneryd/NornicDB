@@ -245,19 +245,16 @@ func TestRelationshipMergeSegmentIdentityIncludesPatternProperties(t *testing.T)
 
 	_, err := exec.Execute(ctx, `CREATE (:A {key: 'a1'}), (:B {key: 'b1'})`, nil)
 	require.NoError(t, err)
-	aRows, err := exec.Execute(ctx, `MATCH (a:A {key: 'a1'}) RETURN a`, nil)
-	require.NoError(t, err)
-	bRows, err := exec.Execute(ctx, `MATCH (b:B {key: 'b1'}) RETURN b`, nil)
-	require.NoError(t, err)
-	a, ok := aRows.Rows[0][0].(*storage.Node)
-	require.True(t, ok)
-	b, ok := bRows.Rows[0][0].(*storage.Node)
-	require.True(t, ok)
-	nodeContext := map[string]*storage.Node{"a": a, "b": b}
 
-	for _, scopeID := range []string{"scope-a", "scope-b", "scope-a"} {
-		pattern := "(a)-[:ASSERTS {scope_id: '" + scopeID + "'}]->(b)"
-		require.NoError(t, exec.executeMergeRelSegment(ctx, pattern, nodeContext, nil))
+	for index, scopeID := range []string{"scope-a", "scope-b", "scope-a"} {
+		result, err := exec.Execute(ctx, "MATCH (a:A {key:'a1'}), (b:B {key:'b1'}) MERGE (a)-[:ASSERTS {scope_id:$scope}]->(b)", map[string]interface{}{"scope": scopeID})
+		require.NoError(t, err)
+		require.Zero(t, result.Stats.NodesCreated)
+		if index < 2 {
+			require.EqualValues(t, 1, result.Stats.RelationshipsCreated)
+		} else {
+			require.Zero(t, result.Stats.RelationshipsCreated)
+		}
 	}
 	assertAssertRelationshipRows(t, exec, ctx, [][]interface{}{
 		{"scope-a", nil},

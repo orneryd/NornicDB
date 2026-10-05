@@ -2,10 +2,8 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"testing"
 
-	nerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -16,23 +14,19 @@ func TestExecuteMergeWithChain_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeMergeWithChain(ctx, "")
-	require.Error(t, err)
-	require.True(t, errors.Is(err, nerrors.ErrInvalidMergeChainQuery))
-
-	res, err := exec.executeMergeWithChain(ctx, "MERGE (a:Node {id:'a1'}) WITH a MATCH (b:Node {id:'missing'}) MERGE (a)-[:REL]->(b) RETURN a.id AS aid")
+	res, err := exec.Execute(ctx, "MERGE (a:Node {id:'a1'}) WITH a MATCH (b:Node {id:'missing'}) MERGE (a)-[:REL]->(b) RETURN a.id AS aid", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"aid"}, res.Columns)
 	require.Empty(t, res.Rows)
 
-	res, err = exec.executeMergeWithChain(ctx, "MERGE (a:Node {id:'a2'}) WITH a OPTIONAL MATCH (b:Node {id:'missing'}) RETURN a.id AS aid, b.id AS bid")
+	res, err = exec.Execute(ctx, "MERGE (a:Node {id:'a2'}) WITH a OPTIONAL MATCH (b:Node {id:'missing'}) RETURN a.id AS aid, b.id AS bid", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"aid", "bid"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "a2", res.Rows[0][0])
 	require.Nil(t, res.Rows[0][1])
 
-	res, err = exec.executeMergeWithChain(ctx, "MERGE (a:Node {id:'a3'}) WITH a MERGE (b:Node {id:'b3'}) WITH a, b MERGE (a)-[:REL]->(b) RETURN a.id AS aid, b.id AS bid")
+	res, err = exec.Execute(ctx, "MERGE (a:Node {id:'a3'}) WITH a MERGE (b:Node {id:'b3'}) WITH a, b MERGE (a)-[:REL]->(b) RETURN a.id AS aid, b.id AS bid", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"aid", "bid"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -45,7 +39,7 @@ func TestExecuteMergeWithChain_Branches(t *testing.T) {
 	require.EqualValues(t, 1, verify.Rows[0][0])
 
 	// FOREACH clause inside chain segment
-	res, err = exec.executeMergeWithChain(ctx, "MERGE (a:Node {id:'a4'}) WITH a FOREACH (i IN [1,2] | CREATE (n:Tmp {k:i})) RETURN a.id AS aid")
+	res, err = exec.Execute(ctx, "MERGE (a:Node {id:'a4'}) WITH a FOREACH (i IN [1,2] | CREATE (n:Tmp {k:i})) RETURN a.id AS aid", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"aid"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -96,13 +90,27 @@ func TestApplyWithProjection_Branches_Additional(t *testing.T) {
 	require.EqualValues(t, int64(7), outScalars["s"])
 }
 
-func TestExecuteMergeWithChain_ErrorBranches(t *testing.T) {
+func TestExecuteMergeWithChain_UnboundEndpoint(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "merge_chain_err_cov")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeMergeWithChain(ctx, "MERGE (a:Node {id:'e1'}) WITH a MERGE (a)-[:REL]->(missing) RETURN a.id AS aid")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing")
+	query := "MERGE (a:Node {id:'e1'}) WITH a MERGE (a)-[:REL]->(missing) RETURN a.id AS aid"
+	result, err := exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"e1"}}, result.Rows)
+	require.EqualValues(t, 2, result.Stats.NodesCreated)
+	require.EqualValues(t, 1, result.Stats.RelationshipsCreated)
+	repeated, err := exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, result.Rows, repeated.Rows)
+	require.Zero(t, repeated.Stats.NodesCreated)
+	require.Zero(t, repeated.Stats.RelationshipsCreated)
+	nodes, err := store.GetNodesByLabel("Node")
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	stored, err := exec.Execute(ctx, "MATCH ()-[r:REL]->() RETURN count(r)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, stored.Rows)
 }

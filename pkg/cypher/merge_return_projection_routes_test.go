@@ -104,11 +104,11 @@ func TestCompoundMatchUnwindMergeReturnProjectsAllRows(t *testing.T) {
 func TestMergeReturnProjectionErrors(t *testing.T) {
 	exec, ctx := newMergeReturnRouteExecutor(t)
 
-	_, err := exec.executeMerge(withExpressionFailures(ctx), "MERGE (n:M {id: 1}) RETURN 1 / 0 AS x")
+	_, err := exec.Execute(withExpressionFailures(ctx), "MERGE (n:M {id: 1}) RETURN 1 / 0 AS x", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 
-	_, err = exec.executeMerge(ctx, "MERGE (n:M {id: 1}) RETURN n.id +")
+	_, err = exec.Execute(ctx, "MERGE (n:M {id: 1}) RETURN n.id +", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
@@ -134,7 +134,7 @@ func TestMergeReturnSeesFabricRecordBindings(t *testing.T) {
 	exec.fabricRecordBindings = map[string]interface{}{"outer": int64(7)}
 	defer func() { exec.fabricRecordBindings = nil }()
 
-	result, err := exec.executeMerge(ctx, "MERGE (n:F {id: 1}) RETURN outer, n.id AS id")
+	result, err := exec.executeInternal(ctx, "MERGE (n:F {id: 1}) RETURN outer, n.id AS id", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(7), int64(1)}}, result.Rows)
 }

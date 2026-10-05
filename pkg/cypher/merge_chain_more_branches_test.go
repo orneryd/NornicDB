@@ -52,14 +52,14 @@ func TestExecuteMergeWithChain_ChainBreakSkipsIntermediateClauses(t *testing.T) 
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	res, err := exec.executeMergeWithChain(ctx, `
+	res, err := exec.Execute(ctx, `
 		MERGE (a:Node {id:'a-skip'})
 		MERGE (b:Node {id:'b-skip'})
 		WITH a, b
 		MATCH (m:Missing {id:'none'})
 		FOREACH (i IN [1,2] | CREATE (tmp:Tmp {k:i}))
 		RETURN a.id AS aid, b.id AS bid
-	`)
+	`, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"aid", "bid"}, res.Columns)
 	require.Empty(t, res.Rows)
@@ -134,7 +134,7 @@ func TestExecuteMergeWithChain_RelationshipBranchesAndChainBreak(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	res, err := exec.executeMergeWithChain(ctx, `
+	res, err := exec.Execute(ctx, `
 		MERGE (a:A {id:'a'})
 		MERGE (b:B {id:'b'})
 		MERGE (a)-[:R0]->(b)
@@ -142,7 +142,7 @@ func TestExecuteMergeWithChain_RelationshipBranchesAndChainBreak(t *testing.T) {
 		MATCH (b:B {id:'b'}) MERGE (a)-[:R1]->(b)
 		MERGE (a)-[:R2]->(b)
 		RETURN a.id AS aid
-	`)
+	`, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"aid"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -153,13 +153,16 @@ func TestExecuteMergeWithChain_RelationshipBranchesAndChainBreak(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 3, verify.Rows[0][0])
 
-	// MATCH parse error in chained segment should break the chain and return zero rows.
-	res2, err := exec.executeMergeWithChain(ctx, `
+	// Malformed MATCH rejects the statement before any MERGE writes.
+	_, err = exec.Execute(ctx, `
 		MERGE (x:A {id:'x'})
 		WITH x
 		MATCH (bad
 		RETURN x.id AS xid
-	`)
+	`, nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	verify, err = exec.Execute(ctx, "MATCH (x:A {id:'x'}) RETURN count(x)", nil)
 	require.NoError(t, err)
-	require.Empty(t, res2.Rows)
+	require.EqualValues(t, 0, verify.Rows[0][0])
 }

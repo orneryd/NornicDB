@@ -2811,5 +2811,53 @@
     "setup": ["CREATE (:WindowSource {id:1})"],
     "query": "MATCH (n:WindowSource) WITH n LIMIT 0 MERGE (target:WindowTarget {id:n.id}) RETURN target.id AS id",
     "no_effects": true
+  },
+  {
+    "name": "issue908 standalone MERGE match is a no-op",
+    "setup": ["CREATE (:MergeNoop {id:1})"],
+    "query": "MERGE (n:MergeNoop {id:1})",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 endpoint MERGE outgoing unbound start reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (endpoint)-[:R]->(bound) WITH bound, endpoint MERGE (again)-[:R]->(bound) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE outgoing unbound end reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (bound)-[:R]->(endpoint) WITH bound, endpoint MERGE (bound)-[:R]->(again) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE incoming unbound start reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (endpoint)<-[:R]-(bound) WITH bound, endpoint MERGE (again)<-[:R]-(bound) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE incoming unbound end reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (bound)<-[:R]-(endpoint) WITH bound, endpoint MERGE (bound)<-[:R]-(again) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE undirected unbound start reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (endpoint)-[:R]-(bound) WITH bound, endpoint MERGE (again)-[:R]-(bound) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 endpoint MERGE undirected unbound end reuses own write",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (bound:MergeBound {id:1}) MERGE (bound)-[:R]-(endpoint) WITH bound, endpoint MERGE (bound)-[:R]-(again) RETURN endpoint = again AS same, bound.id AS id"
+  },
+  {
+    "name": "issue908 malformed MERGE pattern rejects without effects",
+    "query": "MERGE bad-pattern",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 MERGE chain bound MATCH checks its pattern",
+    "setup": ["CREATE (:MergeBound {id:1})"],
+    "query": "MATCH (n:MergeBound {id:1}) WITH n MATCH (n:MergeBound {id:2}) MERGE (:Unexpected) RETURN count(*) AS count",
+    "no_effects": true
   }
 ]

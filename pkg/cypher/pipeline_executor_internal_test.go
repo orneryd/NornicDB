@@ -40,6 +40,21 @@ func TestCanExecuteAsPipeline_SimpleSeederShape(t *testing.T) {
 	require.Equal(t, pipelineClauseCreate, clauses[6].kind)
 }
 
+func TestCanExecuteAsPipeline_StandaloneMerge(t *testing.T) {
+	for _, query := range []string{
+		"MERGE (n:Standalone {id:$id})",
+		"MERGE (n:Standalone {id:$id}) ON CREATE SET n.created=true ON MATCH SET n.seen=true",
+		"MERGE (a:Standalone {id:1})-[:R]->(b:Standalone {id:2})",
+	} {
+		t.Run(query, func(t *testing.T) {
+			clauses, ok := canExecuteAsPipeline(query)
+			require.True(t, ok)
+			require.Len(t, clauses, 1)
+			require.Equal(t, pipelineClauseMerge, clauses[0].kind)
+		})
+	}
+}
+
 func TestPipelineSimpleNodeReadPlan_HandlesBoundedLabelStream(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = store.Close() })

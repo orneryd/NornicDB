@@ -889,9 +889,11 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	// Parse node pattern
 	varName, labels, matchProps, err := e.parseMergeNodePattern(ctx, mergePattern, nodeContext, relContext)
 	if err != nil {
-		varName = e.extractVarName(mergePattern)
-		labels = e.extractLabels(mergePattern)
-		matchProps = make(map[string]interface{})
+		return nil, &classifiedCypherError{
+			cause:  err,
+			code:   "Neo.ClientError.Statement.SyntaxError",
+			detail: "UnexpectedSyntax",
+		}
 	}
 	if err := validateMergePatternProperties(matchProps, "node"); err != nil {
 		return nil, err
@@ -1138,7 +1140,9 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	// keep their get-or-create semantics below (the issue confirms those
 	// already agree with Neo4j).
 	var existingEdge *storage.Edge
-	if startNode == nil && endNode == nil {
+	if startNode == nil && endNode == nil ||
+		startNode == nil && len(parsedPattern.startNodePattern.labels) == 0 && len(parsedPattern.startNodePattern.properties) == 0 ||
+		endNode == nil && len(parsedPattern.endNodePattern.labels) == 0 && len(parsedPattern.endNodePattern.properties) == 0 {
 		// Self-referencing pattern (a)-[:R]->(a): the end is the same node as
 		// the start; resolve it with get-or-create semantics.
 		if parsedPattern.startVariable != "" && parsedPattern.startVariable == parsedPattern.endVariable {
@@ -1161,13 +1165,19 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		} else {
 			startPattern := parsedPattern.startNodePattern
 			endPattern := parsedPattern.endNodePattern
-			startCandidates, err := e.findMergeNodes(store, startPattern.labels, startPattern.properties)
-			if err != nil {
-				return nil, err
+			startCandidates := []*storage.Node{startNode}
+			if startNode == nil {
+				startCandidates, err = e.findMergeNodes(store, startPattern.labels, startPattern.properties)
+				if err != nil {
+					return nil, err
+				}
 			}
-			endCandidates, err := e.findMergeNodes(store, endPattern.labels, endPattern.properties)
-			if err != nil {
-				return nil, err
+			endCandidates := []*storage.Node{endNode}
+			if endNode == nil {
+				endCandidates, err = e.findMergeNodes(store, endPattern.labels, endPattern.properties)
+				if err != nil {
+					return nil, err
+				}
 			}
 		search:
 			for _, candidateStart := range startCandidates {
@@ -1208,23 +1218,27 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			}
 			if existingEdge == nil {
 				// Create the whole pattern fresh.
-				startNode, err = e.createMergeRelationshipEndpointNode(store, startPattern)
-				if err != nil {
-					return nil, err
+				if startNode == nil {
+					startNode, err = e.createMergeRelationshipEndpointNode(store, startPattern)
+					if err != nil {
+						return nil, err
+					}
+					result.Stats.NodesCreated++
+					countCreatedEntity(result.Stats, startNode.Labels, startNode.Properties)
+					if parsedPattern.startVariable != "" {
+						nodeContext[parsedPattern.startVariable] = startNode
+					}
 				}
-				result.Stats.NodesCreated++
-				countCreatedEntity(result.Stats, startNode.Labels, startNode.Properties)
-				if parsedPattern.startVariable != "" {
-					nodeContext[parsedPattern.startVariable] = startNode
-				}
-				endNode, err = e.createMergeRelationshipEndpointNode(store, endPattern)
-				if err != nil {
-					return nil, err
-				}
-				result.Stats.NodesCreated++
-				countCreatedEntity(result.Stats, endNode.Labels, endNode.Properties)
-				if parsedPattern.endVariable != "" {
-					nodeContext[parsedPattern.endVariable] = endNode
+				if endNode == nil {
+					endNode, err = e.createMergeRelationshipEndpointNode(store, endPattern)
+					if err != nil {
+						return nil, err
+					}
+					result.Stats.NodesCreated++
+					countCreatedEntity(result.Stats, endNode.Labels, endNode.Properties)
+					if parsedPattern.endVariable != "" {
+						nodeContext[parsedPattern.endVariable] = endNode
+					}
 				}
 			}
 		}

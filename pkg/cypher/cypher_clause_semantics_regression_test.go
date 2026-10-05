@@ -262,12 +262,39 @@ func TestMatchUnwindMatchMergePreservesBindings(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(2)}}, countResult.Rows)
 }
 
-func TestRelationshipMergeRejectsUnboundEndpoint(t *testing.T) {
-	exec, ctx := newClauseSemanticsExecutor(t)
-	executeClauseQueries(t, exec, ctx, `CREATE (:Function {id: 'poe-T'})`)
-
-	_, err := exec.Execute(ctx, `MATCH (t:Function {id: 'poe-T'}) MERGE (missing)-[:CALLS]->(t)`, nil)
-	require.Error(t, err)
+func TestRelationshipMergeCreatesUnboundEndpoint(t *testing.T) {
+	for _, pattern := range []string{
+		"(endpoint)-[:CALLS]->(t)",
+		"(t)-[:CALLS]->(endpoint)",
+		"(endpoint)<-[:CALLS]-(t)",
+		"(t)<-[:CALLS]-(endpoint)",
+		"(endpoint)-[:CALLS]-(t)",
+		"(t)-[:CALLS]-(endpoint)",
+	} {
+		t.Run(pattern, func(t *testing.T) {
+			exec, ctx := newClauseSemanticsExecutor(t)
+			executeClauseQueries(t, exec, ctx, `CREATE (:Function {id: 'poe-T'})`)
+			query := "MATCH (t:Function {id:'poe-T'}) MERGE " + pattern + " RETURN size(labels(endpoint)) AS labelCount, t.id AS id"
+			for iteration := 0; iteration < 2; iteration++ {
+				result, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(0), "poe-T"}}, result.Rows)
+				if iteration == 0 {
+					require.EqualValues(t, 1, result.Stats.NodesCreated)
+					require.EqualValues(t, 1, result.Stats.RelationshipsCreated)
+				} else {
+					require.Zero(t, result.Stats.NodesCreated)
+					require.Zero(t, result.Stats.RelationshipsCreated)
+				}
+			}
+			stored, err := exec.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(2)}}, stored.Rows)
+			stored, err = exec.Execute(ctx, "MATCH ()-[r:CALLS]->() RETURN count(r)", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(1)}}, stored.Rows)
+		})
+	}
 }
 
 // Regression: initially reported in #367.
