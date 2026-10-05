@@ -976,34 +976,10 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 		}
 		ids = append(ids, edgeID)
 
-		if cached, ok := b.cacheLoadEdge(edgeID); ok {
-			if b.filterEdgeByDecay(cached, nowNanos) {
-				continue
-			}
-			edges = append(edges, cached)
+		edge, ok := b.readIndexedEdgeInTxn(txn, edgeID)
+		if !ok || b.filterEdgeByDecay(edge, nowNanos) {
 			continue
 		}
-
-		item, err := txn.Get(edgeKey(edgeID))
-		if err != nil {
-			continue
-		}
-
-		var edge *Edge
-		if err := item.Value(func(val []byte) error {
-			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
-			return decodeErr
-		}); err != nil {
-			continue
-		}
-
-		b.cacheStoreEdge(edge)
-
-		if b.filterEdgeByDecay(edge, nowNanos) {
-			continue
-		}
-
 		edges = append(edges, edge)
 	}
 	return edges, ids
@@ -1050,15 +1026,15 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 			if !ok {
 				continue
 			}
+			// A value that can't be read is treated as absent: the record
+			// answers instead.
 			var otherNum uint64
 			var edgeType string
 			var carried bool
-			if err := item.Value(func(value []byte) error {
+			_ = item.Value(func(value []byte) error {
 				otherNum, edgeType, carried = decodeAdjacencyEntryValue(value)
 				return nil
-			}); err != nil {
-				return err
-			}
+			})
 			if carried {
 				otherID, ok := b.idDict.lookupNodeIDByNum(otherNum)
 				if !ok {
@@ -1071,27 +1047,36 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 				edges = append(edges, edge)
 				continue
 			}
-			if cached, ok := b.cacheLoadEdge(edgeID); ok {
-				edges = append(edges, cached)
-				continue
-			}
-			record, err := txn.Get(edgeKey(edgeID))
-			if err != nil {
-				continue
-			}
-			if err := record.Value(func(value []byte) error {
-				edge, decodeErr := b.decodeEdgeBodyByID(value, edgeID)
-				if decodeErr == nil {
-					edges = append(edges, edge)
-				}
-				return nil
-			}); err != nil {
-				return err
+			if edge, ok := b.readIndexedEdgeInTxn(txn, edgeID); ok {
+				edges = append(edges, edge)
 			}
 		}
 		return nil
 	})
 	return edges, true, err
+}
+
+// readIndexedEdgeInTxn returns the relationship an adjacency entry names: the
+// cached one, else its stored record, which is then cached. ok is false when
+// the record is missing or can't be decoded.
+func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, bool) {
+	if cached, ok := b.cacheLoadEdge(edgeID); ok {
+		return cached, true
+	}
+	item, err := txn.Get(edgeKey(edgeID))
+	if err != nil {
+		return nil, false
+	}
+	var edge *Edge
+	if err := item.Value(func(val []byte) error {
+		var decodeErr error
+		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+		return decodeErr
+	}); err != nil {
+		return nil, false
+	}
+	b.cacheStoreEdge(edge)
+	return edge, true
 }
 
 // GetIncomingEdges returns all edges where the given node is the target.

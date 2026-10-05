@@ -484,24 +484,31 @@ func decodeAdjacencyEntryValue(value []byte) (otherNodeNum uint64, edgeType stri
 	return binary.BigEndian.Uint64(value[1:9]), string(value[9:]), true
 }
 
-// edgeAdjacencyEntries resolves edge's outgoing and incoming adjacency keys
-// and their values through the ID dictionary, allocating num IDs when
-// missing; write paths pass their txn so the allocation persists.
-func (b *BadgerEngine) edgeAdjacencyEntries(txn kvWriter, edge *Edge) (outKey, outValue, inKey, inValue []byte, err error) {
-	startNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.StartNode)
-	if err != nil {
-		return nil, nil, nil, nil, err
+// adjacencyValueFor is the adjacency entry value pointing at otherNode for a
+// relationship of edgeType. The write paths resolve both endpoints' num IDs
+// before writing the entries; an unknown node yields an empty value, which
+// readers answer from the relationship record.
+func (b *BadgerEngine) adjacencyValueFor(otherNode NodeID, edgeType string) []byte {
+	otherNum, ok := b.idDict.lookupNodeNumID(otherNode)
+	if !ok {
+		return []byte{}
 	}
-	endNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.EndNode)
-	if err != nil {
-		return nil, nil, nil, nil, err
+	return adjacencyEntryValue(otherNum, edgeType)
+}
+
+// setAdjacencyValuesInTxn rewrites the values of edge's existing outgoing
+// and incoming adjacency entries, for a type change that keeps the
+// endpoints.
+func (b *BadgerEngine) setAdjacencyValuesInTxn(txn kvWriter, edge *Edge) error {
+	if outKey := b.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
+		if err := txn.Set(outKey, b.adjacencyValueFor(edge.EndNode, edge.Type)); err != nil {
+			return err
+		}
 	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edge.ID)
-	if err != nil {
-		return nil, nil, nil, nil, err
+	if inKey := b.incomingIndexKeyStringLookup(edge.EndNode, edge.ID); inKey != nil {
+		return txn.Set(inKey, b.adjacencyValueFor(edge.StartNode, edge.Type))
 	}
-	return outgoingIndexKey(startNum, edgeNum), adjacencyEntryValue(endNum, edge.Type),
-		incomingIndexKey(endNum, edgeNum), adjacencyEntryValue(startNum, edge.Type), nil
+	return nil
 }
 
 // outgoingIndexKeyString resolves the node/edge string IDs via the dict

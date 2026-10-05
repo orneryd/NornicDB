@@ -52,9 +52,18 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "L2"}))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, eng.UpdateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:c", Type: "K2"}))
+	tx, err = eng.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("test"))
+	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:e2", StartNode: "test:b", EndNode: "test:c", Type: "L2"}))
+	require.NoError(t, tx.Commit())
 	out, _, err = eng.OutgoingEdgeHeaders("test:a")
 	require.NoError(t, err)
-	require.Equal(t, []string{"test:e1:K2:test:a->test:c", "test:e2:L2:test:a->test:c"}, headerSummary(out))
+	require.Equal(t, []string{"test:e1:K2:test:a->test:c"}, headerSummary(out))
+	out, _, err = eng.OutgoingEdgeHeaders("test:b")
+	require.NoError(t, err)
+	require.Equal(t, []string{"test:e2:L2:test:b->test:c"}, headerSummary(out))
+	require.NoError(t, eng.UpdateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "L2"}))
 
 	// An entry written before the values existed reads the record.
 	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
@@ -150,3 +159,108 @@ func TestEdgeHeadersAcrossStack(t *testing.T) {
 
 // nonHeaderEngine hides EdgeHeaderReader from the engine it wraps.
 type nonHeaderEngine struct{ Engine }
+
+// Header listing skips entries it can't resolve and answers an entry without
+// a value from the cached or stored record.
+func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
+	eng := newTestEngine(t)
+	for _, id := range []NodeID{"test:a", "test:b"} {
+		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
+	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:gone", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
+	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
+	cachedNum, _ := eng.idDict.lookupEdgeNumID("test:cached")
+	goneNum, _ := eng.idDict.lookupEdgeNumID("test:gone")
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		// No value, record in the edge cache.
+		if err := txn.Set(outgoingIndexKey(aNum, cachedNum), []byte{}); err != nil {
+			return err
+		}
+		// No value, record gone.
+		if err := txn.Set(outgoingIndexKey(aNum, goneNum), []byte{}); err != nil {
+			return err
+		}
+		if err := txn.Delete(edgeKey("test:gone")); err != nil {
+			return err
+		}
+		// A malformed key, an unknown relationship, an unknown other end.
+		if err := txn.Set(append(outgoingIndexPrefix(aNum), 1, 2, 3), []byte{}); err != nil {
+			return err
+		}
+		if err := txn.Set(outgoingIndexKey(aNum, 1<<40), adjacencyEntryValue(aNum, "K")); err != nil {
+			return err
+		}
+		return nil
+	}))
+	// A relationship with an unreadable record and no value is skipped.
+	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:corrupt", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
+	corruptNum, _ := eng.idDict.lookupEdgeNumID("test:corrupt")
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		if err := txn.Set(edgeKey("test:corrupt"), []byte{0xff}); err != nil {
+			return err
+		}
+		return txn.Set(outgoingIndexKey(aNum, corruptNum), []byte{})
+	}))
+	// A relationship whose stored other end the dictionary doesn't know.
+	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:odd", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
+	oddNum, _ := eng.idDict.lookupEdgeNumID("test:odd")
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		return txn.Set(outgoingIndexKey(aNum, oddNum), adjacencyEntryValue(1<<42, "K"))
+	}))
+	eng.edgeCacheMu.Lock()
+	clear(eng.edgeCache)
+	eng.edgeCacheMu.Unlock()
+	eng.cacheStoreEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"})
+	out, answered, err := eng.OutgoingEdgeHeaders("test:a")
+	require.NoError(t, err)
+	require.True(t, answered)
+	require.Equal(t, []string{"test:cached:K:test:a->test:b"}, headerSummary(out))
+}
+
+// The adjacency value of an unknown node is empty, and rewriting the values
+// in a transaction that can't write reports the error.
+func TestAdjacencyValueHelpers(t *testing.T) {
+	eng := newTestEngine(t)
+	require.Empty(t, eng.adjacencyValueFor("test:unknown", "K"))
+	for _, id := range []NodeID{"test:a", "test:b"} {
+		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
+	require.NoError(t, eng.withView(func(txn *badger.Txn) error {
+		require.Error(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K2"}))
+		require.NoError(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:unknown", StartNode: "test:a", EndNode: "test:b", Type: "K2"}))
+		return nil
+	}))
+	// Only the incoming entry is known: its write error is reported.
+	require.NoError(t, eng.withView(func(txn *badger.Txn) error {
+		require.Error(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:e", StartNode: "test:unknown", EndNode: "test:b", Type: "K2"}))
+		return nil
+	}))
+}
+
+// The async overlay skips cached relationships that a staged delete hides or
+// a staged update moved to another start node.
+func TestAsyncEdgeHeadersSkipMovedAndDeletedStagedEdges(t *testing.T) {
+	badger, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	defer badger.Close()
+	async := NewAsyncEngine(badger, &AsyncEngineConfig{FlushInterval: time.Hour})
+	defer async.Close()
+	for _, id := range []NodeID{"ns:a", "ns:b", "ns:c"} {
+		_, err := async.CreateNode(&Node{ID: id, Labels: []string{"N"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, async.CreateEdge(&Edge{ID: "ns:moved", StartNode: "ns:a", EndNode: "ns:c", Type: "K"}))
+	require.NoError(t, async.CreateEdge(&Edge{ID: "ns:kept", StartNode: "ns:a", EndNode: "ns:b", Type: "K"}))
+	async.mu.Lock()
+	async.edgeCache["ns:moved"] = &Edge{ID: "ns:moved", StartNode: "ns:b", EndNode: "ns:c", Type: "K"}
+	async.deleteEdges["ns:kept"] = true
+	async.mu.Unlock()
+	out, answered, err := async.OutgoingEdgeHeaders("ns:a")
+	require.NoError(t, err)
+	require.True(t, answered)
+	require.Empty(t, headerSummary(out))
+}
