@@ -1034,11 +1034,12 @@ func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
 		// (BuildIndexes warmup already runs BM25-seeded k-means + IVF-HNSW when
 		// enabled) or before the initial build is ready, which would cluster
 		// partial indexes.
-		if progress.Building || !progress.Ready {
-			log.Printf("🔬 K-means clustering deferred for db %s: search build in progress or not ready (building=%t, phase=%s)", entry.dbName, progress.Building, progress.Phase)
-			continue
-		}
-		if entry.svc.ClusteringInProgress() {
+		// A clustering run already in progress is skipped quietly.
+		clustering := entry.svc.ClusteringInProgress()
+		if progress.Building || !progress.Ready || clustering {
+			if !clustering {
+				log.Printf("🔬 K-means clustering deferred for db %s: search build in progress or not ready (building=%t, phase=%s)", entry.dbName, progress.Building, progress.Phase)
+			}
 			continue
 		}
 

@@ -1507,7 +1507,13 @@ func TestSearch(t *testing.T) {
 // eng must be the db.storage (namespaced) engine; IDs are returned in unprefixed form.
 func storeNodeWithEmbedding(t *testing.T, eng storage.Engine, content string, embedding []float32) storage.NodeID {
 	t.Helper()
-	id := storage.NodeID(generateID())
+	return storeNodeWithEmbeddingID(t, eng, storage.NodeID(generateID()), content, embedding)
+}
+
+// storeNodeWithEmbeddingID is storeNodeWithEmbedding with a chosen ID, for
+// tests that depend on the order nodes are streamed in (node-ID order).
+func storeNodeWithEmbeddingID(t *testing.T, eng storage.Engine, id storage.NodeID, content string, embedding []float32) storage.NodeID {
+	t.Helper()
 	n := &storage.Node{
 		ID:              id,
 		Labels:          []string{"Memory"},
@@ -1541,9 +1547,11 @@ func TestFindSimilar(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		rootID := storeNodeWithEmbedding(t, db.storage, "root", []float32{1.0, 0.0})
-		lowID := storeNodeWithEmbedding(t, db.storage, "low", []float32{0.2, 0.8})
-		highID := storeNodeWithEmbedding(t, db.storage, "high", []float32{0.98, 0.02})
+		// Streamed in ID order: the weaker candidate fills the list first and
+		// the stronger one replaces it.
+		rootID := storeNodeWithEmbeddingID(t, db.storage, "a-root", "root", []float32{1.0, 0.0})
+		lowID := storeNodeWithEmbeddingID(t, db.storage, "b-low", "low", []float32{0.2, 0.8})
+		highID := storeNodeWithEmbeddingID(t, db.storage, "c-high", "high", []float32{0.98, 0.02})
 
 		_, err = db.CreateNode(ctx, []string{"NoEmbed"}, map[string]interface{}{"name": "ignored"})
 		require.NoError(t, err)
