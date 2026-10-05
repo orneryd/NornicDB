@@ -2908,18 +2908,12 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 // runs (MATCH … CALL, a CALL in a tail): its YIELD may then filter, order and
 // page, which a standalone call can't (validateYieldModifiers).
 func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher string, inQuery bool) (*ExecuteResult, error) {
-	// Substitute parameters AFTER routing to avoid keyword detection issues
-	if params := getParamsFromContext(ctx); params != nil {
-		cypher = e.substituteParams(cypher, params)
-	}
 	// A RETURN right after YIELD is the start of the tail, like any other
 	// clause, so it runs over all yielded rows (executeCallTail): an aggregate
 	// in it groups the rows, and ORDER BY / SKIP / LIMIT apply to all of them.
 	parts := splitChainedProcedureCall(cypher)
 	callCypher := parts.callOnly
 	tailCypher := parts.tail
-
-	upper := upperASCII(callCypher)
 
 	// Parse YIELD clause for post-processing
 	yield := parseYieldClause(callCypher)
@@ -2953,7 +2947,11 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 				}
 			}
 		}
-		result, err := proc.Handler(ctx, e, callCypher, args)
+		handlerCypher := callCypher
+		if params := getParamsFromContext(ctx); params != nil {
+			handlerCypher = e.substituteParams(callCypher, params)
+		}
+		result, err := proc.Handler(ctx, e, handlerCypher, args)
 		if err != nil {
 			return nil, procedureRuntimeError(procName, err)
 		}
@@ -2971,6 +2969,11 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 
 	var result *ExecuteResult
 	var err error
+
+	if params := getParamsFromContext(ctx); params != nil {
+		callCypher = e.substituteParams(callCypher, params)
+	}
+	upper := upperASCII(callCypher)
 
 	switch {
 	// Neo4j Vector Index Procedures
@@ -3006,11 +3009,6 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		result, err = e.callApocAlgoLabelPropagation(ctx, callCypher)
 	case strings.Contains(upper, "APOC.ALGO.WCC"):
 		result, err = e.callApocAlgoWCC(ctx, callCypher)
-	// APOC Neighbor Traversal
-	case strings.Contains(upper, "APOC.NEIGHBORS.TOHOP"):
-		result, err = e.callApocNeighborsTohop(ctx, callCypher)
-	case strings.Contains(upper, "APOC.NEIGHBORS.BYHOP"):
-		result, err = e.callApocNeighborsByhop(ctx, callCypher)
 	// APOC Load/Export Procedures
 	case strings.Contains(upper, "APOC.LOAD.JSONARRAY"):
 		result, err = e.callApocLoadJsonArray(ctx, callCypher)

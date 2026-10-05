@@ -187,17 +187,23 @@ func TestApocNeighborsTohop(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("neighbors_1_hop", func(t *testing.T) {
-		result, err := exec.Execute(ctx, "CALL apoc.neighbors.tohop('A', 'CONNECTS', 1) YIELD node", nil)
+		result, err := exec.Execute(ctx, "MATCH (start:Node {name:'A'}) CALL apoc.neighbors.tohop(start, 'CONNECTS', 1) YIELD node RETURN node.name AS name", nil)
 		require.NoError(t, err)
 		// A connects to B and E
 		assert.Len(t, result.Rows, 2, "A should have 2 direct neighbors")
+		require.ElementsMatch(t, [][]interface{}{{"B"}, {"E"}}, result.Rows)
 	})
 
 	t.Run("neighbors_2_hops", func(t *testing.T) {
-		result, err := exec.Execute(ctx, "CALL apoc.neighbors.tohop('A', 'CONNECTS', 2) YIELD node", nil)
+		result, err := exec.Execute(ctx, "MATCH (start:Node {name:'A'}) CALL apoc.neighbors.tohop(start, 'CONNECTS', 2) YIELD node RETURN node.name AS name", nil)
 		require.NoError(t, err)
 		// A -> B, E (1 hop) + C, F (2 hops)
 		assert.Len(t, result.Rows, 4, "A should reach 4 nodes in 2 hops")
+		require.ElementsMatch(t, [][]interface{}{{"B"}, {"E"}, {"C"}, {"F"}}, result.Rows)
+	})
+	t.Run("string_id_is_not_a_node", func(t *testing.T) {
+		_, err := exec.Execute(ctx, "CALL apoc.neighbors.tohop('A', 'CONNECTS', 1)", nil)
+		require.ErrorContains(t, err, "require a node")
 	})
 }
 
@@ -206,16 +212,18 @@ func TestApocNeighborsByhop(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("neighbors_grouped", func(t *testing.T) {
-		result, err := exec.Execute(ctx, "CALL apoc.neighbors.byhop('A', 'CONNECTS', 3) YIELD nodes, depth", nil)
+		result, err := exec.Execute(ctx, "MATCH (start:Node {name:'A'}) CALL apoc.neighbors.byhop(start, 'CONNECTS', 3) YIELD nodes RETURN [node IN nodes | node.name] AS names", nil)
 		require.NoError(t, err)
-		assert.NotEmpty(t, result.Rows)
-
-		// Verify we get depth buckets
-		for _, row := range result.Rows {
-			depth := row[1].(int)
-			assert.Greater(t, depth, 0)
-			assert.LessOrEqual(t, depth, 3)
+		require.Equal(t, []string{"names"}, result.Columns)
+		require.Len(t, result.Rows, 3)
+		for index, expected := range [][]interface{}{{"B", "E"}, {"C", "F"}, {"D"}} {
+			require.Len(t, result.Rows[index], 1)
+			require.ElementsMatch(t, expected, result.Rows[index][0])
 		}
+	})
+	t.Run("string_id_is_not_a_node", func(t *testing.T) {
+		_, err := exec.Execute(ctx, "CALL apoc.neighbors.byhop('A', 'CONNECTS', 3)", nil)
+		require.ErrorContains(t, err, "require a node")
 	})
 }
 

@@ -455,13 +455,13 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoWCC(ctx, cypher)
 			})
-		registerBuiltInProcedureLiteral("apoc.neighbors.tohop", "apoc.neighbors.tohop(node :: NODE, relTypes :: STRING, distance :: INTEGER) :: (node :: NODE)", "Collects neighbors to N hops", ProcedureModeRead, 3, 3, false,
+		registerBuiltInProcedureLiteral("apoc.neighbors.tohop", "apoc.neighbors.tohop(node :: NODE, relTypes :: STRING = '', distance :: INTEGER = 1) :: (node :: NODE)", "Collects neighbors to N hops", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocNeighborsTohop(ctx, cypher)
+				return e.callApocNeighborsTohop(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.neighbors.byhop", "apoc.neighbors.byhop(node :: NODE, relTypes :: STRING, distance :: INTEGER) :: (nodes :: LIST<NODE>)", "Collects neighbors grouped by hop distance", ProcedureModeRead, 3, 3, false,
+		registerBuiltInProcedureLiteral("apoc.neighbors.byhop", "apoc.neighbors.byhop(node :: NODE, relTypes :: STRING = '', distance :: INTEGER = 1) :: (nodes :: LIST<NODE>)", "Collects neighbors grouped by hop distance", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocNeighborsByhop(ctx, cypher)
+				return e.callApocNeighborsByhop(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.load.json", "apoc.load.json(urlOrKeyOrBinary :: STRING, path :: STRING = '', config :: MAP = {}) :: (value :: MAP)", "Loads JSON", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

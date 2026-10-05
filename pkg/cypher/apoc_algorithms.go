@@ -445,107 +445,169 @@ func (e *StorageExecutor) computeCloseness(label string) map[storage.NodeID]floa
 }
 
 // callApocNeighborsTohop gets neighbors up to N hops.
-func (e *StorageExecutor) callApocNeighborsTohop(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	startID, relType, maxHops, err := e.parseNeighborParams(cypher, "TOHOP")
+func (e *StorageExecutor) callApocNeighborsTohop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	startID, relType, maxHops, err := parseNeighborArguments(args)
 	if err != nil {
 		return nil, err
 	}
-	neighbors := e.getNeighborsTohop(startID, relType, maxHops)
-	rows := make([][]interface{}, 0, len(neighbors))
-	for _, nodeID := range neighbors {
-		node, err := e.storage.GetNode(nodeID)
-		if err != nil {
-			continue
+	neighbors, err := e.getNeighborsByhop(ctx, startID, relType, maxHops)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]interface{}, 0)
+	for _, group := range neighbors {
+		for _, nodeID := range group {
+			if nodeID == startID {
+				continue
+			}
+			node, err := e.getStorage(ctx).GetNode(nodeID)
+			if err != nil {
+				return nil, err
+			}
+			rows = append(rows, []interface{}{node})
 		}
-		rows = append(rows, []interface{}{node})
 	}
 	return &ExecuteResult{Columns: []string{"node"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) getNeighborsTohop(startID storage.NodeID, relType string, maxHops int) []storage.NodeID {
+func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage.NodeID, relType string, maxHops int) ([][]storage.NodeID, error) {
+	if relType == "" || maxHops < 1 {
+		return nil, nil
+	}
+	type neighborFilter struct {
+		types     []string
+		direction string
+	}
+	var filters []neighborFilter
+	for _, part := range strings.Split(relType, "|") {
+		types, direction := parseRelationshipFilter(strings.TrimSpace(part))
+		filters = append(filters, neighborFilter{types: types, direction: direction})
+	}
+	store := e.getStorage(ctx)
 	visited := make(map[storage.NodeID]bool)
 	visited[startID] = true
 	current := []storage.NodeID{startID}
-	var result []storage.NodeID
+	var result [][]storage.NodeID
 	for hop := 0; hop < maxHops && len(current) > 0; hop++ {
 		var next []storage.NodeID
+		includeStart := false
 		for _, nodeID := range current {
-			edges := e.getNodeEdges(nodeID)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			outgoing, err := store.GetOutgoingEdges(nodeID)
+			if err != nil {
+				return nil, err
+			}
+			incoming, err := store.GetIncomingEdges(nodeID)
+			if err != nil {
+				return nil, err
+			}
+			edges := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+			edges = append(edges, outgoing...)
+			edges = append(edges, incoming...)
 			for _, edge := range edges {
-				if relType != "" && edge.Type != relType {
+				allowed := false
+				for _, filter := range filters {
+					if filter.direction == "outgoing" && edge.StartNode != nodeID || filter.direction == "incoming" && edge.EndNode != nodeID {
+						continue
+					}
+					if len(filter.types) == 0 {
+						allowed = true
+					}
+					for _, relType := range filter.types {
+						if edge.Type == relType {
+							allowed = true
+						}
+					}
+					if allowed {
+						break
+					}
+				}
+				if !allowed {
 					continue
 				}
 				neighbor := edge.EndNode
 				if edge.StartNode != nodeID {
 					neighbor = edge.StartNode
 				}
+				if neighbor == startID && hop == 0 {
+					includeStart = true
+				}
 				if !visited[neighbor] {
 					visited[neighbor] = true
-					result = append(result, neighbor)
 					next = append(next, neighbor)
 				}
 			}
 		}
+		group := next
+		if includeStart {
+			group = append(group, startID)
+		}
+		result = append(result, group)
 		current = next
 	}
-	return result
+	return result, nil
 }
 
 // callApocNeighborsByhop gets neighbors grouped by hop.
-func (e *StorageExecutor) callApocNeighborsByhop(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	startID, relType, maxHops, err := e.parseNeighborParams(cypher, "BYHOP")
+func (e *StorageExecutor) callApocNeighborsByhop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	startID, relType, maxHops, err := parseNeighborArguments(args)
 	if err != nil {
 		return nil, err
 	}
-	neighborsByHop := e.getNeighborsByhop(startID, relType, maxHops)
-	rows := make([][]interface{}, 0)
-	for depth := 1; depth <= maxHops; depth++ {
-		if nodeIDs, ok := neighborsByHop[depth]; ok {
-			nodesList := make([]interface{}, 0, len(nodeIDs))
-			for _, nodeID := range nodeIDs {
-				node, err := e.storage.GetNode(nodeID)
-				if err != nil {
-					continue
-				}
-				nodesList = append(nodesList, node)
-			}
-			rows = append(rows, []interface{}{nodesList, depth})
-		}
+	neighborsByHop, err := e.getNeighborsByhop(ctx, startID, relType, maxHops)
+	if err != nil {
+		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"nodes", "depth"}, Rows: rows}, nil
+	rows := make([][]interface{}, 0)
+	if relType == "" {
+		return &ExecuteResult{Columns: []string{"nodes"}, Rows: rows}, nil
+	}
+	for depth := 0; depth < maxHops; depth++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var nodeIDs []storage.NodeID
+		if depth < len(neighborsByHop) {
+			nodeIDs = neighborsByHop[depth]
+		}
+		nodesList := make([]interface{}, 0, len(nodeIDs))
+		for _, nodeID := range nodeIDs {
+			node, err := e.getStorage(ctx).GetNode(nodeID)
+			if err != nil {
+				return nil, err
+			}
+			nodesList = append(nodesList, node)
+		}
+		rows = append(rows, []interface{}{nodesList})
+	}
+	return &ExecuteResult{Columns: []string{"nodes"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) getNeighborsByhop(startID storage.NodeID, relType string, maxHops int) map[int][]storage.NodeID {
-	visited := make(map[storage.NodeID]bool)
-	visited[startID] = true
-	result := make(map[int][]storage.NodeID)
-	current := []storage.NodeID{startID}
-	for hop := 1; hop <= maxHops && len(current) > 0; hop++ {
-		var next []storage.NodeID
-		var hopNodes []storage.NodeID
-		for _, nodeID := range current {
-			edges := e.getNodeEdges(nodeID)
-			for _, edge := range edges {
-				if relType != "" && edge.Type != relType {
-					continue
-				}
-				neighbor := edge.EndNode
-				if edge.StartNode != nodeID {
-					neighbor = edge.StartNode
-				}
-				if !visited[neighbor] {
-					visited[neighbor] = true
-					hopNodes = append(hopNodes, neighbor)
-					next = append(next, neighbor)
-				}
-			}
-		}
-		if len(hopNodes) > 0 {
-			result[hop] = hopNodes
-		}
-		current = next
+func parseNeighborArguments(args []interface{}) (storage.NodeID, string, int, error) {
+	if len(args) < 1 || len(args) > 3 {
+		return "", "", 0, fmt.Errorf("neighbor procedures require between one and three arguments")
 	}
-	return result
+	start, ok := args[0].(*storage.Node)
+	if !ok || start == nil {
+		return "", "", 0, fmt.Errorf("neighbor procedures require a node")
+	}
+	filter := ""
+	if len(args) > 1 && args[1] != nil {
+		filter, ok = args[1].(string)
+		if !ok {
+			return "", "", 0, fmt.Errorf("neighbor procedures require a relationship filter string")
+		}
+	}
+	maxHops := 1
+	if len(args) > 2 {
+		if !isIntegerProcedureValue(args[2]) {
+			return "", "", 0, fmt.Errorf("neighbor procedures require an integer distance")
+		}
+		maxHops = int(toInt64(args[2]))
+	}
+	return start.ID, filter, maxHops, nil
 }
 
 // Helper functions
@@ -577,35 +639,6 @@ func (e *StorageExecutor) parsePathAlgoParams(cypher, algoName string) (storage.
 		weightProp = strings.Trim(strings.TrimSpace(parts[3]), "'\"")
 	}
 	return startID, endID, relType, weightProp, nil
-}
-
-func (e *StorageExecutor) parseNeighborParams(cypher, variant string) (storage.NodeID, string, int, error) {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, variant)
-	if idx < 0 {
-		return "", "", 0, fmt.Errorf("could not find %s", variant)
-	}
-	remainder := cypher[idx:]
-	openParen := strings.Index(remainder, "(")
-	closeParen := strings.LastIndex(remainder, ")")
-	if openParen < 0 || closeParen < 0 {
-		return "", "", 0, fmt.Errorf("invalid syntax for %s: missing parentheses (expected %s(startNode, [relType], [maxHops]))", variant, variant)
-	}
-	args := remainder[openParen+1 : closeParen]
-	parts := strings.Split(args, ",")
-	if len(parts) < 1 {
-		return "", "", 0, fmt.Errorf("%s requires at least 1 argument: startNode", variant)
-	}
-	startID := storage.NodeID(strings.Trim(strings.TrimSpace(parts[0]), "'\""))
-	relType := ""
-	if len(parts) > 1 {
-		relType = strings.Trim(strings.TrimSpace(parts[1]), "'\"")
-	}
-	maxHops := 3
-	if len(parts) > 2 {
-		fmt.Sscanf(strings.TrimSpace(parts[2]), "%d", &maxHops)
-	}
-	return startID, relType, maxHops, nil
 }
 
 func (e *StorageExecutor) extractLabelFromAlgoCall(cypher, algoName string) string {

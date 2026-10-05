@@ -172,12 +172,20 @@ func parseRelationshipFilter(filter string) (types []string, direction string) {
 	direction = "both"
 
 	// Handle direction prefix
-	if strings.HasPrefix(filter, ">") {
+	if strings.HasPrefix(filter, "<") && strings.HasSuffix(filter, ">") {
+		filter = filter[1 : len(filter)-1]
+	} else if strings.HasPrefix(filter, ">") {
 		direction = "outgoing"
 		filter = filter[1:]
 	} else if strings.HasPrefix(filter, "<") {
 		direction = "incoming"
 		filter = filter[1:]
+	} else if strings.HasSuffix(filter, ">") {
+		direction = "outgoing"
+		filter = filter[:len(filter)-1]
+	} else if strings.HasSuffix(filter, "<") {
+		direction = "incoming"
+		filter = filter[:len(filter)-1]
 	}
 
 	// Split by | for multiple types

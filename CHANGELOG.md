@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Converge `apoc.neighbors.tohop` and `apoc.neighbors.byhop` on typed node
+  arguments and one caller-context traversal. Preserve staged writes, support
+  directed relationship alternatives and documented defaults, and match APOC
+  empty-filter, hop-bucket and self-loop behavior. Remove their text fallback
+  routes and obsolete argument parser. Standalone registered procedure calls
+  now resolve typed parameters before formatting text for remaining adapters (#908).
+
 - Make MATCH/procedure dispatch terminal through the shared pipeline and retire
   its private executor. Validate empty-input procedure metadata and arity,
   preserve per-row DBMS execution, and require WITH between updates and CALL
