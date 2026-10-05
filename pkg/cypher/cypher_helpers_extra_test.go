@@ -876,8 +876,6 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		"CALL apoc.algo.closeness()",
 		"CALL apoc.algo.labelPropagation()",
 		"CALL apoc.algo.wcc()",
-		"CALL apoc.neighbors.tohop('n1','KNOWS',1)",
-		"CALL apoc.neighbors.byhop('n1','KNOWS',2)",
 		"CALL gds.version()",
 		"CALL gds.graph.list()",
 		"CALL apoc.periodic.iterate('RETURN 1 AS n','RETURN n',{})",
@@ -920,6 +918,17 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		res, err := exec.executeCall(ctx, q)
 		require.NoErrorf(t, err, "expected success for query: %s", q)
 		require.NotNilf(t, res, "expected non-nil result for query: %s", q)
+	}
+
+	for _, query := range []string{
+		"CALL apoc.neighbors.tohop('n1','KNOWS',1)",
+		"CALL apoc.neighbors.byhop('n1','KNOWS',2)",
+	} {
+		result, err := exec.executeCall(ctx, query)
+		require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureNotFound")
+		if result != nil {
+			require.Empty(t, result.Rows)
+		}
 	}
 
 	expectError := []string{
