@@ -257,6 +257,14 @@ func (n *NamespacedEngine) GetNode(id NodeID) (*Node, error) {
 	return n.toUserNode(node), nil
 }
 
+// RelationshipEndpointVisible forwards with the namespace prefix applied.
+func (n *NamespacedEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
+	if checker, ok := n.inner.(RelationshipEndpointChecker); ok {
+		return checker.RelationshipEndpointVisible(n.prefixNodeID(id))
+	}
+	return false, false
+}
+
 func (n *NamespacedEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
 	projected, ok := n.inner.(ProjectedNodeReader)
 	if !ok || properties == nil {

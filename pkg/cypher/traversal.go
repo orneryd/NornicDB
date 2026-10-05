@@ -64,6 +64,19 @@ type TraversalContext struct {
 	endNodeID storage.NodeID
 	// deepest is the greatest depth the search reached.
 	deepest int
+	// endpointsNeedOnlyExist is set when nothing in the statement reads the
+	// nodes the traversal reaches (traversalEndpointsNeedOnlyExist).
+	endpointsNeedOnlyExist bool
+}
+
+// traversalEndpointsNeedOnlyExist reports whether the nodes a traversal
+// reaches are needed only to exist and be visible: the end node is anonymous
+// with no labels or property map, and no path variable exposes the nodes.
+// The traversal then asks storage whether each one is visible
+// (storage.RelationshipEndpointChecker) instead of reading it.
+func traversalEndpointsNeedOnlyExist(match *TraversalMatch) bool {
+	return !match.IsChained && match.PathVariable == "" && match.EndNode.variable == "" &&
+		len(match.EndNode.labels) == 0 && len(match.EndNode.properties) == 0
 }
 
 func buildRelTypeSet(relTypes []string) map[string]struct{} {
@@ -1755,12 +1768,13 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			direction:        match.Relationship.Direction,
 			minHops:          match.Relationship.MinHops,
 			maxHops:          match.Relationship.MaxHops,
-			usedEdges:        make(map[storage.EdgeID]bool),
-			nodeCache:        make(map[storage.NodeID]*storage.Node),
-			limit:            ctxLimit,
-			temporalViewport: viewport,
-			temporalChecker:  checker,
-			cancelCtx:        ctx,
+			usedEdges:              make(map[storage.EdgeID]bool),
+			nodeCache:              make(map[storage.NodeID]*storage.Node),
+			limit:                  ctxLimit,
+			temporalViewport:       viewport,
+			temporalChecker:        checker,
+			cancelCtx:              ctx,
+			endpointsNeedOnlyExist: traversalEndpointsNeedOnlyExist(match),
 		}
 
 		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
@@ -1822,11 +1836,12 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					direction:        match.Relationship.Direction,
 					minHops:          match.Relationship.MinHops,
 					maxHops:          match.Relationship.MaxHops,
-					usedEdges:        make(map[storage.EdgeID]bool),
-					nodeCache:        make(map[storage.NodeID]*storage.Node),
-					temporalViewport: viewport,
-					temporalChecker:  checker,
-					cancelCtx:        ctx,
+					usedEdges:              make(map[storage.EdgeID]bool),
+					nodeCache:              make(map[storage.NodeID]*storage.Node),
+					temporalViewport:       viewport,
+					temporalChecker:        checker,
+					cancelCtx:              ctx,
+					endpointsNeedOnlyExist: traversalEndpointsNeedOnlyExist(match),
 				}
 
 				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
@@ -2012,6 +2027,17 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 // edge semantics.
 func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextNodeID storage.NodeID) (*storage.Node, bool) {
 	nextNode := ctx.nodeCache[nextNodeID]
+	if nextNode == nil && ctx.endpointsNeedOnlyExist && !ctx.temporalViewport.Enabled() {
+		if checker, ok := e.storage.(storage.RelationshipEndpointChecker); ok {
+			if visible, answered := checker.RelationshipEndpointVisible(nextNodeID); answered {
+				if !visible {
+					return nil, false
+				}
+				nextNode = &storage.Node{ID: nextNodeID}
+				ctx.nodeCache[nextNodeID] = nextNode
+			}
+		}
+	}
 	if nextNode == nil {
 		var err error
 		nextNode, err = e.storage.GetNode(nextNodeID)
