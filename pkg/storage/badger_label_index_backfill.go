@@ -45,6 +45,7 @@ import (
 var labelIndexReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaLabelIndexReady}
 
 const (
+	labelIndexSchemeVersion    = 3
 	labelIndexRebuildBatchSize = 50_000
 	labelIndexRebuildLogEvery  = 100_000
 )
@@ -83,10 +84,12 @@ func (b *BadgerEngine) ensureLabelIndex() error {
 func (b *BadgerEngine) labelIndexReady() (bool, error) {
 	var ready bool
 	err := b.db.View(func(txn *badger.Txn) error {
-		_, err := txn.Get(labelIndexReadyKey)
+		item, err := txn.Get(labelIndexReadyKey)
 		if err == nil {
-			ready = true
-			return nil
+			return item.Value(func(value []byte) error {
+				ready = len(value) == 1 && value[0] == labelIndexSchemeVersion
+				return nil
+			})
 		}
 		if errors.Is(err, badger.ErrKeyNotFound) {
 			return nil
@@ -112,7 +115,7 @@ func (b *BadgerEngine) hasAnyStoredNodes() (bool, error) {
 // markLabelIndexReady records that no compatibility rebuild remains.
 func (b *BadgerEngine) markLabelIndexReady() error {
 	return b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(labelIndexReadyKey, []byte{1})
+		return txn.Set(labelIndexReadyKey, []byte{labelIndexSchemeVersion})
 	})
 }
 
@@ -229,7 +232,5 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return processed, err
 	}
-	return processed, b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(labelIndexReadyKey, []byte{1})
-	})
+	return processed, b.markLabelIndexReady()
 }

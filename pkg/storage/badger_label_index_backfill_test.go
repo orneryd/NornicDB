@@ -271,6 +271,129 @@ func wipeMarkerOnly(t *testing.T, eng *BadgerEngine) {
 // production stack writes node IDs with a database prefix
 // ("nornic:foo-1"). The rebuild must preserve this so namespace-
 // scoped reads still work correctly post-rebuild.
+func TestLabelIndexBackfill_ReadyMarkerRequiresCurrentScheme(t *testing.T) {
+	engine, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	for _, testCase := range []struct {
+		name  string
+		value []byte
+		ready bool
+	}{
+		{name: "missing"},
+		{name: "legacy", value: []byte{1}},
+		{name: "empty", value: []byte{}},
+		{name: "other_scheme", value: []byte{2}},
+		{name: "current", value: []byte{3}, ready: true},
+		{name: "malformed", value: []byte{3, 0}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+				if testCase.value == nil {
+					return txn.Delete(labelIndexReadyKey)
+				}
+				return txn.Set(labelIndexReadyKey, testCase.value)
+			}))
+			ready, err := engine.labelIndexReady()
+			require.NoError(t, err)
+			require.Equal(t, testCase.ready, ready)
+		})
+	}
+}
+
+func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
+	dir := t.TempDir()
+	engine, err := NewBadgerEngine(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	for _, namespace := range []string{"alpha", "beta"} {
+		store := NewNamespacedEngine(engine, namespace)
+		_, err := store.CreateNode(&Node{ID: "existing", Labels: []string{"Label", "Second"}, Properties: map[string]interface{}{"id": namespace}})
+		require.NoError(t, err)
+	}
+	wipeLabelIndexAndMarker(t, engine)
+	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		return txn.Set(labelIndexReadyKey, []byte{1})
+	}))
+	require.NoError(t, engine.Close())
+
+	reopened, err := NewBadgerEngine(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	reopened.labelIndexBackfillMu.Lock()
+	done := reopened.labelIndexBackfillDone
+	reopened.labelIndexBackfillMu.Unlock()
+	require.NotNil(t, done, "a legacy ready marker must schedule the existing backfill")
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("legacy label-index backfill did not finish")
+	}
+	require.NoError(t, reopened.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(labelIndexReadyKey)
+		if err != nil {
+			return err
+		}
+		return item.Value(func(value []byte) error {
+			assert.Equal(t, []byte{3}, value)
+			return nil
+		})
+	}))
+	for _, namespace := range []string{"alpha", "beta"} {
+		store := NewNamespacedEngine(reopened, namespace)
+		for _, label := range []string{"Label", "Second"} {
+			nodes, err := store.GetNodesByLabel(label)
+			require.NoError(t, err)
+			require.Len(t, nodes, 1)
+			require.Equal(t, NodeID("existing"), nodes[0].ID)
+			require.Equal(t, namespace, nodes[0].Properties["id"])
+		}
+	}
+	require.NoError(t, reopened.Close())
+	again, err := NewBadgerEngine(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = again.Close() })
+	again.labelIndexBackfillMu.Lock()
+	nextBackfill := again.labelIndexBackfillDone
+	again.labelIndexBackfillMu.Unlock()
+	require.Nil(t, nextBackfill, "current marker must prevent repeated backfill")
+}
+
+func TestLabelIndexBackfill_EmptyStoreMarksCurrentScheme(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy_%t", legacy), func(t *testing.T) {
+			dir := t.TempDir()
+			engine, err := NewBadgerEngine(dir)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = engine.Close() })
+			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+				if legacy {
+					return txn.Set(labelIndexReadyKey, []byte{1})
+				}
+				return txn.Delete(labelIndexReadyKey)
+			}))
+			require.NoError(t, engine.Close())
+			reopened, err := NewBadgerEngine(dir)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = reopened.Close() })
+			reopened.labelIndexBackfillMu.Lock()
+			done := reopened.labelIndexBackfillDone
+			reopened.labelIndexBackfillMu.Unlock()
+			require.Nil(t, done)
+			require.NoError(t, reopened.db.View(func(txn *badger.Txn) error {
+				item, err := txn.Get(labelIndexReadyKey)
+				if err != nil {
+					return err
+				}
+				return item.Value(func(value []byte) error {
+					assert.Equal(t, []byte{3}, value)
+					return nil
+				})
+			}))
+		})
+	}
+}
+
 func TestLabelIndexBackfill_NamespacedNodesRebuildIntoCorrectScope(t *testing.T) {
 	dir := t.TempDir()
 

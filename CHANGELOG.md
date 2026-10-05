@@ -337,6 +337,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Version the label-index ready marker for the v3 index scheme. Upgraded
+  stores with the legacy `{1}` marker rerun the existing label-index backfill
+  instead of treating missing current-scheme entries as ready. Empty stores
+  synchronously mark the current scheme without launching a backfill.
+
 - Record the committed version, not a transaction's uncommitted state, as
   history when a transaction updates a node and then deletes it. With history
   retention on, reading that version returned values that were never
