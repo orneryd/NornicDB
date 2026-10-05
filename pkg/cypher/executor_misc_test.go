@@ -2361,13 +2361,6 @@ func TestCypherUtilityConstructorsAndProcedureDDLBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// findStandaloneWithIndex should ignore STARTS/ENDS WITH and find standalone WITH.
-	s := "RETURN n WHERE n.name STARTS WITH 'a' WITH n RETURN n"
-	withIdx := findStandaloneWithIndex(s)
-	require.Greater(t, withIdx, 0)
-	assert.Equal(t, "WITH", s[withIdx:withIdx+4])
-	assert.Equal(t, -1, findStandaloneWithIndex("RETURN n WHERE n.name ENDS WITH 'z'"))
-
 	// Query analyzer constructor default branch.
 	qa := NewQueryAnalyzer(0)
 	require.NotNil(t, qa)
@@ -2944,8 +2937,11 @@ func TestExecuteMatchWithClause_DelegationAndErrorBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(res.Rows), 3)
 
-	// WITH + OPTIONAL MATCH branch delegates to executeMatchWithOptionalMatch.
-	res, err = exec.executeMatchWithClause(ctx, "MATCH (n:Person) WITH n OPTIONAL MATCH (n)-[:KNOWS]->(m:Person) RETURN n.name, m.name")
+	// MATCH … WITH … OPTIONAL MATCH runs only in the pipeline (#898): this
+	// handler rejects it, and Execute runs it.
+	_, err = exec.executeMatchWithClause(ctx, "MATCH (n:Person) WITH n OPTIONAL MATCH (n)-[:KNOWS]->(m:Person) RETURN n.name, m.name")
+	require.Error(t, err)
+	res, err = exec.Execute(ctx, "MATCH (n:Person) WITH n OPTIONAL MATCH (n)-[:KNOWS]->(m:Person) RETURN n.name, m.name ORDER BY n.name", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 	require.Equal(t, "alice", res.Rows[0][0])
@@ -3046,47 +3042,6 @@ func TestExecuteMatchWithClause_ChainedWithAndStorageFailureBranches(t *testing.
 	_, err = execFailAll.executeMatchWithClause(ctx, "MATCH (n) WITH n RETURN n")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "forced-allnodes-error")
-}
-
-func TestExecuteMatchWithOptionalMatch_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	_, err := store.CreateNode(&storage.Node{ID: "om1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(31)}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "om2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(29)}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "om3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carol"}})
-	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "omr1", StartNode: "om1", EndNode: "om2", Type: "KNOWS", Properties: map[string]interface{}{}}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "omr2", StartNode: "om1", EndNode: "om3", Type: "KNOWS", Properties: map[string]interface{}{}}))
-
-	// Validation branch: required clauses.
-	_, err = exec.executeMatchWithOptionalMatch(ctx, "MATCH (n:Person) WITH n RETURN n")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "WITH, OPTIONAL MATCH, and RETURN clauses required")
-
-	// sourceNode=nil branch (WITH projection drops node object) + ORDER/SKIP/LIMIT branch.
-	noNodeRes, err := exec.executeMatchWithOptionalMatch(
-		ctx,
-		"MATCH (n:Person) WITH n.name AS name OPTIONAL MATCH (n)-[:KNOWS]->(m:Person) RETURN name, m.name ORDER BY name SKIP 1 LIMIT 1",
-	)
-	require.NoError(t, err)
-	require.Len(t, noNodeRes.Rows, 1)
-	require.NotNil(t, noNodeRes.Rows[0][0])
-	require.Nil(t, noNodeRes.Rows[0][1], "optional side should be nil when WITH removed source node")
-
-	// Optional WHERE filters all related nodes -> left-join null row retained.
-	filteredRes, err := exec.executeMatchWithOptionalMatch(
-		ctx,
-		"MATCH (n:Person {name:'alice'}) WITH n OPTIONAL MATCH (n)-[:KNOWS]->(m:Person) WHERE m.age > 100 RETURN n.name, m.name",
-	)
-	require.NoError(t, err)
-	require.Len(t, filteredRes.Rows, 1)
-	require.Equal(t, "alice", filteredRes.Rows[0][0])
-	require.Nil(t, filteredRes.Rows[0][1])
 }
 
 func TestExecuteMatchWithClause_AggregationAndWindowBranches(t *testing.T) {

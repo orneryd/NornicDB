@@ -62,12 +62,6 @@ func TestResidualCypherDescriptorsPreserveContracts(t *testing.T) {
 		{localization.CypherResidualUnionBranchFailed(2, "RETURN broken", cause), localization.MessageCypherResidualUnionBranchFailed, `error in UNION query 2 ("RETURN broken"): forced failure`},
 		{localization.CypherResidualUnionColumnCountMismatch(1, 2), localization.MessageCypherResidualUnionColumnCountMismatch, "UNION queries must return the same number of columns (got 1 and 2)"},
 		{localization.CypherResidualOptionalMatchNotFound("MATCH (n)"), localization.MessageCypherResidualOptionalMatchNotFound, `OPTIONAL MATCH not found in query: "MATCH (n)"`},
-		{localization.CypherResidualCompoundOptionalMatchNotFound("MATCH (n)"), localization.MessageCypherResidualCompoundOptionalMatchNotFound, `OPTIONAL MATCH not found in compound query: "MATCH (n)"`},
-		{localization.CypherResidualMatchNodePatternParseFailed("broken"), localization.MessageCypherResidualMatchNodePatternParseFailed, `could not parse node pattern from MATCH clause: "broken"`},
-		{localization.CypherResidualInitialNodesLookupFailed(cause), localization.MessageCypherResidualInitialNodesLookupFailed, "failed to get initial nodes: forced failure"},
-		{localization.CypherResidualSumArithmeticTermUnsupported("n.value"), localization.MessageCypherResidualSumArithmeticTermUnsupported, "unsupported SUM arithmetic term: n.value"},
-		{localization.CypherResidualSumNumericRequired("bad", "n.value"), localization.MessageCypherResidualSumNumericRequired, `SUM() requires numeric values, got string in expression "n.value"`},
-		{localization.CypherResidualReturnClauseRequired(), localization.MessageCypherResidualReturnClauseRequired, "RETURN clause required"},
 		{localization.CypherResidualForeachClauseNotFound("RETURN 1"), localization.MessageCypherResidualForeachClauseNotFound, `FOREACH clause not found in query: "RETURN 1"`},
 		{localization.CypherResidualLoadCSVUnsupported(), localization.MessageCypherResidualLoadCSVUnsupported, "LOAD CSV is not supported in NornicDB embedded mode"},
 		{localization.CypherResidualEmptyLabelAfterColon("(n:)"), localization.MessageCypherResidualEmptyLabelAfterColon, "empty label name after colon in pattern: (n:)"},
@@ -91,7 +85,7 @@ func TestResidualCypherDescriptorsPreserveContracts(t *testing.T) {
 		{localization.CypherResidualShowAliasesSyntaxInvalid(), localization.MessageCypherResidualShowAliasesSyntaxInvalid, "invalid SHOW ALIASES syntax"},
 	}
 
-	require.Len(t, testCases, 34)
+	require.Len(t, testCases, 28)
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {

@@ -25,9 +25,6 @@
 - id: cyphermatching.with_return_clauses_required
   description: Falta una cláusula WITH o RETURN requerida. Las palabras clave no se traducen.
   other: se requieren las cláusulas WITH y RETURN
-- id: cyphermatching.with_optional_match_return_clauses_required
-  description: Falta una cláusula WITH, OPTIONAL MATCH o RETURN requerida. Las palabras clave no se traducen.
-  other: se requieren las cláusulas WITH, OPTIONAL MATCH y RETURN
 - id: cyphermatching.order_by_parse_failed
   description: Error al analizar ORDER BY. Las palabras clave no se traducen.
   other: no se pudo analizar la cláusula ORDER BY
@@ -124,6 +121,9 @@
 - id: cyphermatching.return_star_no_variables
   description: "RETURN * sin ninguna variable en el ámbito."
   other: "RETURN * requiere al menos una variable en el ámbito"
+- id: cyphermatching.optional_match_shape_unsupported
+  description: "Una sentencia MATCH … OPTIONAL MATCH que la canalización de cláusulas no ejecuta. Query es texto Cypher y no se traduce."
+  other: "esta forma de MATCH … OPTIONAL MATCH no se admite: {{.Query}}"
 - id: cyphermatching.is_not_operand_invalid
   description: IS NOT va seguido de una etiqueta. Input es texto Cypher y no se traduce.
   other: "Entrada no válida '{{.Input}}': se esperaba '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' o 'TYPED'"

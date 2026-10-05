@@ -125,23 +125,23 @@ func TestRegression_TypedUndirectedRelationshipExistenceRespectsRelationshipType
 	})
 }
 
-func TestRegression_ExecuteMatchEmbeddedOptionalMatchProjectsRelationshipVariable(t *testing.T) {
+func TestRegression_OptionalMatchProjectsRelationshipVariable(t *testing.T) {
 	exec := setupOptionalMatchProbeFixture(t)
 	ctx := context.Background()
 
-	result, err := exec.executeMatch(ctx, `MATCH (n:Node {id: 'parent-node-id'}) OPTIONAL MATCH (n)-[r:HAS_CHUNK]->(chunk:NodeChunk) RETURN r, chunk`)
+	result, err := exec.Execute(ctx, `MATCH (n:Node {id: 'parent-node-id'}) OPTIONAL MATCH (n)-[r:HAS_CHUNK]->(chunk:NodeChunk) RETURN r, chunk`, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Len(t, result.Rows[0], 2)
 
 	edge, ok := result.Rows[0][0].(*storage.Edge)
-	require.True(t, ok, "embedded OPTIONAL MATCH should project the relationship variable as *storage.Edge, got %T", result.Rows[0][0])
+	require.True(t, ok, "OPTIONAL MATCH should project the relationship variable as *storage.Edge, got %T", result.Rows[0][0])
 	require.NotNil(t, edge)
 	assert.Equal(t, storage.EdgeID("HAS_CHUNK"), storage.EdgeID(edge.Type), "relationship type should survive the probe path")
 	assert.Equal(t, int64(0), edge.Properties["index"], "relationship properties should survive the probe path")
 
 	node, ok := result.Rows[0][1].(*storage.Node)
-	require.True(t, ok, "embedded OPTIONAL MATCH should project the optional node as *storage.Node, got %T", result.Rows[0][1])
+	require.True(t, ok, "OPTIONAL MATCH should project the optional node as *storage.Node, got %T", result.Rows[0][1])
 	require.NotNil(t, node)
 	assert.Equal(t, "chunk-1", node.Properties["id"])
 }

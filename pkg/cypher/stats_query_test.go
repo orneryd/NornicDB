@@ -201,55 +201,6 @@ func TestReportedWhereAndCreateRegressionCluster(t *testing.T) {
 	require.Equal(t, 2, createTwoRelationships.Stats.RelationshipsCreated)
 }
 
-func TestOptionalRelatedMatchesWhereBindsTargetVariable(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	pattern := exec.parseOptionalRelPattern(ctx, `(t)-[:BLOCKED_BY]->(c:C)`)
-	require.Equal(t, "c", pattern.targetVar)
-
-	related := optionalRelResult{node: &storage.Node{ID: "c1", Labels: []string{"C"}, Properties: map[string]interface{}{"met": false}}}
-	assert.True(t, exec.optionalRelatedMatchesWhere(ctx, nil, related, pattern, "c.met = false"))
-
-	related.node.Properties["met"] = true
-	assert.False(t, exec.optionalRelatedMatchesWhere(ctx, nil, related, pattern, "c.met = false"))
-}
-
-func TestGroupedWithAggregationCountSkipsNullOptionalTarget(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	t1 := &storage.Node{ID: "t1", Labels: []string{"T"}, Properties: map[string]interface{}{"name": "T1"}}
-	t2 := &storage.Node{ID: "t2", Labels: []string{"T"}, Properties: map[string]interface{}{"name": "T2"}}
-	c1 := &storage.Node{ID: "c1", Labels: []string{"C"}, Properties: map[string]interface{}{"name": "C1"}}
-	rows := []joinedRow{
-		{initialNode: t1, relatedNode: c1},
-		{initialNode: t2, relatedNode: nil},
-	}
-	require.Equal(t, "c", extractFuncInner("count(c)"))
-	require.True(t, isAggregateExpression("count(c)"))
-	require.True(t, isAggregateFuncName("count(c)", "count"))
-
-	result, err := exec.processGroupedWithAggregation(
-		ctx,
-		rows,
-		"t",
-		"c",
-		"",
-		[]returnItem{{expr: "t"}, {expr: "count(c)", alias: "n"}},
-		[]returnItem{{expr: "t.name", alias: "name"}, {expr: "n"}},
-		"",
-	)
-	require.NoError(t, err)
-	require.ElementsMatch(t, [][]interface{}{{"T1", int64(1)}, {"T2", int64(0)}}, result.Rows)
-}
-
 // TestMatchOptionalMatchWithCase tests OPTIONAL MATCH with CASE WHEN
 func TestMatchOptionalMatchWithCase(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)

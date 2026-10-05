@@ -448,11 +448,9 @@ skipMatchCallRoute:
 		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
 			return outcome.result, outcome.err
 		}
-		withBeforeOptional := findKeywordIndex(cypher[:optionalMatchIdx], "WITH")
-		if withBeforeOptional > 0 {
-			return e.executeMatchWithOptionalMatch(ctx, cypher)
-		}
-		return e.executeCompoundMatchOptionalMatch(ctx, cypher)
+		// The pipeline is the one executor for MATCH … OPTIONAL MATCH: a
+		// form it declines is rejected, not run by another handler (#898).
+		return nil, unsupportedOptionalMatchShapeError(cypher)
 	}
 
 	switch {
@@ -1179,4 +1177,16 @@ func unresolvedReturnItemError(ctx context.Context, item string) error {
 	)
 	recordExpressionFailure(ctx, err)
 	return err
+}
+
+// unsupportedOptionalMatchShapeError is the error for a MATCH … OPTIONAL MATCH
+// statement the clause pipeline declines. It carries the router terminal's
+// SyntaxError classification: an unhandled shape fails, it never falls back to
+// another executor.
+func unsupportedOptionalMatchShapeError(cypher string) error {
+	return &classifiedCypherError{
+		cause:  localizedError(localization.CypherMatchingOptionalMatchShapeUnsupported(truncateQuery(cypher, 80)), nil),
+		code:   "Neo.ClientError.Statement.SyntaxError",
+		detail: "UnexpectedSyntax",
+	}
 }

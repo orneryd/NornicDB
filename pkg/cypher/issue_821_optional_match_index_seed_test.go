@@ -116,34 +116,6 @@ func TestPropertyIndexMissIsAuthoritative(t *testing.T) {
 	}
 }
 
-func TestIssue821OptionalMatchSeedFiltersWhereIndexCandidatesByPatternProperties(t *testing.T) {
-	exec, ctx := newUnitExecutor(t)
-	for _, query := range []string{
-		"CREATE INDEX person_id FOR (p:Person) ON (p.id)",
-		"CREATE (:Person {id: 1, team: 'a'}), (:Person {id: 2, team: 'b'}), (:Person {id: 3, tags: [1, 2]})",
-	} {
-		_, err := exec.Execute(ctx, query, nil)
-		require.NoError(t, err)
-	}
-	for _, tc := range []struct {
-		pattern nodePatternInfo
-		where   string
-		want    []interface{}
-	}{
-		{nodePatternInfo{variable: "p", labels: []string{"Person"}, properties: map[string]interface{}{"team": "a"}}, "p.id IN [1, 2]", []interface{}{int64(1)}},
-		{nodePatternInfo{variable: "p", labels: []string{"Person"}, properties: map[string]interface{}{"tags": []interface{}{int64(1), int64(2)}}}, "p.id IN [1, 3]", []interface{}{int64(3)}},
-		{nodePatternInfo{variable: "p", labels: []string{"Person"}, properties: map[string]interface{}{"team": nil}}, "p.id IN [1, 2, 3]", []interface{}{}},
-	} {
-		nodes, err := exec.collectOptionalMatchInitialNodes(ctx, tc.pattern, tc.where, "", nil)
-		require.NoError(t, err)
-		got := make([]interface{}, 0, len(nodes))
-		for _, node := range nodes {
-			got = append(got, node.Properties["id"])
-		}
-		require.Equal(t, tc.want, got)
-	}
-}
-
 func TestOptionalMatchSharedRoutePropagatesSeedLookupErrors(t *testing.T) {
 	seedError := errors.New("seed lookup failed")
 	executor := NewStorageExecutor(&labelStreamCountingEngine{

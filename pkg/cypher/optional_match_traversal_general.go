@@ -253,33 +253,9 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 		return rows, nil
 	}
 
-	matchResult, err := e.executeMatch(ctx, "MATCH "+pattern+" RETURN "+strings.Join(allVars, ", "))
+	candidates, err := e.matchTraversalOptRows(ctx, "MATCH "+pattern)
 	if err != nil {
 		return nil, err
-	}
-	candidates := make([]traversalOptRow, 0, len(matchResult.Rows))
-	for _, r := range matchResult.Rows {
-		cand := traversalOptRow{
-			nodes: make(map[string]*storage.Node, util.SafePreallocCap(len(matchResult.Columns))),
-			rels:  make(map[string]*storage.Edge),
-		}
-		for ci, col := range matchResult.Columns {
-			if ci >= len(r) {
-				break
-			}
-			switch v := r[ci].(type) {
-			case *storage.Node:
-				cand.nodes[col] = v
-			case *storage.Edge:
-				cand.rels[col] = v
-			default:
-				if cand.values == nil {
-					cand.values = make(map[string]interface{})
-				}
-				cand.values[col] = v
-			}
-		}
-		candidates = append(candidates, cand)
 	}
 
 	// Split the pattern variables into shared (already bound on the left) and

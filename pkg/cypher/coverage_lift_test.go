@@ -296,8 +296,6 @@ func TestCoverageLiftWithClauseExecutionShapes(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	ctx := context.Background()
 
-	assert.Equal(t, -1, findStandaloneWithIndex("MATCH (n) WHERE n.name STARTS WITH 'A' RETURN n"))
-	assert.Greater(t, findStandaloneWithIndex("MATCH (n) WITH n RETURN n"), 0)
 	assert.True(t, prevWordEqualsIgnoreCase("name STARTS   WITH 'A'", strings.LastIndex("name STARTS   WITH 'A'", "WITH"), "STARTS"))
 	assert.False(t, prevWordEqualsIgnoreCase("name MATCH WITH n", strings.LastIndex("name MATCH WITH n", "WITH"), "STARTS"))
 	assert.Equal(t, -1, findKeywordNotInBrackets("[x IN xs WHERE x > 1] RETURN x", "WHERE"))

@@ -3357,19 +3357,11 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 		t.Fatalf("setup failed: %v", err)
 	}
 
-	// No WITH/RETURN: no columns and no rows, as in Neo4j (#676).
-	res, err := e.executeCompoundMatchOptionalMatch(ctx, "MATCH (a:Person {name:'alice'}) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person)")
-	if err != nil {
-		t.Fatalf("compound optional without WITH/RETURN failed: %v", err)
-	}
-	if len(res.Columns) != 0 || len(res.Rows) != 0 {
-		t.Fatalf("compound optional without RETURN should have no columns and rows: %#v %#v", res.Columns, res.Rows)
-	}
-
-	// Missing variable in initial MATCH pattern should error.
-	_, err = e.executeCompoundMatchOptionalMatch(ctx, "MATCH (:Person) OPTIONAL MATCH (a)-[:KNOWS]->(b) RETURN b")
+	// A statement can't end with OPTIONAL MATCH: Neo4j 5.26.30 rejects it
+	// with a SyntaxError.
+	_, err = e.Execute(ctx, "MATCH (a:Person {name:'alice'}) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person)", nil)
 	if err == nil {
-		t.Fatal("expected parse error for variable-less initial MATCH in compound optional")
+		t.Fatal("expected a SyntaxError for a statement ending with OPTIONAL MATCH")
 	}
 
 	aliceRes, err := e.Execute(ctx, "MATCH (a:Person {name:'alice'}) RETURN a", nil)
