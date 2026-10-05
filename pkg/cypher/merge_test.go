@@ -633,18 +633,18 @@ func TestMergeHelpers_ParseReturnAndClauseSplitBranches(t *testing.T) {
 	require.Equal(t, []string{"name", "aid"}, result.Columns)
 	require.Equal(t, [][]interface{}{{"alice", "n-a"}}, result.Rows)
 
-	assert.Nil(t, splitMergeChainClauseBlock(""))
-	parts := splitMergeChainClauseBlock("junk OPTIONAL MATCH (a) FOREACH (x IN [1] | SET a.v = x) RETURN a")
-	require.GreaterOrEqual(t, len(parts), 3)
-
-	collapsed := collapseConsecutiveDuplicateWithClauses(`
+	parts := pipelineClauseTextsForTest(t, "OPTIONAL MATCH (a) FOREACH (x IN [1] | SET a.v = x) RETURN a")
+	require.Len(t, parts, 3)
+	repeated, err := e.Execute(ctx, `
 MERGE (o:OriginalText {textKey: $lookupValue})
 WITH o, $targetLang AS targetLang
 WITH o, $targetLang AS targetLang
 WHERE o IS NOT NULL
-RETURN o
-`)
-	require.Equal(t, 1, strings.Count(collapsed, "WITH o, $targetLang AS targetLang"))
+RETURN o.textKey AS key, targetLang
+`, map[string]interface{}{"lookupValue": "word", "targetLang": "en"})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"word", "en"}}, repeated.Rows)
+	require.EqualValues(t, 1, repeated.Stats.NodesCreated)
 }
 
 func TestFindMergeNode_UsesPropertyIndexLookup(t *testing.T) {
@@ -1041,67 +1041,52 @@ func TestExecuteMergeRelSegment_ErrorBranches(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(2)}}, stored.Rows)
 }
 
-func TestSplitMergeChainClauseBlock_Branches(t *testing.T) {
-	assert.Nil(t, splitMergeChainClauseBlock("   "))
+func pipelineClauseTextsForTest(t *testing.T, query string) []string {
+	t.Helper()
+	clauses, ok := splitPipelineClauses(strings.TrimSpace(query))
+	require.True(t, ok)
+	texts := make([]string, len(clauses))
+	for index, clause := range clauses {
+		texts[index] = clause.text
+	}
+	return texts
+}
 
-	// No recognized keyword -> returns whole block as one clause.
-	one := splitMergeChainClauseBlock("x = 1")
-	require.Len(t, one, 1)
-	assert.Equal(t, "x = 1", one[0])
-
-	// Leading noise should be skipped to first recognized keyword.
-	clauses := splitMergeChainClauseBlock("foo bar MATCH (n) RETURN n")
-	require.Len(t, clauses, 2)
-	assert.Equal(t, "MATCH (n)", clauses[0])
-	assert.Equal(t, "RETURN n", clauses[1])
-
-	// Mixed clause chain with intermediate text: parser should still split at known clause starts.
-	clauses = splitMergeChainClauseBlock("MATCH (n) junk OPTIONAL MATCH (m) FOREACH (x IN [1] | SET m.v = x) RETURN m")
-	require.Len(t, clauses, 4)
-	assert.Equal(t, "MATCH (n) junk", clauses[0])
-	assert.Equal(t, "OPTIONAL MATCH (m)", clauses[1])
-	assert.Equal(t, "FOREACH (x IN [1] | SET m.v = x)", clauses[2])
-	assert.Equal(t, "RETURN m", clauses[3])
-
-	// Unknown tail after first clause is kept as part of that clause when no next keyword exists.
-	clauses = splitMergeChainClauseBlock("MATCH (n) trailing noise")
-	require.Len(t, clauses, 1)
-	assert.Equal(t, "MATCH (n) trailing noise", clauses[0])
+func TestMergeSharedClauseBoundariesAndLeadingNoiseRejection(t *testing.T) {
+	clauses, ok := splitPipelineClauses("   ")
+	require.False(t, ok)
+	require.Empty(t, clauses)
+	texts := pipelineClauseTextsForTest(t, "MATCH (n) OPTIONAL MATCH (m) FOREACH (x IN [1] | SET m.v = x) RETURN m")
+	require.Equal(t, []string{"MATCH (n)", "OPTIONAL MATCH (m)", "FOREACH (x IN [1] | SET m.v = x)", "RETURN m"}, texts)
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	for _, query := range []string{"x = 1", "foo bar MATCH (n) RETURN n", "junk OPTIONAL MATCH (a) RETURN a"} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		require.Error(t, err)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	}
 }
 
 func TestApplyWithProjection_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	n := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
 	r := &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{}}
-	nodeCtx := map[string]*storage.Node{"n": n}
-	relCtx := map[string]*storage.Edge{"r": r}
-	scalarCtx := map[string]interface{}{"answer": int64(42)}
 	ctx := context.Background()
-
-	remaining, keptNodes, keptRels, keptScalars := exec.applyWithProjection(ctx, "* MATCH (n) RETURN n", nodeCtx, relCtx, scalarCtx)
-	assert.Equal(t, "MATCH (n) RETURN n", remaining)
-	assert.Equal(t, nodeCtx, keptNodes)
-	assert.Equal(t, relCtx, keptRels)
-	assert.Equal(t, scalarCtx, keptScalars)
-
-	remaining, keptNodes, keptRels, keptScalars = exec.applyWithProjection(ctx, "n RETURN n", nodeCtx, relCtx, scalarCtx)
-	assert.Equal(t, "RETURN n", remaining)
-	require.Contains(t, keptNodes, "n")
-	assert.Empty(t, keptRels)
-	assert.Empty(t, keptScalars)
-
-	remaining, keptNodes, keptRels, keptScalars = exec.applyWithProjection(ctx, "answer AS projected RETURN projected", nodeCtx, relCtx, scalarCtx)
-	assert.Equal(t, "RETURN projected", remaining)
-	assert.Empty(t, keptNodes)
-	assert.Empty(t, keptRels)
-	assert.Equal(t, map[string]interface{}{"projected": int64(42)}, keptScalars)
-
-	// Non-matching projection drops context keys not explicitly projected.
-	remaining, keptNodes, keptRels, keptScalars = exec.applyWithProjection(ctx, "n + 1", nodeCtx, relCtx, scalarCtx)
-	assert.Equal(t, "", remaining)
-	assert.Empty(t, keptNodes)
-	assert.Empty(t, keptRels)
-	assert.Empty(t, keptScalars)
+	input := []pipelineRow{{"n": n, "r": r, "answer": int64(42)}}
+	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *")
+	require.True(t, ok)
+	require.Equal(t, input, projected)
+	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n")
+	require.True(t, ok)
+	require.Equal(t, []pipelineRow{{"n": n}}, projected)
+	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH answer AS projected")
+	require.True(t, ok)
+	require.Equal(t, []pipelineRow{{"projected": int64(42)}}, projected)
+	failureCtx := withExpressionFailureSlot(ctx)
+	projected, ok = exec.pipelineApplyWith(failureCtx, input, "WITH n + 1 AS invalid")
+	require.False(t, ok)
+	require.Nil(t, projected)
+	require.Error(t, getExpressionFailure(failureCtx))
+	require.Contains(t, statusText(getExpressionFailure(failureCtx)), "Neo.ClientError.Statement.TypeError")
 }
 
 func TestExecuteMergeWithChain_AdditionalBranches(t *testing.T) {
@@ -1145,10 +1130,8 @@ func TestExecuteMergeWithChain_AdditionalBranches(t *testing.T) {
 	assert.Equal(t, "entry-ok", okRes.Rows[0][0])
 }
 
-func TestSplitMergeChainSegments_AdditionalBranches(t *testing.T) {
-	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-
-	segments := e.splitMergeChainSegments(`
+func TestMergeSharedClauseSplitterStartsWithAndReturn(t *testing.T) {
+	segments := pipelineClauseTextsForTest(t, `
 		MERGE (n:Word {name:'x'})
 		WITH n
 		MATCH (m:Word) WHERE m.name STARTS WITH 'x'
@@ -1158,14 +1141,12 @@ func TestSplitMergeChainSegments_AdditionalBranches(t *testing.T) {
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(segments[0]), "MERGE"))
 	assert.Contains(t, strings.ToUpper(segments[len(segments)-1]), "RETURN")
 
-	one := e.splitMergeChainSegments("MERGE (n:Solo {id:'1'}) RETURN n.id")
-	require.Len(t, one, 1)
-	assert.Contains(t, one[0], "MERGE (n:Solo")
+	one := pipelineClauseTextsForTest(t, "MERGE (n:Solo {id:'1'}) RETURN n.id")
+	require.Equal(t, []string{"MERGE (n:Solo {id:'1'})", "RETURN n.id"}, one)
 }
 
-func TestSplitMultipleMerges_WithScalarProjectionTail(t *testing.T) {
-	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	segments := e.splitMultipleMerges(strings.TrimSpace(`
+func TestMergeSharedClauseSplitterScalarProjectionTail(t *testing.T) {
+	segments := pipelineClauseTextsForTest(t, strings.TrimSpace(`
 WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash
 MATCH (ck:CodeKey {entity_id: entity_id, relation_type: relation_type})
 MATCH (cs:CodeState {state_id: state_id})
@@ -1185,9 +1166,8 @@ MERGE (c)-[:TOUCHED]->(ck)
 	}, segments)
 }
 
-func TestSplitMultipleMerges_CreateRelationshipTail(t *testing.T) {
-	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	segments := e.splitMultipleMerges(strings.TrimSpace(`
+func TestMergeSharedClauseSplitterCreateRelationshipTail(t *testing.T) {
+	segments := pipelineClauseTextsForTest(t, strings.TrimSpace(`
 MERGE (s:Workload {id: 's1'})
 MERGE (t:Workload {id: 't1'})
 CREATE (s)-[:DEPENDS_ON]->(t)
@@ -1198,7 +1178,7 @@ CREATE (s)-[:DEPENDS_ON]->(t)
 		"CREATE (s)-[:DEPENDS_ON]->(t)",
 	}, segments)
 
-	segments = e.splitMultipleMerges("MERGE (n:Workload {id: 'n1'}) ON CREATE SET n.created = true RETURN n")
+	segments = pipelineClauseTextsForTest(t, "MERGE (n:Workload {id: 'n1'}) ON CREATE SET n.created = true RETURN n")
 	require.Equal(t, []string{
 		"MERGE (n:Workload {id: 'n1'}) ON CREATE SET n.created = true",
 		"RETURN n",
@@ -1292,9 +1272,8 @@ CREATE (s)-[:A]->(t), (s)-[:B]->(t)`,
 	}
 }
 
-func TestSplitMultipleMerges_FullFallbackRowShape(t *testing.T) {
-	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	segments := e.splitMultipleMerges(strings.TrimSpace(`
+func TestMergeSharedClauseSplitterFullRowShape(t *testing.T) {
+	segments := pipelineClauseTextsForTest(t, strings.TrimSpace(`
 MERGE (ck:CodeKey {entity_id: 'entity-single', relation_type: 'calls'})
 MERGE (cs:CodeState {state_id: 'state-single'})
 SET cs.code_key = 'repo_fact|calls|single',
@@ -1319,7 +1298,8 @@ MERGE (c)-[:TOUCHED]->(ck)
 `))
 	require.Equal(t, []string{
 		"MERGE (ck:CodeKey {entity_id: 'entity-single', relation_type: 'calls'})",
-		"MERGE (cs:CodeState {state_id: 'state-single'})\nSET cs.code_key = 'repo_fact|calls|single',\n    cs.tx_id = 'tx-single',\n    cs.commit_hash = 'commit-single-row',\n    cs.valid_from_iso = '2026-03-20T20:22:20Z',\n    cs.valid_from = datetime('2026-03-20T20:22:20Z'),\n    cs.value_json = '{\"repo\":\"git-to-graph\",\"source\":\"single-a\",\"target\":\"single-b\"}',\n    cs.valid_to = CASE WHEN null IS NULL THEN null ELSE datetime(null) END,\n    cs.asserted_at = datetime('2026-03-20T20:22:20Z'),\n    cs.asserted_by = 'TJ Sweet',\n    cs.semantic_type = 'CallEdgeVersion'",
+		"MERGE (cs:CodeState {state_id: 'state-single'})",
+		"SET cs.code_key = 'repo_fact|calls|single',\n    cs.tx_id = 'tx-single',\n    cs.commit_hash = 'commit-single-row',\n    cs.valid_from_iso = '2026-03-20T20:22:20Z',\n    cs.valid_from = datetime('2026-03-20T20:22:20Z'),\n    cs.value_json = '{\"repo\":\"git-to-graph\",\"source\":\"single-a\",\"target\":\"single-b\"}',\n    cs.valid_to = CASE WHEN null IS NULL THEN null ELSE datetime(null) END,\n    cs.asserted_at = datetime('2026-03-20T20:22:20Z'),\n    cs.asserted_by = 'TJ Sweet',\n    cs.semantic_type = 'CallEdgeVersion'",
 		"MERGE (c:Commit {hash: 'commit-single-row'})\nON CREATE SET c.timestamp = datetime('2026-03-20T20:22:20Z'), c.tx_id = 'tx-single', c.actor = 'TJ Sweet'",
 		"WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash",
 		"MATCH (ck:CodeKey {entity_id: entity_id, relation_type: relation_type})",
@@ -1334,20 +1314,15 @@ MERGE (c)-[:TOUCHED]->(ck)
 func TestProjectWithContext_PreservesScalarAliases(t *testing.T) {
 	ctx := context.Background()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	nodes, rels, scalars := exec.projectWithContext(ctx,
-		`'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash`,
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
-		nil,
-	)
-	assert.Empty(t, nodes)
-	assert.Empty(t, rels)
-	assert.Equal(t, map[string]interface{}{
+	projected, ok := exec.pipelineApplyWith(ctx, []pipelineRow{{}},
+		`WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash`)
+	require.True(t, ok)
+	require.Equal(t, []pipelineRow{{
 		"entity_id":     "entity-single",
 		"relation_type": "calls",
 		"state_id":      "state-single",
 		"commit_hash":   "commit-single-row",
-	}, scalars)
+	}}, projected)
 }
 
 func TestExecuteMatchSegment_ResolvesScalarBindings(t *testing.T) {

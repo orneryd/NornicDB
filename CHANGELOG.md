@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Make top-level UNWIND, WITH and FOREACH dispatch terminal in the shared
+  pipeline. Retire their private entry owners and the duplicate UNWIND CALL
+  transaction-batch runner; preserve the shared CALL operator's batch semantics.
+  Selected UNWIND rewrite operators stay inside the caller's pipeline context
+  and return execution errors instead of retrying. The pipeline now reports its
+  own recorded expression failures, without relying on public Execute (#908).
+
+- Retire test-only MERGE-chain projection wrappers and bespoke clause scanners.
+  Move their assertions to the shared WITH planner and clause splitter, retaining
+  exact node/relationship/scalar scopes, ON-action boundaries, quoted values and
+  repeated WITH horizons. Require typed errors for empty projections, unknown
+  variables and invalid arithmetic instead of permissive private behavior (#908).
+
 - Route standalone and MERGE-first statements terminally through the shared
   clause pipeline. Retire private standalone, chain, multi-MERGE and segment
   executors. No-op MERGE matches no longer reindex nodes or queue embeddings;

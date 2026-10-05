@@ -8,14 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The pipeline answers CALL { } IN TRANSACTIONS statements; these tests
-// run the fallback batch runners it leaves behind directly. Each batch sees
-// the statement's parameters along with its own rows.
-
-func TestUnwindCallInTransactionsFallback_BatchesSeeStatementParameters(t *testing.T) {
+func TestUnwindCallInTransactionsPipeline_BatchesSeeStatementParameters(t *testing.T) {
 	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
-	ctx := withQueryParams(context.Background(), map[string]interface{}{"tag": "batched"})
-	_, err := exec.executeUnwindCallInTransactions(ctx, "x", []interface{}{int64(1), int64(2), int64(3)}, "WITH x CREATE (:T {v: x, tag: $tag})", "", 2)
+	_, err := exec.Execute(context.Background(), "UNWIND $rows AS x CALL { WITH x CREATE (:T {v: x, tag: $tag}) } IN TRANSACTIONS OF 2 ROWS", map[string]interface{}{
+		"tag":  "batched",
+		"rows": []interface{}{int64(1), int64(2), int64(3)},
+	})
 	require.NoError(t, err)
 
 	result, err := exec.Execute(context.Background(), "MATCH (t:T {tag: 'batched'}) RETURN t.v ORDER BY t.v", nil)

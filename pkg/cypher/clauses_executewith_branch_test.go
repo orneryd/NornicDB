@@ -14,28 +14,27 @@ func TestExecuteWith_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	t.Run("error when WITH missing", func(t *testing.T) {
-		_, err := exec.executeWith(ctx, "RETURN 1")
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "WITH clause not found")
+	t.Run("standalone RETURN is valid", func(t *testing.T) {
+		res, err := exec.Execute(ctx, "RETURN 1", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(1)}}, res.Rows)
 	})
 
-	t.Run("WITH only returns projected row", func(t *testing.T) {
-		res, err := exec.executeWith(ctx, "WITH 7 AS x, 'v' AS y")
-		require.NoError(t, err)
-		require.Equal(t, []string{"x", "y"}, res.Columns)
-		require.Equal(t, [][]interface{}{{int64(7), "v"}}, res.Rows)
+	t.Run("WITH requires a continuation", func(t *testing.T) {
+		res, err := exec.Execute(ctx, "WITH 7 AS x, 'v' AS y", nil)
+		requireSyntaxErrorStatus(t, err, "WITH 7 AS x, 'v' AS y")
+		require.Nil(t, res)
 	})
 
 	t.Run("WHERE filtered non-aggregate returns zero rows", func(t *testing.T) {
-		res, err := exec.executeWith(ctx, "WITH 1 AS x WHERE false RETURN x")
+		res, err := exec.Execute(ctx, "WITH 1 AS x WHERE false RETURN x", nil)
 		require.NoError(t, err)
 		require.Equal(t, []string{"x"}, res.Columns)
 		require.Empty(t, res.Rows)
 	})
 
 	t.Run("WHERE filtered aggregate returns identity row", func(t *testing.T) {
-		res, err := exec.executeWith(ctx, "WITH 1 AS x WHERE false RETURN collect(x) AS xs, count(x) AS c")
+		res, err := exec.Execute(ctx, "WITH 1 AS x WHERE false RETURN collect(x) AS xs, count(x) AS c", nil)
 		require.NoError(t, err)
 		require.Equal(t, []string{"xs", "c"}, res.Columns)
 		require.Len(t, res.Rows, 1)
@@ -44,7 +43,7 @@ func TestExecuteWith_Branches(t *testing.T) {
 	})
 
 	t.Run("map literal binding used in CREATE remainder", func(t *testing.T) {
-		res, err := exec.executeWith(ctx, "WITH {name:'Neo'} AS m CREATE (n:Tmp {name: m.name}) RETURN count(n) AS c")
+		res, err := exec.Execute(ctx, "WITH {name:'Neo'} AS m CREATE (n:Tmp {name: m.name}) RETURN count(n) AS c", nil)
 		require.NoError(t, err)
 		require.Equal(t, []string{"c"}, res.Columns)
 		require.Len(t, res.Rows, 1)
@@ -55,7 +54,7 @@ func TestExecuteWith_Branches(t *testing.T) {
 	})
 
 	t.Run("nested list binding used in UNWIND remainder", func(t *testing.T) {
-		res, err := exec.executeWith(ctx, "WITH [[1,2],[3,4]] AS matrix UNWIND matrix AS row RETURN row")
+		res, err := exec.Execute(ctx, "WITH [[1,2],[3,4]] AS matrix UNWIND matrix AS row RETURN row", nil)
 		require.NoError(t, err)
 		require.Equal(t, []string{"row"}, res.Columns)
 		require.Len(t, res.Rows, 2)
@@ -66,7 +65,7 @@ func TestExecuteWith_Branches(t *testing.T) {
 
 	t.Run("param substitution path", func(t *testing.T) {
 		ctxParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"x": int64(11)})
-		res, err := exec.executeWith(ctxParams, "WITH $x AS v RETURN v")
+		res, err := exec.Execute(ctxParams, "WITH $x AS v RETURN v", nil)
 		require.NoError(t, err)
 		require.Equal(t, []string{"v"}, res.Columns)
 		require.EqualValues(t, 11, res.Rows[0][0])

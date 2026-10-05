@@ -53,13 +53,11 @@ func TestCypherMutationLocalizedErrors(t *testing.T) {
 		require.EqualError(t, err, "REMOVE requires a MATCH clause first (e.g., MATCH (n) REMOVE n.property)")
 		requireMessageID(t, err, localization.MessageCypherMutationsRemoveMatchRequired)
 
-		_, err = exec.executeUnwind(ctx, "UNWIND [1] RETURN 1")
-		require.EqualError(t, err, "UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)")
-		requireMessageID(t, err, localization.MessageCypherMutationsUnwindASRequired)
+		_, err = exec.Execute(ctx, "UNWIND [1] RETURN 1", nil)
+		requireSyntaxErrorStatus(t, err, "UNWIND [1] RETURN 1")
 
-		_, err = exec.executeForeach(ctx, "FOREACH value")
-		require.EqualError(t, err, "FOREACH requires parentheses (e.g., FOREACH (x IN list | SET ...))")
-		requireMessageID(t, err, localization.MessageCypherMutationsForeachParenthesesRequired)
+		_, err = exec.Execute(ctx, "FOREACH value", nil)
+		requireSyntaxErrorStatus(t, err, "FOREACH value")
 	})
 
 	t.Run("nested wrappers retain outer and inner IDs plus sentinel cause", func(t *testing.T) {

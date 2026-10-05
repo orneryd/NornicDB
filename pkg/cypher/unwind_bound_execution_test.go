@@ -64,7 +64,7 @@ func TestUnwind_MergeStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &cancelOnFirstCreateEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel_unwind"), cancel: cancel}
 	exec := NewStorageExecutor(store)
-	_, err := exec.executeUnwind(ctx, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row})")
+	_, err := exec.executeRequiredPipeline(ctx, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row})")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, store.creates)
 }
@@ -73,7 +73,7 @@ func TestUnwind_MergeChainStopsWithinRowAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &cancelOnFirstCreateEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel_chain"), cancel: cancel}
 	exec := NewStorageExecutor(store)
-	_, err := exec.executeUnwind(ctx, "UNWIND [1] AS row MERGE (a:CancelChainA {value: row}) MERGE (b:CancelChainB {value: row}) RETURN count(b) AS count")
+	_, err := exec.executeRequiredPipeline(ctx, "UNWIND [1] AS row MERGE (a:CancelChainA {value: row}) MERGE (b:CancelChainB {value: row}) RETURN count(b) AS count")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, store.creates)
 }
@@ -82,7 +82,7 @@ func TestUnwind_ProjectedMergeStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &cancelOnFirstCreateEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel_projected_unwind"), cancel: cancel}
 	exec := NewStorageExecutor(store)
-	_, err := exec.executeUnwind(ctx, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row}) RETURN n.value AS value")
+	_, err := exec.executeRequiredPipeline(ctx, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row}) RETURN n.value AS value")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, store.creates)
 }
