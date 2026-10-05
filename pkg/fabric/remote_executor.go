@@ -140,33 +140,33 @@ func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToke
 	}
 	r.mu.RUnlock()
 
-	cfg := storage.RemoteEngineConfig{
-		URI:      loc.URI,
-		Database: loc.DBName,
-	}
-
-	switch loc.AuthMode {
-	case "user_password":
-		cfg.User = loc.User
-		cfg.Password = loc.Password
-	default:
-		// oidc_forwarding: forward the caller's auth token.
-		cfg.AuthToken = authToken
-	}
-
-	engine, err := storage.NewRemoteEngine(cfg)
-	if err != nil {
-		return nil, err
-	}
-
+	// Creating an engine doesn't connect, so it happens under the lock and a
+	// concurrent caller that created it first is reused.
 	r.mu.Lock()
-	if existing, exists := r.engineCache[key]; exists {
-		r.mu.Unlock()
-		_ = engine.Close()
-		return existing, nil
+	defer r.mu.Unlock()
+	engine, exists := r.engineCache[key]
+	if !exists {
+		cfg := storage.RemoteEngineConfig{
+			URI:      loc.URI,
+			Database: loc.DBName,
+		}
+
+		switch loc.AuthMode {
+		case "user_password":
+			cfg.User = loc.User
+			cfg.Password = loc.Password
+		default:
+			// oidc_forwarding: forward the caller's auth token.
+			cfg.AuthToken = authToken
+		}
+
+		created, err := storage.NewRemoteEngine(cfg)
+		if err != nil {
+			return nil, err
+		}
+		engine = created
+		r.engineCache[key] = engine
 	}
-	r.engineCache[key] = engine
-	r.mu.Unlock()
 	return engine, nil
 }
 
