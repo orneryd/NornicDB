@@ -1541,7 +1541,7 @@ test-parsers:
 	@echo ""
 	@echo "✅ Both parsers passed all Cypher tests"
 
-.PHONY: cypher-tck-inventory cypher-tck cypher-tck-ratchet cypher-tck-vetted cypher-tck-update-ratchet cypher-conformance cypher-differential
+.PHONY: cypher-tck-inventory cypher-tck cypher-tck-ratchet cypher-tck-vetted cypher-tck-update-ratchet cypher-conformance cypher-differential cypher-differential-ratchet
 
 CYPHER_TCK_ZONEINFO := $(CURDIR)/pkg/cypher/temporal_zoneinfo.zip
 CYPHER_TCK_TAGS := noui,nolocalllm
@@ -1566,6 +1566,12 @@ cypher-conformance: cypher-tck-ratchet cypher-tck-vetted
 
 cypher-differential:
 	./scripts/cypher-tck/run-differential.sh
+
+# The differential ratchet over the sweep and the issue reproductions on every
+# route (#754); run nightly. NORNICDB_DIFFERENTIAL_UPDATE_RATCHET=1 rewrites
+# testing/cypher/tck/testdata/differential/known_mismatches.jsonl instead.
+cypher-differential-ratchet:
+	./scripts/cypher-tck/run-differential.sh ratchet
 
 # Clean ANTLR generated files and JAR
 antlr-clean:
