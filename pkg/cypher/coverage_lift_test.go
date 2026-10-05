@@ -302,34 +302,35 @@ func TestCoverageLiftWithClauseExecutionShapes(t *testing.T) {
 	assert.GreaterOrEqual(t, findKeywordNotInBrackets("WITH 1 AS x RETURN x", "RETURN"), 0)
 	assert.True(t, isWhitespace('\n'))
 
-	result, err := exec.executeWith(ctx, "WITH {name: 'Ada', score: 10} AS m WHERE m.name = 'Ada' RETURN m.name AS name, m.score AS score")
+	result, err := exec.Execute(ctx, "WITH {name: 'Ada', score: 10} AS m WHERE m.name = 'Ada' RETURN m.name AS name, m.score AS score", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"name", "score"}, result.Columns)
 	assert.Equal(t, [][]interface{}{{"Ada", int64(10)}}, result.Rows)
 
-	result, err = exec.executeWith(ctx, "WITH 1 AS n WHERE n > 2 RETURN n AS n")
+	result, err = exec.Execute(ctx, "WITH 1 AS n WHERE n > 2 RETURN n AS n", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"n"}, result.Columns)
 	assert.Empty(t, result.Rows)
 
-	result, err = exec.executeWith(ctx, "WITH 1 AS n WHERE n > 2 RETURN collect(n) AS ns, count(n) AS c, avg(n) AS avg")
+	result, err = exec.Execute(ctx, "WITH 1 AS n WHERE n > 2 RETURN collect(n) AS ns, count(n) AS c, avg(n) AS avg", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ns", "c", "avg"}, result.Columns)
 	assert.Equal(t, [][]interface{}{{[]interface{}{}, int64(0), nil}}, result.Rows)
 
-	result, err = exec.executeWith(ctx, "WITH [[1, 2], ['a', 'b']] AS matrix UNWIND matrix AS row RETURN row")
+	result, err = exec.Execute(ctx, "WITH [[1, 2], ['a', 'b']] AS matrix UNWIND matrix AS row RETURN row", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"row"}, result.Columns)
 	assert.Equal(t, 2, len(result.Rows))
 	assert.Equal(t, []interface{}{int64(1), int64(2)}, result.Rows[0][0])
 	assert.Equal(t, []interface{}{"a", "b"}, result.Rows[1][0])
 
-	result, err = exec.executeWith(withParams(ctx, map[string]interface{}{"name": "Cy"}), "WITH $name AS name RETURN name")
+	result, err = exec.Execute(withParams(ctx, map[string]interface{}{"name": "Cy"}), "WITH $name AS name RETURN name", nil)
 	require.NoError(t, err)
 	assert.Equal(t, [][]interface{}{{"Cy"}}, result.Rows)
 
-	_, err = exec.executeWith(ctx, "RETURN 1")
-	require.ErrorContains(t, err, "WITH clause not found")
+	result, err = exec.Execute(ctx, "RETURN 1", nil)
+	require.NoError(t, err)
+	assert.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 }
 
 func TestCoverageLiftOperatorsAndRelationshipVectorLimitZero(t *testing.T) {

@@ -462,8 +462,13 @@ func sortBoundariesByPos(bs []pipelineBoundary) {
 // executePipeline walks the clauses, threading the binding rows through each
 // step. Its outcome distinguishes a safe decline from a parse rejection or a
 // runtime failure, so callers only retry the NotApplicable state.
-func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) pipelineDispatchOutcome {
+func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (outcome pipelineDispatchOutcome) {
 	ctx = withExpressionFailureSlot(ctx)
+	defer func() {
+		if recorded := getExpressionFailure(ctx); recorded != nil && outcome.err == nil {
+			outcome = newPipelineDispatchOutcome(nil, true, recorded)
+		}
+	}()
 	hasCallSubquery := firstTopLevelCallSubquery(cypher) >= 0
 	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
 		if !pipelineUnwindUsesRange(cypher) {

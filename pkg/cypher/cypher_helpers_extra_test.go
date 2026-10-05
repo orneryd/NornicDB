@@ -2870,19 +2870,18 @@ func TestCypherHelpers_ExecuteUnwind_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	_, err := exec.executeUnwind(ctx, "MATCH (n) RETURN n")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "UNWIND clause not found")
+	matched, err := exec.Execute(ctx, "MATCH (n) RETURN n", nil)
+	require.NoError(t, err)
+	require.Empty(t, matched.Rows)
 
-	_, err = exec.executeUnwind(ctx, "UNWIND [1,2,3] RETURN x")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires AS clause")
+	_, err = exec.Execute(ctx, "UNWIND [1,2,3] RETURN x", nil)
+	requireSyntaxErrorStatus(t, err, "UNWIND [1,2,3] RETURN x")
 
-	keysRes, err := exec.executeUnwind(ctx, "UNWIND keys({a:1}) AS k RETURN k")
+	keysRes, err := exec.Execute(ctx, "UNWIND keys({a:1}) AS k RETURN k", nil)
 	require.NoError(t, err)
 	assert.Equal(t, [][]interface{}{{"a"}}, keysRes.Rows)
 
-	aggRes, err := exec.executeUnwind(ctx, "UNWIND [1,2,3] AS x RETURN sum(x) AS s, count(x) AS c, avg(x) AS a, min(x) AS mn, max(x) AS mx, collect(x)[..2] AS cs")
+	aggRes, err := exec.Execute(ctx, "UNWIND [1,2,3] AS x RETURN sum(x) AS s, count(x) AS c, avg(x) AS a, min(x) AS mn, max(x) AS mx, collect(x)[..2] AS cs", nil)
 	require.NoError(t, err)
 	require.Len(t, aggRes.Rows, 1)
 	assert.Equal(t, int64(6), aggRes.Rows[0][0])
@@ -2892,18 +2891,18 @@ func TestCypherHelpers_ExecuteUnwind_Branches(t *testing.T) {
 	assert.Equal(t, int64(3), aggRes.Rows[0][4])
 	assert.Equal(t, []interface{}{int64(1), int64(2)}, aggRes.Rows[0][5])
 
-	rowRes, err := exec.executeUnwind(ctx, "UNWIND ['a','b'] AS x RETURN x AS value")
+	rowRes, err := exec.Execute(ctx, "UNWIND ['a','b'] AS x RETURN x AS value", nil)
 	require.NoError(t, err)
 	require.Len(t, rowRes.Rows, 2)
 	assert.Equal(t, "a", rowRes.Rows[0][0])
 	assert.Equal(t, "b", rowRes.Rows[1][0])
 
-	nullAgg, err := exec.executeUnwind(ctx, "UNWIND null AS x RETURN count(x) AS c")
+	nullAgg, err := exec.Execute(ctx, "UNWIND null AS x RETURN count(x) AS c", nil)
 	require.NoError(t, err)
 	require.Len(t, nullAgg.Rows, 1)
 	assert.Equal(t, int64(0), nullAgg.Rows[0][0])
 
-	createRes, err := exec.executeUnwind(ctx, "UNWIND [1,2] AS x CREATE (n:UnwindNode {v: x}) RETURN n.v AS v")
+	createRes, err := exec.Execute(ctx, "UNWIND [1,2] AS x CREATE (n:UnwindNode {v: x}) RETURN n.v AS v", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, createRes.Stats.NodesCreated)
 	require.Len(t, createRes.Rows, 2)
@@ -2912,7 +2911,7 @@ func TestCypherHelpers_ExecuteUnwind_Branches(t *testing.T) {
 
 	// Regression: UNWIND row-map + CREATE ... SET n = row must never panic when
 	// downstream execution returns a nil Stats pointer.
-	mapCreateRes, err := exec.executeUnwind(ctx, "UNWIND [{a: 1, b: 'x'}, {a: 2, b: 'y'}] AS row CREATE (n:UnwindSetNode) SET n = row RETURN n.a AS a, n.b AS b")
+	mapCreateRes, err := exec.Execute(ctx, "UNWIND [{a: 1, b: 'x'}, {a: 2, b: 'y'}] AS row CREATE (n:UnwindSetNode) SET n = row RETURN n.a AS a, n.b AS b", nil)
 	require.NoError(t, err)
 	require.Len(t, mapCreateRes.Rows, 2)
 	assert.Equal(t, int64(1), mapCreateRes.Rows[0][0])

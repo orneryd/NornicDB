@@ -180,15 +180,28 @@ func TestForeachClause(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// Direct test of executeForeach function
-	result, err := e.executeForeach(ctx, "FOREACH (i IN [1, 2, 3] | CREATE (:Item {num: i}))")
+	result, err := e.Execute(ctx, "FOREACH (i IN [1, 2, 3] | CREATE (:Item {num: i}))", nil)
 	if err != nil {
-		t.Fatalf("executeForeach failed: %v", err)
+		t.Fatalf("FOREACH failed: %v", err)
 	}
 
-	// FOREACH should return a result
 	if result == nil {
-		t.Error("FOREACH should return a result")
+		t.Fatal("FOREACH should return a result")
+	}
+	if result.Stats == nil || result.Stats.NodesCreated != 3 {
+		t.Fatalf("expected three created nodes, got %+v", result.Stats)
+	}
+	verify, err := e.Execute(ctx, "MATCH (n:Item) RETURN n.num ORDER BY n.num", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verify.Rows) != 3 {
+		t.Fatalf("expected three persisted nodes, got %v", verify.Rows)
+	}
+	for index, row := range verify.Rows {
+		if row[0] != int64(index+1) {
+			t.Fatalf("unexpected persisted values: %v", verify.Rows)
+		}
 	}
 }
 

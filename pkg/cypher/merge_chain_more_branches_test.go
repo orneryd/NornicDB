@@ -28,22 +28,12 @@ func TestApplyWithProjection_ExpressionFallbackBranches(t *testing.T) {
 		Labels:     []string{"Node"},
 		Properties: map[string]interface{}{"name": "alice"},
 	}
-	nodeCtx := map[string]*storage.Node{"n": n}
-	relCtx := map[string]*storage.Edge{}
-	scalarCtx := map[string]interface{}{"score": int64(7)}
-
-	remaining, outNodes, outRels, outScalars := exec.applyWithProjection(ctx, "toUpper(n.name) AS upper RETURN upper", nodeCtx, relCtx, scalarCtx)
-	require.Equal(t, "RETURN upper", remaining)
-	require.Empty(t, outNodes)
-	require.Empty(t, outRels)
-	require.Equal(t, map[string]interface{}{"upper": "ALICE"}, outScalars)
-
-	// Unknown expression resolves to itself and must be skipped instead of leaking literal text.
-	remaining, outNodes, outRels, outScalars = exec.applyWithProjection(ctx, "ghost.prop AS g RETURN g", nodeCtx, relCtx, scalarCtx)
-	require.Equal(t, "RETURN g", remaining)
-	require.Empty(t, outNodes)
-	require.Empty(t, outRels)
-	require.Empty(t, outScalars)
+	projected, ok := exec.pipelineApplyWith(ctx, []pipelineRow{{"n": n, "score": int64(7)}}, "WITH toUpper(n.name) AS upper")
+	require.True(t, ok)
+	require.Equal(t, []pipelineRow{{"upper": "ALICE"}}, projected)
+	_, err := exec.Execute(ctx, "WITH 7 AS score WITH ghost.prop AS g RETURN g", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 }
 
 func TestExecuteMergeWithChain_ChainBreakSkipsIntermediateClauses(t *testing.T) {
@@ -78,16 +68,9 @@ func TestExecuteMergeWithChain_ChainBreakSkipsIntermediateClauses(t *testing.T) 
 func TestApplyWithProjection_EmptyProjectionKeepsContext(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_with_empty_cov"))
 	ctx := context.Background()
-	node := &storage.Node{ID: "n1", Labels: []string{"N"}, Properties: map[string]interface{}{"name": "x"}}
-	nodeCtx := map[string]*storage.Node{"n": node}
-	relCtx := map[string]*storage.Edge{}
-	scalarCtx := map[string]interface{}{"s": int64(1)}
-
-	remaining, outNodes, outRels, outScalars := exec.applyWithProjection(ctx, "MATCH (n) RETURN n", nodeCtx, relCtx, scalarCtx)
-	require.Equal(t, "MATCH (n) RETURN n", remaining)
-	require.Equal(t, nodeCtx, outNodes)
-	require.Empty(t, outRels)
-	require.Equal(t, scalarCtx, outScalars)
+	_, err := exec.Execute(ctx, "WITH MATCH (n) RETURN n", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 }
 
 func TestExecuteMergeWithContext_RelationshipChainAndSet(t *testing.T) {

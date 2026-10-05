@@ -152,7 +152,7 @@ skipMatchCallRoute:
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 	if findKeywordIndex(cypher, "UNWIND") == 0 {
-		return e.executeTopLevelUnwind(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
 	// Standalone DELETE / DETACH DELETE (no MATCH) must reach executeDelete:
@@ -312,17 +312,11 @@ skipMatchCallRoute:
 	case findKeywordIndex(cypher, "DROP") == 0:
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
 	case findKeywordIndex(cypher, "WITH") == 0:
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		return e.executeWith(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	case findKeywordIndex(cypher, "UNWIND") == 0:
-		return e.executeUnwind(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	case findKeywordIndex(cypher, "FOREACH") == 0:
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		return e.executeForeach(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	case findKeywordIndex(cypher, "LOAD CSV") == 0:
 		return e.executeLoadCSV(ctx, cypher)
 	case startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEXES"),
@@ -409,13 +403,6 @@ func (e *StorageExecutor) executeRequiredPipeline(ctx context.Context, cypher st
 		return outcome.result, outcome.err
 	}
 	return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "query could not be planned as a clause pipeline")
-}
-
-// executeTopLevelUnwind keeps autocommit and explicit-transaction routing in
-// sync through the converged clause pipeline. Shapes outside the pipeline's
-// grammar continue through the residual handler.
-func (e *StorageExecutor) executeTopLevelUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	return e.executeUnwind(ctx, cypher)
 }
 
 // executeReturn runs a statement that is only a RETURN (RETURN 1, RETURN

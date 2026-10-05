@@ -326,10 +326,10 @@ func TestExecuteUnwind_WithCollectDistinctProjection(t *testing.T) {
 		},
 	})
 
-	res, err := exec.executeUnwind(ctx, `
+	res, err := exec.Execute(ctx, `
 UNWIND $rows AS r
 WITH collect(DISTINCT r.textKey128) AS keys
-RETURN keys`)
+RETURN keys`, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"keys"}, res.Columns)
 	require.Len(t, res.Rows, 1)

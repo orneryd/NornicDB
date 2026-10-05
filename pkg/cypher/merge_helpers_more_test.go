@@ -46,34 +46,16 @@ func TestEvaluateSimpleWhereClauseForNodeMap_MoreBranches(t *testing.T) {
 	require.False(t, pass)
 }
 
-func TestCollectTopLevelMergeClauseBoundaries_MoreBranches(t *testing.T) {
-	q := "MERGE (n:Node {name:'MATCH in string'}) ON MATCH SET n.a = 1 OPTIONAL MATCH (m:Node) RETURN n"
-	b := collectTopLevelMergeClauseBoundaries(q, []string{"MATCH", "OPTIONAL MATCH", "MERGE", "RETURN"})
-	require.NotEmpty(t, b)
-
-	foundMerge := false
-	foundOptionalMatch := false
-	foundReturn := false
-	foundOnMatchAsClause := false
-	for _, x := range b {
-		switch x.kw {
-		case "MERGE":
-			foundMerge = true
-		case "OPTIONAL MATCH":
-			foundOptionalMatch = true
-		case "RETURN":
-			foundReturn = true
-		case "MATCH":
-			// Must not capture ON MATCH modifier as a clause boundary.
-			if isOnMatchModifier(q, x.pos) {
-				foundOnMatchAsClause = true
-			}
-		}
-	}
-	require.True(t, foundMerge)
-	require.True(t, foundOptionalMatch)
-	require.True(t, foundReturn)
-	require.False(t, foundOnMatchAsClause)
+func TestMergeSharedScannerQuotedKeywordsAndModifiers(t *testing.T) {
+	query := "MERGE (n:Node {name:'MATCH in string'}) ON MATCH SET n.a = 1 WITH n OPTIONAL MATCH (m:Node) RETURN n"
+	clauses, ok := splitPipelineClauses(query)
+	require.True(t, ok)
+	require.Len(t, clauses, 4)
+	require.Equal(t, pipelineClauseMerge, clauses[0].kind)
+	require.Equal(t, "MERGE (n:Node {name:'MATCH in string'}) ON MATCH SET n.a = 1", clauses[0].text)
+	require.Equal(t, pipelineClauseWith, clauses[1].kind)
+	require.Equal(t, pipelineClauseOptionalMatch, clauses[2].kind)
+	require.Equal(t, pipelineClauseReturn, clauses[3].kind)
 }
 
 func TestMergeContextHelpers_MoreBranches(t *testing.T) {
@@ -84,30 +66,24 @@ func TestMergeContextHelpers_MoreBranches(t *testing.T) {
 	rel := &storage.Edge{ID: "e1", Type: "REL", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{"w": int64(1)}}
 	nodeCtx := map[string]*storage.Node{"n": node}
 	relCtx := map[string]*storage.Edge{"r": rel}
-	scalarCtx := map[string]interface{}{"s": int64(7)}
-
-	outN, outR, outS := exec.projectWithContext(ctx, "", nodeCtx, relCtx, scalarCtx)
-	require.Equal(t, nodeCtx, outN)
-	require.Equal(t, relCtx, outR)
-	require.Equal(t, scalarCtx, outS)
-
-	outN, outR, outS = exec.projectWithContext(ctx, "*", nodeCtx, relCtx, scalarCtx)
-	require.Equal(t, nodeCtx, outN)
-	require.Equal(t, relCtx, outR)
-	require.Equal(t, scalarCtx, outS)
-
-	outN, outR, outS = exec.projectWithContext(ctx, "n AS nn, r AS rr, s AS ss, ghost AS gg", nodeCtx, relCtx, scalarCtx)
-	require.Contains(t, outN, "nn")
-	require.Contains(t, outR, "rr")
-	require.Contains(t, outS, "ss")
-	require.NotContains(t, outS, "gg")
+	input := []pipelineRow{{"n": node, "r": rel, "s": int64(7)}}
+	_, err := exec.Execute(ctx, "WITH RETURN 1", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *")
+	require.True(t, ok)
+	require.Equal(t, input, projected)
+	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n AS nn, r AS rr, s AS ss")
+	require.True(t, ok)
+	require.Equal(t, []pipelineRow{{"nn": node, "rr": rel, "ss": int64(7)}}, projected)
+	_, err = exec.Execute(ctx, "WITH 7 AS s WITH s AS ss, ghost AS gg RETURN ss", nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	require.True(t, exec.evaluateWhereForMergeContext(ctx, "true", nodeCtx, relCtx))
 	require.True(t, exec.evaluateWhereForMergeContext(ctx, "n.name = 'alice'", nodeCtx, relCtx))
 	require.False(t, exec.evaluateWhereForMergeContext(ctx, "n.name = 'bob'", nodeCtx, relCtx))
 
-	require.True(t, isOnMatchModifier("MERGE (n) ON MATCH SET n.x = 1", 12))
-	require.True(t, isOptionalMatchModifier("OPTIONAL MATCH (n) RETURN n", 9))
 }
 
 func TestMergeWhereRejectsNonBooleanProperty(t *testing.T) {
