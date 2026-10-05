@@ -1586,13 +1586,38 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 							queryEndpoint = endpoint
 						}
 						results[backend] = post(t, queryEndpoint, testCase.Query, testCase.Parameters)
+						if explicit && results[backend].Commit != "" {
+							commitEndpoint := results[backend].Commit
+							transactionOpen := true
+							rollback := func() {
+								if !transactionOpen {
+									return
+								}
+								request, err := http.NewRequest(http.MethodDelete, strings.TrimSuffix(commitEndpoint, "/commit"), nil)
+								require.NoError(t, err)
+								if strings.HasPrefix(commitEndpoint, local.URL+"/") {
+									request.Header.Set("Authorization", token)
+								}
+								response, err := client.Do(request)
+								require.NoError(t, err)
+								defer response.Body.Close()
+								require.Contains(t, []int{http.StatusOK, http.StatusNoContent, http.StatusNotFound}, response.StatusCode)
+								transactionOpen = false
+							}
+							t.Cleanup(rollback)
+							if len(results[backend].Errors) == 0 {
+								committed := post(t, commitEndpoint, "")
+								transactionOpen = false
+								results[backend].Errors = committed.Errors
+							} else {
+								rollback()
+							}
+						} else if explicit && len(results[backend].Errors) == 0 {
+							require.NotEmpty(t, results[backend].Commit)
+						}
 						if testCase.ExpectedCode != "" {
 							require.Len(t, results[backend].Errors, 1)
 							require.Equal(t, testCase.ExpectedCode, results[backend].Errors[0].Code)
-						}
-						if explicit && len(results[backend].Errors) == 0 {
-							require.NotEmpty(t, results[backend].Commit)
-							require.Empty(t, post(t, results[backend].Commit, "").Errors)
 						}
 						snapshots[backend], relationships[backend] = observeGraph(t, endpoint)
 						if testCase.NoEffects {

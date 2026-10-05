@@ -466,6 +466,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Compare explicit HTTP differential failures after commit, where Neo4j can
+  defer connected-node DELETE validation. Roll back open reference transactions
+  before failed assertions can leave locks behind and cause later reset timeouts.
+
 - Version the label-index ready marker for the v3 index scheme. Upgraded
   stores with the legacy `{1}` marker rerun the existing label-index backfill
   instead of treating missing current-scheme entries as ready. Empty stores
