@@ -1636,6 +1636,45 @@ func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
 	return tx.getCommittedNodeLocked(nodeID)
 }
 
+// RelationshipEndpointVisible implements RelationshipEndpointChecker with the
+// same answer GetNode gives inside this transaction. The transaction's own
+// delete or write decides first. A committed node is decided from its MVCC
+// head alone when the snapshot is at or after the head's version: visible
+// unless the head is a tombstone. An older snapshot, a node without a head,
+// a read error and decay filtering leave the answer to GetNode.
+func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
+	if id == "" {
+		return false, false
+	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if tx.ensureLifecycleActiveLocked() != nil || tx.pinNamespaceFromIDLocked(string(id)) != nil {
+		return false, false
+	}
+	if _, deleted := tx.deletedNodes[id]; deleted {
+		return false, true
+	}
+	if _, pending := tx.pendingNodes[id]; pending {
+		return true, true
+	}
+	if _, cached := tx.snapshotPrefixNodeByID[id]; cached {
+		return true, true
+	}
+	if tx.readTS.IsZero() || tx.engine.decayEnabled && !tx.engine.revealAll.Load() {
+		return false, false
+	}
+	var head MVCCHead
+	err := tx.withSnapshotViewLocked(func(snapshot *badger.Txn) error {
+		var headErr error
+		head, headErr = tx.engine.loadNodeMVCCHeadInTxn(snapshot, id)
+		return headErr
+	})
+	if err != nil || tx.readTS.Compare(head.Version) < 0 {
+		return false, false
+	}
+	return !head.Tombstoned, true
+}
+
 // GetEdge retrieves an edge with read-your-writes semantics.
 //
 // Like GetNode, reads pin the transaction to the edge's namespace so the

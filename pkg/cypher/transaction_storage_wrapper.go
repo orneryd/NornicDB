@@ -249,6 +249,11 @@ func (w *transactionStorageWrapper) GetNode(id storage.NodeID) (*storage.Node, e
 	return w.toUserNode(node), nil
 }
 
+// RelationshipEndpointVisible answers for the transaction, in its namespace.
+func (w *transactionStorageWrapper) RelationshipEndpointVisible(id storage.NodeID) (visible, answered bool) {
+	return w.tx.RelationshipEndpointVisible(w.prefixNodeID(id))
+}
+
 func (w *transactionStorageWrapper) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
 	if w.namespace == "" {
 		return w.tx.GetEdge(id)
