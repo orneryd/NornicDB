@@ -11,6 +11,96 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func BenchmarkGh713MultiMatchAggregation(b *testing.B) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "multi-match-aggregate-bench")
+	for index := 0; index < 32; index++ {
+		for _, side := range []string{"Left", "Right"} {
+			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": int64(index), "value": int64(index)}})
+			require.NoError(b, err)
+		}
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	for _, test := range []struct {
+		name, clause string
+		rows         int
+		value        float64
+	}{
+		{"count", "RETURN count(*) AS total", 1, 1024},
+		{"sum", "RETURN sum(a.value) AS total", 1, 15872},
+		{"grouped", "RETURN a.key AS key, count(*) AS total", 32, 32},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			ctx := withExpressionFailureSlot(context.Background())
+			query := "MATCH (a:AggregateLeft) MATCH (b:AggregateRight) " + test.clause
+			apply := func() {
+				result, err := exec.executeMultiMatch(ctx, query)
+				if err != nil || len(result.Rows) != test.rows {
+					b.Fatalf("unexpected aggregate result: %v, %v", result, err)
+				}
+				for _, row := range result.Rows {
+					value, numeric := toFloat64(row[len(row)-1])
+					if !numeric || value != test.value {
+						b.Fatalf("unexpected aggregate row: %v", row)
+					}
+				}
+			}
+			apply()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				apply()
+			}
+			b.StopTimer()
+		})
+	}
+}
+
+func TestGh713MultiMatchAggregateSharedReturn(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "multi-match-exact-sum")
+	for _, node := range []*storage.Node{
+		{ID: "large", Labels: []string{"ExactSumLeft"}, Properties: map[string]interface{}{"key": "large", "value": int64(9007199254740993)}},
+		{ID: "small", Labels: []string{"ExactSumLeft"}, Properties: map[string]interface{}{"key": "small", "value": int64(2)}},
+		{ID: "right", Labels: []string{"ExactSumRight"}, Properties: map[string]interface{}{"fraction": 0.5}},
+	} {
+		_, err := store.CreateNode(node)
+		require.NoError(t, err)
+	}
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	params := map[string]interface{}{"skip": int64(1), "limit": int64(1)}
+	for _, test := range []struct {
+		clause, code string
+		columns      []string
+		rows         [][]interface{}
+	}{
+		{"RETURN sum(a.value) AS total", "", []string{"total"}, [][]interface{}{{int64(9007199254740995)}}},
+		{"RETURN sum(1) AS total", "", []string{"total"}, [][]interface{}{{int64(2)}}},
+		{"RETURN sum(b.fraction) AS total", "", []string{"total"}, [][]interface{}{{1.0}}},
+		{"RETURN a.key AS key, sum(a.value) AS total ORDER BY key SKIP $skip LIMIT $limit", "", []string{"key", "total"}, [][]interface{}{{"small", int64(2)}}},
+		{"RETURN sum(a.value) AS `exact total` LIMIT 0", "", []string{"exact total"}, [][]interface{}{}},
+		{"RETURN sum(a.value) AS total LIMIT 1 / 0", "Neo.ClientError.Statement.ArithmeticError", nil, nil},
+	} {
+		t.Run(test.clause, func(t *testing.T) {
+			query := "MATCH (a:ExactSumLeft) MATCH (b:ExactSumRight) " + test.clause
+			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
+			result, err := exec.executeMultiMatch(ctx, query)
+			public, publicErr := exec.Execute(context.Background(), query, params)
+			if test.code != "" {
+				require.Error(t, err)
+				require.Contains(t, statusText(err), test.code)
+				require.Error(t, publicErr)
+				require.Contains(t, statusText(publicErr), test.code)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, publicErr)
+			require.Equal(t, test.columns, result.Columns)
+			require.Equal(t, test.rows, result.Rows)
+			require.Equal(t, test.columns, public.Columns)
+			require.Equal(t, test.rows, public.Rows)
+		})
+	}
+}
+
 func TestGh713AggregatePrefixScanning(t *testing.T) {
 	for _, test := range []struct {
 		expression string

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Project multi-MATCH aggregates directly through shared RETURN, preserving
+  exact integer SUM values above 2^53, floating SUM, grouped windows, and typed
+  modifier errors. Remove redundant traversal-row conversion and lossy float
+  coercion; retain integer SUM assertions alongside floating AVG controls (#713).
+
 - Route cartesian aggregates through shared RETURN so ORDER BY, expression and
   parameter windows, LIMIT zero, and typed errors apply to aggregate results.
   Borrowed scopes preserve grouping and empty COUNT semantics while removing
