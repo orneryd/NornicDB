@@ -78,6 +78,9 @@ func TestANTLRParserBasicQueries(t *testing.T) {
 		{"with simple", "MATCH (n:Person) WITH n.name AS name RETURN name"},
 		{"with where", "MATCH (n:Person) WITH n WHERE n.age > 21 RETURN n"},
 		{"with aggregation", "MATCH (n:Person) WITH n.city AS city, COUNT(n) AS cnt RETURN city, cnt"},
+		{"yield alias arithmetic", "WITH 3 AS yield RETURN 1 + yield AS v"},
+		{"yield node binding", "MATCH (yield:Person) RETURN yield.name AS name"},
+		{"yield procedure binding", "CALL db.labels() YIELD label AS yield RETURN yield"},
 
 		// Aggregations
 		{"count all", "MATCH (n:Person) RETURN COUNT(*)"},

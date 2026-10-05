@@ -913,6 +913,24 @@ func (c *queryParamsContext) Value(key any) any {
 	return c.Context.Value(key)
 }
 
+func mergeInheritedQueryParams(ctx context.Context, params map[string]interface{}) map[string]interface{} {
+	inherited := getParamsFromContext(ctx)
+	if len(inherited) == 0 {
+		return params
+	}
+	if params == nil {
+		return inherited
+	}
+	merged := make(map[string]interface{}, len(inherited)+len(params))
+	for name, value := range inherited {
+		merged[name] = value
+	}
+	for name, value := range params {
+		merged[name] = value
+	}
+	return merged
+}
+
 // withQueryParams attaches a query's parameters to ctx, together with a
 // cache of their row values (parameterRowValues). Every row and every
 // expression evaluation of the query binds the same "$name" values, and

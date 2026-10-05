@@ -1934,7 +1934,7 @@ func (e *StorageExecutor) evaluateParsedBoundRelationshipPattern(ctx context.Con
 		}
 	}
 	if !match.IsChained && match.Relationship.MinHops == 1 && match.Relationship.MaxHops == 1 {
-		return e.evaluateBoundOneHopPattern(match, nodes)
+		return e.evaluateBoundOneHopPattern(ctx, match, nodes)
 	}
 
 	var paths []PathResult
@@ -1966,7 +1966,7 @@ func (e *StorageExecutor) evaluateParsedBoundRelationshipPattern(ctx context.Con
 	return false
 }
 
-func (e *StorageExecutor) evaluateBoundOneHopPattern(match *TraversalMatch, nodes map[string]*storage.Node) bool {
+func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match *TraversalMatch, nodes map[string]*storage.Node) bool {
 	start := nodes[match.StartNode.variable]
 	if start == nil {
 		end := nodes[match.EndNode.variable]
@@ -1974,20 +1974,26 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(match *TraversalMatch, node
 			return false
 		}
 		reversed := reverseTraversalMatch(match)
-		return reversed != nil && e.evaluateBoundOneHopPattern(reversed, nodes)
+		return reversed != nil && e.evaluateBoundOneHopPattern(ctx, reversed, nodes)
 	}
 	if !e.matchesEndPattern(start, &match.StartNode) {
 		return false
 	}
 
 	var edges []*storage.Edge
+	var err error
+	store := e.getStorage(ctx)
 	switch match.Relationship.Direction {
 	case "outgoing":
-		edges, _ = e.storage.GetOutgoingEdges(start.ID)
+		edges, err = store.GetOutgoingEdges(start.ID)
 	case "incoming":
-		edges, _ = e.storage.GetIncomingEdges(start.ID)
+		edges, err = store.GetIncomingEdges(start.ID)
 	default:
-		edges, _ = undirectedIncidentEdges(e.storage, start.ID)
+		edges, err = undirectedIncidentEdges(store, start.ID)
+	}
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
 	}
 	boundEnd := nodes[match.EndNode.variable]
 	for _, edge := range edges {
@@ -2014,7 +2020,11 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(match *TraversalMatch, node
 			}
 			continue
 		}
-		end, err := e.storage.GetNode(endID)
+		end, err := store.GetNode(endID)
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			recordExpressionFailure(ctx, err)
+			return false
+		}
 		if err == nil && end != nil && e.matchesEndPattern(end, &match.EndNode) {
 			return true
 		}

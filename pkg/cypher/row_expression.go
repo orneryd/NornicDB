@@ -1840,7 +1840,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 			}
 		}
 	}
-	if mayContainArithmetic(expression) && strictLogical {
+	if mayContainArithmetic(expression) && strictLogical && !looksLikeRowRelationshipPattern(expression) {
 		value, evaluated, err := e.evaluateRowValue(expression, values)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
@@ -1910,9 +1910,9 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
 		return e.evaluateRowPredicateMode(ctx, rewritten, extended)
 	}
-	if nodeCtx, _ := withWhereValueContext(values); len(nodeCtx) > 0 && looksLikeRowRelationshipPattern(expression) {
-		if matches, recognized := e.evaluateBoundRelationshipPattern(ctx, expression, nodeCtx); recognized {
-			return matches
+	if looksLikeRowRelationshipPattern(expression) {
+		if value, resolved := e.rowPredicateOperand(ctx, expression, values); resolved {
+			return predicateValueIsTrue(ctx, value, expression)
 		}
 	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " STARTS WITH ", true, true); ok {
@@ -2023,6 +2023,13 @@ func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
 // the statement's: it is recorded on ctx, and the operand is unresolved, so
 // the predicate doesn't hold.
 func (e *StorageExecutor) rowPredicateOperand(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool) {
+	if looksLikeRowRelationshipPattern(expr) {
+		if nodes, _ := withWhereValueContext(values); len(nodes) > 0 {
+			if matched, recognized := e.evaluateBoundRelationshipPattern(ctx, expr, nodes); recognized {
+				return matched, true
+			}
+		}
+	}
 	value, ok, err := e.evaluateRowValue(expr, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)

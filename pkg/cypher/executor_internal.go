@@ -6,7 +6,6 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // executeInternal executes a Cypher fragment as part of a larger execution flow.
@@ -88,20 +87,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 
-	if inheritedParams := getParamsFromContext(ctx); inheritedParams != nil {
-		if params == nil {
-			params = inheritedParams
-		} else {
-			mergedParams := make(map[string]interface{}, util.SafePreallocSum(len(inheritedParams), len(params)))
-			for key, value := range inheritedParams {
-				mergedParams[key] = value
-			}
-			for key, value := range params {
-				mergedParams[key] = value
-			}
-			params = mergedParams
-		}
-	}
+	params = mergeInheritedQueryParams(ctx, params)
 	params = normalizeQueryParameters(params)
 	ctx = withQueryParams(ctx, params)
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {

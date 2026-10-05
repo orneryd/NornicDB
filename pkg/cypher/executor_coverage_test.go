@@ -2149,31 +2149,27 @@ func TestExecuteMatchCreateBlock_SetAndDeleteErrorBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Invalid label name branch in SET label assignment.
-	_, err = exec.executeMatchCreateBlock(
+	_, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}) CREATE (t:Temp {name:'x'}) SET t:123bad",
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
+		"MATCH (a:Person {name:'alice'}) CREATE (t:Temp {name:'x'}) SET t:123bad", nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid label name")
+	require.Implements(t, (*interface{ BoltErrorCode() string })(nil), err)
+	assert.Equal(t, "Neo.ClientError.Statement.SyntaxError", err.(interface{ BoltErrorCode() string }).BoltErrorCode())
 
 	// Missing parameter branch in SET assignment.
-	_, err = exec.executeMatchCreateBlock(
+	_, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}) CREATE (t:Temp {name:'x'}) SET t.flag = $missing",
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
+		"MATCH (a:Person {name:'alice'}) CREATE (t:Temp {name:'x'}) SET t.flag = $missing", nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parameter $missing")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.ParameterMissing")
+	assert.Contains(t, err.Error(), "missing")
 
 	// Relationship delete target branch.
-	res, err := exec.executeMatchCreateBlock(
+	res, err := exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}) CREATE (b:TempNode {name:'b'}), (a)-[r:REL]->(b) WITH r DELETE r RETURN count(r) AS c",
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
+		"MATCH (a:Person {name:'alice'}) CREATE (b:TempNode {name:'b'}), (a)-[r:REL]->(b) WITH r DELETE r RETURN count(r) AS c", nil,
 	)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
@@ -2336,45 +2332,33 @@ func TestExecuteMatchCreateBlock_SetMergeAndDeleteBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Direct DELETE (without WITH) branch on created relationship + count() return.
-	res, err := exec.executeMatchCreateBlock(
+	res, err := exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}), (b:Person {name:'bob'}) CREATE (a)-[r:REL {v:1}]->(b) DELETE r RETURN count(r) AS deleted",
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
+		"MATCH (a:Person {name:'alice'}), (b:Person {name:'bob'}) CREATE (a)-[r:REL {v:1}]->(b) DELETE r RETURN count(r) AS deleted", nil,
 	)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, int64(1), res.Rows[0][0])
 
 	// SET += merge branch on relationship properties.
-	nodeVars := map[string]*storage.Node{}
-	edgeVars := map[string]*storage.Edge{}
-	_, err = exec.executeMatchCreateBlock(
+	res, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}), (b:Person {name:'bob'}) CREATE (a)-[r:REL2 {x:1}]->(b) SET r += {y:2}",
-		nodeVars,
-		edgeVars,
+		"MATCH (a:Person {name:'alice'}), (b:Person {name:'bob'}) CREATE (a)-[r:REL2 {x:1}]->(b) SET r += {y:2} RETURN r.x, r.y", nil,
 	)
 	require.NoError(t, err)
-	require.Contains(t, edgeVars, "r")
-	assert.Equal(t, int64(1), edgeVars["r"].Properties["x"])
-	assert.Equal(t, int64(2), edgeVars["r"].Properties["y"])
+	require.Equal(t, [][]interface{}{{int64(1), int64(2)}}, res.Rows)
 
 	// Whole-map replacement on node/edge variable branches.
-	_, err = exec.executeMatchCreateBlock(
+	_, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}), (b:Person {name:'bob'}) CREATE (a)-[r:REL3]->(b), (t:Temp {z:0}) SET t = {k: 7}, r = {w: 9} RETURN t.k, r.w",
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
+		"MATCH (a:Person {name:'alice'}), (b:Person {name:'bob'}) CREATE (a)-[r:REL3]->(b), (t:Temp {z:0}) SET t = {k: 7}, r = {w: 9} RETURN t.k, r.w", nil,
 	)
 	require.NoError(t, err)
 
 	// Additional label assignment path.
-	_, err = exec.executeMatchCreateBlock(
+	_, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}) CREATE (t:Temp {name:'x'}) SET t:TagLabel",
-		map[string]*storage.Node{},
-		map[string]*storage.Edge{},
+		"MATCH (a:Person {name:'alice'}) CREATE (t:Temp {name:'x'}) SET t:TagLabel", nil,
 	)
 	require.NoError(t, err)
 }
@@ -2606,24 +2590,19 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (a:Person {name:'alice'})", nil)
 	require.NoError(t, err)
 
-	allNodeVars := map[string]*storage.Node{}
-	allEdgeVars := map[string]*storage.Edge{}
-
-	// No CREATE in block should be a no-op.
-	res, err := exec.executeMatchCreateBlock(ctx, "MATCH (a:Person {name:'alice'})", allNodeVars, allEdgeVars)
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Equal(t, 0, res.Stats.NodesCreated)
-	assert.Empty(t, res.Rows)
+	res, err := exec.Execute(ctx, "MATCH (a:Person {name:'alice'})", nil)
+	require.Error(t, err)
+	require.Nil(t, res)
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 
 	// MATCH producing zero rows should short-circuit CREATE and still shape RETURN columns.
-	res, err = exec.executeMatchCreateBlock(ctx, "MATCH (m:Missing) CREATE (x:Tmp {id:'x'}) RETURN x", allNodeVars, allEdgeVars)
+	res, err = exec.Execute(ctx, "MATCH (m:Missing) CREATE (x:Tmp {id:'x'}) RETURN x", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"x"}, res.Columns)
 	assert.Empty(t, res.Rows)
 
 	// Direct DELETE without WITH branch + count after delete.
-	res, err = exec.executeMatchCreateBlock(ctx, "MATCH (a:Person {name:'alice'}) CREATE (t:Tmp {id:'d1'}) DELETE t RETURN count(t) AS c", allNodeVars, allEdgeVars)
+	res, err = exec.Execute(ctx, "MATCH (a:Person {name:'alice'}) CREATE (t:Tmp {id:'d1'}) DELETE t RETURN count(t) AS c", nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, int64(1), res.Rows[0][0])
@@ -2631,11 +2610,9 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 	assert.Equal(t, 1, res.Stats.NodesDeleted)
 
 	// SET branches: += map, label add, edge property set, and RETURN edge + function expression.
-	res, err = exec.executeMatchCreateBlock(
+	res, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}) CREATE (a)-[r:LIKES]->(b:Person {name:'bob2'}) SET b += {age: 20}, b:User, r.weight = 2 RETURN b.age AS age, type(r) AS rt, r.weight AS w",
-		allNodeVars,
-		allEdgeVars,
+		"MATCH (a:Person {name:'alice'}) CREATE (a)-[r:LIKES]->(b:Person {name:'bob2'}) SET b += {age: 20}, b:User, r.weight = 2 RETURN b.age AS age, type(r) AS rt, r.weight AS w", nil,
 	)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
@@ -2648,24 +2625,25 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 	assert.Equal(t, 2, res.Stats.LabelsAdded)
 
 	// Unknown variable in SET must fail deterministically.
-	_, err = exec.executeMatchCreateBlock(
+	_, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}) CREATE (b:Tmp {id:'u1'}) SET z.flag = true RETURN b",
-		allNodeVars,
-		allEdgeVars,
+		"MATCH (a:Person {name:'alice'}) CREATE (b:Tmp {id:'u1'}) SET z.flag = true RETURN b", nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown variable in SET clause")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, err.Error(), "z")
 
 	// Missing parameter for SET assignment must error.
-	_, err = exec.executeMatchCreateBlock(
+	_, err = exec.Execute(
 		ctx,
-		"MATCH (a:Person {name:'alice'}) CREATE (b:Tmp {id:'u2'}) SET b.score = $score RETURN b",
-		allNodeVars,
-		allEdgeVars,
+		"MATCH (a:Person {name:'alice'}) CREATE (b:Tmp {id:'u2'}) SET b.score = $score RETURN b", nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parameter $score")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.ParameterMissing")
+	assert.Contains(t, err.Error(), "score")
+	readback, err := exec.Execute(ctx, "MATCH (n:Tmp) WHERE n.id IN ['u1', 'u2'] RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, readback.Rows)
 }
 
 func TestCreateDeletePipeline_AdditionalBranches(t *testing.T) {

@@ -171,10 +171,7 @@ skipMatchCallRoute:
 		return e.executeCompoundMatchMerge(ctx, cypher)
 	}
 	if startsWithMatch && createIdx > 0 {
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		return e.executeCompoundMatchCreate(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 	if startsWithCreate && withIdx > 0 {
 		return e.executeRequiredPipeline(ctx, cypher)
