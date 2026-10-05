@@ -11,21 +11,17 @@ import (
 
 // Traversal-seeded OPTIONAL MATCH execution.
 //
-// executeCompoundMatchOptionalMatch routes here when the primary MATCH clause
-// contains a relationship pattern (a traversal) and one or more OPTIONAL MATCH
-// clauses follow it without an intervening WITH. Historically this branch
-// resolved the RETURN projection with resolveReturnExprFromVarMap, which only
-// understood "var.prop" and bare variables — every other expression (type(),
-// coalesce(), labels(), aggregates, properties of second-level OPTIONAL
-// bindings, and the primary MATCH's relationship variable) leaked back to the
-// client as its literal source text. This file replaces that path with:
+// The pipeline's optional-match plan (tryExecutePipelineOptionalMatchPlan)
+// routes here for a read-only MATCH followed by one or more OPTIONAL MATCH
+// clauses and a RETURN. It runs:
 //
-//  1. a seed MATCH that binds relationship variables as well as node variables,
+//  1. the MATCH through the pipeline's MATCH operator, binding relationship
+//     and path variables as well as node variables,
 //  2. an iterative left-outer join across EVERY chained OPTIONAL MATCH clause
 //     (binding whichever endpoint is not yet bound, in either direction), and
 //  3. projection through the real expression evaluator
 //     (evaluateExpressionWithContext), with implicit-grouping aggregation and
-//     ORDER BY / SKIP / LIMIT handling that mirrors buildJoinedResult.
+//     ORDER BY / SKIP / LIMIT.
 
 // traversalOptRow is one joined row in the traversal-seeded OPTIONAL MATCH
 // pipeline. Every bound variable maps to its node or relationship; a variable
@@ -238,52 +234,57 @@ func extendTraversalRow(row traversalOptRow, nodeVar string, node *storage.Node,
 	return out
 }
 
-// executeTraversalSeededOptionalMatch executes a
-// "MATCH <traversal> OPTIONAL MATCH ... [OPTIONAL MATCH ...] RETURN ..." query.
-// initialSection is everything between MATCH and the first OPTIONAL MATCH
-// (pattern plus optional WHERE), nodePatternStr is the bare pattern,
-// optSection is the raw text of all OPTIONAL MATCH clauses, and restOfQuery
-// begins at the first WITH/RETURN after them.
-func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Context, initialSection, nodePatternStr, optSection, restOfQuery string) (*ExecuteResult, error) {
-	optionalClauses := splitOptionalMatchClauses(optSection)
-
-	returnVars := strings.Join(append(extractNodeVariables(nodePatternStr), extractRelationshipVariables(nodePatternStr)...), ", ")
-	if returnVars == "" {
-		returnVars = "*"
-	}
-	matchQuery := "MATCH " + initialSection + " RETURN " + returnVars
-	matchResult, err := e.executeMatch(ctx, matchQuery)
+// matchTraversalOptRows runs one MATCH clause (pattern plus optional WHERE)
+// through the pipeline's MATCH operator; each result row binds exactly the
+// clause's node, relationship and path variables. Both the seed MATCH and the
+// general OPTIONAL MATCH clauses enumerate their rows with it: rebuilding the
+// clause as a query for the legacy MATCH executor ran a second matcher, which
+// dropped the pattern's own properties when the WHERE picked the nodes by an
+// index (#821, #898). A clause the operator declines is rejected.
+func (e *StorageExecutor) matchTraversalOptRows(ctx context.Context, clause string) ([]traversalOptRow, error) {
+	matched, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, clause)
 	if err != nil {
-		return nil, localizedError(localization.CypherMatchingInitialTraversalMatchFailed(err), err)
+		return nil, err
 	}
-
-	rows := make([]traversalOptRow, 0, len(matchResult.Rows))
-	for _, r := range matchResult.Rows {
+	if !handled {
+		return nil, unsupportedOptionalMatchShapeError(clause)
+	}
+	rows := make([]traversalOptRow, 0, len(matched))
+	for _, bindings := range matched {
 		row := traversalOptRow{
-			nodes: make(map[string]*storage.Node, util.SafePreallocCap(len(matchResult.Columns))),
+			nodes: make(map[string]*storage.Node, len(bindings)),
 			rels:  make(map[string]*storage.Edge),
 		}
-		for ci, col := range matchResult.Columns {
-			if ci >= len(r) {
-				break
-			}
-			switch v := r[ci].(type) {
+		for variable, value := range bindings {
+			switch typed := value.(type) {
 			case *storage.Node:
-				row.nodes[col] = v
+				row.nodes[variable] = typed
 			case *storage.Edge:
-				row.rels[col] = v
-			case nil:
-				row.nodes[col] = nil
+				row.rels[variable] = typed
 			default:
 				if row.values == nil {
 					row.values = make(map[string]interface{})
 				}
-				row.values[col] = v
+				row.values[variable] = typed
 			}
 		}
 		rows = append(rows, row)
 	}
+	return rows, nil
+}
 
+// executeTraversalSeededOptionalMatch executes a
+// "MATCH <pattern> [WHERE …] OPTIONAL MATCH ... [OPTIONAL MATCH ...] RETURN ..."
+// query. initialSection is everything between MATCH and the first OPTIONAL
+// MATCH (pattern plus optional WHERE), optSection is the raw text of all
+// OPTIONAL MATCH clauses, and restOfQuery begins at the RETURN after them.
+func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Context, initialSection, optSection, restOfQuery string) (*ExecuteResult, error) {
+	optionalClauses := splitOptionalMatchClauses(optSection)
+
+	rows, err := e.matchTraversalOptRows(ctx, "MATCH "+initialSection)
+	if err != nil {
+		return nil, localizedError(localization.CypherMatchingInitialTraversalMatchFailed(err), err)
+	}
 	for _, clause := range optionalClauses {
 		rows, err = e.applyTraversalOptionalClause(ctx, rows, clause)
 		if err != nil {

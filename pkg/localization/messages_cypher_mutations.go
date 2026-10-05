@@ -99,8 +99,6 @@ const (
 	MessageCypherMutationsUnwindDoubleMalformed               MessageID = "cyphermutations.unwind_double_malformed"
 	MessageCypherMutationsUnwindSecondExpected                MessageID = "cyphermutations.unwind_second_expected"
 	MessageCypherMutationsUnwindSecondASRequired              MessageID = "cyphermutations.unwind_second_as_required"
-	MessageCypherMutationsWithOptionalReturnRequired          MessageID = "cyphermutations.with_optional_return_required"
-	MessageCypherMutationsWithReturnRequired                  MessageID = "cyphermutations.with_return_required"
 	MessageCypherMutationsForeachParenthesesRequired          MessageID = "cyphermutations.foreach_parentheses_required"
 	MessageCypherMutationsForeachBalancedParenthesesRequired  MessageID = "cyphermutations.foreach_balanced_parentheses_required"
 	MessageCypherMutationsForeachInRequired                   MessageID = "cyphermutations.foreach_in_required"
@@ -586,16 +584,6 @@ func CypherMutationsUnwindSecondExpected() Message {
 // CypherMutationsUnwindSecondASRequired identifies a second UNWIND without AS.
 func CypherMutationsUnwindSecondASRequired() Message {
 	return cypherMutationsMessage(MessageCypherMutationsUnwindSecondASRequired, "second UNWIND requires AS clause", nil)
-}
-
-// CypherMutationsWithOptionalReturnRequired identifies an incomplete WITH/OPTIONAL MATCH pipeline.
-func CypherMutationsWithOptionalReturnRequired() Message {
-	return cypherMutationsMessage(MessageCypherMutationsWithOptionalReturnRequired, "WITH, OPTIONAL MATCH, and RETURN clauses required", nil)
-}
-
-// CypherMutationsWithReturnRequired identifies WITH aggregation without RETURN.
-func CypherMutationsWithReturnRequired() Message {
-	return cypherMutationsMessage(MessageCypherMutationsWithReturnRequired, "RETURN clause required after WITH", nil)
 }
 
 // CypherMutationsForeachParenthesesRequired identifies FOREACH without parentheses.

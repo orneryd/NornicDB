@@ -1250,7 +1250,7 @@ func (e *StorageExecutor) tryExecutePipelineOptionalMatchPlan(ctx context.Contex
 		return nil, false, nil
 	}
 
-	result, err := e.executeTraversalSeededOptionalMatch(ctx, initialSection, initialSection, optionalSection, restOfQuery)
+	result, err := e.executeTraversalSeededOptionalMatch(ctx, initialSection, optionalSection, restOfQuery)
 	return result, true, err
 }
 

@@ -62,7 +62,7 @@ func TestCypherMatchingDescriptorsPreserveExactEnglish(t *testing.T) {
 		{localization.CypherMatchingMatchUnwindClausesRequired(), "MATCH and UNWIND clauses required (e.g., MATCH (n) UNWIND n.items AS item RETURN item)"},
 		{localization.CypherMatchingUnwindASRequired(), "UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)"},
 		{localization.CypherMatchingWithReturnClausesRequired(), "WITH and RETURN clauses required"},
-		{localization.CypherMatchingWithOptionalMatchReturnClausesRequired(), "WITH, OPTIONAL MATCH, and RETURN clauses required"},
+		{localization.CypherMatchingOptionalMatchShapeUnsupported("MATCH (n)"), "this MATCH … OPTIONAL MATCH form is not supported: MATCH (n)"},
 		{localization.CypherMatchingOrderByParseFailed(), "failed to parse ORDER BY clause"},
 		{localization.CypherMatchingMatchPatternVariableMissing("(Person)"), `invalid MATCH pattern: missing variable in "(Person)"`},
 		{localization.CypherMatchingTraversalPatternInvalid("(a)-[r"), "invalid traversal pattern: (a)-[r"},

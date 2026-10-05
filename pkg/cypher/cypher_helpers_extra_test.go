@@ -401,8 +401,6 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 	assert.Nil(t, exec.evaluateCoalesceInContext("COALESCE(", nodes, nil, nil))
 
 	ctx := context.Background()
-	assert.True(t, exec.nodeMatchesWhereClause(ctx, nodes["n"], "n.age >= 40", "n"))
-	assert.False(t, exec.nodeMatchesWhereClause(ctx, nodes["n"], "n.age < 40", "n"))
 
 	input := &ExecuteResult{
 		Columns: []string{"x", "n"},

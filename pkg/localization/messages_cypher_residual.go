@@ -10,12 +10,6 @@ const (
 	MessageCypherResidualUnionBranchFailed              MessageID = "cypherresidual.union_branch_failed"
 	MessageCypherResidualUnionColumnCountMismatch       MessageID = "cypherresidual.union_column_count_mismatch"
 	MessageCypherResidualOptionalMatchNotFound          MessageID = "cypherresidual.optional_match_not_found"
-	MessageCypherResidualCompoundOptionalMatchNotFound  MessageID = "cypherresidual.compound_optional_match_not_found"
-	MessageCypherResidualMatchNodePatternParseFailed    MessageID = "cypherresidual.match_node_pattern_parse_failed"
-	MessageCypherResidualInitialNodesLookupFailed       MessageID = "cypherresidual.initial_nodes_lookup_failed"
-	MessageCypherResidualSumArithmeticTermUnsupported   MessageID = "cypherresidual.sum_arithmetic_term_unsupported"
-	MessageCypherResidualSumNumericRequired             MessageID = "cypherresidual.sum_numeric_required"
-	MessageCypherResidualReturnClauseRequired           MessageID = "cypherresidual.return_clause_required"
 	MessageCypherResidualForeachClauseNotFound          MessageID = "cypherresidual.foreach_clause_not_found"
 	MessageCypherResidualLoadCSVUnsupported             MessageID = "cypherresidual.load_csv_unsupported"
 	MessageCypherResidualEmptyLabelAfterColon           MessageID = "cypherresidual.empty_label_after_colon"
@@ -76,37 +70,6 @@ func CypherResidualUnionColumnCountMismatch(expected, actual int) Message {
 // CypherResidualOptionalMatchNotFound identifies a routed query missing OPTIONAL MATCH.
 func CypherResidualOptionalMatchNotFound(query string) Message {
 	return cypherResidualMessage(MessageCypherResidualOptionalMatchNotFound, fmt.Sprintf("OPTIONAL MATCH not found in query: %q", query), map[string]any{"Query": query})
-}
-
-// CypherResidualCompoundOptionalMatchNotFound identifies a compound query missing OPTIONAL MATCH.
-func CypherResidualCompoundOptionalMatchNotFound(query string) Message {
-	return cypherResidualMessage(MessageCypherResidualCompoundOptionalMatchNotFound, fmt.Sprintf("OPTIONAL MATCH not found in compound query: %q", query), map[string]any{"Query": query})
-}
-
-// CypherResidualMatchNodePatternParseFailed identifies an invalid MATCH node pattern.
-func CypherResidualMatchNodePatternParseFailed(pattern string) Message {
-	return cypherResidualMessage(MessageCypherResidualMatchNodePatternParseFailed, fmt.Sprintf("could not parse node pattern from MATCH clause: %q", pattern), map[string]any{"Pattern": pattern})
-}
-
-// CypherResidualInitialNodesLookupFailed identifies a wrapped initial-node lookup failure.
-func CypherResidualInitialNodesLookupFailed(cause error) Message {
-	return cypherResidualMessage(MessageCypherResidualInitialNodesLookupFailed, "failed to get initial nodes: "+cause.Error(), map[string]any{"Cause": cause.Error()})
-}
-
-// CypherResidualSumArithmeticTermUnsupported identifies an unsupported SUM arithmetic term.
-func CypherResidualSumArithmeticTermUnsupported(term string) Message {
-	return cypherResidualMessage(MessageCypherResidualSumArithmeticTermUnsupported, "unsupported SUM arithmetic term: "+term, map[string]any{"Term": term})
-}
-
-// CypherResidualSumNumericRequired identifies a non-numeric SUM operand.
-func CypherResidualSumNumericRequired(value any, expression string) Message {
-	valueType := fmt.Sprintf("%T", value)
-	return cypherResidualMessage(MessageCypherResidualSumNumericRequired, fmt.Sprintf("SUM() requires numeric values, got %s in expression %q", valueType, expression), map[string]any{"ValueType": valueType, "Expression": expression})
-}
-
-// CypherResidualReturnClauseRequired identifies a missing RETURN clause.
-func CypherResidualReturnClauseRequired() Message {
-	return cypherResidualMessage(MessageCypherResidualReturnClauseRequired, "RETURN clause required", nil)
 }
 
 // CypherResidualForeachClauseNotFound identifies a routed query missing FOREACH.

@@ -25,9 +25,6 @@
 - id: cyphermatching.with_return_clauses_required
   description: Expanded pseudo-locale missing WITH or RETURN clause.
   other: "[!! WITH and RETURN clauses required !!]"
-- id: cyphermatching.with_optional_match_return_clauses_required
-  description: Expanded pseudo-locale missing WITH OPTIONAL MATCH RETURN clause.
-  other: "[!! WITH, OPTIONAL MATCH, and RETURN clauses required !!]"
 - id: cyphermatching.order_by_parse_failed
   description: Expanded pseudo-locale ORDER BY parse failure.
   other: "[!! failed to parse ORDER BY clause !!]"
@@ -124,6 +121,9 @@
 - id: cyphermatching.return_star_no_variables
   description: "Expanded pseudo-locale RETURN * with no variables."
   other: "[!! RETURN * requires at least one variable in scope !!]"
+- id: cyphermatching.optional_match_shape_unsupported
+  description: "Expanded pseudo-locale MATCH … OPTIONAL MATCH form unsupported."
+  other: "[!! this MATCH … OPTIONAL MATCH form is not supported: {{.Query}} !!]"
 - id: cyphermatching.is_not_operand_invalid
   description: Expanded pseudo-locale is not operand invalid.
   other: "[!! Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED' !!]"

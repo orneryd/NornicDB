@@ -184,10 +184,6 @@
   other: 'expected second UNWIND'
 - id: cyphermutations.unwind_second_as_required
   other: 'second UNWIND requires AS clause'
-- id: cyphermutations.with_optional_return_required
-  other: 'WITH, OPTIONAL MATCH, and RETURN clauses required'
-- id: cyphermutations.with_return_required
-  other: 'RETURN clause required after WITH'
 - id: cyphermutations.foreach_parentheses_required
   other: 'FOREACH requires parentheses (e.g., FOREACH (x IN list | SET ...))'
 - id: cyphermutations.foreach_balanced_parentheses_required

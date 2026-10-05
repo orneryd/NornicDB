@@ -41,10 +41,10 @@ import (
 //         substring starts with whitespace instead, that check never fires
 //         and the relationship variable/type/properties are silently
 //         dropped.
-// Fix: executeMatch now detects an embedded "OPTIONAL MATCH" inside a
-//         relationship-pattern matchPart and routes the whole query through
-//         executeCompoundMatchOptionalMatch, the same handler the top-level
-//         dispatcher already uses for "MATCH ... OPTIONAL MATCH ..." queries.
+// Fix: executeMatch detected the embedded "OPTIONAL MATCH" and routed the
+//         whole query to the compound OPTIONAL MATCH handler. That handler is
+//         gone (#898): MATCH … OPTIONAL MATCH runs only in the clause
+//         pipeline, and executeMatch rejects an embedded OPTIONAL MATCH.
 // ====================================================================================
 
 func setupOptionalMatchRelVarFixture(t *testing.T) (*StorageExecutor, storage.Engine) {
@@ -66,11 +66,9 @@ func setupOptionalMatchRelVarFixture(t *testing.T) (*StorageExecutor, storage.En
 	return exec, store
 }
 
-// TestBug_OptionalMatchRelVarResolvesToRealEdge exercises the raw internal
-// probe path directly (exec.executeMatch), bypassing the top-level
-// dispatcher, to prove the relationship variable bound by an embedded
-// OPTIONAL MATCH resolves to a real *storage.Edge -- nil only when the
-// OPTIONAL MATCH genuinely found no match.
+// TestBug_OptionalMatchRelVarResolvesToRealEdge proves the relationship
+// variable bound by an OPTIONAL MATCH resolves to a real *storage.Edge -- nil
+// only when the OPTIONAL MATCH genuinely found no match.
 func TestBug_OptionalMatchRelVarResolvesToRealEdge(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -97,7 +95,7 @@ func TestBug_OptionalMatchRelVarResolvesToRealEdge(t *testing.T) {
 			exec, _ := setupOptionalMatchRelVarFixture(t)
 			ctx := context.Background()
 
-			result, err := exec.executeMatch(ctx, tt.query)
+			result, err := exec.Execute(ctx, tt.query, nil)
 			require.NoError(t, err)
 			require.Len(t, result.Rows, 1)
 			require.Len(t, result.Rows[0], 2)

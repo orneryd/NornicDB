@@ -12,18 +12,6 @@
   other: "las consultas UNION deben devolver el mismo número de columnas (se obtuvieron {{.Expected}} y {{.Actual}})"
 - id: cypherresidual.optional_match_not_found
   other: 'OPTIONAL MATCH no encontrado en la consulta: "{{.Query}}"'
-- id: cypherresidual.compound_optional_match_not_found
-  other: 'OPTIONAL MATCH no encontrado en la consulta compuesta: "{{.Query}}"'
-- id: cypherresidual.match_node_pattern_parse_failed
-  other: 'no se pudo analizar el patrón de nodo de la cláusula MATCH: "{{.Pattern}}"'
-- id: cypherresidual.initial_nodes_lookup_failed
-  other: "no se pudieron obtener los nodos iniciales: {{.Cause}}"
-- id: cypherresidual.sum_arithmetic_term_unsupported
-  other: "término aritmético SUM no compatible: {{.Term}}"
-- id: cypherresidual.sum_numeric_required
-  other: 'SUM() requiere valores numéricos; se obtuvo {{.ValueType}} en la expresión "{{.Expression}}"'
-- id: cypherresidual.return_clause_required
-  other: "se requiere la cláusula RETURN"
 - id: cypherresidual.foreach_clause_not_found
   other: 'cláusula FOREACH no encontrada en la consulta: "{{.Query}}"'
 - id: cypherresidual.load_csv_unsupported

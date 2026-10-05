@@ -432,49 +432,6 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestExecuteJoinedRowsWithOptionalMatch_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "cov_joined_opt")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	_, err := store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"S"}, Properties: map[string]interface{}{"name": "a"}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "s2", Labels: []string{"S"}, Properties: map[string]interface{}{"name": "skip"}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "t1", Labels: []string{"T"}, Properties: map[string]interface{}{"name": "t1", "keep": true}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "t2", Labels: []string{"T"}, Properties: map[string]interface{}{"name": "t2", "keep": false}})
-	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "r1", Type: "REL", StartNode: "s1", EndNode: "t1"})
-	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "r2", Type: "REL", StartNode: "s1", EndNode: "t2"})
-	require.NoError(t, err)
-
-	s1, err := store.GetNode("s1")
-	require.NoError(t, err)
-	s2, err := store.GetNode("s2")
-	require.NoError(t, err)
-
-	rows := []joinedRow{
-		{initialNode: s1},
-		{initialNode: s1}, // duplicate to exercise DISTINCT dedupe
-		{initialNode: s2}, // filtered by WITH WHERE
-	}
-	query := "WITH DISTINCT s AS seed WHERE 1 = 1 OPTIONAL MATCH (seed)-[r:REL]->(t:T) WHERE t.keep = true RETURN seed.name AS seed_name, t.name AS target_name ORDER BY seed_name SKIP 0 LIMIT 10"
-	res, err := exec.executeJoinedRowsWithOptionalMatch(ctx, rows, "s", "t", "r", query)
-	require.NoError(t, err)
-	require.Equal(t, []string{"seed_name", "target_name"}, res.Columns)
-	require.Len(t, res.Rows, 2)
-	require.Equal(t, "a", res.Rows[0][0])
-	require.Equal(t, "t1", res.Rows[0][1])
-	require.Equal(t, "skip", res.Rows[1][0])
-	require.Nil(t, res.Rows[1][1])
-
-	_, err = exec.executeJoinedRowsWithOptionalMatch(ctx, rows, "s", "t", "r", "WITH s RETURN s")
-	require.Error(t, err)
-}
-
 func TestLowerCoverageHelpers_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "cov_helpers")

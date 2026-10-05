@@ -57,10 +57,6 @@ func TestCypherMutationLocalizedErrors(t *testing.T) {
 		require.EqualError(t, err, "UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)")
 		requireMessageID(t, err, localization.MessageCypherMutationsUnwindASRequired)
 
-		_, err = exec.executeJoinedRowsWithOptionalMatch(ctx, nil, "source", "target", "rel", "WITH source RETURN source")
-		require.EqualError(t, err, "WITH, OPTIONAL MATCH, and RETURN clauses required")
-		requireMessageID(t, err, localization.MessageCypherMutationsWithOptionalReturnRequired)
-
 		_, err = exec.executeForeach(ctx, "FOREACH value")
 		require.EqualError(t, err, "FOREACH requires parentheses (e.g., FOREACH (x IN list | SET ...))")
 		requireMessageID(t, err, localization.MessageCypherMutationsForeachParenthesesRequired)

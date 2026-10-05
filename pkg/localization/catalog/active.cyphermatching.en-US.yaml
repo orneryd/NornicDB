@@ -25,9 +25,6 @@
 - id: cyphermatching.with_return_clauses_required
   description: Required WITH or RETURN clause is missing. Keywords are untranslated Cypher syntax.
   other: WITH and RETURN clauses required
-- id: cyphermatching.with_optional_match_return_clauses_required
-  description: Required WITH, OPTIONAL MATCH, or RETURN clause is missing. Keywords are untranslated.
-  other: WITH, OPTIONAL MATCH, and RETURN clauses required
 - id: cyphermatching.order_by_parse_failed
   description: ORDER BY clause parsing failed. Keywords are untranslated Cypher syntax.
   other: failed to parse ORDER BY clause
@@ -124,6 +121,9 @@
 - id: cyphermatching.return_star_no_variables
   description: "RETURN * with no variable in scope."
   other: "RETURN * requires at least one variable in scope"
+- id: cyphermatching.optional_match_shape_unsupported
+  description: "A MATCH … OPTIONAL MATCH statement the clause pipeline does not run. Query is Cypher text and is not translated."
+  other: "this MATCH … OPTIONAL MATCH form is not supported: {{.Query}}"
 - id: cyphermatching.is_not_operand_invalid
   description: IS NOT is followed by a label. Input is Cypher text and is not translated.
   other: "Invalid input '{{.Input}}': expected '::', 'NFC', 'NFD', 'NFKC', 'NFKD', 'NORMALIZED', 'NULL' or 'TYPED'"

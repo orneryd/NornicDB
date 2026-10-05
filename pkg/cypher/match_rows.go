@@ -78,12 +78,6 @@ func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[str
 	return nil
 }
 
-// nodeMatchesWhereClause checks if a node matches a simple WHERE clause
-func (e *StorageExecutor) nodeMatchesWhereClause(ctx context.Context, node *storage.Node, whereClause string, varName string) bool {
-	// Use the standard WHERE evaluation with node and variable name
-	return e.evaluateWhere(ctx, node, varName, whereClause)
-}
-
 // evaluateSumArithmetic handles expressions like SUM(n.a) + SUM(n.b)
 func (e *StorageExecutor) evaluateSumArithmetic(expr string, nodes []*storage.Node, variable string) float64 {
 	// Split by + and - operators (respecting parentheses)

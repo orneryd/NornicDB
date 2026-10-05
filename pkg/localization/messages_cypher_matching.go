@@ -15,7 +15,6 @@ const (
 	MessageCypherMatchingMatchUnwindClausesRequired               MessageID = "cyphermatching.match_unwind_clauses_required"
 	MessageCypherMatchingUnwindASRequired                         MessageID = "cyphermatching.unwind_as_required"
 	MessageCypherMatchingWithReturnClausesRequired                MessageID = "cyphermatching.with_return_clauses_required"
-	MessageCypherMatchingWithOptionalMatchReturnClausesRequired   MessageID = "cyphermatching.with_optional_match_return_clauses_required"
 	MessageCypherMatchingOrderByParseFailed                       MessageID = "cyphermatching.order_by_parse_failed"
 	MessageCypherMatchingMatchPatternVariableMissing              MessageID = "cyphermatching.match_pattern_variable_missing"
 	MessageCypherMatchingTraversalPatternInvalid                  MessageID = "cyphermatching.traversal_pattern_invalid"
@@ -50,6 +49,7 @@ const (
 	MessageCypherMatchingPatternPredicateVariableLength           MessageID = "cyphermatching.pattern_predicate_variable_length"
 	MessageCypherMatchingIsNotOperandInvalid                      MessageID = "cyphermatching.is_not_operand_invalid"
 	MessageCypherMatchingReturnStarNoVariables                    MessageID = "cyphermatching.return_star_no_variables"
+	MessageCypherMatchingOptionalMatchShapeUnsupported            MessageID = "cyphermatching.optional_match_shape_unsupported"
 )
 
 func cypherMatchingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -94,10 +94,6 @@ func CypherMatchingUnwindASRequired() Message {
 
 func CypherMatchingWithReturnClausesRequired() Message {
 	return cypherMatchingMessage(MessageCypherMatchingWithReturnClausesRequired, "WITH and RETURN clauses required", nil)
-}
-
-func CypherMatchingWithOptionalMatchReturnClausesRequired() Message {
-	return cypherMatchingMessage(MessageCypherMatchingWithOptionalMatchReturnClausesRequired, "WITH, OPTIONAL MATCH, and RETURN clauses required", nil)
 }
 
 func CypherMatchingOrderByParseFailed() Message {
@@ -264,6 +260,13 @@ func CypherMatchingPatternPredicateVariableLength() Message {
 // no variable in scope (Neo4j's code; NornicDB's wording).
 func CypherMatchingReturnStarNoVariables() Message {
 	return cypherMatchingMessage(MessageCypherMatchingReturnStarNoVariables, "RETURN * requires at least one variable in scope", nil)
+}
+
+// CypherMatchingOptionalMatchShapeUnsupported is the SyntaxError for a
+// MATCH … OPTIONAL MATCH statement the clause pipeline does not run. There is
+// no other executor for it (no alternate execution path).
+func CypherMatchingOptionalMatchShapeUnsupported(query string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingOptionalMatchShapeUnsupported, "this MATCH … OPTIONAL MATCH form is not supported: "+query, map[string]any{"Query": query})
 }
 
 // CypherMatchingIsNotOperandInvalid is Neo4j's SyntaxError for n IS NOT <label>: IS NOT takes NULL, a type or a normal form, not a label expression (#860).
