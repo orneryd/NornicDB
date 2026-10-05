@@ -36,7 +36,11 @@ type Manager struct {
 
 	ttl     time.Duration
 	nowFunc func() time.Time
-	idFunc  func() string
+	// lastID is the most recently issued transaction ID, guarded by mu. IDs
+	// count up from the manager's creation time, so every session gets its
+	// own ID however close together sessions open, and IDs issued after a
+	// restart don't repeat ones issued before it.
+	lastID uint64
 
 	factory               ExecutorFactory
 	terminalErrorObserver func(*Session, error)
@@ -50,10 +54,8 @@ func NewManager(ttl time.Duration, factory ExecutorFactory) *Manager {
 		sessions: make(map[string]*Session),
 		ttl:      ttl,
 		nowFunc:  time.Now,
-		idFunc: func() string {
-			return strconv.FormatInt(time.Now().UnixNano(), 10)
-		},
-		factory: factory,
+		lastID:   uint64(time.Now().UnixNano()),
+		factory:  factory,
 	}
 }
 
@@ -91,7 +93,6 @@ func (m *Manager) OpenWithExecutorForOwner(ctx context.Context, dbName string, e
 
 	now := m.nowFunc()
 	session := &Session{
-		ID:       m.idFunc(),
 		Database: dbName,
 		Owner:    strings.TrimSpace(owner),
 		Executor: executor,
@@ -99,6 +100,8 @@ func (m *Manager) OpenWithExecutorForOwner(ctx context.Context, dbName string, e
 	}
 
 	m.mu.Lock()
+	m.lastID++
+	session.ID = strconv.FormatUint(m.lastID, 10)
 	m.sessions[session.ID] = session
 	m.mu.Unlock()
 
