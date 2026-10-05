@@ -133,19 +133,93 @@ func TestStreamNodesByLabelProjectedHidesDeindexedNodes(t *testing.T) {
 func TestStreamNodesByLabelProjectedSkipsUnreadableRecords(t *testing.T) {
 	const count = labelScanPointLookups + 50
 	eng, created := labelScanFixture(t, count)
-	unreadable, gone := created[0], created[count-1]
+	unreadable, goneEarly, gone := created[0], created[1], created[count-1]
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		if err := txn.Set(nodeKey(unreadable), []byte{0xff}); err != nil {
+		if err := txn.Delete(nodeKey(goneEarly)); err != nil {
 			return err
 		}
 		return txn.Delete(nodeKey(gone))
 	}))
+
+	// In a transaction a missing record is skipped in either phase, and a
+	// visit error stops the second phase.
+	tx, err := eng.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("test"))
+	var txNodes []*Node
+	require.NoError(t, tx.StreamNodesByLabelProjected("Common", nil, func(node *Node) error {
+		txNodes = append(txNodes, node)
+		return nil
+	}))
+	require.Len(t, txNodes, count-2)
+	stop := fmt.Errorf("stop")
+	visited := 0
+	require.ErrorIs(t, tx.StreamNodesByLabelProjected("Common", []string{"i"}, func(*Node) error {
+		visited++
+		if visited == labelScanPointLookups+5 {
+			return stop
+		}
+		return nil
+	}), stop)
+	require.NoError(t, tx.Rollback())
+
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		return txn.Set(nodeKey(unreadable), []byte{0xff})
+	}))
 	for _, properties := range [][]string{nil, {"i"}} {
 		nodes := streamLabelNodes(t, eng, "test:", "Common", properties)
-		require.Len(t, nodes, count-2)
+		require.Len(t, nodes, count-3)
 		for _, node := range nodes {
-			require.NotEqual(t, unreadable, node.ID)
-			require.NotEqual(t, gone, node.ID)
+			require.NotContains(t, []NodeID{unreadable, goneEarly, gone}, node.ID)
 		}
 	}
+
+	// In a transaction an unreadable record fails the scan.
+	tx, err = eng.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("test"))
+	defer func() { _ = tx.Rollback() }()
+	require.Error(t, tx.StreamNodesByLabelProjected("Common", nil, func(*Node) error { return nil }))
+}
+
+// A transaction's label scan reads the nodes past labelScanPointLookups in
+// one pass too, in label-index order, from its pinned snapshot.
+func TestTransactionLabelScanReadsRemainingNodesInOnePass(t *testing.T) {
+	const count = labelScanPointLookups + 200
+	eng, created := labelScanFixture(t, count)
+	for _, properties := range [][]string{nil, {"i"}} {
+		tx, err := eng.BeginTransaction()
+		require.NoError(t, err)
+		require.NoError(t, tx.SetNamespace("test"))
+		require.NotNil(t, tx.snapshotTx)
+		var nodes []*Node
+		require.NoError(t, tx.StreamNodesByLabelProjected("Common", properties, func(node *Node) error {
+			nodes = append(nodes, node)
+			return nil
+		}))
+		require.NoError(t, tx.Rollback())
+		require.Len(t, nodes, count)
+		for index, node := range nodes {
+			require.Equal(t, created[index], node.ID)
+			if properties == nil {
+				require.Equal(t, "x", node.Properties["big"])
+			} else {
+				require.NotContains(t, node.Properties, "big")
+			}
+		}
+	}
+
+	// An unreadable record past the first phase fails the scan, as an
+	// unreadable record in the first phase does.
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		return txn.Set(nodeKey(created[count-1]), []byte{0xff})
+	}))
+	eng.nodeCacheMu.Lock()
+	clear(eng.nodeCache)
+	eng.nodeCacheMu.Unlock()
+	tx, err := eng.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("test"))
+	defer func() { _ = tx.Rollback() }()
+	require.Error(t, tx.StreamNodesByLabelProjected("Common", nil, func(*Node) error { return nil }))
 }
