@@ -827,17 +827,17 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		query     string
 		expectErr bool
 	}{
-		{query: "CALL db.labels()", expectErr: false},
-		{query: "CALL db.relationshipTypes()", expectErr: false},
-		{query: "CALL db.schema.visualization()", expectErr: false},
-		{query: "CALL db.schema.nodeProperties()", expectErr: false},
-		{query: "CALL db.schema.relProperties()", expectErr: false},
-		{query: "CALL db.indexes()", expectErr: false},
-		{query: "CALL db.index.stats()", expectErr: false},
-		{query: "CALL db.constraints()", expectErr: false},
-		{query: "CALL db.propertyKeys()", expectErr: false},
-		{query: "CALL db.info()", expectErr: false},
-		{query: "CALL db.ping()", expectErr: false},
+		{query: "CALL db.labels()", expectErr: true},
+		{query: "CALL db.relationshipTypes()", expectErr: true},
+		{query: "CALL db.schema.visualization()", expectErr: true},
+		{query: "CALL db.schema.nodeProperties()", expectErr: true},
+		{query: "CALL db.schema.relProperties()", expectErr: true},
+		{query: "CALL db.indexes()", expectErr: true},
+		{query: "CALL db.index.stats()", expectErr: true},
+		{query: "CALL db.constraints()", expectErr: true},
+		{query: "CALL db.propertyKeys()", expectErr: true},
+		{query: "CALL db.info()", expectErr: true},
+		{query: "CALL db.ping()", expectErr: true},
 		{query: "CALL dbms.info()", expectErr: false},
 		{query: "CALL dbms.listConfig()", expectErr: false},
 		{query: "CALL dbms.clientConfig()", expectErr: false},
@@ -845,11 +845,11 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		{query: "CALL dbms.components()", expectErr: false},
 		{query: "CALL dbms.procedures()", expectErr: false},
 		{query: "CALL dbms.functions()", expectErr: false},
-		{query: "CALL db.index.fulltext.listAvailableAnalyzers()", expectErr: false},
-		{query: "CALL db.index.fulltext.queryRelationships('default','hello')", expectErr: false},
+		{query: "CALL db.index.fulltext.listAvailableAnalyzers()", expectErr: true},
+		{query: "CALL db.index.fulltext.queryRelationships('default','hello')", expectErr: true},
 		{query: "CALL db.stats.status()", expectErr: false},
-		{query: "CALL db.clearQueryCaches()", expectErr: false},
-		{query: "CALL tx.setMetaData({app:'x'})", expectErr: true}, // requires active tx
+		{query: "CALL db.clearQueryCaches()", expectErr: true},
+		{query: "CALL tx.setMetaData({app:'x'})", expectErr: true}, // registered; no active tx
 		{query: "CALL db.notARealProcedure()", expectErr: true},
 	}
 
@@ -864,6 +864,18 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 	}
 
 	expectSuccess := []string{
+		"CALL db.stats.retrieve('QUERIES')",
+		"CALL db.stats.collect('QUERIES')",
+		"CALL db.stats.clear()",
+		"CALL db.stats.stop()",
+	}
+	for _, q := range expectSuccess {
+		res, err := exec.executeCall(ctx, q)
+		require.NoErrorf(t, err, "expected success for query: %s", q)
+		require.NotNilf(t, res, "expected non-nil result for query: %s", q)
+	}
+
+	for _, query := range []string{
 		"CALL db.index.vector.createNodeIndex('idx','L1','embedding',2,'cosine')",
 		"CALL nornicdb.version()",
 		"CALL nornicdb.stats()",
@@ -893,18 +905,6 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		"CALL db.awaitIndex('idx')",
 		"CALL db.resampleIndex('idx')",
 		"CALL db.stats.retrieveAllAnTheStats()",
-		"CALL db.stats.retrieve('QUERIES')",
-		"CALL db.stats.collect('QUERIES')",
-		"CALL db.stats.clear()",
-		"CALL db.stats.stop()",
-	}
-	for _, q := range expectSuccess {
-		res, err := exec.executeCall(ctx, q)
-		require.NoErrorf(t, err, "expected success for query: %s", q)
-		require.NotNilf(t, res, "expected non-nil result for query: %s", q)
-	}
-
-	for _, query := range []string{
 		"CALL apoc.neighbors.tohop('n1','KNOWS',1)",
 		"CALL apoc.neighbors.byhop('n1','KNOWS',2)",
 		"CALL apoc.path.subgraphNodes('n1', {maxLevel: 1})",
@@ -916,6 +916,9 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		"CALL apoc.algo.closeness()",
 		"CALL apoc.algo.labelPropagation()",
 		"CALL apoc.algo.wcc()",
+		"CALL apoc.algo.dijkstra()",
+		"CALL apoc.algo.astar()",
+		"CALL apoc.algo.allSimplePaths()",
 		"CALL apoc.export.csv.all('file:///export.csv',{})",
 		"CALL apoc.export.csv.query('MATCH (n) RETURN n','file:///export-query.csv',{})",
 		"CALL apoc.export.json.all('file:///export.json',{})",
@@ -924,18 +927,6 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		"CALL apoc.load.json('file:///load.json')",
 		"CALL apoc.load.csv('file:///load.csv')",
 		"CALL apoc.import.json('file:///import.json')",
-	} {
-		result, err := exec.executeCall(ctx, query)
-		require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureNotFound")
-		if result != nil {
-			require.Empty(t, result.Rows)
-		}
-	}
-
-	expectError := []string{
-		"CALL apoc.algo.dijkstra()",
-		"CALL apoc.algo.astar()",
-		"CALL apoc.algo.allSimplePaths()",
 		"CALL gds.graph.drop('missing')",
 		"CALL gds.linkprediction.adamicAdar.stream('g_cov',{sourceNode:'n1',targetNode:'n2'})",
 		"CALL gds.linkprediction.commonNeighbors.stream('g_cov',{sourceNode:'n1',targetNode:'n2'})",
@@ -949,10 +940,12 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		"CALL db.infer({prompt:'x'})",
 		"CALL db.txlog.entries(1, 10)",
 		"CALL db.txlog.byTxId('tx-1', 10)",
-	}
-	for _, q := range expectError {
-		_, err := exec.executeCall(ctx, q)
-		require.Errorf(t, err, "expected error for query: %s", q)
+	} {
+		result, err := exec.executeCall(ctx, query)
+		require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureNotFound")
+		if result != nil {
+			require.Empty(t, result.Rows)
+		}
 	}
 
 }

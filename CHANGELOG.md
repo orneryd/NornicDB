@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Retire the remaining sixty registry-owned text-dispatch branches: every
+  procedure the built-in registry already owns (APOC algo/path/load/export,
+  GDS, db.*, vector/fulltext indexes, RAG, txlog, temporal, nornicdb.*) is now
+  served exclusively by the registry-first path. The legacy switch keeps only
+  the twelve procedures the registry does not yet own (dbms.*, db.stats.*).
+  The empty-registry fallback test pins ProcedureNotFound for all retired
+  routes (#908).
+
 - Retire the twenty APOC text-dispatch branches (algo, path, load/export,
   import) whose procedures are already owned by the built-in registry; the
   registry-first path now serves them exclusively, and the empty-registry
