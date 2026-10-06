@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Fold the last computed-row WHERE text splitter into the shared row predicate
+  evaluator, so post-WITH WHERE positions evaluate with the same precedence,
+  null and unrecognized-text semantics as every other WHERE owner (#908).
+
+- Share one projected-read tail across the Async, WAL and composite engines: a
+  projection-capable reader serves the read, any other engine gets a projected
+  copy of its full read, and errors propagate verbatim (#521).
+
 - Converge `apoc.neighbors.tohop` and `apoc.neighbors.byhop` on typed node
   arguments and one caller-context traversal. Preserve staged writes, support
   directed relationship alternatives and documented defaults, and match APOC
