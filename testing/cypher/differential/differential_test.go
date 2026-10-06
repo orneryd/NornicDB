@@ -90,6 +90,56 @@ func TestSame(t *testing.T) {
 	require.False(t, Same("MATCH (n) WITH n LIMIT 1 RETURN n.id AS v", rows([]any{1}), rows()))
 	require.True(t, SameGraphState(rows([]any{[]any{"A", "B"}}), rows([]any{[]any{"B", "A"}})))
 	require.Equal(t, "unencodable", canonical(make(chan int), false))
+
+	// labels() and keys() columns are sets of names; other lists keep order.
+	labelled := func(names ...any) Outcome {
+		return Outcome{Columns: []string{"l", "o"}, Rows: [][]any{{names, []any{1, 2}}}}
+	}
+	require.True(t, Same("MATCH (n) RETURN labels(n) AS l, [1, 2] AS o", labelled("A", "B"), labelled("B", "A")))
+	require.True(t, Same("MATCH (n) RETURN keys(n) AS l, [1, 2] AS o ORDER BY o", labelled("a", "b"), labelled("b", "a")))
+	require.False(t, Same("MATCH (n) RETURN labels(n) AS l, [1, 2] AS o", labelled("A", "B"), labelled("A", "C")))
+	reversed := Outcome{Columns: []string{"l", "o"}, Rows: [][]any{{[]any{"A"}, []any{2, 1}}}}
+	require.False(t, Same("MATCH (n) RETURN labels(n) AS l, [1, 2] AS o", labelled("A"), reversed))
+	short := Outcome{Columns: []string{"o", "l"}, Rows: [][]any{{1}}}
+	require.True(t, Same("MATCH (n) RETURN 1 AS o, labels(n) AS l", short, short), "a row shorter than its columns isn't read past its end")
+
+	// Rows tied under a returned ORDER BY key come in any order among
+	// themselves; distinct keys keep their order.
+	pairs := func(values ...[]any) Outcome { return Outcome{Columns: []string{"k", "id"}, Rows: values} }
+	tied := "MATCH (n) RETURN n.k AS k, n.id AS id ORDER BY k"
+	require.True(t, Same(tied, pairs([]any{1, "a"}, []any{1, "b"}, []any{2, "c"}), pairs([]any{1, "b"}, []any{1, "a"}, []any{2, "c"})))
+	require.False(t, Same(tied, pairs([]any{1, "a"}, []any{1, "b"}, []any{2, "c"}), pairs([]any{2, "c"}, []any{1, "a"}, []any{1, "b"})))
+	require.False(t, Same(tied, pairs([]any{1, "a"}, []any{2, "b"}), pairs([]any{2, "b"}, []any{1, "a"})))
+	require.True(t, Same("MATCH (n) RETURN n.k, n.id AS id ORDER BY n.k DESC", pairs([]any{1, "a"}, []any{1, "b"}), pairs([]any{1, "b"}, []any{1, "a"})))
+	require.False(t, Same("MATCH (n) RETURN n.k AS k, n.id AS id ORDER BY n.name", pairs([]any{1, "a"}, []any{1, "b"}), pairs([]any{1, "b"}, []any{1, "a"})), "a key that isn't returned keeps strict order")
+
+	require.True(t, OrderOnly("MATCH (n) RETURN n.id AS v ORDER BY n.name", rows([]any{1}, []any{2}), rows([]any{2}, []any{1})))
+	require.False(t, OrderOnly("MATCH (n) RETURN n.id AS v ORDER BY n.name", rows([]any{1}, []any{2}), rows([]any{2}, []any{3})))
+	require.False(t, OrderOnly("MATCH (n) RETURN n.id AS v", rows([]any{1}, []any{2}), rows([]any{2}, []any{1})), "no ORDER BY: not an order difference")
+	require.False(t, OrderOnly("MATCH (n) RETURN n.id AS v ORDER BY n.name", failed, rows()))
+}
+
+func TestReturnShape(t *testing.T) {
+	for _, test := range []struct {
+		query   string
+		columns []string
+		want    shape
+	}{
+		{"RETURN 1", []string{"1"}, shape{}},
+		{"MATCH (n) RETURN labels(n), keys(n) AS k, n.x AS x ORDER BY x, `k` DESC", []string{"labels(n)", "k", "x"}, shape{sortKeys: []int{2, 1}, tokenColumns: []int{0, 1}}},
+		{"MATCH (n) RETURN DISTINCT n.x AS x ORDER BY n.x SKIP 1 LIMIT 2", []string{"x"}, shape{sortKeys: []int{0}}},
+		{"MATCH (n) RETURN n.x AS x ORDER BY n.y", []string{"x"}, shape{}},
+		{"MATCH (n) RETURN n.x AS x, count(*) AS c ORDER BY count(*) DESC", []string{"x", "c"}, shape{sortKeys: []int{1}}},
+		{"MATCH (n) WITH n ORDER BY n.x RETURN n.x AS x", []string{"x"}, shape{}},
+		{"MATCH (n) RETURN *", []string{"n"}, shape{}},
+		{"MATCH (n) RETURN n.a, n.b", []string{"n.a"}, shape{}},
+		{"MATCH (n) RETURN {a: 1, return: 2} AS m, 'x, RETURN y' AS s, n.return AS r ORDER BY s", []string{"m", "s", "r"}, shape{sortKeys: []int{1}}},
+		{"MATCH (n) RETURN [x IN n.l | x] AS l // RETURN a, b\nORDER BY l", []string{"l"}, shape{sortKeys: []int{0}}},
+		{"RETURN 'it\\'s' AS s, \"a\\\"b\" AS t ORDER BY t", []string{"s", "t"}, shape{sortKeys: []int{1}}},
+		{"RETURN 1 AS x UNION RETURN 2 AS x", []string{"x"}, shape{}},
+	} {
+		require.Equal(t, test.want, returnShape(test.query, test.columns), test.query)
+	}
 }
 
 func TestArbitraryAndWrites(t *testing.T) {
@@ -346,6 +396,68 @@ func TestRunFailures(t *testing.T) {
 	failingIssues := &Pair{Neo4j: &fakeServer{}, NornicDB: &fakeServer{failResetsAfter: 1}}
 	_, _, err = RunCorpora(context.Background(), failingIssues, SweepCorpus{}, []IssueCase{{Issue: 2}}, t.Logf)
 	require.ErrorContains(t, err, "issue reproductions")
+}
+
+// shufflingServer answers its queries from a list of answers, one per run,
+// the last one from then on.
+type shufflingServer struct {
+	fakeServer
+	runs map[string][]Outcome
+}
+
+func (server *shufflingServer) Execute(ctx context.Context, query string) Outcome {
+	server.fakeServer.Execute(ctx, query)
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	answers := server.runs[query]
+	if len(answers) == 0 {
+		return Outcome{Columns: []string{"v"}, Rows: [][]any{{query}}}
+	}
+	answer := answers[0]
+	if len(answers) > 1 {
+		server.runs[query] = answers[1:]
+	}
+	return answer
+}
+
+func TestRerunOrder(t *testing.T) {
+	hidden := "MATCH (n) RETURN n.id AS v ORDER BY n.name"
+	ordered, swapped := rows([]any{1}, []any{2}), rows([]any{2}, []any{1})
+	neo4j := &fakeServer{answers: map[string]Outcome{
+		hidden: ordered, "MATCH (n) RETURN n.id AS v ORDER BY v": ordered, "MATCH (n) SET n.x = 1 RETURN n.id AS v ORDER BY n.name": ordered,
+	}}
+	nornic := &shufflingServer{runs: map[string][]Outcome{
+		hidden:                                  {swapped, swapped, ordered},
+		"MATCH (n) RETURN n.id AS v ORDER BY v": {swapped},
+		"MATCH (n) SET n.x = 1 RETURN n.id AS v ORDER BY n.name":        {swapped, ordered},
+		"CALL db.labels() YIELD label RETURN label AS v ORDER BY label": {swapped, ordered},
+	}}
+	pair := &Pair{Neo4j: neo4j, NornicDB: nornic}
+	options := Options{StatementTimeout: time.Second, Workers: 1, ResetAttempts: 1, OrderRetries: 2}
+	results, err := RunIssues(context.Background(), []IssueCase{{Issue: 1, Statements: []IssueStatement{
+		{ID: "hidden", Query: hidden},
+		{ID: "returned", Query: "MATCH (n) RETURN n.id AS v ORDER BY v"},
+		{ID: "write", Query: "MATCH (n) SET n.x = 1 RETURN n.id AS v ORDER BY n.name"},
+		{ID: "call", Query: "CALL db.labels() YIELD label RETURN label AS v ORDER BY label"},
+	}}}, pair, options)
+	require.NoError(t, err)
+	byID := map[string]Result{}
+	for _, result := range results {
+		byID[result.ID] = result
+	}
+	require.True(t, byID["hidden"].Match, "the second run again comes back in Neo4j's order")
+	require.Equal(t, ordered, byID["hidden"].NornicDB)
+	require.False(t, byID["returned"].Match, "a returned sort key shows the order is wrong")
+	require.False(t, byID["write"].Match, "a statement that writes isn't run again")
+	require.False(t, byID["call"].Match, "nor is a procedure call")
+	require.Equal(t, 3, strings.Count(strings.Join(nornic.ran, "\n"), hidden))
+
+	nornic.runs[hidden] = []Outcome{swapped}
+	_, match := pair.rerunOrder(context.Background(), options, hidden, ordered, swapped)
+	require.False(t, match, "still in another order after every retry")
+	_, match = pair.rerunOrder(context.Background(), options, hidden, ordered, rows([]any{3}, []any{1}))
+	require.False(t, match, "different rows aren't an order difference")
+	require.Equal(t, 2, DefaultOptions.OrderRetries)
 }
 
 // onceServer fails every setup statement after the first reset, as a server
