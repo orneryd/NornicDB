@@ -91,7 +91,7 @@ func TestBadgerTransaction_ValidateNodeConstraints_DomainBranch(t *testing.T) {
 	require.Equal(t, ConstraintDomain, cv.Type)
 }
 
-func TestBadgerTransaction_CheckEdgeTemporalConstraint_GetEdgesByTypeErrorIsIgnored(t *testing.T) {
+func TestBadgerTransaction_CheckEdgeTemporalConstraint_GetEdgesByTypeErrorIsPropagated(t *testing.T) {
 	engine := newTestEngine(t)
 
 	tx, err := engine.BeginTransaction()
@@ -108,7 +108,7 @@ func TestBadgerTransaction_CheckEdgeTemporalConstraint_GetEdgesByTypeErrorIsIgno
 
 	require.NoError(t, engine.Close())
 	err = tx.checkEdgeTemporalConstraint(edge, c, "test")
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrStorageClosed)
 }
 
 func TestBadgerTransaction_ValidatePolicyOnNodeLabelChange_UsesPendingEdges(t *testing.T) {

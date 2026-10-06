@@ -280,6 +280,20 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			}
 			return visit(node)
 		}
+		readPoint := func(nodeID NodeID) error {
+			item, err := txn.Get(nodeKey(nodeID))
+			if err == badger.ErrKeyNotFound {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			node, err := readItem(nodeID, item)
+			if err != nil {
+				return err
+			}
+			return emit(node)
+		}
 
 		prefix := labelIndexPrefix(label)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
@@ -310,22 +324,20 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 				continue
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
-				pending = append(pending, nodeID)
-				continue
+				if len(pending) < labelScanMaxBuffered {
+					pending = append(pending, nodeID)
+					continue
+				}
+				for _, pendingID := range pending {
+					if err := readPoint(pendingID); err != nil {
+						return err
+					}
+				}
+				pending = nil
+				covers = false
 			}
 			lookups++
-			item, getErr := txn.Get(nodeKey(nodeID))
-			if getErr == badger.ErrKeyNotFound {
-				continue
-			}
-			if getErr != nil {
-				return getErr
-			}
-			node, err := readItem(nodeID, item)
-			if err != nil {
-				return err
-			}
-			if err := emit(node); err != nil {
+			if err := readPoint(nodeID); err != nil {
 				return err
 			}
 		}

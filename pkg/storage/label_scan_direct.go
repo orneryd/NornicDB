@@ -11,6 +11,10 @@ import (
 // records. A scan stopped within this prefix (LIMIT) stays on point lookups.
 const labelScanPointLookups = 1024
 
+// labelScanMaxBuffered bounds the one-pass tail. Larger scans fall back to
+// streaming point reads rather than retaining every remaining node body.
+const labelScanMaxBuffered = 1024
+
 // readNodeRecordsInOnePass calls read with the stored record of each of ids
 // that exists, walking scope's node records once ("" is every database)
 // instead of looking each record up. read's order is the records' key order;
