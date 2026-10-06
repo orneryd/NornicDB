@@ -354,9 +354,6 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// ORDER/LIMIT scope. Write tails (SET/CREATE/DELETE/MERGE/REMOVE) must use
 	// the per-row path to preserve transactional write-per-row semantics.
 	if !isPotentialWriteTail(tail) {
-		if setBased, ok := e.executeCallTailSetBased(ctx, seed, tail, usedCols, expectedCols); ok {
-			return setBased, nil
-		}
 		if projected, ok, err := e.tryExecuteCallTailRelationshipMatchProjection(ctx, seed, tail, expectedCols); ok || err != nil {
 			return projected, err
 		}
@@ -405,7 +402,11 @@ func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *Exe
 	for _, column := range seed.Columns {
 		scope[column] = struct{}{}
 	}
-	return e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	result, ok, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	if ok {
+		e.markCallTailPipelineUsed()
+	}
+	return result, ok, err
 }
 
 func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
@@ -685,6 +686,19 @@ func isPotentialWriteTail(tail string) bool {
 }
 
 func (e *StorageExecutor) executeCallTailSetBased(
+	ctx context.Context,
+	seed *ExecuteResult,
+	tail string,
+	usedCols []int,
+	expectedCols []string,
+) (*ExecuteResult, bool) {
+	// EXPERIMENT (#66): bypass the set-based owner so the pipeline tail owns
+	// every shape. Revert if the pipeline declines any pinned shape.
+	return nil, false
+}
+
+//nolint:unused // retired with the set-based owner experiment (#66)
+func (e *StorageExecutor) executeCallTailSetBasedLegacy(
 	ctx context.Context,
 	seed *ExecuteResult,
 	tail string,
