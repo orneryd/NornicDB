@@ -1,5 +1,10 @@
 package cypher
 
+// This file is the scanning core of the Nornic parser, a scannerless
+// recursive descent parser: clause boundaries and keyword classification come
+// from top-level keyword scans over the raw query text, with quoted text,
+// comments and bracket nesting tracked inline instead of by a lexer.
+
 import (
 	"hash/maphash"
 	"strconv"

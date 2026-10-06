@@ -26,8 +26,8 @@ flowchart TB
     
     subgraph NORNIC["⚡ Nornic Parser (Default)"]
         direction TB
-        N1["String-based validation"]
-        N2["Regex + indexOf"]
+        N1["Scannerless recursive descent"]
+        N2["Top-level keyword/operator scans"]
         N3["Direct execution"]
         N1 --> N2 --> N3
     end
@@ -77,7 +77,7 @@ flowchart TB
 | **Worst Case** | - | **4,753x slower** |
 | **Error Messages** | Classified with restored line/column positions | Detailed (line/column) |
 | **Syntax Validation** | Strict, TCK-vetted (see below) | Strict OpenCypher |
-| **Memory Usage** | Lowest (recursive key scanner, no parse tree) | Higher |
+| **Memory Usage** | Lowest (scannerless recursive descent, no parse tree) | Higher |
 | **Best For** | **Production** | Development/Debugging |
 
 > **Note:** both modes share a single converged execution pipeline. There are no
@@ -88,9 +88,11 @@ flowchart TB
 
 ### Nornic validation is TCK-vetted
 
-The Nornic scanner uses a recursive key scanner with lightweight lexing only where
-needed (`pkg/cypher/keyword_scan.go`), with quote/comment/bracket-aware fragment
-consumption shared by all callers. The official OpenCypher TCK is pinned at
+The Nornic parser is a **scannerless recursive descent parser**: it descends over
+the raw query text with no separate lexer, and precedence is handled by recursive
+splitting at the top-level occurrence of each operator (`findTopLevelOperator`,
+`pkg/cypher/operators.go`), with quote/comment/bracket-aware fragment consumption
+shared by all callers (`pkg/cypher/keyword_scan.go`). The official OpenCypher TCK is pinned at
 revision `370fe27f` and the ratchet records **7794/7794 scenario/mode outcomes
 passing** with zero expected gaps, setup blocks or harness errors
 (`make cypher-tck-ratchet`, `make cypher-tck-vetted`). Rejections are classified
@@ -141,7 +143,7 @@ config.SetParserType(config.ParserTypeNornic)
 - **Fastest execution** — 3,000-4,200 ops/sec
 - 💾 **Lowest memory** — No parse tree allocation
 - 🔧 **Battle-tested** — Original implementation, converged single pipeline
-- ⚡ **Zero parsing overhead** — recursive key scanner, lightweight lexing only as needed
+- ⚡ **Zero parsing overhead** — scannerless recursive descent, no lexer or parse tree
 
 **Cons:**
 - 🐛 **No structured parse tree** — debugging uses restored positions, not AST inspection
