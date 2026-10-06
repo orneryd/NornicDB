@@ -7,9 +7,13 @@ import {
   type GraphEdgePayload,
   type GraphNeighborhoodResponse,
   type GraphNodePayload,
+  type GraphPropertyFilter,
   type SearchResult,
 } from "../../utils/api";
-import { parseFilterList } from "../../utils/graphFilters";
+import {
+  FilterChipList,
+  PropertyFilterList,
+} from "../graphFilterControls";
 import { getNodePreview } from "../../utils/nodeUtils";
 
 interface GraphExplorerPanelProps {
@@ -34,20 +38,13 @@ const DEFAULT_LIMIT = 200;
 interface GraphExplorerFilters {
   includeLabels: string[];
   includeEdgeTypes: string[];
-  includeProps: string[];
+  includeNames: string[];
+  includeProps: GraphPropertyFilter[];
   excludeLabels: string[];
   excludeEdgeTypes: string[];
-  excludeProps: string[];
+  excludeNames: string[];
+  excludeProps: GraphPropertyFilter[];
 }
-
-const EMPTY_FILTERS: GraphExplorerFilters = {
-  includeLabels: [],
-  includeEdgeTypes: [],
-  includeProps: [],
-  excludeLabels: [],
-  excludeEdgeTypes: [],
-  excludeProps: [],
-};
 
 function getGraphNodeLabel(node: GraphNodePayload): string {
   const previewFields = ["title", "name", "code", "path", "id"];
@@ -159,16 +156,37 @@ export function GraphExplorerPanel({
   const [graph, setGraph] = useState<GraphNeighborhoodResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Filter drafts are free-form text; "apply" copies them into the applied
-  // filters, which the neighborhood request reads.
-  const [includeLabelsText, setIncludeLabelsText] = useState("");
-  const [includeEdgeTypesText, setIncludeEdgeTypesText] = useState("");
-  const [includePropsText, setIncludePropsText] = useState("");
-  const [excludeLabelsText, setExcludeLabelsText] = useState("");
-  const [excludeEdgeTypesText, setExcludeEdgeTypesText] = useState("");
-  const [excludePropsText, setExcludePropsText] = useState("");
-  const [appliedFilters, setAppliedFilters] =
-    useState<GraphExplorerFilters>(EMPTY_FILTERS);
+  // Filter entries are add/remove lists; the neighborhood request reads the
+  // current lists through filtersRef so adding a chip does not auto-reload
+  // (the apply button drives the fetch).
+  const [includeLabels, setIncludeLabels] = useState<string[]>([]);
+  const [includeEdgeTypes, setIncludeEdgeTypes] = useState<string[]>([]);
+  const [includeNames, setIncludeNames] = useState<string[]>([]);
+  const [includeProps, setIncludeProps] = useState<GraphPropertyFilter[]>([]);
+  const [excludeLabels, setExcludeLabels] = useState<string[]>([]);
+  const [excludeEdgeTypes, setExcludeEdgeTypes] = useState<string[]>([]);
+  const [excludeNames, setExcludeNames] = useState<string[]>([]);
+  const [excludeProps, setExcludeProps] = useState<GraphPropertyFilter[]>([]);
+  const filtersRef = useRef<GraphExplorerFilters>({
+    includeLabels,
+    includeEdgeTypes,
+    includeNames,
+    includeProps,
+    excludeLabels,
+    excludeEdgeTypes,
+    excludeNames,
+    excludeProps,
+  });
+  filtersRef.current = {
+    includeLabels,
+    includeEdgeTypes,
+    includeNames,
+    includeProps,
+    excludeLabels,
+    excludeEdgeTypes,
+    excludeNames,
+    excludeProps,
+  };
   const [activeComponent, setActiveComponent] = useState<number | null>(null);
   const [positions, setPositions] = useState<Record<string, NodePosition>>({});
   const [dragging, setDragging] = useState<{
@@ -209,17 +227,20 @@ export function GraphExplorerPanel({
     setLoading(true);
     setError(null);
     try {
+      const filters = filtersRef.current;
       const response = await api.getGraphNeighborhood({
         nodeIds: [effectiveRootNodeId],
         depth,
         limit: DEFAULT_LIMIT,
         database: selectedDatabase,
-        labels: appliedFilters.includeLabels,
-        relationshipTypes: appliedFilters.includeEdgeTypes,
-        includeProperties: appliedFilters.includeProps,
-        excludeLabels: appliedFilters.excludeLabels,
-        excludeRelationshipTypes: appliedFilters.excludeEdgeTypes,
-        excludeProperties: appliedFilters.excludeProps,
+        labels: filters.includeLabels,
+        relationshipTypes: filters.includeEdgeTypes,
+        includeNames: filters.includeNames,
+        excludeNames: filters.excludeNames,
+        includeProperties: filters.includeProps,
+        excludeProperties: filters.excludeProps,
+        excludeLabels: filters.excludeLabels,
+        excludeRelationshipTypes: filters.excludeEdgeTypes,
       });
       setGraph(response);
       setPositions(buildInitialPositions(response, effectiveRootNodeId));
@@ -234,7 +255,7 @@ export function GraphExplorerPanel({
     } finally {
       setLoading(false);
     }
-  }, [depth, effectiveRootNodeId, selectedDatabase, appliedFilters]);
+  }, [depth, effectiveRootNodeId, selectedDatabase]);
 
   useEffect(() => {
     if (!effectiveRootNodeId) {
@@ -377,48 +398,88 @@ export function GraphExplorerPanel({
 
       <details className="rounded-lg border border-norse-rune bg-norse-shadow/30 px-3 py-2">
         <summary className="cursor-pointer select-none text-xs text-norse-silver/80 hover:text-white">
-          filters (labels · edge types · properties)
+          filters (labels · edge types · names · properties)
         </summary>
-        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5">
-          {[
-            ["include labels", includeLabelsText, setIncludeLabelsText, "e.g. Person"],
-            ["exclude labels", excludeLabelsText, setExcludeLabelsText, "e.g. Hidden"],
-            ["include edge types", includeEdgeTypesText, setIncludeEdgeTypesText, "e.g. KNOWS"],
-            ["exclude edge types", excludeEdgeTypesText, setExcludeEdgeTypesText, "e.g. IMPORTS"],
-            ["include properties", includePropsText, setIncludePropsText, "e.g. Code.entry"],
-            ["exclude properties", excludePropsText, setExcludePropsText, "e.g. Context.context"],
-          ].map(([label, value, setter, placeholder]) => (
-            <label
-              key={label as string}
-              className="flex flex-col gap-0.5 text-[10px] text-norse-silver/60"
-            >
-              {label as string}
-              <input
-                type="text"
-                value={value as string}
-                onChange={(event) =>
-                  (setter as (next: string) => void)(event.target.value)
-                }
-                placeholder={placeholder as string}
-                spellCheck={false}
-                className="w-full rounded border border-norse-rune bg-norse-stone px-2 py-1 text-xs text-norse-silver placeholder:text-norse-silver/30 focus:outline-none focus:border-sky-400"
-              />
-            </label>
-          ))}
+        <div className="mt-2 space-y-2">
+          <FilterChipList
+            label="include labels"
+            entries={includeLabels}
+            onAdd={setIncludeLabels}
+            onRemove={(entry) =>
+              setIncludeLabels(includeLabels.filter((item) => item !== entry))
+            }
+            placeholder="e.g. Person"
+          />
+          <FilterChipList
+            label="exclude labels"
+            entries={excludeLabels}
+            onAdd={setExcludeLabels}
+            onRemove={(entry) =>
+              setExcludeLabels(excludeLabels.filter((item) => item !== entry))
+            }
+            placeholder="e.g. Hidden"
+          />
+          <FilterChipList
+            label="include edge types"
+            entries={includeEdgeTypes}
+            onAdd={setIncludeEdgeTypes}
+            onRemove={(entry) =>
+              setIncludeEdgeTypes(
+                includeEdgeTypes.filter((item) => item !== entry),
+              )
+            }
+            placeholder="e.g. KNOWS"
+          />
+          <FilterChipList
+            label="exclude edge types"
+            entries={excludeEdgeTypes}
+            onAdd={setExcludeEdgeTypes}
+            onRemove={(entry) =>
+              setExcludeEdgeTypes(
+                excludeEdgeTypes.filter((item) => item !== entry),
+              )
+            }
+            placeholder="e.g. IMPORTS"
+          />
+          <FilterChipList
+            label="include symbol names"
+            entries={includeNames}
+            onAdd={setIncludeNames}
+            onRemove={(entry) =>
+              setIncludeNames(includeNames.filter((item) => item !== entry))
+            }
+            placeholder="e.g. main()"
+          />
+          <FilterChipList
+            label="exclude symbol names"
+            entries={excludeNames}
+            onAdd={setExcludeNames}
+            onRemove={(entry) =>
+              setExcludeNames(excludeNames.filter((item) => item !== entry))
+            }
+            placeholder="e.g. context.Context"
+          />
+          <PropertyFilterList
+            label="include properties"
+            entries={includeProps}
+            onAdd={setIncludeProps}
+            onRemove={(entry) =>
+              setIncludeProps(includeProps.filter((item) => item !== entry))
+            }
+          />
+          <PropertyFilterList
+            label="exclude properties"
+            entries={excludeProps}
+            onAdd={setExcludeProps}
+            onRemove={(entry) =>
+              setExcludeProps(excludeProps.filter((item) => item !== entry))
+            }
+          />
         </div>
         <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
-            onClick={() => {
-              setAppliedFilters({
-                includeLabels: parseFilterList(includeLabelsText),
-                includeEdgeTypes: parseFilterList(includeEdgeTypesText),
-                includeProps: parseFilterList(includePropsText),
-                excludeLabels: parseFilterList(excludeLabelsText),
-                excludeEdgeTypes: parseFilterList(excludeEdgeTypesText),
-                excludeProps: parseFilterList(excludePropsText),
-              });
-            }}
+            onClick={() => void loadNeighborhood()}
             disabled={loading}
             className="rounded bg-sky-500/90 hover:bg-sky-400 text-slate-950 text-xs font-semibold px-3 py-1 disabled:opacity-40"
           >
@@ -427,13 +488,14 @@ export function GraphExplorerPanel({
           <button
             type="button"
             onClick={() => {
-              setIncludeLabelsText("");
-              setIncludeEdgeTypesText("");
-              setIncludePropsText("");
-              setExcludeLabelsText("");
-              setExcludeEdgeTypesText("");
-              setExcludePropsText("");
-              setAppliedFilters(EMPTY_FILTERS);
+              setIncludeLabels([]);
+              setIncludeEdgeTypes([]);
+              setIncludeNames([]);
+              setIncludeProps([]);
+              setExcludeLabels([]);
+              setExcludeEdgeTypes([]);
+              setExcludeNames([]);
+              setExcludeProps([]);
             }}
             disabled={loading}
             className="rounded border border-norse-rune bg-norse-stone px-3 py-1 text-xs text-norse-silver/80 hover:bg-norse-rune disabled:opacity-40"
@@ -442,9 +504,9 @@ export function GraphExplorerPanel({
           </button>
         </div>
         <div className="mt-1.5 text-[10px] text-norse-silver/50 font-mono leading-snug">
-          properties: dotted paths "key", "Label.key", "Type.key", optionally
-          ":value", or a bare dotted symbol name — exclusions may split the
-          graph into disconnected components
+          names match the symbol name exactly · properties match key +
+          optional value, optionally scoped to a label or edge type —
+          exclusions may split the graph into disconnected components
         </div>
       </details>
 

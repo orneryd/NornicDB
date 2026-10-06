@@ -4,7 +4,12 @@ import {
   api,
   type CypherResponse,
   type GraphNeighborhoodResponse,
+  type GraphPropertyFilter,
 } from "../utils/api";
+import {
+  FilterChipList,
+  PropertyFilterList,
+} from "../components/graphFilterControls";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,96 +133,94 @@ function setDagMode(fg: GraphifyForceGraph, mode: "td" | null): void {
   fg.dagLevelDistance(72);
 }
 
-// Absolute y targets for a top-down band layout: the root lands at the
-// highest y (top of the scene) and each hop steps one band downward.
-function depthTargets(depths: Map<string, number>, spacing: number): Map<string, number> {
-  let maxDepth = 0;
-  for (const depth of depths.values()) {
-    maxDepth = Math.max(maxDepth, depth);
-  }
-  const targets = new Map<string, number>();
-  for (const [id, depth] of depths) {
-    targets.set(id, (maxDepth - depth) * spacing);
-  }
-  return targets;
+// Golden-angle rotation used to scatter nodes inside a kind bubble with a
+// deterministic, stable distribution.
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+// bubbleRadius scales a kind bubble sphere with the square root of its node
+// count so large kinds grow gently instead of exploding.
+function bubbleRadius(count: number): number {
+  return 14 + Math.sqrt(count) * 4.5;
 }
 
-  // Configure the layout orientation: bands are measured as hops from the
-  // chosen root along the call/reference links, so only the starting symbol
-  // sits at the top level (never an artifact of file structure or of which
-  // nodes happen to have no incoming edges). Each band is additionally
-  // split into wedges per symbol kind (calls, types, variables, ...) so
-  // same-kind symbols form their own neighborhood.
-function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], rootId: string | null): void {
-  // dagMode derives levels from link direction (every zero-indegree node
-  // lands at the top), so it stays off; this layout owns the bands.
+// Configure the layout orientation: the root sits at the top of the scene
+// and every symbol kind forms its own spherical bubble; the bubbles hang
+// below the root in a ring, forming a half-dome. Nodes are scattered inside
+// their kind's bubble with a Fibonacci sphere so neighborhoods read as
+// three-dimensional clusters rather than a hierarchical cone.
+function orientGraph(fg: GraphifyForceGraph, _links: GLink[], nodes: GNode[], rootId: string | null): void {
+  // dagMode derives levels from link direction, so it stays off; this
+  // layout owns the positions.
   setDagMode(fg, null);
   fg.d3Force("layers", null);
-  const depths = computeDepths(links, rootId ?? undefined);
-  // Unreachable clusters (possible when test files are shown) go below the
-  // deepest reachable band instead of sharing the root's top level.
-  let maxDepth = 0;
-  for (const depth of depths.values()) {
-    maxDepth = Math.max(maxDepth, depth);
-  }
-  const effective = new Map<string, number>();
+
+  const root = rootId != null ? nodes.find((node) => node.id === rootId) : null;
+  const byKind = new Map<string, GNode[]>();
   for (const node of nodes) {
-    effective.set(node.id, depths.get(node.id) ?? maxDepth + 1);
-  }
-  const targets = depthTargets(effective, 72);
-  // Seed each band with a radial spread so the tree is readable without a
-  // long-running force simulation, then pin every node (fx/fy/fz) so the
-  // hot force ticks cannot drift the graph away from the camera frame
-  // computed by zoomToFit right after graphData is set.
-  const byDepth = new Map<number, GNode[]>();
-  for (const node of nodes) {
-    const depth = effective.get(node.id) ?? 0;
-    const group = byDepth.get(depth) ?? [];
+    if (root != null && node.id === root.id) {
+      continue;
+    }
+    const kind = classifySymbolKind(node);
+    const group = byKind.get(kind) ?? [];
     group.push(node);
-    byDepth.set(depth, group);
+    byKind.set(kind, group);
   }
-  for (const [depth, group] of byDepth) {
-    // Split the band into one wedge per symbol kind: same-kind symbols
-    // cluster into their own angular neighborhood at every depth.
-    const byKind = new Map<string, GNode[]>();
-    const kinds = new Set<string>();
-    for (const node of group) {
-      const kind = classifySymbolKind(node);
-      kinds.add(kind);
-      const kindGroup = byKind.get(kind) ?? [];
-      kindGroup.push(node);
-      byKind.set(kind, kindGroup);
-    }
-    const orderedKinds = Array.from(kinds).sort();
-    const kindIndex = new Map(orderedKinds.map((kind, index) => [kind, index]));
-    const wedgeWidth = (2 * Math.PI) / Math.max(orderedKinds.length, 1);
-    for (const [kind, kindNodes] of byKind) {
-      const center = -Math.PI / 2 + wedgeWidth * (kindIndex.get(kind) ?? 0);
-      const spread = wedgeWidth * 0.85;
-      kindNodes.forEach((node, index) => {
-        const fraction =
-          kindNodes.length > 1 ? index / (kindNodes.length - 1) : 0.5;
-        const angle = center - spread / 2 + spread * fraction;
-        const radius = 24 + depth * 26;
-        node.x = Math.cos(angle) * radius;
-        node.z = Math.sin(angle) * radius;
-        node.y = targets.get(node.id) ?? 0;
-        // Pin the seeded position so the static layout stays exactly where
-        // the camera was framed: force ticks must not move nodes after
-        // zoomToFit has already computed the frame from these positions.
-        node.fx = node.x;
-        node.fy = node.y;
-        node.fz = node.z;
-      });
-    }
+  const kinds = Array.from(byKind.keys()).sort();
+
+  let maxBubble = 0;
+  for (const group of byKind.values()) {
+    maxBubble = Math.max(maxBubble, bubbleRadius(group.length));
   }
+
+  const rootY = maxBubble + 120;
+  const ringRadius = maxBubble + 120;
+  const ringY = rootY - maxBubble - 70;
+
+  const pinNode = (node: GNode, x: number, y: number, z: number) => {
+    node.x = x;
+    node.y = y;
+    node.z = z;
+    // Pin the seeded position so the static layout stays exactly where
+    // the camera was framed: force ticks must not move nodes after
+    // zoomToFit has already computed the frame from these positions.
+    node.fx = x;
+    node.fy = y;
+    node.fz = z;
+  };
+
+  if (root != null) {
+    pinNode(root, 0, rootY, 0);
+  }
+
+  kinds.forEach((kind, kindIndex) => {
+    const group = byKind.get(kind) ?? [];
+    const azimuth = (2 * Math.PI * kindIndex) / Math.max(kinds.length, 1) - Math.PI / 2;
+    const radius = bubbleRadius(group.length);
+    const centerX = Math.cos(azimuth) * ringRadius;
+    const centerZ = Math.sin(azimuth) * ringRadius;
+    const centerY = ringY;
+    group.forEach((node, index) => {
+      // Fibonacci sphere inside the bubble.
+      const y = group.length === 1 ? 0 : 1 - (2 * index) / (group.length - 1);
+      const radiusAt = Math.sqrt(Math.max(0, 1 - y * y));
+      const theta = index * GOLDEN_ANGLE;
+      pinNode(
+        node,
+        centerX + Math.cos(theta) * radiusAt * radius,
+        centerY + y * radius,
+        centerZ + Math.sin(theta) * radiusAt * radius,
+      );
+    });
+  });
+
   if (import.meta.env.DEV) {
     (window as unknown as Record<string, unknown>).__graphifyDebug = {
       rootId,
-      maxDepth,
-      topBand: nodes
-        .filter((node) => (node.y ?? -1) >= (targets.get(rootId ?? "") ?? 0) - 0.5)
-        .map((node) => ({ id: node.id, label: node.label, y: node.y })),
+      bubbles: kinds.map((kind) => ({
+        kind,
+        count: byKind.get(kind)?.length ?? 0,
+        radius: bubbleRadius(byKind.get(kind)?.length ?? 0),
+      })),
     };
   }
   fg.d3AlphaMin(0.9);
@@ -351,107 +354,9 @@ interface Neighbor {
   direction: "in" | "out";
 }
 
-// BFS depth from the root along link direction; unreachable nodes get depth 0.
-function computeDepths(links: GLink[], rootId: string | undefined): Map<string, number> {
-  const depths = new Map<string, number>();
-  const idOf = (end: string | GNode) => (typeof end === "object" ? end.id : end);
-  const children = new Map<string, string[]>();
-  for (const link of links) {
-    const source = idOf(link.source);
-    const target = idOf(link.target);
-    const list = children.get(source) ?? [];
-    list.push(target);
-    children.set(source, list);
-  }
-  if (!rootId) return depths;
-  depths.set(rootId, 0);
-  const queue: Array<[string, number]> = [[rootId, 0]];
-  while (queue.length > 0) {
-    const [current, depth] = queue.shift() as [string, number];
-    for (const child of children.get(current) ?? []) {
-      if (!depths.has(child)) {
-        depths.set(child, depth + 1);
-        queue.push([child, depth + 1]);
-      }
-    }
-  }
-  return depths;
-}
-
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
-
-function FilterChipList(props: {
-  label: string;
-  entries: string[];
-  onAdd: (entries: string[]) => void;
-  onRemove: (entry: string) => void;
-  placeholder?: string;
-}) {
-  const [draft, setDraft] = useState("");
-  const add = () => {
-    const added = draft
-      .split(/[\s,]+/)
-      .map((entry) => entry.trim().replace(/\s*:\s*/g, ":"))
-      .filter((entry) => entry !== "" && !props.entries.includes(entry));
-    if (added.length === 0) {
-      setDraft("");
-      return;
-    }
-    props.onAdd([...props.entries, ...added]);
-    setDraft("");
-  };
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[10px] text-norse-silver/60">{props.label}</span>
-      {props.entries.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {props.entries.map((entry) => (
-            <span
-              key={entry}
-              className="inline-flex items-center gap-1 rounded bg-norse-rune/40 border border-norse-rune px-1.5 py-0.5 text-[10px] font-mono text-norse-silver"
-            >
-              {entry}
-              <button
-                type="button"
-                aria-label={`remove ${entry}`}
-                onClick={() => props.onRemove(entry)}
-                className="text-norse-silver/60 hover:text-red-300"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="flex items-center gap-1">
-        <input
-          type="text"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              add();
-            }
-          }}
-          placeholder={props.placeholder}
-          spellCheck={false}
-          className="w-full rounded border border-norse-rune bg-norse-night px-1.5 py-1 text-[11px] text-norse-silver placeholder:text-norse-silver/30 focus:outline-none focus:border-sky-400"
-        />
-        <button
-          type="button"
-          onClick={add}
-          aria-label={`add ${props.label}`}
-          className="rounded border border-norse-rune bg-norse-night px-1.5 py-1 text-[11px] text-norse-silver/70 hover:border-sky-400"
-        >
-          +
-        </button>
-      </div>
-    </div>
-  );
-}
 
 export function Graphify() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -478,10 +383,12 @@ export function Graphify() {
   const [includeEdgeTypes, setIncludeEdgeTypes] = useState<string[]>([
     ...CALL_RELATION_TYPES,
   ]);
-  const [includeProps, setIncludeProps] = useState<string[]>([]);
+  const [includeNames, setIncludeNames] = useState<string[]>([]);
+  const [includeProps, setIncludeProps] = useState<GraphPropertyFilter[]>([]);
   const [excludeLabels, setExcludeLabels] = useState<string[]>([]);
   const [excludeEdgeTypes, setExcludeEdgeTypes] = useState<string[]>([]);
-  const [excludeProps, setExcludeProps] = useState<string[]>([]);
+  const [excludeNames, setExcludeNames] = useState<string[]>([]);
+  const [excludeProps, setExcludeProps] = useState<GraphPropertyFilter[]>([]);
   // Disconnected subgraphs reported by the endpoint after exclusion
   // filters; selecting one dims the rest of the scene.
   const [components, setComponents] = useState<GraphNeighborhoodResponse[]>([]);
@@ -922,10 +829,12 @@ export function Graphify() {
         limit: NEIGHBORHOOD_LIMIT,
         labels: includeLabels,
         relationshipTypes: includeEdgeTypes,
+        includeNames,
+        excludeNames,
         includeProperties: includeProps,
+        excludeProperties: excludeProps,
         excludeLabels,
         excludeRelationshipTypes: excludeEdgeTypes,
-        excludeProperties: excludeProps,
         direction: "both",
         database: dbName,
       });
@@ -1043,9 +952,11 @@ export function Graphify() {
     selectNode,
     includeLabels,
     includeEdgeTypes,
+    includeNames,
     includeProps,
     excludeLabels,
     excludeEdgeTypes,
+    excludeNames,
     excludeProps,
   ]);
 
@@ -1705,22 +1616,38 @@ export function Graphify() {
               placeholder="e.g. IMPORTS"
             />
             <FilterChipList
+              label="include symbol names"
+              entries={includeNames}
+              onAdd={setIncludeNames}
+              onRemove={(entry) =>
+                setIncludeNames(includeNames.filter((item) => item !== entry))
+              }
+              placeholder="e.g. main()"
+            />
+            <FilterChipList
+              label="exclude symbol names"
+              entries={excludeNames}
+              onAdd={setExcludeNames}
+              onRemove={(entry) =>
+                setExcludeNames(excludeNames.filter((item) => item !== entry))
+              }
+              placeholder="e.g. context.Context"
+            />
+            <PropertyFilterList
               label="include properties"
               entries={includeProps}
               onAdd={setIncludeProps}
               onRemove={(entry) =>
                 setIncludeProps(includeProps.filter((item) => item !== entry))
               }
-              placeholder="e.g. Code.entry or key:value"
             />
-            <FilterChipList
+            <PropertyFilterList
               label="exclude properties"
               entries={excludeProps}
               onAdd={setExcludeProps}
               onRemove={(entry) =>
                 setExcludeProps(excludeProps.filter((item) => item !== entry))
               }
-              placeholder="e.g. context.Context or key:value"
             />
           </div>
           <div className="mt-2 flex items-center gap-2">
@@ -1737,9 +1664,11 @@ export function Graphify() {
               onClick={() => {
                 setIncludeLabels([]);
                 setIncludeEdgeTypes([...CALL_RELATION_TYPES]);
+                setIncludeNames([]);
                 setIncludeProps([]);
                 setExcludeLabels([]);
                 setExcludeEdgeTypes([]);
+                setExcludeNames([]);
                 setExcludeProps([]);
               }}
               disabled={loading}
@@ -1749,9 +1678,9 @@ export function Graphify() {
             </button>
           </div>
           <div className="mt-1.5 text-[10px] text-norse-silver/50 font-mono leading-snug">
-            properties: dotted paths "key", "Label.key", "Type.key",
-            optionally ":value" to match the value, or a bare dotted symbol
-            name to hide it — exclusions may split the graph into components
+            names match the symbol name exactly · properties match key +
+            optional value, optionally scoped to a label or edge type —
+            exclusions may split the graph into components
           </div>
         </div>
 
