@@ -34,15 +34,37 @@ var orderBy = regexp.MustCompile(`(?i)\bORDER\s+BY\b`)
 //   - an error and rows never agree;
 //   - rows agree when the columns are equal and the rows are equal, in order
 //     when query has ORDER BY and as a multiset otherwise;
+//   - rows that tie under the RETURN's ORDER BY have no defined order among
+//     themselves (in Neo4j either): when every sort key is a returned column,
+//     each run of rows with equal keys compares as a multiset;
 //   - a collect() with no ORDER BY before it has no defined element order (in
 //     Neo4j either), so list values of such a statement compare as multisets;
+//   - labels() and keys() list token names in an order that depends on the
+//     database's history (in Neo4j, the order the names were first used), so a
+//     returned column that is one of them compares as a set of names;
 //   - a statement that keeps arbitrary rows (Arbitrary) compares its columns
 //     and its number of rows only.
 func Same(query string, reference, actual Outcome) bool {
 	if Arbitrary(query) && !reference.Failed() && !actual.Failed() {
 		return equalStrings(reference.Columns, actual.Columns) && len(reference.Rows) == len(actual.Rows)
 	}
-	return same(reference, actual, orderBy.MatchString(query), unorderedCollect(query))
+	shape := returnShape(query, reference.Columns)
+	return sameRows(reference, actual, comparison{
+		ordered:        orderBy.MatchString(query),
+		tieKeys:        shape.sortKeys,
+		unorderedLists: unorderedCollect(query),
+		tokenColumns:   shape.tokenColumns,
+	})
+}
+
+// OrderOnly reports whether two outcomes of query that don't agree (Same)
+// differ only in the order of their rows: the same rows, as a multiset.
+func OrderOnly(query string, reference, actual Outcome) bool {
+	if reference.Failed() || actual.Failed() || !orderBy.MatchString(query) {
+		return false
+	}
+	shape := returnShape(query, reference.Columns)
+	return sameRows(reference, actual, comparison{unorderedLists: unorderedCollect(query), tokenColumns: shape.tokenColumns})
 }
 
 var (
@@ -69,10 +91,22 @@ func Arbitrary(query string) bool {
 // SameGraphState reports whether two answers of a GraphStateQueries statement
 // agree: rows as a multiset, label lists in any order.
 func SameGraphState(reference, actual Outcome) bool {
-	return same(reference, actual, false, true)
+	return sameRows(reference, actual, comparison{unorderedLists: true})
 }
 
-func same(reference, actual Outcome, ordered, unorderedLists bool) bool {
+// comparison is how two outcomes' rows are compared.
+type comparison struct {
+	// ordered compares the rows in order; with tieKeys, rows whose values in
+	// those columns are equal and adjacent compare as a multiset.
+	ordered bool
+	tieKeys []int
+	// unorderedLists compares every list value as a multiset.
+	unorderedLists bool
+	// tokenColumns are columns whose list values compare as multisets.
+	tokenColumns []int
+}
+
+func sameRows(reference, actual Outcome, how comparison) bool {
 	if reference.Failed() || actual.Failed() {
 		return reference.Code == actual.Code
 	}
@@ -85,16 +119,58 @@ func same(reference, actual Outcome, ordered, unorderedLists bool) bool {
 	encode := func(rows [][]any) []string {
 		encoded := make([]string, len(rows))
 		for index, row := range rows {
-			encoded[index] = canonical(row, unorderedLists)
+			encoded[index] = canonical(sortColumns(row, how.tokenColumns), how.unorderedLists)
 		}
 		return encoded
 	}
 	left, right := encode(reference.Rows), encode(actual.Rows)
-	if !ordered {
+	if !how.ordered {
 		sort.Strings(left)
 		sort.Strings(right)
+		return equalStrings(left, right)
+	}
+	if len(how.tieKeys) > 0 {
+		// Each run of reference rows with equal sort keys may come in any
+		// order; the actual rows at the same positions must be the same run.
+		key := func(row []any) string {
+			values := make([]any, len(how.tieKeys))
+			for index, column := range how.tieKeys {
+				values[index] = row[column]
+			}
+			return canonical(values, how.unorderedLists)
+		}
+		for start := 0; start < len(left); {
+			end := start + 1
+			for end < len(left) && key(reference.Rows[end]) == key(reference.Rows[start]) {
+				end++
+			}
+			sort.Strings(left[start:end])
+			sort.Strings(right[start:end])
+			start = end
+		}
 	}
 	return equalStrings(left, right)
+}
+
+// sortColumns is row with the list values in columns sorted.
+func sortColumns(row []any, columns []int) []any {
+	if len(columns) == 0 {
+		return row
+	}
+	sorted := append([]any(nil), row...)
+	for _, column := range columns {
+		if column >= len(sorted) {
+			continue
+		}
+		if list, ok := sorted[column].([]any); ok {
+			items := append([]any(nil), list...)
+			sort.Slice(items, func(left, right int) bool {
+				return canonical(items[left], false) < canonical(items[right], false)
+			})
+			sorted[column] = items
+		}
+	}
+	return sorted
 }
 
 // unorderedCollect reports whether query's first collect( has no ORDER BY

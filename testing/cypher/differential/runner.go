@@ -3,6 +3,7 @@ package differential
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -31,16 +32,19 @@ type Result struct {
 }
 
 // Options bound a run: each statement's deadline, the number of statements
-// read in parallel, and how often a reset is retried after a transient error.
+// read in parallel, how often a reset is retried after a transient error, and
+// how often a read whose rows came back in another order runs again
+// (rerunOrder).
 type Options struct {
 	StatementTimeout time.Duration
 	Workers          int
 	ResetAttempts    int
+	OrderRetries     int
 }
 
 // DefaultOptions keep a full run within a CI job's budget: no statement can
 // hold the run longer than its timeout.
-var DefaultOptions = Options{StatementTimeout: 20 * time.Second, Workers: 4, ResetAttempts: 3}
+var DefaultOptions = Options{StatementTimeout: 20 * time.Second, Workers: 4, ResetAttempts: 3, OrderRetries: 2}
 
 // Pair is a route's two servers.
 type Pair struct {
@@ -66,6 +70,40 @@ func (pair *Pair) execute(ctx context.Context, options Options, query string) (O
 	go run(pair.NornicDB, &actual)
 	wait.Wait()
 	return reference, actual
+}
+
+var callClause = regexp.MustCompile(`(?i)\bCALL\b`)
+
+// rerunOrder runs a statement again on NornicDB, up to options.OrderRetries
+// times, when its rows are Neo4j's in another order, it sorts on a key it
+// doesn't return, and it can't write. Rows that tie under such a key have no
+// defined order (in Neo4j either) and nothing shows which rows tie, so a run
+// in Neo4j's order shows the rows are the same. It returns the outcome to
+// report and whether it agrees with reference.
+func (pair *Pair) rerunOrder(ctx context.Context, options Options, query string, reference, actual Outcome) (Outcome, bool) {
+	if !OrderOnly(query, reference, actual) || returnShape(query, reference.Columns).sortKeys != nil ||
+		writeClause.MatchString(query) || callClause.MatchString(query) {
+		return actual, false
+	}
+	for attempt := 0; attempt < options.OrderRetries; attempt++ {
+		statementCtx, cancel := context.WithTimeout(ctx, options.StatementTimeout)
+		again := pair.NornicDB.Execute(statementCtx, query)
+		cancel()
+		if Same(query, reference, again) {
+			return again, true
+		}
+	}
+	return actual, false
+}
+
+// compare is a statement's Result: its outcomes, run again when only their
+// order differs (rerunOrder).
+func (pair *Pair) compare(ctx context.Context, options Options, id string, issue int, query string, reference, actual Outcome) Result {
+	match := Same(query, reference, actual)
+	if !match {
+		actual, match = pair.rerunOrder(ctx, options, query, reference, actual)
+	}
+	return Result{ID: id, Issue: issue, Kind: "statement", Query: query, Neo4j: reference, NornicDB: actual, Match: match}
 }
 
 // reset empties both graphs and runs setup on both. A setup statement that
@@ -179,8 +217,7 @@ func RunIssues(ctx context.Context, issues []IssueCase, pair *Pair, options Opti
 		}
 		for _, statement := range issue.Statements {
 			reference, actual := pair.execute(ctx, options, statement.Query)
-			results = append(results, Result{ID: statement.ID, Issue: issue.Issue, Kind: "statement", Query: statement.Query,
-				Neo4j: reference, NornicDB: actual, Match: Same(statement.Query, reference, actual)})
+			results = append(results, pair.compare(ctx, options, statement.ID, issue.Issue, statement.Query, reference, actual))
 			if Writes(statement.Query) {
 				results = append(results, pair.graphState(ctx, options, statement.ID, issue.Issue, statement.Query))
 			}
