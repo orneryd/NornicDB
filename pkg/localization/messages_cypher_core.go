@@ -83,6 +83,9 @@ const (
 	MessageCypherCoreTemporalNoSuchField                 MessageID = "cyphercore.temporal_no_such_field"
 	MessageCypherCoreTemporalInvalidNanosecond           MessageID = "cyphercore.temporal_invalid_nanosecond"
 	MessageCypherCoreTemporalMissingComponent            MessageID = "cyphercore.temporal_missing_component"
+	MessageCypherCorePercentileOutOfRange                MessageID = "cyphercore.percentile_out_of_range"
+	MessageCypherCorePointMapKeysInvalid                 MessageID = "cyphercore.point_map_keys_invalid"
+	MessageCypherCorePointCoordinatesMissing             MessageID = "cyphercore.point_coordinates_missing"
 	MessageCypherCoreFunctionArgumentInvalid             MessageID = "cyphercore.function_argument_invalid"
 )
 
@@ -437,4 +440,21 @@ func CypherCoreTemporalInvalidNanosecond(value int64) Message {
 // time a function needs ("Cannot get the date of: 03:04:05Z").
 func CypherCoreTemporalMissingComponent(component string, value string) Message {
 	return cypherCoreMessage(MessageCypherCoreTemporalMissingComponent, "Cannot get the "+component+" of: "+value, map[string]any{"Component": component, "Value": value})
+}
+
+// CypherCorePercentileOutOfRange is a percentile outside 0.0..1.0.
+func CypherCorePercentileOutOfRange(value string) Message {
+	return cypherCoreMessage(MessageCypherCorePercentileOutOfRange, "Invalid input '"+value+"' is not a valid argument, must be a number in the range 0.0 to 1.0", map[string]any{"Value": value})
+}
+
+// CypherCorePointMapKeysInvalid is a map literal whose keys don't describe a
+// point; keys lists them quoted ("'a', 'b'").
+func CypherCorePointMapKeysInvalid(keys string) Message {
+	return cypherCoreMessage(MessageCypherCorePointMapKeysInvalid, "A map with keys "+keys+" is not describing a valid point, a point is described either by using cartesian coordinates e.g. {x: 2.3, y: 4.5, crs: 'cartesian'} or using geographic coordinates e.g. {latitude: 12.78, longitude: 56.7, crs: 'WGS-84'}.", map[string]any{"Keys": keys})
+}
+
+// CypherCorePointCoordinatesMissing is a map value with neither x and y nor
+// latitude and longitude.
+func CypherCorePointCoordinatesMissing() Message {
+	return cypherCoreMessage(MessageCypherCorePointCoordinatesMissing, "A point must contain either 'x' and 'y' or 'latitude' and 'longitude'", nil)
 }

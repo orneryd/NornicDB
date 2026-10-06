@@ -196,3 +196,9 @@
   other: "Nanosegundo no válido: {{.Value}}"
 - id: cyphercore.temporal_missing_component
   other: "No se puede obtener el componente {{.Component}} de: {{.Value}}"
+- id: cyphercore.percentile_out_of_range
+  other: "Entrada no válida '{{.Value}}': no es un argumento válido, debe ser un número entre 0.0 y 1.0"
+- id: cyphercore.point_map_keys_invalid
+  other: "Un mapa con las claves {{.Keys}} no describe un punto válido; un punto se describe con coordenadas cartesianas, p. ej. {x: 2.3, y: 4.5, crs: 'cartesian'}, o con coordenadas geográficas, p. ej. {latitude: 12.78, longitude: 56.7, crs: 'WGS-84'}."
+- id: cyphercore.point_coordinates_missing
+  other: "Un punto debe contener 'x' e 'y' o 'latitude' y 'longitude'"
