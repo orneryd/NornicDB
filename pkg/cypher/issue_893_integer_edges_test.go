@@ -120,7 +120,7 @@ func TestIssue893IntegerEdges(t *testing.T) {
 			for _, tc := range []struct{ query, code, message string }{
 				{"UNWIND [1, 'ab'] AS x RETURN size(x) AS r", "Neo.ClientError.Statement.TypeError", "Invalid input for function 'size()': Expected a String or List, got: Long(1)"},
 				{"UNWIND [1] AS x RETURN size(x) AS r", "Neo.ClientError.Statement.SyntaxError", "Type mismatch: expected String or List<T> but was Integer"},
-				{"UNWIND [{a: 1}] AS m RETURN size(m) AS r", "Neo.ClientError.Statement.SyntaxError", "Type mismatch: expected String or List<T> but was Map"},
+				{"UNWIND [{a: 1}] AS m RETURN size(m) AS r", "Neo.ClientError.Statement.SyntaxError", "Type mismatch: expected String or List<T> but was Map, Node or Relationship"},
 				{"MATCH (n:E) RETURN n.v * -1 AS r", "Neo.ClientError.Statement.ArithmeticError", "long overflow"},
 				{"MATCH (n:E) RETURN -n.v AS r", "Neo.ClientError.Statement.ArithmeticError", "long overflow"},
 				{"MATCH (n:E) RETURN size(n.v) AS r", "Neo.ClientError.Statement.TypeError", "Invalid input for function 'size()': Expected a String or List, got: Long(-9223372036854775808)"},

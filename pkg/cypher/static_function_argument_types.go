@@ -15,8 +15,10 @@ import (
 // paths, and variables bound to a literal by WITH … AS or UNWIND
 // (staticTypeScope). Everything else is left to the row evaluator.
 
-// staticArgumentType is what one argument position of a function accepts: the
-// types as Neo4j names them in its error, and the same list split into names.
+// staticArgumentType is what one argument position of a function accepts at
+// compile time: the types as Neo4j names them in its error ("Float or
+// Integer"), and the same list split into names. A position without options
+// isn't checked.
 type staticArgumentType struct {
 	expected string
 	options  []string
@@ -29,102 +31,139 @@ type staticArgumentType struct {
 // although their "Type mismatch" error doesn't list one.
 var staticListAcceptingFunctions = map[string]bool{"tointeger": true}
 
-// staticFunctionArguments are the argument types Neo4j accepts, per function
-// and argument position; positions past the end are not checked. The expected
-// strings are Neo4j 5.26's own.
-var staticFunctionArguments = buildStaticFunctionArguments(map[string][]string{
-	"tointeger":        {"Boolean, Float, Integer or String"},
-	"tofloat":          {"Float, Integer or String"},
-	"tostring":         {"Boolean, Float, Integer, Point, String, Duration, Date, Time, LocalTime, LocalDateTime or DateTime"},
-	"toboolean":        {"Boolean, Integer or String"},
-	"abs":              {"Float or Integer"},
-	"sign":             {"Float or Integer"},
-	"isnan":            {"Float or Integer"},
-	"ceil":             {"Float"},
-	"floor":            {"Float"},
-	"round":            {"Float", "Float, Integer or Number", "String"},
-	"sqrt":             {"Float"},
-	"exp":              {"Float"},
-	"log":              {"Float"},
-	"log10":            {"Float"},
-	"sin":              {"Float"},
-	"cos":              {"Float"},
-	"tan":              {"Float"},
-	"cot":              {"Float"},
-	"asin":             {"Float"},
-	"acos":             {"Float"},
-	"atan":             {"Float"},
-	"atan2":            {"Float", "Float"},
-	"degrees":          {"Float"},
-	"radians":          {"Float"},
-	"haversin":         {"Float"},
-	"stdev":            {"Float"},
-	"stdevp":           {"Float"},
-	"percentilecont":   {"Float", "Float"},
-	"percentiledisc":   {"Float or Integer", "Float"},
-	"sum":              {"Float, Integer or Duration"},
-	"avg":              {"Float, Integer or Duration"},
-	"size":             {"String or List<T>"},
-	"reverse":          {"String or List<T>"},
-	"char_length":      {"String"},
-	"character_length": {"String"},
-	"toupper":          {"String"},
-	"tolower":          {"String"},
-	"upper":            {"String"},
-	"lower":            {"String"},
-	"trim":             {"String"},
-	"ltrim":            {"String", "String"},
-	"rtrim":            {"String", "String"},
-	"btrim":            {"String", "String"},
-	"normalize":        {"String"},
-	"left":             {"String", "Integer"},
-	"right":            {"String", "Integer"},
-	"substring":        {"String", "Integer", "Integer"},
-	"split":            {"String", "String or List<String>"},
-	"replace":          {"String", "String", "String"},
-	"head":             {"List<T>"},
-	"last":             {"List<T>"},
-	"tail":             {"List<T>"},
-	"tointegerlist":    {"List<T>"},
-	"tofloatlist":      {"List<T>"},
-	"tostringlist":     {"List<T>"},
-	"tobooleanlist":    {"List<T>"},
-	"labels":           {"Node"},
-	"type":             {"Relationship"},
-	"startnode":        {"Relationship"},
-	"endnode":          {"Relationship"},
-	"id":               {"Node or Relationship"},
-	"elementid":        {"Node or Relationship"},
-	"properties":       {"Map, Node or Relationship"},
-	"keys":             {"Map, Node or Relationship"},
-	"nodes":            {"Path"},
-	"relationships":    {"Path"},
-	"length":           {"Path"},
-})
+// staticCatalogTypeNames are the catalog's argument types
+// (cypherFunctionCatalog) as Neo4j names them in a compile-time "Type
+// mismatch": where a MAP is expected a node or relationship is accepted too.
+// Neo4j checks no other type at compile time (POINT, the temporal types,
+// ANY), so a position of any other type isn't checked.
+var staticCatalogTypeNames = map[string][]string{
+	"INTEGER":               {"Integer"},
+	"FLOAT":                 {"Float"},
+	"STRING":                {"String"},
+	"BOOLEAN":               {"Boolean"},
+	"DURATION":              {"Duration"},
+	"MAP":                   {"Map", "Node", "Relationship"},
+	"NODE":                  {"Node"},
+	"RELATIONSHIP":          {"Relationship"},
+	"PATH":                  {"Path"},
+	"LIST<ANY>":             {"List<T>"},
+	"LIST<STRING>":          {"List<String>"},
+	"LIST<INTEGER | FLOAT>": {"List<Float>", "List<Integer>", "List<Number>"},
+}
 
-// maxStaticFunctionNameLength is the longest name in staticFunctionArguments
-// ("character_length"), the size of lookupStaticFunctionArguments' buffer.
-const maxStaticFunctionNameLength = len("character_length")
+// staticTypeNameOrder is the order Neo4j lists types in a "Type mismatch"
+// error: "Boolean, Float, Integer or String", "Map, Node, Relationship,
+// String or List<T>", "Float, Integer or Duration".
+var staticTypeNameOrder = []string{
+	"Boolean", "Float", "Integer", "Number", "Map", "Node", "Relationship", "Path", "Point", "String",
+	"Duration", "Date", "Time", "LocalTime", "LocalDateTime", "DateTime",
+	"List<Float>", "List<Integer>", "List<Number>", "List<String>", "List<T>",
+}
 
-func buildStaticFunctionArguments(expected map[string][]string) map[string][]staticArgumentType {
-	built := make(map[string][]staticArgumentType, len(expected))
-	for function, positions := range expected {
-		arguments := make([]staticArgumentType, len(positions))
-		for index, types := range positions {
-			options := strings.Split(strings.ReplaceAll(types, " or ", ", "), ", ")
-			arguments[index] = staticArgumentType{expected: types, options: options, acceptsLists: staticListAcceptingFunctions[function]}
+// staticArgumentOverrides are positions Neo4j 5.26 checks otherwise than its
+// signatures say: toString(input :: ANY) accepts only these types, and every
+// argument of trim, whose catalog entries list a trim specification first, is
+// a STRING.
+var staticArgumentOverrides = map[string][]string{
+	"tostring": {"Boolean, Float, Integer, Point, String, Duration, Date, Time, LocalTime, LocalDateTime or DateTime"},
+	"trim":     {"String", "String", "String"},
+}
+
+// staticFunctionArguments are the argument types Neo4j checks at compile
+// time, per function (lower-case name) and argument position, from the
+// function catalog's signatures: a position accepts what any signature
+// accepts there, and isn't checked when some signature takes a type Neo4j
+// doesn't check. Checked against Neo4j 5.26 with a literal of a wrong type at
+// every position of every function. Positions past the end aren't checked.
+var staticFunctionArguments, maxStaticFunctionNameLength = buildStaticFunctionArguments()
+
+func buildStaticFunctionArguments() (map[string][]staticArgumentType, int) {
+	positions := make(map[string][][]string)
+	unchecked := make(map[string]map[int]bool)
+	for _, function := range cypherFunctionCatalog {
+		name := lowerASCII(function.name)
+		if function.arguments == nil || functionSyntaxForms[name] {
+			continue
 		}
-		built[function] = arguments
+		for index, argument := range function.arguments {
+			for len(positions[name]) <= index {
+				positions[name] = append(positions[name], nil)
+			}
+			options, known := staticCatalogTypeOptions(argument.Type)
+			if !known {
+				if unchecked[name] == nil {
+					unchecked[name] = make(map[int]bool)
+				}
+				unchecked[name][index] = true
+				continue
+			}
+			for _, option := range options {
+				if !containsString(positions[name][index], option) {
+					positions[name][index] = append(positions[name][index], option)
+				}
+			}
+		}
 	}
-	return built
+	built := make(map[string][]staticArgumentType, len(positions))
+	longest := 0
+	for name, typed := range positions {
+		arguments := make([]staticArgumentType, len(typed))
+		checked := false
+		for index, options := range typed {
+			if override, ok := staticArgumentOverrides[name]; ok && index < len(override) {
+				options = staticTypeChoices(override[index])
+			} else if unchecked[name][index] {
+				continue
+			}
+			ordered := make([]string, 0, len(options))
+			for _, typeName := range staticTypeNameOrder {
+				if containsString(options, typeName) {
+					ordered = append(ordered, typeName)
+				}
+			}
+			arguments[index] = staticArgumentType{expected: joinTypeNames(ordered), options: ordered, acceptsLists: staticListAcceptingFunctions[name]}
+			checked = true
+		}
+		if checked {
+			built[name] = arguments
+			longest = max(longest, len(name))
+		}
+	}
+	return built, longest
+}
+
+// staticCatalogTypeOptions names a catalog type ("INTEGER | FLOAT", "LIST<ANY>")
+// as the types Neo4j checks it against at compile time
+// (staticCatalogTypeNames); known is false when Neo4j doesn't check it.
+func staticCatalogTypeOptions(catalogType string) (options []string, known bool) {
+	if names, ok := staticCatalogTypeNames[catalogType]; ok {
+		return names, true
+	}
+	for _, part := range strings.Split(catalogType, " | ") {
+		names, ok := staticCatalogTypeNames[strings.TrimSpace(part)]
+		if !ok {
+			return nil, false
+		}
+		options = append(options, names...)
+	}
+	return options, true
+}
+
+// joinTypeNames writes type names as Neo4j lists them in an error: "Float",
+// "Float or Integer", "Map, Node or Relationship".
+func joinTypeNames(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
 
 // lookupStaticFunctionArguments finds name in staticFunctionArguments
 // case-insensitively without allocating: every identifier followed by "(" in
 // a statement (MATCH (, CASE (, …) passes through it.
 func lookupStaticFunctionArguments(name string) ([]staticArgumentType, bool) {
-	var buffer [maxStaticFunctionNameLength]byte
-	if len(name) > len(buffer) {
+	var buffer [64]byte
+	if len(name) > maxStaticFunctionNameLength || len(name) > len(buffer) {
 		return nil, false
 	}
 	for i := 0; i < len(name); i++ {
@@ -145,7 +184,7 @@ func staticTypeChoices(typeName string) []string {
 }
 
 func (argument staticArgumentType) accepts(typeName string) bool {
-	if typeName == "" {
+	if typeName == "" || len(argument.options) == 0 {
 		return true
 	}
 	if choices := staticTypeChoices(typeName); len(choices) > 1 {
@@ -169,6 +208,8 @@ func (argument staticArgumentType) accepts(typeName string) bool {
 		case option == "Number" && (typeName == "Integer" || typeName == "Float"):
 			return true
 		case option == "List<T>" && isList:
+			return true
+		case typeName == "List<T>" && strings.HasPrefix(option, "List<"):
 			return true
 		}
 	}
@@ -477,8 +518,16 @@ func unwindStaticValueType(clause string) string {
 		body = strings.TrimSpace(body[:asIndex])
 	}
 	listType := staticLiteralTypeName(body)
-	if !strings.HasPrefix(listType, "List<") || strings.Contains(listType, ",") || listType == "List<T>" {
-		return ""
+	// A list typed as several list types gives an element of any of their
+	// element types, as Neo4j names it: UNWIND [{k: 1}] binds a "Map, Node or
+	// Relationship", UNWIND [1, 2.5] a "Float, Integer or Number".
+	choices := staticTypeChoices(listType)
+	elements := make([]string, 0, len(choices))
+	for _, choice := range choices {
+		if !strings.HasPrefix(choice, "List<") || choice == "List<T>" {
+			return ""
+		}
+		elements = append(elements, strings.TrimSuffix(strings.TrimPrefix(choice, "List<"), ">"))
 	}
-	return strings.TrimSuffix(strings.TrimPrefix(listType, "List<"), ">")
+	return joinTypeNames(elements)
 }
