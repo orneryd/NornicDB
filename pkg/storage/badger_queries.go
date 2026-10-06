@@ -47,8 +47,11 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 			}
 
 			item, err := txn.Get(nodeKey(nodeID))
-			if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue
+			}
+			if err != nil {
+				return err
 			}
 
 			if err := item.Value(func(val []byte) error {
@@ -56,7 +59,7 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decodeErr
 			}); err != nil {
-				continue
+				return err
 			}
 			if b.filterNodeByDecay(node, nowNanos) {
 				node = nil
@@ -192,8 +195,11 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 
 			// Fetch node data in same transaction
 			item, err := txn.Get(nodeKey(nodeID))
-			if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue // Skip if node was deleted
+			}
+			if err != nil {
+				return err
 			}
 
 			var node *Node
@@ -202,7 +208,7 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decodeErr
 			}); err != nil {
-				continue
+				return err
 			}
 
 			if b.filterNodeByDecay(node, nowNanos) {
@@ -237,6 +243,10 @@ func (b *BadgerEngine) StreamNodesByLabelProjected(label string, properties []st
 
 // StreamNodesByLabelProjectedInScope is StreamNodesByLabelProjected within
 // one database (ScopedLabelNodeReader).
+//
+// Nodes are visited in label-index order. Scans that continue past
+// labelScanPointLookups switch to one pass over the node records when the
+// label is on at least half of the scope's nodes.
 func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
@@ -249,11 +259,38 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 
 	include := propertyProjectionSet(properties)
 	nowNanos := DecayScoringTime()
+	covers := b.labelCoversScope(scope, label)
 	return b.withView(func(txn *badger.Txn) error {
+		decodeValue := func(nodeID NodeID, value []byte) (*Node, error) {
+			if properties == nil {
+				return b.decodeNodeWithEmbeddings(txn, value, nodeID)
+			}
+			return b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
+		}
+		cachedNode := func(nodeID NodeID) (*Node, bool) {
+			b.nodeCacheMu.RLock()
+			cached, ok := b.nodeCache[nodeID]
+			b.nodeCacheMu.RUnlock()
+			if !ok {
+				return nil, false
+			}
+			return projectCachedNodeForRead(cached, properties), true
+		}
+		emit := func(node *Node) error {
+			if node == nil || b.filterNodeByDecay(node, nowNanos) {
+				return nil
+			}
+			return visit(node)
+		}
+		type pendingNode struct {
+			id   NodeID
+			node *Node
+		}
+		var pending []pendingNode
 		prefix := labelIndexPrefix(label)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
-
+		lookups := 0
 		for it.Rewind(); it.Valid(); it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
 			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
@@ -265,41 +302,60 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 				continue
 			}
 
-			b.nodeCacheMu.RLock()
-			cached, cachedOK := b.nodeCache[nodeID]
-			b.nodeCacheMu.RUnlock()
-			if cachedOK {
-				node := projectCachedNodeForRead(cached, properties)
-				if b.filterNodeByDecay(node, nowNanos) {
+			if pending != nil || (covers && lookups >= labelScanPointLookups) {
+				pending = append(pending, pendingNode{id: nodeID})
+				continue
+			}
+			lookups++
+			node, cached := cachedNode(nodeID)
+			if !cached {
+				item, err := txn.Get(nodeKey(nodeID))
+				if errors.Is(err, badger.ErrKeyNotFound) {
 					continue
 				}
-				if err := visit(node); err != nil {
+				if err != nil {
 					return err
 				}
-				continue
-			}
-
-			item, err := txn.Get(nodeKey(nodeID))
-			if err != nil {
-				continue
-			}
-			var node *Node
-			if err := item.Value(func(value []byte) error {
-				if properties == nil {
+				if err := item.Value(func(value []byte) error {
 					var decodeErr error
-					node, decodeErr = b.decodeNodeWithEmbeddings(txn, value, nodeID)
+					node, decodeErr = decodeValue(nodeID, value)
 					return decodeErr
+				}); err != nil {
+					return err
 				}
-				var decodeErr error
-				node, decodeErr = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
-				return decodeErr
-			}); err != nil {
+			}
+			if err := emit(node); err != nil {
+				return err
+			}
+		}
+		if len(pending) == 0 {
+			return nil
+		}
+
+		ids := make([]NodeID, 0, len(pending))
+		positions := make(map[NodeID]int, len(pending))
+		for index, entry := range pending {
+			if node, cached := cachedNode(entry.id); cached {
+				pending[index].node = node
 				continue
 			}
-			if b.filterNodeByDecay(node, nowNanos) {
-				continue
-			}
-			if err := visit(node); err != nil {
+			ids = append(ids, entry.id)
+			positions[entry.id] = index
+		}
+		if err := readNodeRecordsInOnePass(txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
+			return item.Value(func(value []byte) error {
+				node, err := decodeValue(nodeID, value)
+				if err != nil {
+					return err
+				}
+				pending[positions[nodeID]].node = node
+				return nil
+			})
+		}); err != nil {
+			return err
+		}
+		for _, entry := range pending {
+			if err := emit(entry.node); err != nil {
 				return err
 			}
 		}
@@ -368,7 +424,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decodeErr
 			}); err != nil {
-				continue
+				return err
 			}
 
 			if b.filterNodeByDecay(node, nowNanos) {
@@ -416,7 +472,7 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 				return decodeErr
 			}); err != nil {
-				continue
+				return err
 			}
 
 			if b.filterEdgeByDecay(edge, nowNanos) {
@@ -480,8 +536,11 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		edges = make([]*Edge, 0, len(edgeIDs))
 		for _, edgeID := range edgeIDs {
 			item, err := txn.Get(edgeKey(edgeID))
-			if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue
+			}
+			if err != nil {
+				return err
 			}
 
 			var edge *Edge
@@ -490,7 +549,7 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 				return decodeErr
 			}); err != nil {
-				continue
+				return err
 			}
 
 			if b.filterEdgeByDecay(edge, nowNanos) {
@@ -579,8 +638,11 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 		loaded = loaded[:0]
 		for _, id := range missing {
 			item, err := txn.Get(nodeKey(id))
-			if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue // Skip missing nodes
+			}
+			if err != nil {
+				return err
 			}
 
 			var node *Node
@@ -589,7 +651,7 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
 				return decodeErr
 			}); err != nil {
-				continue
+				return err
 			}
 			if b.filterNodeByDecay(node, nowNanos) {
 				continue
@@ -656,8 +718,11 @@ func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]
 	err := b.withView(func(txn *badger.Txn) error {
 		for _, id := range missing {
 			item, err := txn.Get(nodeKey(id))
-			if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue
+			}
+			if err != nil {
+				return err
 			}
 			var node *Node
 			if err := item.Value(func(val []byte) error {
@@ -666,7 +731,7 @@ func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]
 				node, decodeErr = b.decodeNode(namespace, val)
 				return decodeErr
 			}); err != nil {
-				continue
+				return err
 			}
 			if b.filterNodeByDecay(node, nowNanos) {
 				continue
@@ -723,7 +788,7 @@ func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	}
 
 	if ids, ok := b.adjCacheLoadOutgoing(nodeID); ok {
-		return b.materializeAdjEdges(ids), nil
+		return b.materializeAdjEdges(ids)
 	}
 
 	prefix := b.outgoingIndexPrefixString(nodeID)
@@ -734,8 +799,9 @@ func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	var ids []EdgeID
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		edges, ids = b.collectEdgesByIndexPrefix(txn, prefix, nowNanos)
-		return nil
+		var err error
+		edges, ids, err = b.collectEdgesByIndexPrefix(txn, prefix, nowNanos)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -756,7 +822,15 @@ func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error)
 	cachedOutIDs, outHit := b.adjCacheLoadOutgoing(nodeID)
 	cachedInIDs, inHit := b.adjCacheLoadIncoming(nodeID)
 	if outHit && inHit {
-		return b.materializeAdjEdges(cachedOutIDs), b.materializeAdjEdges(cachedInIDs), nil
+		outgoing, err := b.materializeAdjEdges(cachedOutIDs)
+		if err != nil {
+			return nil, nil, err
+		}
+		incoming, err := b.materializeAdjEdges(cachedInIDs)
+		if err != nil {
+			return nil, nil, err
+		}
+		return outgoing, incoming, nil
 	}
 
 	var outPrefix, inPrefix []byte
@@ -774,13 +848,17 @@ func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error)
 	var outIDs, inIDs []EdgeID
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
+		var err error
 		if !outHit && outPrefix != nil {
-			outgoing, outIDs = b.collectEdgesByIndexPrefix(txn, outPrefix, nowNanos)
+			outgoing, outIDs, err = b.collectEdgesByIndexPrefix(txn, outPrefix, nowNanos)
+			if err != nil {
+				return err
+			}
 		}
 		if !inHit && inPrefix != nil {
-			incoming, inIDs = b.collectEdgesByIndexPrefix(txn, inPrefix, nowNanos)
+			incoming, inIDs, err = b.collectEdgesByIndexPrefix(txn, inPrefix, nowNanos)
 		}
-		return nil
+		return err
 	})
 	if err != nil {
 		return nil, nil, err
@@ -788,12 +866,18 @@ func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error)
 	if !outHit {
 		b.adjCacheStoreOutgoing(nodeID, outIDs)
 	} else {
-		outgoing = b.materializeAdjEdges(cachedOutIDs)
+		outgoing, err = b.materializeAdjEdges(cachedOutIDs)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	if !inHit {
 		b.adjCacheStoreIncoming(nodeID, inIDs)
 	} else {
-		incoming = b.materializeAdjEdges(cachedInIDs)
+		incoming, err = b.materializeAdjEdges(cachedInIDs)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	return outgoing, incoming, nil
 }
@@ -801,9 +885,9 @@ func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error)
 // materializeAdjEdges resolves a list of EdgeIDs to live *Edge bodies by
 // hitting the edge body cache first, then falling back to a one-shot view
 // transaction for any IDs that miss. Used by the adjacency-cache fast path.
-func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID) []*Edge {
+func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID) ([]*Edge, error) {
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	nowNanos := DecayScoringTime()
 	out := make([]*Edge, 0, len(ids))
@@ -819,13 +903,16 @@ func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID) []*Edge {
 		miss = append(miss, id)
 	}
 	if len(miss) == 0 {
-		return out
+		return out, nil
 	}
-	_ = b.withView(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		for _, id := range miss {
 			item, err := txn.Get(edgeKey(id))
-			if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue
+			}
+			if err != nil {
+				return err
 			}
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
@@ -833,7 +920,7 @@ func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID) []*Edge {
 				edge, decodeErr = b.decodeEdgeBodyByID(val, id)
 				return decodeErr
 			}); err != nil {
-				continue
+				return err
 			}
 			b.cacheStoreEdge(edge)
 			if b.filterEdgeByDecay(edge, nowNanos) {
@@ -843,7 +930,10 @@ func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID) []*Edge {
 		}
 		return nil
 	})
-	return out
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // collectEdgesByIndexPrefix iterates the outgoing/incoming edge index under
@@ -856,7 +946,7 @@ func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID) []*Edge {
 // back to a Badger Txn.Get. The cache turns BFS-style traversals (which
 // revisit a small set of edges thousands of times per request) into
 // memory-bound work after the first encounter.
-func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64) ([]*Edge, []EdgeID) {
+func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64) ([]*Edge, []EdgeID, error) {
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 
@@ -873,13 +963,16 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 		}
 		ids = append(ids, edgeID)
 
-		edge, ok := b.readIndexedEdgeInTxn(txn, edgeID)
-		if !ok || b.filterEdgeByDecay(edge, nowNanos) {
+		edge, err := b.readIndexedEdgeInTxn(txn, edgeID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if edge == nil || b.filterEdgeByDecay(edge, nowNanos) {
 			continue
 		}
 		edges = append(edges, edge)
 	}
-	return edges, ids
+	return edges, ids, nil
 }
 
 // OutgoingEdgeHeaders implements EdgeHeaderReader from the outgoing adjacency
@@ -935,7 +1028,11 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 				edges = append(edges, header)
 				continue
 			}
-			if edge, ok := b.readIndexedEdgeInTxn(txn, edgeID); ok {
+			edge, err := b.readIndexedEdgeInTxn(txn, edgeID)
+			if err != nil {
+				return err
+			}
+			if edge != nil {
 				edges = append(edges, edge)
 			}
 		}
@@ -1002,15 +1099,18 @@ func (b *BadgerEngine) adjacencyHeadersInTxn(txn *badger.Txn, nodeID NodeID, dir
 }
 
 // readIndexedEdgeInTxn returns the relationship an adjacency entry names: the
-// cached one, else its stored record, which is then cached. ok is false when
-// the record is missing or can't be decoded.
-func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, bool) {
+// cached one, else its stored record, which is then cached. A missing record
+// returns nil; other read or decode errors are returned.
+func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, error) {
 	if cached, ok := b.cacheLoadEdge(edgeID); ok {
-		return cached, true
+		return cached, nil
 	}
 	item, err := txn.Get(edgeKey(edgeID))
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
@@ -1018,10 +1118,10 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Ed
 		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 		return decodeErr
 	}); err != nil {
-		return nil, false
+		return nil, err
 	}
 	b.cacheStoreEdge(edge)
-	return edge, true
+	return edge, nil
 }
 
 // GetIncomingEdges returns all edges where the given node is the target.
@@ -1031,7 +1131,7 @@ func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	}
 
 	if ids, ok := b.adjCacheLoadIncoming(nodeID); ok {
-		return b.materializeAdjEdges(ids), nil
+		return b.materializeAdjEdges(ids)
 	}
 
 	prefix := b.incomingIndexPrefixString(nodeID)
@@ -1042,8 +1142,9 @@ func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	var ids []EdgeID
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		edges, ids = b.collectEdgesByIndexPrefix(txn, prefix, nowNanos)
-		return nil
+		var err error
+		edges, ids, err = b.collectEdgesByIndexPrefix(txn, prefix, nowNanos)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -1195,7 +1296,13 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType 
 				continue
 			}
 			edge, err := b.edgeFromTxn(txn, edgeID)
-			if err != nil || !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
 				continue
 			}
 			result = append(result, edge)
@@ -1233,7 +1340,13 @@ func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID
 				continue
 			}
 			edge, err := b.edgeFromTxn(txn, edgeID)
-			if err != nil || !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
 				continue
 			}
 			result = append(result, edge)

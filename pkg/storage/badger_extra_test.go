@@ -95,14 +95,11 @@ func TestBadgerEngine_InvalidatePendingEmbeddingsIndex_NoOp(t *testing.T) {
 }
 
 func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
-	t.Run("GetFirstNodeByLabel skips stale and corrupt indexed entries", func(t *testing.T) {
+	t.Run("GetFirstNodeByLabel skips stale entries but rejects corrupt records", func(t *testing.T) {
 		b := createTestBadgerEngine(t)
 		missingID := NodeID(prefixTestID("aa-missing"))
 		corruptID := NodeID(prefixTestID("ab-corrupt"))
 		valid := &Node{ID: NodeID(prefixTestID("zz-valid")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "valid"}}
-		_, err := b.CreateNode(valid)
-		require.NoError(t, err)
-
 		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
 			missingKey, err := b.labelIndexKeyString(txn, "Person", missingID)
 			if err != nil {
@@ -120,8 +117,16 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 			}
 			return txn.Set(nodeKey(corruptID), []byte("not-a-node"))
 		}))
+		_, err := b.CreateNode(valid)
+		require.NoError(t, err)
 
 		got, err := b.GetFirstNodeByLabel("Person")
+		require.Error(t, err)
+		require.Nil(t, got)
+		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+			return txn.Delete(nodeKey(corruptID))
+		}))
+		got, err = b.GetFirstNodeByLabel("Person")
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, valid.ID, got.ID)
@@ -196,7 +201,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		assert.Equal(t, "two", result[n2.ID].Properties["name"])
 	})
 
-	t.Run("BatchGetNodes skips corrupt payloads and missing keys", func(t *testing.T) {
+	t.Run("BatchGetNodes rejects corrupt payloads and skips missing keys", func(t *testing.T) {
 		b := createTestBadgerEngine(t)
 		valid := &Node{ID: NodeID(prefixTestID("batch-valid")), Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "valid"}}
 		corruptID := NodeID(prefixTestID("batch-corrupt"))
@@ -207,6 +212,9 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		}))
 
 		result, err := b.BatchGetNodes([]NodeID{valid.ID, corruptID, NodeID(prefixTestID("batch-missing"))})
+		require.Error(t, err)
+		require.Nil(t, result)
+		result, err = b.BatchGetNodes([]NodeID{valid.ID, NodeID(prefixTestID("batch-missing"))})
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 		assert.Equal(t, valid.ID, result[valid.ID].ID)
@@ -219,7 +227,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("edge query helpers validate ids and skip corrupt payloads", func(t *testing.T) {
+	t.Run("edge query helpers validate ids and reject corrupt payloads", func(t *testing.T) {
 		b := createTestBadgerEngine(t)
 		_, err := b.GetOutgoingEdges("")
 		require.ErrorIs(t, err, ErrInvalidID)
@@ -261,16 +269,16 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		}))
 
 		outgoing, err := b.GetOutgoingEdges(start.ID)
-		require.NoError(t, err)
-		assert.Len(t, outgoing, 1)
+		require.Error(t, err)
+		require.Nil(t, outgoing)
 
 		incoming, err := b.GetIncomingEdges(end.ID)
-		require.NoError(t, err)
-		assert.Len(t, incoming, 1)
+		require.Error(t, err)
+		require.Nil(t, incoming)
 
 		byType, err := b.GetEdgesByType("REL")
-		require.NoError(t, err)
-		assert.Len(t, byType, 1)
+		require.Error(t, err)
+		require.Nil(t, byType)
 	})
 
 	t.Run("UpdateEdge endpoint changes require existing nodes", func(t *testing.T) {
