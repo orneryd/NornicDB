@@ -2982,50 +2982,6 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	// Neo4j Fulltext Index Procedures
 	case strings.Contains(upper, "DB.INDEX.FULLTEXT.QUERYNODES"):
 		result, err = e.callDbIndexFulltextQueryNodes(callCypher)
-	// APOC Procedures (graph traversal)
-	case strings.Contains(upper, "APOC.PATH.SUBGRAPHNODES"):
-		result, err = e.callApocPathSubgraphNodes(callCypher)
-	case strings.Contains(upper, "APOC.PATH.EXPAND"):
-		result, err = e.callApocPathExpand(ctx, callCypher)
-	case strings.Contains(upper, "APOC.PATH.SPANNINGTREE"):
-		result, err = e.callApocPathSpanningTree(callCypher)
-	// APOC Graph Algorithms
-	case strings.Contains(upper, "APOC.ALGO.DIJKSTRA"):
-		result, err = e.callApocAlgoDijkstra(ctx, callCypher)
-	case strings.Contains(upper, "APOC.ALGO.ASTAR"):
-		result, err = e.callApocAlgoAStar(ctx, callCypher)
-	case strings.Contains(upper, "APOC.ALGO.ALLSIMPLEPATHS"):
-		result, err = e.callApocAlgoAllSimplePaths(ctx, callCypher)
-	case strings.Contains(upper, "APOC.ALGO.PAGERANK"):
-		result, err = e.callApocAlgoPageRank(ctx, callCypher)
-	case strings.Contains(upper, "APOC.ALGO.BETWEENNESS"):
-		result, err = e.callApocAlgoBetweenness(ctx, callCypher)
-	case strings.Contains(upper, "APOC.ALGO.CLOSENESS"):
-		result, err = e.callApocAlgoCloseness(ctx, callCypher)
-	// APOC Community Detection
-	case strings.Contains(upper, "APOC.ALGO.LOUVAIN"):
-		result, err = e.callApocAlgoLouvain(ctx, callCypher)
-	case strings.Contains(upper, "APOC.ALGO.LABELPROPAGATION"):
-		result, err = e.callApocAlgoLabelPropagation(ctx, callCypher)
-	case strings.Contains(upper, "APOC.ALGO.WCC"):
-		result, err = e.callApocAlgoWCC(ctx, callCypher)
-	// APOC Load/Export Procedures
-	case strings.Contains(upper, "APOC.LOAD.JSONARRAY"):
-		result, err = e.callApocLoadJsonArray(ctx, callCypher)
-	case strings.Contains(upper, "APOC.LOAD.JSON"):
-		result, err = e.callApocLoadJson(ctx, callCypher)
-	case strings.Contains(upper, "APOC.LOAD.CSV"):
-		result, err = e.callApocLoadCsv(ctx, callCypher)
-	case strings.Contains(upper, "APOC.EXPORT.JSON.ALL"):
-		result, err = e.callApocExportJsonAll(ctx, callCypher)
-	case strings.Contains(upper, "APOC.EXPORT.JSON.QUERY"):
-		result, err = e.callApocExportJsonQuery(ctx, callCypher)
-	case strings.Contains(upper, "APOC.EXPORT.CSV.ALL"):
-		result, err = e.callApocExportCsvAll(ctx, callCypher)
-	case strings.Contains(upper, "APOC.EXPORT.CSV.QUERY"):
-		result, err = e.callApocExportCsvQuery(ctx, callCypher)
-	case strings.Contains(upper, "APOC.IMPORT.JSON"):
-		result, err = e.callApocImportJson(ctx, callCypher)
 	// NornicDB Extensions
 	case strings.Contains(upper, "NORNICDB.VERSION"):
 		result, err = e.callNornicDbVersion()
