@@ -9,6 +9,7 @@ import {
   type GraphNodePayload,
   type SearchResult,
 } from "../../utils/api";
+import { parseFilterList } from "../../utils/graphFilters";
 import { getNodePreview } from "../../utils/nodeUtils";
 
 interface GraphExplorerPanelProps {
@@ -29,6 +30,24 @@ interface NodePosition {
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 680;
 const DEFAULT_LIMIT = 200;
+
+interface GraphExplorerFilters {
+  includeLabels: string[];
+  includeEdgeTypes: string[];
+  includeProps: string[];
+  excludeLabels: string[];
+  excludeEdgeTypes: string[];
+  excludeProps: string[];
+}
+
+const EMPTY_FILTERS: GraphExplorerFilters = {
+  includeLabels: [],
+  includeEdgeTypes: [],
+  includeProps: [],
+  excludeLabels: [],
+  excludeEdgeTypes: [],
+  excludeProps: [],
+};
 
 function getGraphNodeLabel(node: GraphNodePayload): string {
   const previewFields = ["title", "name", "code", "path", "id"];
@@ -140,6 +159,17 @@ export function GraphExplorerPanel({
   const [graph, setGraph] = useState<GraphNeighborhoodResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Filter drafts are free-form text; "apply" copies them into the applied
+  // filters, which the neighborhood request reads.
+  const [includeLabelsText, setIncludeLabelsText] = useState("");
+  const [includeEdgeTypesText, setIncludeEdgeTypesText] = useState("");
+  const [includePropsText, setIncludePropsText] = useState("");
+  const [excludeLabelsText, setExcludeLabelsText] = useState("");
+  const [excludeEdgeTypesText, setExcludeEdgeTypesText] = useState("");
+  const [excludePropsText, setExcludePropsText] = useState("");
+  const [appliedFilters, setAppliedFilters] =
+    useState<GraphExplorerFilters>(EMPTY_FILTERS);
+  const [activeComponent, setActiveComponent] = useState<number | null>(null);
   const [positions, setPositions] = useState<Record<string, NodePosition>>({});
   const [dragging, setDragging] = useState<{
     nodeId: string;
@@ -158,6 +188,17 @@ export function GraphExplorerPanel({
     return map;
   }, [graph]);
 
+  const activeComponentNodeIds = useMemo(() => {
+    if (activeComponent == null || !graph) {
+      return null;
+    }
+    return new Set(
+      (graph.components?.[activeComponent]?.nodes ?? []).map(
+        (node) => node.id,
+      ),
+    );
+  }, [activeComponent, graph]);
+
   const loadNeighborhood = useCallback(async () => {
     if (!effectiveRootNodeId) {
       setGraph(null);
@@ -173,9 +214,16 @@ export function GraphExplorerPanel({
         depth,
         limit: DEFAULT_LIMIT,
         database: selectedDatabase,
+        labels: appliedFilters.includeLabels,
+        relationshipTypes: appliedFilters.includeEdgeTypes,
+        includeProperties: appliedFilters.includeProps,
+        excludeLabels: appliedFilters.excludeLabels,
+        excludeRelationshipTypes: appliedFilters.excludeEdgeTypes,
+        excludeProperties: appliedFilters.excludeProps,
       });
       setGraph(response);
       setPositions(buildInitialPositions(response, effectiveRootNodeId));
+      setActiveComponent(null);
     } catch (err) {
       setGraph(null);
       setError(
@@ -186,7 +234,7 @@ export function GraphExplorerPanel({
     } finally {
       setLoading(false);
     }
-  }, [depth, effectiveRootNodeId, selectedDatabase]);
+  }, [depth, effectiveRootNodeId, selectedDatabase, appliedFilters]);
 
   useEffect(() => {
     if (!effectiveRootNodeId) {
@@ -327,6 +375,79 @@ export function GraphExplorerPanel({
         </div>
       </div>
 
+      <details className="rounded-lg border border-norse-rune bg-norse-shadow/30 px-3 py-2">
+        <summary className="cursor-pointer select-none text-xs text-norse-silver/80 hover:text-white">
+          filters (labels · edge types · properties)
+        </summary>
+        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5">
+          {[
+            ["include labels", includeLabelsText, setIncludeLabelsText, "e.g. Person"],
+            ["exclude labels", excludeLabelsText, setExcludeLabelsText, "e.g. Hidden"],
+            ["include edge types", includeEdgeTypesText, setIncludeEdgeTypesText, "e.g. KNOWS"],
+            ["exclude edge types", excludeEdgeTypesText, setExcludeEdgeTypesText, "e.g. IMPORTS"],
+            ["include properties", includePropsText, setIncludePropsText, "e.g. Code.entry"],
+            ["exclude properties", excludePropsText, setExcludePropsText, "e.g. Context.context"],
+          ].map(([label, value, setter, placeholder]) => (
+            <label
+              key={label as string}
+              className="flex flex-col gap-0.5 text-[10px] text-norse-silver/60"
+            >
+              {label as string}
+              <input
+                type="text"
+                value={value as string}
+                onChange={(event) =>
+                  (setter as (next: string) => void)(event.target.value)
+                }
+                placeholder={placeholder as string}
+                spellCheck={false}
+                className="w-full rounded border border-norse-rune bg-norse-stone px-2 py-1 text-xs text-norse-silver placeholder:text-norse-silver/30 focus:outline-none focus:border-sky-400"
+              />
+            </label>
+          ))}
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setAppliedFilters({
+                includeLabels: parseFilterList(includeLabelsText),
+                includeEdgeTypes: parseFilterList(includeEdgeTypesText),
+                includeProps: parseFilterList(includePropsText),
+                excludeLabels: parseFilterList(excludeLabelsText),
+                excludeEdgeTypes: parseFilterList(excludeEdgeTypesText),
+                excludeProps: parseFilterList(excludePropsText),
+              });
+            }}
+            disabled={loading}
+            className="rounded bg-sky-500/90 hover:bg-sky-400 text-slate-950 text-xs font-semibold px-3 py-1 disabled:opacity-40"
+          >
+            apply filters
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIncludeLabelsText("");
+              setIncludeEdgeTypesText("");
+              setIncludePropsText("");
+              setExcludeLabelsText("");
+              setExcludeEdgeTypesText("");
+              setExcludePropsText("");
+              setAppliedFilters(EMPTY_FILTERS);
+            }}
+            disabled={loading}
+            className="rounded border border-norse-rune bg-norse-stone px-3 py-1 text-xs text-norse-silver/80 hover:bg-norse-rune disabled:opacity-40"
+          >
+            reset
+          </button>
+        </div>
+        <div className="mt-1.5 text-[10px] text-norse-silver/50 font-mono leading-snug">
+          properties: dotted paths "key", "Label.key", "Type.key", optionally
+          ":value", or a bare dotted symbol name — exclusions may split the
+          graph into disconnected components
+        </div>
+      </details>
+
       {!effectiveRootNodeId && (
         <div className="flex-1 flex items-center justify-center rounded-xl border border-dashed border-norse-rune bg-norse-shadow/30 p-6 text-center text-norse-silver">
           <div>
@@ -357,16 +478,40 @@ export function GraphExplorerPanel({
             </div>
           ) : graph ? (
             <div className="h-full flex flex-col">
-              <div className="px-4 py-2 border-b border-norse-rune text-xs text-norse-silver flex items-center justify-between">
+              <div className="px-4 py-2 border-b border-norse-rune text-xs text-norse-silver flex items-center justify-between flex-wrap gap-2">
                 <span>
                   Root:{" "}
                   <span className="text-white font-mono">
                     {effectiveRootNodeId}
                   </span>
                 </span>
-                <span>
-                  {graph.meta.node_count} nodes, {graph.meta.edge_count} edges
-                  {graph.meta.truncated ? " (truncated)" : ""}
+                <span className="flex items-center gap-2">
+                  <span>
+                    {graph.meta.node_count} nodes, {graph.meta.edge_count} edges
+                    {(graph.components?.length ?? 0) > 1 &&
+                      ` · ${graph.components?.length} components`}
+                    {graph.meta.truncated ? " (truncated)" : ""}
+                  </span>
+                  {(graph.components?.length ?? 0) > 1 && (
+                    <select
+                      value={activeComponent ?? "all"}
+                      onChange={(event) =>
+                        setActiveComponent(
+                          event.target.value === "all"
+                            ? null
+                            : Number(event.target.value),
+                        )
+                      }
+                      className="rounded border border-norse-rune bg-norse-stone px-1.5 py-0.5 text-xs text-norse-silver focus:outline-none"
+                    >
+                      <option value="all">all components</option>
+                      {graph.components?.map((component, index) => (
+                        <option key={index} value={index}>
+                          component {index + 1} ({component.meta.node_count} nodes)
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </span>
               </div>
               <div className="flex-1 min-h-0">
@@ -387,8 +532,12 @@ export function GraphExplorerPanel({
                       const midX = (source.x + target.x) / 2;
                       const midY = (source.y + target.y) / 2;
                       const isSelected = edge.id === selectedRelationshipId;
+                      const isDimmed =
+                        activeComponentNodeIds != null &&
+                        (!activeComponentNodeIds.has(edge.source) ||
+                          !activeComponentNodeIds.has(edge.target));
                       return (
-                        <g key={edge.id}>
+                        <g key={edge.id} opacity={isDimmed ? 0.12 : 1}>
                           <line
                             x1={source.x}
                             y1={source.y}
@@ -443,11 +592,15 @@ export function GraphExplorerPanel({
                       }
                       const isRoot = node.id === effectiveRootNodeId;
                       const isSelected = node.id === selectedNodeId;
+                      const isDimmed =
+                        activeComponentNodeIds != null &&
+                        !activeComponentNodeIds.has(node.id);
                       const label = getGraphNodeLabel(node);
                       return (
                         <g
                           key={node.id}
                           transform={`translate(${position.x}, ${position.y})`}
+                          opacity={isDimmed ? 0.12 : 1}
                           className="cursor-pointer"
                         >
                           <circle

@@ -83,6 +83,7 @@ export interface GraphMetaPayload {
   compare_to?: string;
   node_count: number;
   edge_count: number;
+  component_count?: number;
   truncated: boolean;
 }
 
@@ -90,6 +91,9 @@ export interface GraphNeighborhoodResponse {
   nodes: GraphNodePayload[];
   edges: GraphEdgePayload[];
   meta: GraphMetaPayload;
+  // Disconnected subgraphs of a filtered result; each entry is a full
+  // graph payload so clients can render it with the same code path.
+  components?: GraphNeighborhoodResponse[];
 }
 
 export interface CypherResponse {
@@ -1002,6 +1006,10 @@ class NornicDBClient {
     labels?: string[];
     relationshipTypes?: string[];
     direction?: "out" | "in" | "both";
+    includeProperties?: string[];
+    excludeLabels?: string[];
+    excludeRelationshipTypes?: string[];
+    excludeProperties?: string[];
     database?: string;
   }): Promise<GraphNeighborhoodResponse> {
     const dbName = await this.getResolvedDatabaseName(options.database);
@@ -1021,6 +1029,10 @@ class NornicDBClient {
           labels: options.labels,
           relationship_types: options.relationshipTypes,
           direction: options.direction,
+          include_properties: options.includeProperties,
+          exclude_labels: options.excludeLabels,
+          exclude_relationship_types: options.excludeRelationshipTypes,
+          exclude_properties: options.excludeProperties,
         }),
       },
     );

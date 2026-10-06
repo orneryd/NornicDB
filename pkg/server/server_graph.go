@@ -37,6 +37,25 @@ type graphRequest struct {
 	// "out" (follow outgoing edges only), "in" (incoming only) or
 	// "both" (default, preserves the historical undirected behavior).
 	Direction string `json:"direction,omitempty"`
+	// Exclusion filters applied after collection: nodes and edges matching
+	// any entry are removed from the result, along with edges incident to a
+	// removed node. The remaining graph may fragment into several
+	// disconnected components, reported in the payload's components field.
+	ExcludeLabels            []string `json:"exclude_labels,omitempty"`
+	ExcludeRelationshipTypes []string `json:"exclude_relationship_types,omitempty"`
+	// ExcludeProperties entries are property paths: "key" matches the
+	// property key on any node or edge, "Label.key" (or "Type.key")
+	// additionally constrains the node's labels (or the edge's type).
+	// A ":value" suffix matches the property value ("context:ctx"), and a
+	// bare dotted entry also matches the node's symbol name exactly
+	// ("context.Context" hides the variable context.Context).
+	ExcludeProperties []string `json:"exclude_properties,omitempty"`
+	// IncludeProperties is the inclusion mirror of ExcludeProperties: when
+	// set, nodes and edges are kept only when they match at least one
+	// entry (a node must also carry the scoped label, an edge the scoped
+	// type). It combines with labels / relationship_types with AND
+	// semantics and with ExcludeProperties with exclude-after-include.
+	IncludeProperties []string `json:"include_properties,omitempty"`
 }
 
 type graphNodePayload struct {
@@ -65,18 +84,41 @@ type graphMetaPayload struct {
 	CompareTo     string `json:"compare_to,omitempty"`
 	NodeCount     int    `json:"node_count"`
 	EdgeCount     int    `json:"edge_count"`
-	Truncated     bool   `json:"truncated"`
+	// ComponentCount is the number of disconnected subgraphs in the
+	// filtered result; it is 1 when the graph is connected (or empty).
+	ComponentCount int  `json:"component_count,omitempty"`
+	Truncated      bool `json:"truncated"`
 }
 
+// graphPayload is recursive: each entry of Components is itself a
+// graphPayload (nodes + edges + meta) describing one disconnected subgraph
+// of a filtered result, so clients can render every component identically.
 type graphPayload struct {
-	Nodes []graphNodePayload `json:"nodes"`
-	Edges []graphEdgePayload `json:"edges"`
-	Meta  graphMetaPayload   `json:"meta"`
+	Nodes      []graphNodePayload `json:"nodes"`
+	Edges      []graphEdgePayload `json:"edges"`
+	Meta       graphMetaPayload   `json:"meta"`
+	Components []graphPayload     `json:"components,omitempty"`
 }
 
 type graphFilterSet struct {
 	labels            map[string]struct{}
 	relationshipTypes map[string]struct{}
+	includeProperties []graphPropertyFilter
+	excludeLabels     map[string]struct{}
+	excludeRelTypes   map[string]struct{}
+	excludeProperties []graphPropertyFilter
+}
+
+// graphPropertyFilter is one exclude_properties / include_properties entry:
+// an optional scope (a node label, an edge type, or the leading segment of a
+// symbol name) and a property key path inside the entity. An empty scope
+// matches any node or edge. A non-nil value constrains the final property to
+// equal that value (e.g. "context:ctx", "Context.context:ctx"); a nil value
+// only requires the path to exist.
+type graphPropertyFilter struct {
+	scope string
+	path  []string
+	value *string
 }
 
 type graphCollection struct {
@@ -137,7 +179,7 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.GraphDirectionInvalid(), ErrBadRequest)
 		return
 	}
-	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes)
+	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes).withFilters(req.IncludeProperties, req.ExcludeLabels, req.ExcludeRelationshipTypes, req.ExcludeProperties)
 	dbName, engine, err := s.resolveGraphStorage(r)
 	if err != nil {
 		s.writeGraphResolveError(w, r, err)
@@ -416,26 +458,277 @@ func (f graphFilterSet) allowNode(node *storage.Node) bool {
 	if node == nil {
 		return false
 	}
-	if len(f.labels) == 0 {
-		return true
-	}
-	for _, label := range node.Labels {
-		if _, ok := f.labels[label]; ok {
-			return true
+	if len(f.labels) > 0 {
+		matched := false
+		for _, label := range node.Labels {
+			if _, ok := f.labels[label]; ok {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
 		}
 	}
-	return false
+	if len(f.includeProperties) > 0 {
+		// Relevance model: a scoped entry gates only nodes carrying that
+		// label; an unscoped entry gates every node. When at least one entry
+		// applies to this node it must match at least one of them.
+		relevant := 0
+		matched := 0
+		for _, filter := range f.includeProperties {
+			if filter.scope == "" {
+				relevant++
+				if filterPathMatchesNode(filter, node.Labels, node.Properties) {
+					matched++
+				}
+				continue
+			}
+			for _, label := range node.Labels {
+				if label == filter.scope {
+					relevant++
+					if filterPathMatchesNode(filter, node.Labels, node.Properties) {
+						matched++
+					}
+					break
+				}
+			}
+		}
+		if relevant > 0 && matched == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (f graphFilterSet) allowEdge(edge *storage.Edge) bool {
 	if edge == nil {
 		return false
 	}
-	if len(f.relationshipTypes) == 0 {
+	if len(f.relationshipTypes) > 0 {
+		if _, ok := f.relationshipTypes[edge.Type]; !ok {
+			return false
+		}
+	}
+	// Include property paths gate edges only when scoped to the edge's type
+	// (relevance model: type-scoped entries apply to matching edges, and a
+	// matching edge must satisfy at least one of them). Unscoped entries are
+	// node-oriented and leave edge traversal free so node inclusion can
+	// still walk the graph.
+	if len(f.includeProperties) > 0 {
+		relevant := 0
+		matched := 0
+		for _, filter := range f.includeProperties {
+			if filter.scope != edge.Type {
+				continue
+			}
+			relevant++
+			if propertyPathMatches(edge.Properties, filter.path, filter.value) {
+				matched++
+			}
+		}
+		if relevant > 0 && matched == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// withFilters returns a copy of the filter set augmented with the inclusion
+// and exclusion filters. Entries are whitespace-trimmed; empty entries are
+// ignored.
+func (f graphFilterSet) withFilters(includeProperties, excludeLabels, excludeRelationshipTypes, excludeProperties []string) graphFilterSet {
+	if len(includeProperties) == 0 && len(excludeLabels) == 0 && len(excludeRelationshipTypes) == 0 && len(excludeProperties) == 0 {
+		return f
+	}
+	out := graphFilterSet{
+		labels:            f.labels,
+		relationshipTypes: f.relationshipTypes,
+		excludeLabels:     make(map[string]struct{}),
+		excludeRelTypes:   make(map[string]struct{}),
+	}
+	for _, raw := range includeProperties {
+		if filter := parseGraphPropertyFilter(raw); filter != nil {
+			out.includeProperties = append(out.includeProperties, *filter)
+		}
+	}
+	for _, label := range excludeLabels {
+		label = strings.TrimSpace(label)
+		if label != "" {
+			out.excludeLabels[label] = struct{}{}
+		}
+	}
+	for _, relType := range excludeRelationshipTypes {
+		relType = strings.TrimSpace(relType)
+		if relType != "" {
+			out.excludeRelTypes[relType] = struct{}{}
+		}
+	}
+	for _, raw := range excludeProperties {
+		if filter := parseGraphPropertyFilter(raw); filter != nil {
+			out.excludeProperties = append(out.excludeProperties, *filter)
+		}
+	}
+	return out
+}
+
+func (f graphFilterSet) hasExclusions() bool {
+	return len(f.excludeLabels) > 0 || len(f.excludeRelTypes) > 0 || len(f.excludeProperties) > 0
+}
+
+// parseGraphPropertyFilter parses "key", "Label.key" or deeper paths like
+// "Label.prop.sub", optionally suffixed with ":value" to match the property
+// value instead of mere presence ("Context.context:ctx"). A single segment
+// matches the key on any node or edge; a dotted entry constrains the first
+// segment to a node label or edge type. Returns nil for entries with no
+// usable segments.
+func parseGraphPropertyFilter(raw string) *graphPropertyFilter {
+	raw = strings.TrimSpace(raw)
+	var value *string
+	if colon := strings.LastIndex(raw, ":"); colon >= 0 {
+		valuePart := strings.TrimSpace(raw[colon+1:])
+		if valuePart != "" {
+			value = &valuePart
+		}
+		raw = strings.TrimSpace(raw[:colon])
+	}
+	segments := strings.Split(raw, ".")
+	cleaned := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment != "" {
+			cleaned = append(cleaned, segment)
+		}
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	if len(cleaned) == 1 {
+		return &graphPropertyFilter{path: cleaned, value: value}
+	}
+	return &graphPropertyFilter{scope: cleaned[0], path: cleaned[1:], value: value}
+}
+
+// propertyPathMatches reports whether the nested property path is present in
+// props (each segment must be a map key along the way). When want is nil,
+// presence is enough; otherwise the final property must equal want.
+func propertyPathMatches(props map[string]interface{}, path []string, want *string) bool {
+	if props == nil || len(path) == 0 {
+		return false
+	}
+	value, ok := props[path[0]]
+	if !ok {
+		return false
+	}
+	if len(path) == 1 {
+		if want == nil {
+			return true
+		}
+		return propertyValueMatches(value, *want)
+	}
+	nested, ok := value.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	return propertyPathMatches(nested, path[1:], want)
+}
+
+// propertyValueMatches compares a property value against a user-supplied
+// string: strings compare directly, booleans and numbers parse the string,
+// nil matches "null".
+func propertyValueMatches(actual interface{}, want string) bool {
+	switch typed := actual.(type) {
+	case string:
+		return typed == want
+	case bool:
+		parsed, err := strconv.ParseBool(want)
+		return err == nil && parsed == typed
+	case int:
+		parsed, err := strconv.ParseFloat(want, 64)
+		return err == nil && parsed == float64(typed)
+	case int64:
+		parsed, err := strconv.ParseFloat(want, 64)
+		return err == nil && parsed == float64(typed)
+	case float64:
+		parsed, err := strconv.ParseFloat(want, 64)
+		return err == nil && parsed == typed
+	case float32:
+		parsed, err := strconv.ParseFloat(want, 64)
+		return err == nil && parsed == float64(typed)
+	case nil:
+		return want == "null"
+	default:
+		return fmt.Sprint(typed) == want
+	}
+}
+
+// propertyPathExists reports whether the nested property path is present in
+// props (each segment must be a map key along the way).
+func propertyPathExists(props map[string]interface{}, path []string) bool {
+	return propertyPathMatches(props, path, nil)
+}
+
+// filterPathMatchesNode reports whether a property-path filter matches a
+// node. Three dimensions match:
+//   - an exact symbol name: the dotted entry equals the node's "label"
+//     property (e.g. "context.Context" hides the variable context.Context);
+//   - a property path whose scope is empty or one of the node's labels;
+//   - with ":value", the final property must equal that value.
+func filterPathMatchesNode(filter graphPropertyFilter, labels []string, props map[string]interface{}) bool {
+	if filter.value == nil {
+		joined := strings.Join(append([]string{filter.scope}, filter.path...), ".")
+		if name, ok := props["label"].(string); ok && name == joined {
+			return true
+		}
+	}
+	if filter.scope != "" {
+		scopeMatches := false
+		for _, label := range labels {
+			if label == filter.scope {
+				scopeMatches = true
+				break
+			}
+		}
+		if !scopeMatches {
+			return false
+		}
+	}
+	return propertyPathMatches(props, filter.path, filter.value)
+}
+
+// excludeNodePayload reports whether a collected node matches any exclusion
+// filter: an excluded label, or an excluded property path whose scope is
+// empty or one of the node's labels.
+func (f graphFilterSet) excludeNodePayload(node graphNodePayload) bool {
+	for _, label := range node.Labels {
+		if _, ok := f.excludeLabels[label]; ok {
+			return true
+		}
+	}
+	for _, filter := range f.excludeProperties {
+		if filterPathMatchesNode(filter, node.Labels, node.Properties) {
+			return true
+		}
+	}
+	return false
+}
+
+// excludeEdgePayload reports whether a collected edge matches any exclusion
+// filter: an excluded relationship type, or an excluded property path whose
+// scope is empty or the edge's type.
+func (f graphFilterSet) excludeEdgePayload(edge graphEdgePayload) bool {
+	if _, ok := f.excludeRelTypes[edge.Type]; ok {
 		return true
 	}
-	_, ok := f.relationshipTypes[edge.Type]
-	return ok
+	for _, filter := range f.excludeProperties {
+		if filter.scope != "" && filter.scope != edge.Type {
+			continue
+		}
+		if propertyPathMatches(edge.Properties, filter.path, filter.value) {
+			return true
+		}
+	}
+	return false
 }
 
 func newGraphCollection() graphCollection {
@@ -503,11 +796,132 @@ func (c graphCollection) payload(meta graphMetaPayload) graphPayload {
 	}
 	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
 
+	components := c.components()
+
 	meta.NodeCount = len(nodes)
 	meta.EdgeCount = len(edges)
+	meta.ComponentCount = len(components)
 	meta.Truncated = c.truncated
 
-	return graphPayload{Nodes: nodes, Edges: edges, Meta: meta}
+	return graphPayload{Nodes: nodes, Edges: edges, Meta: meta, Components: components}
+}
+
+// pruneExcluded removes nodes and edges matching the exclusion filters, then
+// drops any edge whose endpoint was removed. The remaining graph may
+// fragment into several disconnected components.
+func (c *graphCollection) pruneExcluded(filters graphFilterSet) {
+	if !filters.hasExclusions() {
+		return
+	}
+	for id, node := range c.nodes {
+		if filters.excludeNodePayload(node) {
+			delete(c.nodes, id)
+		}
+	}
+	for id, edge := range c.edges {
+		if filters.excludeEdgePayload(edge) {
+			delete(c.edges, id)
+			continue
+		}
+		if _, ok := c.nodes[edge.Source]; !ok {
+			delete(c.edges, id)
+			continue
+		}
+		if _, ok := c.nodes[edge.Target]; !ok {
+			delete(c.edges, id)
+		}
+	}
+}
+
+// components partitions the collected nodes into connected subgraphs
+// (union-find over the remaining edges). Components are ordered by node
+// count descending, then by smallest node ID; node and edge lists are
+// sorted. Each component is a full graphPayload so clients can render it
+// with the same code path as the top-level graph.
+func (c graphCollection) components() []graphPayload {
+	if len(c.nodes) == 0 {
+		return nil
+	}
+	parent := make(map[string]string, len(c.nodes))
+	var find func(id string) string
+	find = func(id string) string {
+		root, ok := parent[id]
+		if !ok || root == id {
+			return id
+		}
+		grand := find(root)
+		parent[id] = grand
+		return grand
+	}
+	union := func(a, b string) {
+		ra, rb := find(a), find(b)
+		if ra != rb {
+			parent[rb] = ra
+		}
+	}
+	for id := range c.nodes {
+		parent[id] = id
+	}
+	for _, edge := range c.edges {
+		if _, ok := c.nodes[edge.Source]; !ok {
+			continue
+		}
+		if _, ok := c.nodes[edge.Target]; !ok {
+			continue
+		}
+		union(edge.Source, edge.Target)
+	}
+
+	type componentGroup struct {
+		nodeIDs []string
+		edgeIDs []string
+	}
+	byRoot := make(map[string]*componentGroup)
+	for id := range c.nodes {
+		root := find(id)
+		group := byRoot[root]
+		if group == nil {
+			group = &componentGroup{}
+			byRoot[root] = group
+		}
+		group.nodeIDs = append(group.nodeIDs, id)
+	}
+	for _, edge := range c.edges {
+		root := find(edge.Source)
+		if group := byRoot[root]; group != nil {
+			group.edgeIDs = append(group.edgeIDs, edge.ID)
+		}
+	}
+
+	result := make([]graphPayload, 0, len(byRoot))
+	for _, group := range byRoot {
+		sort.Strings(group.nodeIDs)
+		sort.Strings(group.edgeIDs)
+		nodes := make([]graphNodePayload, 0, len(group.nodeIDs))
+		for _, id := range group.nodeIDs {
+			nodes = append(nodes, c.nodes[id])
+		}
+		edges := make([]graphEdgePayload, 0, len(group.edgeIDs))
+		for _, id := range group.edgeIDs {
+			edges = append(edges, c.edges[id])
+		}
+		result = append(result, graphPayload{
+			Nodes: nodes,
+			Edges: edges,
+			Meta: graphMetaPayload{
+				GeneratedFrom: "component",
+				NodeCount:     len(nodes),
+				EdgeCount:     len(edges),
+			},
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Meta.NodeCount != result[j].Meta.NodeCount {
+			return result[i].Meta.NodeCount > result[j].Meta.NodeCount
+		}
+		return result[i].Nodes[0].ID < result[j].Nodes[0].ID
+	})
+	return result
 }
 
 func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.Engine, seedIDs []string, depth, limit int, direction string, filters graphFilterSet) (graphCollection, error) {
@@ -599,6 +1013,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 		}
 	}
 
+	collection.pruneExcluded(filters)
 	return collection, nil
 }
 
