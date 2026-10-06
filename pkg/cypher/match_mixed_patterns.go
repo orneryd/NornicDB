@@ -68,7 +68,7 @@ func (e *StorageExecutor) executeMixedPatternMatch(
 		for _, row := range result.Rows {
 			keys := make([]string, len(row))
 			for i, value := range row {
-				keys[i] = pipelineValueKey(value)
+				keys[i] = cypherEquivalenceKey(value)
 			}
 			key := strings.Join(keys, "\x1f")
 			if _, exists := seen[key]; exists {

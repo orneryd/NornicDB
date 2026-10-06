@@ -3763,7 +3763,7 @@ func deduplicatePipelineRowsWithScopes(rows, scopes []pipelineRow, columns []str
 	keys := make([]string, len(columns))
 	for rowIndex, row := range rows {
 		for i, column := range columns {
-			keys[i] = pipelineValueKey(row[column])
+			keys[i] = cypherEquivalenceKey(row[column])
 		}
 		key := strings.Join(keys, "\x1f")
 		if _, exists := seen[key]; exists {
@@ -4357,7 +4357,7 @@ func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {
 			keys = keys[:len(row)]
 		}
 		for index, value := range row {
-			keys[index] = pipelineValueKey(value)
+			keys[index] = cypherEquivalenceKey(value)
 		}
 		key := strings.Join(keys, "\x1f")
 		if _, exists := seen[key]; exists {
@@ -4432,20 +4432,6 @@ func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 		return v, true
 	}
 	return nil, false
-}
-
-func pipelineValueKey(value interface{}) string {
-	switch entity := value.(type) {
-	case *storage.Node:
-		if entity != nil {
-			return "node:" + string(entity.ID)
-		}
-	case *storage.Edge:
-		if entity != nil {
-			return "edge:" + string(entity.ID)
-		}
-	}
-	return fmt.Sprintf("%T:%#v", value, value)
 }
 
 // ---- helpers ----

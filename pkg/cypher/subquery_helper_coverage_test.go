@@ -180,7 +180,6 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	_, ok = e.parseIntModifier(context.Background(), "LIMIT 1 - 2", "LIMIT")
 	require.False(t, ok)
 
-	require.Equal(t, "<empty>", callSubqueryRowDedupKey(nil))
 	require.Equal(t, "<nil>", callSubqueryLookupKeyString(nil))
 	require.Equal(t, "s:name", callSubqueryLookupKeyString([]byte(" \"name\" ")))
 	require.Equal(t, "i:7", callSubqueryLookupKeyString(7))
@@ -188,9 +187,6 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	require.Equal(t, "f:1.5", callSubqueryLookupKeyString(1.5))
 	require.Equal(t, "b:1", callSubqueryLookupKeyString(true))
 	require.Contains(t, callSubqueryLookupKeyString(struct{ X int }{X: 1}), "struct")
-
-	dedupKey := callSubqueryRowDedupKey([]interface{}{nil, "s", []byte("b"), 1, int64(2), 3.5, float32(4.5), true})
-	require.Equal(t, "n:|s:s|b:b|i:1|i64:2|f:3.5|f32:4.5|t:1", dedupKey)
 
 	joined := crossJoinCallResults(
 		&ExecuteResult{Columns: []string{"left", "shared"}, Rows: [][]interface{}{{"l1", "keep"}}},
