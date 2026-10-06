@@ -9,12 +9,18 @@
 #      Neo4j JVM is SIGKILL'd before the wipe.
 #   1. Start NornicDB, sample powermetrics during seed+benchmark,
 #      measure on-disk data size, stop NornicDB.
+#      Step 1 runs once per NornicDB parser mode (NORNIC_PARSER_MODES, default
+#      "nornic antlr"), each from a freshly wiped data directory and serialized
+#      like every other run. The default (nornic) mode keeps the historical
+#      `nornicdb.*` file names; the ANTLR mode writes `nornicdb-antlr.*`.
 #   2. Start local Neo4j, sample powermetrics during seed+benchmark,
 #      measure on-disk data size, stop Neo4j.
-#   3. Generate three Markdown reports:
+#   3. Generate the Markdown reports:
 #        - reports/<timestamp>/nornicdb.md
+#        - reports/<timestamp>/nornicdb-antlr.md   (when the ANTLR mode ran)
 #        - reports/<timestamp>/neo4j.md
-#        - reports/<timestamp>/comparison.md
+#        - reports/<timestamp>/comparison.md       (ANTLR rows/columns added)
+#        - reports/<timestamp>/parser-modes.md     (default vs ANTLR query latency)
 #
 # Requires: sudo (for powermetrics), Neo4j installed locally (brew install neo4j),
 # Go toolchain, Python 3. Invokes `sudo -v` up front so powermetrics can run
@@ -32,6 +38,12 @@
 #   NEO4J_DATA_DIR          Neo4j data dir (default /opt/homebrew/var/neo4j/data)
 #   NEO4J_PASSWORD          Neo4j password (default "testpass123")
 #   REPORT_DIR              Parent dir for timestamped reports (default scripts/benchmark_reports)
+#   NORNIC_PARSER_MODES     NornicDB parser modes to benchmark, in order (default
+#                           "nornic antlr"). Run "antlr nornic" as well to see
+#                           whether run order biases the comparison.
+#   SKIP_POWERMETRICS=1     do not sample power (no sudo needed); power rows read 0.
+#   SKIP_NEO4J=1            benchmark NornicDB only (Neo4j is neither required nor run);
+#                           the parser-mode report is still generated.
 #   GRAPH_ONLY=1            (default 1) Disable BM25 fulltext + vector ANN index
 #                           build/maintenance for the NornicDB run via the per-DB
 #                           --search-bm25-enabled=false / --search-vector-enabled=false
@@ -69,6 +81,15 @@ NEO4J_DATA_DIR="${NEO4J_DATA_DIR:-/opt/homebrew/var/neo4j/data}"
 NEO4J_PASSWORD="${NEO4J_PASSWORD:-testpass123}"
 REPORT_PARENT="${REPORT_DIR:-${SCRIPT_DIR}/benchmark_reports}"
 GRAPH_ONLY="${GRAPH_ONLY:-1}"
+NORNIC_PARSER_MODES="${NORNIC_PARSER_MODES:-nornic antlr}"
+SKIP_POWERMETRICS="${SKIP_POWERMETRICS:-0}"
+SKIP_NEO4J="${SKIP_NEO4J:-0}"
+for mode in ${NORNIC_PARSER_MODES}; do
+  case "${mode}" in
+    nornic|antlr) ;;
+    *) printf 'NORNIC_PARSER_MODES entries must be "nornic" or "antlr", got %q\n' "${mode}" >&2; exit 1 ;;
+  esac
+done
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 REPORT_DIR="${REPORT_PARENT}/${TIMESTAMP}"
@@ -110,27 +131,34 @@ trap cleanup EXIT INT TERM
 
 require() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"; }
 require go
-require sudo
 require python3
 require lsof
 require nc
-require "${NEO4J_HOME}/bin/neo4j"
-CYPHER_SHELL="${CYPHER_SHELL:-$(command -v cypher-shell || true)}"
-[[ -x "${CYPHER_SHELL}" ]] || die "cypher-shell not found on PATH (set CYPHER_SHELL=/path/to/cypher-shell)"
-[[ -x /usr/bin/powermetrics ]] || die "/usr/bin/powermetrics not found"
+if [[ "${SKIP_POWERMETRICS}" != "1" ]]; then
+  require sudo
+  [[ -x /usr/bin/powermetrics ]] || die "/usr/bin/powermetrics not found"
+fi
+if [[ "${SKIP_NEO4J}" != "1" ]]; then
+  require "${NEO4J_HOME}/bin/neo4j"
+  CYPHER_SHELL="${CYPHER_SHELL:-$(command -v cypher-shell || true)}"
+  [[ -x "${CYPHER_SHELL}" ]] || die "cypher-shell not found on PATH (set CYPHER_SHELL=/path/to/cypher-shell)"
+fi
 
 log "config: iterations=${ITERATIONS} warmup=${WARMUP}"
 log "config: seed_batch_size=${BATCH_SIZE} seed_parallel=${SEED_PARALLEL}"
 log "config: categories=${CATEGORIES} suppliers=${SUPPLIERS} customers=${CUSTOMERS}"
 log "config: products=${PRODUCTS} orders=${ORDERS} order_lines=${ORDER_LINES_MIN}..${ORDER_LINES_MAX} seed=${SEED}"
 log "config: report_dir=${REPORT_DIR}"
+log "config: nornicdb parser modes=${NORNIC_PARSER_MODES} skip_powermetrics=${SKIP_POWERMETRICS} skip_neo4j=${SKIP_NEO4J}"
 if [[ "${GRAPH_ONLY}" == "1" ]]; then
   log "config: GRAPH_ONLY=1 — NornicDB will run with BM25 + vector indexes disabled (graph-only mode)"
 else
   log "config: GRAPH_ONLY=0 — NornicDB will run with BM25 + vector indexes enabled (default mode)"
 fi
 
-if [[ $EUID -ne 0 ]]; then
+if [[ "${SKIP_POWERMETRICS}" == "1" ]]; then
+  log "SKIP_POWERMETRICS=1 — not sampling power, no sudo needed"
+elif [[ $EUID -ne 0 ]]; then
   log "priming sudo for powermetrics (single prompt up front)…"
   sudo -v
   # Keep the sudo timestamp alive while the script runs.
@@ -141,30 +169,45 @@ else
   log "running as root — skipping sudo prime"
 fi
 
+wipe_nornic_data_dir() {
+  if nc -z 127.0.0.1 "${NORNIC_BOLT_PORT}" 2>/dev/null; then
+    die "NornicDB benchmark Bolt port ${NORNIC_BOLT_PORT} is already in use"
+  fi
+  # Never remove an open database directory. A live server keeps its WAL file
+  # descriptor after rm -rf, then fails the next snapshot or write.
+  if [[ -d "${NORNIC_DATA_DIR}" ]] && lsof -nP +D "${NORNIC_DATA_DIR}" 2>/dev/null | awk 'NR > 1 {found=1} END {exit !found}'; then
+    die "NornicDB data directory is open by another process: ${NORNIC_DATA_DIR}"
+  fi
+  # NornicDB: remove the whole data dir. If a prior run left it root-owned
+  # (sudo invocation), fall through to a sudo rm so the wipe actually succeeds.
+  if [[ -d "${NORNIC_DATA_DIR}" ]]; then
+    if ! rm -rf "${NORNIC_DATA_DIR}" 2>/dev/null; then
+      sudo rm -rf "${NORNIC_DATA_DIR}"
+    fi
+  fi
+  mkdir -p "${NORNIC_DATA_DIR}"
+}
+
 log "wiping data directories before run (NornicDB + Neo4j databases/transactions)…"
-if nc -z 127.0.0.1 "${NORNIC_BOLT_PORT}" 2>/dev/null; then
-  die "NornicDB benchmark Bolt port ${NORNIC_BOLT_PORT} is already in use"
-fi
-# Never remove an open database directory. A live server keeps its WAL file
-# descriptor after rm -rf, then fails the next snapshot or write.
-if [[ -d "${NORNIC_DATA_DIR}" ]] && lsof -nP +D "${NORNIC_DATA_DIR}" 2>/dev/null | awk 'NR > 1 {found=1} END {exit !found}'; then
-  die "NornicDB data directory is open by another process: ${NORNIC_DATA_DIR}"
-fi
-if pgrep -f 'org\.neo4j\.server\.' >/dev/null 2>&1; then
+if [[ "${SKIP_NEO4J}" != "1" ]] && pgrep -f 'org\.neo4j\.server\.' >/dev/null 2>&1; then
   die "Neo4j is running; stop it before benchmarking (its data directory would be wiped)"
 fi
-# NornicDB: remove the whole data dir. If a prior run left it root-owned
-# (sudo invocation), fall through to a sudo rm so the wipe actually succeeds.
-if [[ -d "${NORNIC_DATA_DIR}" ]]; then
-  if ! rm -rf "${NORNIC_DATA_DIR}" 2>/dev/null; then
-    sudo rm -rf "${NORNIC_DATA_DIR}"
-  fi
+# Neo4j listens on its default ports. Anything already there (typically the
+# local NornicDB server, which uses the same 7474/7687) would pass the script's
+# "port is up" readiness check and get benchmarked as if it were Neo4j, so fail
+# now rather than after the NornicDB runs.
+if [[ "${SKIP_NEO4J}" != "1" ]]; then
+  for port in "${NEO4J_BOLT_PORT}" "${NEO4J_HTTP_PORT}"; do
+    if nc -z 127.0.0.1 "${port}" 2>/dev/null; then
+      die "port ${port} is in use, but the Neo4j phase needs it. Stop whatever holds it (is a local NornicDB or Neo4j server running? try: lsof -nP -iTCP:${port} -sTCP:LISTEN), or set SKIP_NEO4J=1."
+    fi
+  done
 fi
-mkdir -p "${NORNIC_DATA_DIR}"
+wipe_nornic_data_dir
 
 # Neo4j: remove the ephemeral `databases/` + `transactions/` subtrees (leave
 # the parent alone so the brew-managed config/logs directories persist).
-if [[ -x "${NEO4J_HOME}/bin/neo4j" ]]; then
+if [[ "${SKIP_NEO4J}" != "1" && -x "${NEO4J_HOME}/bin/neo4j" ]]; then
   if [[ -d "${NEO4J_DATA_DIR}/databases" || -d "${NEO4J_DATA_DIR}/transactions" ]]; then
     if ! rm -rf "${NEO4J_DATA_DIR}/databases" "${NEO4J_DATA_DIR}/transactions" 2>/dev/null; then
       sudo rm -rf "${NEO4J_DATA_DIR}/databases" "${NEO4J_DATA_DIR}/transactions"
@@ -272,18 +315,35 @@ stop_pid_graceful() {
 # NornicDB run
 # ------------------------------------------------------------------------
 
+NORNIC_RUNS_DONE=0
+
+# run_nornic <mode>   mode: nornic (the default parser) | antlr
+#
+# Each mode is an independent, serialized run from a freshly wiped data
+# directory, so neither mode inherits the other's warmed caches or data. The
+# default mode keeps the historical `nornicdb.*` file names so existing reports
+# and tooling are unchanged; the others write `nornicdb-<mode>.*`.
 run_nornic() {
-  log "=== NornicDB run ==="
-  # Data dir already wiped at script start. Just make sure the directory
-  # exists (some engines refuse to boot without it).
+  local mode="${1:-nornic}"
+  local label="nornicdb"
+  [[ "${mode}" == "nornic" ]] || label="nornicdb-${mode}"
+  log "=== NornicDB run (parser=${mode}, label=${label}) ==="
+  # The data dir was wiped at script start; later runs wipe it again.
+  if (( NORNIC_RUNS_DONE > 0 )); then
+    log "wiping NornicDB data directory for a clean ${mode} run"
+    wipe_nornic_data_dir
+  fi
+  NORNIC_RUNS_DONE=$((NORNIC_RUNS_DONE + 1))
   mkdir -p "${NORNIC_DATA_DIR}"
 
   # Powermetrics wraps the entire DB lifecycle — startup, seed, benchmark,
   # shutdown — so the report captures the full energy envelope, not just the
   # query window.
-  log "starting powermetrics sampler (covers startup + benchmark + shutdown)"
-  POWER_PID=$(start_powermetrics "${REPORT_DIR}/nornicdb.powermetrics.plist")
-  VMSTAT_PID=$(start_vmstat "${REPORT_DIR}/nornicdb.vmstat.log")
+  if [[ "${SKIP_POWERMETRICS}" != "1" ]]; then
+    log "starting powermetrics sampler (covers startup + benchmark + shutdown)"
+    POWER_PID=$(start_powermetrics "${REPORT_DIR}/${label}.powermetrics.plist")
+  fi
+  VMSTAT_PID=$(start_vmstat "${REPORT_DIR}/${label}.vmstat.log")
   local t0=$(date +%s.%N)
 
   # Optional graph-only mode: disable BM25 + vector index build at startup
@@ -304,27 +364,29 @@ run_nornic() {
     nornic_extra_env=(NORNICDB_MEMORY_DECAY_ENABLED=false)
   fi
 
-  log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY}"
+  log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY} parser=${mode}"
   # Note: ${arr[@]+"${arr[@]}"} guards against `set -u` tripping on an empty
   # array expansion. macOS ships bash 3.2 which is strict here. Extra env
   # vars ride through `env` because bash does NOT recognize a word produced
   # by expansion as an assignment prefix — it would run it as a command.
+  # NORNICDB_PARSER is set explicitly for every run so an ambient value in the
+  # caller's environment can never leak into the "default" mode.
   NORNICDB_NO_AUTH=true NORNICDB_EMBEDDING_ENABLED=false \
-    env ${nornic_extra_env[@]+"${nornic_extra_env[@]}"} \
+    env NORNICDB_PARSER="${mode}" ${nornic_extra_env[@]+"${nornic_extra_env[@]}"} \
     "${NORNIC_BIN}" serve \
       --bolt-port "${NORNIC_BOLT_PORT}" \
       --http-port "${NORNIC_HTTP_PORT}" \
       --data-dir "${NORNIC_DATA_DIR}" \
       --no-auth \
       ${nornic_extra_flags[@]+"${nornic_extra_flags[@]}"} \
-      >"${REPORT_DIR}/nornicdb.stdout.log" 2>"${REPORT_DIR}/nornicdb.stderr.log" &
+      >"${REPORT_DIR}/${label}.stdout.log" 2>"${REPORT_DIR}/${label}.stderr.log" &
   NORNIC_PID=$!
 
   for i in {1..30}; do
     if nc -z 127.0.0.1 "${NORNIC_BOLT_PORT}" 2>/dev/null; then break; fi
     sleep 1
     if ! kill -0 "${NORNIC_PID}" 2>/dev/null; then
-      die "NornicDB crashed on startup; see ${REPORT_DIR}/nornicdb.stderr.log"
+      die "NornicDB crashed on startup; see ${REPORT_DIR}/${label}.stderr.log"
     fi
   done
   nc -z 127.0.0.1 "${NORNIC_BOLT_PORT}" 2>/dev/null || die "NornicDB bolt port never came up"
@@ -346,9 +408,9 @@ run_nornic() {
     -seed "${SEED}" \
     -iterations "${ITERATIONS}" \
     -warmup "${WARMUP}" \
-    -label "nornicdb" \
-    -out "${REPORT_DIR}/nornicdb.results.json" \
-    2>"${REPORT_DIR}/nornicdb.bench.log" || die "NornicDB benchmark failed — see ${REPORT_DIR}/nornicdb.bench.log"
+    -label "${label}" \
+    -out "${REPORT_DIR}/${label}.results.json" \
+    2>"${REPORT_DIR}/${label}.bench.log" || die "NornicDB (${mode}) benchmark failed — see ${REPORT_DIR}/${label}.bench.log"
 
   # Graceful shutdown so BadgerDB gets a chance to flush its in-memory
   # memtables and compact/rewrite vlog segments. Without this the
@@ -360,23 +422,25 @@ run_nornic() {
   NORNIC_PID=""
 
   local t1=$(date +%s.%N)
-  log "stopping powermetrics sampler"
-  stop_powermetrics "${POWER_PID}"
-  POWER_PID=""
+  if [[ -n "${POWER_PID:-}" ]]; then
+    log "stopping powermetrics sampler"
+    stop_powermetrics "${POWER_PID}"
+    POWER_PID=""
+  fi
   stop_vmstat "${VMSTAT_PID}"
   VMSTAT_PID=""
 
-  python3 -c "print(f'{float(${t1}) - float(${t0}):.3f}')" > "${REPORT_DIR}/nornicdb.wall_seconds.txt"
+  python3 -c "print(f'{float(${t1}) - float(${t0}):.3f}')" > "${REPORT_DIR}/${label}.wall_seconds.txt"
 
   # Flush OS page cache for this directory before measuring so `du` sees
   # what actually landed in the filesystem.
   sync
   log "measuring NornicDB on-disk size"
-  du -sk "${NORNIC_DATA_DIR}" | awk '{print $1 * 1024}' > "${REPORT_DIR}/nornicdb.disk_bytes.txt"
-  du -sh "${NORNIC_DATA_DIR}" > "${REPORT_DIR}/nornicdb.disk_human.txt" || true
-  echo "${NORNIC_DATA_DIR}" > "${REPORT_DIR}/nornicdb.data_dir.txt"
+  du -sk "${NORNIC_DATA_DIR}" | awk '{print $1 * 1024}' > "${REPORT_DIR}/${label}.disk_bytes.txt"
+  du -sh "${NORNIC_DATA_DIR}" > "${REPORT_DIR}/${label}.disk_human.txt" || true
+  echo "${NORNIC_DATA_DIR}" > "${REPORT_DIR}/${label}.data_dir.txt"
 
-  log "NornicDB run complete"
+  log "NornicDB run complete (parser=${mode})"
 }
 
 # ------------------------------------------------------------------------
@@ -535,8 +599,12 @@ generate_reports() {
   ls -la "${REPORT_DIR}"/*.md 2>/dev/null || true
 }
 
-run_nornic
-run_neo4j
+for mode in ${NORNIC_PARSER_MODES}; do
+  run_nornic "${mode}"
+done
+if [[ "${SKIP_NEO4J}" != "1" ]]; then
+  run_neo4j
+fi
 generate_reports
 
 log "DONE — reports: ${REPORT_DIR}"
