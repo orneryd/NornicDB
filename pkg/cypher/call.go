@@ -2976,104 +2976,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	upper := upperASCII(callCypher)
 
 	switch {
-	// Neo4j Vector Index Procedures
-	case strings.Contains(upper, "DB.INDEX.VECTOR.QUERYNODES"):
-		result, err = e.callDbIndexVectorQueryNodes(ctx, callCypher)
-	// Neo4j Fulltext Index Procedures
-	case strings.Contains(upper, "DB.INDEX.FULLTEXT.QUERYNODES"):
-		result, err = e.callDbIndexFulltextQueryNodes(callCypher)
-	// NornicDB Extensions
-	case strings.Contains(upper, "NORNICDB.VERSION"):
-		result, err = e.callNornicDbVersion()
-	case strings.Contains(upper, "NORNICDB.STATS"):
-		result, err = e.callNornicDbStats()
-	case strings.Contains(upper, "NORNICDB.DECAY.INFO"):
-		result, err = e.callNornicDbDecayInfo()
-	case strings.Contains(upper, "NORNICDB.KNOWLEDGEPOLICY.INFO"):
-		result, err = e.callNornicDbKnowledgePolicyInfo()
-	// Seam-aligned RAG procedures
-	case strings.Contains(upper, "DB.RETRIEVE"):
-		result, err = e.callDbRetrieve(ctx, callCypher)
-	case strings.Contains(upper, "DB.RRETRIEVE"):
-		result, err = e.callDbRRetrieve(ctx, callCypher)
-	case strings.Contains(upper, "DB.RERANK"):
-		result, err = e.callDbRerank(ctx, callCypher)
-	case strings.Contains(upper, "DB.INFER"):
-		result, err = e.callDbInfer(ctx, callCypher)
-	// Neo4j Schema/Metadata Procedures
-	case strings.Contains(upper, "DB.SCHEMA.VISUALIZATION"):
-		result, err = e.callDbSchemaVisualization()
-	case strings.Contains(upper, "DB.SCHEMA.NODEPROPERTIES"):
-		result, err = e.callDbSchemaNodeProperties()
-	case strings.Contains(upper, "DB.SCHEMA.RELPROPERTIES"):
-		result, err = e.callDbSchemaRelProperties()
-	case strings.Contains(upper, "DB.LABELS"):
-		result, err = e.callDbLabels()
-	case strings.Contains(upper, "DB.RELATIONSHIPTYPES"):
-		result, err = e.callDbRelationshipTypes()
-	case strings.Contains(upper, "DB.INDEXES"):
-		result, err = e.callDbIndexes()
-	case strings.Contains(upper, "DB.INDEX.STATS"):
-		result, err = e.callDbIndexStats()
-	case strings.Contains(upper, "DB.CONSTRAINTS"):
-		result, err = e.callDbConstraints()
-	case strings.Contains(upper, "DB.PROPERTYKEYS"):
-		result, err = e.callDbPropertyKeys()
-	// Neo4j GDS Link Prediction Procedures (topological)
-	case strings.Contains(upper, "GDS.LINKPREDICTION.ADAMICADAR.STREAM"):
-		result, err = e.callGdsLinkPredictionAdamicAdar(ctx, callCypher)
-	case strings.Contains(upper, "GDS.LINKPREDICTION.COMMONNEIGHBORS.STREAM"):
-		result, err = e.callGdsLinkPredictionCommonNeighbors(ctx, callCypher)
-	case strings.Contains(upper, "GDS.LINKPREDICTION.RESOURCEALLOCATION.STREAM"):
-		result, err = e.callGdsLinkPredictionResourceAllocation(ctx, callCypher)
-	case strings.Contains(upper, "GDS.LINKPREDICTION.PREFERENTIALATTACHMENT.STREAM"):
-		result, err = e.callGdsLinkPredictionPreferentialAttachment(ctx, callCypher)
-	case strings.Contains(upper, "GDS.LINKPREDICTION.JACCARD.STREAM"):
-		result, err = e.callGdsLinkPredictionJaccard(ctx, callCypher)
-	case strings.Contains(upper, "GDS.LINKPREDICTION.PREDICT.STREAM"):
-		result, err = e.callGdsLinkPredictionPredict(ctx, callCypher)
-	// GDS Graph Management and FastRP
-	case strings.Contains(upper, "GDS.VERSION"):
-		result, err = e.callGdsVersion()
-	case strings.Contains(upper, "GDS.GRAPH.LIST"):
-		result, err = e.callGdsGraphList()
-	case strings.Contains(upper, "GDS.GRAPH.DROP"):
-		result, err = e.callGdsGraphDrop(callCypher)
-	case strings.Contains(upper, "GDS.GRAPH.PROJECT"):
-		result, err = e.callGdsGraphProject(callCypher)
-	case strings.Contains(upper, "GDS.FASTRP.STREAM"):
-		result, err = e.callGdsFastRPStream(callCypher)
-	case strings.Contains(upper, "GDS.FASTRP.STATS"):
-		result, err = e.callGdsFastRPStats(callCypher)
-	// Additional Neo4j procedures for compatibility
-	case strings.Contains(upper, "DB.INFO"):
-		result, err = e.callDbInfo(ctx)
-	case strings.Contains(upper, "DB.PING"):
-		result, err = e.callDbPing()
-	case strings.Contains(upper, "DB.INDEX.FULLTEXT.QUERYRELATIONSHIPS"):
-		result, err = e.callDbIndexFulltextQueryRelationships(callCypher)
-	case strings.Contains(upper, "DB.INDEX.VECTOR.QUERYRELATIONSHIPS"):
-		result, err = e.callDbIndexVectorQueryRelationships(ctx, callCypher)
-	case strings.Contains(upper, "DB.INDEX.VECTOR.EMBED"):
-		result, err = e.callDbIndexVectorEmbed(ctx, callCypher)
-	case strings.Contains(upper, "DB.INDEX.VECTOR.CREATENODEINDEX"):
-		result, err = e.callDbIndexVectorCreateNodeIndex(ctx, callCypher)
-	case strings.Contains(upper, "DB.INDEX.VECTOR.CREATERELATIONSHIPINDEX"):
-		result, err = e.callDbIndexVectorCreateRelationshipIndex(ctx, callCypher)
-	case strings.Contains(upper, "DB.INDEX.FULLTEXT.CREATENODEINDEX"):
-		result, err = e.callDbIndexFulltextCreateNodeIndex(ctx, callCypher)
-	case strings.Contains(upper, "DB.INDEX.FULLTEXT.CREATERELATIONSHIPINDEX"):
-		result, err = e.callDbIndexFulltextCreateRelationshipIndex(ctx, callCypher)
-	case strings.Contains(upper, "DB.INDEX.FULLTEXT.DROP"):
-		result, err = e.callDbIndexFulltextDrop(callCypher)
-	case strings.Contains(upper, "DB.INDEX.VECTOR.DROP"):
-		result, err = e.callDbIndexVectorDrop(callCypher)
-	case strings.Contains(upper, "DB.INDEX.FULLTEXT.LISTAVAILABLEANALYZERS"):
-		result, err = e.callDbIndexFulltextListAvailableAnalyzers()
-	case strings.Contains(upper, "DB.CREATE.SETNODEVECTORPROPERTY"):
-		result, err = e.callDbCreateSetNodeVectorProperty(ctx, callCypher)
-	case strings.Contains(upper, "DB.CREATE.SETRELATIONSHIPVECTORPROPERTY"):
-		result, err = e.callDbCreateSetRelationshipVectorProperty(ctx, callCypher)
+	// Database management procedures not yet owned by the registry.
 	case strings.Contains(upper, "DBMS.INFO"):
 		result, err = e.callDbmsInfo()
 	case strings.Contains(upper, "DBMS.LISTCONFIG"):
@@ -3088,30 +2991,9 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		result, err = e.callDbmsProcedures()
 	case strings.Contains(upper, "DBMS.FUNCTIONS"):
 		result, err = e.callDbmsFunctions()
-	// Transaction log query procedures (NornicDB extension for Idea #7)
-	case strings.Contains(upper, "DB.TXLOG.ENTRIES"):
-		result, err = e.callDbTxlogEntries(ctx, callCypher)
-	case strings.Contains(upper, "DB.TXLOG.BYTXID"):
-		result, err = e.callDbTxlogByTxID(ctx, callCypher)
-	// Temporal helper procedures (NornicDB extension for Idea #7)
-	case strings.Contains(upper, "DB.TEMPORAL.ASSERTNOOVERLAP"):
-		result, err = e.callDbTemporalAssertNoOverlap(ctx, callCypher)
-	case strings.Contains(upper, "DB.TEMPORAL.ASOF"):
-		result, err = e.callDbTemporalAsOf(ctx, callCypher)
-	// Transaction metadata (Neo4j tx.setMetaData)
-	case strings.Contains(upper, "TX.SETMETADATA"):
-		result, err = e.callTxSetMetadata(ctx, callCypher)
-	// Index management procedures
-	case strings.Contains(upper, "DB.AWAITINDEXES"):
-		result, err = e.callDbAwaitIndexes(callCypher)
-	case strings.Contains(upper, "DB.AWAITINDEX"):
-		result, err = e.callDbAwaitIndex(callCypher)
-	case strings.Contains(upper, "DB.RESAMPLEINDEX"):
-		result, err = e.callDbResampleIndex(callCypher)
-	// Query statistics procedures (longer matches first)
-	case strings.Contains(upper, "DB.STATS.RETRIEVEALLANTHESTATS"):
-		result, err = e.callDbStatsRetrieveAllAnTheStats()
-	case strings.Contains(upper, "DB.STATS.RETRIEVE"):
+	// Query statistics procedures (longer names must not fall through the
+	// shorter RETRIEVE keyword).
+	case strings.Contains(upper, "DB.STATS.RETRIEVE") && !strings.Contains(upper, "DB.STATS.RETRIEVEALLANTHESTATS"):
 		result, err = e.callDbStatsRetrieve(callCypher)
 	case strings.Contains(upper, "DB.STATS.COLLECT"):
 		result, err = e.callDbStatsCollect(callCypher)
@@ -3121,23 +3003,6 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		result, err = e.callDbStatsStatus()
 	case strings.Contains(upper, "DB.STATS.STOP"):
 		result, err = e.callDbStatsStop()
-	// Database cleardown procedures (for testing)
-	case strings.Contains(upper, "DB.CLEARQUERYCACHES"):
-		result, err = e.callDbClearQueryCaches()
-	// APOC Dynamic Cypher Execution
-	case strings.Contains(upper, "APOC.CYPHER.RUNMANY"):
-		result, err = e.callApocCypherRunMany(ctx, callCypher)
-	case strings.Contains(upper, "APOC.CYPHER.RUN"):
-		result, err = e.callApocCypherRun(ctx, callCypher)
-	case strings.Contains(upper, "APOC.CYPHER.DOITALL"):
-		result, err = e.callApocCypherRun(ctx, callCypher) // Alias
-	// APOC Periodic/Batch Operations
-	case strings.Contains(upper, "APOC.PERIODIC.ITERATE"):
-		result, err = e.callApocPeriodicIterate(ctx, callCypher)
-	case strings.Contains(upper, "APOC.PERIODIC.COMMIT"):
-		result, err = e.callApocPeriodicCommit(ctx, callCypher)
-	case strings.Contains(upper, "APOC.PERIODIC.ROCK_N_ROLL"):
-		result, err = e.callApocPeriodicIterate(ctx, callCypher) // Alias
 	default:
 		// Extract procedure name for clearer error
 		procName := extractProcedureName(callCypher)
