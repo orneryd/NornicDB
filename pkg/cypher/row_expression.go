@@ -1269,8 +1269,12 @@ func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[stri
 			if !ok {
 				return nil, false, nil
 			}
-			// CASE x WHEN y compares as x = y does (promoteConstantNumbers).
-			if compareValues(promoteConstantNumbers("=", parsed.testExpression, clause.value, testValue, whenValue)) {
+			// CASE x WHEN y matches when x = y is true, as the = operator
+			// compares (promoteConstantNumbers, compareCypherPredicateValue):
+			// [1, 2] matches [1, 2.0], and an unknown (null) result such as
+			// [1, null] against [1, null] doesn't match.
+			left, right := promoteConstantNumbers("=", parsed.testExpression, clause.value, testValue, whenValue)
+			if matched, _ := compareCypherPredicateValue(left, right, "=").(bool); matched {
 				return e.evaluateRowValue(clause.result, values)
 			}
 		}
