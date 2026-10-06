@@ -8,7 +8,7 @@ import (
 
 // labelScanPointLookups is how many of a label's nodes a scan reads with one
 // record lookup each before it may switch to a single pass over the node
-// records. A scan the caller stops early (LIMIT) stays on point lookups.
+// records. A scan stopped within this prefix (LIMIT) stays on point lookups.
 const labelScanPointLookups = 1024
 
 // readNodeRecordsInOnePass calls read with the stored record of each of ids

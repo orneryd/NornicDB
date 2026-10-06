@@ -336,14 +336,23 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 		// The rest are read in one pass over the node records, then visited
 		// in label-index order.
 		nodes := make(map[NodeID]*Node, len(pending))
+		readErrors := make(map[NodeID]error)
 		if err := readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
 			node, err := readItem(nodeID, item)
 			nodes[nodeID] = node
-			return err
+			if err != nil {
+				readErrors[nodeID] = err
+			}
+			return nil
 		}); err != nil {
 			return err
 		}
 		for _, nodeID := range pending {
+			// Record order differs from visitation order; a later corrupt
+			// record must not override an earlier callback's stop error.
+			if err := readErrors[nodeID]; err != nil {
+				return err
+			}
 			if err := emit(nodes[nodeID]); err != nil {
 				return err
 			}
