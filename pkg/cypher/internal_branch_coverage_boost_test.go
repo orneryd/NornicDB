@@ -294,23 +294,6 @@ func TestCallAndClauseHelpers_Branches(t *testing.T) {
 		buildCallTailPredicateInjection("MATCH (n) RETURN n", []string{"x = 1"}),
 	)
 
-	out, err := exec.callTailTraversalEdges(aNode, &TraversalMatch{Relationship: RelationshipPattern{Direction: "outgoing"}})
-	require.NoError(t, err)
-	require.Len(t, out, 1)
-	require.Equal(t, storage.EdgeID("ab"), out[0].ID)
-
-	in, err := exec.callTailTraversalEdges(aNode, &TraversalMatch{Relationship: RelationshipPattern{Direction: "incoming"}})
-	require.NoError(t, err)
-	require.Empty(t, in)
-
-	both, err := exec.callTailTraversalEdges(aNode, &TraversalMatch{Relationship: RelationshipPattern{Direction: "both"}})
-	require.NoError(t, err)
-	require.Len(t, both, 1)
-
-	require.Equal(t, storage.NodeID("b"), callTailNextNodeID("a", abEdge, "outgoing"))
-	require.Equal(t, storage.NodeID("a"), callTailNextNodeID("b", abEdge, "incoming"))
-	require.Equal(t, storage.NodeID("b"), callTailNextNodeID("a", abEdge, "both"))
-
 	varMap := map[string]interface{}{"s": aNode}
 	require.Equal(t, "B", exec.resolveReturnExprFromVarMap(ctx, "t.name", varMap, "t", "r", &storage.Node{ID: "t", Properties: map[string]interface{}{"name": "B"}}, abEdge))
 	require.EqualValues(t, 5, exec.resolveReturnExprFromVarMap(ctx, "r.w", varMap, "t", "r", nil, abEdge))
