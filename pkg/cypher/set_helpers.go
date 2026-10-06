@@ -571,113 +571,13 @@ func (e *StorageExecutor) evaluateSubstringForSet(expr string) string {
 	return cyphertext.Substring(str, start, length)
 }
 
-// splitFunctionArgs splits function arguments by comma, respecting parentheses and quotes.
-//
-// This function intelligently parses function arguments, handling:
-//   - Nested parentheses: function(a, func(b, c), d)
-//   - Quoted strings: "hello, world" treated as single argument
-//   - Escape sequences: \"escaped quote\" within strings
-//   - Mixed quotes: 'single' and "double" quotes
-//
-// # Parameters
-//
-//   - args: The argument string to split (without outer parentheses)
-//
-// # Returns
-//
-//   - Slice of individual arguments, trimmed of whitespace
-//
-// # Example
-//
-//	splitFunctionArgs("name, age, email")
-//	// Returns: ["name", "age", "email"]
-//
-//	splitFunctionArgs("toLower(n.name), toUpper(n.city)")
-//	// Returns: ["toLower(n.name)", "toUpper(n.city)"]
-//
-// # ELI12
-//
-// Imagine you're reading a sentence: "I like pizza, pasta, and ice cream"
-// You need to split it by commas, but what if someone says:
-// "I like pizza, 'pasta, with sauce', and ice cream"
-//
-// You can't just split at every comma! The comma inside the quotes is PART of
-// the item, not a separator. This function is smart enough to know:
-//   - Commas outside quotes = split here
-//   - Commas inside quotes = keep them
-//   - Parentheses = keep everything inside together
+// splitFunctionArgs splits a function call's argument text at its top-level
+// commas with the shared splitter (splitTopLevelComma): a comma inside
+// quotes, a quoted name or a (), [] or {} group belongs to its argument, so
+// a map literal with several keys is one argument. The arguments are
+// trimmed; an empty last one is dropped.
 func (e *StorageExecutor) splitFunctionArgs(args string) []string {
-	var result []string
-	var current strings.Builder
-	parenDepth := 0
-	bracketDepth := 0
-	inSingleQuote := false
-	inDoubleQuote := false
-
-	for i := 0; i < len(args); i++ {
-		c := args[i]
-		switch c {
-		case '\'':
-			if !inDoubleQuote {
-				// Check for escape sequence
-				if isBackslashEscaped(args, i) {
-					current.WriteByte(c)
-				} else {
-					inSingleQuote = !inSingleQuote
-					current.WriteByte(c)
-				}
-			} else {
-				current.WriteByte(c)
-			}
-		case '"':
-			if !inSingleQuote {
-				// Check for escape sequence
-				if isBackslashEscaped(args, i) {
-					current.WriteByte(c)
-				} else {
-					inDoubleQuote = !inDoubleQuote
-					current.WriteByte(c)
-				}
-			} else {
-				current.WriteByte(c)
-			}
-		case '(':
-			if !inSingleQuote && !inDoubleQuote {
-				parenDepth++
-			}
-			current.WriteByte(c)
-		case ')':
-			if !inSingleQuote && !inDoubleQuote {
-				parenDepth--
-			}
-			current.WriteByte(c)
-		case '[':
-			if !inSingleQuote && !inDoubleQuote {
-				bracketDepth++
-			}
-			current.WriteByte(c)
-		case ']':
-			if !inSingleQuote && !inDoubleQuote {
-				bracketDepth--
-			}
-			current.WriteByte(c)
-		case ',':
-			if parenDepth == 0 && bracketDepth == 0 && !inSingleQuote && !inDoubleQuote {
-				result = append(result, strings.TrimSpace(current.String()))
-				current.Reset()
-			} else {
-				current.WriteByte(c)
-			}
-		default:
-			current.WriteByte(c)
-		}
-	}
-
-	if s := strings.TrimSpace(current.String()); s != "" {
-		result = append(result, s)
-	}
-
-	return result
+	return splitTopLevelComma(args)
 }
 
 // generateUUID generates a simple UUID-like string.

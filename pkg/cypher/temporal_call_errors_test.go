@@ -134,3 +134,21 @@ func TestTemporalCallDefensiveReturns(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, value)
 }
+
+// TestFunctionArgumentsWithMapLiterals: a map literal with several keys is
+// one function argument (splitFunctionArgs), so a call with one isn't read
+// as having too many arguments and null.
+func TestFunctionArgumentsWithMapLiterals(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	require.Equal(t, []string{"'day'", "d", "{year: 2020, month: 2}"}, exec.splitFunctionArgs("'day', d, {year: 2020, month: 2}"))
+	require.Equal(t, []string{"`a,b`", "[1, 2]", "f(x, y)"}, exec.splitFunctionArgs("`a,b`, [1, 2], f(x, y)"))
+	require.Equal(t, []string{"a", "", "b"}, exec.splitFunctionArgs("a,,b"))
+	require.Nil(t, exec.splitFunctionArgs("  "))
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "RETURN date.truncate('Ab c', 1, {year: 2020, month: 2}) AS v", nil)
+	require.Contains(t, statusText(err), "Neo.ClientError.Procedure.ProcedureCallFailed")
+	result, err := exec.Execute(ctx, "RETURN date.truncate('day', date('2020-01-02'), {year: 2020, day: 3}) IS NOT NULL AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{true}}, result.Rows)
+}
