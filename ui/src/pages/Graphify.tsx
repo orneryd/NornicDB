@@ -114,12 +114,11 @@ const KIND_LEGEND: Array<[string, string]> = [
   ["similar", SIMILAR_COLOR],
 ];
 
-// The top-level entry point the rooted view starts from: main() in
-// cmd/nornicdb/main.go (graphify node id convention: path_segments_symbol).
-const MAIN_ENTRY_ID = "cmd_nornicdb_main_main";
-const MAIN_ENTRY_QUERY = `MATCH (n)
-WHERE n.source_file = 'cmd/nornicdb/main.go' AND n.label = 'main()'
-RETURN n.id AS id LIMIT 1`;
+// The rooted view starts from the repository's main entry point. The ingest
+// (Soraban/code-intelligence) tags that node with a second label, :Main, so it
+// is fetched directly. A database without one falls back to ENTRY_CANDIDATE_QUERY.
+const MAIN_NODE_QUERY = `MATCH (n:Main)
+RETURN n.id AS id, n.label AS label LIMIT 1`;
 
 const DEFAULT_DEPTH = 3;
 const NEIGHBORHOOD_LIMIT = 20000;
@@ -129,6 +128,21 @@ const NEIGHBORHOOD_LIMIT = 20000;
 // handful of nodes, and adding the dense import/contains edges blows past
 // the node limit at any depth.
 const CALL_RELATION_TYPES = ["CALLS", "METHOD", "REFERENCES"];
+
+// Fallback root when no :Main node exists: the function with the most
+// connected nodes (distinct neighbors over every edge except the structural
+// CONTAINS link). It must be a function defined in the code: symbol_kind is
+// 'function' only for a callable with a source file, so external dependency
+// symbols (no source_file), classes and file containers are never picked. A
+// file or a leaf would have no call edges and render as a single node.
+// Candidates are ranked by connectivity and the first outside test code wins.
+const ENTRY_CANDIDATE_LIMIT = 50;
+const ENTRY_CANDIDATE_QUERY = `MATCH (a)-[r]-(b)
+WHERE a.symbol_kind = 'function' AND a.source_file <> '' AND type(r) <> 'CONTAINS' AND id(a) <> id(b)
+WITH a, count(DISTINCT b) AS degree
+ORDER BY degree DESC
+LIMIT ${ENTRY_CANDIDATE_LIMIT}
+RETURN a.id AS id, a.label AS label, a.source_file AS source_file, degree`;
 
 // three-forcegraph's runtime disables DAG layout on a falsy mode, but its
 // typings only accept the DagMode union; route through a null-tolerant cast.
@@ -873,18 +887,44 @@ export function Graphify() {
       // graphify graph, or the symbol last chosen with "start graph from
       // this symbol"), then walk its neighborhood at the configured depth.
       let rootId = customRootRef.current?.id ?? null;
-      let rootLabel = customRootRef.current?.label ?? "main()";
+      let rootLabel = customRootRef.current?.label ?? "main entry";
       if (!rootId) {
-        setStatus("resolving main entry...");
+        setStatus("resolving main entry point...");
         try {
           const mainResp = await api.executeCypherOnDatabase(
             dbName,
-            MAIN_ENTRY_QUERY,
+            MAIN_NODE_QUERY,
           );
-          const mainRows = rowsFromCypher(mainResp);
-          rootId = mainRows[0]?.id != null ? String(mainRows[0].id) : MAIN_ENTRY_ID;
+          const mainRow = rowsFromCypher(mainResp)[0];
+          if (mainRow?.id != null) {
+            rootId = String(mainRow.id);
+            if (mainRow.label != null) rootLabel = String(mainRow.label);
+          }
         } catch {
-          rootId = MAIN_ENTRY_ID;
+          // no :Main node; use the best-connected function below
+        }
+      }
+      if (!rootId) {
+        try {
+          const entryResp = await api.executeCypherOnDatabase(
+            dbName,
+            ENTRY_CANDIDATE_QUERY,
+          );
+          const entry = rowsFromCypher(entryResp).find(
+            (row) =>
+              row.id != null &&
+              !isTestSource(
+                typeof row.source_file === "string"
+                  ? row.source_file
+                  : undefined,
+              ),
+          );
+          if (entry) {
+            rootId = String(entry.id);
+            if (entry.label != null) rootLabel = String(entry.label);
+          }
+        } catch {
+          // fall through to the last-resort root below
         }
       }
       setStatus(
@@ -892,15 +932,18 @@ export function Graphify() {
       );
       // The neighborhood endpoint seeds by internal id(n), not by the
       // graphify id property; resolve the seed first.
-      let eidResp = await api.executeCypherOnDatabase(
-        dbName,
-        `MATCH (n {id: $graphifyId}) RETURN id(n) AS internalId LIMIT 1`,
-        { graphifyId: rootId },
-      );
-      let eidRows = rowsFromCypher(eidResp);
+      let eidRows = rootId
+        ? rowsFromCypher(
+            await api.executeCypherOnDatabase(
+              dbName,
+              `MATCH (n {id: $graphifyId}) RETURN id(n) AS internalId LIMIT 1`,
+              { graphifyId: rootId },
+            ),
+          )
+        : [];
       if (eidRows[0]?.internalId == null) {
-        // Artifacts without the canonical main() entry: root at the first
-        // node in the database instead.
+        // No :Main node and no function with connections (e.g. a graph
+        // from an older ingest): root at the first node in the database.
         const anyResp = await api.executeCypherOnDatabase(
           dbName,
           `MATCH (n) WHERE n.id IS NOT NULL RETURN n.id AS id, n.label AS label LIMIT 1`,
@@ -912,13 +955,17 @@ export function Graphify() {
             anyRows[0].label != null
               ? String(anyRows[0].label)
               : rootLabel;
-          eidResp = await api.executeCypherOnDatabase(
-            dbName,
-            `MATCH (n {id: $graphifyId}) RETURN id(n) AS internalId LIMIT 1`,
-            { graphifyId: rootId },
+          eidRows = rowsFromCypher(
+            await api.executeCypherOnDatabase(
+              dbName,
+              `MATCH (n {id: $graphifyId}) RETURN id(n) AS internalId LIMIT 1`,
+              { graphifyId: rootId },
+            ),
           );
-          eidRows = rowsFromCypher(eidResp);
         }
+      }
+      if (!rootId) {
+        throw new Error(`database '${dbName}' has no graphify nodes`);
       }
       const seedInternalId =
         eidRows[0]?.internalId != null
