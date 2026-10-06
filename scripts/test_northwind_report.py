@@ -1,6 +1,6 @@
 import unittest
 
-from northwind_report import benchmark_throughput, render_comparison, render_single_report
+from northwind_report import benchmark_throughput, parser_mode_lines, render_comparison, render_single_report
 
 
 def make_query(name, mean_ms=20.0, latencies_ms=None):
@@ -127,6 +127,59 @@ class NorthwindReportTests(unittest.TestCase):
         self.assertIn("Invalid workload comparison", report)
         self.assertIn("random_seed: NornicDB=42 Neo4j=99", report)
         self.assertIn("measured operations: NornicDB=2 Neo4j=3", report)
+
+    ARGS = dict(iterations=2, warmup=1, batch_size=500, parallel=4, products=10, orders=10)
+
+    def three_runs(self, antlr_mean=40.0, antlr_hash="abc123"):
+        nornic = make_run([make_query("a", 10.0), make_query("b", 20.0)], 4, 100.0)
+        neo4j = make_run([make_query("a", 30.0), make_query("b", 60.0)], 4, 100.0)
+        antlr = make_run([make_query("a", antlr_mean), make_query("b", antlr_mean * 2)], 4, 400.0)
+        antlr["results"]["queries"][1]["result_hash"] = antlr_hash
+        return {"nornicdb": nornic, "neo4j": neo4j, "nornicdb-antlr": antlr}
+
+    def test_comparison_without_an_antlr_run_has_no_antlr_content(self):
+        runs = self.three_runs()
+        del runs["nornicdb-antlr"]
+        report = render_comparison(runs, **self.ARGS)
+        self.assertNotIn("ANTLR", report)
+        self.assertNotIn("Parser Modes", report)
+
+    def test_antlr_run_adds_rows_and_a_section_without_changing_existing_figures(self):
+        runs = self.three_runs()
+        without = dict(runs)
+        del without["nornicdb-antlr"]
+        base = render_comparison(without, **self.ARGS)
+        report = render_comparison(runs, **self.ARGS)
+
+        # every line of the original report is still there, in order
+        remaining = iter(report.splitlines())
+        for line in base.splitlines():
+            self.assertTrue(any(line == candidate for candidate in remaining), f"lost or reordered: {line!r}")
+
+        self.assertIn("## NornicDB Parser Modes: default vs ANTLR", report)
+        antlr_rows = [line for line in report.splitlines() if line.startswith("| NornicDB (ANTLR) |")]
+        self.assertEqual(len(antlr_rows), 2)  # one extra row per query
+        self.assertIn("Mean-latency ratio (NornicDB ANTLR / default): **4.00×**", report)
+
+    def test_parser_mode_section_ratios_and_parity(self):
+        runs = self.three_runs(antlr_mean=40.0)
+        text = "\n".join(parser_mode_lines(runs["nornicdb"], runs["nornicdb-antlr"]))
+        # latency: ANTLR 40 ms vs default 10 ms
+        self.assertIn("| `a` | 10.00 | 40.00 | 4.00× |", text)
+        # throughput: default does 4 ops in 100 ms, ANTLR in 400 ms, so ANTLR is 4× slower
+        self.assertIn("| End-to-end query-loop throughput (ops/sec) | 40.00 | 10.00 | -75.0% | 4.00× |", text)
+        self.assertIn("Both modes returned identical results for all 2 queries.", text)
+
+        mismatch = "\n".join(parser_mode_lines(*[self.three_runs(antlr_hash="zzz")[k] for k in ("nornicdb", "nornicdb-antlr")]))
+        self.assertIn("Result mismatch between parser modes", mismatch)
+        self.assertIn("| ❌ |", mismatch)
+
+    def test_parser_mode_section_flags_unequal_workloads(self):
+        runs = self.three_runs()
+        runs["nornicdb-antlr"]["results"]["random_seed"] = 7
+        runs["nornicdb"]["results"]["random_seed"] = 42
+        text = "\n".join(parser_mode_lines(runs["nornicdb"], runs["nornicdb-antlr"]))
+        self.assertIn("Invalid parser-mode comparison", text)
 
 
 if __name__ == "__main__":
