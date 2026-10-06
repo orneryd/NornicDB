@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
-import { api, type CypherResponse } from "../utils/api";
+import {
+  api,
+  type CypherResponse,
+  type GraphNeighborhoodResponse,
+} from "../utils/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -17,11 +21,15 @@ interface GNode {
   highlight: boolean;
   selected: boolean;
   similar?: boolean;
+  dimmed?: boolean;
   internalId?: string;
   body?: string;
   x?: number;
   y?: number;
   z?: number;
+  fx?: number;
+  fy?: number;
+  fz?: number;
   vx?: number;
   vy?: number;
   vz?: number;
@@ -32,6 +40,7 @@ interface GLink {
   target: string | GNode;
   relation: string;
   highlight: boolean;
+  dimmed?: boolean;
 }
 
 type GraphifyForceGraph = ForceGraph3DInstance<GNode, GLink>;
@@ -62,18 +71,38 @@ type LoadSource =
 // Constants
 // ---------------------------------------------------------------------------
 
-const FILE_TYPE_COLORS: Record<string, string> = {
-  code: "#38bdf8",
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+// Symbol kinds are colored independently so function calls, types and
+// variables are visually distinct, and each kind is clustered into its own
+// wedge in the band layout.
+const KIND_COLORS: Record<string, string> = {
+  call: "#38bdf8",
+  type: "#fb7185",
+  variable: "#34d399",
+  file: "#94a3b8",
   document: "#fbbf24",
-  entity: "#64748b",
+  other: "#a78bfa",
 };
 
-const DEFAULT_NODE_COLOR = "#a78bfa";
+const DEFAULT_NODE_COLOR = KIND_COLORS.other;
 const LINK_COLOR = "rgba(125,211,252,0.35)";
 const LINK_HIGHLIGHT = "rgba(168,85,247,0.9)";
 const HIGHLIGHT_COLOR = "#a855f7";
 // Color for semantically similar nodes spawned as a new arm of the graph.
-const SIMILAR_COLOR = "#f472b6";
+const SIMILAR_COLOR = "#e879f9";
+
+const KIND_LEGEND: Array<[string, string]> = [
+  ["call", KIND_COLORS.call],
+  ["type", KIND_COLORS.type],
+  ["variable", KIND_COLORS.variable],
+  ["file", KIND_COLORS.file],
+  ["document", KIND_COLORS.document],
+  ["other", KIND_COLORS.other],
+  ["similar", SIMILAR_COLOR],
+];
 
 // The top-level entry point the rooted view starts from: main() in
 // cmd/nornicdb/main.go (graphify node id convention: path_segments_symbol).
@@ -113,10 +142,12 @@ function depthTargets(depths: Map<string, number>, spacing: number): Map<string,
   return targets;
 }
 
-// Configure the layout orientation: bands are measured as hops from the
-// chosen root along the call/reference links, so only the starting symbol
-// sits at the top level (never an artifact of file structure or of which
-// nodes happen to have no incoming edges).
+  // Configure the layout orientation: bands are measured as hops from the
+  // chosen root along the call/reference links, so only the starting symbol
+  // sits at the top level (never an artifact of file structure or of which
+  // nodes happen to have no incoming edges). Each band is additionally
+  // split into wedges per symbol kind (calls, types, variables, ...) so
+  // same-kind symbols form their own neighborhood.
 function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], rootId: string | null): void {
   // dagMode derives levels from link direction (every zero-indegree node
   // lands at the top), so it stays off; this layout owns the bands.
@@ -135,7 +166,9 @@ function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], roo
   }
   const targets = depthTargets(effective, 72);
   // Seed each band with a radial spread so the tree is readable without a
-  // long-running force simulation, then freeze for fast static rendering.
+  // long-running force simulation, then pin every node (fx/fy/fz) so the
+  // hot force ticks cannot drift the graph away from the camera frame
+  // computed by zoomToFit right after graphData is set.
   const byDepth = new Map<number, GNode[]>();
   for (const node of nodes) {
     const depth = effective.get(node.id) ?? 0;
@@ -144,13 +177,39 @@ function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], roo
     byDepth.set(depth, group);
   }
   for (const [depth, group] of byDepth) {
-    group.forEach((node, index) => {
-      const angle = (2 * Math.PI * index) / group.length + depth * 0.35;
-      const radius = 24 + depth * 26;
-      node.x = Math.cos(angle) * radius;
-      node.z = Math.sin(angle) * radius;
-      node.y = targets.get(node.id) ?? 0;
-    });
+    // Split the band into one wedge per symbol kind: same-kind symbols
+    // cluster into their own angular neighborhood at every depth.
+    const byKind = new Map<string, GNode[]>();
+    const kinds = new Set<string>();
+    for (const node of group) {
+      const kind = classifySymbolKind(node);
+      kinds.add(kind);
+      const kindGroup = byKind.get(kind) ?? [];
+      kindGroup.push(node);
+      byKind.set(kind, kindGroup);
+    }
+    const orderedKinds = Array.from(kinds).sort();
+    const kindIndex = new Map(orderedKinds.map((kind, index) => [kind, index]));
+    const wedgeWidth = (2 * Math.PI) / Math.max(orderedKinds.length, 1);
+    for (const [kind, kindNodes] of byKind) {
+      const center = -Math.PI / 2 + wedgeWidth * (kindIndex.get(kind) ?? 0);
+      const spread = wedgeWidth * 0.85;
+      kindNodes.forEach((node, index) => {
+        const fraction =
+          kindNodes.length > 1 ? index / (kindNodes.length - 1) : 0.5;
+        const angle = center - spread / 2 + spread * fraction;
+        const radius = 24 + depth * 26;
+        node.x = Math.cos(angle) * radius;
+        node.z = Math.sin(angle) * radius;
+        node.y = targets.get(node.id) ?? 0;
+        // Pin the seeded position so the static layout stays exactly where
+        // the camera was framed: force ticks must not move nodes after
+        // zoomToFit has already computed the frame from these positions.
+        node.fx = node.x;
+        node.fy = node.y;
+        node.fz = node.z;
+      });
+    }
   }
   if (import.meta.env.DEV) {
     (window as unknown as Record<string, unknown>).__graphifyDebug = {
@@ -167,6 +226,9 @@ function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], roo
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const FILE_EXTENSIONS =
+  /\.(go|md|py|ts|js|jsx|tsx|yml|yaml|json|sh|c|h|cpp|cc|java|rs|html|css|txt|toml|mod|sum|proto|graphql)$/i;
 
 function rowsFromCypher(resp: CypherResponse): Array<Record<string, unknown>> {
   if (resp.errors && resp.errors.length > 0) {
@@ -200,16 +262,43 @@ function isTestSource(sourceFile: string | undefined): boolean {
   return false;
 }
 
-function fileColor(fileType: string): string {
-  return FILE_TYPE_COLORS[fileType.toLowerCase()] ?? DEFAULT_NODE_COLOR;
-}
-
 function chunk<T>(items: T[], size: number): T[][] {
   const batches: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
     batches.push(items.slice(i, i + size));
   }
   return batches;
+}
+
+function classifySymbolKind(node: GNode): string {
+  if ((node.fileType ?? "").toLowerCase() === "document") {
+    return "document";
+  }
+  const label = (node.label ?? "").trim();
+  if (!label) {
+    return "other";
+  }
+  // Function or method call/definition: the label carries a parameter
+  // list, e.g. ".GetParser()", "NewManager(...)".
+  if (/\(.*\)$/.test(label)) {
+    return "call";
+  }
+  // Imported paths and file references carry slashes or a known file
+  // extension. The extension list is explicit so dotted type references
+  // like "context.Context" or "language.Tag" classify as variables, not
+  // as files.
+  if (label.includes("/") || FILE_EXTENSIONS.test(label)) {
+    return "file";
+  }
+  // Go-style capitalized identifiers are types (structs, interfaces).
+  if (/^[A-Z]/.test(label)) {
+    return "type";
+  }
+  // Everything else is a variable / field / package name.
+  if (/^[a-z_]/.test(label)) {
+    return "variable";
+  }
+  return "other";
 }
 
 function sanitizeRelation(relation: string): string {
@@ -293,6 +382,77 @@ function computeDepths(links: GLink[], rootId: string | undefined): Map<string, 
 // Page
 // ---------------------------------------------------------------------------
 
+function FilterChipList(props: {
+  label: string;
+  entries: string[];
+  onAdd: (entries: string[]) => void;
+  onRemove: (entry: string) => void;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    const added = draft
+      .split(/[\s,]+/)
+      .map((entry) => entry.trim().replace(/\s*:\s*/g, ":"))
+      .filter((entry) => entry !== "" && !props.entries.includes(entry));
+    if (added.length === 0) {
+      setDraft("");
+      return;
+    }
+    props.onAdd([...props.entries, ...added]);
+    setDraft("");
+  };
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] text-norse-silver/60">{props.label}</span>
+      {props.entries.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {props.entries.map((entry) => (
+            <span
+              key={entry}
+              className="inline-flex items-center gap-1 rounded bg-norse-rune/40 border border-norse-rune px-1.5 py-0.5 text-[10px] font-mono text-norse-silver"
+            >
+              {entry}
+              <button
+                type="button"
+                aria-label={`remove ${entry}`}
+                onClick={() => props.onRemove(entry)}
+                className="text-norse-silver/60 hover:text-red-300"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-1">
+        <input
+          type="text"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              add();
+            }
+          }}
+          placeholder={props.placeholder}
+          spellCheck={false}
+          className="w-full rounded border border-norse-rune bg-norse-night px-1.5 py-1 text-[11px] text-norse-silver placeholder:text-norse-silver/30 focus:outline-none focus:border-sky-400"
+        />
+        <button
+          type="button"
+          onClick={add}
+          aria-label={`add ${props.label}`}
+          className="rounded border border-norse-rune bg-norse-night px-1.5 py-1 text-[11px] text-norse-silver/70 hover:border-sky-400"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Graphify() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<GraphifyForceGraph | null>(null);
@@ -311,6 +471,21 @@ export function Graphify() {
   const customRootRef = useRef<{ id: string; label: string } | null>(null);
   const [depth, setDepth] = useState<number>(DEFAULT_DEPTH);
   const [showTests, setShowTests] = useState(false);
+  // Filter entries are managed as add/remove lists in the filter panel;
+  // applying them reloads the graph with the lists sent to the
+  // neighborhood endpoint.
+  const [includeLabels, setIncludeLabels] = useState<string[]>([]);
+  const [includeEdgeTypes, setIncludeEdgeTypes] = useState<string[]>([
+    ...CALL_RELATION_TYPES,
+  ]);
+  const [includeProps, setIncludeProps] = useState<string[]>([]);
+  const [excludeLabels, setExcludeLabels] = useState<string[]>([]);
+  const [excludeEdgeTypes, setExcludeEdgeTypes] = useState<string[]>([]);
+  const [excludeProps, setExcludeProps] = useState<string[]>([]);
+  // Disconnected subgraphs reported by the endpoint after exclusion
+  // filters; selecting one dims the rest of the scene.
+  const [components, setComponents] = useState<GraphNeighborhoodResponse[]>([]);
+  const [activeComponent, setActiveComponent] = useState<number | null>(null);
   const [source, setSource] = useState<LoadSource | null>(null);
   const [status, setStatus] = useState<string>(
     "select a database and load the graphify tree",
@@ -403,14 +578,21 @@ export function Graphify() {
       .nodeOpacity(0.95)
       .nodeVal((n) => 1 + Math.sqrt(n.degree) * 0.55)
       .nodeColor((n) => {
+        if (n.dimmed) return "#1c2431";
         if (n.selected) return HIGHLIGHT_COLOR;
         if (n.highlight) return "#f0abfc";
         if (n.similar) return SIMILAR_COLOR;
-        return fileColor(n.fileType);
+        return KIND_COLORS[classifySymbolKind(n)] ?? DEFAULT_NODE_COLOR;
       })
       .linkOpacity(0.4)
-      .linkWidth((l) => (l.highlight ? 1.6 : 0.6))
-      .linkColor((l) => (l.highlight ? LINK_HIGHLIGHT : LINK_COLOR))
+      .linkWidth((l) => (l.dimmed ? 0.25 : l.highlight ? 1.6 : 0.6))
+      .linkColor((l) =>
+        l.dimmed
+          ? "rgba(148,163,184,0.08)"
+          : l.highlight
+            ? LINK_HIGHLIGHT
+            : LINK_COLOR,
+      )
       .linkDirectionalArrowLength(3.5)
       .linkDirectionalArrowRelPos(1)
       .linkCurvature(0.2)
@@ -423,7 +605,7 @@ export function Graphify() {
       })
       .nodeLabel(
         (n) =>
-          `${n.label}${n.sourceFile ? ` · ${n.sourceFile}${n.sourceLocation ? ":" + n.sourceLocation : ""}` : ""}`,
+          `${classifySymbolKind(n)} · ${n.label}${n.sourceFile ? ` · ${n.sourceFile}${n.sourceLocation ? ":" + n.sourceLocation : ""}` : ""}`,
       )
       .cooldownTicks(80)
       .warmupTicks(0)
@@ -437,6 +619,9 @@ export function Graphify() {
     charge?.strength(-8);
 
     graphRef.current = fg;
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__graphify = fg;
+    }
 
     const ro = new ResizeObserver(() => {
       fg.width(el.clientWidth);
@@ -561,6 +746,51 @@ export function Graphify() {
     },
     [selectNode],
   );
+
+  // --- Component filtering -------------------------------------------------
+
+  // Dims every node and link outside the selected disconnected component,
+  // and fits the camera to that component so disjoint subgraphs are easy to
+  // inspect one at a time.
+  const applyComponentDim = useCallback(
+    (index: number | null) => {
+      const fg = graphRef.current;
+      if (!fg) return;
+      const live = fg.graphData();
+      const memberIds =
+        index == null
+          ? null
+          : new Set(
+              (components[index]?.nodes ?? []).map((node) => node.id),
+            );
+      for (const node of live.nodes) {
+        node.dimmed = memberIds != null && !memberIds.has(node.id);
+      }
+      for (const link of live.links) {
+        const source =
+          typeof link.source === "object"
+            ? link.source.id
+            : String(link.source);
+        const target =
+          typeof link.target === "object"
+            ? link.target.id
+            : String(link.target);
+        link.dimmed =
+          memberIds != null && (!memberIds.has(source) || !memberIds.has(target));
+      }
+      fg.nodeColor(fg.nodeColor());
+      fg.linkColor(fg.linkColor());
+      fg.linkWidth(fg.linkWidth());
+      if (memberIds != null) {
+        fg.zoomToFit(400, 60, (node) => memberIds.has((node as GNode).id));
+      }
+    },
+    [components],
+  );
+
+  useEffect(() => {
+    applyComponentDim(activeComponent);
+  }, [activeComponent, applyComponentDim]);
 
   // --- Data loading ---------------------------------------------------------
 
@@ -690,7 +920,12 @@ export function Graphify() {
         nodeIds: [seedInternalId],
         depth,
         limit: NEIGHBORHOOD_LIMIT,
-        relationshipTypes: CALL_RELATION_TYPES,
+        labels: includeLabels,
+        relationshipTypes: includeEdgeTypes,
+        includeProperties: includeProps,
+        excludeLabels,
+        excludeRelationshipTypes: excludeEdgeTypes,
+        excludeProperties: excludeProps,
         direction: "both",
         database: dbName,
       });
@@ -771,6 +1006,8 @@ export function Graphify() {
       buildGraph(visibleNodes, visibleLinks, rootId);
       publicToInternalRef.current = publicToInternal;
       setSource({ kind: "db", name: dbName });
+      setComponents(hood.components ?? []);
+      setActiveComponent(null);
       // Auto-select the root (or the newly chosen re-root symbol) so its
       // details pane opens immediately after every (re)load.
       const focusId = customRootRef.current?.id ?? rootId;
@@ -785,6 +1022,9 @@ export function Graphify() {
       setStatus(
         `rooted at ${rootLabel} · depth ${depth} · ${visibleNodes.length} nodes · ${visibleLinks.length} links` +
           (!showTests ? " · tests hidden" : " · tests shown") +
+          (hood.components && hood.components.length > 1
+            ? ` · ${hood.components.length} components`
+            : "") +
           (hood.meta?.truncated ? " (truncated)" : ""),
       );
     } catch (err) {
@@ -794,7 +1034,20 @@ export function Graphify() {
     } finally {
       setLoading(false);
     }
-  }, [database, customRoot, depth, showTests, buildGraph, selectNode]);
+  }, [
+    database,
+    customRoot,
+    depth,
+    showTests,
+    buildGraph,
+    selectNode,
+    includeLabels,
+    includeEdgeTypes,
+    includeProps,
+    excludeLabels,
+    excludeEdgeTypes,
+    excludeProps,
+  ]);
 
   const ingestArtifact = useCallback(async () => {
     if (!uploadFile) return;
@@ -1317,16 +1570,21 @@ export function Graphify() {
             ? `${source.kind === "db" ? `database: ${source.name}` : source.name} · ${nodeCount} nodes · ${loadedLinks} links`
             : "graphify tree explorer"}
         </div>
-        <div className="mt-1 flex items-center gap-2 text-[10px] text-norse-silver/50 font-mono">
-          <span className="inline-block w-2 h-2 rounded-full bg-sky-400" /> code
-          <span className="inline-block w-2 h-2 rounded-full bg-amber-400" /> document
-          <span className="inline-block w-2 h-2 rounded-full bg-violet-400" /> other
-          <span className="inline-block w-2 h-2 rounded-full bg-pink-400" /> similar
+        <div className="mt-1 flex items-center gap-2 text-[10px] text-norse-silver/50 font-mono flex-wrap">
+          {KIND_LEGEND.map(([kind, color]) => (
+            <span key={kind} className="inline-flex items-center gap-1">
+              <span
+                className="inline-block w-2 h-2 rounded-full"
+                style={{ backgroundColor: color }}
+              />
+              {kind}
+            </span>
+          ))}
         </div>
       </div>
 
       {/* Controls (top-right) */}
-      <div className="absolute top-4 right-4 z-10 w-80 rounded-lg border border-sky-500/30 bg-norse-shadow/85 backdrop-blur px-4 py-3 shadow-[0_0_24px_rgba(56,189,248,0.15)]">
+      <div className="absolute top-4 right-4 z-10 w-80 max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-sky-500/30 bg-norse-shadow/85 backdrop-blur px-4 py-3 shadow-[0_0_24px_rgba(56,189,248,0.15)]">
         <div className="flex items-baseline justify-between">
           <span className="text-xs uppercase tracking-[0.25em] text-sky-300">
             Graph Source
@@ -1394,6 +1652,107 @@ export function Graphify() {
           >
             ↺ main entry
           </button>
+        </div>
+
+        <div className="mt-3 border-t border-norse-rune/60 pt-2">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-norse-silver/60">
+              Filters
+            </span>
+            <span className="text-[10px] text-norse-silver/50 font-mono">
+              include · exclude
+            </span>
+          </div>
+          <div className="mt-2 space-y-2">
+            <FilterChipList
+              label="include labels"
+              entries={includeLabels}
+              onAdd={setIncludeLabels}
+              onRemove={(entry) =>
+                setIncludeLabels(includeLabels.filter((item) => item !== entry))
+              }
+              placeholder="e.g. Code"
+            />
+            <FilterChipList
+              label="exclude labels"
+              entries={excludeLabels}
+              onAdd={setExcludeLabels}
+              onRemove={(entry) =>
+                setExcludeLabels(excludeLabels.filter((item) => item !== entry))
+              }
+              placeholder="e.g. Context"
+            />
+            <FilterChipList
+              label="include edge types"
+              entries={includeEdgeTypes}
+              onAdd={setIncludeEdgeTypes}
+              onRemove={(entry) =>
+                setIncludeEdgeTypes(
+                  includeEdgeTypes.filter((item) => item !== entry),
+                )
+              }
+              placeholder="e.g. CALLS"
+            />
+            <FilterChipList
+              label="exclude edge types"
+              entries={excludeEdgeTypes}
+              onAdd={setExcludeEdgeTypes}
+              onRemove={(entry) =>
+                setExcludeEdgeTypes(
+                  excludeEdgeTypes.filter((item) => item !== entry),
+                )
+              }
+              placeholder="e.g. IMPORTS"
+            />
+            <FilterChipList
+              label="include properties"
+              entries={includeProps}
+              onAdd={setIncludeProps}
+              onRemove={(entry) =>
+                setIncludeProps(includeProps.filter((item) => item !== entry))
+              }
+              placeholder="e.g. Code.entry or key:value"
+            />
+            <FilterChipList
+              label="exclude properties"
+              entries={excludeProps}
+              onAdd={setExcludeProps}
+              onRemove={(entry) =>
+                setExcludeProps(excludeProps.filter((item) => item !== entry))
+              }
+              placeholder="e.g. context.Context or key:value"
+            />
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void loadFromDatabase()}
+              disabled={!database || loading}
+              className="flex-1 rounded bg-sky-500/90 hover:bg-sky-400 text-slate-950 text-xs font-semibold px-2 py-1.5 disabled:opacity-40"
+            >
+              apply filters
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIncludeLabels([]);
+                setIncludeEdgeTypes([...CALL_RELATION_TYPES]);
+                setIncludeProps([]);
+                setExcludeLabels([]);
+                setExcludeEdgeTypes([]);
+                setExcludeProps([]);
+              }}
+              disabled={loading}
+              className="rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver/80 hover:border-sky-400 disabled:opacity-40"
+            >
+              reset
+            </button>
+          </div>
+          <div className="mt-1.5 text-[10px] text-norse-silver/50 font-mono leading-snug">
+            properties: dotted paths "key", "Label.key", "Type.key",
+            optionally ":value" to match the value, or a bare dotted symbol
+            name to hide it — exclusions may split the graph into components
+          </div>
         </div>
 
         <div className="mt-2 flex items-center gap-2">
@@ -1568,6 +1927,50 @@ export function Graphify() {
           </div>
         )}
       </div>
+
+      {/* Disconnected components (appear when exclusion filters fragment the
+          graph) */}
+      {components.length > 1 && (
+        <div className="absolute bottom-20 right-4 z-10 w-72 rounded-lg border border-norse-rune bg-norse-shadow/85 backdrop-blur px-3 py-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-norse-silver/60">
+              disconnected components ({components.length})
+            </span>
+            {activeComponent != null && (
+              <button
+                type="button"
+                onClick={() => setActiveComponent(null)}
+                className="text-[10px] text-sky-300 hover:text-sky-200"
+              >
+                show all
+              </button>
+            )}
+          </div>
+          <div className="mt-1.5 max-h-40 overflow-y-auto space-y-1">
+            {components.map((component, index) => (
+              <button
+                key={`${component.nodes[0]?.id ?? "empty"}-${index}`}
+                type="button"
+                onClick={() =>
+                  setActiveComponent(activeComponent === index ? null : index)
+                }
+                className={`block w-full text-left rounded px-2 py-1 text-[11px] font-mono ${
+                  activeComponent === index
+                    ? "bg-sky-500/20 text-sky-200"
+                    : "text-norse-silver hover:bg-norse-rune/40"
+                }`}
+              >
+                {index + 1}. {component.meta.node_count} nodes ·{" "}
+                {component.meta.edge_count} edges
+                {activeComponent === index ? " ✓" : ""}
+              </button>
+            ))}
+          </div>
+          <div className="mt-1 text-[10px] text-norse-silver/50">
+            selecting a component dims the rest and fits the camera
+          </div>
+        </div>
+      )}
 
       {/* Status bar (bottom) */}
       <div className="absolute bottom-4 left-4 right-4 z-10 flex items-center gap-4 rounded-lg border border-norse-rune bg-norse-shadow/80 backdrop-blur px-4 py-3">
