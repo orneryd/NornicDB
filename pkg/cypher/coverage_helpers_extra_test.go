@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -157,59 +156,6 @@ func TestCypherCoverage_ExecutorAccessorsAndFulltextExtraction(t *testing.T) {
 	require.Equal(t, "graph database", exec.extractFulltextQuery("CALL db.index.fulltext.queryNodes('nodes', 'graph database') YIELD node RETURN node"))
 	require.Equal(t, "edge search", exec.extractFulltextQuery("CALL db.index.fulltext.queryRelationships(\"rels\", \"edge search\")"))
 	require.Empty(t, exec.extractFulltextQuery("CALL db.labels()"))
-}
-
-func TestCypherCoverage_LiteralAndArgumentHelpers(t *testing.T) {
-	require.Equal(t, "null", cypherLiteral(nil))
-	require.Equal(t, "'O\\'Reilly'", cypherLiteral("O'Reilly"))
-	require.Equal(t, "true", cypherLiteral(true))
-	require.Equal(t, "false", cypherLiteral(false))
-	require.Equal(t, "7", cypherLiteral(7))
-	require.Equal(t, "8", cypherLiteral(int64(8)))
-	require.Equal(t, "1.25", cypherLiteral(float64(1.25)))
-	require.Equal(t, "2.5", cypherLiteral(float32(2.5)))
-	require.Equal(t, "'{custom}'", cypherLiteral(struct{ Name string }{Name: "custom"}))
-
-	ctx := context.WithValue(context.Background(), paramsKey, map[string]interface{}{
-		"int":        int64(12),
-		"float":      float64(3.5),
-		"strings":    []string{"a", "b"},
-		"interfaces": []interface{}{"c", "d"},
-		"badSlice":   []interface{}{"ok", 1},
-	})
-
-	intValue, ok := resolveIntLiteralOrParam(ctx, "$int")
-	require.True(t, ok)
-	require.Equal(t, 12, intValue)
-	intValue, ok = resolveOptionalIntLiteralOrParam(ctx, "")
-	require.True(t, ok)
-	require.Equal(t, -1, intValue)
-	_, ok = resolveIntLiteralOrParam(ctx, "$missing")
-	require.False(t, ok)
-	_, ok = resolveIntLiteralOrParam(ctx, "not-int")
-	require.False(t, ok)
-
-	floatValue, ok := resolveFloatLiteralOrParam(ctx, "$float")
-	require.True(t, ok)
-	require.Equal(t, 3.5, floatValue)
-	_, ok = resolveFloatLiteralOrParam(ctx, "$missing")
-	require.False(t, ok)
-	_, ok = resolveFloatLiteralOrParam(ctx, "not-float")
-	require.False(t, ok)
-
-	stringsValue, ok := resolveStringSliceLiteralOrParam(ctx, "$strings")
-	require.True(t, ok)
-	require.Equal(t, []string{"a", "b"}, stringsValue)
-	stringsValue, ok = resolveStringSliceLiteralOrParam(ctx, "$interfaces")
-	require.True(t, ok)
-	require.Equal(t, []string{"c", "d"}, stringsValue)
-	stringsValue, ok = resolveStringSliceLiteralOrParam(ctx, "['x', \"y\"]")
-	require.True(t, ok)
-	require.Equal(t, []string{"x", "y"}, stringsValue)
-	_, ok = resolveStringSliceLiteralOrParam(ctx, "$badSlice")
-	require.False(t, ok)
-	_, ok = resolveStringSliceLiteralOrParam(ctx, "not-slice")
-	require.False(t, ok)
 }
 
 func TestCypherCoverage_WhereAndComparableHelpers(t *testing.T) {

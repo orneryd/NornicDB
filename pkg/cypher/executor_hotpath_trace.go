@@ -14,7 +14,6 @@ type HotPathTrace struct {
 	UnwindRelationshipMergeBatch bool
 	UnwindFixedChainLinkBatch    bool
 	UnwindMultiMatchCreateBatch  bool
-	CallTailTraversalFastPath    bool
 	CallTailProjectionFastPath   bool
 	CallTailPipelineUsed         bool
 	MergeSchemaLookupUsed        bool
@@ -165,15 +164,6 @@ func (e *StorageExecutor) markCallTailProjectionFastPathUsed() {
 	}
 	e.hotPathTraceState.mu.Lock()
 	e.hotPathTraceState.trace.CallTailProjectionFastPath = true
-	e.hotPathTraceState.mu.Unlock()
-}
-
-func (e *StorageExecutor) markCallTailTraversalFastPathUsed() {
-	if e.hotPathTraceState == nil {
-		e.hotPathTraceState = &hotPathTraceState{}
-	}
-	e.hotPathTraceState.mu.Lock()
-	e.hotPathTraceState.trace.CallTailTraversalFastPath = true
 	e.hotPathTraceState.mu.Unlock()
 }
 

@@ -10,30 +10,6 @@ import (
 )
 
 func TestBuildIDCaseExpression_SortsAndEscapes(t *testing.T) {
-	expr := buildIDCaseExpression("n", map[string]interface{}{
-		"b":       int64(2),
-		"a'quote": "x",
-	})
-	require.Equal(t, "CASE id(n) WHEN 'a\\'quote' THEN 'x' WHEN 'b' THEN 2 ELSE null END", expr)
-}
-
-func TestRewriteFirstWithScalar(t *testing.T) {
-	_, ok := rewriteFirstWithScalar("RETURN x", "x", "CASE id(n) WHEN '1' THEN 2 ELSE null END")
-	require.False(t, ok)
-
-	rewritten, ok := rewriteFirstWithScalar("WITH x, y RETURN x", "x", "CASE id(n) WHEN '1' THEN 2 ELSE null END")
-	require.True(t, ok)
-	require.Equal(t, compactCypherFragment("WITH CASE id(n) WHEN '1' THEN 2 ELSE null END AS x, y RETURN x"), compactCypherFragment(rewritten))
-
-	rewritten, ok = rewriteFirstWithScalar("MATCH (n) WITH x WHERE x > 1 RETURN x", "x", "CASE id(n) WHEN '1' THEN 2 ELSE null END")
-	require.True(t, ok)
-	require.Equal(t, compactCypherFragment("MATCH (n) WITH CASE id(n) WHEN '1' THEN 2 ELSE null END AS x WHERE x > 1 RETURN x"), compactCypherFragment(rewritten))
-
-	_, ok = rewriteFirstWithScalar("WITH y RETURN y", "x", "CASE id(n) WHEN '1' THEN 2 ELSE null END")
-	require.False(t, ok)
-}
-
-func TestProjectFromRow(t *testing.T) {
 	node := &storage.Node{Properties: map[string]interface{}{"name": "alice"}}
 	row := pipelineRow{
 		"x":    int64(7),

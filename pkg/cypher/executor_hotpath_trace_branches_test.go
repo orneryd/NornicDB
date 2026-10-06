@@ -22,7 +22,6 @@ func TestHotPathTrace_AllMarkers(t *testing.T) {
 	exec.markUnwindRelationshipMergeBatchUsed()
 	exec.markUnwindFixedChainLinkBatchUsed()
 	exec.markUnwindMultiMatchCreateBatchUsed()
-	exec.markCallTailTraversalFastPathUsed()
 	exec.markMergeSchemaLookupUsed()
 	exec.markMergeScanFallbackUsed()
 
@@ -38,7 +37,6 @@ func TestHotPathTrace_AllMarkers(t *testing.T) {
 	require.True(t, trace.UnwindRelationshipMergeBatch)
 	require.True(t, trace.UnwindFixedChainLinkBatch)
 	require.True(t, trace.UnwindMultiMatchCreateBatch)
-	require.True(t, trace.CallTailTraversalFastPath)
 	require.True(t, trace.MergeSchemaLookupUsed)
 	require.True(t, trace.MergeScanFallbackUsed)
 }

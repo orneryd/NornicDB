@@ -205,7 +205,6 @@ func TestVectorQueryHelpers_AndHotPathTraceMarks(t *testing.T) {
 	exec.markUnwindMergeChainBatchUsed()
 	exec.markUnwindFixedChainLinkBatchUsed()
 	exec.markUnwindMultiMatchCreateBatchUsed()
-	exec.markCallTailTraversalFastPathUsed()
 	exec.markMergeSchemaLookupUsed()
 	exec.markMergeScanFallbackUsed()
 
@@ -220,7 +219,6 @@ func TestVectorQueryHelpers_AndHotPathTraceMarks(t *testing.T) {
 	exec.markUnwindMergeChainBatchUsed()
 	exec.markUnwindFixedChainLinkBatchUsed()
 	exec.markUnwindMultiMatchCreateBatchUsed()
-	exec.markCallTailTraversalFastPathUsed()
 	exec.markMergeSchemaLookupUsed()
 	exec.markMergeScanFallbackUsed()
 
@@ -235,7 +233,6 @@ func TestVectorQueryHelpers_AndHotPathTraceMarks(t *testing.T) {
 	require.True(t, trace.UnwindMergeChainBatch)
 	require.True(t, trace.UnwindFixedChainLinkBatch)
 	require.True(t, trace.UnwindMultiMatchCreateBatch)
-	require.True(t, trace.CallTailTraversalFastPath)
 	require.True(t, trace.MergeSchemaLookupUsed)
 	require.True(t, trace.MergeScanFallbackUsed)
 }
