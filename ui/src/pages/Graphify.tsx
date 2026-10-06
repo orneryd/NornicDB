@@ -143,21 +143,60 @@ function bubbleRadius(count: number): number {
   return 14 + Math.sqrt(count) * 4.5;
 }
 
-// Configure the layout orientation: the root sits at the top of the scene
-// and every symbol kind forms its own spherical bubble; the bubbles hang
-// below the root in a ring, forming a half-dome. Nodes are scattered inside
-// their kind's bubble with a Fibonacci sphere so neighborhoods read as
-// three-dimensional clusters rather than a hierarchical cone.
-function orientGraph(fg: GraphifyForceGraph, _links: GLink[], nodes: GNode[], rootId: string | null): void {
+// callTreeLayout computes BFS depth from the root along call-kind links so
+// function calls can be drawn as a branching tree instead of a sphere.
+function callTreeLayout(
+  links: GLink[],
+  rootId: string | null,
+): Map<string, number> {
+  const depths = new Map<string, number>();
+  if (rootId == null) {
+    return depths;
+  }
+  const idOf = (end: string | GNode) => (typeof end === "object" ? end.id : end);
+  const children = new Map<string, string[]>();
+  for (const link of links) {
+    const source = idOf(link.source);
+    const target = idOf(link.target);
+    const list = children.get(source) ?? [];
+    list.push(target);
+    children.set(source, list);
+  }
+  depths.set(rootId, 0);
+  const queue: Array<[string, number]> = [[rootId, 0]];
+  while (queue.length > 0) {
+    const [current, depth] = queue.shift() as [string, number];
+    for (const child of children.get(current) ?? []) {
+      if (!depths.has(child)) {
+        depths.set(child, depth + 1);
+        queue.push([child, depth + 1]);
+      }
+    }
+  }
+  return depths;
+}
+
+// Configure the layout orientation: the root sits at the top of the scene.
+// Function calls form a branching tree descending from the root (level
+// rings, parents fanning out to children), while every other symbol kind
+// stays a spherical Fibonacci-scatter bubble ringed around the tree as a
+// half-dome. Positions are pinned so the camera frame stays stable.
+function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], rootId: string | null): void {
   // dagMode derives levels from link direction, so it stays off; this
   // layout owns the positions.
   setDagMode(fg, null);
   fg.d3Force("layers", null);
 
   const root = rootId != null ? nodes.find((node) => node.id === rootId) : null;
+  const callDepths = callTreeLayout(links, rootId);
+  const callNodes: GNode[] = [];
   const byKind = new Map<string, GNode[]>();
   for (const node of nodes) {
     if (root != null && node.id === root.id) {
+      continue;
+    }
+    if (classifySymbolKind(node) === "call" && callDepths.has(node.id)) {
+      callNodes.push(node);
       continue;
     }
     const kind = classifySymbolKind(node);
@@ -166,15 +205,6 @@ function orientGraph(fg: GraphifyForceGraph, _links: GLink[], nodes: GNode[], ro
     byKind.set(kind, group);
   }
   const kinds = Array.from(byKind.keys()).sort();
-
-  let maxBubble = 0;
-  for (const group of byKind.values()) {
-    maxBubble = Math.max(maxBubble, bubbleRadius(group.length));
-  }
-
-  const rootY = maxBubble + 120;
-  const ringRadius = maxBubble + 120;
-  const ringY = rootY - maxBubble - 70;
 
   const pinNode = (node: GNode, x: number, y: number, z: number) => {
     node.x = x;
@@ -188,17 +218,80 @@ function orientGraph(fg: GraphifyForceGraph, _links: GLink[], nodes: GNode[], ro
     node.fz = z;
   };
 
+  let maxBubble = 0;
+  for (const group of byKind.values()) {
+    maxBubble = Math.max(maxBubble, bubbleRadius(group.length));
+  }
+
+  // The call tree occupies the center: a radial tidy tree where every
+  // parent fans its children out inside its own angular window, so the
+  // branches are visible instead of collapsing into a dense ball.
+  const idOf = (end: string | GNode) => (typeof end === "object" ? end.id : end);
+  const callChildren = new Map<string, GNode[]>();
+  for (const link of links) {
+    const source = idOf(link.source);
+    const target = idOf(link.target);
+    const sourceNode = source === root?.id ? root : callNodes.find((node) => node.id === source);
+    const targetNode = callNodes.find((node) => node.id === target);
+    if (!sourceNode || !targetNode) {
+      continue;
+    }
+    const siblings = callChildren.get(source) ?? [];
+    siblings.push(targetNode);
+    callChildren.set(source, siblings);
+  }
+  for (const siblings of callChildren.values()) {
+    siblings.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  let maxCallDepth = 0;
+  for (const depth of callDepths.values()) {
+    maxCallDepth = Math.max(maxCallDepth, depth);
+  }
+  const rootY = Math.max(maxBubble + 140, 260 + maxCallDepth * 90);
+
   if (root != null) {
     pinNode(root, 0, rootY, 0);
   }
 
+  interface TreeSlot {
+    node: GNode;
+    depth: number;
+    start: number;
+    end: number;
+  }
+  const slotQueue: TreeSlot[] = [];
+  if (root != null && classifySymbolKind(root) === "call") {
+    slotQueue.push({ node: root, depth: 0, start: 0, end: 2 * Math.PI });
+  }
+  let slotHead = 0;
+  while (slotHead < slotQueue.length) {
+    const slot = slotQueue[slotHead];
+    slotHead += 1;
+    const children = callChildren.get(slot.node.id) ?? [];
+    const childCount = children.length;
+    children.forEach((child, index) => {
+      const start = slot.start + ((slot.end - slot.start) * index) / childCount;
+      const end = slot.start + ((slot.end - slot.start) * (index + 1)) / childCount;
+      const depth = slot.depth + 1;
+      const radius = 60 + depth * 70;
+      const levelY = rootY - 90 - depth * 90;
+      const angle = (start + end) / 2;
+      pinNode(child, Math.cos(angle) * radius, levelY, Math.sin(angle) * radius);
+      slotQueue.push({ node: child, depth, start, end });
+    });
+  }
+
+  // Non-call kinds ring around the tree, outside its radial extent.
+  const ringRadius = 60 + maxCallDepth * 70 + maxBubble + 60;
+  const ringY = rootY - maxBubble - 70;
   kinds.forEach((kind, kindIndex) => {
     const group = byKind.get(kind) ?? [];
-    const azimuth = (2 * Math.PI * kindIndex) / Math.max(kinds.length, 1) - Math.PI / 2;
+    const azimuth =
+      (2 * Math.PI * kindIndex) / Math.max(kinds.length, 1) - Math.PI / 2;
     const radius = bubbleRadius(group.length);
     const centerX = Math.cos(azimuth) * ringRadius;
     const centerZ = Math.sin(azimuth) * ringRadius;
-    const centerY = ringY;
     group.forEach((node, index) => {
       // Fibonacci sphere inside the bubble.
       const y = group.length === 1 ? 0 : 1 - (2 * index) / (group.length - 1);
@@ -207,7 +300,7 @@ function orientGraph(fg: GraphifyForceGraph, _links: GLink[], nodes: GNode[], ro
       pinNode(
         node,
         centerX + Math.cos(theta) * radiusAt * radius,
-        centerY + y * radius,
+        ringY + y * radius,
         centerZ + Math.sin(theta) * radiusAt * radius,
       );
     });
@@ -216,6 +309,7 @@ function orientGraph(fg: GraphifyForceGraph, _links: GLink[], nodes: GNode[], ro
   if (import.meta.env.DEV) {
     (window as unknown as Record<string, unknown>).__graphifyDebug = {
       rootId,
+      callTree: { nodes: callNodes.length, maxDepth: maxCallDepth },
       bubbles: kinds.map((kind) => ({
         kind,
         count: byKind.get(kind)?.length ?? 0,
@@ -467,6 +561,31 @@ export function Graphify() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showTests]);
+
+  // Filters apply automatically: adding or removing any entry reloads the
+  // graph with the updated lists (the first render is skipped so the Load
+  // tree button drives the initial fetch).
+  const filtersKey = JSON.stringify([
+    includeLabels,
+    includeEdgeTypes,
+    includeNames,
+    includeProps,
+    excludeLabels,
+    excludeEdgeTypes,
+    excludeNames,
+    excludeProps,
+  ]);
+  const filtersFirstRenderRef = useRef(true);
+  useEffect(() => {
+    if (filtersFirstRenderRef.current) {
+      filtersFirstRenderRef.current = false;
+      return;
+    }
+    if (database && !loading) {
+      void loadFromDatabase();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey]);
 
   // --- Graph init (once) ---------------------------------------------------
 
@@ -1678,6 +1797,7 @@ export function Graphify() {
             </button>
           </div>
           <div className="mt-1.5 text-[10px] text-norse-silver/50 font-mono leading-snug">
+            filters apply automatically when you add or remove an entry ·
             names match the symbol name exactly · properties match key +
             optional value, optionally scoped to a label or edge type —
             exclusions may split the graph into components
