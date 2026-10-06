@@ -43,19 +43,35 @@ type graphRequest struct {
 	// disconnected components, reported in the payload's components field.
 	ExcludeLabels            []string `json:"exclude_labels,omitempty"`
 	ExcludeRelationshipTypes []string `json:"exclude_relationship_types,omitempty"`
-	// ExcludeProperties entries are property paths: "key" matches the
-	// property key on any node or edge, "Label.key" (or "Type.key")
-	// additionally constrains the node's labels (or the edge's type).
-	// A ":value" suffix matches the property value ("context:ctx"), and a
-	// bare dotted entry also matches the node's symbol name exactly
-	// ("context.Context" hides the variable context.Context).
-	ExcludeProperties []string `json:"exclude_properties,omitempty"`
-	// IncludeProperties is the inclusion mirror of ExcludeProperties: when
-	// set, nodes and edges are kept only when they match at least one
-	// entry (a node must also carry the scoped label, an edge the scoped
-	// type). It combines with labels / relationship_types with AND
-	// semantics and with ExcludeProperties with exclude-after-include.
-	IncludeProperties []string `json:"include_properties,omitempty"`
+	// ExcludeNames removes nodes whose symbol name (the "label" property)
+	// equals an entry exactly, e.g. "context.Context" hides the variable
+	// context.Context.
+	ExcludeNames []string `json:"exclude_names,omitempty"`
+	// ExcludeProperties entries match nodes and edges by explicit fields:
+	// scope optionally constrains the node's labels (or the edge's type),
+	// property is the property key, and value optionally constrains the
+	// property's value.
+	ExcludeProperties []graphPropertyFilterRequest `json:"exclude_properties,omitempty"`
+	// IncludeNames and IncludeProperties are the inclusion mirrors: when
+	// set, nodes are kept only when they match at least one name entry and
+	// at least one applicable property entry (a node must also carry the
+	// scoped label, an edge the scoped type). They combine with labels /
+	// relationship_types with AND semantics and with the exclusion filters
+	// with exclude-after-include.
+	IncludeNames      []string                     `json:"include_names,omitempty"`
+	IncludeProperties []graphPropertyFilterRequest `json:"include_properties,omitempty"`
+}
+
+// graphPropertyFilterRequest is one explicit property filter entry.
+type graphPropertyFilterRequest struct {
+	// Scope optionally constrains the node's labels or the edge's type;
+	// empty matches any node or edge.
+	Scope string `json:"scope,omitempty"`
+	// Property is the property key to match (required).
+	Property string `json:"property"`
+	// Value optionally constrains the property's value; nil only requires
+	// the property to exist.
+	Value *string `json:"value,omitempty"`
 }
 
 type graphNodePayload struct {
@@ -103,22 +119,22 @@ type graphPayload struct {
 type graphFilterSet struct {
 	labels            map[string]struct{}
 	relationshipTypes map[string]struct{}
+	includeNames      map[string]struct{}
 	includeProperties []graphPropertyFilter
 	excludeLabels     map[string]struct{}
 	excludeRelTypes   map[string]struct{}
+	excludeNames      map[string]struct{}
 	excludeProperties []graphPropertyFilter
 }
 
-// graphPropertyFilter is one exclude_properties / include_properties entry:
-// an optional scope (a node label, an edge type, or the leading segment of a
-// symbol name) and a property key path inside the entity. An empty scope
-// matches any node or edge. A non-nil value constrains the final property to
-// equal that value (e.g. "context:ctx", "Context.context:ctx"); a nil value
-// only requires the path to exist.
+// graphPropertyFilter is one explicit property filter entry: an optional
+// scope (a node label or an edge type), the property key, and an optional
+// equality constraint on the property value. No string parsing happens at
+// this layer; the request carries the fields explicitly.
 type graphPropertyFilter struct {
-	scope string
-	path  []string
-	value *string
+	scope    string
+	property string
+	value    *string
 }
 
 type graphCollection struct {
@@ -179,7 +195,7 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.GraphDirectionInvalid(), ErrBadRequest)
 		return
 	}
-	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes).withFilters(req.IncludeProperties, req.ExcludeLabels, req.ExcludeRelationshipTypes, req.ExcludeProperties)
+	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes).withFilters(req.IncludeNames, req.ExcludeNames, req.IncludeProperties, req.ExcludeProperties, req.ExcludeLabels, req.ExcludeRelationshipTypes)
 	dbName, engine, err := s.resolveGraphStorage(r)
 	if err != nil {
 		s.writeGraphResolveError(w, r, err)
@@ -470,6 +486,15 @@ func (f graphFilterSet) allowNode(node *storage.Node) bool {
 			return false
 		}
 	}
+	if len(f.includeNames) > 0 {
+		name, ok := node.Properties["label"].(string)
+		if !ok {
+			return false
+		}
+		if _, in := f.includeNames[name]; !in {
+			return false
+		}
+	}
 	if len(f.includeProperties) > 0 {
 		// Relevance model: a scoped entry gates only nodes carrying that
 		// label; an unscoped entry gates every node. When at least one entry
@@ -479,7 +504,7 @@ func (f graphFilterSet) allowNode(node *storage.Node) bool {
 		for _, filter := range f.includeProperties {
 			if filter.scope == "" {
 				relevant++
-				if filterPathMatchesNode(filter, node.Labels, node.Properties) {
+				if propertyMatches(node.Properties, filter.property, filter.value) {
 					matched++
 				}
 				continue
@@ -487,7 +512,7 @@ func (f graphFilterSet) allowNode(node *storage.Node) bool {
 			for _, label := range node.Labels {
 				if label == filter.scope {
 					relevant++
-					if filterPathMatchesNode(filter, node.Labels, node.Properties) {
+					if propertyMatches(node.Properties, filter.property, filter.value) {
 						matched++
 					}
 					break
@@ -510,11 +535,11 @@ func (f graphFilterSet) allowEdge(edge *storage.Edge) bool {
 			return false
 		}
 	}
-	// Include property paths gate edges only when scoped to the edge's type
-	// (relevance model: type-scoped entries apply to matching edges, and a
-	// matching edge must satisfy at least one of them). Unscoped entries are
-	// node-oriented and leave edge traversal free so node inclusion can
-	// still walk the graph.
+	// Include property filters gate edges only when scoped to the edge's
+	// type (relevance model: type-scoped entries apply to matching edges,
+	// and a matching edge must satisfy at least one of them). Unscoped
+	// entries are node-oriented and leave edge traversal free so node
+	// inclusion can still walk the graph.
 	if len(f.includeProperties) > 0 {
 		relevant := 0
 		matched := 0
@@ -523,7 +548,7 @@ func (f graphFilterSet) allowEdge(edge *storage.Edge) bool {
 				continue
 			}
 			relevant++
-			if propertyPathMatches(edge.Properties, filter.path, filter.value) {
+			if propertyMatches(edge.Properties, filter.property, filter.value) {
 				matched++
 			}
 		}
@@ -535,21 +560,30 @@ func (f graphFilterSet) allowEdge(edge *storage.Edge) bool {
 }
 
 // withFilters returns a copy of the filter set augmented with the inclusion
-// and exclusion filters. Entries are whitespace-trimmed; empty entries are
-// ignored.
-func (f graphFilterSet) withFilters(includeProperties, excludeLabels, excludeRelationshipTypes, excludeProperties []string) graphFilterSet {
-	if len(includeProperties) == 0 && len(excludeLabels) == 0 && len(excludeRelationshipTypes) == 0 && len(excludeProperties) == 0 {
+// and exclusion filters. Name entries are whitespace-trimmed; property
+// entries without a property key are ignored.
+func (f graphFilterSet) withFilters(includeNames, excludeNames []string, includeProperties, excludeProperties []graphPropertyFilterRequest, excludeLabels, excludeRelationshipTypes []string) graphFilterSet {
+	if len(includeNames) == 0 && len(excludeNames) == 0 && len(includeProperties) == 0 && len(excludeProperties) == 0 && len(excludeLabels) == 0 && len(excludeRelationshipTypes) == 0 {
 		return f
 	}
 	out := graphFilterSet{
 		labels:            f.labels,
 		relationshipTypes: f.relationshipTypes,
+		includeNames:      make(map[string]struct{}),
 		excludeLabels:     make(map[string]struct{}),
 		excludeRelTypes:   make(map[string]struct{}),
+		excludeNames:      make(map[string]struct{}),
 	}
-	for _, raw := range includeProperties {
-		if filter := parseGraphPropertyFilter(raw); filter != nil {
-			out.includeProperties = append(out.includeProperties, *filter)
+	for _, name := range includeNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			out.includeNames[name] = struct{}{}
+		}
+	}
+	for _, name := range excludeNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			out.excludeNames[name] = struct{}{}
 		}
 	}
 	for _, label := range excludeLabels {
@@ -564,73 +598,57 @@ func (f graphFilterSet) withFilters(includeProperties, excludeLabels, excludeRel
 			out.excludeRelTypes[relType] = struct{}{}
 		}
 	}
-	for _, raw := range excludeProperties {
-		if filter := parseGraphPropertyFilter(raw); filter != nil {
+	for _, entry := range includeProperties {
+		if filter := newGraphPropertyFilter(entry); filter != nil {
+			out.includeProperties = append(out.includeProperties, *filter)
+		}
+	}
+	for _, entry := range excludeProperties {
+		if filter := newGraphPropertyFilter(entry); filter != nil {
 			out.excludeProperties = append(out.excludeProperties, *filter)
 		}
 	}
 	return out
 }
 
-func (f graphFilterSet) hasExclusions() bool {
-	return len(f.excludeLabels) > 0 || len(f.excludeRelTypes) > 0 || len(f.excludeProperties) > 0
-}
-
-// parseGraphPropertyFilter parses "key", "Label.key" or deeper paths like
-// "Label.prop.sub", optionally suffixed with ":value" to match the property
-// value instead of mere presence ("Context.context:ctx"). A single segment
-// matches the key on any node or edge; a dotted entry constrains the first
-// segment to a node label or edge type. Returns nil for entries with no
-// usable segments.
-func parseGraphPropertyFilter(raw string) *graphPropertyFilter {
-	raw = strings.TrimSpace(raw)
-	var value *string
-	if colon := strings.LastIndex(raw, ":"); colon >= 0 {
-		valuePart := strings.TrimSpace(raw[colon+1:])
-		if valuePart != "" {
-			value = &valuePart
-		}
-		raw = strings.TrimSpace(raw[:colon])
-	}
-	segments := strings.Split(raw, ".")
-	cleaned := make([]string, 0, len(segments))
-	for _, segment := range segments {
-		segment = strings.TrimSpace(segment)
-		if segment != "" {
-			cleaned = append(cleaned, segment)
-		}
-	}
-	if len(cleaned) == 0 {
+// newGraphPropertyFilter converts an explicit request entry; entries without
+// a property key are rejected.
+func newGraphPropertyFilter(entry graphPropertyFilterRequest) *graphPropertyFilter {
+	property := strings.TrimSpace(entry.Property)
+	if property == "" {
 		return nil
 	}
-	if len(cleaned) == 1 {
-		return &graphPropertyFilter{path: cleaned, value: value}
+	filter := &graphPropertyFilter{
+		scope:    strings.TrimSpace(entry.Scope),
+		property: property,
 	}
-	return &graphPropertyFilter{scope: cleaned[0], path: cleaned[1:], value: value}
+	if entry.Value != nil {
+		value := strings.TrimSpace(*entry.Value)
+		if value != "" {
+			filter.value = &value
+		}
+	}
+	return filter
 }
 
-// propertyPathMatches reports whether the nested property path is present in
-// props (each segment must be a map key along the way). When want is nil,
-// presence is enough; otherwise the final property must equal want.
-func propertyPathMatches(props map[string]interface{}, path []string, want *string) bool {
-	if props == nil || len(path) == 0 {
+func (f graphFilterSet) hasExclusions() bool {
+	return len(f.excludeLabels) > 0 || len(f.excludeRelTypes) > 0 || len(f.excludeNames) > 0 || len(f.excludeProperties) > 0
+}
+
+// propertyMatches reports whether the node or edge carries the property key;
+// when want is non-nil the property's value must equal it.
+func propertyMatches(props map[string]interface{}, key string, want *string) bool {
+	if props == nil || key == "" {
 		return false
 	}
-	value, ok := props[path[0]]
+	value, ok := props[key]
 	if !ok {
 		return false
 	}
-	if len(path) == 1 {
-		if want == nil {
-			return true
-		}
-		return propertyValueMatches(value, *want)
+	if want == nil {
+		return true
 	}
-	nested, ok := value.(map[string]interface{})
-	if !ok {
-		return false
-	}
-	return propertyPathMatches(nested, path[1:], want)
+	return propertyValueMatches(value, *want)
 }
 
 // propertyValueMatches compares a property value against a user-supplied
@@ -662,25 +680,10 @@ func propertyValueMatches(actual interface{}, want string) bool {
 	}
 }
 
-// propertyPathExists reports whether the nested property path is present in
-// props (each segment must be a map key along the way).
-func propertyPathExists(props map[string]interface{}, path []string) bool {
-	return propertyPathMatches(props, path, nil)
-}
-
-// filterPathMatchesNode reports whether a property-path filter matches a
-// node. Three dimensions match:
-//   - an exact symbol name: the dotted entry equals the node's "label"
-//     property (e.g. "context.Context" hides the variable context.Context);
-//   - a property path whose scope is empty or one of the node's labels;
-//   - with ":value", the final property must equal that value.
-func filterPathMatchesNode(filter graphPropertyFilter, labels []string, props map[string]interface{}) bool {
-	if filter.value == nil {
-		joined := strings.Join(append([]string{filter.scope}, filter.path...), ".")
-		if name, ok := props["label"].(string); ok && name == joined {
-			return true
-		}
-	}
+// filterPropertyMatchesNode reports whether an explicit property filter
+// matches a node: the scope must be empty or one of the node's labels, and
+// the property must exist (and equal the value when constrained).
+func filterPropertyMatchesNode(filter graphPropertyFilter, labels []string, props map[string]interface{}) bool {
 	if filter.scope != "" {
 		scopeMatches := false
 		for _, label := range labels {
@@ -693,20 +696,25 @@ func filterPathMatchesNode(filter graphPropertyFilter, labels []string, props ma
 			return false
 		}
 	}
-	return propertyPathMatches(props, filter.path, filter.value)
+	return propertyMatches(props, filter.property, filter.value)
 }
 
 // excludeNodePayload reports whether a collected node matches any exclusion
-// filter: an excluded label, or an excluded property path whose scope is
-// empty or one of the node's labels.
+// filter: an excluded label, an excluded symbol name, or an excluded
+// property entry whose scope is empty or one of the node's labels.
 func (f graphFilterSet) excludeNodePayload(node graphNodePayload) bool {
 	for _, label := range node.Labels {
 		if _, ok := f.excludeLabels[label]; ok {
 			return true
 		}
 	}
+	if name, ok := node.Properties["label"].(string); ok {
+		if _, in := f.excludeNames[name]; in {
+			return true
+		}
+	}
 	for _, filter := range f.excludeProperties {
-		if filterPathMatchesNode(filter, node.Labels, node.Properties) {
+		if filterPropertyMatchesNode(filter, node.Labels, node.Properties) {
 			return true
 		}
 	}
@@ -724,7 +732,7 @@ func (f graphFilterSet) excludeEdgePayload(edge graphEdgePayload) bool {
 		if filter.scope != "" && filter.scope != edge.Type {
 			continue
 		}
-		if propertyPathMatches(edge.Properties, filter.path, filter.value) {
+		if propertyMatches(edge.Properties, filter.property, filter.value) {
 			return true
 		}
 	}

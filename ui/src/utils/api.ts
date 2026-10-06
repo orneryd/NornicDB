@@ -87,6 +87,12 @@ export interface GraphMetaPayload {
   truncated: boolean;
 }
 
+export interface GraphPropertyFilter {
+  scope?: string;
+  property: string;
+  value?: string;
+}
+
 export interface GraphNeighborhoodResponse {
   nodes: GraphNodePayload[];
   edges: GraphEdgePayload[];
@@ -1006,10 +1012,12 @@ class NornicDBClient {
     labels?: string[];
     relationshipTypes?: string[];
     direction?: "out" | "in" | "both";
-    includeProperties?: string[];
+    includeNames?: string[];
+    excludeNames?: string[];
+    includeProperties?: GraphPropertyFilter[];
+    excludeProperties?: GraphPropertyFilter[];
     excludeLabels?: string[];
     excludeRelationshipTypes?: string[];
-    excludeProperties?: string[];
     database?: string;
   }): Promise<GraphNeighborhoodResponse> {
     const dbName = await this.getResolvedDatabaseName(options.database);
@@ -1029,10 +1037,12 @@ class NornicDBClient {
           labels: options.labels,
           relationship_types: options.relationshipTypes,
           direction: options.direction,
+          include_names: options.includeNames,
+          exclude_names: options.excludeNames,
           include_properties: options.includeProperties,
+          exclude_properties: options.excludeProperties,
           exclude_labels: options.excludeLabels,
           exclude_relationship_types: options.excludeRelationshipTypes,
-          exclude_properties: options.excludeProperties,
         }),
       },
     );
