@@ -111,7 +111,10 @@ func (w *transactionStorageWrapper) ensureNodeLookupCacheLocked(seedFrom *Storag
 		return
 	}
 	w.txNodeLookupCacheMu = &sync.RWMutex{}
-	w.txNodeLookupCache = make(map[string]*storage.Node, 1000)
+	// Lazy-sized map: autocommit transactions rarely touch more than a
+	// handful of nodes, and an eager 1000-bucket table was ~5% of TCK
+	// allocation space per statement (#48).
+	w.txNodeLookupCache = make(map[string]*storage.Node)
 	if seedFrom == nil {
 		return
 	}

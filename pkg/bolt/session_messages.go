@@ -385,7 +385,7 @@ func (s *Session) handleRun(data []byte) error {
 		if err := s.sendSuccessNoFlush(successMetadata); err != nil {
 			return err
 		}
-		return s.flushIfPending()
+		return s.flushRunResponse()
 	}
 	successMetadata := map[string]any{
 		"fields":  result.Columns,
@@ -394,6 +394,20 @@ func (s *Session) handleRun(data []byte) error {
 	addDurableQIDMetadata(successMetadata, result)
 	if err := s.sendSuccessNoFlush(successMetadata); err != nil {
 		return err
+	}
+	return s.flushRunResponse()
+}
+
+// flushRunResponse flushes pending RUN output. Pipelined clients (the Neo4j
+// driver sends PULL immediately after RUN) already have their next message
+// queued by the time the query finishes; deferring the flush then lets PULL's
+// own tail flush carry RUN's SUCCESS and the record batch in a single socket
+// write. Blocking request/response clients see an empty queue and get the
+// flush immediately, so semantics are unchanged (#48: per-message flushes
+// were ~25% of autocommit TCK CPU).
+func (s *Session) flushRunResponse() error {
+	if s.messageQueue != nil && len(s.messageQueue) > 0 {
+		return nil
 	}
 	return s.flushIfPending()
 }

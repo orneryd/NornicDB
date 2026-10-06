@@ -1177,7 +1177,11 @@ func (e *StorageExecutor) cacheNodeLookup(label string, props map[string]interfa
 func (e *StorageExecutor) invalidateNodeLookupCache() {
 	cacheMu := e.nodeLookupCacheLock()
 	cacheMu.Lock()
-	e.nodeLookupCache = make(map[string]*storage.Node, 1000)
+	if e.nodeLookupCache != nil {
+		clear(e.nodeLookupCache)
+	} else {
+		e.nodeLookupCache = make(map[string]*storage.Node)
+	}
 	cacheMu.Unlock()
 }
 

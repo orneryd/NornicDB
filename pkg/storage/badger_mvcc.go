@@ -1366,13 +1366,18 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 	// mvccNodeVersionKey records (only present when retention > 0).
 	headPrefix := []byte{prefixMVCCNodeHead}
 	opts := badgerIteratorOptions()
+	// PrefetchValues stays off: badger v4.9.6 spawns a goroutine per entry
+	// when prefetching, which made TCK allocation churn worse (#48).
 	opts.Prefix = headPrefix
 	it := txn.NewIterator(opts)
 	defer it.Close()
 
 	nowNanos := DecayScoringTime()
+	var headBuf []byte
 	for it.Rewind(); it.Valid(); it.Next() {
-		key := append([]byte(nil), it.Item().Key()...)
+		// it.Item().Key() stays valid until the next Next(); parse in place
+		// instead of copying a fresh slice per entry.
+		key := it.Item().Key()
 		if len(key) != 1+8 {
 			continue
 		}
@@ -1381,19 +1386,20 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 		if !ok || !nodeIDInScope(nodeID, scope) {
 			continue
 		}
-		var head MVCCHead
-		if err := it.Item().Value(func(val []byte) error {
-			decoded, decodeErr := decodeMVCCHead(val)
-			if decodeErr != nil {
-				return decodeErr
-			}
-			head = decoded
-			return nil
-		}); err != nil {
+		// Reuse a scratch buffer across entries: ValueCopy allocates only
+		// while the buffer is still growing (#48).
+		var err error
+		headBuf, err = it.Item().ValueCopy(headBuf[:0])
+		if err != nil {
+			return err
+		}
+		head, err := decodeMVCCHead(headBuf)
+		if err != nil {
 			return err
 		}
 		if b.hasMVCCFloor(prefixMVCCNode, nodeNum) {
-			if err := b.applyMVCCPruneFloorInTxn(txn, append([]byte{prefixMVCCNode}, key[1:]...), &head); err != nil {
+			logical := append([]byte{prefixMVCCNode}, key[1:]...)
+			if err := b.applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
 				return err
 			}
 		}
@@ -1454,13 +1460,16 @@ func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 	// we can't just scan the version prefix post-refactor.
 	headPrefix := []byte{prefixMVCCEdgeHead}
 	opts := badgerIteratorOptions()
+	// PrefetchValues stays off: badger v4.9.6 spawns a goroutine per entry
+	// when prefetching, which made TCK allocation churn worse (#48).
 	opts.Prefix = headPrefix
 	it := txn.NewIterator(opts)
 	defer it.Close()
 
 	nowNanos := DecayScoringTime()
+	var headBuf []byte
 	for it.Rewind(); it.Valid(); it.Next() {
-		key := append([]byte(nil), it.Item().Key()...)
+		key := it.Item().Key()
 		if len(key) != 1+8 {
 			continue
 		}
@@ -1469,19 +1478,20 @@ func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 		if !ok {
 			continue
 		}
-		var head MVCCHead
-		if err := it.Item().Value(func(val []byte) error {
-			decoded, decodeErr := decodeMVCCHead(val)
-			if decodeErr != nil {
-				return decodeErr
-			}
-			head = decoded
-			return nil
-		}); err != nil {
+		// Reuse a scratch buffer across entries: ValueCopy allocates only
+		// while the buffer is still growing (#48).
+		var err error
+		headBuf, err = it.Item().ValueCopy(headBuf[:0])
+		if err != nil {
+			return err
+		}
+		head, err := decodeMVCCHead(headBuf)
+		if err != nil {
 			return err
 		}
 		if b.hasMVCCFloor(prefixMVCCEdge, edgeNum) {
-			if err := b.applyMVCCPruneFloorInTxn(txn, append([]byte{prefixMVCCEdge}, key[1:]...), &head); err != nil {
+			logical := append([]byte{prefixMVCCEdge}, key[1:]...)
+			if err := b.applyMVCCPruneFloorInTxn(txn, logical, &head); err != nil {
 				return err
 			}
 		}
