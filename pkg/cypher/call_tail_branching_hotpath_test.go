@@ -40,7 +40,7 @@ LIMIT $topK
 					"query":      vectorForFanout(fanout),
 				})
 				require.NoError(t, err, "fanout=%d depth=%d", fanout, depth)
-				require.True(t, exec.LastHotPathTrace().CallTailTraversalFastPath, "fanout=%d depth=%d should use call-tail traversal hot path", fanout, depth)
+				require.True(t, exec.LastHotPathTrace().CallTailPipelineUsed, "fanout=%d depth=%d should use the pipeline tail", fanout, depth)
 				require.Equal(t, []string{"nodeID", "score", "pathCount"}, res.Columns)
 				require.Len(t, res.Rows, 1)
 				assert.Equal(t, storage.NodeElementID("test", root.ID), res.Rows[0][0])
@@ -78,7 +78,7 @@ LIMIT $topK
 					"query":      frontierVectorForFanout(fanout),
 				})
 				require.NoError(t, err, "fanout=%d depth=%d", fanout, depth)
-				require.True(t, exec.LastHotPathTrace().CallTailTraversalFastPath, "fanout=%d depth=%d should use call-tail traversal hot path", fanout, depth)
+				require.True(t, exec.LastHotPathTrace().CallTailPipelineUsed, "fanout=%d depth=%d should use the pipeline tail", fanout, depth)
 				require.Equal(t, []string{"nodeID", "score", "nearest", "reachable"}, res.Columns)
 				require.Len(t, res.Rows, 1)
 				assert.Equal(t, storage.NodeElementID("test", root.ID), res.Rows[0][0])
@@ -114,13 +114,53 @@ LIMIT $topK
 			"cats":       []string{"allowed"},
 		})
 		require.NoError(t, err, "depth=%d", depth)
-		require.True(t, exec.LastHotPathTrace().CallTailTraversalFastPath, "depth=%d should use call-tail traversal hot path", depth)
+		require.True(t, exec.LastHotPathTrace().CallTailPipelineUsed, "depth=%d should use the pipeline tail", depth)
 		require.Equal(t, []string{"nodeID", "score", "maxDepth"}, res.Columns)
 		require.Len(t, res.Rows, 1, "depth=%d should only return the strong constrained root", depth)
 		assert.Equal(t, storage.NodeElementID("test", strongRoot.ID), res.Rows[0][0])
 		assert.NotEqual(t, storage.NodeElementID("test", weakRoot.ID), res.Rows[0][0])
 		assert.EqualValues(t, depth, toInt64ForTest(t, res.Rows[0][2]), "depth=%d maxDepth", depth)
 	}
+}
+
+// TestCallTailPipelineRelationshipAggregationWithScalars pins the pipeline tail
+// as the owner of a CALL ... YIELD MATCH tail that aggregates relationships per
+// seeded node alongside scalar bindings — the shape the retired set-based owner
+// used to rewrite.
+func TestCallTailPipelineRelationshipAggregationWithScalars(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, `
+		CREATE (a:OriginalText {textKey:'a', embedding:[1.0, 0.0]})
+		CREATE (b:OriginalText {textKey:'b', embedding:[0.9, 0.1]})
+		CREATE (m:Node)
+		CREATE (a)-[:REL]->(m)
+		CREATE (b)-[:REL]->(m)
+		CREATE (b)-[:REL]->(a)
+	`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('idx_tail', 'OriginalText', 'embedding', 2, 'cosine')", nil)
+	require.NoError(t, err)
+
+	res, err := exec.Execute(ctx, `
+		CALL db.index.vector.queryNodes('idx_tail', 2, [1.0, 0.0])
+		YIELD node, score
+		MATCH (node)-[r]->(m)
+		WITH node, score, count(r) AS c
+		RETURN node.textKey AS id, c, score
+		ORDER BY id
+	`, nil)
+	require.NoError(t, err)
+	require.True(t, exec.LastHotPathTrace().CallTailPipelineUsed, "relationship aggregation tail should use the pipeline tail")
+	require.Equal(t, []string{"id", "c", "score"}, res.Columns)
+	require.Len(t, res.Rows, 2)
+	require.Equal(t, "a", res.Rows[0][0])
+	require.EqualValues(t, 1, res.Rows[0][1])
+	require.Equal(t, "b", res.Rows[1][0])
+	require.EqualValues(t, 2, res.Rows[1][1])
 }
 
 func setupCallTailTraversalFixture(t *testing.T) (*StorageExecutor, storage.Engine, context.Context, map[string]*storage.Node) {
