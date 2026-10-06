@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -182,9 +181,11 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 	return typeNameMismatchError(argument.expected, typeName)
 }
 
-// forEachStaticFunctionArgument calls check for every argument of every call
-// to a function in staticFunctionArguments in text, outside string literals
-// and quoted names, including nested calls. A DISTINCT before an aggregate's
+// forEachStaticFunctionArgument checks every call to a built-in function in
+// text, outside string literals and quoted names, including nested calls: a
+// call with an argument count outside the function's arity (functionArities)
+// is Neo4j's compile-time SyntaxError, and check is called for every
+// argument of a function in staticFunctionArguments. A DISTINCT before an aggregate's
 // argument is not part of it, and trim([LEADING | TRAILING | BOTH]
 // [characters] FROM source) checks its characters and source (trimFromArguments).
 func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string) error) error {
@@ -209,13 +210,20 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = next
 			continue
 		}
+		// A namespaced name (date.truncate, vector.similarity.cosine) is one
+		// function name.
+		for next < len(text) && text[next] == '.' && next+1 < len(text) && isIdentifierStart(text[next+1]) {
+			_, end, _ := scanIdentifierToken(text, next+1)
+			name, next = text[index:end], end
+		}
 		open := skipSpaces(text, next)
 		if open >= len(text) || text[open] != '(' {
 			index = next
 			continue
 		}
-		arguments, known := lookupStaticFunctionArguments(name)
-		if !known {
+		arguments, typed := lookupStaticFunctionArguments(name)
+		arity, counted := lookupFunctionArity(name)
+		if !typed && !counted {
 			index = open + 1
 			continue
 		}
@@ -236,26 +244,16 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				continue
 			}
 		}
-		minimum, maximum := len(arguments), len(arguments)
-		switch lowerASCII(name) {
-		case "round":
-			minimum = 1
-		case "substring":
-			minimum = 2
-		case "ltrim", "rtrim", "btrim":
-			minimum = 1
-		case "normalize":
-			maximum = 2
-		}
 		count := 0
 		if inner != "" {
 			count = len(splitTopLevelComma(inner))
 		}
-		if count < minimum || count > maximum {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments",
-				fmt.Sprintf("Invalid number of arguments for function '%s': expected %d to %d, got %d", name, minimum, maximum, count))
+		if counted {
+			if err := checkFunctionArity(name, arity, count); err != nil {
+				return err
+			}
 		}
-		if inner != "" {
+		if typed && inner != "" {
 			for position, expression := range splitTopLevelComma(inner) {
 				if position >= len(arguments) {
 					break
