@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -129,12 +130,18 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 				continue
 			}
 			item, err := txn.Get(edgeKey(edgeID))
-			if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue
+			}
+			if err != nil {
+				return err
 			}
 			if err := item.Value(func(data []byte) error {
 				candidate, err := b.projectedEdge(data, edgeID, startNum, endNum, include)
-				if err != nil || candidate == nil {
+				if err != nil {
+					return err
+				}
+				if candidate == nil {
 					return nil
 				}
 				candidate.StartNode, candidate.EndNode = startID, endID
@@ -143,7 +150,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 				}
 				edge, err := b.decodeEdgeBodyByID(data, edgeID)
 				if err != nil {
-					return nil
+					return err
 				}
 				matched = append(matched, edge)
 				return nil

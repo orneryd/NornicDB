@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Restore one-pass reads for large, high-coverage label scans, preserving
+  label-index order, projections, early stopping and transaction snapshots.
+  Unreadable records now fail the scan instead of being silently skipped (#930).
+
 - Delete the legacy procedure dispatch switch entirely: every built-in
   procedure is now served by the registry, and unrecognized names are
   rejected at the converged router's terminal chokepoint. The five db.stats
@@ -500,6 +504,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#911).
 
 ### Fixed
+
+- Fail storage scans, batch reads and constraint checks on record read or
+  decode errors. Only missing records (stale index entries) are skipped, so
+  corruption no longer silently reduces query results or bypasses constraints
+  (#930).
 
 - Compare explicit HTTP differential failures after commit, where Neo4j can
   defer connected-node DELETE validation. Roll back open reference transactions

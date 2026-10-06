@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -271,7 +272,10 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 
 		item, err := txn.Get(nodeKey(nodeID))
 		if err != nil {
-			continue
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			return err
 		}
 
 		var nodeBytes []byte
@@ -279,12 +283,12 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 			nodeBytes = append([]byte{}, val...)
 			return nil
 		}); err != nil {
-			continue
+			return err
 		}
 
 		existingNode, err := b.decodeNode(namespace, nodeBytes)
 		if err != nil {
-			continue
+			return err
 		}
 
 		if existingValue, ok := existingNode.Properties[property]; ok {
@@ -327,7 +331,10 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 
 		item, err := txn.Get(nodeKey(nodeID))
 		if err != nil {
-			continue
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			return err
 		}
 
 		var nodeBytes []byte
@@ -335,12 +342,12 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 			nodeBytes = append([]byte{}, val...)
 			return nil
 		}); err != nil {
-			continue
+			return err
 		}
 
 		existingNode, err := b.decodeNode(namespace, nodeBytes)
 		if err != nil {
-			continue
+			return err
 		}
 
 		match := true
@@ -389,7 +396,10 @@ func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namesp
 
 		item, err := txn.Get(nodeKey(nodeID))
 		if err != nil {
-			continue
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			return err
 		}
 
 		var nodeBytes []byte
@@ -397,12 +407,12 @@ func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namesp
 			nodeBytes = append([]byte{}, val...)
 			return nil
 		}); err != nil {
-			continue
+			return err
 		}
 
 		existingNode, err := b.decodeNode(namespace, nodeBytes)
 		if err != nil {
-			continue
+			return err
 		}
 
 		existingKey, ok := existingNode.Properties[keyProp]
@@ -640,7 +650,10 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 
 		item, err := txn.Get(edgeKey(edgeID))
 		if err != nil {
-			continue
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			return err
 		}
 
 		var edgeBytes []byte
@@ -648,12 +661,12 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 			edgeBytes = append([]byte{}, val...)
 			return nil
 		}); err != nil {
-			continue
+			return err
 		}
 
 		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
 		if err != nil {
-			continue
+			return err
 		}
 
 		if len(c.Properties) == 1 {
@@ -779,7 +792,10 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 
 		item, err := txn.Get(edgeKey(edgeID))
 		if err != nil {
-			continue
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			return err
 		}
 
 		var edgeBytes []byte
@@ -787,12 +803,12 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 			edgeBytes = append([]byte{}, val...)
 			return nil
 		}); err != nil {
-			continue
+			return err
 		}
 
 		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
 		if err != nil {
-			continue
+			return err
 		}
 
 		if !edgeTemporalCompositeKeyMatch(existingEdge, keyProps, keyVals) {
@@ -867,18 +883,21 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 		// Read the edge to check its type.
 		item, err := txn.Get(edgeKey(edgeID))
 		if err != nil {
-			continue
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			return err
 		}
 		var edgeBytes []byte
 		if err := item.Value(func(val []byte) error {
 			edgeBytes = append([]byte{}, val...)
 			return nil
 		}); err != nil {
-			continue
+			return err
 		}
 		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
 		if err != nil {
-			continue
+			return err
 		}
 		if existingEdge.Type == c.Label {
 			count++
@@ -923,13 +942,19 @@ func (b *BadgerEngine) checkEdgePolicyInTxn(txn *badger.Txn, edge *Edge, schema 
 	// Read source node labels.
 	srcLabels, err := b.readNodeLabelsInTxn(txn, NodeID(edge.StartNode))
 	if err != nil {
-		return nil // If node can't be read, skip policy check (other validation catches missing nodes)
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return nil // Other validation catches missing nodes.
+		}
+		return err
 	}
 
 	// Read target node labels.
 	tgtLabels, err := b.readNodeLabelsInTxn(txn, NodeID(edge.EndNode))
 	if err != nil {
-		return nil
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return nil
+		}
+		return err
 	}
 
 	// Check DISALLOWED policies first (they take precedence).
@@ -1040,18 +1065,21 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		// Read edge.
 		item, err := txn.Get(edgeKey(edgeID))
 		if err != nil {
-			continue
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			return err
 		}
 		var edgeBytes []byte
 		if err := item.Value(func(val []byte) error {
 			edgeBytes = append([]byte{}, val...)
 			return nil
 		}); err != nil {
-			continue
+			return err
 		}
 		edge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
 		if err != nil {
-			continue
+			return err
 		}
 
 		// Get the other node's labels.
@@ -1063,7 +1091,10 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		}
 		otherLabels, err := b.readNodeLabelsInTxn(txn, otherNodeID)
 		if err != nil {
-			continue
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			return err
 		}
 
 		// Determine source/target labels based on edge direction.

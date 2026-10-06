@@ -194,7 +194,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 		}
 		return txn.Set(outgoingIndexKey(aNum, 1<<40), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "K"}, aNum, bNum, 0))
 	}))
-	// A relationship with an unreadable record and no value is skipped.
+	// A relationship with an unreadable record and no value fails the read.
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:corrupt", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
 	corruptNum, _ := eng.idDict.lookupEdgeNumID("test:corrupt")
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
@@ -215,6 +215,12 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 	eng.edgeCacheMu.Unlock()
 	eng.cacheStoreEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"})
 	out, answered, err := eng.OutgoingEdgeHeaders("test:a")
+	require.Error(t, err)
+	require.True(t, answered)
+	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+		return txn.Delete(edgeKey("test:corrupt"))
+	}))
+	out, answered, err = eng.OutgoingEdgeHeaders("test:a")
 	require.NoError(t, err)
 	require.True(t, answered)
 	require.Equal(t, []string{"test:cached:K:test:a->test:b", "test:odd:K:test:a->test:b"}, headerSummary(out))

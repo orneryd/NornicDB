@@ -17,7 +17,7 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("edges_with_prefix_skip_malformed_lookup_and_decode", func(t *testing.T) {
+	t.Run("edges_with_prefix_skip_malformed_lookup_and_reject_decode", func(t *testing.T) {
 		engine := newTestEngine(t)
 		_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"A"}})
 		require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 			if err := txn.Set(outgoingIndexKey(num, 999999999), []byte{}); err != nil {
 				return err
 			}
-			// corrupt edge body for existing edge: decodeEdgeBodyByID error => continue
+			// A corrupt existing edge must fail validation, not bypass policy checks.
 			return txn.Set(edgeKey("test:e1"), []byte("corrupt-edge"))
 		}))
 
@@ -48,7 +48,7 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 			require.NotNil(t, prefix)
 			return engine.validatePolicyForEdgesWithPrefixInTxn(txn, prefix, &Node{ID: "test:a", Labels: []string{"A"}}, true, schema, "test")
 		})
-		require.NoError(t, err)
+		require.ErrorContains(t, err, "edge body has unexpected format byte")
 	})
 
 	t.Run("edges_with_prefix_missing_other_node_labels_continue", func(t *testing.T) {

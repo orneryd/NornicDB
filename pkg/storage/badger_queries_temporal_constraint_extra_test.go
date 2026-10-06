@@ -31,7 +31,7 @@ func TestCompareValues_MixedAndFallbackBranches(t *testing.T) {
 	}
 }
 
-func TestBadgerEngine_MaterializeAdjEdges_CacheMissAndDecodeSkip(t *testing.T) {
+func TestBadgerEngine_MaterializeAdjEdges_CacheMissAndDecodeError(t *testing.T) {
 	engine := newTestEngine(t)
 
 	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
@@ -47,12 +47,16 @@ func TestBadgerEngine_MaterializeAdjEdges_CacheMissAndDecodeSkip(t *testing.T) {
 	// Force one cache hit path.
 	engine.cacheStoreEdge(e1)
 
-	// Corrupt one key to hit decode-skip path.
+	// Corrupt records fail the read; missing records are still skipped.
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 		return txn.Set(edgeKey("test:e-corrupt"), []byte("bad-edge-bytes"))
 	}))
 
-	got := engine.materializeAdjEdges([]EdgeID{"test:e1", "test:e2", "test:e-missing", "test:e-corrupt"})
+	got, err := engine.materializeAdjEdges([]EdgeID{"test:e1", "test:e2", "test:e-missing", "test:e-corrupt"})
+	require.Error(t, err)
+	require.Nil(t, got)
+	got, err = engine.materializeAdjEdges([]EdgeID{"test:e1", "test:e2", "test:e-missing"})
+	require.NoError(t, err)
 	require.Len(t, got, 2)
 	ids := map[EdgeID]struct{}{}
 	for _, e := range got {
