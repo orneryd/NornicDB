@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -176,13 +176,10 @@ func newPointFromMap(fields map[string]interface{}) (point CypherPoint, ok bool,
 			coordinates = append(coordinates, height)
 		}
 	} else {
-		keys := make([]string, 0, len(fields))
-		for key := range fields {
-			keys = append(keys, "'"+key+"'")
-		}
-		sort.Strings(keys)
-		return CypherPoint{}, false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidPoint",
-			"A map with keys "+strings.Join(keys, ", ")+" is not describing a valid point, a point is described either by using cartesian coordinates e.g. {x: 2.3, y: 4.5, crs: 'cartesian'} or using geographic coordinates e.g. {latitude: 12.78, longitude: 56.7, crs: 'WGS-84'}.")
+		// A map literal without coordinates fails when the statement compiles
+		// (checkStaticLiteralArguments); a map value fails here.
+		return CypherPoint{}, false, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidPoint",
+			localization.CypherCorePointCoordinatesMissing())
 	}
 	if null {
 		return CypherPoint{}, false, nil

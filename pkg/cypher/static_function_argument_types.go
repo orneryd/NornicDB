@@ -294,6 +294,11 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				return err
 			}
 		}
+		if count > 0 {
+			if err := checkStaticLiteralArguments(name, splitTopLevelComma(inner)); err != nil {
+				return err
+			}
+		}
 		if typed && inner != "" {
 			for position, expression := range splitTopLevelComma(inner) {
 				if position >= len(arguments) {

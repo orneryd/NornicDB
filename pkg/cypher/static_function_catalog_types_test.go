@@ -90,3 +90,46 @@ func TestStaticFunctionArgumentTypesThroughExecute(t *testing.T) {
 		require.NoError(t, err, query)
 	}
 }
+
+// TestStaticLiteralArgumentValues: a percentile literal outside 0.0..1.0 and
+// a point() map literal without coordinates fail when the statement
+// compiles, as in Neo4j, even when no row would call the function; computed
+// values fail when they run, with an ArgumentError.
+func TestStaticLiteralArgumentValues(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	for query, code := range map[string]string{
+		"MATCH (n:Nothing) RETURN percentileCont(n.x, 1.5) AS v":  "Neo.ClientError.Statement.SyntaxError",
+		"MATCH (n:Nothing) RETURN percentileDisc(n.x, -0.1) AS v": "Neo.ClientError.Statement.SyntaxError",
+		"UNWIND [1] AS x RETURN percentileDisc(x, 0.5 + 1) AS v":  "Neo.ClientError.Statement.ArgumentError",
+		"MATCH (n:Nothing) RETURN point({a: 1}) AS v":             "Neo.ClientError.Statement.SyntaxError",
+		"RETURN point({x: 1}) AS v":                               "Neo.ClientError.Statement.SyntaxError",
+		"WITH {x: 1} AS m RETURN point(m) AS v":                   "Neo.ClientError.Statement.ArgumentError",
+		"RETURN point({x: 1, y: 2, crs: 'zz'}) AS v":              "Neo.ClientError.Statement.ArgumentError",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		require.Contains(t, statusText(err), code, query)
+	}
+	_, err := exec.Execute(ctx, "RETURN point({a: 1, b: 2}) AS v", nil)
+	require.Contains(t, statusText(err), "A map with keys 'a', 'b' is not describing a valid point")
+	for _, query := range []string{
+		"UNWIND [1, 2] AS x RETURN percentileCont(x, 1) AS v",
+		"UNWIND [1, 2] AS x RETURN percentileCont(x, -0) AS v",
+		"RETURN point({x: 1, y: 2}) AS v",
+		"RETURN point({`latitude`: 1, `longitude`: 2}) AS v",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+	}
+
+	require.NoError(t, checkStaticLiteralArguments("percentileCont", []string{"x"}))
+	require.NoError(t, checkStaticLiteralArguments("point", []string{"m", "n"}))
+	keys, isMap := staticMapLiteralKeys("{`a``b`: 1, c: 2}")
+	require.True(t, isMap)
+	require.Equal(t, map[string]bool{"a`b": true, "c": true}, keys)
+	_, isMap = staticMapLiteralKeys("{a}")
+	require.False(t, isMap)
+	_, isMap = staticMapLiteralKeys("m{.a}")
+	require.False(t, isMap)
+}
