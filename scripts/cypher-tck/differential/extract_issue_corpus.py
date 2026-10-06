@@ -17,6 +17,9 @@ NornicDB's Cypher, or when they would make the run slow or unrepeatable:
 - administration (databases, aliases, users, roles, privileges);
 - procedures and functions Neo4j Community doesn't have (APOC, NornicDB's
   own, GDS, GenAI, plugins), LOAD CSV, client commands (:param);
+- NornicDB's own schema objects (decay and promotion profiles, constraint
+  contracts, value-list constraints), and constraints only Neo4j Enterprise
+  creates (key, existence and property type constraints);
 - answers that differ between runs: rand(), randomUUID(), timestamp(), the
   current date or time, id(), elementId();
 - data generators larger than MAX_RANGE rows.
@@ -55,6 +58,16 @@ SKIP = [
     re.compile(r"\b(date|datetime|time|localtime|localdatetime)(\.(realtime|statement|transaction))?\s*\(\s*\)", re.I),
     re.compile(r"\b(TERMINATE|SHOW)\s+TRANSACTIONS?\b", re.I),
     re.compile(r"\bPOLIC(Y|IES)\b", re.I),
+    # NornicDB's own schema objects (Neo4j rejects them; a graph reset doesn't
+    # remove them, so they would carry into later issues) and procedures.
+    re.compile(r"\b(DECAY|PROMOTION)\s+PROFILES?\b", re.I),
+    re.compile(r"\bREQUIRE\s*\{|\bCONSTRAINT\s+CONTRACTS?\b", re.I),
+    re.compile(r"\bREQUIRE\b.*\bIN\s*\[", re.I),
+    re.compile(r"\bdb\.index\.(vector|fulltext)\.(drop|embed|createRelationshipIndex)\b", re.I),
+    re.compile(r"\bdb\.(retrieve|rretrieve|rerank|infer|temporal\.\w+|txlog\.\w+|index\.stats)\b", re.I),
+    # Constraints Neo4j Community can't create (Enterprise Edition only).
+    re.compile(r"\bIS\s+(NODE|RELATIONSHIP|REL)\s+KEY\b", re.I),
+    re.compile(r"\bREQUIRE\b.*\bIS\s+(NOT\s+NULL\b|::|TYPED\b)", re.I),
 ]
 
 
