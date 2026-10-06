@@ -420,50 +420,6 @@ func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx con
 	return res, true, nil
 }
 
-func callSubqueryRowDedupKey(row []interface{}) string {
-	if len(row) == 0 {
-		return "<empty>"
-	}
-	var b strings.Builder
-	b.Grow(len(row) * 16)
-	for i, v := range row {
-		if i > 0 {
-			b.WriteByte('|')
-		}
-		switch x := v.(type) {
-		case nil:
-			b.WriteString("n:")
-		case string:
-			b.WriteString("s:")
-			b.WriteString(x)
-		case []byte:
-			b.WriteString("b:")
-			b.Write(x)
-		case int:
-			b.WriteString("i:")
-			b.WriteString(strconv.Itoa(x))
-		case int64:
-			b.WriteString("i64:")
-			b.WriteString(strconv.FormatInt(x, 10))
-		case float64:
-			b.WriteString("f:")
-			b.WriteString(strconv.FormatFloat(x, 'g', -1, 64))
-		case float32:
-			b.WriteString("f32:")
-			b.WriteString(strconv.FormatFloat(float64(x), 'g', -1, 32))
-		case bool:
-			if x {
-				b.WriteString("t:1")
-			} else {
-				b.WriteString("t:0")
-			}
-		default:
-			b.WriteString(fmt.Sprintf("%T:%v", v, v))
-		}
-	}
-	return b.String()
-}
-
 // seedNodesFromOuterMatch executes the outer MATCH/WHERE segment through the normal
 // execution pipeline (instead of manual scan/filter) so index/hot-path optimizations
 // apply before correlated CALL {} expansion.
