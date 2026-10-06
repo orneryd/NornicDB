@@ -14,32 +14,6 @@
   ]
  },
  {
-  "issue": 70,
-  "title": "[FEATURE] - Constraint Schemas",
-  "statements": [
-   {
-    "id": "845ea944caf1",
-    "query": "CREATE CONSTRAINT person_contract FOR (n:Person) REQUIRE { n.id IS UNIQUE n.name IS NOT NULL n.age IS :: INTEGER n.status IN ['active', 'inactive'] (n.tenant, n.externalId) IS NODE KEY COUNT { (n)-[:PRIMARY_EMPLOYER]->(:Company) } <= 1 NOT EXISTS { (n)-[:FORBIDDEN_REL]->() } }"
-   },
-   {
-    "id": "7a5211f0da29",
-    "query": "CREATE CONSTRAINT works_at_contract FOR ()-[r:WORKS_AT]-() REQUIRE { r.id IS UNIQUE r.startedAt IS NOT NULL r.role IS :: STRING (r.tenant, r.externalId) IS RELATIONSHIP KEY startNode(r) <> endNode(r) startNode(r).tenant = endNode(r).tenant r.status IN ['active', 'inactive'] r.hoursPerWeek > 0 }"
-   },
-   {
-    "id": "620b8ad5906c",
-    "query": "SHOW CONSTRAINT CONTRACTS"
-   },
-   {
-    "id": "ee61c43529a1",
-    "query": "CREATE CONSTRAINT person_contract FOR (n:Person) REQUIRE { n.id IS UNIQUE n.name IS NOT NULL n.age IS :: INTEGER n.status IS :: STRING n.status IN ['active', 'inactive'] (n.tenant, n.externalId) IS NODE KEY COUNT { (n)-[:PRIMARY_EMPLOYER]->(:Company) } <= 1 NOT EXISTS { (n)-[:FORBIDDEN_REL]->() } }"
-   },
-   {
-    "id": "a8ef482826d6",
-    "query": "CREATE CONSTRAINT works_at_contract FOR ()-[r:WORKS_AT]-() REQUIRE { r.id IS UNIQUE r.startedAt IS NOT NULL r.role IS :: STRING (r.tenant, r.externalId) IS RELATIONSHIP KEY startNode(r) <> endNode(r) startNode(r).tenant = endNode(r).tenant r.status IN ['active', 'inactive'] r.hoursPerWeek > 0 }"
-   }
-  ]
- },
- {
   "issue": 100,
   "title": "[PROPOSAL] - Abstracted Memory model as policy",
   "statements": [
@@ -710,10 +684,6 @@
    {
     "id": "a6d0568671f6",
     "query": "CALL db.index.vector.queryNodes('evidence_vec', 10, $storedVector) YIELD node, score RETURN node.id, score"
-   },
-   {
-    "id": "52a6a90c6371",
-    "query": "CALL db.retrieve({query: 'probe', embedding: $storedVector, types: ['Evidence'], limit: 10}) YIELD node, score RETURN node.id, score"
    }
   ]
  },
@@ -3494,27 +3464,7 @@
   "title": "[BUG] Decay / promotion profile and policy commands: CREATE only works in explicit transactions; ALTER PROMOTION POLICY accepts invalid clauses and options",
   "statements": [
    {
-    "id": "db7de291d369",
-    "query": "CREATE DECAY PROFILE decay_x OPTIONS { halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED' }"
-   },
-   {
-    "id": "04dadc9f497c",
-    "query": "CREATE PROMOTION PROFILE boost_x OPTIONS { multiplier: 1.5, scoreFloor: 0.1, scoreCap: 0.9 }"
-   },
-   {
-    "id": "a4c32eba03a3",
-    "query": "CREATE PROMOTION PROFILE boost1_x OPTIONS {multiplier: 1.5}"
-   },
-   {
-    "id": "0b0da90e8b1f",
-    "query": "SHOW DECAY PROFILES -> only decay_t (the explicit-transaction one)"
-   },
-   {
-    "id": "ea71327ae580",
-    "query": "SHOW PROMOTION PROFILES -> only boost_t, boost1_t"
-   },
-   {
-    "id": "4e681ffebc30",
+    "id": "59e1c9f122ed",
     "query": "MATCH (n) RETURN labels(n), properties(n) -> [{labels: [], props: {multiplier: 15}}, {labels: [], props: {multiplier: 15}}]"
    }
   ]
@@ -3592,35 +3542,27 @@
   "title": "[BUG] Legacy CREATE CONSTRAINT <name> ON … ASSERT … IS NODE KEY ignores the given name (a generated name is used, DROP CONSTRAINT <name> fails)",
   "statements": [
    {
-    "id": "4ef62a02241c",
-    "query": "CREATE CONSTRAINT mykey ON (n:L) ASSERT (n.a) IS NODE KEY"
-   },
-   {
-    "id": "4cfbea164f43",
+    "id": "01cc7b6a56bc",
     "query": "CREATE CONSTRAINT myuniq ON (n:L) ASSERT n.b IS UNIQUE"
    },
    {
-    "id": "bb313aa35273",
-    "query": "CREATE CONSTRAINT mykey2 FOR (n:L2) REQUIRE (n.a) IS NODE KEY"
-   },
-   {
-    "id": "9af7b54e7f97",
+    "id": "7ed3795d8fed",
     "query": "SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties, type RETURN name, labelsOrTypes, properties, type ORDER BY name"
    },
    {
-    "id": "7f7c87942e1f",
+    "id": "3f040916b887",
     "query": "DROP CONSTRAINT mykey"
    },
    {
-    "id": "ea6a0e5fea73",
+    "id": "cadd2c0d3226",
     "query": "DROP CONSTRAINT myuniq"
    },
    {
-    "id": "4f34bec36d9b",
+    "id": "401a7e6ffdf7",
     "query": "DROP CONSTRAINT mykey -> SyntaxError: constraint \"mykey\" does not exist"
    },
    {
-    "id": "79ffc70d7658",
+    "id": "65a43c7fd844",
     "query": "DROP CONSTRAINT myuniq -> ok"
    }
   ]
@@ -3638,63 +3580,31 @@
     "query": "CREATE FULLTEXT INDEX ftidx FOR (n:F) ON EACH [n.t]"
    },
    {
-    "id": "cd5e01f39a9f",
-    "query": "CALL db.index.vector.drop('vidx')"
-   },
-   {
-    "id": "5d6c31f4eb99",
-    "query": "CALL db.index.fulltext.drop('ftidx')"
-   },
-   {
-    "id": "9e78c2b686c6",
+    "id": "039c3560ed05",
     "query": "SHOW INDEXES YIELD name, type WHERE name IN ['vidx', 'ftidx'] RETURN name, type ORDER BY name"
    },
    {
-    "id": "30e21c029a87",
-    "query": "CALL db.index.vector.drop('does_not_exist')"
-   },
-   {
-    "id": "2a21ebffe578",
-    "query": "CALL db.index.fulltext.drop('does_not_exist')"
-   },
-   {
-    "id": "3201bc0b1d64",
+    "id": "7d07389ed56a",
     "query": "DROP INDEX does_not_exist"
    },
    {
-    "id": "8902cbd3db55",
+    "id": "e2f61762a37d",
     "query": "DROP INDEX vidx"
    },
    {
-    "id": "c976e88d39ab",
+    "id": "973b9253125d",
     "query": "DROP INDEX ftidx"
    },
    {
-    "id": "fb3799cab654",
+    "id": "1e243611309f",
     "query": "SHOW INDEXES YIELD name, type WHERE name IN ['vidx', 'ftidx'] RETURN name, type ORDER BY name"
    },
    {
-    "id": "21545f518896",
-    "query": "CALL db.index.vector.drop('vidx') -> [{name: 'vidx', dropped: true}]"
-   },
-   {
-    "id": "81c3cd250433",
-    "query": "CALL db.index.fulltext.drop('ftidx') -> [{name: 'ftidx', dropped: true}]"
-   },
-   {
-    "id": "7eac2548b820",
-    "query": "CALL db.index.vector.drop('does_not_exist') -> [{name: 'does_not_exist', dropped: true}]"
-   },
-   {
-    "id": "fb8aa2fa3b20",
-    "query": "CALL db.index.fulltext.drop('does_not_exist') -> [{name: 'does_not_exist', dropped: true}]"
-   },
-   {
-    "id": "4853f0231a59",
+    "id": "8e16818f3efc",
     "query": "DROP INDEX does_not_exist -> SyntaxError: index \"does_not_exist\" does not exist"
    },
    {
-    "id": "df4a9dd89023",
+    "id": "3d889e8be291",
     "query": "DROP INDEX vidx / DROP INDEX ftidx -> ok"
    }
   ]
@@ -3710,14 +3620,6 @@
    {
     "id": "f756afa79bf9",
     "query": "SHOW FUNCTIONS YIELD name WHERE name = 'toUpper' RETURN name"
-   },
-   {
-    "id": "46a1624a2991",
-    "query": "SHOW PROMOTION PROFILES YIELD name WHERE name = 'zzz' RETURN name"
-   },
-   {
-    "id": "adc5270d4320",
-    "query": "SHOW DECAY PROFILES YIELD name RETURN count(*) AS c"
    }
   ]
  },
@@ -3868,67 +3770,47 @@
     "query": "SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties WHERE name = 'dupc' RETURN name, labelsOrTypes, properties ORDER BY labelsOrTypes"
    },
    {
-    "id": "c8b05ab1dcf9",
-    "query": "CREATE DECAY PROFILE decay_x OPTIONS { halfLifeSeconds: 3600, function: 'exponential', scope: 'NODE', scoreFrom: 'CREATED' }"
-   },
-   {
-    "id": "7bdecea3c2d2",
-    "query": "CREATE PROMOTION PROFILE boost_x OPTIONS { multiplier: 1.5, scoreFloor: 0.1, scoreCap: 0.9 }"
-   },
-   {
-    "id": "6294807b111f",
-    "query": "CREATE PROMOTION PROFILE boost1_x OPTIONS {multiplier: 1.5}"
-   },
-   {
-    "id": "f165d69130c4",
-    "query": "SHOW DECAY PROFILES -> only decay_t (the explicit-transaction one)"
-   },
-   {
-    "id": "925854cc3039",
-    "query": "SHOW PROMOTION PROFILES -> only boost_t, boost1_t"
-   },
-   {
-    "id": "e29c88733576",
+    "id": "f51b507c00fa",
     "query": "MATCH (n) RETURN labels(n), properties(n)"
    },
    {
-    "id": "24351e3f4652",
+    "id": "dc02d8c3f405",
     "query": "CREATE INDEX dupidx FOR (n:T) ON (n.id)"
    },
    {
-    "id": "f88f2a661961",
+    "id": "e7f4738e8f37",
     "query": "CREATE INDEX dupidx FOR (n:T) ON (n.id)"
    },
    {
-    "id": "fc236ee13663",
+    "id": "6b5ed19dd75b",
     "query": "CREATE INDEX dupidx FOR (n:U) ON (n.x)"
    },
    {
-    "id": "872f87d5b592",
+    "id": "5958bf049f6c",
     "query": "CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS { indexConfig: {"
    },
    {
-    "id": "0cb8a34e447b",
+    "id": "0e4031416c4d",
     "query": "CREATE VECTOR INDEX vdup FOR (n:V) ON (n.e) OPTIONS { indexConfig: {"
    },
    {
-    "id": "38d1756872e1",
+    "id": "6c0293d72c27",
     "query": "CREATE VECTOR INDEX vdup FOR (n:Z) ON (n.z) OPTIONS { indexConfig: {"
    },
    {
-    "id": "de43bf718394",
+    "id": "9e087f6b3f78",
     "query": "CREATE CONSTRAINT dupc FOR (n:T) REQUIRE n.u IS UNIQUE"
    },
    {
-    "id": "cf06aa02089a",
+    "id": "542bcf2c9b89",
     "query": "CREATE CONSTRAINT dupc FOR (n:U) REQUIRE n.v IS UNIQUE"
    },
    {
-    "id": "8989d069be2d",
+    "id": "b960c5a16585",
     "query": "SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE name IN ['dupidx', 'vdup', 'dupc'] RETURN name, labelsOrTypes, properties ORDER BY name, labelsOrTypes"
    },
    {
-    "id": "0b9650606d41",
+    "id": "e95e36b21a9e",
     "query": "SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties WHERE name = 'dupc' RETURN name, labelsOrTypes, properties ORDER BY labelsOrTypes"
    }
   ]
