@@ -226,13 +226,14 @@ func (s *scenarioState) expectError(errorType, phase, detail string) error {
 	}
 	legacyStaticListType := errorType == "TypeError" && phase == "any time" && detail == "InvalidArgumentType" && s.matchesNeo4j526StaticListDiagnostic(queryErr)
 	legacyStaticMapKey := errorType == "Error" && phase == "runtime" && detail == "MapElementAccessByNonString" && s.matchesNeo4j526StaticMapDiagnostic(queryErr)
+	legacyStaticRangeType := errorType == "Error" && phase == "runtime" && detail == "InvalidArgumentType" && s.matchesNeo4j526StaticRangeDiagnostic(queryErr)
 	if errorType != "Error" && errorType != "*" && queryErr.Type != errorType && !legacyStaticListType {
 		return fmt.Errorf("error type differs: got %q, want %q", queryErr.Type, errorType)
 	}
-	if phase != "any time" && queryErr.Phase != phase && !legacyStaticMapKey {
+	if phase != "any time" && queryErr.Phase != phase && !legacyStaticMapKey && !legacyStaticRangeType {
 		return fmt.Errorf("error phase differs: got %q, want %q", queryErr.Phase, phase)
 	}
-	if detail != "*" && queryErr.Detail != detail && !legacyStaticListType && !legacyStaticMapKey {
+	if detail != "*" && queryErr.Detail != detail && !legacyStaticListType && !legacyStaticMapKey && !legacyStaticRangeType {
 		return fmt.Errorf("error detail differs: got %q, want %q", queryErr.Detail, detail)
 	}
 	return s.expectNoSideEffects()
@@ -251,6 +252,25 @@ func (s *scenarioState) matchesNeo4j526StaticMapDiagnostic(queryErr *QueryError)
 	return errors.As(queryErr, &raw) && raw.Code == "Neo.ClientError.Statement.SyntaxError" &&
 		(strings.HasPrefix(raw.Msg, "Type mismatch: expected String but was Integer") ||
 			strings.HasPrefix(raw.Msg, "Type mismatch: map key must be given as String, but was Integer"))
+}
+
+// matchesNeo4j526StaticRangeDiagnostic accepts Neo4j 5.26's diagnostic for
+// List11 [5]: a range() argument literal that isn't an integer (true, 1.1,
+// 'xyz', [0], {start: 0}) is rejected while the query compiles, with
+// "Type mismatch: expected Integer but was …", where the TCK expects a
+// runtime error.
+func (s *scenarioState) matchesNeo4j526StaticRangeDiagnostic(queryErr *QueryError) bool {
+	if queryErr.Type != "SyntaxError" || queryErr.Phase != "compile time" ||
+		!strings.HasSuffix(filepath.ToSlash(s.featureURI), "/expressions/list/List11.feature") ||
+		strings.SplitN(s.scenarioName, " #", 2)[0] != "[5] Fail on invalid argument types for `range()`" {
+		return false
+	}
+	if queryErr.Detail != "InvalidArgumentType" && queryErr.Detail != "50N42" && queryErr.Detail != "*" {
+		return false
+	}
+	var raw *neo4j.Neo4jError
+	return errors.As(queryErr, &raw) && raw.Code == "Neo.ClientError.Statement.SyntaxError" &&
+		strings.HasPrefix(raw.Msg, "Type mismatch: expected Integer but was ")
 }
 
 func (s *scenarioState) matchesNeo4j526StaticListDiagnostic(queryErr *QueryError) bool {

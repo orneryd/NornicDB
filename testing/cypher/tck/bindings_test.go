@@ -299,3 +299,54 @@ func TestBindingsNeo4j526StaticListDiagnosticProfile(t *testing.T) {
 		})
 	}
 }
+
+func TestBindingsNeo4j526StaticRangeDiagnosticProfile(t *testing.T) {
+	newState := func(typeName string) scenarioState {
+		return scenarioState{
+			featureURI:   "testdata/opencypher/features/expressions/list/List11.feature",
+			scenarioName: "[5] Fail on invalid argument types for `range()`",
+			err: classifyBoltError(&neo4j.Neo4jError{
+				Code:      "Neo.ClientError.Statement.SyntaxError",
+				Msg:       "Type mismatch: expected Integer but was " + typeName + " (line 1, column 14 (offset: 13))",
+				GqlStatus: "50N42",
+			}),
+		}
+	}
+	for _, typeName := range []string{"Boolean", "Float", "String", "List<Integer>", "Map"} {
+		t.Run(typeName, func(t *testing.T) {
+			state := newState(typeName)
+			if err := state.expectError("Error", "runtime", "InvalidArgumentType"); err != nil {
+				t.Fatal(err)
+			}
+			var raw *neo4j.Neo4jError
+			var classified *QueryError
+			if !errors.As(state.err, &raw) || raw.Code != "Neo.ClientError.Statement.SyntaxError" ||
+				!errors.As(state.err, &classified) || classified.Type != "SyntaxError" || classified.Phase != "compile time" {
+				t.Fatalf("raw diagnostic changed: %v", state.err)
+			}
+		})
+	}
+	for _, control := range []struct {
+		name   string
+		mutate func(*scenarioState)
+	}{
+		{"other feature", func(state *scenarioState) { state.featureURI = "expressions/list/List12.feature" }},
+		{"other scenario", func(state *scenarioState) {
+			state.scenarioName = "[4] Fail on invalid arguments for `range()`"
+		}},
+		{"other diagnostic", func(state *scenarioState) {
+			state.err = classifyBoltError(&neo4j.Neo4jError{Code: "Neo.ClientError.Statement.SyntaxError", Msg: "Type mismatch: expected String but was Boolean", GqlStatus: "50N42"})
+		}},
+		{"other detail", func(state *scenarioState) { state.err.(*QueryError).Detail = "UnexpectedSyntax" }},
+		{"runtime failure", func(state *scenarioState) { state.err.(*QueryError).Phase = "runtime" }},
+		{"graph effects", func(state *scenarioState) { state.after.Nodes = []NodeValue{{Identity: "unexpected"}} }},
+	} {
+		t.Run(control.name, func(t *testing.T) {
+			state := newState("Boolean")
+			control.mutate(&state)
+			if err := state.expectError("Error", "runtime", "InvalidArgumentType"); err == nil {
+				t.Fatal("accepted invalid diagnostic or graph effects")
+			}
+		})
+	}
+}
