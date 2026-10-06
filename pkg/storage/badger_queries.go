@@ -285,6 +285,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		type pendingNode struct {
 			id   NodeID
 			node *Node
+			err  error
 		}
 		var pending []pendingNode
 		prefix := labelIndexPrefix(label)
@@ -343,18 +344,25 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			positions[entry.id] = index
 		}
 		if err := readNodeRecordsInOnePass(txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
-			return item.Value(func(value []byte) error {
+			index := positions[nodeID]
+			pending[index].err = item.Value(func(value []byte) error {
 				node, err := decodeValue(nodeID, value)
 				if err != nil {
 					return err
 				}
-				pending[positions[nodeID]].node = node
+				pending[index].node = node
 				return nil
 			})
+			// Report record errors in visit order, so an early stop does not
+			// surface corruption in a record the caller never reaches.
+			return nil
 		}); err != nil {
 			return err
 		}
 		for _, entry := range pending {
+			if entry.err != nil {
+				return entry.err
+			}
 			if err := emit(entry.node); err != nil {
 				return err
 			}

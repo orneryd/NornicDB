@@ -217,5 +217,63 @@ func TestTransactionLabelScanReadsRemainingNodesInOnePass(t *testing.T) {
 				require.NotContains(t, node.Properties, "big")
 			}
 		}
+
+	}
+}
+
+func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
+	for _, properties := range [][]string{nil, {"i"}} {
+		name := "full"
+		if properties != nil {
+			name = "projected"
+		}
+		t.Run(name, func(t *testing.T) {
+			const count = labelScanPointLookups + 50
+			eng, created := labelScanFixture(t, count)
+			// Reverse creation order puts this last label candidate first in
+			// the one-pass record walk, before valid pending candidates.
+			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+				return txn.Set(nodeKey(created[count-1]), []byte{0xff})
+			}))
+			for _, transaction := range []bool{false, true} {
+				name := "engine"
+				if transaction {
+					name = "transaction"
+				}
+				t.Run(name, func(t *testing.T) {
+					scan := func(visit func(*Node) error) error {
+						return eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, visit)
+					}
+					if transaction {
+						tx, err := eng.BeginTransaction()
+						require.NoError(t, err)
+						require.NoError(t, tx.SetNamespace("test"))
+						defer func() { _ = tx.Rollback() }()
+						scan = func(visit func(*Node) error) error {
+							return tx.StreamNodesByLabelProjected("Common", properties, visit)
+						}
+					}
+					stop := fmt.Errorf("stop")
+					visited := 0
+					require.ErrorIs(t, scan(func(node *Node) error {
+						require.Equal(t, created[visited], node.ID)
+						visited++
+						if visited == labelScanPointLookups+1 {
+							return stop
+						}
+						return nil
+					}), stop)
+					require.Equal(t, labelScanPointLookups+1, visited)
+
+					visited = 0
+					require.Error(t, scan(func(node *Node) error {
+						require.Equal(t, created[visited], node.ID)
+						visited++
+						return nil
+					}))
+					require.Equal(t, count-1, visited, "valid preceding label candidates must be visited before corruption is reported")
+				})
+			}
+		})
 	}
 }
