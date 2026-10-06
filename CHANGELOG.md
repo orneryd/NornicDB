@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Retire the twenty APOC text-dispatch branches (algo, path, load/export,
+  import) whose procedures are already owned by the built-in registry; the
+  registry-first path now serves them exclusively, and the empty-registry
+  fallback test pins ProcedureNotFound instead of legacy success (#908).
+
 - Fold the last computed-row WHERE text splitter into the shared row predicate
   evaluator, so post-WITH WHERE positions evaluate with the same precedence,
   null and unrecognized-text semantics as every other WHERE owner (#908).
