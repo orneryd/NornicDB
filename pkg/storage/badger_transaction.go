@@ -3664,6 +3664,19 @@ func (tx *BadgerTransaction) validateAllConstraints() error {
 			return err
 		}
 	}
+	// Deferred updates skip the per-operation check; revalidate final labels before publishing.
+	for _, op := range tx.operations {
+		if op.Type != OpUpdateNode || op.OldNode == nil {
+			continue
+		}
+		node, exists := tx.pendingNodes[op.NodeID]
+		if !exists || labelsEqual(node.Labels, op.OldNode.Labels) {
+			continue
+		}
+		if err := tx.validatePolicyOnNodeLabelChange(node, op.OldNode); err != nil {
+			return err
+		}
+	}
 	for _, edge := range tx.pendingEdges {
 		if err := tx.validateEdgeConstraints(edge); err != nil {
 			return err
@@ -3788,7 +3801,7 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 	// Check against committed edges via the engine
 	existingEdges, err := tx.engine.GetEdgesByType(edge.Type)
 	if err != nil {
-		return nil // If we can't read edges, skip check rather than block
+		return err
 	}
 	nsPrefix := namespace + ":"
 	for _, existingEdge := range existingEdges {
@@ -3863,7 +3876,7 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 	// Check against committed edges (filtered by namespace)
 	existingEdges, err := tx.engine.GetEdgesByType(edge.Type)
 	if err != nil {
-		return nil
+		return err
 	}
 	for _, existingEdge := range existingEdges {
 		if existingEdge.ID == edge.ID {
@@ -3931,24 +3944,25 @@ func (tx *BadgerTransaction) checkEdgeCardinality(edge *Edge, c Constraint, name
 	} else {
 		committedEdges, err = tx.engine.GetIncomingEdges(anchorNode)
 	}
-	if err == nil {
-		for _, existingEdge := range committedEdges {
-			if existingEdge.ID == edge.ID || existingEdge.Type != c.Label {
-				continue
-			}
-			if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
-				continue
-			}
-			// Skip edges that are deleted in this transaction.
-			if _, deleted := tx.deletedEdges[existingEdge.ID]; deleted {
-				continue
-			}
-			// Skip edges already counted as pending (they may have been updated).
-			if _, isPending := tx.pendingEdges[existingEdge.ID]; isPending {
-				continue
-			}
-			count++
+	if err != nil {
+		return err
+	}
+	for _, existingEdge := range committedEdges {
+		if existingEdge.ID == edge.ID || existingEdge.Type != c.Label {
+			continue
 		}
+		if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
+			continue
+		}
+		// Skip edges that are deleted in this transaction.
+		if _, deleted := tx.deletedEdges[existingEdge.ID]; deleted {
+			continue
+		}
+		// Skip edges already counted as pending (they may have been updated).
+		if _, isPending := tx.pendingEdges[existingEdge.ID]; isPending {
+			continue
+		}
+		count++
 	}
 
 	if count >= c.MaxCount {
@@ -3983,13 +3997,19 @@ func (tx *BadgerTransaction) checkEdgePolicy(edge *Edge, schema *SchemaManager, 
 	}
 
 	// Read source node labels (check pending first for read-your-writes).
-	srcLabels := tx.getNodeLabels(NodeID(edge.StartNode))
+	srcLabels, err := tx.getNodeLabels(NodeID(edge.StartNode))
+	if err != nil {
+		return err
+	}
 	if srcLabels == nil {
 		return nil // Node not found; other validation catches this
 	}
 
 	// Read target node labels.
-	tgtLabels := tx.getNodeLabels(NodeID(edge.EndNode))
+	tgtLabels, err := tx.getNodeLabels(NodeID(edge.EndNode))
+	if err != nil {
+		return err
+	}
 	if tgtLabels == nil {
 		return nil
 	}
@@ -4043,8 +4063,17 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(node *Node, oldNode
 			edges, err = tx.engine.GetIncomingEdges(node.ID)
 		}
 		if err != nil {
-			continue
+			return err
 		}
+
+		// Pending updates replace committed edge types and endpoints.
+		finalCommittedEdges := edges[:0]
+		for _, edge := range edges {
+			if _, replaced := tx.pendingEdges[edge.ID]; !replaced {
+				finalCommittedEdges = append(finalCommittedEdges, edge)
+			}
+		}
+		edges = finalCommittedEdges
 
 		// Include pending edges in this transaction.
 		for _, pendingEdge := range tx.pendingEdges {
@@ -4070,7 +4099,10 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(node *Node, oldNode
 			} else {
 				otherNodeID = NodeID(edge.StartNode)
 			}
-			otherLabels := tx.getNodeLabels(otherNodeID)
+			otherLabels, err := tx.getNodeLabels(otherNodeID)
+			if err != nil {
+				return err
+			}
 			if otherLabels == nil {
 				continue
 			}
@@ -4130,18 +4162,22 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(node *Node, oldNode
 }
 
 // getNodeLabels returns labels for a node, checking pending nodes first for read-your-writes.
-func (tx *BadgerTransaction) getNodeLabels(nodeID NodeID) []string {
+// Storage failures are preserved for fail-closed policy validation.
+func (tx *BadgerTransaction) getNodeLabels(nodeID NodeID) ([]string, error) {
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
-		return nil
+		return nil, nil
 	}
 	if pending, exists := tx.pendingNodes[nodeID]; exists {
-		return pending.Labels
+		return pending.Labels, nil
 	}
 	node, err := tx.getCommittedNodeLocked(nodeID)
-	if err != nil {
-		return nil
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
 	}
-	return node.Labels
+	if err != nil {
+		return nil, err
+	}
+	return node.Labels, nil
 }
 
 // Helper: check if node has label

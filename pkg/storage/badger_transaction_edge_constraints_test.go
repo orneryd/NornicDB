@@ -607,16 +607,21 @@ func TestTxGetNodeLabels_PendingCommittedDeleted(t *testing.T) {
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Committed branch: node "test:a" is already on disk.
-	got := tx.getNodeLabels("test:a")
+	got, err := tx.getNodeLabels("test:a")
+	require.NoError(t, err)
 	require.Equal(t, []string{"Endpoint"}, got)
 
 	// Pending branch overrides committed.
 	_, err = tx.CreateNode(&Node{ID: "test:new1", Labels: []string{"Pending"}})
 	require.NoError(t, err)
-	require.Equal(t, []string{"Pending"}, tx.getNodeLabels("test:new1"))
+	got, err = tx.getNodeLabels("test:new1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"Pending"}, got)
 
 	// Deleted branch: even though "test:a" exists committed, after
 	// DeleteNode the lookup returns nil (deleted-set takes precedence).
 	require.NoError(t, tx.DeleteNode("test:a"))
-	require.Nil(t, tx.getNodeLabels("test:a"))
+	got, err = tx.getNodeLabels("test:a")
+	require.NoError(t, err)
+	require.Nil(t, got)
 }

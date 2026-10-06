@@ -282,6 +282,26 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			}
 			return visit(node)
 		}
+		readPoint := func(nodeID NodeID) error {
+			node, cached := cachedNode(nodeID)
+			if !cached {
+				item, err := txn.Get(nodeKey(nodeID))
+				if errors.Is(err, badger.ErrKeyNotFound) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				if err := item.Value(func(value []byte) error {
+					var decodeErr error
+					node, decodeErr = decodeValue(nodeID, value)
+					return decodeErr
+				}); err != nil {
+					return err
+				}
+			}
+			return emit(node)
+		}
 		type pendingNode struct {
 			id   NodeID
 			node *Node
@@ -304,28 +324,20 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			}
 
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
-				pending = append(pending, pendingNode{id: nodeID})
-				continue
-			}
-			lookups++
-			node, cached := cachedNode(nodeID)
-			if !cached {
-				item, err := txn.Get(nodeKey(nodeID))
-				if errors.Is(err, badger.ErrKeyNotFound) {
+				if len(pending) < labelScanMaxBuffered {
+					pending = append(pending, pendingNode{id: nodeID})
 					continue
 				}
-				if err != nil {
-					return err
+				for _, entry := range pending {
+					if err := readPoint(entry.id); err != nil {
+						return err
+					}
 				}
-				if err := item.Value(func(value []byte) error {
-					var decodeErr error
-					node, decodeErr = decodeValue(nodeID, value)
-					return decodeErr
-				}); err != nil {
-					return err
-				}
+				pending = nil
+				covers = false
 			}
-			if err := emit(node); err != nil {
+			lookups++
+			if err := readPoint(nodeID); err != nil {
 				return err
 			}
 		}

@@ -27,7 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Restore one-pass reads for large, high-coverage label scans, preserving
   label-index order, projections, early stopping and transaction snapshots.
-  Unreadable records now fail the scan instead of being silently skipped (#930).
+  Bound the buffered tail to 1,024 candidates and use streaming point reads
+  for larger tails. Unreadable records now fail scans and explicit transaction
+  constraint validation instead of being silently skipped (#930).
 
 - Delete the legacy procedure dispatch switch entirely: every built-in
   procedure is now served by the registry, and unrecognized names are
