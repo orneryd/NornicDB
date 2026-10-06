@@ -186,3 +186,13 @@
   other: "[!! Invalid input for function '{{.Function}}()': Expected {{.Expected}}, got: {{.Value}} !!]"
 - id: cyphercore.temporal_call_signature
   other: "[!! Invalid call signature for {{.Type}}Function: Provided input was [{{.Provided}}] !!]"
+- id: cyphercore.temporal_procedure_call_signature
+  other: "[!! Invalid call signature for {{.Procedure}}: Provided input was [{{.Provided}}] !!]"
+- id: cyphercore.temporal_unsupported_unit
+  other: "[!! Unsupported unit: {{.Unit}} !!]"
+- id: cyphercore.temporal_no_such_field
+  other: "[!! No such field: {{.Field}} !!]"
+- id: cyphercore.temporal_invalid_nanosecond
+  other: "[!! Invalid nanosecond: {{.Value}} !!]"
+- id: cyphercore.temporal_missing_component
+  other: "[!! Cannot get the {{.Component}} of: {{.Value}} !!]"

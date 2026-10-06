@@ -1,16 +1,43 @@
 package cypher
 
 import (
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-func truncateTemporalValue(kind, unit string, value interface{}, fields map[string]interface{}) (interface{}, bool) {
+// temporalFieldNames are the field names of Neo4j's temporal values, lower
+// case; a truncation's fields map naming any other is "No such field".
+var temporalFieldNames = map[string]bool{
+	"year": true, "quarter": true, "month": true, "week": true, "weekyear": true, "dayofquarter": true,
+	"dayofweek": true, "ordinalday": true, "day": true, "hour": true, "minute": true, "second": true,
+	"millisecond": true, "microsecond": true, "nanosecond": true, "timezone": true, "offset": true,
+	"epochseconds": true, "epochmillis": true, "date": true, "time": true, "datetime": true,
+}
+
+// truncateTemporalValue is X.truncate(unit, value, fields) for kind X (date,
+// datetime, localdatetime, time, localtime), with Neo4j's run-time errors: a
+// value without the date or time X needs is a TypeError ("Cannot get the
+// date of: 03:04:05Z"), a field no temporal value has an ArgumentError ("No
+// such field: a"), and a unit no temporal value has a DatabaseError
+// ("Unsupported unit: zz").
+func truncateTemporalValue(kind, unit string, value interface{}, fields map[string]interface{}) (interface{}, bool, error) {
 	base, zoneID, hasDate, hasClock, zoned := temporalTruncationParts(value)
 	needsDate := kind == "date" || kind == "localdatetime" || kind == "datetime"
 	needsClock := kind == "localtime" || kind == "time"
-	if needsDate && !hasDate || needsClock && !hasClock {
-		return nil, true
+	if needsDate && !hasDate {
+		return nil, true, temporalMissingComponentError("date", value)
+	}
+	if needsClock && !hasClock {
+		return nil, true, temporalMissingComponentError("time", value)
+	}
+	for field := range fields {
+		if !temporalFieldNames[lowerASCII(field)] {
+			return nil, true, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+				localization.CypherCoreTemporalNoSuchField(field))
+		}
 	}
 	if needsDate && !hasClock {
 		base = time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, base.Location())
@@ -25,37 +52,38 @@ func truncateTemporalValue(kind, unit string, value interface{}, fields map[stri
 	if timezone, exists := fields["timezone"]; exists && (kind == "datetime" || kind == "time") {
 		locationName, valid := timezone.(string)
 		if !valid {
-			return nil, true
+			return nil, true, nil
 		}
 		var locationOK bool
 		location, zoneID, locationOK = truncationLocation(locationName)
 		if !locationOK {
-			return nil, true
+			return nil, true, nil
 		}
 	}
 	base = time.Date(base.Year(), base.Month(), base.Day(), base.Hour(), base.Minute(), base.Second(), base.Nanosecond(), location)
 	truncated, valid := truncateTimeAtUnit(base, lowerASCII(unit))
 	if !valid {
-		return nil, true
+		return nil, true, localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",
+			localization.CypherCoreTemporalUnsupportedUnit(unit))
 	}
 	truncated = applyTruncationFields(truncated, fields)
 
 	switch kind {
 	case "date":
-		return CypherDate{Time: time.Date(truncated.Year(), truncated.Month(), truncated.Day(), 0, 0, 0, 0, time.UTC)}, true
+		return CypherDate{Time: time.Date(truncated.Year(), truncated.Month(), truncated.Day(), 0, 0, 0, 0, time.UTC)}, true, nil
 	case "localdatetime":
-		return CypherLocalDateTime{Time: time.Date(truncated.Year(), truncated.Month(), truncated.Day(), truncated.Hour(), truncated.Minute(), truncated.Second(), truncated.Nanosecond(), time.UTC)}, true
+		return CypherLocalDateTime{Time: time.Date(truncated.Year(), truncated.Month(), truncated.Day(), truncated.Hour(), truncated.Minute(), truncated.Second(), truncated.Nanosecond(), time.UTC)}, true, nil
 	case "datetime":
 		if zoneID != "" {
-			return CypherDateTime{Time: truncated, ZoneID: zoneID}, true
+			return CypherDateTime{Time: truncated, ZoneID: zoneID}, true, nil
 		}
-		return CypherDateTime{Time: truncated}, true
+		return CypherDateTime{Time: truncated}, true, nil
 	case "localtime":
-		return CypherLocalTime{Time: time.Date(1970, 1, 1, truncated.Hour(), truncated.Minute(), truncated.Second(), truncated.Nanosecond(), time.UTC)}, true
+		return CypherLocalTime{Time: time.Date(1970, 1, 1, truncated.Hour(), truncated.Minute(), truncated.Second(), truncated.Nanosecond(), time.UTC)}, true, nil
 	case "time":
-		return CypherTime{Time: time.Date(1970, 1, 1, truncated.Hour(), truncated.Minute(), truncated.Second(), truncated.Nanosecond(), location)}, true
+		return CypherTime{Time: time.Date(1970, 1, 1, truncated.Hour(), truncated.Minute(), truncated.Second(), truncated.Nanosecond(), location)}, true, nil
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 }
 
@@ -173,4 +201,30 @@ func applyTruncationFields(value time.Time, fields map[string]interface{}) time.
 		nanos += int(replacement)
 	}
 	return time.Date(year, month, day, hour, minute, second, nanos, value.Location())
+}
+
+// temporalMissingComponentError is Neo4j's TypeError for a temporal value
+// without the date or time a function needs.
+func temporalMissingComponentError(component string, value interface{}) error {
+	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgument",
+		localization.CypherCoreTemporalMissingComponent(component, fmt.Sprint(value)))
+}
+
+// isTemporalInstant reports whether value is a date, a time or a datetime
+// (temporalTruncationParts), the values truncate and duration.between take.
+func isTemporalInstant(value interface{}) bool {
+	_, _, hasDate, hasClock, _ := temporalTruncationParts(value)
+	return hasDate || hasClock
+}
+
+// temporalProcedureCallError is Neo4j's ProcedureCallFailed for a temporal
+// function (Truncate, Between, FromEpoch, FromEpochMillis) called with values
+// of types it doesn't take.
+func temporalProcedureCallError(procedure string, provided ...interface{}) error {
+	parts := make([]string, len(provided))
+	for index, value := range provided {
+		parts[index] = neo4jProvidedValue(value)
+	}
+	return localizedStatusError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument",
+		localization.CypherCoreTemporalProcedureCallSignature(procedure, strings.Join(parts, ", ")))
 }

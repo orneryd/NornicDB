@@ -842,9 +842,13 @@ skipArrayIndexing:
 	// ========================================
 	// Date/Time Functions (Neo4j compatible)
 	// ========================================
-	if value, handled := e.evaluateTemporalConstructor(ctx, func(argument string) interface{} {
+	if value, handled, callErr := e.evaluateTemporalConstructor(ctx, func(argument string) interface{} {
 		return e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}, expr); handled {
+		if callErr != nil {
+			recordExpressionFailure(ctx, callErr)
+			return nil
+		}
 		if value == nil {
 			if function, argument, ok := parseFunctionCallWS(expr); ok && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
 				input := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
