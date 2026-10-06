@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
+import { forceCollide, forceLink, forceX, forceY, forceZ } from "d3-force-3d";
+import { ChevronDown, ChevronUp, Grip, PanelRightClose, PanelRightOpen } from "lucide-react";
+import type { PerspectiveCamera } from "three";
+import { callTreeLayout, layoutCallBranches, layoutSymbolBundles, packageForSymbol, rootCameraFrame } from "../utils/graphifyLayout";
+import { clampPanelBounds } from "../utils/floatingPanelBounds";
 import {
   api,
   type CypherResponse,
@@ -133,191 +138,88 @@ function setDagMode(fg: GraphifyForceGraph, mode: "td" | null): void {
   fg.dagLevelDistance(72);
 }
 
-// Golden-angle rotation used to scatter nodes inside a kind bubble with a
-// deterministic, stable distribution.
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-
-// bubbleRadius scales a kind bubble sphere with the square root of its node
-// count so large kinds grow gently instead of exploding.
-function bubbleRadius(count: number): number {
-  return 14 + Math.sqrt(count) * 4.5;
-}
-
-// callTreeLayout computes BFS depth from the root along call-kind links so
-// function calls can be drawn as a branching tree instead of a sphere.
-function callTreeLayout(
-  links: GLink[],
-  rootId: string | null,
-): Map<string, number> {
-  const depths = new Map<string, number>();
-  if (rootId == null) {
-    return depths;
-  }
-  const idOf = (end: string | GNode) => (typeof end === "object" ? end.id : end);
-  const children = new Map<string, string[]>();
-  for (const link of links) {
-    const source = idOf(link.source);
-    const target = idOf(link.target);
-    const list = children.get(source) ?? [];
-    list.push(target);
-    children.set(source, list);
-  }
-  depths.set(rootId, 0);
-  const queue: Array<[string, number]> = [[rootId, 0]];
-  while (queue.length > 0) {
-    const [current, depth] = queue.shift() as [string, number];
-    for (const child of children.get(current) ?? []) {
-      if (!depths.has(child)) {
-        depths.set(child, depth + 1);
-        queue.push([child, depth + 1]);
-      }
-    }
-  }
-  return depths;
-}
-
-// Configure the layout orientation: the root sits at the top of the scene.
-// Function calls form a branching tree descending from the root (level
-// rings, parents fanning out to children), while every other symbol kind
-// stays a spherical Fibonacci-scatter bubble ringed around the tree as a
-// half-dome. Positions are pinned so the camera frame stays stable.
 function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], rootId: string | null): void {
-  // dagMode derives levels from link direction, so it stays off; this
-  // layout owns the positions.
+  links = [...links];
+  nodes = [...nodes];
+  fg.onEngineTick(() => {});
+  fg.onEngineStop(() => {});
+  for (const name of ["bundles", "branch-x", "branch-y", "branch-z"]) {
+    fg.d3Force(name, null);
+  }
+  fg.graphData({ nodes, links });
   setDagMode(fg, null);
   fg.d3Force("layers", null);
-
-  const root = rootId != null ? nodes.find((node) => node.id === rootId) : null;
-  const callDepths = callTreeLayout(links, rootId);
-  const callNodes: GNode[] = [];
-  const byKind = new Map<string, GNode[]>();
+  fg.d3Force("center", null);
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  const kinds = nodes.map(node => ({ id: node.id, kind: classifySymbolKind(node), packageName: packageForSymbol(node) }));
+  const packages = new Map(kinds.map(node => [node.id, node.packageName]));
+  const branches = layoutCallBranches(nodes.map(node => node.id), links, rootId, packages);
+  const bundles = layoutSymbolBundles(kinds, links, rootId);
+  const bundleLinks: Array<{ source: string; target: string }> = [];
   for (const node of nodes) {
-    if (root != null && node.id === root.id) {
-      continue;
-    }
-    if (classifySymbolKind(node) === "call" && callDepths.has(node.id)) {
-      callNodes.push(node);
-      continue;
-    }
-    const kind = classifySymbolKind(node);
-    const group = byKind.get(kind) ?? [];
-    group.push(node);
-    byKind.set(kind, group);
+    delete node.fx;
+    delete node.fy;
+    delete node.fz;
+    const bundle = bundles.get(node.id);
+    const anchor = bundle?.anchorId ? branches.get(bundle.anchorId) : undefined;
+    const position = branches.get(node.id)!;
+    node.x = anchor && bundle ? anchor.x + bundle.x : position.x;
+    node.y = anchor && bundle ? anchor.y + bundle.y : position.y;
+    node.z = anchor && bundle ? anchor.z + bundle.z : position.z;
+    node.vx = 0;
+    node.vy = 0;
+    node.vz = 0;
+    if (bundle?.anchorId) bundleLinks.push({ source: node.id, target: bundle.anchorId });
   }
-  const kinds = Array.from(byKind.keys()).sort();
-
-  const pinNode = (node: GNode, x: number, y: number, z: number) => {
-    node.x = x;
-    node.y = y;
-    node.z = z;
-    // Pin the seeded position so the static layout stays exactly where
-    // the camera was framed: force ticks must not move nodes after
-    // zoomToFit has already computed the frame from these positions.
-    node.fx = x;
-    node.fy = y;
-    node.fz = z;
-  };
-
-  let maxBubble = 0;
-  for (const group of byKind.values()) {
-    maxBubble = Math.max(maxBubble, bubbleRadius(group.length));
-  }
-
-  // The call tree occupies the center: a radial tidy tree where every
-  // parent fans its children out inside its own angular window, so the
-  // branches are visible instead of collapsing into a dense ball.
-  const idOf = (end: string | GNode) => (typeof end === "object" ? end.id : end);
-  const callChildren = new Map<string, GNode[]>();
-  for (const link of links) {
-    const source = idOf(link.source);
-    const target = idOf(link.target);
-    const sourceNode = source === root?.id ? root : callNodes.find((node) => node.id === source);
-    const targetNode = callNodes.find((node) => node.id === target);
-    if (!sourceNode || !targetNode) {
-      continue;
-    }
-    const siblings = callChildren.get(source) ?? [];
-    siblings.push(targetNode);
-    callChildren.set(source, siblings);
-  }
-  for (const siblings of callChildren.values()) {
-    siblings.sort((a, b) => a.id.localeCompare(b.id));
-  }
-
-  let maxCallDepth = 0;
-  for (const depth of callDepths.values()) {
-    maxCallDepth = Math.max(maxCallDepth, depth);
-  }
-  const rootY = Math.max(maxBubble + 140, 260 + maxCallDepth * 90);
-
-  if (root != null) {
-    pinNode(root, 0, rootY, 0);
-  }
-
-  interface TreeSlot {
-    node: GNode;
-    depth: number;
-    start: number;
-    end: number;
-  }
-  const slotQueue: TreeSlot[] = [];
-  if (root != null && classifySymbolKind(root) === "call") {
-    slotQueue.push({ node: root, depth: 0, start: 0, end: 2 * Math.PI });
-  }
-  let slotHead = 0;
-  while (slotHead < slotQueue.length) {
-    const slot = slotQueue[slotHead];
-    slotHead += 1;
-    const children = callChildren.get(slot.node.id) ?? [];
-    const childCount = children.length;
-    children.forEach((child, index) => {
-      const start = slot.start + ((slot.end - slot.start) * index) / childCount;
-      const end = slot.start + ((slot.end - slot.start) * (index + 1)) / childCount;
-      const depth = slot.depth + 1;
-      const radius = 60 + depth * 70;
-      const levelY = rootY - 90 - depth * 90;
-      const angle = (start + end) / 2;
-      pinNode(child, Math.cos(angle) * radius, levelY, Math.sin(angle) * radius);
-      slotQueue.push({ node: child, depth, start, end });
+  const branchStrength = (node: GNode) => node.id === rootId ? 0.12 : bundles.get(node.id)?.anchorId ? 0 : 0.018;
+  fg.onEngineTick(() => {
+    const activeLinks = fg.d3Force("link") as unknown as { links(): GLink[] };
+    if (activeLinks.links() !== links) return;
+    fg.onEngineTick(() => {});
+    fg.d3Force("branch-x", forceX<GNode>(node => branches.get(node.id)!.x).strength(branchStrength));
+    fg.d3Force("branch-y", forceY<GNode>(node => branches.get(node.id)!.y).strength(branchStrength));
+    fg.d3Force("branch-z", forceZ<GNode>(node => branches.get(node.id)!.z).strength(branchStrength));
+    fg.d3Force("bundles", forceLink<GNode>(bundleLinks).id(node => node.id).distance(65).strength(0.65));
+    fg.d3Force("collide", forceCollide<GNode>(node => node.id === rootId ? 10 : 5).strength(0.7));
+    const linkForce = fg.d3Force("link") as unknown as {
+      distance(value: (link: GLink) => number): unknown;
+      strength(value: (link: GLink) => number): unknown;
+    };
+    linkForce.distance(link => link.relation === "CALLS" || link.relation === "METHOD" ? 85 : 65);
+    linkForce.strength(link => {
+      const source = typeof link.source === "string" ? byId.get(link.source) : link.source;
+      const target = typeof link.target === "string" ? byId.get(link.target) : link.target;
+      const degree = Math.max(source?.degree ?? 1, target?.degree ?? 1, 1);
+      return (link.relation === "CALLS" || link.relation === "METHOD" ? 0.16 : 0.012) / Math.sqrt(degree);
     });
-  }
-
-  // Non-call kinds ring around the tree, outside its radial extent.
-  const ringRadius = 60 + maxCallDepth * 70 + maxBubble + 60;
-  const ringY = rootY - maxBubble - 70;
-  kinds.forEach((kind, kindIndex) => {
-    const group = byKind.get(kind) ?? [];
-    const azimuth =
-      (2 * Math.PI * kindIndex) / Math.max(kinds.length, 1) - Math.PI / 2;
-    const radius = bubbleRadius(group.length);
-    const centerX = Math.cos(azimuth) * ringRadius;
-    const centerZ = Math.sin(azimuth) * ringRadius;
-    group.forEach((node, index) => {
-      // Fibonacci sphere inside the bubble.
-      const y = group.length === 1 ? 0 : 1 - (2 * index) / (group.length - 1);
-      const radiusAt = Math.sqrt(Math.max(0, 1 - y * y));
-      const theta = index * GOLDEN_ANGLE;
-      pinNode(
-        node,
-        centerX + Math.cos(theta) * radiusAt * radius,
-        ringY + y * radius,
-        centerZ + Math.sin(theta) * radiusAt * radius,
-      );
+    fg.d3VelocityDecay(0.35);
+    fg.d3AlphaMin(0.001);
+    fg.cooldownTicks(220);
+    fg.onEngineStop(() => {
+      fg.onEngineStop(() => {});
+      frameRootGraph(fg, rootId);
+      if (import.meta.env.DEV) {
+        const debug = (window as unknown as Record<string, { settled?: boolean }>).__graphifyDebug;
+        if (debug) debug.settled = true;
+      }
     });
+    fg.d3ReheatSimulation();
   });
-
   if (import.meta.env.DEV) {
+    const depths = callTreeLayout(links, rootId);
     (window as unknown as Record<string, unknown>).__graphifyDebug = {
       rootId,
-      callTree: { nodes: callNodes.length, maxDepth: maxCallDepth },
-      bubbles: kinds.map((kind) => ({
-        kind,
-        count: byKind.get(kind)?.length ?? 0,
-        radius: bubbleRadius(byKind.get(kind)?.length ?? 0),
-      })),
+      packages: [...packages],
+      callTree: { nodes: kinds.filter(node => node.kind === "call").length, maxDepth: Math.max(0, ...depths.values()) },
+      bundles: [...bundles].map(([id, bundle]) => ({ id, anchorId: bundle.anchorId })),
     };
   }
-  fg.d3AlphaMin(0.9);
+  fg.d3ReheatSimulation();
+}
+
+function frameRootGraph(fg: GraphifyForceGraph, rootId: string | null): void {
+  const frame = rootCameraFrame(fg.graphData().nodes, rootId, fg.width(), fg.height(), (fg.camera() as PerspectiveCamera).fov);
+  fg.cameraPosition(frame.position, frame.target, 400);
 }
 
 // ---------------------------------------------------------------------------
@@ -470,23 +372,61 @@ export function Graphify() {
   const customRootRef = useRef<{ id: string; label: string } | null>(null);
   const [depth, setDepth] = useState<number>(DEFAULT_DEPTH);
   const [showTests, setShowTests] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   // Filter entries are managed as add/remove lists in the filter panel;
   // applying them reloads the graph with the lists sent to the
-  // neighborhood endpoint.
-  const [includeLabels, setIncludeLabels] = useState<string[]>([]);
-  const [includeEdgeTypes, setIncludeEdgeTypes] = useState<string[]>([
-    ...CALL_RELATION_TYPES,
-  ]);
-  const [includeNames, setIncludeNames] = useState<string[]>([]);
-  const [includeProps, setIncludeProps] = useState<GraphPropertyFilter[]>([]);
-  const [excludeLabels, setExcludeLabels] = useState<string[]>([]);
-  const [excludeEdgeTypes, setExcludeEdgeTypes] = useState<string[]>([]);
-  const [excludeNames, setExcludeNames] = useState<string[]>([]);
-  const [excludeProps, setExcludeProps] = useState<GraphPropertyFilter[]>([]);
+  // neighborhood endpoint. All lists persist in localStorage so settings
+  // survive reloads and restarts.
+  const FILTERS_STORAGE_KEY = "nornicdb.graphify.filters.v1";
+  interface StoredGraphifyFilters {
+    includeLabels?: string[];
+    includeEdgeTypes?: string[];
+    includeNames?: string[];
+    includeProps?: GraphPropertyFilter[];
+    excludeLabels?: string[];
+    excludeEdgeTypes?: string[];
+    excludeNames?: string[];
+    excludeProps?: GraphPropertyFilter[];
+  }
+  const initialFilters = useMemo<StoredGraphifyFilters>(() => {
+    try {
+      const raw = localStorage.getItem(FILTERS_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as StoredGraphifyFilters;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }, []);
+  const [includeLabels, setIncludeLabels] = useState<string[]>(
+    initialFilters.includeLabels ?? [],
+  );
+  const [includeEdgeTypes, setIncludeEdgeTypes] = useState<string[]>(
+    initialFilters.includeEdgeTypes ?? [...CALL_RELATION_TYPES],
+  );
+  const [includeNames, setIncludeNames] = useState<string[]>(
+    initialFilters.includeNames ?? [],
+  );
+  const [includeProps, setIncludeProps] = useState<GraphPropertyFilter[]>(
+    initialFilters.includeProps ?? [],
+  );
+  const [excludeLabels, setExcludeLabels] = useState<string[]>(
+    initialFilters.excludeLabels ?? [],
+  );
+  const [excludeEdgeTypes, setExcludeEdgeTypes] = useState<string[]>(
+    initialFilters.excludeEdgeTypes ?? [],
+  );
+  const [excludeNames, setExcludeNames] = useState<string[]>(
+    initialFilters.excludeNames ?? [],
+  );
+  const [excludeProps, setExcludeProps] = useState<GraphPropertyFilter[]>(
+    initialFilters.excludeProps ?? [],
+  );
   // Disconnected subgraphs reported by the endpoint after exclusion
   // filters; selecting one dims the rest of the scene.
   const [components, setComponents] = useState<GraphNeighborhoodResponse[]>([]);
   const [activeComponent, setActiveComponent] = useState<number | null>(null);
+  const [componentsVisible, setComponentsVisible] = useState(false);
   const [source, setSource] = useState<LoadSource | null>(null);
   const [status, setStatus] = useState<string>(
     "select a database and load the graphify tree",
@@ -503,7 +443,12 @@ export function Graphify() {
   const [searchResults, setSearchResults] = useState<Array<{ id: string; label: string; sourceFile?: string; score?: number }>>([]);
   const [similarLoading, setSimilarLoading] = useState(false);
   const [similarCount, setSimilarCount] = useState<number | null>(null);
-  const [panelPos, setPanelPos] = useState<{ left: number; top: number } | null>(null);
+  const [panelBounds, setPanelBounds] = useState(() => clampPanelBounds({
+    left: window.innerWidth - 400,
+    top: Math.min(264, window.innerHeight - 496),
+    width: 384,
+    height: 480,
+  }, window.innerWidth, window.innerHeight));
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadDbName, setUploadDbName] = useState("");
@@ -512,8 +457,29 @@ export function Graphify() {
   const [updateExisting, setUpdateExisting] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null);
+  const resizeRef = useRef<{ startX: number; startY: number; width: number; height: number } | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const rootIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const clamp = () => setPanelBounds(current => {
+      const panel = panelRef.current?.getBoundingClientRect();
+      const next = clampPanelBounds({
+        ...current,
+        width: panel?.width ?? current.width,
+        height: panel?.height ?? current.height,
+      }, window.innerWidth, window.innerHeight);
+      return Object.keys(next).every(key => next[key as keyof typeof next] === current[key as keyof typeof current]) ? current : next;
+    });
+    const observer = new ResizeObserver(clamp);
+    if (panelRef.current) observer.observe(panelRef.current);
+    window.addEventListener("resize", clamp);
+    clamp();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", clamp);
+    };
+  }, [selected != null]);
 
   // --- Database list -------------------------------------------------------
 
@@ -587,6 +553,24 @@ export function Graphify() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersKey]);
 
+  // Persist every filter change so settings survive reloads and restarts.
+  useEffect(() => {
+    localStorage.setItem(
+      FILTERS_STORAGE_KEY,
+      JSON.stringify({
+        includeLabels,
+        includeEdgeTypes,
+        includeNames,
+        includeProps,
+        excludeLabels,
+        excludeEdgeTypes,
+        excludeNames,
+        excludeProps,
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey]);
+
   // --- Graph init (once) ---------------------------------------------------
 
   useEffect(() => {
@@ -619,9 +603,9 @@ export function Graphify() {
             ? LINK_HIGHLIGHT
             : LINK_COLOR,
       )
-      .linkDirectionalArrowLength(3.5)
+      .linkDirectionalArrowLength(0)
       .linkDirectionalArrowRelPos(1)
-      .linkCurvature(0.2)
+      .linkCurvature(0)
       .dagLevelDistance(72)
       .linkDirectionalParticles(0)
       .linkLabel((l) => {
@@ -687,7 +671,7 @@ export function Graphify() {
   }, []);
 
   const selectNode = useCallback(
-    async (id: string) => {
+    async (id: string, focusCamera = true) => {
       const node = nodeByIdRef.current.get(id);
       if (!node) return;
       selectedIdRef.current = id;
@@ -695,7 +679,7 @@ export function Graphify() {
       applySelectionVisuals(id);
 
       const fg = graphRef.current;
-      if (fg) {
+      if (fg && focusCamera) {
         fg.cameraPosition(
           {
             x: node.x ?? 0,
@@ -787,7 +771,9 @@ export function Graphify() {
         index == null
           ? null
           : new Set(
-              (components[index]?.nodes ?? []).map((node) => node.id),
+              (components[index]?.nodes ?? []).map((node) =>
+                node.properties.id != null ? String(node.properties.id) : node.id,
+              ),
             );
       for (const node of live.nodes) {
         node.dimmed = memberIds != null && !memberIds.has(node.id);
@@ -861,16 +847,12 @@ export function Graphify() {
       const fg = graphRef.current;
       const nodes = Array.from(byId.values());
       if (fg) {
-        // Orient the graph top-down: dagMode when acyclic (the root then
-        // lands at the top), otherwise seed positions by depth from the root
-        // and hold them with a layered y-force.
         orientGraph(fg, links, nodes, rootId);
       }
-      fg?.graphData({ nodes, links });
       if (fg && rootId) {
-        // Frame the whole tree once it is laid out; dagMode td keeps the
-        // start node pinned at the top of the scene.
-        fg.zoomToFit(400, 60);
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => frameRootGraph(fg, rootId));
+        });
       }
       setLoadedLinks(links.length);
       setSelected(null);
@@ -997,8 +979,7 @@ export function Graphify() {
       }));
       // Test-file nodes (and their edges) are filtered out unless "show test
       // files" is checked. The root stays visible so a re-root into test code
-      // never empties the graph. Nodes and clusters left unconnected by the
-      // removed test links (orphans) are pruned too.
+      // never empties the graph.
       let visibleNodes = rawNodes;
       let visibleLinks = rawLinks;
       if (!showTests) {
@@ -1009,27 +990,8 @@ export function Graphify() {
         const links = rawLinks.filter(
           (link) => visible.has(link.source) && visible.has(link.target),
         );
-        // Keep only the root's connected component of the remaining graph.
-        const adjacency = new Map<string, string[]>();
-        for (const node of rawNodes) {
-          if (visible.has(node.id)) adjacency.set(node.id, []);
-        }
-        for (const link of links) {
-          adjacency.get(link.source)?.push(link.target);
-          adjacency.get(link.target)?.push(link.source);
-        }
-        const reachable = new Set<string>();
-        const stack = [rootId];
-        while (stack.length > 0) {
-          const current = stack.pop();
-          if (current === undefined || reachable.has(current)) continue;
-          reachable.add(current);
-          for (const next of adjacency.get(current) ?? []) stack.push(next);
-        }
-        visibleNodes = rawNodes.filter((node) => reachable.has(node.id));
-        visibleLinks = links.filter(
-          (link) => reachable.has(link.source) && reachable.has(link.target),
-        );
+        visibleNodes = rawNodes.filter((node) => visible.has(node.id));
+        visibleLinks = links;
       }
       buildGraph(visibleNodes, visibleLinks, rootId);
       publicToInternalRef.current = publicToInternal;
@@ -1042,7 +1004,7 @@ export function Graphify() {
       const focusNode = nodeByIdRef.current.get(focusId);
       if (focusNode) {
         selectedIdRef.current = focusId;
-        void selectNode(focusId);
+        void selectNode(focusId, false);
       } else {
         selectedIdRef.current = null;
         setSelected(null);
@@ -1410,10 +1372,7 @@ export function Graphify() {
         live.links.push(link);
       }
     }
-    // Keep the top-down orientation valid after new arms are spawned, then
-    // hand the merged data to the renderer once.
     orientGraph(fg, live.links, live.nodes, rootIdRef.current);
-    fg.graphData(live);
     // Re-apply the accessors so node/link color changes (e.g. newly
     // flagged similar nodes) repaint immediately.
     fg.nodeColor(fg.nodeColor());
@@ -1614,8 +1573,20 @@ export function Graphify() {
       </div>
 
       {/* Controls (top-right) */}
-      <div className="absolute top-4 right-4 z-10 w-80 max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-sky-500/30 bg-norse-shadow/85 backdrop-blur px-4 py-3 shadow-[0_0_24px_rgba(56,189,248,0.15)]">
-        <div className="flex items-baseline justify-between">
+      <button
+        type="button"
+        aria-label={controlsVisible ? "Hide filters" : "Show filters"}
+        title={controlsVisible ? "Hide filters" : "Show filters"}
+        aria-expanded={controlsVisible}
+        aria-controls="graphify-filter-pane"
+        onClick={() => setControlsVisible(visible => !visible)}
+        className="absolute top-5 right-5 z-30 flex h-7 w-7 items-center justify-center rounded border border-sky-500/30 bg-norse-shadow/95 text-sky-300 hover:text-white"
+      >
+        {controlsVisible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+      </button>
+      {controlsVisible && (
+      <div id="graphify-filter-pane" className="absolute top-4 right-4 z-10 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-sky-500/30 bg-norse-shadow/85 backdrop-blur px-4 py-3 shadow-[0_0_24px_rgba(56,189,248,0.15)]">
+        <div className="flex items-baseline justify-between pr-7">
           <span className="text-xs uppercase tracking-[0.25em] text-sky-300">
             Graph Source
           </span>
@@ -1826,6 +1797,7 @@ export function Graphify() {
           to zoom · right-drag to pan
         </div>
       </div>
+      )}
 
       {/* Upload dialog */}
       {uploadOpen && (
@@ -1946,7 +1918,7 @@ export function Graphify() {
       )}
 
       {/* Search (top-center) */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 w-72">
+      <div className={`absolute ${components.length > 1 ? "top-12" : "top-4"} left-1/2 -translate-x-1/2 z-10 w-72`}>
         <input
           type="text"
           value={search}
@@ -1980,7 +1952,17 @@ export function Graphify() {
       {/* Disconnected components (appear when exclusion filters fragment the
           graph) */}
       {components.length > 1 && (
-        <div className="absolute bottom-20 right-4 z-10 w-72 rounded-lg border border-norse-rune bg-norse-shadow/85 backdrop-blur px-3 py-2">
+        <div
+          data-testid="graphify-components-drawer"
+          className="absolute top-0 left-1/2 z-30 w-72 max-w-[calc(100%-2rem)] transition-transform duration-200 ease-out motion-reduce:transition-none"
+          style={{ transform: `translate(-50%, ${componentsVisible ? "0" : "-100%"})` }}
+        >
+          <div
+            id="graphify-components"
+            inert={!componentsVisible}
+            aria-hidden={!componentsVisible}
+            className="rounded-b-lg border border-t-0 border-norse-rune bg-norse-shadow/95 backdrop-blur px-3 py-2 shadow-lg"
+          >
           <div className="flex items-center justify-between">
             <span className="text-[10px] uppercase tracking-[0.2em] text-norse-silver/60">
               disconnected components ({components.length})
@@ -1995,14 +1977,16 @@ export function Graphify() {
               </button>
             )}
           </div>
-          <div className="mt-1.5 max-h-40 overflow-y-auto space-y-1">
+          <div className="mt-1.5 max-h-[min(15rem,40vh)] overflow-y-auto space-y-1">
             {components.map((component, index) => (
               <button
                 key={`${component.nodes[0]?.id ?? "empty"}-${index}`}
                 type="button"
-                onClick={() =>
-                  setActiveComponent(activeComponent === index ? null : index)
-                }
+                aria-pressed={activeComponent === index}
+                onClick={() => {
+                  setActiveComponent(index);
+                  applyComponentDim(index);
+                }}
                 className={`block w-full text-left rounded px-2 py-1 text-[11px] font-mono ${
                   activeComponent === index
                     ? "bg-sky-500/20 text-sky-200"
@@ -2015,9 +1999,18 @@ export function Graphify() {
               </button>
             ))}
           </div>
-          <div className="mt-1 text-[10px] text-norse-silver/50">
-            selecting a component dims the rest and fits the camera
           </div>
+          <button
+            type="button"
+            aria-label={componentsVisible ? "Close components" : "Open components"}
+            title={componentsVisible ? "Close components" : "Open components"}
+            aria-expanded={componentsVisible}
+            aria-controls="graphify-components"
+            onClick={() => setComponentsVisible((visible) => !visible)}
+            className="absolute top-full left-1/2 flex h-7 w-16 -translate-x-1/2 items-center justify-center rounded-b-md border border-t-0 border-norse-rune bg-norse-shadow/95 text-sky-300 shadow hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400"
+          >
+            {componentsVisible ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
         </div>
       )}
 
@@ -2053,23 +2046,22 @@ export function Graphify() {
       {selected && (
         <div
           ref={panelRef}
-          style={
-            panelPos
-              ? {
-                  left: panelPos.left,
-                  top: panelPos.top,
-                  maxHeight: `calc(100vh - ${Math.max(0, panelPos.top)}px - 24px)`,
-                }
-              : undefined
-          }
-          className={`absolute z-10 w-96 max-w-[calc(100vw-2rem)] rounded-lg border border-purple-500/30 bg-norse-shadow/90 backdrop-blur overflow-y-auto shadow-[0_0_24px_rgba(168,85,247,0.15)] ${
-            panelPos ? "" : "top-[16.5rem] right-4 max-h-[calc(100vh-18rem)]"
-          }`}
+          data-testid="graphify-details"
+          style={{
+            ...panelBounds,
+            minWidth: "min(280px, calc(100vw - 32px))",
+            minHeight: "min(180px, calc(100vh - 32px))",
+            maxWidth: `calc(100vw - ${panelBounds.left + 16}px)`,
+            maxHeight: `calc(100vh - ${panelBounds.top + 16}px)`,
+          }}
+          className="absolute z-20 flex flex-col rounded-lg border border-purple-500/30 bg-norse-shadow/90 backdrop-blur overflow-hidden shadow-[0_0_24px_rgba(168,85,247,0.15)]"
         >
           <div
             onPointerDown={(e) => {
-              // Ignore drags that start on the close button so its click fires.
+              if (e.button !== 0) return;
               if ((e.target as HTMLElement).closest("button")) return;
+              e.preventDefault();
+              e.stopPropagation();
               const panel = panelRef.current;
               if (!panel) return;
               const rect = panel.getBoundingClientRect();
@@ -2084,15 +2076,11 @@ export function Graphify() {
             onPointerMove={(e) => {
               const drag = dragRef.current;
               if (!drag) return;
-              const left = Math.min(
-                Math.max(0, drag.left + e.clientX - drag.startX),
-                Math.max(0, window.innerWidth - 160),
-              );
-              const top = Math.min(
-                Math.max(0, drag.top + e.clientY - drag.startY),
-                Math.max(0, window.innerHeight - 160),
-              );
-              setPanelPos({ left, top });
+              setPanelBounds(current => clampPanelBounds({
+                ...current,
+                left: drag.left + e.clientX - drag.startX,
+                top: drag.top + e.clientY - drag.startY,
+              }, window.innerWidth, window.innerHeight));
             }}
             onPointerUp={() => {
               dragRef.current = null;
@@ -2100,7 +2088,11 @@ export function Graphify() {
             onPointerCancel={() => {
               dragRef.current = null;
             }}
-            className="sticky top-0 z-10 bg-norse-shadow/95 backdrop-blur px-4 py-3 border-b border-norse-rune/60 flex items-start justify-between cursor-grab active:cursor-grabbing touch-none"
+            onLostPointerCapture={() => {
+              dragRef.current = null;
+            }}
+            data-testid="graphify-details-header"
+            className="shrink-0 z-10 bg-norse-shadow/95 backdrop-blur px-4 py-3 border-b border-norse-rune/60 flex items-start justify-between cursor-grab active:cursor-grabbing touch-none"
           >
             <div className="min-w-0">
               <div className="text-sm font-semibold text-white truncate">
@@ -2125,7 +2117,34 @@ export function Graphify() {
             </button>
           </div>
 
-          <div className="px-4 py-3 text-xs space-y-2">
+          <button
+            type="button"
+            aria-label="Resize details"
+            title="Resize details"
+            onPointerDown={event => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              event.stopPropagation();
+              resizeRef.current = { startX: event.clientX, startY: event.clientY, width: panelBounds.width, height: panelBounds.height };
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={event => {
+              const resizing = resizeRef.current;
+              if (!resizing) return;
+              setPanelBounds(current => clampPanelBounds({
+                ...current,
+                width: Math.min(window.innerWidth - current.left - 16, resizing.width + event.clientX - resizing.startX),
+                height: Math.min(window.innerHeight - current.top - 16, resizing.height + event.clientY - resizing.startY),
+              }, window.innerWidth, window.innerHeight));
+            }}
+            onPointerUp={() => { resizeRef.current = null; }}
+            onPointerCancel={() => { resizeRef.current = null; }}
+            onLostPointerCapture={() => { resizeRef.current = null; }}
+            className="absolute bottom-0 right-0 z-30 p-1 text-norse-silver/60 hover:text-white cursor-nwse-resize touch-none"
+          >
+            <Grip size={14} />
+          </button>
+          <div className="px-4 py-3 text-xs space-y-2 flex-1 min-h-0 overflow-auto">
             <div className="grid grid-cols-[88px_1fr] gap-x-2 gap-y-1 font-mono">
               <span className="text-norse-silver/50">file_type</span>
               <span className="text-sky-300">{selected.fileType}</span>

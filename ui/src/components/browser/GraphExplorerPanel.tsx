@@ -158,15 +158,78 @@ export function GraphExplorerPanel({
   const [error, setError] = useState<string | null>(null);
   // Filter entries are add/remove lists; the neighborhood request reads the
   // current lists through filtersRef so adding a chip does not auto-reload
-  // (the apply button drives the fetch).
-  const [includeLabels, setIncludeLabels] = useState<string[]>([]);
-  const [includeEdgeTypes, setIncludeEdgeTypes] = useState<string[]>([]);
-  const [includeNames, setIncludeNames] = useState<string[]>([]);
-  const [includeProps, setIncludeProps] = useState<GraphPropertyFilter[]>([]);
-  const [excludeLabels, setExcludeLabels] = useState<string[]>([]);
-  const [excludeEdgeTypes, setExcludeEdgeTypes] = useState<string[]>([]);
-  const [excludeNames, setExcludeNames] = useState<string[]>([]);
-  const [excludeProps, setExcludeProps] = useState<GraphPropertyFilter[]>([]);
+  // (the apply button drives the fetch). All lists persist in localStorage.
+  const EXPLORER_FILTERS_STORAGE_KEY = "nornicdb.explorer.filters.v1";
+  interface StoredExplorerFilters {
+    includeLabels?: string[];
+    includeEdgeTypes?: string[];
+    includeNames?: string[];
+    includeProps?: GraphPropertyFilter[];
+    excludeLabels?: string[];
+    excludeEdgeTypes?: string[];
+    excludeNames?: string[];
+    excludeProps?: GraphPropertyFilter[];
+  }
+  const initialFilters = useMemo<StoredExplorerFilters>(() => {
+    try {
+      const raw = localStorage.getItem(EXPLORER_FILTERS_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as StoredExplorerFilters;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }, []);
+  const [includeLabels, setIncludeLabels] = useState<string[]>(
+    initialFilters.includeLabels ?? [],
+  );
+  const [includeEdgeTypes, setIncludeEdgeTypes] = useState<string[]>(
+    initialFilters.includeEdgeTypes ?? [],
+  );
+  const [includeNames, setIncludeNames] = useState<string[]>(
+    initialFilters.includeNames ?? [],
+  );
+  const [includeProps, setIncludeProps] = useState<GraphPropertyFilter[]>(
+    initialFilters.includeProps ?? [],
+  );
+  const [excludeLabels, setExcludeLabels] = useState<string[]>(
+    initialFilters.excludeLabels ?? [],
+  );
+  const [excludeEdgeTypes, setExcludeEdgeTypes] = useState<string[]>(
+    initialFilters.excludeEdgeTypes ?? [],
+  );
+  const [excludeNames, setExcludeNames] = useState<string[]>(
+    initialFilters.excludeNames ?? [],
+  );
+  const [excludeProps, setExcludeProps] = useState<GraphPropertyFilter[]>(
+    initialFilters.excludeProps ?? [],
+  );
+  const filtersKey = JSON.stringify([
+    includeLabels,
+    includeEdgeTypes,
+    includeNames,
+    includeProps,
+    excludeLabels,
+    excludeEdgeTypes,
+    excludeNames,
+    excludeProps,
+  ]);
+  useEffect(() => {
+    localStorage.setItem(
+      EXPLORER_FILTERS_STORAGE_KEY,
+      JSON.stringify({
+        includeLabels,
+        includeEdgeTypes,
+        includeNames,
+        includeProps,
+        excludeLabels,
+        excludeEdgeTypes,
+        excludeNames,
+        excludeProps,
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey]);
   const filtersRef = useRef<GraphExplorerFilters>({
     includeLabels,
     includeEdgeTypes,
