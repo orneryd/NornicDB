@@ -28,6 +28,26 @@ import (
 //     have no identity, so every NaN is apart.)
 //   - any other value (temporal, spatial, path) keeps its Go type and value.
 func cypherEquivalenceKey(value interface{}) string {
+	// The common single values get their key in one allocation; the rest are
+	// written by appendEquivalenceKey.
+	switch typed := value.(type) {
+	case nil:
+		return "N"
+	case string:
+		return "S" + typed
+	case *storage.Node:
+		if typed != nil {
+			return "n:" + string(typed.ID)
+		}
+		return "N"
+	case *storage.Edge:
+		if typed != nil {
+			return "r:" + string(typed.ID)
+		}
+		return "N"
+	case int64:
+		return "I" + strconv.FormatInt(typed, 10)
+	}
 	var key strings.Builder
 	appendEquivalenceKey(&key, value)
 	return key.String()
@@ -38,13 +58,6 @@ func cypherEquivalenceKey(value interface{}) string {
 // is preceded by its length, so a composite key has one reading.
 func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 	switch typed := value.(type) {
-	case nil:
-		key.WriteByte('N')
-		return
-	case string:
-		key.WriteByte('S')
-		key.WriteString(typed)
-		return
 	case bool:
 		if typed {
 			key.WriteString("Bt")
@@ -55,22 +68,6 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 	case []byte:
 		key.WriteByte('X')
 		key.Write(typed)
-		return
-	case *storage.Node:
-		if typed == nil {
-			key.WriteByte('N')
-			return
-		}
-		key.WriteString("n:")
-		key.WriteString(string(typed.ID))
-		return
-	case *storage.Edge:
-		if typed == nil {
-			key.WriteByte('N')
-			return
-		}
-		key.WriteString("r:")
-		key.WriteString(string(typed.ID))
 		return
 	}
 	if signed, ok := cypherSignedInteger(value); ok {
