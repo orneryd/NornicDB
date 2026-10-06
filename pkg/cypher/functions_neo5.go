@@ -224,6 +224,11 @@ func fnStringOperation(name string) cypherfn.Func {
 		if err != nil {
 			return nil, err
 		}
+		if name == "split" {
+			if delimiters, isList := values[1].([]interface{}); isList {
+				return splitAtAnyDelimiter(name, text, delimiters)
+			}
+		}
 		if name == "replace" || name == "split" {
 			separator, _, err := stringArgument(name, values, 1)
 			if err != nil {
@@ -343,6 +348,56 @@ func fnIsNaN(ctx cypherfn.Context, args []string) (interface{}, error) {
 }
 
 // stringArgument is values[index] as a string; ok is false for null.
+// splitAtAnyDelimiter is split(text, delimiters) with a list of delimiters,
+// as Neo4j does it: the text is cut wherever one of them starts, the first in
+// the list winning at a position; an empty delimiter cuts between
+// characters, an empty list leaves the text whole, a null delimiter gives
+// null and any other non-string one is a type error.
+func splitAtAnyDelimiter(function, text string, delimiters []interface{}) (interface{}, error) {
+	separators := make([]string, 0, len(delimiters))
+	for _, delimiter := range delimiters {
+		if delimiter == nil {
+			return nil, nil
+		}
+		separator, isString := delimiter.(string)
+		if !isString {
+			return nil, &cypherfn.TypeMismatchError{Function: function, Expected: "String", Value: delimiter}
+		}
+		separators = append(separators, separator)
+	}
+	parts := []interface{}{}
+	start := 0
+	for position := 0; position < len(text); {
+		cut := -1
+		for _, separator := range separators {
+			if separator == "" {
+				if position > start {
+					cut = 0
+					break
+				}
+				continue
+			}
+			if strings.HasPrefix(text[position:], separator) {
+				cut = len(separator)
+				break
+			}
+		}
+		if cut > 0 {
+			parts = append(parts, text[start:position])
+			position += cut
+			start = position
+			continue
+		}
+		if cut == 0 {
+			parts = append(parts, text[start:position])
+			start = position
+		}
+		_, size := utf8.DecodeRuneInString(text[position:])
+		position += size
+	}
+	return append(parts, text[start:]), nil
+}
+
 func stringArgument(function string, values []interface{}, index int) (string, bool, error) {
 	if values[index] == nil {
 		return "", false, nil

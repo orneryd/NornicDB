@@ -186,3 +186,13 @@
   other: "Entrada no válida para la función '{{.Function}}()': se esperaba {{.Expected}}, se obtuvo: {{.Value}}"
 - id: cyphercore.temporal_call_signature
   other: "Firma de llamada no válida para {{.Type}}Function: la entrada proporcionada fue [{{.Provided}}]"
+- id: cyphercore.temporal_procedure_call_signature
+  other: "Firma de llamada no válida para {{.Procedure}}: la entrada proporcionada fue [{{.Provided}}]"
+- id: cyphercore.temporal_unsupported_unit
+  other: "Unidad no admitida: {{.Unit}}"
+- id: cyphercore.temporal_no_such_field
+  other: "No existe el campo: {{.Field}}"
+- id: cyphercore.temporal_invalid_nanosecond
+  other: "Nanosegundo no válido: {{.Value}}"
+- id: cyphercore.temporal_missing_component
+  other: "No se puede obtener el componente {{.Component}} de: {{.Value}}"

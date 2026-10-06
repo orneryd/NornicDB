@@ -249,57 +249,69 @@ func temporalClockValue(kind string, instant time.Time, zoneID string) (interfac
 	}
 }
 
-func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEval func(string) interface{}, expression string) (interface{}, bool) {
+// evaluateTemporalConstructor evaluates a temporal function call: the
+// constructors (date(…), datetime.realtime(…), …), X.truncate, the
+// duration.between family and datetime.fromepoch / fromepochmillis. handled
+// is false for any other expression. A call Neo4j rejects at run time
+// returns its error: an argument of a type the function doesn't take is
+// ProcedureCallFailed ("Invalid call signature for Truncate: …").
+func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEval func(string) interface{}, expression string) (interface{}, bool, error) {
 	name, argument, ok := parseFunctionCallWS(expression)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	kind := lowerASCII(name)
 	if kind == "duration.between" || kind == "duration.inmonths" || kind == "duration.indays" || kind == "duration.inseconds" {
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) != 2 {
-			return nil, true
+			return nil, true, nil
 		}
 		leftExpression := strings.TrimSpace(arguments[0])
 		rightExpression := strings.TrimSpace(arguments[1])
-		if strings.EqualFold(leftExpression, "null") || strings.EqualFold(rightExpression, "null") {
-			return nil, true
+		left := ctxEval(leftExpression)
+		right := left
+		if rightExpression != leftExpression {
+			right = ctxEval(rightExpression)
+		}
+		if left == nil || right == nil {
+			return nil, true, nil
+		}
+		if !isTemporalInstant(left) || !isTemporalInstant(right) {
+			return nil, true, temporalProcedureCallError("Between", left, right)
 		}
 		if leftExpression == rightExpression {
-			return &CypherDuration{}, true
+			return &CypherDuration{}, true, nil
 		}
-		left := ctxEval(leftExpression)
-		right := ctxEval(rightExpression)
-		if left == nil || right == nil {
-			return nil, true
-		}
-		return durationBetweenTemporalValues(strings.TrimPrefix(kind, "duration."), left, right)
+		value, _ := durationBetweenTemporalValues(strings.TrimPrefix(kind, "duration."), left, right)
+		return value, true, nil
 	}
 	if strings.HasSuffix(kind, ".truncate") {
 		kind = strings.TrimSuffix(kind, ".truncate")
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) < 1 || len(arguments) > 3 {
-			return nil, true
+			return nil, true, nil
 		}
-		unit, unitOK := ctxEval(strings.TrimSpace(arguments[0])).(string)
-		if !unitOK {
-			return nil, true
-		}
+		unitValue := ctxEval(strings.TrimSpace(arguments[0]))
 		var value interface{}
 		if len(arguments) == 1 {
 			value, _ = temporalClockValue(kind, e.temporalClockTime(ctx, "transaction"), "")
 		} else {
 			value = ctxEval(strings.TrimSpace(arguments[1]))
 		}
+		var fieldsValue interface{}
 		fields := map[string]interface{}{}
 		if len(arguments) == 3 {
-			if input := ctxEval(strings.TrimSpace(arguments[2])); input != nil {
-				var fieldsOK bool
-				fields, fieldsOK = toStringAnyMap(input)
-				if !fieldsOK {
-					return nil, true
-				}
+			fieldsValue = ctxEval(strings.TrimSpace(arguments[2]))
+		}
+		unit, unitOK := unitValue.(string)
+		if fieldsValue != nil {
+			var fieldsOK bool
+			if fields, fieldsOK = toStringAnyMap(fieldsValue); !fieldsOK {
+				unitOK = false
 			}
+		}
+		if !unitOK || !isTemporalInstant(value) {
+			return nil, true, temporalProcedureCallError("Truncate", unitValue, value, fieldsValue)
 		}
 		return truncateTemporalValue(kind, unit, value, fields)
 	}
@@ -318,58 +330,68 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		if clockFunction && argument != "" {
 			zoneID, valid := ctxEval(argument).(string)
 			if !valid {
-				return nil, true
+				return nil, true, nil
 			}
 			instant := e.temporalClockTime(ctx, clock)
 			location, zoneID, valid := temporalLocationForProjection(map[string]interface{}{"timezone": zoneID}, true, instant, true)
 			if !valid {
-				return nil, true
+				return nil, true, nil
 			}
-			return temporalClockValue(kind, instant.In(location), zoneID)
+			value, handled := temporalClockValue(kind, instant.In(location), zoneID)
+			return value, handled, nil
 		}
 		if argument == "" {
 			value, _ := temporalClockValue(kind, e.temporalClockTime(ctx, clock), "")
-			return value, true
+			return value, true, nil
 		}
 		value := ctxEval(argument)
 		if value == nil {
-			return nil, true
+			return nil, true, nil
 		}
 		if text, isString := value.(string); isString {
 			parsed, valid := parseTemporalText(kind, text)
 			if !valid {
-				return nil, true
+				return nil, true, nil
 			}
-			return parsed, true
+			return parsed, true, nil
 		}
 		if converted, valid := projectTemporalValue(kind, value); valid {
-			return converted, true
+			return converted, true, nil
 		}
 		fields, isMap := toStringAnyMap(value)
 		if !isMap {
-			return nil, true
+			return nil, true, nil
 		}
 		built, _ := buildTemporalValue(kind, fields)
-		return built, true
+		return built, true, nil
 	case "datetime.fromepoch":
+		// Both arguments are integers, whatever the signature says: a float or
+		// null is ProcedureCallFailed, and the nanoseconds are of the second.
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) != 2 {
-			return nil, true
+			return nil, true, nil
 		}
-		seconds, secondsOK := temporalInt(ctxEval(strings.TrimSpace(arguments[0])))
-		nanos, nanosOK := temporalInt(ctxEval(strings.TrimSpace(arguments[1])))
+		secondsValue := ctxEval(strings.TrimSpace(arguments[0]))
+		nanosValue := ctxEval(strings.TrimSpace(arguments[1]))
+		seconds, secondsOK := cypherIntegerValue(secondsValue)
+		nanos, nanosOK := cypherIntegerValue(nanosValue)
 		if !secondsOK || !nanosOK {
-			return nil, true
+			return nil, true, temporalProcedureCallError("FromEpoch", secondsValue, nanosValue)
 		}
-		return CypherDateTime{Time: time.Unix(seconds, nanos).UTC()}, true
+		if nanos < 0 || nanos > 999_999_999 {
+			return nil, true, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+				localization.CypherCoreTemporalInvalidNanosecond(nanos))
+		}
+		return CypherDateTime{Time: time.Unix(seconds, nanos).UTC()}, true, nil
 	case "datetime.fromepochmillis":
-		millis, valid := temporalInt(ctxEval(strings.TrimSpace(argument)))
+		millisValue := ctxEval(strings.TrimSpace(argument))
+		millis, valid := cypherIntegerValue(millisValue)
 		if !valid {
-			return nil, true
+			return nil, true, temporalProcedureCallError("FromEpochMillis", millisValue)
 		}
-		return CypherDateTime{Time: time.UnixMilli(millis).UTC()}, true
+		return CypherDateTime{Time: time.UnixMilli(millis).UTC()}, true, nil
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 }
 
@@ -869,15 +891,28 @@ func temporalConstructorError(function string, input interface{}) error {
 		}
 		return localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",
 			localization.CypherCoreTemporalMapInvalid(typeName, fmt.Sprintf("%v", value)))
+	}
+	return temporalCallSignatureError(typeName, neo4jProvidedValue(input))
+}
+
+// neo4jProvidedValue writes a value as Neo4j lists the input of a call with
+// an invalid signature: NO_VALUE, String("x"), Boolean('true'), Double(1.5),
+// Long(1), and any other value as itself.
+func neo4jProvidedValue(value interface{}) string {
+	switch typed := value.(type) {
+	case nil:
+		return "NO_VALUE"
+	case string:
+		return "String(" + strconv.Quote(typed) + ")"
 	case bool:
-		return temporalCallSignatureError(typeName, fmt.Sprintf("Boolean('%t')", value))
+		return fmt.Sprintf("Boolean('%t')", typed)
 	case float32, float64:
-		return temporalCallSignatureError(typeName, fmt.Sprintf("Double(%v)", value))
+		return fmt.Sprintf("Double(%v)", typed)
 	}
-	if integer, ok := cypherIntegerValue(input); ok {
-		return temporalCallSignatureError(typeName, fmt.Sprintf("Long(%d)", integer))
+	if integer, ok := cypherIntegerValue(value); ok {
+		return fmt.Sprintf("Long(%d)", integer)
 	}
-	return temporalCallSignatureError(typeName, fmt.Sprintf("%v", input))
+	return fmt.Sprintf("%v", value)
 }
 
 // temporalCallSignatureError is Neo4j's error for a temporal constructor

@@ -78,6 +78,11 @@ const (
 	MessageCypherCoreTemporalTextUnparseable             MessageID = "cyphercore.temporal_text_unparseable"
 	MessageCypherCoreTemporalMapInvalid                  MessageID = "cyphercore.temporal_map_invalid"
 	MessageCypherCoreTemporalCallSignature               MessageID = "cyphercore.temporal_call_signature"
+	MessageCypherCoreTemporalProcedureCallSignature      MessageID = "cyphercore.temporal_procedure_call_signature"
+	MessageCypherCoreTemporalUnsupportedUnit             MessageID = "cyphercore.temporal_unsupported_unit"
+	MessageCypherCoreTemporalNoSuchField                 MessageID = "cyphercore.temporal_no_such_field"
+	MessageCypherCoreTemporalInvalidNanosecond           MessageID = "cyphercore.temporal_invalid_nanosecond"
+	MessageCypherCoreTemporalMissingComponent            MessageID = "cyphercore.temporal_missing_component"
 	MessageCypherCoreFunctionArgumentInvalid             MessageID = "cyphercore.function_argument_invalid"
 )
 
@@ -402,4 +407,34 @@ func CypherCoreFunctionArgumentInvalid(function, expected, value string) Message
 
 func CypherCoreTemporalCallSignature(typeName string, provided string) Message {
 	return cypherCoreMessage(MessageCypherCoreTemporalCallSignature, "Invalid call signature for "+typeName+"Function: Provided input was ["+provided+"]", map[string]any{"Type": typeName, "Provided": provided})
+}
+
+// CypherCoreTemporalProcedureCallSignature is a temporal function (truncate,
+// duration.between, datetime.fromepoch, …) called with a value of a type it
+// doesn't take.
+func CypherCoreTemporalProcedureCallSignature(procedure string, provided string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalProcedureCallSignature, "Invalid call signature for "+procedure+": Provided input was ["+provided+"]", map[string]any{"Procedure": procedure, "Provided": provided})
+}
+
+// CypherCoreTemporalUnsupportedUnit is a truncation unit the function doesn't
+// know.
+func CypherCoreTemporalUnsupportedUnit(unit string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalUnsupportedUnit, "Unsupported unit: "+unit, map[string]any{"Unit": unit})
+}
+
+// CypherCoreTemporalNoSuchField is a field name no temporal value has.
+func CypherCoreTemporalNoSuchField(field string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalNoSuchField, "No such field: "+field, map[string]any{"Field": field})
+}
+
+// CypherCoreTemporalInvalidNanosecond is a nanosecond-of-second outside
+// 0..999999999.
+func CypherCoreTemporalInvalidNanosecond(value int64) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalInvalidNanosecond, "Invalid nanosecond: "+strconv.FormatInt(value, 10), map[string]any{"Value": value})
+}
+
+// CypherCoreTemporalMissingComponent is a temporal value without the date or
+// time a function needs ("Cannot get the date of: 03:04:05Z").
+func CypherCoreTemporalMissingComponent(component string, value string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalMissingComponent, "Cannot get the "+component+" of: "+value, map[string]any{"Component": component, "Value": value})
 }

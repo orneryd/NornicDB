@@ -231,7 +231,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		if temporalContext == nil {
 			temporalContext = context.Background()
 		}
-		if value, handled := e.evaluateTemporalConstructor(temporalContext, func(inner string) interface{} {
+		if value, handled, callErr := e.evaluateTemporalConstructor(temporalContext, func(inner string) interface{} {
 			value, evaluated, err := e.evaluateRowValue(inner, values)
 			if err != nil && argumentErr == nil {
 				argumentErr = err
@@ -243,6 +243,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		}, expr); handled {
 			if argumentErr != nil {
 				return nil, false, argumentErr
+			}
+			if callErr != nil {
+				return nil, false, callErr
 			}
 			if value == nil && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
 				input, resolved, err := e.evaluateRowValue(argument, values)
