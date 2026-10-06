@@ -8,9 +8,13 @@ Inputs (produced by scripts/benchmark_northwind_vs_neo4j.sh in --dir):
   <label>.wall_seconds.txt     wall-clock seconds for the sampled window
 
 Outputs (written into --dir):
-  nornicdb.md    NornicDB-only report
-  neo4j.md       Neo4j-only report
-  comparison.md  side-by-side comparison
+  nornicdb.md         NornicDB-only report (default parser)
+  nornicdb-antlr.md   NornicDB-only report with NORNICDB_PARSER=antlr (when that run exists)
+  neo4j.md            Neo4j-only report
+  comparison.md       side-by-side comparison; when the ANTLR run exists it gains a parser-mode
+                      section and an extra "NornicDB (ANTLR)" row per query. Every NornicDB-vs-Neo4j
+                      figure is computed exactly as before.
+  parser-modes.md     default-vs-ANTLR query latency and throughput (needs only the two NornicDB runs)
 """
 
 import argparse
@@ -383,7 +387,7 @@ def load_run(dir_: Path, label: str) -> dict:
                "files": {}, "root": ""}
     if data_dir_path.exists():
         root = Path(data_dir_path.read_text().strip())
-        rules = NORNIC_RULES if label == "nornicdb" else NEO4J_RULES
+        rules = NORNIC_RULES if label.startswith("nornicdb") else NEO4J_RULES
         storage = classify_dir(root, rules)
 
     return {
@@ -494,7 +498,7 @@ def render_single_report(run: dict, iterations: int, warmup: int, batch_size: in
     wall = run["wall_seconds"]
     throughput = benchmark_throughput(r)
 
-    display_name = {"nornicdb": "NornicDB", "neo4j": "Neo4j"}.get(label, label)
+    display_name = {"nornicdb": "NornicDB", "nornicdb-antlr": "NornicDB (ANTLR parser)", "neo4j": "Neo4j"}.get(label, label)
 
     lines = []
     lines.append(f"# {display_name} — Northwind Benchmark Report")
@@ -674,9 +678,111 @@ def render_single_report(run: dict, iterations: int, warmup: int, batch_size: in
     return "\n".join(lines)
 
 
+def parser_mode_lines(default_run: dict, antlr_run: dict, heading_level: int = 2) -> list[str]:
+    """Query latency and throughput of NornicDB's default parser vs NORNICDB_PARSER=antlr.
+
+    Only query latency and throughput are compared. Both runs seed the same graph and run the
+    same workload from a freshly wiped data directory, serialized, so the only difference is
+    the parser mode. The mode changes the syntax-validation gate in front of the shared
+    execution pipeline: the default mode validates with its scannerless scanner and caches
+    texts it has accepted, while ANTLR mode revalidates every execution with the ANTLR grammar
+    and does not use that cache.
+    """
+    d_r = default_run["results"]
+    a_r = antlr_run["results"]
+    d_throughput = benchmark_throughput(d_r)
+    a_throughput = benchmark_throughput(a_r)
+    h = "#" * heading_level
+    lines = [f"{h} NornicDB Parser Modes: default vs ANTLR", ""]
+    lines.append(
+        "Query latency and throughput of the two `NORNICDB_PARSER` modes over the same seeded Northwind graph "
+        "and the same workload. Each mode ran serialized from a freshly wiped data directory. "
+        "Seeding, storage, power and memory are not compared here."
+    )
+    lines.append("")
+    mismatches = comparison_configuration_mismatches(d_r, a_r)
+    if mismatches:
+        lines.append("> **Invalid parser-mode comparison:** benchmark settings or operation counts differ between the runs.")
+        for mismatch in mismatches:
+            lines.append(f"> - {mismatch}")
+        lines.append("")
+
+    def slower(lower_is_better, default_value, antlr_value):
+        # "How many times slower is ANTLR mode": latency ratio antlr/default, throughput ratio default/antlr.
+        if lower_is_better:
+            return f"{antlr_value / default_value:.2f}×" if default_value else "n/a"
+        return f"{default_value / antlr_value:.2f}×" if antlr_value else "n/a"
+
+    def pct(new, old):
+        return f"{((new - old) / old) * 100:+.1f}%" if old else "n/a"
+
+    lines.append("| Metric | NornicDB (default) | NornicDB (ANTLR) | Delta | ANTLR slower by |")
+    lines.append("|---|---:|---:|---:|---:|")
+    for name, dv, av, fmt, lower in (
+        ("Overall mean latency (ms)", d_r.get("overall_mean_ms", 0), a_r.get("overall_mean_ms", 0), fmt_ms, True),
+        ("End-to-end query-loop throughput (ops/sec)", d_throughput["end_to_end_ops_per_second"],
+         a_throughput["end_to_end_ops_per_second"], fmt_num, False),
+        ("Query-latency-only aggregate throughput (ops/sec)", d_throughput["query_latency_ops_per_second"],
+         a_throughput["query_latency_ops_per_second"], fmt_num, False),
+        ("Query-loop duration (s)", d_throughput["duration_ms"] / 1000.0, a_throughput["duration_ms"] / 1000.0,
+         lambda x: fmt_num(x, 3), True),
+    ):
+        lines.append(f"| {name} | {fmt(dv)} | {fmt(av)} | {pct(av, dv)} | {slower(lower, dv, av)} |")
+    lines.append("")
+    lines.append("_Delta = (ANTLR − default) / default. \"ANTLR slower by\" is ANTLR ÷ default for latency and "
+                 "default ÷ ANTLR for throughput, so values above 1.00× mean ANTLR mode is slower._")
+    lines.append("")
+
+    d_by_name = {q["name"]: q for q in d_r.get("queries", [])}
+    a_by_name = {q["name"]: q for q in a_r.get("queries", [])}
+    names = ordered_query_names(d_by_name, a_by_name)
+    lines.append(f"{h}# Per-query latency")
+    lines.append("")
+    lines.append("| Query | Mean default (ms) | Mean ANTLR (ms) | Mean × | Median default (ms) | Median ANTLR (ms) | "
+                 "P95 default (ms) | P95 ANTLR (ms) | P99 default (ms) | P99 ANTLR (ms) | "
+                 "Ops/sec default | Ops/sec ANTLR | Same result |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|")
+    parity_failures = []
+    for name in names:
+        dq = d_by_name.get(name)
+        aq = a_by_name.get(name)
+        if dq is None or aq is None:
+            lines.append(f"| `{name}` | {'not run' if dq is None else fmt_ms(dq.get('mean_ms', 0))} | "
+                         f"{'not run' if aq is None else fmt_ms(aq.get('mean_ms', 0))} | — | — | — | — | — | — | — | — | — | ❌ |")
+            parity_failures.append(f"{name}: missing in {'default' if dq is None else 'ANTLR'} run")
+            continue
+        same = dq.get("row_count") == aq.get("row_count") and dq.get("result_hash") == aq.get("result_hash")
+        if not same:
+            parity_failures.append(f"{name}: default rows={dq.get('row_count')} hash={dq.get('result_hash')} / "
+                                   f"ANTLR rows={aq.get('row_count')} hash={aq.get('result_hash')}")
+        dm = float(dq.get("mean_ms", 0) or 0)
+        am = float(aq.get("mean_ms", 0) or 0)
+        lines.append(
+            f"| `{name}` | {fmt_ms(dm)} | {fmt_ms(am)} | {slower(True, dm, am)} | "
+            f"{fmt_ms(dq.get('median_ms', 0))} | {fmt_ms(aq.get('median_ms', 0))} | "
+            f"{fmt_ms(dq.get('p95_ms', 0))} | {fmt_ms(aq.get('p95_ms', 0))} | "
+            f"{fmt_ms(dq.get('p99_ms', 0))} | {fmt_ms(aq.get('p99_ms', 0))} | "
+            f"{fmt_num(dq.get('ops_per_second', 0))} | {fmt_num(aq.get('ops_per_second', 0))} | {'✅' if same else '❌'} |"
+        )
+    lines.append("")
+    lines.append("_Mean × is ANTLR mean ÷ default mean. \"Same result\" compares each query's row count and SHA-256 result "
+                 "fingerprint across the two modes._")
+    lines.append("")
+    if parity_failures:
+        lines.append("> **Result mismatch between parser modes:**")
+        for failure in parity_failures:
+            lines.append(f"> - {failure}")
+        lines.append("")
+    else:
+        lines.append(f"Both modes returned identical results for all {len(names)} queries.")
+        lines.append("")
+    return lines
+
+
 def render_comparison(runs: dict[str, dict], iterations: int, warmup: int, batch_size: int, parallel: int, products: int, orders: int) -> str:
     n = runs.get("nornicdb")
     m = runs.get("neo4j")
+    a = runs.get("nornicdb-antlr")  # optional: NORNICDB_PARSER=antlr run, shown in extra rows/sections only
 
     def pct_delta(new, old):
         if old == 0:
@@ -775,7 +881,10 @@ def render_comparison(runs: dict[str, dict], iterations: int, warmup: int, batch
     lines.append("")
     nornic_by_name = {q["name"]: q for q in n_r.get("queries", [])}
     neo4j_by_name = {q["name"]: q for q in m_r.get("queries", [])}
+    antlr_by_name = {q["name"]: q for q in a["results"].get("queries", [])} if a else {}
     query_names = ordered_query_names(nornic_by_name, neo4j_by_name)
+    if a:
+        lines.extend(parser_mode_lines(n, a))
     lines.append("## Full Query Suite")
     lines.append("")
     lines.append("Each workload is reported independently with all recorded latency percentiles, range, sample count, and per-query rate.")
@@ -783,6 +892,7 @@ def render_comparison(runs: dict[str, dict], iterations: int, warmup: int, batch
     for name in query_names:
         nq = nornic_by_name.get(name)
         mq = neo4j_by_name.get(name)
+        aq = antlr_by_name.get(name)
         query = nq or mq or {}
         lines.append(f"### `{name}`")
         if query.get("description"):
@@ -791,10 +901,13 @@ def render_comparison(runs: dict[str, dict], iterations: int, warmup: int, batch
         lines.append("")
         lines.append("| Engine | Samples | Mean (ms) | Median (ms) | P95 (ms) | P99 (ms) | Min (ms) | Max (ms) | StdDev (ms) | Ops/sec | Rows |")
         lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
-        for engine, engine_query, run in (
+        engine_rows = [
             ("NornicDB", nq, n_r),
             ("Neo4j", mq, m_r),
-        ):
+        ]
+        if a:
+            engine_rows.append(("NornicDB (ANTLR)", aq, a["results"]))
+        for engine, engine_query, run in engine_rows:
             if engine_query is None:
                 lines.append(f"| {engine} | not run | — | — | — | — | — | — | — | — | — |")
                 continue
@@ -809,6 +922,8 @@ def render_comparison(runs: dict[str, dict], iterations: int, warmup: int, batch
         if nq and mq and float(nq.get("mean_ms", 0) or 0) > 0:
             speed_ratio = float(mq.get("mean_ms", 0) or 0) / float(nq["mean_ms"])
             lines.append(f"\nMean-latency ratio (Neo4j / NornicDB): **{speed_ratio:.2f}×**.")
+        if nq and aq and float(nq.get("mean_ms", 0) or 0) > 0:
+            lines.append(f"\nMean-latency ratio (NornicDB ANTLR / default): **{float(aq.get('mean_ms', 0) or 0) / float(nq['mean_ms']):.2f}×**.")
         cypher = query.get("cypher", "").strip()
         if cypher:
             lines.extend(["", "<details><summary>Cypher</summary>", "", "```cypher", cypher, "```", "", "</details>"])
@@ -999,7 +1114,7 @@ def main():
         sys.exit(1)
 
     runs = {}
-    for label in ("nornicdb", "neo4j"):
+    for label in ("nornicdb", "nornicdb-antlr", "neo4j"):
         try:
             runs[label] = load_run(out_dir, label)
         except FileNotFoundError as e:
@@ -1016,6 +1131,18 @@ def main():
         print(f"wrote {out_dir / 'comparison.md'}")
     else:
         print("note: comparison report skipped (missing one of the runs)", file=sys.stderr)
+
+    if "nornicdb" in runs and "nornicdb-antlr" in runs:
+        d_cfg = runs["nornicdb"]["results"]
+        header = ["# NornicDB Parser Modes — Northwind Query Latency (default vs ANTLR)", "",
+                  f"- Products seeded: **{args.products:,}**, Orders seeded: **{args.orders:,}**",
+                  f"- Iterations/query: **{d_cfg.get('iterations_per_query', args.iterations)}** "
+                  f"(**{d_cfg.get('warmup_iterations', args.warmup)} warmup**)", ""]
+        body = parser_mode_lines(runs["nornicdb"], runs["nornicdb-antlr"], heading_level=2)
+        (out_dir / "parser-modes.md").write_text("\n".join(header + body) + "\n")
+        print(f"wrote {out_dir / 'parser-modes.md'}")
+    elif "nornicdb-antlr" in runs:
+        print("note: parser-modes report skipped (missing the default-parser NornicDB run)", file=sys.stderr)
 
 
 if __name__ == "__main__":
