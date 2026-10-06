@@ -2967,67 +2967,13 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		return result, nil
 	}
 
-	var result *ExecuteResult
-	var err error
-
-	if params := getParamsFromContext(ctx); params != nil {
-		callCypher = e.substituteParams(callCypher, params)
-	}
-	upper := upperASCII(callCypher)
-
-	switch {
-	// Database management procedures not yet owned by the registry.
-	case strings.Contains(upper, "DBMS.INFO"):
-		result, err = e.callDbmsInfo()
-	case strings.Contains(upper, "DBMS.LISTCONFIG"):
-		result, err = e.callDbmsListConfig()
-	case strings.Contains(upper, "DBMS.CLIENTCONFIG"):
-		result, err = e.callDbmsClientConfig()
-	case strings.Contains(upper, "DBMS.LISTCONNECTIONS"):
-		result, err = e.callDbmsListConnections()
-	case strings.Contains(upper, "DBMS.COMPONENTS"):
-		result, err = e.callDbmsComponents()
-	case strings.Contains(upper, "DBMS.PROCEDURES"):
-		result, err = e.callDbmsProcedures()
-	case strings.Contains(upper, "DBMS.FUNCTIONS"):
-		result, err = e.callDbmsFunctions()
-	// Query statistics procedures (longer names must not fall through the
-	// shorter RETRIEVE keyword).
-	case strings.Contains(upper, "DB.STATS.RETRIEVE") && !strings.Contains(upper, "DB.STATS.RETRIEVEALLANTHESTATS"):
-		result, err = e.callDbStatsRetrieve(callCypher)
-	case strings.Contains(upper, "DB.STATS.COLLECT"):
-		result, err = e.callDbStatsCollect(callCypher)
-	case strings.Contains(upper, "DB.STATS.CLEAR"):
-		result, err = e.callDbStatsClear()
-	case strings.Contains(upper, "DB.STATS.STATUS"):
-		result, err = e.callDbStatsStatus()
-	case strings.Contains(upper, "DB.STATS.STOP"):
-		result, err = e.callDbStatsStop()
-	default:
-		// Extract procedure name for clearer error
-		procName := extractProcedureName(callCypher)
-		return nil, newSemanticError(
-			"Neo.ClientError.Procedure.ProcedureNotFound",
-			"ProcedureNotFound",
-			fmt.Sprintf("There is no procedure with the name `%s` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.", procName),
-		)
-	}
-
-	if err != nil {
-		return nil, procedureRuntimeError(procName, err)
-	}
-
-	// Apply YIELD clause filtering (WHERE, column selection, aliasing)
-	if yield != nil {
-		result, err = e.applyYieldFilter(ctx, result, yield)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if strings.TrimSpace(tailCypher) != "" {
-		return e.executeCallTail(ctx, result, tailCypher)
-	}
-	return result, nil
+	// Terminal chokepoint of the converged procedure router: every built-in
+	// procedure is registered, so an unrecognized name is rejected here.
+	return nil, newSemanticError(
+		"Neo.ClientError.Procedure.ProcedureNotFound",
+		"ProcedureNotFound",
+		fmt.Sprintf("There is no procedure with the name `%s` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.", procName),
+	)
 }
 
 func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {

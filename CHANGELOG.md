@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Delete the legacy procedure dispatch switch entirely: every built-in
+  procedure is now served by the registry, and unrecognized names are
+  rejected at the converged router's terminal chokepoint. The five db.stats
+  procedures are registered with their canonical Neo4j 5.26 signatures
+  (required section argument, optional config map, canonical output columns)
+  and dbms.clientConfig returns the canonical eight-column shape (#908).
+
 - Retire the remaining sixty registry-owned text-dispatch branches: every
   procedure the built-in registry already owns (APOC algo/path/load/export,
   GDS, db.*, vector/fulltext indexes, RAG, txlog, temporal, nornicdb.*) is now

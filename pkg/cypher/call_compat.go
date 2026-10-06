@@ -123,10 +123,10 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 // callDbmsClientConfig lists client-visible configuration - Neo4j dbms.clientConfig()
 func (e *StorageExecutor) callDbmsClientConfig() (*ExecuteResult, error) {
 	return &ExecuteResult{
-		Columns: []string{"name", "value"},
+		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
 		Rows: [][]interface{}{
-			{"server.bolt.advertised_address", "localhost:7687"},
-			{"server.http.advertised_address", "localhost:7474"},
+			{"server.bolt.advertised_address", "Bolt connector advertised address", "localhost:7687", false, nil, nil, false, "localhost:7687"},
+			{"server.http.advertised_address", "HTTP connector advertised address", "localhost:7474", false, nil, nil, false, "localhost:7474"},
 		},
 	}, nil
 }

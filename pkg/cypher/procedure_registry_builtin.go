@@ -174,7 +174,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsListConfigArguments(ctx, args)
 			})
-		registerBuiltInProcedure("dbms.clientConfig", "dbms.clientConfig() :: (name :: STRING, value :: ANY)", localization.CypherProcedureMetadata("dbms.clientConfig"), ProcedureModeDBMS, 0, 0, true,
+		registerBuiltInProcedure("dbms.clientConfig", "dbms.clientConfig() :: (name :: STRING, description :: STRING, value :: STRING, dynamic :: BOOLEAN, defaultValue :: STRING, startupValue :: STRING, explicitlySet :: BOOLEAN, validValues :: STRING)", localization.CypherProcedureMetadata("dbms.clientConfig"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsClientConfig()
 			})
@@ -189,6 +189,30 @@ func ensureBuiltInProceduresRegistered() {
 		registerBuiltInProcedure("dbms.functions", "dbms.functions() :: (name :: STRING, description :: STRING, category :: STRING)", localization.CypherProcedureMetadata("dbms.functions"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsFunctions()
+			})
+
+		// Query statistics procedures: canonical Neo4j 5.26 signatures. The
+		// section argument is required; retrieve/collect accept an optional
+		// config map.
+		registerBuiltInProcedure("db.stats.retrieve", "db.stats.retrieve(section :: STRING, config = {} :: MAP) :: (section :: STRING, data :: MAP)", localization.CypherProcedureMetadata("db.stats.retrieve"), ProcedureModeDBMS, 1, 2, true,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callQueryStatistics(ctx, "retrieve", args)
+			})
+		registerBuiltInProcedure("db.stats.collect", "db.stats.collect(section :: STRING, config = {} :: MAP) :: (section :: STRING, success :: BOOLEAN, message :: STRING)", localization.CypherProcedureMetadata("db.stats.collect"), ProcedureModeDBMS, 1, 2, true,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callQueryStatistics(ctx, "collect", args)
+			})
+		registerBuiltInProcedure("db.stats.clear", "db.stats.clear(section :: STRING) :: (section :: STRING, success :: BOOLEAN, message :: STRING)", localization.CypherProcedureMetadata("db.stats.clear"), ProcedureModeDBMS, 1, 1, true,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callQueryStatistics(ctx, "clear", args)
+			})
+		registerBuiltInProcedure("db.stats.status", "db.stats.status() :: (section :: STRING, status :: STRING, data :: MAP)", localization.CypherProcedureMetadata("db.stats.status"), ProcedureModeDBMS, 0, 0, true,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callQueryStatistics(ctx, "status", nil)
+			})
+		registerBuiltInProcedure("db.stats.stop", "db.stats.stop(section :: STRING) :: (section :: STRING, success :: BOOLEAN, message :: STRING)", localization.CypherProcedureMetadata("db.stats.stop"), ProcedureModeDBMS, 1, 1, true,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callQueryStatistics(ctx, "stop", args)
 			})
 
 		registerProcedure(awaitIndexProcedureSpec("db.awaitIndex", true),

@@ -838,16 +838,16 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		{query: "CALL db.propertyKeys()", expectErr: true},
 		{query: "CALL db.info()", expectErr: true},
 		{query: "CALL db.ping()", expectErr: true},
-		{query: "CALL dbms.info()", expectErr: false},
-		{query: "CALL dbms.listConfig()", expectErr: false},
-		{query: "CALL dbms.clientConfig()", expectErr: false},
-		{query: "CALL dbms.listConnections()", expectErr: false},
-		{query: "CALL dbms.components()", expectErr: false},
-		{query: "CALL dbms.procedures()", expectErr: false},
-		{query: "CALL dbms.functions()", expectErr: false},
+		{query: "CALL dbms.info()", expectErr: true},
+		{query: "CALL dbms.listConfig()", expectErr: true},
+		{query: "CALL dbms.clientConfig()", expectErr: true},
+		{query: "CALL dbms.listConnections()", expectErr: true},
+		{query: "CALL dbms.components()", expectErr: true},
+		{query: "CALL dbms.procedures()", expectErr: true},
+		{query: "CALL dbms.functions()", expectErr: true},
 		{query: "CALL db.index.fulltext.listAvailableAnalyzers()", expectErr: true},
 		{query: "CALL db.index.fulltext.queryRelationships('default','hello')", expectErr: true},
-		{query: "CALL db.stats.status()", expectErr: false},
+		{query: "CALL db.stats.status()", expectErr: true},
 		{query: "CALL db.clearQueryCaches()", expectErr: true},
 		{query: "CALL tx.setMetaData({app:'x'})", expectErr: true}, // registered; no active tx
 		{query: "CALL db.notARealProcedure()", expectErr: true},
@@ -863,16 +863,25 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		}
 	}
 
-	expectSuccess := []string{
+	for _, query := range []string{
+		"CALL dbms.info()",
+		"CALL dbms.listConfig()",
+		"CALL dbms.clientConfig()",
+		"CALL dbms.listConnections()",
+		"CALL dbms.components()",
+		"CALL dbms.procedures()",
+		"CALL dbms.functions()",
 		"CALL db.stats.retrieve('QUERIES')",
 		"CALL db.stats.collect('QUERIES')",
-		"CALL db.stats.clear()",
-		"CALL db.stats.stop()",
-	}
-	for _, q := range expectSuccess {
-		res, err := exec.executeCall(ctx, q)
-		require.NoErrorf(t, err, "expected success for query: %s", q)
-		require.NotNilf(t, res, "expected non-nil result for query: %s", q)
+		"CALL db.stats.clear('QUERIES')",
+		"CALL db.stats.status()",
+		"CALL db.stats.stop('QUERIES')",
+	} {
+		result, err := exec.executeCall(ctx, query)
+		require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureNotFound")
+		if result != nil {
+			require.Empty(t, result.Rows)
+		}
 	}
 
 	for _, query := range []string{
@@ -2438,10 +2447,10 @@ func TestCypherHelpers_ExecuteCallDispatchAssertions(t *testing.T) {
 		"CALL db.retrieve('x')",
 		"CALL db.rretrieve('x')",
 		"CALL db.stats.status()",
-		"CALL db.stats.stop()",
-		"CALL db.stats.clear()",
-		"CALL db.stats.collect()",
-		"CALL db.stats.retrieve()",
+		"CALL db.stats.stop('QUERIES')",
+		"CALL db.stats.clear('QUERIES')",
+		"CALL db.stats.collect('QUERIES')",
+		"CALL db.stats.retrieve('QUERIES')",
 		"CALL db.stats.retrieveAllAnTheStats()",
 		"CALL db.awaitIndexes()",
 		"CALL db.awaitIndex('idx', 1)",
