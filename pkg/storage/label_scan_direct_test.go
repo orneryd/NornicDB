@@ -253,6 +253,7 @@ func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
 							return tx.StreamNodesByLabelProjected("Common", properties, visit)
 						}
 					}
+
 					stop := fmt.Errorf("stop")
 					visited := 0
 					require.ErrorIs(t, scan(func(node *Node) error {
@@ -273,6 +274,102 @@ func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
 					}))
 					require.Equal(t, count-1, visited, "valid preceding label candidates must be visited before corruption is reported")
 				})
+			}
+		})
+	}
+}
+
+func TestReadNodeRecordsInOnePassStopsOnCallbackError(t *testing.T) {
+	eng, ids := labelScanFixture(t, 3)
+	stop := fmt.Errorf("stop reading records")
+	visited := 0
+	require.ErrorIs(t, eng.withView(func(txn *badger.Txn) error {
+		return readNodeRecordsInOnePass(txn, "test:", ids, func(NodeID, *badger.Item) error {
+			visited++
+			return stop
+		})
+	}), stop)
+	require.Equal(t, 1, visited)
+}
+
+// BenchmarkLabelRecordReads compares record reads and projected decoding, not
+// full queries or the label scan's initial point-lookup prefix.
+func BenchmarkLabelRecordReads(b *testing.B) {
+	eng, err := NewBadgerEngineInMemory()
+	require.NoError(b, err)
+	b.Cleanup(func() { _ = eng.Close() })
+	const count = 40000
+	const batchSize = 250
+	ids := make([]NodeID, count)
+	for offset := 0; offset < count; offset += batchSize {
+		nodes := make([]*Node, 0, batchSize)
+		for index := offset; index < offset+batchSize; index++ {
+			ids[index] = NodeID(fmt.Sprintf("test:n%05d", count-index-1))
+			nodes = append(nodes, &Node{
+				ID:         ids[index],
+				Labels:     []string{"L"},
+				Properties: map[string]any{"i": int64(index), "big": "x"},
+			})
+		}
+		require.NoError(b, eng.BulkCreateNodes(nodes))
+	}
+	txn, readTs := eng.db.beginTxn(false)
+	b.Cleanup(func() {
+		txn.Discard()
+		eng.db.endRead(readTs)
+	})
+	include := propertyProjectionSet([]string{"i"})
+	for _, strategy := range []struct {
+		name string
+		read func(func(NodeID, *badger.Item) error) error
+	}{
+		{
+			name: "point_lookups",
+			read: func(read func(NodeID, *badger.Item) error) error {
+				for _, id := range ids {
+					item, err := txn.Get(nodeKey(id))
+					if err != nil {
+						return err
+					}
+					if err := read(id, item); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			name: "one_pass",
+			read: func(read func(NodeID, *badger.Item) error) error {
+				return readNodeRecordsInOnePass(txn, "test:", ids, read)
+			},
+		},
+	} {
+		b.Run(strategy.name, func(b *testing.B) {
+			visited := 0
+			read := func(id NodeID, item *badger.Item) error {
+				return item.Value(func(value []byte) error {
+					node, err := eng.decodeNodeProjected(namespaceForNodeID(id), value, include)
+					if err != nil {
+						return err
+					}
+					if node == nil {
+						return fmt.Errorf("missing decoded node %s", id)
+					}
+					visited++
+					return nil
+				})
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				visited = 0
+				if err := strategy.read(read); err != nil {
+					b.Fatal(err)
+				}
+				if visited != count {
+					b.Fatalf("read %d nodes, want %d", visited, count)
+				}
 			}
 		})
 	}
