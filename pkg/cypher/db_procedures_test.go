@@ -932,14 +932,16 @@ func TestCallDbmsClientConfig(t *testing.T) {
 		t.Fatalf("dbms.clientConfig() failed: %v", err)
 	}
 
-	if len(result.Columns) != 2 {
-		t.Errorf("Expected 2 columns, got %d", len(result.Columns))
-	}
+	require.Equal(t, []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"}, result.Columns)
 
-	// Should have advertised addresses
-	if len(result.Rows) < 1 {
-		t.Errorf("Expected at least 1 row, got %d", len(result.Rows))
+	// Canonical eight-column shape with the advertised addresses.
+	names := make([]string, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		require.Len(t, row, 8)
+		names = append(names, row[0].(string))
 	}
+	require.Contains(t, names, "server.bolt.advertised_address")
+	require.Contains(t, names, "server.http.advertised_address")
 }
 
 func TestCallDbmsListConnections(t *testing.T) {
