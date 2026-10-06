@@ -705,55 +705,12 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	return result, nil
 }
 
-// evaluateWhereOnComputedRow evaluates a WHERE condition on computed values
+// evaluateWhereOnComputedRow is the computed-row entry into the shared row
+// predicate evaluator: the post-WITH WHERE position evaluates identically to
+// every other WHERE position (null drops the row, AND/OR precedence and IS
+// NULL forms come from the one owner) instead of a local text splitter.
 func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereClause string, values map[string]interface{}) bool {
-	whereClause = strings.TrimSpace(whereClause)
-	upperClause := upperASCII(whereClause)
-
-	// Handle AND
-	if idx := strings.Index(upperASCII(whereClause), " AND "); idx > 0 {
-		left := whereClause[:idx]
-		right := whereClause[idx+5:]
-		return e.evaluateWhereOnComputedRow(ctx, left, values) && e.evaluateWhereOnComputedRow(ctx, right, values)
-	}
-
-	// Handle OR
-	if idx := strings.Index(upperASCII(whereClause), " OR "); idx > 0 {
-		left := whereClause[:idx]
-		right := whereClause[idx+4:]
-		return e.evaluateWhereOnComputedRow(ctx, left, values) || e.evaluateWhereOnComputedRow(ctx, right, values)
-	}
-
-	if strings.HasSuffix(upperClause, " IS NOT NULL") {
-		expr := strings.TrimSpace(whereClause[:len(whereClause)-len(" IS NOT NULL")])
-		return e.evaluateExpressionFromValues(expr, values) != nil
-	}
-	if strings.HasSuffix(upperClause, " IS NULL") {
-		expr := strings.TrimSpace(whereClause[:len(whereClause)-len(" IS NULL")])
-		return e.evaluateExpressionFromValues(expr, values) == nil
-	}
-
-	// Handle a bare label test such as `n:Workload` or `n:A:B`. It carries no
-	// comparison operator, so without this branch it falls through to the
-	// pass-through at the end of this function and admits every row -- the
-	// filter is silently not applied.
-	if variable, labels, ok := parseWithWhereLabelTest(whereClause); ok {
-		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
-	}
-
-	// Handle comparison operators
-	for _, op := range []string{">=", "<=", "<>", "!=", "=", ">", "<"} {
-		if idx := strings.Index(whereClause, op); idx > 0 {
-			left := strings.TrimSpace(whereClause[:idx])
-			right := strings.TrimSpace(whereClause[idx+len(op):])
-
-			leftVal := e.evaluateExpressionFromValues(left, values)
-			rightVal := e.parseValue(ctx, right)
-			return compareCypherPredicateValues(leftVal, rightVal, op)
-		}
-	}
-
-	return true
+	return e.evaluateRowPredicate(ctx, whereClause, values)
 }
 
 // evaluateExpressionFromValues evaluates an expression over a computed values

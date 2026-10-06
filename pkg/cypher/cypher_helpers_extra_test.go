@@ -1550,7 +1550,9 @@ func TestCypherHelpers_EvaluateWhereOnComputedRow(t *testing.T) {
 	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score < 10", values))
 	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age <= 30", values))
 	assert.False(t, exec.evaluateWhereOnComputedRow(ctx, "score > 99", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "unsupported-clause", values))
+	// The shared predicate owner drops rows for unrecognized predicate text
+	// instead of the legacy permissive pass-through that admitted every row.
+	assert.False(t, exec.evaluateWhereOnComputedRow(ctx, "unsupported-clause", values))
 }
 
 func TestCypherHelpers_EvaluateInnerWhereBranches(t *testing.T) {

@@ -15,6 +15,17 @@ def graph_items(path, key):
         yield from ijson.items(graph_file, f"{key}.item")
 
 
+def link_key(path):
+    """Return the edge-array key of the graph export.
+
+    Graphify >=0.9.69 exports ``links``; older graphs used ``edges``. Probe
+    the links key first and fall back to edges when it is absent.
+    """
+    for _ in graph_items(path, "links"):
+        return "links"
+    return "edges"
+
+
 def analyze(graph_path, components):
     symbols = {}
     groups = defaultdict(list)
@@ -35,7 +46,7 @@ def analyze(graph_path, components):
         symbols[node["id"]] = symbol
         groups[(component, label)].append(symbol)
 
-    for edge in graph_items(graph_path, "edges"):
+    for edge in graph_items(graph_path, link_key(graph_path)):
         if edge.get("relation") != "calls":
             continue
         caller = edge.get("source")

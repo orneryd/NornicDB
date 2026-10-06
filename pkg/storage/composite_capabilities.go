@@ -444,15 +444,7 @@ func (c *CompositeEngine) GetNodeProjected(id NodeID, properties []string) (*Nod
 		if err != nil {
 			continue
 		}
-		var node *Node
-		if reader, ok := engine.(NodeProjectionReader); ok {
-			node, err = reader.GetNodeProjected(id, properties)
-		} else {
-			node, err = engine.GetNode(id)
-			if err == nil {
-				node = projectCachedNodeForRead(node, properties)
-			}
-		}
+		node, err := getNodeProjectedThrough(engine, id, properties)
 		if err == nil {
 			return node, nil
 		}

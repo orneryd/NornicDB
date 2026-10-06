@@ -171,14 +171,7 @@ func (ae *AsyncEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 		return projectCachedNodeForRead(node, properties), nil
 	}
 	ae.mu.RUnlock()
-	if reader, ok := ae.engine.(NodeProjectionReader); ok {
-		return reader.GetNodeProjected(id, properties)
-	}
-	node, err := ae.engine.GetNode(id)
-	if err != nil {
-		return nil, err
-	}
-	return projectCachedNodeForRead(node, properties), nil
+	return getNodeProjectedThrough(ae.engine, id, properties)
 }
 
 // RelationshipEndpointVisible honors the async overlay as GetNode does: a
@@ -274,10 +267,19 @@ func (w *WALEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
 // GetNodeProjected forwards the projected read to the underlying engine. WAL
 // adds no overlay, so a plain forward preserves parity with GetNode.
 func (w *WALEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
-	if reader, ok := w.engine.(NodeProjectionReader); ok {
+	return getNodeProjectedThrough(w.engine, id, properties)
+}
+
+// getNodeProjectedThrough reads a projected node through a single engine: a
+// projection-capable reader serves the read directly, and any other engine
+// serves a full read that is projected on the way out. Async, WAL and the
+// composite constituent scan share this tail, so reader preference and error
+// propagation cannot drift between wrappers.
+func getNodeProjectedThrough(engine Engine, id NodeID, properties []string) (*Node, error) {
+	if reader, ok := engine.(NodeProjectionReader); ok {
 		return reader.GetNodeProjected(id, properties)
 	}
-	node, err := w.engine.GetNode(id)
+	node, err := engine.GetNode(id)
 	if err != nil {
 		return nil, err
 	}
