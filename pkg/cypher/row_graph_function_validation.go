@@ -47,8 +47,9 @@ func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, r
 			if valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array {
 				return nil
 			}
+			scope := make(pipelineRow, len(row)+1)
 			for _, item := range toAnySlice(listValue) {
-				scope := make(pipelineRow, len(row)+1)
+				clear(scope)
 				for name, value := range row {
 					scope[name] = value
 				}
