@@ -2155,8 +2155,8 @@ func TestFunctionAdditionalMathNilAndFallbackBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(123)", nodes, rels); got != false {
 		t.Fatalf("isEmpty(123) = %#v, want false", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(NULL)", nodes, rels); got != true {
-		t.Fatalf("isEmpty(NULL) = %#v, want true", got)
+	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(NULL)", nodes, rels); got != nil {
+		t.Fatalf("isEmpty(NULL) = %#v, want nil (Neo4j)", got)
 	}
 
 	if got := e.evaluateExpressionWithContext(ctx, "coth(0)", nodes, rels); !math.IsNaN(got.(float64)) {
@@ -2661,8 +2661,8 @@ func TestFunctionFullMath_AdditionalInvalidInputBranches(t *testing.T) {
 			t.Fatalf("%s should be nil, got %#v", expr, got)
 		}
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "point.withinBBox('bad', point({x:0,y:0}), point({x:1,y:1}))", nodes, nil); got != false {
-		t.Fatalf("point.withinBBox invalid input should be false, got %#v", got)
+	if got := e.evaluateExpressionWithContext(ctx, "point.withinBBox('bad', point({x:0,y:0}), point({x:1,y:1}))", nodes, nil); got != nil {
+		t.Fatalf("point.withinBBox with an argument that isn't a point should be nil (Neo4j), got %#v", got)
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "point.withinDistance('bad', point({x:0,y:0}), 1)", nodes, nil); got != false {
 		t.Fatalf("point.withinDistance invalid input should be false, got %#v", got)
@@ -2817,8 +2817,8 @@ func TestFunctionEval_SpatialGeometryAndKalmanAdditionalBranches(t *testing.T) {
 	if ok := e.evaluateExpressionWithContext(ctx, "point.withinBBox(point({latitude:1,longitude:1}), point({latitude:0,longitude:0}), point({latitude:2,longitude:2}))", nodes, nil); ok != true {
 		t.Fatalf("point.withinBBox lat/lon returned %#v", ok)
 	}
-	if ok := e.evaluateExpressionWithContext(ctx, "point.withinBBox(1,2,3)", nodes, nil); ok != false {
-		t.Fatalf("point.withinBBox invalid args should be false, got %#v", ok)
+	if ok := e.evaluateExpressionWithContext(ctx, "point.withinBBox(1,2,3)", nodes, nil); ok != nil {
+		t.Fatalf("point.withinBBox with arguments that aren't points should be nil (Neo4j), got %#v", ok)
 	}
 	if ok := e.evaluateExpressionWithContext(ctx, "point.withinDistance(point({x:1,y:1}), point({x:0,y:0}), 2)", nodes, nil); ok != true {
 		t.Fatalf("point.withinDistance returned %#v", ok)

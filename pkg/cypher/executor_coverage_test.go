@@ -2133,10 +2133,10 @@ func TestExecuteAggregationWithNonNumeric(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	// SUM should handle non-numeric gracefully
-	result, err := exec.Execute(ctx, "MATCH (n:NonNum) RETURN sum(n.value)", nil)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), result.Rows[0][0])
+	// sum of a string is Neo4j's TypeError.
+	_, err = exec.Execute(ctx, "MATCH (n:NonNum) RETURN sum(n.value)", nil)
+	require.Error(t, err)
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.TypeError")
 }
 
 func TestExecuteMatchCreateBlock_SetAndDeleteErrorBranches(t *testing.T) {
