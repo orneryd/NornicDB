@@ -53,12 +53,22 @@ type recordingBM25Index struct {
 	limits  []int
 }
 
-func (i *recordingBM25Index) Search(_ string, limit int) []indexResult {
+func (i *recordingBM25Index) Search(query string, limit int) []indexResult {
+	return i.SearchAllowed(query, limit, nil)
+}
+
+func (i *recordingBM25Index) SearchAllowed(_ string, limit int, allowed func(string) bool) []indexResult {
 	i.limits = append(i.limits, limit)
-	if limit > len(i.results) {
-		limit = len(i.results)
+	var ranked []indexResult
+	for _, result := range i.results {
+		if allowed == nil || allowed(result.ID) {
+			ranked = append(ranked, result)
+		}
 	}
-	return i.results[:limit]
+	if limit > len(ranked) {
+		limit = len(ranked)
+	}
+	return ranked[:limit]
 }
 
 func (g *recordingCandidateGenerator) SearchCandidates(_ context.Context, _ []float32, limit int, _ float64) ([]Candidate, error) {

@@ -586,8 +586,10 @@ func TestParseRetrievalFiltersEdgeCases(t *testing.T) {
 	require.Nil(t, parseRetrievalFilters(nil))
 	require.Nil(t, parseRetrievalFilters("not-a-map"))
 	require.Nil(t, parseRetrievalFilters(map[string]interface{}{}))
-	require.Nil(t, parseRetrievalFilters(map[string]interface{}{
-		"": nil, "empty": []interface{}{nil},
+	// An empty list, or one of nulls only, is kept and matches nothing (#938);
+	// a blank key is dropped.
+	require.Equal(t, map[string][]string{"empty": {}, "nulls": {}}, parseRetrievalFilters(map[string]interface{}{
+		"": nil, "empty": []interface{}{}, "nulls": []interface{}{nil},
 	}))
 
 	require.Equal(t, map[string][]string{

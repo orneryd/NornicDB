@@ -296,6 +296,15 @@ func (f *FulltextIndexV2) removeInternalLocked(id string) bool {
 }
 
 func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
+	return f.SearchAllowed(query, limit, nil)
+}
+
+// SearchAllowed is Search over the documents allowed accepts: a document it
+// rejects is never scored or returned, so the top limit are the best allowed
+// documents however many better ones it rejects (#938). allowed is called at
+// most once per document, while the index's read lock is held; nil allows
+// every document.
+func (f *FulltextIndexV2) SearchAllowed(query string, limit int, allowed func(docID string) bool) []indexResult {
 	if limit <= 0 {
 		return nil
 	}
@@ -339,7 +348,9 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 	lengthNormOffset := bm25K1 * (1 - bm25B)
 	lengthNormScale := bm25K1 * bm25B / f.avgDocLength
 	denseTouchedAfterFirstTerm := 0
-	if useDenseScores {
+	// The unfiltered dense loop is kept free of the allowed check: with it,
+	// unfiltered searches measured about 8% slower (#938).
+	if useDenseScores && allowed == nil {
 		for termIndex, wt := range weightedTerms {
 			termScale := wt.weight * wt.idf * (bm25K1 + 1)
 			for _, p := range wt.postings {
@@ -360,13 +371,54 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 				denseTouchedAfterFirstTerm = len(scratch.touched)
 			}
 		}
+	} else if useDenseScores {
+		for termIndex, wt := range weightedTerms {
+			termScale := wt.weight * wt.idf * (bm25K1 + 1)
+			for _, p := range wt.postings {
+				docLen := f.docLengths[p.DocNum]
+				if docLen == 0 {
+					continue
+				}
+				if scratch.generations[p.DocNum] != scratch.generation {
+					scratch.generations[p.DocNum] = scratch.generation
+					scratch.scores[p.DocNum] = 0
+					// A rejected document is never touched, so it is never
+					// ranked; later terms may add to its score, which nothing
+					// reads.
+					if allowed != nil && !allowed(f.docNumToID[p.DocNum]) {
+						continue
+					}
+					scratch.touched = append(scratch.touched, p.DocNum)
+				}
+				tf := float64(p.TF)
+				denominator := tf + lengthNormOffset + lengthNormScale*float64(docLen)
+				scratch.scores[p.DocNum] += termScale * tf / denominator
+			}
+			if termIndex == 0 {
+				denseTouchedAfterFirstTerm = len(scratch.touched)
+			}
+		}
 	} else {
+		var admitted map[uint32]bool
+		if allowed != nil {
+			admitted = make(map[uint32]bool)
+		}
 		for _, wt := range weightedTerms {
 			termScale := wt.weight * wt.idf * (bm25K1 + 1)
 			for _, p := range wt.postings {
 				docLen := f.docLengths[p.DocNum]
 				if docLen == 0 {
 					continue
+				}
+				if allowed != nil {
+					ok, seen := admitted[p.DocNum]
+					if !seen {
+						ok = allowed(f.docNumToID[p.DocNum])
+						admitted[p.DocNum] = ok
+					}
+					if !ok {
+						continue
+					}
 				}
 				tf := float64(p.TF)
 				denominator := tf + lengthNormOffset + lengthNormScale*float64(docLen)

@@ -1,10 +1,13 @@
 // Package search – regression tests for the nodeMatchesFilters and
 // filterByTypeAndProperties fixes.
 //
-// Bug 1: An empty value list in a filter (e.g. {"tag":[]}) caused
+// Empty value lists: 3e320049 made an empty list ({"tag":[]}) mean "no
 //
-//	nodeMatchesFilters to return false for every node, so a client
-//	sending {"filters":{"key":[]}} silently got zero results.
+//	constraint", so a client sending one by mistake would not silently get
+//	zero results. #938 reverses that deliberately: an empty list matches
+//	nothing, as Cypher's n.k IN [] does, because returning everything is far
+//	more dangerous than returning nothing when search results drive writes
+//	and deletes.
 //
 // Bug 2: filterByType + filterByProperties called sequentially issued two
 //
@@ -49,38 +52,35 @@ func makeNode(tb testing.TB, eng storage.Engine, id string, labels []string, pro
 // nodeMatchesFilters – unit tests (no storage)
 // ---------------------------------------------------------------------------
 
-// TestNodeMatchesFilters_EmptyValueList_IgnoresKey is the regression for Bug 1:
-// a filter key with an empty slice must be treated as "no constraint" rather
-// than "impossible to satisfy", so nodes are NOT discarded.
-func TestNodeMatchesFilters_EmptyValueList_IgnoresKey(t *testing.T) {
+// TestNodeMatchesFilters_EmptyValueList_MatchesNothing: a filter key with an
+// empty slice matches no node, as Cypher's IN [] (#938).
+func TestNodeMatchesFilters_EmptyValueList_MatchesNothing(t *testing.T) {
 	node := &storage.Node{
 		Properties: map[string]any{"color": "blue"},
 	}
 
-	// An empty slice for "collection" must not filter the node out.
 	filters := map[string][]string{"collection": {}}
-	assert.True(t, nodeMatchesFilters(node, filters),
-		"empty filter value list must be treated as no constraint")
+	assert.False(t, nodeMatchesFilters(node, filters),
+		"an empty filter value list matches nothing")
 }
 
-// TestNodeMatchesFilters_EmptyValueList_WithOtherConstraints verifies that an
-// empty-list key is ignored even when other populated keys are present.
+// TestNodeMatchesFilters_EmptyValueList_WithOtherConstraints: an empty-list
+// key matches nothing even when the node satisfies the other keys.
 func TestNodeMatchesFilters_EmptyValueList_WithOtherConstraints(t *testing.T) {
 	node := &storage.Node{
 		Properties: map[string]any{"color": "blue", "size": "large"},
 	}
 
-	// "color" has a real constraint; "extra" is empty → must still match.
 	filters := map[string][]string{
 		"color": {"blue"},
 		"extra": {},
 	}
-	assert.True(t, nodeMatchesFilters(node, filters),
-		"node satisfying non-empty filters must pass even if other keys have empty lists")
+	assert.False(t, nodeMatchesFilters(node, filters),
+		"an empty list on one key matches nothing whatever the other keys")
 }
 
-// TestNodeMatchesFilters_AllEmpty passes when ALL filter keys have empty lists
-// (vacuously true – nothing to constrain).
+// TestNodeMatchesFilters_AllEmpty: keys that all have empty lists match
+// nothing.
 func TestNodeMatchesFilters_AllEmpty(t *testing.T) {
 	node := &storage.Node{
 		Properties: map[string]any{},
@@ -89,7 +89,7 @@ func TestNodeMatchesFilters_AllEmpty(t *testing.T) {
 		"foo": {},
 		"bar": {},
 	}
-	assert.True(t, nodeMatchesFilters(node, filters))
+	assert.False(t, nodeMatchesFilters(node, filters))
 }
 
 // TestNodeMatchesFilters_NilFilters passes trivially (nil map → zero iterations).
@@ -170,10 +170,9 @@ func buildFilterResults(ids ...string) []indexResult {
 	return out
 }
 
-// TestFilterByTypeAndProperties_EmptyFilterList_ReturnsAll is the end-to-end
-// regression for Bug 1: sending Filters with empty value lists must not drop
-// any results.
-func TestFilterByTypeAndProperties_EmptyFilterList_ReturnsAll(t *testing.T) {
+// TestFilterByTypeAndProperties_EmptyFilterList_ReturnsNothing: Filters with
+// an empty value list return no result (#938).
+func TestFilterByTypeAndProperties_EmptyFilterList_ReturnsNothing(t *testing.T) {
 	eng := newFilterTestEngine(t)
 	svc := NewService(eng)
 	ctx := context.Background()
@@ -183,15 +182,12 @@ func TestFilterByTypeAndProperties_EmptyFilterList_ReturnsAll(t *testing.T) {
 
 	results := buildFilterResults("nornic:n1", "nornic:n2")
 
-	// An empty value list for "collection" must not filter out any node.
 	filters := map[string][]string{"collection": {}}
 	seenOrphans := map[string]bool{}
 
 	out := svc.filterByTypeAndProperties(ctx, results, nil, filters, seenOrphans)
 
-	require.Len(t, out, 2, "empty filter value list must not discard any results")
-	assert.Equal(t, "nornic:n1", out[0].ID)
-	assert.Equal(t, "nornic:n2", out[1].ID)
+	require.Empty(t, out, "an empty filter value list matches nothing")
 }
 
 // TestFilterByTypeAndProperties_NoFilters_ReturnsAll passes the full slice
@@ -307,9 +303,9 @@ func TestFilterByTypeAndProperties_CombinedTypeAndProperty(t *testing.T) {
 	assert.Equal(t, "nornic:a", out[0].ID)
 }
 
-// TestFilterByTypeAndProperties_EmptyValueList_CombinedWithPopulatedFilter
-// is the precise regression scenario: {"filters":{"collection":[], "env":["prod"]}}.
-// The empty "collection" key must be ignored; only "env" constrains the result.
+// TestFilterByTypeAndProperties_EmptyValueList_CombinedWithPopulatedFilter:
+// {"filters":{"collection":[], "env":["prod"]}} returns nothing; the empty
+// "collection" list matches no node whatever "env" allows (#938).
 func TestFilterByTypeAndProperties_EmptyValueList_CombinedWithPopulatedFilter(t *testing.T) {
 	eng := newFilterTestEngine(t)
 	svc := NewService(eng)
@@ -320,18 +316,17 @@ func TestFilterByTypeAndProperties_EmptyValueList_CombinedWithPopulatedFilter(t 
 
 	results := buildFilterResults("nornic:keep", "nornic:drop")
 	filters := map[string][]string{
-		"collection": {}, // empty → must be a no-op
+		"collection": {}, // empty: matches nothing
 		"env":        {"prod"},
 	}
 	out := svc.filterByTypeAndProperties(ctx, results, nil, filters, map[string]bool{})
 
-	require.Len(t, out, 1, "empty-list filter key must not eliminate valid results")
-	assert.Equal(t, "nornic:keep", out[0].ID)
+	require.Empty(t, out, "an empty-list filter key matches nothing")
 }
 
-// TestFilterByTypeAndProperties_AllEmptyFilters_ReturnsAll ensures that when
-// every filter key has an empty value list the function is effectively a no-op.
-func TestFilterByTypeAndProperties_AllEmptyFilters_ReturnsAll(t *testing.T) {
+// TestFilterByTypeAndProperties_AllEmptyFilters_ReturnsNothing: filter keys
+// that all have empty value lists match nothing (#938).
+func TestFilterByTypeAndProperties_AllEmptyFilters_ReturnsNothing(t *testing.T) {
 	eng := newFilterTestEngine(t)
 	svc := NewService(eng)
 	ctx := context.Background()
@@ -343,7 +338,7 @@ func TestFilterByTypeAndProperties_AllEmptyFilters_ReturnsAll(t *testing.T) {
 	filters := map[string][]string{"tag": {}, "category": {}}
 
 	out := svc.filterByTypeAndProperties(ctx, results, nil, filters, map[string]bool{})
-	require.Len(t, out, 2)
+	require.Empty(t, out)
 }
 
 // TestFilterByTypeAndProperties_ScorePreserved verifies that the original

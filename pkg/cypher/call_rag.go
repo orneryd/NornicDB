@@ -672,9 +672,10 @@ func parseRetrievalFilters(raw interface{}) map[string][]string {
 				values = []string{fmt.Sprint(rawValues)}
 			}
 		}
-		if len(values) > 0 {
-			parsed[property] = values
-		}
+		// An empty list is kept: it matches nothing, as Cypher's IN [] does
+		// (search.nodeMatchesFilters, #938), rather than dropping the
+		// constraint.
+		parsed[property] = values
 	}
 	if len(parsed) == 0 {
 		return nil
