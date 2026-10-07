@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reduce transaction label-scan cache overhead: stop populating the bounded
+  label cache once full, and reuse validated prefix sizes and sidecar checks
+  when indexing cached nodes. Preserve snapshot reads and embedding hydration
+  (#911).
+
 - Preserve FINISH-terminated MATCH reads through shared pipeline admission
   and reject unquoted FINISH identifiers consistently in both parsers.
 

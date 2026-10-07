@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -299,6 +300,93 @@ func TestTxReads_EndpointPrefixNodeCacheIsBounded(t *testing.T) {
 	require.Contains(t, tx.snapshotPrefixNodeByID, NodeID(fmt.Sprintf("test:cached-%03d", maxSnapshotPrefixNodeCacheNodes+4)))
 	require.LessOrEqual(t, tx.snapshotPrefixNodeBytes, maxSnapshotPrefixNodeCacheBytes)
 	require.Len(t, tx.snapshotPrefixNodeOrder, maxSnapshotPrefixNodeCacheNodes)
+}
+
+func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
+	engine := NewMemoryEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	writer, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	for index := 0; index < maxSnapshotPrefixNodeCacheNodes+2; index++ {
+		_, err = writer.CreateNode(&Node{
+			ID: NodeID(fmt.Sprintf("test:bounded-%03d", index)), Labels: []string{"Person"},
+		})
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Commit())
+	reader, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, reader.SetNamespace("test"))
+	t.Cleanup(func() { _ = reader.Rollback() })
+	var uncached NodeID
+	for pass := 0; pass < 2; pass++ {
+		visited := 0
+		require.NoError(t, reader.StreamNodesByLabelProjected("Person", []string{}, func(node *Node) error {
+			visited++
+			if _, cached := reader.snapshotNodeLabels[node.ID]; !cached {
+				uncached = node.ID
+			}
+			return nil
+		}))
+		require.Equal(t, maxSnapshotPrefixNodeCacheNodes+2, visited)
+		require.Len(t, reader.snapshotNodeLabels, maxSnapshotPrefixNodeCacheNodes)
+		require.Equal(t, maxSnapshotPrefixNodeCacheNodes*len("Person"), reader.snapshotNodeLabelBytes)
+	}
+	require.NotEmpty(t, uncached)
+	node, err := engine.GetNode(uncached)
+	require.NoError(t, err)
+	node.Labels = []string{"Changed"}
+	require.NoError(t, engine.UpdateNode(node))
+	labels, err := reader.committedNodeLabelsLocked(uncached)
+	require.NoError(t, err)
+	require.Equal(t, []string{"Person"}, labels)
+	require.NotContains(t, reader.snapshotNodeLabels, uncached)
+}
+
+func TestTxReads_PrefixAdmissionReusesValidatedSizes(t *testing.T) {
+	transaction := &BadgerTransaction{}
+	nodes := []*Node{
+		{ID: "test:small", Labels: []string{"Person"}},
+		{ID: "test:larger", Labels: []string{"Person", "Engineer"}, Properties: map[string]any{"name": "Alice"}},
+	}
+	transaction.storeSnapshotLabelPrefixLocked(nil, "Person", nodes, true)
+	require.Len(t, transaction.snapshotPrefixNodeByID, len(nodes))
+	total := 0
+	for _, node := range nodes {
+		bytes, ok := snapshotLabelPrefixNodeBytes(node)
+		require.True(t, ok)
+		total += bytes
+		require.Equal(t, bytes, transaction.snapshotPrefixNodeBytesByID[node.ID])
+		copy, err := transaction.getCommittedNodeLocked(node.ID)
+		require.NoError(t, err)
+		require.Equal(t, node, copy)
+		require.NotSame(t, node, copy)
+	}
+	require.Equal(t, total, transaction.snapshotPrefixNodeBytes)
+	require.Equal(t, total, transaction.snapshotLabelPrefixBytes)
+	transaction.storeSnapshotLabelPrefixLocked(nil, "Other", nodes, true)
+	require.Equal(t, total, transaction.snapshotPrefixNodeBytes)
+	require.Len(t, transaction.snapshotPrefixNodeOrder, len(nodes))
+}
+
+func TestTxReads_PrefixAdmissionExcludesEmbeddingSidecars(t *testing.T) {
+	engine := newTestEngine(t)
+	node := &Node{ID: "test:sidecar", Labels: []string{"Person"}}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	embeddings := [][]float32{{0.1, 0.2}}
+	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, node.ID, embeddings, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})))
+	transaction, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transaction.Rollback() })
+	transaction.storeSnapshotLabelPrefixLocked(transaction.snapshotTx, "Person", []*Node{node}, true)
+	require.Empty(t, transaction.snapshotLabelPrefixNodes)
+	require.Empty(t, transaction.snapshotPrefixNodeByID)
+	transaction.cacheSnapshotPrefixNodeByIDLocked(transaction.snapshotTx, node)
+	require.Empty(t, transaction.snapshotPrefixNodeByID)
+	stored, err := transaction.getCommittedNodeLocked(node.ID)
+	require.NoError(t, err)
+	require.Equal(t, embeddings, stored.ChunkEmbeddings)
 }
 
 func TestTxReads_GetNodeUsesUnprojectedSnapshotPrefix(t *testing.T) {

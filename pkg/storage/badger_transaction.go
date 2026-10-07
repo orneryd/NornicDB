@@ -1882,7 +1882,9 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		if node == nil {
 			return nil
 		}
-		tx.cacheCommittedNodeLabelsLocked(node)
+		if len(tx.snapshotNodeLabels) < maxSnapshotPrefixNodeCacheNodes {
+			tx.cacheCommittedNodeLabelsLocked(node)
+		}
 		if !hasPending {
 			return invokeVisit(node)
 		}

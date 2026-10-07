@@ -30,7 +30,8 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 	}
 
 	bytes := 0
-	for _, node := range nodes {
+	var sizes [maxSnapshotLabelPrefixNodes]int
+	for index, node := range nodes {
 		nodeBytes, ok := snapshotLabelPrefixNodeBytes(node)
 		if !ok || nodeBytes > maxSnapshotLabelPrefixBytes-bytes {
 			return
@@ -42,6 +43,7 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 		if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
 			return
 		}
+		sizes[index] = nodeBytes
 		bytes += nodeBytes
 	}
 	previousBytes := tx.snapshotLabelPrefixNodeBytes[key]
@@ -60,8 +62,8 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 			tx.snapshotPrefixNodeByID = make(map[NodeID]*Node, len(nodes))
 			tx.snapshotPrefixNodeBytesByID = make(map[NodeID]int, len(nodes))
 		}
-		for _, node := range nodes {
-			tx.cacheSnapshotPrefixNodeByIDLocked(txn, node)
+		for index, node := range nodes {
+			tx.cacheValidatedSnapshotPrefixNodeByIDLocked(node, sizes[index])
 		}
 	}
 }
@@ -119,6 +121,10 @@ func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(txn *badger.Txn, 
 	if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
 		return
 	}
+	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(node, nodeBytes)
+}
+
+func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(node *Node, nodeBytes int) {
 	if _, exists := tx.snapshotPrefixNodeByID[node.ID]; exists {
 		return
 	}
