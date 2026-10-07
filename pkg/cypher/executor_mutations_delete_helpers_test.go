@@ -24,7 +24,7 @@ func TestDeleteProjectionCanonicalMultiplicityAndCounters(t *testing.T) {
 			ctx := withExpressionFailureSlot(context.WithValue(context.Background(), paramsKey, map[string]interface{}{"payload": map[string]interface{}{"value": float64(7)}}))
 			_, err := exec.Execute(ctx, "CREATE (n:Victim {id: 'v'})-[r:R {weight: 1}]->(:Target), (n)-[s:R {weight: 2}]->(:Target)", nil)
 			require.NoError(t, err)
-			result, err := exec.executeDelete(ctx, "MATCH (n:Victim)-[r:R]->(m:Target) DETACH DELETE n RETURN "+test.projection)
+			result, err := exec.Execute(ctx, "MATCH (n:Victim)-[r:R]->(m:Target) DETACH DELETE n RETURN "+test.projection, getParamsFromContext(ctx))
 			if test.deleted {
 				requireDeletedEntityError(t, err)
 				return
@@ -133,7 +133,7 @@ func TestDeleteHelpers_StreamEligibilityAndExecution(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (a:Tmp {id:'a'}), (b:Tmp {id:'b'})", nil)
 	require.NoError(t, err)
 
-	res, err := exec.executeDeleteStreaming(ctx, "MATCH (n:Tmp)", "n", false)
+	res, err := exec.Execute(ctx, "MATCH (n:Tmp)"+" DELETE "+"n", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.EqualValues(t, 2, res.Stats.NodesDeleted)
 
@@ -141,18 +141,21 @@ func TestDeleteHelpers_StreamEligibilityAndExecution(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 0, verify.Rows[0][0])
 
-	_, err = exec.executeDeleteStreaming(ctx, "MATCH (", "n", false)
-	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH ("+" DELETE "+"n", getParamsFromContext(ctx))
+	require.Error(t, err)
 
 	// Fallback branch: rows returned but delete variable unresolved => no deletes.
 	_, err = exec.Execute(ctx, "CREATE (:Ghost {id:'g1'})", nil)
 	require.NoError(t, err)
-	res, err = exec.executeDeleteStreaming(ctx, "MATCH (n:Ghost)", "missingVar", false)
+	res, err = exec.Execute(ctx, "MATCH (n:Ghost)"+" DELETE "+"missingVar", getParamsFromContext(ctx))
+	require.Error(t, err)
+	require.Nil(t, res)
+	ghosts, err := store.GetNodesByLabel("Ghost")
 	require.NoError(t, err)
-	require.EqualValues(t, 0, res.Stats.NodesDeleted)
+	require.Len(t, ghosts, 1)
 
 	// Fallback branch with non-node values from a WITH projection.
-	res, err = exec.executeDeleteStreaming(ctx, "WITH 'does-not-exist' AS n", "n", false)
+	res, err = exec.Execute(ctx, "WITH 'does-not-exist' AS n"+" DELETE "+"n", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.EqualValues(t, 0, res.Stats.NodesDeleted)
 }
@@ -166,7 +169,7 @@ func TestDeleteHelpers_StreamExecution_NodeEdgeAndStatsBranches(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (a:Tmp {id:'a'}), (b:Tmp {id:'b'}), (a)-[:R]->(b)", nil)
 	require.NoError(t, err)
 
-	res, err := exec.executeDeleteStreaming(ctx, "MATCH (n:Tmp {id:'a'})", "n", true)
+	res, err := exec.Execute(ctx, "MATCH (n:Tmp {id:'a'})"+" DETACH DELETE "+"n", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, res.Stats.NodesDeleted)
 	require.EqualValues(t, 1, res.Stats.RelationshipsDeleted)
@@ -181,7 +184,7 @@ func TestDeleteHelpers_StreamExecution_NodeEdgeAndStatsBranches(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE (c:Tmp {id:'c'}), (d:Tmp {id:'d'}), (c)-[:R]->(d)", nil)
 	require.NoError(t, err)
 
-	res, err = exec.executeDeleteStreaming(ctx, "MATCH ()-[r:R]->()", "r", false)
+	res, err = exec.Execute(ctx, "MATCH ()-[r:R]->()"+" DELETE "+"r", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, res.Stats.RelationshipsDeleted)
 	require.EqualValues(t, 0, res.Stats.NodesDeleted)
@@ -204,7 +207,7 @@ func TestDeleteHelpers_StreamExecution_ExpressionDeleteVarsBranches(t *testing.T
 	require.NoError(t, err)
 
 	// String branch in executeDeleteStreaming switch via RETURN id(n).
-	res, err := exec.executeDeleteStreaming(ctx, "MATCH (n:Tmp)", "id(n)", false)
+	res, err := exec.Execute(ctx, "MATCH (n:Tmp)"+" DELETE "+"id(n)", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.EqualValues(t, 3, res.Stats.NodesDeleted)
 
@@ -216,7 +219,7 @@ func TestDeleteHelpers_StreamExecution_ExpressionDeleteVarsBranches(t *testing.T
 	require.NoError(t, err)
 
 	// Map branch with _edgeId key via map projection expression.
-	res, err = exec.executeDeleteStreaming(ctx, "MATCH ()-[r:R]->()", "{_edgeId: id(r)}", false)
+	res, err = exec.Execute(ctx, "MATCH ()-[r:R]->()"+" DELETE "+"{_edgeId: id(r)}", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, res.Stats.RelationshipsDeleted)
 
@@ -225,7 +228,7 @@ func TestDeleteHelpers_StreamExecution_ExpressionDeleteVarsBranches(t *testing.T
 	require.EqualValues(t, 0, verify.Rows[0][0])
 
 	// Map branch with _nodeId key via map projection expression.
-	res, err = exec.executeDeleteStreaming(ctx, "MATCH (n:Tmp)", "{_nodeId: id(n)}", false)
+	res, err = exec.Execute(ctx, "MATCH (n:Tmp)"+" DELETE "+"{_nodeId: id(n)}", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.EqualValues(t, 2, res.Stats.NodesDeleted)
 

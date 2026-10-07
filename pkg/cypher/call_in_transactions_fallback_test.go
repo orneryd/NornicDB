@@ -29,7 +29,7 @@ func TestVariableScopeCallInTransactionsFallback_BatchesSeeStatementParameters(t
 	require.NoError(t, err)
 
 	ctx := withQueryParams(context.Background(), map[string]interface{}{"mark": "seen"})
-	_, err = exec.executeVariableScopeCallInTransactions(ctx, seeds, "n", "WITH n SET n.mark = $mark", "", 2)
+	_, err = exec.sharedScopedTransactionalCallForTest(ctx, seeds, "n", "WITH n SET n.mark = $mark", "", 2)
 	require.NoError(t, err)
 
 	result, err := exec.Execute(context.Background(), "MATCH (n:X {mark: 'seen'}) RETURN count(n)", nil)

@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Finish #908 execution ownership: graph reads and mutations use terminal
+  shared pipeline dispatch; retire independent MATCH, CREATE, mutation,
+  OPTIONAL MATCH, FOREACH, CALL composition and aggregation interpreters.
+  Keep bulk CREATE publication and indexed candidate prefetch in shared
+  operators, consume borrowed rows without redundant copies, propagate
+  traversal read failures, and preserve correlated stale-index recovery.
+  Reject scalar SET targets before writes while keeping null targets as
+  no-ops. ANTLR now accepts ORDER BY, SKIP and LIMIT after SHOW YIELD.
+
 - Restore one-pass reads for large, high-coverage label scans, preserving
   label-index order, projections, early stopping and transaction snapshots.
   Bound the buffered tail to 1,024 candidates and use streaming point reads

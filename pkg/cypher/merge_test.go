@@ -764,15 +764,9 @@ func TestExecuteCompoundMatchMerge_OptionalAndContextRelationshipBranches(t *tes
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 
-	// Relationship-context matcher error path via malformed match clause.
-	matches, rels, err := e.executeMatchForContextWithRelationships(
-		ctx,
-		"MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN",
-		"(a:Person)-[:KNOWS]->(b:Person)",
-	)
-	require.NoError(t, err)
-	require.NotNil(t, matches)
-	require.NotNil(t, rels)
+	res, err = e.Execute(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN", nil)
+	require.Error(t, err)
+	require.Nil(t, res)
 }
 
 func TestExecuteMatchForContextWithRelationships_MapResolutionBranches(t *testing.T) {
@@ -784,23 +778,15 @@ func TestExecuteMatchForContextWithRelationships_MapResolutionBranches(t *testin
 	_, err := e.Execute(ctx, "CREATE (a:Person {name:'alice'}), (b:Person {name:'bob'}), (a)-[:KNOWS]->(b)", nil)
 	require.NoError(t, err)
 
-	// Map with explicit id key branch.
-	matches, _, err := e.executeMatchForContextWithRelationships(
-		ctx,
-		"MATCH (a:Person)-[:KNOWS]->(b:Person) WITH {id:'a'} AS a, b",
-		"(a:Person)-[:KNOWS]->(b:Person)",
-	)
+	matches, err := e.Execute(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person) WITH {id:'a'} AS a, b RETURN a, b", nil)
 	require.NoError(t, err)
-	require.NotNil(t, matches)
+	require.Len(t, matches.Rows, 1)
+	require.Equal(t, map[string]interface{}{"id": "a"}, matches.Rows[0][0])
 
-	// Map without id/_id branch should fall back to findNodeByProperties.
-	matches, _, err = e.executeMatchForContextWithRelationships(
-		ctx,
-		"MATCH (a:Person)-[:KNOWS]->(b:Person) WITH {name:'alice'} AS a, b",
-		"(a:Person)-[:KNOWS]->(b:Person)",
-	)
+	matches, err = e.Execute(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person) WITH {name:'alice'} AS a, b RETURN a, b", nil)
 	require.NoError(t, err)
-	require.NotEmpty(t, matches)
+	require.Len(t, matches.Rows, 1)
+	require.Equal(t, map[string]interface{}{"name": "alice"}, matches.Rows[0][0])
 }
 
 // ========================================

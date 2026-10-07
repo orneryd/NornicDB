@@ -79,7 +79,7 @@ showCommand
         : SHOW ((ALL | FULLTEXT | RANGE_INDEX | TEXT | POINT | VECTOR | LOOKUP)? (INDEXES | INDEX)
             | CONSTRAINTS | CONSTRAINT CONTRACTS? | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
             | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | USERS | CURRENT USER | ALL)
-            (YIELD (MULT | yieldItems) returnSt?)?
+            (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt? returnSt?)?
     ;
 
 administrationCommand

@@ -24,9 +24,9 @@ func (e *failFirstDeleteNodeEngine) DeleteNode(id storage.NodeID) error {
 
 func TestExecuteDeleteStreaming_UnsupportedMatchShapeReturnsEmpty(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_stream_match_err_cov"))
-	res, err := exec.executeDeleteStreaming(context.Background(), "BOGUS", "n", false)
-	require.NoError(t, err)
-	require.EqualValues(t, 0, res.Stats.NodesDeleted)
+	res, err := exec.Execute(context.Background(), "BOGUS"+" DELETE "+"n", getParamsFromContext(context.Background()))
+	require.Error(t, err)
+	require.Nil(t, res)
 }
 
 func TestExecuteDeleteStreaming_FallbackMapEdgeBranch(t *testing.T) {
@@ -38,7 +38,7 @@ func TestExecuteDeleteStreaming_FallbackMapEdgeBranch(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:Ghost {id:'g1'})", nil)
 	require.NoError(t, err)
 
-	res, err := exec.executeDeleteStreaming(ctx, "MATCH (n:Ghost)", "{_edgeId:'missing-edge'}", false)
+	res, err := exec.Execute(ctx, "MATCH (n:Ghost)"+" DELETE "+"{_edgeId:'missing-edge'}", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.EqualValues(t, 0, res.Stats.NodesDeleted)
 	require.EqualValues(t, 0, res.Stats.RelationshipsDeleted)
@@ -55,7 +55,7 @@ func TestExecuteDeleteStreaming_FallbackDeletesAfterInitialDeleteFailure(t *test
 	_, err := store.CreateNode(&storage.Node{ID: storage.NodeID("n-retry"), Labels: []string{"Retry"}, Properties: map[string]interface{}{"id": "n-retry"}})
 	require.NoError(t, err)
 
-	res, err := exec.executeDeleteStreaming(ctx, "MATCH (n:Retry)", "n", false)
+	res, err := exec.Execute(ctx, "MATCH (n:Retry)"+" DELETE "+"n", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, res.Stats.NodesDeleted)
 

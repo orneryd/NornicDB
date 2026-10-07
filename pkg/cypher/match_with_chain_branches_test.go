@@ -57,7 +57,7 @@ func TestExecuteChainedMatchWithAggregations_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "with_chain_exec"))
 	ctx := context.Background()
 
-	res, used, err := exec.executeChainedMatchWithAggregations(ctx, "RETURN 1")
+	res, used, err := exec.sharedChainedPipelineForTest(ctx, "RETURN 1")
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
@@ -72,7 +72,7 @@ func TestExecuteChainedMatchWithAggregations_Branches(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	res, used, err = exec.executeChainedMatchWithAggregations(ctx,
+	res, used, err = exec.sharedChainedPipelineForTest(ctx,
 		"MATCH (a:A) WITH count(a) AS aCount MATCH (b:B) WITH aCount AS aCount, count(b.z) AS bz RETURN aCount, bz")
 	require.NoError(t, err)
 	require.True(t, used)
@@ -81,16 +81,17 @@ func TestExecuteChainedMatchWithAggregations_Branches(t *testing.T) {
 	require.EqualValues(t, int64(2), res.Rows[0][0])
 	require.EqualValues(t, int64(1), res.Rows[0][1])
 
-	res, used, err = exec.executeChainedMatchWithAggregations(ctx,
-		"MATCH (a:A) WITH sum(a) AS s MATCH (b:B) WITH s AS s2, count(b) AS c RETURN s2, c")
+	res, used, err = exec.sharedChainedPipelineForTest(ctx,
+		"MATCH (a:A) WITH sum(1) AS s MATCH (b:B) WITH s AS s2, count(b) AS c RETURN s2, c")
 	require.NoError(t, err)
-	require.False(t, used)
-	require.Nil(t, res)
+	require.True(t, used)
+	require.Equal(t, [][]interface{}{{int64(2), int64(2)}}, res.Rows)
 
-	res, used, err = exec.executeChainedMatchWithAggregations(ctx,
+	res, used, err = exec.sharedChainedPipelineForTest(ctx,
 		"MATCH (a:A) WITH count(a) AS aCount MATCH (b:B) WITH missingAlias AS x, count(b) AS c RETURN x, c")
-	require.NoError(t, err)
-	require.False(t, used)
+	require.Error(t, err)
+	require.True(t, used)
+	require.ErrorContains(t, err, "missingAlias")
 	require.Nil(t, res)
 }
 

@@ -27,7 +27,7 @@ func TestForeach_BoundStandaloneDelete(t *testing.T) {
 
 	// DETACH DELETE of the bound chunk entities.
 	foreachCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"chunks": chunkItems})
-	_, err = exec.executeForeachWithContext(foreachCtx, "FOREACH (chunk IN $chunks | DETACH DELETE chunk)", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	_, err = exec.sharedForeachForTest(foreachCtx, "FOREACH (chunk IN $chunks | DETACH DELETE chunk)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
 	left, err := engine.GetNodesByLabel("Chunk")
 	require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestForeach_BoundStandaloneDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	edgeCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"rels": []interface{}{edges[0]}})
-	_, err = exec.executeForeachWithContext(edgeCtx, "FOREACH (r IN $rels | DELETE r)", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	_, err = exec.sharedForeachForTest(edgeCtx, "FOREACH (r IN $rels | DELETE r)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
 	edges, err = engine.GetEdgesByType("LINK")
 	require.NoError(t, err)
@@ -57,13 +57,14 @@ func TestForeach_BoundStandaloneDelete(t *testing.T) {
 	require.NoError(t, err)
 	file := files[0]
 	connectedCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"items": []interface{}{file}})
-	_, err = exec.executeForeachWithContext(connectedCtx, "FOREACH (f IN $items | DELETE f)", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	_, err = exec.sharedForeachForTest(connectedCtx, "FOREACH (f IN $items | DELETE f)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
 
-	// Unbound standalone DELETE keeps the historical classified error.
-	_, err = exec.executeDelete(ctx, "DELETE n")
+	// Unbound standalone DELETE is rejected by shared statement admission.
+	_, err = exec.Execute(ctx, "DELETE n", getParamsFromContext(ctx))
 	require.Error(t, err)
-	require.EqualError(t, err, "DELETE requires a MATCH clause first (e.g., MATCH (n) DELETE n)")
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.SyntaxError")
+	require.ErrorContains(t, err, "undefined variable")
 }
 
 // TestForeach_BoundStandaloneDelete_StringIDs pins the string-ID bound target.
@@ -78,7 +79,7 @@ func TestForeach_BoundStandaloneDelete_StringIDs(t *testing.T) {
 	require.Len(t, nodes, 1)
 
 	strCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"items": []interface{}{string(nodes[0].ID)}})
-	_, err = exec.executeForeachWithContext(strCtx, "FOREACH (id IN $items | DELETE id)", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	_, err = exec.sharedForeachForTest(strCtx, "FOREACH (id IN $items | DELETE id)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
 	nodes, err = engine.GetNodesByLabel("StrDel")
 	require.NoError(t, err)
@@ -99,7 +100,7 @@ func BenchmarkForeach_BoundStandaloneDelete(b *testing.B) {
 			b.Fatalf("setup: %v %d", err, len(nodes))
 		}
 		foreachCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"items": []interface{}{nodes[0]}})
-		if _, err := exec.executeForeachWithContext(foreachCtx, "FOREACH (x IN $items | DELETE x)", map[string]*storage.Node{}, map[string]*storage.Edge{}); err != nil {
+		if _, err := exec.sharedForeachForTest(foreachCtx, "FOREACH (x IN $items | DELETE x)", map[string]*storage.Node{}, map[string]*storage.Edge{}); err != nil {
 			b.Fatal(err)
 		}
 	}

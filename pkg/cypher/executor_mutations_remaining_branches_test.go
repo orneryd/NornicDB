@@ -25,7 +25,7 @@ func TestSetTrailingProjectionCanonicalRowSet(t *testing.T) {
 		{"WITH * RETURN value ORDER BY n.v, value DESC LIMIT 1", []string{"value"}, [][]interface{}{{int64(3)}}},
 	} {
 		t.Run(test.clause, func(t *testing.T) {
-			result, handled, err := exec.executeSetTrailingWithReturn(ctx, test.clause, input, &ExecuteResult{Stats: stats})
+			result, handled, err := exec.sharedTrailingRowsHandledForTest(ctx, test.clause, input, &ExecuteResult{Stats: stats})
 			require.NoError(t, err)
 			require.True(t, handled)
 			require.Equal(t, test.columns, result.Columns)
@@ -44,7 +44,7 @@ func TestExecuteSet_TrailingFallbackMatchProjection(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:Person {id:'p1', name:'alice'})", nil)
 	require.NoError(t, err)
 
-	res, err := exec.executeSet(ctx, "MATCH (n:Person {id:'p1'}) SET n.flag = true MATCH (m:Person {id:'p1'}) RETURN m.flag AS flag")
+	res, err := exec.Execute(ctx, "MATCH (n:Person {id:'p1'}) SET n.flag = true MATCH (m:Person {id:'p1'}) RETURN m.flag AS flag", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, []string{"flag"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -109,34 +109,34 @@ func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:P {id:'p1'})", nil)
 	require.NoError(t, err)
 
-	_, err = exec.executeSet(ctx, "MATCH (n:P) SET += {a:1}")
+	_, err = exec.Execute(ctx, "MATCH (n:P) SET += {a:1}", getParamsFromContext(ctx))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid SET assignment")
 
-	_, err = exec.executeSet(ctx, "MATCH (n:P) SET n += $")
+	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += $", getParamsFromContext(ctx))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "valid parameter name")
 
-	_, err = exec.executeSet(ctx, "MATCH (n:P) SET n += $props")
+	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += $props", getParamsFromContext(ctx))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "requires parameters")
+	require.Contains(t, err.Error(), "Neo.ClientError.Statement.ParameterMissing")
 
 	ctxParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"other": map[string]interface{}{"x": int64(1)}})
-	_, err = exec.executeSet(ctxParams, "MATCH (n:P) SET n += $props")
+	_, err = exec.Execute(ctxParams, "MATCH (n:P) SET n += $props", getParamsFromContext(ctxParams))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "not found")
+	require.Contains(t, err.Error(), "Neo.ClientError.Statement.ParameterMissing")
 
-	_, err = exec.executeSet(ctx, "MATCH (n:P) SET n += props")
+	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += props", getParamsFromContext(ctx))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "requires a map")
+	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 
-	_, err = exec.executeSet(ctx, "MATCH (n:P) WITH n, 1 AS props SET n += props")
+	_, err = exec.Execute(ctx, "MATCH (n:P) WITH n, 1 AS props SET n += props", getParamsFromContext(ctx))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "requires a map")
 
 	// n is out of scope after WITH n AS p: SET n += ... must not fall back
 	// to writing whatever node the row holds.
-	_, err = exec.executeSet(ctx, "MATCH (n:P {id:'p1'}) WITH n AS p SET n += {score: 7} RETURN p.score AS score")
+	_, err = exec.Execute(ctx, "MATCH (n:P {id:'p1'}) WITH n AS p SET n += {score: 7} RETURN p.score AS score", getParamsFromContext(ctx))
 	require.Error(t, err)
 	res, err := exec.Execute(ctx, "MATCH (n:P {id:'p1'}) RETURN n.score AS score", nil)
 	require.NoError(t, err)

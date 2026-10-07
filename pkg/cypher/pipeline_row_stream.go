@@ -298,15 +298,17 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 		alternatives map[string][]*storage.Node
 	}
 	caches := make([]candidateCache, len(templates))
+	prefetched, _ := ctx.Value(pipelinePrefetchedNodeCandidatesKey{}).(map[nodeBatchMatchKey]map[string]*storage.Node)
 	return func(yield func(pipelineRow) bool) bool {
 		valid := true
+		current := make(pipelineRow, len(templates))
+		resolved := make([]nodePatternInfo, len(templates))
+		candidates := make([][]*storage.Node, len(templates))
 		completed := inputSource(func(input pipelineRow) bool {
-			current := make(pipelineRow, len(input)+len(templates))
+			clear(current)
 			for name, value := range input {
 				current[name] = value
 			}
-			resolved := make([]nodePatternInfo, len(templates))
-			candidates := make([][]*storage.Node, len(templates))
 			for index, template := range templates {
 				pattern, ok := template.node(ctx, e, input)
 				if !ok {
@@ -315,7 +317,14 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					return false
 				}
 				resolved[index] = pattern
-				key, keyed := pipelinePropertiesKey(pattern.properties)
+				key, keyed := "", false
+				prefetchedPattern := false
+				if len(pattern.labels) == 1 && len(pattern.properties) == 1 {
+					_, prefetchedPattern = prefetched[nodeBatchMatchKey{label: pattern.labels[0], prop: template.properties[0].key}]
+				}
+				if !prefetchedPattern {
+					key, keyed = pipelinePropertiesKey(pattern.properties)
+				}
 				cache := &caches[index]
 				nodes, cached := cache.nodes, keyed && cache.initialized && cache.key == key
 				if keyed && !cached && cache.alternatives != nil {
@@ -323,7 +332,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 				}
 				if !keyed || !cached {
 					var err error
-					nodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, pattern, "", hint)
+					nodes, _, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, input), pattern, "", hint)
 					if err != nil {
 						recordExpressionFailure(ctx, err)
 						valid = false

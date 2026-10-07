@@ -24,64 +24,6 @@ type createOutcome struct {
 	returnIdx int    // index of RETURN in cypher, or -1
 }
 
-// createFromPattern is the single CREATE pattern executor: parameter
-// substitution, validation (empty / invalid / reserved labels, property keys
-// and values, relationship types), property references to variables created
-// earlier in the same pattern, relationship chains and named paths (p = ...).
-// Plain CREATE and CREATE with references share this pattern executor;
-// pipeline CREATE clauses use its shared planning and publication operators.
-func (e *StorageExecutor) createFromPattern(ctx context.Context, cypher string) (*createOutcome, error) {
-	projectionCypher := cypher
-	// Substitute parameters AFTER routing to avoid keyword detection issues
-	if params := getParamsFromContext(ctx); params != nil {
-		cypher = e.substituteParams(cypher, params)
-	}
-
-	result := &ExecuteResult{
-		Columns: []string{},
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-
-	// Parse CREATE pattern
-	pattern := cypher[6:] // Skip "CREATE"
-
-	// Use word boundary detection to avoid matching substrings
-	returnIdx := findKeywordIndex(cypher, "RETURN")
-	if returnIdx > 0 {
-		pattern = cypher[6:returnIdx]
-	}
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
-		// A bare CREATE has no pattern after it; Neo4j rejects it as a
-		// syntax error and writes nothing (#514).
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			"Invalid input: expected a pattern after CREATE")
-	}
-	if pattern[0] != '(' && !namedPathAssignmentPrefix(pattern) {
-		// Anything after CREATE that does not begin a node pattern or a
-		// named-path assignment (p = (...)) is not a pattern (#514:
-		// `create.go` must not create a node).
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			fmt.Sprintf("Invalid input '%s': expected a pattern after CREATE", truncateQuery(pattern, 40)))
-	}
-
-	createdNodes := make(map[string]*storage.Node)
-	createdEdges := make(map[string]*storage.Edge)
-	createdPaths, err := e.createPatternsInScope(ctx, pattern, createdNodes, createdEdges, result)
-	if err != nil {
-		return nil, err
-	}
-	return &createOutcome{
-		result:    result,
-		nodes:     createdNodes,
-		edges:     createdEdges,
-		paths:     createdPaths,
-		cypher:    projectionCypher,
-		returnIdx: topLevelKeywordIndex(projectionCypher, "RETURN"),
-	}, nil
-}
-
 // createPlan is what one CREATE clause writes: every node and relationship,
 // fully parsed, evaluated and validated, in creation order.
 type createPlan struct {
@@ -131,6 +73,44 @@ func (p *createPlan) release() {
 // rejection (a unique constraint) also writes nothing. This keeps CREATE
 // atomic on routes that write without a transaction (the async auto-commit
 // route, #628) as well as inside one.
+func (e *StorageExecutor) pipelineCreateSource(ctx context.Context, source pipelineRowSource, clauses []pipelineClause) ([]pipelineRow, *ExecuteResult, bool, error) {
+	plan := acquireCreatePlan()
+	defer plan.release()
+	var out []pipelineRow
+	var planningError error
+	completed := source(func(row pipelineRow) bool {
+		if planningError = ctx.Err(); planningError != nil {
+			return false
+		}
+		clear(plan.nodeBindings)
+		clear(plan.edgeBindings)
+		var newRow pipelineRow
+		newRow, planningError = e.pipelinePlanCreateRow(ctx, row, clauses, plan)
+		if planningError != nil {
+			return false
+		}
+		out = append(out, newRow)
+		return true
+	})
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, nil, true, failure
+	}
+	if planningError != nil {
+		return nil, nil, true, planningError
+	}
+	if !completed {
+		return nil, nil, false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, true, err
+	}
+	created := &ExecuteResult{Stats: &QueryStats{}}
+	if err := e.applyCreatePlan(ctx, plan, created); err != nil {
+		return nil, nil, true, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
+	}
+	return out, created, true, nil
+}
+
 func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, result *ExecuteResult) (map[string]PathResult, error) {
 	plan := acquireCreatePlan()
 	defer plan.release()
@@ -406,17 +386,6 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 	return nil
 }
 
-func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	out, err := e.createFromPattern(ctx, cypher)
-	if err != nil {
-		return nil, err
-	}
-	if err := e.projectCreateReturn(ctx, out); err != nil {
-		return nil, err
-	}
-	return out.result, nil
-}
-
 // prepareCreateNodePattern parses and validates one CREATE node pattern. It is
 // shared by every CREATE route (createFromPattern and the auto-commit bulk fast
 // path tryAsyncCreateNodeBatch) so they reject the same patterns: malformed
@@ -644,20 +613,6 @@ func parseCreatePathAssignment(pattern string) (string, string) {
 		return "", pattern
 	}
 	return left, right
-}
-
-// executeCreateWithRefs is like executeCreate but also returns the created nodes and edges maps.
-// This is used by compound queries like CREATE...WITH...DELETE to avoid expensive O(n) scans
-// when looking up the created entities.
-func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
-	out, err := e.createFromPattern(ctx, cypher)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if err := e.projectCreateReturn(ctx, out); err != nil {
-		return nil, nil, nil, err
-	}
-	return out.result, out.nodes, out.edges, nil
 }
 
 // splitCreatePatterns splits a CREATE pattern into individual patterns (nodes and relationships)

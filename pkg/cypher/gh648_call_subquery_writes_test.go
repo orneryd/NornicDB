@@ -415,7 +415,7 @@ func TestPR771CallOrderModifiersCanonicalExpressions(t *testing.T) {
 		Rows:    [][]interface{}{{int64(1)}, {int64(4)}, {int64(3)}, {int64(2)}},
 		Stats:   &QueryStats{NodesCreated: 4},
 	}
-	result, err := exec.processAfterCallSubquery(context.Background(), input, "ORDER BY value % 2, value DESC SKIP 1 LIMIT 2")
+	result, err := exec.sharedCallTailForTest(context.Background(), input, "ORDER BY value % 2, value DESC SKIP 1 LIMIT 2")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(2)}, {int64(3)}}, result.Rows)
 	require.Same(t, input.Stats, result.Stats)

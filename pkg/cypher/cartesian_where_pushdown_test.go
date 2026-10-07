@@ -54,10 +54,7 @@ func BenchmarkGh728CartesianPreparedMembership(b *testing.B) {
 	}
 	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 	query := "MATCH (a:PreparedLeft), (b:PreparedRight) WHERE a.key IN $keys OR b.key IN $keys RETURN a.key AS key"
-	patterns := []string{"(a:PreparedLeft)", "(b:PreparedRight)"}
-	whereIndex := findKeywordIndex(query, "WHERE")
-	returnIndex := findKeywordIndex(query, "RETURN")
-	items := []returnItem{{expr: "a.key", alias: "key"}}
+
 	for _, length := range []int{64, 4096} {
 		b.Run("keys="+strconv.Itoa(length), func(b *testing.B) {
 			keys := make([]interface{}, length)
@@ -66,7 +63,7 @@ func BenchmarkGh728CartesianPreparedMembership(b *testing.B) {
 			}
 			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"keys": keys}))
 			apply := func() {
-				result, err := exec.executeCartesianProductMatch(ctx, query, "", patterns, whereIndex, returnIndex, items, false, false, &ExecuteResult{Columns: []string{"key"}})
+				result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 				if err != nil || len(result.Rows) != 1024 {
 					b.Fatalf("expected 1024 rows, got result=%v err=%v", result, err)
 				}
@@ -274,11 +271,9 @@ func BenchmarkGh713CartesianParallel(b *testing.B) {
 				b.Run(test.name, func(b *testing.B) {
 					ctx := withExpressionFailureSlot(context.Background())
 					query := "MATCH (a:ParallelLeft), (b:ParallelRight) " + test.clause
-					patterns := []string{"(a:ParallelLeft)", "(b:ParallelRight)"}
-					items := exec.parseReturnItems(test.clause[len("RETURN "):])
-					returnIndex := findKeywordIndex(query, "RETURN")
+
 					apply := func() {
-						result, err := exec.executeCartesianProductMatch(ctx, query, "", patterns, -1, returnIndex, items, true, false, &ExecuteResult{})
+						result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 						if err != nil || len(result.Rows) != test.rows {
 							b.Fatalf("unexpected aggregate result: %v, %v", result, err)
 						}
@@ -328,11 +323,9 @@ func BenchmarkGh713CartesianAggregation(b *testing.B) {
 		b.Run(test.name, func(b *testing.B) {
 			ctx := withExpressionFailureSlot(context.Background())
 			query := "MATCH (a:AggregateLeft), (b:AggregateRight) " + test.clause
-			patterns := []string{"(a:AggregateLeft)", "(b:AggregateRight)"}
-			items := exec.parseReturnItems(test.clause[len("RETURN "):])
-			returnIndex := findKeywordIndex(query, "RETURN")
+
 			apply := func() {
-				result, err := exec.executeCartesianProductMatch(ctx, query, "", patterns, -1, returnIndex, items, true, false, &ExecuteResult{})
+				result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 				if err != nil || len(result.Rows) != test.rows {
 					b.Fatalf("unexpected aggregate result: %v, %v", result, err)
 				}
@@ -367,7 +360,7 @@ func TestGh728CartesianMembershipParameterFreshness(t *testing.T) {
 	keys := []interface{}{"key-1"}
 	ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"keys": keys}))
 	apply := func() [][]interface{} {
-		result, err := exec.executeCartesianProductMatch(ctx, query, "", []string{"(a:PreparedLeft)", "(b:PreparedRight)"}, findKeywordIndex(query, "WHERE"), findKeywordIndex(query, "RETURN"), []returnItem{{expr: "a.key", alias: "left"}, {expr: "b.key", alias: "right"}}, false, false, &ExecuteResult{Columns: []string{"left", "right"}})
+		result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 		require.NoError(t, err)
 		require.NoError(t, getExpressionFailure(ctx))
 		return result.Rows
@@ -502,10 +495,10 @@ func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			query := "MATCH (a:ProjectionLeft), (b:ProjectionRight) " + test.tail
 			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"skip": int64(2), "limit": int64(1), "zero": int64(0)}))
-			items := exec.parseReturnItems(test.tail[len("RETURN "):])
+
 			stats := &QueryStats{}
 			buffer := &ExecuteResult{Columns: test.columns, Stats: stats}
-			result, err := exec.executeCartesianProductMatch(ctx, query, "", []string{"(a:ProjectionLeft)", "(b:ProjectionRight)"}, -1, findKeywordIndex(query, "RETURN"), items, returnProjectionPlanFor(test.tail).hasAggregate, false, buffer)
+			result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 			publicResult, publicErr := exec.Execute(context.Background(), query, map[string]interface{}{"skip": int64(2), "limit": int64(1), "zero": int64(0)})
 			if test.code != "" {
 				require.Error(t, err)
@@ -519,10 +512,10 @@ func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
 			require.Equal(t, test.columns, publicResult.Columns)
 			require.Equal(t, test.rows, publicResult.Rows)
 			require.NoError(t, getExpressionFailure(ctx))
-			require.Same(t, buffer, result)
+			require.NotSame(t, buffer, result)
 			require.Equal(t, test.columns, result.Columns)
 			require.Equal(t, test.rows, result.Rows)
-			require.Same(t, stats, result.Stats)
+			require.NotSame(t, stats, result.Stats)
 		})
 	}
 	for _, test := range []struct {
@@ -536,9 +529,9 @@ func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
 			query := "MATCH (a:ProjectionMissing), (b:ProjectionRight) " + test.clause
 			ctx := withExpressionFailureSlot(context.Background())
 			buffer := &ExecuteResult{Stats: &QueryStats{}}
-			result, err := exec.executeCartesianProductMatch(ctx, query, "", []string{"(a:ProjectionMissing)", "(b:ProjectionRight)"}, -1, findKeywordIndex(query, "RETURN"), exec.parseReturnItems(test.clause[len("RETURN "):]), true, false, buffer)
+			result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 			require.NoError(t, err)
-			require.Same(t, buffer, result)
+			require.NotSame(t, buffer, result)
 			require.Equal(t, []string{"total"}, result.Columns)
 			require.Equal(t, test.rows, result.Rows)
 			publicResult, publicErr := exec.Execute(context.Background(), query, nil)

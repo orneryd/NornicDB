@@ -79,7 +79,7 @@ RETURN count(o) AS linked
 		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
 		require.Error(t, err)
 		require.True(t, supported)
-		require.Contains(t, err.Error(), "UNWIND fixed-chain merge failed")
+		require.Contains(t, err.Error(), "edge create boom")
 	})
 }
 
@@ -118,8 +118,8 @@ MERGE (o)-[:NEXT]->(h1)
 RETURN count(o) AS linked
 `
 	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", []interface{}{int64(1), "bad"}, validRest)
-	require.NoError(t, err)
+	require.Error(t, err)
 	require.True(t, supported)
-	require.Len(t, res.Rows, 1)
-	require.EqualValues(t, 0, res.Rows[0][0])
+	require.Nil(t, res)
+	require.Contains(t, err.Error(), "Neo.ClientError.Statement.TypeError")
 }

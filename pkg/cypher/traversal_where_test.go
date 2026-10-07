@@ -230,7 +230,7 @@ func TestEvaluatePathValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exec.evaluatePathValue(tt.input)
+			result := exec.sharedPathLiteralForTest(tt.input)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -273,14 +273,14 @@ func TestCompareValuesForPath(t *testing.T) {
 		{"int vs float", int64(42), 42.0, "=", true},
 
 		// Nil comparisons
-		{"nil equal nil", nil, nil, "=", true},
+		{"nil equal nil", nil, nil, "=", false},
 		{"nil not equal value", nil, "hello", "=", false},
-		{"nil not equal op", nil, "hello", "<>", true},
+		{"nil not equal op", nil, "hello", "<>", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exec.compareValues(tt.left, tt.right, tt.op)
+			result := exec.sharedPathComparisonForTest(tt.left, tt.right, tt.op)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

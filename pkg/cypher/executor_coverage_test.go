@@ -705,7 +705,7 @@ func TestExecuteSetMergeRejectsMalformedInlineMap(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (n:SetMergeMalformed) RETURN n.a", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{nil}}, result.Rows)
-	_, err = exec.executeSet(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
+	_, err = exec.Execute(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}", getParamsFromContext(ctx))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse properties in SET +=")
 }
@@ -2236,7 +2236,7 @@ func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
 
 	// Parameter substitution + function return item variable extraction.
 	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"name": "alice"})
-	res, nodes, edges, err := exec.executeCreateWithRefs(
+	res, nodes, edges, err := exec.sharedCreateBindingsForTest(
 		ctxWithParams,
 		"CREATE (a:Person {name: $name})-[:KNOWS]->(b:Person {name:'bob'}) RETURN id(a) AS aid, b.name AS bname",
 	)
@@ -2250,7 +2250,7 @@ func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
 	assert.Equal(t, "bob", res.Rows[0][1])
 
 	// Chain remainder branch and relationship variable capture.
-	res, nodes, edges, err = exec.executeCreateWithRefs(
+	res, nodes, edges, err = exec.sharedCreateBindingsForTest(
 		ctx,
 		"CREATE (x:A {name:'x'})-[r1:R1]->(y:B {name:'y'})-[r2:R2]->(z:C {name:'z'}) RETURN z.name",
 	)
@@ -2264,7 +2264,7 @@ func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
 	assert.Equal(t, "z", res.Rows[0][0])
 
 	// Reverse direction branch.
-	_, nodes, edges, err = exec.executeCreateWithRefs(
+	_, nodes, edges, err = exec.sharedCreateBindingsForTest(
 		ctx,
 		"CREATE (l:Left {name:'l'})<-[rr:BACK]-(r:Right {name:'r'}) RETURN l.name, r.name",
 	)
@@ -2274,7 +2274,7 @@ func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
 	require.Contains(t, edges, "rr")
 
 	// Invalid relationship syntax branch.
-	_, _, _, err = exec.executeCreateWithRefs(ctx, "CREATE (a)-[:BROKEN](b)")
+	_, _, _, err = exec.sharedCreateBindingsForTest(ctx, "CREATE (a)-[:BROKEN](b)")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid relationship pattern")
 }

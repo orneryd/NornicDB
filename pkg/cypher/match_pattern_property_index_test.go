@@ -649,12 +649,12 @@ CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target
 `, nil)
 	require.NoError(t, err)
 
-	result, err := exec.executeDelete(ctx, `
+	result, err := exec.Execute(ctx, `
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
 DELETE rel
-`)
+`, getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
 }

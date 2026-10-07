@@ -43,7 +43,7 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 		t.Run(test.clause, func(t *testing.T) {
 			query := "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item " + test.clause
 			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
-			result, err := exec.executeMatchWithUnwind(ctx, query)
+			result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 			public, publicErr := exec.Execute(context.Background(), query, params)
 			if test.code != "" {
 				require.Error(t, err)
@@ -62,7 +62,7 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 	}
 	t.Run("WITH function", func(t *testing.T) {
 		query := "MATCH (n:UnwindReturn) WITH n, labels(n) AS items UNWIND items AS item RETURN item AS value"
-		result, err := exec.executeMatchWithUnwind(withExpressionFailureSlot(context.Background()), query)
+		result, err := exec.Execute(withExpressionFailureSlot(context.Background()), query, getParamsFromContext(withExpressionFailureSlot(context.Background())))
 		require.NoError(t, err)
 		require.Equal(t, []string{"value"}, result.Columns)
 		require.Equal(t, [][]interface{}{{"UnwindReturn"}}, result.Rows)
@@ -73,7 +73,7 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 	})
 	t.Run("mixed clause case", func(t *testing.T) {
 		query := "mAtCh (n:UnwindReturn) wItH n, n.items AS items uNwInD items AS item rEtUrN item AS value ORDER BY value SKIP 1 LIMIT 1"
-		result, err := exec.executeMatchWithUnwind(withExpressionFailureSlot(context.Background()), query)
+		result, err := exec.Execute(withExpressionFailureSlot(context.Background()), query, getParamsFromContext(withExpressionFailureSlot(context.Background())))
 		require.NoError(t, err)
 		require.Equal(t, []string{"value"}, result.Columns)
 		require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
@@ -97,7 +97,7 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 			query := "MATCH (n:UnwindEdge) WHERE n.name = $name WITH n.items AS items UNWIND items AS item RETURN item AS value"
 			params := map[string]interface{}{"name": test.name}
 			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
-			result, err := exec.executeMatchWithUnwind(ctx, query)
+			result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 			require.NoError(t, err)
 			require.Equal(t, []string{"value"}, result.Columns)
 			require.Equal(t, test.rows, result.Rows)
@@ -127,7 +127,7 @@ func BenchmarkGh713MatchWithUnwindReturn(b *testing.B) {
 			ctx := withExpressionFailureSlot(context.Background())
 			query := "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item " + test.clause
 			apply := func() {
-				result, err := exec.executeMatchWithUnwind(ctx, query)
+				result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 				if err != nil || len(result.Rows) != test.rows {
 					b.Fatalf("unexpected unwind result: %v, %v", result, err)
 				}
@@ -203,7 +203,7 @@ func BenchmarkGh713MultiMatchAggregation(b *testing.B) {
 			ctx := withExpressionFailureSlot(context.Background())
 			query := "MATCH (a:AggregateLeft) MATCH (b:AggregateRight) " + test.clause
 			apply := func() {
-				result, err := exec.executeMultiMatch(ctx, query)
+				result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 				if err != nil || len(result.Rows) != test.rows {
 					b.Fatalf("unexpected aggregate result: %v, %v", result, err)
 				}
@@ -252,7 +252,7 @@ func TestGh713MultiMatchAggregateSharedReturn(t *testing.T) {
 		t.Run(test.clause, func(t *testing.T) {
 			query := "MATCH (a:ExactSumLeft) MATCH (b:ExactSumRight) " + test.clause
 			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
-			result, err := exec.executeMultiMatch(ctx, query)
+			result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 			public, publicErr := exec.Execute(context.Background(), query, params)
 			if test.code != "" {
 				require.Error(t, err)
@@ -308,7 +308,7 @@ func TestGh713MultiMatchBorrowedReturn(t *testing.T) {
 	} {
 		t.Run(test.query, func(t *testing.T) {
 			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
-			result, err := exec.executeMultiMatch(ctx, test.query)
+			result, err := exec.Execute(ctx, test.query, getParamsFromContext(ctx))
 			public, publicErr := exec.Execute(context.Background(), test.query, params)
 			if test.code != "" {
 				require.Error(t, err)
@@ -351,7 +351,7 @@ func BenchmarkGh713MultiMatchProjection(b *testing.B) {
 	ctx := withExpressionFailureSlot(context.Background())
 	query := "MATCH (a:ProjectionLeft) MATCH (b:ProjectionRight) RETURN a.value + b.value AS total"
 	apply := func() {
-		result, err := exec.executeMultiMatch(ctx, query)
+		result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 		if err != nil || len(result.Rows) != 1024 {
 			b.Fatalf("unexpected projection result: %v, %v", result, err)
 		}
@@ -612,7 +612,7 @@ func TestExecuteCartesianAggregation_Branches(t *testing.T) {
 
 	res := &ExecuteResult{Rows: [][]interface{}{}}
 	ungroupedItems := []returnItem{{expr: "COUNT(*)"}, {expr: "COLLECT(a.kind)"}}
-	out, err := exec.executeCartesianAggregation(ctx, allMatches, ungroupedItems, res)
+	out, err := exec.sharedCartesianAggregationForTest(ctx, allMatches, ungroupedItems, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 1)
 	require.Equal(t, int64(3), out.Rows[0][0])
@@ -620,7 +620,7 @@ func TestExecuteCartesianAggregation_Branches(t *testing.T) {
 
 	res = &ExecuteResult{Rows: [][]interface{}{}}
 	groupedItems := []returnItem{{expr: "a.kind"}, {expr: "COUNT(*)"}, {expr: "COLLECT(b.name)"}}
-	out, err = exec.executeCartesianAggregation(ctx, allMatches, groupedItems, res)
+	out, err = exec.sharedCartesianAggregationForTest(ctx, allMatches, groupedItems, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 2)
 
@@ -655,7 +655,7 @@ func TestExecuteAggregation_GroupedAndSingleGroupBranches(t *testing.T) {
 		{expr: "COLLECT(n.tag)"},
 	}
 	res := &ExecuteResult{Rows: [][]interface{}{}}
-	out, err := exec.executeAggregation(ctx, nodes, "n", groupItems, res)
+	out, err := exec.sharedNodeAggregationForTest(ctx, nodes, "n", groupItems, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 2)
 
@@ -690,10 +690,10 @@ func TestExecuteAggregation_GroupedAndSingleGroupBranches(t *testing.T) {
 		{expr: "MAX(n.max)"},
 		{expr: "COLLECT(DISTINCT n.tag)"},
 		{expr: "COLLECT(n.tag)"},
-		{expr: "n.grp"},
+		{expr: "'constant'"},
 	}
 	res = &ExecuteResult{}
-	out, err = exec.executeAggregationSingleGroup(ctx, nodes, "n", singleItems, res)
+	out, err = exec.sharedNodeAggregationForTest(ctx, nodes, "n", singleItems, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 1)
 	row := out.Rows[0]
@@ -710,11 +710,11 @@ func TestExecuteAggregation_GroupedAndSingleGroupBranches(t *testing.T) {
 	sort.Slice(distinct, func(i, j int) bool { return fmt.Sprint(distinct[i]) < fmt.Sprint(distinct[j]) })
 	require.Equal(t, []interface{}{"x", "y"}, distinct)
 	require.Equal(t, []interface{}{"x", "x", "y"}, row[9])
-	require.Equal(t, "a", row[10])
+	require.Equal(t, "constant", row[10])
 
 	// No rows still uses single-group aggregation path.
 	emptyRes := &ExecuteResult{}
-	emptyOut, err := exec.executeAggregation(ctx, nil, "n", []returnItem{{expr: "COUNT(*)"}}, emptyRes)
+	emptyOut, err := exec.sharedNodeAggregationForTest(ctx, nil, "n", []returnItem{{expr: "COUNT(*)"}}, emptyRes)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, emptyOut.Rows)
 }
@@ -743,7 +743,7 @@ func TestExecuteAggregationSingleGroup_ExtraBranches(t *testing.T) {
 	}
 
 	res := &ExecuteResult{}
-	out, err := exec.executeAggregationSingleGroup(ctx, nodes, "n", items, res)
+	out, err := exec.sharedNodeAggregationForTest(ctx, nodes, "n", items, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 1)
 	row := out.Rows[0]
@@ -770,23 +770,22 @@ func TestExecuteMatchWithUnwind_Branches(t *testing.T) {
 	_, err = store.CreateNode(&storage.Node{ID: "nornic:n2", Labels: []string{"Thing"}, Properties: map[string]interface{}{"id": "n2", "labels": []string{"a"}}})
 	require.NoError(t, err)
 
-	res, err := exec.executeMatchWithUnwind(ctx, "MATCH (n:Thing) WITH n, n.labels AS labels UNWIND labels AS label RETURN label, n.id ORDER BY label")
+	res, err := exec.Execute(ctx, "MATCH (n:Thing) WITH n, n.labels AS labels UNWIND labels AS label RETURN label, n.id ORDER BY label", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, []string{"label", "n.id"}, res.Columns)
 	require.Equal(t, [][]interface{}{{"a", "n1"}, {"a", "n2"}, {"b", "n1"}}, res.Rows)
 
-	res, err = exec.executeMatchWithUnwind(ctx, "MATCH (n:Thing) WITH n, n.labels AS labels UNWIND labels AS type WITH type, COUNT(*) AS cnt RETURN type, cnt ORDER BY type")
+	res, err = exec.Execute(ctx, "MATCH (n:Thing) WITH n, n.labels AS labels UNWIND labels AS type WITH type, COUNT(*) AS cnt RETURN type, cnt ORDER BY type", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, []string{"type", "cnt"}, res.Columns)
 	require.Equal(t, [][]interface{}{{"a", int64(2)}, {"b", int64(1)}}, res.Rows)
 
-	_, err = exec.executeMatchWithUnwind(ctx, "MATCH (n:Thing) WITH n UNWIND [1,2,3] RETURN n")
+	_, err = exec.Execute(ctx, "MATCH (n:Thing) WITH n UNWIND [1,2,3] RETURN n", getParamsFromContext(ctx))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "UNWIND requires AS clause")
+	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 
-	_, err = exec.executeMatchWithUnwind(ctx, "MATCH (n:Thing) RETURN n")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "MATCH, WITH, UNWIND, and RETURN clauses required")
+	_, err = exec.Execute(ctx, "MATCH (n:Thing) RETURN n", getParamsFromContext(ctx))
+	require.NoError(t, err)
 }
 
 func TestEvaluateWhereForContext_RelationshipAndBooleanBranches(t *testing.T) {

@@ -2,11 +2,71 @@ package cypher
 
 import (
 	"context"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIssue908SetScalarTargetRejectsBeforeWrites(t *testing.T) {
+	for _, value := range []interface{}{int64(1), 1.5, true, "scalar", []interface{}{int64(1)}, map[string]interface{}{"v": int64(1)}} {
+		t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+			exec := NewStorageExecutor(store)
+			node := &storage.Node{ID: "node", Labels: []string{"N"}, Properties: map[string]interface{}{"v": int64(0)}}
+			id, err := store.CreateNode(node)
+			require.NoError(t, err)
+			_, handled, err := exec.pipelineApplySet(context.Background(), []pipelineRow{{"n": node, "age": nil}, {"n": node, "age": value}}, "SET n.v = 1, age = {v: 2}")
+			require.True(t, handled)
+			require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
+			stored, err := store.GetNode(id)
+			require.NoError(t, err)
+			require.Equal(t, int64(0), stored.Properties["v"])
+			require.Equal(t, int64(0), node.Properties["v"])
+		})
+	}
+}
+
+func TestIssue908NullSetTargetsAreNoops(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	for _, value := range []interface{}{nil, (*storage.Node)(nil), (*storage.Edge)(nil)} {
+		stats, handled, err := exec.pipelineApplySet(context.Background(), []pipelineRow{{"n": value}}, "SET n.v = 1")
+		require.NoError(t, err)
+		require.True(t, handled)
+		require.Zero(t, stats.PropertiesSet)
+	}
+}
+
+func TestIssue908LegacyPolicyOwnersRetired(t *testing.T) {
+	files := map[string][]string{
+		"executor_mutations.go":            {"executeSet", "executeDelete", "executeDeleteStreaming", "executeRemove", "executeSetTrailingUnwind", "executeSetTrailingWithReturn"},
+		"executor_mutations_where_eval.go": {"compileSimpleWhere", "compileSimpleWhereTruth", "evaluateWhereTruth", "evaluateWhereLeaf", "buildBoundInFastFilter"},
+		"match.go":                         {"executeMatch"},
+		"match_multi.go":                   {"executeMultiMatch", "executeCartesianProductMatch", "executeMatchWithUnwind", "executeFirstMatch", "executeCartesianAggregation"},
+		"match_aggregation.go":             {"executeAggregation", "executeAggregationSingleGroup"},
+		"match_with_chain.go":              {"executeChainedMatchWithAggregations"},
+		"create.go":                        {"executeCreate", "createFromPattern", "executeCreateWithRefs"},
+		"clauses.go":                       {"executeOptionalMatch", "executeForeachWithContext", "retiredUnwindMergeChainBatch", "applyUnwindMergeChainSetAssignment", "applyUnwindMergeChainEdgeSetAssignment"},
+		"executor_subqueries.go":           {"executeCallSubquery", "executeCallInTransactions", "executeVariableScopeCallInTransactions", "executeChainedCallSubquery", "executeCorrelatedCallWithSeedRows", "processAfterCallSubquery"},
+		"traversal.go":                     {"evaluatePathValue", "compareValues", "retiredStartPropertyScan"},
+		"unwind_multi_match_create.go":     {"planUnwindMultiMatchCreateRowIndexed"},
+	}
+	for path, retired := range files {
+		t.Run(path, func(t *testing.T) {
+			file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+			require.NoError(t, err)
+			for _, declaration := range file.Decls {
+				if function, ok := declaration.(*ast.FuncDecl); ok {
+					require.NotContains(t, retired, function.Name.Name)
+				}
+			}
+		})
+	}
+}
 
 func TestIssue908Convergence(t *testing.T) {
 	tests := []struct {

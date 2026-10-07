@@ -62,22 +62,22 @@ func TestApplyUnwindMergeChainEdgeSetAssignment_Branches(t *testing.T) {
 		return row[expr]
 	}
 
-	changed, err := applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
+	changed, err := sharedSetAssignmentForTest(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
 	require.NoError(t, err)
 	require.Equal(t, 2, changed)
 	require.Equal(t, "v", edge.Properties["k"])
 	require.EqualValues(t, 1, edge.Properties["n"])
 
-	changed, err = applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
+	changed, err = sharedSetAssignmentForTest(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
 	require.NoError(t, err)
 	require.Equal(t, 0, changed)
 
-	changed, err = applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{prop: "name", expr: "name"}, rowValues, resolver, &setWrites{})
+	changed, err = sharedSetAssignmentForTest(edge, unwindSimpleSetAssignment{prop: "name", expr: "name"}, rowValues, resolver, &setWrites{})
 	require.NoError(t, err)
 	require.Equal(t, 1, changed)
 	require.Equal(t, "primary", edge.Properties["name"])
 
-	changed, err = applyUnwindMergeChainEdgeSetAssignment(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "bad"}, map[string]interface{}{"bad": int64(5)}, resolver, &setWrites{})
+	changed, err = sharedSetAssignmentForTest(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "bad"}, map[string]interface{}{"bad": int64(5)}, resolver, &setWrites{})
 	require.Error(t, err)
 	require.Equal(t, 0, changed)
 }
@@ -110,7 +110,7 @@ func TestExecuteDeleteStreaming_NodeAndRelationshipPaths(t *testing.T) {
 	err = store.CreateEdge(&storage.Edge{ID: "r-del", Type: "REL", StartNode: "s", EndNode: "t"})
 	require.NoError(t, err)
 
-	res, err := exec.executeDeleteStreaming(ctx, "MATCH (n:Victim)", "n", true)
+	res, err := exec.Execute(ctx, "MATCH (n:Victim)"+" DETACH DELETE "+"n", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Stats)
@@ -120,7 +120,7 @@ func TestExecuteDeleteStreaming_NodeAndRelationshipPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 0, remainingVictims.Rows[0][0])
 
-	res, err = exec.executeDeleteStreaming(ctx, "MATCH ()-[r:REL]->()", "r", false)
+	res, err = exec.Execute(ctx, "MATCH ()-[r:REL]->()"+" DELETE "+"r", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Stats)
@@ -219,15 +219,15 @@ func TestExecuteCorrelatedCallWithSeedRows_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, seedNode)
 
-	_, err = exec.executeCorrelatedCallWithSeedRows(ctx, &ExecuteResult{Columns: []string{"seed"}, Rows: [][]interface{}{{int64(1)}}}, "RETURN 1 AS x", []string{"missing"})
+	_, err = exec.sharedCorrelatedCallForTest(ctx, &ExecuteResult{Columns: []string{"seed"}, Rows: [][]interface{}{{int64(1)}}}, "RETURN 1 AS x", []string{"missing"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown variable")
 
-	_, err = exec.executeCorrelatedCallWithSeedRows(ctx, &ExecuteResult{Columns: []string{"seed"}, Rows: [][]interface{}{{}}}, "RETURN 1 AS x", []string{"seed"})
+	_, err = exec.sharedCorrelatedCallForTest(ctx, &ExecuteResult{Columns: []string{"seed"}, Rows: [][]interface{}{{}}}, "RETURN 1 AS x", []string{"seed"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing variable")
 
-	res, err := exec.executeCorrelatedCallWithSeedRows(
+	res, err := exec.sharedCorrelatedCallForTest(
 		ctx,
 		&ExecuteResult{Columns: []string{"seed", "extra"}, Rows: [][]interface{}{{int64(7), "x"}}},
 		"CREATE (:Tmp {v: seed})",
@@ -243,7 +243,7 @@ func TestExecuteCorrelatedCallWithSeedRows_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, tmpCount.Rows[0][0])
 
-	res, err = exec.executeCorrelatedCallWithSeedRows(
+	res, err = exec.sharedCorrelatedCallForTest(
 		ctx,
 		&ExecuteResult{Columns: []string{"seed", "extra"}, Rows: [][]interface{}{{seedNode, int64(1)}}},
 		"RETURN seed.name AS name, 99 AS score",
@@ -255,7 +255,7 @@ func TestExecuteCorrelatedCallWithSeedRows_Branches(t *testing.T) {
 	require.Equal(t, "Alice", res.Rows[0][2])
 	require.EqualValues(t, int64(99), res.Rows[0][3])
 
-	res, err = exec.executeCorrelatedCallWithSeedRows(
+	res, err = exec.sharedCorrelatedCallForTest(
 		ctx,
 		&ExecuteResult{Columns: []string{"seed", "extra"}, Rows: [][]interface{}{{int64(1), int64(2)}}},
 		"MATCH (x:NoSuchLabel) RETURN x AS x",
@@ -481,12 +481,9 @@ func TestExecuteDeleteStreaming_FallbackNoDeletes(t *testing.T) {
 
 	// deleteVars references an unresolved symbol, so rows are returned but no deletes occur;
 	// this exercises the safety-valve fallback path and loop break behavior.
-	res, err := exec.executeDeleteStreaming(ctx, "MATCH (n:Victim)", "missingVar", true)
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	require.NotNil(t, res.Stats)
-	require.Equal(t, 0, res.Stats.NodesDeleted)
-	require.Equal(t, 0, res.Stats.RelationshipsDeleted)
+	res, err := exec.Execute(ctx, "MATCH (n:Victim)"+" DETACH DELETE "+"missingVar", getParamsFromContext(ctx))
+	require.Error(t, err)
+	require.Nil(t, res)
 
 	verify, err := exec.Execute(ctx, "MATCH (n:Victim) RETURN count(n)", nil)
 	require.NoError(t, err)

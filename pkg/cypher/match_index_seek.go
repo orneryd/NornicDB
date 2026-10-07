@@ -2091,6 +2091,9 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		{collect: func() ([]*storage.Node, bool, error) {
 			// Inline pattern properties ({id: $id}) on an indexed property.
 			nodes, used := e.lookupPatternCandidatesUsingPropertyIndex(nodePattern, e.getStorage(ctx))
+			if used {
+				e.markMergeSchemaLookupUsed()
+			}
 			if !used || len(nodePattern.labels) < 2 {
 				return nodes, used, nil
 			}

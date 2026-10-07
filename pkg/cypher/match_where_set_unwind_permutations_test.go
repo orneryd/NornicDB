@@ -36,7 +36,7 @@ func TestGh713SetUnwindUsesSharedProjection(t *testing.T) {
 				if route == "direct" {
 					ctx = withExpressionFailureSlot(ctx)
 					stats := &QueryStats{}
-					result, err = exec.executeSetTrailingUnwind(ctx, test.tail, seed, &ExecuteResult{Stats: stats})
+					result, err = exec.sharedTrailingRowsForTest(ctx, test.tail, seed, &ExecuteResult{Stats: stats})
 					require.NoError(t, getExpressionFailure(ctx))
 					if err == nil {
 						require.Same(t, stats, result.Stats)
@@ -75,7 +75,7 @@ func TestGh713SetUnwindSharedFailures(t *testing.T) {
 			exec, ctx := newUnitExecutor(t)
 			ctx = withExpressionFailureSlot(ctx)
 			input := &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{nil}}}
-			result, err := exec.executeSetTrailingUnwind(ctx, test.tail, input, &ExecuteResult{Stats: &QueryStats{}})
+			result, err := exec.sharedTrailingRowsForTest(ctx, test.tail, input, &ExecuteResult{Stats: &QueryStats{}})
 			require.Nil(t, result)
 			requireStatusCode(t, err, test.code)
 			requireStatusCode(t, getExpressionFailure(ctx), test.code)

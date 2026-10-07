@@ -2460,20 +2460,20 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	e := NewStorageExecutor(store)
 
 	t.Run("match_all_by_label", func(t *testing.T) {
-		matches, rels, err := e.executeMatchForContext(ctx, "MATCH (p:Person)")
+		matches, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:Person)")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
 		if len(matches) != 2 {
 			t.Errorf("Expected 2 Person matches, got %d", len(matches))
 		}
-		if rels == nil {
-			t.Error("Expected non-nil rels map")
+		if !handled {
+			t.Error("Expected shared MATCH to handle the pattern")
 		}
 	})
 
 	t.Run("match_with_where", func(t *testing.T) {
-		matches, _, err := e.executeMatchForContext(ctx, "MATCH (p:Person) WHERE p.age = 30")
+		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:Person) WHERE p.age = 30")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2483,7 +2483,7 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_with_property_filter", func(t *testing.T) {
-		matches, _, err := e.executeMatchForContext(ctx, "MATCH (p:Person {name: 'Alice'})")
+		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:Person {name: 'Alice'})")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2493,7 +2493,7 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_no_results", func(t *testing.T) {
-		matches, _, err := e.executeMatchForContext(ctx, "MATCH (p:NonExistent)")
+		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:NonExistent)")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2503,7 +2503,7 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_all_nodes_no_label", func(t *testing.T) {
-		matches, _, err := e.executeMatchForContext(ctx, "MATCH (n)")
+		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (n)")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -3333,13 +3333,13 @@ func TestOptionalMatch_AdditionalBranches(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := e.executeOptionalMatch(ctx, "MATCH (n) RETURN n")
+	_, err := e.Execute(ctx, "MATCH (n) RETURN n", getParamsFromContext(ctx))
 	if err == nil {
 		t.Fatal("expected OPTIONAL MATCH not found error")
 	}
 
 	// Malformed OPTIONAL MATCH should still return deterministic single-row output.
-	res, err := e.executeOptionalMatch(ctx, "OPTIONAL MATCH (n RETURN n")
+	res, err := e.Execute(ctx, "OPTIONAL MATCH (n RETURN n", getParamsFromContext(ctx))
 	if err != nil {
 		t.Fatalf("optional malformed should return deterministic result, got err: %v", err)
 	}
@@ -3386,7 +3386,7 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 	}
 
 	outPattern := e.parseOptionalRelPattern(ctx, "(a)-[r:KNOWS]->(b:Person {name:'bob'})")
-	outRelated := e.findRelatedNodes(alice, outPattern)
+	outRelated := e.sharedOptionalExpansionForTest(alice, outPattern)
 	if len(outRelated) != 1 {
 		t.Fatalf("outgoing related len = %d, want 1", len(outRelated))
 	}
@@ -3395,14 +3395,14 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 	}
 
 	inPattern := e.parseOptionalRelPattern(ctx, "(a)<-[r:KNOWS]-(b:Person)")
-	inRelated := e.findRelatedNodes(alice, inPattern)
+	inRelated := e.sharedOptionalExpansionForTest(alice, inPattern)
 	if len(inRelated) != 0 {
 		t.Fatalf("incoming related len = %d, want 0", len(inRelated))
 	}
 
 	// both-direction with wrong type should filter to zero.
 	bothWrongType := optionalRelPattern{direction: "both", relType: "LIKES", targetProps: map[string]interface{}{}}
-	bothRelated := e.findRelatedNodes(alice, bothWrongType)
+	bothRelated := e.sharedOptionalExpansionForTest(alice, bothWrongType)
 	if len(bothRelated) != 0 {
 		t.Fatalf("both-direction wrong-type related len = %d, want 0", len(bothRelated))
 	}

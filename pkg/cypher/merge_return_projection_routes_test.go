@@ -112,9 +112,9 @@ func TestMergeReturnProjectionErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
-	a1, err := exec.executeMatch(ctx, "MATCH (a:A {name: 'a1'}) RETURN a")
+	a1, err := exec.Execute(ctx, "MATCH (a:A {name: 'a1'}) RETURN a", getParamsFromContext(ctx))
 	require.NoError(t, err)
-	b1, err := exec.executeMatch(ctx, "MATCH (b:B {name: 'b1'}) RETURN b")
+	b1, err := exec.Execute(ctx, "MATCH (b:B {name: 'b1'}) RETURN b", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	nodes := map[string]*storage.Node{"a": a1.Rows[0][0].(*storage.Node), "b": b1.Rows[0][0].(*storage.Node)}
 
@@ -145,15 +145,15 @@ func TestMergeReturnSeesFabricRecordBindings(t *testing.T) {
 func TestLegacyRoutesCountDistinct(t *testing.T) {
 	exec, ctx := newMergeReturnRouteExecutor(t)
 
-	result, err := exec.executeMatchWithClause(ctx, "MATCH (n:B) WITH n RETURN count(DISTINCT n.name) AS c")
+	result, err := exec.Execute(ctx, "MATCH (n:B) WITH n RETURN count(DISTINCT n.name) AS c", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 
-	result, err = exec.executeMatchRelationshipsWithClause(ctx, "(a:A)-[:R]->(b:B)", "", "WITH a.name AS a, count(DISTINCT b.name) AS c RETURN a, c ORDER BY a")
+	result, err = exec.sharedRelationshipPipelineForTest(ctx, "(a:A)-[:R]->(b:B)", "", "WITH a.name AS a, count(DISTINCT b.name) AS c RETURN a, c ORDER BY a")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a1", int64(2)}, {"a2", int64(1)}}, result.Rows)
 
-	result, err = exec.executeMatch(ctx, "MATCH (a:A)-[:R]->(b:B) RETURN count(DISTINCT b) AS c")
+	result, err = exec.Execute(ctx, "MATCH (a:A)-[:R]->(b:B) RETURN count(DISTINCT b) AS c", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 }
@@ -181,7 +181,7 @@ func TestCompoundMatchMergeRouteShapes(t *testing.T) {
 // fails to run is the context helper's error.
 func TestMatchForContextWithRelationshipsReportsMatchErrors(t *testing.T) {
 	exec, ctx := newMergeReturnRouteExecutor(t)
-	_, _, err := exec.executeMatchForContextWithRelationships(ctx, "MATCH (a:A)-[r:R]->(b) RETURN ,", "(a:A)-[r:R]->(b)")
+	_, err := exec.Execute(ctx, "MATCH (a:A)-[r:R]->(b) RETURN ,", nil)
 	require.Error(t, err)
 }
 

@@ -599,7 +599,7 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows(t *testing.T) {
 	require.NoError(t, err)
 
 	matchPart := "MATCH (o:OrderStatus) WITH collect(o) AS orders UNWIND range(0, size(orders)-1) AS i WITH orders[i] AS o, i MATCH (ph:Pharmacy) WITH o, i, ph ORDER BY ph.id WITH o, i, collect(ph) AS pharmacies WITH o, pharmacies[i % size(pharmacies)] AS pharmacy"
-	rows, err := exec.executeMatchWithPipelineToRows(ctx, matchPart, []string{"o", "pharmacy"}, eng)
+	rows, err := exec.sharedPipelineRowsForTest(ctx, matchPart, []string{"o", "pharmacy"}, eng)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	for _, row := range rows {
@@ -610,8 +610,9 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows(t *testing.T) {
 	}
 
 	// Missing WITH should error.
-	_, err = exec.executeMatchWithPipelineToRows(ctx, "MATCH (o:OrderStatus)", []string{"o"}, eng)
-	require.Error(t, err)
+	rows, err = exec.sharedPipelineRowsForTest(ctx, "MATCH (o:OrderStatus)", []string{"o"}, eng)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
 }
 
 func TestCypherHelpers_ParserMarkersAndUnwindHelpers(t *testing.T) {
@@ -681,40 +682,15 @@ func TestCypherHelpers_CartesianMatchAndAggregation(t *testing.T) {
 		Rows:    [][]interface{}{},
 		Stats:   &QueryStats{},
 	}
-	items := []returnItem{
-		{expr: "a.name", alias: "aName"},
-		{expr: "b.name", alias: "bName"},
-	}
-	_, err = exec.executeCartesianProductMatch(
-		ctx,
-		"MATCH (a:A), (b:B) RETURN a.name AS aName, b.name AS bName ORDER BY aName SKIP 1 LIMIT 2",
-		"(a:A), (b:B)",
-		[]string{"(a:A)", "(b:B)"},
-		-1,
-		strings.Index("MATCH (a:A), (b:B) RETURN a.name AS aName, b.name AS bName ORDER BY aName SKIP 1 LIMIT 2", "RETURN"),
-		items,
-		false,
-		false,
-		result,
-	)
+
+	result, err = exec.Execute(ctx, "MATCH (a:A), (b:B) RETURN a.name AS aName, b.name AS bName ORDER BY aName SKIP 1 LIMIT 2", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 2)
 
 	// Aggregation without grouping.
 	aggResult := &ExecuteResult{Columns: []string{"cnt"}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-	aggItems := []returnItem{{expr: "COUNT(*)", alias: "cnt"}}
-	_, err = exec.executeCartesianProductMatch(
-		ctx,
-		"MATCH (a:A), (b:B) RETURN COUNT(*) AS cnt",
-		"(a:A), (b:B)",
-		[]string{"(a:A)", "(b:B)"},
-		-1,
-		strings.Index("MATCH (a:A), (b:B) RETURN COUNT(*) AS cnt", "RETURN"),
-		aggItems,
-		true,
-		false,
-		aggResult,
-	)
+
+	aggResult, err = exec.Execute(ctx, "MATCH (a:A), (b:B) RETURN COUNT(*) AS cnt", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, aggResult.Rows, 1)
 	assert.Equal(t, int64(4), aggResult.Rows[0][0])
@@ -726,7 +702,7 @@ func TestCypherHelpers_CartesianMatchAndAggregation(t *testing.T) {
 		{"a": {ID: "a3", Properties: map[string]interface{}{"name": "y"}}},
 	}
 	groupRes := &ExecuteResult{Columns: []string{"name", "cnt"}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-	_, err = exec.executeCartesianAggregation(ctx, allMatches, []returnItem{{expr: "a.name", alias: "name"}, {expr: "COUNT(*)", alias: "cnt"}}, groupRes)
+	_, err = exec.sharedCartesianAggregationForTest(ctx, allMatches, []returnItem{{expr: "a.name", alias: "name"}, {expr: "COUNT(*)", alias: "cnt"}}, groupRes)
 	require.NoError(t, err)
 	require.Len(t, groupRes.Rows, 2)
 }
@@ -2542,39 +2518,15 @@ func TestCypherHelpers_ExecuteCartesianProductMatch_Branches(t *testing.T) {
 
 	// Non-aggregation path with WHERE, DISTINCT, ORDER BY, SKIP, LIMIT.
 	query := "MATCH (p:Person), (a:Area) WHERE p.age >= 20 RETURN p.name AS name, a.code AS code ORDER BY name SKIP 1 LIMIT 2"
-	retItems := []returnItem{{expr: "p.name", alias: "name"}, {expr: "a.code", alias: "code"}}
-	res := &ExecuteResult{Columns: []string{"name", "code"}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-	out, err := exec.executeCartesianProductMatch(
-		ctx,
-		query,
-		"MATCH (p:Person), (a:Area)",
-		[]string{"(p:Person)", "(a:Area)"},
-		strings.Index(strings.ToUpper(query), "WHERE"),
-		strings.Index(strings.ToUpper(query), "RETURN"),
-		retItems,
-		false,
-		true,
-		res,
-	)
+
+	out, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 2)
 
 	// Aggregation path.
 	aggQuery := "MATCH (p:Person), (a:Area) RETURN count(*) AS c, collect(p.name) AS names"
-	aggItems := []returnItem{{expr: "count(*)", alias: "c"}, {expr: "collect(p.name)", alias: "names"}}
-	aggRes := &ExecuteResult{Columns: []string{"c", "names"}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-	aggOut, err := exec.executeCartesianProductMatch(
-		ctx,
-		aggQuery,
-		"MATCH (p:Person), (a:Area)",
-		[]string{"(p:Person)", "(a:Area)"},
-		-1,
-		strings.Index(strings.ToUpper(aggQuery), "RETURN"),
-		aggItems,
-		true,
-		false,
-		aggRes,
-	)
+
+	aggOut, err := exec.Execute(ctx, aggQuery, getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, aggOut.Rows, 1)
 	assert.Equal(t, int64(4), aggOut.Rows[0][0]) // 2x2 cartesian product
@@ -2592,40 +2544,17 @@ func TestCypherHelpers_ExecuteCartesianProductMatch_LabelAndAnonymousBranches(t 
 	require.NoError(t, err)
 
 	// Additional-label filtering path (:Person:Employee).
-	retItems := []returnItem{{expr: "p.name", alias: "name"}}
-	res := &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-	out, err := exec.executeCartesianProductMatch(
-		ctx,
-		"MATCH (p:Person:Employee) RETURN p.name AS name",
-		"MATCH (p:Person:Employee)",
-		[]string{"(p:Person:Employee)"},
-		-1,
-		strings.Index(strings.ToUpper("MATCH (p:Person:Employee) RETURN p.name AS name"), "RETURN"),
-		retItems,
-		false,
-		false,
-		res,
-	)
+
+	out, err := exec.Execute(ctx, "MATCH (p:Person:Employee) RETURN p.name AS name", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 1)
 	assert.Equal(t, "alice", out.Rows[0][0])
 
 	// Anonymous pattern (no variable) results in no pattern matches and empty rows.
-	anon := &ExecuteResult{Columns: []string{"x"}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-	anonOut, err := exec.executeCartesianProductMatch(
-		ctx,
-		"MATCH (:Person) RETURN 1 AS x",
-		"MATCH (:Person)",
-		[]string{"(:Person)"},
-		-1,
-		strings.Index(strings.ToUpper("MATCH (:Person) RETURN 1 AS x"), "RETURN"),
-		[]returnItem{{expr: "1", alias: "x"}},
-		false,
-		false,
-		anon,
-	)
+
+	anonOut, err := exec.Execute(ctx, "MATCH (:Person) RETURN 1 AS x", getParamsFromContext(ctx))
 	require.NoError(t, err)
-	assert.Empty(t, anonOut.Rows)
+	assert.Len(t, anonOut.Rows, 2)
 }
 
 func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
@@ -2726,7 +2655,7 @@ func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T
 	})
 	require.NoError(t, err)
 
-	out, err := exec.executeMatchRelationshipsWithClause(
+	out, err := exec.sharedRelationshipPipelineForTest(
 		ctx,
 		"p = (a:Person)-[r:KNOWS]->(b:Person)",
 		"",
@@ -2737,23 +2666,23 @@ func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T
 	assert.Equal(t, "alice", out.Rows[0][0])
 	assert.Equal(t, "bob", out.Rows[0][1])
 
-	_, err = exec.executeMatchRelationshipsWithClause(
+	_, err = exec.sharedRelationshipPipelineForTest(
 		ctx,
 		"(a:Person)-[r:KNOWS]->(b:Person)",
 		"",
 		"WITH a, b, r",
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "RETURN clause required")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 
-	_, err = exec.executeMatchRelationshipsWithClause(
+	_, err = exec.sharedRelationshipPipelineForTest(
 		ctx,
 		"this is not a traversal pattern",
 		"",
 		"WITH a RETURN a",
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid traversal pattern")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 }
 
 func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
@@ -2986,9 +2915,9 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows_Branches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rows, err := exec.executeMatchWithPipelineToRows(
+	rows, err := exec.sharedPipelineRowsForTest(
 		ctx,
-		"MATCH (o:OrderStatus {state: 'ready'}) WHERE o.active = true WITH o",
+		"MATCH (o:OrderStatus {state: 'ready'}) WHERE o.active = true WITH o ORDER BY o.orderId WITH collect(o) AS orders UNWIND range(0, size(orders)-1) AS i WITH orders[i] AS o, i MATCH (ph:Pharmacy) WITH o, i, ph ORDER BY id(ph) WITH o, i, collect(ph) AS pharmacies WITH o, pharmacies[i % size(pharmacies)] AS pharmacy",
 		[]string{"o", "pharmacy"},
 		eng,
 	)
@@ -3010,13 +2939,13 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows_Branches(t *testing.T) {
 	assert.Equal(t, storage.NodeID("o-2"), secondOrder.ID)
 	assert.Equal(t, storage.NodeID("ph-2"), secondPharmacy.ID)
 
-	_, err = exec.executeMatchWithPipelineToRows(ctx, "MATCH (o:OrderStatus)", []string{"o"}, eng)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "pipeline requires WITH")
+	rows, err = exec.sharedPipelineRowsForTest(ctx, "MATCH (o:OrderStatus)", []string{"o"}, eng)
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
 
-	_, err = exec.executeMatchWithPipelineToRows(ctx, "MATCH (:OrderStatus) WITH o", []string{"o"}, eng)
+	_, err = exec.sharedPipelineRowsForTest(ctx, "MATCH (:OrderStatus) WITH o", []string{"o"}, eng)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must have a variable")
+	assert.Contains(t, err.Error(), "could not evaluate expression: o")
 }
 
 func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
@@ -3301,10 +3230,10 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	assert.Empty(t, exec.extractVariableNamesFromPattern("()-[:REL]->()"))
 
 	// No variable names branch.
-	matches, rels, err := exec.executeMatchForContextWithRelationships(ctx, "MATCH ()-[:REL]->()", "()-[:REL]->()")
+	matches, handled, err := exec.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH ()-[:REL]->()")
 	require.NoError(t, err)
 	assert.Empty(t, matches)
-	assert.Empty(t, rels)
+	assert.True(t, handled)
 
 	_, err = eng.CreateNode(&storage.Node{ID: "pa", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
@@ -3313,34 +3242,33 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "k1", StartNode: "pa", EndNode: "pb", Type: "KNOWS"}))
 
 	// Successful extraction branch.
-	matches, rels, err = exec.executeMatchForContextWithRelationships(
+	matches, handled, err = exec.pipelineApplyMatch(
 		ctx,
+		[]pipelineRow{{}},
 		"MATCH (a:Person)-[:KNOWS]->(b:Person)",
-		"(a:Person)-[:KNOWS]->(b:Person)",
 	)
 	require.NoError(t, err)
 	require.Len(t, matches, 1)
-	assert.Equal(t, storage.NodeID("pa"), matches[0]["a"].ID)
-	assert.Equal(t, storage.NodeID("pb"), matches[0]["b"].ID)
-	// One relationship row per node row; the anonymous relationship binds nothing.
-	assert.Equal(t, []map[string]*storage.Edge{{}}, rels)
+	assert.Equal(t, storage.NodeID("pa"), matches[0]["a"].(*storage.Node).ID)
+	assert.Equal(t, storage.NodeID("pb"), matches[0]["b"].(*storage.Node).ID)
+	assert.True(t, handled)
+	assert.Len(t, matches[0], 2)
 
 	// A named relationship is bound per row.
-	matches, rels, err = exec.executeMatchForContextWithRelationships(
+	matches, handled, err = exec.pipelineApplyMatch(
 		ctx,
+		[]pipelineRow{{}},
 		"MATCH (a:Person)-[k:KNOWS]->(b:Person)",
-		"(a:Person)-[k:KNOWS]->(b:Person)",
 	)
 	require.NoError(t, err)
 	require.Len(t, matches, 1)
-	require.Len(t, rels, 1)
-	require.NotNil(t, rels[0]["k"])
-	assert.Equal(t, storage.EdgeID("k1"), rels[0]["k"].ID)
+	require.True(t, handled)
+	require.NotNil(t, matches[0]["k"])
+	assert.Equal(t, storage.EdgeID("k1"), matches[0]["k"].(*storage.Edge).ID)
 
 	// Malformed pattern should fail fast.
-	_, _, err = exec.executeMatchForContextWithRelationships(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person", "(a:Person)-[:KNOWS]->(b:Person")
+	_, err = exec.Execute(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person RETURN a", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "malformed relationship pattern")
 }
 
 func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
@@ -3474,13 +3402,12 @@ func TestCypherHelpers_ExecuteSetTrailingPipelinesAndHelpers(t *testing.T) {
 	}
 
 	// executeSetTrailingUnwind syntax validation branches.
-	_, err = exec.executeSetTrailingUnwind(ctx, "UNWIND [1,2]", matchResult, &ExecuteResult{Stats: &QueryStats{}})
+	_, err = exec.Execute(ctx, "UNWIND [1,2]", nil)
 	require.Error(t, err)
-	assert.Contains(t, strings.ToUpper(err.Error()), "AS")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
-	_, err = exec.executeSetTrailingUnwind(ctx, "UNWIND [1,2] AS x", matchResult, &ExecuteResult{Stats: &QueryStats{}})
-	require.Error(t, err)
-	assert.Contains(t, strings.ToUpper(err.Error()), "RETURN")
+	_, err = exec.sharedTrailingRowsForTest(ctx, "UNWIND [1,2] AS x", matchResult, &ExecuteResult{Stats: &QueryStats{}})
+	require.NoError(t, err)
 
 	// Helper branches.
 	assert.Equal(t, "n += $props, n.x = 1, n.y = 2", collapseChainedSetClauses("n += $props SET n.x = 1 SET n.y = 2"))
@@ -3537,7 +3464,7 @@ func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T)
 	require.NoError(t, err)
 
 	matchPart := "MATCH (o:OrderStatus:Routable {status:'open'}) WHERE o.orderId IS NOT NULL WITH collect(o) AS orders UNWIND range(0, size(orders)-1) AS i WITH orders[i] AS o, i MATCH (ph:Pharmacy) WITH o, i, ph ORDER BY ph.id WITH o, i, collect(ph) AS pharmacies WITH o, pharmacies[i % size(pharmacies)] AS pharmacy"
-	rows, err := exec.executeMatchWithPipelineToRows(ctx, matchPart, []string{"o", "pharmacy"}, store)
+	rows, err := exec.sharedPipelineRowsForTest(ctx, matchPart, []string{"o", "pharmacy"}, store)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	_, ok := rows[0]["o"].(*storage.Node)
@@ -3555,7 +3482,7 @@ func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T)
 		},
 	})
 	require.NoError(t, err)
-	rows, err = exec.executeMatchWithPipelineToRows(
+	rows, err = exec.sharedPipelineRowsForTest(
 		ctx,
 		"MATCH (o:OrderStatus) WITH collect(o) AS orders UNWIND range(0, size(orders)-1) AS i WITH orders[i] AS o, i MATCH (ph:Pharmacy) WITH o, i, ph ORDER BY ph.id WITH o, i, collect(ph) AS pharmacies WITH o, pharmacies[i % size(pharmacies)] AS pharmacy",
 		[]string{"o", "pharmacy"},
@@ -3607,41 +3534,38 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 		require.True(t, mapOK)
 	}
 
-	// executeSetTrailingWithReturn: non-WITH trailing text => handled=false.
-	out, handled, err := exec.executeSetTrailingWithReturn(ctx, "UNWIND [1] AS x RETURN x", mr, &ExecuteResult{Stats: &QueryStats{}})
+	// The shared row owner supports UNWIND and WITH-only operator tails.
+	out, handled, err := exec.sharedTrailingRowsHandledForTest(ctx, "UNWIND [1] AS x RETURN x", mr, &ExecuteResult{Stats: &QueryStats{}})
 	require.NoError(t, err)
-	assert.False(t, handled)
-	assert.Nil(t, out)
+	assert.True(t, handled)
+	require.Equal(t, [][]interface{}{{int64(1)}, {int64(1)}}, out.Rows)
 
-	// executeSetTrailingWithReturn: WITH without RETURN => handled=false.
-	out, handled, err = exec.executeSetTrailingWithReturn(ctx, "WITH n", mr, &ExecuteResult{Stats: &QueryStats{}})
+	out, handled, err = exec.sharedTrailingRowsHandledForTest(ctx, "WITH n", mr, &ExecuteResult{Stats: &QueryStats{}})
 	require.NoError(t, err)
-	assert.False(t, handled)
-	assert.Nil(t, out)
+	assert.True(t, handled)
+	assert.Empty(t, out.Rows)
 
 	// executeSetTrailingWithReturn: in WITH RETURN n, return is a variable
 	// the WITH projects (as Neo4j reads it, #740), so there is no RETURN
 	// clause; the statement is Neo4j's SyntaxError (Invalid input 'n').
-	_, handled, err = exec.executeSetTrailingWithReturn(ctx, "WITH   RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
-	require.NoError(t, err)
-	assert.False(t, handled)
+	_, handled, err = exec.sharedTrailingRowsHandledForTest(ctx, "WITH   RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
+	require.Error(t, err)
 	_, err = exec.Execute(ctx, "MATCH (n) SET n.x = 1 WITH RETURN n", nil)
 	require.Error(t, err)
 
 	// executeSetTrailingWithReturn: WITH n AS RETURN n aliases n as return
 	// (#740), so there is no RETURN clause; the statement is a SyntaxError
 	// for the n after the alias, as in Neo4j.
-	_, handled, err = exec.executeSetTrailingWithReturn(ctx, "WITH n AS RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
+	_, handled, err = exec.sharedTrailingRowsHandledForTest(ctx, "WITH n AS RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
 	require.NoError(t, err)
-	assert.False(t, handled)
 	_, err = exec.Execute(ctx, "MATCH (n) SET n.x = 1 WITH n AS RETURN n", nil)
 	require.Error(t, err)
 
-	// executeSetTrailingWithReturn: unsupported additional clause in WITH => falls back (handled=false).
-	out, handled, err = exec.executeSetTrailingWithReturn(ctx, "WITH n MATCH (m) RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
+	// Additional MATCH clauses remain in the shared owner.
+	out, handled, err = exec.sharedTrailingRowsHandledForTest(ctx, "WITH n MATCH (m) RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
 	require.NoError(t, err)
-	assert.False(t, handled)
-	assert.Nil(t, out)
+	assert.True(t, handled)
+	require.Len(t, out.Rows, len(mr.Rows))
 
 	// executeSetTrailingWithReturn: handled path, projection through WITH alias and property access.
 	matchResult := &ExecuteResult{
@@ -3651,7 +3575,7 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 		}},
 	}
 	res := &ExecuteResult{Stats: &QueryStats{}}
-	out, handled, err = exec.executeSetTrailingWithReturn(ctx, "WITH n AS person RETURN person.flag AS flag, person.name AS name", matchResult, res)
+	out, handled, err = exec.sharedTrailingRowsHandledForTest(ctx, "WITH n AS person RETURN person.flag AS flag, person.name AS name", matchResult, res)
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.NotNil(t, out)
@@ -3662,7 +3586,7 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 	assert.Equal(t, "norm", out.Rows[0][1])
 
 	// executeSetTrailingWithReturn: map-property projection branch from WITH alias value.
-	mapOut, handled, err := exec.executeSetTrailingWithReturn(
+	mapOut, handled, err := exec.sharedTrailingRowsHandledForTest(
 		ctx,
 		"WITH {flag: true, name: 'map'} AS person RETURN person.flag AS flag, person.name AS name",
 		matchResult,

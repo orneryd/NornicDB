@@ -36,7 +36,7 @@ func TestUnion_BoundContextResolvesBranchValues(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"ann"}, {"z"}}, res.Rows)
 
 	// A UNION inside a CALL subquery still composes its branches.
-	sub, err := exec.executeCallSubquery(ctx, "CALL { RETURN 1 AS a UNION RETURN 2 AS a }")
+	sub, err := exec.Execute(ctx, "CALL { RETURN 1 AS a UNION RETURN 2 AS a }", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.NotNil(t, sub)
 	require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}}, sub.Rows)

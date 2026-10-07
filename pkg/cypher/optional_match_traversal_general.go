@@ -238,103 +238,70 @@ func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
 // candidate are preserved with null bindings for the new variables — the
 // Apply + Optional contract.
 func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
-	if len(rows) == 0 {
-		return rows, nil
-	}
 	pattern := ensureLeadingNodeNamed(clause.pattern)
 	nodeVars := extractNodeVariables(pattern)
 	relVars := extractRelationshipVariables(pattern)
-	allVars := append(append([]string{}, nodeVars...), relVars...)
 	pathVar := extractPathAssignmentVariable(pattern)
+	allVars := append(append([]string{}, nodeVars...), relVars...)
 	if pathVar != "" {
 		allVars = appendUniquePipelineBinding(allVars, pathVar)
 	}
-	if len(allVars) == 0 {
+	if len(rows) == 0 || len(allVars) == 0 {
 		return rows, nil
 	}
-
-	candidates, err := e.matchTraversalOptRows(ctx, "MATCH "+pattern)
-	if err != nil {
-		return nil, err
+	matchClause := "MATCH " + pattern
+	if strings.TrimSpace(clause.where) != "" {
+		matchClause += " WHERE " + clause.where
 	}
-
-	// Split the pattern variables into shared (already bound on the left) and
-	// new, using the uniform binding keys of the first row.
-	variableLengthRelVars := variableLengthRelationshipVariableSet(pattern)
-	var sharedNodeVars, newNodeVars, sharedRelVars, newRelVars, sharedValueVars, newValueVars []string
-	for _, v := range nodeVars {
-		if _, bound := rows[0].nodes[v]; bound {
-			sharedNodeVars = append(sharedNodeVars, v)
-		} else {
-			newNodeVars = append(newNodeVars, v)
-		}
-	}
-	for _, v := range relVars {
-		if _, variableLength := variableLengthRelVars[v]; variableLength {
-			if _, bound := rows[0].values[v]; bound {
-				sharedValueVars = append(sharedValueVars, v)
-			} else {
-				newValueVars = append(newValueVars, v)
-			}
-			continue
-		}
-		if _, bound := rows[0].rels[v]; bound {
-			sharedRelVars = append(sharedRelVars, v)
-		} else {
-			newRelVars = append(newRelVars, v)
-		}
-	}
-
-	nullBindsNodes := make(map[string]*storage.Node, len(newNodeVars))
-	for _, v := range newNodeVars {
-		nullBindsNodes[v] = nil
-	}
-	nullBindsRels := make(map[string]*storage.Edge, len(newRelVars))
-	for _, v := range newRelVars {
-		nullBindsRels[v] = nil
-	}
-	if pathVar != "" {
-		if _, bound := rows[0].values[pathVar]; !bound {
-			newValueVars = appendUniquePipelineBinding(newValueVars, pathVar)
-		} else {
-			sharedValueVars = appendUniquePipelineBinding(sharedValueVars, pathVar)
-		}
-	}
-	nullBindsValues := make(map[string]interface{}, len(newValueVars))
-	for _, variable := range newValueVars {
-		nullBindsValues[variable] = nil
-	}
-
 	out := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
-		matched := false
-		for _, cand := range candidates {
-			if !candidateAgreesWithRow(row, cand, sharedNodeVars, sharedRelVars) ||
-				!candidateValuesAgreeWithRow(row, cand, sharedValueVars) {
-				continue
-			}
-			nodeBinds := make(map[string]*storage.Node, len(newNodeVars))
-			for _, v := range newNodeVars {
-				nodeBinds[v] = cand.nodes[v]
-			}
-			relBinds := make(map[string]*storage.Edge, len(newRelVars))
-			for _, v := range newRelVars {
-				relBinds[v] = cand.rels[v]
-			}
-			valueBinds := make(map[string]interface{}, len(newValueVars))
-			for _, variable := range newValueVars {
-				valueBinds[variable] = cand.values[variable]
-			}
-			merged := extendTraversalRowMulti(row, nodeBinds, relBinds, valueBinds)
-			if !e.traversalOptionalWhereMatches(ctx, clause.where, merged) {
-				continue
-			}
-			merged.optionalMatched = true
-			out = append(out, merged)
-			matched = true
+		scope := pipelineRowFromTraversalOptionalRow(row)
+		matched, handled, err := e.pipelineApplyMatch(withValueBindings(ctx, scope), []pipelineRow{scope}, matchClause)
+		if err != nil {
+			return nil, err
 		}
-		if !matched {
-			out = append(out, extendTraversalRowMulti(row, nullBindsNodes, nullBindsRels, nullBindsValues))
+		if !handled {
+			return nil, unsupportedOptionalMatchShapeError(matchClause)
+		}
+		for _, binding := range matched {
+			candidate := extendTraversalRowMulti(row, nil, nil, nil)
+			if candidate.values == nil {
+				candidate.values = make(map[string]interface{})
+			}
+			for _, name := range allVars {
+				switch value := binding[name].(type) {
+				case *storage.Node:
+					candidate.nodes[name] = value
+				case *storage.Edge:
+					candidate.rels[name] = value
+				default:
+					candidate.values[name] = value
+				}
+			}
+			candidate.optionalMatched = true
+			out = append(out, candidate)
+		}
+		if len(matched) == 0 {
+			candidate := extendTraversalRowMulti(row, nil, nil, nil)
+			if candidate.values == nil {
+				candidate.values = make(map[string]interface{})
+			}
+			variableLength := variableLengthRelationshipVariableSet(pattern)
+			for _, name := range allVars {
+				if _, bound := scope[name]; bound {
+					continue
+				}
+				if name == pathVar {
+					candidate.values[name] = nil
+				} else if containsString(nodeVars, name) {
+					candidate.nodes[name] = nil
+				} else if _, list := variableLength[name]; list {
+					candidate.values[name] = nil
+				} else {
+					candidate.rels[name] = nil
+				}
+			}
+			out = append(out, candidate)
 		}
 	}
 	return out, nil
