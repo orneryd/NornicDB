@@ -352,21 +352,21 @@ func endPendingRead(source pendingWriteSource) {
 // entries are dropped and pending nodes placed at their values. IDs with the
 // same value are in ID order. limit < 0 lists all. Caller holds idx.mu.
 // keep, when not nil, selects the index keys to list (PropertyIndexRange).
-func (idx *PropertyIndex) orderedIDsLocked(view pendingWriteView, property string, descending bool, limit int, keep func(key interface{}) bool) []NodeID {
-	keys := idx.sortedKeysLocked()
-	if keep != nil {
-		selected := keys[:0]
-		for _, key := range keys {
-			if keep(key) {
-				selected = append(selected, key)
-			}
+func (idx *PropertyIndex) orderedIDsLocked(view pendingWriteView, property string, descending bool, limit int, bounds PropertyIndexBounds) []NodeID {
+	// Binary search narrows the keys to bounds where their kinds allow
+	// (sortedKeyRangeLocked); contains then checks every remaining key, so
+	// keys the search couldn't place are still filtered exactly.
+	inRange, _ := idx.sortedKeyRangeLocked(bounds)
+	keys := make([]interface{}, 0, len(inRange))
+	for _, key := range inRange {
+		if !bounds.bounded() || bounds.contains(key) {
+			keys = append(keys, key)
 		}
-		keys = selected
 	}
 	pending := view.propertyEntries(idx.Label, property)
 	if len(pending) > 0 {
 		for valueKey := range pending {
-			if valueKey == nil || (keep != nil && !keep(valueKey)) {
+			if valueKey == nil || (bounds.bounded() && !bounds.contains(valueKey)) {
 				continue
 			}
 			if ids := idx.values[valueKey]; len(ids) == 0 {

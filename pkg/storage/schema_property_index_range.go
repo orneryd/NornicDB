@@ -24,22 +24,31 @@ func (sm *SchemaManager) PropertyIndexRange(label, property string, bounds Prope
 	if (bounds.HasLower && !indexRangeBoundType(bounds.Lower)) || (bounds.HasUpper && !indexRangeBoundType(bounds.Upper)) {
 		return nil, false
 	}
-	keep := func(key interface{}) bool {
-		if bounds.HasLower {
-			order, comparable := compareIndexRangeValues(key, bounds.Lower)
-			if !comparable || order < 0 || (order == 0 && !bounds.LowerInclusive) {
-				return false
-			}
+	return sm.orderedPropertyIndexIDs(label, property, false, -1, bounds)
+}
+
+// bounded reports whether bounds limits anything.
+func (bounds PropertyIndexBounds) bounded() bool {
+	return bounds.HasLower || bounds.HasUpper
+}
+
+// contains reports whether an index value lies within bounds. A value of
+// another type than a bound never does: Cypher compares numbers only with
+// numbers and strings only with strings.
+func (bounds PropertyIndexBounds) contains(key interface{}) bool {
+	if bounds.HasLower {
+		order, comparable := compareIndexRangeValues(key, bounds.Lower)
+		if !comparable || order < 0 || (order == 0 && !bounds.LowerInclusive) {
+			return false
 		}
-		if bounds.HasUpper {
-			order, comparable := compareIndexRangeValues(key, bounds.Upper)
-			if !comparable || order > 0 || (order == 0 && !bounds.UpperInclusive) {
-				return false
-			}
-		}
-		return true
 	}
-	return sm.orderedPropertyIndexIDs(label, property, false, -1, keep)
+	if bounds.HasUpper {
+		order, comparable := compareIndexRangeValues(key, bounds.Upper)
+		if !comparable || order > 0 || (order == 0 && !bounds.UpperInclusive) {
+			return false
+		}
+	}
+	return true
 }
 
 func indexRangeBoundType(value interface{}) bool {

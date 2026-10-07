@@ -481,8 +481,10 @@ type PropertyIndex struct {
 	// sortedNonNilKeys caches non-nil keys in ascending order.
 	// It is rebuilt lazily when values are mutated.
 	sortedNonNilKeys []interface{}
-	keysDirty        bool
-	mu               sync.RWMutex
+	// sortedKeyKinds describes sortedNonNilKeys, rebuilt with it.
+	sortedKeyKinds propertyIndexKeyKinds
+	keysDirty      bool
+	mu             sync.RWMutex
 }
 
 // CompositeKey represents a key composed of multiple property values.
@@ -919,7 +921,7 @@ func indexValueKey(value interface{}) (interface{}, bool) {
 // compositeIndexKey is the index key of a list or map value: a canonical text
 // of its elements, numbers in their numeric form, so [1, 2] and [1.0, 2.0]
 // share a key, and map entries in key order. Its own type keeps it apart from
-// string keys. Ordered index scans skip it (sortedKeysLocked).
+// string keys. Ordered index scans skip it (sortedKeysViewLocked).
 type compositeIndexKey string
 
 func compositeIndexKeyOf(value interface{}) (compositeIndexKey, bool) {
@@ -2530,14 +2532,14 @@ func (sm *SchemaManager) PropertyIndexTopK(label, property string, limit int, de
 	if limit <= 0 {
 		return nil
 	}
-	ids, _ := sm.orderedPropertyIndexIDs(label, property, descending, limit, nil)
+	ids, _ := sm.orderedPropertyIndexIDs(label, property, descending, limit, PropertyIndexBounds{})
 	return ids
 }
 
 // PropertyIndexAllNonNil returns all node IDs from the property index in key order,
 // excluding nil keys, merged with the pending writes.
 func (sm *SchemaManager) PropertyIndexAllNonNil(label, property string, descending bool) []NodeID {
-	ids, _ := sm.orderedPropertyIndexIDs(label, property, descending, -1, nil)
+	ids, _ := sm.orderedPropertyIndexIDs(label, property, descending, -1, PropertyIndexBounds{})
 	return ids
 }
 
@@ -2545,7 +2547,7 @@ func (sm *SchemaManager) PropertyIndexAllNonNil(label, property string, descendi
 // (orderedIDsLocked), merged with the pending writes; limit < 0 lists all,
 // and keep, when set, selects the index values listed. exists is false when
 // the label and property have no index.
-func (sm *SchemaManager) orderedPropertyIndexIDs(label, property string, descending bool, limit int, keep func(key interface{}) bool) (ids []NodeID, exists bool) {
+func (sm *SchemaManager) orderedPropertyIndexIDs(label, property string, descending bool, limit int, bounds PropertyIndexBounds) (ids []NodeID, exists bool) {
 	sm.mu.RLock()
 	idx, exists := sm.seekablePropertyIndexLocked(label, property)
 	sm.mu.RUnlock()
@@ -2554,14 +2556,35 @@ func (sm *SchemaManager) orderedPropertyIndexIDs(label, property string, descend
 	}
 	view, source := sm.beginPendingRead()
 	defer endPendingRead(source)
-	idx.mu.RLock()
+	idx.rLockWithFreshKeys()
 	defer idx.mu.RUnlock()
-	return idx.orderedIDsLocked(view, property, descending, limit, keep), true
+	return idx.orderedIDsLocked(view, property, descending, limit, bounds), true
 }
 
-// sortedKeysLocked returns non-nil index keys in ascending order.
-// Caller must hold idx.mu (read or write lock).
-func (idx *PropertyIndex) sortedKeysLocked() []interface{} {
+// rLockWithFreshKeys takes idx.mu for reading with the sorted-key cache
+// current, so a reader never rebuilds it: several readers hold the read lock
+// at once, and two rebuilding together raced on the cache (#942). A stale
+// cache is rebuilt under the write lock first; writers need that lock too,
+// so the cache stays current while the read lock is held.
+func (idx *PropertyIndex) rLockWithFreshKeys() {
+	for {
+		idx.mu.RLock()
+		if !idx.keysDirty && idx.sortedNonNilKeys != nil {
+			return
+		}
+		idx.mu.RUnlock()
+		idx.mu.Lock()
+		idx.sortedKeysViewLocked()
+		idx.mu.Unlock()
+	}
+}
+
+// sortedKeysViewLocked returns the cached non-nil index keys in ascending
+// order and their kinds, rebuilding them after a write. The slice is shared
+// and must not be modified; a rebuild replaces it rather than changing it.
+// Caller must hold idx.mu for writing, or for reading through
+// rLockWithFreshKeys, which leaves nothing to rebuild.
+func (idx *PropertyIndex) sortedKeysViewLocked() ([]interface{}, propertyIndexKeyKinds) {
 	if idx.keysDirty || idx.sortedNonNilKeys == nil {
 		keys := make([]interface{}, 0, len(idx.values))
 		for k, ids := range idx.values {
@@ -2579,11 +2602,10 @@ func (idx *PropertyIndex) sortedKeysLocked() []interface{} {
 			return compareSchemaIndexValues(keys[i], keys[j]) < 0
 		})
 		idx.sortedNonNilKeys = keys
+		idx.sortedKeyKinds = newPropertyIndexKeyKinds(keys)
 		idx.keysDirty = false
 	}
-	out := make([]interface{}, len(idx.sortedNonNilKeys))
-	copy(out, idx.sortedNonNilKeys)
-	return out
+	return idx.sortedNonNilKeys, idx.sortedKeyKinds
 }
 
 func compareSchemaIndexValues(a, b interface{}) int {
