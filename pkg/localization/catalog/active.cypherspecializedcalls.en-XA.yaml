@@ -78,29 +78,19 @@
   other: "[!! {{.Argument}} must be a whole non-negative number !!]"
 - id: cypherspecializedcalls.unsigned_valid
   other: "[!! {{.Argument}} must be a valid uint64 !!]"
-- id: cypherspecializedcalls.txlog_invalid_syntax
-  other: "[!! invalid {{.Procedure}} syntax !!]"
-- id: cypherspecializedcalls.txlog_closing_parenthesis
-  other: "[!! missing closing parenthesis in {{.Procedure}} !!]"
-- id: cypherspecializedcalls.txlog_entries_argument_required
-  other: "[!! db.txlog.entries requires at least fromSeq parameter !!]"
-- id: cypherspecializedcalls.txlog_invalid_sequence
-  other: "[!! invalid {{.Argument}}: {{.Cause}} !!]"
 - id: cypherspecializedcalls.txlog_from_sequence_positive
   other: "[!! fromSeq must be greater than 0 !!]"
 - id: cypherspecializedcalls.wal_unavailable
   other: "[!! WAL not available (memory-only database) !!]"
-- id: cypherspecializedcalls.wal_config_unavailable
-  other: "[!! WAL config not available !!]"
-- id: cypherspecializedcalls.wal_directory_not_configured
-  other: "[!! WAL directory not configured !!]"
 - id: cypherspecializedcalls.txlog_sequence_order
   other: "[!! toSeq must be >= fromSeq !!]"
 - id: cypherspecializedcalls.txlog_read_entries_failed
   other: "[!! failed to read WAL entries: {{.Cause}} !!]"
-- id: cypherspecializedcalls.txlog_by_id_argument_required
-  other: "[!! db.txlog.byTxId requires txId parameter !!]"
 - id: cypherspecializedcalls.txlog_id_empty
   other: "[!! txId cannot be empty !!]"
 - id: cypherspecializedcalls.txlog_find_entries_failed
   other: "[!! failed to find WAL entries: {{.Cause}} !!]"
+- id: cypherspecializedcalls.txlog_to_sequence_negative
+  other: "[!! toSeq must be 0 or greater !!]"
+- id: cypherspecializedcalls.txlog_argument_type
+  other: "[!! {{.Argument}} must be {{.Type}}, but was {{.Received}} !!]"

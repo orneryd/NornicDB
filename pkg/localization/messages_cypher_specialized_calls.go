@@ -46,17 +46,12 @@ const (
 	MessageCypherSpecializedCallsUnsignedNonNegative             MessageID = "cypherspecializedcalls.unsigned_non_negative"
 	MessageCypherSpecializedCallsUnsignedWholeNonNegative        MessageID = "cypherspecializedcalls.unsigned_whole_non_negative"
 	MessageCypherSpecializedCallsUnsignedValid                   MessageID = "cypherspecializedcalls.unsigned_valid"
-	MessageCypherSpecializedCallsTxlogInvalidSyntax              MessageID = "cypherspecializedcalls.txlog_invalid_syntax"
-	MessageCypherSpecializedCallsTxlogClosingParenthesis         MessageID = "cypherspecializedcalls.txlog_closing_parenthesis"
-	MessageCypherSpecializedCallsTxlogEntriesArgumentRequired    MessageID = "cypherspecializedcalls.txlog_entries_argument_required"
-	MessageCypherSpecializedCallsTxlogInvalidSequence            MessageID = "cypherspecializedcalls.txlog_invalid_sequence"
 	MessageCypherSpecializedCallsTxlogFromSequencePositive       MessageID = "cypherspecializedcalls.txlog_from_sequence_positive"
+	MessageCypherSpecializedCallsTxlogToSequenceNegative         MessageID = "cypherspecializedcalls.txlog_to_sequence_negative"
+	MessageCypherSpecializedCallsTxlogArgumentType               MessageID = "cypherspecializedcalls.txlog_argument_type"
 	MessageCypherSpecializedCallsWALUnavailable                  MessageID = "cypherspecializedcalls.wal_unavailable"
-	MessageCypherSpecializedCallsWALConfigUnavailable            MessageID = "cypherspecializedcalls.wal_config_unavailable"
-	MessageCypherSpecializedCallsWALDirectoryNotConfigured       MessageID = "cypherspecializedcalls.wal_directory_not_configured"
 	MessageCypherSpecializedCallsTxlogSequenceOrder              MessageID = "cypherspecializedcalls.txlog_sequence_order"
 	MessageCypherSpecializedCallsTxlogReadEntriesFailed          MessageID = "cypherspecializedcalls.txlog_read_entries_failed"
-	MessageCypherSpecializedCallsTxlogByIDArgumentRequired       MessageID = "cypherspecializedcalls.txlog_by_id_argument_required"
 	MessageCypherSpecializedCallsTxlogIDEmpty                    MessageID = "cypherspecializedcalls.txlog_id_empty"
 	MessageCypherSpecializedCallsTxlogFindEntriesFailed          MessageID = "cypherspecializedcalls.txlog_find_entries_failed"
 )
@@ -229,36 +224,12 @@ func CypherSpecializedCallsUnsignedValid(argument string) Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsUnsignedValid, argument+" must be a valid uint64", map[string]any{"Argument": argument})
 }
 
-func CypherSpecializedCallsTxlogInvalidSyntax(procedure string) Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogInvalidSyntax, "invalid "+procedure+" syntax", map[string]any{"Procedure": procedure})
-}
-
-func CypherSpecializedCallsTxlogClosingParenthesis(procedure string) Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogClosingParenthesis, "missing closing parenthesis in "+procedure, map[string]any{"Procedure": procedure})
-}
-
-func CypherSpecializedCallsTxlogEntriesArgumentRequired() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogEntriesArgumentRequired, "db.txlog.entries requires at least fromSeq parameter", nil)
-}
-
-func CypherSpecializedCallsTxlogInvalidSequence(argument string, cause error) Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogInvalidSequence, "invalid "+argument+": "+cause.Error(), map[string]any{"Argument": argument, "Cause": cause.Error()})
-}
-
 func CypherSpecializedCallsTxlogFromSequencePositive() Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogFromSequencePositive, "fromSeq must be greater than 0", nil)
 }
 
 func CypherSpecializedCallsWALUnavailable() Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsWALUnavailable, "WAL not available (memory-only database)", nil)
-}
-
-func CypherSpecializedCallsWALConfigUnavailable() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsWALConfigUnavailable, "WAL config not available", nil)
-}
-
-func CypherSpecializedCallsWALDirectoryNotConfigured() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsWALDirectoryNotConfigured, "WAL directory not configured", nil)
 }
 
 func CypherSpecializedCallsTxlogSequenceOrder() Message {
@@ -269,14 +240,22 @@ func CypherSpecializedCallsTxlogReadEntriesFailed(cause error) Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogReadEntriesFailed, "failed to read WAL entries: "+cause.Error(), map[string]any{"Cause": cause.Error()})
 }
 
-func CypherSpecializedCallsTxlogByIDArgumentRequired() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogByIDArgumentRequired, "db.txlog.byTxId requires txId parameter", nil)
-}
-
 func CypherSpecializedCallsTxlogIDEmpty() Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogIDEmpty, "txId cannot be empty", nil)
 }
 
 func CypherSpecializedCallsTxlogFindEntriesFailed(cause error) Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogFindEntriesFailed, "failed to find WAL entries: "+cause.Error(), map[string]any{"Cause": cause.Error()})
+}
+
+// CypherSpecializedCallsTxlogToSequenceNegative is a db.txlog.entries toSeq
+// below 0.
+func CypherSpecializedCallsTxlogToSequenceNegative() Message {
+	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogToSequenceNegative, "toSeq must be 0 or greater", nil)
+}
+
+// CypherSpecializedCallsTxlogArgumentType is a db.txlog argument of the
+// wrong type, such as a parameter holding a string for fromSeq.
+func CypherSpecializedCallsTxlogArgumentType(argument string, typeName string, received string) Message {
+	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTxlogArgumentType, argument+" must be "+typeName+", but was "+received, map[string]any{"Argument": argument, "Type": typeName, "Received": received})
 }
