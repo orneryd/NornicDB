@@ -457,11 +457,12 @@ func TestFinishTerminatorReturnsNoRows(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "FINISH", res.Rows[0][0])
 
-	// FINISH must be last, and a bare FINISH identifier is the reserved
-	// keyword: these are syntax errors, as in Neo4j.
+	// FINISH must be last, and can't follow RETURN: these are syntax
+	// errors, as in Neo4j. FINISH is not reserved, so `finish` as a variable
+	// (WITH 1 AS finish RETURN finish) is valid; TestFinishAsNameMatchesNeo4j
+	// covers it (#958).
 	for _, query := range []string{
 		"FINISH RETURN 1",
-		"WITH 1 AS finish RETURN finish",
 		"MATCH (n:Fin) RETURN n FINISH",
 	} {
 		_, err := exec.Execute(ctx, query, nil)
