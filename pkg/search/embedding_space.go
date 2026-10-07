@@ -11,6 +11,7 @@ func (s *Service) SetEmbeddingSpace(space string) {
 		return
 	}
 	s.embeddingSpace.Store(space)
+	s.indexChanged()
 	if s.resultCache != nil {
 		s.resultCache.Invalidate()
 	}
