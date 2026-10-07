@@ -333,6 +333,11 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 	_, srcSeedable := rows[0].nodes[eps.source.variable]
 	_, tgtSeedable := rows[0].nodes[eps.target.variable]
 	_, relBound := rows[0].rels[eps.relVar]
+	if (srcSeedable && (len(eps.source.labels) > 0 || len(eps.source.properties) > 0)) ||
+		(tgtSeedable && (len(eps.target.labels) > 0 || len(eps.target.properties) > 0)) ||
+		strings.Contains(clause.pattern, "{") {
+		return e.applyGeneralOptionalClause(ctx, rows, clause)
+	}
 	if (!srcSeedable && !tgtSeedable) || (eps.relVar != "" && relBound) {
 		// Disconnected one-hop pattern or a pre-bound relationship variable:
 		// evaluate with the general Apply + Optional path.

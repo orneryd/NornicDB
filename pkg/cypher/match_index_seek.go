@@ -1457,6 +1457,9 @@ func unwrapOuterParens(clause string) string {
 // WHERE planners (index seek, cartesian and CREATE / MERGE filters, CALL
 // subquery correlation).
 func splitTopLevelAndConjuncts(clause string) []string {
+	if topLevelKeywordIndex(clause, "OR") >= 0 || topLevelKeywordIndex(clause, "XOR") >= 0 {
+		return []string{strings.TrimSpace(clause)}
+	}
 	inSingle, inDouble, inBacktick := false, false, false
 	paren, bracket, brace, caseDepth := 0, 0, 0, 0
 	parts := make([]string, 0, 2)

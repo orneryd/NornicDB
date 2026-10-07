@@ -971,7 +971,7 @@ func TestGh908CreateCompositionDeleteSafety(t *testing.T) {
 
 func TestGh908RequiredPipelineDeclineHasNoEffects(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
-	result, err := exec.executeRequiredPipeline(ctx, "CREATE (a:Declined)")
+	result, err := exec.executeRequiredPipeline(ctx, "CREATE (a:Declined) -- invalid")
 	require.Nil(t, result)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")

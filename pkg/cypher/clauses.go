@@ -1401,7 +1401,11 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 		}
 		return changed, writes.count, nil
 	}
-	processedRows := 0
+	var countState pipelineAggregateState
+	if countAlias != "" {
+		projection := returnProjectionPlanFor(returnPart).projections[0]
+		countState = pipelineAggregateState{name: projection.aggregateName, expression: projection.aggregateExpr}
+	}
 	// runSteps runs plan.steps[stepIndex:] for one row. A relationship MERGE
 	// that matches several relationships runs the rest of the steps once per
 	// relationship, as Neo4j's MERGE yields a row for each. A row that a
@@ -1418,6 +1422,9 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 				matchProps := make(map[string]interface{}, len(nodePlan.matchAssignments))
 				for _, assignment := range nodePlan.matchAssignments {
 					matchProps[assignment.prop] = resolveBatchValue(assignment.expr, rowValues)
+				}
+				if err := validateMergePatternProperties(matchProps, "node"); err != nil {
+					return err
 				}
 				lookupKey := unwindMergeKey(unwindMergeLabelsKey(nodePlan.labels), matchProps)
 				node := lookupCache[lookupKey]
@@ -1437,13 +1444,14 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 						Properties: cloneNodePropertiesMap(matchProps),
 					}
 					var writes setWrites
-					for _, assignment := range nodePlan.setAssignments {
+					rowValues[nodePlan.mergeVar] = node
+					for _, assignment := range nodePlan.onCreateAssignments {
 						if _, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue, &writes); err != nil {
 							return err
 						}
 					}
 					writes.endRun()
-					for _, assignment := range nodePlan.onCreateAssignments {
+					for _, assignment := range nodePlan.setAssignments {
 						if _, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue, &writes); err != nil {
 							return err
 						}
@@ -1466,7 +1474,8 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 				} else {
 					var writes setWrites
 					changed := 0
-					for _, assignment := range nodePlan.setAssignments {
+					rowValues[nodePlan.mergeVar] = node
+					for _, assignment := range nodePlan.onMatchAssignments {
 						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue, &writes)
 						if err != nil {
 							return err
@@ -1474,7 +1483,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 						changed += n
 					}
 					writes.endRun()
-					for _, assignment := range nodePlan.onMatchAssignments {
+					for _, assignment := range nodePlan.setAssignments {
 						n, err := applyUnwindMergeChainSetAssignment(node, assignment, rowValues, resolveBatchValue, &writes)
 						if err != nil {
 							return err
@@ -1574,6 +1583,9 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 			for _, assignment := range relPlan.matchAssignments {
 				matchProps[assignment.prop] = normalizePropValue(resolveBatchValue(assignment.expr, rowValues))
 			}
+			if err := validateMergePatternProperties(matchProps, "relationship"); err != nil {
+				return err
+			}
 			edges, err := relIdentities.relationships(store, fromNode.ID, toNode.ID, relPlan.relType, matchProps)
 			if err != nil {
 				return localizedError(localization.CypherMutationsUnwindRelationshipLookupFailed(err), err)
@@ -1665,7 +1677,14 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 			}
 			return nil
 		}
-		processedRows++
+		if countAlias != "" {
+			if !countState.add(ctx, e, pipelineRow(rowValues)) {
+				if failure := getExpressionFailure(ctx); failure != nil {
+					return failure
+				}
+				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "Unsupported UNWIND batch RETURN")
+			}
+		}
 		return nil
 	}
 	for _, item := range items {
@@ -1678,7 +1697,8 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 	}
 
 	if countAlias != "" {
-		result.Rows = [][]interface{}{{int64(processedRows)}}
+		value, _ := countState.result(ctx, e)
+		result.Rows = [][]interface{}{{value}}
 	}
 	return result, true, nil
 }

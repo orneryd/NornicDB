@@ -429,7 +429,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
 		filtered := paths[:0]
 		for _, path := range paths {
-			if len(path.Nodes) > 1 && path.Nodes[0].ID == path.Nodes[len(path.Nodes)-1].ID {
+			if len(path.Nodes) > 0 && path.Nodes[0].ID == path.Nodes[len(path.Nodes)-1].ID {
 				filtered = append(filtered, path)
 			}
 		}
@@ -949,7 +949,7 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 			if n == nil {
 				continue
 			}
-			if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(n, nodePattern.labels) {
+			if !pipelineNodeMatchesPattern(n, nodePattern) {
 				continue
 			}
 			if e.compareEqual(n.Properties[prop], value) {
@@ -988,7 +988,7 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 			if n == nil {
 				continue
 			}
-			if len(nodePattern.labels) > 0 && !nodeHasAnyLabel(n, nodePattern.labels) {
+			if !pipelineNodeMatchesPattern(n, nodePattern) {
 				continue
 			}
 			if _, exists := n.Properties[prop]; exists && n.Properties[prop] != nil {
@@ -1667,11 +1667,11 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 		startNodes, _ = e.loadPatternNodes(ctx, match.StartNode.labels, match.StartNode.properties)
 	}
 
-	// Filter by properties
-	if len(match.StartNode.properties) > 0 {
+	// Filter indexed candidates through the shared complete pattern check.
+	if len(match.StartNode.properties) > 0 || len(match.StartNode.labels) > 0 {
 		var filtered []*storage.Node
 		for _, n := range startNodes {
-			if e.nodeMatchesProps(n, match.StartNode.properties) {
+			if pipelineNodeMatchesPattern(n, match.StartNode) {
 				filtered = append(filtered, n)
 			}
 		}
@@ -2716,152 +2716,9 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 // evaluateWhereOnPath evaluates a WHERE condition against a path context.
 // Handles conditions like: i.name = 'value', e.score < 90, etc.
 func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause string, pathCtx PathContext) bool {
-	whereClause = strings.TrimSpace(whereClause)
-	upperClause := upperASCII(whereClause)
-
-	// Handle parenthesized expressions - strip outer parens and recurse
-	if strings.HasPrefix(whereClause, "(") && strings.HasSuffix(whereClause, ")") {
-		// Verify these are matching outer parens, not separate groups
-		depth := 0
-		isOuterParen := true
-		for i, ch := range whereClause {
-			if ch == '(' {
-				depth++
-			} else if ch == ')' {
-				depth--
-			}
-			// If depth goes to 0 before the last char, these aren't outer parens
-			if depth == 0 && i < len(whereClause)-1 {
-				isOuterParen = false
-				break
-			}
-		}
-		if isOuterParen {
-			return e.evaluateWhereOnPath(ctx, whereClause[1:len(whereClause)-1], pathCtx)
-		}
-	}
-
-	// Handle AND / OR conditions at top level: outside strings, parentheses,
-	// brackets and braces, so an AND / OR inside a subquery body stays in it.
-	if idx := findTopLevelKeyword(whereClause, " AND "); idx > 0 {
-		left := strings.TrimSpace(whereClause[:idx])
-		right := strings.TrimSpace(whereClause[idx+5:])
-		return e.evaluateWhereOnPath(ctx, left, pathCtx) && e.evaluateWhereOnPath(ctx, right, pathCtx)
-	}
-	if idx := findTopLevelKeyword(whereClause, " OR "); idx > 0 {
-		left := strings.TrimSpace(whereClause[:idx])
-		right := strings.TrimSpace(whereClause[idx+4:])
-		return e.evaluateWhereOnPath(ctx, left, pathCtx) || e.evaluateWhereOnPath(ctx, right, pathCtx)
-	}
-
-	// A clause with an EXISTS / COUNT / COLLECT subquery in it goes to the
-	// row predicate evaluator with the path's variables bound, so the
-	// subquery runs through the one subquery evaluator and a comparison
-	// around it (EXISTS { … } = false) is evaluated as an expression (#652).
-	if mayContainSubqueryExpression(whereClause) {
-		return e.evaluateRowPredicate(ctx, whereClause, e.pathContextValues(pathCtx))
-	}
-
-	// Handle NOT prefix (before operators so "->" in NOT (n)-[:X]->() is not parsed as ">")
-	if strings.HasPrefix(upperClause, "NOT ") {
-		inner := strings.TrimSpace(whereClause[4:])
-		if truth, ok := inPredicateTruth(inner, func(expr string) interface{} {
-			return e.evaluateExpressionWithPathContext(ctx, expr, pathCtx)
-		}); ok {
-			return truth == truthFalse
-		}
-		return !e.evaluateWhereOnPath(ctx, inner, pathCtx)
-	}
-
-	if variable, labels, ok := parseWithWhereLabelTest(whereClause); ok {
-		if rel, isRel := pathCtx.rels[variable]; isRel {
-			return entityHasAllLabelsOrTypesPredicate(rel, labels) // r:R tests the type (#860)
-		}
-		return entityHasAllLabelsOrTypesPredicate(pathCtx.nodes[variable], labels)
-	}
-
-	// Handle membership predicates before comparison operators so list literals
-	// are not mistaken for scalar comparison right-hand sides.
-	if inIdx := findTopLevelKeyword(whereClause, " IN "); inIdx > 0 {
-		leftExpr := strings.TrimSpace(whereClause[:inIdx])
-		rightExpr := strings.TrimSpace(whereClause[inIdx+4:])
-
-		leftVal := e.evaluateExpressionWithPathContext(ctx, leftExpr, pathCtx)
-		rightVal := e.evaluateExpressionWithPathContext(ctx, rightExpr, pathCtx)
-		if rightVal == nil {
-			rightVal = e.parseValue(ctx, rightExpr)
-		}
-		items, ok := toInterfaceSlice(rightVal)
-		if !ok {
-			return false
-		}
-		comparableSet, nonComparable := buildComparableMembershipIndex(items)
-		return evaluateComparableMembership(leftVal, comparableSet, nonComparable, e.compareEqual)
-	}
-
-	// Handle relationship-existence patterns before operator checks so arrow
-	// syntax is not misinterpreted as a comparison operator.
-	hasRelPattern := containsRelExistencePattern(whereClause)
-	if hasRelPattern && pathCtx.nodes != nil {
-		for variable, node := range pathCtx.nodes {
-			if node == nil {
-				continue
-			}
-			refsVar := strings.Contains(whereClause, "("+variable+")") || strings.Contains(whereClause, "("+variable+":") ||
-				strings.HasPrefix(whereClause, variable+")") || strings.HasPrefix(whereClause, variable+":")
-			if !refsVar {
-				continue
-			}
-			pattern := whereClause
-			if strings.HasPrefix(whereClause, variable+")") || strings.HasPrefix(whereClause, variable+":") {
-				pattern = "(" + whereClause
-			}
-			return e.evaluateRelationshipPatternInWhere(node, variable, pattern)
-		}
-	}
-
-	resolveComparisonOperand := func(operand string) interface{} {
-		value := e.evaluateExpressionWithPathContext(ctx, operand, pathCtx)
-		if value == nil {
-			value = e.evaluatePathValue(operand)
-		}
-		return value
-	}
-	if result, ok := evaluateComparisonChain(whereClause, resolveComparisonOperand, compareCypherPredicateValue); ok {
-		matched, _ := result.(bool)
-		return matched
-	}
-
-	// Handle CONTAINS
-	if idx := strings.Index(upperClause, " CONTAINS "); idx > 0 {
-		leftExpr := strings.TrimSpace(whereClause[:idx])
-		rightExpr := strings.TrimSpace(whereClause[idx+10:])
-
-		leftVal := e.evaluateExpressionWithPathContext(ctx, leftExpr, pathCtx)
-		rightVal := e.evaluatePathValue(rightExpr)
-
-		leftStr, lok := leftVal.(string)
-		rightStr, rok := rightVal.(string)
-		if lok && rok {
-			return strings.Contains(leftStr, rightStr)
-		}
-		return false
-	}
-
-	// Handle IS NULL / IS NOT NULL
-	if strings.HasSuffix(upperClause, " IS NOT NULL") {
-		expr := strings.TrimSpace(whereClause[:len(whereClause)-12])
-		val := e.evaluateExpressionWithPathContext(ctx, expr, pathCtx)
-		return val != nil
-	}
-	if strings.HasSuffix(upperClause, " IS NULL") {
-		expr := strings.TrimSpace(whereClause[:len(whereClause)-8])
-		val := e.evaluateExpressionWithPathContext(ctx, expr, pathCtx)
-		return val == nil
-	}
-
-	value := e.evaluateExpressionWithPathContext(ctx, whereClause, pathCtx)
-	return predicateValueIsTrue(ctx, value, whereClause)
+	values := e.pathContextValues(pathCtx)
+	bindParameterRow(ctx, values)
+	return e.evaluateRowPredicate(ctx, strings.TrimSpace(whereClause), values)
 }
 
 func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathContext, subquery string) bool {

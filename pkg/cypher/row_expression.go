@@ -1890,6 +1890,16 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, true); ok {
 		return e.evaluateRowPredicateParts(ctx, left, values) || e.evaluateRowPredicateParts(ctx, right, values)
 	}
+	if left, right, ok := splitByOperatorWithOptions(expression, " XOR ", true, true); ok {
+		leftValue, leftOK := e.rowPredicateOperand(ctx, left, values)
+		rightValue, rightOK := e.rowPredicateOperand(ctx, right, values)
+		if !leftOK || !rightOK || leftValue == nil || rightValue == nil {
+			return false
+		}
+		leftBool, leftBoolean := leftValue.(bool)
+		rightBool, rightBoolean := rightValue.(bool)
+		return leftBoolean && rightBoolean && leftBool != rightBool
+	}
 	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, true); ok {
 		return e.evaluateRowPredicateParts(ctx, left, values) && e.evaluateRowPredicateParts(ctx, right, values)
 	}
@@ -2197,7 +2207,11 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 func (e *StorageExecutor) evaluateRowStringPredicate(ctx context.Context, left, right string, values map[string]interface{}, predicate func(string, string) bool) bool {
 	leftValue, leftOK := e.rowPredicateOperand(ctx, left, values)
 	rightValue, rightOK := e.rowPredicateOperand(ctx, right, values)
-	leftText, leftString := leftValue.(string)
-	rightText, rightString := rightValue.(string)
-	return leftOK && rightOK && leftString && rightString && predicate(leftText, rightText)
+	return leftOK && rightOK && evaluateRowStringPredicateValues(leftValue, rightValue, predicate)
+}
+
+func evaluateRowStringPredicateValues(left, right interface{}, predicate func(string, string) bool) bool {
+	leftText, leftString := left.(string)
+	rightText, rightString := right.(string)
+	return leftString && rightString && predicate(leftText, rightText)
 }

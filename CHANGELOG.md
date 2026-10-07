@@ -507,6 +507,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve the 17 reopened #908 write, WHERE and MATCH reproductions: reject
+  null MERGE keys and malformed CREATE patterns, preserve ON-action/SET order
+  and nullable counts, share predicate precedence and complete seed constraints,
+  respect constrained OPTIONAL MATCH and zero-length paths, and enforce comma
+  relationship uniqueness and anonymous multiplicity. Hash joins now use shared
+  Cypher value keys so integer and floating-point equivalents match.
+- Plan STARTS WITH, ENDS WITH and CONTAINS in the shared row predicate owner,
+  and reuse a predicate plan for streamed counts instead of reparsing each node.
+
 - Fail storage scans, batch reads and constraint checks on record read or
   decode errors. Only missing records (stale index entries) are skipped, so
   corruption no longer silently reduces query results or bypasses constraints

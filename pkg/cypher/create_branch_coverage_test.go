@@ -15,11 +15,12 @@ func TestExecuteCreate_BranchCoverage(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	t.Run("skips empty split patterns and still creates valid node", func(t *testing.T) {
-		res, err := exec.executeCreate(ctx, "CREATE (a:KeepMe), , (b:KeepMe)")
+	t.Run("rejects empty split patterns without writes", func(t *testing.T) {
+		_, err := exec.Execute(ctx, "CREATE (a:KeepMe), , (b:KeepMe)", nil)
+		require.Error(t, err)
+		nodes, err := store.GetNodesByLabel("KeepMe")
 		require.NoError(t, err)
-		require.NotNil(t, res.Stats)
-		assert.Equal(t, 2, res.Stats.NodesCreated)
+		require.Empty(t, nodes)
 	})
 
 	t.Run("empty label name is rejected", func(t *testing.T) {

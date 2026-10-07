@@ -2931,5 +2931,91 @@
     "query": "MATCH (n:ProcedureBefore) SET n.value = 2 CALL dbms.components() YIELD name RETURN n.value AS value",
     "expected_code": "Neo.ClientError.Statement.SyntaxError",
     "no_effects": true
+  },
+  {
+    "name": "issue908 merge null property",
+    "query": "UNWIND [{k: null}, {k: null}] AS row MERGE (n:P {k: row.k}) RETURN count(*) AS c",
+    "expected_code": "Neo.ClientError.Statement.SemanticError",
+    "no_effects": true
+  },
+  {
+    "name": "issue908 merge set ordering",
+    "setup": ["UNWIND [1] AS x MERGE (n:P {k: x}) ON CREATE SET n.v = 1 SET n.v = 2 RETURN count(*) AS c"],
+    "query": "MATCH (n:P) RETURN n.v"
+  },
+  {
+    "name": "issue908 optional count after merge",
+    "query": "UNWIND [1, 2] AS x OPTIONAL MATCH (m:Missing {k: x}) MERGE (n:P {k: x}) RETURN count(m) AS c"
+  },
+  {
+    "name": "issue908 property comparison count",
+    "setup": ["CREATE (:L {a: 1, b: 1}), (:L {a: 1, b: 2})"],
+    "query": "MATCH (n:L) WHERE n.a = n.b RETURN count(n) AS c"
+  },
+  {
+    "name": "issue908 xor count",
+    "setup": ["CREATE (:A {id: 1}), (:A {id: 2})"],
+    "query": "MATCH (a:A) WHERE a.id = 1 XOR a.id = 2 RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 path predicate precedence",
+    "setup": ["CREATE (:L {a: 1, b: 0, c: 0})-[:R]->(:M), (:L {a: 0, b: 2, c: 3})-[:R]->(:M)"],
+    "query": "MATCH (n:L)-[:R]->(m) WHERE n.a = 1 OR n.b = 2 AND n.c = 3 RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 outer predicate precedence",
+    "setup": ["CREATE (:O {flag: true}), (:L)-[:R]->(:M {y: 0, z: 0})"],
+    "query": "MATCH (o:O) WITH o.flag AS f MATCH (a:L)-[:R]->(b) WHERE f = true OR b.y = 2 AND b.z = 3 RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 seed inline properties",
+    "setup": ["CREATE (:A {k: 1, x: 5})-[:R]->(:B {n: 'ok'}), (:A {k: 2, x: 5})-[:R]->(:B {n: 'bad'})"],
+    "query": "MATCH (a:A {k: 1})-[:R]->(b) WHERE a.x = 5 RETURN b.n AS n"
+  },
+  {
+    "name": "issue908 indexed seed all labels",
+    "setup": ["CREATE INDEX FOR (a:A) ON (a.x)", "CREATE (:A {x: 1})-[:R]->(:M)"],
+    "query": "MATCH (a:A:B {x: 1})-[:R]->(b) RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 optional relationship properties",
+    "setup": ["CREATE (:P {name: 'a'})-[:KNOWS {since: 2019}]->(:P {name: 'b'})"],
+    "query": "MATCH (a:P {name: 'a'}) OPTIONAL MATCH (a)-[r:KNOWS {since: 2020}]->(b) RETURN b.name AS b"
+  },
+  {
+    "name": "issue908 optional bound source labels",
+    "setup": ["CREATE (:P {name: 'a'})-[:KNOWS]->(:P {name: 'b'})"],
+    "query": "MATCH (a:P {name: 'a'}) OPTIONAL MATCH (a:Missing)-[r]->(b) RETURN b.name AS b"
+  },
+  {
+    "name": "issue908 zero length identity path",
+    "setup": ["CREATE (:N)-[:R]->(:N)"],
+    "query": "MATCH (a)-[*0..1]->(a) RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 comma relationship uniqueness",
+    "setup": ["CREATE (:N)-[:R]->(:N)"],
+    "query": "MATCH (a)-[r1]->(b), (c)-[r2]->(d) RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 anonymous relationship uniqueness",
+    "setup": ["CREATE (:P {name: 'a'})-[:KNOWS]->(:P {name: 'b'}), (:P {name: 'c'})-[:KNOWS]->(:P {name: 'd'})"],
+    "query": "MATCH ()-[:KNOWS]->(), ()-[:KNOWS]->() RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 anonymous node multiplicity",
+    "setup": ["CREATE (:A {x: 1}), (:A {x: 2}), (:B), (:B), (:B)"],
+    "query": "MATCH (a:A), (:B) RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 numeric join equality",
+    "setup": ["CREATE (:A {v: 1}), (:B {v: 1.0})"],
+    "query": "MATCH (a:A), (b:B) WHERE a.v = b.v RETURN count(*) AS c"
+  },
+  {
+    "name": "issue908 invalid create suffix",
+    "query": "CREATE (:P {x: 1}) -- note",
+    "expected_code": "Neo.ClientError.Statement.SyntaxError",
+    "no_effects": true
   }
 ]

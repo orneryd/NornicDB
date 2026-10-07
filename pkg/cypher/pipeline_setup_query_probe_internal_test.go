@@ -10,11 +10,11 @@ func TestPipelineAcceptsCommaMatchThenCreate(t *testing.T) {
 	}
 }
 
-func TestPipelineLeavesStandaloneCreateReturnAtomic(t *testing.T) {
+func TestPipelineAcceptsStandaloneCreateReturn(t *testing.T) {
 	q := `CREATE (node:Item {num: 1}) RETURN node`
 	_, ok := canExecuteAsPipeline(q)
-	if ok {
-		t.Fatalf("standalone CREATE ... RETURN must remain one atomic write operator")
+	if !ok {
+		t.Fatalf("standalone CREATE ... RETURN must use the shared atomic CREATE planner")
 	}
 }
 

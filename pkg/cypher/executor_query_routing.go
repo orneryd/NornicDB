@@ -239,10 +239,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	case startsWithKeywords(cypher, "CREATE", "ALIAS"):
 		return e.executeCreateAlias(ctx, cypher)
 	case startsWithCreate:
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		return e.executeCreate(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	case hasDelete || hasDetachDelete:
 		return e.executeDelete(ctx, cypher)
 	case findKeywordIndex(cypher, "CALL") == 0:

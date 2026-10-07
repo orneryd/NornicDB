@@ -72,11 +72,13 @@ func TestIssue882OptionalMatchPlanValuesAndRejections(t *testing.T) {
 		{"d", nil, nil},
 	}, result.Rows)
 
+	result, err = exec.Execute(ctx, "MATCH ()-[:KNOWS]->(), ()-[:KNOWS]->() OPTIONAL MATCH (x:P {name: 'd'}) RETURN x.name", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"d"}, {"d"}}, result.Rows)
+
 	for _, tc := range []struct{ query, code string }{
 		// UNWIND needs AS.
 		{"MATCH (a:P) OPTIONAL MATCH (a)-->(b) UNWIND a.name RETURN 1", "Neo.ClientError.Statement.SyntaxError"},
-		// The pipeline's MATCH declines anonymous comma relationship parts.
-		{"MATCH ()-[:KNOWS]->(), ()-[:KNOWS]->() OPTIONAL MATCH (x:P {name: 'd'}) RETURN x.name", "Neo.ClientError.Statement.SyntaxError"},
 		// An OPTIONAL MATCH clause's own errors reach the caller.
 		{"MATCH (a:P) OPTIONAL MATCH (a)-[:KNOWS]->(b) WHERE b.name AND true RETURN a.name", "Neo.ClientError.Statement.TypeError"},
 		{"MATCH (a:P) OPTIONAL MATCH (a)-[:KNOWS*1..2]->(b {k: 1 / 0}) RETURN a.name", "Neo.ClientError.Statement.ArithmeticError"},
