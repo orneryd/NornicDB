@@ -500,7 +500,51 @@ func fnTrimFunction(name string, leading, trailing bool) cypherfn.Func {
 // fnTrim is trim(original) and Neo4j's
 // trim([[LEADING | TRAILING | BOTH] [character] FROM] original): the
 // character is a one-character string.
+// trimSpecificationForm is trim(specification, original) and
+// trim(specification, character, original), the forms Neo4j's FROM syntax
+// stands for, which Neo4j also accepts as written. The specification is
+// matched exactly: 'LEADING' trims the start, 'TRAILING' the end, and any
+// other string, 'leading' included, both ends. A null original or
+// character is null; otherwise a specification that isn't a string is a
+// TypeError and a character that isn't one character long an ArgumentError,
+// as in Neo4j.
+func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, error) {
+	values, err := evalArgs(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	original := values[len(values)-1]
+	if original == nil || len(values) == 3 && values[1] == nil {
+		return nil, nil
+	}
+	specification, isString := values[0].(string)
+	if !isString {
+		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+			localization.CypherCoreFunctionArgumentInvalid("trim", "a String", neo4jValueRepr(values[0])))
+	}
+	text, _, err := stringArgument("trim", values, len(values)-1)
+	if err != nil {
+		return nil, err
+	}
+	cutset := ""
+	if len(values) == 3 {
+		character, _, err := stringArgument("trim", values, 1)
+		if err != nil {
+			return nil, err
+		}
+		if utf8.RuneCountInString(character) != 1 {
+			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+				localization.CypherCoreTrimCharacterLength())
+		}
+		cutset = character
+	}
+	return trimCharacters(text, cutset, specification != "TRAILING", specification != "LEADING"), nil
+}
+
 func fnTrim(ctx cypherfn.Context, args []string) (interface{}, error) {
+	if len(args) == 2 || len(args) == 3 {
+		return trimSpecificationForm(ctx, args)
+	}
 	if len(args) != 1 {
 		return nil, argumentCountError("trim", "1", len(args))
 	}
