@@ -79,6 +79,9 @@ func TestFunctionNullAndPointValues(t *testing.T) {
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
 	}
+	// The evaluator itself, below the compile-time argument count check:
+	// point.withinBBox with other than three arguments is null.
+	require.Nil(t, exec.evaluateExpressionWithContext(ctx, "point.withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}))", nil, nil))
 }
 
 // TestTrimSpecificationForms pins trim(specification, [character,] original),
@@ -98,11 +101,14 @@ func TestTrimSpecificationForms(t *testing.T) {
 	require.Equal(t, [][]interface{}{{nil, nil, nil}}, result.Rows)
 
 	for query, code := range map[string]string{
-		"WITH null AS s RETURN trim(s, 'abc') AS v": "Neo.ClientError.Statement.TypeError",
-		"RETURN trim('LEADING', 'xy', 'xxa') AS v":  "Neo.ClientError.Statement.ArgumentError",
-		"RETURN trim('LEADING', '', 'xxa') AS v":    "Neo.ClientError.Statement.ArgumentError",
+		"RETURN trim('LEADING', $five) AS v":                "Neo.ClientError.Statement.SyntaxError",
+		"RETURN trim('LEADING', $five, 'abc') AS v":         "Neo.ClientError.Statement.SyntaxError",
+		"RETURN trim('LEADING', 'a', toString(1 / 0)) AS v": "Neo.ClientError.Statement.ArithmeticError",
+		"WITH null AS s RETURN trim(s, 'abc') AS v":         "Neo.ClientError.Statement.TypeError",
+		"RETURN trim('LEADING', 'xy', 'xxa') AS v":          "Neo.ClientError.Statement.ArgumentError",
+		"RETURN trim('LEADING', '', 'xxa') AS v":            "Neo.ClientError.Statement.ArgumentError",
 	} {
-		_, err := exec.Execute(ctx, query, nil)
+		_, err := exec.Execute(ctx, query, map[string]interface{}{"five": int64(5)})
 		require.Error(t, err, query)
 		require.Contains(t, statusText(err), code, query)
 	}
