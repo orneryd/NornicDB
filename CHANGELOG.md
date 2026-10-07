@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Harden Cypher regression controls for string SUM rejection and invalid query
+  syntax across both parsers without depending on parser-specific messages.
+
 - Reduce transaction label-scan cache overhead: stop populating the bounded
   label cache once full, and reuse validated prefix sizes and sidecar checks
   when indexing cached nodes. Preserve snapshot reads and embedding hydration
