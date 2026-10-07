@@ -6,7 +6,6 @@
 //
 // Performance Impact:
 //   - Schema DDL operations: 5-10x faster (9 patterns)
-//   - APOC path operations: 8-15x faster (8 patterns)
 //   - Duration parsing: 3-5x faster (2 patterns)
 package cypher
 
@@ -15,22 +14,6 @@ import (
 )
 
 // =============================================================================
-// APOC Configuration Patterns
-// =============================================================================
-
-var (
-	// APOC path configuration
-	apocMaxLevelPattern    = regexp.MustCompile(`maxLevel\s*:\s*(\d+)`)
-	apocMinLevelPattern    = regexp.MustCompile(`minLevel\s*:\s*(\d+)`)
-	apocLimitPattern       = regexp.MustCompile(`limit\s*:\s*(\d+)`)
-	apocRelFilterPattern   = regexp.MustCompile(`relationshipFilter\s*:\s*['"]([^'"]+)['"]`)
-	apocLabelFilterPattern = regexp.MustCompile(`labelFilter\s*:\s*['"]([^'"]+)['"]`)
-
-	// APOC node ID extraction
-	apocNodeIdBracePattern = regexp.MustCompile(`\{[^}]*id\s*:\s*['"]([^'"]+)['"]`)
-	apocWhereIdPattern     = regexp.MustCompile(`WHERE\s+\w+\.id\s*=\s*['"]([^'"]+)['"]`)
-)
-
 // Dynamic Regex Cache (for user-provided patterns like =~ comparison)
 // =============================================================================
 

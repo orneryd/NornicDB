@@ -208,3 +208,23 @@
   other: "{{.Function}}() solo admite valores numéricos o null, pero recibió {{.Received}}"
 - id: cyphercore.aggregate_mixes_number_and_duration
   other: "{{.Function}}() no puede mezclar números y duraciones"
+- id: cyphercore.apoc_path_min_level
+  other: "minLevel solo puede ser 0 o 1 en {{.Procedure}}()"
+- id: cyphercore.apoc_path_node_argument
+  other: "{{.Argument}} debe ser un nodo, un id de elemento o una lista de ellos, pero era {{.Received}}"
+- id: cyphercore.apoc_path_config_not_map
+  other: "la configuración de apoc.path debe ser un mapa, pero era {{.Received}}"
+- id: cyphercore.apoc_path_sequence_relationship
+  other: "la secuencia no tiene filtro de relación para el paso {{.Step}}"
+- id: cyphercore.apoc_path_label_filter_empty
+  other: "la entrada del filtro de etiquetas {{.Entry}} no tiene etiqueta"
+- id: cyphercore.apoc_path_sequence_label
+  other: "la secuencia no tiene filtro de etiquetas para la profundidad {{.Depth}}"
+- id: cyphercore.apoc_path_node_not_found
+  other: "{{.Argument}}: ningún nodo tiene el id de elemento {{.ID}}"
+- id: cyphercore.apoc_path_config_number
+  other: "{{.Key}} debe ser un número, pero era {{.Received}}"
+- id: cyphercore.apoc_path_config_string
+  other: "{{.Key}} debe ser una cadena, pero era {{.Received}}"
+- id: cyphercore.apoc_path_limit
+  other: "limit debe ser -1 (sin límite) o al menos 0, pero era {{.Limit}}"

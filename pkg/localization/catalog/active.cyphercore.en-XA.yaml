@@ -208,3 +208,23 @@
   other: "[!! {{.Function}}() can only handle numerical values or null, but received {{.Received}} !!]"
 - id: cyphercore.aggregate_mixes_number_and_duration
   other: "[!! {{.Function}}() cannot mix number and duration !!]"
+- id: cyphercore.apoc_path_min_level
+  other: "[!! minLevel can only be 0 or 1 in {{.Procedure}}() !!]"
+- id: cyphercore.apoc_path_node_argument
+  other: "[!! {{.Argument}} must be a node, an element id or a list of them, but was {{.Received}} !!]"
+- id: cyphercore.apoc_path_config_not_map
+  other: "[!! the apoc.path config must be a map, but was {{.Received}} !!]"
+- id: cyphercore.apoc_path_sequence_relationship
+  other: "[!! the sequence has no relationship filter for step {{.Step}} !!]"
+- id: cyphercore.apoc_path_label_filter_empty
+  other: "[!! the label filter entry {{.Entry}} has no label !!]"
+- id: cyphercore.apoc_path_sequence_label
+  other: "[!! the sequence has no label filter for depth {{.Depth}} !!]"
+- id: cyphercore.apoc_path_node_not_found
+  other: "[!! {{.Argument}}: no node has the element id {{.ID}} !!]"
+- id: cyphercore.apoc_path_config_number
+  other: "[!! {{.Key}} must be a number, but was {{.Received}} !!]"
+- id: cyphercore.apoc_path_config_string
+  other: "[!! {{.Key}} must be a string, but was {{.Received}} !!]"
+- id: cyphercore.apoc_path_limit
+  other: "[!! limit must be -1 (no limit) or at least 0, but was {{.Limit}} !!]"

@@ -2,384 +2,80 @@ package cypher
 
 import (
 	"context"
-	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-// TestApocPathSpanningTreeBasic tests basic spanning tree functionality
-func TestApocPathSpanningTreeBasic(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create a simple graph: A -> B -> C
-	//                         A -> D
-	store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "CONNECTS", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "CONNECTS", StartNode: "b", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "CONNECTS", StartNode: "a", EndNode: "d"})
-
-	// Get spanning tree from node A (using node ID directly)
-	query := `CALL apoc.path.spanningTree({id: 'a'}, {}) YIELD path RETURN path`
-
-	result, err := e.Execute(ctx, query, nil)
-	if err != nil {
-		t.Fatalf("Spanning tree query failed: %v", err)
-	}
-
-	// Should have 3 edges in the spanning tree (connecting 4 nodes)
-	if len(result.Rows) != 3 {
-		t.Errorf("Expected 3 edges in spanning tree, got %d", len(result.Rows))
-	}
-}
-
-// TestApocPathSpanningTreeWithCycle tests spanning tree with cycles
-func TestApocPathSpanningTreeWithCycle(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create a graph with a cycle: A -> B -> C -> A
-	//                                A -> D
-	store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "CONNECTS", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "CONNECTS", StartNode: "b", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "CONNECTS", StartNode: "c", EndNode: "a"}) // Creates cycle
-	store.CreateEdge(&storage.Edge{ID: "e4", Type: "CONNECTS", StartNode: "a", EndNode: "d"})
-
-	query := `CALL apoc.path.spanningTree({id: 'a'}, {}) YIELD path RETURN path`
-
-	result, err := e.Execute(ctx, query, nil)
-	if err != nil {
-		t.Fatalf("Spanning tree query failed: %v", err)
-	}
-
-	// Should still have only 3 edges (spanning tree excludes cycle-creating edge)
-	if len(result.Rows) != 3 {
-		t.Errorf("Expected 3 edges in spanning tree (no cycles), got %d", len(result.Rows))
-	}
-}
-
-// TestApocPathSpanningTreeMaxLevel tests maxLevel configuration
-func TestApocPathSpanningTreeMaxLevel(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create a chain: A -> B -> C -> D
-	store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "CONNECTS", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "CONNECTS", StartNode: "b", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "CONNECTS", StartNode: "c", EndNode: "d"})
-
-	// Test with maxLevel: 2 (should get only first 2 edges)
-	query := `CALL apoc.path.spanningTree({id: 'a'}, {maxLevel: 2}) YIELD path RETURN path`
-
-	result, err := e.Execute(ctx, query, nil)
-	if err != nil {
-		t.Fatalf("Spanning tree query failed: %v", err)
-	}
-
-	if len(result.Rows) != 2 {
-		t.Errorf("Expected 2 edges with maxLevel:2, got %d", len(result.Rows))
-	}
-}
-
-// TestApocPathSpanningTreeRelationshipFilter tests relationship type filtering
-func TestApocPathSpanningTreeRelationshipFilter(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create a graph with different relationship types
-	store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "FRIEND", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "FRIEND", StartNode: "b", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "COLLEAGUE", StartNode: "a", EndNode: "d"})
-
-	// Test with relationshipFilter for FRIEND only
-	query := `CALL apoc.path.spanningTree({id: 'a'}, {relationshipFilter: 'FRIEND'}) YIELD path RETURN path`
-
-	result, err := e.Execute(ctx, query, nil)
-	if err != nil {
-		t.Fatalf("Spanning tree query failed: %v", err)
-	}
-
-	// Should have only 2 edges (FRIEND relationships)
-	if len(result.Rows) != 2 {
-		t.Errorf("Expected 2 edges with FRIEND filter, got %d", len(result.Rows))
-	}
-}
-
-// TestApocPathSpanningTreeDFS tests depth-first search spanning tree
-func TestApocPathSpanningTreeDFS(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create a binary tree
-	store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-	store.CreateNode(&storage.Node{ID: "e", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "E"}})
-
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "CONNECTS", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "CONNECTS", StartNode: "a", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "CONNECTS", StartNode: "b", EndNode: "d"})
-	store.CreateEdge(&storage.Edge{ID: "e4", Type: "CONNECTS", StartNode: "b", EndNode: "e"})
-
-	// Test with DFS
-	query := `CALL apoc.path.spanningTree({id: 'a'}, {bfs: false}) YIELD path RETURN path`
-
-	result, err := e.Execute(ctx, query, nil)
-	if err != nil {
-		t.Fatalf("Spanning tree DFS query failed: %v", err)
-	}
-
-	// Should have 4 edges in the spanning tree
-	if len(result.Rows) != 4 {
-		t.Errorf("Expected 4 edges in DFS spanning tree, got %d", len(result.Rows))
-	}
-}
-
-// TestApocPathSpanningTreeLabelFilter tests label filtering
-func TestApocPathSpanningTreeLabelFilter(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create a graph with different labels
-	store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Start"}, Properties: map[string]interface{}{"name": "A"}})
-	store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Good"}, Properties: map[string]interface{}{"name": "B"}})
-	store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Good"}, Properties: map[string]interface{}{"name": "C"}})
-	store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Bad"}, Properties: map[string]interface{}{"name": "D"}})
-
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "CONNECTS", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "CONNECTS", StartNode: "b", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "CONNECTS", StartNode: "a", EndNode: "d"})
-
-	// Test with labelFilter to include only Good nodes
-	query := `CALL apoc.path.spanningTree({id: 'a'}, {labelFilter: '+Good'}) YIELD path RETURN path`
-
-	result, err := e.Execute(ctx, query, nil)
-	if err != nil {
-		t.Fatalf("Spanning tree query failed: %v", err)
-	}
-
-	// Should have only 2 edges (excluding Bad labeled node)
-	if len(result.Rows) != 2 {
-		t.Errorf("Expected 2 edges with Good label filter, got %d", len(result.Rows))
-	}
-}
-
-// TestApocPathSpanningTreeLimit tests limit configuration
-func TestApocPathSpanningTreeLimit(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create a star graph: A connected to B, C, D, E
-	store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-	store.CreateNode(&storage.Node{ID: "e", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "E"}})
-
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "CONNECTS", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "CONNECTS", StartNode: "a", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "CONNECTS", StartNode: "a", EndNode: "d"})
-	store.CreateEdge(&storage.Edge{ID: "e4", Type: "CONNECTS", StartNode: "a", EndNode: "e"})
-
-	// Test with limit: 2
-	query := `CALL apoc.path.spanningTree({id: 'a'}, {limit: 2}) YIELD path RETURN path`
-
-	result, err := e.Execute(ctx, query, nil)
-	if err != nil {
-		t.Fatalf("Spanning tree query failed: %v", err)
-	}
-
-	if len(result.Rows) != 2 {
-		t.Errorf("Expected 2 edges with limit:2, got %d", len(result.Rows))
-	}
-}
-
-// TestApocPathSpanningTreeDisconnectedGraph tests with disconnected components
-func TestApocPathSpanningTreeDisconnectedGraph(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create two disconnected components: A-B and C-D
-	store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "CONNECTS", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "CONNECTS", StartNode: "c", EndNode: "d"})
-
-	// Get spanning tree from node A (should only include A-B component)
-	query := `CALL apoc.path.spanningTree({id: 'a'}, {}) YIELD path RETURN path`
-
-	result, err := e.Execute(ctx, query, nil)
-	if err != nil {
-		t.Fatalf("Spanning tree query failed: %v", err)
-	}
-
-	// Should have only 1 edge (A-B), not reaching C-D
-	if len(result.Rows) != 1 {
-		t.Errorf("Expected 1 edge in disconnected graph spanning tree, got %d", len(result.Rows))
-	}
-}
-
-// TestApocPathSpanningTreeDirection tests directional traversal
-func TestApocPathSpanningTreeDirection(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create a directed graph: A -> B -> C
-	//                           A <- D
-	store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "POINTS_TO", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "POINTS_TO", StartNode: "b", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "POINTS_TO", StartNode: "d", EndNode: "a"})
-
-	// Test with outgoing relationships only
-	query := `CALL apoc.path.spanningTree({id: 'a'}, {relationshipFilter: '>POINTS_TO'}) YIELD path RETURN path`
-
-	result, err := e.Execute(ctx, query, nil)
-	if err != nil {
-		t.Fatalf("Spanning tree query failed: %v", err)
-	}
-
-	// Should have only 2 edges (A->B->C), not including D->A
-	if len(result.Rows) != 2 {
-		t.Errorf("Expected 2 edges with outgoing filter, got %d", len(result.Rows))
-	}
-}
-
-// TestSpanningTreeKernel_BFSAndDFSShareFrontierInvariants pins the shared
-// frontier walk (spanningTreeFrom): on a tree graph both modes visit every
-// node and return the same edge set; on a cyclic graph both return a
-// connected spanning forest (nodeCount - 1 edges for the reachable part).
-func TestSpanningTreeKernel_BFSAndDFSShareFrontierInvariants(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "spanning_kernel")
-	e := NewStorageExecutor(store)
-
-	for i := 0; i < 6; i++ {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Node"}})
-		require.NoError(t, err)
-	}
-	// A tree: n0 -> n1, n0 -> n2, n1 -> n3, n1 -> n4, n2 -> n5
-	treeEdges := []*storage.Edge{
-		{ID: "t0", Type: "LINK", StartNode: "n0", EndNode: "n1"},
-		{ID: "t1", Type: "LINK", StartNode: "n0", EndNode: "n2"},
-		{ID: "t2", Type: "LINK", StartNode: "n1", EndNode: "n3"},
-		{ID: "t3", Type: "LINK", StartNode: "n1", EndNode: "n4"},
-		{ID: "t4", Type: "LINK", StartNode: "n2", EndNode: "n5"},
-	}
-	for _, edge := range treeEdges {
-		require.NoError(t, store.CreateEdge(edge))
-	}
-
-	start, err := store.GetNode("n0")
-	require.NoError(t, err)
-
-	bfs := e.spanningTreeFrom(start, apocPathConfig{direction: "both", maxLevel: -1}, false)
-	dfs := e.spanningTreeFrom(start, apocPathConfig{direction: "both", maxLevel: -1}, true)
-	require.Len(t, bfs, 5)
-	require.Len(t, dfs, 5)
-	require.ElementsMatch(t, []storage.EdgeID{"t0", "t1", "t2", "t3", "t4"},
-		[]storage.EdgeID{bfs[0].ID, bfs[1].ID, bfs[2].ID, bfs[3].ID, bfs[4].ID})
-	require.ElementsMatch(t, []storage.EdgeID{"t0", "t1", "t2", "t3", "t4"},
-		[]storage.EdgeID{dfs[0].ID, dfs[1].ID, dfs[2].ID, dfs[3].ID, dfs[4].ID})
-
-	// A cycle: n1 -extra-> n2. Both walks still span all reachable nodes
-	// with exactly nodeCount-1 edges.
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "cycle", Type: "LINK", StartNode: "n1", EndNode: "n2"}))
-	bfs = e.spanningTreeFrom(start, apocPathConfig{direction: "both", maxLevel: -1}, false)
-	dfs = e.spanningTreeFrom(start, apocPathConfig{direction: "both", maxLevel: -1}, true)
-	require.Len(t, bfs, 5)
-	require.Len(t, dfs, 5)
-}
-
-// BenchmarkSpanningTreeKernel pins the shared frontier-walk cost on a 100-node
-// synthetic tree for both modes.
-func BenchmarkSpanningTreeKernel(b *testing.B) {
-	baseStore := newTestMemoryEngine(b)
-	store := storage.NewNamespacedEngine(baseStore, "spanning_bench")
-	e := NewStorageExecutor(store)
-	for i := 0; i < 100; i++ {
-		if _, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Node"}}); err != nil {
-			b.Fatal(err)
-		}
-		if i > 0 {
-			parent := storage.NodeID(fmt.Sprintf("n%d", (i-1)/2))
-			child := storage.NodeID(fmt.Sprintf("n%d", i))
-			if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%d", i)), Type: "LINK", StartNode: parent, EndNode: child}); err != nil {
-				b.Fatal(err)
+// TestApocPathSpanningTree pins APOC 5.26's apoc.path.spanningTree rows
+// (#907), read from Neo4j 5.26.30 with APOC: one path from the start node A
+// to each node it reaches, the start's own zero-length path included, each
+// path written as its node names.
+func TestApocPathSpanningTree(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		graph  string
+		config string
+		paths  []string
+	}{
+		{"tree", "CREATE (a:Node {name:'A'})-[:CONNECTS]->(b:Node {name:'B'})-[:CONNECTS]->(c:Node {name:'C'}), (a)-[:CONNECTS]->(d:Node {name:'D'})",
+			"{}", []string{"A", "AB", "ABC", "AD"}},
+		{"a cycle reaches each node once", "CREATE (a:Node {name:'A'})-[:CONNECTS]->(b:Node {name:'B'})-[:CONNECTS]->(c:Node {name:'C'})-[:CONNECTS]->(a), (a)-[:CONNECTS]->(d:Node {name:'D'})",
+			"{}", []string{"A", "AB", "AC", "AD"}},
+		{"maxLevel", "CREATE (a:Node {name:'A'})-[:CONNECTS]->(b:Node {name:'B'})-[:CONNECTS]->(c:Node {name:'C'})-[:CONNECTS]->(d:Node {name:'D'})",
+			"{maxLevel: 2}", []string{"A", "AB", "ABC"}},
+		{"relationshipFilter", "CREATE (a:Node {name:'A'})-[:FRIEND]->(b:Node {name:'B'})-[:FRIEND]->(c:Node {name:'C'}), (a)-[:COLLEAGUE]->(d:Node {name:'D'})",
+			"{relationshipFilter: 'FRIEND'}", []string{"A", "AB", "ABC"}},
+		{"depth first", "CREATE (a:Node {name:'A'})-[:CONNECTS]->(b:Node {name:'B'}), (a)-[:CONNECTS]->(:Node {name:'C'}), (b)-[:CONNECTS]->(:Node {name:'D'}), (b)-[:CONNECTS]->(:Node {name:'E'})",
+			"{bfs: false}", []string{"A", "AB", "ABD", "ABE", "AC"}},
+		{"labelFilter", "CREATE (a:Start {name:'A'})-[:CONNECTS]->(b:Good {name:'B'})-[:CONNECTS]->(c:Good {name:'C'}), (a)-[:CONNECTS]->(d:Bad {name:'D'})",
+			"{labelFilter: '+Good'}", []string{"A", "AB", "ABC"}},
+		{"another component is not reached", "CREATE (a:Node {name:'A'})-[:CONNECTS]->(b:Node {name:'B'}), (c:Node {name:'C'})-[:CONNECTS]->(d:Node {name:'D'})",
+			"{}", []string{"A", "AB"}},
+		{"outgoing, mark first", "CREATE (a:Node {name:'A'})-[:POINTS_TO]->(b:Node {name:'B'})-[:POINTS_TO]->(c:Node {name:'C'}), (d:Node {name:'D'})-[:POINTS_TO]->(a)",
+			"{relationshipFilter: '>POINTS_TO'}", []string{"A", "AB", "ABC"}},
+		{"incoming, mark last", "CREATE (a:Node {name:'A'})-[:POINTS_TO]->(b:Node {name:'B'})-[:POINTS_TO]->(c:Node {name:'C'}), (d:Node {name:'D'})-[:POINTS_TO]->(a)",
+			"{relationshipFilter: 'POINTS_TO<'}", []string{"A", "AD"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, test.graph, nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(ctx, "MATCH (s {name: 'A'}) CALL apoc.path.spanningTree(s, "+test.config+") YIELD path RETURN [n IN nodes(path) | n.name] AS names", nil)
+			require.NoError(t, err)
+			var paths []string
+			for _, row := range result.Rows {
+				var names []string
+				for _, name := range row[0].([]interface{}) {
+					names = append(names, name.(string))
+				}
+				paths = append(paths, strings.Join(names, ""))
 			}
-		}
+			sort.Strings(paths)
+			require.Equal(t, test.paths, paths)
+		})
 	}
-	start, err := store.GetNode("n0")
-	if err != nil {
-		b.Fatal(err)
-	}
-	cfg := apocPathConfig{direction: "both", maxLevel: -1}
-	b.Run("bfs", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			_ = e.spanningTreeFrom(start, cfg, false)
-		}
+
+	t.Run("limit", func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (a:Node {name:'A'}) WITH a UNWIND ['B', 'C', 'D', 'E'] AS name CREATE (a)-[:CONNECTS]->(:Node {name: name})", nil)
+		require.NoError(t, err)
+		// The start's path, then one neighbour: which one follows the
+		// store's relationship order, which Neo4j doesn't specify.
+		result, err := exec.Execute(ctx, "MATCH (s {name: 'A'}) CALL apoc.path.spanningTree(s, {limit: 2}) YIELD path RETURN length(path) AS length", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(0)}, {int64(1)}}, result.Rows)
 	})
-	b.Run("dfs", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			_ = e.spanningTreeFrom(start, cfg, true)
-		}
+
+	t.Run("a map is not a start node", func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+		_, err := exec.Execute(context.Background(), "CALL apoc.path.spanningTree({name: 'A'}, {}) YIELD path RETURN path", nil)
+		require.ErrorContains(t, err, "Failed to invoke procedure `apoc.path.spanningTree`")
+		requireStatusCode(t, err, "Neo.ClientError.Procedure.ProcedureCallFailed")
 	})
 }

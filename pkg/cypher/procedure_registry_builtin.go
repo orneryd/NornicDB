@@ -361,17 +361,25 @@ func ensureBuiltInProceduresRegistered() {
 				return e.callDbTemporalAsOf(ctx, cypher)
 			})
 
-		registerBuiltInProcedureLiteral("apoc.path.subgraphNodes", "apoc.path.subgraphNodes(startNode :: NODE, config :: MAP) :: (node :: NODE)", "Returns all nodes in a subgraph", ProcedureModeRead, 1, 2, false,
+		registerBuiltInProcedureLiteral("apoc.path.subgraphNodes", "apoc.path.subgraphNodes(startNode :: ANY, config :: MAP) :: (node :: NODE)", "Returns the nodes reachable from the start node(s) under the config's filters", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocPathSubgraphNodes(cypher)
+				return e.callApocPathSubgraphNodes(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.path.expand", "apoc.path.expand(startNode :: NODE, relationshipFilter :: STRING, labelFilter :: STRING, minLevel :: INTEGER, maxLevel :: INTEGER) :: (path :: PATH)", "Expands paths from a start node", ProcedureModeRead, 1, 5, false,
+		registerBuiltInProcedureLiteral("apoc.path.subgraphAll", "apoc.path.subgraphAll(startNode :: ANY, config :: MAP) :: (nodes :: LIST<NODE>, relationships :: LIST<RELATIONSHIP>)", "Returns the reachable nodes and the relationships between them", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocPathExpand(ctx, cypher)
+				return e.callApocPathSubgraphAll(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.path.spanningTree", "apoc.path.spanningTree(startNode :: NODE, config :: MAP) :: (path :: PATH)", "Returns spanning tree paths", ProcedureModeRead, 1, 2, false,
+		registerBuiltInProcedureLiteral("apoc.path.expand", "apoc.path.expand(startNode :: ANY, relationshipFilter :: STRING, labelFilter :: STRING, minLevel :: INTEGER, maxLevel :: INTEGER) :: (path :: PATH)", "Expands paths from the start node(s)", ProcedureModeRead, 1, 5, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocPathSpanningTree(cypher)
+				return e.callApocPathExpand(ctx, args)
+			})
+		registerBuiltInProcedureLiteral("apoc.path.expandConfig", "apoc.path.expandConfig(startNode :: ANY, config :: MAP) :: (path :: PATH)", "Expands paths from the start node(s) under a config", ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callApocPathExpandConfig(ctx, args)
+			})
+		registerBuiltInProcedureLiteral("apoc.path.spanningTree", "apoc.path.spanningTree(startNode :: ANY, config :: MAP) :: (path :: PATH)", "Returns a path from the start node(s) to every node reached once", ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callApocPathSpanningTree(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.cypher.run", "apoc.cypher.run(statement :: STRING, params :: MAP) :: (value :: MAP)", "Runs dynamic Cypher", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

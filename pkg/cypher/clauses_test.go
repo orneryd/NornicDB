@@ -4,6 +4,7 @@ package cypher
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -996,48 +997,39 @@ func TestCallApocPathExpand(t *testing.T) {
 }
 
 func TestApocPathConfig(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-
-	tests := []struct {
-		cypher    string
-		maxLevel  int
-		direction string
-		types     []string
-	}{
-		{
-			"CALL apoc.path.subgraphNodes(n, {maxLevel: 5})",
-			5, "both", nil,
-		},
-		{
-			"CALL apoc.path.subgraphNodes(n, {maxLevel: 3, relationshipFilter: 'KNOWS'})",
-			3, "both", []string{"KNOWS"},
-		},
-		{
-			"CALL apoc.path.subgraphNodes(n, {relationshipFilter: '>FOLLOWS'})",
-			3, "outgoing", []string{"FOLLOWS"},
-		},
-		{
-			"CALL apoc.path.subgraphNodes(n, {relationshipFilter: '<FOLLOWS|KNOWS'})",
-			3, "incoming", []string{"FOLLOWS", "KNOWS"},
-		},
+	// relationshipFilter gives each type its own direction; a lone < or >
+	// is any type in that direction (#907).
+	for filter, want := range map[string][]apocRelationshipStep{
+		"KNOWS":          {{relType: "KNOWS", direction: "both"}},
+		"FOLLOWS>":       {{relType: "FOLLOWS", direction: "out"}},
+		"<FOLLOWS|KNOWS": {{relType: "FOLLOWS", direction: "in"}, {relType: "KNOWS", direction: "both"}},
+		">|<":            {{direction: "out"}, {direction: "in"}},
+		" R> | <T | ":    {{relType: "R", direction: "out"}, {relType: "T", direction: "in"}},
+		// As in APOC, the mark may stand on either side; with both, the
+		// leading one decides.
+		">FOLLOWS|KNOWS<": {{relType: "FOLLOWS", direction: "out"}, {relType: "KNOWS", direction: "in"}},
+		"<KNOWS>|<|>":     {{relType: "KNOWS", direction: "in"}, {direction: "in"}, {direction: "out"}},
+	} {
+		if got := parseApocRelationshipFilter(filter); !reflect.DeepEqual(got, want) {
+			t.Errorf("parseApocRelationshipFilter(%q) = %v, want %v", filter, got, want)
+		}
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.cypher, func(t *testing.T) {
-			config := e.parseApocPathConfig(tt.cypher)
-			if config.maxLevel != tt.maxLevel {
-				t.Errorf("maxLevel = %d, want %d", config.maxLevel, tt.maxLevel)
-			}
-			if config.direction != tt.direction {
-				t.Errorf("direction = %s, want %s", config.direction, tt.direction)
-			}
-			if len(config.relationshipTypes) != len(tt.types) {
-				t.Errorf("types = %v, want %v", config.relationshipTypes, tt.types)
-			}
-		})
+	for _, filter := range []string{">", "A|+", "-", "/"} {
+		if _, err := parseApocLabelFilter(filter); err == nil {
+			t.Errorf("parseApocLabelFilter(%q) accepted an operator without a label", filter)
+		}
+	}
+
+	x := newApocExpansion("NODE_GLOBAL")
+	if err := x.configure(nil, map[string]interface{}{"maxLevel": int64(5), "minLevel": int64(-3), "limit": int64(-1), "labelFilter": "+A|-B|/C|>D|E"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if x.maxLevel != 5 || x.minLevel != 0 || x.limit != -1 {
+		t.Errorf("levels = %d..%d limit %d", x.minLevel, x.maxLevel, x.limit)
+	}
+	if !x.labels.allow["A"] || !x.labels.allow["E"] || !x.labels.deny["B"] || !x.labels.terminate["C"] || !x.labels.end["D"] {
+		t.Errorf("label filter = %+v", x)
 	}
 }
 

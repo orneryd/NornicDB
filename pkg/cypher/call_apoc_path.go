@@ -2,904 +2,773 @@ package cypher
 
 import (
 	"context"
-	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // ========================================
-// APOC Path Procedures (graph traversal)
+// APOC path expansion (apoc.path.*)
 // ========================================
+//
+// apoc.path.expand, expandConfig, subgraphNodes, subgraphAll and
+// spanningTree share one expander (runApocExpansion), configured from the
+// procedure's evaluated arguments: the start node(s) bound by MATCH, an
+// element id, a $parameter or a list of them, and the config map, inline or
+// as a parameter (#907). The rules follow APOC 5.26 and its documentation
+// (https://neo4j.com/docs/apoc/current/graph-querying/expand-paths-config/):
+//
+//   - relationshipFilter "TYPE>|<TYPE|TYPE|>|<": per type a direction
+//     (outgoing, incoming, both); a lone > or < is any type in that direction.
+//   - labelFilter "+Allow|-Deny|/Terminate|>End": a node with a denylisted
+//     label is never part of a path; a termination node ends a path and stops
+//     expansion; an end node ends a path and expansion continues past it;
+//     when termination or end labels are given, only paths ending at such a
+//     node are returned; otherwise every node on a path must carry an
+//     allowlisted label (termination and end nodes are exempt). A label
+//     without an operator is allowlisted. Precedence: deny, terminate, end,
+//     allow. Below minLevel, termination and end nodes neither end nor stop
+//     a path (deny and allow still apply).
+//   - sequence "Label,RelFilter,Label,…": alternating label and relationship
+//     filters that repeat along the path, replacing labelFilter and
+//     relationshipFilter. With beginSequenceAtStart (default true) the first
+//     label filter is the start node's and the sequence repeats whole; with
+//     it false the first relationship filter is the first step's only, and
+//     the remaining relationship filters repeat. A step the sequence has no
+//     relationship filter for fails, as in APOC.
+//   - endNodes / terminatorNodes / allowlistNodes / denylistNodes: the same
+//     roles given as node lists.
+//   - minLevel / maxLevel (-1: none), limit (-1: none), bfs, filterStartNode
+//     (the label and node filters apply to the start node too), optional (a
+//     start with no result yields a null).
+//   - uniqueness: RELATIONSHIP_PATH for expand / expandConfig (configurable
+//     for expandConfig), NODE_GLOBAL for subgraphNodes, subgraphAll and
+//     spanningTree, which accept a minLevel of 0 or 1 only.
+//
+// Relationships are followed in NornicDB's storage order. Neo4j follows its
+// own store's order (newest first on a node with few relationships), which it
+// doesn't specify; where only one of several paths is kept (spanningTree,
+// NODE_GLOBAL, limit, bfs: false), the path kept can differ from Neo4j's.
 
-// callApocPathSubgraphNodes implements apoc.path.subgraphNodes
-// Syntax: CALL apoc.path.subgraphNodes(startNode, {maxLevel: n, relationshipFilter: 'TYPE'})
-//
-// This is the primary graph traversal procedure for:
-//   - Knowledge graph exploration
-//   - Relationship discovery
-//   - Context gathering from connected nodes
-//
-// Config Parameters:
-//   - maxLevel: Maximum traversal depth (default: 3)
-//   - relationshipFilter: Filter by relationship types (e.g., "RELATES_TO|CONTAINS")
-//   - labelFilter: Filter by node labels (e.g., "+Memory|-Archive")
-//   - minLevel: Minimum traversal depth before returning results
-//   - limit: Maximum number of nodes to return
-//   - bfs: Use breadth-first search (default: true)
-//
-// Relationship Filter Syntax:
-//   - "TYPE" - Match relationships of type TYPE in either direction
-//   - ">TYPE" - Match outgoing relationships of type TYPE
-//   - "<TYPE" - Match incoming relationships of type TYPE
-//   - "TYPE1|TYPE2" - Match multiple types
-//
-// Label Filter Syntax:
-//   - "+Label" - Only include nodes with Label
-//   - "-Label" - Exclude nodes with Label
-//   - "/Label" - Terminate traversal at nodes with Label (end nodes)
-func (e *StorageExecutor) callApocPathSubgraphNodes(cypher string) (*ExecuteResult, error) {
-	result := &ExecuteResult{
-		Columns: []string{"node"},
-		Rows:    [][]interface{}{},
-	}
+// apocRelationshipStep is one relationshipFilter entry: a type ("" for any)
+// and the direction it is followed in.
+type apocRelationshipStep struct {
+	relType   string
+	direction string // "out", "in" or "both"
+}
 
-	// Parse configuration and start node
-	config := e.parseApocPathConfig(cypher)
-	startNodeID := e.extractStartNodeID(cypher)
+// apocLabelFilter is one labelFilter: the labels of each role.
+type apocLabelFilter struct {
+	allow, deny, terminate, end map[string]bool
+}
 
-	// Get starting node(s)
-	var startNodes []*storage.Node
-	if startNodeID == "*" {
-		// Special case: traverse from all nodes (when no specific start node)
-		allNodes, err := e.storage.AllNodes()
-		if err != nil {
-			return nil, err
+// endsPaths reports whether the filter names termination or end labels, so
+// that only paths ending at such a node are returned.
+func (f apocLabelFilter) endsPaths() bool {
+	return f.terminate != nil || f.end != nil
+}
+
+// apocSequence is a sequence config: label filters and relationship filters
+// in the order they repeat (see the comment above).
+type apocSequence struct {
+	labels        []apocLabelFilter
+	relationships [][]apocRelationshipStep
+	beginAtStart  bool
+}
+
+// apocExpansion is one apoc.path.* request.
+type apocExpansion struct {
+	starts          []*storage.Node
+	minLevel        int
+	maxLevel        int // -1: no maximum; below -1: no path
+	relationships   []apocRelationshipStep
+	labels          apocLabelFilter
+	sequence        *apocSequence
+	allowNodes      map[storage.NodeID]bool
+	denyNodes       map[storage.NodeID]bool
+	terminatorNodes map[storage.NodeID]bool
+	endNodes        map[storage.NodeID]bool
+	endsOnly        bool // only paths ending at a termination or end node
+	uniqueness      string
+	bfs             bool
+	filterStartNode bool
+	limit           int // -1: no limit
+	optional        bool
+}
+
+func newApocExpansion(uniqueness string) *apocExpansion {
+	return &apocExpansion{minLevel: 0, maxLevel: -1, uniqueness: uniqueness, bfs: true, limit: -1}
+}
+
+// apocNodes reads an apoc.path node argument (the start, or a config node
+// list): a node, an element id, or a list of them; null is none. An id that
+// matches no node fails, as in APOC.
+func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*storage.Node, error) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, nil
+	case []interface{}:
+		var nodes []*storage.Node
+		for _, item := range typed {
+			more, err := e.apocNodes(argument, item)
+			if err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, more...)
 		}
-		startNodes = allNodes
-	} else if startNodeID != "" {
-		if node, err := e.storage.GetNode(storage.NodeID(startNodeID)); err == nil && node != nil {
-			startNodes = append(startNodes, node)
+		return nodes, nil
+	case *storage.Node:
+		if typed == nil {
+			return nil, nil
+		}
+		return []*storage.Node{typed}, nil
+	case string:
+		node, err := e.storage.GetNode(storage.NodeID(normalizeNodeIDValue(typed).(string)))
+		if err != nil || node == nil {
+			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
+		}
+		return []*storage.Node{node}, nil
+	}
+	return nil, localizedError(localization.CypherCoreApocPathNodeArgument(argument, neo4jProvidedValue(value)), nil)
+}
+
+// apocInteger reads an apoc.path integer setting as APOC does: a number,
+// truncated, or a string holding one; anything else, null included, fails.
+func apocInteger(key string, value interface{}) (int, error) {
+	if integer, ok := coerceInt64(value); ok {
+		return int(integer), nil
+	}
+	switch typed := value.(type) {
+	case float64:
+		return int(typed), nil
+	case string:
+		if number, err := strconv.ParseFloat(typed, 64); err == nil {
+			return int(number), nil
+		}
+	}
+	return 0, localizedError(localization.CypherCoreApocPathConfigNumber(key, neo4jProvidedValue(value)), nil)
+}
+
+// apocString reads an apoc.path string setting; a value of another type
+// fails, as in APOC.
+func apocString(key string, value interface{}) (string, error) {
+	text, ok := value.(string)
+	if !ok {
+		return "", localizedError(localization.CypherCoreApocPathConfigString(key, neo4jProvidedValue(value)), nil)
+	}
+	return text, nil
+}
+
+// apocBoolean reads an apoc.path boolean setting as APOC does: null, false,
+// 0 and the strings "", "false", "no" and "0" are false, anything else true.
+func apocBoolean(value interface{}) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(typed) {
+		case "", "false", "no", "0":
+			return false
+		}
+		return true
+	}
+	if number, ok := coerceInt64(value); ok {
+		return number != 0
+	}
+	if number, ok := value.(float64); ok {
+		return int64(number) != 0
+	}
+	return true
+}
+
+// configure applies an apoc.path config map. As in APOC, null is false for
+// a boolean setting, fails for minLevel, maxLevel and limit, and leaves any
+// other setting at its default; uniqueness is read only when readUniqueness
+// (expandConfig), and a limit below -1 fails.
+func (x *apocExpansion) configure(e *StorageExecutor, config map[string]interface{}, readUniqueness bool) error {
+	sequence, beginAtStart := "", true
+	for key, value := range config {
+		switch key {
+		case "minLevel", "maxLevel", "limit":
+			number, err := apocInteger(key, value)
+			if err != nil {
+				return err
+			}
+			switch key {
+			case "minLevel":
+				x.minLevel = max(number, 0)
+			case "maxLevel":
+				x.maxLevel = number
+			default:
+				if number < -1 {
+					return localizedError(localization.CypherCoreApocPathLimit(number), nil)
+				}
+				x.limit = number
+			}
+			continue
+		case "beginSequenceAtStart":
+			beginAtStart = apocBoolean(value)
+			continue
+		case "bfs":
+			x.bfs = apocBoolean(value)
+			continue
+		case "filterStartNode":
+			x.filterStartNode = apocBoolean(value)
+			continue
+		case "optional":
+			x.optional = apocBoolean(value)
+			continue
+		}
+		if value == nil || (key == "uniqueness" && !readUniqueness) {
+			continue
+		}
+		switch key {
+		case "relationshipFilter", "labelFilter", "sequence", "uniqueness":
+			text, err := apocString(key, value)
+			if err != nil {
+				return err
+			}
+			switch key {
+			case "relationshipFilter":
+				x.relationships = parseApocRelationshipFilter(text)
+			case "labelFilter":
+				labels, err := parseApocLabelFilter(text)
+				if err != nil {
+					return err
+				}
+				x.labels = labels
+			case "sequence":
+				sequence = text
+			default:
+				x.uniqueness = strings.ToUpper(text)
+			}
+		case "endNodes", "terminatorNodes", "allowlistNodes", "whitelistNodes", "denylistNodes", "blacklistNodes":
+			nodes, err := e.apocNodes(key, value)
+			if err != nil {
+				return err
+			}
+			set := make(map[storage.NodeID]bool, len(nodes))
+			for _, node := range nodes {
+				set[node.ID] = true
+			}
+			switch key {
+			case "endNodes":
+				x.endNodes = set
+			case "terminatorNodes":
+				x.terminatorNodes = set
+			case "allowlistNodes", "whitelistNodes":
+				x.allowNodes = set
+			default:
+				x.denyNodes = set
+			}
+		}
+	}
+	x.endsOnly = x.endNodes != nil || x.terminatorNodes != nil
+	if sequence != "" {
+		parsed, err := parseApocSequence(sequence, beginAtStart)
+		if err != nil {
+			return err
+		}
+		x.sequence = parsed
+		for _, labels := range x.sequence.labels {
+			x.endsOnly = x.endsOnly || labels.endsPaths()
 		}
 	} else {
-		// If no start node at all (parameter reference), return empty
-		return result, nil
+		x.endsOnly = x.endsOnly || x.labels.endsPaths()
 	}
-
-	if len(startNodes) == 0 {
-		return result, nil
-	}
-
-	// BFS traversal
-	visited := make(map[string]bool)
-	var resultNodes []*storage.Node
-
-	for _, startNode := range startNodes {
-		nodes := e.bfsTraversal(startNode, config, visited)
-		resultNodes = append(resultNodes, nodes...)
-	}
-
-	// Apply limit if specified
-	if config.limit > 0 && len(resultNodes) > config.limit {
-		resultNodes = resultNodes[:config.limit]
-	}
-
-	// Convert to result rows
-	for _, node := range resultNodes {
-		result.Rows = append(result.Rows, []interface{}{node})
-	}
-
-	return result, nil
+	return nil
 }
 
-// apocPathConfig holds parsed APOC path configuration
-type apocPathConfig struct {
-	maxLevel          int
-	minLevel          int
-	relationshipTypes []string
-	direction         string // "both", "outgoing", "incoming"
-	includeLabels     []string
-	excludeLabels     []string
-	terminateLabels   []string
-	limit             int
-	bfs               bool
-}
-
-// parseApocPathConfig extracts configuration from APOC path calls
-func (e *StorageExecutor) parseApocPathConfig(cypher string) apocPathConfig {
-	config := apocPathConfig{
-		maxLevel:  3,
-		minLevel:  0,
-		direction: "both",
-		bfs:       true,
-		limit:     0, // No limit
-	}
-
-	// Find config object { ... }
-	configStart := strings.Index(cypher, "{")
-	configEnd := strings.LastIndex(cypher, "}")
-	if configStart == -1 || configEnd == -1 || configEnd <= configStart {
-		return config
-	}
-
-	configStr := cypher[configStart+1 : configEnd]
-
-	// Parse maxLevel using pre-compiled pattern from regex_patterns.go
-	if match := apocMaxLevelPattern.FindStringSubmatch(configStr); len(match) > 1 {
-		if level, err := strconv.Atoi(match[1]); err == nil && level > 0 {
-			config.maxLevel = level
-		}
-	}
-
-	// Parse minLevel using pre-compiled pattern
-	if match := apocMinLevelPattern.FindStringSubmatch(configStr); len(match) > 1 {
-		if level, err := strconv.Atoi(match[1]); err == nil {
-			config.minLevel = level
-		}
-	}
-
-	// Parse limit using pre-compiled pattern
-	if match := apocLimitPattern.FindStringSubmatch(configStr); len(match) > 1 {
-		if limit, err := strconv.Atoi(match[1]); err == nil {
-			config.limit = limit
-		}
-	}
-
-	// Parse relationshipFilter using pre-compiled pattern
-	if match := apocRelFilterPattern.FindStringSubmatch(configStr); len(match) > 1 {
-		filterStr := match[1]
-		config.relationshipTypes, config.direction = parseRelationshipFilter(filterStr)
-	}
-
-	// Parse labelFilter using pre-compiled pattern
-	if match := apocLabelFilterPattern.FindStringSubmatch(configStr); len(match) > 1 {
-		filterStr := match[1]
-		config.includeLabels, config.excludeLabels, config.terminateLabels = parseLabelFilter(filterStr)
-	}
-
-	// Parse bfs
-	if strings.Contains(configStr, "bfs: false") || strings.Contains(configStr, "bfs:false") {
-		config.bfs = false
-	}
-
-	return config
-}
-
-// parseRelationshipFilter parses a relationship filter string
-func parseRelationshipFilter(filter string) (types []string, direction string) {
-	direction = "both"
-
-	// Handle direction prefix
-	if strings.HasPrefix(filter, "<") && strings.HasSuffix(filter, ">") {
-		filter = filter[1 : len(filter)-1]
-	} else if strings.HasPrefix(filter, ">") {
-		direction = "outgoing"
-		filter = filter[1:]
-	} else if strings.HasPrefix(filter, "<") {
-		direction = "incoming"
-		filter = filter[1:]
-	} else if strings.HasSuffix(filter, ">") {
-		direction = "outgoing"
-		filter = filter[:len(filter)-1]
-	} else if strings.HasSuffix(filter, "<") {
-		direction = "incoming"
-		filter = filter[:len(filter)-1]
-	}
-
-	// Split by | for multiple types
-	for _, t := range strings.Split(filter, "|") {
-		t = strings.TrimSpace(t)
-		if t != "" && t != ">" && t != "<" {
-			types = append(types, t)
-		}
-	}
-
-	return types, direction
-}
-
-// parseLabelFilter parses a label filter string
-func parseLabelFilter(filter string) (include, exclude, terminate []string) {
-	parts := strings.Split(filter, "|")
-
-	for _, part := range parts {
+// parseApocRelationshipFilter reads "TYPE>|<TYPE|TYPE|>|<". As in APOC,
+// the direction mark may stand on either side of the type (">TYPE" is
+// outgoing, "TYPE<" incoming); with marks on both sides the leading one
+// decides ("<TYPE>" is incoming).
+func parseApocRelationshipFilter(filter string) []apocRelationshipStep {
+	var steps []apocRelationshipStep
+	for _, part := range strings.Split(filter, "|") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-
-		if strings.HasPrefix(part, "+") {
-			include = append(include, part[1:])
-		} else if strings.HasPrefix(part, "-") {
-			exclude = append(exclude, part[1:])
-		} else if strings.HasPrefix(part, "/") {
-			terminate = append(terminate, part[1:])
+		step := apocRelationshipStep{direction: "both"}
+		marks := map[byte]string{'<': "in", '>': "out"}
+		if direction, ok := marks[part[len(part)-1]]; ok {
+			step.direction, part = direction, part[:len(part)-1]
 		}
-	}
-
-	return include, exclude, terminate
-}
-
-// extractStartNodeID extracts the starting node ID from the CALL statement
-func (e *StorageExecutor) extractStartNodeID(cypher string) string {
-	// Look for node variable in MATCH clause
-	// Pattern: MATCH (varName:Label {id: 'value'}) or MATCH (varName) WHERE varName.id = 'value'
-	// Uses pre-compiled patterns from regex_patterns.go
-
-	// Try to find a MATCH pattern with id property
-	if match := apocNodeIdBracePattern.FindStringSubmatch(cypher); len(match) > 1 {
-		return match[1]
-	}
-
-	// Try to find WHERE clause with id
-	if match := apocWhereIdPattern.FindStringSubmatch(cypher); len(match) > 1 {
-		return match[1]
-	}
-
-	// Try to find $nodeId parameter (would need to be substituted)
-	if strings.Contains(cypher, "$nodeId") || strings.Contains(cypher, "$startNode") {
-		return ""
-	}
-
-	// Return special marker for "traverse all" when no specific ID found
-	return "*"
-}
-
-// bfsTraversal performs breadth-first traversal from a start node
-func (e *StorageExecutor) bfsTraversal(startNode *storage.Node, config apocPathConfig, globalVisited map[string]bool) []*storage.Node {
-	var results []*storage.Node
-
-	// Queue: (node, level)
-	type queueItem struct {
-		node  *storage.Node
-		level int
-	}
-	queue := []queueItem{{node: startNode, level: 0}}
-
-	// Track visited for this traversal
-	visited := make(map[string]bool)
-	visited[string(startNode.ID)] = true
-
-	for len(queue) > 0 {
-		item := queue[0]
-		queue = queue[1:]
-
-		node := item.node
-		level := item.level
-
-		// Check if we should include this node
-		if level >= config.minLevel && !globalVisited[string(node.ID)] {
-			// Check label filters
-			if passesLabelFilter(node, config.includeLabels, config.excludeLabels) {
-				results = append(results, node)
-				globalVisited[string(node.ID)] = true
+		if part != "" {
+			if direction, ok := marks[part[0]]; ok {
+				step.direction, part = direction, part[1:]
 			}
 		}
+		step.relType = strings.TrimSpace(part)
+		steps = append(steps, step)
+	}
+	return steps
+}
 
-		// Check if we should terminate at this node
-		if isTerminateNode(node, config.terminateLabels) {
+// parseApocLabelFilter reads "+Allow|-Deny|/Terminate|>End". An operator
+// without a label fails, as in APOC.
+func parseApocLabelFilter(filter string) (apocLabelFilter, error) {
+	var labels apocLabelFilter
+	add := func(set *map[string]bool, label string) {
+		if *set == nil {
+			*set = make(map[string]bool)
+		}
+		(*set)[label] = true
+	}
+	for _, part := range strings.Split(filter, "|") {
+		part = strings.TrimSpace(part)
+		if part == "" {
 			continue
 		}
+		if len(part) == 1 && strings.ContainsRune("+-/>", rune(part[0])) {
+			return apocLabelFilter{}, localizedError(localization.CypherCoreApocPathLabelFilterEmpty(part), nil)
+		}
+		switch part[0] {
+		case '-':
+			add(&labels.deny, part[1:])
+		case '/':
+			add(&labels.terminate, part[1:])
+		case '>':
+			add(&labels.end, part[1:])
+		case '+':
+			add(&labels.allow, part[1:])
+		default:
+			add(&labels.allow, part)
+		}
+	}
+	return labels, nil
+}
 
-		// Check if we've reached max level
-		if level >= config.maxLevel {
+// parseApocSequence reads a sequence config: comma-separated filters that
+// alternate between labels and relationships, starting with labels when
+// beginAtStart. As APOC splits it, trailing empty entries are dropped
+// ("A,R>," is one label filter and one relationship filter).
+func parseApocSequence(sequence string, beginAtStart bool) (*apocSequence, error) {
+	parsed := &apocSequence{beginAtStart: beginAtStart}
+	parts := strings.Split(sequence, ",")
+	for len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	for index, part := range parts {
+		if (index%2 == 0) != beginAtStart {
+			parsed.relationships = append(parsed.relationships, parseApocRelationshipFilter(part))
 			continue
 		}
-
-		// Get edges based on direction
-		var edges []*storage.Edge
-		switch config.direction {
-		case "outgoing":
-			edges, _ = e.storage.GetOutgoingEdges(node.ID)
-		case "incoming":
-			edges, _ = e.storage.GetIncomingEdges(node.ID)
-		default: // "both"
-			out, _ := e.storage.GetOutgoingEdges(node.ID)
-			in, _ := e.storage.GetIncomingEdges(node.ID)
-			edges = append(out, in...)
+		labels, err := parseApocLabelFilter(part)
+		if err != nil {
+			return nil, err
 		}
+		parsed.labels = append(parsed.labels, labels)
+	}
+	return parsed, nil
+}
 
-		// Process each edge
-		for _, edge := range edges {
-			// Check relationship type filter
-			if len(config.relationshipTypes) > 0 {
-				found := false
-				for _, t := range config.relationshipTypes {
-					if edge.Type == t {
-						found = true
-						break
-					}
-				}
-				if !found {
-					continue
-				}
+// labelsAt returns the label filter for a node at depth, or an error when
+// the sequence has none for it (one with only relationship filters).
+func (x *apocExpansion) labelsAt(depth int) (apocLabelFilter, error) {
+	if x.sequence == nil {
+		return x.labels, nil
+	}
+	labels := x.sequence.labels
+	if !x.sequence.beginAtStart {
+		if depth == 0 {
+			return apocLabelFilter{}, nil
+		}
+		depth--
+	}
+	if len(labels) == 0 {
+		return apocLabelFilter{}, localizedError(localization.CypherCoreApocPathSequenceLabel(depth+1), nil)
+	}
+	return labels[depth%len(labels)], nil
+}
+
+// relationshipsAt returns the relationship filter for step (1 for the
+// start node's relationships), or an error when the sequence has none for it.
+func (x *apocExpansion) relationshipsAt(step int) ([]apocRelationshipStep, error) {
+	if x.sequence == nil {
+		return x.relationships, nil
+	}
+	relationships := x.sequence.relationships
+	if !x.sequence.beginAtStart {
+		if step == 1 && len(relationships) > 0 {
+			return relationships[0], nil
+		}
+		relationships, step = relationships[min(1, len(relationships)):], step-1
+	}
+	if len(relationships) == 0 {
+		return nil, localizedError(localization.CypherCoreApocPathSequenceRelationship(step), nil)
+	}
+	return relationships[(step-1)%len(relationships)], nil
+}
+
+func nodeHasLabelIn(node *storage.Node, labels map[string]bool) bool {
+	for _, label := range node.Labels {
+		if labels[label] {
+			return true
+		}
+	}
+	return false
+}
+
+// verdict is how the filters treat a node reached at depth: whether a path
+// ending there is returned, and whether expansion continues past it.
+func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand bool, err error) {
+	if x.maxLevel < -1 {
+		return false, false, nil
+	}
+	include, expand = depth >= x.minLevel, x.maxLevel < 0 || depth < x.maxLevel
+	if depth == 0 && !x.filterStartNode {
+		return include && !x.endsOnly, expand, nil
+	}
+	labels, err := x.labelsAt(depth)
+	if err != nil {
+		return false, false, err
+	}
+	if x.denyNodes[node.ID] || nodeHasLabelIn(node, labels.deny) {
+		return false, false, nil
+	}
+	if x.terminatorNodes[node.ID] || nodeHasLabelIn(node, labels.terminate) {
+		if depth < x.minLevel {
+			return false, expand, nil
+		}
+		return include, false, nil
+	}
+	if x.endNodes[node.ID] || nodeHasLabelIn(node, labels.end) {
+		return include, expand, nil
+	}
+	if (labels.allow != nil && !nodeHasLabelIn(node, labels.allow)) || (x.allowNodes != nil && !x.allowNodes[node.ID]) {
+		return false, false, nil
+	}
+	return include && !x.endsOnly, expand, nil
+}
+
+// apocSteps lists the relationships the filter steps follow from node.
+func (e *StorageExecutor) apocSteps(node *storage.Node, steps []apocRelationshipStep) []*storage.Edge {
+	if len(steps) == 0 {
+		steps = []apocRelationshipStep{{direction: "both"}}
+	}
+	out, _ := e.storage.GetOutgoingEdges(node.ID)
+	in, _ := e.storage.GetIncomingEdges(node.ID)
+	var edges []*storage.Edge
+	seen := make(map[storage.EdgeID]bool)
+	take := func(edge *storage.Edge, step apocRelationshipStep) {
+		if step.follows(edge, node.ID) && !seen[edge.ID] {
+			seen[edge.ID] = true
+			edges = append(edges, edge)
+		}
+	}
+	for _, step := range steps {
+		if step.direction != "in" {
+			for _, edge := range out {
+				take(edge, step)
 			}
+		}
+		if step.direction != "out" {
+			for _, edge := range in {
+				take(edge, step)
+			}
+		}
+	}
+	return edges
+}
 
-			// Get the other node
-			var nextNodeID storage.NodeID
-			if edge.StartNode == node.ID {
-				nextNodeID = edge.EndNode
+// follows reports whether this filter entry follows edge from the node
+// from: its type matches (any, for "") and, for a direction, from is the
+// edge's start (out) or end (in).
+func (step apocRelationshipStep) follows(edge *storage.Edge, from storage.NodeID) bool {
+	if step.relType != "" && edge.Type != step.relType {
+		return false
+	}
+	switch step.direction {
+	case "out":
+		return edge.StartNode == from
+	case "in":
+		return edge.EndNode == from
+	}
+	return true
+}
+
+// apocStep is the end of a path the expander walks: its last node and the
+// relationship it arrived by, linked to the path one step shorter. The
+// frontier shares each path's prefix; only a returned path is copied out
+// (path).
+type apocStep struct {
+	node   *storage.Node
+	edge   *storage.Edge // nil at the start node
+	parent *apocStep
+	depth  int
+}
+
+// path copies the steps out as a PathResult, start node first.
+func (step *apocStep) path() PathResult {
+	path := PathResult{Nodes: make([]*storage.Node, step.depth+1), Relationships: make([]*storage.Edge, step.depth), Length: step.depth}
+	for at := step; at != nil; at = at.parent {
+		path.Nodes[at.depth] = at.node
+		if at.edge != nil {
+			path.Relationships[at.depth-1] = at.edge
+		}
+	}
+	return path
+}
+
+// runApocExpansion expands every start node and returns the ends of the
+// paths the filters include, in BFS or DFS order, at most limit of them.
+func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion) ([]*apocStep, error) {
+	var results []*apocStep
+	if x.limit == 0 {
+		return results, nil
+	}
+	globalNodes := make(map[storage.NodeID]bool)
+	globalRelationships := make(map[storage.EdgeID]bool)
+	for _, start := range x.starts {
+		// Every start node starts its own path, even one already reached.
+		frontier := []*apocStep{{node: start}}
+		globalNodes[start.ID] = true
+		for len(frontier) > 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			var step *apocStep
+			if x.bfs {
+				step, frontier = frontier[0], frontier[1:]
 			} else {
-				nextNodeID = edge.StartNode
+				step, frontier = frontier[len(frontier)-1], frontier[:len(frontier)-1]
 			}
-
-			// Skip if already visited
-			if visited[string(nextNodeID)] {
+			include, expand, err := x.verdict(step.node, step.depth)
+			if err != nil {
+				return nil, err
+			}
+			if include {
+				results = append(results, step)
+				if x.limit >= 0 && len(results) >= x.limit {
+					return results, nil
+				}
+			}
+			if !expand {
 				continue
 			}
-			visited[string(nextNodeID)] = true
-
-			// Get the node and add to queue
-			nextNode, err := e.storage.GetNode(nextNodeID)
-			if err == nil && nextNode != nil {
-				queue = append(queue, queueItem{node: nextNode, level: level + 1})
+			filter, err := x.relationshipsAt(step.depth + 1)
+			if err != nil {
+				return nil, err
+			}
+			edges := e.apocSteps(step.node, filter)
+			next := make([]*apocStep, 0, len(edges))
+			for _, edge := range edges {
+				// A path never turns straight back along the relationship
+				// it arrived by, whatever the uniqueness, as in Neo4j.
+				if step.edge != nil && step.edge.ID == edge.ID {
+					continue
+				}
+				otherID := edge.EndNode
+				if otherID == step.node.ID {
+					otherID = edge.StartNode
+				}
+				if !apocUnique(x.uniqueness, step, edge, otherID, globalNodes, globalRelationships) {
+					continue
+				}
+				other, err := e.storage.GetNode(otherID)
+				if err != nil || other == nil {
+					continue
+				}
+				switch x.uniqueness {
+				case "NODE_GLOBAL":
+					globalNodes[otherID] = true
+				case "RELATIONSHIP_GLOBAL":
+					globalRelationships[edge.ID] = true
+				}
+				next = append(next, &apocStep{node: other, edge: edge, parent: step, depth: step.depth + 1})
+			}
+			if x.bfs {
+				frontier = append(frontier, next...)
+			} else {
+				for index := len(next) - 1; index >= 0; index-- {
+					frontier = append(frontier, next[index])
+				}
 			}
 		}
 	}
-
-	return results
+	return results, nil
 }
 
-// passesLabelFilter checks if a node passes the label filter
-func passesLabelFilter(node *storage.Node, include, exclude []string) bool {
-	// Check exclude labels first
-	for _, excLabel := range exclude {
-		for _, nodeLabel := range node.Labels {
-			if nodeLabel == excLabel {
+// apocUnique applies the uniqueness rule to following edge from the path
+// ending at step to otherID.
+func apocUnique(uniqueness string, step *apocStep, edge *storage.Edge, otherID storage.NodeID, globalNodes map[storage.NodeID]bool, globalRelationships map[storage.EdgeID]bool) bool {
+	switch uniqueness {
+	case "NODE_GLOBAL":
+		return !globalNodes[otherID]
+	case "RELATIONSHIP_GLOBAL":
+		return !globalRelationships[edge.ID]
+	case "NODE_PATH":
+		for at := step; at != nil; at = at.parent {
+			if at.node.ID == otherID {
 				return false
 			}
 		}
-	}
-
-	// If no include labels specified, pass
-	if len(include) == 0 {
+		return true
+	case "NONE":
+		return true
+	default: // RELATIONSHIP_PATH
+		for at := step; at.edge != nil; at = at.parent {
+			if at.edge.ID == edge.ID {
+				return false
+			}
+		}
 		return true
 	}
-
-	// Check include labels
-	for _, incLabel := range include {
-		for _, nodeLabel := range node.Labels {
-			if nodeLabel == incLabel {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
-// isTerminateNode checks if traversal should terminate at this node
-func isTerminateNode(node *storage.Node, terminateLabels []string) bool {
-	for _, termLabel := range terminateLabels {
-		for _, nodeLabel := range node.Labels {
-			if nodeLabel == termLabel {
-				return true
-			}
-		}
-	}
-	return false
+// apocPathProcedure describes how an apoc.path procedure reads its config.
+type apocPathProcedure struct {
+	name string
+	// uniqueness is the procedure's uniqueness rule; configurable lets the
+	// config's uniqueness replace it (expandConfig).
+	uniqueness   string
+	configurable bool
+	// oneVisitPerNode procedures (subgraphNodes, subgraphAll, spanningTree)
+	// accept a minLevel of 0 or 1 only.
+	oneVisitPerNode bool
 }
 
-// callApocPathExpand implements apoc.path.expand
-// Syntax: CALL apoc.path.expand(startNode, relationshipFilter, labelFilter, minLevel, maxLevel)
-//
-// Returns paths (sequences of nodes and relationships) from the start node.
-// Unlike subgraphNodes which returns just nodes, expand returns complete paths.
-func (e *StorageExecutor) callApocPathExpand(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	result := &ExecuteResult{
-		Columns: []string{"path"},
-		Rows:    [][]interface{}{},
+var (
+	apocPathExpandProcedure        = apocPathProcedure{name: "expand", uniqueness: "RELATIONSHIP_PATH"}
+	apocPathExpandConfigProcedure  = apocPathProcedure{name: "expandConfig", uniqueness: "RELATIONSHIP_PATH", configurable: true}
+	apocPathSubgraphNodesProcedure = apocPathProcedure{name: "subgraphNodes", uniqueness: "NODE_GLOBAL", oneVisitPerNode: true}
+	apocPathSubgraphAllProcedure   = apocPathProcedure{name: "subgraphAll", uniqueness: "NODE_GLOBAL", oneVisitPerNode: true}
+	apocPathSpanningTreeProcedure  = apocPathProcedure{name: "spanningTree", uniqueness: "NODE_GLOBAL", oneVisitPerNode: true}
+)
+
+// apocExpansionFromArguments builds the expansion of a (start, config)
+// procedure call from its evaluated arguments.
+func (e *StorageExecutor) apocExpansionFromArguments(args []interface{}, procedure apocPathProcedure) (*apocExpansion, error) {
+	x := newApocExpansion(procedure.uniqueness)
+	if len(args) > 0 {
+		starts, err := e.apocNodes("the start node", args[0])
+		if err != nil {
+			return nil, err
+		}
+		x.starts = starts
 	}
-
-	// Parse parameters: (startNode, relationshipFilter, labelFilter, minLevel, maxLevel)
-	params := e.parseApocPathExpandParams(ctx, cypher)
-	if params.startNode == nil {
-		// No start node found, return empty result
-		return result, nil
+	if len(args) > 1 && args[1] != nil {
+		config, ok := args[1].(map[string]interface{})
+		if !ok {
+			return nil, localizedError(localization.CypherCoreApocPathConfigNotMap(neo4jProvidedValue(args[1])), nil)
+		}
+		// These take an integer minLevel of 0 or 1 only: 1.0 and '1' fail.
+		if value, given := config["minLevel"]; given && procedure.oneVisitPerNode {
+			if level, ok := coerceInt64(value); !ok || (level != 0 && level != 1) {
+				return nil, localizedError(localization.CypherCoreApocPathMinLevel(procedure.name), nil)
+			}
+		}
+		if err := x.configure(e, config, procedure.configurable); err != nil {
+			return nil, err
+		}
 	}
+	return x, nil
+}
 
-	// Build config from parameters
-	config := apocPathConfig{
-		maxLevel:          params.maxLevel,
-		minLevel:          params.minLevel,
-		relationshipTypes: params.relationshipTypes,
-		direction:         params.direction,
-		includeLabels:     params.includeLabels,
-		excludeLabels:     params.excludeLabels,
-		terminateLabels:   params.terminateLabels,
-		limit:             0, // No limit for expand
-		bfs:               true,
+func (e *StorageExecutor) apocPathRows(ctx context.Context, x *apocExpansion, row func(*apocStep) []interface{}, columns ...string) (*ExecuteResult, error) {
+	ends, err := e.runApocExpansion(ctx, x)
+	if err != nil {
+		return nil, err
 	}
-
-	// Perform BFS traversal with path tracking
-	paths := e.bfsPathTraversal(params.startNode, config)
-
-	// Convert paths to result format
-	for _, path := range paths {
-		result.Rows = append(result.Rows, []interface{}{e.pathToMap(path)})
+	result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(ends))}
+	for _, end := range ends {
+		result.Rows = append(result.Rows, row(end))
 	}
-
+	if len(result.Rows) == 0 && x.optional {
+		nulls := make([]interface{}, len(columns))
+		result.Rows = append(result.Rows, nulls)
+	}
 	return result, nil
 }
 
-// apocPathExpandParams holds parsed parameters for apoc.path.expand
-type apocPathExpandParams struct {
-	startNode         *storage.Node
-	relationshipTypes []string
-	direction         string
-	includeLabels     []string
-	excludeLabels     []string
-	terminateLabels   []string
-	minLevel          int
-	maxLevel          int
+// callApocPathExpandConfig implements apoc.path.expandConfig(start, config)
+// :: (path).
+func (e *StorageExecutor) callApocPathExpandConfig(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	x, err := e.apocExpansionFromArguments(args, apocPathExpandConfigProcedure)
+	if err != nil {
+		return nil, err
+	}
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(end.path())} }, "path")
 }
 
-// parseApocPathExpandParams parses positional parameters from apoc.path.expand call
-// Syntax: CALL apoc.path.expand(startNode, relationshipFilter, labelFilter, minLevel, maxLevel)
-func (e *StorageExecutor) parseApocPathExpandParams(ctx context.Context, cypher string) apocPathExpandParams {
-	params := apocPathExpandParams{
-		minLevel:  1,
-		maxLevel:  1,
-		direction: "both",
-	}
-
-	// Find the procedure call and extract parameters
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "APOC.PATH.EXPAND")
-	if callIdx == -1 {
-		return params
-	}
-
-	// Find opening parenthesis
-	rest := cypher[callIdx:]
-	parenIdx := strings.Index(rest, "(")
-	if parenIdx == -1 {
-		return params
-	}
-
-	// Find matching closing parenthesis
-	parenContent := rest[parenIdx+1:]
-	depth := 1
-	endIdx := -1
-	for i, c := range parenContent {
-		if c == '(' {
-			depth++
-		} else if c == ')' {
-			depth--
-			if depth == 0 {
-				endIdx = i
-				break
-			}
+// callApocPathExpand implements apoc.path.expand(start, relationshipFilter,
+// labelFilter, minLevel, maxLevel) :: (path).
+func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	// Null filters are none; null levels fail, as in APOC.
+	config := map[string]interface{}{}
+	for index, key := range []string{"", "relationshipFilter", "labelFilter", "minLevel", "maxLevel"} {
+		if index > 0 && index < len(args) && (args[index] != nil || index > 2) {
+			config[key] = args[index]
 		}
 	}
-	if endIdx == -1 {
-		return params
+	start := []interface{}{nil, config}
+	if len(args) > 0 {
+		start[0] = args[0]
 	}
-
-	// Split parameters carefully (respecting quotes and nested structures)
-	paramStr := parenContent[:endIdx]
-	parts := splitParamsCarefully(paramStr)
-
-	// Parse startNode (first parameter)
-	if len(parts) > 0 {
-		firstParam := strings.TrimSpace(parts[0])
-		// Try to extract node ID from MATCH clause first
-		startNodeID := e.extractStartNodeID(cypher)
-		if startNodeID != "" && startNodeID != "*" {
-			if node, err := e.storage.GetNode(storage.NodeID(startNodeID)); err == nil && node != nil {
-				params.startNode = node
-			}
-		} else if firstParam != "" && firstParam != "null" {
-			// If no ID found, try to find node by variable name from MATCH clause
-			// Look for pattern: MATCH (varName:Label {id: 'value'})
-			varName := strings.Trim(firstParam, "'\"")
-			if node := e.findNodeByVariableInMatch(ctx, cypher, varName); node != nil {
-				params.startNode = node
-			}
-		}
+	x, err := e.apocExpansionFromArguments(start, apocPathExpandProcedure)
+	if err != nil {
+		return nil, err
 	}
-
-	// Parse relationshipFilter (second parameter)
-	if len(parts) > 1 {
-		relFilter := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
-		if relFilter != "" && relFilter != "null" {
-			params.relationshipTypes, params.direction = parseRelationshipFilter(relFilter)
-		}
-	}
-
-	// Parse labelFilter (third parameter)
-	if len(parts) > 2 {
-		labelFilter := strings.Trim(strings.TrimSpace(parts[2]), "'\"")
-		if labelFilter != "" && labelFilter != "null" {
-			params.includeLabels, params.excludeLabels, params.terminateLabels = parseLabelFilter(labelFilter)
-		}
-	}
-
-	// Parse minLevel (fourth parameter)
-	if len(parts) > 3 {
-		minLevelStr := strings.TrimSpace(parts[3])
-		if minLevel, err := strconv.Atoi(minLevelStr); err == nil {
-			params.minLevel = minLevel
-		}
-	}
-
-	// Parse maxLevel (fifth parameter)
-	if len(parts) > 4 {
-		maxLevelStr := strings.TrimSpace(parts[4])
-		if maxLevel, err := strconv.Atoi(maxLevelStr); err == nil {
-			params.maxLevel = maxLevel
-		}
-	}
-
-	return params
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(end.path())} }, "path")
 }
 
-// findNodeByVariableInMatch finds a node by variable name from a MATCH clause
-func (e *StorageExecutor) findNodeByVariableInMatch(ctx context.Context, cypher, varName string) *storage.Node {
-	// Look for MATCH clause with this variable
-	// Pattern: MATCH (varName:Label {id: 'value'}) or MATCH (varName:Label {prop: 'value'})
-	// The first MATCH node pattern that starts with varName.
-	nodePattern := ""
-	for _, match := range matchNodePatternPattern.FindAllStringSubmatch(cypher, -1) {
-		if len(match[1]) >= len(varName) && strings.EqualFold(match[1][:len(varName)], varName) {
-			nodePattern = match[0]
-			break
-		}
+// callApocPathSubgraphNodes implements apoc.path.subgraphNodes(start,
+// config) :: (node).
+func (e *StorageExecutor) callApocPathSubgraphNodes(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphNodesProcedure)
+	if err != nil {
+		return nil, err
 	}
-	if nodePattern == "" {
-		return nil
-	}
-
-	// Try to extract ID from {id: 'value'} pattern
-	if idMatch := apocNodeIdBracePattern.FindStringSubmatch(nodePattern); len(idMatch) > 1 {
-		if node, err := e.storage.GetNode(storage.NodeID(idMatch[1])); err == nil && node != nil {
-			return node
-		}
-	}
-
-	// Try to find node by parsing the pattern
-	nodeInfo := e.parseNodePattern(ctx, nodePattern)
-	if len(nodeInfo.labels) > 0 {
-		candidates, _ := e.storage.GetNodesByLabel(nodeInfo.labels[0])
-		for _, node := range candidates {
-			if e.nodeMatchesProps(node, nodeInfo.properties) {
-				return node
-			}
-		}
-	}
-
-	return nil
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{end.node} }, "node")
 }
 
-// bfsPathTraversal performs breadth-first traversal with path tracking
-func (e *StorageExecutor) bfsPathTraversal(startNode *storage.Node, config apocPathConfig) []PathResult {
-	var results []PathResult
-
-	// Queue item tracks the path taken to reach this node
-	type pathQueueItem struct {
-		path  PathResult
-		level int
+// callApocPathSpanningTree implements apoc.path.spanningTree(start, config)
+// :: (path): a path from the start to every node reached once.
+func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	x, err := e.apocExpansionFromArguments(args, apocPathSpanningTreeProcedure)
+	if err != nil {
+		return nil, err
 	}
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(end.path())} }, "path")
+}
 
-	// Start with path containing just the start node
-	initialPath := PathResult{
-		Nodes:         []*storage.Node{startNode},
-		Relationships: []*storage.Edge{},
-		Length:        0,
+// callApocPathSubgraphAll implements apoc.path.subgraphAll(start, config) ::
+// (nodes, relationships): the nodes subgraphNodes returns and every
+// relationship between two of them.
+func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphAllProcedure)
+	if err != nil {
+		return nil, err
 	}
-	queue := []pathQueueItem{{path: initialPath, level: 0}}
-
-	// Track visited nodes to avoid cycles
-	visited := make(map[string]bool)
-	visited[string(startNode.ID)] = true
-
-	for len(queue) > 0 {
-		item := queue[0]
-		queue = queue[1:]
-
-		currentPath := item.path
-		level := item.level
-		currentNode := currentPath.Nodes[len(currentPath.Nodes)-1]
-
-		// Check if we should include this path
-		if level >= config.minLevel && level <= config.maxLevel {
-			// Check label filters on the end node
-			if passesLabelFilter(currentNode, config.includeLabels, config.excludeLabels) {
-				// Create a copy of the path for results
-				pathCopy := PathResult{
-					Nodes:         make([]*storage.Node, len(currentPath.Nodes)),
-					Relationships: make([]*storage.Edge, len(currentPath.Relationships)),
-					Length:        currentPath.Length,
-				}
-				copy(pathCopy.Nodes, currentPath.Nodes)
-				copy(pathCopy.Relationships, currentPath.Relationships)
-				results = append(results, pathCopy)
-			}
+	ends, err := e.runApocExpansion(ctx, x)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]interface{}, 0, len(ends))
+	members := make(map[storage.NodeID]bool, len(ends))
+	for _, end := range ends {
+		node := end.node
+		if !members[node.ID] {
+			members[node.ID] = true
+			nodes = append(nodes, node)
 		}
-
-		// Check if we should terminate at this node
-		if isTerminateNode(currentNode, config.terminateLabels) {
-			continue
-		}
-
-		// Check if we've reached max level
-		if level >= config.maxLevel {
-			continue
-		}
-
-		// Get edges based on direction
-		var edges []*storage.Edge
-		switch config.direction {
-		case "outgoing":
-			edges, _ = e.storage.GetOutgoingEdges(currentNode.ID)
-		case "incoming":
-			edges, _ = e.storage.GetIncomingEdges(currentNode.ID)
-		default: // "both"
-			out, _ := e.storage.GetOutgoingEdges(currentNode.ID)
-			in, _ := e.storage.GetIncomingEdges(currentNode.ID)
-			edges = append(out, in...)
-		}
-
-		// Process each edge
+	}
+	relationships := make([]interface{}, 0)
+	for _, value := range nodes {
+		edges, _ := e.storage.GetOutgoingEdges(value.(*storage.Node).ID)
 		for _, edge := range edges {
-			// Check relationship type filter
-			if len(config.relationshipTypes) > 0 {
-				found := false
-				for _, t := range config.relationshipTypes {
-					if edge.Type == t {
-						found = true
-						break
-					}
-				}
-				if !found {
-					continue
-				}
+			if members[edge.EndNode] {
+				relationships = append(relationships, edge)
 			}
-
-			// Get the other node
-			var nextNodeID storage.NodeID
-			if edge.StartNode == currentNode.ID {
-				nextNodeID = edge.EndNode
-			} else {
-				nextNodeID = edge.StartNode
-			}
-
-			// Skip if already visited in this path (avoid cycles)
-			// But allow revisiting nodes if they're reached via different paths
-			nextNode, err := e.storage.GetNode(nextNodeID)
-			if err != nil || nextNode == nil {
-				continue
-			}
-
-			// Create new path by extending current path
-			newPath := PathResult{
-				Nodes:         make([]*storage.Node, len(currentPath.Nodes)+1),
-				Relationships: make([]*storage.Edge, len(currentPath.Relationships)+1),
-				Length:        currentPath.Length + 1,
-			}
-			copy(newPath.Nodes, currentPath.Nodes)
-			copy(newPath.Relationships, currentPath.Relationships)
-			newPath.Nodes[len(newPath.Nodes)-1] = nextNode
-			newPath.Relationships[len(newPath.Relationships)-1] = edge
-
-			// Add to queue
-			queue = append(queue, pathQueueItem{path: newPath, level: level + 1})
 		}
 	}
-
-	return results
+	// One row, with empty lists when nothing is reached, optional or not,
+	// as in APOC.
+	return &ExecuteResult{Columns: []string{"nodes", "relationships"}, Rows: [][]interface{}{{nodes, relationships}}}, nil
 }
-
-// callApocPathSpanningTree implements apoc.path.spanningTree
-// Syntax: CALL apoc.path.spanningTree(startNode, {maxLevel: n, relationshipFilter: 'TYPE', ...})
-//
-// Returns a spanning tree from the start node - a minimal tree that connects all reachable
-// nodes without creating cycles. The tree is represented as a list of relationships.
-//
-// Config Parameters:
-//   - maxLevel: Maximum traversal depth (default: -1 for unlimited)
-//   - minLevel: Minimum traversal depth before returning results (default: 0)
-//   - relationshipFilter: Filter by relationship types (e.g., "RELATES_TO|CONTAINS")
-//   - labelFilter: Filter by node labels (e.g., "+Memory|-Archive")
-//   - limit: Maximum number of relationships to return
-//   - bfs: Use breadth-first search (default: true, DFS if false)
-//
-// Returns: List of relationships that form the spanning tree
-func (e *StorageExecutor) callApocPathSpanningTree(cypher string) (*ExecuteResult, error) {
-	result := &ExecuteResult{
-		Columns: []string{"path"},
-		Rows:    [][]interface{}{},
-	}
-
-	// Parse configuration and start node
-	config := e.parseApocPathConfig(cypher)
-	if config.maxLevel == 3 { // Default from parseApocPathConfig
-		config.maxLevel = -1 // For spanning tree, default to unlimited
-	}
-	startNodeID := e.extractStartNodeID(cypher)
-
-	// Get starting node
-	if startNodeID == "" || startNodeID == "*" {
-		// Spanning tree requires a specific start node
-		return result, fmt.Errorf("apoc.path.spanningTree requires a specific start node")
-	}
-
-	startNode, err := e.storage.GetNode(storage.NodeID(startNodeID))
-	if err != nil || startNode == nil {
-		return result, nil
-	}
-
-	// Build spanning tree using BFS or DFS
-	var treeEdges []*storage.Edge
-	if config.bfs {
-		treeEdges = e.bfsSpanningTree(startNode, config)
-	} else {
-		treeEdges = e.dfsSpanningTree(startNode, config)
-	}
-
-	// Apply limit if specified
-	if config.limit > 0 && len(treeEdges) > config.limit {
-		treeEdges = treeEdges[:config.limit]
-	}
-
-	// Convert edges to path format
-	// Each path contains the edge and its connected nodes
-	for _, edge := range treeEdges {
-		// Get the nodes
-		startNodeObj, _ := e.storage.GetNode(edge.StartNode)
-		endNodeObj, _ := e.storage.GetNode(edge.EndNode)
-
-		if startNodeObj != nil && endNodeObj != nil {
-			path := map[string]interface{}{
-				"nodes": []interface{}{
-					startNodeObj,
-					endNodeObj,
-				},
-				"relationships": []interface{}{
-					map[string]interface{}{
-						"_edgeId":    string(edge.ID),
-						"type":       edge.Type,
-						"properties": edge.Properties,
-						"startNode":  string(edge.StartNode),
-						"endNode":    string(edge.EndNode),
-					},
-				},
-				"length": 1,
-			}
-			result.Rows = append(result.Rows, []interface{}{path})
-		}
-	}
-
-	return result, nil
-}
-
-// bfsSpanningTree builds a spanning tree using breadth-first search
-// spanningTreeFrom builds a spanning tree from startNode with a shared
-// frontier walk. BFS pops from the front (queue) and scans edges in list
-// order; DFS pops from the back (stack) and scans edges in reverse so the
-// first edge in list order is still explored first. Everything else — level
-// window, terminate labels, direction, relationship/label filters and the
-// visited set — is identical for both walks.
-func (e *StorageExecutor) spanningTreeFrom(startNode *storage.Node, config apocPathConfig, depthFirst bool) []*storage.Edge {
-	var treeEdges []*storage.Edge
-	visited := make(map[string]bool)
-
-	type frontierItem struct {
-		node       *storage.Node
-		level      int
-		parentEdge *storage.Edge
-	}
-	frontier := []frontierItem{{node: startNode, level: 0, parentEdge: nil}}
-	visited[string(startNode.ID)] = true
-
-	for len(frontier) > 0 {
-		var item frontierItem
-		if depthFirst {
-			item = frontier[len(frontier)-1]
-			frontier = frontier[:len(frontier)-1]
-		} else {
-			item = frontier[0]
-			frontier = frontier[1:]
-		}
-
-		node := item.node
-		level := item.level
-
-		// Add the edge that got us here (if any) and if level > minLevel
-		// Note: edges connect level N to level N+1, so check level > minLevel not level >= minLevel
-		if item.parentEdge != nil && level > config.minLevel {
-			treeEdges = append(treeEdges, item.parentEdge)
-		}
-
-		// Check if we should terminate at this node
-		if isTerminateNode(node, config.terminateLabels) {
-			continue
-		}
-
-		// Check if we've reached max level
-		if config.maxLevel >= 0 && level >= config.maxLevel {
-			continue
-		}
-
-		// Get edges based on direction
-		var edges []*storage.Edge
-		switch config.direction {
-		case "outgoing":
-			edges, _ = e.storage.GetOutgoingEdges(node.ID)
-		case "incoming":
-			edges, _ = e.storage.GetIncomingEdges(node.ID)
-		default: // "both"
-			out, _ := e.storage.GetOutgoingEdges(node.ID)
-			in, _ := e.storage.GetIncomingEdges(node.ID)
-			edges = append(out, in...)
-		}
-
-		// Process each edge; DFS scans in reverse so list order is explored first.
-		for idx := 0; idx < len(edges); idx++ {
-			edge := edges[idx]
-			if depthFirst {
-				edge = edges[len(edges)-1-idx]
-			}
-
-			// Check relationship type filter
-			if len(config.relationshipTypes) > 0 {
-				found := false
-				for _, t := range config.relationshipTypes {
-					if edge.Type == t {
-						found = true
-						break
-					}
-				}
-				if !found {
-					continue
-				}
-			}
-
-			// Get the other node
-			var nextNodeID storage.NodeID
-			if edge.StartNode == node.ID {
-				nextNodeID = edge.EndNode
-			} else {
-				nextNodeID = edge.StartNode
-			}
-
-			// Skip if already visited (no cycles in spanning tree)
-			if visited[string(nextNodeID)] {
-				continue
-			}
-			visited[string(nextNodeID)] = true
-
-			// Get the node
-			nextNode, err := e.storage.GetNode(nextNodeID)
-			if err != nil || nextNode == nil {
-				continue
-			}
-
-			// Check label filters
-			if !passesLabelFilter(nextNode, config.includeLabels, config.excludeLabels) {
-				continue
-			}
-
-			frontier = append(frontier, frontierItem{
-				node:       nextNode,
-				level:      level + 1,
-				parentEdge: edge,
-			})
-		}
-	}
-
-	return treeEdges
-}
-
-func (e *StorageExecutor) bfsSpanningTree(startNode *storage.Node, config apocPathConfig) []*storage.Edge {
-	return e.spanningTreeFrom(startNode, config, false)
-}
-
-// dfsSpanningTree builds a spanning tree using depth-first search
-func (e *StorageExecutor) dfsSpanningTree(startNode *storage.Node, config apocPathConfig) []*storage.Edge {
-	return e.spanningTreeFrom(startNode, config, true)
-}
-
-// matchNodePatternPattern is "MATCH (…)", compiled once (#591).
-var matchNodePatternPattern = regexp.MustCompile(`(?i)MATCH\s*\(([^)]*)\)`)
