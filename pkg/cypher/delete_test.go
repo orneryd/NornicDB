@@ -192,10 +192,10 @@ func TestDetachDeleteAnonymousChainedPath(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 	_, err := executor.Execute(ctx, `
-		CREATE (start:Start), (middleOne), (middleTwo), (finish)
+		CREATE (start:Start), (middleOne), (middleTwo), (lastNode)
 		CREATE (start)-[:LINK]->(middleOne)
 		CREATE (middleOne)-[:LINK]->(middleTwo)
-		CREATE (middleTwo)-[:LINK]->(finish)
+		CREATE (middleTwo)-[:LINK]->(lastNode)
 	`, nil)
 	require.NoError(t, err)
 	edges, edgeErr := executor.Execute(ctx, `MATCH ()-[relationship]->() RETURN count(relationship)`, nil)

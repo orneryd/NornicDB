@@ -142,7 +142,6 @@ func TestToFloat64TypeCoverage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, float64(50), result.Rows[0][0])
 
-	// Test string value - Neo4j ignores non-numeric values in SUM
 	node4 := &storage.Node{
 		ID:         "str-num",
 		Labels:     []string{"StrNumTest"},
@@ -151,10 +150,13 @@ func TestToFloat64TypeCoverage(t *testing.T) {
 	_, err = store.CreateNode(node4)
 	require.NoError(t, err)
 
-	result, err = exec.Execute(ctx, "MATCH (n:StrNumTest) RETURN sum(n.val)", nil)
-	require.NoError(t, err)
-	// String values are not numeric, so SUM ignores them and returns 0
-	assert.Equal(t, int64(0), result.Rows[0][0])
+	_, err = exec.Execute(ctx, "MATCH (n:StrNumTest) RETURN sum(n.val)", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
+
+	node4.Properties["val"] = "not a number"
+	require.NoError(t, store.UpdateNode(node4))
+	_, err = exec.Execute(ctx, "MATCH (n:StrNumTest) RETURN sum(n.val)", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
 }
 
 // Test Parser MERGE clause

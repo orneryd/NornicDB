@@ -701,13 +701,12 @@ func TestExecuteSetMergeRejectsMalformedInlineMap(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}", nil)
-	require.Error(t, err)
+	requireSyntaxErrorStatus(t, err, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
 	result, err := exec.Execute(ctx, "MATCH (n:SetMergeMalformed) RETURN n.a", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{nil}}, result.Rows)
 	_, err = exec.Execute(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}", getParamsFromContext(ctx))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse properties in SET +=")
+	requireSyntaxErrorStatus(t, err, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
 }
 
 func TestExecuteAggregationCountStar(t *testing.T) {

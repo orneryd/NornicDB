@@ -44,7 +44,7 @@ func TestExecuteSet_TrailingFallbackMatchProjection(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:Person {id:'p1', name:'alice'})", nil)
 	require.NoError(t, err)
 
-	res, err := exec.Execute(ctx, "MATCH (n:Person {id:'p1'}) SET n.flag = true MATCH (m:Person {id:'p1'}) RETURN m.flag AS flag", getParamsFromContext(ctx))
+	res, err := exec.Execute(ctx, "MATCH (n:Person {id:'p1'}) SET n.flag = true WITH n MATCH (m:Person {id:'p1'}) RETURN m.flag AS flag", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, []string{"flag"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -110,12 +110,10 @@ func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET += {a:1}", getParamsFromContext(ctx))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid SET assignment")
+	requireSyntaxErrorStatus(t, err, "MATCH (n:P) SET += {a:1}")
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += $", getParamsFromContext(ctx))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "valid parameter name")
+	requireSyntaxErrorStatus(t, err, "MATCH (n:P) SET n += $")
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += $props", getParamsFromContext(ctx))
 	require.Error(t, err)

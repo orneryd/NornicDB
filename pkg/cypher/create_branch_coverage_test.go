@@ -25,20 +25,20 @@ func TestExecuteCreate_BranchCoverage(t *testing.T) {
 
 	t.Run("empty label name is rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:)", getParamsFromContext(ctx))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "empty label name after colon")
+		requireSyntaxErrorStatus(t, err, "CREATE (n:)")
 	})
 
 	t.Run("invalid label identifier is rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:Bad-Label)", getParamsFromContext(ctx))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid label name")
+		requireSyntaxErrorStatus(t, err, "CREATE (n:Bad-Label)")
 	})
 
 	t.Run("invalid relationship type is rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (a:Person)-[:BAD-TYPE]->(b:Person)", getParamsFromContext(ctx))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid relationship type")
+		requireSyntaxErrorStatus(t, err, "CREATE (a:Person)-[:BAD-TYPE]->(b:Person)")
+		nodes, err := store.GetNodesByLabel("Person")
+		require.NoError(t, err)
+		require.Empty(t, nodes)
 	})
 
 	t.Run("reverse relationship direction creates correct edge orientation", func(t *testing.T) {
