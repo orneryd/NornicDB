@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Decline independent MATCH hash joins when inline properties depend on
+  variables bound by other parts of the same MATCH. The shared sequential
+  product resolves those bindings before applying WHERE, while independent
+  parameter and external-row lookups retain hash joins (#907).
+
 - Finish #908 execution ownership: graph reads and mutations use terminal
   shared pipeline dispatch; retire independent MATCH, CREATE, mutation,
   OPTIONAL MATCH, FOREACH, CALL composition and aggregation interpreters.
