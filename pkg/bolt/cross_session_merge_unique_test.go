@@ -645,11 +645,13 @@ func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
 		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE")
 	runBoltQueryAndCollectRecords(t, setup, "CREATE (:TerraformResource {uid: 'stored'})")
 
+	// A transaction that read through its snapshot keeps it: a MERGE of a
+	// key a peer committed afterwards loses the race.
 	begin := func() net.Conn {
 		conn := openBoltTestConn(t, port)
 		requireNoError(t, SendBegin(t, conn, nil))
 		requireNoError(t, ReadSuccess(t, conn))
-		runBoltQueryAndCollectRecords(t, conn, "MATCH (r:TerraformResource) RETURN count(r)")
+		runBoltQueryAndCollectRecords(t, conn, "MATCH (r:TerraformResource) RETURN r.uid")
 		return conn
 	}
 	const merge = "MERGE (r:TerraformResource {uid: 'peer'}) SET r.name = 'second'"
@@ -659,6 +661,18 @@ func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
 	if code, _ := runBoltQueryExpectFailure(t, conn, merge); code != "Neo.TransientError.Transaction.Outdated" {
 		t.Errorf("MERGE losing a race: got %s, want Neo.TransientError.Transaction.Outdated", code)
 	}
+
+	// A count reads the committed counters, not the snapshot (Neo4j's
+	// read-committed view), so after one the MERGE still moves the snapshot
+	// forward and matches the peer's node, as in Neo4j (#961).
+	counted := openBoltTestConn(t, port)
+	requireNoError(t, SendBegin(t, counted, nil))
+	requireNoError(t, ReadSuccess(t, counted))
+	runBoltQueryAndCollectRecords(t, counted, "MATCH (r:TerraformResource) RETURN count(r)")
+	runBoltQueryAndCollectRecords(t, setup, "CREATE (:TerraformResource {uid: 'counted'})")
+	runBoltQueryAndCollectRecords(t, counted, "MERGE (r:TerraformResource {uid: 'counted'}) RETURN r.uid")
+	requireNoError(t, SendCommit(t, counted))
+	requireNoError(t, ReadSuccess(t, counted))
 	retry := begin()
 	runBoltQueryAndCollectRecords(t, retry, merge)
 	requireNoError(t, SendCommit(t, retry))
@@ -677,7 +691,7 @@ func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
 
 	records := runBoltQueryAndCollectRecords(t, setup,
 		"MATCH (r:TerraformResource) RETURN r.uid AS uid, r.name AS name ORDER BY uid")
-	if got := fmt.Sprint(records); got != "[[peer second] [stored <nil>]]" {
-		t.Errorf("stored nodes: got %s, want [[peer second] [stored <nil>]]", got)
+	if got := fmt.Sprint(records); got != "[[counted <nil>] [peer second] [stored <nil>]]" {
+		t.Errorf("stored nodes: got %s, want [[counted <nil>] [peer second] [stored <nil>]]", got)
 	}
 }

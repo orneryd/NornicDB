@@ -136,6 +136,8 @@
   other: "transaction metadata too large: {{.Actual}} chars (max {{.Maximum}})"
 - id: storage.transaction.edge_changed
   other: "conflict detected: edge {{.EdgeID}} changed after transaction start"
+- id: storage.transaction.deadlock_detected
+  other: "deadlock detected: waiting for the lock on a {{.Label}}.{{.Property}} key would wait for this transaction itself"
 - id: storage.transaction.node_changed
   other: "conflict detected: node {{.NodeID}} changed after transaction start"
 - id: storage.transaction.node_changed_detailed

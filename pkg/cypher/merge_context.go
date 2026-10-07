@@ -684,6 +684,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		existingNode = candidate
 	}
 	if existingNode == nil && !nodeKnownAbsent {
+		if err := prepareMergeKeys(ctx, store, labels, matchProps); err != nil {
+			return nil, err
+		}
 		existingNode, err = e.findMergeNode(store, labels, matchProps)
 		if err != nil {
 			return nil, err
@@ -926,7 +929,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		// the start; resolve it with get-or-create semantics.
 		if parsedPattern.startVariable != "" && parsedPattern.startVariable == parsedPattern.endVariable {
 			var created bool
-			startNode, created, err = e.resolveMergeRelationshipEndpoint(store, parsedPattern.startNodePattern)
+			startNode, created, err = e.resolveMergeRelationshipEndpoint(ctx, store, parsedPattern.startNodePattern)
 			if err != nil {
 				return nil, err
 			}
@@ -946,6 +949,9 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			endPattern := parsedPattern.endNodePattern
 			startCandidates := []*storage.Node{startNode}
 			if startNode == nil {
+				if err := prepareMergeKeys(ctx, store, startPattern.labels, startPattern.properties); err != nil {
+					return nil, err
+				}
 				startCandidates, err = e.findMergeNodes(store, startPattern.labels, startPattern.properties)
 				if err != nil {
 					return nil, err
@@ -953,6 +959,9 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			}
 			endCandidates := []*storage.Node{endNode}
 			if endNode == nil {
+				if err := prepareMergeKeys(ctx, store, endPattern.labels, endPattern.properties); err != nil {
+					return nil, err
+				}
 				endCandidates, err = e.findMergeNodes(store, endPattern.labels, endPattern.properties)
 				if err != nil {
 					return nil, err
@@ -1025,7 +1034,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 
 	if startNode == nil {
 		var created bool
-		startNode, created, err = e.resolveMergeRelationshipEndpoint(store, parsedPattern.startNodePattern)
+		startNode, created, err = e.resolveMergeRelationshipEndpoint(ctx, store, parsedPattern.startNodePattern)
 		if err != nil {
 			return nil, err
 		}
@@ -1045,7 +1054,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	}
 	if endNode == nil {
 		var created bool
-		endNode, created, err = e.resolveMergeRelationshipEndpoint(store, parsedPattern.endNodePattern)
+		endNode, created, err = e.resolveMergeRelationshipEndpoint(ctx, store, parsedPattern.endNodePattern)
 		if err != nil {
 			return nil, err
 		}
@@ -1229,9 +1238,12 @@ func (e *StorageExecutor) createMergeRelationshipEndpointNode(store storage.Engi
 // resolveMergeRelationshipEndpoint resolves a MERGE relationship endpoint with
 // get-or-create semantics, used when at least one endpoint is already bound
 // (the forms the issue confirms match Neo4j).
-func (e *StorageExecutor) resolveMergeRelationshipEndpoint(store storage.Engine, pattern nodePatternInfo) (*storage.Node, bool, error) {
+func (e *StorageExecutor) resolveMergeRelationshipEndpoint(ctx context.Context, store storage.Engine, pattern nodePatternInfo) (*storage.Node, bool, error) {
 	if len(pattern.labels) == 0 && len(pattern.properties) == 0 {
 		return nil, false, nil
+	}
+	if err := prepareMergeKeys(ctx, store, pattern.labels, pattern.properties); err != nil {
+		return nil, false, err
 	}
 
 	node, err := e.findMergeNode(store, pattern.labels, pattern.properties)

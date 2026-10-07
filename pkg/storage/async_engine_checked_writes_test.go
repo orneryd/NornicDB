@@ -458,11 +458,11 @@ func TestAsyncEngineCheckedWriteFailsWhenTheCacheCannotBeFlushed(t *testing.T) {
 // takes none either.
 func TestConstraintKeyLocksCoverNodeConstraintsOnly(t *testing.T) {
 	var none *SchemaManager
-	none.lockConstraintKeysOf(&Node{ID: "test:n", Labels: []string{"X"}, Properties: map[string]any{"k": 1}})()
+	lockNodesForTest(none, &Node{ID: "test:n", Labels: []string{"X"}, Properties: map[string]any{"k": 1}})()
 	sm := NewSchemaManager()
-	sm.lockConstraintKeysOf()()
+	lockNodesForTest(sm)()
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "r_k", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "X", Properties: []string{"k"}}))
-	release := sm.lockConstraintKeysOf(&Node{ID: "test:n", Labels: []string{"X"}, Properties: map[string]any{"k": 1}})
+	release := lockNodesForTest(sm, &Node{ID: "test:n", Labels: []string{"X"}, Properties: map[string]any{"k": 1}})
 	release()
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	require.Empty(t, sm.uniqueConstraintCommitLocks)

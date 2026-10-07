@@ -30,7 +30,7 @@ func TestUniqueConstraintCommitLocks_DisjointBatchesAreParallel(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			release := sm.acquireUniqueConstraintCommitLocks(batch)
+			release := acquireLocksForTest(sm, batch)
 			acquired <- struct{}{}
 			<-releaseAll
 			release()
@@ -80,7 +80,7 @@ func BenchmarkUniqueConstraintCommitLocks_DisjointBatches(b *testing.B) {
 			go func() {
 				defer wg.Done()
 				<-start
-				release := sm.acquireUniqueConstraintCommitLocks(batch)
+				release := acquireLocksForTest(sm, batch)
 				time.Sleep(time.Millisecond)
 				release()
 			}()

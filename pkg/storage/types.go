@@ -60,6 +60,7 @@ var (
 	ErrNotFound         = errors.New("not found")
 	ErrAlreadyExists    = errors.New("already exists")
 	ErrConflict         = errors.New("conflict")
+	ErrDeadlock         = errors.New("transaction deadlock") // a lock wait closing a cycle of waiting transactions (DeadlockDetected)
 	ErrExhausted        = errors.New("exhausted")
 	ErrInvalidID        = errors.New("invalid id")
 	ErrInvalidData      = errors.New("invalid data")

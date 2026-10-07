@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sync"
@@ -31,7 +32,7 @@ func TestUniqueConstraintCommitLocks_DisjointValuesAreParallel(t *testing.T) {
 	t1Done := make(chan struct{})
 	go func() {
 		defer close(t1Done)
-		release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{heldKey})
+		release := acquireLocksForTest(sm, []uniqueConstraintLockKey{heldKey})
 		close(t1Acquired)
 		<-t1Release
 		release()
@@ -44,7 +45,7 @@ func TestUniqueConstraintCommitLocks_DisjointValuesAreParallel(t *testing.T) {
 	t2Done := make(chan struct{})
 	go func() {
 		defer close(t2Done)
-		release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{disjointKey})
+		release := acquireLocksForTest(sm, []uniqueConstraintLockKey{disjointKey})
 		close(t2Acquired)
 		release()
 	}()
@@ -70,7 +71,7 @@ func TestUniqueConstraintCommitLocks_RegistryEntriesExpire(t *testing.T) {
 		{label: "Function", property: "uid", value: "Y"},
 	}
 
-	release := sm.acquireUniqueConstraintCommitLocks(keys)
+	release := acquireLocksForTest(sm, keys)
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	active := len(sm.uniqueConstraintCommitLocks)
 	sm.uniqueConstraintCommitLocksMu.Unlock()
@@ -99,7 +100,7 @@ func TestUniqueConstraintCommitLocks_CollidingFormattedKeysHaveDistinctOrder(t *
 		t.Fatal("test setup requires distinct exact keys with the same legacy formatted order key")
 	}
 
-	release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{first, second})
+	release := acquireLocksForTest(sm, []uniqueConstraintLockKey{first, second})
 	defer release()
 
 	sm.uniqueConstraintCommitLocksMu.Lock()
@@ -116,7 +117,7 @@ func TestUniqueConstraintCommitLocks_CollidingFormattedKeysHaveDistinctOrder(t *
 
 func TestUniqueConstraintCommitLocks_NaNDoesNotLeakRegistryEntry(t *testing.T) {
 	sm := &SchemaManager{}
-	release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{
+	release := acquireLocksForTest(sm, []uniqueConstraintLockKey{
 		{label: "Metric", property: "value", value: math.NaN()},
 	})
 	release()
@@ -133,7 +134,7 @@ func TestUniqueConstraintCommitLocks_WaitersKeepEntryAlive(t *testing.T) {
 	sm := &SchemaManager{}
 	key := uniqueConstraintLockKey{label: "Function", property: "uid", value: "X"}
 
-	releaseHolder := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{key})
+	releaseHolder := acquireLocksForTest(sm, []uniqueConstraintLockKey{key})
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	entry := sm.uniqueConstraintCommitLocks[key]
 	sm.uniqueConstraintCommitLocksMu.Unlock()
@@ -143,7 +144,7 @@ func TestUniqueConstraintCommitLocks_WaitersKeepEntryAlive(t *testing.T) {
 	waiterDone := make(chan struct{})
 	go func() {
 		defer close(waiterDone)
-		release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{key})
+		release := acquireLocksForTest(sm, []uniqueConstraintLockKey{key})
 		close(waiterAcquired)
 		<-releaseWaiter
 		release()
@@ -199,7 +200,7 @@ func TestUniqueConstraintCommitLocks_SameValueSerializes(t *testing.T) {
 	t1Done := make(chan struct{})
 	go func() {
 		defer close(t1Done)
-		release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{
+		release := acquireLocksForTest(sm, []uniqueConstraintLockKey{
 			{label: "TerraformResource", property: "uid", value: "X"},
 		})
 		close(t1Acquired)
@@ -212,7 +213,7 @@ func TestUniqueConstraintCommitLocks_SameValueSerializes(t *testing.T) {
 	t2Done := make(chan struct{})
 	go func() {
 		defer close(t2Done)
-		release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{
+		release := acquireLocksForTest(sm, []uniqueConstraintLockKey{
 			{label: "TerraformResource", property: "uid", value: "X"},
 		})
 		close(t2Acquired)
@@ -268,7 +269,7 @@ func TestUniqueConstraintCommitLocks_DeterministicOrderingNoDeadlock(t *testing.
 					value:    v,
 				})
 			}
-			release := sm.acquireUniqueConstraintCommitLocks(keys)
+			release := acquireLocksForTest(sm, keys)
 			// Brief work-simulation window so concurrent goroutines actually
 			// overlap on lock holding rather than sequentially zip through.
 			time.Sleep(time.Millisecond)
@@ -287,4 +288,23 @@ func TestUniqueConstraintCommitLocks_DeterministicOrderingNoDeadlock(t *testing.
 	case <-time.After(5 * time.Second):
 		t.Fatal("acquire timed out — possible AB-BA deadlock, sorted acquisition order broken")
 	}
+}
+
+// acquireLocksForTest takes keys for a fresh owner, as a direct engine write
+// does, and panics on an error (none is expected without other owners).
+func acquireLocksForTest(sm *SchemaManager, keys []uniqueConstraintLockKey) func() {
+	release, err := sm.acquireUniqueConstraintCommitLocks(context.Background(), newEngineWriteLockOwner(), keys)
+	if err != nil {
+		panic(err)
+	}
+	return release
+}
+
+// lockNodesForTest is lockConstraintKeysOf for a fresh owner.
+func lockNodesForTest(sm *SchemaManager, nodes ...*Node) func() {
+	release, err := sm.lockConstraintKeysOf(context.Background(), newEngineWriteLockOwner(), nodes...)
+	if err != nil {
+		panic(err)
+	}
+	return release
 }

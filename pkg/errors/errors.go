@@ -31,9 +31,9 @@ var (
 	// ErrMVCCSnapshotHardExpired aliases the storage sentinel for snapshots
 	// forcibly expired during critical MVCC pressure.
 	ErrMVCCSnapshotHardExpired = storage.ErrMVCCSnapshotHardExpired
-	// ErrTransactionDeadlock marks lock-ordering deadlocks that drivers should
+	// ErrTransactionDeadlock aliases the storage deadlock sentinel: lock waits that drivers should
 	// retry as Neo4j-compatible transient transaction failures.
-	ErrTransactionDeadlock = stderrors.New("transaction deadlock")
+	ErrTransactionDeadlock = storage.ErrDeadlock
 	// ErrMergeCommitTimeUniqueConflict marks a commit-time UNIQUE violation from
 	// a concurrent MERGE race. Retry-aware clients can safely replay because the
 	// winner's committed node will be observed on the next attempt.

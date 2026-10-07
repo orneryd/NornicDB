@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -53,7 +54,10 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 
 	// The constraint keys' commit locks cover the check, the write and the
 	// publication to the constraint cache, as for a transaction's commit.
-	releaseUniqueLocks := schema.lockConstraintKeysOf(node)
+	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node)
+	if lockErr != nil {
+		return "", lockErr
+	}
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
 	b.labelCountWriteMu.Lock()
@@ -329,7 +333,10 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 	// The constraint keys' commit locks cover the check, the write and the
 	// publication to the constraint cache, as for a transaction's commit.
-	releaseUniqueLocks := schema.lockConstraintKeysOf(node)
+	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node)
+	if lockErr != nil {
+		return lockErr
+	}
 	defer releaseUniqueLocks()
 
 	// Track if this is an insert (new node) or update (existing node)
@@ -784,3 +791,9 @@ func (b *BadgerEngine) deleteEdgesWithPrefix(txn *badger.Txn, prefix []byte) (in
 }
 
 // ============================================================================
+
+// lockEngineWriteKeys takes node's constraint key locks for a direct engine
+// write, under an owner of its own (a variable so tests can make it fail).
+var lockEngineWriteKeys = func(schema *SchemaManager, node *Node) (func(), error) {
+	return schema.lockConstraintKeysOf(context.Background(), newEngineWriteLockOwner(), node)
+}

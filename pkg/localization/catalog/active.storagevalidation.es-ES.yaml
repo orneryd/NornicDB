@@ -136,6 +136,8 @@
   other: "los metadatos de la transacción son demasiado grandes: {{.Actual}} caracteres (máximo {{.Maximum}})"
 - id: storage.transaction.edge_changed
   other: "conflicto detectado: la relación {{.EdgeID}} cambió después de iniciar la transacción"
+- id: storage.transaction.deadlock_detected
+  other: "interbloqueo detectado: esperar el bloqueo de una clave {{.Label}}.{{.Property}} significaría esperar a esta misma transacción"
 - id: storage.transaction.node_changed
   other: "conflicto detectado: el nodo {{.NodeID}} cambió después de iniciar la transacción"
 - id: storage.transaction.node_changed_detailed

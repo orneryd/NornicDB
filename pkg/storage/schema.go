@@ -12,6 +12,7 @@ package storage
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"reflect"
 	"sort"
@@ -85,7 +86,10 @@ type SchemaManager struct {
 	uniqueConstraintCommitLocksMu sync.Mutex
 	uniqueConstraintCommitLocks   map[uniqueConstraintLockKey]*uniqueConstraintCommitLock
 	uniqueConstraintCommitOrder   uint64
-	schemaMutationMu              sync.Mutex
+	// uniqueConstraintLockWaits maps each owner waiting for a constraint key
+	// lock to that lock, for deadlock detection (#961).
+	uniqueConstraintLockWaits map[string]*uniqueConstraintCommitLock
+	schemaMutationMu          sync.Mutex
 
 	// Constraints
 	uniqueConstraints       map[string]*UniqueConstraint      // key: "Label:property"
@@ -1018,10 +1022,16 @@ type uniqueConstraintLockKey struct {
 	value    interface{}
 }
 
+// uniqueConstraintCommitLock is one constraint key's lock. It belongs to one
+// owner at a time (a transaction ID, or a direct engine write's own ID); the
+// owner may take it again (holds counts its acquisitions), and released is
+// closed whenever it becomes free, waking its waiters (#961).
 type uniqueConstraintCommitLock struct {
-	mu    sync.Mutex
-	refs  int
-	order uint64
+	owner    string
+	holds    int
+	refs     int
+	order    uint64
+	released chan struct{}
 }
 
 type uniqueConstraintLockRequest struct {
@@ -1045,9 +1055,13 @@ type uniqueConstraintLockRequest struct {
 // constraint check still runs, and serialization is best-effort for such
 // values, which constrained workloads don't use in practice. A NODE KEY with a
 // missing property takes no lock: the check rejects the node anyway.
-func (sm *SchemaManager) lockConstraintKeysOf(nodes ...*Node) func() {
+//
+// owner holds the locks (acquireUniqueConstraintCommitLocks); keys it already
+// holds, such as a MERGE key a transaction locked, are taken again without
+// waiting.
+func (sm *SchemaManager) lockConstraintKeysOf(ctx context.Context, owner string, nodes ...*Node) (func(), error) {
 	if sm == nil || len(nodes) == 0 {
-		return func() {}
+		return func() {}, nil
 	}
 	// Allocated on the first key: an unconstrained write allocates nothing.
 	var keys []uniqueConstraintLockKey
@@ -1101,7 +1115,7 @@ func (sm *SchemaManager) lockConstraintKeysOf(nodes ...*Node) func() {
 			}
 		}
 	}
-	return sm.acquireUniqueConstraintCommitLocks(keys)
+	return sm.acquireUniqueConstraintCommitLocks(ctx, owner, keys)
 }
 
 // constraintLockValue is node's canonical value of prop for a constraint key
@@ -1115,10 +1129,12 @@ func constraintLockValue(node *Node, prop string) (interface{}, bool) {
 	return indexValueKey(rawValue)
 }
 
-// acquireUniqueConstraintCommitLocks acquires exact UNIQUE value mutexes in a
-// deterministic order and returns a release function.
+// acquireUniqueConstraintCommitLocks acquires exact UNIQUE value locks for
+// owner in a deterministic order and returns a release function.
 // Deterministic ordering eliminates the AB-BA deadlock risk when two
-// transactions both touch overlapping sets of constrained values.
+// batches both touch overlapping sets of constrained values. A lock owner
+// already holds (a MERGE key its transaction locked, #961) is taken again
+// without waiting, and released with this release.
 //
 // Duplicate keys in the input are deduplicated. An empty input returns a
 // no-op release function so callers can safely defer the result regardless
@@ -1132,9 +1148,13 @@ func constraintLockValue(node *Node, prop string) (interface{}, bool) {
 // Registry entries count both holders and waiters and are evicted when that
 // count reaches zero, bounding memory by active commit demand rather than the
 // historical graph cardinality.
-func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(keys []uniqueConstraintLockKey) func() {
+//
+// A wait that would close a cycle of owners waiting for each other fails with
+// ErrDeadlock, and a wait ends with ctx's error when ctx ends. The locks
+// taken so far are released either way.
+func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context, owner string, keys []uniqueConstraintLockKey) (func(), error) {
 	if len(keys) == 0 {
-		return func() {}
+		return func() {}, nil
 	}
 	requests := make([]uniqueConstraintLockRequest, 0, len(keys))
 	seen := make(map[uniqueConstraintLockKey]struct{}, len(keys))
@@ -1156,7 +1176,7 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(keys []uniqueConstra
 		requests = append(requests, uniqueConstraintLockRequest{key: k})
 	}
 	if len(requests) == 0 {
-		return func() {}
+		return func() {}, nil
 	}
 
 	sm.uniqueConstraintCommitLocksMu.Lock()
@@ -1173,7 +1193,7 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(keys []uniqueConstra
 			if sm.uniqueConstraintCommitOrder == 0 {
 				panic("UNIQUE commit lock order overflow")
 			}
-			lock = &uniqueConstraintCommitLock{order: sm.uniqueConstraintCommitOrder}
+			lock = &uniqueConstraintCommitLock{order: sm.uniqueConstraintCommitOrder, released: make(chan struct{})}
 			sm.uniqueConstraintCommitLocks[requests[i].key] = lock
 		}
 		lock.refs++
@@ -1185,23 +1205,128 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(keys []uniqueConstra
 	})
 
 	for i := range requests {
-		requests[i].lock.mu.Lock()
+		if err := sm.waitForUniqueConstraintLock(ctx, owner, requests[i]); err != nil {
+			sm.releaseUniqueConstraintLocks(owner, requests[:i], requests[i:])
+			return nil, err
+		}
 	}
 	return func() {
-		for i := len(requests) - 1; i >= 0; i-- {
-			requests[i].lock.mu.Unlock()
-		}
+		sm.releaseUniqueConstraintLocks(owner, requests, nil)
+	}, nil
+}
 
+// waitForUniqueConstraintLock takes request's lock for owner, waiting while
+// another owner holds it.
+func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner string, request uniqueConstraintLockRequest) error {
+	lock := request.lock
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	for {
+		if lock.owner == "" || lock.owner == owner {
+			lock.owner = owner
+			lock.holds++
+			delete(sm.uniqueConstraintLockWaits, owner)
+			sm.uniqueConstraintCommitLocksMu.Unlock()
+			return nil
+		}
+		if sm.uniqueConstraintLockWaitClosesCycleLocked(owner, lock) {
+			delete(sm.uniqueConstraintLockWaits, owner)
+			sm.uniqueConstraintCommitLocksMu.Unlock()
+			return localizedError(localization.StorageTransactionDeadlockDetected(request.key.label, request.key.property), ErrDeadlock)
+		}
+		if sm.uniqueConstraintLockWaits == nil {
+			sm.uniqueConstraintLockWaits = make(map[string]*uniqueConstraintCommitLock)
+		}
+		sm.uniqueConstraintLockWaits[owner] = lock
+		released := lock.released
+		sm.uniqueConstraintCommitLocksMu.Unlock()
+		select {
+		case <-released:
+		case <-ctx.Done():
+			sm.uniqueConstraintCommitLocksMu.Lock()
+			delete(sm.uniqueConstraintLockWaits, owner)
+			sm.uniqueConstraintCommitLocksMu.Unlock()
+			return ctx.Err()
+		}
 		sm.uniqueConstraintCommitLocksMu.Lock()
-		defer sm.uniqueConstraintCommitLocksMu.Unlock()
-		for i := range requests {
-			request := requests[i]
+	}
+}
+
+// uniqueConstraintLockWaitClosesCycleLocked reports whether owner waiting for
+// lock would close a cycle: lock's owner waits, directly or through other
+// owners, for a lock owner holds.
+func (sm *SchemaManager) uniqueConstraintLockWaitClosesCycleLocked(owner string, lock *uniqueConstraintCommitLock) bool {
+	holder := lock.owner
+	for steps := 0; holder != "" && steps <= len(sm.uniqueConstraintLockWaits); steps++ {
+		if holder == owner {
+			return true
+		}
+		next, waiting := sm.uniqueConstraintLockWaits[holder]
+		if !waiting {
+			return false
+		}
+		holder = next.owner
+	}
+	return false
+}
+
+// releaseUniqueConstraintLocks releases owner's hold on each of held and drops
+// the registry references of held and unacquired.
+func (sm *SchemaManager) releaseUniqueConstraintLocks(owner string, held, unacquired []uniqueConstraintLockRequest) {
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	defer sm.uniqueConstraintCommitLocksMu.Unlock()
+	for i := len(held) - 1; i >= 0; i-- {
+		lock := held[i].lock
+		if lock.owner != owner || lock.holds == 0 {
+			continue
+		}
+		lock.holds--
+		if lock.holds == 0 {
+			lock.owner = ""
+			close(lock.released)
+			lock.released = make(chan struct{})
+		}
+	}
+	for _, requests := range [2][]uniqueConstraintLockRequest{held, unacquired} {
+		for _, request := range requests {
 			request.lock.refs--
 			if request.lock.refs == 0 && sm.uniqueConstraintCommitLocks[request.key] == request.lock {
 				delete(sm.uniqueConstraintCommitLocks, request.key)
 			}
 		}
 	}
+}
+
+// engineWriteLockOwners numbers the lock owners of direct engine writes,
+// which aren't transactions.
+var engineWriteLockOwners atomic.Uint64
+
+// newEngineWriteLockOwner returns a lock owner for one direct engine write.
+func newEngineWriteLockOwner() string {
+	return "engine-write-" + strconv.FormatUint(engineWriteLockOwners.Add(1), 10)
+}
+
+// uniqueMergeKey returns the lock key of value under label's single-property
+// UNIQUE constraint (or one-property NODE KEY) on property, as
+// lockConstraintKeysOf builds it; ok is false when there's no such
+// constraint or value is null.
+func (sm *SchemaManager) uniqueMergeKey(label, property string, value interface{}) (uniqueConstraintLockKey, bool) {
+	if sm == nil || value == nil {
+		return uniqueConstraintLockKey{}, false
+	}
+	for _, c := range sm.GetConstraintsForLabels([]string{label}) {
+		if c.EffectiveEntityType() != ConstraintEntityNode || c.Label != label || len(c.Properties) != 1 || c.Properties[0] != property {
+			continue
+		}
+		if c.Type != ConstraintUnique && c.Type != ConstraintNodeKey {
+			continue
+		}
+		key, ok := indexValueKey(value)
+		if !ok {
+			return uniqueConstraintLockKey{}, false
+		}
+		return uniqueConstraintLockKey{label: label, property: property, value: key}, true
+	}
+	return uniqueConstraintLockKey{}, false
 }
 
 // RegisterUniqueValue registers a value for a unique constraint.
