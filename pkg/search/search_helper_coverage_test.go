@@ -17,6 +17,7 @@ func TestDisabledBM25IndexMethods(t *testing.T) {
 	idx.IndexBatch([]FulltextBatchEntry{{ID: "doc-2", Text: "batch text"}})
 
 	require.Nil(t, idx.Search("hello", 5))
+	require.Nil(t, idx.SearchAllowed("hello", 5, nil))
 	require.Nil(t, idx.PhraseSearch("hello world", 5))
 	require.Nil(t, idx.LexicalSeedDocIDs(3, 2))
 	require.Equal(t, 0, idx.Count())

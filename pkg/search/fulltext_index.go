@@ -387,6 +387,14 @@ func (f *FulltextIndex) removeInternal(id string) bool {
 // Search performs BM25 keyword search.
 // Returns results sorted by BM25 score (highest first).
 func (f *FulltextIndex) Search(query string, limit int) []indexResult {
+	return f.SearchAllowed(query, limit, nil)
+}
+
+// SearchAllowed is Search over the documents allowed accepts: a document it
+// rejects is never scored or returned (#938). allowed is called at most once
+// per document, while the index's read lock is held; nil allows every
+// document.
+func (f *FulltextIndex) SearchAllowed(query string, limit int, allowed func(docID string) bool) []indexResult {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -402,6 +410,21 @@ func (f *FulltextIndex) Search(query string, limit int) []indexResult {
 
 	// Calculate BM25 scores for all documents containing query terms
 	scores := make(map[string]float64)
+	var admitted map[string]bool
+	admit := func(docID string) bool {
+		if allowed == nil {
+			return true
+		}
+		if admitted == nil {
+			admitted = make(map[string]bool)
+		}
+		ok, seen := admitted[docID]
+		if !seen {
+			ok = allowed(docID)
+			admitted[docID] = ok
+		}
+		return ok
+	}
 
 	for _, term := range queryTerms {
 		// First try exact match
@@ -409,6 +432,9 @@ func (f *FulltextIndex) Search(query string, limit int) []indexResult {
 		if exists {
 			idf := f.calculateIDF(term)
 			for docID, termFreq := range docs {
+				if !admit(docID) {
+					continue
+				}
 				docLen := float64(f.docLengths[docID])
 				tf := float64(termFreq)
 				numerator := tf * (bm25K1 + 1)
@@ -424,6 +450,9 @@ func (f *FulltextIndex) Search(query string, limit int) []indexResult {
 				// Use reduced IDF for prefix matches (not as strong as exact)
 				idf := f.calculateIDF(indexedTerm) * 0.8
 				for docID, termFreq := range termDocs {
+					if !admit(docID) {
+						continue
+					}
 					docLen := float64(f.docLengths[docID])
 					tf := float64(termFreq)
 					numerator := tf * (bm25K1 + 1)

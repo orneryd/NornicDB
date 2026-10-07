@@ -157,6 +157,9 @@ type bm25Index interface {
 	Index(id, text string)
 	Remove(id string)
 	Search(query string, limit int) []indexResult
+	// SearchAllowed is Search over the documents allowed accepts; a
+	// rejected document is never scored (#938).
+	SearchAllowed(query string, limit int, allowed func(docID string) bool) []indexResult
 	PhraseSearch(query string, limit int) []indexResult
 	GetDocument(id string) (string, bool)
 	LexicalSeedDocIDs(maxTerms, perTerm int) []string
@@ -210,6 +213,9 @@ type disabledBM25Index struct{}
 func (disabledBM25Index) Index(string, string)                        {}
 func (disabledBM25Index) Remove(string)                               {}
 func (disabledBM25Index) Search(string, int) []indexResult            { return nil }
+func (disabledBM25Index) SearchAllowed(string, int, func(string) bool) []indexResult {
+	return nil
+}
 func (disabledBM25Index) PhraseSearch(string, int) []indexResult      { return nil }
 func (disabledBM25Index) GetDocument(string) (string, bool)           { return "", false }
 func (disabledBM25Index) LexicalSeedDocIDs(int, int) []string         { return nil }
@@ -386,7 +392,9 @@ type SearchOptions struct {
 
 	// Filters pre-filters nodes by property values before top-K selection.
 	// Keys are property names; values are acceptable values (OR within a key, AND across keys).
-	// Scalar and array property values are both supported.
+	// Scalar and array property values are both supported. A key with an
+	// empty list matches no node, as Cypher's IN [] (nodeMatchesFilters);
+	// leave a key out to not constrain it.
 	Filters map[string][]string
 
 	// IncludeProperties limits each returned result's Properties map to these
@@ -4863,8 +4871,14 @@ func (s *Service) adaptiveVectorSearch(
 			stats.exhausted = stats.exhausted && len(results) == config.target
 			return results[:config.target], stats, nil
 		}
-		if !config.adaptive || requestLimit >= config.maxLimit || exhausted {
+		if !config.adaptive || exhausted {
 			return results, stats, nil
+		}
+		if requestLimit >= config.maxLimit {
+			if postProcess == nil || explicitCandidateCap(opts) {
+				return results, stats, nil
+			}
+			return s.completeVectorSearch(ctx, embedding, opts, config.target, postProcess, stats)
 		}
 		nextLimit := int(math.Ceil(float64(requestLimit) * config.growthFactor))
 		if nextLimit <= requestLimit {
@@ -4875,6 +4889,91 @@ func (s *Service) adaptiveVectorSearch(
 	}
 }
 
+// completeVectorSearch fills a vector page the approximate search's budget
+// left short while it had not covered every vector (#938): it scores
+// exactly the vectors of the nodes the request can return, only those of the
+// requested Types when there are Types (indexedTypeAdmitter), keeps each
+// node's best vector above the minimum similarity, and filters the ranking
+// with postProcess in batches of target until target results pass or it
+// ends. The approximate search may still have routed through other vectors;
+// this pass scores none of them.
+func (s *Service) completeVectorSearch(
+	ctx context.Context,
+	embedding []float32,
+	opts *SearchOptions,
+	target int,
+	postProcess func([]indexResult) []indexResult,
+	stats vectorOverfetchStats,
+) ([]indexResult, vectorOverfetchStats, error) {
+	admit := func(string) bool { return true }
+	var candidates []Candidate
+	// Lock order indexMu -> mu, as index writes take them.
+	s.indexMu.RLock()
+	s.mu.RLock()
+	if len(opts.Types) > 0 {
+		admit = s.indexedTypeAdmitter(opts.Types)
+	}
+	for nodeID := range s.nodeLabels {
+		if !admit(nodeID) {
+			continue
+		}
+		for _, vectorID := range s.nodeChunkVectors[nodeID] {
+			candidates = append(candidates, Candidate{ID: vectorID})
+		}
+		for _, vectorID := range s.nodeNamedVector[nodeID] {
+			candidates = append(candidates, Candidate{ID: vectorID})
+		}
+		for _, vectorID := range s.nodePropVector[nodeID] {
+			candidates = append(candidates, Candidate{ID: vectorID})
+		}
+	}
+	vectors, fileStore := s.vectorIndex, s.vectorFileStore
+	s.mu.RUnlock()
+	s.indexMu.RUnlock()
+
+	stats.retries++
+	stats.exhausted = true
+	if (vectors == nil && fileStore == nil) || len(candidates) == 0 {
+		return nil, stats, nil
+	}
+	scored, err := s.resolveVectorExactScorer(exactScorerPolicyCPU, vectors, fileStore).ScoreCandidates(ctx, embedding, candidates)
+	if err != nil {
+		return nil, stats, err
+	}
+	stats.rawCandidates = len(scored)
+	minSimilarity := opts.GetMinSimilarity(0.5)
+	ranked := make([]indexResult, 0, len(scored))
+	for _, result := range scored {
+		if result.Score < minSimilarity {
+			break
+		}
+		ranked = append(ranked, indexResult{ID: result.ID, MatchID: result.ID, Score: result.Score})
+	}
+	ranked = collapseIndexResultsByNodeID(ranked)
+	results := make([]indexResult, 0, target)
+	for start := 0; start < len(ranked) && len(results) < target; start += target {
+		if err := ctx.Err(); err != nil {
+			return nil, stats, err
+		}
+		end := min(start+target, len(ranked))
+		results = append(results, postProcess(append([]indexResult(nil), ranked[start:end]...))...)
+	}
+	if len(results) > target {
+		results = results[:target]
+	}
+	return results, stats, nil
+}
+
+// adaptiveBM25Search returns up to the overfetch target of BM25 results that
+// postProcess (the Types / Filters / decay filter) keeps, best first.
+//
+// With Types, documents of other types are never scored (indexedTypeAdmitter
+// through SearchAllowed), so the ranked list holds only the right types. The
+// list is widened adaptively; if the widening budget runs out before the
+// target is filled while more ranked documents remain, the rest of the list
+// is filtered batch by batch until the target is filled or the list ends, so
+// a selective filter still fills the page whatever ranks above its matches
+// (#938).
 func (s *Service) adaptiveBM25Search(
 	ctx context.Context,
 	index bm25Index,
@@ -4885,6 +4984,22 @@ func (s *Service) adaptiveBM25Search(
 	if index == nil {
 		return nil, vectorOverfetchStats{exhausted: true}, nil
 	}
+	search := index.Search
+	if opts != nil && len(opts.Types) > 0 {
+		allowed := s.indexedTypeAdmitter(opts.Types)
+		search = func(query string, limit int) []indexResult {
+			// Lock order indexMu -> index lock, as index writes take them.
+			s.indexMu.RLock()
+			defer s.indexMu.RUnlock()
+			return index.SearchAllowed(query, limit, allowed)
+		}
+	}
+	filter := func(results []indexResult) []indexResult {
+		if postProcess == nil {
+			return results
+		}
+		return postProcess(results)
+	}
 	config := resolveAdaptiveOverfetch(opts)
 	requestLimit := config.initialLimit
 	var stats vectorOverfetchStats
@@ -4892,20 +5007,23 @@ func (s *Service) adaptiveBM25Search(
 		if err := ctx.Err(); err != nil {
 			return nil, stats, err
 		}
-		rawResults := index.Search(query, requestLimit)
+		rawResults := search(query, requestLimit)
 		stats.rawCandidates = len(rawResults)
 		// BM25 enumerates an exact ranked prefix before metadata filtering.
 		stats.exhausted = len(rawResults) < requestLimit
-		results := rawResults
-		if postProcess != nil {
-			results = postProcess(results)
-		}
+		results := filter(rawResults)
 		if len(results) >= config.target {
 			stats.exhausted = stats.exhausted && len(results) == config.target
 			return results[:config.target], stats, nil
 		}
-		if !config.adaptive || requestLimit >= config.maxLimit || len(rawResults) < requestLimit {
+		if len(rawResults) < requestLimit {
 			return results, stats, nil
+		}
+		if !config.adaptive || requestLimit >= config.maxLimit {
+			if !config.adaptive || postProcess == nil || explicitCandidateCap(opts) {
+				return results, stats, nil
+			}
+			return s.completeBM25Search(ctx, search, query, index.Count(), config.target, requestLimit, filter, stats)
 		}
 		nextLimit := int(math.Ceil(float64(requestLimit) * config.growthFactor))
 		if nextLimit <= requestLimit {
@@ -4914,6 +5032,47 @@ func (s *Service) adaptiveBM25Search(
 		requestLimit = min(nextLimit, config.maxLimit)
 		stats.retries++
 	}
+}
+
+// explicitCandidateCap reports whether the caller capped the candidates a
+// search may examine (SearchOptions.MaxCandidateLimit > 0). The completion
+// passes (completeBM25Search, completeVectorSearch) go past the default
+// overfetch budget to fill a filtered page, but never past a cap the caller
+// set: that page may stay short (#938).
+func explicitCandidateCap(opts *SearchOptions) bool {
+	return opts != nil && opts.MaxCandidateLimit > 0
+}
+
+// completeBM25Search fills a BM25 page the widening budget left short: it
+// ranks every matching document (at most documents) once and filters the list in batches of
+// batch documents until target results pass or the list ends. The prefix the
+// budget already filtered is filtered again, since an engine may order equal
+// scores differently between calls (v1).
+func (s *Service) completeBM25Search(
+	ctx context.Context,
+	search func(query string, limit int) []indexResult,
+	query string,
+	documents, target, batch int,
+	filter func([]indexResult) []indexResult,
+	stats vectorOverfetchStats,
+) ([]indexResult, vectorOverfetchStats, error) {
+	all := search(query, max(documents, 1))
+	stats.rawCandidates = len(all)
+	stats.retries++
+	results := make([]indexResult, 0, target)
+	for start := 0; start < len(all) && len(results) < target; start += batch {
+		if err := ctx.Err(); err != nil {
+			return nil, stats, err
+		}
+		end := min(start+batch, len(all))
+		page := append([]indexResult(nil), all[start:end]...)
+		results = append(results, filter(page)...)
+	}
+	stats.exhausted = len(results) < target
+	if len(results) > target {
+		results = results[:target]
+	}
+	return results, stats, nil
 }
 
 func lexicalEntryIDsFromResults(results []indexResult) []string {
@@ -7033,10 +7192,21 @@ func vectorFromPropertyValue(value any, expectedDim int) ([]float32, bool) {
 // Each filter value is matched against the property as a string; for array properties every
 // element is checked individually. Filter keys with an empty value list are ignored so that
 // a client sending {"filters":{"key":[]}} does not silently discard all results.
+// nodeMatchesFilters reports whether node passes SearchOptions.Filters: for
+// every key, the property holds one of the listed values.
+//
+// A key with an empty list matches nothing (#938), as Cypher's n.k IN []
+// does. 3e320049 had made it mean "no constraint", so that a client sending
+// {"key": []} by mistake would not silently get zero results; that is
+// reversed deliberately, because returning everything is far more dangerous
+// than returning nothing: search results drive writes and deletes, and a
+// caller that builds the list from, say, the collections a user may read, and
+// finds none, would read, change or delete everything instead of nothing. A
+// key that isn't given at all still constrains nothing.
 func nodeMatchesFilters(node *storage.Node, filters map[string][]string) bool {
 	for propName, wantVals := range filters {
 		if len(wantVals) == 0 {
-			continue // treat missing/empty list as "no constraint"
+			return false
 		}
 		propVal, exists := node.Properties[propName]
 		if !exists {
