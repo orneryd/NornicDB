@@ -73,6 +73,7 @@ const (
 	MessageStorageTransactionMetadataTooLarge               MessageID = "storage.transaction.metadata_too_large"
 	MessageStorageTransactionEdgeChanged                    MessageID = "storage.transaction.edge_changed"
 	MessageStorageTransactionNodeChanged                    MessageID = "storage.transaction.node_changed"
+	MessageStorageTransactionDeadlockDetected               MessageID = "storage.transaction.deadlock_detected"
 	MessageStorageTransactionNodeChangedDetailed            MessageID = "storage.transaction.node_changed_detailed"
 	MessageStorageTransactionConcurrentModification         MessageID = "storage.transaction.concurrent_modification"
 	MessageStorageTransactionEndpointDeleted                MessageID = "storage.transaction.endpoint_deleted"
@@ -317,6 +318,12 @@ func StorageTransactionMetadataTooLarge(actual, maximum int) Message {
 }
 func StorageTransactionEdgeChanged(edgeID string) Message {
 	return storageValidationMessage(MessageStorageTransactionEdgeChanged, fmt.Sprintf("conflict detected: edge %s changed after transaction start", edgeID), map[string]any{"EdgeID": edgeID})
+}
+
+// StorageTransactionDeadlockDetected is a wait for the lock of a constraint
+// key that the lock's holder is, through its own waits, waiting for.
+func StorageTransactionDeadlockDetected(label, property string) Message {
+	return storageValidationMessage(MessageStorageTransactionDeadlockDetected, fmt.Sprintf("deadlock detected: waiting for the lock on a %s.%s key would wait for this transaction itself", label, property), map[string]any{"Label": label, "Property": property})
 }
 func StorageTransactionNodeChanged(nodeID string) Message {
 	return storageValidationMessage(MessageStorageTransactionNodeChanged, fmt.Sprintf("conflict detected: node %s changed after transaction start", nodeID), map[string]any{"NodeID": nodeID})

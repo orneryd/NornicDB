@@ -178,6 +178,13 @@ type BadgerTransaction struct {
 	// Transaction metadata (for logging/debugging)
 	Metadata           map[string]interface{}
 	snapshotReaderInfo SnapshotReaderInfo
+
+	// observed is set once the transaction reads through its snapshot; from
+	// then on the snapshot can't move forward (PrepareMergeKey, #961).
+	observed bool
+	// mergeKeyRelease releases the constraint key lock PrepareMergeKey took;
+	// closeLocked calls it.
+	mergeKeyRelease    func()
 	snapshotDeregister func()
 	closedErr          error
 }
@@ -333,6 +340,26 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 		tx.badgerDB.endRead(tx.badgerReadTs)
 		tx.badgerReadHeld = false
 	}
+	if tx.mergeKeyRelease != nil {
+		// After a commit's publication to the constraint cache, so a MERGE
+		// waiting for the key finds the committed node.
+		tx.mergeKeyRelease()
+		tx.mergeKeyRelease = nil
+	}
+	tx.clearSnapshotCachesLocked()
+	tx.pendingWrites = make(map[string][]byte)
+	tx.pendingDeletes = make(map[string]bool)
+	tx.pendingLabelCountDeltas = make(map[namespaceLabel]int64)
+	tx.pendingEdgeTypeCountDeltas = make(map[namespaceEdgeType]int64)
+	tx.pendingEdgeTypeLabelCountDeltas = make(map[edgeTypeLabelDelta]int64)
+	tx.Status = status
+	tx.closedErr = closedErr
+	tx.releaseSnapshotReaderLocked()
+}
+
+// clearSnapshotCachesLocked drops what the transaction cached from its
+// snapshot.
+func (tx *BadgerTransaction) clearSnapshotCachesLocked() {
 	tx.snapshotOutgoingAdjacency.clear()
 	tx.snapshotIncomingAdjacency.clear()
 	tx.snapshotLabelPrefixNodes = nil
@@ -349,14 +376,6 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	tx.snapshotEdgeBytesByID = nil
 	tx.snapshotEdgeOrder = nil
 	tx.snapshotEdgeBytes = 0
-	tx.pendingWrites = make(map[string][]byte)
-	tx.pendingDeletes = make(map[string]bool)
-	tx.pendingLabelCountDeltas = make(map[namespaceLabel]int64)
-	tx.pendingEdgeTypeCountDeltas = make(map[namespaceEdgeType]int64)
-	tx.pendingEdgeTypeLabelCountDeltas = make(map[edgeTypeLabelDelta]int64)
-	tx.Status = status
-	tx.closedErr = closedErr
-	tx.releaseSnapshotReaderLocked()
 }
 
 // releaseSnapshotReaderLocked ends the transaction's registration as an
@@ -2296,7 +2315,11 @@ func (tx *BadgerTransaction) Commit() error {
 	// — the second overwriting the first — leaving the UNIQUE constraint
 	// silently violated in storage. See cross_session_merge_unique_test.go
 	// for the reproduction.
-	releaseCommitLocks := tx.acquireUniqueConstraintCommitLocks()
+	releaseCommitLocks, err := tx.acquireUniqueConstraintCommitLocks()
+	if err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
 	defer releaseCommitLocks()
 
 	// Final constraint validation before commit
@@ -3635,19 +3658,136 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 // for that property. Constraint validation still fires at commit time;
 // commit-window serialization is best-effort for non-comparable types
 // (which UNIQUE-constrained Eshu/Neo4j workloads do not use in practice).
-func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() func() {
+//
+// The transaction owns the locks under its ID, so a key PrepareMergeKey
+// already locked for it is taken without waiting. A wait that would close a
+// cycle of transactions fails with ErrDeadlock.
+func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() (func(), error) {
 	if len(tx.pendingNodes) == 0 || tx.namespace == "" {
-		return func() {}
+		return func() {}, nil
 	}
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	if schema == nil {
-		return func() {}
-	}
 	nodes := make([]*Node, 0, len(tx.pendingNodes))
 	for _, node := range tx.pendingNodes {
 		nodes = append(nodes, node)
 	}
-	return schema.lockConstraintKeysOf(nodes...)
+	return schema.lockConstraintKeysOf(context.Background(), tx.ID, nodes...)
+}
+
+// PrepareMergeKey readies the transaction for a MERGE that looks up the node
+// whose key under label's UNIQUE constraint on property is value, so that
+// concurrent MERGEs of one key behave as in Neo4j: one creates the node and
+// the others match it, without an error or a retry (#961).
+//
+// It applies while the transaction hasn't read through its snapshot or
+// written anything, and to one key per transaction:
+//   - when the key's node was committed after the transaction's snapshot,
+//     the snapshot moves forward to now (nothing has read it yet), so the
+//     MERGE sees the node and everything committed with it, and matches;
+//   - when the key has no node, the transaction locks the key until it ends,
+//     so a concurrent MERGE of the key waits for it to commit and then
+//     matches its node; a node committed while this one waited moves the
+//     snapshot forward as above.
+//
+// Otherwise it does nothing, and a concurrent create of the key fails at
+// commit, the retryable MERGE race. A wait ends with ErrDeadlock when it
+// would close a cycle of transactions waiting for each other, or with ctx's
+// error.
+func (tx *BadgerTransaction) PrepareMergeKey(ctx context.Context, label, property string, value interface{}) error {
+	tx.mu.Lock()
+	if tx.Status != TxStatusActive || tx.mergeKeyRelease != nil || tx.namespace == "" || tx.snapshotTx == nil || tx.observedLocked() {
+		tx.mu.Unlock()
+		return nil
+	}
+	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
+	key, constrained := schema.uniqueMergeKey(label, property, value)
+	tx.mu.Unlock()
+	if !constrained {
+		return nil
+	}
+	nodeID, found, _, complete := schema.LookupUniqueConstraintValueForPlanning(label, property, value)
+	if found {
+		return tx.catchUpToNode(nodeID)
+	}
+	if !complete {
+		return nil
+	}
+	release, err := schema.acquireUniqueConstraintCommitLocks(ctx, tx.ID, []uniqueConstraintLockKey{key})
+	if err != nil {
+		return err
+	}
+	tx.mu.Lock()
+	if tx.Status != TxStatusActive || tx.mergeKeyRelease != nil {
+		tx.mu.Unlock()
+		release()
+		return nil
+	}
+	tx.mergeKeyRelease = release
+	tx.mu.Unlock()
+	if nodeID, found, _, _ = schema.LookupUniqueConstraintValueForPlanning(label, property, value); found {
+		return tx.catchUpToNode(nodeID)
+	}
+	return nil
+}
+
+// catchUpToNode moves the snapshot forward when node nodeID was committed
+// after it and the transaction has observed nothing yet.
+func (tx *BadgerTransaction) catchUpToNode(nodeID NodeID) error {
+	head, err := tx.engine.GetNodeCurrentHead(nodeID)
+	if err == ErrNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if tx.Status != TxStatusActive || tx.observedLocked() {
+		return nil
+	}
+	newer, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+	if err != nil || !newer {
+		return err
+	}
+	return tx.refreshSnapshotLocked()
+}
+
+// observedLocked reports whether the transaction has read through its
+// snapshot or written anything, so its snapshot can no longer move.
+func (tx *BadgerTransaction) observedLocked() bool {
+	return tx.observed || len(tx.operations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0 ||
+		len(tx.pendingNodes) > 0 || len(tx.pendingEdges) > 0 || len(tx.deletedNodes) > 0 || len(tx.deletedEdges) > 0
+}
+
+// refreshSnapshotLocked moves a transaction that has observed nothing to a
+// snapshot taken now, as if it had just begun: new Badger reader and writer
+// transactions, the namespaces' current MVCC versions, and empty snapshot
+// caches.
+func (tx *BadgerTransaction) refreshSnapshotLocked() error {
+	if tx.badgerTx != nil && tx.engine.idDict != nil {
+		tx.engine.idDict.discardTxnCounters(tx.badgerTx)
+	}
+	if tx.badgerTx != nil && tx.engine.propKeyDict != nil {
+		tx.engine.propKeyDict.discardTxnCounters(tx.badgerTx)
+	}
+	if tx.badgerTx != nil {
+		tx.badgerTx.Discard()
+	}
+	if tx.snapshotTx != nil {
+		tx.snapshotTx.Discard()
+	}
+	if tx.badgerReadHeld {
+		tx.badgerDB.endRead(tx.badgerReadTs)
+		tx.badgerReadHeld = false
+	}
+	snapshotTx, badgerReadTs := tx.badgerDB.beginTxn(false)
+	tx.snapshotTx = snapshotTx
+	tx.badgerReadTs = badgerReadTs
+	tx.badgerReadHeld = true
+	tx.badgerTx = tx.badgerDB.newTxnAt(badgerReadTs, true)
+	tx.beginSnapshot = tx.engine.snapshotNamespaceVersions()
+	tx.clearSnapshotCachesLocked()
+	return tx.refreshReadVersionForNamespaceLocked()
 }
 
 func (tx *BadgerTransaction) validateAllConstraints() error {

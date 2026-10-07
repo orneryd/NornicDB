@@ -192,6 +192,26 @@ func (e *StorageExecutor) cacheMergeNode(labels []string, props map[string]inter
 	}
 }
 
+// prepareMergeKeys readies a transaction for a MERGE lookup of a node with
+// labels and props, so concurrent MERGEs of a uniquely constrained key behave
+// as in Neo4j: one creates the node and the others wait for it and match it
+// (storage.BadgerTransaction.PrepareMergeKey, #961). Outside a transaction it
+// does nothing.
+func prepareMergeKeys(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}) error {
+	wrapper, ok := store.(*transactionStorageWrapper)
+	if !ok || wrapper.tx == nil || len(labels) == 0 || len(props) == 0 {
+		return nil
+	}
+	for _, label := range labels {
+		for _, property := range mergePropertyNamesSorted(props) {
+			if err := wrapper.tx.PrepareMergeKey(ctx, label, property, props[property]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (e *StorageExecutor) loadMergeCandidateNodes(store storage.Engine, ids []storage.NodeID) []*storage.Node {
 	if len(ids) == 0 {
 		return nil

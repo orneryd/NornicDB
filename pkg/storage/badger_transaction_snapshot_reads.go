@@ -516,6 +516,7 @@ func (tx *BadgerTransaction) snapshotHeaderLocked(snapshot *badger.Txn, headers 
 // reservation. Fresh Views would admit that peer halfway through this reader.
 // The separate read-only transaction does not enlarge the writer's SSI read set.
 func (tx *BadgerTransaction) withSnapshotViewLocked(read func(*badger.Txn) error) error {
+	tx.observed = true
 	if tx.snapshotTx != nil {
 		return read(tx.snapshotTx)
 	}
