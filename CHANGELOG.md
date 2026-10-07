@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when indexing cached nodes. Preserve snapshot reads and embedding hydration
   (#911).
 
+- Reuse candidate binding contexts across MATCH product legs only on cache
+  misses, avoid empty-seed context wrappers, and remove a captured per-scan
+  label predicate. The WITH LIMIT benchmark now verifies successful execution
+  and exact relationship create/delete counts (#911).
+
 - Preserve FINISH-terminated MATCH reads through shared pipeline admission
   and reject unquoted FINISH identifiers consistently in both parsers.
 

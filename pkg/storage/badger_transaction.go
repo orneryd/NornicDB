@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1867,17 +1868,6 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	if hasPending {
 		seen = make(map[NodeID]struct{}, len(tx.pendingNodes))
 	}
-	matchesLabel := func(node *Node) bool {
-		if node == nil {
-			return false
-		}
-		for _, candidate := range node.Labels {
-			if candidate == label {
-				return true
-			}
-		}
-		return false
-	}
 	emitCommitted := func(node *Node) error {
 		if node == nil {
 			return nil
@@ -1894,7 +1884,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		}
 		if pending, exists := tx.pendingNodes[node.ID]; exists {
 			seen[node.ID] = struct{}{}
-			if matchesLabel(pending) {
+			if pending != nil && slices.Contains(pending.Labels, label) {
 				return invokeVisit(projectCachedNodeForRead(pending, properties))
 			}
 			return nil
@@ -1914,7 +1904,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 				return err
 			}
 		}
-		return tx.streamPendingLabelNodesLocked(matchesLabel, seen, properties, invokeVisit)
+		return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit)
 	}
 
 	completed := make([]*Node, 0)
@@ -1972,7 +1962,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		tx.snapshotProjectedLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
 	}
-	return tx.streamPendingLabelNodesLocked(matchesLabel, seen, properties, invokeVisit)
+	return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit)
 }
 
 // StreamNodesWithOptions streams the transaction's view of every node (its
@@ -2107,7 +2097,7 @@ func snapshotLabelProjectionKey(label string, properties []string) string {
 }
 
 func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
-	matchesLabel func(*Node) bool,
+	label string,
 	seen map[NodeID]struct{},
 	properties []string,
 	visit func(*Node) error,
@@ -2119,7 +2109,7 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 		if _, emitted := seen[id]; emitted {
 			continue
 		}
-		if _, deleted := tx.deletedNodes[id]; deleted || !matchesLabel(node) {
+		if _, deleted := tx.deletedNodes[id]; deleted || node == nil || !slices.Contains(node.Labels, label) {
 			continue
 		}
 		if err := visit(projectCachedNodeForRead(node, properties)); err != nil {
