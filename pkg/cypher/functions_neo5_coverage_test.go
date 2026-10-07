@@ -131,6 +131,7 @@ func TestNeo4j5FunctionImplementations(t *testing.T) {
 		"btrim":     func() (interface{}, error) { return fnTrimFunction("btrim", true, true)(ctx, []string{"boom"}) },
 		"trim text": func() (interface{}, error) { return fnTrim(ctx, []string{"boom"}) },
 		"trim char": func() (interface{}, error) { return fnTrim(ctx, []string{"boom FROM s"}) },
+		"trim spec": func() (interface{}, error) { return fnTrim(ctx, []string{"s", "boom"}) },
 		"normalize": func() (interface{}, error) { return fnNormalize(ctx, []string{"boom"}) },
 		"nullIf":    func() (interface{}, error) { return fnNullIf(ctx, []string{"s", "boom"}) },
 		"valueType": func() (interface{}, error) { return fnValueType(ctx, []string{"boom"}) },
