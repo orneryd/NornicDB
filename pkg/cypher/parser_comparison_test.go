@@ -25,6 +25,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// restoreParserTypeAfter restores the parser set when tb started (for
+// example by NORNICDB_PARSER=antlr) once tb ends. The parser is process-wide,
+// so a test that switches it and leaves it switched would run every later
+// test in the package under that parser (#956).
+func restoreParserTypeAfter(tb testing.TB) {
+	tb.Helper()
+	previous := config.GetParserType()
+	tb.Cleanup(func() { config.SetParserType(previous) })
+}
+
 func setupParserComparisonExecutor(tb testing.TB) (*StorageExecutor, context.Context) {
 	tb.Helper()
 
@@ -170,6 +180,7 @@ func BenchmarkParserValidationIsolation(b *testing.B) {
 // paths using config switching.
 // Prints an integrated-flow timing comparison report at the end.
 func TestParserComparison(t *testing.T) {
+	restoreParserTypeAfter(t)
 	type result struct {
 		name       string
 		nornicTime time.Duration
@@ -225,9 +236,6 @@ func TestParserComparison(t *testing.T) {
 				r.antlrTime, r.antlrErr = measureMedian(t, config.ParserTypeANTLR, tc.query, samplesPerParser)
 				r.nornicTime, r.nornicErr = measureMedian(t, config.ParserTypeNornic, tc.query, samplesPerParser)
 			}
-
-			// Reset to default
-			config.SetParserType(config.ParserTypeNornic)
 
 			results = append(results, r)
 
@@ -285,6 +293,7 @@ func TestParserComparison(t *testing.T) {
 // BenchmarkParserComparison benchmarks both executor paths using the integrated
 // flow. It is not a parser-only benchmark.
 func BenchmarkParserComparison(b *testing.B) {
+	restoreParserTypeAfter(b)
 	queries := []struct {
 		name  string
 		query string
@@ -316,9 +325,6 @@ func BenchmarkParserComparison(b *testing.B) {
 			}
 		})
 	}
-
-	// Reset to default
-	config.SetParserType(config.ParserTypeNornic)
 }
 
 // TestParserPerformanceComparison runs a detailed integrated executor-flow
@@ -327,6 +333,7 @@ func TestParserPerformanceComparison(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping performance comparison in short mode")
 	}
+	restoreParserTypeAfter(t)
 
 	baseStore := newTestMemoryEngine(t)
 
@@ -372,14 +379,13 @@ func TestParserPerformanceComparison(t *testing.T) {
 		fmt.Printf("%-15s | %-15s | %-15s | %.2fx\n", tc.name, nornicAvg, antlrAvg, ratio)
 	}
 	fmt.Println()
-
-	// Reset to default
-	config.SetParserType(config.ParserTypeNornic)
 }
 
 // TestParserTypeSwitch verifies the config-based parser switching.
 func TestParserTypeSwitch(t *testing.T) {
-	// Test default is nornic
+	restoreParserTypeAfter(t)
+	// Start from Nornic, the default, whatever parser the run selected.
+	config.SetParserType(config.ParserTypeNornic)
 	assert.Equal(t, config.ParserTypeNornic, config.GetParserType())
 	assert.True(t, config.IsNornicParser())
 	assert.False(t, config.IsANTLRParser())
@@ -390,7 +396,7 @@ func TestParserTypeSwitch(t *testing.T) {
 	assert.True(t, config.IsANTLRParser())
 	assert.False(t, config.IsNornicParser())
 
-	// Test cleanup restores default
+	// Test cleanup restores the previous parser
 	cleanup()
 	assert.Equal(t, config.ParserTypeNornic, config.GetParserType())
 	assert.True(t, config.IsNornicParser())
