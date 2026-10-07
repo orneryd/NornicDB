@@ -72,6 +72,7 @@ export function layoutCallBranches(
   links: LayoutLink[],
   rootId: string | null,
   packages?: ReadonlyMap<string, string>,
+  communities?: ReadonlyMap<string, string>,
 ): Map<string, { x: number; y: number; z: number }> {
   const eligible = new Set(nodeIds);
   const adjacency = new Map<string, Set<string>>();
@@ -94,16 +95,35 @@ export function layoutCallBranches(
   let mainExtent = 0;
   const cloudRadius = Math.max(80, Math.cbrt(nodeIds.length) * 16);
   const connected = packages ? callTreeLayout(links, rootId) : new Map<string, number>();
-  const packageMembers = new Map<string, number>();
+  // Order: the call tree (placed first, from the root), then communities, then packages inside each
+  // community. A group is a (community, package) pair; without communities it is just the package.
+  const groupOf = (id: string) => {
+    const packageName = packages?.get(id) ?? "unknown";
+    // No communities: every package is its own top-level group, as before.
+    const community = communities ? communities.get(id) ?? "" : packageName;
+    return { community, packageName, key: JSON.stringify([community, packageName]) };
+  };
+  const packageMembers = new Map<string, number>(); // by group key
   for (const id of orderedIds) {
     if (connected.has(id)) continue;
-    const packageName = packages?.get(id) ?? "unknown";
-    packageMembers.set(packageName, (packageMembers.get(packageName) ?? 0) + 1);
+    const { key } = groupOf(id);
+    packageMembers.set(key, (packageMembers.get(key) ?? 0) + 1);
   }
-  const packageNames = [...packageMembers.keys()].sort();
-  const packageIndices = new Map(packageNames.map((name, index) => [name, index]));
+  const groupKeys = [...packageMembers.keys()].sort();
+  const communityNames = [...new Set(groupKeys.map(key => JSON.parse(key)[0] as string))].sort();
+  const packagesByCommunity = new Map<string, string[]>();
+  for (const key of groupKeys) {
+    const [community] = JSON.parse(key) as [string, string];
+    packagesByCommunity.set(community, [...(packagesByCommunity.get(community) ?? []), key]);
+  }
+  const communityMembers = new Map<string, number>();
+  for (const [key, count] of packageMembers) {
+    const [community] = JSON.parse(key) as [string, string];
+    communityMembers.set(community, (communityMembers.get(community) ?? 0) + count);
+  }
   const packageSlots = new Map<string, number>();
-  const largestPackageRadius = Math.max(0, ...[...packageMembers.values()].map(count => Math.max(60, Math.cbrt(count) * 16)));
+  const groupRadius = (count: number) => Math.max(60, Math.cbrt(count) * 16);
+  const largestPackageRadius = Math.max(0, ...[...communityMembers.values()].map(count => groupRadius(count)));
   for (const seed of orderedIds) {
     if (positions.has(seed)) continue;
     const children = new Map<string, string[]>();
@@ -130,21 +150,41 @@ export function layoutCallBranches(
       z: component === 0 ? 0 : height * radius,
     };
     if (component > 0 && packages) {
-      const name = packages.get(seed) ?? "unknown";
-      const packageIndex = packageIndices.get(name)!;
-      const localIndex = (packageSlots.get(name) ?? 0) + 1;
-      packageSlots.set(name, localIndex);
-      const packageHeight = 1 - 2 * (packageIndex + 0.5) / packageNames.length;
-      const packageAngle = packageIndex * 2.399963;
-      const packageDistance = mainExtent + largestPackageRadius + 100 + Math.sqrt(packageNames.length) * 24;
-      const packageWidth = Math.sqrt(1 - packageHeight * packageHeight) * packageDistance;
-      const localRadius = Math.max(60, Math.cbrt(packageMembers.get(name)!) * 16) * Math.cbrt((localIndex * 0.754877666) % 1);
+      const group = groupOf(seed);
+      const communityIndex = communityNames.indexOf(group.community);
+      const localIndex = (packageSlots.get(group.key) ?? 0) + 1;
+      packageSlots.set(group.key, localIndex);
+      // 1. the community's place around the call tree
+      const communityHeight = 1 - 2 * (communityIndex + 0.5) / communityNames.length;
+      const communityAngle = communityIndex * 2.399963;
+      const communityDistance = mainExtent + largestPackageRadius + 100 + Math.sqrt(communityNames.length) * 24;
+      const communityWidth = Math.sqrt(1 - communityHeight * communityHeight) * communityDistance;
+      const center = {
+        x: Math.cos(communityAngle) * communityWidth,
+        y: Math.sin(communityAngle) * communityWidth,
+        z: communityHeight * communityDistance,
+      };
+      // 2. the package's place inside its community
+      const siblings = packagesByCommunity.get(group.community)!;
+      const packageIndex = siblings.indexOf(group.key);
+      const communityRadius = groupRadius(communityMembers.get(group.community)!);
+      if (siblings.length > 1) {
+        const packageHeight = 1 - 2 * (packageIndex + 0.5) / siblings.length;
+        const packageAngle = packageIndex * 2.399963;
+        const packageWidth = Math.sqrt(1 - packageHeight * packageHeight) * communityRadius;
+        center.x += Math.cos(packageAngle) * packageWidth;
+        center.y += Math.sin(packageAngle) * packageWidth;
+        center.z += packageHeight * communityRadius;
+      }
+      // 3. the component inside its package
+      const localRadius = groupRadius(packageMembers.get(group.key)!) * (siblings.length > 1 ? 0.5 : 1)
+        * Math.cbrt((localIndex * 0.754877666) % 1);
       const localHeight = 1 - 2 * ((localIndex * 0.61803398875) % 1);
       const localWidth = Math.sqrt(1 - localHeight * localHeight) * localRadius;
       seedPosition = {
-        x: Math.cos(packageAngle) * packageWidth + Math.cos(localIndex * 2.399963) * localWidth,
-        y: Math.sin(packageAngle) * packageWidth + Math.sin(localIndex * 2.399963) * localWidth,
-        z: packageHeight * packageDistance + localHeight * localRadius,
+        x: center.x + Math.cos(localIndex * 2.399963) * localWidth,
+        y: center.y + Math.sin(localIndex * 2.399963) * localWidth,
+        z: center.z + localHeight * localRadius,
       };
     }
     positions.set(seed, seedPosition);

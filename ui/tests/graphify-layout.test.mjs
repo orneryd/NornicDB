@@ -152,3 +152,30 @@ test("package identities use explicit metadata, source directories, or external 
   assert.equal(packageForSymbol({ label: "context.Context" }), "context");
   assert.equal(packageForSymbol({}), "unknown");
 });
+test("disconnected nodes group by community first, then by package inside each community", () => {
+  const ids = Array.from({ length: 120 }, (_, index) => `node-${String(index).padStart(3, "0")}`);
+  const communityOf = new Map(ids.map((id, index) => [id, index % 2 === 0 ? "1" : "2"]));
+  // Both communities contain both packages, so grouping by package alone would mix them.
+  const packages = new Map(ids.map((id, index) => [id, Math.floor(index / 2) % 2 === 0 ? "pkg/a" : "pkg/b"]));
+  const positions = layoutCallBranches(["main", ...ids], [], "main", packages, communityOf);
+  const center = (select) => {
+    const points = ids.filter(select).map(id => positions.get(id));
+    return {
+      x: points.reduce((total, point) => total + point.x, 0) / points.length,
+      y: points.reduce((total, point) => total + point.y, 0) / points.length,
+      z: points.reduce((total, point) => total + point.z, 0) / points.length,
+    };
+  };
+  const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+  const c1 = center(id => communityOf.get(id) === "1");
+  const c2 = center(id => communityOf.get(id) === "2");
+  assert.ok(distance(c1, c2) > 150, "communities sit apart");
+  // Inside community 1 the two packages are separated but stay close to the community.
+  const a = center(id => communityOf.get(id) === "1" && packages.get(id) === "pkg/a");
+  const b = center(id => communityOf.get(id) === "1" && packages.get(id) === "pkg/b");
+  assert.ok(distance(a, b) > 10 && distance(a, b) < distance(c1, c2), "packages are sub-groups of their community");
+  for (const id of ids.filter(id => communityOf.get(id) === "1")) {
+    assert.ok(distance(positions.get(id), c1) < 150, "every member stays near its community");
+  }
+  assert.deepEqual([...positions], [...layoutCallBranches(["main", ...ids], [], "main", packages, communityOf)]);
+});

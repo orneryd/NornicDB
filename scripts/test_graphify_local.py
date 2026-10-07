@@ -10,6 +10,7 @@ from scripts.graphify_local import (
     DEFAULT_MAIN,
     MainSelectionError,
     body_for_node,
+    comments_for_node,
     body_span,
     choose_main,
     collect_symbol_lines,
@@ -339,7 +340,9 @@ class GraphifyLocalTest(unittest.TestCase):
         node_rows = {row["id"]: row["props"]
                      for query, params in queries if "MERGE (n:" in query
                      for row in params["rows"]}
-        self.assertIn("// Doc for A.", node_rows["a"]["body"])
+        # Comments live in their own property, apart from the symbol body.
+        self.assertNotIn("// Doc for A.", node_rows["a"]["body"])
+        self.assertIn("// Doc for A.", node_rows["a"]["comments"])
         self.assertTrue(node_rows["a"]["body"].rstrip().endswith("}"))
         self.assertEqual(node_rows["b"]["body"], "func B() {}")
         # Go has no _callable flag, but every function and method label ends in "()"
@@ -420,7 +423,7 @@ class GraphifyLocalTest(unittest.TestCase):
             emit_enriched_graph(graph_path, out_path, str(root))
             data = json.loads(out_path.read_text(encoding="utf-8"))
             by_id = {n["id"]: n for n in data["nodes"]}
-            self.assertIn("// Doc for A.", by_id["a"]["body"])
+            self.assertNotIn("// Doc for A.", by_id["a"]["body"])
             self.assertTrue(by_id["a"]["body"].rstrip().endswith("}"))
             self.assertEqual(by_id["b"]["body"], "func B() {}")
             self.assertEqual(data["links"], graph["links"])
@@ -542,17 +545,23 @@ func Other() {}
 
             compute_body = body_for_node(root, by_id["compute"], symbols, cache, state_cache)
             self.assertIsNotNone(compute_body)
-            # Full, untruncated body including the doc comments above and the
-            # comment inside — but stopping before Other()'s own doc comment.
-            self.assertIn("// Compute adds one.", compute_body)
-            self.assertIn("// More detail.", compute_body)
-            self.assertIn("// inside comment", compute_body)
+            # Full, untruncated body without comment-only lines (those go to `comments`), and it
+            # stops before Other()'s own doc comment.
+            self.assertEqual(compute_body.splitlines()[0], "func Compute(x int) int {")
             self.assertIn("return x + 1", compute_body)
+            self.assertNotIn("// Compute adds one.", compute_body)
+            self.assertNotIn("// inside comment", compute_body)
             self.assertNotIn("// Other is second.", compute_body)
             self.assertTrue(compute_body.rstrip().endswith("}"))
+            compute_comments = comments_for_node(root, by_id["compute"], symbols, {}, cache, state_cache)
+            self.assertIn("// Compute adds one.", compute_comments)
+            self.assertIn("// More detail.", compute_comments)
+            self.assertIn("// inside comment", compute_comments)
+            self.assertNotIn("// Other is second.", compute_comments)
 
             other_body = body_for_node(root, by_id["other"], symbols, cache, state_cache)
-            self.assertEqual(other_body, "// Other is second.\nfunc Other() {}")
+            self.assertEqual(other_body, "func Other() {}")
+            self.assertEqual(comments_for_node(root, by_id["other"], symbols, {}, cache, state_cache), "// Other is second.")
 
             self.assertIsNone(body_for_node(root, by_id["missing"], symbols, cache, state_cache))
 

@@ -27,6 +27,9 @@ interface GNode {
   sourceFile?: string;
   sourceLocation?: string;
   nodeKind?: string;
+  // Graphify community (cluster) this node belongs to, when the database has them.
+  community?: string;
+  communityName?: string;
   degree: number;
   highlight: boolean;
   selected: boolean;
@@ -63,6 +66,8 @@ interface ArtifactNode {
   source_location?: string;
   node_kind?: string;
   body?: string;
+  community?: unknown;
+  community_name?: unknown;
   [key: string]: unknown;
 }
 
@@ -114,6 +119,55 @@ const KIND_LEGEND: Array<[string, string]> = [
   ["similar", SIMILAR_COLOR],
 ];
 
+// Communities are Graphify's clusters of closely related symbols. Their colors
+// are spread around the hue wheel by the golden angle so neighbors differ, and
+// a community keeps its color for a given id.
+function communityColor(community: string): string {
+  const index = Number.parseInt(community, 10);
+  const seed = Number.isFinite(index) ? index : community.length;
+  const hue = (seed * 137.508) % 360;
+  const lightness = 58 + ((seed * 7) % 3) * 6;
+  return `hsl(${hue.toFixed(1)}, 72%, ${lightness}%)`;
+}
+
+const COMMUNITY_LEGEND_SIZE = 10;
+const COMMUNITY_COHESION = 0.035;
+const COMMUNITY_MEMBERSHIP_QUERY = `MATCH (n)-[:IN_COMMUNITY]->(c:Community)
+WHERE n.id IN $ids
+RETURN n.id AS id, c.community AS community, c.name AS name`;
+
+// Pulls every node toward the live centroid of its community. It is weak enough
+// that the call-tree branches still set the shape of the graph; it only makes
+// each community read as one group within that shape.
+function communityCohesion(communityOf: ReadonlyMap<string, string>, rootId: string | null, strength: number) {
+  let nodes: GNode[] = [];
+  const force = (alpha: number) => {
+    const sums = new Map<string, { x: number; y: number; z: number; count: number }>();
+    for (const node of nodes) {
+      const community = communityOf.get(node.id);
+      if (!community) continue;
+      const sum = sums.get(community) ?? { x: 0, y: 0, z: 0, count: 0 };
+      sum.x += node.x ?? 0;
+      sum.y += node.y ?? 0;
+      sum.z += node.z ?? 0;
+      sum.count += 1;
+      sums.set(community, sum);
+    }
+    for (const node of nodes) {
+      const community = communityOf.get(node.id);
+      const sum = community ? sums.get(community) : undefined;
+      if (!sum || sum.count < 2 || node.id === rootId) continue;
+      node.vx = (node.vx ?? 0) + (sum.x / sum.count - (node.x ?? 0)) * strength * alpha;
+      node.vy = (node.vy ?? 0) + (sum.y / sum.count - (node.y ?? 0)) * strength * alpha;
+      node.vz = (node.vz ?? 0) + (sum.z / sum.count - (node.z ?? 0)) * strength * alpha;
+    }
+  };
+  force.initialize = (initial: GNode[]) => {
+    nodes = initial;
+  };
+  return force;
+}
+
 // The rooted view starts from the repository's main entry point. The ingest
 // (Soraban/code-intelligence) tags that node with a second label, :Main, so it
 // is fetched directly. A database without one falls back to ENTRY_CANDIDATE_QUERY.
@@ -152,12 +206,18 @@ function setDagMode(fg: GraphifyForceGraph, mode: "td" | null): void {
   fg.dagLevelDistance(72);
 }
 
-function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], rootId: string | null): void {
+function orientGraph(
+  fg: GraphifyForceGraph,
+  links: GLink[],
+  nodes: GNode[],
+  rootId: string | null,
+  groupByCommunity = true,
+): void {
   links = [...links];
   nodes = [...nodes];
   fg.onEngineTick(() => {});
   fg.onEngineStop(() => {});
-  for (const name of ["bundles", "branch-x", "branch-y", "branch-z"]) {
+  for (const name of ["bundles", "branch-x", "branch-y", "branch-z", "community"]) {
     fg.d3Force(name, null);
   }
   fg.graphData({ nodes, links });
@@ -165,9 +225,19 @@ function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], roo
   fg.d3Force("layers", null);
   fg.d3Force("center", null);
   const byId = new Map(nodes.map(node => [node.id, node]));
-  const kinds = nodes.map(node => ({ id: node.id, kind: classifySymbolKind(node), packageName: packageForSymbol(node) }));
-  const packages = new Map(kinds.map(node => [node.id, node.packageName]));
-  const branches = layoutCallBranches(nodes.map(node => node.id), links, rootId, packages);
+  // Order: the call tree branches from the root as before; symbols outside it group by community, then by
+  // package inside each community.
+  const communityOf = new Map<string, string>();
+  if (groupByCommunity) {
+    for (const node of nodes) if (node.community) communityOf.set(node.id, node.community);
+  }
+  const kinds = nodes.map(node => ({
+    id: node.id,
+    kind: classifySymbolKind(node),
+    packageName: `${communityOf.get(node.id) ?? ""}|${packageForSymbol(node)}`,
+  }));
+  const packages = new Map(nodes.map(node => [node.id, packageForSymbol(node)]));
+  const branches = layoutCallBranches(nodes.map(node => node.id), links, rootId, packages, communityOf.size > 0 ? communityOf : undefined);
   const bundles = layoutSymbolBundles(kinds, links, rootId);
   const bundleLinks: Array<{ source: string; target: string }> = [];
   for (const node of nodes) {
@@ -195,6 +265,7 @@ function orientGraph(fg: GraphifyForceGraph, links: GLink[], nodes: GNode[], roo
     fg.d3Force("branch-z", forceZ<GNode>(node => branches.get(node.id)!.z).strength(branchStrength));
     fg.d3Force("bundles", forceLink<GNode>(bundleLinks).id(node => node.id).distance(65).strength(0.65));
     fg.d3Force("collide", forceCollide<GNode>(node => node.id === rootId ? 10 : 5).strength(0.7));
+    if (communityOf.size > 0) fg.d3Force("community", communityCohesion(communityOf, rootId, COMMUNITY_COHESION));
     const linkForce = fg.d3Force("link") as unknown as {
       distance(value: (link: GLink) => number): unknown;
       strength(value: (link: GLink) => number): unknown;
@@ -386,6 +457,11 @@ export function Graphify() {
   const customRootRef = useRef<{ id: string; label: string } | null>(null);
   const [depth, setDepth] = useState<number>(DEFAULT_DEPTH);
   const [showTests, setShowTests] = useState(false);
+  const [colorBy, setColorBy] = useState<"kind" | "community">("kind");
+  const [groupByCommunity, setGroupByCommunity] = useState(true);
+  const [communityLegend, setCommunityLegend] = useState<Array<{ id: string; name: string; size: number }>>([]);
+  const colorByRef = useRef<"kind" | "community">("kind");
+  const groupByCommunityRef = useRef(true);
   const [controlsVisible, setControlsVisible] = useState(true);
   // Filter entries are managed as add/remove lists in the filter panel;
   // applying them reloads the graph with the lists sent to the
@@ -542,6 +618,22 @@ export function Graphify() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showTests]);
 
+  // Recolor in place when the color mode flips.
+  useEffect(() => {
+    colorByRef.current = colorBy;
+    const fg = graphRef.current;
+    if (fg) fg.nodeColor(fg.nodeColor());
+  }, [colorBy]);
+
+  // Re-lay out the loaded graph when grouping by community is switched.
+  useEffect(() => {
+    groupByCommunityRef.current = groupByCommunity;
+    const fg = graphRef.current;
+    if (!fg) return;
+    const { nodes, links } = fg.graphData();
+    if (nodes.length > 0) orientGraph(fg, links as GLink[], nodes as GNode[], rootIdRef.current, groupByCommunity);
+  }, [groupByCommunity]);
+
   // Filters apply automatically: adding or removing any entry reloads the
   // graph with the updated lists (the first render is skipped so the Load
   // tree button drives the initial fetch).
@@ -606,6 +698,7 @@ export function Graphify() {
         if (n.selected) return HIGHLIGHT_COLOR;
         if (n.highlight) return "#f0abfc";
         if (n.similar) return SIMILAR_COLOR;
+        if (colorByRef.current === "community" && n.community) return communityColor(n.community);
         return KIND_COLORS[classifySymbolKind(n)] ?? DEFAULT_NODE_COLOR;
       })
       .linkOpacity(0.4)
@@ -629,7 +722,7 @@ export function Graphify() {
       })
       .nodeLabel(
         (n) =>
-          `${classifySymbolKind(n)} · ${n.label}${n.sourceFile ? ` · ${n.sourceFile}${n.sourceLocation ? ":" + n.sourceLocation : ""}` : ""}`,
+          `${classifySymbolKind(n)} · ${n.label}${n.communityName ? ` · community: ${n.communityName}` : ""}${n.sourceFile ? ` · ${n.sourceFile}${n.sourceLocation ? ":" + n.sourceLocation : ""}` : ""}`,
       )
       .cooldownTicks(80)
       .warmupTicks(0)
@@ -832,6 +925,8 @@ export function Graphify() {
           sourceFile: raw.source_file,
           sourceLocation: raw.source_location,
           nodeKind: raw.node_kind,
+          community: raw.community == null ? undefined : String(raw.community),
+          communityName: typeof raw.community_name === "string" && raw.community_name ? raw.community_name : undefined,
           body: raw.body,
           degree: 0,
           highlight: false,
@@ -861,8 +956,20 @@ export function Graphify() {
       const fg = graphRef.current;
       const nodes = Array.from(byId.values());
       if (fg) {
-        orientGraph(fg, links, nodes, rootId);
+        orientGraph(fg, links, nodes, rootId, groupByCommunityRef.current);
       }
+      const sizes = new Map<string, { name: string; size: number }>();
+      for (const node of nodes) {
+        if (!node.community) continue;
+        const entry = sizes.get(node.community) ?? { name: "", size: 0 };
+        entry.size += 1;
+        entry.name = entry.name || node.communityName || "";
+        sizes.set(node.community, entry);
+      }
+      setCommunityLegend(
+        [...sizes].map(([id, entry]) => ({ id, name: entry.name || `community ${id}`, size: entry.size }))
+          .sort((a, b) => b.size - a.size).slice(0, COMMUNITY_LEGEND_SIZE),
+      );
       if (fg && rootId) {
         window.requestAnimationFrame(() => {
           window.requestAnimationFrame(() => frameRootGraph(fg, rootId));
@@ -1017,8 +1124,33 @@ export function Graphify() {
             typeof payload.properties.body === "string"
               ? payload.properties.body
               : undefined,
+          community: payload.properties.community,
+          community_name: payload.properties.community_name,
         };
       });
+      // Databases loaded by the current importers keep communities as Community nodes joined by
+      // IN_COMMUNITY edges (not properties, so relabelling never rewrites the symbols).
+      if (rawNodes.length > 0 && rawNodes.every((node) => node.community == null)) {
+        try {
+          const byPublicId = new Map(rawNodes.map((node) => [node.id, node]));
+          const ids = [...byPublicId.keys()];
+          for (let offset = 0; offset < ids.length; offset += 2000) {
+            const resp = await api.executeCypherOnDatabase(
+              dbName,
+              COMMUNITY_MEMBERSHIP_QUERY,
+              { ids: ids.slice(offset, offset + 2000) },
+            );
+            for (const row of rowsFromCypher(resp)) {
+              const node = byPublicId.get(String(row.id));
+              if (!node) continue;
+              node.community = row.community;
+              node.community_name = typeof row.name === "string" ? row.name : undefined;
+            }
+          }
+        } catch {
+          // no communities in this database: the layout falls back to packages
+        }
+      }
       const rawLinks: ArtifactLink[] = hood.edges.map((edge) => ({
         source: internalToPublic.get(edge.source) ?? edge.source,
         target: internalToPublic.get(edge.target) ?? edge.target,
@@ -1607,7 +1739,18 @@ export function Graphify() {
             : "graphify tree explorer"}
         </div>
         <div className="mt-1 flex items-center gap-2 text-[10px] text-norse-silver/50 font-mono flex-wrap">
-          {KIND_LEGEND.map(([kind, color]) => (
+          {colorBy === "community" && communityLegend.length > 0
+            ? communityLegend.map((entry) => (
+                <span key={entry.id} className="inline-flex items-center gap-1" title={`${entry.size} nodes`}>
+                  <span
+                    className="inline-block w-2 h-2 rounded-full"
+                    style={{ backgroundColor: communityColor(entry.id) }}
+                  />
+                  {entry.name}
+                </span>
+              ))
+            : null}
+          {colorBy === "kind" && KIND_LEGEND.map(([kind, color]) => (
             <span key={kind} className="inline-flex items-center gap-1">
               <span
                 className="inline-block w-2 h-2 rounded-full"
@@ -1678,6 +1821,26 @@ export function Graphify() {
               }}
               className="w-14 rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver focus:outline-none focus:border-sky-400"
             />
+          </label>
+          <label className="flex items-center gap-1 text-xs text-norse-silver/80 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={groupByCommunity}
+              onChange={(e) => setGroupByCommunity(e.target.checked)}
+              className="mr-0.5"
+            />
+            group by community
+          </label>
+          <label className="flex items-center gap-1 text-xs text-norse-silver/80 select-none">
+            color
+            <select
+              value={colorBy}
+              onChange={(e) => setColorBy(e.target.value as "kind" | "community")}
+              className="rounded border border-norse-rune bg-norse-night px-1 py-1 text-xs text-norse-silver focus:outline-none focus:border-sky-400"
+            >
+              <option value="kind">symbol kind</option>
+              <option value="community">community</option>
+            </select>
           </label>
           <label className="flex items-center gap-1 text-xs text-norse-silver/80 select-none cursor-pointer">
             <input

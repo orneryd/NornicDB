@@ -7,8 +7,10 @@ in step: a fix to one belongs in the other.
 
 Graphify's ``graph.json`` records only the start line of each symbol, so the importer
 re-reads the real source files and writes the FULL, untruncated symbol ``body``
-(including the comment block directly above the symbol and all comments within the
-span) on every node. NornicDB's managed embedding worker includes every string
+(its source without comment-only lines and docstrings) and a separate ``comments``
+property (the comment block above the symbol, its docstring and the comments inside it)
+on every node. Graphify's communities become ``Community`` nodes joined to their members
+by ``IN_COMMUNITY`` edges. NornicDB's managed embedding worker includes every string
 property in the embedding text, so ingested nodes become searchable through the vector
 search APIs without any extra configuration.
 
@@ -532,15 +534,69 @@ def _resolve_main_spec(spec, nodes):
         f"(external symbols cannot be the main entry point).{hint}")
 
 
+class Communities:
+    """Graphify's clustering: which community each node is in, and what it is called.
+
+    Names are voted per community, because a graph that was re-clustered without
+    re-labelling can carry stale names from an older numbering (the importer then
+    uses the most common one and reports the mismatch).
+    """
+
+    def __init__(self):
+        self.members = []  # (node id, node db label, community id)
+        self.names = defaultdict(lambda: defaultdict(int))
+        self.sizes = defaultdict(int)
+
+    def add(self, node_id, label, community, name):
+        if not isinstance(community, int) or isinstance(community, bool):
+            return
+        self.members.append((node_id, label, community))
+        self.sizes[community] += 1
+        if isinstance(name, str) and name.strip():
+            self.names[community][name.strip()] += 1
+
+    def ids(self):
+        return sorted(self.sizes)
+
+    def name(self, community):
+        votes = self.names.get(community)
+        if not votes:
+            return ""
+        return max(sorted(votes), key=lambda candidate: votes[candidate])
+
+    def inconsistent(self):
+        return sum(1 for votes in self.names.values() if len(votes) > 1)
+
+    def unnamed(self):
+        return sum(1 for community in self.sizes if not self.names.get(community))
+
+
 def collect_symbol_lines(graph_path):
     """Map source_file -> sorted [(line, node_data)] from a streaming pass."""
     symbols = defaultdict(list)
     for data in graph_items(graph_path, "nodes"):
+        # A rationale node is a docstring or comment inside a symbol, never the start of the next
+        # one; treating it as a boundary would cut every documented function off at its docstring.
+        if data.get("file_type") == "rationale":
+            continue
         line = parse_location(data.get("source_location"))
         symbols[data.get("source_file") or ""].append((line, data))
     for rows in symbols.values():
         rows.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
     return symbols
+
+
+def collect_docstring_lines(graph_path, link_key):
+    """Map symbol id -> source lines of its docstrings (rationale_for edges)."""
+    rationale_line = {}
+    for data in graph_items(graph_path, "nodes"):
+        if data.get("file_type") == "rationale":
+            rationale_line[data["id"]] = parse_location(data.get("source_location"))
+    found = defaultdict(list)
+    for data in graph_items(graph_path, link_key):
+        if data.get("relation") == "rationale_for" and rationale_line.get(data["source"]):
+            found[data["target"]].append(rationale_line[data["source"]])
+    return found
 
 
 def file_comment_state(repo_root, source_file, lines, state_cache):
@@ -556,24 +612,17 @@ def file_comment_state(repo_root, source_file, lines, state_cache):
     return style, mask
 
 
-def body_for_node(repo_root, data, symbols, line_cache, state_cache):
-    """Full untruncated body for one node, or None when not applicable."""
+def symbol_range(repo_root, data, symbols, line_cache, state_cache):
+    """(lines, begin, end, start_line, mask) of an ordinary symbol, or None.
+
+    ``begin`` is the first line of the comment block attached above the symbol
+    (or the symbol's own line), ``end`` the last line before the next symbol's
+    attached comment block. All 1-based and inclusive.
+    """
     source_file = data.get("source_file")
-    if node_is_page(data):
-        lines = read_file_lines(repo_root, source_file, line_cache)
-        if lines is None:
-            return None
-        return "\n".join(lines)
-    if node_is_file_container(data) or node_is_filename_container(data):
-        return None
     start_line = parse_location(data.get("source_location"))
     if start_line is None or not source_file:
         return None
-    if node_is_entrypoint(data):
-        lines = read_file_lines(repo_root, source_file, line_cache)
-        if lines is None:
-            return None
-        return "\n".join(lines)
     lines = read_file_lines(repo_root, source_file, line_cache)
     if lines is None or start_line > len(lines):
         return None
@@ -590,8 +639,117 @@ def body_for_node(repo_root, data, symbols, line_cache, state_cache):
         break
     if end_line < begin:
         end_line = start_line
-    body = "\n".join(lines[begin - 1:end_line])
-    return body.lstrip("\n")
+    return lines, begin, end_line, start_line, mask
+
+
+def body_for_node(repo_root, data, symbols, line_cache, state_cache, docstring_lines=None):
+    """Full untruncated body for one node, or None when not applicable.
+
+    For an ordinary symbol the body is its source with the comment-only lines and docstrings taken
+    out; those are stored separately as ``comments`` (see ``comments_for_node``).
+    """
+    source_file = data.get("source_file")
+    if node_is_page(data):
+        lines = read_file_lines(repo_root, source_file, line_cache)
+        if lines is None:
+            return None
+        return "\n".join(lines)
+    if node_is_file_container(data) or node_is_filename_container(data):
+        return None
+    if parse_location(data.get("source_location")) is None or not source_file:
+        return None
+    if node_is_entrypoint(data):
+        lines = read_file_lines(repo_root, source_file, line_cache)
+        if lines is None:
+            return None
+        return "\n".join(lines)
+    if data.get("file_type") == "rationale":
+        return rationale_body(repo_root, data, line_cache, state_cache)
+    found = symbol_range(repo_root, data, symbols, line_cache, state_cache)
+    if found is None:
+        return None
+    lines, begin, end_line, start_line, mask = found
+    dropped = set()
+    for index in range(begin, end_line + 1):
+        if mask[index - 1]:
+            dropped.add(index)
+    for doc_line in (docstring_lines or {}).get(data.get("id"), ()):
+        span = docstring_span(lines, doc_line)
+        if span and begin <= span[0] and span[1] <= end_line:
+            dropped.update(range(span[0], span[1] + 1))
+    body = "\n".join(lines[index - 1] for index in range(begin, end_line + 1) if index not in dropped)
+    return body.strip("\n")
+
+
+DOCSTRING_OPENER = re.compile(r"""^\s*[rRuUbBfF]{0,2}(\"\"\"|\'\'\')""")
+
+
+def docstring_span(lines, line):
+    """(first line, last line, inner text) of the triple-quoted string opening on 1-based ``line``."""
+    if line is None or line < 1 or line > len(lines):
+        return None
+    match = DOCSTRING_OPENER.match(lines[line - 1])
+    if not match:
+        return None
+    quote = match.group(1)
+    rest = lines[line - 1][match.end():]
+    if quote in rest:
+        return line, line, rest[:rest.index(quote)].strip()
+    parts = [rest]
+    for offset, raw in enumerate(lines[line:line + 400], start=line + 1):
+        if quote in raw:
+            parts.append(raw[:raw.index(quote)])
+            return line, offset, "\n".join(part.rstrip() for part in parts).strip()
+        parts.append(raw)
+    return None
+
+
+def docstring_at(lines, line):
+    """Text of the triple-quoted string that opens on 1-based ``line``, or None."""
+    span = docstring_span(lines, line)
+    return span[2] if span else None
+
+
+def rationale_body(repo_root, data, line_cache, state_cache):
+    """A rationale node is one docstring or comment block; its body is exactly that text."""
+    start_line = parse_location(data.get("source_location"))
+    lines = read_file_lines(repo_root, data.get("source_file"), line_cache)
+    if start_line is None or lines is None or start_line > len(lines):
+        return None
+    span = docstring_span(lines, start_line)
+    if span:
+        return "\n".join(lines[span[0] - 1:span[1]])
+    _style, mask = file_comment_state(repo_root, data["source_file"], lines, state_cache)
+    end = start_line
+    while mask[end - 1] and end < len(lines) and mask[end]:
+        end += 1
+    return "\n".join(lines[start_line - 1:end]) if mask[start_line - 1] else lines[start_line - 1]
+
+
+def comments_for_node(repo_root, data, symbols, docstring_lines, line_cache, state_cache):
+    """Comments of one symbol as text, separate from its ``body``.
+
+    The comment block attached above the symbol, its Python docstring (Graphify
+    records each as a rationale node at the docstring's first line), and every
+    comment-only line inside the symbol's span, in source order. None when the
+    symbol has no comments or is not an ordinary symbol.
+    """
+    if (node_is_page(data) or node_is_file_container(data) or node_is_filename_container(data)
+            or node_is_entrypoint(data) or data.get("file_type") == "rationale"):
+        return None
+    found = symbol_range(repo_root, data, symbols, line_cache, state_cache)
+    if found is None:
+        return None
+    lines, begin, end_line, start_line, mask = found
+    pieces = [(index, lines[index - 1]) for index in range(begin, end_line + 1) if mask[index - 1]]
+    docstrings = []
+    for doc_line in docstring_lines.get(data.get("id"), ()):
+        text = docstring_at(lines, doc_line)
+        if text:
+            docstrings.append((doc_line, text))
+    merged = sorted([(i, t) for i, t in pieces] + docstrings, key=lambda pair: pair[0])
+    text = "\n".join(part for _, part in merged).strip()
+    return text or None
 
 
 def git_file_times(repo_root):
@@ -666,6 +824,17 @@ def ensure_database(driver, database):
             session.run(f"CREATE DATABASE `{database}` IF NOT EXISTS").consume()
 
 
+def friendly_error(error, uri):
+    """One readable line for a failed call to NornicDB (no traceback to scroll through)."""
+    text = str(error)
+    if "Unauthorized" in text or "HTTP 401" in text or "HTTP 403" in text or "AuthError" in type(error).__name__:
+        return (f"error: NornicDB at {uri} rejected the credentials. Check the username and password "
+                f"(the nornicdb-user / nornicdb-password inputs).")
+    if isinstance(error, (RetryableError, OSError)) or "ServiceUnavailable" in type(error).__name__:
+        return f"error: cannot reach NornicDB at {uri}: {text}"
+    return f"error: NornicDB at {uri} returned an error: {text}"
+
+
 def last_ingested_state(uri, user, password, database, repo):
     """{'commit', 'main_spec'} recorded by the previous successful run, or None."""
     try:
@@ -677,10 +846,15 @@ def last_ingested_state(uri, user, password, database, repo):
                     repo=repo,
                 ).single()
                 return dict(record) if record else None
-    except Exception as error:  # missing database, first run, etc.
-        print(f"Could not read last ingested commit ({error}); assuming ingest is needed",
-              file=sys.stderr)
-        return None
+    except SystemExit:
+        raise
+    except Exception as error:
+        # A database that does not exist yet is the normal first run. Anything else (bad credentials,
+        # unreachable server, server error) would only fail later, after a long extraction, so fail now.
+        if "DatabaseNotFound" in str(error):
+            print(f"Database {database!r} does not exist yet; this will be the first ingest", file=sys.stderr)
+            return None
+        raise SystemExit(friendly_error(error, uri)) from error
 
 
 def import_graph(graph_path, uri, user, password, batch_size, repo_root, database, repo,
@@ -693,6 +867,13 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
     updated_nodes = 0
     unchanged_nodes = unchanged_edges = 0  # already in the database with the same content hash
     symbols = collect_symbol_lines(graph_path)
+    # Graphify >=0.9.69 exports links; older graphs used edges. Probe
+    # the links key first and fall back to edges when it is absent.
+    link_key = "links"
+    if next(graph_items(graph_path, "links"), None) is None:
+        link_key = "edges"
+    docstring_lines = collect_docstring_lines(graph_path, link_key)
+    communities = Communities()
     line_cache = {}
     state_cache = {}
     file_times = {**manifest_mtimes(graph_path), **git_file_times(repo_root)}
@@ -807,7 +988,11 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                     "symbol_kind": symbol_kind(data),
                     "updated_at": updated_at_for(data, repo_root, file_times),
                 }
-                body = body_for_node(repo_root, data, symbols, line_cache, state_cache)
+                # Community membership is modelled as Community nodes + IN_COMMUNITY edges, not as
+                # properties: a re-clustering renumbers and renames communities, which would rewrite
+                # and re-embed every member node.
+                communities.add(node_id, label, props.pop("community", None), props.pop("community_name", None))
+                body = body_for_node(repo_root, data, symbols, line_cache, state_cache, docstring_lines)
                 if body and max_body_bytes and len(body.encode("utf-8")) > max_body_bytes:
                     print(f"Skipping body of {node_id} ({data.get('source_file')}): "
                           f"larger than the HTTP request limit", file=sys.stderr)
@@ -816,6 +1001,9 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                     props["body"] = body
                     props["body_start_line"] = parse_location(data.get("source_location")) or 0
                     bodied_count += 1
+                    comments = comments_for_node(repo_root, data, symbols, docstring_lines, line_cache, state_cache)
+                    if comments:
+                        props["comments"] = comments
                 else:
                     skipped_count += 1
                 props["props_hash"] = content_hash(props)
@@ -828,11 +1016,6 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                 if len(rows) >= batch_size:
                     write_nodes(label, rows)
 
-            # Graphify >=0.9.69 exports links; older graphs used edges. Probe
-            # the links key first and fall back to edges when it is absent.
-            link_key = "links"
-            if next(graph_items(graph_path, "links"), None) is None:
-                link_key = "edges"
             for data in graph_items(graph_path, link_key):
                 for node_id in (data["source"], data["target"]):
                     if node_id not in labels:
@@ -842,6 +1025,37 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
             for label, rows in node_batches.items():
                 if rows:
                     write_nodes(label, rows)
+
+            if communities.members:
+                if communities.inconsistent():
+                    print(f"Warning: {communities.inconsistent()} communities carry more than one name "
+                          f"(a graph re-clustered without re-labelling); using the most common. "
+                          f"Run `graphify cluster-only` to relabel.", file=sys.stderr)
+                if communities.unnamed():
+                    print(f"Note: {communities.unnamed()} of {len(communities.sizes)} communities have no name.",
+                          flush=True)
+                community_rows = node_batches["Community"]
+                for community in communities.ids():
+                    node_id = f"community:{community}"
+                    labels[node_id] = "Community"
+                    name = communities.name(community)
+                    size = communities.sizes[community]
+                    props = {
+                        "id": node_id, "repo": repo, "symbol_kind": "community",
+                        "community": community, "name": name or f"Community {community}",
+                        "summary": f"Community {community}: {name or 'unnamed'} ({size} members)",
+                        "size": size, "updated_at": time.time(),
+                    }
+                    props["props_hash"] = content_hash(props)
+                    node_count += 1
+                    if skip_unchanged and existing_nodes.get(node_id) == props["props_hash"]:
+                        unchanged_nodes += 1
+                        continue
+                    community_rows.append({"id": node_id, "props": props})
+                    if len(community_rows) >= batch_size:
+                        write_nodes("Community", community_rows)
+                if community_rows:
+                    write_nodes("Community", community_rows)
 
             print(f"Imported {node_count} nodes "
                   f"({bodied_count} with full source bodies, {skipped_count} without)", flush=True)
@@ -889,6 +1103,20 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                         write_edges(source_label, target_label, relation, rows)
                 if edge_count % 10000 == 0:
                     print(f"Imported {edge_count} edges", flush=True)
+
+            member_props = {}
+            member_props["props_hash"] = content_hash(member_props)
+            for node_id, node_db_label, community in communities.members:
+                community_id = f"community:{community}"
+                incoming_edges.add((node_id, community_id, "IN_COMMUNITY"))
+                edge_count += 1
+                if skip_unchanged and existing_edges_hash.get((node_id, community_id, "IN_COMMUNITY")) == member_props["props_hash"]:
+                    unchanged_edges += 1
+                    continue
+                rows = edge_batches[(node_db_label, "Community", "IN_COMMUNITY")]
+                rows.append({"src": node_id, "tgt": community_id, "props": member_props})
+                if len(rows) >= batch_size:
+                    write_edges(node_db_label, "Community", "IN_COMMUNITY", rows)
 
             for (source_label, target_label, relation), rows in edge_batches.items():
                 if rows:
@@ -1010,14 +1238,19 @@ def emit_enriched_graph(graph_path, out_path, repo_root):
     with graph_path.open("rb") as graph_file:
         data = json.load(graph_file)
     symbols = collect_symbol_lines(graph_path)
+    link_key = "links" if "links" in data else "edges"
+    docstring_lines = collect_docstring_lines(graph_path, link_key)
     line_cache, state_cache = {}, {}
     file_times = {**manifest_mtimes(graph_path), **git_file_times(repo_root)}
     bodied = 0
     for node in data.get("nodes", []):
-        body = body_for_node(repo_root, node, symbols, line_cache, state_cache)
+        body = body_for_node(repo_root, node, symbols, line_cache, state_cache, docstring_lines)
         if body:
             node["body"] = body
             bodied += 1
+            comments = comments_for_node(repo_root, node, symbols, docstring_lines, line_cache, state_cache)
+            if comments:
+                node["comments"] = comments
         node["updated_at"] = updated_at_for(node, repo_root, file_times)
     with out_path.open("w", encoding="utf-8") as out_file:
         json.dump(data, out_file, ensure_ascii=False)
@@ -1126,12 +1359,15 @@ def main():
                   "--main to pick the real entry point. Next best:", flush=True)
             for line in main["runner_ups"]:
                 print("    " + line, flush=True)
-    import_graph(args.graph, args.uri, args.user, args.password, args.batch_size,
-                 args.repo_root, args.database, args.repo,
-                 commit=args.commit, branch=args.branch, sync=not args.no_sync,
-                 max_delete_fraction=args.max_delete_fraction, main=main,
-                 main_spec=args.main.strip() if main else NO_MAIN,
-                 skip_unchanged=not args.rewrite_all)
+    try:
+        import_graph(args.graph, args.uri, args.user, args.password, args.batch_size,
+                     args.repo_root, args.database, args.repo,
+                     commit=args.commit, branch=args.branch, sync=not args.no_sync,
+                     max_delete_fraction=args.max_delete_fraction, main=main,
+                     main_spec=args.main.strip() if main else NO_MAIN,
+                     skip_unchanged=not args.rewrite_all)
+    except (RuntimeError, RetryableError, OSError) as error:
+        raise SystemExit(friendly_error(error, args.uri)) from error
 
 
 if __name__ == "__main__":
