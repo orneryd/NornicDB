@@ -11,11 +11,25 @@ import (
 // (), [], {} groups and quoted strings. The parts are trimmed substrings of
 // input, so splitting copies no text.
 func splitTopLevelComma(input string) []string {
-	if strings.TrimSpace(input) == "" {
+	var buffer [8]string
+	parts := appendTopLevelComma(buffer[:0], input)
+	if len(parts) == 0 {
 		return nil
 	}
+	// One allocation of the exact size, as the compiler gives a slice built
+	// locally and returned.
+	return append([]string(nil), parts...)
+}
 
-	var parts []string
+// appendTopLevelComma appends input's comma-separated parts outside quotes
+// and brackets, trimmed, to parts (splitTopLevelComma). A caller passing a
+// fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
+// allocating.
+func appendTopLevelComma(parts []string, input string) []string {
+	if strings.TrimSpace(input) == "" {
+		return parts
+	}
+
 	start := 0
 	depth := 0
 
