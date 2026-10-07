@@ -591,8 +591,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// TODO: Migrate handlers to use QueryInfo directly
 	upperQuery := e.cachedUpperQuery(cypher)
 
-	// Capture the storage revision before execution so mutations performed
-	// outside this executor cannot leave a stale cached result behind.
+	// Capture the storage and search-index revisions before execution so
+	// mutations performed outside this executor cannot leave a stale cached
+	// result behind. The search index is updated after the graph (a node's
+	// vector is indexed after its embedding is saved), so a search procedure
+	// that ran in between would otherwise keep its result until the TTL
+	// (#945).
 	resultCacheKey := ""
 	if info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
 		resultCacheKey = resultCacheEntryKey(cypher, params)
@@ -600,6 +604,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			if version, supported := provider.GraphMutationVersion(); supported {
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)
 			}
+		}
+		if svc := e.searchService; svc != nil {
+			resultCacheKey += ":search:" + strconv.FormatUint(svc.IndexRevision(), 10)
 		}
 		if cached, trace, entities, found := e.cache.getWithTrace(resultCacheKey); found {
 			e.restoreHotPathTrace(trace)

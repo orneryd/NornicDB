@@ -864,6 +864,12 @@ type Service struct {
 	buildTotalNodes  atomic.Int64
 	buildProcessed   atomic.Int64
 
+	// indexRevision advances after every change to what a search can return
+	// (indexChanged). Cached search results, here and in the Cypher result
+	// cache, are keyed by it (IndexRevision), so a result computed before a
+	// change is never served after it (#945).
+	indexRevision atomic.Uint64
+
 	// resultCache caches Search() results by query+options (same semantics as Cypher query cache).
 	// All call paths (HTTP search, Cypher, etc.) benefit. Invalidated on IndexNode/RemoveNode.
 	resultCache          *searchResultCache
@@ -1343,7 +1349,32 @@ func (s *Service) MarkReadyDisabled() {
 func (s *Service) SetIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
 	prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
 	prevVec := s.vectorEnabled.Swap(vectorEnabled)
-	return prevBM25 != bm25Enabled || prevVec != vectorEnabled
+	changed = prevBM25 != bm25Enabled || prevVec != vectorEnabled
+	if changed {
+		s.indexChanged()
+	}
+	return changed
+}
+
+// IndexRevision is a number that advances whenever what a search can return
+// changes: a node or relationship is indexed or removed, an index is cleared
+// or rebuilt, or the embedding space or index flags change. A cache of search
+// results reads it before computing a result and keys the result by it, so
+// the result is never served once a later change has completed (#945).
+func (s *Service) IndexRevision() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.indexRevision.Load()
+}
+
+// indexChanged advances IndexRevision. Call it after the change is applied,
+// so a reader that sees the new revision also sees the change.
+func (s *Service) indexChanged() {
+	if s == nil {
+		return
+	}
+	s.indexRevision.Add(1)
 }
 
 // BM25Enabled reports whether BM25 search is enabled for this service.
@@ -2553,6 +2584,7 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 // This is used when regenerating all embeddings to reset the index count.
 // Also frees memory from HNSW tombstones which can accumulate over time.
 func (s *Service) ClearVectorIndex() {
+	defer s.indexChanged()
 	// Lock order: pipelineMu -> mu -> hnswMu, matching pipeline construction paths.
 	s.pipelineMu.Lock()
 	s.vectorPipeline = nil
@@ -2831,6 +2863,7 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 // A node whose searchable text is already in the fulltext index keeps that
 // document: re-indexing it would analyze the same text twice for no change.
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
+	defer s.indexChanged()
 	nodeIDStr := string(node.ID)
 	shouldIndex, err := s.shouldIndexNode(node)
 	if err != nil {
@@ -3187,6 +3220,7 @@ func (s *Service) storedVectorEqualsLocked(id string, vec []float32) bool {
 // This is used by both RemoveNode (delete path) and IndexNode (update path) to ensure
 // vector IDs never become orphaned when embeddings change shape over time.
 func (s *Service) removeNodeLocked(nodeIDStr string) {
+	defer s.indexChanged()
 	s.removeNodeEntriesLocked(nodeIDStr, true)
 }
 
@@ -3316,6 +3350,7 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 // indexEdgeLocked indexes vector-shaped relationship properties.
 // Caller must hold s.indexMu.
 func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
+	defer s.indexChanged()
 	if edge == nil || !s.vectorEnabled.Load() {
 		return nil
 	}
@@ -3368,6 +3403,7 @@ func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
 }
 
 func (s *Service) removeEdgeLocked(edgeIDStr string) {
+	defer s.indexChanged()
 	if edgeIDStr == "" {
 		return
 	}
@@ -3448,6 +3484,7 @@ func (s *Service) CountPropertyVectorEntries(propertyKey string) int {
 // propertyKey. Callers are expected to also call DropIndex on the schema
 // to remove the named-index entry that points at this property.
 func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
+	defer s.indexChanged()
 	if s == nil || propertyKey == "" {
 		return
 	}
@@ -3551,6 +3588,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		return nil
 	}
 	s.resetANNForBuild()
+	s.indexChanged()
 	s.ready.Store(false)
 	s.buildInProgress.Store(true)
 	s.buildStartedUnix.Store(time.Now().Unix())
@@ -3559,6 +3597,8 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	s.setBuildPhase("loading_existing_indexes")
 	defer func() {
 		s.buildInProgress.Store(false)
+		// Loading persisted indexes doesn't go through indexNodeLocked.
+		s.indexChanged()
 		if !s.ready.Load() {
 			s.setBuildPhase("idle")
 		}
@@ -4169,6 +4209,7 @@ func (s *Service) reloadFulltextAfterWarmup(path string, expectedCount int) erro
 func (s *Service) finishBuildWithFinalPersist(ctx context.Context) {
 	s.setBuildPhase("persisting_final_indexes")
 	s.buildInProgress.Store(false)
+	s.indexChanged()
 	s.runPersistWithContext(ctx)
 	s.ready.Store(true)
 	s.setBuildPhase("ready")
@@ -4348,7 +4389,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	opts.MinSimilarity = s.resolveMinSimilarity(opts)
 
 	// Cache key for result cache (same query+options => same key; used for Get and Put).
-	cacheKey := s.cacheNamespace + "\x00" + searchCacheKey(query, embedding, opts)
+	cacheKey := s.cacheNamespace + "\x00" + strconv.FormatUint(s.IndexRevision(), 10) + "\x00" + searchCacheKey(query, embedding, opts)
 	if s.resultCache != nil {
 		if cached := s.resultCache.Get(cacheKey); cached != nil {
 			s.maybeLogSearchTiming(query, cached, time.Since(start), true)
