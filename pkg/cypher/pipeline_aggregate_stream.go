@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -445,6 +446,9 @@ type pipelineAggregateState struct {
 	values           []interface{}
 	mean, squared    float64
 	percentileRows   []pipelineRow
+	// duration is the running sum of sum() / avg() over durations; numbers
+	// and durations can't be mixed (aggregateMixesNumberAndDuration).
+	duration *CypherDuration
 }
 
 func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageExecutor, row pipelineRow) bool {
@@ -503,9 +507,29 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 	case "collect":
 		state.values = append(state.values, value)
 	case "sum", "avg", "stdev", "stdevp":
+		// Neo4j's sum and avg take numbers or durations, never both; stDev and
+		// stDevP numbers only. Any other value fails the statement.
 		numeric, exactInteger, integer, valid := pipelineAggregateNumber(value)
 		if !valid {
+			duration, isDuration := asCypherDuration(value)
+			if !isDuration || state.name == "stdev" || state.name == "stdevp" {
+				recordExpressionFailure(ctx, aggregateValueError(state.name, value))
+				return false
+			}
+			if state.count > state.durationCount() {
+				recordExpressionFailure(ctx, aggregateMixesNumberAndDuration(state.name))
+				return false
+			}
+			if state.duration == nil {
+				state.duration = &CypherDuration{}
+			}
+			state.duration = combineDurations(state.duration, duration, 1)
+			state.count++
 			return true
+		}
+		if state.duration != nil {
+			recordExpressionFailure(ctx, aggregateMixesNumberAndDuration(state.name))
+			return false
 		}
 		state.count++
 		if state.name == "sum" {
@@ -545,6 +569,9 @@ func (state *pipelineAggregateState) result(ctx context.Context, executor *Stora
 	case "count":
 		return state.count, true
 	case "sum":
+		if state.duration != nil {
+			return state.duration, true
+		}
 		if state.hasFloat {
 			return state.floatingTotal, true
 		}
@@ -552,6 +579,12 @@ func (state *pipelineAggregateState) result(ctx context.Context, executor *Stora
 	case "avg":
 		if state.count == 0 {
 			return nil, true
+		}
+		if state.duration != nil {
+			// Neo4j divides the sum, its fractions of a month spilling into
+			// days and of a day into seconds (scaleTemporalDuration).
+			average, _ := scaleTemporalDuration(state.duration, 1/float64(state.count))
+			return average, true
 		}
 		return state.floatingTotal / float64(state.count), true
 	case "min", "max":
@@ -578,4 +611,32 @@ func (state *pipelineAggregateState) result(ctx context.Context, executor *Stora
 	default:
 		return nil, false
 	}
+}
+
+// durationCount is how many of the values state has added are durations: all
+// of them once a duration was added.
+func (state *pipelineAggregateState) durationCount() int64 {
+	if state.duration == nil {
+		return 0
+	}
+	return state.count
+}
+
+// aggregateValueError is Neo4j's TypeError for a value an aggregate can't
+// take: sum and avg take numbers and durations, stDev and stDevP numbers.
+func aggregateValueError(function string, value interface{}) error {
+	name := strings.ToUpper(function)
+	if function == "sum" || function == "avg" {
+		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
+			localization.CypherCoreAggregateNumberOrDurationOnly(name))
+	}
+	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
+		localization.CypherCoreAggregateNumberOnly(name, cypherTypeName(value)))
+}
+
+// aggregateMixesNumberAndDuration is Neo4j's TypeError for sum or avg over
+// both numbers and durations.
+func aggregateMixesNumberAndDuration(function string) error {
+	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
+		localization.CypherCoreAggregateMixesNumberAndDuration(strings.ToUpper(function)))
 }

@@ -202,3 +202,9 @@
   other: "Un mapa con las claves {{.Keys}} no describe un punto válido; un punto se describe con coordenadas cartesianas, p. ej. {x: 2.3, y: 4.5, crs: 'cartesian'}, o con coordenadas geográficas, p. ej. {latitude: 12.78, longitude: 56.7, crs: 'WGS-84'}."
 - id: cyphercore.point_coordinates_missing
   other: "Un punto debe contener 'x' e 'y' o 'latitude' y 'longitude'"
+- id: cyphercore.aggregate_number_or_duration_only
+  other: "{{.Function}}() solo admite valores numéricos, duraciones o null."
+- id: cyphercore.aggregate_number_only
+  other: "{{.Function}}() solo admite valores numéricos o null, pero recibió {{.Received}}"
+- id: cyphercore.aggregate_mixes_number_and_duration
+  other: "{{.Function}}() no puede mezclar números y duraciones"

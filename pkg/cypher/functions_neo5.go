@@ -484,7 +484,16 @@ func fnTrimFunction(name string, leading, trailing bool) cypherfn.Func {
 			}
 			cutset = characters
 		}
-		return trimCharacters(text, cutset, leading, trailing), nil
+		trimmed := trimCharacters(text, cutset, leading, trailing)
+		if name == "rtrim" && cutset != "" && trimmed == "" && text != "" {
+			// Neo4j's rtrim with characters never removes a first character
+			// of one byte: rtrim('xx', 'x') is 'x', rtrim('ab', 'ab') is 'a'
+			// (a multi-byte one goes: rtrim('éé', 'é') is '').
+			if _, size := utf8.DecodeRuneInString(text); size == 1 {
+				trimmed = text[:1]
+			}
+		}
+		return trimmed, nil
 	}
 }
 
