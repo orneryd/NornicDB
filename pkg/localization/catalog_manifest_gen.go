@@ -1763,6 +1763,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "storage.transaction.concurrent_modification", Constructor: "StorageTransactionConcurrentModification", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.constraint_violation", Constructor: "StorageTransactionConstraintViolation", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.cross_namespace", Constructor: "StorageTransactionCrossNamespace", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "storage.transaction.deadlock_detected", Constructor: "StorageTransactionDeadlockDetected", Fields: []string{"Label", "Property"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.edge_changed", Constructor: "StorageTransactionEdgeChanged", Fields: []string{"EdgeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.end_node_missing", Constructor: "StorageTransactionEndNodeMissing", Fields: []string{"NodeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.endpoint_deleted", Constructor: "StorageTransactionEndpointDeleted", Fields: []string{"NodeID"}, PluralForms: []string{"other"}},
