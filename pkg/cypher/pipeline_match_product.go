@@ -8,10 +8,28 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// pipelineApplyMatchProduct matches the comma-separated parts of one MATCH,
+// part by part, and keeps the combinations its WHERE accepts. A WHERE
+// condition that reads one node part's variable only (id(a) = $x,
+// a.name STARTS WITH 'x') is matched with that part, so its seeks and filters
+// narrow the part before any combination is built, as Neo4j plans it below
+// its CartesianProduct; only the other conditions are evaluated on the
+// combinations (#940).
 func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
+	nodeVariables := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "(") && !containsRelExistencePattern(part) {
+			if variable := e.parseNodePattern(ctx, part).variable; variable != "" {
+				nodeVariables = append(nodeVariables, variable)
+			}
+		}
+	}
+	nodeWhere, rest := splitWhereByVariable(where, nodeVariables)
 	if joined, handled, err := e.pipelineApplyNodeJoinProduct(ctx, rows, parts, where); handled || err != nil {
 		return joined, handled, err
 	}
+	where = rest
 	var hidden, paths []string
 	usedNames := strings.Join(parts, " ") + " " + where
 	newBinding := func() string {
@@ -46,8 +64,12 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 				part = path + " = " + part
 			}
 			paths = append(paths, path)
-		} else if strings.HasPrefix(part, "(") && e.parseNodePattern(ctx, part).variable == "" {
-			part = "(" + newBinding() + part[1:]
+		} else if strings.HasPrefix(part, "(") {
+			if variable := e.parseNodePattern(ctx, part).variable; variable == "" {
+				part = "(" + newBinding() + part[1:]
+			} else if own := nodeWhere[variable]; own != "" {
+				part += " WHERE " + own
+			}
 		}
 		expanded, handled, err := e.pipelineApplyMatch(ctx, rows, "MATCH "+part)
 		if !handled || err != nil {
@@ -80,6 +102,10 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 	return filtered, true, nil
 }
 
+// pipelineApplyNodeJoinProduct joins node parts on a WHERE property
+// equality (a.k = b.k) instead of building every combination. Each part's
+// candidates are narrowed by the conditions that read its variable only
+// (splitWhereByVariable) first.
 func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
 	if strings.TrimSpace(where) == "" {
 		return nil, false, nil
@@ -117,6 +143,11 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	if !joinable {
 		return nil, false, nil
 	}
+	names := make([]string, 0, len(variables))
+	for name := range variables {
+		names = append(names, name)
+	}
+	nodeWhere, _ := splitWhereByVariable(where, names)
 	var out []pipelineRow
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
@@ -137,10 +168,16 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 					nodes = []*storage.Node{node}
 				}
 			} else {
+				own := nodeWhere[pattern.variable]
+				rowCtx := withValueBindings(ctx, row)
+				var whereApplied bool
 				var err error
-				nodes, _, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, row), pattern, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+				nodes, whereApplied, err = e.collectPipelineInitialNodeCandidates(rowCtx, pattern, own, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 				if err != nil {
 					return nil, true, err
+				}
+				if own != "" && !whereApplied {
+					nodes = e.filterNodes(rowCtx, nodes, pattern.variable, own)
 				}
 			}
 			matches[index].variable, matches[index].nodes = pattern.variable, nodes

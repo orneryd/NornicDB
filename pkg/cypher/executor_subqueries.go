@@ -469,7 +469,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				}
 				// O(k) batched ID seek path for: MATCH (v) WHERE id(v) IN $ids
 				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromIDInParam(np, whereClause, params); ok || err != nil {
+					if nodes, ok, err := e.tryCollectNodesFromIDIn(ctx, np, whereClause, params); ok || err != nil {
 						return nodes, err
 					}
 				}

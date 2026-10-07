@@ -160,22 +160,22 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodes, used, err := exec.tryCollectNodesFromIDInParam(nodePatternInfo{variable: "n"}, "id(n) IN $ids", nil)
+	nodes, used, err := exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", nil)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDInParam(nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"other": []interface{}{"p1"}})
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"other": []interface{}{"p1"}})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDInParam(nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": "p1"})
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": "p1"})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDInParam(
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}, properties: map[string]interface{}{"kind": "human"}},
 		"elementId(n) IN $ids",
 		map[string]interface{}{"ids": []interface{}{"p1", "4:nornic:p2", "p1", "", 7}},
@@ -186,7 +186,7 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	require.Equal(t, storage.NodeID("p1"), nodes[0].ID)
 	require.Equal(t, storage.NodeID("p2"), nodes[1].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDInParam(
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Movie"}, properties: map[string]interface{}{"kind": "human"}},
 		"id(n) IN $ids",
 		map[string]interface{}{"ids": []interface{}{"p1", "m1"}},
@@ -194,6 +194,24 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
+
+	// A constant list seeks too: a literal, as a substituted parameter
+	// arrives (#940); null selects nothing; a non-list is left to the
+	// evaluator.
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "(id(n) IN ['p2', 'm1', 'missing'])", nil)
+	require.NoError(t, err)
+	require.True(t, used)
+	require.ElementsMatch(t, []storage.NodeID{"p2", "m1"}, []storage.NodeID{nodes[0].ID, nodes[1].ID})
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN null", nil)
+	require.NoError(t, err)
+	require.True(t, used)
+	require.Empty(t, nodes)
+	_, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN 'p1'", nil)
+	require.NoError(t, err)
+	require.False(t, used)
+	_, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN n.ids", nil)
+	require.NoError(t, err)
+	require.False(t, used, "a list read from the node itself isn't constant")
 
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_person_name_cov IF NOT EXISTS FOR (n:Person) ON (n.name)", nil)
 	require.NoError(t, err)

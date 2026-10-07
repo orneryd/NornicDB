@@ -145,12 +145,12 @@ func TestMatchIndexSeek_IDEqualityCompoundAndIDInAdditionalBranches(t *testing.T
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDInParam(nodePatternInfo{variable: "n"}, "id(n) IN $ids OR n.k='v1'", map[string]interface{}{"ids": []interface{}{"n1"}})
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids OR n.k='v1'", map[string]interface{}{"ids": []interface{}{"n1"}})
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDInParam(nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": []interface{}{nil, 7, "", "n2"}})
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": []interface{}{nil, 7, "", "n2"}})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
