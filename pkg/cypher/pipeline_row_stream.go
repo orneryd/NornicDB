@@ -309,6 +309,8 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 			for name, value := range input {
 				current[name] = value
 			}
+			candidateCtx := ctx
+			candidatesBound := false
 			for index, template := range templates {
 				pattern, ok := template.node(ctx, e, input)
 				if !ok {
@@ -331,8 +333,12 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					nodes, cached = cache.alternatives[key]
 				}
 				if !keyed || !cached {
+					if !candidatesBound && len(input) > 0 {
+						candidateCtx = withValueBindings(ctx, input)
+						candidatesBound = true
+					}
 					var err error
-					nodes, _, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, input), pattern, "", hint)
+					nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, pattern, "", hint)
 					if err != nil {
 						recordExpressionFailure(ctx, err)
 						valid = false

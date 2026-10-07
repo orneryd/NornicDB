@@ -230,7 +230,13 @@ func BenchmarkFastPath_WithLimit(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		executor.Execute(ctx, query, nil)
+		result, err := executor.Execute(ctx, query, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if result == nil || result.Stats == nil || result.Stats.RelationshipsCreated != 1 || result.Stats.RelationshipsDeleted != 1 {
+			b.Fatalf("expected one relationship created and deleted, got %+v", result)
+		}
 	}
 }
 
