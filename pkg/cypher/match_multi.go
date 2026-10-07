@@ -1783,25 +1783,7 @@ func int64OfValue(v interface{}) (int64, bool) {
 }
 
 func cartesianValueKey(v interface{}) string {
-	switch x := v.(type) {
-	case nil:
-		return "<nil>"
-	case string:
-		return "s:" + x
-	case int:
-		return fmt.Sprintf("i:%d", x)
-	case int64:
-		return fmt.Sprintf("i64:%d", x)
-	case float64:
-		return fmt.Sprintf("f:%g", x)
-	case bool:
-		if x {
-			return "b:1"
-		}
-		return "b:0"
-	default:
-		return fmt.Sprintf("%T:%v", v, v)
-	}
+	return cypherEquivalenceKey(v)
 }
 
 func collectPropValues(nodes []*storage.Node, prop string) map[string]struct{} {

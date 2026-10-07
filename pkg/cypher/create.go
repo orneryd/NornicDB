@@ -149,6 +149,12 @@ func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern str
 // into createdNodes / createdEdges for later patterns and clauses. Adjacent
 // pipeline CREATE clauses share one plan and are published atomically.
 func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) {
+	for _, fragment := range splitTopLevelComma(pattern) {
+		_, body := parseCreatePathAssignment(strings.TrimSpace(fragment))
+		if !strings.HasPrefix(body, "(") || !strings.HasSuffix(strings.TrimSpace(body), ")") {
+			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "Invalid CREATE pattern")
+		}
+	}
 	patterns := e.createPatternSplitFor(pattern)
 
 	// First, create all nodes
@@ -419,10 +425,25 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 // earlier in the statement (b {name: a.name}) are resolved against nodes and
 // relationships.
 func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern string, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) (nodePatternInfo, error) {
+	var parameterProperties map[string]interface{}
+	if head, props := splitNodePatternProperties(pattern); props == "" {
+		if parameterAt := indexByteOutsideBackticks(head, '$'); parameterAt >= 0 {
+			value, resolved := resolveDirectParamRef(ctx, strings.TrimSpace(head[parameterAt:]))
+			properties, isMap := toStringAnyMap(value)
+			if !resolved || !isMap {
+				return nodePatternInfo{}, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidPropertyValue", "CREATE properties must be a map")
+			}
+			parameterProperties = cloneNodePropertiesMap(properties)
+			pattern = "(" + strings.TrimSpace(head[:parameterAt]) + ")"
+		}
+	}
 	if err := e.validateCreatePatternPropertyMap(ctx, pattern); err != nil {
 		return nodePatternInfo{}, err
 	}
 	nodePattern := e.parseNodePattern(ctx, pattern)
+	if parameterProperties != nil {
+		nodePattern.properties = parameterProperties
+	}
 	e.resolveCreatePropertyReferences(ctx, pattern, nodePattern.properties, nodes, relationships)
 	for key, value := range nodePattern.properties {
 		if value == nil {

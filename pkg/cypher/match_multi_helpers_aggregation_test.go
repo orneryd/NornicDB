@@ -505,14 +505,10 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		_, _, _, _, _, ok = parseCartesianVarPropEqualityTerm("a.id = 10")
 		require.False(t, ok)
 
-		require.Equal(t, "<nil>", cartesianValueKey(nil))
-		require.Equal(t, "s:x", cartesianValueKey("x"))
-		require.Equal(t, "i:2", cartesianValueKey(2))
-		require.Equal(t, "i64:3", cartesianValueKey(int64(3)))
-		require.Equal(t, "f:2.5", cartesianValueKey(2.5))
-		require.Equal(t, "b:1", cartesianValueKey(true))
-		require.Equal(t, "b:0", cartesianValueKey(false))
-		require.Equal(t, "[]int:[1 2]", cartesianValueKey([]int{1, 2}))
+		for _, value := range []interface{}{nil, "x", 2, int64(3), 2.5, true, false, []int{1, 2}} {
+			require.Equal(t, cypherEquivalenceKey(value), cartesianValueKey(value))
+		}
+		require.Equal(t, cartesianValueKey(int64(1)), cartesianValueKey(float64(1)))
 	})
 
 	t.Run("prop collection and filters", func(t *testing.T) {
@@ -525,12 +521,12 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 
 		vals := collectPropValues(nodes, "k")
 		require.Len(t, vals, 2)
-		_, hasA := vals["s:a"]
-		_, hasB := vals["s:b"]
+		_, hasA := vals[cypherEquivalenceKey("a")]
+		_, hasB := vals[cypherEquivalenceKey("b")]
 		require.True(t, hasA)
 		require.True(t, hasB)
 
-		filtered := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{"s:b": {}})
+		filtered := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{cypherEquivalenceKey("b"): {}})
 		require.Len(t, filtered, 1)
 		require.Equal(t, storage.NodeID("n2"), filtered[0].ID)
 
@@ -830,10 +826,10 @@ func TestCartesianOffsetArithmeticExact(t *testing.T) {
 	// The shifted lookup key stays exact and keeps the stored type.
 	key, ok := cartesianShiftValueKey(int64(9007199254740992), 1)
 	require.True(t, ok)
-	require.Equal(t, "i64:9007199254740993", key)
+	require.Equal(t, cypherEquivalenceKey(int64(9007199254740993)), key)
 	intKey, ok := cartesianShiftValueKey(5, -2)
 	require.True(t, ok)
-	require.Equal(t, "i:3", intKey)
+	require.Equal(t, cypherEquivalenceKey(int64(3)), intKey)
 	_, ok = cartesianShiftValueKey("x", 1)
 	require.False(t, ok)
 

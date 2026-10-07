@@ -50,6 +50,16 @@ func TestRowPredicateStringComparisonIsPlanned(t *testing.T) {
 		"n.name + 'x' = 'Adax'",
 		"n.name = 'Ada' + ''",
 		"n.n - 1 = 'x'",
+		"n.name STARTS WITH 'A'",
+		"n.name ENDS WITH 'a'",
+		"n.name CONTAINS 'd'",
+		"n.name STARTS WITH $p",
+		"n.name CONTAINS 'x'",
+		"n.missing STARTS WITH 'A'",
+		"n.n STARTS WITH '3'",
+		"n.name STARTS WITH 'A' AND n.n = 3",
+		"n.name STARTS WITH 'B' OR n.name ENDS WITH 'a'",
+		"unbound STARTS WITH 'A'",
 	} {
 		plan := planRowPredicate(predicate)
 		require.NotNil(t, plan, predicate)
@@ -60,13 +70,13 @@ func TestRowPredicateStringComparisonIsPlanned(t *testing.T) {
 	}
 
 	for _, predicate := range []string{
-		"n.name STARTS WITH 'A'",
-		"n.name CONTAINS 'd'",
 		"n.name =~ 'A.*'",
 		"NOT n.name = 'Ada'",
 		"toUpper(n.name) = 'ADA'",
 		"n:P AND n.name = 'x'",
 		"n.name = 'a' = true",
+		"toUpper(n.name) STARTS WITH 'A'",
+		"n.name STARTS WITH toUpper('a')",
 	} {
 		plan := planRowPredicate(predicate)
 		require.True(t, plan == nil || !plan.complete, predicate)

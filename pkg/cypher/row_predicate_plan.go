@@ -255,21 +255,23 @@ const (
 	rowPredicateAnd
 	rowPredicateOr
 	rowPredicateIn
+	rowPredicateString
 )
 
 // rowPredicatePart is a node of a planned predicate: an AND or OR of parts, a
 // comparison or null test of simple operands, or text.
 type rowPredicatePart struct {
-	kind       rowPredicatePartKind
-	text       string
-	left       rowOperand
-	right      rowOperand
-	operator   comparisonEvaluationHandler
+	kind     rowPredicatePartKind
+	text     string
+	left     rowOperand
+	right    rowOperand
+	operator comparisonEvaluationHandler
 	// constantNumbers marks a comparison of two constant numeric
 	// expressions, compared as Neo4j folds them (promoteConstantNumbers).
 	constantNumbers bool
 	parts           []rowPredicatePart
-	membership *bindingParamMembershipCache
+	membership      *bindingParamMembershipCache
+	stringPredicate func(string, string) bool
 }
 
 // rowPredicatePlan is a planned predicate.
@@ -395,6 +397,19 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 	}
 	if part, ok := planRowLiteralListMembership(text); ok {
 		return part, true
+	}
+	for _, operation := range []struct {
+		keyword   string
+		predicate func(string, string) bool
+	}{{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains}} {
+		if left, right, found := splitByOperatorWithOptions(text, operation.keyword, true, true); found {
+			leftOperand, leftOK := parseRowOperand(left)
+			rightOperand, rightOK := parseRowOperand(right)
+			if !leftOK || !rightOK {
+				return rowPredicatePart{}, false
+			}
+			return rowPredicatePart{kind: rowPredicateString, text: text, left: leftOperand, right: rightOperand, stringPredicate: operation.predicate}, true
+		}
 	}
 	if strings.ContainsAny(text, "'\"") {
 		return planRowStringComparison(text)
@@ -656,6 +671,13 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 		}
 		matched, known := part.operator.evaluate(left, right).(bool)
 		return known && matched
+	case rowPredicateString:
+		left, leftOK := part.left.resolveScope(scope)
+		right, rightOK := part.right.resolveScope(scope)
+		if !leftOK || !rightOK {
+			return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
+		}
+		return evaluateRowStringPredicateValues(left, right, part.stringPredicate)
 	case rowPredicateIn:
 		needle, needleOK := part.left.resolveScope(scope)
 		haystack, haystackOK := part.right.resolveScope(scope)

@@ -157,18 +157,15 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	if !ok {
 		return nil, false
 	}
-	// Single MERGE, FOREACH and CALL subquery clauses own their seed row.
-	if len(clauses) < 2 && (len(clauses) == 0 || (clauses[0].kind != pipelineClauseMerge && clauses[0].kind != pipelineClauseForeach && clauses[0].kind != pipelineClauseCallSubquery)) {
-		return nil, false
-	}
-	// Standalone CREATE ... RETURN remains one atomic write operator. CREATE
-	// participates in the row pipeline as soon as another clause establishes
-	// or consumes a row horizon.
-	if len(clauses) == 2 && clauses[0].kind == pipelineClauseCreate && clauses[1].kind == pipelineClauseReturn {
-		returnBody := strings.TrimSpace(clauses[1].text[len("RETURN"):])
-		if firstTopLevelModifierIndex(returnBody) < 0 {
+	if len(clauses) > 0 && clauses[0].kind == pipelineClauseCreate {
+		body := pipelineClauseBody(clauses[0].text, "CREATE")
+		if !strings.HasPrefix(body, "(") && !namedPathAssignmentPrefix(body) {
 			return nil, false
 		}
+	}
+	// Single write clauses and CALL subqueries own their seed row.
+	if len(clauses) < 2 && (len(clauses) == 0 || (clauses[0].kind != pipelineClauseCreate && clauses[0].kind != pipelineClauseMerge && clauses[0].kind != pipelineClauseForeach && clauses[0].kind != pipelineClauseCallSubquery)) {
+		return nil, false
 	}
 	return clauses, true
 }
@@ -1150,15 +1147,18 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return nil, false, nil
 	}
 
-	whereFilter, compiledWhere := e.getCompiledSimpleWhere(ctx, nodePattern.variable, whereClause)
-	if !compiledWhere {
-		// The same row the general single-node read evaluates WHERE on: the
-		// node and the parameters ($name), so $q = 1, $flag, ... hold here too.
-		predicateRow := pipelineNodeRow(ctx, nodePattern.variable, nil)
-		whereFilter = func(node *storage.Node) bool {
-			predicateRow[nodePattern.variable] = node
-			return e.evaluateWithWhereCondition(ctx, whereClause, predicateRow)
+	predicateRow := pipelineNodeRow(ctx, nodePattern.variable, nil)
+	predicatePlan := planRowPredicate(whereClause)
+	hasWhere := strings.TrimSpace(whereClause) != ""
+	whereFilter := func(node *storage.Node) bool {
+		predicateRow[nodePattern.variable] = node
+		if !hasWhere {
+			return true
 		}
+		if predicatePlan != nil && predicatePlan.complete {
+			return e.evaluateRowPredicatePlan(ctx, predicatePlan, predicateRow)
+		}
+		return e.evaluateRowPredicate(ctx, whereClause, predicateRow)
 	}
 	hideSystemNodes := shouldHideSystemNodes(store)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
@@ -1912,6 +1912,13 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 			return nil, true, getExpressionFailure(ctx)
 		}
 		return expanded, true, nil
+	}
+	if len(parts) > 1 {
+		where := ""
+		if patternEnd < len(body) {
+			where = strings.TrimSpace(body[patternEnd+len("WHERE"):])
+		}
+		return e.pipelineApplyMatchProduct(ctx, rows, parts, where)
 	}
 	if expanded, ok, err := e.pipelineApplyBoundRelationshipListMatch(ctx, rows, clause); ok || err != nil {
 		return expanded, ok, err
@@ -2801,7 +2808,7 @@ func (e *StorageExecutor) pipelineApplyBoundTraversalMatch(ctx context.Context, 
 		return rows, true, nil
 	}
 	pattern := strings.TrimSpace(clause[len("MATCH"):])
-	if findKeywordIndexInContext(pattern, "WHERE") >= 0 || strings.Contains(pattern, "*") || strings.Contains(pattern, "{") {
+	if extractPathAssignmentVariable(pattern) != "" || findKeywordIndexInContext(pattern, "WHERE") >= 0 || strings.Contains(pattern, "*") || strings.Contains(pattern, "{") {
 		return nil, false, nil
 	}
 	nodeGroups, brackets := scanOptionalPatternShape(pattern)
@@ -2917,6 +2924,10 @@ func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clau
 	for name, value := range e.fabricRecordBindings {
 		initial[name] = value
 	}
+	for name, value := range valueBindingsFromContext(ctx) {
+		initial[name] = value
+	}
+	bindParameterRow(ctx, initial)
 	rows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{initial}, clauses[:end])
 	if err != nil {
 		return nil, true, err

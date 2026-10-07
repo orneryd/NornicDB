@@ -424,12 +424,9 @@ func TestLowerCoverageHelpers_Branches(t *testing.T) {
 	// match_multi helpers
 	require.EqualValues(t, int64(5), exec.resolveWhereValue(ctx, "$v", map[string]interface{}{"v": int64(5)}))
 	require.Equal(t, "x", exec.resolveWhereValue(ctx, "'x'", nil))
-	require.Equal(t, "<nil>", cartesianValueKey(nil))
-	require.Equal(t, "s:abc", cartesianValueKey("abc"))
-	require.Equal(t, "i:1", cartesianValueKey(1))
-	require.Equal(t, "i64:2", cartesianValueKey(int64(2)))
-	require.Equal(t, "f:3.5", cartesianValueKey(3.5))
-	require.Equal(t, "b:1", cartesianValueKey(true))
+	for _, value := range []interface{}{nil, "abc", 1, int64(2), 3.5, true} {
+		require.Equal(t, cypherEquivalenceKey(value), cartesianValueKey(value))
+	}
 
 	// binding_where_compile helpers
 	pred, ok := exec.compileBindingNullPredicate("n.missing IS NULL", " IS NULL", false)
