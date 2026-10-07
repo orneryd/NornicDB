@@ -462,10 +462,12 @@ func TestFinalizeTraversalAggregate_AllFunctions(t *testing.T) {
 	require.EqualValues(t, 5, fin("sum", []interface{}{int64(2), int(3)}, false, 2))
 	require.EqualValues(t, 0, fin("sum", nil, false, 0), "sum identity is 0")
 	require.Equal(t, 5.5, fin("sum", []interface{}{int64(2), 3.5}, false, 2), "mixed types sum as float")
-	require.Equal(t, int64(0), fin("sum", []interface{}{"abc"}, false, 1), "collector skips non-numeric values")
 	require.Nil(t, fin("avg", nil, false, 0), "avg identity is null")
 	require.Equal(t, 2.5, fin("avg", []interface{}{int64(2), int64(3)}, false, 2))
-	require.Nil(t, fin("avg", []interface{}{"abc"}, false, 1))
+	for _, name := range []string{"sum", "avg"} {
+		state := pipelineAggregateState{name: name, expression: "value"}
+		require.False(t, state.add(ctx, exec, pipelineRow{"value": "abc"}), "%s of a non-numeric value is a TypeError, as in Neo4j", name)
+	}
 	require.Nil(t, fin("min", nil, false, 0))
 	require.EqualValues(t, 2, fin("min", []interface{}{int64(3), int64(2), int64(5)}, false, 3))
 	require.EqualValues(t, 5, fin("max", []interface{}{int64(3), int64(2), int64(5)}, false, 3))
@@ -493,7 +495,8 @@ func TestStdevTraversalAggregateValues_Contract(t *testing.T) {
 		return value
 	}
 	require.Nil(t, deviation(nil, false), "no values: null (StdevFunction count==0)")
-	require.Nil(t, deviation([]interface{}{"x"}, false), "non-numeric values are skipped")
+	nonNumeric := pipelineAggregateState{name: "stdev", expression: "value"}
+	require.False(t, nonNumeric.add(ctx, exec, pipelineRow{"value": "x"}), "a non-numeric value is a TypeError, as in Neo4j")
 	require.Equal(t, 0.0, deviation([]interface{}{int64(9)}, false), "single value: 0.0")
 	require.InDelta(t, 2.8284, deviation([]interface{}{int64(2), int64(6)}, false).(float64), 0.001, "sample divisor n-1")
 	require.InDelta(t, 2.0, deviation([]interface{}{int64(2), int64(6)}, true).(float64), 0.001, "population divisor n")
