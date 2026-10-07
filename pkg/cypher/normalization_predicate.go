@@ -11,49 +11,46 @@ import (
 // tested against the form, null gives null, and so does a value of any other
 // type: `3 IS NORMALIZED` is null, not an error.
 
-// normalizationPredicateSuffixes are the predicate's spellings, longest
-// first so " IS NOT NFC NORMALIZED" is not read as " NFC NORMALIZED".
-var normalizationPredicateSuffixes = func() []struct {
-	text    string
-	negated bool
-	form    norm.Form
-} {
-	var suffixes []struct {
-		text    string
-		negated bool
-		form    norm.Form
-	}
-	for _, negated := range []bool{true, false} {
-		for _, form := range []string{"NFKC", "NFKD", "NFC", "NFD", ""} {
-			text := " IS "
-			if negated {
-				text += "NOT "
-			}
-			if form != "" {
-				text += form + " "
-			}
-			named, _ := unicodeNormalForm(form)
-			suffixes = append(suffixes, struct {
-				text    string
-				negated bool
-				form    norm.Form
-			}{text + "NORMALIZED", negated, named})
-		}
-	}
-	return suffixes
-}()
-
-// splitNormalizationPredicate splits `operand IS [NOT] [form] NORMALIZED`.
+// splitNormalizationPredicate splits `operand IS [NOT] [form] NORMALIZED`,
+// with any whitespace between the words, as Cypher allows.
 func splitNormalizationPredicate(expr string) (operand string, negated bool, form norm.Form, ok bool) {
+	expr = strings.TrimSpace(expr)
 	if !hasSuffixFoldASCII(expr, "normalized") {
 		return "", false, norm.NFC, false
 	}
-	for _, suffix := range normalizationPredicateSuffixes {
-		if hasSuffixFoldASCII(expr, lowerASCII(suffix.text)) {
-			return strings.TrimSpace(expr[:len(expr)-len(suffix.text)]), suffix.negated, suffix.form, true
-		}
+	rest, word := lastPredicateWord(expr[:len(expr)-len("normalized")])
+	form = norm.NFC
+	if named, isForm := unicodeNormalForm(upperASCII(word)); isForm && word != "" {
+		form = named
+		rest, word = lastPredicateWord(rest)
 	}
-	return "", false, norm.NFC, false
+	if strings.EqualFold(word, "NOT") {
+		negated = true
+		rest, word = lastPredicateWord(rest)
+	}
+	if !strings.EqualFold(word, "IS") || rest == "" {
+		return "", false, norm.NFC, false
+	}
+	return strings.TrimSpace(rest), negated, form, true
+}
+
+// lastPredicateWord splits off the last word of text, which must end with
+// the whitespace separating that word from the next ('x'IS NORMALIZED needs
+// none before IS). word is "" when text doesn't end with whitespace after a
+// word.
+func lastPredicateWord(text string) (rest, word string) {
+	end := len(text)
+	if end == 0 || !isASCIISpace(text[end-1]) {
+		return text, ""
+	}
+	for end > 0 && isASCIISpace(text[end-1]) {
+		end--
+	}
+	start := end
+	for start > 0 && isIdentByte(text[start-1]) {
+		start--
+	}
+	return text[:start], text[start:end]
 }
 
 // evaluateNormalizationPredicate is the predicate's value: a Boolean for a

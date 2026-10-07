@@ -879,11 +879,11 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			return nil, false, nil
 		}
 		if expr[0] == '+' {
-			// Unary plus returns a number, a temporal value, a duration or
-			// null unchanged, as in Neo4j.
-			if _, numeric := toFloat64(value); !numeric && value != nil && !isRuntimeTemporal(value) && !isRuntimeDuration(value) {
-				return nil, false, nil
-			}
+			// Unary plus returns its operand unchanged, as in Neo4j: an
+			// operand typed other than a number, temporal value or duration
+			// is rejected before running (static_operator_types.go), and at
+			// run time any value passes through (UNWIND [3, '3'] AS x
+			// RETURN +x is 3 and '3').
 			return value, true, nil
 		}
 		if value == nil {
