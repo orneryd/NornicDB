@@ -89,6 +89,16 @@ const (
 	MessageCypherCoreAggregateNumberOrDurationOnly       MessageID = "cyphercore.aggregate_number_or_duration_only"
 	MessageCypherCoreAggregateNumberOnly                 MessageID = "cyphercore.aggregate_number_only"
 	MessageCypherCoreAggregateMixesNumberAndDuration     MessageID = "cyphercore.aggregate_mixes_number_and_duration"
+	MessageCypherCoreApocPathMinLevel                    MessageID = "cyphercore.apoc_path_min_level"
+	MessageCypherCoreApocPathNodeArgument                MessageID = "cyphercore.apoc_path_node_argument"
+	MessageCypherCoreApocPathConfigNotMap                MessageID = "cyphercore.apoc_path_config_not_map"
+	MessageCypherCoreApocPathSequenceRelationship        MessageID = "cyphercore.apoc_path_sequence_relationship"
+	MessageCypherCoreApocPathLabelFilterEmpty            MessageID = "cyphercore.apoc_path_label_filter_empty"
+	MessageCypherCoreApocPathSequenceLabel               MessageID = "cyphercore.apoc_path_sequence_label"
+	MessageCypherCoreApocPathNodeNotFound                MessageID = "cyphercore.apoc_path_node_not_found"
+	MessageCypherCoreApocPathConfigNumber                MessageID = "cyphercore.apoc_path_config_number"
+	MessageCypherCoreApocPathConfigString                MessageID = "cyphercore.apoc_path_config_string"
+	MessageCypherCoreApocPathLimit                       MessageID = "cyphercore.apoc_path_limit"
 	MessageCypherCoreFunctionArgumentInvalid             MessageID = "cyphercore.function_argument_invalid"
 )
 
@@ -479,3 +489,65 @@ func CypherCoreAggregateMixesNumberAndDuration(function string) Message {
 	return cypherCoreMessage(MessageCypherCoreAggregateMixesNumberAndDuration, function+"() cannot mix number and duration", map[string]any{"Function": function})
 }
 
+// CypherCoreApocPathMinLevel is an apoc.path procedure that reaches every
+// node once (subgraphNodes, subgraphAll, spanningTree) given a minLevel other
+// than 0 or 1.
+func CypherCoreApocPathMinLevel(procedure string) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathMinLevel, "minLevel can only be 0 or 1 in "+procedure+"()", map[string]any{"Procedure": procedure})
+}
+
+// CypherCoreApocPathNodeArgument is an apoc.path start node, or a node list
+// in its config (endNodes, terminatorNodes, ...), that isn't a node, an
+// element id or a list of them.
+func CypherCoreApocPathNodeArgument(argument string, received string) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathNodeArgument, argument+" must be a node, an element id or a list of them, but was "+received, map[string]any{"Argument": argument, "Received": received})
+}
+
+// CypherCoreApocPathConfigNotMap is an apoc.path config that isn't a map.
+func CypherCoreApocPathConfigNotMap(received string) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathConfigNotMap, "the apoc.path config must be a map, but was "+received, map[string]any{"Received": received})
+}
+
+// CypherCoreApocPathSequenceRelationship is an apoc.path sequence with no
+// relationship filter for a step: one with no relationship filter, or,
+// with beginSequenceAtStart false, only one (the first applies to the
+// first step only).
+func CypherCoreApocPathSequenceRelationship(step int) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathSequenceRelationship, "the sequence has no relationship filter for step "+strconv.Itoa(step), map[string]any{"Step": step})
+}
+
+// CypherCoreApocPathLabelFilterEmpty is an apoc.path label filter entry that
+// is an operator (+, -, /, >) without a label.
+func CypherCoreApocPathLabelFilterEmpty(entry string) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathLabelFilterEmpty, "the label filter entry "+entry+" has no label", map[string]any{"Entry": entry})
+}
+
+// CypherCoreApocPathSequenceLabel is an apoc.path sequence with no label
+// filter for a node it reaches: with beginSequenceAtStart false, one of
+// relationship filters only.
+func CypherCoreApocPathSequenceLabel(depth int) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathSequenceLabel, "the sequence has no label filter for depth "+strconv.Itoa(depth), map[string]any{"Depth": depth})
+}
+
+// CypherCoreApocPathNodeNotFound is an apoc.path node argument given as an
+// element id that no node has.
+func CypherCoreApocPathNodeNotFound(argument string, id string) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathNodeNotFound, argument+": no node has the element id "+id, map[string]any{"Argument": argument, "ID": id})
+}
+
+// CypherCoreApocPathConfigNumber is an apoc.path minLevel, maxLevel or limit
+// that is neither a number nor a string holding one.
+func CypherCoreApocPathConfigNumber(key string, received string) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathConfigNumber, key+" must be a number, but was "+received, map[string]any{"Key": key, "Received": received})
+}
+
+// CypherCoreApocPathConfigString is an apoc.path filter or uniqueness
+// setting that isn't a string.
+func CypherCoreApocPathConfigString(key string, received string) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathConfigString, key+" must be a string, but was "+received, map[string]any{"Key": key, "Received": received})
+}
+
+// CypherCoreApocPathLimit is an apoc.path limit below -1 (no limit).
+func CypherCoreApocPathLimit(limit int) Message {
+	return cypherCoreMessage(MessageCypherCoreApocPathLimit, "limit must be -1 (no limit) or at least 0, but was "+strconv.Itoa(limit), map[string]any{"Limit": limit})
+}

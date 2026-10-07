@@ -1156,7 +1156,7 @@ func TestCypherHelpers_VectorRegistryRegisterUnregister(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestCypherHelpers_SchemaVectorAndApocPathHelpers(t *testing.T) {
+func TestCypherHelpers_SchemaAndVectorHelpers(t *testing.T) {
 	// parsePropertyType coverage.
 	pt, err := parsePropertyType("STRING")
 	require.NoError(t, err)
@@ -1194,12 +1194,6 @@ func TestCypherHelpers_SchemaVectorAndApocPathHelpers(t *testing.T) {
 	assert.Equal(t, vectorspace.DistanceEuclidean, dist)
 	_, err = toDistanceMetric("chebyshev")
 	require.Error(t, err)
-
-	// isTerminateNode coverage.
-	node := &storage.Node{ID: "n1", Labels: []string{"A", "B"}}
-	assert.True(t, isTerminateNode(node, []string{"B"}))
-	assert.False(t, isTerminateNode(node, []string{"C"}))
-	assert.False(t, isTerminateNode(node, nil))
 }
 
 func TestCypherHelpers_CreateAndDropConstraintVariants(t *testing.T) {
@@ -1603,31 +1597,6 @@ func TestCypherHelpers_NormalizePropValueAndMap(t *testing.T) {
 	require.Error(t, err)
 	_, err = normalizePropsMap("not-map", "props")
 	require.Error(t, err)
-}
-
-func TestCypherHelpers_FindNodeByVariableInMatch(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	eng := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(eng)
-
-	_, err := eng.CreateNode(&storage.Node{ID: "id-node", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "other-node", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
-	require.NoError(t, err)
-
-	// ID pattern branch.
-	ctx := context.Background()
-	n := exec.findNodeByVariableInMatch(ctx, "MATCH (a:Person {id: 'id-node'}) RETURN a", "a")
-	require.NotNil(t, n)
-	assert.Equal(t, storage.NodeID("id-node"), n.ID)
-
-	// Non-id pattern branch currently does not resolve a node from MATCH text.
-	n = exec.findNodeByVariableInMatch(ctx, "MATCH (a:Person) RETURN a", "a")
-	assert.Nil(t, n)
-
-	// No match branch.
-	n = exec.findNodeByVariableInMatch(ctx, "MATCH (x:Thing) RETURN x", "a")
-	assert.Nil(t, n)
 }
 
 func TestCypherHelpers_ApocLouvainBasic(t *testing.T) {

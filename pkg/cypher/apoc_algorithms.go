@@ -474,15 +474,7 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 	if relType == "" || maxHops < 1 {
 		return nil, nil
 	}
-	type neighborFilter struct {
-		types     []string
-		direction string
-	}
-	var filters []neighborFilter
-	for _, part := range strings.Split(relType, "|") {
-		types, direction := parseRelationshipFilter(strings.TrimSpace(part))
-		filters = append(filters, neighborFilter{types: types, direction: direction})
-	}
+	filters := parseApocRelationshipFilter(relType)
 	store := e.getStorage(ctx)
 	visited := make(map[storage.NodeID]bool)
 	visited[startID] = true
@@ -509,18 +501,8 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 			for _, edge := range edges {
 				allowed := false
 				for _, filter := range filters {
-					if filter.direction == "outgoing" && edge.StartNode != nodeID || filter.direction == "incoming" && edge.EndNode != nodeID {
-						continue
-					}
-					if len(filter.types) == 0 {
+					if filter.follows(edge, nodeID) {
 						allowed = true
-					}
-					for _, relType := range filter.types {
-						if edge.Type == relType {
-							allowed = true
-						}
-					}
-					if allowed {
 						break
 					}
 				}
