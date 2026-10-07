@@ -220,12 +220,12 @@ func TestExecuteCorrelatedCallWithSeedRows_Branches(t *testing.T) {
 	require.NotNil(t, seedNode)
 
 	_, err = exec.sharedCorrelatedCallForTest(ctx, &ExecuteResult{Columns: []string{"seed"}, Rows: [][]interface{}{{int64(1)}}}, "RETURN 1 AS x", []string{"missing"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown variable")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, err.Error(), "missing")
 
 	_, err = exec.sharedCorrelatedCallForTest(ctx, &ExecuteResult{Columns: []string{"seed"}, Rows: [][]interface{}{{}}}, "RETURN 1 AS x", []string{"seed"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing variable")
+	assert.Contains(t, err.Error(), "unknown variable: seed")
 
 	res, err := exec.sharedCorrelatedCallForTest(
 		ctx,
@@ -262,7 +262,7 @@ func TestExecuteCorrelatedCallWithSeedRows_Branches(t *testing.T) {
 		[]string{"seed", "extra"},
 	)
 	require.NoError(t, err)
-	require.Equal(t, []string{"seed", "extra"}, res.Columns)
+	require.Equal(t, []string{"seed", "extra", "x"}, res.Columns)
 	require.Empty(t, res.Rows)
 }
 

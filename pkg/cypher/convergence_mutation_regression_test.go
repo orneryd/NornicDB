@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -81,7 +82,10 @@ func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, 
 	if err == nil {
 		err = getExpressionFailure(ctx)
 	}
-	if err == nil && result != nil {
+	if err != nil {
+		return nil, handled, err
+	}
+	if result != nil {
 		result.Stats = output.Stats
 	}
 	return result, handled, err
@@ -171,7 +175,17 @@ func (e *StorageExecutor) sharedSeededCallForTest(ctx context.Context, input *Ex
 }
 
 func (e *StorageExecutor) sharedCorrelatedCallForTest(ctx context.Context, input *ExecuteResult, body string, imports []string) (*ExecuteResult, error) {
-	return e.sharedSeededCallForTest(ctx, input, "CALL ("+strings.Join(imports, ", ")+") { "+body+" } RETURN *")
+	columns := append([]string(nil), input.Columns...)
+	for _, column := range e.StatementColumns(body) {
+		if !slices.Contains(columns, column) {
+			columns = append(columns, column)
+		}
+	}
+	projection := "*"
+	if len(columns) > 0 {
+		projection = strings.Join(columns, ", ")
+	}
+	return e.sharedSeededCallForTest(ctx, input, "CALL ("+strings.Join(imports, ", ")+") { "+body+" } RETURN "+projection)
 }
 
 func (e *StorageExecutor) sharedTransactionalCallForTest(ctx context.Context, body string, batchSize int) (*ExecuteResult, error) {

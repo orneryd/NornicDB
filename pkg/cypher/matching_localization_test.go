@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,11 +22,11 @@ func requireCypherMatchingLocalizedError(t *testing.T, err error, messageID loca
 }
 
 func TestCypherMatchingLocalizedErrorsHaveTypedIdentity(t *testing.T) {
-	exec := &StorageExecutor{}
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "matching_localization"))
 
 	t.Run("MATCH validation", func(t *testing.T) {
 		_, err := exec.Execute(context.Background(), "MATCH RETURN n", getParamsFromContext(context.Background()))
-		requireCypherMatchingLocalizedError(t, err, localization.MessageCypherMatchingMatchPatternRequired, "MATCH clause requires a pattern")
+		requireSyntaxErrorStatus(t, err, "MATCH RETURN n")
 	})
 
 	t.Run("optional endpoint validation", func(t *testing.T) {

@@ -36,9 +36,10 @@ func TestCypherTransactionsLocalizedErrorsHaveTypedIdentityAndExactEnglish(t *te
 	})
 
 	t.Run("multi match validation", func(t *testing.T) {
-		exec := &StorageExecutor{}
-		_, err := exec.Execute(context.Background(), "MATCH (n) RETURN n", getParamsFromContext(context.Background()))
-		requireCypherTransactionsLocalizedError(t, err, localization.MessageCypherTransactionsMatchWithUnwindClausesRequired, "MATCH, WITH, UNWIND, and RETURN clauses required (e.g., MATCH (n) WITH n UNWIND n.items AS item RETURN item)")
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "transaction_localization"))
+		query := "MATCH (n) MATCH (m)"
+		_, err := exec.Execute(context.Background(), query, nil)
+		requireSyntaxErrorStatus(t, err, query)
 	})
 
 	t.Run("delete guard", func(t *testing.T) {

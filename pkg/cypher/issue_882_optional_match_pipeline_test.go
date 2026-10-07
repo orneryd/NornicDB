@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,14 +91,25 @@ func TestIssue882OptionalMatchPlanValuesAndRejections(t *testing.T) {
 	}
 }
 
-// executeMatch has no executor for an embedded OPTIONAL MATCH with a
-// relationship pattern; it rejects it instead of dropping the relationship
-// variable.
-func TestIssue882EmbeddedOptionalMatchIsRejected(t *testing.T) {
+func TestIssue882EmbeddedOptionalMatchPreservesBindings(t *testing.T) {
 	exec := newAsyncStackTestExecutor(t)
 	ctx := context.Background()
-	_, err := exec.Execute(ctx, "MATCH (n:T) OPTIONAL MATCH (n)-[r:R]->(c) RETURN n, r, c", getParamsFromContext(ctx))
-	require.Error(t, err)
-	code, _ := nornicerrors.Neo4jStatus(err)
-	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+	query := "MATCH (n:T) OPTIONAL MATCH (n)-[r:R]->(c) RETURN n, r, c ORDER BY n.id"
+	result, err := exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"n", "r", "c"}, result.Columns)
+	require.Empty(t, result.Rows)
+
+	_, err = exec.Execute(ctx, "CREATE (a:T {id: 1}), (:T {id: 2}), (c:Child {id: 3}), (a)-[:R]->(c)", nil)
+	require.NoError(t, err)
+	result, err = exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"n", "r", "c"}, result.Columns)
+	require.Len(t, result.Rows, 2)
+	require.Equal(t, int64(1), result.Rows[0][0].(*storage.Node).Properties["id"])
+	require.Equal(t, "R", result.Rows[0][1].(*storage.Edge).Type)
+	require.Equal(t, int64(3), result.Rows[0][2].(*storage.Node).Properties["id"])
+	require.Equal(t, int64(2), result.Rows[1][0].(*storage.Node).Properties["id"])
+	require.Nil(t, result.Rows[1][1])
+	require.Nil(t, result.Rows[1][2])
 }
