@@ -546,7 +546,7 @@ func fnTrim(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return trimSpecificationForm(ctx, args)
 	}
 	if len(args) != 1 {
-		return nil, argumentCountError("trim", "1", len(args))
+		return nil, argumentCountError("trim", "1 to 3", len(args))
 	}
 	expression := strings.TrimSpace(args[0])
 	leading, trailing := true, true

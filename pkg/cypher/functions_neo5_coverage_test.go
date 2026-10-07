@@ -97,13 +97,17 @@ func TestNeo4j5FunctionImplementations(t *testing.T) {
 		"upper":         fnStringCase(func(s string) string { return s }, "upper"),
 		"toIntegerList": fnListConversion("toIntegerList", convertToIntegerOrNull),
 		"valueType":     fnValueType,
-		"trim":          fnTrim,
 	}
 	for name, function := range oneArgument {
 		_, err := function(ctx, []string{"s", "s"})
 		require.Error(t, err, name)
 		require.Contains(t, err.Error(), "argument(s), got 2", name)
 	}
+	// trim takes its FROM form or one to three positional arguments
+	// (trimSpecificationForm).
+	_, trimErr := fnTrim(ctx, []string{"s", "s", "s", "s"})
+	require.Error(t, trimErr)
+	require.Contains(t, trimErr.Error(), "argument(s), got 4")
 	for name, function := range map[string]cypherfn.Func{
 		"btrim":     fnTrimFunction("btrim", true, true),
 		"normalize": fnNormalize,
