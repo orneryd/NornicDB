@@ -23,7 +23,7 @@ func TestCypherSpecializedCallsDescriptorsPreserveEnglishAndData(t *testing.T) {
 		{CypherSpecializedCallsFulltextOptionInvalid("skip", -1), "invalid fulltext options.skip: -1"},
 		{CypherSpecializedCallsTemporalReadNodesFailed("History", cause), `failed to read nodes for label "History": forced specialized call failure`},
 		{CypherSpecializedCallsTemporalOverlap("accountId", 42), "temporal overlap detected for accountId=42"},
-		{CypherSpecializedCallsTxlogInvalidSequence("fromSeq", cause), "invalid fromSeq: forced specialized call failure"},
+		{CypherSpecializedCallsTxlogArgumentType("fromSeq", "INTEGER", "String(\"x\")"), `fromSeq must be INTEGER, but was String("x")`},
 	}
 
 	for _, testCase := range testCases {

@@ -6,7 +6,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"strconv"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -70,17 +69,6 @@ func TestSpecializedCallErrorsHaveTypedIdentity(t *testing.T) {
 		var localizedErr *localization.LocalizedError
 		require.ErrorAs(t, err, &localizedErr)
 		require.Equal(t, localization.MessageCypherSpecializedCallsVectorParametersMissing, localizedErr.Message.ID)
-	})
-
-	t.Run("wrapped cause", func(t *testing.T) {
-		_, err := exec.callDbTxlogEntries(context.Background(), "CALL db.txlog.entries(nope)")
-		require.EqualError(t, err, `invalid fromSeq: strconv.ParseUint: parsing "nope": invalid syntax`)
-		require.ErrorIs(t, err, strconv.ErrSyntax)
-
-		var localizedErr *localization.LocalizedError
-		require.ErrorAs(t, err, &localizedErr)
-		require.Equal(t, localization.MessageCypherSpecializedCallsTxlogInvalidSequence, localizedErr.Message.ID)
-		require.Equal(t, "fromSeq", localizedErr.Message.Data["Argument"])
 	})
 
 	t.Run("errors as", func(t *testing.T) {

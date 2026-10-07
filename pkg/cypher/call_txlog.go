@@ -2,8 +2,8 @@ package cypher
 
 import (
 	"context"
-	"strconv"
-	"strings"
+	"errors"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,192 +12,169 @@ import (
 // ========================================
 // Transaction Log Query Procedures
 // ========================================
-
-// callDbTxlogEntries implements db.txlog.entries
-// Syntax: CALL db.txlog.entries(fromSeq, toSeq) YIELD sequence, operation, timestamp, tx_id, data
 //
-// Returns WAL entries in the specified sequence range (inclusive).
-// Parameters:
-//   - fromSeq: Starting sequence number (required)
-//   - toSeq: Ending sequence number (optional, 0 = no limit)
-func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Parse: CALL db.txlog.entries(fromSeq, toSeq)
-	upper := upperASCII(cypher)
-	startIdx := strings.Index(upper, "DB.TXLOG.ENTRIES(")
-	if startIdx == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSyntax("db.txlog.entries"), nil)
-	}
+// db.txlog.entries(fromSeq = null, toSeq = null) and
+// db.txlog.byTxId(txId, limit = null) read the current database's WAL
+// entries (#953). Both yield
+//
+//	txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER,
+//	timestamp :: STRING, payload :: STRING
+//
+// as their registered signatures and docs/operations/wal-compaction.md
+// declare: txId is the entry's transaction id ("" when it has none), db its
+// database, kind its operation, seq its WAL sequence, timestamp its RFC 3339
+// time in UTC and payload its JSON data. Arguments are the procedures'
+// evaluated arguments, so parameters and variables work like literals.
+// Entries are visited one at a time; only the rows returned are kept.
 
-	// Extract parameters
-	paramStart := startIdx + len("DB.TXLOG.ENTRIES(")
-	paramEnd := strings.Index(cypher[paramStart:], ")")
-	if paramEnd == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogClosingParenthesis("db.txlog.entries"), nil)
-	}
-	paramsStr := strings.TrimSpace(cypher[paramStart : paramStart+paramEnd])
+// txlogColumns are the columns both txlog procedures yield.
+var txlogColumns = []string{"txId", "db", "kind", "seq", "timestamp", "payload"}
 
-	// Parse parameters (comma-separated)
-	parts := strings.Split(paramsStr, ",")
-	if len(parts) < 1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogEntriesArgumentRequired(), nil)
-	}
+// txlogRecentEntries is how many of the most recent entries
+// db.txlog.entries() returns when called without a range.
+const txlogRecentEntries = 1000
 
-	fromSeqStr := strings.TrimSpace(parts[0])
-	fromSeq, err := strconv.ParseUint(fromSeqStr, 10, 64)
-	if err != nil {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSequence("fromSeq", err), err)
-	}
-	if fromSeq == 0 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogFromSequencePositive(), nil)
-	}
+// errTxlogLimitReached stops a WAL visit once enough rows are collected.
+var errTxlogLimitReached = errors.New("txlog limit reached")
 
-	var toSeq uint64
-	if len(parts) > 1 {
-		toSeqStr := strings.TrimSpace(parts[1])
-		if toSeqStr != "" && toSeqStr != "0" {
-			toSeq, err = strconv.ParseUint(toSeqStr, 10, 64)
-			if err != nil {
-				return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSequence("toSeq", err), err)
-			}
-		}
-	}
-
-	// Get WAL directory
-	wal, _ := e.resolveWALAndDatabase()
+// txlogWAL returns the WAL directory and the database whose entries the
+// txlog procedures return. An empty database (an executor not bound to one)
+// returns entries of every database.
+func (e *StorageExecutor) txlogWAL() (string, string, error) {
+	wal, database := e.resolveWALAndDatabase()
 	if wal == nil {
-		return nil, localizedError(localization.CypherSpecializedCallsWALUnavailable(), nil)
+		return "", "", localizedError(localization.CypherSpecializedCallsWALUnavailable(), nil)
 	}
-
-	// Get WAL directory from config
-	walCfg := wal.Config()
-	if walCfg == nil {
-		return nil, localizedError(localization.CypherSpecializedCallsWALConfigUnavailable(), nil)
-	}
-	walDir := walCfg.Dir
-	if walDir == "" {
-		return nil, localizedError(localization.CypherSpecializedCallsWALDirectoryNotConfigured(), nil)
-	}
-
-	// Read entries
-	var entries []storage.WALEntry
-	if toSeq > 0 {
-		if toSeq < fromSeq {
-			return nil, localizedError(localization.CypherSpecializedCallsTxlogSequenceOrder(), nil)
-		}
-		entries, err = storage.ReadWALEntriesRangeFromDir(walDir, fromSeq, toSeq)
-	} else {
-		entries, err = storage.ReadWALEntriesAfterFromDir(walDir, fromSeq-1) // -1 because After is exclusive
-	}
-	if err != nil {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogReadEntriesFailed(err), err)
-	}
-
-	// Build result
-	columns := []string{"sequence", "operation", "timestamp", "tx_id", "database", "data"}
-	rows := make([][]interface{}, len(entries))
-	for i, entry := range entries {
-		txID := storage.GetEntryTxID(entry)
-		rows[i] = []interface{}{
-			entry.Sequence,
-			string(entry.Operation),
-			entry.Timestamp,
-			txID,
-			entry.Database,
-			string(entry.Data), // JSON string
-		}
-	}
-
-	return &ExecuteResult{
-		Columns: columns,
-		Rows:    rows,
-	}, nil
+	// NewWAL always sets a configuration with a directory.
+	return wal.Config().Dir, database, nil
 }
 
-// callDbTxlogByTxID implements db.txlog.byTxId
-// Syntax: CALL db.txlog.byTxId(txId, maxEntries) YIELD sequence, operation, timestamp, tx_id, data
-//
-// Returns WAL entries for a specific transaction ID.
-// Parameters:
-//   - txId: Transaction ID (required)
-//   - maxEntries: Maximum number of entries to return (optional, 0 = all)
-func (e *StorageExecutor) callDbTxlogByTxID(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Parse: CALL db.txlog.byTxId('txId', maxEntries)
-	upper := upperASCII(cypher)
-	startIdx := strings.Index(upper, "DB.TXLOG.BYTXID(")
-	if startIdx == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSyntax("db.txlog.byTxId"), nil)
+// txlogInteger reads an optional integer argument: absent or null is
+// (0, false).
+func txlogInteger(args []interface{}, index int, name string) (int64, bool, error) {
+	if index >= len(args) || args[index] == nil {
+		return 0, false, nil
+	}
+	value, ok := coerceInt64(args[index])
+	if !ok {
+		return 0, false, localizedError(localization.CypherSpecializedCallsTxlogArgumentType(name, "INTEGER", neo4jProvidedValue(args[index])), nil)
+	}
+	return value, true, nil
+}
+
+// txlogRow is the row of one WAL entry.
+func txlogRow(entry storage.WALEntry) []interface{} {
+	return []interface{}{
+		storage.GetEntryTxID(entry),
+		entry.Database,
+		string(entry.Operation),
+		int64(entry.Sequence),
+		entry.Timestamp.UTC().Format(time.RFC3339Nano),
+		string(entry.Data),
+	}
+}
+
+// callDbTxlogEntries implements db.txlog.entries(fromSeq = null, toSeq =
+// null): the current database's entries from fromSeq (inclusive, at least 1)
+// to toSeq (inclusive; null or 0 is no upper bound). Without either it
+// returns the most recent txlogRecentEntries entries.
+func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	fromSeq, hasFrom, err := txlogInteger(args, 0, "fromSeq")
+	if err != nil {
+		return nil, err
+	}
+	toSeq, hasTo, err := txlogInteger(args, 1, "toSeq")
+	if err != nil {
+		return nil, err
+	}
+	if hasFrom && fromSeq < 1 {
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogFromSequencePositive(), nil)
+	}
+	if hasTo && toSeq < 0 {
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogToSequenceNegative(), nil)
+	}
+	if !hasFrom {
+		fromSeq = 1
+	}
+	if toSeq > 0 && toSeq < fromSeq {
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogSequenceOrder(), nil)
+	}
+	walDir, database, err := e.txlogWAL()
+	if err != nil {
+		return nil, err
 	}
 
-	// Extract parameters
-	paramStart := startIdx + len("DB.TXLOG.BYTXID(")
-	paramEnd := strings.Index(cypher[paramStart:], ")")
-	if paramEnd == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogClosingParenthesis("db.txlog.byTxId"), nil)
+	recent := !hasFrom && !hasTo
+	var rows [][]interface{}
+	err = storage.VisitWALEntriesAfterFromDir(walDir, uint64(fromSeq-1), func(entry storage.WALEntry) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if (toSeq > 0 && entry.Sequence > uint64(toSeq)) || (database != "" && entry.Database != database) {
+			return nil
+		}
+		rows = append(rows, txlogRow(entry))
+		// Keep only the most recent window, so memory stays bounded.
+		if recent && len(rows) > 2*txlogRecentEntries {
+			rows = append(rows[:0], rows[len(rows)-txlogRecentEntries:]...)
+		}
+		return nil
+	})
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogReadEntriesFailed(err), err)
 	}
-	paramsStr := strings.TrimSpace(cypher[paramStart : paramStart+paramEnd])
-
-	// Parse parameters (comma-separated, first is string, second is optional int)
-	parts := strings.Split(paramsStr, ",")
-	if len(parts) < 1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogByIDArgumentRequired(), nil)
+	if recent && len(rows) > txlogRecentEntries {
+		rows = rows[len(rows)-txlogRecentEntries:]
 	}
+	return &ExecuteResult{Columns: txlogColumns, Rows: rows}, nil
+}
 
-	// Extract txId (remove quotes if present)
-	txIDStr := strings.TrimSpace(parts[0])
-	txIDStr = strings.Trim(txIDStr, `"'`)
-	if txIDStr == "" {
+// callDbTxlogByTxID implements db.txlog.byTxId(txId, limit = null): the
+// current database's entries of transaction txId, at most limit of them
+// (null, 0 or less is no limit).
+func (e *StorageExecutor) callDbTxlogByTxID(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	var txID string
+	if len(args) > 0 && args[0] != nil {
+		text, ok := args[0].(string)
+		if !ok {
+			return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("txId", "STRING", neo4jProvidedValue(args[0])), nil)
+		}
+		txID = text
+	}
+	if txID == "" {
 		return nil, localizedError(localization.CypherSpecializedCallsTxlogIDEmpty(), nil)
 	}
-
-	var maxEntries int
-	if len(parts) > 1 {
-		maxStr := strings.TrimSpace(parts[1])
-		if maxStr != "" && maxStr != "0" {
-			max, err := strconv.Atoi(maxStr)
-			if err == nil && max > 0 {
-				maxEntries = max
-			}
-		}
-	}
-
-	// Get WAL directory
-	wal, _ := e.resolveWALAndDatabase()
-	if wal == nil {
-		return nil, localizedError(localization.CypherSpecializedCallsWALUnavailable(), nil)
-	}
-
-	walCfg := wal.Config()
-	if walCfg == nil {
-		return nil, localizedError(localization.CypherSpecializedCallsWALConfigUnavailable(), nil)
-	}
-	walDir := walCfg.Dir
-	if walDir == "" {
-		return nil, localizedError(localization.CypherSpecializedCallsWALDirectoryNotConfigured(), nil)
-	}
-
-	// Find entries by tx_id
-	entries, err := storage.FindWALEntriesByTxID(walDir, txIDStr, maxEntries)
+	limit, _, err := txlogInteger(args, 1, "limit")
 	if err != nil {
+		return nil, err
+	}
+	walDir, database, err := e.txlogWAL()
+	if err != nil {
+		return nil, err
+	}
+
+	var rows [][]interface{}
+	err = storage.VisitWALEntriesAfterFromDir(walDir, 0, func(entry storage.WALEntry) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if (database != "" && entry.Database != database) || storage.GetEntryTxID(entry) != txID {
+			return nil
+		}
+		rows = append(rows, txlogRow(entry))
+		if limit > 0 && int64(len(rows)) >= limit {
+			return errTxlogLimitReached
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errTxlogLimitReached) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, localizedError(localization.CypherSpecializedCallsTxlogFindEntriesFailed(err), err)
 	}
-
-	// Build result
-	columns := []string{"sequence", "operation", "timestamp", "tx_id", "database", "data"}
-	rows := make([][]interface{}, len(entries))
-	for i, entry := range entries {
-		txID := storage.GetEntryTxID(entry)
-		rows[i] = []interface{}{
-			entry.Sequence,
-			string(entry.Operation),
-			entry.Timestamp,
-			txID,
-			entry.Database,
-			string(entry.Data), // JSON string
-		}
-	}
-
-	return &ExecuteResult{
-		Columns: columns,
-		Rows:    rows,
-	}, nil
+	return &ExecuteResult{Columns: txlogColumns, Rows: rows}, nil
 }

@@ -99,18 +99,26 @@ enabled by default to preserve existing behavior; retention is **opt-in**.
 You can query WAL entries directly via Cypher:
 
 ```cypher
-// Scan recent entries (no args = recent window)
+// The 1,000 most recent entries of the current database
 CALL db.txlog.entries() YIELD txId, db, kind, seq, timestamp, payload
 RETURN seq, kind, txId, timestamp, payload
 ORDER BY seq;
 
-// Read entries for a specific transaction
-CALL db.txlog.byTxId('tx-123') YIELD txId, db, kind, seq, timestamp, payload
+// Entries from sequence 1000 to 1200 (inclusive)
+CALL db.txlog.entries(1000, 1200) YIELD seq, kind, txId
+RETURN seq, kind, txId
+ORDER BY seq;
+
+// Entries of one transaction, at most 200 of them
+CALL db.txlog.byTxId('tx-123', 200) YIELD txId, db, kind, seq, timestamp, payload
 RETURN seq, kind, txId, timestamp, payload
 ORDER BY seq;
 ```
 
-`db.txlog.entries` accepts up to 4 optional positional args (filter parameters); pass none for a recent-window scan. `db.txlog.byTxId` takes a single transaction ID. The yield columns are fixed: `txId, db, kind, seq, timestamp, payload`.
+- `db.txlog.entries(fromSeq = null, toSeq = null)` returns the current database's entries from `fromSeq` (inclusive, at least 1) to `toSeq` (inclusive; `null` or `0` is no upper bound). Without either, it returns the 1,000 most recent entries.
+- `db.txlog.byTxId(txId, limit = null)` returns the current database's entries of one transaction; `limit` caps how many (`null`, `0` or less is no limit).
+- Both yield `txId` (the entry's transaction ID, `""` when it has none), `db`, `kind` (the operation, such as `create_node` or `tx_commit`), `seq` (the WAL sequence), `timestamp` (RFC 3339, UTC) and `payload` (the entry's JSON data).
+- Arguments may be literals, parameters or variables.
 
 ---
 

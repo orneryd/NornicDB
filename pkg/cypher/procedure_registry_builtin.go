@@ -340,13 +340,13 @@ func ensureBuiltInProceduresRegistered() {
 				return e.callDbInfer(ctx, cypher)
 			})
 
-		registerBuiltInProcedure("db.txlog.entries", "db.txlog.entries() :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.entries"), ProcedureModeDBMS, 0, 4, true,
+		registerBuiltInProcedure("db.txlog.entries", "db.txlog.entries(fromSeq = null :: INTEGER, toSeq = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.entries"), ProcedureModeDBMS, 0, 2, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbTxlogEntries(ctx, cypher)
+				return e.callDbTxlogEntries(ctx, args)
 			})
-		registerBuiltInProcedure("db.txlog.byTxId", "db.txlog.byTxId(txId :: STRING) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.byTxId"), ProcedureModeDBMS, 1, 1, true,
+		registerBuiltInProcedure("db.txlog.byTxId", "db.txlog.byTxId(txId :: STRING, limit = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.byTxId"), ProcedureModeDBMS, 1, 2, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbTxlogByTxID(ctx, cypher)
+				return e.callDbTxlogByTxID(ctx, args)
 			})
 		registerBuiltInProcedure("db.temporal.assertNoOverlap", "db.temporal.assertNoOverlap(args :: MAP) :: (ok :: BOOLEAN)", localization.CypherProcedureMetadata("db.temporal.assertNoOverlap"), ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
