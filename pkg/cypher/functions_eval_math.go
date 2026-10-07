@@ -359,7 +359,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		switch v := val.(type) {
 		case nil:
-			return true
+			// isEmpty(null) is null, as in Neo4j.
+			return nil
 		case string:
 			return len(v) == 0
 		case []interface{}:
@@ -884,51 +885,26 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		return nil
 	}
 
-	// point.withinBBox(point, lowerLeft, upperRight) - alias for withinBBox
+	// point.withinBBox(point, lowerLeft, upperRight): whether point lies in
+	// the box (pointWithinBBox). As in Neo4j, an argument that isn't a point
+	// (null, a map, a string, …) or points of different systems give null.
 	if matchFuncStartAndSuffix(expr, "point.withinbbox") {
-		inner := extractFuncArgs(expr, "point.withinbbox")
-		args := e.splitFunctionArgs(inner)
-		if len(args) < 3 {
-			return false
+		args := e.splitFunctionArgs(extractFuncArgs(expr, "point.withinbbox"))
+		if len(args) != 3 {
+			return nil
 		}
-		point := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		lowerLeft := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		upperRight := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if target, ok := pointValue(point); ok {
-			low, lowOK := pointValue(lowerLeft)
-			high, highOK := pointValue(upperRight)
-			if lowOK && highOK {
-				if within, ok := pointWithinBBox(target, low, high); ok {
-					return within
-				}
+		points := make([]CypherPoint, len(args))
+		for index, argument := range args {
+			point, ok := pointValue(e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			if !ok {
 				return nil
 			}
+			points[index] = point
 		}
-
-		pm, ok1 := spatialMap(point)
-		llm, ok2 := spatialMap(lowerLeft)
-		urm, ok3 := spatialMap(upperRight)
-		if !ok1 || !ok2 || !ok3 {
-			return false
+		if within, ok := pointWithinBBox(points[0], points[1], points[2]); ok {
+			return within
 		}
-
-		px, py, hasXY := getXY(pm)
-		llx, lly, hasLL := getXY(llm)
-		urx, ury, hasUR := getXY(urm)
-
-		if hasXY && hasLL && hasUR {
-			return px >= llx && px <= urx && py >= lly && py <= ury
-		}
-
-		plat, plon, hasLatLon := getLatLon(pm)
-		lllat, lllon, hasLLLatLon := getLatLon(llm)
-		urlat, urlon, hasURLatLon := getLatLon(urm)
-
-		if hasLatLon && hasLLLatLon && hasURLatLon {
-			return plat >= lllat && plat <= urlat && plon >= lllon && plon <= urlon
-		}
-
-		return false
+		return nil
 	}
 
 	// point.withinDistance(point, center, distance) - check if point is within distance of center

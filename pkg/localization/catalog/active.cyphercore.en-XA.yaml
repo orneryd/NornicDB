@@ -202,3 +202,9 @@
   other: "[!! A map with keys {{.Keys}} is not describing a valid point, a point is described either by using cartesian coordinates e.g. {x: 2.3, y: 4.5, crs: 'cartesian'} or using geographic coordinates e.g. {latitude: 12.78, longitude: 56.7, crs: 'WGS-84'}. !!]"
 - id: cyphercore.point_coordinates_missing
   other: "[!! A point must contain either 'x' and 'y' or 'latitude' and 'longitude' !!]"
+- id: cyphercore.aggregate_number_or_duration_only
+  other: "[!! {{.Function}}() can only handle numerical values, duration, or null. !!]"
+- id: cyphercore.aggregate_number_only
+  other: "[!! {{.Function}}() can only handle numerical values or null, but received {{.Received}} !!]"
+- id: cyphercore.aggregate_mixes_number_and_duration
+  other: "[!! {{.Function}}() cannot mix number and duration !!]"

@@ -43,6 +43,9 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 		}
 		numeric, _, _, valid := pipelineAggregateNumber(value)
 		if !valid {
+			// Neo4j's percentiles take numbers only: any other value is a
+			// TypeError.
+			recordExpressionFailure(ctx, aggregateValueError(name, value))
 			return nil, false
 		}
 		if distinct {

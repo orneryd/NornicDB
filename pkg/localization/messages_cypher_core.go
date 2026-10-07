@@ -86,6 +86,9 @@ const (
 	MessageCypherCorePercentileOutOfRange                MessageID = "cyphercore.percentile_out_of_range"
 	MessageCypherCorePointMapKeysInvalid                 MessageID = "cyphercore.point_map_keys_invalid"
 	MessageCypherCorePointCoordinatesMissing             MessageID = "cyphercore.point_coordinates_missing"
+	MessageCypherCoreAggregateNumberOrDurationOnly       MessageID = "cyphercore.aggregate_number_or_duration_only"
+	MessageCypherCoreAggregateNumberOnly                 MessageID = "cyphercore.aggregate_number_only"
+	MessageCypherCoreAggregateMixesNumberAndDuration     MessageID = "cyphercore.aggregate_mixes_number_and_duration"
 	MessageCypherCoreFunctionArgumentInvalid             MessageID = "cyphercore.function_argument_invalid"
 )
 
@@ -458,3 +461,21 @@ func CypherCorePointMapKeysInvalid(keys string) Message {
 func CypherCorePointCoordinatesMissing() Message {
 	return cypherCoreMessage(MessageCypherCorePointCoordinatesMissing, "A point must contain either 'x' and 'y' or 'latitude' and 'longitude'", nil)
 }
+// CypherCoreAggregateNumberOrDurationOnly is sum() or avg() over a value that
+// is neither a number nor a duration.
+func CypherCoreAggregateNumberOrDurationOnly(function string) Message {
+	return cypherCoreMessage(MessageCypherCoreAggregateNumberOrDurationOnly, function+"() can only handle numerical values, duration, or null.", map[string]any{"Function": function})
+}
+
+// CypherCoreAggregateNumberOnly is stDev() or stDevP() over a value that
+// isn't a number.
+func CypherCoreAggregateNumberOnly(function string, received string) Message {
+	return cypherCoreMessage(MessageCypherCoreAggregateNumberOnly, function+"() can only handle numerical values or null, but received "+received, map[string]any{"Function": function, "Received": received})
+}
+
+// CypherCoreAggregateMixesNumberAndDuration is sum() or avg() over both
+// numbers and durations.
+func CypherCoreAggregateMixesNumberAndDuration(function string) Message {
+	return cypherCoreMessage(MessageCypherCoreAggregateMixesNumberAndDuration, function+"() cannot mix number and duration", map[string]any{"Function": function})
+}
+
