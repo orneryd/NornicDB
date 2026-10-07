@@ -29,10 +29,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // unwindMultiMatchCreatePlan is the parsed form of the mutation body.
@@ -99,15 +95,13 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 
 	mutationPart := trimmed
 	returnPart := ""
-	countAlias := ""
 	if returnIdx := findKeywordIndexInContext(trimmed, "RETURN"); returnIdx >= 0 {
 		mutationPart = strings.TrimSpace(trimmed[:returnIdx])
 		returnPart = strings.TrimSpace(trimmed[returnIdx:])
-		alias, ok := parseUnwindBatchCountReturn(returnPart)
+		_, ok := parseUnwindBatchCountReturn(returnPart)
 		if !ok {
 			return nil, false, nil
 		}
-		countAlias = alias
 	}
 	if withIdx := findKeywordIndexInContext(mutationPart, "WITH"); withIdx >= 0 {
 		withClause := strings.TrimSpace(mutationPart[withIdx+len("WITH"):])
@@ -139,189 +133,50 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		return nil, false, nil
 	}
 
-	store := e.getStorage(ctx)
-	result := &ExecuteResult{
-		Columns: []string{},
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-	processedRows := 0
-
-	// Collect all nodes and edges across every row, then issue two bulk
-	// storage calls. On Badger+WAL+Async this collapses N*(WAL fsync +
-	// schema/lookup index mutation) to 2 round-trips per UNWIND batch.
-	pendingNodes := make([]*storage.Node, 0, util.SafePreallocProduct(len(items), len(plan.nodeCreates)))
-	pendingEdges := make([]*storage.Edge, 0, util.SafePreallocProduct(len(items), util.SafePreallocSum(len(plan.edgeCreates), 1)))
-
-	// Deterministic resolution rule (no heuristics): every MATCH in a bulk
-	// batch MUST have a declared schema property index. The index is used as
-	// the accelerator, but any unresolved requested value is verified by a
-	// bounded label scan so an incomplete index cannot silently drop rows.
-	// If no index exists, refuse the fast path and let the caller fall back.
-	schema := store.GetSchema()
-	for _, m := range plan.matches {
-		if m.byID {
-			continue
+	for _, created := range plan.nodeCreates {
+		for _, match := range plan.matches {
+			if created.label == match.label {
+				return nil, false, nil
+			}
 		}
-		if schema == nil || !schema.HasPropertyIndex(m.label, m.propName) {
+	}
+	schema := e.getStorage(ctx).GetSchema()
+	for _, match := range plan.matches {
+		if !match.byID && (schema == nil || !schema.HasPropertyIndex(match.label, match.propName)) {
 			return nil, false, nil
 		}
 	}
-
-	// Coerce the items once so we can walk them twice (prefetch + plan).
-	// Map rows support the classic `row.field` forms; scalar rows support
-	// expressions over the UNWIND variable such as `i` and `i + 1`.
-	rows := make([]unwindBatchRow, 0, len(items))
+	rows := make([]map[string]interface{}, 0, len(items))
 	for _, item := range items {
-		row := unwindBatchRow{item: item}
-		if itemMap, ok := toStringAnyMap(item); ok {
-			row.itemMap = itemMap
+		row, ok := toStringAnyMap(item)
+		if !ok {
+			rows = nil
+			break
 		}
 		rows = append(rows, row)
 	}
-
-	// Per-batch MATCH prefetch: for each (label, prop) pair in the plan,
-	// gather the distinct set of row values, do one PropertyIndexLookup
-	// per distinct value, and BatchGetNodes the resulting IDs in a single
-	// round-trip. Build a per-(label, prop) map keyed by row value. This
-	// is still deterministic — the lookup is index-driven — but collapses
-	// N × 2 per-row Badger point-reads into a bounded handful of calls.
-	//
-	// The map key format mirrors propEqKeyBatch below so int64/float64
-	// numeric equivalents collide (a Bolt int64 row value and a float64
-	// stored property both hash to the same key).
-	batchIndex := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(plan.matches))
-	matchesByKey := make(map[nodeBatchMatchKey][]matchClauseSpec, len(plan.matches))
-	keyOrder := make([]nodeBatchMatchKey, 0, len(plan.matches))
-	for _, m := range plan.matches {
-		key := m.batchKey()
-		if _, seen := matchesByKey[key]; !seen {
-			keyOrder = append(keyOrder, key)
-		}
-		matchesByKey[key] = append(matchesByKey[key], m)
-	}
-	for _, key := range keyOrder {
-		group := matchesByKey[key]
-		m := group[0]
-		// Collect distinct row values for this match.
-		distinct := make(map[string]any, util.SafePreallocProduct(len(rows), len(group)))
-		for _, m := range group {
-			for _, r := range rows {
-				val, ok := e.evaluateUnwindBatchLookupExpr(m, r)
-				if !ok {
-					continue
-				}
-				distinct[propEqKeyBatch(val)] = val
+	if len(rows) > 0 {
+		matches := make([]matchClauseSpec, 0, len(plan.matches))
+		for _, match := range plan.matches {
+			if !match.byID {
+				matches = append(matches, match)
 			}
 		}
-		if len(distinct) == 0 {
-			batchIndex[key] = map[string]*storage.Node{}
-			continue
-		}
-		if m.byID {
-			idx := make(map[string]*storage.Node, len(distinct))
-			for k, value := range distinct {
-				elementID, ok := value.(string)
-				if !ok {
-					continue
-				}
-				lookupID := strings.TrimSpace(elementID)
-				if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 && parts[0] == "4" {
-					lookupID = parts[2]
-				}
-				node, err := store.GetNode(storage.NodeID(lookupID))
-				if err == nil && node != nil && (m.label == "" || nodeHasAnyLabel(node, []string{m.label})) {
-					idx[k] = node
-				}
-			}
-			batchIndex[key] = idx
-			continue
-		}
-		// One PropertyIndexLookup per distinct row value + one GetNode per
-		// lookup result. Both operations are O(1) lookups on in-memory
-		// structures (schema map + Badger cache/skiplist point read); we
-		// avoid BatchGetNodes here because NamespacedEngine.BatchGetNodes
-		// returns a map keyed by UNPREFIXED IDs while the schema index
-		// yields PREFIXED IDs, so a batched-read + map-lookup mismatches.
-		// GetNode handles both forms via idempotent prefixNodeID.
-		idx := make(map[string]*storage.Node, len(distinct))
-		unresolved := make(map[string]any)
-		for k, val := range distinct {
-			ids := propertyIndexLookup(store, schema, m.label, m.propName, val)
-			matched := 0
-			for _, id := range ids {
-				n, err := store.GetNode(id)
-				if err == nil && nodeBatchMatchesValue(n, key, val) {
-					matched++
-					idx[k] = n
-				}
-			}
-			if matched != 1 {
-				delete(idx, k)
-				unresolved[k] = val
-			}
-		}
-		if len(unresolved) > 0 {
-			scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, unresolved)
-			if err != nil {
-				return nil, true, err
-			}
-			if !scanUnique {
-				return nil, false, nil
-			}
-			for k, node := range scanned {
-				idx[k] = node
-			}
-		}
-		batchIndex[key] = idx
-	}
-
-	for _, row := range rows {
-		prevNodes := len(pendingNodes)
-		prevEdges := len(pendingEdges)
-		if err := e.planUnwindMultiMatchCreateRowIndexed(plan, row, batchIndex, &pendingNodes, &pendingEdges); err != nil {
+		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, matches)
+		if err != nil {
 			return nil, true, err
 		}
-		if len(pendingNodes) > prevNodes || len(pendingEdges) > prevEdges {
-			processedRows++
+		if !unique {
+			return nil, false, nil
 		}
+		ctx = context.WithValue(ctx, pipelinePrefetchedNodeCandidatesKey{}, prefetched)
 	}
-
-	for _, node := range pendingNodes {
-		if err := validatePropertyValues(node.Properties); err != nil {
-			return nil, true, err
-		}
+	ctx = context.WithValue(ctx, pipelineIndependentCreateBatchKey{}, true)
+	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, restQuery)
+	if handled && err == nil {
+		e.markUnwindMultiMatchCreateBatchUsed()
 	}
-	for _, edge := range pendingEdges {
-		if err := validatePropertyValues(edge.Properties); err != nil {
-			return nil, true, err
-		}
-	}
-	if len(pendingNodes) > 0 {
-		if err := store.BulkCreateNodes(pendingNodes); err != nil {
-			return nil, true, localizedError(localization.CypherMergeBulkCreateNodesFailed(err), err)
-		}
-		result.Stats.NodesCreated += len(pendingNodes)
-		for _, node := range pendingNodes {
-			countCreatedEntity(result.Stats, node.Labels, node.Properties)
-		}
-	}
-	if len(pendingEdges) > 0 {
-		if err := store.BulkCreateEdges(pendingEdges); err != nil {
-			return nil, true, localizedError(localization.CypherMergeBulkCreateEdgesFailed(err), err)
-		}
-		result.Stats.RelationshipsCreated += len(pendingEdges)
-		for _, edge := range pendingEdges {
-			countCreatedEntity(result.Stats, nil, edge.Properties)
-		}
-	}
-
-	e.markUnwindMultiMatchCreateBatchUsed()
-	if countAlias != "" {
-		result.Columns = []string{countAlias}
-		result.Rows = [][]interface{}{{int64(processedRows)}}
-	}
-	return result, true, nil
+	return result, handled, err
 }
 
 func isSimpleWithPassthroughClause(clause string) bool {
@@ -352,77 +207,6 @@ func isSimpleWithPassthroughClause(clause string) bool {
 		}
 	}
 	return true
-}
-
-// planUnwindMultiMatchCreateRowIndexed resolves row-bound MATCH targets
-// from the per-batch index the caller prebuilt. The caller already ran the
-// per-distinct-value PropertyIndexLookup + BatchGetNodes, so this hot loop
-// is pure in-memory map access.
-//
-// An empty lookup result means the row legitimately has no match in the
-// user's data (Cypher MATCH semantics: zero the row stream); we return nil
-// and skip the row's CREATE clauses, matching standard behaviour.
-func (e *StorageExecutor) planUnwindMultiMatchCreateRowIndexed(
-	plan unwindMultiMatchCreatePlan,
-	row unwindBatchRow,
-	batchIndex map[nodeBatchMatchKey]map[string]*storage.Node,
-	pendingNodes *[]*storage.Node, pendingEdges *[]*storage.Edge,
-) error {
-	bound := make(map[string]*storage.Node, len(plan.matches)+len(plan.nodeCreates))
-
-	// 1. Resolve every MATCH target from the pre-batched index.
-	for _, m := range plan.matches {
-		val, ok := e.evaluateUnwindBatchLookupExpr(m, row)
-		if !ok {
-			return nil
-		}
-		key := m.batchKey()
-		idx, ok := batchIndex[key]
-		if !ok {
-			return fmt.Errorf("internal: missing batch index for %s.%s", m.label, m.propName)
-		}
-		node := idx[propEqKeyBatch(val)]
-		if node == nil {
-			return nil
-		}
-		bound[m.variable] = node
-	}
-
-	// 2. Queue each new node with a minted ID so downstream edges can
-	// reference it.
-	for _, c := range plan.nodeCreates {
-		props := buildPropsFromSpec(row.itemMap, c.rowFieldRefs, c.literals)
-		node := &storage.Node{
-			ID:         storage.NodeID(e.generateID()),
-			Labels:     []string{c.label},
-			Properties: props,
-		}
-		bound[c.variable] = node
-		*pendingNodes = append(*pendingNodes, node)
-	}
-
-	// 3. Queue each edge. Both endpoints must be bound (either from MATCH
-	// or from a freshly queued CREATE above).
-	for _, c := range plan.edgeCreates {
-		start, ok := bound[c.startVar]
-		if !ok || start == nil {
-			return localizedError(localization.CypherMergeCreateEdgeStartNotBound(c.startVar), nil)
-		}
-		end, ok := bound[c.endVar]
-		if !ok || end == nil {
-			return localizedError(localization.CypherMergeCreateEdgeEndNotBound(c.endVar), nil)
-		}
-		edge := &storage.Edge{
-			ID:         storage.EdgeID(e.generateID()),
-			Type:       c.relType,
-			StartNode:  start.ID,
-			EndNode:    end.ID,
-			Properties: buildPropsFromSpec(row.itemMap, c.rowFieldRefs, c.literals),
-		}
-		*pendingEdges = append(*pendingEdges, edge)
-	}
-
-	return nil
 }
 
 func (e *StorageExecutor) evaluateUnwindBatchLookupExpr(match matchClauseSpec, row unwindBatchRow) (interface{}, bool) {

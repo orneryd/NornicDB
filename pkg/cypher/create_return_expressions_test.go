@@ -237,7 +237,7 @@ func TestCreateProjectionCanonicalTypedParameters(t *testing.T) {
 			} else if strings.Contains(query, " SET ") {
 				result, err = exec.Execute(ctx, query, params)
 			} else {
-				result, err = exec.executeCreate(ctx, query)
+				result, err = exec.Execute(ctx, query, getParamsFromContext(ctx))
 			}
 			require.NoError(t, err)
 			require.Equal(t, []string{"$whole", "$payload", "n.v"}, result.Columns)
@@ -259,7 +259,7 @@ func TestCreateProjectionCanonicalRowsAndPaths(t *testing.T) {
 	require.Equal(t, 3, result.Stats.NodesCreated)
 	require.Equal(t, 1, result.Stats.RelationshipsCreated)
 
-	result, err = exec.executeCreate(ctx, "CREATE (n:N {v: 3}) RETURN * LIMIT 0")
+	result, err = exec.Execute(ctx, "CREATE (n:N {v: 3}) RETURN * LIMIT 0", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, []string{"n"}, result.Columns)
 	require.Empty(t, result.Rows)

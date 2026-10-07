@@ -15,128 +15,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// executeMatchForContext executes a MATCH clause and returns its rows: the
-// matched nodes by variable name, and index-aligned with them the matched
-// relationships by variable name (empty maps for node-only patterns).
-// Handles both simple node patterns like (a:Label), (b:Label2) and relationship patterns
-// like (a)<-[r:REL]-(b)-[:REL]->(c).
-func (e *StorageExecutor) executeMatchForContext(ctx context.Context, matchClause string) ([]map[string]*storage.Node, []map[string]*storage.Edge, error) {
-	store := e.getStorage(ctx)
-
-	// Find WHERE clause if present (newline/tab tolerant).
-	whereIdx := findKeywordIndex(matchClause, "WHERE")
-	var patternPart string
-
-	if whereIdx > 0 {
-		patternPart = matchClause[5:whereIdx]
-	} else {
-		patternPart = matchClause[5:]
-	}
-
-	patternPart = strings.TrimSpace(patternPart)
-
-	// Check if this is a relationship pattern (contains ->, <-, or ]-)
-	// If so, we need to use proper path matching, not cartesian product
-	hasRelationship := strings.Contains(patternPart, "->") ||
-		strings.Contains(patternPart, "<-") ||
-		strings.Contains(patternPart, "]-")
-
-	if hasRelationship {
-		// Use executeMatch to properly find paths, then extract variable bindings
-		return e.executeMatchForContextWithRelationships(ctx, matchClause, patternPart)
-	}
-
-	// Simple node patterns only - use cartesian product approach
-	// Split multiple node patterns: (a:Label), (b:Label2)
-	nodePatterns := e.splitNodePatterns(patternPart)
-
-	// If no patterns found, try parsing as single pattern
-	if len(nodePatterns) == 0 {
-		nodePatterns = []string{patternPart}
-	}
-
-	// For each node pattern, find matching nodes
-	patternMatches := make([]struct {
-		variable string
-		nodes    []*storage.Node
-	}, len(nodePatterns))
-
-	for i, np := range nodePatterns {
-		nodeInfo := e.parseNodePattern(ctx, np)
-
-		var candidates []*storage.Node
-		// Single-pattern WHERE fast-path: reduce candidates via property index lookup
-		// when possible (e.g., o.textKey128='x' OR ('y' IS NOT NULL AND o.textKey='y')).
-		if whereIdx > 0 && len(nodePatterns) == 1 {
-			wherePart := strings.TrimSpace(matchClause[whereIdx+len("WHERE"):])
-			if indexed, ok := e.lookupWhereCandidatesUsingPropertyIndex(nodeInfo, wherePart, store); ok {
-				candidates = indexed
-			}
-		}
-		// Pattern-inline property fast-path: when the pattern carries inline
-		// equality on one or more indexed properties (e.g. `(n:Code {id:$x})`
-		// or the labelless `(n {id:$x})`), probe the property index instead
-		// of scanning the full label population. This is the generic,
-		// shape-agnostic counterpart to the WHERE fast-path above and
-		// applies to N inline properties: each indexed prop intersects the
-		// candidate set further, residual non-indexed props are still
-		// enforced by `nodeMatchesProps` below.
-		if candidates == nil {
-			if indexed, ok := e.lookupPatternCandidatesUsingPropertyIndex(nodeInfo, store); ok {
-				candidates = indexed
-			}
-		}
-		if candidates == nil {
-			if len(nodeInfo.labels) > 0 {
-				var err error
-				candidates, err = store.GetNodesByLabel(nodeInfo.labels[0])
-				if err != nil {
-					return nil, nil, localizedError(localization.CypherMergeMatchLabelLookupFailed(nodeInfo.labels[0], err), err)
-				}
-			} else {
-				var err error
-				candidates, err = store.AllNodes()
-				if err != nil {
-					return nil, nil, localizedError(localization.CypherMergeMatchAllNodesFailed(err), err)
-				}
-			}
-		}
-
-		// Filter by properties
-		var filtered []*storage.Node
-		for _, node := range candidates {
-			if e.nodeMatchesProps(node, nodeInfo.properties) {
-				filtered = append(filtered, node)
-			}
-		}
-
-		patternMatches[i] = struct {
-			variable string
-			nodes    []*storage.Node
-		}{
-			variable: nodeInfo.variable,
-			nodes:    filtered,
-		}
-	}
-
-	// Build cartesian product of all pattern matches
-	allMatches := e.buildCartesianProduct(patternMatches)
-
-	// Apply WHERE clause to each combination
-	if whereIdx > 0 {
-		wherePart := strings.TrimSpace(matchClause[whereIdx+len("WHERE"):])
-		var filtered []map[string]*storage.Node
-		for _, nodeMap := range allMatches {
-			if e.evaluateWhereForNodeMap(ctx, nodeMap, wherePart) {
-				filtered = append(filtered, nodeMap)
-			}
-		}
-		allMatches = filtered
-	}
-
-	return allMatches, emptyRelationshipContexts(len(allMatches)), nil
-}
-
 // emptyRelationshipContexts is n rows' relationship bindings for a pattern
 // without relationship variables.
 func emptyRelationshipContexts(n int) []map[string]*storage.Edge {
@@ -571,105 +449,6 @@ func normalizeWhereList(v interface{}) ([]interface{}, bool) {
 	default:
 		return nil, false
 	}
-}
-
-// executeMatchForContextWithRelationships handles MATCH patterns that include relationships.
-// It executes the MATCH query and returns each row's node and relationship
-// bindings (index-aligned), as executeMatchForContext.
-func (e *StorageExecutor) executeMatchForContextWithRelationships(ctx context.Context, matchClause, patternPart string) ([]map[string]*storage.Node, []map[string]*storage.Edge, error) {
-	store := e.getStorage(ctx)
-
-	// Fail fast on malformed relationship patterns instead of returning
-	// an implicit empty context. This keeps behavior strict and predictable.
-	if strings.Count(patternPart, "(") != strings.Count(patternPart, ")") ||
-		strings.Count(patternPart, "[") != strings.Count(patternPart, "]") {
-		return nil, nil, localizedError(localization.CypherMergeMalformedRelationshipPattern(patternPart), nil)
-	}
-
-	// The pattern's node variables, then its relationship variables.
-	nodeVarNames := e.extractVariableNamesFromPattern(patternPart)
-	if len(nodeVarNames) == 0 {
-		return nil, nil, nil
-	}
-	relVarNames := extractRelationshipVariables(patternPart)
-	isRelationshipVariable := make(map[string]bool, len(relVarNames))
-	for _, name := range relVarNames {
-		isRelationshipVariable[name] = true
-	}
-
-	// Build RETURN clause with all variables
-	returnClause := "RETURN " + strings.Join(append(append([]string{}, nodeVarNames...), relVarNames...), ", ")
-	fullQuery := matchClause + " " + returnClause
-
-	// Execute the match
-	result, err := e.executeMatch(ctx, fullQuery)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Convert results to node and relationship context maps
-	var allMatches []map[string]*storage.Node
-	var allRelationships []map[string]*storage.Edge
-
-	for _, row := range result.Rows {
-		nodeMap := make(map[string]*storage.Node)
-		relMap := make(map[string]*storage.Edge)
-		for i, col := range result.Columns {
-			if i >= len(row) {
-				continue
-			}
-
-			// Get the node from storage based on the returned value
-			val := row[i]
-			if val == nil {
-				continue
-			}
-			if isRelationshipVariable[col] {
-				if edge, ok := val.(*storage.Edge); ok {
-					relMap[col] = edge
-				}
-				continue
-			}
-
-			// The returned value might be a map or a node representation
-			var node *storage.Node
-
-			switch v := val.(type) {
-			case map[string]interface{}:
-				// It's a map representation - find the actual node
-				// Look for an ID property or _id
-				if id, ok := v["_id"]; ok {
-					if nodeID, ok := id.(string); ok {
-						node, _ = store.GetNode(storage.NodeID(nodeID))
-					}
-				} else if id, ok := v["id"]; ok {
-					if nodeID, ok := id.(string); ok {
-						node, _ = store.GetNode(storage.NodeID(nodeID))
-					}
-				}
-				// If we still don't have a node, try to find by properties
-				if node == nil {
-					// Try to find by matching properties
-					node = e.findNodeByProperties(v)
-				}
-			case *storage.Node:
-				node = v
-			case storage.Node:
-				node = &v
-			}
-
-			if node != nil {
-				nodeMap[col] = node
-			}
-		}
-
-		if len(nodeMap) > 0 {
-			allMatches = append(allMatches, nodeMap)
-			allRelationships = append(allRelationships, relMap)
-		}
-	}
-
-	return allMatches, allRelationships, nil
 }
 
 // extractVariableNamesFromPattern extracts variable names from a Cypher pattern.
@@ -1326,6 +1105,10 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			// applySetClause below.
 			countCreatedEntity(result.Stats, nil, edge.Properties)
 			e.notifyEdgeMutated(string(edge.ID))
+			e.notifyNodeMutated(string(edge.StartNode))
+			if edge.EndNode != edge.StartNode {
+				e.notifyNodeMutated(string(edge.EndNode))
+			}
 		}
 	}
 

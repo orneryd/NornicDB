@@ -96,7 +96,7 @@ func TestIssue882OptionalMatchPlanValuesAndRejections(t *testing.T) {
 func TestIssue882EmbeddedOptionalMatchIsRejected(t *testing.T) {
 	exec := newAsyncStackTestExecutor(t)
 	ctx := context.Background()
-	_, err := exec.executeMatch(ctx, "MATCH (n:T) OPTIONAL MATCH (n)-[r:R]->(c) RETURN n, r, c")
+	_, err := exec.Execute(ctx, "MATCH (n:T) OPTIONAL MATCH (n)-[r:R]->(c) RETURN n, r, c", getParamsFromContext(ctx))
 	require.Error(t, err)
 	code, _ := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)

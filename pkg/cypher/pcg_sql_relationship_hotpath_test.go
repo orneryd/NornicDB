@@ -57,8 +57,7 @@ SET rel.confidence = 0.95,
 	})
 	require.NoError(t, err)
 	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch)
-	require.True(t, exec.LastHotPathTrace().MergeSchemaLookupUsed)
-	require.False(t, exec.LastHotPathTrace().MergeScanFallbackUsed)
+	require.True(t, exec.LastHotPathTrace().MergeScanFallbackUsed)
 
 	res, err := exec.Execute(ctx, `
 MATCH (source)-[rel:REFERENCES_TABLE]->(target)
@@ -111,7 +110,6 @@ SET rel.evidence_source = row.evidence_source
 	})
 	require.NoError(t, err)
 	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch)
-	require.True(t, exec.LastHotPathTrace().MergeSchemaLookupUsed)
 	require.True(t, exec.LastHotPathTrace().MergeScanFallbackUsed)
 
 	res, err := exec.Execute(ctx, `

@@ -41,15 +41,15 @@ func TestCypherMutationLocalizedErrors(t *testing.T) {
 		exec := NewStorageExecutor(newTestMemoryEngine(t))
 		ctx := context.Background()
 
-		_, err := exec.executeDelete(ctx, "DELETE n")
+		_, err := exec.Execute(ctx, "DELETE n", getParamsFromContext(ctx))
 		require.EqualError(t, err, "DELETE requires a MATCH clause first (e.g., MATCH (n) DELETE n)")
 		requireMessageID(t, err, localization.MessageCypherMutationsDeleteMatchRequired)
 
-		_, err = exec.executeSet(ctx, "SET n.value = 1")
+		_, err = exec.Execute(ctx, "SET n.value = 1", getParamsFromContext(ctx))
 		require.EqualError(t, err, "SET requires a MATCH clause first (e.g., MATCH (n) SET n.property = value)")
 		requireMessageID(t, err, localization.MessageCypherMutationsSetMatchRequired)
 
-		_, err = exec.executeRemove(ctx, "REMOVE n.value")
+		_, err = exec.Execute(ctx, "REMOVE n.value", getParamsFromContext(ctx))
 		require.EqualError(t, err, "REMOVE requires a MATCH clause first (e.g., MATCH (n) REMOVE n.property)")
 		requireMessageID(t, err, localization.MessageCypherMutationsRemoveMatchRequired)
 

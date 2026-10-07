@@ -117,32 +117,21 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
-	// Standalone DELETE / DETACH DELETE (no MATCH) must reach executeDelete:
-	// a bound-variable target (§6.2) deletes its entity, an unbound target
-	// gets the classified match-required error instead of the terminal
-	// unsupported-type rejection.
 	hasDelete := findKeywordIndex(cypher, "DELETE") >= 0
 	hasDetachDelete := containsKeywordOutsideStrings(cypher, "DETACH DELETE")
 	if hasDelete || hasDetachDelete {
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		return e.executeDelete(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
 	hasSet := containsKeywordOutsideStrings(cypher, "SET")
 	hasOnCreateSet := containsKeywordOutsideStrings(cypher, "ON CREATE SET")
 	hasOnMatchSet := containsKeywordOutsideStrings(cypher, "ON MATCH SET")
 	if startsWithMatch && hasSet && containsKeywordOutsideStrings(cypher, "REMOVE") {
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
 	if startsWithCreate && hasSet && containsKeywordOutsideStrings(cypher, "REMOVE") {
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 	if startsWithCreate && !isCreateProcedureCommand(cypher) && hasSet && !hasOnCreateSet && !hasOnMatchSet &&
 		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
@@ -163,20 +152,12 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		!startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE") &&
 		!startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY") {
 		if startsWithMatch || findKeywordIndex(cypher, "SET") == 0 {
-			if startsWithMatch {
-				if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-					return outcome.result, outcome.err
-				}
-			}
-			return e.executeSet(ctx, cypher)
+			return e.executeRequiredPipeline(ctx, cypher)
 		}
 	}
 
 	if containsKeywordOutsideStrings(cypher, "REMOVE") {
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		return e.executeRemove(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
 	if startsWithMatch && optionalMatchIdx > 0 {
@@ -196,31 +177,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case startsWithKeywords(cypher, "OPTIONAL", "MATCH"):
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		return e.executeOptionalMatch(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithMatch:
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-			return outcome.result, outcome.err
-		}
-		matchCount := countKeywordOccurrences(upperQuery, "MATCH")
-		optionalMatchCount := countKeywordOccurrences(upperQuery, "OPTIONAL MATCH")
-		if matchCount-optionalMatchCount > 1 && findKeywordIndexInContext(cypher, "WITH") > 0 {
-			if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
-				return outcome.result, outcome.err
-			}
-		}
-		isMultiMatch := matchCount-optionalMatchCount > 1
-		if !isMultiMatch {
-			patternInfo := DetectQueryPattern(ctx, cypher)
-			if patternInfo.IsOptimizable() {
-				if result, ok := e.ExecuteOptimized(ctx, cypher, patternInfo); ok {
-					return result, nil
-				}
-			}
-		}
-		return e.executeMatch(ctx, cypher)
+		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithKeywords(cypher, "CREATE", "CONSTRAINT"),
 		startsWithKeywords(cypher, "CREATE", "RANGE INDEX"),
 		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX"),
@@ -240,8 +199,6 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeCreateAlias(ctx, cypher)
 	case startsWithCreate:
 		return e.executeRequiredPipeline(ctx, cypher)
-	case hasDelete || hasDetachDelete:
-		return e.executeDelete(ctx, cypher)
 	case findKeywordIndex(cypher, "CALL") == 0:
 		return e.executeCall(ctx, cypher)
 	case findKeywordIndex(cypher, "RETURN") == 0:

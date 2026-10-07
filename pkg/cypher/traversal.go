@@ -105,15 +105,23 @@ func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.N
 		} else {
 			edges, answered, err = reader.IncomingEdgeHeaders(nodeID)
 		}
-		if answered && err == nil {
+		if err != nil && ctx.cancelCtx != nil {
+			recordExpressionFailure(ctx.cancelCtx, err)
+			return nil
+		}
+		if answered {
 			return edges
 		}
 	}
 	var edges []*storage.Edge
+	var err error
 	if outgoing {
-		edges, _ = e.storage.GetOutgoingEdges(nodeID)
+		edges, err = e.storage.GetOutgoingEdges(nodeID)
 	} else {
-		edges, _ = e.storage.GetIncomingEdges(nodeID)
+		edges, err = e.storage.GetIncomingEdges(nodeID)
+	}
+	if err != nil && ctx.cancelCtx != nil {
+		recordExpressionFailure(ctx.cancelCtx, err)
 	}
 	return edges
 }
@@ -914,95 +922,27 @@ func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Con
 //   - <startVar>.<prop> = <value>
 //   - <startVar>.<prop> IS NOT NULL
 func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
-	if strings.TrimSpace(nodePattern.variable) == "" {
+	if strings.TrimSpace(nodePattern.variable) == "" || strings.TrimSpace(whereClause) == "" {
 		return nil, false, nil
 	}
-
-	// Equality predicate pushdown.
-	if prop, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereClause); ok {
-		// Safety guard: this fallback scan-pruning path only applies literal equality.
-		// Parameterized predicates (e.g. n.id = $id) are handled elsewhere after
-		// parameter substitution. Applying compareEqual on raw "$param" here would
-		// incorrectly prune all candidates.
-		if s, isString := value.(string); isString && strings.HasPrefix(strings.TrimSpace(s), "$") {
+	for _, reference := range semanticExpressionReferences(whereClause) {
+		if strings.SplitN(reference, ".", 2)[0] != nodePattern.variable {
 			return nil, false, nil
 		}
-		var candidates []*storage.Node
-		if len(nodePattern.labels) > 0 {
-			nodes, err := e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-			if err != nil {
-				return nil, false, err
-			}
-			candidates = nodes
-		} else {
-			var err error
-			candidates, err = e.loadNodesWithTemporalViewport(ctx, nil)
-			if err != nil {
-				return nil, false, err
-			}
-		}
-		if len(candidates) == 0 {
-			return []*storage.Node{}, true, nil
-		}
-		filtered := make([]*storage.Node, 0, len(candidates))
-		for _, n := range candidates {
-			if n == nil {
-				continue
-			}
-			if !pipelineNodeMatchesPattern(n, nodePattern) {
-				continue
-			}
-			if e.compareEqual(n.Properties[prop], value) {
-				filtered = append(filtered, n)
-			}
-		}
-		// Fail-open safety: if fallback parsing/value coercion is wrong, do not
-		// risk false negatives. Let the normal traversal path evaluate WHERE.
-		if len(filtered) == 0 {
-			return nil, false, nil
-		}
-		return filtered, true, nil
 	}
-
-	// IS NOT NULL predicate pushdown.
-	if prop, ok := e.parseSimpleIndexedIsNotNull(nodePattern.variable, whereClause); ok {
-		var candidates []*storage.Node
-		if len(nodePattern.labels) > 0 {
-			nodes, err := e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-			if err != nil {
-				return nil, false, err
-			}
-			candidates = nodes
-		} else {
-			var err error
-			candidates, err = e.loadNodesWithTemporalViewport(ctx, nil)
-			if err != nil {
-				return nil, false, err
-			}
-		}
-		if len(candidates) == 0 {
-			return []*storage.Node{}, true, nil
-		}
-		filtered := make([]*storage.Node, 0, len(candidates))
-		for _, n := range candidates {
-			if n == nil {
-				continue
-			}
-			if !pipelineNodeMatchesPattern(n, nodePattern) {
-				continue
-			}
-			if _, exists := n.Properties[prop]; exists && n.Properties[prop] != nil {
-				filtered = append(filtered, n)
-			}
-		}
-		// Fail-open safety to preserve semantics.
-		if len(filtered) == 0 {
-			return nil, false, nil
-		}
-		return filtered, true, nil
+	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+	if err != nil {
+		return nil, true, err
 	}
-
-	return nil, false, nil
+	values := pipelineNodeRow(ctx, nodePattern.variable, nil)
+	filtered := nodes[:0]
+	for _, node := range nodes {
+		values[nodePattern.variable] = node
+		if e.evaluateRowPredicate(ctx, whereClause, values) {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered, true, nil
 }
 
 func (e *StorageExecutor) tryFastRelationshipCount(matches *TraversalMatch, item returnItem) (count int64, ok bool, err error) {
@@ -1626,45 +1566,10 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 		return e.traverseChainedGraph(ctx, match, nil)
 	}
 
-	// Get starting nodes
-	var startNodes []*storage.Node
-	if len(match.StartNode.labels) > 0 && len(match.StartNode.properties) == 1 {
-		for prop, value := range match.StartNode.properties {
-			schema := e.storage.GetSchema()
-			if schema != nil {
-				labels := e.indexCandidateLabels(schema, match.StartNode.labels, prop)
-				if len(labels) > 0 {
-					idSet := make(map[storage.NodeID]struct{}, 64)
-					for _, label := range labels {
-						for _, id := range propertyIndexLookup(e.storage, schema, label, prop, value) {
-							idSet[id] = struct{}{}
-						}
-					}
-					if len(idSet) > 0 {
-						ids := make([]string, 0, len(idSet))
-						for id := range idSet {
-							ids = append(ids, string(id))
-						}
-						sort.Strings(ids)
-						startNodes = make([]*storage.Node, 0, len(ids))
-						for _, id := range ids {
-							node, err := e.storage.GetNode(storage.NodeID(id))
-							if err != nil || node == nil {
-								continue
-							}
-							visible, visErr := nodeVisibleInTemporalViewport(node, viewport, checker)
-							if visErr != nil || !visible {
-								continue
-							}
-							startNodes = append(startNodes, node)
-						}
-					}
-				}
-			}
-		}
-	}
-	if startNodes == nil {
-		startNodes, _ = e.loadPatternNodes(ctx, match.StartNode.labels, match.StartNode.properties)
+	startNodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, match.StartNode, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
 	}
 
 	// Filter indexed candidates through the shared complete pattern check.
@@ -2124,7 +2029,12 @@ func (e *StorageExecutor) findPaths(
 	case "incoming":
 		edges = e.traversalEdges(ctx, currentNode.ID, false)
 	case "both":
-		edges, _ = undirectedIncidentEdges(e.storage, currentNode.ID)
+		var err error
+		edges, err = undirectedIncidentEdges(e.storage, currentNode.ID)
+		if err != nil && ctx.cancelCtx != nil {
+			recordExpressionFailure(ctx.cancelCtx, err)
+			return results
+		}
 	}
 
 	// Traverse each edge
@@ -2817,102 +2727,4 @@ func pipelineRowFromPathContext(path PathContext) map[string]interface{} {
 		row[name] = relationship
 	}
 	return row
-}
-
-// evaluatePathValue parses a literal value from a WHERE clause expression.
-// Note: Parameters should already be substituted by this point, but we handle
-// them here as a fallback in case substitution didn't happen.
-func (e *StorageExecutor) evaluatePathValue(expr string) interface{} {
-	expr = strings.TrimSpace(expr)
-
-	// Handle parameters (should already be substituted by executeMatch before reaching here)
-	// If we see a $ parameter here, it means substitution failed - return as-is
-	if strings.HasPrefix(expr, "$") {
-		return expr // Return as-is if no substitution available
-	}
-
-	// Handle quoted strings
-	if len(expr) >= 2 {
-		first, last := expr[0], expr[len(expr)-1]
-		if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
-			return expr[1 : len(expr)-1]
-		}
-	}
-
-	// Handle list literals used by traversal WHERE predicates, for example
-	// e.uuid IN ['r1', 'm1'] after parameter substitution.
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
-		inner := strings.TrimSpace(expr[1 : len(expr)-1])
-		if inner == "" {
-			return []interface{}{}
-		}
-		parts := splitOutsideParens(inner, ',')
-		items := make([]interface{}, 0, len(parts))
-		for _, part := range parts {
-			items = append(items, e.evaluatePathValue(part))
-		}
-		return items
-	}
-
-	// Handle numbers
-	if i, err := strconv.ParseInt(expr, 10, 64); err == nil {
-		return i
-	}
-	if f, err := strconv.ParseFloat(expr, 64); err == nil {
-		return f
-	}
-
-	// Handle booleans
-	if strings.EqualFold(expr, "true") {
-		return true
-	}
-	if strings.EqualFold(expr, "false") {
-		return false
-	}
-
-	return expr
-}
-
-// compareValues compares two values using the given operator.
-func (e *StorageExecutor) compareValues(left, right interface{}, op string) bool {
-	// Handle nil cases
-	if left == nil || right == nil {
-		if op == "=" {
-			return left == right
-		}
-		if op == "<>" {
-			return left != right
-		}
-		return false
-	}
-	if leftNode, ok := left.(*storage.Node); ok {
-		rightNode, rightOK := right.(*storage.Node)
-		if !rightOK || leftNode == nil || rightNode == nil {
-			return false
-		}
-		switch op {
-		case "=":
-			return leftNode.ID == rightNode.ID
-		case "<>":
-			return leftNode.ID != rightNode.ID
-		default:
-			return false
-		}
-	}
-	if leftEdge, ok := left.(*storage.Edge); ok {
-		rightEdge, rightOK := right.(*storage.Edge)
-		if !rightOK || leftEdge == nil || rightEdge == nil {
-			return false
-		}
-		switch op {
-		case "=":
-			return leftEdge.ID == rightEdge.ID
-		case "<>":
-			return leftEdge.ID != rightEdge.ID
-		default:
-			return false
-		}
-	}
-
-	return compareCypherPredicateValues(left, right, op)
 }

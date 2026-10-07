@@ -30,7 +30,7 @@ func TestSubqueryValueRemainingBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(5)}}, result.Rows)
 
-	result, err = exec.executeMatch(ctx, "MATCH (n:SQ) RETURN n.v AS v, count(*) AS c ORDER BY v DESC SKIP 0 LIMIT 2")
+	result, err = exec.Execute(ctx, "MATCH (n:SQ) RETURN n.v AS v, count(*) AS c ORDER BY v DESC SKIP 0 LIMIT 2", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(3), int64(1)}, {int64(2), int64(1)}}, result.Rows)
 

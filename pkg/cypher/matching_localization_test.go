@@ -24,7 +24,7 @@ func TestCypherMatchingLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 	exec := &StorageExecutor{}
 
 	t.Run("MATCH validation", func(t *testing.T) {
-		_, err := exec.executeMatch(context.Background(), "MATCH RETURN n")
+		_, err := exec.Execute(context.Background(), "MATCH RETURN n", getParamsFromContext(context.Background()))
 		requireCypherMatchingLocalizedError(t, err, localization.MessageCypherMatchingMatchPatternRequired, "MATCH clause requires a pattern")
 	})
 

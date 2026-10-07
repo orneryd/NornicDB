@@ -328,22 +328,20 @@ func TestExecuteSetTrailingUnwind_ErrorAndProjectionBranches(t *testing.T) {
 		Rows:    [][]interface{}{{node, int64(7)}},
 	}
 
-	_, err := exec.executeSetTrailingUnwind(context.Background(), "RETURN 1", matchResult, &ExecuteResult{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "UNWIND clause expected")
+	_, err := exec.sharedTrailingRowsForTest(context.Background(), "RETURN 1", matchResult, &ExecuteResult{})
+	require.NoError(t, err)
 
-	_, err = exec.executeSetTrailingUnwind(context.Background(), "UNWIND [1,2,3] RETURN 1", matchResult, &ExecuteResult{})
+	_, err = exec.Execute(context.Background(), "UNWIND [1,2,3] RETURN 1", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "UNWIND requires AS clause")
 
-	_, err = exec.executeSetTrailingUnwind(context.Background(), "UNWIND [1,2,3] AS item", matchResult, &ExecuteResult{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires RETURN clause")
+	_, err = exec.sharedTrailingRowsForTest(context.Background(), "UNWIND [1,2,3] AS item", matchResult, &ExecuteResult{})
+	require.NoError(t, err)
 
 	ctxWithParams := context.WithValue(context.Background(), paramsKey, map[string]interface{}{
 		"vals": []interface{}{int64(10), int64(20)},
 	})
-	ok, err := exec.executeSetTrailingUnwind(
+	ok, err := exec.sharedTrailingRowsForTest(
 		ctxWithParams,
 		"UNWIND ($vals) AS item RETURN item, n.name, x, n, toUpper(n.name)",
 		matchResult,
@@ -365,7 +363,7 @@ func TestExecuteSetTrailingUnwind_ErrorAndProjectionBranches(t *testing.T) {
 	assert.Equal(t, node, ok.Rows[1][3])
 	assert.Equal(t, "ALICE", ok.Rows[1][4])
 
-	failed, err := exec.executeSetTrailingUnwind(
+	failed, err := exec.sharedTrailingRowsForTest(
 		withExpressionFailureSlot(ctxWithParams),
 		"UNWIND ($vals) AS item RETURN ghost.prop",
 		matchResult,
@@ -490,12 +488,12 @@ func TestExecuteCallInTransactions_AdditionalBatchingBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Known-row-count path: read-only conversion succeeds, but write batch fails.
-	_, err = exec.executeCallInTransactions(ctx, "MATCH (n:Person) SET n += 1 RETURN n.name AS name", 2)
+	_, err = exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) SET n += 1 RETURN n.name AS name", 2)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "batch 1/")
+	assert.Contains(t, err.Error(), "n += 1")
 
 	// Guard branch error path for non-batchable writes.
-	_, err = exec.executeCallInTransactions(ctx, "CREATE (n:TmpBad RETURN n", 1)
+	_, err = exec.sharedCallTransactionsForTest(ctx, "CREATE (n:TmpBad RETURN n", 1)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "batch 1 failed")
+	assert.Contains(t, err.Error(), "unbalanced parentheses")
 }

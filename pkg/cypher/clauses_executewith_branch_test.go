@@ -78,10 +78,10 @@ func TestExecuteOptionalMatch_ErrorAndEmptyBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeOptionalMatch(ctx, "RETURN 1")
+	_, err := exec.Execute(ctx, "OPTIONAL MATCH (n:Missing) RETURN ,", getParamsFromContext(ctx))
 	require.Error(t, err)
 
-	res, err := exec.executeOptionalMatch(ctx, "OPTIONAL MATCH (n:Missing) RETURN n")
+	res, err := exec.Execute(ctx, "OPTIONAL MATCH (n:Missing) RETURN n", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, []string{"n"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -89,7 +89,7 @@ func TestExecuteOptionalMatch_ErrorAndEmptyBranches(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "CREATE (n:Person {name:'A'})", nil)
 	require.NoError(t, err)
-	res, err = exec.executeOptionalMatch(ctx, "OPTIONAL MATCH (n:Person {name:'A'}) RETURN n.name AS name")
+	res, err = exec.Execute(ctx, "OPTIONAL MATCH (n:Person {name:'A'}) RETURN n.name AS name", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, res.Columns)
 	require.Equal(t, "A", res.Rows[0][0])

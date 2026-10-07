@@ -4,16 +4,342 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
+func (e *StorageExecutor) sharedForeachForTest(ctx context.Context, query string, nodes map[string]*storage.Node, edges map[string]*storage.Edge) (*ExecuteResult, error) {
+	row := maps.Clone(valueBindingsFromContext(ctx))
+	if row == nil {
+		row = make(map[string]interface{})
+	}
+	for name, node := range nodes {
+		row[name] = node
+	}
+	for name, edge := range edges {
+		row[name] = edge
+	}
+	bindParameterRow(ctx, row)
+	clauses, ok, _ := parsePipelineClauses(query)
+	if !ok {
+		return e.Execute(withValueBindings(ctx, row), query, getParamsFromContext(ctx))
+	}
+	scope := make(map[string]struct{}, len(row))
+	for name := range row {
+		scope[name] = struct{}{}
+	}
+	ctx = withExpressionFailureSlot(ctx)
+	result, _, err := e.runPipelineClauses(ctx, []pipelineRow{row}, scope, clauses, clauses)
+	if err == nil {
+		err = getExpressionFailure(ctx)
+	}
+	return result, err
+}
+
+func (e *StorageExecutor) sharedCallTransactionsForTest(ctx context.Context, query string, batchSize int) (*ExecuteResult, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	return e.Execute(ctx, fmt.Sprintf("CALL { %s } IN TRANSACTIONS OF %d ROWS", query, batchSize), getParamsFromContext(ctx))
+}
+
+func (e *StorageExecutor) sharedChainedPipelineForTest(ctx context.Context, query string) (*ExecuteResult, bool, error) {
+	outcome := e.executePipeline(ctx, query)
+	return outcome.result, outcome.terminal(), outcome.err
+}
+
+func (e *StorageExecutor) sharedPathLiteralForTest(expression string) interface{} {
+	value, _ := e.evaluateRowExpressionWithContext(context.Background(), expression, nil)
+	return value
+}
+
+func (e *StorageExecutor) sharedPathComparisonForTest(left, right interface{}, operator string) bool {
+	return e.evaluateRowPredicate(context.Background(), "left "+operator+" right", map[string]interface{}{"left": left, "right": right})
+}
+
+func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, query string, input, output *ExecuteResult) (*ExecuteResult, bool, error) {
+	clauses, ok, _ := parsePipelineClauses(query)
+	if !ok {
+		return nil, false, fmt.Errorf("invalid pipeline clauses: %s", query)
+	}
+	ctx = withExpressionFailureSlot(ctx)
+	scope := make(map[string]struct{}, len(input.Columns))
+	for _, name := range input.Columns {
+		scope[name] = struct{}{}
+	}
+	rows := make([]pipelineRow, 0, len(input.Rows))
+	for _, values := range input.Rows {
+		row := pipelineRow(buildRowValueMap(input.Columns, values))
+		bindParameterRow(ctx, row)
+		rows = append(rows, row)
+	}
+	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	if err == nil {
+		err = getExpressionFailure(ctx)
+	}
+	if err == nil && result != nil {
+		result.Stats = output.Stats
+	}
+	return result, handled, err
+}
+
+func (e *StorageExecutor) sharedTrailingRowsForTest(ctx context.Context, query string, input, output *ExecuteResult) (*ExecuteResult, error) {
+	result, _, err := e.sharedTrailingRowsHandledForTest(ctx, query, input, output)
+	return result, err
+}
+
+func sharedSetAssignmentForTest(entity interface{}, assignment unwindSimpleSetAssignment, values map[string]interface{}, _ func(string, map[string]interface{}) interface{}, _ *setWrites) (int, error) {
+	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "fixture")
+	defer store.Close()
+	row := pipelineRow(maps.Clone(values))
+	var before map[string]interface{}
+	switch original := entity.(type) {
+	case *storage.Node:
+		copy := *original
+		copy.Properties = maps.Clone(original.Properties)
+		before = maps.Clone(original.Properties)
+		if _, err := store.CreateNode(&copy); err != nil {
+			return 0, err
+		}
+		row["subject"] = &copy
+	case *storage.Edge:
+		copy := *original
+		copy.Properties = maps.Clone(original.Properties)
+		before = maps.Clone(original.Properties)
+		if copy.StartNode == "" {
+			copy.StartNode = "fixture-start"
+		}
+		if copy.EndNode == "" {
+			copy.EndNode = "fixture-end"
+		}
+		if _, err := store.CreateNode(&storage.Node{ID: copy.StartNode}); err != nil {
+			return 0, err
+		}
+		if copy.EndNode != copy.StartNode {
+			if _, err := store.CreateNode(&storage.Node{ID: copy.EndNode}); err != nil {
+				return 0, err
+			}
+		}
+		if err := store.CreateEdge(&copy); err != nil {
+			return 0, err
+		}
+		row["subject"] = &copy
+	default:
+		return 0, fmt.Errorf("unsupported test entity: %T", entity)
+	}
+	clause := "SET subject." + assignment.prop + " = " + assignment.expr
+	if assignment.mergeMap {
+		clause = "SET subject += " + assignment.expr
+	}
+	exec := NewStorageExecutor(store)
+	ctx := withExpressionFailureSlot(context.Background())
+	_, _, err := exec.pipelineApplySet(ctx, []pipelineRow{row}, clause)
+	if err == nil {
+		err = getExpressionFailure(ctx)
+	}
+	if err != nil {
+		return 0, err
+	}
+	var after map[string]interface{}
+	switch original := entity.(type) {
+	case *storage.Node:
+		after = row["subject"].(*storage.Node).Properties
+		original.Properties = after
+	case *storage.Edge:
+		after = row["subject"].(*storage.Edge).Properties
+		original.Properties = after
+	}
+	return changedPropertyCount(before, after), nil
+}
+
+func (e *StorageExecutor) sharedQueryHandledForTest(ctx context.Context, query string) (*ExecuteResult, bool, error) {
+	result, err := e.Execute(ctx, query, getParamsFromContext(ctx))
+	return result, true, err
+}
+
+func (e *StorageExecutor) sharedCallQueryForTest(ctx context.Context, query string) (*ExecuteResult, error) {
+	return e.Execute(ctx, query, getParamsFromContext(ctx))
+}
+
+func (e *StorageExecutor) sharedSeededCallForTest(ctx context.Context, input *ExecuteResult, query string) (*ExecuteResult, error) {
+	result, _, err := e.sharedTrailingRowsHandledForTest(ctx, query, input, &ExecuteResult{})
+	return result, err
+}
+
+func (e *StorageExecutor) sharedCorrelatedCallForTest(ctx context.Context, input *ExecuteResult, body string, imports []string) (*ExecuteResult, error) {
+	return e.sharedSeededCallForTest(ctx, input, "CALL ("+strings.Join(imports, ", ")+") { "+body+" } RETURN *")
+}
+
+func (e *StorageExecutor) sharedTransactionalCallForTest(ctx context.Context, body string, batchSize int) (*ExecuteResult, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	return e.Execute(ctx, fmt.Sprintf("CALL { %s } IN TRANSACTIONS OF %d ROWS", body, batchSize), getParamsFromContext(ctx))
+}
+
+func (e *StorageExecutor) sharedScopedTransactionalCallForTest(ctx context.Context, nodes []*storage.Node, variable, body, tail string, batchSize int) (*ExecuteResult, error) {
+	input := &ExecuteResult{Columns: []string{variable}}
+	for _, node := range nodes {
+		input.Rows = append(input.Rows, []interface{}{node})
+	}
+	query := fmt.Sprintf("CALL (%s) { %s } IN TRANSACTIONS OF %d ROWS %s", variable, body, batchSize, tail)
+	return e.sharedSeededCallForTest(ctx, input, query)
+}
+
+func (e *StorageExecutor) sharedCallTailForTest(ctx context.Context, input *ExecuteResult, tail string) (*ExecuteResult, error) {
+	if _, parsed, _ := parsePipelineClauses(tail); !parsed {
+		tail = "RETURN * " + tail
+	}
+	return e.sharedTrailingRowsForTest(ctx, tail, input, input)
+}
+
+func (e *StorageExecutor) sharedAggregationRowsForTest(ctx context.Context, rows []pipelineRow, items []returnItem, result *ExecuteResult) (*ExecuteResult, error) {
+	projections := make([]string, 0, len(items))
+	for _, item := range items {
+		projection := item.expr
+		if item.alias != "" {
+			projection += " AS " + item.alias
+		}
+		projections = append(projections, projection)
+	}
+	ctx = withExpressionFailureSlot(ctx)
+	projected, handled := e.pipelineApplyReturn(ctx, rows, "RETURN "+strings.Join(projections, ", "))
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, failure
+	}
+	if !handled {
+		return nil, fmt.Errorf("shared RETURN declined aggregation fixture")
+	}
+	result.Columns, result.Rows = projected.Columns, projected.Rows
+	return result, nil
+}
+
+func (e *StorageExecutor) sharedNodeAggregationForTest(ctx context.Context, nodes []*storage.Node, variable string, items []returnItem, result *ExecuteResult) (*ExecuteResult, error) {
+	rows := make([]pipelineRow, 0, len(nodes))
+	for _, node := range nodes {
+		rows = append(rows, pipelineRow{variable: node})
+	}
+	return e.sharedAggregationRowsForTest(ctx, rows, items, result)
+}
+
+func (e *StorageExecutor) sharedCartesianAggregationForTest(ctx context.Context, matches []map[string]*storage.Node, items []returnItem, result *ExecuteResult) (*ExecuteResult, error) {
+	rows := make([]pipelineRow, 0, len(matches))
+	for _, match := range matches {
+		row := make(pipelineRow, len(match))
+		for name, node := range match {
+			row[name] = node
+		}
+		rows = append(rows, row)
+	}
+	return e.sharedAggregationRowsForTest(ctx, rows, items, result)
+}
+
+func (e *StorageExecutor) sharedFirstMatchForTest(ctx context.Context, pattern string) ([]binding, []relationshipBinding) {
+	rows, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH "+pattern)
+	if err != nil {
+		panic(err)
+	}
+	nodes := make([]binding, 0, len(rows))
+	relationships := make([]relationshipBinding, 0, len(rows))
+	for _, row := range rows {
+		nodeBindings, edgeBindings := binding{}, relationshipBinding{}
+		for name, value := range row {
+			switch entity := value.(type) {
+			case *storage.Node:
+				nodeBindings[name] = entity
+			case *storage.Edge:
+				edgeBindings[name] = entity
+			}
+		}
+		nodes = append(nodes, nodeBindings)
+		relationships = append(relationships, edgeBindings)
+	}
+	return nodes, relationships
+}
+
 func newConvergenceExecutor(t *testing.T) (*StorageExecutor, context.Context) {
 	t.Helper()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "convergence")
 	return NewStorageExecutor(store), context.Background()
+}
+
+func (e *StorageExecutor) sharedRelationshipPipelineForTest(ctx context.Context, pattern, where, tail string) (*ExecuteResult, error) {
+	query := "MATCH " + pattern
+	if strings.TrimSpace(where) != "" {
+		query += " WHERE " + where
+	}
+	return e.Execute(ctx, query+" "+tail, getParamsFromContext(ctx))
+}
+
+func (e *StorageExecutor) sharedPipelineRowsForTest(ctx context.Context, query string, variables []string, store storage.Engine) ([]map[string]interface{}, error) {
+	if store != nil {
+		e = NewStorageExecutor(store)
+	}
+	result, err := e.Execute(ctx, query+" RETURN *", getParamsFromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]map[string]interface{}, len(result.Rows))
+	for index, values := range result.Rows {
+		row := make(map[string]interface{}, len(result.Columns))
+		for column, name := range result.Columns {
+			row[name] = values[column]
+		}
+		rows[index] = row
+	}
+	return rows, nil
+}
+
+func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
+	clauses, ok, _ := parsePipelineClauses(query)
+	if !ok || len(clauses) == 0 || clauses[0].kind != pipelineClauseCreate {
+		return nil, nil, nil, fmt.Errorf("invalid CREATE pipeline")
+	}
+	ctx = withExpressionFailureSlot(ctx)
+	row := pipelineRow{}
+	bindParameterRow(ctx, row)
+	rows, created, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{row}, clauses[:1])
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	nodes := map[string]*storage.Node{}
+	edges := map[string]*storage.Edge{}
+	for name, value := range rows[0] {
+		switch entity := value.(type) {
+		case *storage.Node:
+			nodes[name] = entity
+		case *storage.Edge:
+			edges[name] = entity
+		}
+	}
+	result := created
+	if len(clauses) > 1 {
+		result, _ = e.pipelineApplyReturn(ctx, rows, clauses[1].text)
+		result.Stats = created.Stats
+	}
+	return result, nodes, edges, getExpressionFailure(ctx)
+}
+
+func (e *StorageExecutor) sharedOptionalExpansionForTest(source *storage.Node, pattern optionalRelPattern) []optionalRelResult {
+	direction := map[string]string{"out": "outgoing", "in": "incoming", "both": "both"}[pattern.direction]
+	match := &TraversalMatch{
+		StartNode:    nodePatternInfo{variable: pattern.sourceVar},
+		EndNode:      nodePatternInfo{variable: pattern.targetVar, labels: pattern.targetLabels, properties: pattern.targetProps},
+		Relationship: RelationshipPattern{Variable: pattern.relVar, Direction: direction, MinHops: 1, MaxHops: 1},
+	}
+	if pattern.relType != "" {
+		match.Relationship.Types = strings.Split(pattern.relType, "|")
+	}
+	paths := e.traverseGraphSequential(context.Background(), match, []*storage.Node{source}, TemporalViewport{}, nil)
+	results := make([]optionalRelResult, 0, len(paths))
+	for _, path := range paths {
+		results = append(results, optionalRelResult{node: path.Nodes[len(path.Nodes)-1], edge: path.Relationships[0]})
+	}
+	return results
 }
 
 func requireSingleValue(t *testing.T, result *ExecuteResult, want interface{}) {
@@ -1103,10 +1429,34 @@ func BenchmarkSetExecutionPaths(b *testing.B) {
 	})
 	b.Run("residual_handler", func(b *testing.B) {
 		benchmark(b, func(exec *StorageExecutor, ctx context.Context) error {
-			_, err := exec.executeSet(ctx, query)
+			_, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 			return err
 		})
 	})
+}
+
+func TestIssue908IndependentCreateBorrowedRowsPreserveEndpoints(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX doc_id FOR (n:Doc) ON (n.id)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Doc {id: 1}), (:Doc {id: 2}), (:Doc {id: 3})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, `UNWIND $rows AS row
+MATCH (a:Doc {id: row.id})
+MATCH (b:Doc {id: row.id + 1})
+CREATE (a)-[:NEXT]->(b)
+RETURN count(*) AS created`, map[string]interface{}{
+		"rows": []map[string]interface{}{{"id": int64(1)}, {"id": int64(2)}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+	require.Equal(t, 2, result.Stats.RelationshipsCreated)
+	require.True(t, exec.LastHotPathTrace().UnwindMultiMatchCreateBatch)
+	result, err = exec.Execute(ctx, "MATCH (a:Doc)-[:NEXT]->(b:Doc) RETURN a.id, b.id ORDER BY a.id", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1), int64(2)}, {int64(2), int64(3)}}, result.Rows)
 }
 
 func TestConvergedSetPipelineHelpers(t *testing.T) {

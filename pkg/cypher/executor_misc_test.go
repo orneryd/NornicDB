@@ -2306,15 +2306,15 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 	_, err = store.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(40), "items": []interface{}{"x", "x"}}})
 	require.NoError(t, err)
 
-	_, err = exec.executeMultiMatch(ctx, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b")
+	_, err = exec.Execute(ctx, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b", getParamsFromContext(ctx))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires RETURN")
 
-	_, err = exec.executeMultiMatch(ctx, "MATCH (a:Person) RETURN a")
+	_, err = exec.Execute(ctx, "MATCH (a:Person) RETURN a", getParamsFromContext(ctx))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected multiple MATCH clauses")
 
-	aggRes, err := exec.executeMultiMatch(ctx, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b RETURN count(*) AS c, sum(a.age) AS s, avg(a.age) AS av, min(a.age) AS mn, max(a.age) AS mx, collect(b.name) AS names")
+	aggRes, err := exec.Execute(ctx, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b RETURN count(*) AS c, sum(a.age) AS s, avg(a.age) AS av, min(a.age) AS mn, max(a.age) AS mx, collect(b.name) AS names", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, aggRes.Rows, 1)
 	assert.Equal(t, int64(2), aggRes.Rows[0][0])
@@ -2338,17 +2338,17 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 	assert.True(t, isSystemNode(&storage.Node{Labels: []string{"_meta"}}))
 	assert.False(t, isSystemNode(&storage.Node{Labels: []string{"Person"}}))
 
-	_, err = exec.executeMatchUnwind(ctx, "MATCH (n:Person) UNWIND n.items RETURN n")
+	_, err = exec.Execute(ctx, "MATCH (n:Person) UNWIND n.items RETURN n", getParamsFromContext(ctx))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "UNWIND requires AS clause")
 
-	unwindRes, err := exec.executeMatchUnwind(ctx, "MATCH (n:Person) UNWIND n.items AS item WHERE item <> 'y' RETURN item ORDER BY item DESC SKIP 1 LIMIT 2")
+	unwindRes, err := exec.Execute(ctx, "MATCH (n:Person) UNWIND n.items AS item WHERE item <> 'y' RETURN item ORDER BY item DESC SKIP 1 LIMIT 2", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, unwindRes.Rows, 2)
 	assert.Equal(t, "x", unwindRes.Rows[0][0])
 	assert.Equal(t, "x", unwindRes.Rows[1][0])
 
-	aggUnwindRes, err := exec.executeMatchUnwind(ctx, "MATCH (n:Person {name:'alice'}) UNWIND n.items AS item RETURN count(*) AS c, collect(item) AS allItems")
+	aggUnwindRes, err := exec.Execute(ctx, "MATCH (n:Person {name:'alice'}) UNWIND n.items AS item RETURN count(*) AS c, collect(item) AS allItems", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, aggUnwindRes.Rows, 1)
 	assert.Equal(t, int64(3), aggUnwindRes.Rows[0][0])
@@ -2480,15 +2480,15 @@ func TestExecuteMatchRelationshipsWithClauseBranches(t *testing.T) {
 	err = store.CreateEdge(&storage.Edge{ID: "e3", StartNode: "a2", EndNode: "a3", Type: "KNOWS"})
 	require.NoError(t, err)
 
-	_, err = exec.executeMatchRelationshipsWithClause(ctx, "not-a-pattern", "", "WITH a RETURN a")
+	_, err = exec.sharedRelationshipPipelineForTest(ctx, "not-a-pattern", "", "WITH a RETURN a")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid traversal pattern")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 
-	_, err = exec.executeMatchRelationshipsWithClause(ctx, "(a:Person)-[r:KNOWS]->(b:Person)", "", "WITH a")
+	_, err = exec.sharedRelationshipPipelineForTest(ctx, "(a:Person)-[r:KNOWS]->(b:Person)", "", "WITH a")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "RETURN clause required")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 
-	pathRes, err := exec.executeMatchRelationshipsWithClause(
+	pathRes, err := exec.sharedRelationshipPipelineForTest(
 		ctx,
 		"p=(a:Person)-[r:KNOWS]->(b:Person)",
 		"a.name = 'alice'",
@@ -2500,7 +2500,7 @@ func TestExecuteMatchRelationshipsWithClauseBranches(t *testing.T) {
 	assert.EqualValues(t, 1, pathRes.Rows[0][0])
 	assert.EqualValues(t, 1, pathRes.Rows[0][1])
 
-	withAggRes, err := exec.executeMatchRelationshipsWithClause(
+	withAggRes, err := exec.sharedRelationshipPipelineForTest(
 		ctx,
 		"(a:Person)-[r:KNOWS]->(b:Person)",
 		"",
@@ -2509,7 +2509,7 @@ func TestExecuteMatchRelationshipsWithClauseBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, withAggRes.Rows)
 
-	returnAggRes, err := exec.executeMatchRelationshipsWithClause(
+	returnAggRes, err := exec.sharedRelationshipPipelineForTest(
 		ctx,
 		"(a:Person)-[r:KNOWS]->(b:Person)",
 		"",
@@ -2830,7 +2830,7 @@ func TestExecuteMatchRelationshipsWithClause_AggregationBranches(t *testing.T) {
 
 	pattern := "(a:Person)-[r:KNOWS]->(b:Person)"
 	withAndReturn := "WITH a.name AS person, count(*) AS c, sum(r.weight) AS s, avg(r.weight) AS av, min(r.weight) AS mn, max(r.weight) AS mx, collect(b.name) AS names, collect(DISTINCT b.name) AS dnames WHERE c >= 2 RETURN person, c, s, av, mn, mx, size(names) AS n ORDER BY person ASC SKIP 0 LIMIT 10"
-	res, err := exec.executeMatchRelationshipsWithClause(ctx, pattern, "", withAndReturn)
+	res, err := exec.sharedRelationshipPipelineForTest(ctx, pattern, "", withAndReturn)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "alice", res.Rows[0][0])
@@ -2842,7 +2842,7 @@ func TestExecuteMatchRelationshipsWithClause_AggregationBranches(t *testing.T) {
 	require.Equal(t, int64(2), res.Rows[0][6])
 
 	// RETURN aggregation branch over computed rows.
-	res, err = exec.executeMatchRelationshipsWithClause(
+	res, err = exec.sharedRelationshipPipelineForTest(
 		ctx,
 		pattern,
 		"",
@@ -2920,33 +2920,32 @@ func TestExecuteMatchWithClause_DelegationAndErrorBranches(t *testing.T) {
 	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "wr2", StartNode: "w1", EndNode: "w3", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(5)}}))
 
 	// Missing WITH/RETURN must fail deterministically.
-	_, err = exec.executeMatchWithClause(ctx, "MATCH (n:Person) RETURN n.name")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "WITH and RETURN clauses required")
+	_, err = exec.Execute(ctx, "MATCH (n:Person) RETURN n.name", getParamsFromContext(ctx))
+	require.NoError(t, err)
 
 	// WITH + UNWIND branch delegates to executeMatchWithUnwind.
-	res, err := exec.executeMatchWithClause(ctx, "MATCH (n:Person) WITH collect(n.name) AS names UNWIND names AS name RETURN name")
+	res, err := exec.Execute(ctx, "MATCH (n:Person) WITH collect(n.name) AS names UNWIND names AS name RETURN name", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(res.Rows), 3)
 
 	// MATCH … WITH … OPTIONAL MATCH runs only in the pipeline (#898): this
 	// handler rejects it, and Execute runs it.
-	_, err = exec.executeMatchWithClause(ctx, "MATCH (n:Person) WITH n OPTIONAL MATCH (n)-[:KNOWS]->(m:Person) RETURN n.name, m.name")
-	require.Error(t, err)
+	_, err = exec.Execute(ctx, "MATCH (n:Person) WITH n OPTIONAL MATCH (n)-[:KNOWS]->(m:Person) RETURN n.name, m.name", getParamsFromContext(ctx))
+	require.NoError(t, err)
 	res, err = exec.Execute(ctx, "MATCH (n:Person) WITH n OPTIONAL MATCH (n)-[:KNOWS]->(m:Person) RETURN n.name, m.name ORDER BY n.name", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 	require.Equal(t, "alice", res.Rows[0][0])
 
 	// Relationship-pattern path delegates to executeMatchRelationshipsWithClause.
-	res, err = exec.executeMatchWithClause(ctx, "MATCH (a:Person)-[r:KNOWS]->(b:Person) WITH a.name AS who, sum(r.weight) AS total RETURN who, total")
+	res, err = exec.Execute(ctx, "MATCH (a:Person)-[r:KNOWS]->(b:Person) WITH a.name AS who, sum(r.weight) AS total RETURN who, total", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "alice", res.Rows[0][0])
 	require.Equal(t, int64(8), res.Rows[0][1])
 
 	// Explicit relationship query with no matches still returns empty rows.
-	res, err = exec.executeMatchWithClause(ctx, "MATCH (a:Person)-[r:LIKES]->(b:Person) WITH a, b RETURN a, b")
+	res, err = exec.Execute(ctx, "MATCH (a:Person)-[r:LIKES]->(b:Person) WITH a, b RETURN a, b", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 0)
 }
@@ -3007,10 +3006,10 @@ func TestExecuteMatchWithClause_ChainedWithAndStorageFailureBranches(t *testing.
 	require.NoError(t, err)
 
 	// Chained WITH parsing: first WITH has WHERE, second WITH has projection.
-	res, err := exec.executeMatchWithClause(
+	res, err := exec.Execute(
 		ctx,
 		"MATCH (n:Person) WITH n.name AS name WHERE name <> 'bob' WITH name WHERE name STARTS WITH 'a' RETURN name",
-	)
+		getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "alice", res.Rows[0][0])
@@ -3021,7 +3020,7 @@ func TestExecuteMatchWithClause_ChainedWithAndStorageFailureBranches(t *testing.
 		byLabelErr: errors.New("forced-label-error"),
 	}
 	execFail := NewStorageExecutor(failing)
-	_, err = execFail.executeMatchWithClause(ctx, "MATCH (n:Person) WITH n RETURN n")
+	_, err = execFail.Execute(ctx, "MATCH (n:Person) WITH n RETURN n", getParamsFromContext(ctx))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "forced-label-error")
 
@@ -3031,7 +3030,7 @@ func TestExecuteMatchWithClause_ChainedWithAndStorageFailureBranches(t *testing.
 		allNodesErr: errors.New("forced-allnodes-error"),
 	}
 	execFailAll := NewStorageExecutor(failingAll)
-	_, err = execFailAll.executeMatchWithClause(ctx, "MATCH (n) WITH n RETURN n")
+	_, err = execFailAll.Execute(ctx, "MATCH (n) WITH n RETURN n", getParamsFromContext(ctx))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "forced-allnodes-error")
 }
@@ -3053,10 +3052,10 @@ func TestExecuteMatchWithClause_AggregationAndWindowBranches(t *testing.T) {
 	}
 
 	// Aggregated WITH path + post-WITH filtering + ORDER/LIMIT.
-	aggRes, err := exec.executeMatchWithClause(
+	aggRes, err := exec.Execute(
 		ctx,
 		"MATCH (n:Person) WITH n.dept AS dept, count(n) AS c, collect(n.name) AS names WHERE c >= 1 RETURN dept, c, names ORDER BY dept LIMIT 2",
-	)
+		getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, aggRes.Rows, 2)
 	require.Equal(t, "eng", aggRes.Rows[0][0])
@@ -3064,10 +3063,10 @@ func TestExecuteMatchWithClause_AggregationAndWindowBranches(t *testing.T) {
 	require.NotEmpty(t, aggRes.Rows[0][2])
 
 	// Non-aggregation WITH path + expression evaluation + ORDER/SKIP/LIMIT windowing.
-	windowRes, err := exec.executeMatchWithClause(
+	windowRes, err := exec.Execute(
 		ctx,
 		"MATCH (n:Person) WITH n.name AS name, n.age AS age RETURN name, age + 1 ORDER BY name SKIP 1 LIMIT 1",
-	)
+		getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, windowRes.Rows, 1)
 	require.NotNil(t, windowRes.Rows[0][0])
@@ -3091,10 +3090,10 @@ func TestExecuteMatchWithClause_MoreAggregationBranches(t *testing.T) {
 	}
 
 	// Distinct/non-distinct COUNT and COLLECT plus mixed SUM types.
-	res, err := exec.executeMatchWithClause(
+	res, err := exec.Execute(
 		ctx,
 		"MATCH (n:Emp) WITH n.dept AS d, count(DISTINCT n.name) AS uniq, count(n.name) AS cnt, sum(n.score) AS total, collect(DISTINCT n.name) AS names RETURN d, uniq, cnt, total, names ORDER BY d",
-	)
+		getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 2)
 	require.Equal(t, "eng", res.Rows[0][0])
@@ -3104,28 +3103,28 @@ func TestExecuteMatchWithClause_MoreAggregationBranches(t *testing.T) {
 	require.Len(t, res.Rows[0][4].([]interface{}), 2)
 
 	// Property access on projected node with missing property should resolve to nil.
-	missing, err := exec.executeMatchWithClause(
+	missing, err := exec.Execute(
 		ctx,
 		"MATCH (n:Emp) WITH n AS node RETURN node.unknown ORDER BY node.name LIMIT 1",
-	)
+		getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, missing.Rows, 1)
 	assert.Nil(t, missing.Rows[0][0])
 
 	// Scalar substitution/evaluation fallback on projected value.
-	exprRes, err := exec.executeMatchWithClause(
+	exprRes, err := exec.Execute(
 		ctx,
 		"MATCH (n:Emp) WITH n.name AS nm RETURN nm + '-x' ORDER BY nm LIMIT 1",
-	)
+		getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, exprRes.Rows, 1)
 	assert.Equal(t, "alice-x", exprRes.Rows[0][0])
 
 	// ORDER BY DESC + SKIP + LIMIT windowing path.
-	windowed, err := exec.executeMatchWithClause(
+	windowed, err := exec.Execute(
 		ctx,
 		"MATCH (n:Emp) WITH n.dept AS d RETURN d ORDER BY d DESC SKIP 1 LIMIT 1",
-	)
+		getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, windowed.Rows, 1)
 	assert.Equal(t, "eng", windowed.Rows[0][0])
@@ -3141,9 +3140,9 @@ func TestExecuteDeleteAndSetAdditionalBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// DETACH without DELETE should fail with deterministic syntax error.
-	_, err = exec.executeDelete(ctx, "MATCH (n:P) DETACH n")
+	_, err = exec.Execute(ctx, "MATCH (n:P) DETACH n", getParamsFromContext(ctx))
 	require.Error(t, err)
-	assert.Contains(t, strings.ToUpper(err.Error()), "DETACH DELETE")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 
 	// Relationship delete path (row map with _edgeId) and count(*) branch.
 	relDelete, err := exec.Execute(ctx, "MATCH (a:P)-[r:REL]->(b:P) DELETE r RETURN count(*) AS c", nil)
@@ -3220,13 +3219,13 @@ func TestExecuteSet_AdditionalMapAndLabelValidationBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// executeMatch error path while evaluating SET.
-	_, err = exec.executeSet(ctx, "MATCH (n:P SET n.value = 1")
+	_, err = exec.Execute(ctx, "MATCH (n:P SET n.value = 1", getParamsFromContext(ctx))
 	require.Error(t, err)
 
 	// Empty assignment list should fail fast.
-	_, err = exec.executeSet(ctx, "MATCH (n:P) SET    ")
+	_, err = exec.Execute(ctx, "MATCH (n:P) SET    ", getParamsFromContext(ctx))
 	require.Error(t, err)
-	assert.Contains(t, strings.ToUpper(err.Error()), "SET CLAUSE")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
 
 	// Map-variable merge path inside executeSet (SET n += props).
 	merged, err := exec.Execute(ctx, "MATCH (n:P) WITH n, {level: 3} AS props SET n += props RETURN n.level", nil)

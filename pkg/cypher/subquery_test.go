@@ -2424,13 +2424,13 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 	}
 
 	// processAfterCallSubquery RETURN path
-	ret, err := exec.processAfterCallSubquery(ctx, inner, "RETURN name, score")
+	ret, err := exec.sharedCallTailForTest(ctx, inner, "RETURN name, score")
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "score"}, ret.Columns)
 	require.Len(t, ret.Rows, 2)
 
 	// ORDER BY path + modifiers
-	ordered, err := exec.processAfterCallSubquery(ctx, inner, "ORDER BY score DESC LIMIT 1")
+	ordered, err := exec.sharedCallTailForTest(ctx, inner, "ORDER BY score DESC LIMIT 1")
 	require.NoError(t, err)
 	require.Len(t, ordered.Rows, 1)
 	assert.Equal(t, "alice", ordered.Rows[0][0])
@@ -2440,15 +2440,15 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 		Columns: []string{"name", "score"},
 		Rows:    [][]interface{}{{"alice", float64(0.9)}, {"bob", float64(0.8)}},
 	}
-	projected, err := exec.processAfterCallSubquery(ctx, innerForWith, "WITH name RETURN name")
+	projected, err := exec.sharedCallTailForTest(ctx, innerForWith, "WITH name RETURN name")
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, projected.Columns)
 	require.Equal(t, [][]interface{}{{"alice"}, {"bob"}}, projected.Rows)
 
-	// Unsupported clauses still take the syntax-error branch.
-	_, err = exec.processAfterCallSubquery(ctx, inner, "WITH name")
+	// An unresolved projection after CALL is rejected by the shared owner.
+	_, err = exec.sharedCallTailForTest(ctx, inner, "WITH name RETURN missing")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported clause after CALL {}")
+	assert.Contains(t, err.Error(), "missing")
 
 	// processCallSubqueryReturn: aggregation and aliases
 	innerForAgg := &ExecuteResult{
@@ -2566,11 +2566,11 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 	_, err = eng.CreateNode(&storage.Node{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "c", "age": int64(30)}})
 	require.NoError(t, err)
 
-	readOnlyRes, err := exec.executeCallInTransactions(ctx, "MATCH (n:Person) RETURN n.name AS name", 0)
+	readOnlyRes, err := exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) RETURN n.name AS name", 0)
 	require.NoError(t, err)
 	require.Len(t, readOnlyRes.Rows, 3)
 
-	writeRes, err := exec.executeCallInTransactions(ctx, "MATCH (n:Person) SET n.flag = true RETURN n.name AS name", 2)
+	writeRes, err := exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) SET n.flag = true RETURN n.name AS name", 2)
 	require.NoError(t, err)
 	require.Len(t, writeRes.Rows, 3)
 	for _, row := range writeRes.Rows {
@@ -2578,7 +2578,7 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		require.NotEmpty(t, row[0])
 	}
 
-	_, err = exec.executeCallInTransactions(ctx, "MATCH (n:Person) SET n.bad = true RETURN", 1)
+	_, err = exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) SET n.bad = true RETURN", 1)
 	require.Error(t, err)
 
 	withLimit := exec.addLimitSkipToSubquery("MATCH (n:Person) SET n.flag = true RETURN n.name AS name", 2, 1)
@@ -2612,7 +2612,7 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 	assert.Equal(t, int64(60), aggRes.Rows[0][1])
 	assert.Equal(t, float64(20), aggRes.Rows[0][2])
 
-	_, err = exec.processAfterCallSubquery(ctx, inner, "SET x = 1")
+	_, err = exec.sharedCallTailForTest(ctx, inner, "SET age = 1")
 	require.Error(t, err)
 
 	modified, err := exec.applyResultModifiers(context.Background(), inner, "ORDER BY age DESC SKIP 1 LIMIT 1")
@@ -3296,9 +3296,9 @@ func TestSubqueryHelpers_IterativeCallInTransactionsBranch(t *testing.T) {
 
 	// No MATCH in subquery => makeSubqueryReadOnly returns empty, using iterative batching.
 	// First batch then fails deterministically due invalid procedure call.
-	_, err := exec.executeCallInTransactions(ctx, "CALL totally.missing.procedure()", 1)
+	_, err := exec.sharedCallTransactionsForTest(ctx, "CALL totally.missing.procedure()", 1)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "subquery execution failed")
+	assert.Contains(t, err.Error(), "totally.missing.procedure")
 }
 
 func TestSubqueryHelpers_CallInTransactions_NonBatchableWriteExecutesOnce(t *testing.T) {
@@ -3307,7 +3307,7 @@ func TestSubqueryHelpers_CallInTransactions_NonBatchableWriteExecutesOnce(t *tes
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	res, err := exec.executeCallInTransactions(ctx, "CREATE (n:TmpOnce {name:'once'}) RETURN n.name AS name", 1)
+	res, err := exec.sharedCallTransactionsForTest(ctx, "CREATE (n:TmpOnce {name:'once'}) RETURN n.name AS name", 1)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -3337,9 +3337,9 @@ func TestSubqueryHelpers_CallInTransactions_KnownBatchCountErrorBranch(t *testin
 	}))
 
 	// Row count is known from MATCH/RETURN, but the second batch fails due unique constraint.
-	_, err = exec.executeCallInTransactions(ctx, "MATCH (n:Person) SET n.email = 'dup@example.com' RETURN n.name AS name", 1)
+	_, err = exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) SET n.email = 'dup@example.com' RETURN n.name AS name", 1)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "batch 2/2 failed")
+	assert.Contains(t, err.Error(), "constraint violation")
 }
 
 func TestSubqueryHelpers_CallInTransactions_IterativeBatchingWithUnwind(t *testing.T) {
@@ -3350,7 +3350,7 @@ func TestSubqueryHelpers_CallInTransactions_IterativeBatchingWithUnwind(t *testi
 
 	// UNWIND write query is not convertible by makeSubqueryReadOnly, so this exercises
 	// iterative batching with a batchable source.
-	res, err := exec.executeCallInTransactions(ctx, "UNWIND [1,2,3] AS i CREATE (n:IterTx {v:i}) RETURN i AS i", 2)
+	res, err := exec.sharedCallTransactionsForTest(ctx, "UNWIND [1,2,3] AS i CREATE (n:IterTx {v:i}) RETURN i AS i", 2)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, []string{"i"}, res.Columns)
@@ -3376,7 +3376,7 @@ func TestSubqueryHelpers_CallInTransactions_IterativeBatchingWithMatchMerge(t *t
 	require.NoError(t, err)
 
 	// makeSubqueryReadOnly cannot rewrite MATCH...MERGE, forcing iterative batching.
-	res, err := exec.executeCallInTransactions(ctx, "MATCH (n:Person) MERGE (m:Tag {name:n.name}) RETURN n.name AS name", 2)
+	res, err := exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) MERGE (m:Tag {name:n.name}) RETURN n.name AS name", 2)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, res.Columns)
 	require.Len(t, res.Rows, 3)
@@ -3799,7 +3799,7 @@ func TestExecuteCorrelatedCallWithSeedRows_BatchedLookup(t *testing.T) {
 			{"s2"},
 		},
 	}
-	res, err := exec.executeCorrelatedCallWithSeedRows(
+	res, err := exec.sharedCorrelatedCallForTest(
 		ctx,
 		seed,
 		"MATCH (tt:MongoDocument) WHERE tt.sourceId = sourceId AND tt.translatedText IS NOT NULL RETURN tt.language AS language, tt.translatedText AS translatedText",

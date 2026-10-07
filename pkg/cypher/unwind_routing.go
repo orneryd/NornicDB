@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -144,6 +145,52 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 		}
 	}
 	return nil, false, nil
+}
+
+func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query string) (*ExecuteResult, bool, error) {
+	clauses, ok, _ := parsePipelineClauses(query)
+	if !ok {
+		return nil, false, nil
+	}
+	originalClauses := clauses
+	if independent, _ := ctx.Value(pipelineIndependentCreateBatchKey{}).(bool); independent {
+		var patterns []string
+		for _, clause := range clauses {
+			if clause.kind != pipelineClauseMatch {
+				break
+			}
+			patterns = append(patterns, pipelineClauseBody(clause.text, "MATCH"))
+		}
+		if len(patterns) > 1 {
+			combined := "MATCH " + strings.Join(patterns, ", ")
+			if e.compilePipelineNodeMatchSource(combined).supported {
+				clauses = append([]pipelineClause{{kind: pipelineClauseMatch, text: combined}}, clauses[len(patterns):]...)
+			}
+		}
+	}
+	ctx = withExpressionFailureSlot(ctx)
+	scope := map[string]struct{}{variable: {}}
+	base := pipelineRow{}
+	for name, value := range e.fabricRecordBindings {
+		base[name] = value
+		scope[name] = struct{}{}
+	}
+	for name, value := range valueBindingsFromContext(ctx) {
+		base[name] = value
+		scope[name] = struct{}{}
+	}
+	bindParameterRow(ctx, base)
+	rows := make([]pipelineRow, 0, len(items))
+	for _, item := range items {
+		row := maps.Clone(base)
+		row[variable] = item
+		rows = append(rows, row)
+	}
+	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, originalClauses)
+	if failure := getExpressionFailure(ctx); failure != nil && err == nil {
+		return nil, true, failure
+	}
+	return result, handled, err
 }
 
 func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {

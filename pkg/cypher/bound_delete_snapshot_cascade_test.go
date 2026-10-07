@@ -134,10 +134,10 @@ DETACH DELETE f`, map[string]interface{}{"uids": []string{uids[tc.deletedUIDKey]
 			// real Badger transaction wrapper, so this executes the production
 			// single-MATCH bound-delete body with its real snapshot semantics.
 			txExec := exec.cloneWithStorage(intercept)
-			result, err := txExec.executeDelete(ctx, `
+			result, err := txExec.Execute(ctx, `
 MATCH (s:Function {uid:'`+uids["source"]+`'})-[rel:TAINT_FLOWS_TO]->(:Function)
 WHERE rel.evidence_source = '`+evidence+`'
-DELETE rel`)
+DELETE rel`, getParamsFromContext(ctx))
 			require.NoError(t, intercept.hookErr, "barrier assertions must not be swallowed by traversal routing")
 			require.NoError(t, err, "enumerated snapshot edge must not become ErrNotFound before BulkDeleteEdges")
 

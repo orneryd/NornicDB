@@ -7,146 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
-
-func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	ctx = withExpressionFailureSlot(ctx)
-
-	// Find all clause boundaries
-	matchIdx := findKeywordIndex(cypher, "MATCH")
-	withIdx := findKeywordIndex(cypher, "WITH")
-	unwindIdx := findKeywordNotInBrackets(cypher, " UNWIND ")
-	returnIdx := findKeywordIndex(cypher, "RETURN")
-
-	if matchIdx == -1 || withIdx == -1 || unwindIdx == -1 || returnIdx == -1 {
-		return nil, localizedError(localization.CypherTransactionsMatchWithUnwindClausesRequired(), nil)
-	}
-
-	// Step 1: Parse MATCH clause
-	matchPart := strings.TrimSpace(cypher[matchIdx+5 : withIdx])
-
-	// Check for WHERE clause in MATCH part
-	matchWhereIdx := findKeywordNotInBrackets(matchPart, " WHERE ")
-	var matchWhere string
-	var nodePatternPart string
-
-	if matchWhereIdx > 0 {
-		nodePatternPart = strings.TrimSpace(matchPart[:matchWhereIdx])
-		matchWhere = strings.TrimSpace(matchPart[matchWhereIdx+len("WHERE"):])
-	} else {
-		nodePatternPart = matchPart
-	}
-
-	nodePattern := e.parseNodePattern(ctx, nodePatternPart)
-
-	// Get matching nodes
-	var nodes []*storage.Node
-	var err error
-
-	nodes, err = e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
-	if err != nil {
-		return nil, localizedError(localization.CypherTransactionsStorageFailed(err), err)
-	}
-
-	if matchWhere != "" {
-		nodes = e.filterNodesByWhereClause(ctx, nodes, matchWhere, nodePattern.variable)
-	}
-
-	// Step 2: Process first WITH clause - compute filteredLabels for each node
-	withSection := strings.TrimSpace(cypher[withIdx+4 : unwindIdx])
-	withItems := e.splitWithItems(withSection)
-
-	type nodeWithValues struct {
-		values map[string]interface{}
-	}
-	var nodeRows []nodeWithValues
-
-	for _, node := range nodes {
-		values := make(map[string]interface{})
-
-		for _, item := range withItems {
-			item = strings.TrimSpace(item)
-			if item == "" {
-				continue
-			}
-
-			asIdx := projectionAliasIndex(item)
-			var alias, expr string
-			if asIdx > 0 {
-				expr = strings.TrimSpace(item[:asIdx])
-				alias = strings.TrimSpace(item[asIdx+len("AS"):])
-			} else {
-				expr = item
-				alias = item
-			}
-
-			if expr == nodePattern.variable {
-				values[alias] = node
-			} else if strings.HasPrefix(expr, nodePattern.variable+".") {
-				propName := expr[len(nodePattern.variable)+1:]
-				values[alias] = node.Properties[propName]
-			} else {
-				values[alias] = e.evaluateExpressionWithContext(ctx, expr, map[string]*storage.Node{nodePattern.variable: node}, nil)
-			}
-		}
-
-		nodeRows = append(nodeRows, nodeWithValues{values: values})
-	}
-
-	// Step 3: Parse UNWIND clause
-	unwindSection := strings.TrimSpace(cypher[unwindIdx+7:]) // Skip " UNWIND "
-	asIdx := strings.Index(upperASCII(unwindSection), " AS ")
-	if asIdx == -1 {
-		return nil, localizedError(localization.CypherTransactionsUnwindASRequired(), nil)
-	}
-
-	unwindExpr := strings.TrimSpace(unwindSection[:asIdx])
-
-	// Find end of unwind var (next clause)
-	remainder := strings.TrimSpace(unwindSection[asIdx+4:])
-	spaceIdx := strings.IndexAny(remainder, " \t\n")
-	var unwindVar string
-	if spaceIdx > 0 {
-		unwindVar = remainder[:spaceIdx]
-	} else {
-		unwindVar = remainder
-	}
-
-	source := func(yield func(pipelineRow) bool) bool {
-		for _, row := range nodeRows {
-			values := pipelineRow(row.values)
-			items := coerceToUnwindItems(values[unwindExpr])
-			for _, item := range items {
-				values[unwindVar] = item
-				if !yield(values) {
-					return true
-				}
-			}
-		}
-		return true
-	}
-	secondWithIdx := findKeywordNotInBrackets(cypher[unwindIdx:], " WITH ")
-	if secondWithIdx <= 0 || unwindIdx+secondWithIdx >= returnIdx {
-		return e.projectMergeReturnSource(ctx, nil, cypher[returnIdx:], source)
-	}
-	withClause := strings.TrimSpace(cypher[unwindIdx+secondWithIdx : returnIdx])
-	var rows []pipelineRow
-	if !pipelineClauseAggregates(pipelineClause{kind: pipelineClauseWith, text: withClause}) {
-		rows, _ = materializePipelineSource(source)
-		source = pipelineRowsSource(rows)
-	}
-	projected, handled := e.pipelineApplyWithSource(ctx, rows, withClause, source, false)
-	if failure := getExpressionFailure(ctx); failure != nil {
-		return nil, failure
-	}
-	if !handled {
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidWith", "invalid WITH projection")
-	}
-	return e.projectMergeReturn(ctx, projected, cypher[returnIdx:])
-}
 
 // countKeywordOccurrences counts how many times a keyword appears in the query
 // using word boundary detection. Excludes occurrences inside labels (after ':')
@@ -172,144 +35,6 @@ func countKeywordOccurrences(upper, keyword string) int {
 		idx = pos + len(keyword)
 	}
 	return count
-}
-
-// executeMultiMatch handles queries with multiple MATCH clauses
-// Example: MATCH (p1:Person)-[:WORKS_AT]->(c:Company) MATCH (p2:Person)-[:WORKS_AT]->(c) WHERE p1 <> p2 RETURN p1, p2, c
-func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Normalize two-MATCH forms where WHERE appears between MATCH clauses:
-	// MATCH A WHERE wa MATCH B RETURN ...
-	// -> MATCH A MATCH B WHERE wa RETURN ...
-	cypher = normalizeMultiMatchWhereClauses(cypher)
-
-	// Find RETURN and WHERE positions
-	returnIdx := findKeywordIndex(cypher, "RETURN")
-	if returnIdx == -1 {
-		return nil, localizedError(localization.CypherTransactionsMultiMatchReturnRequired(), nil)
-	}
-
-	// Extract WHERE clause if present (between last MATCH pattern and RETURN).
-	// Use the last WHERE before RETURN so queries like:
-	// MATCH A WHERE wa MATCH B RETURN ...
-	// (after normalization) do not accidentally pick an earlier WHERE position.
-	var whereClause string
-	whereIdx := lastKeywordIndexBefore(cypher, "WHERE", returnIdx)
-	if whereIdx > 0 && whereIdx < returnIdx {
-		whereClause = strings.TrimSpace(cypher[whereIdx+5 : returnIdx])
-	}
-
-	returnPart := cypher[returnIdx+6:]
-	returnPlan := returnProjectionPlanFor(cypher[returnIdx:])
-
-	// Split MATCH clauses
-	matchClauses := splitMatchClauses(cypher, whereIdx, returnIdx)
-	components := make([]string, 0, len(matchClauses))
-	for _, clause := range matchClauses {
-		for _, component := range splitTopLevelComma(clause) {
-			component = strings.TrimSpace(component)
-			if component != "" {
-				components = append(components, component)
-			}
-		}
-	}
-	matchClauses = components
-	if len(matchClauses) < 2 {
-		return nil, localizedError(localization.CypherTransactionsMultipleMatchExpected(), nil)
-	}
-	hasAggregation := returnPlan.hasAggregate
-
-	// Execute first MATCH and get initial bindings. relBindings is
-	// index-aligned with bindings and carries any relationship variable
-	// bound by a clause (e.g. "rel" in `(s)-[rel]->(x)`); see the binding
-	// type's doc comment for why relationships aren't stored inside binding
-	// itself.
-	var bindings []binding
-	var relBindings []relationshipBinding
-	if !hasAggregation {
-		bindings, relBindings = e.executeFirstMatch(ctx, matchClauses[0])
-		for index := 1; index < len(matchClauses); index++ {
-			bindings, relBindings = e.executeChainedMatch(ctx, matchClauses[index], bindings, relBindings)
-		}
-		if whereClause != "" {
-			bindings, relBindings = e.filterBindingsByWhereWithRels(ctx, bindings, relBindings, whereClause, getParamsFromContext(ctx))
-		}
-	}
-
-	// relAt returns the relationship-binding map for row idx, or nil when
-	// relBindings is shorter than bindings (e.g. rows added before any
-	// relationship variable existed).
-	relAt := func(idx int) relationshipBinding {
-		if idx < len(relBindings) {
-			return relBindings[idx]
-		}
-		return nil
-	}
-	if hasAggregation {
-		result := &ExecuteResult{Stats: &QueryStats{}}
-		rows := []pipelineRow{{}}
-		bindParameterRow(ctx, rows[0])
-		for _, clause := range matchClauses {
-			expanded, handled, err := e.pipelineApplyMatch(ctx, rows, "MATCH "+clause)
-			if err != nil {
-				return nil, err
-			}
-			if !handled {
-				return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "could not bind aggregate MATCH pattern")
-			}
-			rows = expanded
-		}
-		if whereClause != "" {
-			filtered, handled := e.pipelineApplyWith(ctx, rows, "WITH * WHERE "+whereClause)
-			if !handled {
-				if failure := getExpressionFailure(ctx); failure != nil {
-					return nil, failure
-				}
-				return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "could not evaluate aggregate MATCH predicate")
-			}
-			rows = filtered
-		}
-		projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+returnPart)
-		if err != nil {
-			return nil, err
-		}
-		projected.Stats = result.Stats
-		*result = *projected
-		return result, nil
-	}
-
-	values := make(pipelineRow)
-	source := func(yield func(pipelineRow) bool) bool {
-		for index, nodes := range bindings {
-			clear(values)
-			for name, node := range nodes {
-				if node == nil {
-					values[name] = nil
-				} else {
-					values[name] = node
-				}
-			}
-			for name, value := range relAt(index) {
-				values[name] = value
-			}
-			if !yield(values) {
-				break
-			}
-		}
-		return true
-	}
-	if returnPlan.star && len(bindings) == 0 {
-		scope := make(map[string]struct{})
-		for _, clause := range matchClauses {
-			addPipelinePatternBindings(e, scope, "MATCH "+clause, "MATCH")
-		}
-		returnPlan = returnPlan.withStarExpanded(pipelineScopeColumns(scope))
-	}
-	projected, err := e.projectMergeReturnPlan(ctx, nil, "RETURN "+returnPart, returnPlan, source)
-	if err != nil {
-		return nil, err
-	}
-	projected.Stats = &QueryStats{}
-	return projected, nil
 }
 
 // lastKeywordIndexBefore returns the last occurrence of keyword before endIdx.
@@ -402,55 +127,6 @@ func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
 // []binding slice rather than living inside binding itself.
 type binding map[string]*storage.Node
 type relationshipBinding map[string]interface{}
-
-// executeFirstMatch executes the first MATCH and returns initial bindings,
-// plus the relationship variable (if any) bound by this same clause for each
-// row, index-aligned with the returned bindings slice.
-func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string) ([]binding, []relationshipBinding) {
-	var bindings []binding
-	var relBindings []relationshipBinding
-
-	// Check for relationship pattern
-	if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
-		matches := e.parseTraversalPattern(ctx, pattern)
-		if matches == nil {
-			return bindings, relBindings
-		}
-
-		paths := e.traverseGraph(ctx, matches)
-		for _, path := range paths {
-			if len(path.Nodes) == 0 {
-				continue
-			}
-			pathContext := e.buildPathContext(path, matches)
-			b := make(binding, len(pathContext.nodes))
-			for name, node := range pathContext.nodes {
-				b[name] = node
-			}
-			bindings = append(bindings, b)
-			// BUG FIX: a relationship variable bound by this clause (e.g.
-			// "rel" in `(s)-[rel]->(x)`) was previously dropped entirely —
-			// `binding` only ever stored nodes. buildPathContext already
-			// knows how to map a PathResult's relationships onto the
-			// pattern's relationship variable(s) (including chained
-			// segments); reuse it instead of duplicating that logic.
-			relBindings = append(relBindings, relationshipBindingsFromPathContext(pathContext))
-		}
-	} else {
-		// Simple node pattern
-		nodePattern := e.parseNodePattern(ctx, pattern)
-		nodes, _ := e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, "", -1)
-
-		for _, node := range nodes {
-			b := make(binding)
-			b[nodePattern.variable] = node
-			bindings = append(bindings, b)
-			relBindings = append(relBindings, nil)
-		}
-	}
-
-	return bindings, relBindings
-}
 
 // executeChainedMatch executes a subsequent MATCH against existing bindings.
 // existingRelBindings must be index-aligned with existingBindings (as
@@ -907,15 +583,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	collected := make([]*storage.Node, 0, capacity)
 	var whereFilter FilterFunc
 	if strings.TrimSpace(whereClause) != "" {
-		if fastIN, ok := e.buildBoundInFastFilter(whereVariable, whereClause); ok {
-			whereFilter = fastIN
-		} else if compiled, ok := e.getCompiledSimpleWhere(ctx, whereVariable, whereClause); ok {
-			whereFilter = compiled
-		} else {
-			whereFilter = func(node *storage.Node) bool {
-				return e.evaluateWhere(ctx, node, whereVariable, whereClause)
-			}
-		}
+		whereFilter = e.compileNodeWhereFilter(ctx, whereVariable, whereClause)
 	}
 	collect := func(node *storage.Node) error {
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
@@ -944,50 +612,6 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 			return storage.ErrIterationStopped
 		}
 		return nil
-	}
-
-	// Pattern-inline property fast-path: when the pattern carries inline
-	// equality on one or more indexed properties (labelled or labelless), we
-	// can probe the property index instead of streaming or scanning the full
-	// label population. This is the generic, shape-agnostic counterpart of
-	// the WHERE-clause index fast-paths in executeMatch — it covers patterns
-	// like `MATCH (n:Code {id:$x})`, `MATCH (n {id:$x})` (graphify's labelless
-	// edge MATCH), and N-ary `MATCH (n:Code {id:$x, sku:$y})`. The residual
-	// property filter and viewport / system-node filters below are still
-	// applied so semantics match the scan path exactly.
-	if len(properties) > 0 && strings.TrimSpace(whereClause) == "" {
-		nodeInfo := nodePatternInfo{labels: labels, properties: properties}
-		if indexed, ok := e.lookupPatternCandidatesUsingPropertyIndex(nodeInfo, store); ok {
-			out := indexed
-			// Residual property / viewport / system-node filters.
-			hideSystemNodes := shouldHideSystemNodes(store)
-			filtered := out[:0]
-			for _, n := range out {
-				if hideSystemNodes && isSystemNode(n) {
-					continue
-				}
-				if len(labels) > 0 && !mergeNodeHasLabels(n, labels) {
-					continue
-				}
-				if !e.nodeMatchesProps(n, properties) {
-					continue
-				}
-				if hasViewport && canCheckViewport {
-					visible, err := checker.IsCurrentTemporalNode(n, viewport.AsOf)
-					if err != nil {
-						return nil, err
-					}
-					if !visible {
-						continue
-					}
-				}
-				filtered = append(filtered, n)
-				if limit > 0 && len(filtered) >= limit {
-					break
-				}
-			}
-			return filtered, nil
-		}
 	}
 
 	// A label-indexed stream is the primary physical scan for every labelled
@@ -1194,163 +818,6 @@ func isSystemNode(node *storage.Node) bool {
 		}
 	}
 	return false
-}
-
-// executeCartesianProductMatch handles MATCH queries with multiple comma-separated node patterns.
-// For example: MATCH (p:Person), (a:Area) RETURN p.name, a.code
-// This creates a cartesian product of all matching nodes.
-func (e *StorageExecutor) executeCartesianProductMatch(
-	ctx context.Context,
-	cypher string,
-	matchPart string,
-	nodePatterns []string,
-	whereIdx int,
-	returnIdx int,
-	returnItems []returnItem,
-	hasAggregation bool,
-	distinct bool,
-	result *ExecuteResult,
-) (*ExecuteResult, error) {
-	// For each node pattern, find matching nodes
-	patternMatches := make([]struct {
-		variable string
-		nodes    []*storage.Node
-	}, 0, len(nodePatterns))
-	whereClause := ""
-	if whereIdx > 0 {
-		whereClause = strings.TrimSpace(cypher[whereIdx+5 : returnIdx])
-	}
-
-	for _, pattern := range nodePatterns {
-		pattern = strings.TrimSpace(pattern)
-		if pattern == "" {
-			continue
-		}
-
-		nodeInfo := e.parseNodePattern(ctx, pattern)
-
-		var nodes []*storage.Node
-		var err error
-
-		// Pattern-inline property fast-path: when the pattern carries inline
-		// equality on an indexed property, probe the property index per
-		// cartesian leg instead of loading the full label population. This
-		// is the path that fires for graphify's labelless edge MATCH —
-		// `MATCH (a {id:$src}),(b {id:$tgt})` — and turns each leg into an
-		// O(1) lookup. The residual property filter below is still applied
-		// to enforce any non-indexed inline props identically to the scan.
-		usedPatternIndex := false
-		if len(nodeInfo.properties) > 0 {
-			if indexed, ok := e.lookupPatternCandidatesUsingPropertyIndex(nodeInfo, e.getStorage(ctx)); ok {
-				nodes = indexed
-				usedPatternIndex = true
-			}
-		}
-		if !usedPatternIndex {
-			nodes, err = e.loadPatternNodes(ctx, nodeInfo.labels, nodeInfo.properties)
-			if err != nil {
-				return nil, localizedError(localization.CypherTransactionsStorageFailed(err), err)
-			}
-		}
-
-		// Filter by properties if specified in pattern
-		if len(nodeInfo.properties) > 0 {
-			nodes = e.filterNodesByProperties(nodes, nodeInfo.properties)
-		}
-
-		if nodeInfo.variable != "" {
-			patternMatches = append(patternMatches, struct {
-				variable string
-				nodes    []*storage.Node
-			}{
-				variable: nodeInfo.variable,
-				nodes:    nodes,
-			})
-		}
-	}
-
-	// Push down selective WHERE predicates before cartesian expansion.
-	// This avoids catastrophic row explosion for shapes like:
-	// MATCH (o),(t) WHERE o.k IN [...] AND t.k = o.k
-	if whereClause != "" && len(patternMatches) > 1 {
-		patternMatches = e.applyCartesianWherePushdown(ctx, patternMatches, whereClause)
-	}
-
-	returnClause := cypher[returnIdx:]
-	if distinct && !startsWithKeywordFold(strings.TrimSpace(returnClause[len("RETURN"):]), "DISTINCT") {
-		returnClause = "RETURN DISTINCT " + strings.TrimSpace(returnClause[len("RETURN"):])
-	}
-	if hasAggregation && whereClause == "" {
-		groups, handled, err := e.tryCartesianAggregatePartitions(ctx, patternMatches, returnProjectionPlanFor(returnClause), 0)
-		if err != nil {
-			return nil, err
-		}
-		if handled {
-			projected, err := e.projectMergeReturnSource(ctx, nil, returnClause, nil, groups)
-			if err != nil {
-				return nil, err
-			}
-			projected.Stats = result.Stats
-			*result = *projected
-			return result, nil
-		}
-	}
-
-	// Use an equality join when WHERE provides a supported key; otherwise keep
-	// the general cartesian expansion for predicates the join planner cannot
-	// safely reduce.
-	var allMatches []map[string]*storage.Node
-	joinedByWhere := false
-	if whereClause != "" && len(patternMatches) > 1 {
-		allMatches, joinedByWhere = e.buildCombinationsUsingWhereJoin(patternMatches, whereClause)
-	}
-	if !joinedByWhere {
-		allMatches = e.buildCartesianProduct(patternMatches)
-	}
-
-	// Apply WHERE clause to filter combinations
-	if whereClause != "" {
-		predicate := e.newBindingFilterPredicate(ctx, whereClause, nil)
-		var filtered []map[string]*storage.Node
-		for _, match := range allMatches {
-			if predicate.matches(binding(match), nil) {
-				filtered = append(filtered, match)
-			}
-		}
-		allMatches = filtered
-	}
-
-	var variables []string
-	if len(allMatches) > 0 {
-		variables = make([]string, 0, len(allMatches[0]))
-		for name := range allMatches[0] {
-			variables = append(variables, name)
-		}
-	}
-	source := func(yield func(pipelineRow) bool) bool {
-		values := make(pipelineRow, len(variables))
-		for _, match := range allMatches {
-			for _, name := range variables {
-				node := match[name]
-				if node == nil {
-					values[name] = nil
-				} else {
-					values[name] = node
-				}
-			}
-			if !yield(values) {
-				break
-			}
-		}
-		return true
-	}
-	projected, err := e.projectMergeReturnSource(ctx, nil, returnClause, source)
-	if err != nil {
-		return nil, err
-	}
-	projected.Stats = result.Stats
-	*result = *projected
-	return result, nil
 }
 
 type cartesianInConstraint struct {
@@ -1851,25 +1318,6 @@ func filterNodesByNullConstraint(nodes []*storage.Node, prop string, expectNotNu
 	return out
 }
 
-// executeCartesianAggregation handles aggregation over cartesian product results
-func (e *StorageExecutor) executeCartesianAggregation(
-	ctx context.Context,
-	allMatches []map[string]*storage.Node,
-	returnItems []returnItem,
-	result *ExecuteResult,
-) (*ExecuteResult, error) {
-	rows := make([]traversalOptRow, 0, len(allMatches))
-	for _, match := range allMatches {
-		rows = append(rows, traversalOptRow{nodes: match, rels: nil})
-	}
-	aggregated, err := e.aggregateTraversalOptionalRows(ctx, rows, returnItems)
-	if err != nil {
-		return nil, err
-	}
-	result.Rows = aggregated
-	return result, nil
-}
-
 // evaluateWhereForContext evaluates a WHERE clause against a node context
 func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClause string, nodes map[string]*storage.Node) bool {
 	if strings.TrimSpace(whereClause) == "" {
@@ -1958,56 +1406,18 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 		reversed := reverseTraversalMatch(match)
 		return reversed != nil && e.evaluateBoundOneHopPattern(ctx, reversed, nodes)
 	}
-	if !e.matchesEndPattern(start, &match.StartNode) {
+	if !pipelineNodeMatchesPattern(start, match.StartNode) {
 		return false
 	}
-
-	var edges []*storage.Edge
-	var err error
-	store := e.getStorage(ctx)
-	switch match.Relationship.Direction {
-	case "outgoing":
-		edges, err = store.GetOutgoingEdges(start.ID)
-	case "incoming":
-		edges, err = store.GetIncomingEdges(start.ID)
-	default:
-		edges, err = undirectedIncidentEdges(store, start.ID)
-	}
-	if err != nil {
-		recordExpressionFailure(ctx, err)
-		return false
-	}
-	boundEnd := nodes[match.EndNode.variable]
-	for _, edge := range edges {
-		if edge == nil || len(match.Relationship.Types) > 0 && !e.edgeTypeMatches(edge.Type, match.Relationship.Types) ||
-			len(match.Relationship.Properties) > 0 && !e.edgeMatchesProps(edge, match.Relationship.Properties) {
+	viewport, _ := TemporalViewportFromContext(ctx)
+	checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
+	paths := e.traverseGraphSequential(ctx, match, []*storage.Node{start}, viewport, checker)
+	end, bound := nodes[match.EndNode.variable]
+	for _, path := range paths {
+		if len(path.Nodes) == 0 {
 			continue
 		}
-		var endID storage.NodeID
-		switch match.Relationship.Direction {
-		case "outgoing":
-			endID = edge.EndNode
-		case "incoming":
-			endID = edge.StartNode
-		case "both":
-			if edge.StartNode == start.ID {
-				endID = edge.EndNode
-			} else {
-				endID = edge.StartNode
-			}
-		}
-		if boundEnd != nil {
-			if endID == boundEnd.ID && e.matchesEndPattern(boundEnd, &match.EndNode) {
-				return true
-			}
-			continue
-		}
-		end, err := store.GetNode(endID)
-		if err != nil && !errors.Is(err, storage.ErrNotFound) {
-			recordExpressionFailure(ctx, err)
-			return false
-		}
-		if err == nil && end != nil && e.matchesEndPattern(end, &match.EndNode) {
+		if !bound || end != nil && path.Nodes[len(path.Nodes)-1].ID == end.ID {
 			return true
 		}
 	}

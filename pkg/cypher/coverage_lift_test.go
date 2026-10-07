@@ -423,7 +423,7 @@ func TestCoverageLiftUnwindAndRelationshipBatchEdgeBranches(t *testing.T) {
 
 	_, err := store.CreateNode(&storage.Node{ID: "bag", Labels: []string{"Bag"}, Properties: map[string]interface{}{"items": []interface{}{"keep", "drop"}}})
 	require.NoError(t, err)
-	result, err := exec.executeMatchUnwind(ctx, "MATCH (n:Bag) UNWIND n.items AS item WHERE item = 'keep' RETURN item")
+	result, err := exec.Execute(ctx, "MATCH (n:Bag) UNWIND n.items AS item WITH item WHERE item = 'keep' RETURN item", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"item"}, result.Columns)
 	assert.Equal(t, [][]interface{}{{"keep"}}, result.Rows)

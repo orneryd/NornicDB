@@ -37,34 +37,34 @@ func TestExecuteChainedCallSubquery_Branches(t *testing.T) {
 
 	seed := &ExecuteResult{Columns: []string{"seed"}, Rows: [][]interface{}{{int64(1)}, {int64(2)}}}
 
-	_, err := exec.executeChainedCallSubquery(ctx, seed, "CALL { }")
+	_, err := exec.sharedSeededCallForTest(ctx, seed, "CALL { }")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty body")
 
-	_, err = exec.executeChainedCallSubquery(ctx, seed, "CALL { RETURN 1 AS x } IN TRANSACTIONS OF 2 ROWS RETURN x")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not supported")
+	batched, err := exec.sharedSeededCallForTest(ctx, seed, "CALL { RETURN 1 AS x } IN TRANSACTIONS OF 2 ROWS RETURN x")
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}, {int64(1)}}, batched.Rows)
 
-	res, err := exec.executeChainedCallSubquery(ctx, seed, "CALL { RETURN 7 AS x } RETURN x")
+	res, err := exec.sharedSeededCallForTest(ctx, seed, "CALL { RETURN 7 AS x } RETURN x")
 	require.NoError(t, err)
 	require.Equal(t, []string{"x"}, res.Columns)
 	require.Len(t, res.Rows, 2)
 	require.EqualValues(t, 7, res.Rows[0][0])
 	require.EqualValues(t, 7, res.Rows[1][0])
 
-	res, err = exec.executeChainedCallSubquery(ctx, seed, "CALL { WITH seed RETURN seed AS x } RETURN x")
+	res, err = exec.sharedSeededCallForTest(ctx, seed, "CALL { WITH seed RETURN seed AS x } RETURN x")
 	require.NoError(t, err)
 	require.Equal(t, []string{"x"}, res.Columns)
 	require.Len(t, res.Rows, 2)
 	require.EqualValues(t, int64(1), res.Rows[0][0])
 	require.EqualValues(t, int64(2), res.Rows[1][0])
 
-	_, err = exec.executeChainedCallSubquery(ctx, seed, "CALL { WITH seed }")
+	_, err = exec.sharedSeededCallForTest(ctx, seed, "CALL { WITH seed }")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "WITH must be followed by a query clause")
 
 	// USE branch should route through scoped resolution and still execute.
-	res, err = exec.executeChainedCallSubquery(ctx, seed, "CALL { USE missing_db RETURN 1 AS x } RETURN x")
+	res, err = exec.sharedSeededCallForTest(ctx, seed, "CALL { USE missing_db RETURN 1 AS x } RETURN x")
 	require.NoError(t, err)
 	require.Equal(t, []string{"x"}, res.Columns)
 	require.Len(t, res.Rows, 2)
@@ -89,7 +89,7 @@ func TestExecuteChainedCallSubquery_ImplicitScalarCorrelationOptionalAggregate(t
 		},
 	}
 
-	res, err := exec.executeChainedCallSubquery(ctx, seed, "CALL { OPTIONAL MATCH (o:Order) WHERE o.owner_id = person_id AND o.amount >= $min_amount RETURN collect(o.order_id) AS order_ids, count(o) AS order_count } RETURN person_id, person_name, order_ids, order_count")
+	res, err := exec.sharedSeededCallForTest(ctx, seed, "CALL { OPTIONAL MATCH (o:Order) WHERE o.owner_id = person_id AND o.amount >= $min_amount RETURN collect(o.order_id) AS order_ids, count(o) AS order_count } RETURN person_id, person_name, order_ids, order_count")
 	require.NoError(t, err)
 	require.Equal(t, []string{"person_id", "person_name", "order_ids", "order_count"}, res.Columns)
 	require.Len(t, res.Rows, 2)
