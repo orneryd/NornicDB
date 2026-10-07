@@ -434,6 +434,12 @@ func (s *BaseCypherParserListener) EnterAtomicExpression(ctx *AtomicExpressionCo
 // ExitAtomicExpression is called when production atomicExpression is exited.
 func (s *BaseCypherParserListener) ExitAtomicExpression(ctx *AtomicExpressionContext) {}
 
+// EnterNormalizationPredicate is called when production normalizationPredicate is entered.
+func (s *BaseCypherParserListener) EnterNormalizationPredicate(ctx *NormalizationPredicateContext) {}
+
+// ExitNormalizationPredicate is called when production normalizationPredicate is exited.
+func (s *BaseCypherParserListener) ExitNormalizationPredicate(ctx *NormalizationPredicateContext) {}
+
 // EnterLabelPredicate is called when production labelPredicate is entered.
 func (s *BaseCypherParserListener) EnterLabelPredicate(ctx *LabelPredicateContext) {}
 

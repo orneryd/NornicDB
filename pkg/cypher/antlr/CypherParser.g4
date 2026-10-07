@@ -363,7 +363,13 @@ unaryAddSubExpression
     ;
 
 atomicExpression
-    : propertyOrLabelExpression (stringExpression | listExpression | nullExpression | typePredicate | labelPredicate)*
+    : propertyOrLabelExpression (stringExpression | listExpression | nullExpression | typePredicate | normalizationPredicate | labelPredicate)*
+    ;
+
+// x IS [NOT] [NFC | NFD | NFKC | NFKD] NORMALIZED; before labelPredicate so
+// x IS NORMALIZED is the predicate, not a label named NORMALIZED.
+normalizationPredicate
+    : IS NOT? (NFC | NFD | NFKC | NFKD)? NORMALIZED
     ;
 
 labelPredicate
@@ -695,6 +701,11 @@ symbol
     | UNIQUE
     | REQUIRE
     | TYPED
+    | NORMALIZED
+    | NFC
+    | NFD
+    | NFKC
+    | NFKD
     | EMBEDDING
     | IF
     | EACH

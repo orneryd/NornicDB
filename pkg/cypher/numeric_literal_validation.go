@@ -110,7 +110,13 @@ func validateNumericLiteralAt(cypher string, start int) (int, error) {
 	for end < len(cypher) && isASCIIDigit(cypher[end]) {
 		end++
 	}
-	if end < len(cypher) && cypher[end] == '.' {
+	// 5. is not a number: Neo4j reads the dot as a property access, so
+	// RETURN 5. AS v and 5.e3 are SyntaxErrors. In 1..2 (a range) the
+	// integer ends at the dots.
+	if end < len(cypher) && cypher[end] == '.' && (end+1 >= len(cypher) || (!isASCIIDigit(cypher[end+1]) && cypher[end+1] != '.')) {
+		return end + 1, numericLiteralError("InvalidNumberLiteral", cypher[start:end+1])
+	}
+	if end+1 < len(cypher) && cypher[end] == '.' && cypher[end+1] != '.' {
 		end++
 		for end < len(cypher) && isASCIIDigit(cypher[end]) {
 			end++

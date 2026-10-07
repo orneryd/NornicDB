@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -244,6 +246,13 @@ func propertyAccessTypeError(value interface{}) error {
 		return nil
 	}
 	return runtimeTypeError(fmt.Sprintf("Type mismatch: expected a map but was %s", neo4jValueRepr(value)))
+}
+
+// temporalNoSuchFieldError is the TypeError of reading a field a temporal
+// value or duration doesn't have (d.a, d['a'], d{.a}), as Neo4j reports it.
+func temporalNoSuchFieldError(field string) error {
+	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+		localization.CypherCoreTemporalNoSuchField(field))
 }
 
 // subscriptReceiverError is the TypeError of base[index] for a base that is
