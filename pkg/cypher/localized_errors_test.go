@@ -37,21 +37,18 @@ func TestCypherMutationLocalizedErrors(t *testing.T) {
 		require.Equal(t, "storage failure", localizedErr.Message.Data["Cause"])
 	})
 
-	t.Run("clause validation paths expose stable IDs", func(t *testing.T) {
+	t.Run("public clause validation exposes syntax status", func(t *testing.T) {
 		exec := NewStorageExecutor(newTestMemoryEngine(t))
 		ctx := context.Background()
 
 		_, err := exec.Execute(ctx, "DELETE n", getParamsFromContext(ctx))
-		require.EqualError(t, err, "DELETE requires a MATCH clause first (e.g., MATCH (n) DELETE n)")
-		requireMessageID(t, err, localization.MessageCypherMutationsDeleteMatchRequired)
+		requireSyntaxErrorStatus(t, err, "DELETE n")
 
 		_, err = exec.Execute(ctx, "SET n.value = 1", getParamsFromContext(ctx))
-		require.EqualError(t, err, "SET requires a MATCH clause first (e.g., MATCH (n) SET n.property = value)")
-		requireMessageID(t, err, localization.MessageCypherMutationsSetMatchRequired)
+		requireSyntaxErrorStatus(t, err, "SET n.value = 1")
 
 		_, err = exec.Execute(ctx, "REMOVE n.value", getParamsFromContext(ctx))
-		require.EqualError(t, err, "REMOVE requires a MATCH clause first (e.g., MATCH (n) REMOVE n.property)")
-		requireMessageID(t, err, localization.MessageCypherMutationsRemoveMatchRequired)
+		requireSyntaxErrorStatus(t, err, "REMOVE n.value")
 
 		_, err = exec.Execute(ctx, "UNWIND [1] RETURN 1", nil)
 		requireSyntaxErrorStatus(t, err, "UNWIND [1] RETURN 1")

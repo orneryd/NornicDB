@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Preserve FINISH-terminated MATCH reads through shared pipeline admission
+  and reject unquoted FINISH identifiers consistently in both parsers.
+
 - Decline independent MATCH hash joins when inline properties depend on
   variables bound by other parts of the same MATCH. The shared sequential
   product resolves those bindings before applying WHERE, while independent

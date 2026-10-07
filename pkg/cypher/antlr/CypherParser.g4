@@ -727,7 +727,6 @@ reservedWord
     | WHERE
     | WITH
     | UNION
-    | FINISH
     | UNWIND
     | AND
     | AS

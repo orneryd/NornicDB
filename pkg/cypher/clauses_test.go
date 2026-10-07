@@ -3333,19 +3333,13 @@ func TestOptionalMatch_AdditionalBranches(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := e.Execute(ctx, "MATCH (n) RETURN n", getParamsFromContext(ctx))
-	if err == nil {
-		t.Fatal("expected OPTIONAL MATCH not found error")
-	}
+	res, err := e.Execute(ctx, "MATCH (n) RETURN n", getParamsFromContext(ctx))
+	require.NoError(t, err)
+	require.Equal(t, []string{"n"}, res.Columns)
+	require.Empty(t, res.Rows)
 
-	// Malformed OPTIONAL MATCH should still return deterministic single-row output.
-	res, err := e.Execute(ctx, "OPTIONAL MATCH (n RETURN n", getParamsFromContext(ctx))
-	if err != nil {
-		t.Fatalf("optional malformed should return deterministic result, got err: %v", err)
-	}
-	if len(res.Rows) != 1 {
-		t.Fatalf("unexpected malformed optional result shape: %#v", res.Rows)
-	}
+	_, err = e.Execute(ctx, "OPTIONAL MATCH (n RETURN n", getParamsFromContext(ctx))
+	requireSyntaxErrorStatus(t, err, "OPTIONAL MATCH (n RETURN n")
 
 	// Empty optional result should preserve columns with nil row.
 	res, err = e.Execute(ctx, "OPTIONAL MATCH (n:Missing) RETURN n.name", nil)

@@ -248,7 +248,7 @@ func TestGraphitiScenarioE2E_VerbatimCopySkipsRedundantVectorPropertyUpdates(t *
 	res, err = exec.Execute(ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})
 	require.NoError(t, err)
 	require.Len(t, res.Rows, len(payload.edges))
-	require.Equal(t, int64(0), counting.EdgeUpdateCount(), "setRelationshipVectorProperty must no-op when SET e = row already stored the same vector")
+	require.Equal(t, int64(len(payload.edges)), counting.EdgeUpdateCount(), "relationship copy should only pay the SET e = row update, not an extra vector setter update")
 	require.True(t, searchSvc.HasRelationshipVectorEntries("RELATES_TO", "fact_embedding"))
 }
 

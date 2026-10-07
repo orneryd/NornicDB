@@ -2307,12 +2307,12 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b", getParamsFromContext(ctx))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires RETURN")
+	requireSyntaxErrorStatus(t, err, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b")
 
-	_, err = exec.Execute(ctx, "MATCH (a:Person) RETURN a", getParamsFromContext(ctx))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected multiple MATCH clauses")
+	matched, err := exec.Execute(ctx, "MATCH (a:Person) RETURN a", getParamsFromContext(ctx))
+	require.NoError(t, err)
+	require.Equal(t, []string{"a"}, matched.Columns)
+	require.Len(t, matched.Rows, 2)
 
 	aggRes, err := exec.Execute(ctx, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b RETURN count(*) AS c, sum(a.age) AS s, avg(a.age) AS av, min(a.age) AS mn, max(a.age) AS mx, collect(b.name) AS names", getParamsFromContext(ctx))
 	require.NoError(t, err)
@@ -2339,10 +2339,12 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 	assert.False(t, isSystemNode(&storage.Node{Labels: []string{"Person"}}))
 
 	_, err = exec.Execute(ctx, "MATCH (n:Person) UNWIND n.items RETURN n", getParamsFromContext(ctx))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "UNWIND requires AS clause")
+	requireSyntaxErrorStatus(t, err, "MATCH (n:Person) UNWIND n.items RETURN n")
 
-	unwindRes, err := exec.Execute(ctx, "MATCH (n:Person) UNWIND n.items AS item WHERE item <> 'y' RETURN item ORDER BY item DESC SKIP 1 LIMIT 2", getParamsFromContext(ctx))
+	_, err = exec.Execute(ctx, "MATCH (n:Person) UNWIND n.items AS item WHERE item <> 'y' RETURN item", nil)
+	requireSyntaxErrorStatus(t, err, "WHERE directly after UNWIND")
+
+	unwindRes, err := exec.Execute(ctx, "MATCH (n:Person) UNWIND n.items AS item WITH item WHERE item <> 'y' RETURN item ORDER BY item DESC SKIP 1 LIMIT 2", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, unwindRes.Rows, 2)
 	assert.Equal(t, "x", unwindRes.Rows[0][0])
