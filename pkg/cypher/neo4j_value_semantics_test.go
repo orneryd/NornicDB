@@ -2,7 +2,9 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -86,6 +88,31 @@ func TestIsNormalizedMatchesNeo4j(t *testing.T) {
 	result, err = exec.Execute(ctx, "WITH 'ab' AS s, 1 AS i WHERE s IS NORMALIZED AND NOT coalesce(i IS NORMALIZED, false) RETURN 1 AS v", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+
+	// Any whitespace between the words, and none needed before IS.
+	for _, predicate := range []string{"'x' IS  NORMALIZED", "'x' IS\tNFC NORMALIZED", "'x'  is  not   nfkd  normalized", "'x'IS NORMALIZED", "('x')IS NOT NFC NORMALIZED"} {
+		value, ok := splitNormalizationPredicateValue(predicate)
+		require.True(t, ok, predicate)
+		require.NotNil(t, value, predicate)
+	}
+	for _, text := range []string{"normalized", "x NORMALIZED", "x NOT NORMALIZED", "IS NORMALIZED", "x ISNORMALIZED"} {
+		_, _, _, ok := splitNormalizationPredicate(text)
+		require.False(t, ok, text)
+	}
+	result, err = exec.Execute(ctx, "WITH 'a' AS normalized RETURN normalized, 'x' IS  NORMALIZED, 'x' IS NOT   NFKD   NORMALIZED", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"a", true, false}}, result.Rows)
+}
+
+// splitNormalizationPredicateValue evaluates a normalization predicate on a
+// string-literal operand, for the spelling tests above.
+func splitNormalizationPredicateValue(predicate string) (interface{}, bool) {
+	operand, negated, form, ok := splitNormalizationPredicate(predicate)
+	if !ok {
+		return nil, false
+	}
+	operand = strings.Trim(operand, "()'")
+	return evaluateNormalizationPredicate(operand, negated, form), true
 }
 
 // TestMapProjectionMatchesNeo4j pins map projection's receivers, fields and
@@ -163,6 +190,22 @@ func TestTemporalFieldsAndUnaryPlusMatchNeo4j(t *testing.T) {
 	result, err = exec.Execute(ctx, "RETURN [1, 2, 3][0..1] AS a, 5.0 AS b", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{int64(1)}, 5.0}}, result.Rows)
+
+	// At run time unary plus passes any value through: only a statically
+	// typed operand is checked.
+	result, err = exec.Execute(ctx, "UNWIND [3, '3', [1], true, {a: 1}] AS x RETURN +x AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(3)}, {"3"}, {[]interface{}{int64(1)}}, {true}, {map[string]interface{}{"a": int64(1)}}}, result.Rows)
+
+	// A datetime passed as a parameter (a time.Time) has fields like any
+	// other datetime.
+	params := map[string]interface{}{"dt": time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)}
+	result, err = exec.Execute(ctx, "WITH $dt AS d RETURN d{.year}, d['month'], (+d).day", params)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{map[string]interface{}{"year": int64(2020)}, int64(1), int64(2)}}, result.Rows)
+	_, err = exec.Execute(ctx, "WITH $dt AS d RETURN d{.nope} AS v", params)
+	require.Error(t, err)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
 }
 
 // TestValueOrderingPathForms orders every representation of a path the

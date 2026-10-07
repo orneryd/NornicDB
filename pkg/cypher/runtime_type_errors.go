@@ -147,10 +147,13 @@ func isRuntimeDuration(v interface{}) bool {
 	return false
 }
 
+// isRuntimeTemporal reports whether v is a date, time or datetime. A
+// time.Time, as typed parameters carry a datetime, is a zoned datetime, as
+// evaluateTemporalProperty reads it.
 func isRuntimeTemporal(v interface{}) bool {
 	switch v.(type) {
 	case CypherDate, *CypherDate, CypherTime, *CypherTime, CypherLocalTime, *CypherLocalTime,
-		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime:
+		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime, time.Time, *time.Time:
 		return true
 	}
 	return false
