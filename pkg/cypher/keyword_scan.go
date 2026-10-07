@@ -489,7 +489,7 @@ var (
 	nameableClauseKeywords3 = [...]string{"SET"}
 	nameableClauseKeywords4 = [...]string{"WITH", "SKIP", "CALL"}
 	nameableClauseKeywords5 = [...]string{"MATCH", "MERGE", "UNION", "LIMIT", "ORDER", "WHERE"}
-	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND"}
+	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND", "FINISH"}
 	nameableClauseKeywords7 = [...]string{"FOREACH"}
 	nameableClauseKeywords8 = [...]string{"OPTIONAL"}
 )
@@ -596,7 +596,7 @@ func isExpressionBoundaryWord(word string) bool {
 	default:
 		return false
 	}
-	for _, keyword := range [...]string{"AS", "WITH", "RETURN", "WHERE", "BY", "DISTINCT", "AND", "OR", "XOR", "NOT", "IN", "CASE", "WHEN", "THEN", "ELSE", "UNWIND", "SET", "YIELD"} {
+	for _, keyword := range [...]string{"AS", "WITH", "RETURN", "WHERE", "BY", "DISTINCT", "AND", "OR", "XOR", "NOT", "IN", "CASE", "WHEN", "THEN", "ELSE", "UNWIND", "SET", "YIELD", "DELETE"} {
 		if len(keyword) != len(word) {
 			continue
 		}

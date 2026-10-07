@@ -632,6 +632,7 @@ symbol
     | ROLLBACK
     | TRANSACTION
     | YIELD
+    | FINISH
     | DROP
     | CREATE
     | VECTOR

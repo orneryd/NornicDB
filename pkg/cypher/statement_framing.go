@@ -203,7 +203,10 @@ var finishProhibitedClauses = map[string]bool{
 }
 
 // trailingBareFinish reports whether the statement ends with a standalone
-// FINISH keyword outside quotes and comments.
+// FINISH keyword outside quotes and comments. A trailing `finish` where a
+// name or an expression is read (RETURN finish, x AS finish, DELETE finish,
+// m.finish) is a variable, not the clause: FINISH is not a reserved word in
+// Neo4j (#958).
 func trailingBareFinish(cypher string) (string, bool) {
 	last := lastLiveByte(cypher, len(cypher))
 	if last < 0 || !isIdentByte(cypher[last]) {
@@ -217,7 +220,12 @@ func trailingBareFinish(cypher string) (string, bool) {
 	if !strings.EqualFold(cypher[start:end], "FINISH") {
 		return "", false
 	}
-	return strings.TrimSpace(cypher[:start]), true
+	remainder := strings.TrimSpace(cypher[:start])
+	// A FINISH with nothing before it is the whole statement, the clause.
+	if remainder != "" && clauseKeywordUsedAsName(cypher, start, end, "FINISH") {
+		return "", false
+	}
+	return remainder, true
 }
 
 // stripTrailingFinish removes a trailing FINISH clause terminator (Neo4j 5.19+:
