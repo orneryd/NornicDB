@@ -978,7 +978,11 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 	spec := orderSpecs[0]
-	primaryNonNull := e.indexedOrderRequiresNonNull(nodePattern.variable, spec.propName, whereClause)
+	// A WHERE that bounds the first sort property (n.t > $last, the keyset
+	// form n.t > $t OR (n.t = $t AND n.id > $id)) starts the index scan at
+	// the bound, and rules out rows where it is null (#939).
+	bounds := impliedPropertyBounds(nodePattern.variable, spec.propName, whereClause, getParamsFromContext(ctx))
+	primaryNonNull := bounds.HasLower || bounds.HasUpper || e.indexedOrderRequiresNonNull(nodePattern.variable, spec.propName, whereClause)
 	if spec.descending && !primaryNonNull {
 		return nil, false, nil
 	}
@@ -994,7 +998,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	}
 	label := labels[0]
 
-	nodes, used, err := e.collectIndexedOrderWindow(ctx, nodePattern, whereClause, orderSpecs, label, limit)
+	nodes, used, err := e.collectIndexedOrderWindow(ctx, nodePattern, whereClause, orderSpecs, label, limit, bounds)
 	if err == nil && used && len(nodes) < limit {
 		if primaryNonNull {
 			return nodes, true, nil
@@ -1048,7 +1052,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 		return nil, false, nil
 	}
 	label := labels[0]
-	return e.collectIndexedOrderWindow(ctx, nodePattern, whereClause, orderSpecs, label, limit)
+	return e.collectIndexedOrderWindow(ctx, nodePattern, whereClause, orderSpecs, label, limit, storage.PropertyIndexBounds{})
 }
 
 // tryCollectNodesFromPropertyIndexNotNull attempts to satisfy:
@@ -1441,12 +1445,10 @@ func parseSimpleSingleIndexedIsNotNull(variable, clause string) (property string
 
 func unwrapOuterParens(clause string) string {
 	out := strings.TrimSpace(clause)
-	for strings.HasPrefix(out, "(") && strings.HasSuffix(out, ")") && len(out) >= 2 {
-		inner := strings.TrimSpace(out[1 : len(out)-1])
-		if inner == out {
-			break
-		}
-		out = inner
+	// Only a pair that encloses the whole clause: (a) OR (b) starts and ends
+	// with a parenthesis, but they don't match each other.
+	for strings.HasPrefix(out, "(") && findMatchingDelimiter(out, 0, '(', ')') == len(out)-1 {
+		out = strings.TrimSpace(out[1 : len(out)-1])
 	}
 	return out
 }

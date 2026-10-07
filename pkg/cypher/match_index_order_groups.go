@@ -57,7 +57,9 @@ func (h *indexedOrderHeap) Pop() interface{} {
 // collectIndexedOrderWindow applies filtering and all sort keys before
 // truncation. A primary-key group may be much larger than the requested page;
 // only the best limit nodes are retained while every boundary tie is examined.
-func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int) ([]*storage.Node, bool, error) {
+// bounds (impliedPropertyBounds) skips the primary-key groups where can't
+// match.
+func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
 	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
@@ -75,7 +77,7 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 	}
 	var visitErr error
 	visited := false
-	found := schema.VisitPropertyIndexGroups(label, specs[0].propName, specs[0].descending, func(ids []storage.NodeID) bool {
+	found := schema.VisitPropertyIndexGroupsInRange(label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
 		visited = true
 		remaining := limit - len(nodes)
 		groupTop := &indexedOrderHeap{
