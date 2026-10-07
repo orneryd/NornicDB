@@ -87,8 +87,16 @@ func isTransientCommitCode(failureBody []byte) bool {
 // Eshu produces through neo4j-go-driver's session.ExecuteWrite.
 func runBoltExplicitMergeTx(t *testing.T, port int, label, prop, value string, sessionTag string) error {
 	t.Helper()
+	return runBoltExplicitTxWithRetry(t, port, fmt.Sprintf("MERGE (r:%s {%s: %q}) SET r.name = %q", label, prop, value, sessionTag))
+}
+
+// runBoltExplicitTxWithRetry runs query in BEGIN/RUN/PULL/COMMIT, retrying
+// while the server answers with a Neo.TransientError.* status, as
+// neo4j-go-driver's ExecuteWrite does.
+func runBoltExplicitTxWithRetry(t *testing.T, port int, query string) error {
+	t.Helper()
 	for attempt := 0; attempt < driverRetryBudget; attempt++ {
-		err, transient := runBoltExplicitMergeTxAttempt(t, port, label, prop, value, sessionTag)
+		err, transient := runBoltExplicitTxAttempt(t, port, query)
 		if err == nil {
 			return nil
 		}
@@ -100,10 +108,10 @@ func runBoltExplicitMergeTx(t *testing.T, port int, label, prop, value string, s
 	return fmt.Errorf("explicit-tx MERGE exhausted %d retries", driverRetryBudget)
 }
 
-// runBoltExplicitMergeTxAttempt runs one BEGIN/RUN/PULL/COMMIT attempt and
-// returns (err, transient). transient=true means a Neo.TransientError
+// runBoltExplicitTxAttempt runs query in one BEGIN/RUN/PULL/COMMIT attempt
+// and returns (err, transient). transient=true means a Neo.TransientError
 // surfaced and the caller should retry (mimics neo4j-go-driver behavior).
-func runBoltExplicitMergeTxAttempt(t *testing.T, port int, label, prop, value string, sessionTag string) (error, bool) {
+func runBoltExplicitTxAttempt(t *testing.T, port int, query string) (error, bool) {
 	t.Helper()
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
@@ -129,7 +137,6 @@ func runBoltExplicitMergeTxAttempt(t *testing.T, port int, label, prop, value st
 	} else if mt == MsgFailure {
 		return fmt.Errorf("BEGIN failure: %s", string(md)), isTransientCommitCode(md)
 	}
-	query := fmt.Sprintf("MERGE (r:%s {%s: %q}) SET r.name = %q", label, prop, value, sessionTag)
 	if err := SendRun(t, conn, query, nil, nil); err != nil {
 		return fmt.Errorf("run: %w", err), false
 	}
@@ -495,6 +502,58 @@ func TestBoltCrossSessionMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T)
 	}
 	if count != 1 {
 		t.Errorf("expected exactly one TerraformResource node, got %d", count)
+	}
+}
+
+// TestBoltCrossSessionMultiMergeUniqueConflict_Concurrent_ExplicitTx races
+// a statement of several MERGE clauses on two uniquely constrained keys, whose
+// ON CREATE SET writes a computed value to a property named like the other
+// label's key (o.id against V.id). The losing commit must be the retryable
+// transient race, not a ConstraintValidationFailed the driver gives up on
+// (#961).
+func TestBoltCrossSessionMultiMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T) {
+	baseStore := storage.NewMemoryEngine()
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+
+	setup := openBoltTestConn(t, port)
+	runBoltQueryAndCollectRecords(t, setup, "CREATE CONSTRAINT o_hash IF NOT EXISTS FOR (o:O) REQUIRE o.hash IS UNIQUE")
+	runBoltQueryAndCollectRecords(t, setup, "CREATE CONSTRAINT v_id IF NOT EXISTS FOR (v:V) REQUIRE v.id IS UNIQUE")
+	if err := setup.Close(); err != nil {
+		t.Fatalf("close setup: %v", err)
+	}
+
+	const concurrency = 2
+	var wg sync.WaitGroup
+	failures := make([]string, concurrency)
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			query := fmt.Sprintf("MERGE (o:O {hash: 'h1'}) ON CREATE SET o.id = 'sha256:' + o.hash "+
+				"MERGE (v:V {id: 'v1'}) ON CREATE SET v.original_id = o.id "+
+				"MERGE (v)-[:HAS_ORIGINAL]->(o) "+
+				"MERGE (u:U {id: 'u%d'}) MERGE (u)-[:OF_VERSION]->(v) RETURN v.id", idx)
+			if err := runBoltExplicitTxWithRetry(t, port, query); err != nil {
+				failures[idx] = err.Error()
+			}
+		}(i)
+	}
+	wg.Wait()
+	for idx, msg := range failures {
+		if msg != "" {
+			t.Errorf("session %d failed: %s", idx, msg)
+		}
+	}
+
+	check := openBoltTestConn(t, port)
+	records := runBoltQueryAndCollectRecords(t, check,
+		"MATCH (v:V {id: 'v1'})-[:HAS_ORIGINAL]->(o:O {hash: 'h1'}) MATCH (u:U)-[:OF_VERSION]->(v) RETURN count(DISTINCT v), count(DISTINCT o), count(u)")
+	if len(records) != 1 || len(records[0]) != 3 {
+		t.Fatalf("expected one count row, got %v", records)
+	}
+	if records[0][0] != int64(1) || records[0][1] != int64(1) || records[0][2] != int64(2) {
+		t.Errorf("expected one V, one O and two uploads, got %v", records[0])
 	}
 }
 

@@ -524,9 +524,7 @@ func (s *Session) recordExplicitTransactionWrite(query string, params map[string
 		s.txHasNonMergeWrite = true
 		return
 	}
-	if !cypher.IsRetrySafeMergeCommitQuery(info) {
-		s.txHasNonMergeWrite = true
-	}
+	s.txWriteInfos = append(s.txWriteInfos, info)
 }
 
 // canRetryMergeCommitConflict reports whether a UNIQUE violation err of the
@@ -534,7 +532,15 @@ func (s *Session) recordExplicitTransactionWrite(query string, params map[string
 // constraint, is a retry-safe MERGE race: every write was MERGE-shaped and no
 // SET in them wrote a violated property (cypher.MergeUniqueConflictIsRetrySafe).
 func (s *Session) canRetryMergeCommitConflict(err error) bool {
-	return s.txHasMerge && !s.txHasNonMergeWrite && cypher.MergeUniqueConflictIsRetrySafe(s.txMergeStatements, err)
+	if !s.txHasMerge || s.txHasNonMergeWrite {
+		return false
+	}
+	for _, info := range s.txWriteInfos {
+		if !cypher.IsRetrySafeMergeCommitQuery(info) {
+			return false
+		}
+	}
+	return cypher.MergeUniqueConflictIsRetrySafe(s.txMergeStatements, err)
 }
 
 // truncateQuery truncates a query for logging.
@@ -1154,6 +1160,7 @@ func (s *Session) handleBegin(data []byte) error {
 	s.txHasMerge = false
 	s.txHasNonMergeWrite = false
 	s.txMergeStatements = nil
+	s.txWriteInfos = nil
 	s.queryId = 0
 	s.latestStatementID = -1
 	s.resultStreams = make(map[int64]*resultStream)

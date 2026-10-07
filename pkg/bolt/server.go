@@ -1515,6 +1515,7 @@ type Session struct {
 	txHasMerge                      bool
 	txHasNonMergeWrite              bool
 	txMergeStatements               []cypher.CommitStatement
+	txWriteInfos                    []*cypher.QueryInfo // write statements; MERGE-only shape decided when a commit fails
 	txLifecycle                     transactionLifecycle
 	failedUntilReset                bool
 	transactionCleanupFailed        bool

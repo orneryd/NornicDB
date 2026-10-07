@@ -51,7 +51,9 @@ func TestMergeUniqueConflictRetryBranches(t *testing.T) {
 	require.True(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: true}) SET u.k = true", nil), violation))
 	require.True(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: false}) SET u.k = false", nil), violation))
 	require.False(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: 1}) SET u.k = 2", nil), violation))
-	require.Equal(t, map[string][]string(nil), appendPatternPropertyExpressions(nil, "(u:U {k: 1"))
+	require.Equal(t, map[string][]string(nil), appendPatternPropertyExpressions(nil, "(u:U {k: 1", "U"))
+	require.Equal(t, map[string][]string(nil), appendPatternPropertyExpressions(nil, "(u:U {k: 1)", "U"))
+	require.Equal(t, map[string][]string{"k": {"3"}}, appendPatternPropertyExpressions(nil, "(x {k: 1})-[{k: 2}]->(u:U {k: 3})", "U"))
 }
 
 // TestStaticTypeValidationClauseBranches runs statements whose static type

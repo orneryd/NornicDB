@@ -228,6 +228,48 @@ func TestMergeUniqueConflictIsRetrySafe(t *testing.T) {
 		require.Equal(t, want, MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: statement, Params: params}}, violation), statement)
 	}
 	require.False(t, MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: "MERGE (u:U {k: 7})"}}, stderrors.New("other")))
+
+	// Only writes that can reach the violated label count, and only MERGE
+	// keys on that label (#961). A node its own MERGE created has exactly the
+	// pattern's labels plus static SET labels.
+	versionViolation := &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "V", Properties: []string{"id"}}
+	versionParams := map[string]interface{}{"h": "abc", "id": "v1", "other": "v2", "label": "V"}
+	for statement, want := range map[string]bool{
+		"MERGE (o:O {h: $h}) ON CREATE SET o.id = 'sha256:' + $h MERGE (v:V {id: $id}) ON CREATE SET v.original_id = o.id " +
+			"MERGE (v)-[:HAS]->(o) MERGE (u:U {id: 'u1'}) MERGE (u)-[:OF]->(v) RETURN v.id": true,
+		"MERGE (o:O {h: $h}) ON CREATE SET o.id = 'sha256:' + $h MERGE (v:V {id: $id})":                   true,
+		"MERGE (o:O {h: $h}) ON CREATE SET o:V, o.id = 'sha256:' + $h MERGE (v:V {id: $id})":              false,
+		"MERGE (o:O {h: $h}) ON CREATE SET o:$($label), o.id = 'sha256:' + $h MERGE (v:V {id: $id})":      false,
+		"MERGE (o:O:V {h: $h}) ON CREATE SET o.id = 'sha256:' + $h":                                       false,
+		"MERGE (o:O {h: $h}) ON MATCH SET o.id = 'sha256:' + $h MERGE (v:V {id: $id})":                    false,
+		"MERGE (o:O {h: $h}) SET o.id = 'sha256:' + $h MERGE (v:V {id: $id})":                             false,
+		"MATCH (o:O {h: $h}) MERGE (o)-[:R]->(v:V {id: $id}) ON CREATE SET o.id = 'x'":                    false,
+		"MERGE (v:V {id: $id}) MERGE (o:O {h: $h})-[:R]->(v) ON CREATE SET v.id = 'x'":                    false,
+		"MERGE (o:O {id: $id}) MERGE (v:V {id: $other}) SET v.id = $id":                                   false,
+		"MERGE (v:V {id: $id}) SET v.id = $id":                                                            true,
+		"MERGE (v:V {id: $id})-[:R {id: $other}]->(w:W {id: 'x'}) ON CREATE SET w.id = 'y', v.name = 'n'": true,
+	} {
+		require.Equal(t, want, MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: statement, Params: versionParams}}, versionViolation), statement)
+	}
+
+	// The write shape is decided by the statement's clauses, not by keywords:
+	// ON CREATE SET and a quoted 'create' are MERGE work (#961).
+	for statement, want := range map[string]bool{
+		"MERGE (o:O {h: $h}) ON CREATE SET o.id = 'x' MERGE (v:V {id: $id}) ON MATCH SET v.seen = true RETURN v.id": true,
+		"MERGE (o:O {h: 'create'}) RETURN o":                                          true,
+		"MATCH (a:A) WITH a UNWIND [1] AS i MERGE (o:O {h: a.h})":                     true,
+		"MERGE (o:O {h: $h}) CREATE (x:X)":                                            false,
+		"MERGE (o:O {h: $h}) WITH o DELETE o":                                         false,
+		"MERGE (o:O {h: $h}) REMOVE o.x":                                              false,
+		"MERGE (o:O {h: $h}) FOREACH (x IN [1] | CREATE (:X))":                        false,
+		"MERGE (o:O {h: $h}) WITH o CALL { CREATE (:X) }":                             false,
+		"MERGE (o:O {h: 1}) RETURN o.h AS h UNION MERGE (o:O {h: 2}) RETURN o.h AS h": false,
+		"LOAD CSV FROM 'file:///x.csv' AS row MERGE (o:O {h: row[0]})":                false,
+		"MATCH (n) RETURN n":                                                          false,
+	} {
+		require.Equal(t, want, IsRetrySafeMergeCommitQuery(analyzeQuery(statement)), statement)
+	}
+	require.False(t, IsRetrySafeMergeCommitQuery(nil))
 }
 
 // TestErrorClassesMatchNeo4j covers the #657 error-class cases, each as Neo4j

@@ -331,6 +331,10 @@ func analyzeQuery(cypher string) *QueryInfo {
 // with MATCH, OPTIONAL MATCH, SET, WITH, UNWIND, and RETURN, but side-effecting
 // clauses such as CREATE, DELETE, REMOVE, FOREACH, LOAD CSV, or CALL make the
 // statement non-retryable.
+//
+// The analyzer's keyword flags are conservative (CREATE in ON CREATE SET or
+// in a string sets HasCreate), so when one of them is set the statement's
+// clauses decide (#961): MERGE … ON CREATE SET … is MERGE work, not CREATE.
 func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
 	if info == nil || !info.HasMerge {
 		return false
@@ -338,9 +342,34 @@ func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
 	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove ||
 		info.HasForeach || info.HasLoadCSV || info.HasCall || info.HasSchema ||
 		info.HasShow || info.HasUnion {
-		return false
+		return mergeOnlyClauses(info.rawQuery)
 	}
 	return true
+}
+
+// mergeOnlyClauses reports whether query is a single statement of MERGE
+// clauses combined only with MATCH, OPTIONAL MATCH, SET, WITH, UNWIND and
+// RETURN. A statement the clause splitter can't split, or a UNION, is not.
+func mergeOnlyClauses(query string) bool {
+	if topLevelUnionCut(query) >= 0 {
+		return false
+	}
+	clauses, ok := splitPipelineClauses(query)
+	if !ok {
+		return false
+	}
+	merge := false
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseMerge:
+			merge = true
+		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseSet,
+			pipelineClauseWith, pipelineClauseUnwind, pipelineClauseReturn:
+		default:
+			return false
+		}
+	}
+	return merge
 }
 
 // CommitStatement is one statement of a committing transaction with the
@@ -361,19 +390,30 @@ type CommitStatement struct {
 // the parameter map's keys and values. Whatever can't be decided statically (a
 // computed value, a map from a variable, a statement the clause splitter can't
 // split) is not retry-safe, so a real duplicate is never retried.
+//
+// Only writes that can reach the violated constraint's label count, and only
+// MERGE keys on that label (#961). An ON CREATE SET item on a node its own
+// MERGE introduces writes a node whose labels are exactly the pattern's plus
+// the statement's static SET x:Label items, so MERGE (o:O {h: $h}) ON CREATE
+// SET o.id = 'sha256:' + $h can't clash on V.id. Every other write may reach a
+// node with more labels than its pattern names (a matched node), so it counts
+// whatever its pattern says.
 func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) bool {
 	var violation *storage.ConstraintViolationError
 	if !stderrors.As(err, &violation) || violation == nil {
 		return false
 	}
 	for _, statement := range statements {
-		items, mergeKeys, ok := mergeStatementSetItems(statement.Query)
+		items, mergeKeys, ok := mergeStatementSetItems(statement.Query, violation.Label)
 		if !ok {
 			return false
 		}
 		for _, item := range items {
+			if item.exactLabels && !containsString(item.labels, violation.Label) {
+				continue
+			}
 			for _, property := range violation.Properties {
-				if !setItemKeepsMergeKey(item, property, mergeKeys, statement.Params) {
+				if !setItemKeepsMergeKey(item.text, property, mergeKeys, statement.Params) {
 					return false
 				}
 			}
@@ -382,53 +422,162 @@ func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) boo
 	return true
 }
 
+// mergeSetItem is one SET item of a MERGE statement. exactLabels is set when
+// the node it writes has exactly labels.
+type mergeSetItem struct {
+	text        string
+	labels      []string
+	exactLabels bool
+}
+
 // mergeStatementSetItems returns the SET items of statement (its SET clauses
 // and its MERGE clauses' ON CREATE SET / ON MATCH SET lists) and the property
-// expressions its MERGE patterns key on. ok is false when the statement can't
-// be split into clauses.
-func mergeStatementSetItems(statement string) (items []string, mergeKeys map[string][]string, ok bool) {
+// expressions its MERGE patterns key on for label. ok is false when the
+// statement can't be split into clauses.
+func mergeStatementSetItems(statement, label string) (items []mergeSetItem, mergeKeys map[string][]string, ok bool) {
 	clauses, ok := splitPipelineClauses(statement)
 	if !ok {
 		return nil, nil, false
 	}
-	for _, clause := range clauses {
+	addedLabels, dynamicLabels := statementSetLabels(clauses)
+	for index, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseSet:
-			items = append(items, splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):]))...)
+			for _, assignment := range splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):])) {
+				items = append(items, mergeSetItem{text: assignment})
+			}
 		case pipelineClauseMerge:
 			pattern, onCreate, onMatch := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
-			items = append(items, splitSetAssignments(onCreate)...)
-			items = append(items, splitSetAssignments(onMatch)...)
-			mergeKeys = appendPatternPropertyExpressions(mergeKeys, pattern)
+			mergeKeys = appendPatternPropertyExpressions(mergeKeys, pattern, label)
+			introduced := patternNodeLabels(pattern)
+			for _, assignment := range splitSetAssignments(onCreate) {
+				item := mergeSetItem{text: assignment}
+				target, _, _, _ := splitSetAssignment(assignment)
+				if labels, named := introduced[target]; named && !dynamicLabels[target] && !referencedIn(clauses[:index], target) {
+					item.labels = append(append([]string(nil), labels...), addedLabels[target]...)
+					item.exactLabels = true
+				}
+				items = append(items, item)
+			}
+			for _, assignment := range splitSetAssignments(onMatch) {
+				items = append(items, mergeSetItem{text: assignment})
+			}
 		}
 	}
 	return items, mergeKeys, true
 }
 
-// appendPatternPropertyExpressions adds the key: expression pairs of the
-// property maps in pattern to keys.
-func appendPatternPropertyExpressions(keys map[string][]string, pattern string) map[string][]string {
+// statementSetLabels returns the labels each variable gets from the
+// statement's SET x:Label items (SET clauses and ON CREATE / ON MATCH SET
+// lists), and the variables given a label that isn't static (SET x:$(expr)).
+func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dynamic map[string]bool) {
+	added, dynamic = map[string][]string{}, map[string]bool{}
+	note := func(list string) {
+		for _, assignment := range splitSetAssignments(list) {
+			target, _, operator, right := splitSetAssignment(assignment)
+			if operator != ":" {
+				continue
+			}
+			labels, err := parseLabelChain(right)
+			if err != nil || strings.Contains(right, "$") {
+				dynamic[target] = true
+				continue
+			}
+			added[target] = append(added[target], labels...)
+		}
+	}
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseSet:
+			note(strings.TrimSpace(clause.text[len("SET"):]))
+		case pipelineClauseMerge:
+			_, onCreate, onMatch := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
+			note(onCreate)
+			note(onMatch)
+		}
+	}
+	return added, dynamic
+}
+
+// referencedIn reports whether variable appears in any of clauses.
+func referencedIn(clauses []pipelineClause, variable string) bool {
+	for _, clause := range clauses {
+		if isIdentifierReferenced(clause.text, variable) {
+			return true
+		}
+	}
+	return false
+}
+
+// patternNodeLabels returns the labels of each named node of pattern
+// ((n:L1:L2 {…}) gives n: [L1 L2]).
+func patternNodeLabels(pattern string) map[string][]string {
+	nodes := map[string][]string{}
+	eachPatternElement(pattern, func(opener byte, element string) {
+		if opener != '(' {
+			return
+		}
+		head, _ := splitNodePatternProperties(element)
+		if variable, labels, err := parseNodeHead(head); err == nil && variable != "" {
+			nodes[variable] = append(nodes[variable], labels...)
+		}
+	})
+	return nodes
+}
+
+// eachPatternElement calls visit with each node "(…)" and relationship
+// "[…]" of pattern, delimiters included, skipping quoted text.
+func eachPatternElement(pattern string, visit func(opener byte, element string)) {
 	for index := 0; index < len(pattern); index++ {
 		switch pattern[index] {
-		case '\'', '"':
+		case '\'', '"', '`':
 			index = skipQuotedSemanticText(pattern, index) - 1
-		case '{':
-			closing := findMatchingDelimiter(pattern, index, '{', '}')
+		case '(', '[':
+			closer := ')'
+			if pattern[index] == '[' {
+				closer = ']'
+			}
+			closing := findMatchingDelimiter(pattern, index, rune(pattern[index]), closer)
 			if closing < 0 {
-				return keys
+				return
 			}
-			for _, pair := range splitTopLevelComma(pattern[index+1 : closing]) {
-				if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-					if keys == nil {
-						keys = make(map[string][]string)
-					}
-					key := normalizePropertyKey(pair[:separator])
-					keys[key] = append(keys[key], strings.TrimSpace(pair[separator+1:]))
-				}
-			}
+			visit(pattern[index], pattern[index:closing+1])
 			index = closing
 		}
 	}
+}
+
+// appendPatternPropertyExpressions adds to keys the key: expression pairs of
+// the property maps of pattern's nodes labelled label and relationships of
+// type label.
+func appendPatternPropertyExpressions(keys map[string][]string, pattern, label string) map[string][]string {
+	eachPatternElement(pattern, func(opener byte, element string) {
+		inner := element[1 : len(element)-1]
+		brace := indexByteOutsideBackticks(inner, '{')
+		if brace < 0 {
+			return
+		}
+		_, chain, hasLabels := splitNodeHead(inner[:brace])
+		if !hasLabels {
+			return
+		}
+		if labels, err := parseLabelChain(chain); err != nil || !containsString(labels, label) {
+			return
+		}
+		closing := findMatchingDelimiter(inner, brace, '{', '}')
+		if closing < 0 {
+			return
+		}
+		for _, pair := range splitTopLevelComma(inner[brace+1 : closing]) {
+			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
+				if keys == nil {
+					keys = make(map[string][]string)
+				}
+				key := normalizePropertyKey(pair[:separator])
+				keys[key] = append(keys[key], strings.TrimSpace(pair[separator+1:]))
+			}
+		}
+	})
 	return keys
 }
 
