@@ -97,6 +97,16 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 		variables[template.variable] = struct{}{}
 		templates[index] = template
 	}
+	for _, template := range templates {
+		for _, property := range template.properties {
+			for _, reference := range semanticExpressionReferences(property.expr) {
+				variable := strings.SplitN(reference, ".", 2)[0]
+				if _, dependent := variables[variable]; dependent {
+					return nil, false, nil
+				}
+			}
+		}
+	}
 	joinable := false
 	for _, term := range splitTopLevelAndConjuncts(where) {
 		left, _, right, _, _, equality := parseCartesianVarPropEqualityTerm(strings.TrimSpace(term))

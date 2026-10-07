@@ -12,6 +12,51 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIssue907MatchProductDependentInlineProperties(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, `CREATE (:PDDocument {id: 'issue-d'}),
+(:PDVersion {id: 'issue-v', document_id: 'issue-d', original_id: 'issue-o'}),
+(:PDOriginal {id: 'issue-o', content_hash: 'original-bytes'})`, nil)
+	require.NoError(t, err)
+	params := map[string]interface{}{"document_id": "issue-d", "version_id": "issue-v"}
+	pattern := `MATCH (d:PDDocument {id: $document_id}), (v:PDVersion {id: $version_id}), (o:PDOriginal {id: v.original_id})`
+	for _, test := range []struct {
+		name  string
+		where string
+		rows  [][]interface{}
+	}{
+		{"join equality", " WHERE v.document_id = d.id", [][]interface{}{{"original-bytes"}}},
+		{"without where", "", [][]interface{}{{"original-bytes"}}},
+		{"rejecting where", " WHERE v.document_id = d.id AND o.content_hash = 'other'", nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := exec.Execute(ctx, pattern+test.where+" RETURN o.content_hash", params)
+			require.NoError(t, err)
+			require.Equal(t, []string{"o.content_hash"}, result.Columns)
+			require.Equal(t, len(test.rows), len(result.Rows))
+			if len(test.rows) > 0 {
+				require.Equal(t, test.rows, result.Rows)
+			}
+		})
+	}
+	failureCtx := withExpressionFailureSlot(withQueryParams(ctx, params))
+	_, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{}}, []string{
+		"(d:PDDocument {id: $document_id})", "(v:PDVersion {id: $version_id})", "(o:PDOriginal {id: v.original_id})",
+	}, "v.document_id = d.id")
+	require.NoError(t, err)
+	require.False(t, handled)
+	require.Nil(t, getExpressionFailure(failureCtx))
+	joined, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{"lookup": map[string]interface{}{"original_id": "issue-o"}}}, []string{
+		"(d:PDDocument {id: $document_id})", "(v:PDVersion {id: $version_id})", "(o:PDOriginal {id: lookup.original_id})",
+	}, "v.document_id = d.id")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Len(t, joined, 1)
+	require.Equal(t, "original-bytes", joined[0]["o"].(*storage.Node).Properties["content_hash"])
+}
+
 func TestIssue908SetScalarTargetRejectsBeforeWrites(t *testing.T) {
 	for _, value := range []interface{}{int64(1), 1.5, true, "scalar", []interface{}{int64(1)}, map[string]interface{}{"v": int64(1)}} {
 		t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
