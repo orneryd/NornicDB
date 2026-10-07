@@ -34,7 +34,7 @@ func TestWhereLabelDisjunction(t *testing.T) {
 		{"NOT n:Code", nil},               // negation
 		{"n:Code|", nil},                  // malformed
 		{"n:Code AND n:Document", nil},    // conjunction
-		{"(n:Code) OR (n:Document)", nil}, // not recognised: no seek, still correct
+		{"(n:Code) OR (n:Document)", []string{"Code", "Document"}}, // each side in parentheses
 	} {
 		labels, ok := whereLabelDisjunction("n", tc.term)
 		require.Equal(t, tc.labels != nil, ok, tc.term)
