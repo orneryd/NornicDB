@@ -1129,25 +1129,29 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
             # data from other pipelines are never touched.
             stale_ids, stale_edges = [], []
             if sync and labels:
+                # Every lookup below names its label, so it uses the (id) and (repo) indexes. An unlabelled
+                # `MATCH (n {id: ...})` is a scan of every node per row, which turned deleting a few
+                # thousand stale edges into minutes.
                 managed_labels = sorted(set(labels.values()))
-                label_clause = " OR ".join(f"n:{label}" for label in managed_labels)
-                existing_ids = {
-                    record.get("id") for record in run_retry(
-                        f"MATCH (n) WHERE n.repo = $repo AND n.id IS NOT NULL "
-                        f"AND n.props_hash IS NOT NULL AND ({label_clause}) RETURN n.id AS id",
-                        repo=repo,
-                    )
-                }
-                stale_ids = [node_id for node_id in existing_ids if node_id not in labels]
-                existing_edges = {
-                    (record.get("src"), record.get("tgt"), record.get("rel"))
+                existing_labels = {}  # id -> db label, for ids the importer wrote in this repo
+                for label in managed_labels:
                     for record in run_retry(
-                        "MATCH (a)-[r]->(b) WHERE a.repo = $repo AND b.repo = $repo "
-                        "AND a.props_hash IS NOT NULL AND b.props_hash IS NOT NULL "
-                        "RETURN a.id AS src, b.id AS tgt, type(r) AS rel",
+                        f"MATCH (n:{label} {{repo: $repo}}) WHERE n.id IS NOT NULL AND n.props_hash IS NOT NULL "
+                        f"RETURN n.id AS id",
                         repo=repo,
-                    )
-                }
+                    ):
+                        existing_labels[record.get("id")] = label
+                existing_ids = set(existing_labels)
+                stale_ids = [node_id for node_id in existing_ids if node_id not in labels]
+                existing_edges = set()
+                for label in managed_labels:
+                    for record in run_retry(
+                        f"MATCH (a:{label} {{repo: $repo}})-[r]->(b) WHERE b.repo = $repo "
+                        f"AND a.props_hash IS NOT NULL AND b.props_hash IS NOT NULL "
+                        f"RETURN a.id AS src, b.id AS tgt, type(r) AS rel",
+                        repo=repo,
+                    ):
+                        existing_edges.add((record.get("src"), record.get("tgt"), record.get("rel")))
                 stale_edges = [edge for edge in existing_edges if edge not in incoming_edges]
 
                 # A truncated or failed extraction would otherwise delete most
@@ -1164,20 +1168,35 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                             f"extraction was complete; rerun with --max-delete-fraction 1 to accept it."
                         )
 
-                for batch in (stale_edges[i:i + batch_size] for i in range(0, len(stale_edges), batch_size)):
-                    run_retry(
-                        "UNWIND $rows AS row "
-                        "MATCH (a {id: row.src, repo: $repo})-[r]->(b {id: row.tgt, repo: $repo}) "
-                        "WHERE type(r) = row.rel DELETE r",
-                        rows=[{"src": src, "tgt": tgt, "rel": rel} for src, tgt, rel in batch],
-                        repo=repo,
-                    ).consume()
-                for batch in (stale_ids[i:i + batch_size] for i in range(0, len(stale_ids), batch_size)):
-                    run_retry(
-                        f"UNWIND $ids AS id MATCH (n) WHERE n.repo = $repo AND n.id = id "
-                        f"AND n.props_hash IS NOT NULL AND ({label_clause}) DETACH DELETE n",
-                        ids=batch, repo=repo,
-                    ).consume()
+                # An edge touching a stale node goes with the node (DETACH DELETE); the rest are deleted
+                # per (source label, target label, relation), the same grouping they were written in.
+                stale_id_set = set(stale_ids)
+                by_shape = defaultdict(list)
+                for src, tgt, rel in stale_edges:
+                    if src in stale_id_set or tgt in stale_id_set:
+                        continue
+                    by_shape[(existing_labels[src], existing_labels.get(tgt, labels.get(tgt)), rel)].append(
+                        {"src": src, "tgt": tgt})
+                for (source_label, target_label, rel), rows in by_shape.items():
+                    if target_label is None:
+                        continue
+                    for batch in (rows[i:i + batch_size] for i in range(0, len(rows), batch_size)):
+                        run_retry(
+                            f"UNWIND $rows AS row "
+                            f"MATCH (a:{source_label} {{id: row.src, repo: $repo}})-[r:{rel}]->"
+                            f"(b:{target_label} {{id: row.tgt, repo: $repo}}) DELETE r",
+                            rows=batch, repo=repo,
+                        ).consume()
+                stale_by_label = defaultdict(list)
+                for node_id in stale_ids:
+                    stale_by_label[existing_labels[node_id]].append(node_id)
+                for label, ids in stale_by_label.items():
+                    for batch in (ids[i:i + batch_size] for i in range(0, len(ids), batch_size)):
+                        run_retry(
+                            f"UNWIND $ids AS id MATCH (n:{label} {{id: id, repo: $repo}}) "
+                            f"WHERE n.props_hash IS NOT NULL DETACH DELETE n",
+                            ids=batch, repo=repo,
+                        ).consume()
                 if stale_ids or stale_edges:
                     print(
                         f"Sync: removed {len(stale_ids)} stale nodes and "

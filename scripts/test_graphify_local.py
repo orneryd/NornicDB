@@ -170,7 +170,8 @@ class GraphifyLocalTest(unittest.TestCase):
         driver.connection.responses = [
             ("RETURN n.id AS id", [{"id": "a"}, {"id": "b"}, {"id": "stale-node"}]),
             ("RETURN a.id AS src", [{"src": "a", "tgt": "b", "rel": "CALLS"},
-                                    {"src": "a", "tgt": "stale-node", "rel": "CALLS"}]),
+                                    {"src": "a", "tgt": "stale-node", "rel": "CALLS"},
+                                    {"src": "b", "tgt": "a", "rel": "CALLS"}]),
         ]
         ingest(graph, driver)
         queries = driver.connection.queries
@@ -179,13 +180,17 @@ class GraphifyLocalTest(unittest.TestCase):
         self.assertEqual(delete_nodes[0][1]["repo"], REPO)
         # hand-made nodes (no props_hash) and other repos are never candidates
         self.assertIn("n.props_hash IS NOT NULL", delete_nodes[0][0])
-        fetch_ids = [q for q, _ in queries if "RETURN n.id AS id" in q][0]
-        self.assertIn("n.repo = $repo", fetch_ids)
+        # every lookup names its label, so it uses the id/repo indexes instead of scanning all nodes
+        self.assertIn("MATCH (n:Code {id: id, repo: $repo})", delete_nodes[0][0])
+        fetch_ids = [q for q, _ in queries if "MATCH (n:Code {repo: $repo})" in q and "RETURN n.id AS id" in q][0]
         self.assertIn("n.props_hash IS NOT NULL", fetch_ids)
-        delete_edges = [params for q, params in queries if "MATCH (a {id: row.src, repo: $repo})-[r]->(b {id: row.tgt, repo: $repo})" in q]
-        self.assertEqual([p["rows"] for p in delete_edges], [[{"src": "a", "tgt": "stale-node", "rel": "CALLS"}]])
+        delete_edges = [(q, params) for q, params in queries
+                        if "MATCH (a:Code {id: row.src, repo: $repo})-[r:CALLS]->(b:Code {id: row.tgt, repo: $repo})" in q]
+        # b->a is stale; a->stale-node goes with its node (DETACH DELETE) and is not deleted separately
+        self.assertEqual([params["rows"] for _, params in delete_edges], [[{"src": "b", "tgt": "a"}]])
         # the sync's own fetch (the last one) is restricted to nodes this importer wrote
         fetch_edges = [q for q, _ in queries if "RETURN a.id AS src, b.id AS tgt, type(r) AS rel" in q][-1]
+        self.assertIn("MATCH (a:Code {repo: $repo})-[r]->(b)", fetch_edges)
         self.assertIn("a.props_hash IS NOT NULL AND b.props_hash IS NOT NULL", fetch_edges)
 
     def test_sync_refuses_a_mass_delete_before_deleting_anything(self):
