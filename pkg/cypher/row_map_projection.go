@@ -3,26 +3,53 @@ package cypher
 import (
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
-	open := strings.Index(expression, " {")
-	if open <= 0 || !strings.HasSuffix(strings.TrimSpace(expression), "}") {
-		return nil, false, false, nil
-	}
-	baseExpression := strings.TrimSpace(expression[:open])
-	// Cypher map projection starts from a bound variable (`node {.*}` or
-	// `node {.name}`). Requiring that grammar here prevents nested map
-	// literals and map comparisons from being mistaken for projections merely
-	// because they contain a space followed by an opening brace.
-	if !isValidIdentifier(baseExpression) && !isBacktickQuotedName(baseExpression) {
-		return nil, false, false, nil
-	}
+// Map projection (#907): variable{.key, .*, key: expression, variable}, the
+// brace with or without space after the variable, as Neo4j 5.26 evaluates it:
+//
+//   - a node, relationship or map projects its properties;
+//   - a temporal value or duration projects its fields (d{.year}); an
+//     unknown field, or .*, is a TypeError;
+//   - null projects to null;
+//   - any other value is a TypeError ("Type mismatch: expected a map but was
+//     Long(1)"); statically known ones are rejected before the statement runs.
+//
+// Items apply in order, a later one replacing an earlier key: {a: 1}{.a,
+// a: 2} is {a: 2}.
+
+// rowMapProjectionSplit splits variable{items} into the variable and the item
+// list. ok is false when expression is not a map projection: its brace
+// doesn't close it, or what precedes the brace isn't a variable (a map
+// literal, a subquery such as COUNT { … }).
+func rowMapProjectionSplit(expression string) (variable, items string, ok bool) {
 	trimmed := strings.TrimSpace(expression)
-	open = strings.Index(trimmed, " {")
-	inner := strings.TrimSpace(trimmed[open+2 : len(trimmed)-1])
-	base, resolved, err := e.evaluateRowValue(baseExpression, values)
+	if !strings.HasSuffix(trimmed, "}") {
+		return "", "", false
+	}
+	open := strings.IndexByte(trimmed, '{')
+	if open <= 0 || findMatchingDelimiter(trimmed, open, '{', '}') != len(trimmed)-1 {
+		return "", "", false
+	}
+	variable = strings.TrimSpace(trimmed[:open])
+	if !isValidIdentifier(variable) && !isBacktickQuotedName(variable) {
+		return "", "", false
+	}
+	switch upperASCII(variable) {
+	case "EXISTS", "COUNT", "COLLECT", "CALL":
+		return "", "", false
+	}
+	return variable, strings.TrimSpace(trimmed[open+1 : len(trimmed)-1]), true
+}
+
+func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
+	variable, inner, projection := rowMapProjectionSplit(expression)
+	if !projection {
+		return nil, false, false, nil
+	}
+	base, resolved, err := e.evaluateRowValue(variable, values)
 	if err != nil {
 		return nil, true, false, err
 	}
@@ -32,10 +59,13 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 	if base == nil {
 		return nil, true, true, nil
 	}
-
-	properties, valid := rowProjectionProperties(base)
-	if !valid {
-		return nil, true, false, nil
+	temporal := isRuntimeTemporal(base) || isRuntimeDuration(base)
+	properties, hasProperties := rowProjectionProperties(base)
+	if !hasProperties && !temporal {
+		if _, isPath := cypherPathElements(base); isPath {
+			return nil, true, false, runtimeTypeError("Type mismatch: expected a map but was Path")
+		}
+		return nil, true, false, propertyAccessTypeError(base)
 	}
 	result := make(map[string]interface{})
 	if inner == "" {
@@ -45,6 +75,10 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 		item := strings.TrimSpace(rawItem)
 		switch {
 		case item == ".*":
+			if temporal {
+				return nil, true, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+					localization.CypherCoreMapProjectionCoercion(formatCypherValueString(base)))
+			}
 			for name, value := range properties {
 				result[name] = value
 			}
@@ -53,7 +87,15 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			if !selector {
 				return nil, true, false, nil
 			}
-			result[name] = properties[name]
+			if !temporal {
+				result[name] = properties[name]
+				continue
+			}
+			value, _, supported := evaluateTemporalProperty(base, name)
+			if !supported {
+				return nil, true, false, temporalNoSuchFieldError(name)
+			}
+			result[name] = value
 		default:
 			separator := findTopLevelMapKeyValueSeparator(item)
 			if separator > 0 {
@@ -97,6 +139,8 @@ func mapProjectionPropertySelector(item string) (string, bool) {
 	return "", false
 }
 
+// rowProjectionProperties returns the properties of a node, relationship or
+// map; ok is false for any other value.
 func rowProjectionProperties(value interface{}) (map[string]interface{}, bool) {
 	switch typed := value.(type) {
 	case *storage.Node:
@@ -109,7 +153,9 @@ func rowProjectionProperties(value interface{}) (map[string]interface{}, bool) {
 			return nil, false
 		}
 		return typed.Properties, true
-	default:
-		return toStringAnyMap(value)
 	}
+	if _, isPath := cypherPathElements(value); isPath {
+		return nil, false
+	}
+	return toStringAnyMap(value)
 }

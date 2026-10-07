@@ -126,6 +126,14 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return nil
 	}
 
+	if key, isKey := index.(string); isKey && (isRuntimeTemporal(base) || isRuntimeDuration(base)) {
+		// A temporal value's or duration's fields read like properties:
+		// d['year'] is d.year, and a field it doesn't have is a TypeError.
+		if _, _, supported := evaluateTemporalProperty(base, key); !supported {
+			return temporalNoSuchFieldError(key)
+		}
+		return nil
+	}
 	baseType := reflect.TypeOf(base)
 	if baseType == nil || (baseType.Kind() != reflect.Slice && baseType.Kind() != reflect.Array) {
 		return subscriptReceiverError(base, index)

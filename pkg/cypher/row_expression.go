@@ -680,6 +680,13 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		}
 		return evaluateTypePredicate(value, negated, spec), true, nil
 	}
+	if operand, negated, form, isNormalization := splitNormalizationPredicate(expr); isNormalization {
+		value, ok, err := e.evaluateRowValue(operand, values)
+		if err != nil || !ok {
+			return nil, false, err
+		}
+		return evaluateNormalizationPredicate(value, negated, form), true, nil
+	}
 	for _, predicate := range []struct {
 		suffix  string
 		notNull bool
@@ -780,6 +787,14 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			value, ok := rowPropertyValue(base, key)
 			return value, ok, nil
 		}
+		if key, isKey := indexValue.(string); isKey && (isRuntimeTemporal(base) || isRuntimeDuration(base)) {
+			// d['year'] reads the field d.year does.
+			value, _, supported := evaluateTemporalProperty(base, key)
+			if !supported {
+				return nil, false, temporalNoSuchFieldError(key)
+			}
+			return value, true, nil
+		}
 		index, ok := rowSubscriptIndex(indexValue)
 		if !ok {
 			return nil, false, nil
@@ -864,7 +879,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			return nil, false, nil
 		}
 		if expr[0] == '+' {
-			if _, numeric := toFloat64(value); !numeric && value != nil {
+			// Unary plus returns a number, a temporal value, a duration or
+			// null unchanged, as in Neo4j.
+			if _, numeric := toFloat64(value); !numeric && value != nil && !isRuntimeTemporal(value) && !isRuntimeDuration(value) {
 				return nil, false, nil
 			}
 			return value, true, nil
@@ -993,6 +1010,9 @@ func rowArithmeticSignIsUnary(expr string, index int) bool {
 	return strings.ContainsRune("([{,:+-*/%^=<>|", rune(expr[previous]))
 }
 
+// compareCypherOrderedValues orders two values for the comparison operators
+// (comparability): comparable is false for values that have no order between
+// them (different kinds, durations, points, null inside a list or map).
 func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 	if comparison, temporal := compareTemporalOrdering(left, right); temporal {
 		return comparison, true
@@ -1056,18 +1076,10 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 			sharedLength = len(rightList)
 		}
 		for index := 0; index < sharedLength; index++ {
-			equal := cypherEquality(leftList[index], rightList[index])
-			if equal == nil {
-				return 0, false
+			comparison, comparable := compareCypherComparableValues(leftList[index], rightList[index])
+			if !comparable || comparison != 0 {
+				return comparison, comparable
 			}
-			if equal.(bool) {
-				continue
-			}
-			comparison, comparable := compareCypherOrderedValues(leftList[index], rightList[index])
-			if !comparable {
-				return 0, false
-			}
-			return comparison, true
 		}
 		switch {
 		case len(leftList) < len(rightList):
@@ -1077,6 +1089,10 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 		default:
 			return 0, true
 		}
+	}
+	// Maps, nodes, relationships and paths, after the scalar kinds above.
+	if comparison, comparable, structured := compareCypherStructuredValues(left, right, compareCypherComparableValues); structured {
+		return comparison, comparable
 	}
 	return 0, false
 }
@@ -1091,32 +1107,17 @@ func compareCypherPredicateValue(left, right interface{}, operator string) inter
 		matched, _ := cypherRegexMatch(left, right)
 		return matched
 	}
-	if leftNode, ok := left.(*storage.Node); ok {
+	// A node or relationship equals only itself; it is unequal to any other
+	// value, and ordered only against its own kind (below).
+	if operator == "=" || operator == "<>" || operator == "!=" {
+		leftNode, leftIsNode := left.(*storage.Node)
 		rightNode, rightIsNode := right.(*storage.Node)
-		if !rightIsNode || rightNode == nil {
-			return false
-		}
-		switch operator {
-		case "=":
-			return leftNode.ID == rightNode.ID
-		case "<>", "!=":
-			return leftNode.ID != rightNode.ID
-		default:
-			return nil
-		}
-	}
-	if leftEdge, ok := left.(*storage.Edge); ok {
+		leftEdge, leftIsEdge := left.(*storage.Edge)
 		rightEdge, rightIsEdge := right.(*storage.Edge)
-		if !rightIsEdge || rightEdge == nil {
-			return false
-		}
-		switch operator {
-		case "=":
-			return leftEdge.ID == rightEdge.ID
-		case "<>", "!=":
-			return leftEdge.ID != rightEdge.ID
-		default:
-			return nil
+		if leftIsNode || rightIsNode || leftIsEdge || rightIsEdge {
+			equal := (leftIsNode && rightIsNode && leftNode != nil && rightNode != nil && leftNode.ID == rightNode.ID) ||
+				(leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && leftEdge.ID == rightEdge.ID)
+			return equal == (operator == "=")
 		}
 	}
 	if operator != "=" && operator != "<>" && operator != "!=" {
@@ -1160,6 +1161,13 @@ func compareCypherPredicateValue(left, right interface{}, operator string) inter
 	}
 	comparison, comparable := compareCypherOrderedValues(left, right)
 	if !comparable {
+		// Values with no order between them (two durations, two points) are
+		// still <= and >= when equal, as Neo4j reads a <= b as a < b OR a = b.
+		if operator == "<=" || operator == ">=" {
+			if equal, known := cypherEquality(left, right).(bool); known && equal {
+				return true
+			}
+		}
 		return nil
 	}
 	switch operator {
@@ -1527,6 +1535,9 @@ func rowPropertyChainTypeError(value interface{}, chain string) error {
 		if !ok {
 			if _, isPoint, err := evaluatePointProperty(value, property); isPoint && err != nil {
 				return err
+			}
+			if isRuntimeTemporal(value) || isRuntimeDuration(value) {
+				return temporalNoSuchFieldError(property)
 			}
 			return propertyAccessTypeError(value)
 		}
@@ -1972,6 +1983,11 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		}
 		value, ok := e.rowPredicateOperand(ctx, operand, values)
 		return ok && evaluateTypePredicate(value, negated, spec)
+	}
+	if operand, negated, form, isNormalization := splitNormalizationPredicate(expression); isNormalization {
+		value, ok := e.rowPredicateOperand(ctx, operand, values)
+		matched, known := evaluateNormalizationPredicate(value, negated, form).(bool)
+		return ok && known && matched
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
 		if hasSuffixFoldASCII(expression, operator) {

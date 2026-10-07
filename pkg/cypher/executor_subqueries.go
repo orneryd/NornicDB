@@ -2267,6 +2267,9 @@ func compareValuesForSort(a, b interface{}) int {
 		return 1
 	}
 
+	if comparison, _, structured := compareCypherStructuredValues(a, b, compareSortableValues); structured {
+		return comparison
+	}
 	sa := fmt.Sprintf("%v", a)
 	sb := fmt.Sprintf("%v", b)
 	if sa < sb {

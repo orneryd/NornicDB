@@ -81,6 +81,8 @@ const (
 	MessageCypherCoreTemporalProcedureCallSignature      MessageID = "cyphercore.temporal_procedure_call_signature"
 	MessageCypherCoreTemporalUnsupportedUnit             MessageID = "cyphercore.temporal_unsupported_unit"
 	MessageCypherCoreTemporalNoSuchField                 MessageID = "cyphercore.temporal_no_such_field"
+	MessageCypherCoreMapProjectionCoercion               MessageID = "cyphercore.map_projection_coercion"
+	MessageCypherCoreMapProjectionReceiver               MessageID = "cyphercore.map_projection_receiver"
 	MessageCypherCoreTemporalInvalidNanosecond           MessageID = "cyphercore.temporal_invalid_nanosecond"
 	MessageCypherCoreTemporalMissingComponent            MessageID = "cyphercore.temporal_missing_component"
 	MessageCypherCorePercentileOutOfRange                MessageID = "cyphercore.percentile_out_of_range"
@@ -550,4 +552,17 @@ func CypherCoreApocPathConfigString(key string, received string) Message {
 // CypherCoreApocPathLimit is an apoc.path limit below -1 (no limit).
 func CypherCoreApocPathLimit(limit int) Message {
 	return cypherCoreMessage(MessageCypherCoreApocPathLimit, "limit must be -1 (no limit) or at least 0, but was "+strconv.Itoa(limit), map[string]any{"Limit": limit})
+}
+
+// CypherCoreMapProjectionCoercion is a map projection with .* of a value
+// that has fields but no properties, a temporal value or duration
+// (d{.*}).
+func CypherCoreMapProjectionCoercion(value string) Message {
+	return cypherCoreMessage(MessageCypherCoreMapProjectionCoercion, "Can't coerce `"+value+"` to Map", map[string]any{"Value": value})
+}
+
+// CypherCoreMapProjectionReceiver is a map projection whose receiver isn't a
+// variable (3{.a}, n.prop{.a}, {a: 1}{.a}).
+func CypherCoreMapProjectionReceiver(receiver string) Message {
+	return cypherCoreMessage(MessageCypherCoreMapProjectionReceiver, "Invalid input '{': only a variable can be projected, not "+receiver, map[string]any{"Receiver": receiver})
 }

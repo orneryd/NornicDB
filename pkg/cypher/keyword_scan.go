@@ -353,8 +353,10 @@ func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
 		if j >= len(s) {
 			return true
 		}
+		// A sign after it is a unary operator (RETURN +3, RETURN -3), as
+		// a statement can only start with a clause.
 		switch s[j] {
-		case ',', '+', '/', '%', '^', '=', '<', '>', ')':
+		case ',', '/', '%', '^', '=', '<', '>', ')':
 			return true
 		case '.':
 			return j+1 < len(s) && !isDigitByte(s[j+1]) // RETURN .5 is a number

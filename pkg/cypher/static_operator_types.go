@@ -247,6 +247,12 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 	if expression == "" {
 		return staticOperand{}, nil
 	}
+	if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
+		if _, _, projection := staticMapProjectionSplit(expression); !projection {
+			return staticOperand{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
+				localization.CypherCoreMapProjectionReceiver(receiver))
+		}
+	}
 	if _, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
 		return checker.checkAtom(expression)
 	}
@@ -606,6 +612,87 @@ func staticPatternExpressionType(expression string) staticOperand {
 	return staticOperand{}
 }
 
+// staticMapProjectionReceiver returns what precedes the brace of an
+// expression that ends in a braced item list (receiver{…}); projected is false
+// when it doesn't. Neo4j projects only a variable: any other receiver (a
+// literal, a call, n.prop, a map literal) is a SyntaxError.
+func staticMapProjectionReceiver(expression string) (receiver string, projected bool) {
+	if !strings.HasSuffix(expression, "}") {
+		return "", false
+	}
+	for open := 0; open < len(expression); open++ {
+		switch expression[open] {
+		case '\'', '"':
+			open = skipQuotedSemanticText(expression, open) - 1
+		case '(', '[':
+			opening, closingDelimiter := '(', ')'
+			if expression[open] == '[' {
+				opening, closingDelimiter = '[', ']'
+			}
+			closing := findMatchingDelimiter(expression, open, opening, closingDelimiter)
+			if closing < 0 {
+				return "", false
+			}
+			open = closing
+		case '{':
+			if findMatchingDelimiter(expression, open, '{', '}') == len(expression)-1 {
+				receiver = strings.TrimSpace(expression[:open])
+				if !endsWithOperand(receiver) {
+					// After an operator, a comma or a keyword ({a: 1} + x,
+					// x = {a: 1}, THEN {a: 1}, and EXISTS / COUNT / COLLECT
+					// { … } subqueries) the brace opens a map literal or a
+					// subquery.
+					return "", false
+				}
+				return receiver, true
+			}
+			closing := findMatchingDelimiter(expression, open, '{', '}')
+			if closing < 0 {
+				return "", false
+			}
+			open = closing
+		}
+	}
+	return "", false
+}
+
+// staticProjectable reports whether a value of a static type, or of one of
+// its choices ("Map, Node or Relationship"), can be map-projected: a map,
+// node, relationship, null, temporal value or duration.
+func staticProjectable(typeName string) bool {
+	for _, choice := range staticTypeChoices(typeName) {
+		operand := knownOperand(strings.TrimSpace(choice))
+		switch {
+		case operand.kind == "Map", operand.kind == "Node", operand.kind == "Relationship", operand.kind == "Null",
+			operand.temporal(), operand.duration():
+			return true
+		}
+	}
+	return false
+}
+
+// endsWithOperand reports whether text ends with an operand: a literal, a
+// closing bracket, or a name that isn't a keyword (true, false and null are
+// operands).
+func endsWithOperand(text string) bool {
+	if text == "" {
+		return false
+	}
+	last := text[len(text)-1]
+	switch {
+	case last == '\'' || last == '"' || last == '`' || last == ')' || last == ']' || last == '}':
+		return true
+	case !isIdentifierPart(last):
+		return false
+	}
+	start := len(text)
+	for start > 0 && isIdentifierPart(text[start-1]) {
+		start--
+	}
+	word := text[start:]
+	return !isCypherKeyword(word) || isBooleanOrNullLiteral(word)
+}
+
 // staticMapProjectionSplit splits a map projection (variable{.a, k: v})
 // into its variable and item list.
 func staticMapProjectionSplit(expression string) (variable, items string, projection bool) {
@@ -662,8 +749,10 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return knownOperand("Map"), nil
 	}
 	if variable, items, projection := staticMapProjectionSplit(expression); projection {
-		if receiver := checker.scope.typeOf(variable); receiver != "" && receiver != "Map" && receiver != "Node" && receiver != "Relationship" && receiver != "Null" {
-			return staticOperand{}, operandMismatch(knownOperand(receiver), "Map, Node or Relationship")
+		// A temporal value or duration projects its fields; reading one it
+		// doesn't have is a runtime error, as for d.field.
+		if receiver := knownOperand(checker.scope.typeOf(variable)); receiver.kind != "" && !staticProjectable(receiver.kind) {
+			return staticOperand{}, operandMismatch(receiver, "Map, Node or Relationship")
 		}
 		for _, item := range splitTopLevelComma(items) {
 			if separator := findTopLevelMapKeyValueSeparator(item); separator > 0 {
@@ -757,7 +846,7 @@ func mayContainArithmetic(text string) bool {
 // are type-checked: an operator, subscript or property access that can reject
 // an operand's static type needs one of these characters or keywords.
 func mayNeedStaticTypeCheck(text string) bool {
-	if strings.ContainsAny(text, "+-*/%^[.~") {
+	if strings.ContainsAny(text, "+-*/%^[.~{") {
 		return true
 	}
 	return containsFold(text, "AND") || containsFold(text, "OR") || containsFold(text, "NOT") ||

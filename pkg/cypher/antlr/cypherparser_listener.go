@@ -214,6 +214,9 @@ type CypherParserListener interface {
 	// EnterAtomicExpression is called when entering the atomicExpression production.
 	EnterAtomicExpression(c *AtomicExpressionContext)
 
+	// EnterNormalizationPredicate is called when entering the normalizationPredicate production.
+	EnterNormalizationPredicate(c *NormalizationPredicateContext)
+
 	// EnterLabelPredicate is called when entering the labelPredicate production.
 	EnterLabelPredicate(c *LabelPredicateContext)
 
@@ -576,6 +579,9 @@ type CypherParserListener interface {
 
 	// ExitAtomicExpression is called when exiting the atomicExpression production.
 	ExitAtomicExpression(c *AtomicExpressionContext)
+
+	// ExitNormalizationPredicate is called when exiting the normalizationPredicate production.
+	ExitNormalizationPredicate(c *NormalizationPredicateContext)
 
 	// ExitLabelPredicate is called when exiting the labelPredicate production.
 	ExitLabelPredicate(c *LabelPredicateContext)
