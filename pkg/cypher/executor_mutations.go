@@ -244,7 +244,7 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 	var err error
 	usedIndex := false
 	if wherePart != "" {
-		if candidates, used, idxErr := e.tryCollectNodesFromIDInParam(nodePat, wherePart, params); idxErr == nil && used {
+		if candidates, used, idxErr := e.tryCollectNodesFromIDIn(ctx, nodePat, wherePart, params); idxErr == nil && used {
 			nodes = candidates
 			usedIndex = true
 		}

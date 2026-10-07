@@ -839,22 +839,28 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	return nodes, true, nil
 }
 
-// tryCollectNodesFromIDInParam attempts to satisfy simple id/elementId IN-list predicates:
+// tryCollectNodesFromIDIn attempts to satisfy simple id/elementId IN-list predicates:
 //
 //	id(<var>) IN $param
 //	elementId(<var>) IN $param
+//	id(<var>) IN ['id-1', $other, …]
 //
-// where $param is a list from query parameters. This provides direct node seeks
-// for batched correlated lookups and avoids full scans.
-func (e *StorageExecutor) tryCollectNodesFromIDInParam(
+// The list is a query parameter, or any constant list: a literal, a list of
+// parameters, or a parameter the executor already substituted into the query
+// text (#940). A missing or non-list $param selects nothing, as before; a
+// constant that isn't a list leaves the predicate to the evaluator. This
+// provides direct node seeks for batched correlated lookups and avoids full
+// scans.
+func (e *StorageExecutor) tryCollectNodesFromIDIn(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
-	if params == nil || strings.TrimSpace(whereClause) == "" {
+	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	if clause == "" {
 		return nil, false, nil
 	}
-	clause := strings.TrimSpace(whereClause)
 	upper := upperASCII(clause)
 	inIdx := strings.Index(upper, " IN ")
 	if inIdx <= 0 {
@@ -867,11 +873,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDInParam(
 
 	left := strings.TrimSpace(clause[:inIdx])
 	right := strings.TrimSpace(clause[inIdx+4:])
-	if left == "" || right == "" || !strings.HasPrefix(right, "$") {
-		return nil, false, nil
-	}
-	paramName := strings.TrimSpace(strings.TrimPrefix(right, "$"))
-	if paramName == "" {
+	if left == "" || right == "" {
 		return nil, false, nil
 	}
 
@@ -892,13 +894,26 @@ func (e *StorageExecutor) tryCollectNodesFromIDInParam(
 		return nil, false, nil
 	}
 
-	raw, ok := params[paramName]
-	if !ok {
-		return []*storage.Node{}, true, nil
-	}
-	list := toAnySlice(raw)
-	if list == nil {
-		return []*storage.Node{}, true, nil
+	var list []interface{}
+	if paramName := strings.TrimPrefix(right, "$"); paramName != right && isValidIdentifier(paramName) {
+		if params == nil {
+			return nil, false, nil
+		}
+		raw, ok := params[paramName]
+		if !ok {
+			return []*storage.Node{}, true, nil
+		}
+		list = toAnySlice(raw)
+	} else {
+		value, constant := e.indexSeekConstant(ctx, right)
+		if !constant {
+			return nil, false, nil
+		}
+		if value != nil {
+			if list = toAnySlice(value); list == nil {
+				return nil, false, nil
+			}
+		}
 	}
 	if len(list) == 0 {
 		return []*storage.Node{}, true, nil
@@ -2064,14 +2079,23 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 	if nodes, used, err := e.tryCollectNodesFromIDEqualityCompound(ctx, nodePattern, whereClause, params); err != nil || used {
 		return nodes, false, used, err
 	}
-	// The id IN $list seek only applies when that predicate is the whole
-	// WHERE, and returns exactly the nodes it selects: the caller need not
+	// When an id IN list predicate is the whole WHERE, its seek returns
+	// exactly the nodes it selects: the caller need not
 	// evaluate the WHERE again on each of them. Evaluating it per row checked
 	// every node against the whole list: CALL { … } IN TRANSACTIONS batches,
 	// which select their rows by id(n) IN $ids, were quadratic in the batch
 	// size (#703).
-	if nodes, used, err := e.tryCollectNodesFromIDInParam(nodePattern, whereClause, params); err != nil || used {
+	if nodes, used, err := e.tryCollectNodesFromIDIn(ctx, nodePattern, whereClause, params); err != nil || used {
 		return nodes, used, used, err
+	}
+	// An id IN list among AND conditions seeks the same way; the caller
+	// still evaluates the whole WHERE on the nodes it selects.
+	if findTopLevelKeyword(whereClause, " AND ") > 0 {
+		for _, conjunct := range splitTopLevelAndConjuncts(whereClause) {
+			if nodes, used, err := e.tryCollectNodesFromIDIn(ctx, nodePattern, conjunct, params); err != nil || used {
+				return nodes, false, used, err
+			}
+		}
 	}
 	// inList marks the plan that answers a WHERE that is exactly an IN list.
 	indexedPlans := []struct {
