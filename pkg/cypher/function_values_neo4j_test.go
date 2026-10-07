@@ -39,13 +39,13 @@ func TestAggregateValueTypes(t *testing.T) {
 		require.Contains(t, statusText(err), "Neo.ClientError.Statement.TypeError", query)
 	}
 	for query, want := range map[string]string{
-		"UNWIND [duration('P1D'), duration('P2D')] AS x RETURN sum(x) AS v":                                  "P3D",
-		"UNWIND [duration('P1D'), duration('P2D')] AS x RETURN avg(x) AS v":                                  "P1DT12H",
-		"UNWIND [duration('P1D'), duration('P1D'), duration('P2D')] AS x RETURN sum(DISTINCT x) AS v":        "P3D",
-		"UNWIND [duration('P1M'), duration('PT10H28M7S'), null] AS x RETURN avg(x) AS v":                     "P15DT10H28M36.5S",
-		"UNWIND [duration('PT1S'), duration('PT2S'), duration('PT4S')] AS x RETURN avg(x) AS v":              "PT2.333333333S",
-		"MATCH (n:AggDur) RETURN sum(n.v) AS v":                                                              "P3D",
-		"MATCH (n:AggDur) RETURN avg(n.v) AS v":                                                              "P1DT12H",
+		"UNWIND [duration('P1D'), duration('P2D')] AS x RETURN sum(x) AS v":                           "P3D",
+		"UNWIND [duration('P1D'), duration('P2D')] AS x RETURN avg(x) AS v":                           "P1DT12H",
+		"UNWIND [duration('P1D'), duration('P1D'), duration('P2D')] AS x RETURN sum(DISTINCT x) AS v": "P3D",
+		"UNWIND [duration('P1M'), duration('PT10H28M7S'), null] AS x RETURN avg(x) AS v":              "P15DT10H28M36.5S",
+		"UNWIND [duration('PT1S'), duration('PT2S'), duration('PT4S')] AS x RETURN avg(x) AS v":       "PT2.333333333S",
+		"MATCH (n:AggDur) RETURN sum(n.v) AS v":                                                       "P3D",
+		"MATCH (n:AggDur) RETURN avg(n.v) AS v":                                                       "P1DT12H",
 	} {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err, query)
@@ -67,16 +67,43 @@ func TestFunctionNullAndPointValues(t *testing.T) {
 	ctx := context.Background()
 	for query, want := range map[string]interface{}{
 		"RETURN isEmpty(null) AS v": nil,
-		"RETURN point.withinBBox(point({x: 1, y: 1}), 'x', point({x: 2, y: 2})) AS v":                                      nil,
-		"RETURN point.withinBBox(null, point({x: 0, y: 0}), point({x: 2, y: 2})) AS v":                                     nil,
-		"RETURN point.withinBBox({x: 1, y: 1}, point({x: 0, y: 0}), point({x: 2, y: 2})) AS v":                             nil,
-		"RETURN point.withinBBox(point({x: 1, y: 1}), point({longitude: 0, latitude: 0}), point({x: 2, y: 2})) AS v":       nil,
-		"RETURN point.withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}), point({x: 2, y: 2})) AS v":                      true,
-		"RETURN point.withinBBox(point({x: 3, y: 1}), point({x: 0, y: 0}), point({x: 2, y: 2})) AS v":                      false,
+		"RETURN point.withinBBox(point({x: 1, y: 1}), 'x', point({x: 2, y: 2})) AS v":                                              nil,
+		"RETURN point.withinBBox(null, point({x: 0, y: 0}), point({x: 2, y: 2})) AS v":                                             nil,
+		"RETURN point.withinBBox({x: 1, y: 1}, point({x: 0, y: 0}), point({x: 2, y: 2})) AS v":                                     nil,
+		"RETURN point.withinBBox(point({x: 1, y: 1}), point({longitude: 0, latitude: 0}), point({x: 2, y: 2})) AS v":               nil,
+		"RETURN point.withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}), point({x: 2, y: 2})) AS v":                              true,
+		"RETURN point.withinBBox(point({x: 3, y: 1}), point({x: 0, y: 0}), point({x: 2, y: 2})) AS v":                              false,
 		"RETURN [rtrim('xx', 'x'), rtrim('ab', 'ab'), rtrim('', 'x'), rtrim('éé', 'é'), rtrim('xax', 'x'), ltrim('xx', 'x')] AS v": []interface{}{"x", "a", "", "", "xa", ""},
 	} {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
+}
+
+// TestTrimSpecificationForms pins trim(specification, [character,] original),
+// the forms trim's FROM syntax stands for: the specification is matched
+// exactly ('leading' trims both ends), null in gives null out, a
+// specification that isn't a string is a TypeError and a character that
+// isn't one character long an ArgumentError, as in Neo4j.
+func TestTrimSpecificationForms(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	result, err := exec.Execute(ctx, "RETURN trim('LEADING', 'xxaxx') AS a, trim('trailing', 'x', 'xxaxx') AS b, trim('BOTH', 'x', 'xxaxx') AS c, trim('other', '  a  ') AS d, trim('LEADING', 'x', 'xxaxx') AS e, trim('TRAILING', 'x', 'xxaxx') AS f, trim('Leading', ' xa ') AS g, trim('TRAILING', ' xa ') AS h", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"xxaxx", "a", "a", "a", "axx", "xxa", "xa", " xa"}}, result.Rows)
+
+	result, err = exec.Execute(ctx, "RETURN trim('LEADING', null, 'xxa') AS v, trim('LEADING', 'x', null) AS w, trim('LEADING', null) AS x", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil, nil, nil}}, result.Rows)
+
+	for query, code := range map[string]string{
+		"WITH null AS s RETURN trim(s, 'abc') AS v": "Neo.ClientError.Statement.TypeError",
+		"RETURN trim('LEADING', 'xy', 'xxa') AS v":  "Neo.ClientError.Statement.ArgumentError",
+		"RETURN trim('LEADING', '', 'xxa') AS v":    "Neo.ClientError.Statement.ArgumentError",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		require.Contains(t, statusText(err), code, query)
 	}
 }
