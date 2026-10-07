@@ -495,6 +495,214 @@ function neo4jValueToPlain(v: unknown): unknown {
   return v;
 }
 
+interface TxGraphNode {
+  id?: string;
+  elementId: string;
+  labels?: string[];
+  properties?: Record<string, unknown>;
+}
+
+interface TxGraphRelationship {
+  id?: string;
+  elementId: string;
+  type?: string;
+  startNodeElementId?: string;
+  endNodeElementId?: string;
+  properties?: Record<string, unknown>;
+}
+
+interface TxGraph {
+  nodes?: TxGraphNode[];
+  relationships?: TxGraphRelationship[];
+}
+
+interface TxEntityMeta {
+  id?: unknown;
+  elementId: string;
+  type: "node" | "relationship";
+}
+
+interface TxResultRow {
+  row?: unknown[];
+  meta?: unknown[];
+  graph?: TxGraph;
+}
+
+interface TxStatementResult {
+  columns?: string[];
+  data?: TxResultRow[];
+}
+
+function isTxEntityMeta(m: unknown): m is TxEntityMeta {
+  if (!m || typeof m !== "object" || Array.isArray(m)) {
+    return false;
+  }
+  const meta = m as Record<string, unknown>;
+  return (
+    (meta.type === "node" || meta.type === "relationship") &&
+    typeof meta.elementId === "string"
+  );
+}
+
+function isTxPointMeta(m: unknown): boolean {
+  return (
+    !!m &&
+    typeof m === "object" &&
+    !Array.isArray(m) &&
+    (m as Record<string, unknown>).type === "point"
+  );
+}
+
+// txRowToBoltShape rebuilds a /tx/commit row (requested with
+// resultDataContents ["row","graph"]) into the shape neo4jValueToPlain
+// produces for Bolt results, so consumers can't tell the transports apart.
+//
+// The server emits each node/relationship in `row` as its bare property map
+// and appends one `meta` entry per leaf value, walking lists in order and map
+// values in key order: null for scalars, {id, elementId, type} for entities,
+// {type: "point"} for points, and a nested array for a path. Labels, types and
+// endpoints only exist in the per-row `graph`, keyed by elementId. Walking the
+// row in that same order keeps the meta cursor aligned. A map whose first
+// value is an entity also lines up with an entity meta entry, so an object is
+// only treated as the entity when its properties match the graph's copy.
+function txRowToBoltShape(
+  row: unknown[],
+  meta: unknown[] | undefined,
+  graph: TxGraph | undefined,
+): unknown[] {
+  const nodes = new Map<string, TxGraphNode>();
+  for (const node of graph?.nodes ?? []) {
+    nodes.set(node.elementId, node);
+  }
+  const relationships = new Map<string, TxGraphRelationship>();
+  for (const rel of graph?.relationships ?? []) {
+    relationships.set(rel.elementId, rel);
+  }
+
+  const toEntity = (
+    properties: Record<string, unknown>,
+    m: TxEntityMeta,
+  ): Record<string, unknown> => {
+    if (m.type === "node") {
+      const node = nodes.get(m.elementId);
+      return {
+        identity: m.id,
+        elementId: m.elementId,
+        labels: node?.labels ?? [],
+        properties,
+      };
+    }
+    const rel = relationships.get(m.elementId);
+    return {
+      identity: m.id,
+      elementId: m.elementId,
+      type: rel?.type ?? "",
+      properties,
+      startNodeElementId: rel?.startNodeElementId,
+      endNodeElementId: rel?.endNodeElementId,
+    };
+  };
+
+  const matchesGraphEntity = (value: unknown, m: TxEntityMeta): boolean => {
+    const known =
+      m.type === "node"
+        ? nodes.get(m.elementId)
+        : relationships.get(m.elementId);
+    if (!known) {
+      return true;
+    }
+    return JSON.stringify(known.properties ?? {}) === JSON.stringify(value);
+  };
+
+  const makeWalker = (metas: unknown[]) => {
+    let cursor = 0;
+    const walk = (value: unknown): unknown => {
+      const m = metas[cursor];
+      if (Array.isArray(value)) {
+        if (Array.isArray(m)) {
+          cursor++;
+          return toPath(value.map(makeWalker(m)));
+        }
+        return value.map(walk);
+      }
+      if (value !== null && typeof value === "object") {
+        if (isTxPointMeta(m)) {
+          cursor++;
+          return value;
+        }
+        if (isTxEntityMeta(m) && matchesGraphEntity(value, m)) {
+          cursor++;
+          return toEntity(value as Record<string, unknown>, m);
+        }
+        const out: Record<string, unknown> = {};
+        for (const [key, nested] of Object.entries(value)) {
+          out[key] = walk(nested);
+        }
+        return out;
+      }
+      cursor++;
+      return value;
+    };
+    return walk;
+  };
+
+  return row.map(makeWalker(Array.isArray(meta) ? meta : []));
+}
+
+// toPath mirrors the Bolt Path shape for a path the server sent as an
+// alternating node, relationship, node, ... list.
+function toPath(entities: unknown[]): Record<string, unknown> {
+  const segments: Array<Record<string, unknown>> = [];
+  for (let i = 1; i + 1 < entities.length; i += 2) {
+    segments.push({
+      start: entities[i - 1],
+      relationship: entities[i],
+      end: entities[i + 1],
+    });
+  }
+  return {
+    start: entities[0],
+    end: entities[entities.length - 1],
+    segments,
+    length: segments.length,
+  };
+}
+
+function boltErrorCode(err: unknown): string | undefined {
+  if (err && typeof err === "object" && "code" in err) {
+    const code = (err as { code?: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
+
+// Bolt's equivalent of HTTP 401/403 (Unauthorized, Forbidden, TokenExpired,
+// AuthorizationExpired, ...). Retrying over HTTP with the same credentials
+// can't succeed, so these are surfaced instead of triggering the fallback.
+function isBoltAuthError(err: unknown): boolean {
+  return boltErrorCode(err)?.startsWith("Neo.ClientError.Security.") ?? false;
+}
+
+// Errors the server reported over a working Bolt connection carry a Neo.*
+// status code; anything else (ServiceUnavailable, SessionExpired, WebSocket
+// failures) means the transport itself is unusable.
+function isBoltServerError(err: unknown): boolean {
+  return boltErrorCode(err)?.startsWith("Neo.") ?? false;
+}
+
+function boltErrorToResponse(err: unknown): CypherResponse {
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    results: [],
+    errors: [
+      {
+        code: boltErrorCode(err) ?? "Neo.ClientError.Statement.SyntaxError",
+        message,
+      },
+    ],
+  };
+}
+
 function asOptionalString(value: unknown): string | undefined {
   const out = asString(value);
   return out ? out : undefined;
@@ -539,6 +747,10 @@ class NornicDBClient {
   // never need to surface the JWT in JS — the UA does it for us.
   private boltDriver: Driver | null = null;
   private boltDriverPromise: Promise<Driver> | null = null;
+  // Set when discovery reports bolt_enabled=false or the Bolt WebSocket can't
+  // be opened (e.g. 7687 isn't reachable behind a proxy that only forwards the
+  // HTTP port). Queries then go through /tx/commit until the next logout.
+  private boltUnavailable = false;
 
   // Pre-decoded discovery payload, cached for the same lifetime as
   // defaultDatabase. Used to pick ws_direct vs wss_direct.
@@ -605,10 +817,94 @@ class NornicDBClient {
     return this.runCypherOverHttp(dbName, statement, parameters);
   }
 
+  // runCypher is the transport-agnostic entry point for UI queries: Bolt over
+  // WebSocket when the server offers it, otherwise the HTTP /tx/commit
+  // endpoint with results reshaped to match Bolt's. Any Bolt failure other
+  // than an auth error is retried over HTTP; transport-level failures also
+  // pin the client to HTTP until logout.
+  private async runCypher(
+    dbName: string,
+    statement: string,
+    parameters?: Record<string, unknown>,
+  ): Promise<CypherResponse> {
+    if (!this.boltUnavailable) {
+      await this.fetchDiscovery();
+      if (this.discovery?.bolt_enabled === false) {
+        this.boltUnavailable = true;
+      }
+    }
+    if (this.boltUnavailable) {
+      return this.runCypherOverHttpBoltShaped(dbName, statement, parameters);
+    }
+    try {
+      return await this.runCypherOverBolt(dbName, statement, parameters);
+    } catch (err) {
+      if (isBoltAuthError(err)) {
+        return boltErrorToResponse(err);
+      }
+      if (!isBoltServerError(err)) {
+        this.boltUnavailable = true;
+        await this.discardBoltDriver();
+      }
+      return this.runCypherOverHttpBoltShaped(dbName, statement, parameters);
+    }
+  }
+
+  // runCypherOverHttpBoltShaped runs a statement through /tx/commit and
+  // rebuilds nodes, relationships and paths into the Bolt result shape (see
+  // txRowToBoltShape), so pages behave the same on either transport.
+  private async runCypherOverHttpBoltShaped(
+    dbName: string,
+    statement: string,
+    parameters?: Record<string, unknown>,
+  ): Promise<CypherResponse> {
+    const res = await fetch(
+      joinBasePath(BASE_PATH, `/db/${encodeURIComponent(dbName)}/tx/commit`),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          statements: [
+            { statement, parameters, resultDataContents: ["row", "graph"] },
+          ],
+        }),
+      },
+    );
+    if (!res.ok) {
+      const message = await this.parseErrorMessage(
+        res,
+        "Cypher request failed",
+      );
+      return {
+        results: [],
+        errors: [{ code: "Neo.ClientError.Request.Invalid", message }],
+      };
+    }
+    const json = (await res.json()) as {
+      results?: TxStatementResult[];
+      errors?: CypherResponse["errors"];
+    };
+    const errors = json.errors ?? [];
+    if (errors.length > 0) {
+      return { results: [], errors };
+    }
+    return {
+      results: (json.results ?? []).map((result) => ({
+        columns: result.columns ?? [],
+        data: (result.data ?? []).map((entry) => ({
+          row: txRowToBoltShape(entry.row ?? [], entry.meta, entry.graph),
+          meta: [],
+        })),
+      })),
+    };
+  }
+
   // runCypherOverBolt drives a single Cypher statement through the
   // Bolt-over-WS driver and reshapes the result into the same
   // CypherResponse format the UI's parseCypherRows / display layer
-  // already consumes. This replaces the HTTP /tx/commit path.
+  // already consumes. All errors are thrown; runCypher decides whether to
+  // surface them or fall back to HTTP.
   //
   // Auth: the WS upgrade carries the same-origin nornicdb_token cookie
   // (browsers attach automatically) or an Authorization: Bearer header
@@ -642,21 +938,6 @@ class NornicDBClient {
       });
       return {
         results: [{ columns, data }],
-      };
-    } catch (err) {
-      // Surface driver errors in the same shape the UI's
-      // assertCypherSuccess / display layer expects.
-      const message = err instanceof Error ? err.message : String(err);
-      const code =
-        err &&
-        typeof err === "object" &&
-        "code" in err &&
-        typeof (err as { code?: unknown }).code === "string"
-          ? (err as { code: string }).code
-          : "Neo.ClientError.Statement.SyntaxError";
-      return {
-        results: [],
-        errors: [{ code, message }],
       };
     } finally {
       if (session) {
@@ -771,9 +1052,14 @@ class NornicDBClient {
   // a re-login can pick up a fresh cookie without leaking the old
   // session's connections.
   async closeBoltDriver(): Promise<void> {
+    this.discovery = null;
+    this.boltUnavailable = false;
+    await this.discardBoltDriver();
+  }
+
+  private async discardBoltDriver(): Promise<void> {
     const driver = this.boltDriver;
     this.boltDriver = null;
-    this.discovery = null;
     if (driver) {
       try {
         await driver.close();
@@ -996,7 +1282,7 @@ class NornicDBClient {
       database != null && database !== ""
         ? database
         : await this.getDefaultDatabase();
-    return this.runCypherOverBolt(dbName, statement, parameters);
+    return this.runCypher(dbName, statement, parameters);
   }
 
   async getResolvedDatabaseName(database?: string): Promise<string> {
@@ -1061,7 +1347,7 @@ class NornicDBClient {
     statement: string,
     parameters?: Record<string, unknown>,
   ): Promise<CypherResponse> {
-    return this.runCypherOverBolt(dbName, statement, parameters);
+    return this.runCypher(dbName, statement, parameters);
   }
 
   async executeSystemCypher(
@@ -1200,7 +1486,7 @@ class NornicDBClient {
     try {
       // First, verify the nodes exist before deleting (safety check)
       const verifyStatement = `MATCH (n) WHERE id(n) IN $ids RETURN id(n) as nodeId, elementId(n) as elementId`;
-      const verifyResult = await this.runCypherOverBolt(
+      const verifyResult = await this.runCypher(
         dbName,
         verifyStatement,
         { ids: nodeIds },
@@ -1237,7 +1523,7 @@ class NornicDBClient {
       const statement = `MATCH (n) WHERE id(n) IN $ids DETACH DELETE n RETURN count(n) as deleted`;
       const parameters = { ids: nodeIds };
 
-      const result = await this.runCypherOverBolt(
+      const result = await this.runCypher(
         dbName,
         statement,
         parameters,
@@ -1322,7 +1608,7 @@ class NornicDBClient {
     const statement = `MATCH (n) WHERE id(n) = $nodeId OR n.id = $nodeId SET ${setParts.join(", ")} RETURN n`;
 
     try {
-      const result = await this.runCypherOverBolt(
+      const result = await this.runCypher(
         dbName,
         statement,
         parameters,
