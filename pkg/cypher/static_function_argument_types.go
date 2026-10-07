@@ -187,7 +187,8 @@ func (argument staticArgumentType) accepts(typeName string) bool {
 	if typeName == "" || len(argument.options) == 0 {
 		return true
 	}
-	if choices := staticTypeChoices(typeName); len(choices) > 1 {
+	if strings.Contains(typeName, ", ") || strings.Contains(typeName, " or ") {
+		choices := staticTypeChoices(typeName)
 		for _, choice := range choices {
 			if argument.accepts(choice) {
 				return true
@@ -285,26 +286,24 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				continue
 			}
 		}
-		count := 0
-		if inner != "" {
-			count = len(splitTopLevelComma(inner))
-		}
+		var buffer [8]string
+		expressions := appendTopLevelComma(buffer[:0], inner)
 		if counted {
-			if err := checkFunctionArity(name, arity, count); err != nil {
+			if err := checkFunctionArity(name, arity, len(expressions)); err != nil {
 				return err
 			}
 		}
-		if count > 0 {
-			if err := checkStaticLiteralArguments(name, splitTopLevelComma(inner)); err != nil {
+		if len(expressions) > 0 {
+			if err := checkStaticLiteralArguments(name, expressions); err != nil {
 				return err
 			}
 		}
-		if typed && inner != "" {
-			for position, expression := range splitTopLevelComma(inner) {
+		if typed {
+			for position, expression := range expressions {
 				if position >= len(arguments) {
 					break
 				}
-				if err := check(arguments[position], strings.TrimSpace(expression)); err != nil {
+				if err := check(arguments[position], expression); err != nil {
 					return err
 				}
 			}

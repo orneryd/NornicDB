@@ -16,8 +16,8 @@ import (
 //     and y nor latitude and longitude); a map value is checked when it runs
 //     (newPointFromMap).
 func checkStaticLiteralArguments(function string, arguments []string) error {
-	switch lowerASCII(function) {
-	case "percentilecont", "percentiledisc":
+	switch {
+	case strings.EqualFold(function, "percentileCont") || strings.EqualFold(function, "percentileDisc"):
 		if len(arguments) < 2 {
 			return nil
 		}
@@ -28,14 +28,27 @@ func checkStaticLiteralArguments(function string, arguments []string) error {
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
 				localization.CypherCorePercentileOutOfRange(text))
 		}
-	case "point":
+	case strings.EqualFold(function, "point"):
 		if len(arguments) != 1 {
 			return nil
 		}
-		keys, isMap := staticMapLiteralKeys(arguments[0])
-		if !isMap || pointMapDescribesPoint(keys) {
+		var x, y, latitude, longitude bool
+		isMap := visitStaticMapLiteralKeys(arguments[0], func(key string) {
+			switch key {
+			case "x":
+				x = true
+			case "y":
+				y = true
+			case "latitude":
+				latitude = true
+			case "longitude":
+				longitude = true
+			}
+		})
+		if !isMap || x && y || latitude && longitude {
 			return nil
 		}
+		keys, _ := staticMapLiteralKeys(arguments[0])
 		quoted := make([]string, 0, len(keys))
 		for key := range keys {
 			quoted = append(quoted, "'"+key+"'")
@@ -50,28 +63,34 @@ func checkStaticLiteralArguments(function string, arguments []string) error {
 // staticMapLiteralKeys returns the keys of a map literal ({x: 1, `y`: 2});
 // isMap is false for any other expression.
 func staticMapLiteralKeys(expression string) (keys map[string]bool, isMap bool) {
-	expression = strings.TrimSpace(expression)
-	if !strings.HasPrefix(expression, "{") || findMatchingDelimiter(expression, 0, '{', '}') != len(expression)-1 {
+	keys = make(map[string]bool)
+	if !visitStaticMapLiteralKeys(expression, func(key string) { keys[key] = true }) {
 		return nil, false
 	}
-	keys = make(map[string]bool)
-	for _, entry := range splitTopLevelComma(expression[1 : len(expression)-1]) {
+	return keys, true
+}
+
+// visitStaticMapLiteralKeys calls visit with each key of a map literal
+// ({x: 1, `y`: 2}), unquoted, without allocating for an ordinary map; it
+// reports false for any other expression, whose keys visit may have seen in
+// part. point() checks the keys of a map literal argument (newPointFromMap
+// reads x and y or latitude and longitude).
+func visitStaticMapLiteralKeys(expression string, visit func(key string)) bool {
+	expression = strings.TrimSpace(expression)
+	if !strings.HasPrefix(expression, "{") || findMatchingDelimiter(expression, 0, '{', '}') != len(expression)-1 {
+		return false
+	}
+	var buffer [8]string
+	for _, entry := range appendTopLevelComma(buffer[:0], expression[1:len(expression)-1]) {
 		colon := strings.IndexByte(entry, ':')
 		if colon < 0 {
-			return nil, false
+			return false
 		}
 		key := strings.TrimSpace(entry[:colon])
 		if len(key) >= 2 && key[0] == '`' && key[len(key)-1] == '`' {
 			key = strings.ReplaceAll(key[1:len(key)-1], "``", "`")
 		}
-		keys[key] = true
+		visit(key)
 	}
-	return keys, true
-}
-
-// pointMapDescribesPoint reports whether a map with these keys describes a
-// point: x and y (cartesian) or latitude and longitude (geographic), as
-// newPointFromMap reads it.
-func pointMapDescribesPoint(keys map[string]bool) bool {
-	return keys["x"] && keys["y"] || keys["latitude"] && keys["longitude"]
+	return true
 }
