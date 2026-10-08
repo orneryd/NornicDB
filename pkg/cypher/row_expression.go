@@ -764,7 +764,12 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		if !ok {
 			return nil, false, nil
 		}
-		items := toAnySlice(base)
+		// Only a list is indexed by an integer: n.big[0] on a number is a
+		// TypeError wherever it is read, a WHERE included (#907).
+		items, isList := cypherListValue(base)
+		if !isList {
+			return nil, false, subscriptReceiverError(base, indexValue)
+		}
 		if index < 0 {
 			index += len(items)
 		}
@@ -1155,70 +1160,70 @@ func compareCypherPredicateValues(left, right interface{}, operator string) bool
 }
 
 func (e *StorageExecutor) evaluateRowListSlice(base interface{}, lowerExpression, upperExpression string, values map[string]interface{}) (interface{}, bool, error) {
-	if base == nil {
-		return nil, true, nil
+	bound := func(expression string) (interface{}, bool, error) {
+		if expression == "" {
+			return nil, true, nil
+		}
+		return e.evaluateRowValue(expression, values)
 	}
-	baseType := reflect.TypeOf(base)
-	if baseType == nil || (baseType.Kind() != reflect.Slice && baseType.Kind() != reflect.Array) {
-		return nil, false, nil
+	lower, ok, err := bound(lowerExpression)
+	if err != nil || !ok {
+		return nil, false, err
 	}
-	items := toAnySlice(base)
+	upper, ok, err := bound(upperExpression)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	value, ok := cypherListSlice(base, lower, upper, lowerExpression != "", upperExpression != "")
+	return value, ok, nil
+}
+
+// cypherListSlice is base[lower..upper], the one list slice of every
+// evaluator (#907). A bound that is absent (hasLower / hasUpper false) is
+// the list's start or end; a negative one counts from the end; both are
+// clamped to the list. A null base or bound gives null. A base that isn't a
+// list is a list of that one value, as Neo4j slices a value whose type it
+// doesn't know before the statement runs (n.p[..1] is [n.p]); a type known
+// before is checked statically. ok is false for a bound that isn't an
+// integer.
+func cypherListSlice(base, lower, upper interface{}, hasLower, hasUpper bool) (interface{}, bool) {
+	if base == nil || hasLower && lower == nil || hasUpper && upper == nil {
+		return nil, true
+	}
+	var items []interface{}
+	if list, isList := cypherListValue(base); isList {
+		items = list
+	} else {
+		items = []interface{}{base}
+	}
 	length := len(items)
-	lower, upper := 0, length
-	if lowerExpression != "" {
-		value, ok, err := e.evaluateRowValue(lowerExpression, values)
-		if err != nil {
-			return nil, false, err
+	from, to := 0, length
+	if hasLower {
+		index, isIndex := rowSubscriptIndex(lower)
+		if !isIndex {
+			return nil, false
 		}
-		if !ok {
-			return nil, false, nil
+		from = index
+	}
+	if hasUpper {
+		index, isIndex := rowSubscriptIndex(upper)
+		if !isIndex {
+			return nil, false
 		}
-		if value == nil {
-			return nil, true, nil
-		}
-		lower, ok = rowSubscriptIndex(value)
-		if !ok {
-			return nil, false, nil
-		}
+		to = index
 	}
-	if upperExpression != "" {
-		value, ok, err := e.evaluateRowValue(upperExpression, values)
-		if err != nil {
-			return nil, false, err
-		}
-		if !ok {
-			return nil, false, nil
-		}
-		if value == nil {
-			return nil, true, nil
-		}
-		upper, ok = rowSubscriptIndex(value)
-		if !ok {
-			return nil, false, nil
-		}
+	if from < 0 {
+		from += length
 	}
-	if lower < 0 {
-		lower += length
+	if to < 0 {
+		to += length
 	}
-	if upper < 0 {
-		upper += length
+	from = min(max(from, 0), length)
+	to = min(max(to, 0), length)
+	if from >= to {
+		return []interface{}{}, true
 	}
-	if lower < 0 {
-		lower = 0
-	}
-	if lower > length {
-		lower = length
-	}
-	if upper < 0 {
-		upper = 0
-	}
-	if upper > length {
-		upper = length
-	}
-	if lower >= upper {
-		return []interface{}{}, true, nil
-	}
-	return append([]interface{}(nil), items[lower:upper]...), true, nil
+	return append([]interface{}(nil), items[from:to]...), true
 }
 
 // evaluateRowCaseExpression evaluates CASE against the complete heterogeneous

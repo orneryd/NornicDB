@@ -2473,8 +2473,9 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[3..1]", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
 		t.Fatalf("n.arrAny[3..1] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "'abc'[..1]", nodes, nil); got != nil {
-		t.Fatalf("'abc'[..1] should be nil, got %#v", got)
+	// Neo4j slices a non-list value as a list of that value (#907).
+	if got := e.evaluateExpressionWithContext(ctx, "n.text[..1]", nodes, nil); !reflect.DeepEqual([]interface{}{"xy"}, got) {
+		t.Fatalf("n.text[..1] unexpected: %#v", got)
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny['2']", nodes, nil); got != int64(3) {
 		t.Fatalf("n.arrAny['2'] unexpected: %#v", got)

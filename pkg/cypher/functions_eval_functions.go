@@ -96,36 +96,17 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			if strings.Contains(indexExpr, "..") {
 				// This is a slice, not an index
 				baseVal := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				if list, ok := baseVal.([]interface{}); ok {
-					parts := strings.SplitN(indexExpr, "..", 2)
-					startIdx := int64(0)
-					endIdx := int64(len(list))
-
-					if parts[0] != "" {
-						startIdx, _ = strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
-					}
-					if len(parts) > 1 && parts[1] != "" {
-						endIdx, _ = strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-					}
-
-					// Handle negative indices
-					if startIdx < 0 {
-						startIdx = int64(len(list)) + startIdx
-					}
-					if endIdx < 0 {
-						endIdx = int64(len(list)) + endIdx
-					}
-					// Clamp
-					if startIdx < 0 {
-						startIdx = 0
-					}
-					if endIdx > int64(len(list)) {
-						endIdx = int64(len(list))
-					}
-					if startIdx >= endIdx {
-						return []interface{}{}
-					}
-					return list[startIdx:endIdx]
+				lowerExpr, upperExpr, _ := strings.Cut(indexExpr, "..")
+				lowerExpr, upperExpr = strings.TrimSpace(lowerExpr), strings.TrimSpace(upperExpr)
+				var lower, upper interface{}
+				if lowerExpr != "" {
+					lower = e.evaluateExpressionWithContextFull(ctx, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+				}
+				if upperExpr != "" {
+					upper = e.evaluateExpressionWithContextFull(ctx, upperExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+				}
+				if value, ok := cypherListSlice(baseVal, lower, upper, lowerExpr != "", upperExpr != ""); ok {
+					return value
 				}
 				return nil
 			}
