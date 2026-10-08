@@ -484,12 +484,12 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 				if entity == nil {
 					return nil, true, nil
 				}
-				return propertiesMapValue(entity.Properties), true, nil
+				return cypherfn.EntityProperties(entity.Properties), true, nil
 			case *storage.Edge:
 				if entity == nil {
 					return nil, true, nil
 				}
-				return propertiesMapValue(entity.Properties), true, nil
+				return cypherfn.EntityProperties(entity.Properties), true, nil
 			default:
 				object, isMap := toStringAnyMap(value)
 				return object, isMap, nil
@@ -2176,13 +2176,4 @@ func evaluateRowStringPredicateValues(left, right interface{}, predicate func(st
 	leftText, leftString := left.(string)
 	rightText, rightString := right.(string)
 	return leftString && rightString && predicate(leftText, rightText)
-}
-
-// propertiesMapValue is properties() of an entity: its property map, an
-// empty map when it has none (never null).
-func propertiesMapValue(properties map[string]interface{}) map[string]interface{} {
-	if properties == nil {
-		return map[string]interface{}{}
-	}
-	return properties
 }

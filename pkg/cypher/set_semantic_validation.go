@@ -110,17 +110,27 @@ func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error
 // bound (deleteExpressionRootIdentifier), with the error the pipeline DELETE
 // step raises at run time, so a subquery body is checked before it runs.
 func validateDeleteClauseScope(scope *semanticBindingScope, clause string) error {
-	body := strings.TrimSpace(clause)
-	if startsWithKeywordFold(body, "DETACH") {
-		body = strings.TrimSpace(body[len("DETACH"):])
-	}
-	body = strings.TrimSpace(body[len("DELETE"):])
-	for _, expression := range splitTopLevelComma(body) {
+	targets, _, _ := deleteClauseTargets(clause)
+	for _, expression := range targets {
 		if root := deleteExpressionRootIdentifier(expression); root != "" && !scope.contains(root) {
 			return deleteUndefinedVariableError(expression)
 		}
 	}
 	return nil
+}
+
+// deleteClauseTargets splits a [DETACH] DELETE clause into its target
+// expressions, for every check and the pipeline step that read them. ok is
+// false for text that isn't a DELETE clause.
+func deleteClauseTargets(clause string) (targets []string, detach, ok bool) {
+	body := strings.TrimSpace(clause)
+	if startsWithKeywordFold(body, "DETACH DELETE") {
+		detach, body = true, strings.TrimSpace(body[len("DETACH"):])
+	}
+	if !startsWithKeywordFold(body, "DELETE") {
+		return nil, false, false
+	}
+	return splitTopLevelComma(strings.TrimSpace(body[len("DELETE"):])), detach, true
 }
 
 // deleteUndefinedVariableError is the error for a DELETE target that refers to

@@ -1,47 +1,87 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-const (
-	pipelineDeletedNodesKey = "\x00nornic.deleted.nodes"
-	pipelineDeletedEdgesKey = "\x00nornic.deleted.edges"
-)
+// deletedEntities is what a statement has deleted so far: the nodes and
+// relationships its DELETE clauses removed (a DETACH DELETE's relationships
+// and a deleted path's parts included). It is the statement's, not a row's,
+// so it holds across WITH, aliases, collect() and the row-at-a-time runs of
+// a write stretch: Neo4j 5.26 reads a deleted entity the same way wherever
+// it is reached in the rest of the statement (#907).
+type deletedEntities struct {
+	nodes map[storage.NodeID]struct{}
+	edges map[storage.EdgeID]struct{}
+}
 
-func markPipelineRowsDeletedEntities(rows []pipelineRow, nodeIDs []storage.NodeID, edgeIDs map[storage.EdgeID]struct{}) {
-	deletedNodes := make(map[storage.NodeID]struct{}, len(nodeIDs))
-	for _, id := range nodeIDs {
-		deletedNodes[id] = struct{}{}
+type deletedEntitiesKey struct{}
+
+// withDeletedEntities gives the statement a deletedEntities, unless ctx has
+// one: a subquery, FOREACH or row-at-a-time run shares the statement's.
+func withDeletedEntities(ctx context.Context) context.Context {
+	if deletedEntitiesOf(ctx) != nil {
+		return ctx
 	}
-	for _, row := range rows {
-		row[pipelineDeletedNodesKey] = deletedNodes
-		row[pipelineDeletedEdgesKey] = edgeIDs
+	return context.WithValue(ctx, deletedEntitiesKey{}, &deletedEntities{})
+}
+
+// deletedEntitiesOf is the statement's deletedEntities, nil when it has none.
+func deletedEntitiesOf(ctx context.Context) *deletedEntities {
+	deleted, _ := ctx.Value(deletedEntitiesKey{}).(*deletedEntities)
+	return deleted
+}
+
+// pipelineClausesMayDelete reports whether clauses can delete: a DELETE, or
+// a FOREACH or CALL subquery that may hold one.
+func pipelineClausesMayDelete(clauses []pipelineClause) bool {
+	for _, clause := range clauses {
+		switch clause.kind {
+		case pipelineClauseDelete, pipelineClauseForeach, pipelineClauseCallSubquery:
+			return true
+		}
+	}
+	return false
+}
+
+// add records deleted nodes and relationships.
+func (d *deletedEntities) add(nodeIDs []storage.NodeID, edgeIDs map[storage.EdgeID]struct{}) {
+	if len(nodeIDs) > 0 && d.nodes == nil {
+		d.nodes = make(map[storage.NodeID]struct{}, len(nodeIDs))
+	}
+	for _, id := range nodeIDs {
+		d.nodes[id] = struct{}{}
+	}
+	if len(edgeIDs) > 0 && d.edges == nil {
+		d.edges = make(map[storage.EdgeID]struct{}, len(edgeIDs))
+	}
+	for id := range edgeIDs {
+		d.edges[id] = struct{}{}
 	}
 }
 
-// replaceDeletedEntityViews replaces, in rows, every node and relationship the
-// statement deleted (the rows' deleted sets) with what Neo4j 5.26 returns for
-// it after the DELETE: the same entity without labels or properties, so
-// RETURN n is an empty node and n {.*}, properties(n) and keys(n) are empty.
-// A relationship keeps its type and endpoints (type(r) still answers). Paths
-// and lists holding a deleted entity are rebuilt with its view (#907).
-// Reading a deleted entity's property or labels is an error instead
-// (validateDeletedEntityProjection).
-func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow) {
-	views := deletedEntityViews{executor: e}
+// empty reports whether nothing is deleted (a nil d included).
+func (d *deletedEntities) empty() bool {
+	return d == nil || (len(d.nodes) == 0 && len(d.edges) == 0)
+}
+
+// replaceDeletedEntityViews replaces, in rows, every node and relationship in
+// deleted with what Neo4j 5.26 returns for it after the DELETE: the same
+// entity without labels or properties, so RETURN n is an empty node and
+// n {.*}, properties(n) and keys(n) are empty. A relationship keeps its type
+// and endpoints (type(r) still answers). Paths and lists holding a deleted
+// entity are rebuilt with its view (#907). Reading a deleted entity's
+// property or labels is an error instead (validateDeletedEntityReads).
+func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow, deleted *deletedEntities) {
+	if deleted.empty() {
+		return
+	}
+	views := deletedEntityViews{executor: e, nodes: deleted.nodes, edges: deleted.edges}
 	for _, row := range rows {
-		views.nodes, _ = row[pipelineDeletedNodesKey].(map[storage.NodeID]struct{})
-		views.edges, _ = row[pipelineDeletedEdgesKey].(map[storage.EdgeID]struct{})
-		if len(views.nodes) == 0 && len(views.edges) == 0 {
-			continue
-		}
 		for name, value := range row {
-			if name == pipelineDeletedNodesKey || name == pipelineDeletedEdgesKey {
-				continue
-			}
 			if replaced, changed := views.replace(value); changed {
 				row[name] = replaced
 			}
@@ -133,26 +173,32 @@ func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
 	return &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
 }
 
-// validateDeletedEntityProjection rejects a RETURN that reads a property or
-// the labels of a node or relationship the statement deleted, or the keys or
-// properties() of a deleted relationship, anywhere in an item (n.p + 1 too):
-// Neo4j 5.26's EntityNotFound. keys and properties of a deleted node, and
-// n {.*}, are empty instead (replaceDeletedEntityViews).
-func validateDeletedEntityProjection(rows []pipelineRow, clause string) error {
-	for _, expression := range projectionExpressions(clause, "RETURN") {
-		reads := deletedEntityReadsIn(expression)
-		if len(reads) == 0 {
-			continue
-		}
-		for _, row := range rows {
-			for _, read := range reads {
-				if rowReferencesDeletedEntity(row, read.variable, read.relationshipOnly) {
-					return newSemanticError(
-						"Neo.ClientError.Statement.EntityNotFound",
-						"DeletedEntityAccess",
-						"cannot access properties or labels of a deleted entity",
-					)
-				}
+// validateDeletedEntityReads rejects a clause that, after a DELETE in the
+// statement, reads a property or the labels of a deleted node or
+// relationship, or the keys or properties() of a deleted relationship,
+// anywhere it reads (n.p + 1, WITH n.p AS p, WHERE n.p = 1, ORDER BY n.p, a
+// SET value, [x IN deleted | x.p]): Neo4j 5.26's EntityNotFound. keys and
+// properties of a deleted node, and n {.*}, are empty instead
+// (replaceDeletedEntityViews); n.p IS NULL is true and SET n.p = 1 writes
+// nothing, without an error (deletedEntityReadsIn, deletedEntityReadText).
+func validateDeletedEntityReads(rows []pipelineRow, clause string, deleted *deletedEntities) error {
+	if deleted.empty() {
+		return nil
+	}
+	reads := deletedEntityReadsIn(clause)
+	for _, row := range rows {
+		for _, read := range reads {
+			variable := read.variable
+			if _, bound := row[variable]; !bound {
+				// A list iteration variable (x IN xs) reads the list's items.
+				variable = iterationSourceVariable(clause, variable)
+			}
+			if deleted.bindsDeleted(row, variable, read.relationshipOnly) {
+				return newSemanticError(
+					"Neo.ClientError.Statement.EntityNotFound",
+					"DeletedEntityAccess",
+					"cannot access properties or labels of a deleted entity",
+				)
 			}
 		}
 	}
@@ -193,7 +239,9 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 		next := skipSpaceIndex(expression, index)
 		switch {
 		case next < len(expression) && expression[next] == '.' && next+1 < len(expression) && expression[next+1] != '.':
-			reads = append(reads, deletedEntityRead{variable: word})
+			if !propertyNullTestFollows(expression, next+1) {
+				reads = append(reads, deletedEntityRead{variable: word})
+			}
 		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
 			argumentStart := skipSpaceIndex(expression, next+1)
 			argumentEnd := argumentStart
@@ -215,23 +263,135 @@ func skipSpaceIndex(text string, index int) int {
 	return index
 }
 
-// rowReferencesDeletedEntity reports whether row binds variable to a node or
-// relationship the statement deleted. For a keys() / properties() read
-// (relationshipOnly) only a relationship counts: a deleted node's are empty.
-func rowReferencesDeletedEntity(row pipelineRow, variable string, relationshipOnly bool) bool {
-	switch entity := row[variable].(type) {
+// bindsDeleted reports whether row binds variable to a deleted node or
+// relationship. For a keys() / properties() read (relationshipOnly) only a
+// relationship counts: a deleted node's are empty.
+func (d *deletedEntities) bindsDeleted(row pipelineRow, variable string, relationshipOnly bool) bool {
+	if variable == "" {
+		return false
+	}
+	return d.holdsDeleted(row[variable], relationshipOnly)
+}
+
+// holdsDeleted reports whether value is a deleted node or relationship, or a
+// list holding one (bindsDeleted).
+func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool) bool {
+	switch entity := value.(type) {
+	case []interface{}:
+		for _, item := range entity {
+			if d.holdsDeleted(item, relationshipOnly) {
+				return true
+			}
+		}
+		return false
 	case *storage.Node:
-		if relationshipOnly {
+		if relationshipOnly || entity == nil {
 			return false
 		}
-		deleted, _ := row[pipelineDeletedNodesKey].(map[storage.NodeID]struct{})
-		_, found := deleted[entity.ID]
+		_, found := d.nodes[entity.ID]
 		return found
 	case *storage.Edge:
-		deleted, _ := row[pipelineDeletedEdgesKey].(map[storage.EdgeID]struct{})
-		_, found := deleted[entity.ID]
+		if entity == nil {
+			return false
+		}
+		_, found := d.edges[entity.ID]
 		return found
 	default:
 		return false
 	}
+}
+
+// propertyNullTestFollows reports whether the property name starting at
+// index is followed by IS NULL or IS NOT NULL: Neo4j tests a deleted
+// entity's property for null without an error (it has none).
+func propertyNullTestFollows(expression string, index int) bool {
+	for index < len(expression) && isCypherIdentByte(expression[index]) {
+		index++
+	}
+	rest := expression[skipSpaceIndex(expression, index):]
+	if !startsWithKeywordFold(rest, "IS") {
+		return false
+	}
+	rest = strings.TrimLeft(rest[len("IS"):], " \t\r\n")
+	if startsWithKeywordFold(rest, "NOT") {
+		rest = strings.TrimLeft(rest[len("NOT"):], " \t\r\n")
+	}
+	return startsWithKeywordFold(rest, "NULL")
+}
+
+// iterationSourceVariable is the row variable that variable iterates in
+// clause (x in [x IN xs | x.p], any(x IN xs WHERE …), reduce(s = 0, x IN xs
+// | …)), "" when variable iterates no row variable.
+func iterationSourceVariable(clause, variable string) string {
+	for offset := 0; offset < len(clause); {
+		index := indexIdentifierFold(clause[offset:], variable)
+		if index < 0 {
+			return ""
+		}
+		after := offset + index + len(variable)
+		offset = after
+		rest := clause[skipSpaceIndex(clause, after):]
+		if !startsWithKeywordFold(rest, "IN") {
+			continue
+		}
+		rest = strings.TrimLeft(rest[len("IN"):], " \t\r\n")
+		end := 0
+		for end < len(rest) && isCypherIdentByte(rest[end]) {
+			end++
+		}
+		if end > 0 {
+			return rest[:end]
+		}
+	}
+	return ""
+}
+
+// indexIdentifierFold is the index of identifier in text as a whole word
+// outside string literals, -1 when it isn't there.
+func indexIdentifierFold(text, identifier string) int {
+	for index := 0; index+len(identifier) <= len(text); {
+		switch character := text[index]; {
+		case character == '\'' || character == '"' || character == '`':
+			end := strings.IndexByte(text[index+1:], character)
+			if end < 0 {
+				return -1
+			}
+			index += end + 2
+			continue
+		case (index > 0 && isCypherIdentByte(text[index-1])) || !strings.EqualFold(text[index:index+len(identifier)], identifier):
+			index++
+			continue
+		}
+		if end := index + len(identifier); end < len(text) && isCypherIdentByte(text[end]) {
+			index++
+			continue
+		}
+		return index
+	}
+	return -1
+}
+
+// deletedEntityReadText is the part of clause that reads values, for
+// validateDeletedEntityReads: a SET's assigned values (its targets are
+// writes, and Neo4j lets SET write to a deleted entity), nothing for a
+// DELETE or REMOVE (their targets), the whole clause otherwise.
+func deletedEntityReadText(clause pipelineClause) string {
+	switch clause.kind {
+	case pipelineClauseDelete, pipelineClauseRemove:
+		return ""
+	case pipelineClauseSet:
+		body := strings.TrimSpace(clause.text)
+		if startsWithKeywordFold(body, "SET") {
+			body = body[len("SET"):]
+		}
+		var values strings.Builder
+		for _, assignment := range splitSetAssignments(body) {
+			if _, _, operator, right := splitSetAssignment(assignment); operator == "=" || operator == "+=" {
+				values.WriteString(right)
+				values.WriteByte('\n')
+			}
+		}
+		return values.String()
+	}
+	return clause.text
 }
