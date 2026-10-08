@@ -317,22 +317,17 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 	var boundaries []pipelineBoundary
 	for _, k := range keywords {
 		for _, p := range findAllTopLevelPipelineKeywordPositions(cypher, k.name) {
-			if k.name == "CALL" {
-				// OPTIONAL CALL is one clause, unless optional is a variable.
-				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
-				if end := len(strings.TrimRight(cypher[:p], " \t\n\r")); strings.HasSuffix(preceding, "OPTIONAL") &&
-					!clauseKeywordUsedAsName(cypher, end-len("OPTIONAL"), end, "OPTIONAL") {
-					continue
-				}
+			// OPTIONAL CALL and OPTIONAL MATCH are one clause, found by their
+			// own keyword, unless optional is a variable (WITH x, optional
+			// MATCH (n), #894).
+			if k.name == "CALL" && precededByOptionalKeyword(cypher, p) {
+				continue
 			}
 			if k.kind == pipelineClauseMatch {
-				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
-				// OPTIONAL MATCH is one clause, unless optional is a variable
-				// (WITH x, optional MATCH (n), #894).
-				if end := len(strings.TrimRight(cypher[:p], " \t\n\r")); strings.HasSuffix(preceding, "OPTIONAL") &&
-					!clauseKeywordUsedAsName(cypher, end-len("OPTIONAL"), end, "OPTIONAL") {
+				if precededByOptionalKeyword(cypher, p) {
 					continue
 				}
+				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
 				if strings.HasSuffix(preceding, "ON") {
 					continue
 				}
@@ -4871,4 +4866,13 @@ func parseFloatFast(s string) (float64, bool) {
 		return 0, false
 	}
 	return f, true
+}
+
+// precededByOptionalKeyword reports whether the clause keyword at position in
+// cypher follows the keyword OPTIONAL (OPTIONAL MATCH, OPTIONAL CALL), not a
+// variable named optional. It doesn't allocate.
+func precededByOptionalKeyword(cypher string, position int) bool {
+	end := len(strings.TrimRight(cypher[:position], " \t\n\r"))
+	return end >= len("OPTIONAL") && equalFoldASCII(cypher[end-len("OPTIONAL"):end], "OPTIONAL") &&
+		!clauseKeywordUsedAsName(cypher, end-len("OPTIONAL"), end, "OPTIONAL")
 }
